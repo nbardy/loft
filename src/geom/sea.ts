@@ -12,9 +12,10 @@
 // cells c across a wave of length L and amplitude A (0.003 for the serpent's swell at 1-unit cells).
 
 import {
-  add, cross, distance, exp, lift, max, mul, normalize, sign, abs, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
+  add, cross, distance, lift, max, mul, normalize, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
+import { CELL_PIXELS } from "../artefact.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
 import { eyePosition, viewDir, wgslFn } from "../lib/wgsl.ts";
@@ -159,11 +160,12 @@ export class Sea implements Chart, Drawable {
 
   constructor(readonly waves: readonly Wave[], readonly reach: number, readonly foam: number, readonly deforms: readonly SeaDeform[] = []) {
     // Transparent: what shows through the water is the submerged body (tinted by its own shader) or, where nothing
-    // is below, the sky shader's under-horizon colour. The grid's counts here are only its declared size; the host
-    // sizes it to the screen each frame.
+    // is below, the sky shader's under-horizon colour. The host sizes the grid to the screen each frame; the counts
+    // here are only its declared size (`stats.maxTriangles`): what it draws at 1280 x 800 with water to every edge.
     const lift = waves.reduce((a, w) => a + w.amp, 0);
+    const declared = (pixels: number) => Math.ceil((pixels * 1.1) / (SEA_CELL * CELL_PIXELS));
     this.drawn = drawGlazed("sea", this.surface(), {
-      colour: (fr) => this.water(fr), grid: { u: spacing.even(256), v: spacing.even(160) }, phase: "water", sceneDepth: true,
+      colour: (fr) => this.water(fr), grid: { u: spacing.even(declared(1280)), v: spacing.even(declared(800)) }, phase: "water", sceneDepth: true,
       detail: { kind: "projected", cell: SEA_CELL, plane: 0, reach, lift },
     });
   }
