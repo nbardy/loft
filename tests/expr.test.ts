@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { setupGlobals } from "bun-webgpu";
 import {
   abs, add, atan2, clamp, compileJs, cos, cross, CURVE_N, emitWgsl, f, fetch, floor, iterate, length, lt, mix, mod, mul, normalize,
-  param, pow, row, Row, select, sin, smoothstep, step, sub, time, variable, vec2, vec3, type Bind, type Expr, type TableSource,
+  param, pow, round, row, Row, select, sin, smoothstep, step, sub, time, variable, vec2, vec3, type Bind, type Expr, type TableSource,
 } from "../src/expr.ts";
 
 const u = variable("u", "f32");
@@ -18,6 +18,10 @@ const cases: Expr[] = [
   select(lt(u, 0.5), pow(u, 2.2), atan2(u, 0.3)),
   row(ramp, u).xyz.mul(step(0.25, u)),
   clamp(vec3(u, -1, 4), 0, vec3(0.6, 0.6, 2)),
+  // One scalar branch and one vector branch: the scalar must be widened in the emitted WGSL.
+  mix(u, vec3(1, 2, 3), 0.3),
+  select(lt(u, 0.4), u, vec3(1, 2, 3)),
+  round(mul(vec3(u, 2.5, -1.5), 3)),
 ];
 
 test("JS and WGSL backends agree", async () => {

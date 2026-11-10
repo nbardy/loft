@@ -388,7 +388,8 @@ export function mix<B extends NumTy>(a: Lit, b: Expr<B>, t: In<NumTy>): Expr<B e
 export function mix(a: Lit, b: Lit, t: In<NumTy>): Expr<VecTy>;
 export function mix<A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, t: In<NumTy>): Expr<Wider<A, B>>;
 export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
-  return call("mix", wider(lift(a).ty, lift(b).ty), [a, b, t]);
+  // The blend factor may be the only vector: the result is then a vector too.
+  return call("mix", wider(lift(a).ty, lift(b).ty, lift(t).ty), [a, b, t]);
 }
 export function clamp(x: number, lo: number, hi: number): Expr<"f32">;
 export function clamp<A extends NumTy>(x: Expr<A>, lo: In<NumTy>, hi: In<NumTy>): Expr<A>;
@@ -424,6 +425,11 @@ export function select<A extends NumTy = "f32", B extends NumTy = "f32">(cond: I
 export function select(cond: In<"bool">, yes: In<NumTy>, no: In<NumTy>): Expr {
   return call("select", wider(lift(yes).ty, lift(no).ty), [cond, yes, no]);
 }
+
+/** Round to the nearest integer, halves upward. Defined as floor(x + 0.5) so both backends agree at ties (WGSL's own `round` goes to even). */
+export function round<A extends NumTy = "f32">(x: Expr<A> | number | Lit): Expr<A> { return floor(add(x as Expr<A>, 0.5)) as Expr<A>; }
+/** Any component selection, for example `swizzle(p, "zyx")`. The getters (`.x`, `.xy`, `.xyz`, ...) cover the common ones. */
+export function swizzle<T extends NumTy>(a: Expr<VecTy>, sel: string): Expr<T> { return get<T>(a, sel); }
 
 export const TAU = Math.PI * 2;
 
@@ -526,7 +532,9 @@ const lit = (n: number): string => (Number.isInteger(n) ? n.toFixed(1) : String(
 const WGSL_TY: Record<Ty, string> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3<f32>", vec4: "vec4<f32>", bool: "bool" };
 
 /** Fns whose WGSL form needs every argument to have the result's type (a scalar is splatted to a vector). */
-const SPLAT: ReadonlySet<Fn> = new Set<Fn>(["min", "max", "pow", "atan2", "step", "clamp", "smoothstep"]);
+// `mix` and `select` are here because one branch may be a scalar and the other a vector: WGSL wants both the result's
+// type, and without the splat the emitted call does not compile (found by the differentiation module).
+const SPLAT: ReadonlySet<Fn> = new Set<Fn>(["min", "max", "pow", "atan2", "step", "clamp", "smoothstep", "mix", "select"]);
 const INFIX: Partial<Record<Fn, string>> = { add: "+", sub: "-", mul: "*", div: "/", lt: "<", gt: ">", le: "<=", ge: ">=", and: "&&", or: "||" };
 
 function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
