@@ -15,7 +15,7 @@ import {
   sub, substitute, TAU, time, length, vec3, type Env, type Expr, type In, type TableFill, type TablePrep, type TableSource,
 } from "../expr.ts";
 import { compose, rotate, world } from "./chart.ts";
-import { poseStrand, STATION_VEC4S, type V3 } from "./transport.ts";
+import { poseStrand, qrot as qrotNum, stationRadii, STATION_VEC4S, v3, type V3 } from "./transport.ts";
 import type { Chart, End, F, Frame, P3, Placeable, Skeleton, Surface, Topology } from "./types.ts";
 
 type Fn1 = (m: F) => F;
@@ -109,8 +109,43 @@ const SLOPE_H = 1e-3;
 
 type Ring = { readonly st: FrameSample; readonly pos: P3; readonly normal: P3; readonly radial: P3 };
 
-/** The memo of a body's time slices, shared by every slice of it. */
-export type Slices = Map<Expr<"f32">, { readonly body: Body; readonly index: number }>;
+/**
+ * The memo of a body's time slices, shared by every slice of it: whole slices by time, prefixes (stations 0 .. k - 1
+ * only) by time and k, all numbered in one sequence (the number names the slice's table).
+ */
+export type Slices = { readonly whole: Map<Expr<"f32">, Body>; readonly prefix: Map<string, Body>; readonly skeleton: Map<string, Skeleton>; count: number };
+export const newSlices = (): Slices => ({ whole: new Map(), prefix: new Map(), skeleton: new Map(), count: 0 });
+
+/**
+ * Which stations a body's table holds. `all`, or the first `stations` only: a slice read only near the start of the
+ * body (a head riding the neck, taken at an earlier time for a smear). Frames are transported from m = 0, so a prefix
+ * is exact for every station but its last two (whose tangents would need the stations after them), and readers stay
+ * below those (`Body.atNear`).
+ */
+export type Posted =
+  | { readonly kind: "all" }
+  | { readonly kind: "prefix"; readonly stations: number }
+  /**
+   * Stations `first` .. the end only (a smear's copy of a striking tail): the frame at `first` is the live body's frame
+   * there, carried to this slice's tangent by the minimal rotation, then transported as usual. Positions and radii are
+   * exact from `first + 1` on; frames differ from the whole slice's by how far the body rolled between the two times.
+   */
+  | { readonly kind: "part"; readonly first: number; readonly live: Body };
+
+/** The value of a constant f32 expression (a literal, or a literal component of a literal vector), or NaN. */
+function constantOf(e: Expr): number {
+  const n = e.node;
+  switch (n.op) {
+    case "const": return n.v.length === 1 ? n.v[0]! : NaN;
+    case "get": {
+      const i = "xyzw".indexOf(n.sel);
+      if (n.sel.length !== 1 || i < 0) return NaN;
+      const a = n.a.node;
+      return a.op === "const" ? (a.v[i] ?? NaN) : a.op === "vec" && a.args.length === (a.ty === "vec2" ? 2 : a.ty === "vec3" ? 3 : 4) ? constantOf(a.args[i]!) : NaN;
+    }
+    default: return NaN;
+  }
+}
 
 /** A swept body. Build with `sweep`; `strand` (src/geom/strand.ts) is the library form with defaults and a look. */
 export class Body implements Surface, Chart, Placeable<Body> {
@@ -131,6 +166,7 @@ export class Body implements Surface, Chart, Placeable<Body> {
     readonly slice: F,
     protected readonly slices: Slices,
     tableName: string,
+    readonly posted: Posted,
   ) {
     this.table = new StationTable(tableName, this);
     this.topology = { u: [endOf(section.tips[0]), endOf(section.tips[1])], v: "periodic" };
@@ -222,17 +258,66 @@ export class Body implements Surface, Chart, Placeable<Body> {
 
   /** This body with `time` read as t: its own stations, posed every frame (a telegraph, a smear). */
   at(t: F): Body {
-    const seen = this.slices.get(t);
-    if (seen) return seen.body;
-    const index = this.slices.size;
-    const body = this.remake(this.chart.at(t), t, this.slices, `${this.table.base}_${index}`);
-    this.slices.set(t, { body, index });
+    const seen = this.slices.whole.get(t);
+    if (seen) return seen;
+    const body = this.remake(this.chart.at(t), t, this.slices, `${this.table.base}_${this.slices.count++}`, { kind: "all" });
+    this.slices.whole.set(t, body);
+    return body;
+  }
+
+  /**
+   * This body's skeleton at time t at the given stations only, without frames (`SkeletonTable`): what a wake needs of a
+   * past slice. Joint j is station `stations[j]`.
+   */
+  skeletonAt(t: F, stations: readonly number[]): Skeleton {
+    const key = `${t.id}:${stations.join(",")}`;
+    const seen = this.slices.skeleton.get(key);
+    if (seen) return seen;
+    const table = new SkeletonTable(`${this.table.base}_skel${this.slices.count++}`, this, t, stations);
+    const sk: Skeleton = { joints: table.entries, joint: (k) => { const j = fetch(table, k, 0); return { p: j.xyz, r: j.w }; } };
+    this.slices.skeleton.set(key, sk);
+    return sk;
+  }
+
+  /**
+   * This body at time t for a reader of m in [from, 1] only (a smear's copy of the part that strikes): it posts the
+   * stations from just before `from` and seeds its frame from the live body (`Posted` "part"). The spine is the cost of a
+   * slice, so a tail from m = 0.8 costs a fifth of a whole slice.
+   */
+  partAt(t: F, from: number): Body {
+    const first = Math.floor(Math.min(Math.max(from, 0), 1) * (this.transport.stations - 1)) - 1;
+    const whole = this.slices.whole.get(t);
+    if (first <= 0 || whole) return whole ?? this.at(t);
+    const key = `${t.id}:part${first}`;
+    const seen = this.slices.prefix.get(key);
+    if (seen) return seen;
+    const body = this.remake(this.chart.at(t), t, this.slices, `${this.table.base}_${this.slices.count++}`, { kind: "part", first, live: this });
+    this.slices.prefix.set(key, body);
+    return body;
+  }
+
+  /**
+   * This body at time t for a reader of body coordinates c only (a part placed there): when c's m is a constant, the
+   * slice posts only the stations up to it (a smear's copies of a head riding the neck read the neck's first stations,
+   * not the whole body: 4 against 48 in examples/strike.ts). Exact where it is read: the reads at m touch stations up to
+   * floor(m (n - 1)) + 2, and only the last two of a prefix differ from the whole slice.
+   */
+  atNear(t: F, c: P3): Body {
+    const n = this.transport.stations, m = constantOf(c.x);
+    const k = Number.isFinite(m) ? Math.floor(Math.min(Math.max(m, 0), 1) * (n - 1)) + 5 : n;
+    const whole = this.slices.whole.get(t);
+    if (k >= n || whole) return whole ?? this.at(t);
+    const key = `${t.id}:${k}`;
+    const seen = this.slices.prefix.get(key);
+    if (seen) return seen;
+    const body = this.remake(this.chart.at(t), t, this.slices, `${this.table.base}_${this.slices.count++}`, { kind: "prefix", stations: k });
+    this.slices.prefix.set(key, body);
     return body;
   }
 
   /** The same body with its spine placed in `chart` (composed with where it already was). */
   placed(chart: Chart): Body {
-    return this.remake(compose(chart, this.chart), time, new Map(), this.table.base);
+    return this.remake(compose(chart, this.chart), time, newSlices(), this.table.base, { kind: "all" });
   }
 
   /**
@@ -241,12 +326,12 @@ export class Body implements Surface, Chart, Placeable<Body> {
    * is still read, as the host its other parts are placed on (src/geom/whirlpool.ts coils the serpent this way).
    */
   placedAs(chart: Chart, tableName: string): Body {
-    return this.remake(compose(chart, this.chart), time, new Map(), tableName);
+    return this.remake(compose(chart, this.chart), time, newSlices(), tableName, { kind: "all" });
   }
 
   /** The same kind of body elsewhere or at another time (a subclass that carries more, such as a look, overrides it). */
-  protected remake(chart: Chart, slice: F, slices: Slices, tableName: string): Body {
-    return new Body(this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName);
+  protected remake(chart: Chart, slice: F, slices: Slices, tableName: string, posted: Posted): Body {
+    return new Body(this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName, posted);
   }
 }
 
@@ -261,9 +346,15 @@ export class StationTable implements TableSource {
   get name(): string { return this.base; }
 
   prepare(p: TablePrep): TableFill {
-    const b = this.body, n = this.entries;
-    const ms = Array.from({ length: n }, (_, k) => f(k / (n - 1)));
+    const b = this.body, span = this.entries - 1;
+    // A prefix or a part posts some stations only; the entries outside them are never read (Body.atNear, Body.partAt).
+    const [first, n] = postedRange(b.posted, this.entries);
+    const ms = Array.from({ length: n }, (_, k) => f((first + k) / span));
     const local = ms.map((m) => b.spine(m));
+    // The rest pose over every station (memoised; it changes only with params), so a part's rest arc lengths and
+    // stretch are those of the whole body.
+    const restAll = restPose(p, Array.from({ length: this.entries }, (_, k) => b.spine(f(k / span))));
+    const seed = seedOf(b.posted, first);
     const roots: Expr[] = [];
     // The spine reaches the world through the chart; for a body on a host this reads the host's table, which the pose
     // pass fills first (tables are filled on first read).
@@ -273,23 +364,6 @@ export class StationTable implements TableSource {
     ms.forEach((m, k) => roots.push(b.chart.frame(local[k]).o, b.transport.twist(m), b.halfWidth(m), b.section.aspect(m), local[k]));
     roots.push(rotate(b.chart.frame(local[0]), b.transport.up));
     const run = p.compile(b.slice === time ? roots : substitute(roots, time, b.slice));
-    // Stretch is measured against the rest pose: the local spine at time 0. It depends only on params, non-time inputs
-    // and curves, which rarely change between frames, so the last one is kept (a memo keyed on all of those, so the
-    // fill stays a function of its frame).
-    const rest = p.compile(substitute(local, time, f(0)));
-    let restKey = "", restCurves = new Float32Array(0), restValues: V3[] = [];
-    const restOf = (frame: Parameters<TableFill>[0]): V3[] => {
-      const env: Env = frame.env;
-      const { time: _, ...inputs } = env.inputs;
-      const key = JSON.stringify([inputs, env.params]);
-      const curves = env.curves ?? new Float32Array(0);
-      if (key !== restKey || !sameFloats(curves, restCurves)) {
-        restValues = rest(frame) as V3[];
-        restKey = key;
-        restCurves = curves.slice();
-      }
-      return restValues;
-    };
     const PER = 5;
     return (frame, out) => {
       const v = run(frame);
@@ -298,9 +372,112 @@ export class StationTable implements TableSource {
         pos.push(v[k * PER] as V3); twist.push(v[k * PER + 1] as number); halfWidth.push(v[k * PER + 2] as number); aspect.push(v[k * PER + 3] as number);
         here.push(v[k * PER + 4] as V3);
       }
-      poseStrand({ pos, local: here, rest: restOf(frame), twist, halfWidth, aspect, up: v[n * PER] as V3, level: b.transport.level }, out, 0);
+      const rest = restAll(frame);
+      const up = seed(frame, v[n * PER] as V3, pos, twist[0]!);
+      poseStrand({ pos, local: here, rest: rest.slice(first, first + n), restStart: restArcTo(rest, first), twist, halfWidth, aspect, up, level: b.transport.level }, out, first * STATION_VEC4S * 4);
     };
   }
+}
+
+/**
+ * The rest pose of a spine (its local stations at time 0), as a fill reads it. Stretch is measured against it. It
+ * depends only on params, non-time inputs and curves, which rarely change between frames, so the last one is kept (a
+ * memo keyed on all of those, so the fill stays a function of its frame).
+ */
+function restPose(p: TablePrep, local: readonly P3[]): (frame: Parameters<TableFill>[0]) => V3[] {
+  const rest = p.compile(substitute(local, time, f(0)));
+  let restKey = "", restCurves = new Float32Array(0), restValues: V3[] = [];
+  return (frame) => {
+    const env: Env = frame.env;
+    const { time: _, ...inputs } = env.inputs;
+    const key = JSON.stringify([inputs, env.params]);
+    const curves = env.curves ?? new Float32Array(0);
+    if (key !== restKey || !sameFloats(curves, restCurves)) {
+      restValues = rest(frame) as V3[];
+      restKey = key;
+      restCurves = curves.slice();
+    }
+    return restValues;
+  };
+}
+
+/**
+ * A body's skeleton at another time at some of its stations, without frames: per kept station its position and radius
+ * (the larger half-axis after volume preservation), what a wake reads. The cost of a slice is evaluating the spine at
+ * each station (in examples/strike.ts the posed spine is about 2300 nodes), so a wake keeping every third station costs
+ * a third of a full slice, which also transports a frame along every station. Positions equal the full slice's at the
+ * stations kept; radii measure stretch between kept neighbours.
+ */
+export class SkeletonTable implements TableSource {
+  readonly lanes = 1;
+  readonly entries: number;
+  readonly role = "stations";
+  constructor(readonly name: string, private readonly body: Body, private readonly t: F, private readonly stations: readonly number[]) {
+    this.entries = stations.length;
+    const n = body.transport.stations;
+    for (const k of stations) if (!(Number.isInteger(k) && k >= 0 && k < n)) throw new Error(`skeleton of "${body.name}": station ${k} is not one of its ${n}`);
+  }
+
+  prepare(p: TablePrep): TableFill {
+    const b = this.body, n = this.entries, span = b.transport.stations - 1;
+    const ms = this.stations.map((k) => f(k / span));
+    const local = ms.map((m) => b.spine(m));
+    const chart = b.chart.at(this.t);
+    const roots = ms.flatMap((m, k) => [chart.frame(local[k]!).o, b.halfWidth(m), b.section.aspect(m), local[k]!]);
+    const run = p.compile(substitute(roots, time, this.t));
+    const restOf = restPose(p, local);
+    return (frame, out) => {
+      const v = run(frame);
+      const s = { local: [] as V3[], rest: restOf(frame), halfWidth: [] as number[], aspect: [] as number[] };
+      for (let k = 0; k < n; k++) { s.halfWidth.push(v[4 * k + 1] as number); s.aspect.push(v[4 * k + 2] as number); s.local.push(v[4 * k + 3] as V3); }
+      for (let k = 0; k < n; k++) {
+        // Stretch between kept neighbours (exact positions; within 15% of the whole slice's radius at the serpent's
+        // neck, 3% elsewhere). Measuring it at the stations' own neighbours needs the spine at every station again; the
+        // live body's stretch instead lags by the slice's age (8% at 0.35 s).
+        const [ra, rb] = stationRadii(s, k);
+        const pk = v[4 * k] as V3;
+        // Rounded to f32 before the max, as the full table stores the two half-axes and the skeleton takes their max.
+        out.set([pk[0], pk[1], pk[2], Math.max(Math.fround(ra), Math.fround(rb))], 4 * k);
+      }
+    };
+  }
+}
+
+/** The stations a table posts: [first, first + count). */
+function postedRange(p: Posted, all: number): [number, number] {
+  switch (p.kind) {
+    case "all": return [0, all];
+    case "prefix": return [0, p.stations];
+    case "part": return [p.first, all - p.first];
+  }
+}
+
+type Seed = (frame: Parameters<TableFill>[0], up: V3, pos: readonly V3[], twist: number) => V3;
+/**
+ * The direction a posted range's frames start from: the body's `up` (from station 0), or for a part the live body's
+ * dorsal direction at its first station, untwisted (poseStrand applies twist itself) and carried onto this slice's
+ * tangent there by the minimal rotation (poseStrand projects it off the tangent).
+ */
+function seedOf(p: Posted, first: number): Seed {
+  switch (p.kind) {
+    case "all": case "prefix": return (_frame, up) => up;
+    case "part": {
+      const live = p.live;
+      return (frame, _up, pos, twist) => {
+        const t = frame.table(live.table), o = first * STATION_VEC4S * 4;
+        const q = [t[o + 4]!, t[o + 5]!, t[o + 6]!, t[o + 7]!];
+        const tan = qrotNum(q, [1, 0, 0]);
+        return v3.rotate(qrotNum(q, [0, 1, 0]), tan, -twist);
+      };
+    }
+  }
+}
+
+/** Arc length along the rest stations up to station k. */
+function restArcTo(rest: readonly V3[], k: number): number {
+  let s = 0;
+  for (let i = 1; i <= k; i++) s += v3.len(v3.sub(rest[i]!, rest[i - 1]!));
+  return s;
 }
 
 function sameFloats(a: Float32Array, b: Float32Array): boolean {
@@ -316,7 +493,7 @@ export function sweepArgs(name: string, spine: (m: F) => P3, section: Section, t
   if (!IDENT.test(name)) throw new Error(`sweep "${name}": names must be identifiers (they name tables and shaders)`);
   if (!(Number.isInteger(transport.stations) && transport.stations >= 4)) throw new Error(`sweep "${name}": stations must be an integer >= 4, got ${transport.stations}`);
   if (!(section.squareness >= 1.2)) throw new Error(`sweep "${name}": squareness must be >= 1.2 (the normal needs |x|^(n-1)), got ${section.squareness}`);
-  return [name, spine, section, transport, world, time, new Map(), `body_${name}`];
+  return [name, spine, section, transport, world, time, newSlices(), `body_${name}`, { kind: "all" }];
 }
 
 /** A section swept along `spine` (in world coordinates; place it to put it elsewhere). */

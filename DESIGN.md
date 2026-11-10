@@ -639,10 +639,16 @@ Where the plan met the code:
 - **The head's pitch is the neck's business.** A head hung forward of the neck at a pitch dove into the water when the
   neck met it horizontally; `approach` makes the neck climb into the head so it levels out, and `lead` (spine end to
   tip) is a number of the creature measured once, then verified by `landsInside` and `stopsAt`.
-- **Past slices are full poses.** Each smear copy and each wake sample is a body slice with its own transported
-  stations (a head copy also slices the body it rides). In the example that is 1054 stations against 142 and about
-  2.5 to 3 ms of extra CPU pose per frame (best case). A skeleton-only slice (spine points and radii without frames) would
-  serve the wake for much less; not built.
+- **Past slices pose only what they are read for** (polish pass, 2026-11-11). A slice's cost is evaluating the posed
+  spine at each station (about 2300 expression nodes per station in the example; frame transport is a quarter of it), so:
+  a part placed on a body at a constant m (`on(body, c)`) takes its host's slice with `Body.atNear`, which posts only
+  the stations up to that m (a head copy reads 5 of the body's 48); a smear copy is `Body.partAt(t, from)`, the stations
+  from the part's start, its first frame seeded from the live body's (positions and radii exact, frames within the roll
+  made since: under 2 degrees at 0.35 s); a wake sample is `Body.skeletonAt(t, stations)`, positions and radii at every
+  third station and no frames (stretch measured between kept stations: radii within 15% at the neck, 3% elsewhere).
+  Before: each copy and sample posed the whole body (1054 stations against 142). CPU pose, best of 3000 interleaved
+  in one process: 0.47 -> 0.22 ms with smear and wake (0.11 without); `tools/strike_bench.ts` on the loaded machine:
+  2.1-4.0 -> 1.5-2.2 ms (0.5-0.7 without). Tests: `tests/spacetime.slices.test.ts`.
 - **Targets are skeletons.** The stand-in hull's capsules are as wide as its beam, so "contact" at arming is a gap of
   about 0.45 to the capsule surface, not zero; real ships will want a hull distance function as their target kind.
 ## 10. Ships, afloat, and the whirlpool (as built)

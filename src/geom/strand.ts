@@ -5,8 +5,8 @@
 import { lift, vec3, type Expr, type In } from "../expr.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
-import { Body, sweepArgs, type Section, type Slices, type Tip } from "../map/sweep.ts";
-import type { Chart, F, Paint, Points, Skeleton } from "../map/types.ts";
+import { Body, sweepArgs, type Posted, type Section, type Slices, type Tip } from "../map/sweep.ts";
+import type { Chart, F, P3, Paint, Points, Skeleton } from "../map/types.ts";
 
 export type Rgb = readonly [number, number, number];
 type Fn1 = (m: F) => F;
@@ -83,8 +83,10 @@ export class Strand extends Body implements Drawable {
   override at(t: F): Strand { return super.at(t) as Strand; }
   override placed(chart: Chart): Strand { return super.placed(chart) as Strand; }
   override placedAs(chart: Chart, tableName: string): Strand { return super.placedAs(chart, tableName) as Strand; }
-  protected override remake(chart: Chart, slice: F, slices: Slices, tableName: string): Strand {
-    return new Strand([this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName], this.look);
+  override atNear(t: F, c: P3): Strand { return super.atNear(t, c) as Strand; }
+  override partAt(t: F, from: number): Strand { return super.partAt(t, from) as Strand; }
+  protected override remake(chart: Chart, slice: F, slices: Slices, tableName: string, posted: Posted): Strand {
+    return new Strand([this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName, posted], this.look);
   }
 }
 

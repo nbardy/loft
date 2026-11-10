@@ -1,5 +1,5 @@
 // The wake: foam on the water where a body crossed the surface in the recent past (DESIGN.md 8), from the body taken
-// at earlier times (`body.at(time - k dt)`), never from state kept between frames.
+// at earlier times (`body.skeletonAt(time - k dt)`), never from state kept between frames.
 //
 // The pose pass evaluates the skeleton of each past slice and the sea's height at that slice's time. Where a joint's
 // sphere cuts the water, its waterline is a disc of radius sqrt(r^2 - h^2); consecutive joints make a tapered capsule,
@@ -11,9 +11,12 @@
 import { sub, time, variable, vec2, vec4, type TableSource } from "../expr.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Body } from "../map/sweep.ts";
+import type { Skeleton } from "../map/types.ts";
 
 /** vec4s per capsule: (end a xz, end b xz), (radius a, radius b, age, valid), (linked to previous, linked to next, 0, 0). */
 const ENTRY = 3;
+/** The wake keeps every STRIDE-th station of the body. */
+const STRIDE = 3;
 /** Quads per side of a capsule's patch. */
 const PATCH = 3;
 
@@ -35,13 +38,17 @@ class Wake implements Drawable {
 
   draws(ctx: CompileContext): Emitted {
     const s = this.spec, dt = s.over / s.samples;
-    const joints = this.body.skeleton.joints, segs = joints - 1;
-    const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? this.body : this.body.at(sub(time, k * dt))));
+    // Past slices are skeletons only (positions and radii, no frames), at every STRIDE-th station: all a waterline
+    // needs, at a third of the cost (DESIGN.md 9). Row 0 reads the live body at the same stations.
+    const n = this.body.transport.stations, joints = Math.ceil((n - 1) / STRIDE) + 1, segs = joints - 1;
+    const kept = Array.from({ length: joints }, (_, j) => Math.round((j * (n - 1)) / (joints - 1)));
+    const live: Skeleton = { joints, joint: (j) => this.body.skeleton.joint(kept[j]!) };
+    const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? live : this.body.skeletonAt(sub(time, k * dt), kept)));
     const X = variable("x", "f32"), Z = variable("z", "f32"), T = variable("t", "f32");
     const source: TableSource = {
       name: `wake_${this.body.name}`, lanes: 1, entries: ENTRY * (s.samples + 1) * segs, role: "data",
       prepare: (p) => {
-        const chains = slices.map((b) => p.compile(Array.from({ length: joints }, (_, k) => { const j = b.skeleton.joint(k); return vec4(j.p, j.r); })));
+        const chains = slices.map((sk) => p.compile(Array.from({ length: joints }, (_, k) => { const j = sk.joint(k); return vec4(j.p, j.r); })));
         const height = p.compile([ctx.sea.height(vec2(X, Z), T)]);
         return (frame, out) => {
           const now = frame.env.inputs.time as number;

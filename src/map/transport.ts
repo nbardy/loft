@@ -3,7 +3,7 @@
 // so the GPU and the CPU read it through the same expressions.
 //
 // Layout, 3 vec4 per station:
-//   p = (position xyz, arc fraction)       q = frame quaternion (x, y, z, w)       r = (half-width, half-height, stretch, 0)
+//   p = (position xyz, arc fraction of the stations posted)       q = frame quaternion (x, y, z, w)       r = (half-width, half-height, stretch, rest arc length)
 // The frame quaternion maps local x to the tangent (toward increasing m), local y to the dorsal direction and local z
 // to the side (= tangent x dorsal). Stations are uniform in the spine parameter m.
 //
@@ -58,6 +58,8 @@ export type StrandSamples = {
   readonly local: readonly V3[];
   /** The local spine at rest (stretch is measured against it). */
   readonly rest: readonly V3[];
+  /** Rest arc length before the first station (0 for a whole spine; a part of a body starts further along). */
+  readonly restStart: number;
   /** Twist (radians about the tangent) at each station. */
   readonly twist: readonly number[];
   /** Half-width before stretch, including tip closure, at each station. */
@@ -79,6 +81,17 @@ function knotDerivative(p: readonly V3[], k: number): V3 {
 }
 
 /**
+ * Station k's half-width and half-height after volume preservation (radii scale by 1 / sqrt(stretch), stretch measured
+ * on the local spine against its rest), and the stretch. Shared by the full pose and the skeleton-only slice, so the two
+ * agree exactly.
+ */
+export function stationRadii(s: Pick<StrandSamples, "local" | "rest" | "halfWidth" | "aspect">, k: number): [number, number, number] {
+  const stretch = v3.len(knotDerivative(s.local, k)) / Math.max(v3.len(knotDerivative(s.rest, k)), 1e-9);
+  const keep = 1 / Math.sqrt(Math.max(stretch, 0.05));
+  return [s.halfWidth[k]! * keep, s.halfWidth[k]! * s.aspect[k]! * keep, stretch];
+}
+
+/**
  * Pose one strand into `out` starting at float offset `at`: rotation-minimising frames by double reflection (Wang,
  * Juettler, Zheng and Liu 2008) seeded from `up`, with `strand_kit::Spine::new`'s levelling, then twist; arc
  * fractions; and radii with volume preservation (radii scale by 1 / sqrt(stretch)).
@@ -92,7 +105,7 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
   const total = Math.max(arc, 1e-9);
   // Arc length along the rest spine, in its own units: lane r.w, which a body's anchor (its skin straightened at rest,
   // DESIGN.md 2.6) reads so patterns ride the body. It changes only with what the rest pose reads (params, inputs).
-  const restArcs = [0];
+  const restArcs = [s.restStart];
   for (let k = 1; k < n; k++) restArcs.push(restArcs[k - 1]! + v3.len(v3.sub(s.rest[k]!, s.rest[k - 1]!)));
 
   const seed = v3.axpy(-v3.dot(s.up, tan[0]), tan[0], s.up);
@@ -133,11 +146,10 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
     if (q[0] * prevQ[0] + q[1] * prevQ[1] + q[2] * prevQ[2] + q[3] * prevQ[3] < 0) q = [-q[0], -q[1], -q[2], -q[3]];
     prevQ = q;
 
-    const stretch = v3.len(knotDerivative(s.local, k)) / Math.max(v3.len(knotDerivative(s.rest, k)), 1e-9);
-    const keep = 1 / Math.sqrt(Math.max(stretch, 0.05));
+    const [ra, rb, stretch] = stationRadii(s, k);
     const o = at + k * STATION_VEC4S * 4;
     out[o] = s.pos[k][0]; out[o + 1] = s.pos[k][1]; out[o + 2] = s.pos[k][2]; out[o + 3] = arcs[k] / total;
     out[o + 4] = q[0]; out[o + 5] = q[1]; out[o + 6] = q[2]; out[o + 7] = q[3];
-    out[o + 8] = s.halfWidth[k] * keep; out[o + 9] = s.halfWidth[k] * s.aspect[k] * keep; out[o + 10] = stretch; out[o + 11] = restArcs[k]!;
+    out[o + 8] = ra; out[o + 9] = rb; out[o + 10] = stretch; out[o + 11] = restArcs[k]!;
   }
 }

@@ -17,7 +17,7 @@ export function carry(chart: Chart, f: Frame): Frame {
 }
 
 /** The identity: local coordinates are world coordinates. */
-export const world: Chart = { frame: (c) => ({ o: c, x: X, y: Y, z: Z }), at: () => world };
+export const world: Chart = { frame: (c) => ({ o: c, x: X, y: Y, z: Z }), at: () => world, atNear: () => world };
 
 /**
  * The frame of `host` at the fixed local point `c`, as a rigid chart: local (x, y, z) goes to
@@ -26,12 +26,12 @@ export const world: Chart = { frame: (c) => ({ o: c, x: X, y: Y, z: Z }), at: ()
 export function on(host: Chart, c: In<"vec3">): Chart {
   const ce = lift<"vec3">(c);
   const g = host.frame(ce);
-  return { frame: (l) => ({ o: add(g.o, rotate(g, l)), x: g.x, y: g.y, z: g.z }), at: (t) => on(host.at(t), ce) };
+  return { frame: (l) => ({ o: add(g.o, rotate(g, l)), x: g.x, y: g.y, z: g.z }), at: (t) => on(host.atNear(t, ce), ce), atNear: (t) => on(host.atNear(t, ce), ce) };
 }
 
 /** `inner`'s coordinates, then `outer`'s: frames of inner carried through outer. */
 export function compose(outer: Chart, inner: Chart): Chart {
-  return { frame: (c) => carry(outer, inner.frame(c)), at: (t) => compose(outer.at(t), inner.at(t)) };
+  return { frame: (c) => carry(outer, inner.frame(c)), at: (t) => compose(outer.at(t), inner.at(t)), atNear: (t, c) => compose(outer.at(t), inner.atNear(t, c)) };
 }
 
 /** Put a shape in a coordinate system. */

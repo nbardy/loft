@@ -196,8 +196,9 @@ export class Sea implements Chart, Drawable {
 
   at(t: F): Chart {
     const slice = (fr: Frame): Frame => { const [o, x, y, z] = substitute([fr.o, fr.x, fr.y, fr.z], time, t) as Expr<"vec3">[]; return { o, x, y, z }; };
-    return { frame: (c) => slice(this.frame(c)), at: (t2) => this.at(t2) };
+    return { frame: (c) => slice(this.frame(c)), at: (t2) => this.at(t2), atNear: (t2) => this.at(t2) };
   }
+  atNear(t: F): Chart { return this.at(t); }
 
   /** The water: a grid round the view centre whose cells grow away from it, laid in this chart at height 0. */
   private surface(): Surface {

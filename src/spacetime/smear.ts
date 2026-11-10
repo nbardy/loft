@@ -43,7 +43,8 @@ class Smear implements Drawable {
 
   draws(ctx: CompileContext): Emitted {
     const { part } = this.strike, s = this.spec, dt = s.over / s.samples;
-    const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? part.body : part.body.at(sub(time, k * dt))));
+    // Each copy posts only the part's stations (`partAt`): the spine is what a slice costs.
+    const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? part.body : part.body.partAt(sub(time, k * dt), part.from)));
     const emitted: Emitted[] = [];
     // Oldest first: drawn back to front in time, so younger copies lie over older ones.
     for (let k = s.samples; k >= 1; k--) {

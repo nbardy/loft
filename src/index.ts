@@ -30,7 +30,8 @@ export { landsInside, staysClear, stopsAt, minScreenSize, budget, runChecks, for
 export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, biolume, papercraft, WOODBLOCK_PALETTE, type StyleName } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
-export { afloat, afloatFrame, rigid, type AfloatSpec, type Waters } from "./geom/afloat.ts";
+export { afloat, afloatFrame, type AfloatSpec, type Waters } from "./geom/afloat.ts";
+export { rigid } from "./geom/rig.ts";
 export { hull, Hull, type HullSpec, type HullLook, type Lines, type Station } from "./geom/hull.ts";
 export { ship, Ship, type ShipSpec, type ShipColours, type Placement } from "./geom/ship.ts";
 export { lines, type Rope, type LinesSpec } from "./geom/lines.ts";

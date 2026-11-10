@@ -73,6 +73,11 @@ export interface Surface {
 export interface Chart {
   frame(c: P3): Frame;
   at(t: F): Chart;
+  /**
+   * `at(t)` for a reader that reads the slice only at local coordinates `c` (a part placed there). A chart built on
+   * per-frame tables may post only what reading at c needs (a body: the stations up to c's m); others are `at(t)`.
+   */
+  atNear(t: F, c: P3): Chart;
 }
 
 /** point -> signed distance. Drawn by a tracer inside a bound (`draw.field`). */
