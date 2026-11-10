@@ -27,3 +27,4 @@ export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type Verdict, type Measured } from "./check.ts";
+export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, biolume, papercraft, WOODBLOCK_PALETTE, type StyleName } from "./style/index.ts";

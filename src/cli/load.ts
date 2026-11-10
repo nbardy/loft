@@ -2,7 +2,7 @@
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
 import { resolve } from "node:path";
 import type { Artefact, Host } from "../artefact.ts";
-import type { Source } from "./args.ts";
+import type { Source, StyleChoice } from "./args.ts";
 
 async function importFrom<T>(rel: string): Promise<T> {
   return (await import(new URL(rel, import.meta.url).href)) as T;
@@ -24,7 +24,19 @@ export async function loadArtefact(source: Source): Promise<Artefact> {
       const scene = ((await import(resolve(source.path))) as { default?: unknown }).default;
       if (scene === undefined) throw new Error(`${source.path} has no default export (it must export a scene)`);
       const index = await importFrom<Record<string, unknown>>("../index.ts");
-      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(scene);
+      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style));
+    }
+  }
+}
+
+/** The scene in the chosen style (`--style`): its own, or the named one swapped in without touching the scene. */
+async function styled(scene: unknown, style: StyleChoice): Promise<unknown> {
+  switch (style.kind) {
+    case "scene": return scene;
+    case "named": {
+      const styles = await importFrom<Record<string, unknown>>("../style/index.ts");
+      const named = need<(n: string) => unknown>(styles, "styleNamed", "src/style/index.ts")(style.name);
+      return need<(s: unknown, st: unknown) => unknown>(styles, "withStyle", "src/style/index.ts")(scene, named);
     }
   }
 }

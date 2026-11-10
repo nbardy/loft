@@ -17,10 +17,15 @@ type Built = { readonly kind: "ok"; readonly js: string } | { readonly kind: "er
 function sceneModule(cmd: DevCommand): string {
   const idx = JSON.stringify(resolve(ROOT, "src/index.ts"));
   switch (cmd.source.kind) {
+    // `build(style)`: "scene" for the scene's own style, or a name from src/style/index.ts (the viewer's selector);
+    // `startStyle` is the `--style` the server was started with. The fixture is a compiled artefact: no styles.
     case "fixture":
-      return `export const sceneName = "fixture";\nexport const build = async () => (await import(${JSON.stringify(resolve(ROOT, "src/host/fixture.ts"))})).fixture;\n`;
-    case "file":
-      return `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport const build = async () => {\n  const [mod, { compile }] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx})]);\n  return compile(mod.default);\n};\n`;
+      return `export const sceneName = "fixture";\nexport const styleNames = [];\nexport const startStyle = "scene";\nexport const build = async () => (await import(${JSON.stringify(resolve(ROOT, "src/host/fixture.ts"))})).fixture;\n`;
+    case "file": {
+      const styles = JSON.stringify(resolve(ROOT, "src/style/index.ts"));
+      const start = JSON.stringify(cmd.source.style.kind === "named" ? cmd.source.style.name : "scene");
+      return `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport { STYLE_NAMES as styleNames } from ${styles};\nexport const startStyle = ${start};\nexport const build = async (style) => {\n  const [mod, { compile }, s] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx}), import(${styles})]);\n  return compile(style === "scene" ? mod.default : s.withStyle(mod.default, s.styleNamed(style)));\n};\n`;
+    }
   }
 }
 

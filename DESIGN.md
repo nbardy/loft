@@ -135,6 +135,72 @@ legs on a gait, a Raup shell, unequal claws whose pincer fingers are horns, stal
 the `slam` input). Learned on the way: a vertical bolt is a dot from a top-down camera (throw it along the sea); a
 pincer that opens vertically hides behind its palm from above (open it in the palm's flat plane); and a shell's
 aperture faces wherever the coil ends (u = 1 at `turns` whorls), so turn the shell to put it away from the camera.
+### 2.6 Styles as built (`src/style.ts`, `src/style/`)
+
+A look is a program; a scene names one, and any other can be swapped in without touching the scene:
+`withStyle(scene, styleNamed("woodblock"))`, `--style name` on `render`, `frames`, `clip` and `dev`, and a selector in
+the viewer (which recompiles: a style is shader code, so a new style is a new artefact). Styles by name live in
+`STYLES` (`src/style/index.ts`): constructors, because a style declares params and params are global by name.
+
+**The interface** (`Style`, `src/style.ts`). The compiler emits each function once into `sceneWgsl`:
+
+| Member | Called from | Context |
+|---|---|---|
+| `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea |
+| `outline` | the hull's offset (never under 1.5 px) | a world width, usually a param |
+| `water(ctx)` | the sea's fragment stage | `WaterCtx`: normal, sun, view, world, crest (-1..1), distance, `foam`, `contact`, `phase` |
+| `shadow(ctx)` | cast shadows laid on the water | `LayerCtx`: world, view, distance, coverage |
+| `sky(ctx)` | the background | view direction, sun |
+| `post` | full-screen passes after the scene, in order | raw WGSL: the picture so far, the opaque scene's depth and position, `sceneWgsl` |
+| `clear` | the clear colour | |
+
+What grew, additively, for these styles (both in `WaterCtx`, built by `src/geom/sea.ts`):
+
+- `contact`: how close a body is, continuously (1 at the body, 0 at the sea's foam width, negative beyond). The sea's
+  contact search was split into this band and toon's shaping of it (`foam`), with the same arithmetic, so toon's frame
+  is byte-identical to the one before (`tests/styles.gpu.test.ts`). `foam` is near-binary (two smoothed thresholds),
+  so a style that wants its own foam shape (clawed, scalloped) needs the band.
+- `phase`: the phase of the largest swell, in cycles. Contours of the height field of two crossed swells close into
+  rings (a topographic map); lines of constant phase run along the crests, which is what a printed or cut sea follows.
+
+Nothing else was needed: every pattern is a function of what the contexts already carry, emissive light is simply
+bright output (in a dark picture the bloom pass's threshold finds it), and paper grain is a post pass, so neither the
+sky nor the sea needed pixel coordinates.
+
+**Shared parts** (`src/style/shared.ts`): `edgeOf` (an edge antialiased by about a pixel, with a floor and a cap on its
+width) and `POST_COMMON` (WGSL for post passes, prefixed `sty_`: pixel hash and value noise, view depth, a normal
+reconstructed from neighbouring depths using the nearer of each pair, "is this pixel the sea", "is it submerged").
+
+**The styles.**
+
+- `toon` (`src/style.ts`): banded sun, rim, gloss, an ink hull, a translucent stylised sea.
+- `woodblock`: bodies print in five inks (`WOODBLOCK_PALETTE`: black, indigo, a pale blue, cream, one vermilion), chosen
+  by the paint's luminance times a two-tone light in value bands; a paint whose red stands above its green and blue
+  prints vermilion. Every edge is antialiased by a pixel and no more. Post: a key line (silhouettes on their near side,
+  measured against the plane through the pixel; creases from reconstructed normals; half-width 1.5 to 4.7 px wandering
+  with world-space noise) over a colour block read 1.4 px out of register; then paper fibre and tooth. Sea: opaque, two
+  flat blues, five printed lines per wavelength along `phase`, foam with fingers along the zero lines of a noise field
+  and spray specks, both from `contact`.
+- `biolume`: night sky and water; skin near black; a paint's light is `glowOf(base)`: as strong as it is bright and
+  vivid, magenta for purples and reds, cyan for the rest, brightest facing the eye; cyan fresnel rim and hull; the water
+  is translucent (submerged light shows), with faint ripple lines, twinkling plankton, and a cyan halo and foam from
+  `contact`. Post: a reflection (light from bodies above a water pixel gathered down a wavering column), then a 40-tap
+  spiral bloom with a soft shoulder.
+- `papercraft`: facets from shading alone. The surface is cut by a 3D Voronoi lattice; each cell is lit by the surface's
+  normal carried to its site through the normal's screen-space derivatives (a plane touching the surface there), and
+  each cell is a fan of triangles, one per neighbour, sloping toward its edge (a low pyramid, raised or sunk). Fold
+  lines along cell walls and spokes; a studio key that leans toward the camera; paint turned to card. Sea: opaque
+  cut-paper sheets along `phase` with edges scalloped by cellular domes, a shadow under each edge and a lit cut edge;
+  foam a scalloped white collar. Post: ambient occlusion from depth (16 taps) and paper fibre.
+
+**The style sheet**: `bun src/style/sheet.ts [--out out/style_sheet.webp] [--size 640x400]`: rows toon, woodblock,
+biolume, papercraft; columns serpent, shell, serpent_scales; one camera (`SHEET_CAMERA`).
+
+**Limits, as built.** Patterns that should stick to a body (papercraft's facets, woodblock's line wobble) are in world
+space, so on a moving body they slide slowly through it; anchoring them needs body coordinates in `ShadeCtx`, which
+`shade` deliberately does not have (paint has used them), so it would be a change to the compiler's style emission.
+Screen-space paper grain is fixed to the frame (the paper), so it does not swim with the camera but the picture moves
+under it. Bloom is one pass with no downsampled mips (40 taps out to 30 px at 800 px high).
 
 ## 3. The Artefact (`src/artefact.ts`, done)
 
