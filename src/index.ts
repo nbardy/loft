@@ -14,3 +14,6 @@ export { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawS
 export { emitFn, emitShaderFn } from "./compile/bind.ts";
 export { TableBudgetError } from "./compile/tables.ts";
 export type { Artefact } from "./artefact.ts";
+export { bound, type TraceBound, type TraceOutline } from "./draw/trace.ts";
+export { checkField, FieldDrawable, fieldPixel, FieldSafetyError, LIPSCHITZ_LIMIT, measureField, type FieldHit, type FieldSafetyFailure } from "./draw/field.ts";
+export { impostors, Impostors, type Cell, type ImpostorHit, type ImpostorOptions, type ImpostorShape } from "./draw/impostors.ts";

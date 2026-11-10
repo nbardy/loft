@@ -315,3 +315,65 @@ generic.
   first; a sweep's name also names its table.
 - **Params are global by name.** Two scenes declaring one param with different defaults cannot be loaded in one process
   (the shell demo and the serpent did, through `toon.outline`). Unchanged here; worth a scene-scoped registry.
+
+### 7.7 Tracers: `draw.field` and `impostors` (as built)
+
+Two per-pixel tracers (docs/folding_and_tracing.md 3.1 and 3.2), each one module in `src/draw/` sharing `trace.ts`.
+Examples: `examples/coral.ts`, `examples/nest.ts` (fields), `examples/pearls.ts` (impostors).
+
+```ts
+draw.field(name, field, { bounds, paint, steps, outline, safety? })   // field: (p) => distance
+impostors(name, { cell, shape, bounds, paint, cells, outline })      // shape: (cell) => sphere | capsule | cone
+bound.box(min, max) | bound.sphere(c, r) | bound.capsule(a, b, r)    // TraceBound, a field's bound
+fieldPixel                                                           // world size of a pixel: a field's level of detail
+grow({ count, motif, step }), kifs({ count, fold, scale, offset })   // src/lib/grow.ts: folds as real loops
+```
+
+- **Proxy and ray.** The bound's oriented box is drawn as 36 vertices with front faces culled (a back face is visible
+  whenever any of the bound is, the camera inside it included). The fragment stage builds the pixel's ray (one formula
+  for perspective and orthographic: the proxy point moved back along `view_dir` to the plane through the eye) and its
+  span in the bound's own shape, in closed form per kind.
+- **Field march.** Steps by the distance (times `safety`, default 1); a hit is a distance under 0.3 pixels at that
+  range, the pixel size being affine along the ray. Out of steps inside the bound counts as a hit. Two secant steps
+  refine a hit (2e-4 of the analytic intersection in the tests; plain steps left 7e-3 at oblique hits). Normal: the
+  symbolic gradient of the field (`grad.ts`), once per pixel. `paint({ p, normal })`; per-copy identity comes from
+  evaluating the fold again at `p` (pure functions, so this is the same expression).
+- **Level of detail.** `fieldPixel` is the pixel size at the point evaluated, per step, so an `iterate` count built
+  from it falls with distance (coral: stop when a branch is under half a pixel). Per step, not per ray: per ray it
+  was the pixel size at the bound entry, which is zero with the camera inside the bound.
+- **Impostor walk.** A 3D DDA over the lattice cells (cells centred on multiples of `cell`, those with centres in
+  `bounds`), each cell's shape intersected in closed form (Quilez's sphere, capsule and rounded-cone intersectors);
+  the walk stops once the best hit is nearer than the current cell's exit. A cell's shape is an expression of
+  `{ id, centre, hash }` and must stay inside its cell; radius 0 is an absent copy. `paint({ p, normal, local, cell })`.
+- **In the scene.** Both write `frag_depth` (clip z / w of the hit), so they cut triangle bodies exactly and the sea's
+  contact foam appears where they meet the water with no code of their own (seen in coral, nest and pearls). Lit by
+  the style's `shade` with the underwater depth like any body. Opaque phase, no shadows cast (`skeletons` empty), not
+  bakeable.
+- **Edges.** A traced edge is inside its proxy, so MSAA does not see it. Coverage is written as
+  `@builtin(sample_mask)` (round(4c) of 4 samples, bits turned per pixel), from how close a missed ray came in pixels,
+  estimated between two samples as where their spheres of free space meet (the sampled distances alone gave grain).
+  `outline: "silhouette"`: a ray passing within the ink width while receding is ink, including inner silhouettes.
+  Ink width is the style's, at least 1.5 and at most 4 px (uncapped, a branch at the lens wore a 50 px band).
+- **Safety check.** When the scene compiles, an unchecked field (`safety` absent) is sampled with `lipschitz` (20000
+  pairs, in its bound plus 2%, at full and coarsest detail); above 1.01 it throws `FieldSafetyError` naming the field,
+  the measured value and a suggested `safety`. A GPU-only function in the field is a `FieldSafetyError` too (cannot be
+  checked; pass `safety`). It caught two real defects while building the examples: a polar repeat of coral trees whose
+  crowns cross sector walls (98), and nested shells seen through windows with only one neighbour shell evaluated (12.9).
+
+Corrections to the specification:
+
+- **Derivatives after a march.** The style's shading calls `fwidth` after a loop whose exit differs per pixel, which
+  WGSL's uniformity analysis rejects; the fragment entry points carry `@diagnostic(off, derivative_uniformity)`. Every
+  invocation still runs there (a miss is discarded at the end, which demotes it to a helper), so the values are defined.
+- **A fold that must see its neighbours costs them.** Repeats and polar repeats are exact only when the motif stays in
+  its cell. A reef of three trees is three tree evaluations, not one polar fold, and the nest evaluates five shells per
+  query. The check is what tells you.
+- **Params are global by name** (7.6) bites examples: all three tracer examples use the default `toon.outline` so they
+  load in one test process.
+
+Cost, best case at 1280x800 on this (heavily loaded) machine, tracer only (frame minus the same frame without the
+traced draw): coral about 11 to 14 ms at its overview cameras, 36 ms in the close-up that fills the screen, about 4 ms
+at twice the camera distance and 23 ms at 0.6 times; nest about 1 to 7 ms (noisy); pearls about 3 to 6 ms. The step
+cap (32 to 192 for coral, 16 to 96 cells for pearls) changes almost nothing: rays end by hitting, by the pixel
+threshold or by leaving the bound well before the cap. Cost follows screen coverage times the field's cost per
+evaluation (coral is 3 trees x up to 10 levels per step).

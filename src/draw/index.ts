@@ -8,6 +8,7 @@ import type { Drawable } from "../compile/context.ts";
 import type { Warp } from "../map/types.ts";
 import { NO_SKELETON, type Curve, type Density, type F, type Field, type P3, type Paint, type Points, type Surface } from "../map/types.ts";
 import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface.ts";
+import { drawField } from "./field.ts";
 
 /** A drawable that can be drawn once per point of a `Points`. */
 export interface Instanceable {
@@ -22,16 +23,7 @@ export class NotImplementedError extends Error {
 /** An axis-aligned box: the proxy a tracer starts and ends its march in. */
 export type Bounds = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] };
 
-export type FieldOptions = {
-  /** Where the field is traced: its proxy triangles. */
-  readonly bounds: Bounds;
-  /** Base colour at a point of the surface (lit by the style). */
-  readonly paint: (p: P3) => P3;
-  /** Most sphere-tracing steps per pixel. */
-  readonly steps: number;
-  /** A safety factor below 1 for fields whose stretch is only a bound (twist, bend, noise warps). */
-  readonly lipschitz: number;
-};
+export type { FieldOptions } from "./field.ts";
 export type ReliefOptions = {
   /** Height above the surface at (u, v), in world units, at most `hMax`. */
   readonly height: (u: F, v: F) => F;
@@ -83,7 +75,7 @@ export const draw = {
     return thing.instanced(name, points);
   },
   /** A distance field, sphere-traced inside its bounds (folded and recursive solids). */
-  field: notYet("draw.field") as (name: string, field: Field, o: FieldOptions) => Drawable,
+  field: drawField,
   /** Relief shell-traced on a surface, in its own coordinates (scales, spikes, barnacles). */
   relief: notYet("draw.relief") as (name: string, surface: Surface, o: ReliefOptions) => Drawable,
   /** A density integrated along the view ray (cloud, fog). */
