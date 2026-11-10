@@ -212,8 +212,12 @@ fn trace_mask(c: f32, px: vec2<f32>) -> u32 {
   return ((bits << r) | (bits >> (4u - r))) & 15u;
 }
 /// The style's lit colour of a traced point, as a triangle body's fragment would get it.
-fn trace_shade(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
-  return shade(base, n, -d, p, sea_height(p.xz) - p.y);
+/// A traced solid has no surface coordinates: (u, v) is 0 and its anchor is the world point (DESIGN.md 2.6).
+fn trace_shade(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32) -> vec3<f32> {
+  return shade(base, n, -d, p, sea_height(p.xz) - p.y, vec2<f32>(0.0), p, id);
+}
+fn trace_mark(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32) -> f32 {
+  return mark(base, n, -d, p, sea_height(p.xz) - p.y, vec2<f32>(0.0), p, id);
 }
 /// Ink width in pixels for a pixel of world size fp: the style's width (as a hull outline has it), at least 1.5 px,
 /// and at most 4 px. The cap is for traced solids only: their ink is measured as closest approach, so a branch at
@@ -221,8 +225,8 @@ fn trace_shade(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>) -> vec
 fn ink_px(fp: f32) -> f32 {
   return clamp(outline_world() / fp, 1.5, 4.0);
 }
-fn trace_ink(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
-  return ink(base, n, -d, p, sea_height(p.xz) - p.y);
+fn trace_ink(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32) -> vec3<f32> {
+  return ink(base, n, -d, p, sea_height(p.xz) - p.y, vec2<f32>(0.0), p, id);
 }`;
 }
 

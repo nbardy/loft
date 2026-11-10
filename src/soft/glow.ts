@@ -143,6 +143,7 @@ struct VOut {
   @builtin(position) clip: vec4<f32>,
   @location(0) world: vec3<f32>,
   @location(1) @interpolate(flat) id: vec2<u32>,
+  @location(2) @interpolate(flat) veil: f32,
 };
 /// Unit right and up of the view plane at p.
 fn glow_basis(p: vec3<f32>) -> array<vec3<f32>, 2> {
@@ -163,6 +164,7 @@ fn glow_basis(p: vec3<f32>) -> array<vec3<f32>, 2> {
     // Off: a degenerate triangle outside the clip volume.
     out.clip = vec4<f32>(0.0, 0.0, 2.0, 1.0);
     out.world = vec3<f32>(0.0);
+    out.veil = 0.0;
     return out;
   }
   let mid = 0.5 * (a.xyz + b.xyz);
@@ -179,6 +181,11 @@ fn glow_basis(p: vec3<f32>) -> array<vec3<f32>, 2> {
   let p = mid + along * corner.x * (0.5 * len + reach) + side * corner.y * reach;
   out.world = p;
   out.clip = frame.view_proj * vec4<f32>(p, 1.0);
+  // The veil once per segment, at its middle, not per pixel: a medium's depth is smooth across a quad, and per pixel
+  // it was a full pass over the medium's blobs for every pixel of a halo (in examples/storm.ts the lit bolt's halos
+  // cost more than the cloud itself).
+  let vo = mid - f * dot(mid - frame.eye.xyz, f);
+  out.veil = glow_veil(vo, f, dot(mid - vo, f));
   return out;
 }
 /// Closest approach of the ray o + t d (d unit, t >= 0) to segment a b: (distance, t along the ray, s along the segment).
@@ -232,7 +239,7 @@ fn glow_eval(o: vec3<f32>, d: vec3<f32>, stroke: u32, seg: u32) -> GlowAt {
   let g = glow_eval(o, d, in.id.x, in.id.y);
   // Behind an opaque body: hidden. In or behind a medium: dimmed by its optical depth up to the curve.
   if (!g.own || dot(scene_position(in.clip.xy) - o, d) < g.t) { discard; }
-  return vec4<f32>(g.light * glow_veil(o, d, g.t), 1.0);
+  return vec4<f32>(g.light * in.veil, 1.0);
 }`;
 }
 

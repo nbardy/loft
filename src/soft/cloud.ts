@@ -59,6 +59,7 @@ function profileAt(profile: readonly (readonly [number, number])[], h: number): 
 // Radii are shares of the local half-width (the profile at the puff's height), so a narrow tower gets small puffs.
 // The surface tier is the densest: a Gaussian's visible edge is sharper the larger its peak optical depth, so dense
 // small puffs on the outside make a crisp, lumpy silhouette, while a thinner core only has to fill the inside.
+const TIER_BLOBS = 260;
 const TIERS = [
   { share: 0.1, radius: 0.34, out: [0.0, 0.4], density: 0.6 },
   { share: 0.3, radius: 0.2, out: [0.4, 0.78], density: 1.0 },
@@ -72,6 +73,11 @@ export function cloud(spec: CloudSpec): Cloud {
   for (let k = 1; k < spec.profile.length; k++) if (!(spec.profile[k][0] > spec.profile[k - 1][0])) throw new Error("cloud: profile heights must increase");
   const [W, H, Dp] = spec.size;
   const half = Math.max(W, Dp) / 2;
+  // The tiers' radii are calibrated for TIER_BLOBS puffs; with fewer (cheaper: cost per pixel and the light pass both
+  // grow with the count) each is larger by the cube root, so the puffs fill the same volume, and thinner by as much, so
+  // a puff's optical depth through its middle (density times radius), and with it the cloud's shading, stays the same.
+  // Thinner still (keeping the cloud's mass) went pale and see-through; checked in tests/soft.storm.test.ts.
+  const fill = Math.cbrt(TIER_BLOBS / spec.blobs);
   const puffs: Puff[] = [];
   let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   let start = 0;
@@ -85,7 +91,7 @@ export function cloud(spec: CloudSpec): Cloud {
       const R = profileAt(spec.profile, h);
       const theta = u(1) * Math.PI * 2;
       const rho = tier.out[0] + (tier.out[1] - tier.out[0]) * Math.sqrt(u(2));
-      const r = R * half * tier.radius * (0.75 + 0.5 * u(3));
+      const r = R * half * tier.radius * fill * (0.75 + 0.5 * u(3));
       // Flatter toward the base (a level, dark bottom) and in the anvil (a wide, thin sheet).
       const flat = h < 0.12 ? 0.55 : R > 0.8 ? 0.6 : 1;
       const ry = Math.min(r * flat, H * 0.3);
@@ -102,7 +108,7 @@ export function cloud(spec: CloudSpec): Cloud {
       const centre = add(add(vec3(...base), vec3(mul(wander(0), reach), mul(wander(1), reach * 0.6), mul(wander(2), reach))), mul(vec3(...spec.drift), time));
       const breathe = add(1, mul(noise3(vec3(seedOff[2], add(clock, 41.3), seedOff[0])), 0.25 * spec.turbulence));
       const tint = 0.92 + 0.08 * u(7);
-      puffs.push(blob({ centre, radii: mul(vec3(r, ry, r), breathe), density: spec.density * tier.density, colour: spec.colour.map((c) => c * tint) as [number, number, number] }));
+      puffs.push(blob({ centre, radii: mul(vec3(r, ry, r), breathe), density: (spec.density * tier.density) / fill, colour: spec.colour.map((c) => c * tint) as [number, number, number] }));
       const m = [r, ry, r].map((x) => 3.2 * x * (1 + 0.25 * spec.turbulence) + reach);
       for (let a = 0; a < 3; a++) {
         const end = base[a] + spec.drift[a] * spec.seconds;

@@ -9,6 +9,8 @@
 // than the cell's exit, and the walk stops there. A shape reaching into a neighbouring cell is cut where the ray
 // leaves its cell late; that is the author's to avoid (a radius of zero is allowed and draws nothing: a missing copy).
 
+import { nameId } from "./surface.ts";
+import { lit } from "../compile/scene_wgsl.ts";
 import { add, mul, variable, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
@@ -195,7 +197,7 @@ export class Impostors implements Drawable {
     });
     const box = bound.box(this.lo.map((l, i) => (l - 0.5) * c[i]) as unknown as V3, this.hi.map((h, i) => (h + 0.5) * c[i]) as unknown as V3);
     const key = `impostors.${this.name}`;
-    const code = [traceWgsl(box), outlineWgsl(this.o.outline), shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi)].join("\n");
+    const code = [traceWgsl(box), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi)].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...shapeFn.libs, ...paint.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { CELLS: this.o.cells } })],
@@ -275,10 +277,11 @@ fn imp_closest(o: vec3<f32>, d: vec3<f32>, a: vec3<f32>, b: vec3<f32>) -> f32 {
   let fp = fp0 + fpk * (tq - t0);
   let edge = select(0.0, ink_px(fp), INK_ON);
   let cover = select(clamp(1.0 + edge - nearPx, 0.0, 1.0), 1.0, hit || inked);
-  let colour = select(trace_shade(base, n, p, d), trace_ink(base, n, p, d), INK_ON && !hit);
+  let id = fract(IMP_ID + dot(ck, vec3<f32>(0.6180340, 0.4142136, 0.7320508)));
+  let colour = select(trace_shade(base, n, p, d, id), trace_ink(base, n, p, d, id), INK_ON && !hit);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, 1.0), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, id)), trace_depth(p), mask);
 }`;
 }
 

@@ -4,9 +4,9 @@
 // the speed of the part's tip between that copy and the next younger one. Back faces are dropped so each copy is one
 // layer of translucency, not two.
 
-import { distance, dot, lift, mix, mul, smoothstep, step, sub, time, vec4, type Expr } from "../expr.ts";
+import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, vec4, type Expr } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
-import { drawGlazed, spacing, type Fragment } from "../draw/surface.ts";
+import { drawGlazed, nameId, spacing, type Fragment } from "../draw/surface.ts";
 import { viewDir } from "../lib/wgsl.ts";
 import type { Strand } from "../geom/strand.ts";
 import { NO_SKELETON, type Surface } from "../map/types.ts";
@@ -28,7 +28,7 @@ export type SmearSpec = {
 /** The part's stretch of a body (the slice), as its own surface: u runs from the part's `from` to its `to`. */
 function partSurface(body: Strand, p: Part): Surface {
   const m = (u: F): F => mix(p.from, p.to, u);
-  return { point: (u, v) => body.point(m(u), v), normal: (u, v) => body.normal(m(u), v), topology: { u: ["free", "free"], v: "periodic" }, skeleton: NO_SKELETON };
+  return { point: (u, v) => body.point(m(u), v), normal: (u, v) => body.normal(m(u), v), anchor: (u, v) => body.anchor(m(u), v), topology: { u: ["free", "free"], v: "periodic" }, skeleton: NO_SKELETON };
 }
 
 /** The tip's spine point (the nearest station: one table read). */
@@ -43,7 +43,8 @@ class Smear implements Drawable {
 
   draws(ctx: CompileContext): Emitted {
     const { part } = this.strike, s = this.spec, dt = s.over / s.samples;
-    const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? part.body : part.body.at(sub(time, k * dt))));
+    // Each copy posts only the part's stations (`partAt`): the spine is what a slice costs.
+    const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? part.body : part.body.partAt(sub(time, k * dt), part.from)));
     const emitted: Emitted[] = [];
     // Oldest first: drawn back to front in time, so younger copies lie over older ones.
     for (let k = s.samples; k >= 1; k--) {
@@ -55,7 +56,11 @@ class Smear implements Drawable {
         const m = mix(part.from, part.to, fr.u);
         const normal = body.normal(m, fr.v);
         const view = mul(viewDir(fr.world), -1);
-        const lit = fr.style.shade({ base: part.body.look.paint(m, fr.v), normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(ctx.sea.height(fr.world.xz), fr.world.y) });
+        // The copy is the part itself an instant ago: its own coordinates, anchor and identity, so its pattern matches.
+        const lit = fr.style.shade({
+          base: part.body.look.paint(m, fr.v), normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(ctx.sea.height(fr.world.xz), fr.world.y),
+          uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)),
+        });
         return vec4(lit, mul(show, step(0, dot(normal, view))));
       };
       emitted.push(drawGlazed(`${this.name}_${k}`, partSurface(body, part), {

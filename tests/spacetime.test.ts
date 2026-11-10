@@ -23,10 +23,11 @@ test("at the arming time the striking end is where the specification says, for a
   for (const ship of [[14.5, 1.5], [13.2, -2.6], [15.6, 4.2], [12.4, 0.3]] as const) {
     const probe = new Probe(compiled, { "ship.at": [...ship] });
     const end = probe.eval([body.skeleton.joint(0).p], ARM)[0] as number[];
-    // Lane from the anchor (7.4, 0) to the ship; b is 1.0 short of the ship; the tip lands half the radius (0.95) short
-    // of b; the spine end lands 1.95 (the lead) behind the tip at height 0.8.
+    // Lane from the anchor (7.4, 0) to the ship; b is 0.53 short of the ship's centre (the half-beam 0.95 less 0.42, so
+    // the tip touches the hull); the tip lands half the radius (0.95) short of b; the spine end lands 1.95 (the lead)
+    // behind the tip at height 0.8.
     const d = [ship[0] - 7.4, ship[1]], l = Math.hypot(d[0], d[1]), u = [d[0] / l, d[1] / l];
-    const back = 1.0 + 0.475 + 1.95;
+    const back = 0.53 + 0.475 + 1.95;
     const want = [ship[0] - u[0] * back, 0.8, ship[1] - u[1] * back];
     for (let c = 0; c < 3; c++) expect(Math.abs(end[c] - want[c])).toBeLessThan(1e-3);
     // And not just at an instant that happens to agree: a frame before, the end is still on its way.
@@ -40,7 +41,8 @@ test("at the arming time the striking end is where the specification says, for a
     const q = [ship[0] + 3, ship[1]], range = Math.hypot(q[0], q[1]);
     const from = Math.PI - 0.25;
     const bearing = from + (((Math.atan2(q[1], q[0]) - from) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const rho = 7.4 - 0.45, angle = bearing - 1.05 / range - 0.45 / rho;
+    // The arc ends short of the ship's bearing by the angle 0.87 subtends at its range (the half-beam 0.95 less 0.08).
+    const rho = 7.4 - 0.45, angle = bearing - 0.87 / range - 0.45 / rho;
     expect(Math.abs(tip[0] - (-3 + rho * Math.cos(angle)))).toBeLessThan(1e-3);
     expect(Math.abs(tip[2] - rho * Math.sin(angle))).toBeLessThan(1e-3);
   }
@@ -75,7 +77,7 @@ test("checks pass the example's attacks and fail a bad one", () => {
   const inTheWay: Target = { kind: "disc", centre: vec2(10.2, 0.75), radius: f(0.4) };
   const early: Check[] = [staysClear(strikes.bite.part, inTheWay, { until: strikes.bite.attack.arm }), stopsAt(strikes.bite, inTheWay)];
   for (const v of runChecks(strike, early, { compiled })) expect(v.pass).toBe(false);
-});
+}, 120000); // the hull targets (src/geom/hull_distance.ts) take 3-10 s of CPU on a loaded machine
 
 // ---- the telegraph against the analytic shape, on a real render ---------------------------------------------------
 

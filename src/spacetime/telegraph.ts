@@ -111,6 +111,7 @@ class Telegraph implements Drawable {
     const surface: Surface = {
       point: (u, v) => { const xz = hitPatch(h, u, v, lift<"f32">(PAD)); return vec3(xz.x, sea.height(xz), xz.y); },
       normal: () => vec3(0, 1, 0),
+      anchor: (u, v) => vec3(u, v, 0), // a glazed marker: its colour reads (u, v) itself
       topology: { u: ["free", "free"], v: "free" },
       skeleton: NO_SKELETON,
     };

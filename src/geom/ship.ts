@@ -18,10 +18,11 @@ import { through } from "../curve.ts";
 import type { Drawable } from "../compile/context.ts";
 import { drawSurface, spacing } from "../draw/surface.ts";
 import { place } from "../map/chart.ts";
-import { framed, mapNormal, sheet, thicken } from "../map/surface.ts";
+import { atRest, framed, mapNormal, sheet, thicken } from "../map/surface.ts";
 import type { Chart, F, Frame, P3, Paint, Skeleton, Surface } from "../map/types.ts";
 import { afloat, type Waters } from "./afloat.ts";
 import { Hull, type HullSpec, type Rgb } from "./hull.ts";
+import type { Target } from "../spacetime/attack.ts";
 import { lines, type Rope } from "./lines.ts";
 import { strand, type Strand } from "./strand.ts";
 
@@ -116,11 +117,20 @@ export class Ship {
 
   /** Float the ship on the water (the sea, or a whirlpool in it) and assemble it there. */
   afloat(water: Waters, p: Placement): Drawable[] {
-    const chart = afloat(water, {
+    return this.placed(this.afloatChart(water, p), p.wind);
+  }
+
+  /** The rigid chart `afloat` puts the ship in (for `target`, or to place more things on the ship). */
+  afloatChart(water: Waters, p: Placement): Chart {
+    return afloat(water, {
       at: p.at, heading: p.heading, length: this.hull.lines.length * 0.8, beam: this.hull.lines.beam,
       wind: { direction: p.wind, heel: this.spec.heel },
     });
-    return this.placed(chart, p.wind);
+  }
+
+  /** The hull in `chart` as an attack's target: checks measure its signed distance (src/geom/hull_distance.ts). */
+  target(chart: Chart): Target {
+    return { kind: "hull", hull: this.hull, frame: chart.frame(lift<"vec3">([0, 0, 0])) };
   }
 
   /** The ship in a rigid chart (its frame at the origin is the ship's), with the wind blowing toward `wind`. */
@@ -344,7 +354,7 @@ function framedChart(point: (u: F, v: F) => P3, chart: Chart): Surface {
   return framedFrame(point, chart.frame(lift<"vec3">([0, 0, 0])));
 }
 function framedFrame(point: (u: F, v: F) => P3, G: Frame): Surface {
-  return framed({ point, normal: mapNormal(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, scale: lift<"f32">(1) });
+  return framed({ point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, scale: lift<"f32">(1) });
 }
 
 /** A wave travelling across the cloth, -1..1: two crossing trains so it never looks like a single ripple. */
@@ -404,7 +414,7 @@ function pennant(top: P3, wl: P3, length: number, width: number): Surface {
     const along = add(add(root, mul(wl, mul(u, length))), mul(side, mul(mul(add(wave, mul(wave2, 0.3)), u), length * 0.08)));
     return add(add(along, mul(UP, mul(sub(v, 0.5), w))), vec3(0, mul(mul(u, u), -length * 0.12), 0));
   };
-  return { point, normal: mapNormal(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } };
+  return { point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } };
 }
 
 /** A skeleton given in local coordinates, carried to the world. */

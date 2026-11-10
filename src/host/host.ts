@@ -217,6 +217,18 @@ function frameState(a: Artefact, slots: Slots, paramFloats: number, curves: Floa
   return { time: view.time, inputs, params, curves };
 }
 
+/** The `FrameState` a host hands the pose pass for a view: the same mapping `frame` and `draw` use. */
+export function viewState(a: Artefact, view: View, curves: Float32Array = a.curves): FrameState {
+  return frameState(a, slotsOf(a), checkArtefact(a).paramFloats, curves, view);
+}
+
+function slotsOf(a: Artefact): Slots {
+  return {
+    inputs: new Map(a.inputs.map((s) => [s.name, { slot: s.slot, floats: FLOATS[s.ty] }])),
+    params: new Map(a.params.map((p) => [p.name, p.slot])),
+  };
+}
+
 function frameUniform(view: View): Float32Array<ArrayBuffer> {
   const m = cameraMatrices(view.camera, view.width / view.height);
   const u = new Float32Array(FRAME_FLOATS);
@@ -402,10 +414,7 @@ export function createHost(device: GPUDevice): GpuHost {
 
 async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const { paramFloats } = checkArtefact(a);
-  const slots: Slots = {
-    inputs: new Map(a.inputs.map((s) => [s.name, { slot: s.slot, floats: FLOATS[s.ty] }])),
-    params: new Map(a.params.map((p) => [p.name, p.slot])),
-  };
+  const slots = slotsOf(a);
   const post = a.post ?? []; // absent means none (artefact.ts)
   const STORAGE = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
   const buffer = (label: string, bytes: number, usage: number) => device.createBuffer({ label, size: Math.max(MIN_BUFFER_BYTES, bytes), usage });

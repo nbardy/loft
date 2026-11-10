@@ -202,6 +202,7 @@ export class PoolChart implements Chart {
   }
 
   at(t: F): Chart { return new PoolChart(this.pool, this.sea, t); }
+  atNear(t: F): Chart { return this.at(t); }
 
   /** For afloat (src/geom/afloat.ts): a point given in whirlpool (x, z) is carried to the sea plane, turned with the water. */
   carry(at: V2): { readonly xz: V2; readonly turn: F } { return this.pool.flow(at, this.t); }

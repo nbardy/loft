@@ -1,7 +1,7 @@
 // Surfaces written as maps, and the products that build them from curves (DESIGN.md 7.2, "multiply"). `sweep` lives in
 // sweep.ts (it needs frames transported on the CPU); everything here is closed form.
 
-import { add, clamp, cos, cross, div, length, lift, max, mix, mul, sin, sub, TAU, vec3, type In } from "../expr.ts";
+import { add, clamp, cos, cross, div, f, length, lift, max, mix, mul, sin, sub, substitute, TAU, time, vec3, type In } from "../expr.ts";
 import { through } from "../curve.ts";
 import { rotate } from "./chart.ts";
 import { NO_SKELETON, type Curve, type End, type F, type P3, type Placed, type Surface, type Topology } from "./types.ts";
@@ -23,9 +23,17 @@ export function mapNormal(point: (u: F, v: F) => P3): (u: F, v: F) => P3 {
   };
 }
 
+/**
+ * The anchor of an analytic map (`Surface.anchor`): its point at time 0. Exact for a closed-form surface; one that reads
+ * a per-frame table (a sheet standing on a body) keeps that table's motion, since a slice is not a substitution.
+ */
+export function atRest(point: (u: F, v: F) => P3): (u: F, v: F) => P3 {
+  return (u, v) => substitute([point(u, v)], time, f(0))[0] as P3;
+}
+
 /** A surface written directly as a function of (u, v); its normal comes from the map itself. */
 export function surface(point: (u: F, v: F) => P3, topology: Topology): Surface {
-  return { point, normal: mapNormal(point), topology, skeleton: NO_SKELETON };
+  return { point, normal: mapNormal(point), anchor: atRest(point), topology, skeleton: NO_SKELETON };
 }
 
 /** A surface carried by a placement: points and normals in the placed frame, scaled (an instance of it). */
@@ -33,6 +41,8 @@ export function framed(s: Surface, at: Placed): Surface {
   return {
     point: (u, v) => add(at.frame.o, mul(rotate(at.frame, s.point(u, v)), at.scale)),
     normal: (u, v) => rotate(at.frame, s.normal(u, v)),
+    // A copy's pattern is its own: the placement moves it, the anchor stays in the copy's coordinates (scaled with it).
+    anchor: (u, v) => mul(s.anchor(u, v), at.scale),
     topology: s.topology,
     skeleton: NO_SKELETON,
   };
@@ -52,6 +62,7 @@ export function sheet(root: Curve, edge: Curve): Surface {
       const n = cross(along, sub(edge(u), root(u)));
       return div(n, max(length(n), 1e-12));
     },
+    anchor: atRest(point),
     topology: { u: ["free", "free"], v: "free" },
     skeleton: NO_SKELETON,
   };

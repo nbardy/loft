@@ -6,6 +6,7 @@
 import { lift, neg, sub, time, vec3 } from "../expr.ts";
 import { SurfaceDrawable, type Look } from "../draw/surface.ts";
 import { framed } from "../map/surface.ts";
+import { newSlices } from "../map/sweep.ts";
 import type { Chart, End, P3, Surface, Topology } from "../map/types.ts";
 import { Strand } from "./strand.ts";
 
@@ -17,7 +18,7 @@ function mirrorStrand(s: Strand, name: string): Strand {
   const t = s.transport;
   const transport = { ...t, twist: (m: Parameters<typeof t.twist>[0]) => neg(t.twist(m)), up: reflect(t.up) };
   const paint = s.look.paint;
-  return new Strand([name, (m) => reflect(s.spine(m)), s.section, transport, s.chart, time, new Map(), `body_${name}`], { ...s.look, paint: (m, v) => paint(m, sub(0.5, v)) });
+  return new Strand([name, (m) => reflect(s.spine(m)), s.section, transport, s.chart, time, newSlices(), `body_${name}`, { kind: "all" }], { ...s.look, paint: (m, v) => paint(m, sub(0.5, v)) });
 }
 
 const swapEnds = (u: Topology["u"]): Topology["u"] => (u === "periodic" ? u : [u[1], u[0]] as readonly [End, End]);
@@ -27,6 +28,7 @@ function mirrorSurface(s: Surface): Surface {
   return {
     point: (u, v) => reflect(s.point(flip(u), v)),
     normal: (u, v) => reflect(s.normal(flip(u), v)),
+    anchor: (u, v) => reflect(s.anchor(flip(u), v)),
     topology: { u: swapEnds(s.topology.u), v: s.topology.v },
     skeleton: { joints: s.skeleton.joints, joint: (k) => { const j = s.skeleton.joint(k); return { p: reflect(j.p), r: j.r }; } },
   };
@@ -57,7 +59,7 @@ mirror.surface = mirrorSurface;
 
 /** A strand under another name (its table and shaders are keyed by name, so copies need their own). */
 function renamed(s: Strand, name: string): Strand {
-  return new Strand([name, s.spine, s.section, s.transport, s.chart, s.slice, new Map(), `body_${name}`], s.look);
+  return new Strand([name, s.spine, s.section, s.transport, s.chart, s.slice, newSlices(), `body_${name}`, { kind: "all" }], s.look);
 }
 
 /**

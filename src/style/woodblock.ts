@@ -5,7 +5,7 @@
 // The sea is flat blues with printed lines along the swell's contours and clawed foam where it meets a body.
 
 import { abs, add, dot, fract, length, max, min, mix, mul, param, saturate, smoothstep, sub, vec4, type Expr } from "../expr.ts";
-import { noise2, hash22, luminance } from "../lib/index.ts";
+import { noise2, noise3, hash22, luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Rgb, Style } from "../style.ts";
@@ -34,7 +34,7 @@ const BAND = { black: 0.08, indigo: 0.34, pale: 0.6, warm: 0.28 } as const;
 /**
  * The key-line pass. A pixel is inked when, within the line's half-width, the opaque scene steps away from it (a
  * silhouette: only the NEAR side is inked, so an edge gets one line, not one on each surface) or turns sharply (a
- * crease). The half-width wanders with low-frequency noise in world space, so the line swells and thins like a cut
+ * crease). The half-width wanders with low-frequency noise over the body's anchor (the style's mark), so the line swells and thins like a cut
  * one, and it is thinner far away. The colour block is read slightly out of register; the key line is not.
  *
  * A step is measured against the plane through the pixel, not against the pixel's own depth: a plane's inverse view
@@ -65,8 +65,10 @@ fn wb_near(px: vec2<f32>) -> f32 {
   // A step beyond the plane, as a share of the nearness (perspective: about the relative jump in depth) or in world
   // units (orthographic).
   let unit = select(1.0, g0, frame.eye.w > 0.5);
-  // Half-width in pixels: 1.5 to 4.7 at the reference size, wandering along the line.
-  let wobble = sty_noise(p.xz * 1.3 + vec2<f32>(p.y * 1.7, 0.0));
+  // Half-width in pixels: 1.5 to 4.7 at the reference size, wandering along the line. The wander is the style's mark
+  // (noise over the body's anchor, written to alpha by \`mark\`), so the line's swellings ride a moving body; in world
+  // space they slid along it.
+  let wobble = post_color(px * frame.viewport.zw).a;
   let w = max(scale * (1.5 + 3.2 * wobble * wobble) * clamp(18.0 / z, 0.6, 1.4), 1.0);
   // Offsets of at least a whole pixel: textureLoad floors, so a smaller offset could read the pixel itself.
   let s = max(round(1.5 * scale), 1.0);
@@ -141,6 +143,8 @@ export function woodblock(): Style {
     },
     // The key block's black: the hull merges with the key line drawn over it.
     ink: () => rgb(P.black),
+    // The key line's weight here, 0..1: noise over the anchor, so it rides the body (read back by the key-line pass).
+    mark: (ctx) => saturate(add(0.5, mul(noise3(add(mul(ctx.anchor, 1.3), mul(ctx.id, 17))), 0.75))),
     water: (ctx) => {
       const xz = ctx.world.xz;
       // Two flat blues, trough and crest, split along the swell's own contour (a little wobble, no blobs: the lines
@@ -168,8 +172,10 @@ export function woodblock(): Style {
       const speck = mul(specks(mul(xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
       c = mix(c, rgb(P.indigo), rim);
       c = mix(c, rgb(P.cream), max(foam, speck));
-      // The far sea fades in two flat steps toward the haze at the horizon.
-      const far = add(mul(edgeOf(ctx.distance, 70, 1, 8), 0.45), mul(edgeOf(ctx.distance, 140, 1, 8), 0.4));
+      // The far sea fades toward the haze at the horizon as a bokashi (a graded wiping of the block, as the sky's): two
+      // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
+      // maelstrom's view (examples/maelstrom.ts --style woodblock).
+      const far = mul(smoothstep(50, 220, ctx.distance), 0.85);
       c = mix(c, rgb(SEA.haze), far);
       // Opaque: a print shows nothing under its water.
       return vec4(c, 1);

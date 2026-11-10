@@ -3,8 +3,8 @@
 // style is swappable without touching a scene.
 
 import {
-  add, clamp, dot, exp, fract, lift, max, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, abs, TAU,
-  vec3, vec4, type Expr, type In,
+  add, clamp, dot, exp, fract, leaves, lift, max, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, abs, TAU,
+  variable, vec3, vec4, type Expr, type In,
 } from "./expr.ts";
 import type { PostSpec } from "./compile/context.ts";
 import { fwidth } from "./lib/wgsl.ts";
@@ -20,6 +20,16 @@ export type ShadeCtx = {
   readonly world: Expr<"vec3">;
   /** Depth below the sea surface (negative above it). */
   readonly depth: Expr<"f32">;
+  /** The surface's own coordinates (u, v) here (body coordinates (m, v) on a body); (0, 0) on a traced solid. */
+  readonly uv: Expr<"vec2">;
+  /**
+   * The surface's anchor here (`Surface.anchor`): a point fixed to the thing, at about world scale. Patterns written
+   * over it (facets, line wobble, hatching) ride a moving body instead of sliding through it. On a traced solid, the
+   * world point.
+   */
+  readonly anchor: Expr<"vec3">;
+  /** A stable identity of the thing in [0, 1): a hash of the drawable's name, varied per copy of `draw.points`. */
+  readonly id: Expr<"f32">;
 };
 
 /** What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. */
@@ -63,6 +73,11 @@ export type Style = {
   shade(ctx: ShadeCtx): Expr<"vec3">;
   /** Colour of the outline pass. */
   ink(ctx: ShadeCtx): Expr<"vec3">;
+  /**
+   * A number the style's post passes read back from the picture's alpha where an opaque body was drawn
+   * (`post_color(uv).a`), so a post pass can follow the body (woodblock's line weight). 1 for a style that reads none.
+   */
+  mark(ctx: ShadeCtx): Expr<"f32">;
   /** Outline width, world units (the host never sees it below a minimum in pixels). */
   readonly outline: Expr<"f32">;
   /** Sea colour and alpha (what shows through the water below it is already tinted by `shade`). */
@@ -151,6 +166,7 @@ export function toon(spec: ToonSpec = {}): Style {
       return submerge(c, ctx.depth);
     },
     ink: (ctx) => submerge(mix(inkColour, mul(ctx.base, 0.3), 0.25), ctx.depth),
+    mark: () => lift<"f32">(1),
     water: (ctx) => {
       const facing = saturate(dot(ctx.normal, ctx.view));
       // Lighter on crests and toward grazing angles; a banded sun glint; distance fades to the horizon colour.
@@ -216,3 +232,28 @@ export const palette = {
   /** Clamp a colour to [0, 1]. */
   clamp: (c: Expr<"vec3">): Expr<"vec3"> => clamp(c, 0, 1),
 };
+
+const BODY_VARS = ["c_uv", "c_anchor", "c_id"] as const;
+const readsCache = new WeakMap<Style, boolean>();
+/**
+ * Whether the style's body functions read the surface's coordinates, anchor or identity. A drawable computes the anchor
+ * in its vertex stage only when they do, so a style that ignores them (toon) pays nothing for them.
+ */
+export function readsBody(style: Style): boolean {
+  const seen = readsCache.get(style);
+  if (seen !== undefined) return seen;
+  const ctx = shadeVariables([0, 1, 0]);
+  const vars = leaves([style.shade(ctx), style.ink(ctx), style.mark(ctx)]).vars;
+  const reads = BODY_VARS.some((n) => vars.has(n));
+  readsCache.set(style, reads);
+  return reads;
+}
+
+/** The shade context as the free variables the compiler emits `shade`, `ink` and `mark` over (src/compile/scene_wgsl.ts). */
+export function shadeVariables(sun: Rgb): ShadeCtx {
+  return {
+    base: variable("c_base", "vec3"), normal: variable("c_normal", "vec3"), sun: lift<"vec3">(sun), view: variable("c_view", "vec3"),
+    world: variable("c_world", "vec3"), depth: variable("c_depth", "f32"), uv: variable("c_uv", "vec2"), anchor: variable("c_anchor", "vec3"),
+    id: variable("c_id", "f32"),
+  };
+}

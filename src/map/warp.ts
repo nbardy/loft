@@ -16,6 +16,7 @@ export const warp = {
   surface: (s: Surface, w: Warp<"vec2">): Surface => ({
     point: (u, v) => { const x = w(vec2(u, v)).x; return s.point(x.x, x.y); },
     normal: (u, v) => { const x = w(vec2(u, v)).x; return s.normal(x.x, x.y); },
+    anchor: (u, v) => { const x = w(vec2(u, v)).x; return s.anchor(x.x, x.y); },
     topology: s.topology,
     skeleton: s.skeleton,
   }),

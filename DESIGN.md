@@ -100,8 +100,8 @@ tests and the baker. A scene module's default export is a `Scene`. Working examp
 ### 2.3 Style (`src/style.ts`)
 
 A style is a program in the same language: `{ shade(ctx), ink(ctx), outline, water(ctx), shadow(ctx), sky(ctx), post,
-clear }`. `shade` lights a base colour (body coordinates are not in its context: paint has already used them) and tints
-it under water. v0: `toon`.
+clear }`. `shade` lights a base colour and tints it under water; its context carries the surface's coordinates, anchor
+and identity for patterns that must ride the body (2.6). v0: `toon`.
 
 ### 2.4 Planned (unchanged in intent; to be written on section 7)
 
@@ -146,7 +146,8 @@ the viewer (which recompiles: a style is shader code, so a new style is a new ar
 
 | Member | Called from | Context |
 |---|---|---|
-| `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea |
+| `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea, and the body: `uv` (the surface's coordinates), `anchor` (`Surface.anchor` there), `id` (a hash of the drawable's name in [0, 1), varied per copy) |
+| `mark(ctx)` | the same fragments; written to the picture's alpha | a number the style's post passes read back (`post_color(uv).a`) where a body was drawn; 1 for none |
 | `outline` | the hull's offset (never under 1.5 px) | a world width, usually a param |
 | `water(ctx)` | the sea's fragment stage | `WaterCtx`: normal, sun, view, world, crest (-1..1), distance, `foam`, `contact`, `phase` |
 | `shadow(ctx)` | cast shadows laid on the water | `LayerCtx`: world, view, distance, coverage |
@@ -196,10 +197,20 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
 **The style sheet**: `bun src/style/sheet.ts [--out out/style_sheet.webp] [--size 640x400]`: rows toon, woodblock,
 biolume, papercraft; columns serpent, shell, serpent_scales; one camera (`SHEET_CAMERA`).
 
-**Limits, as built.** Patterns that should stick to a body (papercraft's facets, woodblock's line wobble) are in world
-space, so on a moving body they slide slowly through it; anchoring them needs body coordinates in `ShadeCtx`, which
-`shade` deliberately does not have (paint has used them), so it would be a change to the compiler's style emission.
-Screen-space paper grain is fixed to the frame (the paper), so it does not swim with the camera but the picture moves
+**Patterns that ride the body** (as built 2026-11-11). Every `Surface` has an `anchor(u, v)`: a point that depends only
+on (u, v), at about world scale. A body's is its skin straightened at rest: (arc length along the rest spine, the rest
+section's ring), with the rest arc lengths in the station table's spare lane (`r.w`) and the section read at time 0, so
+every slice of a body has the same anchor. A copy's (`framed`, `draw.points`) is its own surface's, scaled; a carried
+or displaced surface keeps its base's; a closed-form surface's is its point at time 0 (one that reads a host's table,
+such as a crest on a body, keeps that table's motion: a slice is not a substitution). A traced solid's is its world
+point. Papercraft's Voronoi lattice is laid in the anchor (directions found there are carried to the world through the
+screen: the same screen offset applied to the world point's derivatives), and woodblock's line weight is its `mark`
+(noise over the anchor), which the key-line pass reads from alpha. A drawable evaluates the anchor only for a style
+that reads it (`readsBody`), so toon's frames and cost are unchanged (its reference frame is byte-identical).
+Test: `tests/style.anchor.test.ts` (the line weight at fixed body coordinates is the same at two times while the body
+moves there). Pictures: `out/polish/serpent_close_{papercraft,woodblock}_{before,after}.webp`.
+
+**Limits, as built.** Screen-space paper grain is fixed to the frame (the paper), so it does not swim with the camera but the picture moves
 under it. Bloom is one pass with no downsampled mips (40 taps out to 30 px at 800 px high).
 
 ## 3. The Artefact (`src/artefact.ts`, done)
@@ -220,7 +231,7 @@ throws). The tables the library declares:
 | Table | Declared by | Per entry | Contents |
 |---|---|---|---|
 | `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, 0) |
-| `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
+| `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
 | any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f |
 
 `stats.stations` counts the entries of tables whose role is `"stations"`.
@@ -438,8 +449,11 @@ grow({ count, motif, step }), kifs({ count, fold, scale, offset })   // src/lib/
   `{ id, centre, hash }` and must stay inside its cell; radius 0 is an absent copy. `paint({ p, normal, local, cell })`.
 - **In the scene.** Both write `frag_depth` (clip z / w of the hit), so they cut triangle bodies exactly and the sea's
   contact foam appears where they meet the water with no code of their own (seen in coral, nest and pearls). Lit by
-  the style's `shade` with the underwater depth like any body. Opaque phase, no shadows cast (`skeletons` empty), not
-  bakeable.
+  the style's `shade` with the underwater depth like any body. Opaque phase, not bakeable. A field casts a soft blob
+  (2026-11-11, `src/draw/field_shadow.ts`): its field sampled once on a 22^3 grid in its bound at time 0, the inside
+  points above the still water fitted with a short capsule chain (principal horizontal axis, extent, spread, mean
+  height); a field the CPU cannot evaluate casts from its bound. It does not follow a field that moves. Impostors cast
+  nothing yet.
 - **Edges.** A traced edge is inside its proxy, so MSAA does not see it. Coverage is written as
   `@builtin(sample_mask)` (round(4c) of 4 samples, bits turned per pixel), from how close a missed ray came in pixels,
   estimated between two samples as where their spheres of free space meet (the sampled distances alone gave grain).
@@ -628,12 +642,26 @@ Where the plan met the code:
 - **The head's pitch is the neck's business.** A head hung forward of the neck at a pitch dove into the water when the
   neck met it horizontally; `approach` makes the neck climb into the head so it levels out, and `lead` (spine end to
   tip) is a number of the creature measured once, then verified by `landsInside` and `stopsAt`.
-- **Past slices are full poses.** Each smear copy and each wake sample is a body slice with its own transported
-  stations (a head copy also slices the body it rides). In the example that is 1054 stations against 142 and about
-  2.5 to 3 ms of extra CPU pose per frame (best case). A skeleton-only slice (spine points and radii without frames) would
-  serve the wake for much less; not built.
-- **Targets are skeletons.** The stand-in hull's capsules are as wide as its beam, so "contact" at arming is a gap of
-  about 0.45 to the capsule surface, not zero; real ships will want a hull distance function as their target kind.
+- **Past slices pose only what they are read for** (polish pass, 2026-11-11). A slice's cost is evaluating the posed
+  spine at each station (about 2300 expression nodes per station in the example; frame transport is a quarter of it), so:
+  a part placed on a body at a constant m (`on(body, c)`) takes its host's slice with `Body.atNear`, which posts only
+  the stations up to that m (a head copy reads 5 of the body's 48); a smear copy is `Body.partAt(t, from)`, the stations
+  from the part's start, its first frame seeded from the live body's (positions and radii exact, frames within the roll
+  made since: 2.65 degrees at 0.35 s, older than any copy in the example); a wake sample is
+  `Body.skeletonAt(t, stations)`, positions and radii at every third station and no frames (stretch measured between
+  kept stations: radii within 15% at the neck, 3% elsewhere).
+  Before: each copy and sample posed the whole body (1054 stations against 142). CPU pose, best of 3000 interleaved
+  in one process: 0.47 -> 0.22 ms with smear and wake (0.11 without); `tools/strike_bench.ts` on the loaded machine:
+  2.1-4.0 -> 1.5-2.2 ms (0.5-0.7 without). Tests: `tests/spacetime.slices.test.ts`.
+- **A ship is its hull** (polish pass, 2026-11-11). `Target` has a third kind, `{ kind: "hull", hull, frame }`
+  (`Ship.target(chart)`, with `Ship.afloatChart` the chart `afloat` uses): checks move the chain into the ship's frame
+  and measure the hull's signed distance (`src/geom/hull_distance.ts`: the skin sampled 64 x 65, closed across the rail
+  and at both ends, nearest strips first with box pruning, inside by the parity of an upward ray; within 1e-3 of the
+  closed-form skin, `tests/hull.distance.test.ts`), at points along each capsule half its smaller radius apart, skipping
+  any whose distance to the hull's box cannot beat the best. `examples/strike.ts` now strikes two cutters built by
+  `ship` (the fleet's sloop, smaller): contact at arming reads 0.044 (bite) and 0.093 (lash) with `contact: 0.1`, where
+  the stand-in read 0.46 against a 0.6 allowance. A sample point inside a raked bow was called outside by the first
+  sign test (point in the section nearest along the length); the parity ray replaced it.
 ## 10. Ships, afloat, and the whirlpool (as built)
 
 Library functions on the map algebra; examples `examples/brig.ts`, `examples/fleet.ts`, `examples/maelstrom.ts`.
@@ -706,7 +734,10 @@ time derivative of the map, vertical motion included); `drift(xz)` the water's h
 its parts. `SurfaceDrawable.through(chart)` carries a drawable: copies' frames are carried (skeleton placement); a
 single surface's points are mapped and its normals turned with the chart's frame, which is right for thin things riding a
 placed body (fins) and wrong for solids. `examples/maelstrom.ts` coils the serpent this way: its body rebuilt from
-`bodySpec` with more stations, its other strands `placedAs`, its crests, teeth and spikes `through`.
+`bodySpec` with more stations, its other strands `placedAs`, its crests, teeth and spikes `through`. Laid along a radius,
+the whirlpool wound it to 2.8-3 times its length (6 times locally) and it read as a thin ribbon; it is now laid 30
+degrees off the flow (a circle in whirlpool coordinates keeps its radius, so the tilt sets how tight the coil is), 1.4
+times its length (2026-11-11). Its girth stays as authored: its crests, spikes and head ride the authored body's skin.
 
 ### 8.6 Corrections made on the way
 
@@ -757,7 +788,11 @@ draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.
   keeps sunlit faces white); a blob's own shadow counts a third (at full strength every lump drew as its own sphere).
 - `cloud({ at, size, profile, blobs, turbulence, billow, drift, density, colour, seed, seconds })`: three tiers of puffs
   (few large core, medium lobes, many small dense surface puffs: a Gaussian's edge is crisper the denser it is), a
-  level base, boiling from noise, drift; returns puffs and the bounds that hold them for `seconds`. `thunderhead({ at,
+  level base, boiling from noise, drift; returns puffs and the bounds that hold them for `seconds`. The tiers are
+  calibrated for 260 puffs; with fewer, each is larger by the cube root of the ratio (the same volume filled) and its
+  density lower by as much (the same depth through its middle). `examples/storm.ts` uses 96, with the detail carried by
+  noise (`detail` multiplies a piece's depth by exp(amount x noise), one octave: a factor e^x moves a Gaussian's edge
+  by about x / 2q radii, so the silhouette becomes lumps; the earlier 1 + amount x noise, clamped, punched holes). `thunderhead({ at,
   height, width, blobs, seed, drift, seconds })` is a profile preset.
 
 Corrections found by looking: lighting a puff at its centroid drew dark discs with bright rims (now: where seen); a
@@ -772,7 +807,8 @@ the rain shaft into the fog (now: fixed fog bins).
   curve). Each segment is a view-plane quad; a pixel is lit by the nearest segment of a window of 6 either side only, so
   a curve's picture does not depend on how it is cut (tested). Core never thinner than a pixel (dims instead); additive;
   hidden behind opaque bodies; `veil: { kind: "medium", medium }` attenuates by the medium's closed-form depth up to the
-  curve, so a bolt inside a cloud shows through it.
+  curve, so a bolt inside a cloud shows through it. The veil is evaluated once per segment, at its middle, in the vertex
+  stage: per pixel it was a full pass over the medium for every pixel of a halo, more than the cloud itself cost.
 - `bolt({ from, to, wander, roughness, levels, branches, schedule, segments })`: midpoint displacement in closed form
   (a sum over levels of hat functions times hashed offsets), deterministic in (seed, strike index); branches leave the
   channel at hashed points. `strikeAt(schedule)` is a pure function of time; `flicker(since)` (four return strokes),
@@ -784,6 +820,28 @@ the rain shaft into the fog (now: fixed fog bins).
 
 ### 8.4 Costs (best of 25, 1280x800, draw to texture without readback, heavily loaded machine; numbers vary ~2x run to run)
 
+Polish pass (2026-11-11), `bun tools/storm_bench.ts 30`, best of 30, drawn into a texture and waited for, the start of
+the pass and the end measured back to back, twice:
+
+| storm view | before (260 puffs) | after (96 puffs) |
+|---|---|---|
+| three (the wide view) | 21.1, 21.5 ms (pose 4.8-5.6) | 11.1, 15.4 ms (pose 2.1-2.2) |
+| front | 29.4-32.0 | 18.0-18.4 |
+| side | 24.6-24.7 | 16.9-17.7 |
+| low | 32.1-33.0 | 17.1-20.3 |
+| edge | 58.1-60.7 | 28.7-32.4 |
+
+What moved it: 96 larger puffs with noise detail (per-pixel blob work and the O(N^2) light pass, 6.8 -> 0.8 ms of CPU);
+the glow veil per segment instead of per pixel; one detail octave instead of two (about 1.5 ms); rays that meet no
+puff skip pass 2 and the depth bins (most of a hazy screen); a layer's depth toward the sun is its vertical depth over
+sun.y (one erfc per fog piece fewer). The light pass is still every pair (a grid was not needed at 96). Other views
+than the wide one stay above 16 ms: the fog layer and bank are integrated in 3 x 8 pieces over the whole lower screen
+(about 3.5 ms) and the edge view puts the camera inside the cloud. Pictures: `out/polish/storm_before.webp`,
+`out/polish/storm_after.webp`; test: `tests/soft.storm.test.ts` (coverage, brightness, contrast and blurred difference
+against the 260-puff cloud).
+
+Before the polish pass:
+
 | Scene | ms per frame (of which CPU pose) |
 |---|---|
 | storm, views three / side / front / low / edge | 44-58 / 56-60 / 53-68 / 63-81 / 76-91 (pose 11-19) |
@@ -793,8 +851,8 @@ the rain shaft into the fog (now: fixed fog bins).
 
 Cost is linear in blob count and in covered pixels; the CPU light pass is O(N^2) (0.9 ms at 65 blobs, ~20 ms at 520)
 and each active flash adds another pass. Not real time for a 260-blob storm on this machine; the levers not yet pulled
-are half-resolution integration (needs host support), fewer blobs with more detail noise, and a light pass that reuses
-the previous frame (would break purity).
+are half-resolution integration (needs host support) and a light pass that reuses the previous frame (would break
+purity); fewer blobs with detail noise is done (above).
 
 ### 8.5 Known limits
 

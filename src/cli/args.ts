@@ -2,6 +2,8 @@
 // looks at argv. Bad input throws `UsageError` naming the offending flag.
 import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
 
+import { parseInputs, parseSweep, type InputValues, type Sweep } from "./inputs.ts";
+
 export class UsageError extends Error {}
 
 /** The style a scene is drawn in: its own, or one of `src/style/index.ts`'s by name (`--style`). */
@@ -10,13 +12,13 @@ export type Source = { readonly kind: "file"; readonly path: string; readonly st
 export type Size = { readonly width: number; readonly height: number };
 export type ViewName = string;
 
-type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>> };
+type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues };
 
 export type Command =
   | GalleryCommand
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
-  | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName })
-  | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName })
+  | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName; readonly sweep: Sweep })
+  | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
   | { readonly kind: "dev"; readonly source: Source; readonly port: number }
   | { readonly kind: "check"; readonly path: string }
   | { readonly kind: "bake"; readonly source: Source; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } };
@@ -29,6 +31,9 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
   check  <scene>   (runs the scene module's exported \`checks\` on the CPU; exits 1 if any fails)
   --style toon|woodblock|biolume|papercraft  (render, clip, frames, dev) draws the scene in that style instead of its own
   gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
+  --input name=value  (render, clip, frames; repeatable) sets a host input: a scalar, or x,y,z for a vector
+  --sweep name=a..b   (clip, frames) moves one input evenly from a to b across the frames; with one --times value,
+                      frames draws --count frames (default 6) at that time
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
@@ -36,6 +41,9 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--out": { value: true, commands: ["render", "clip", "frames", "bake"] },
   "--size": { value: true, commands: ["render", "clip", "frames"] },
   "--param": { value: true, commands: ["render", "clip", "frames"] },
+  "--input": { value: true, commands: ["render", "clip", "frames"] },
+  "--sweep": { value: true, commands: ["clip", "frames"] },
+  "--count": { value: true, commands: ["frames"] },
   "--views": { value: true, commands: ["render"] },
   "--time": { value: true, commands: ["render", "bake"] },
   "--density": { value: true, commands: ["bake"] },
@@ -94,7 +102,7 @@ export function parseArgs(argv: readonly string[]): Command {
     } else list.push("");
     flags.set(a, list);
   }
-  for (const [flag, values] of flags) if (flag !== "--param" && values.length > 1) throw new UsageError(`flag ${flag} given twice`);
+  for (const [flag, values] of flags) if (flag !== "--param" && flag !== "--input" && values.length > 1) throw new UsageError(`flag ${flag} given twice`);
 
   const one = (flag: string): string | undefined => flags.get(flag)?.[0];
   const fixture = flags.has("--fixture");
@@ -127,7 +135,9 @@ export function parseArgs(argv: readonly string[]): Command {
     source,
     size: parseSize(one("--size") ?? "1280x800"),
     params: Object.fromEntries((flags.get("--param") ?? []).map(parseParam)),
+    inputs: parseInputs(flags.get("--input") ?? []),
   };
+  const sweep = parseSweep(one("--sweep"));
 
   switch (name) {
     case "render":
@@ -142,14 +152,24 @@ export function parseArgs(argv: readonly string[]): Command {
         ...shared, kind: "clip", out,
         seconds: one("--seconds") === undefined ? 8 : positive("--seconds", one("--seconds")!),
         fps: one("--fps") === undefined ? 30 : positive("--fps", one("--fps")!),
-        view: one("--view") ?? "three",
+        view: one("--view") ?? "three", sweep,
       };
     case "frames": {
       const t = one("--times");
       if (t === undefined) throw new UsageError("frames: --times is required, e.g. --times 0,0.5,1");
-      return { ...shared, kind: "frames", out, times: t.split(",").map((s) => num("--times", s)), view: one("--view") ?? "three" };
+      const listed = t.split(",").map((s) => num("--times", s));
+      return { ...shared, kind: "frames", out, times: frameTimes(listed, sweep, one("--count")), view: one("--view") ?? "three", sweep };
     }
     default:
       throw new UsageError(`unhandled command "${name}"`);
   }
+}
+
+/** A sweep at one time draws `--count` frames there; otherwise one frame per listed time (and no `--count`). */
+function frameTimes(listed: readonly number[], sweep: Sweep, count: string | undefined): readonly number[] {
+  if (count === undefined) return listed.length === 1 && sweep.kind === "linear" ? Array(6).fill(listed[0]) : listed;
+  if (sweep.kind === "none" || listed.length !== 1) throw new UsageError("--count: only with --sweep and a single --times value");
+  const n = positive("--count", count);
+  if (!Number.isInteger(n) || n < 2) throw new UsageError(`--count: ${count} must be a whole number of at least 2`);
+  return Array(n).fill(listed[0]);
 }

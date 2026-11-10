@@ -11,7 +11,7 @@
 // amidships.
 
 import { add, cos, cross, dot, lift, mul, normalize, sin, sub, substitute, time, vec2, vec3, type Expr, type In } from "../expr.ts";
-import { rotate } from "../map/chart.ts";
+import { rigid } from "./rig.ts";
 import type { Chart, F, Frame, P3 } from "../map/types.ts";
 
 type V2 = Expr<"vec2">;
@@ -76,17 +76,6 @@ function heelOf(spec: AfloatSpec, stbd: V2): F {
   const across = add(mul(stbd.x, wind.direction[0] / l), mul(stbd.y, wind.direction[1] / l));
   const gust = add(1, mul(add(sin(mul(time, 0.53)), mul(sin(mul(time, 1.37)), 0.5)), 0.12));
   return mul(mul(across, wind.heel), gust);
-}
-
-/** A rigid chart in the frame g: local l goes to o + l.x X + l.y Y + l.z Z; a slice substitutes time in the frame. */
-export function rigid(g: Frame): Chart {
-  return {
-    frame: (l) => ({ o: add(g.o, rotate(g, l)), x: g.x, y: g.y, z: g.z }),
-    at: (t) => {
-      const [o, x, y, z] = substitute([g.o, g.x, g.y, g.z], time, t) as P3[];
-      return rigid({ o, x, y, z });
-    },
-  };
 }
 
 /** Float something on the water: a rigid placement that rides the surface under it. */

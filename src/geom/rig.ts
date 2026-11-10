@@ -13,5 +13,6 @@ export function rigid(g: Frame): Chart {
       const [o, x, y, z] = substitute([g.o, g.x, g.y, g.z], time, t) as Expr<"vec3">[];
       return rigid({ o, x, y, z });
     },
+    atNear(t: F) { return this.at(t); },
   };
 }

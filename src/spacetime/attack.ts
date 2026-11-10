@@ -18,6 +18,8 @@ import { response } from "../curve.ts";
 import type { Drawable } from "../compile/context.ts";
 import type { Body } from "../map/sweep.ts";
 import type { Strand } from "../geom/strand.ts";
+import type { Hull } from "../geom/hull.ts";
+import type { Frame } from "../map/types.ts";
 import { hitInradius, laneOf, polar, type Arc, type Capsule, type Disc, type Hit } from "./hit.ts";
 
 type F = Expr<"f32">;
@@ -25,10 +27,14 @@ type P3 = Expr<"vec3">;
 type V2 = Expr<"vec2">;
 export type Spine = (m: F) => P3;
 
-/** What an attack must not pass into: a disc on the water (a vertical cylinder), or a body's skeleton. */
+/**
+ * What an attack must not pass into: a disc on the water (a vertical cylinder), a body's skeleton, or a ship's hull in
+ * the frame it is placed in (its signed distance, src/geom/hull_distance.ts; `Ship.target`).
+ */
 export type Target =
   | { readonly kind: "disc"; readonly centre: V2; readonly radius: F }
-  | { readonly kind: "body"; readonly body: Body };
+  | { readonly kind: "body"; readonly body: Body }
+  | { readonly kind: "hull"; readonly hull: Hull; readonly frame: Frame };
 
 /** A stretch of a body that strikes: m from `from` to `to`, its striking tip at m = `tip`. */
 export type Part = { readonly name: string; readonly body: Strand; readonly from: number; readonly to: number; readonly tip: number };

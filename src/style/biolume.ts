@@ -3,7 +3,7 @@
 // faintly where bodies break the water. Two post passes: the glow smeared down the water as a reflection, then bloom,
 // which glows whatever is bright (in this picture, only what emits).
 
-import { abs, add, dot, exp, fract, length, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
+import { abs, add, dot, exp, fract, length, lift, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
 import { hash22, luminance, noise2 } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
@@ -119,6 +119,7 @@ export function biolume(): Style {
       return mix(rgb(C.water), mul(c, add(0.25, mul(sink, 0.75))), sink);
     },
     // The hull is a thin line of the rim's light.
+    mark: () => lift<"f32">(1),
     ink: (ctx) => mul(rgb(C.cyan), mul(0.35, exp(mul(max(ctx.depth, 0), -1.5)))),
     water: (ctx) => {
       const facing = saturate(dot(ctx.normal, ctx.view));

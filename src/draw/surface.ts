@@ -3,13 +3,14 @@
 // of a set of `Points`; the fragment stage evaluates the look per pixel. The surface coordinates (u, v) reach the
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
-import { cos, f, mix, mul, variable, vec2, vec4, type Expr } from "../expr.ts";
+import { add, cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { carry, rotate } from "../map/chart.ts";
 import { framed } from "../map/surface.ts";
 import type { Chart, F, P3, Paint, Points, Skeleton, Surface } from "../map/types.ts";
-import type { Style } from "../style.ts";
+import { readsBody, type Style } from "../style.ts";
+import { lit } from "../compile/scene_wgsl.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -98,6 +99,7 @@ export class SurfaceDrawable implements Drawable {
       `override NU: u32 = ${NU}u;`,
       `override NV: u32 = ${NV}u;`,
       frag.overrides,
+      `const ID: f32 = ${lit(nameId(this.name))};`,
       vertex.code, frag.fns.code,
       /* wgsl */ `
 struct VOut {
@@ -105,6 +107,8 @@ struct VOut {
   @location(0) world: vec3<f32>,
   @location(1) normal: vec3<f32>,
   @location(2) uv: vec2<f32>,
+  @location(3) anchor: vec3<f32>,
+  @location(4) @interpolate(flat) id: f32,
 };
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   let ij = vec2<u32>((vi / 6u) / NV, (vi / 6u) % NV) + quad_corner(vi % 6u);
@@ -115,6 +119,8 @@ struct VOut {
   out.world = p;
   out.normal = s.normal;
   out.uv = s.uv;
+  out.anchor = s.anchor;
+  out.id = copy_id(ID, ii);
   return out;
 }
 ${frag.main}`,
@@ -137,6 +143,7 @@ function carriedSurface(s: Surface, c: Copies, chart: Chart): Surface {
     case "one": return {
       point: (u, v) => chart.frame(s.point(u, v)).o,
       normal: (u, v) => rotate(chart.frame(s.point(u, v)), s.normal(u, v)),
+      anchor: s.anchor, // carried, not moved: its pattern rides it
       topology: s.topology,
       skeleton: { joints: s.skeleton.joints, joint: (k) => { const j = s.skeleton.joint(k); return { p: chart.frame(j.p).o, r: j.r }; } },
     };
@@ -156,7 +163,12 @@ function carriedCopies(c: Copies, chart: Chart): Copies {
 function skeletonsOf(s: Surface, c: Copies): readonly Skeleton[] {
   switch (c.kind) {
     case "one": return [s.skeleton];
-    case "points": return []; // copies do not cast (a row of teeth under a head)
+    // Each copy casts with the surface's own chain carried by its placement (copies used not to cast at all, so a
+    // fleet of instanced ships or a ring of spikes left no shadow on the water).
+    case "points": return s.skeleton.joints < 2 ? [] : Array.from({ length: c.points.count }, (_, i) => {
+      const at = c.points.at(f(i));
+      return { joints: s.skeleton.joints, joint: (k: number) => { const j = s.skeleton.joint(k); return { p: add(at.frame.o, mul(rotate(at.frame, j.p), at.scale)), r: mul(j.r, at.scale) }; } };
+    });
   }
 }
 
@@ -180,9 +192,11 @@ function vertexFn(ctx: CompileContext, d: SurfaceDrawable, name: string): Shader
   const u = d.grid.u.at(S), v = d.grid.v.at(T);
   const s = placedSurface(d.surface, d.copies);
   const normal = vertexNormal(d.look, s, u, v);
+  // Only for a style that reads it: a body's anchor fetches its stations again, which toon would pay for nothing.
+  const anchor = readsBody(ctx.style) ? s.anchor(u, v) : vec3(0, 0, 0);
   return emitShaderFn(ctx.slots, {
     name, args: [["s", "f32"], ["t", "f32"], ["i", "f32"]], out: "SurfV",
-    roots: [s.point(u, v), normal, vec2(u, v)], ret: (o) => `SurfV(${o.join(", ")})`,
+    roots: [s.point(u, v), normal, vec2(u, v), anchor], ret: (o) => `SurfV(${o.join(", ")})`,
   });
 }
 
@@ -224,8 +238,9 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
           // INK is an override, so this branch is uniform (the style's shading takes screen-space derivatives), and the
           // outline pass does not pay for the shading it would throw away.
           main: `${head}
-  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth), 1.0); }
-  return vec4<f32>(shade(base, n, eye, in.world, depth), 1.0);
+  let mk = mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id);
+  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk); }
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
 }`,
           draws: (b) => [
             drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
@@ -238,14 +253,14 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
           main: `${head}
   let fw = fwidth(in.uv.y);
   let edge = 1.0 - smoothstep(fw * 1.0, fw * 2.2, 1.0 - in.uv.y);
-  return vec4<f32>(mix(shade(base, n, eye, in.world, depth), ink(base, n, eye, in.world, depth), edge), 1.0);
+  return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id));
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
         case "none": return {
           overrides: "", fns: paintFn(look.paint), push: "s.pos",
           main: `${head}
-  return vec4<f32>(shade(base, n, eye, in.world, depth), 1.0);
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id));
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
@@ -287,3 +302,10 @@ export function drawFlat(name: string, surface: Surface, o: { readonly paint: Pa
   return new SurfaceDrawable(name, surface, o.grid, { kind: "flat", paint: o.paint }, { kind: "one" });
 }
 
+
+/** A stable identity in [0, 1) for a drawable, from its name (FNV-1a): the same body gets the same patterns everywhere. */
+export function nameId(name: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < name.length; i++) h = Math.imul(h ^ name.charCodeAt(i), 0x01000193) >>> 0;
+  return (h >>> 8) / 16777216;
+}

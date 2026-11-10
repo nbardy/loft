@@ -1,5 +1,3 @@
 [test]
-# These are correctness tests that create GPU pipelines. Bun's default 5 s per test is too tight when the machine is
-# shared: pipeline creation alone took over 10 s under a load average above 60 (2026-11-10), which showed up as one
-# random failure per full run. A hung test still fails, just later.
-timeout = 60000
+# See tests/setup.ts: it sets the per-test timeout for GPU tests.
+preload = ["./tests/setup.ts"]

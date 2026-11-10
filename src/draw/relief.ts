@@ -9,7 +9,8 @@
 // hull would outline the shell, not the relief). The march's sample count falls with the relief's size on screen, and
 // relief below a pixel is not marched at all: the plain surface at the pixel's height, with the paint's shading.
 
-import { f, variable, vec2 } from "../expr.ts";
+import { f, variable, vec2, vec3 } from "../expr.ts";
+import { readsBody } from "../style.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import { lit } from "../compile/scene_wgsl.ts";
@@ -18,7 +19,7 @@ import type { F, P3, Skeleton, Surface, Warp } from "../map/types.ts";
 import { displace, shellFrame, type ShellFrame } from "../relief/displace.ts";
 import type { Height } from "../relief/height.ts";
 import { traceMarch, tracePlain, type Traced } from "../relief/trace.ts";
-import type { Grid } from "./surface.ts";
+import { nameId, type Grid } from "./surface.ts";
 
 /** Where on the surface a height or a paint is asked: the surface's coordinates, and the cell of the fold they fall in. */
 export type ReliefSite = { readonly u: F; readonly v: F; readonly cell: Folded<"vec2"> };
@@ -98,12 +99,13 @@ export class ReliefDrawable implements Drawable {
   draws(ctx: CompileContext): Emitted {
     const n = this.name, key = `relief.${n}`;
     const NU = this.o.grid.u.count, NV = this.o.grid.v.count;
-    const fns = [this.vertexFn(ctx), this.traceFn(ctx, `march_${n}`, "march"), this.traceFn(ctx, `plain_${n}`, "plain"), this.paintFn(ctx)];
+    const fns = [this.vertexFn(ctx), this.traceFn(ctx, `march_${n}`, "march"), this.traceFn(ctx, `plain_${n}`, "plain"), this.paintFn(ctx), this.anchorFn(ctx)];
     const ink = INK_OF[this.o.outline];
     const code = [
       `override NU: u32 = ${NU}u;`,
       `override NV: u32 = ${NV}u;`,
       `const HMAX: f32 = ${lit(this.o.hMax)};`,
+      `const ID: f32 = ${lit(nameId(this.name))};`,
       /* wgsl */ `
 struct ReliefV { base: vec3<f32>, su: vec3<f32>, sv: vec3<f32>, n: vec3<f32>, nu: vec3<f32>, nv: vec3<f32>, uv: vec2<f32> };
 struct ReliefHit { kind: f32, world: vec3<f32>, uvh: vec3<f32>, normal: vec3<f32> };`,
@@ -156,12 +158,13 @@ struct FOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
   let eye = -d;
   let depth = sea_height(r.world.xz) - r.world.y;
   let base = paint_${n}(r.uvh.x, r.uvh.y, r.uvh.z);
+  let anchor = anchor_${n}(r.uvh.x, r.uvh.y);
   // Both are evaluated (the style's shading takes screen-space derivatives, which need uniform control flow).
-  let lit_c = shade(base, r.normal, eye, r.world, depth);
-  let ink_c = ink(base, r.normal, eye, r.world, depth);
+  let lit_c = shade(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID);
+  let ink_c = ink(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID);
   let clip = frame.view_proj * vec4<f32>(r.world, 1.0);
   var out: FOut;
-  out.colour = vec4<f32>(select(lit_c, ink_c, r.kind < 0.75), 1.0);
+  out.colour = vec4<f32>(select(lit_c, ink_c, r.kind < 0.75), mark(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID));
   out.depth = clip.z / clip.w;
   return out;
 }`,
@@ -193,6 +196,12 @@ struct FOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
       : tracePlain(fr, FV.uv, ray, this.heightOf, FV.ink);
     const args = which === "march" ? [...FRAME_ARGS, ["b_steps", "f32"], ["b_ink", "f32"], ["b_detail", "f32"]] as const : [...FRAME_ARGS, ["b_ink", "f32"]] as const;
     return emitShaderFn(ctx.slots, { name, args, out: "ReliefHit", roots: [t.kind, t.world, t.uvh, t.normal], ret: (x) => `ReliefHit(${x.join(", ")})` });
+  }
+
+  /** `fn anchor_<name>(u, v) -> vec3`: the surface's anchor at the hit (0 for a style that does not read it). */
+  private anchorFn(ctx: CompileContext): Shader {
+    const anchor = readsBody(ctx.style) ? this.surface.anchor(U, V) : vec3(0, 0, 0);
+    return emitShaderFn(ctx.slots, { name: `anchor_${this.name}`, args: [["u", "f32"], ["v", "f32"]], out: "vec3<f32>", roots: [anchor], ret: (x) => x[0] });
   }
 
   /** `fn paint_<name>(u, v, h) -> vec3`. */

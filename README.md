@@ -18,7 +18,12 @@ pnpm loft render examples/serpent.ts --out out/s.webp [--views front,side,top,th
 pnpm loft frames examples/serpent.ts --out out/m.webp --times 0,0.5,1,1.5 [--view three]    # one view, several times
 pnpm loft clip   examples/serpent.ts --out out/s.mp4 [--seconds 8] [--fps 30] [--view three] # raw RGBA piped to ffmpeg
 pnpm loft dev    examples/serpent.ts [--port 5173]                                           # live viewer
+pnpm loft frames examples/stormwing.ts --out out/w.webp --times 1 --count 6 --sweep strike=0..1   # an input swept across a sheet
 ```
+
+`--input name=value` (repeatable; `x,y` for a vector) sets a host input on `render`, `frames` and `clip`; `--sweep
+name=a..b` moves one input evenly across the frames of `frames` or `clip`. An input the scene does not declare fails by
+name.
 
 `render` writes one contact sheet (row-major, views in the order given); stills are WebP q90 (needs `cwebp`), clips are
 H.264 (needs `ffmpeg`). Timings print on every run. `dev` serves a WebGPU page with orbit (drag, wheel), the scene's named

@@ -31,11 +31,14 @@
 // measured value and suggests a step scale. Passing `safety` scales every step by it and skips the check: a deliberate
 // statement that the field is known to need (or not need) it.
 
+import { nameId } from "./surface.ts";
+import { lit } from "../compile/scene_wgsl.ts";
 import { div, f, length, libsOf, max, substitute, variable, type Expr } from "../expr.ts";
 import { gradient } from "../grad.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import { lipschitz } from "../lib/sdf3.ts";
+import { fieldShadow, shadowSkeleton } from "./field_shadow.ts";
 import type { F, Field, P3, Skeleton } from "../map/types.ts";
 import { aabbOf, outlineWgsl, PROXY_VERTICES, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 
@@ -116,7 +119,12 @@ export function checkField(name: string, field: Field, b: TraceBound): number {
 }
 
 export class FieldDrawable implements Drawable {
-  readonly skeletons: readonly Skeleton[] = [];
+  private shadow: Skeleton[] | undefined;
+  /** A soft blob fitted to the solid (src/draw/field_shadow.ts), found on first use: sampling costs a few ms. */
+  get skeletons(): readonly Skeleton[] {
+    this.shadow ??= [shadowSkeleton(fieldShadow(this.field, this.o.bounds, fieldPixel))];
+    return this.shadow;
+  }
   /** Traced: there is no surface to bake. */
   readonly surfaces: readonly Bakeable[] = [];
 
@@ -145,7 +153,7 @@ export class FieldDrawable implements Drawable {
       roots: [this.o.paint({ p: P, normal: N as Expr<"vec3"> })], ret: (v) => v[0],
     });
     const key = `field.${this.name}`;
-    const code = [traceWgsl(this.o.bounds), outlineWgsl(this.o.outline), field.code, normal.code, paint.code, fragmentWgsl(safety)].join("\n");
+    const code = [traceWgsl(this.o.bounds), outlineWgsl(this.o.outline), `const FIELD_ID: f32 = ${lit(nameId(this.name))};`, field.code, normal.code, paint.code, fragmentWgsl(safety)].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...field.libs, ...normal.libs, ...paint.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
@@ -235,10 +243,10 @@ const HIT: f32 = ${num(HIT)};
   let edge = select(HIT, inkPx, INK_ON);
   let cover = select(clamp(1.0 + edge - nearPx, 0.0, 1.0), 1.0, hit || inked);
   let useInk = INK_ON && !hit;
-  let colour = select(trace_shade(base, n, p, d), trace_ink(base, n, p, d), useInk);
+  let colour = select(trace_shade(base, n, p, d, FIELD_ID), trace_ink(base, n, p, d, FIELD_ID), useInk);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, 1.0), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, FIELD_ID)), trace_depth(p), mask);
 }`;
 }
 

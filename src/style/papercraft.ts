@@ -5,7 +5,7 @@
 // The sea is layered cut-paper sheets with scalloped edges, each casting a small shadow on the one below. A post
 // pass adds ambient occlusion in creases (from the opaque scene's depth) and paper fibre.
 
-import { add, dot, fract, max, mix, mul, normalize, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
+import { add, dot, fract, lift, max, mix, mul, normalize, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
 import { fwidth, wgslFn } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
@@ -46,12 +46,23 @@ fn pc_hash3(c: vec3<i32>) -> vec3<f32> {
   let d = (b ^ (b >> 15u)) * 2246822519u;
   return vec3<f32>(f32(a >> 8u), f32(b >> 8u), f32(d >> 8u)) / 16777216.0;
 }
-fn pc_facet(n: vec3<f32>, p: vec3<f32>) -> vec4<f32> {
+/// Screen offsets (a, b) with a dpx + b dpy nearest to r, in least squares (0 where the pixel's footprint is degenerate).
+fn pc_screen(r: vec3<f32>, dpx: vec3<f32>, dpy: vec3<f32>) -> vec2<f32> {
+  let g = vec3<f32>(dot(dpx, dpx), dot(dpx, dpy), dot(dpy, dpy));
+  let det = g.x * g.z - g.y * g.y;
+  let rhs = vec2<f32>(dot(r, dpx), dot(r, dpy));
+  return select(vec2<f32>(0.0), clamp(vec2<f32>(g.z * rhs.x - g.y * rhs.y, g.x * rhs.y - g.y * rhs.x) / det, vec2<f32>(-400.0), vec2<f32>(400.0)), abs(det) > 1e-20);
+}
+/// The lattice lives in the surface's anchor space a (so the facets ride a moving body); directions found there are
+/// carried to the world through the screen: the same screen offset applied to the world point's derivatives.
+fn pc_facet(n: vec3<f32>, p: vec3<f32>, a: vec3<f32>) -> vec4<f32> {
   let dpx = dpdx(p);
   let dpy = dpdy(p);
+  let dax = dpdx(a);
+  let day = dpdy(a);
   let dnx = dpdx(n);
   let dny = dpdy(n);
-  let q = p / ${CELL};
+  let q = a / ${CELL};
   let base = vec3<i32>(floor(q));
   var d1 = 1e9;
   var d2 = 1e9;
@@ -77,17 +88,15 @@ fn pc_facet(n: vec3<f32>, p: vec3<f32>) -> vec4<f32> {
   // between this fan triangle and the next (sites 2, 3).
   let wall = (d2 - d1) / (2.0 * max(length(s2 - s1), 1e-4)) * ${CELL};
   let spoke = (d3 - d2) / (2.0 * max(length(s3 - s2), 1e-4)) * ${CELL};
-  // The surface normal carried to the site: solve r = a dpx + b dpy in least squares, then n + a dnx + b dny.
-  let r = s1 * ${CELL} - p;
-  let g = vec3<f32>(dot(dpx, dpx), dot(dpx, dpy), dot(dpy, dpy));
-  let det = g.x * g.z - g.y * g.y;
-  let rhs = vec2<f32>(dot(r, dpx), dot(r, dpy));
-  let ab = select(vec2<f32>(0.0), clamp(vec2<f32>(g.z * rhs.x - g.y * rhs.y, g.x * rhs.y - g.y * rhs.x) / det, vec2<f32>(-400.0), vec2<f32>(400.0)), abs(det) > 1e-20);
+  // The surface normal carried to the site: the screen offset (a, b) that reaches it, then n + a dnx + b dny.
+  let ab = pc_screen(s1 * ${CELL} - a, dax, day);
   let carried = n + ab.x * dnx + ab.y * dny;
   // A carried normal that turned past the surface's own (a cell across a sharp rim) keeps the surface's.
   let flat = select(n, normalize(carried), dot(carried, n) > 0.3 * length(carried));
   // The fan triangle slopes toward its edge of the cell: up for a raised cell, down for a sunk one.
-  let toward = s2 - s1 - flat * dot(s2 - s1, flat);
+  let w = pc_screen(s2 - s1, dax, day);
+  let edge = w.x * dpx + w.y * dpy;
+  let toward = edge - flat * dot(edge, flat);
   let raised = select(-1.0, 1.0, pc_hash3(id1).x > 0.35);
   let slope = toward / max(length(toward), 1e-5) * (${SLOPE} * raised);
   let jitter = (pc_hash3(id1 * 3 + id2 + vec3<i32>(17, 5, 11)) - 0.5) * ${TILT * 2};
@@ -148,7 +157,7 @@ export function papercraft(): Style {
     clear: C.backdrop,
     post: [PAPERCRAFT_POST.studio],
     shade: (ctx) => {
-      const f = facet(ctx.normal, ctx.world);
+      const f = facet(ctx.normal, ctx.world, ctx.anchor);
       const n = f.xyz;
       // Soft studio light: a wrapped warm key from the sun's side, a cool fill from above.
       // The key comes from the sun's side but leans toward the camera and up, as a studio key over a model does,
@@ -164,6 +173,7 @@ export function papercraft(): Style {
     },
     // The hull is the card's cut edge: a little darker than the card.
     ink: (ctx) => mul(card(ctx.base), 0.55),
+    mark: () => lift<"f32">(1),
     water: (ctx) => {
       const xz = ctx.world.xz;
       // Sheets laid along the swell, two edges per wavelength of the largest swell, bent by the height field and
