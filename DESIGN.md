@@ -733,7 +733,10 @@ time derivative of the map, vertical motion included); `drift(xz)` the water's h
 its parts. `SurfaceDrawable.through(chart)` carries a drawable: copies' frames are carried (skeleton placement); a
 single surface's points are mapped and its normals turned with the chart's frame, which is right for thin things riding a
 placed body (fins) and wrong for solids. `examples/maelstrom.ts` coils the serpent this way: its body rebuilt from
-`bodySpec` with more stations, its other strands `placedAs`, its crests, teeth and spikes `through`.
+`bodySpec` with more stations, its other strands `placedAs`, its crests, teeth and spikes `through`. Laid along a radius,
+the whirlpool wound it to 2.8-3 times its length (6 times locally) and it read as a thin ribbon; it is now laid 30
+degrees off the flow (a circle in whirlpool coordinates keeps its radius, so the tilt sets how tight the coil is), 1.4
+times its length (2026-11-11). Its girth stays as authored: its crests, spikes and head ride the authored body's skin.
 
 ### 8.6 Corrections made on the way
 

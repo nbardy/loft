@@ -56,12 +56,16 @@ const debris = [
 ];
 
 // ---- the serpent, coiled ----------------------------------------------------------------------------------------
-// The serpent as authored (head toward +x, around the origin), laid along a radius of the whirlpool: tail inward,
-// head out near the rim. That is its spine in whirlpool coordinates; the whirlpool does the rest.
-const RADIAL = 3.6;
+// The serpent as authored (head toward +x, around the origin), laid across the whirlpool 30 degrees off the flow,
+// tail inward: that is its spine in whirlpool coordinates, and the whirlpool winds it into a coil. Laid along a radius it
+// was wound 2.8 to 3 times its length (6 times locally) and read as a thin ribbon; across the flow a line keeps its
+// radius, so the tilt sets how tightly it coils (1.4 times its length here, scratch measurement 2026-11-11). Its girth
+// stays as authored: the crests, spikes and head ride the authored body's skin, so a thicker coiled body buries them.
+const RADIAL = 2.2, OFF_FLOW = 0.5;
+const heading = RADIAL + Math.PI / 2 - OFF_FLOW;
 const shift: Chart = rigid({
   o: vec3(13.5 * Math.cos(RADIAL), 0, 13.5 * Math.sin(RADIAL)),
-  x: vec3(Math.cos(RADIAL), 0, Math.sin(RADIAL)), y: vec3(0, 1, 0), z: vec3(-Math.sin(RADIAL), 0, Math.cos(RADIAL)),
+  x: vec3(Math.cos(heading), 0, Math.sin(heading)), y: vec3(0, 1, 0), z: vec3(-Math.sin(heading), 0, Math.cos(heading)),
 });
 const coil = compose(vortex, shift);
 // The body again from its spec, with more stations: in the coil it is several times longer than as authored.

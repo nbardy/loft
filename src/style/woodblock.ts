@@ -172,8 +172,10 @@ export function woodblock(): Style {
       const speck = mul(specks(mul(xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
       c = mix(c, rgb(P.indigo), rim);
       c = mix(c, rgb(P.cream), max(foam, speck));
-      // The far sea fades in two flat steps toward the haze at the horizon.
-      const far = add(mul(edgeOf(ctx.distance, 70, 1, 8), 0.45), mul(edgeOf(ctx.distance, 140, 1, 8), 0.4));
+      // The far sea fades toward the haze at the horizon as a bokashi (a graded wiping of the block, as the sky's): two
+      // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
+      // maelstrom's view (examples/maelstrom.ts --style woodblock).
+      const far = mul(smoothstep(50, 220, ctx.distance), 0.85);
       c = mix(c, rgb(SEA.haze), far);
       // Opaque: a print shows nothing under its water.
       return vec4(c, 1);
