@@ -160,7 +160,8 @@ struct FOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
   return out;
 }`,
     ].join("\n");
-    const shader: Shader = { code, libs: fns.flatMap((f) => f.libs) };
+    // One module, four emitted functions: a library function two of them call must be defined once.
+    const shader: Shader = { code, libs: [...new Set(fns.flatMap((f) => f.libs))] };
     return {
       shaders: { [key]: shader },
       draws: [drawSpec({ label: n, shader: key, vertices: 6 * NU * NV, instances: 1, constants: { NU, NV }, cull: "back" })],

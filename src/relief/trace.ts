@@ -21,7 +21,7 @@
 // displace.ts), all of which the vertex stage computes from the surface's own expressions and the rasteriser interpolates.
 
 import {
-  abs, add, and, cross, f, div, dot, ge, gt, iterate, le, lt, max, min, mix, mul, normalize, saturate, select, sqrt, sub, substitute,
+  abs, add, and, cross, f, length, div, dot, ge, gt, iterate, le, lt, max, min, mix, mul, normalize, saturate, select, sqrt, sub, substitute,
   variable, vec2, vec3, type Expr,
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
@@ -46,6 +46,12 @@ export const KIND = { miss: 0, ink: 0.5, hit: 1 } as const;
 
 /** How far a march may run along the ray, in shell thicknesses: past this the second-order model is not trusted. */
 const REACH = 12;
+/**
+ * How far a march may slide along the surface, as a fraction of the radius of curvature in the ray's direction. Past
+ * it the second-order model invents hits: on the serpent's coils, rays grazing past the silhouette met relief that
+ * hung off the body like curtains (2026-11-11, examples/serpent_relief.ts "graze" view). Rays cut off here miss.
+ */
+const SLIDE = 0.75;
 /** The march ends a little below the base, so a ray that meets the base where the height is 0 is a hit, not a miss. */
 const BELOW = 0.01;
 const BIG = 1e20;
@@ -67,6 +73,8 @@ export function firstRoot(a: F, b: F, c: F): F {
 export type ShellModel = {
   /** Surface coordinates and height at t. */
   at(t: F): { readonly u: F; readonly v: F; readonly h: F; readonly du: F; readonly dv: F };
+  /** |d - (d.n) n|: how fast the ray slides along the surface per unit t. */
+  readonly slide: F;
   /** h(t) = c0 + c1 t + c2 t^2. */
   readonly c0: F;
   readonly c1: F;
@@ -88,8 +96,9 @@ export function shellModel(fr: ShellFrame, uv0: Expr<"vec2">, ray: ShellRay): Sh
   const c0 = sub(p.z, mul(II(p.xy, p.xy), 0.5));
   const c1 = sub(q.z, II(p.xy, q.xy));
   const c2 = mul(II(q.xy, q.xy), -0.5);
+  const slide = length(sub(d, mul(fr.n, dot(d, fr.n))));
   return {
-    c0, c1, c2,
+    c0, c1, c2, slide,
     at: (t) => {
       const l = add(p, mul(q, t));
       const h = add(c0, mul(t, add(c1, mul(c2, t))));
@@ -121,7 +130,9 @@ function reliefNormal(fr: ShellFrame, height: Height, n: P3, u: F, v: F): { h: F
 function span(m: ShellModel, top: F): { end: F; exit: F } {
   const out = add(max(top, m.c0), mul(top, 1e-3));
   const base = firstRoot(m.c2, m.c1, add(m.c0, mul(top, BELOW)));
-  const exit = min(firstRoot(m.c2, m.c1, sub(m.c0, out)), mul(top, REACH));
+  // Curvature in the ray's direction is |II(q, q)| / slide^2 = 2 |c2| / slide^2; sliding SLIDE / curvature takes t = SLIDE slide / (2 |c2|).
+  const bend = select(gt(abs(m.c2), 1e-9), div(mul(m.slide, SLIDE * 0.5), max(abs(m.c2), 1e-9)), BIG);
+  const exit = min(min(firstRoot(m.c2, m.c1, sub(m.c0, out)), mul(top, REACH)), bend);
   return { end: min(base, exit), exit };
 }
 

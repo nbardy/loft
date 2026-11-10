@@ -14,3 +14,5 @@ export { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawS
 export { emitFn, emitShaderFn } from "./compile/bind.ts";
 export { TableBudgetError } from "./compile/tables.ts";
 export type { Artefact } from "./artefact.ts";
+export * from "./relief/index.ts";
+export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
