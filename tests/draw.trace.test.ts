@@ -36,7 +36,7 @@ const probeShader = (axis: "x" | "y" | "z") => /* wgsl */ `
   let b = v - r * 65536.0 - g * 256.0;
   return vec4<f32>(r / 255.0, g / 255.0, b / 255.0, select(1.0, 0.0, scene_depth(p.xy) >= 1.0));
 }`;
-const probeDraw = (shader: string): Draw => ({ label: shader, shader, vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, sceneDepth: true });
+const probeDraw = (shader: string): Draw => ({ label: shader, shader, vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" }, sceneDepth: true });
 
 /** The scene's draws named in `keep`, rendered with the probe: per pixel the opaque world point, or undefined. */
 async function positions(s: Scene, keep: readonly string[], camera: Camera, W: number, H: number): Promise<(Vec3 | undefined)[]> {

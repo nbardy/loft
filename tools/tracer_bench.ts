@@ -63,7 +63,7 @@ for (const name of which) {
     const a: Artefact = k === "base" ? await baseArtefact(name) : compile(withSchedule(SCENES[name]!, k));
     const ms = performance.now() - t0;
     const mb = (a.statics ?? []).reduce((n, s) => n + s.data.byteLength, 0) / 2 ** 20;
-    console.log(`${name} ${k}: compile ${ms.toFixed(0)} ms, static tables ${mb.toFixed(2)} MB, ${a.stats.triangles} triangles`);
+    console.log(`${name} ${k}: compile ${ms.toFixed(0)} ms, static tables ${mb.toFixed(2)} MB, ${a.stats.maxTriangles} triangles declared`);
     cams = [...Object.entries(a.cameras), ["far", far(a.cameras.three!)]];
     const dir = `out/tracer/${tag}/${k}`;
     mkdirSync(dir, { recursive: true });

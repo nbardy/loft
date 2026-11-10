@@ -17,6 +17,12 @@
 
 import { CURVE_N, type NumTy } from "./expr.ts";
 
+/**
+ * Slots in the level-of-detail table (`loft_detail`, group 0 binding 4): a uniform array of vec4, 64 KiB, the default
+ * `maxUniformBufferBindingSize`. A uniform, not a storage buffer, so the per-stage storage budget stays the tables'.
+ */
+export const DETAIL_SLOTS = 4096;
+
 /** Prepended by the host to every shader module, before `Artefact.sceneWgsl` and the shader itself. */
 export const PRELUDE_WGSL = /* wgsl */ `
 struct Frame {
@@ -31,6 +37,7 @@ struct Frame {
 @group(0) @binding(1) var<storage, read> inputs: array<f32>;        // host inputs, by slot
 @group(0) @binding(2) var<storage, read> params: array<f32>;        // tunable numbers, by slot
 @group(0) @binding(3) var<storage, read> curves: array<vec4<f32>>;  // rows of CURVE_N samples
+@group(0) @binding(4) var<uniform> loft_detail: array<vec4<f32>, ${DETAIL_SLOTS}>;  // per-frame level of detail (Draw.detail)
 
 const CURVE_N: u32 = ${CURVE_N}u;
 /// Sample curve row \`r\` at x in [0, 1]: linear interpolation, clamped at the ends.
@@ -130,8 +137,45 @@ export type DynamicBuffer = { readonly name: string; readonly binding: number; r
  */
 export type StaticBuffer = { readonly name: string; readonly binding: number; readonly data: Float32Array };
 
+/**
+ * How a draw's size is chosen each frame. The host writes a vec4 per slot into `loft_detail` before the frame and
+ * issues the vertex count that goes with it.
+ *
+ * fixed      `vertices` x `instances`, as declared; no slot.
+ * grid       a grid of cells over two axes, at one of `levels` (finest first; `levels[0].vertices` is `Draw.vertices`).
+ *            Per instance i, slot `slot + i` receives `(cells[0], cells[1], 0, 0)` and the instance is drawn with that
+ *            level's `vertices`. The shape is measured by the compiler at rest: `cell` is a level's largest cell, world
+ *            units, and `radius` the surface's reach from its anchor point, both at scale 1. Per frame the pose's tables
+ *            hold one vec4 per instance at `bound.offset + i` of dynamic buffer `bound.buffer`: (anchor point xyz,
+ *            scale). The host picks, per instance, the coarsest level whose cells (scale x cell) are at most
+ *            `View.cellPixels` across on screen at the nearest point of the sphere (anchor, scale x radius), keeping the
+ *            previous frame's level while its cells stay within [1 / HYSTERESIS, HYSTERESIS] of that rule's bounds, and
+ *            skips an instance whose sphere is under a pixel across or wholly behind the eye. Instances are drawn in
+ *            runs of one level (`firstInstance`), so `@builtin(instance_index)` still names the copy.
+ * projected  a grid laid over the image of the plane y = `plane` out to view depth `reach`: the host chooses
+ *            nx x ny cells of `cell` x `View.cellPixels` pixels covering NDC x in [-1 - m, 1 + m] and NDC y in
+ *            [y0, y1] (the rows whose ray meets the plane within `reach`, widened by m), where m is the screen movement of
+ *            a point of the plane lifted by `lift`, and writes `(nx, ny, y0, y1)` to `slot`, with m in the slot's
+ *            neighbour `slot + 1` as `(m, 0, 0, 0)`. It draws 6 nx ny vertices, or nothing when no row meets the plane.
+ */
+export type Detail =
+  | { readonly kind: "fixed" }
+  | {
+    readonly kind: "grid";
+    readonly slot: number;
+    readonly bound: { readonly buffer: string; readonly offset: number };
+    readonly radius: number;
+    readonly levels: readonly { readonly cells: readonly [number, number]; readonly vertices: number; readonly cell: number }[];
+  }
+  | { readonly kind: "projected"; readonly slot: number; readonly cell: number; readonly plane: number; readonly reach: number; readonly lift: number };
+
+/** A grid keeps its level while its cells stay within this factor beyond the bounds that would choose it afresh. */
+export const HYSTERESIS = 1.25;
+
 export type Draw = {
   readonly label: string;
+  /** How its vertex count is chosen per frame. Two draws with one slot (a surface and its ink) share the choice. */
+  readonly detail: Detail;
   /** Key into `Artefact.shaders`. The module has entry points `vs` and `fs`. */
   readonly shader: string;
   readonly vertices: number;
@@ -197,7 +241,11 @@ export type Artefact = {
   pose(state: FrameState): Readonly<Record<string, Float32Array>>;
   /** Views the scene suggests, by name. */
   readonly cameras: Readonly<Record<string, Camera>>;
-  readonly stats: { readonly triangles: number; readonly draws: number; readonly curveRows: number; readonly stations: number };
+  /**
+   * `maxTriangles`: what the draw list declares (every draw's vertices / 3 x instances, scene layer), the most a frame
+   * can draw; a host drawing at a coarser level of detail draws fewer (`FrameStats`). `draws`: draws declared.
+   */
+  readonly stats: { readonly maxTriangles: number; readonly draws: number; readonly curveRows: number; readonly stations: number };
 };
 
 /** One frame to draw. Missing inputs and params take the artefact's defaults; `time` also fills the `time` input. */
@@ -209,7 +257,21 @@ export type View = {
   readonly inputs?: Readonly<Record<string, number | readonly number[]>>;
   readonly params?: Readonly<Record<string, number>>;
   readonly construction?: boolean;
+  /**
+   * Level of detail: the size, in pixels, a grid cell should have on screen (`Draw.detail`); default `CELL_PIXELS`.
+   * 0 draws every grid at its finest (the authored density).
+   */
+  readonly cellPixels?: number;
 };
+
+/** The default `View.cellPixels`. */
+export const CELL_PIXELS = 7;
+
+/**
+ * What a host actually drew for one frame: triangles submitted (every draw call's vertices / 3 x instances, construction
+ * lines included when shown) and draw calls issued.
+ */
+export type FrameStats = { readonly triangles: number; readonly draws: number };
 
 /** What every host implements. `frame` returns tightly packed RGBA8, top row first. */
 export interface Host {
@@ -218,7 +280,7 @@ export interface Host {
 export interface Loaded {
   frame(view: View): Promise<Uint8Array>;
   /** Draw the same frame into a texture the caller owns (a canvas's current texture), sized as the view. */
-  draw(view: View, target: GPUTexture): Promise<void>;
+  draw(view: View, target: GPUTexture): Promise<FrameStats>;
   /** Replace table-backed curve data without rebuilding pipelines. */
   setCurves(curves: Float32Array): void;
   destroy(): void;

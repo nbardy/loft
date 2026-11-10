@@ -1,12 +1,21 @@
 // The sea: the root chart, local (x, z, height above the surface) with a swell that moves in time, and the water drawn
-// as a glazed `Surface` in that chart. The surface is a grid that grows away from where the view meets the water (so
-// it is evaluated on the GPU only), coloured per pixel by the style's `water`, with foam where the water meets any
+// as a glazed `Surface` in that chart. The surface is a projected grid (`Detail` kind "projected"): cells of about
+// SEA_CELL x `View.cellPixels` pixels laid over the image of the still water out to `reach`, each vertex the point of
+// the still water its pixel sees, lifted to the swell there (exactly the height function at that point). Its cells
+// are the same size on screen everywhere, so the far sea is no longer drawn with triangles far smaller than a pixel.
+// It is evaluated on the GPU only, coloured per pixel by the style's `water`, with foam where the water meets any
 // opaque body found from the scene's depth.
+//
+// Vertices move over the water as the camera moves (a projected grid "swims"). What that can change is small: colour,
+// crest, foam and slope are evaluated per pixel at the interpolated point, and a point of the swell sampled anywhere
+// is still on the swell; only the straight edges between vertices cut the crests, by at most A (pi c / L)^2 / 2 for
+// cells c across a wave of length L and amplitude A (0.003 for the serpent's swell at 1-unit cells).
 
 import {
-  add, cross, distance, exp, lift, max, mul, normalize, sign, abs, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
+  add, cross, distance, lift, max, mul, normalize, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
+import { CELL_PIXELS } from "../artefact.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
 import { eyePosition, viewDir, wgslFn } from "../lib/wgsl.ts";
@@ -51,9 +60,7 @@ export type SeaSpec = {
   readonly swell: readonly SwellSpec[];
   /** Deformations of the water, applied in order (each sees the previous one's coordinates). Default none. */
   readonly deform?: readonly SeaDeform[];
-  /** Cells per side of the sea grid. Default 192. */
-  readonly grid?: number;
-  /** Reach of the grid from its centre, world units. Default 400. */
+  /** How far the water is drawn, as view depth in world units. Default 400. */
   readonly reach?: number;
   /** Width of the foam band where the water meets a body, world units. Default 0.3. */
   readonly foam?: number;
@@ -65,17 +72,25 @@ type Wave = { readonly dir: readonly [number, number]; readonly k: number; reado
 /** The free variable the sea's gradient is taken with respect to (then replaced by the point asked about). */
 const SEA_XZ = variable("loft_sea_xz", "vec2");
 
-/** Growth of the sea grid's cells away from its centre: offset = reach (e^(K|u|) - 1) / (e^K - 1). */
-const SEA_GROWTH = 6;
+/** Sea cells on screen, in units of `View.cellPixels`: shading is per pixel, so the cells carry only the swell's shape. */
+const SEA_CELL = 2.25;
 
-/** Where the sea grid is centred: where the view centre meets the water (or ahead of the eye), snapped to 2 units. */
-const seaCentre = wgslFn<"vec2">({
-  name: "loft_sea_centre", ret: "vec2", wgsl: /* wgsl */ `
-fn loft_sea_centre() -> vec2<f32> {
-  let f = frame.forward.xyz;
-  let e = frame.eye.xyz;
-  let t = select(60.0, clamp(-e.y / f.y, 0.0, 60.0), f.y < -0.01);
-  return floor((e.xz + f.xz * t) / 2.0) * 2.0;
+/**
+ * The point of the still water (y = 0) that grid corner (u, v) of the projected grid sees: NDC x across the screen
+ * widened by the host's margin, NDC y over the rows the host found meeting the water (src/host/detail.ts).
+ * `LOFT_DETAIL_SLOT` is the sea draw's override; the host chose only rows whose rays meet the water ahead.
+ */
+const seaPlane = wgslFn<"vec2">({
+  name: "loft_sea_plane", ret: "vec2", wgsl: /* wgsl */ `
+fn loft_sea_plane(u: f32, v: f32) -> vec2<f32> {
+  let rows = loft_detail[LOFT_DETAIL_SLOT];
+  let m = loft_detail[LOFT_DETAIL_SLOT + 1u].x;
+  let ndc = vec2<f32>(mix(-1.0 - m, 1.0 + m, u), mix(rows.z, rows.w, v));
+  let a = frame.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+  let b = frame.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+  let o = a.xyz / a.w;
+  let d = b.xyz / b.w - o;
+  return (o + d * (-o.y / d.y)).xz;
 }`,
 });
 
@@ -143,11 +158,15 @@ export class Sea implements Chart, Drawable {
   readonly surfaces: readonly Bakeable[] = [];
   private readonly drawn: SurfaceDrawable;
 
-  constructor(readonly waves: readonly Wave[], readonly grid: number, readonly reach: number, readonly foam: number, readonly deforms: readonly SeaDeform[] = []) {
+  constructor(readonly waves: readonly Wave[], readonly reach: number, readonly foam: number, readonly deforms: readonly SeaDeform[] = []) {
     // Transparent: what shows through the water is the submerged body (tinted by its own shader) or, where nothing
-    // is below, the sky shader's under-horizon colour.
+    // is below, the sky shader's under-horizon colour. The host sizes the grid to the screen each frame; the counts
+    // here are only its declared size (`stats.maxTriangles`): what it draws at 1280 x 800 with water to every edge.
+    const lift = waves.reduce((a, w) => a + w.amp, 0);
+    const declared = (pixels: number) => Math.ceil((pixels * 1.1) / (SEA_CELL * CELL_PIXELS));
     this.drawn = drawGlazed("sea", this.surface(), {
-      colour: (fr) => this.water(fr), grid: { u: spacing.even(grid), v: spacing.even(grid) }, phase: "water", sceneDepth: true,
+      colour: (fr) => this.water(fr), grid: { u: spacing.even(declared(1280)), v: spacing.even(declared(800)) }, phase: "water", sceneDepth: true,
+      detail: { kind: "projected", cell: SEA_CELL, plane: 0, reach, lift },
     });
   }
 
@@ -200,13 +219,9 @@ export class Sea implements Chart, Drawable {
   }
   atNear(t: F): Chart { return this.at(t); }
 
-  /** The water: a grid round the view centre whose cells grow away from it, laid in this chart at height 0. */
+  /** The water: the projected grid (seaPlane), laid in this chart at height 0. */
   private surface(): Surface {
-    const offset = (u: F): F => {
-      const a = sub(mul(u, 2), 1);
-      return mul(sign(a), mul(this.reach / (Math.exp(SEA_GROWTH) - 1), sub(exp(mul(abs(a), SEA_GROWTH)), 1)));
-    };
-    const xz = (u: F, v: F) => add(seaCentre(), vec2(offset(u), offset(v)));
+    const xz = (u: F, v: F) => seaPlane(u, v);
     return {
       point: (u, v) => { const p = xz(u, v); return this.frame(vec3(p.x, p.y, 0)).o; },
       normal: (u, v) => { const p = xz(u, v); return this.frame(vec3(p.x, p.y, 0)).y; },
@@ -260,9 +275,7 @@ export function sea(spec: SeaSpec): Sea {
     const k = (2 * Math.PI) / s.length;
     return { dir: [s.direction[0] / l, s.direction[1] / l], k, amp: s.height / 2, omega: k * s.speed, phase: s.phase ?? 0 };
   });
-  const grid = spec.grid ?? 192;
-  if (!(Number.isInteger(grid) && grid >= 8)) throw new Error(`sea: grid must be an integer >= 8, got ${grid}`);
   const foam = spec.foam ?? 0.3;
   if (!(foam > 0)) throw new Error(`sea: foam width must be positive, got ${foam}`);
-  return new Sea(waves, grid, spec.reach ?? 400, foam, spec.deform ?? []);
+  return new Sea(waves, spec.reach ?? 400, foam, spec.deform ?? []);
 }

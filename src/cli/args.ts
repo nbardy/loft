@@ -2,6 +2,7 @@
 // looks at argv. Bad input throws `UsageError` naming the offending flag.
 import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
 
+import type { OutlineMethod } from "../scene.ts";
 import { parseInputs, parseSweep, type InputValues, type Sweep } from "./inputs.ts";
 
 export class UsageError extends Error {}
@@ -21,6 +22,7 @@ export type Command =
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
   | { readonly kind: "dev"; readonly source: Source; readonly port: number }
   | { readonly kind: "check"; readonly path: string }
+  | { readonly kind: "profile"; readonly path: string; readonly style: StyleChoice; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
   | { readonly kind: "bake"; readonly source: Source; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } };
 
 export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
@@ -28,6 +30,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
   dev    <scene> [--port 5173]
+  profile <scene> [--view game] [--size 1280x800] [--frames 30] [--time 1.0] [--style name] [--outline hull|screen]   (GPU ms per draw, best of frames)
   check  <scene>   (runs the scene module's exported \`checks\` on the CPU; exits 1 if any fails)
   --style toon|woodblock|biolume|papercraft  (render, clip, frames, dev) draws the scene in that style instead of its own
   gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
@@ -39,21 +42,23 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
   "--fixture": { value: false, commands: ["render", "clip", "frames", "dev"] },
   "--out": { value: true, commands: ["render", "clip", "frames", "bake"] },
-  "--size": { value: true, commands: ["render", "clip", "frames"] },
+  "--size": { value: true, commands: ["render", "clip", "frames", "profile"] },
+  "--frames": { value: true, commands: ["profile"] },
+  "--outline": { value: true, commands: ["profile"] },
   "--param": { value: true, commands: ["render", "clip", "frames"] },
   "--input": { value: true, commands: ["render", "clip", "frames"] },
   "--sweep": { value: true, commands: ["clip", "frames"] },
   "--count": { value: true, commands: ["frames"] },
   "--views": { value: true, commands: ["render"] },
-  "--time": { value: true, commands: ["render", "bake"] },
+  "--time": { value: true, commands: ["render", "bake", "profile"] },
   "--density": { value: true, commands: ["bake"] },
   "--construction": { value: false, commands: ["render"] },
   "--seconds": { value: true, commands: ["clip"] },
   "--fps": { value: true, commands: ["clip"] },
-  "--view": { value: true, commands: ["clip", "frames"] },
+  "--view": { value: true, commands: ["clip", "frames", "profile"] },
   "--times": { value: true, commands: ["frames"] },
   "--port": { value: true, commands: ["dev"] },
-  "--style": { value: true, commands: ["render", "clip", "frames", "dev"] },
+  "--style": { value: true, commands: ["render", "clip", "frames", "dev", "profile"] },
 };
 
 function num(flag: string, text: string): number {
@@ -80,10 +85,18 @@ function parseParam(text: string): [string, number] {
   return [text.slice(0, i), num(`--param ${text.slice(0, i)}`, text.slice(i + 1))];
 }
 
+function outlineOf(text: string | undefined): "scene" | OutlineMethod {
+  switch (text) {
+    case undefined: return "scene";
+    case "hull": case "screen": return text;
+    default: throw new UsageError(`--outline: "${text}" is not hull or screen`);
+  }
+}
+
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
-  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile"].includes(name)) throw new UsageError(`unknown command "${name}"`);
   if (name === "gallery") return parseGalleryArgs(rest);
 
   const flags = new Map<string, string[]>();
@@ -116,6 +129,16 @@ export function parseArgs(argv: readonly string[]): Command {
   if (name === "check") {
     if (source.kind !== "file") throw new UsageError("check: needs a scene file (a fixture has no checks)");
     return { kind: "check", path: source.path };
+  }
+  if (name === "profile") {
+    if (source.kind !== "file") throw new UsageError("profile: needs a scene file");
+    const frames = one("--frames") === undefined ? 30 : positive("--frames", one("--frames")!);
+    if (!Number.isInteger(frames)) throw new UsageError(`--frames: ${frames} is not a whole number`);
+    return {
+      kind: "profile", path: source.path, style: source.style, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
+      time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
+      outline: outlineOf(one("--outline")),
+    };
   }
   if (name === "dev") return { kind: "dev", source, port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };
 

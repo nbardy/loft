@@ -5,8 +5,8 @@
 // a drawable emits (`fetch`), or declared with `ctx.table` when the drawable writes raw WGSL that reads one. The
 // compiler owns bindings, table packing, the pose function and draw order; nothing in src/compile changes for a new kind.
 
-import type { Draw } from "../artefact.ts";
-import type { LibFn, TableSource } from "../expr.ts";
+import type { Detail, Draw } from "../artefact.ts";
+import type { Expr, LibFn, TableSource } from "../expr.ts";
 import type { Sea } from "../geom/sea.ts";
 import type { Grid } from "../draw/surface.ts";
 import type { P3, Paint, Skeleton, Surface } from "../map/types.ts";
@@ -14,6 +14,7 @@ import type { TriangleMesh } from "../map/nets.ts";
 import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
+import type { OutlineMethod } from "../scene.ts";
 import type { Slots } from "./bind.ts";
 
 /** What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). */
@@ -30,8 +31,26 @@ export const PASS_OF: Readonly<Record<Phase, Draw["pass"]>> = {
   background: "opaque", opaque: "opaque", water: "transparent", "on-water": "transparent", transparent: "transparent",
 };
 
+/**
+ * A draw's level of detail as a drawable states it (the artefact's `Detail` before slots and table offsets exist):
+ * a grid names the per-frame table of its bounds (two lanes per instance, declared through `ctx.table`); the compiler
+ * gives each bound table, and each projected spec, its slots. Draws stating the same bound table share one choice.
+ */
+export type DetailSpec =
+  | { readonly kind: "fixed" }
+  | {
+    readonly kind: "grid";
+    /** One lane per instance: (anchor point, scale), per frame. */
+    readonly bound: TableSource;
+    /** Cell counts per level, finest first. */
+    readonly counts: readonly (readonly [number, number])[];
+    /** What the compiler measures at rest: 5 x 5 grid points (u fastest) and the anchor point (src/draw/grid_detail.ts). */
+    readonly rest: { readonly samples: readonly Expr<"vec3">[]; readonly anchor: Expr<"vec3"> };
+  }
+  | Omit<Extract<Detail, { kind: "projected" }>, "slot">;
+
 /** A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. */
-export type DrawSpec = Omit<Draw, "pass"> & { readonly phase: Phase };
+export type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; readonly detail: DetailSpec };
 
 /**
  * A shader module: its code (entry points `vs` and `fs`) and the library functions that code calls. The compiler puts
@@ -58,6 +77,13 @@ export interface CompileContext {
   table(t: TableSource): TableRef;
   /** Add a full-screen pass after the scene (after the style's own). */
   post(pass: PostSpec): void;
+  /** How ink outlines are drawn in this scene. */
+  readonly outline: OutlineMethod;
+  /**
+   * The alpha an opaque fragment writes for `mark` (WGSL expression `mark`): the mark itself with hull outlines; with
+   * screen outlines, the mark and whether this surface is outlined (src/draw/ink.ts), and asking for the ink pass.
+   */
+  markOut(mark: string, inked: boolean): string;
 }
 
 /** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */
@@ -82,7 +108,7 @@ export interface Drawable {
 /** A draw with the defaults most draws share; each field still has to be meant. */
 export function drawSpec(d: Pick<DrawSpec, "label" | "shader" | "vertices"> & Partial<DrawSpec>): DrawSpec {
   return {
-    instances: 1, phase: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {},
+    instances: 1, phase: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" },
     ...d,
   };
 }

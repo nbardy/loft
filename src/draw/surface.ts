@@ -5,7 +5,8 @@
 
 import { add, cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { boundTable, gridDetail } from "./grid_detail.ts";
 import { carry, rotate } from "../map/chart.ts";
 import { framed } from "../map/surface.ts";
 import type { Chart, F, P3, Paint, Points, Skeleton, Surface } from "../map/types.ts";
@@ -45,7 +46,10 @@ export type Look =
   /** `paint` as the final colour, unlit, opaque: strokes and ink lines. */
   | { readonly kind: "flat"; readonly paint: Paint }
   /** Its own colour and alpha, blended over what is behind it (the sea): no depth write. */
-  | { readonly kind: "glazed"; readonly colour: (f: Fragment) => Expr<"vec4">; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean };
+  | { readonly kind: "glazed"; readonly colour: (f: Fragment) => Expr<"vec4">; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail: GlazedDetail };
+
+/** A glazed surface's grid: as authored, or laid over the screen by the host (the sea). */
+export type GlazedDetail = { readonly kind: "fixed" } | Extract<DetailSpec, { kind: "projected" }>;
 
 /** One copy, or one per point. */
 type Copies = { readonly kind: "one" } | { readonly kind: "points"; readonly points: Points };
@@ -95,9 +99,9 @@ export class SurfaceDrawable implements Drawable {
     const frag = fragment(ctx, this);
     const instances = countOf(this.copies);
     const NU = this.grid.u.count, NV = this.grid.v.count;
+    const detail = detailOf(ctx, this);
     const code = [
-      `override NU: u32 = ${NU}u;`,
-      `override NV: u32 = ${NV}u;`,
+      cellsWgsl(detail, NU, NV),
       frag.overrides,
       `const ID: f32 = ${lit(nameId(this.name))};`,
       vertex.code, frag.fns.code,
@@ -111,8 +115,9 @@ struct VOut {
   @location(4) @interpolate(flat) id: f32,
 };
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
-  let ij = vec2<u32>((vi / 6u) / NV, (vi / 6u) % NV) + quad_corner(vi % 6u);
-  let s = surf_${this.name}(f32(ij.x) / f32(NU), f32(ij.y) / f32(NV), f32(ii));
+  let n = grid_cells(ii);
+  let ij = vec2<u32>((vi / 6u) / n.y, (vi / 6u) % n.y) + quad_corner(vi % 6u);
+  let s = surf_${this.name}(f32(ij.x) / f32(n.x), f32(ij.y) / f32(n.y), f32(ii));
   let p = ${frag.push};
   var out: VOut;
   out.clip = frame.view_proj * vec4<f32>(p, 1.0);
@@ -125,9 +130,44 @@ struct VOut {
 }
 ${frag.main}`,
     ].join("\n");
-    const base = { label: this.name, shader: key, vertices: 6 * NU * NV, instances, constants: { NU, NV } };
+    const base = { label: this.name, shader: key, vertices: 6 * NU * NV, instances, constants: constantsOf(detail, NU, NV), detail: detail.spec };
     const shader: Shader = { code, libs: [...vertex.libs, ...frag.fns.libs] };
     return { shaders: { [key]: shader }, draws: frag.draws(base) };
+  }
+}
+
+/**
+ * How a drawn surface's grid size is chosen: fixed at the authored counts, or by the host from the surface's size on
+ * screen (lit surfaces: bodies, sheets, hulls, sails). Glazed surfaces (the sea's own grid is its business; markers and
+ * smears on it) and flat strokes (whose grids carry structure, such as a ship's ropes joined by zero-width cells) stay
+ * fixed.
+ */
+type SurfaceDetail = { readonly kind: "fixed" | "grid" | "projected"; readonly spec: DetailSpec };
+
+function detailOf(ctx: CompileContext, d: SurfaceDrawable): SurfaceDetail {
+  switch (d.look.kind) {
+    case "lit": {
+      const at = { u: d.grid.u.at, v: d.grid.v.at };
+      const bound = boundTable(d.name, d.surface, at, d.copies);
+      ctx.table(bound);
+      return { kind: "grid", spec: gridDetail(bound, d.surface, at, d.copies, d.grid.u.count, d.grid.v.count) };
+    }
+    case "flat": return { kind: "fixed", spec: { kind: "fixed" } };
+    case "glazed": return d.look.detail.kind === "fixed" ? { kind: "fixed", spec: d.look.detail } : { kind: "projected", spec: d.look.detail };
+  }
+}
+/** `fn grid_cells(ii) -> vec2<u32>`: the cell counts this instance is drawn with. */
+function cellsWgsl(d: SurfaceDetail, nu: number, nv: number): string {
+  switch (d.kind) {
+    case "fixed": return `override NU: u32 = ${nu}u;\noverride NV: u32 = ${nv}u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(NU, NV); }`;
+    case "grid": return `override LOFT_DETAIL_SLOT: u32 = 0u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(loft_detail[LOFT_DETAIL_SLOT + ii].xy); }`;
+    case "projected": return `override LOFT_DETAIL_SLOT: u32 = 0u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(loft_detail[LOFT_DETAIL_SLOT].xy); }`;
+  }
+}
+function constantsOf(d: SurfaceDetail, nu: number, nv: number): Readonly<Record<string, number>> {
+  switch (d.kind) {
+    case "fixed": return { NU: nu, NV: nv };
+    case "grid": case "projected": return {};
   }
 }
 
@@ -215,7 +255,7 @@ function placedSurface(s: Surface, c: Copies): Surface {
   }
 }
 
-type Base = Pick<DrawSpec, "label" | "shader" | "vertices" | "instances" | "constants">;
+type Base = Pick<DrawSpec, "label" | "shader" | "vertices" | "instances" | "constants" | "detail">;
 type Frag = { readonly overrides: string; readonly fns: Shader; readonly push: string; readonly main: string; readonly draws: (b: Base) => DrawSpec[] };
 
 const LIT_PRE = /* wgsl */ `
@@ -233,34 +273,21 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   let base = paint_${d.name}(in.uv.x, in.uv.y);`;
       const cull = look.sides === "one" ? "back" : "none";
       switch (look.outline) {
-        case "hull": return {
-          overrides: "override INK: f32 = 0.0;", fns: paintFn(look.paint), push: "s.pos + s.normal * (INK * ink_width(s.pos))",
-          // INK is an override, so this branch is uniform (the style's shading takes screen-space derivatives), and the
-          // outline pass does not pay for the shading it would throw away.
-          main: `${head}
-  let mk = mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id);
-  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk); }
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
-}`,
-          draws: (b) => [
-            drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
-            drawSpec({ ...b, label: `${b.label} outline`, cull: "front", constants: { ...b.constants, INK: 1 } }),
-          ],
-        };
+        case "hull": return hullOutline(ctx, head, paintFn(look.paint), cull);
         case "border": return {
           overrides: "", fns: paintFn(look.paint), push: "s.pos",
           // Ink along the v = 1 edge, in the surface's own coordinates: about two pixels wide at any distance.
           main: `${head}
   let fw = fwidth(in.uv.y);
   let edge = 1.0 - smoothstep(fw * 1.0, fw * 2.2, 1.0 - in.uv.y);
-  return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id));
+  return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
         case "none": return {
           overrides: "", fns: paintFn(look.paint), push: "s.pos",
           main: `${head}
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id));
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
@@ -284,6 +311,33 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   }
 }
 
+/** A closed surface's ink: a second draw pushed out along the normal (hull), or a flag for the screen pass. */
+function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: DrawSpec["cull"]): Frag {
+  switch (ctx.outline) {
+    case "hull": return {
+      overrides: "override INK: f32 = 0.0;", fns: paint, push: "s.pos + s.normal * (INK * ink_width(s.pos))",
+      // INK is an override, so this branch is uniform (the style's shading takes screen-space derivatives), and the
+      // outline pass does not pay for the shading it would throw away.
+      main: `${head}
+  let mk = mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id);
+  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk); }
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
+}`,
+      draws: (b) => [
+        drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
+        drawSpec({ ...b, label: `${b.label} outline`, cull: "front", constants: { ...b.constants, INK: 1 } }),
+      ],
+    };
+    case "screen": return {
+      overrides: "", fns: paint, push: "s.pos",
+      main: `${head}
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", true)});
+}`,
+      draws: (b) => [drawSpec({ ...b, cull })],
+    };
+  }
+}
+
 /** Options for a lit surface. */
 export type SurfaceOptions = { readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly outline: Outline };
 
@@ -293,8 +347,8 @@ export function drawSurface(name: string, surface: Surface, o: SurfaceOptions): 
 }
 
 /** A surface with its own colour and alpha over what is behind it (the sea; a decal surface). */
-export function drawGlazed(name: string, surface: Surface, o: { readonly colour: (f: Fragment) => Expr<"vec4">; readonly grid: Grid; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean }): SurfaceDrawable {
-  return new SurfaceDrawable(name, surface, o.grid, { kind: "glazed", colour: o.colour, phase: o.phase, sceneDepth: o.sceneDepth }, { kind: "one" });
+export function drawGlazed(name: string, surface: Surface, o: { readonly colour: (f: Fragment) => Expr<"vec4">; readonly grid: Grid; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail?: GlazedDetail }): SurfaceDrawable {
+  return new SurfaceDrawable(name, surface, o.grid, { kind: "glazed", colour: o.colour, phase: o.phase, sceneDepth: o.sceneDepth, detail: o.detail ?? { kind: "fixed" } }, { kind: "one" });
 }
 
 /** A surface whose paint is its final colour (a stroke, an ink line). */

@@ -44,7 +44,7 @@ const water = sea({
     { direction: [1, 0.3], length: 20, height: 0.5, speed: 2 },
     { direction: [-0.3, 1], length: 8, height: 0.16, speed: 1.2, phase: 1.3 },
   ],
-  deform: [pool], grid: 256, reach: 300, foam: 0.45,
+  deform: [pool], reach: 300, foam: 0.45,
 });
 const vortex = pool.in(water);
 

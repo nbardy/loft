@@ -1,5 +1,5 @@
 // loft CLI. Dispatch only: each command is one function below.
-import type { Loaded } from "../artefact.ts";
+import type { GpuLoaded } from "../host/host.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { contactSheet, writeWebp, type Frame } from "./image.ts";
@@ -9,22 +9,22 @@ import { openVideo } from "./video.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
-async function open(cmd: Exclude<Command, { kind: "dev" | "bake" | "check" | "gallery" }>, sweep: Sweep) {
+async function open(cmd: Exclude<Command, { kind: "dev" | "bake" | "check" | "gallery" | "profile" }>, sweep: Sweep) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   checkInputs(artefact, cmd.inputs, sweep);
-  console.log(`compile  ${ms(t)}  (${artefact.stats.triangles} triangles, ${artefact.stats.draws} draws)`);
+  console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
   t = performance.now();
-  const loaded: Loaded = await (await headlessHost()).load(artefact);
+  const loaded: GpuLoaded = await (await headlessHost()).load(artefact);
   console.log(`load     ${ms(t)}`);
   return { artefact, loaded };
 }
 
-async function timed(label: string, draw: () => Promise<Uint8Array>): Promise<Uint8Array> {
+async function timed(label: string, draw: () => ReturnType<GpuLoaded["frameTimed"]>): Promise<Uint8Array> {
   const t = performance.now();
-  const rgba = await draw();
-  console.log(`frame    ${ms(t)}  ${label}`);
-  return rgba;
+  const r = await draw();
+  console.log(`frame    ${ms(t)}  ${label}  (${r.drawn.triangles} triangles drawn, ${r.drawn.draws} draw calls)`);
+  return r.pixels;
 }
 
 async function render(cmd: Extract<Command, { kind: "render" }>) {
@@ -32,7 +32,7 @@ async function render(cmd: Extract<Command, { kind: "render" }>) {
   const frames: Frame[] = [];
   for (const name of cmd.views) {
     const camera = resolveCamera(artefact, name);
-    const rgba = await timed(name, () => loaded.frame({ camera, ...cmd.size, time: cmd.time, params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
+    const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: cmd.time, params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
     frames.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -48,7 +48,7 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
     const label = cmd.sweep.kind === "linear" ? `t=${time} ${cmd.sweep.name}=${inputs[cmd.sweep.name]!.map((x) => +x.toFixed(4)).join(",")}` : `t=${time}`;
-    const rgba = await timed(label, () => loaded.frame({ camera, ...cmd.size, time, params: cmd.params, inputs }));
+    const rgba = await timed(label, () => loaded.frameTimed({ camera, ...cmd.size, time, params: cmd.params, inputs }));
     out.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -83,6 +83,7 @@ async function main(argv: readonly string[]) {
     case "bake": return (await import("../bake/command.ts")).bake(cmd);
     case "check": return (await import("./check.ts")).check(cmd);
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
+    case "profile": return (await import("./profile.ts")).profile(cmd);
   }
 }
 

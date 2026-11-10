@@ -23,9 +23,12 @@
 //
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts) stays clean.
 
-import { POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type PostPass, type Host, type Loaded, type View } from "../artefact.ts";
+import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type FrameStats, type PostPass, type Host, type Loaded, type View } from "../artefact.ts";
 import { CURVE_N, type NumTy } from "../expr.ts";
 import { cameraMatrices } from "./camera.ts";
+import { planFrame, slotsUsed, type Memory, type Plan } from "./detail.ts";
+import { profileFrames, type Profile } from "./profile.ts";
+export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 
 /** The colour target format. A canvas drawn through `draw` must be configured with this format. */
 export const COLOR_FORMAT: GPUTextureFormat = "rgba8unorm";
@@ -42,13 +45,18 @@ export type FrameTimings = {
 };
 
 export interface GpuLoaded extends Loaded {
-  /** `frame`, with milliseconds per stage. */
-  frameTimed(view: View): Promise<{ readonly pixels: Uint8Array; readonly ms: FrameTimings }>;
+  /** `frame`, with milliseconds per stage and what was drawn. */
+  frameTimed(view: View): Promise<{ readonly pixels: Uint8Array; readonly ms: FrameTimings; readonly drawn: FrameStats }>;
   /**
    * Browser path: draw the same frame into `target` (for example `context.getCurrentTexture()`), which must be
    * `COLOR_FORMAT` and exactly `view.width` x `view.height`. Resolves once validation of the submit is known.
    */
-  draw(view: View, target: GPUTexture): Promise<void>;
+  draw(view: View, target: GPUTexture): Promise<FrameStats>;
+  /**
+   * GPU time per draw and per fixed stage, the minimum over `frames` frames of the same view (src/host/profile.ts).
+   * Needs a device created with the "timestamp-query" feature; throws without it.
+   */
+  profile(view: View, frames: number): Promise<Profile>;
 }
 export interface GpuHost extends Host {
   load(artefact: Artefact): Promise<GpuLoaded>;
@@ -96,6 +104,30 @@ function checkArtefact(a: Artefact): { paramFloats: number } {
     if (!(d.shader in a.shaders)) fail(`draw "${d.label}" names unknown shader "${d.shader}"`);
     // Opaque draws are what scene depth is made of; one cannot read it while it is being written.
     if (d.sceneDepth === true && d.pass === "opaque") fail(`draw "${d.label}" sets sceneDepth but is opaque; only transparent draws can read the opaque scene's depth`);
+  }
+  const bySlot = new Map<number, string>();
+  for (const d of a.draws) {
+    const detail = d.detail;
+    switch (detail.kind) {
+      case "fixed": break;
+      case "grid": {
+        const buf = a.dynamic.find((b) => b.name === detail.bound.buffer);
+        if (!buf) fail(`draw "${d.label}" reads its bounds from "${detail.bound.buffer}", which is not a dynamic buffer`);
+        if (detail.bound.offset + d.instances > buf!.vec4s) fail(`draw "${d.label}": its bounds overrun "${detail.bound.buffer}"`);
+        if (detail.levels.length === 0 || detail.levels[0]!.vertices !== d.vertices) fail(`draw "${d.label}": its finest level must have the draw's ${d.vertices} vertices`);
+        if (detail.slot + d.instances > DETAIL_SLOTS) fail(`draw "${d.label}": slots ${detail.slot}..${detail.slot + d.instances} exceed ${DETAIL_SLOTS}`);
+        break;
+      }
+      case "projected":
+        if (detail.slot + 2 > DETAIL_SLOTS) fail(`draw "${d.label}": slot ${detail.slot} exceeds ${DETAIL_SLOTS}`);
+        break;
+    }
+    // A slot is one choice: draws sharing it (a surface and its ink) must describe the same detail.
+    if (detail.kind !== "fixed") {
+      const key = JSON.stringify(detail), seen = bySlot.get(detail.slot);
+      if (seen !== undefined && seen !== key) fail(`draw "${d.label}" shares level-of-detail slot ${detail.slot} with a draw whose detail differs`);
+      bySlot.set(detail.slot, key);
+    }
   }
   for (const p of a.post ?? []) if (!(p.shader in a.shaders)) fail(`post pass "${p.label}" names unknown shader "${p.shader}"`);
   return { paramFloats };
@@ -171,7 +203,7 @@ function fullScreenPipeline(label: string, layout: GPUPipelineLayout, module: GP
 }
 
 /** The single-sampled opaque depth that SCENE_DEPTH_WGSL reads. */
-const SCENE_DEPTH_FORMAT: GPUTextureFormat = "r32float";
+export const SCENE_DEPTH_FORMAT: GPUTextureFormat = "r32float";
 
 // The nearest of each pixel's samples (SCENE_DEPTH_WGSL's comment says why the minimum and not the mean).
 const DEPTH_RESOLVE_WGSL = /* wgsl */ `
@@ -235,7 +267,7 @@ function slotsOf(a: Artefact): Slots {
   };
 }
 
-function frameUniform(view: View): Float32Array<ArrayBuffer> {
+export function frameUniform(view: View): Float32Array<ArrayBuffer> {
   const m = cameraMatrices(view.camera, view.width / view.height);
   const u = new Float32Array(FRAME_FLOATS);
   u.set(m.viewProj, 0);
@@ -255,13 +287,13 @@ type Targets = {
   readonly width: number;
   readonly height: number;
   readonly textures: readonly GPUTexture[];
-  readonly record: (encoder: GPUCommandEncoder, out: GPUTextureView, construction: boolean) => void;
+  readonly record: (encoder: GPUCommandEncoder, out: GPUTextureView, plan: Plan) => void;
 };
 /** The headless output texture and its readback buffer. */
 type Readback = { readonly width: number; readonly height: number; readonly texture: GPUTexture; readonly buffer: GPUBuffer; readonly bytesPerRow: number };
 
 /** Decided once at load from the artefact (see the header). */
-type Schedule =
+export type Schedule =
   | { readonly kind: "plain" }
   | {
     readonly kind: "split";
@@ -273,9 +305,10 @@ type Schedule =
     readonly post: readonly GPURenderPipeline[];
   };
 
-type Drawn = { readonly draw: Draw; readonly pipeline: GPURenderPipeline };
+export type Drawn = { readonly draw: Draw; readonly pipeline: GPURenderPipeline; readonly index: number };
+export type { Plan, Run } from "./detail.ts";
 /** What every schedule's recording shares: the artefact's clear colour, its draws and bind groups 0 and 1. */
-type Scene = {
+export type Scene = {
   readonly clear: GPUColor;
   readonly opaque: readonly Drawn[];
   readonly transparent: readonly Drawn[];
@@ -283,14 +316,23 @@ type Scene = {
   readonly group1: GPUBindGroup;
 };
 
-function drawAll(pass: GPURenderPassEncoder, list: readonly Drawn[], construction: boolean): void {
-  for (const { draw, pipeline } of list) {
-    if (draw.layer === "construction" && !construction) continue;
-    pass.setPipeline(pipeline);
-    pass.draw(draw.vertices, draw.instances);
-  }
+export function drawOne(pass: GPURenderPassEncoder, d: Drawn, plan: Plan): void {
+  const runs = plan[d.index]!;
+  if (runs.length === 0) return;
+  pass.setPipeline(d.pipeline);
+  for (const r of runs) pass.draw(r.vertices, r.instances, 0, r.first);
+}
+function drawAll(pass: GPURenderPassEncoder, list: readonly Drawn[], plan: Plan): void {
+  for (const d of list) drawOne(pass, d, plan);
 }
 
+
+/** What a plan draws (FrameStats): scene triangles, and the draw calls issued. */
+function statsOf(plan: Plan): FrameStats {
+  let triangles = 0, draws = 0;
+  for (const runs of plan) for (const r of runs) { triangles += (r.vertices / 3) * r.instances; draws++; }
+  return { triangles: Math.round(triangles), draws };
+}
 
 /** plain: one 4x pass, opaque then transparent, resolved into the output. */
 function plainTargets(device: GPUDevice, scene: Scene, size: { width: number; height: number }): Targets {
@@ -300,7 +342,7 @@ function plainTargets(device: GPUDevice, scene: Scene, size: { width: number; he
   return {
     ...size,
     textures: [colour, depth],
-    record: (encoder, out, construction) => {
+    record: (encoder, out, plan) => {
       const pass = encoder.beginRenderPass({
         label: "loft scene",
         colorAttachments: [{ view: colourView, resolveTarget: out, loadOp: "clear", storeOp: "discard", clearValue: scene.clear }],
@@ -308,7 +350,7 @@ function plainTargets(device: GPUDevice, scene: Scene, size: { width: number; he
       });
       pass.setBindGroup(0, scene.group0);
       pass.setBindGroup(1, scene.group1);
-      drawAll(pass, [...scene.opaque, ...scene.transparent], construction);
+      drawAll(pass, [...scene.opaque, ...scene.transparent], plan);
       pass.end();
     },
   };
@@ -338,7 +380,7 @@ function splitTargets(device: GPUDevice, scene: Scene, s: Extract<Schedule, { ki
   return {
     ...size,
     textures: [colour, depth, sceneDepth, ...intermediates.map((i) => i.texture)],
-    record: (encoder, out, construction) => {
+    record: (encoder, out, plan) => {
       const opaque = encoder.beginRenderPass({
         label: "loft scene opaque",
         colorAttachments: [{ view: colourView, loadOp: "clear", storeOp: "store", clearValue: scene.clear }],
@@ -346,7 +388,7 @@ function splitTargets(device: GPUDevice, scene: Scene, s: Extract<Schedule, { ki
       });
       opaque.setBindGroup(0, scene.group0);
       opaque.setBindGroup(1, scene.group1);
-      drawAll(opaque, scene.opaque, construction);
+      drawAll(opaque, scene.opaque, plan);
       opaque.end();
 
       const resolve = encoder.beginRenderPass({
@@ -366,7 +408,7 @@ function splitTargets(device: GPUDevice, scene: Scene, s: Extract<Schedule, { ki
       transparent.setBindGroup(0, scene.group0);
       transparent.setBindGroup(1, scene.group1);
       transparent.setBindGroup(2, depthGroup); // ignored by pipelines whose layout stops at group 1
-      drawAll(transparent, scene.transparent, construction);
+      drawAll(transparent, scene.transparent, plan);
       transparent.end();
 
       s.post.forEach((pipeline, i) => {
@@ -429,6 +471,12 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const inputBuf = buffer("inputs", a.inputFloats * 4, STORAGE);
   const paramBuf = buffer("params", paramFloats * 4, STORAGE);
   const curveBuf = buffer("curves", a.curves.byteLength, STORAGE);
+  const detailBuf = buffer("loft_detail", DETAIL_SLOTS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+  const detail = new Float32Array(DETAIL_SLOTS * 4);
+  // Only the slots the artefact uses are uploaded each frame (the rest of the 64 KiB array is never read).
+  const detailFloats = Math.max(4, slotsUsed(a) * 4);
+  // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames.
+  const memory: Memory = new Map();
   if (a.curves.length > 0) device.queue.writeBuffer(curveBuf, 0, a.curves as Float32Array<ArrayBuffer>); // Dawn warns on empty writes
   const dynamic = a.dynamic.map((d) => ({ ...d, gpu: buffer(d.name, d.vec4s * 16, STORAGE) }));
   // Static tables: written once, here (absent means none).
@@ -441,12 +489,12 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const storageEntry = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: VISIBILITY, buffer: { type: "read-only-storage" } });
   const layout0 = device.createBindGroupLayout({
     label: "loft prelude",
-    entries: [{ binding: 0, visibility: VISIBILITY, buffer: { type: "uniform" } }, storageEntry(1), storageEntry(2), storageEntry(3)],
+    entries: [{ binding: 0, visibility: VISIBILITY, buffer: { type: "uniform" } }, storageEntry(1), storageEntry(2), storageEntry(3), { binding: 4, visibility: VISIBILITY, buffer: { type: "uniform" } }],
   });
   const layout1 = device.createBindGroupLayout({ label: "loft scene tables", entries: group1Buffers.map((d) => storageEntry(d.binding)) });
   const group0 = device.createBindGroup({
     layout: layout0,
-    entries: [frameBuf, inputBuf, paramBuf, curveBuf].map((b, binding) => ({ binding, resource: { buffer: b } })),
+    entries: [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf].map((b, binding) => ({ binding, resource: { buffer: b } })),
   });
   const group1 = device.createBindGroup({ layout: layout1, entries: group1Buffers.map((d) => ({ binding: d.binding, resource: { buffer: d.gpu } })) });
   // Group 2 layouts: exactly the ones documented on SCENE_DEPTH_WGSL and POST_WGSL.
@@ -483,12 +531,13 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     const v = drawVariant(d);
     if (!pipelines.has(key)) pipelines.set(key, await createPipeline(device, `shader "${d.shader}" (draw "${d.label}")`, drawPipeline(layouts[v], modules.get(moduleKey(d.shader, v))!, d)));
   }
-  const drawn = (pass: Draw["pass"]) => a.draws.filter((d) => d.pass === pass).map((d) => ({ draw: d, pipeline: pipelines.get(pipelineKey(d))! }));
+  const drawn = (pass: Draw["pass"]): Drawn[] => a.draws.flatMap((d, index) => (d.pass === pass ? [{ draw: d, pipeline: pipelines.get(pipelineKey(d))!, index }] : []));
   const scene: Scene = { clear: { r: a.clear[0], g: a.clear[1], b: a.clear[2], a: 1 }, opaque: drawn("opaque"), transparent: drawn("transparent"), group0, group1 };
 
   const split = post.length > 0 || a.draws.some((d) => d.sceneDepth === true);
+  const postModules = post.map((p) => ({ pass: p, module: modules.get(moduleKey(p.shader, "post"))! }));
   const schedule: Schedule = split
-    ? { kind: "split", depthLayout, postLayout, ...await splitPipelines(device, layouts.post, post.map((p) => ({ pass: p, module: modules.get(moduleKey(p.shader, "post"))! }))) }
+    ? { kind: "split", depthLayout, postLayout, ...await splitPipelines(device, layouts.post, postModules) }
     : { kind: "plain" };
   const declared = new Set(a.dynamic.map((d) => d.name));
 
@@ -515,10 +564,13 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     return readback;
   };
 
-  /** Pose and upload. Every `writeBuffer` precedes the one submit that reads it, so queue ordering is not a concern. */
+  /**
+   * Pose and upload, and the frame's plan: the draw calls to issue. Every `writeBuffer` precedes the one submit that
+   * reads it, so queue ordering is not a concern.
+   */
   // The curve data the GPU holds, so the pose pass reads the same curves (FrameState.curves).
   let curves = a.curves;
-  const upload = (view: View): void => {
+  const upload = (view: View): Plan => {
     const state = frameState(a, slots, paramFloats, curves, view);
     const tables = a.pose(state);
     for (const name of Object.keys(tables)) if (!declared.has(name)) throw new Error(`pose returned "${name}", which is not a declared dynamic buffer`);
@@ -531,11 +583,14 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     device.queue.writeBuffer(frameBuf, 0, frameUniform(view));
     if (state.inputs.length > 0) device.queue.writeBuffer(inputBuf, 0, state.inputs as Float32Array<ArrayBuffer>);
     if (state.params.length > 0) device.queue.writeBuffer(paramBuf, 0, state.params as Float32Array<ArrayBuffer>);
+    const plan = planFrame(a, view, tables, memory, detail);
+    device.queue.writeBuffer(detailBuf, 0, detail, 0, detailFloats);
+    return plan;
   };
 
   /** The shared drawing code, for `frame` and `draw` alike: every pass of the schedule, ending in `out`. */
-  const record = (encoder: GPUCommandEncoder, view: View, out: GPUTextureView): void => {
-    targetsFor(view).record(encoder, out, view.construction === true);
+  const record = (encoder: GPUCommandEncoder, view: View, out: GPUTextureView, plan: Plan): void => {
+    targetsFor(view).record(encoder, out, plan);
   };
 
   const checkView = (view: View): void => {
@@ -563,12 +618,13 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     try {
       const t0 = performance.now();
       let t1 = t0;
+      let plan: Plan = [];
       const rb = await validated("frame", () => {
-        upload(view);
+        plan = upload(view);
         t1 = performance.now();
         const rb = readbackFor(view);
         const encoder = device.createCommandEncoder({ label: "loft frame" });
-        record(encoder, view, rb.texture.createView());
+        record(encoder, view, rb.texture.createView(), plan);
         encoder.copyTextureToBuffer({ texture: rb.texture }, { buffer: rb.buffer, bytesPerRow: rb.bytesPerRow, rowsPerImage: view.height }, { width: view.width, height: view.height });
         device.queue.submit([encoder.finish()]);
         return rb;
@@ -581,7 +637,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       for (let y = 0; y < view.height; y++) pixels.set(mapped.subarray(y * rb.bytesPerRow, y * rb.bytesPerRow + row), y * row);
       rb.buffer.unmap();
       const t3 = performance.now();
-      return { pixels, ms: { pose: t1 - t0, encode: t2 - t1, readback: t3 - t2 } };
+      return { pixels, ms: { pose: t1 - t0, encode: t2 - t1, readback: t3 - t2 }, drawn: statsOf(plan) };
     } finally {
       reading = false;
     }
@@ -596,12 +652,21 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       if (target.width !== view.width || target.height !== view.height) {
         throw new Error(`draw: target is ${target.width} x ${target.height} but the view is ${view.width} x ${view.height}`);
       }
-      await validated("draw", () => {
-        upload(view);
+      return validated("draw", () => {
+        const plan = upload(view);
         const encoder = device.createCommandEncoder({ label: "loft draw" });
-        record(encoder, view, target.createView());
+        record(encoder, view, target.createView(), plan);
         device.queue.submit([encoder.finish()]);
+        return statsOf(plan);
       });
+    },
+    profile: async (view, frames) => {
+      checkView(view);
+      if (!(Number.isInteger(frames) && frames >= 1)) throw new Error(`profile: frames must be a positive integer, got ${frames}`);
+      return validated("profile", () => profileFrames({
+        device, scene, schedule, size: { width: view.width, height: view.height }, frames,
+        upload: () => { const t0 = performance.now(); const plan = upload(view); return { plan, poseMs: performance.now() - t0 }; },
+      }));
     },
     setCurves: (next) => {
       if (next.length !== a.curves.length) throw new Error(`setCurves: got ${next.length} floats; the artefact has ${a.curves.length}`);
@@ -610,7 +675,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       curves = next.slice();
     },
     destroy: () => {
-      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, ...group1Buffers.map((d) => d.gpu)]) b.destroy();
+      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf, ...group1Buffers.map((d) => d.gpu)]) b.destroy();
       for (const t of targets?.textures ?? []) t.destroy();
       readback?.texture.destroy(); readback?.buffer.destroy();
       targets = undefined; readback = undefined;

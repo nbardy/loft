@@ -42,7 +42,7 @@ export type TableLayout = {
 
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 const accessor = (name: string): string => `t_${name}`;
-const bufferName = (k: number): string => `loft_tables_${k}`;
+export const bufferName = (k: number): string => `loft_tables_${k}`;
 const staticName = (k: number): string => `loft_static_${k}`;
 const vec4sOf = (t: TableSource): number => t.entries * t.lanes;
 const UNFILLED: TableFill = () => { throw new Error("internal: a table was read while it was being prepared"); };
@@ -124,9 +124,10 @@ export class Tables {
 }
 
 /** One frame's buffers, with every table filled on first read (so a table may read another; a cycle throws). */
-export function poseFrame(layout: TableLayout, env: (state: FrameState) => Omit<Env, "tables">, state: FrameState): { frame: TableFrame; buffers: Float32Array[] } {
+export function poseFrame(layout: TableLayout, env: (state: FrameState) => Omit<Env, "tables">, state: FrameState, clock?: Map<string, number>): { frame: TableFrame; buffers: Float32Array[] } {
   const buffers = layout.dynamic.map((d) => new Float32Array(d.vec4s * 4));
   const filled = new Set<TableSource>(), filling: TableSource[] = [];
+  const children: number[] = [];
   const table = (t: TableSource): Float32Array => {
     const p = layout.placed.get(t);
     if (!p) throw new Error(`pose: the table "${t.name}" is not in this artefact (nothing drawn reads it)`);
@@ -135,7 +136,13 @@ export function poseFrame(layout: TableLayout, env: (state: FrameState) => Omit<
     if (filled.has(t)) return view;
     if (filling.includes(t)) throw new Error(`pose: table "${t.name}" depends on itself (through ${[...filling, t].map((x) => x.name).join(" -> ")})`);
     filling.push(t);
+    const t0 = performance.now();
+    children.push(0);
     p.fill(frame, view);
+    // Exclusive time: the tables this fill read were filled inside it and charged their own time.
+    const spent = performance.now() - t0, inner = children.pop()!;
+    clock?.set(t.name, spent - inner);
+    if (children.length > 0) children[children.length - 1] += spent;
     filling.pop();
     filled.add(t);
     return view;
@@ -151,4 +158,15 @@ export function poseFunction(layout: TableLayout, env: (state: FrameState) => Om
     for (const p of layout.placed.values()) if (p.kind === "dynamic") frame.table(p.table);
     return Object.fromEntries(layout.dynamic.map((d, k) => [d.name, buffers[k]]));
   };
+}
+
+/**
+ * CPU milliseconds per table for one pose, by name: each fill's own time, without the tables it read (those count as
+ * themselves). For profiling; the artefact's pose function does the same work without the clock.
+ */
+export function poseProfile(layout: TableLayout, env: (state: FrameState) => Omit<Env, "tables">, state: FrameState): Map<string, number> {
+  const own = new Map<string, number>();
+  const { frame } = poseFrame(layout, env, state, own);
+  for (const t of layout.placed.keys()) frame.table(t);
+  return own;
 }

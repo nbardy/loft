@@ -15,7 +15,16 @@ export type SceneSpec = {
   /** Direction toward the sun (normalised here). */
   readonly sun: readonly [number, number, number];
   readonly cameras?: Readonly<Record<string, Camera>>;
+  /** How ink outlines are drawn (`OutlineMethod`). Default `DEFAULT_OUTLINE`. */
+  readonly outline?: OutlineMethod;
 };
+
+/**
+ * hull: every outlined surface drawn a second time, pushed out along its normal, front faces culled.
+ * screen: one full-screen pass after the scene finds the outlined surfaces' silhouettes in the depth (src/draw/ink.ts).
+ */
+export type OutlineMethod = "hull" | "screen";
+export const DEFAULT_OUTLINE: OutlineMethod = "hull";
 
 export type Scene = {
   readonly sea: Sea;
@@ -24,6 +33,7 @@ export type Scene = {
   readonly style: Style;
   readonly sun: V3;
   readonly cameras: Readonly<Record<string, Camera>>;
+  readonly outline: OutlineMethod;
 };
 
 export function scene(spec: SceneSpec): Scene {
@@ -35,5 +45,5 @@ export function scene(spec: SceneSpec): Scene {
     if (names.has(t.name)) throw new Error(`scene: two things are named "${t.name}" (names key shaders)`);
     names.add(t.name);
   }
-  return { sea: spec.sea, things, style: spec.style, sun: [spec.sun[0] / l, spec.sun[1] / l, spec.sun[2] / l], cameras: spec.cameras ?? {} };
+  return { sea: spec.sea, things, style: spec.style, sun: [spec.sun[0] / l, spec.sun[1] / l, spec.sun[2] / l], cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE };
 }

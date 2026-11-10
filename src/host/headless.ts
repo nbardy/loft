@@ -7,7 +7,9 @@ export async function headlessDevice(): Promise<GPUDevice> {
   await setupGlobals();
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) throw new Error("headlessDevice: no WebGPU adapter found (bun-webgpu/Dawn could not open a GPU on this machine)");
-  const device = await adapter.requestDevice();
+  // Timestamp queries let `GpuLoaded.profile` time each draw on the GPU; ordinary frames never use them.
+  const requiredFeatures: GPUFeatureName[] = adapter.features.has("timestamp-query") ? ["timestamp-query"] : [];
+  const device = await adapter.requestDevice({ requiredFeatures });
   device.addEventListener("uncapturederror", (e) => {
     // Errors outside a validation scope would otherwise vanish; the host scopes its own work, so this is a backstop.
     console.error(`loft host: uncaptured WebGPU error: ${(e as GPUUncapturedErrorEvent).error.message}`);

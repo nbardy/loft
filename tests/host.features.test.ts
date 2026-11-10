@@ -48,12 +48,12 @@ const probe: Artefact = {
       }`,
   },
   draws: [
-    { label: "ground", shader: "ground", vertices: 6, instances: 1, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {} },
-    { label: "probe", shader: "probe", vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, sceneDepth: true },
+    { label: "ground", shader: "ground", vertices: 6, instances: 1, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" } },
+    { label: "probe", shader: "probe", vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" }, sceneDepth: true },
   ],
   pose: () => ({}),
   cameras: {},
-  stats: { triangles: 3, draws: 2, curveRows: 0, stations: 0 },
+  stats: { maxTriangles: 3, draws: 2, curveRows: 0, stations: 0 },
 };
 
 /** WebGPU's standard 4x sample positions within a pixel (fixed by the WebGPU spec). */
@@ -131,7 +131,7 @@ test("post passes apply in list order, each reading the one before", async () =>
     lift: /* wgsl */ `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> { return vec4<f32>(post_color(in.uv).rgb + 0.25, 1.0); }`,
   };
   const ops = { half: (v: number) => v * 0.5, lift: (v: number) => v + 0.25 };
-  const empty: Artefact = { ...plain, clear, shaders, draws: [], stats: { ...plain.stats, triangles: 0, draws: 0 } };
+  const empty: Artefact = { ...plain, clear, shaders, draws: [], stats: { ...plain.stats, maxTriangles: 0, draws: 0 } };
   for (const order of [["half", "lift", "half"], ["lift", "half", "half"]] as const) {
     const loaded = await host.load({ ...empty, post: order.map((s, i) => ({ label: `${s} ${i}`, shader: s })) });
     const px = await loaded.frame({ ...base, width: 16, height: 8 });

@@ -2,7 +2,7 @@
 // (the host's targets: 4x MSAA colour and depth, cleared). Wall-clock frame times on this shared machine move by
 // milliseconds with the load; the GPU's own clock around the pass does not see the CPU at all, so the best of a few
 // dozen passes is what the draws cost. Used by tools/tracer_bench.ts.
-import { PRELUDE_WGSL, type Artefact, type Camera } from "../src/artefact.ts";
+import { DETAIL_SLOTS, PRELUDE_WGSL, type Artefact, type Camera } from "../src/artefact.ts";
 import { cameraMatrices } from "../src/host/camera.ts";
 import { COLOR_FORMAT, DEPTH_FORMAT, SAMPLES, viewState } from "../src/host/index.ts";
 
@@ -23,7 +23,8 @@ export async function interleaved(timers: readonly GpuTimer[], camera: Camera, r
 /** A timer for the draws of `a` whose labels satisfy `keep`, at width x height. Needs the "timestamp-query" feature. */
 export async function gpuTimer(device: GPUDevice, a: Artefact, keep: (label: string) => boolean, width: number, height: number): Promise<GpuTimer> {
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: VIS, buffer: { type: "read-only-storage" } });
-  const g0 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: VIS, buffer: { type: "uniform" } }, storage(1), storage(2), storage(3)] });
+  // Binding 4 is the level-of-detail table (artefact.ts). The traced draws timed here are of fixed detail, so it stays zero.
+  const g0 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: VIS, buffer: { type: "uniform" } }, storage(1), storage(2), storage(3), { binding: 4, visibility: VIS, buffer: { type: "uniform" } }] });
   const group1 = [...a.dynamic.map((d) => ({ binding: d.binding, bytes: d.vec4s * 16 })), ...(a.statics ?? []).map((d) => ({ binding: d.binding, bytes: d.data.byteLength }))];
   const g1 = device.createBindGroupLayout({ entries: group1.map((d) => storage(d.binding)) });
   const layout = device.createPipelineLayout({ bindGroupLayouts: [g0, g1] });
@@ -34,10 +35,13 @@ export async function gpuTimer(device: GPUDevice, a: Artefact, keep: (label: str
   if (a.curves.length > 0) device.queue.writeBuffer(curves, 0, a.curves as Float32Array<ArrayBuffer>);
   const tables = group1.map((d) => buf(d.bytes, S));
   (a.statics ?? []).forEach((d, k) => device.queue.writeBuffer(tables[a.dynamic.length + k]!, 0, d.data as Float32Array<ArrayBuffer>));
-  const bind0 = device.createBindGroup({ layout: g0, entries: [frame, inputs, params, curves].map((b, binding) => ({ binding, resource: { buffer: b } })) });
+  const detail = buf(DETAIL_SLOTS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+  const bind0 = device.createBindGroup({ layout: g0, entries: [frame, inputs, params, curves, detail].map((b, binding) => ({ binding, resource: { buffer: b } })) });
   const bind1 = device.createBindGroup({ layout: g1, entries: group1.map((d, k) => ({ binding: d.binding, resource: { buffer: tables[k]! } })) });
   const draws = a.draws.filter((d) => keep(d.label));
   if (draws.length === 0) throw new Error("gpuTimer: no draw kept");
+  const levelled = draws.find((d) => d.detail.kind !== "fixed");
+  if (levelled) throw new Error(`gpuTimer: draw "${levelled.label}" has ${levelled.detail.kind} detail; this timer draws fixed-detail draws only (use \`loft profile\`)`);
   const pipelines: GPURenderPipeline[] = [];
   for (const d of draws) {
     const module = device.createShaderModule({ code: PRELUDE_WGSL + a.sceneWgsl + a.shaders[d.shader] });
@@ -91,6 +95,6 @@ export async function gpuTimer(device: GPUDevice, a: Artefact, keep: (label: str
     }
     return best;
   };
-  const destroy = () => { for (const b of [frame, inputs, params, curves, ...tables, resolved, read]) b.destroy(); colour.destroy(); depth.destroy(); query.destroy(); };
+  const destroy = () => { for (const b of [frame, inputs, params, curves, detail, ...tables, resolved, read]) b.destroy(); colour.destroy(); depth.destroy(); query.destroy(); };
   return { time, destroy };
 }

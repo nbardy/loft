@@ -63,10 +63,10 @@ function markers(points: readonly (readonly [number, number, number])[]): Artefa
           return vec4<f32>(f32(in.i == 0u), f32(in.i == 1u), f32(in.i == 2u), 1.0);
         }`,
     },
-    draws: [{ label: "marks", shader: "mark", vertices: 6, instances: points.length, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {} }],
+    draws: [{ label: "marks", shader: "mark", vertices: 6, instances: points.length, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" } }],
     pose: () => ({ points: table }),
     cameras: {},
-    stats: { triangles: 2 * points.length, draws: 1, curveRows: 0, stations: 0 },
+    stats: { maxTriangles: 2 * points.length, draws: 1, curveRows: 0, stations: 0 },
   };
 }
 

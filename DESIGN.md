@@ -95,7 +95,8 @@ tests and the baker. A scene module's default export is a `Scene`. Working examp
 - `crest(spec) -> SurfaceDrawable`: a `sheet` standing on the line of constant v of a body, rising along its section's
   outward direction, raked and fluttering; drawn two-sided with ink on its free edge.
 - `sea(spec) -> Sea`: the root chart (x, z, height above the water), and the water as a glazed surface in that chart:
-  a camera-following grid, the style's `water`, foam where any opaque body meets it (from scene depth).
+  a projected grid of cells a constant size on screen (section 12), the style's `water`, foam where any opaque body
+  meets it (from scene depth).
 
 ### 2.3 Style (`src/style.ts`)
 
@@ -148,7 +149,7 @@ the viewer (which recompiles: a style is shader code, so a new style is a new ar
 |---|---|---|
 | `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea, and the body: `uv` (the surface's coordinates), `anchor` (`Surface.anchor` there), `id` (a hash of the drawable's name in [0, 1), varied per copy) |
 | `mark(ctx)` | the same fragments; written to the picture's alpha | a number the style's post passes read back (`post_color(uv).a`) where a body was drawn; 1 for none |
-| `outline` | the hull's offset (never under 1.5 px) | a world width, usually a param |
+| `outline` | the hull's offset (never under 1.5 px), or the screen ink pass's width (section 12.3) | a world width, usually a param |
 | `water(ctx)` | the sea's fragment stage | `WaterCtx`: normal, sun, view, world, crest (-1..1), distance, `foam`, `contact`, `phase` |
 | `shadow(ctx)` | cast shadows laid on the water | `LayerCtx`: world, view, distance, coverage |
 | `sky(ctx)` | the background | view direction, sun |
@@ -240,7 +241,15 @@ the library declares:
 | `<field>_brick` | `draw.field` with schedule `brick` or `auto` (static) | coarse cells, then bricks | `src/map/brick.ts`: per coarse cell (slot or -1, lower bound, union mask), then 9^3 samples per brick |
 | `<field>_mesh`, `<field>_tris` | `draw.field` with schedule `mesh` or `auto` | 2 vec4 / 1 vec4 | vertices (position, normal); triangle corners, 4 indices per vec4 |
 
-`stats.stations` counts the entries of tables whose role is `"stations"`.
+`stats.stations` counts the entries of tables whose role is `"stations"`. `stats.maxTriangles` is what the draw list
+declares, the most a frame can draw; what a frame actually drew (after level of detail) is the host's `FrameStats`
+(`Loaded.draw`, `GpuLoaded.frameTimed`).
+
+Level of detail (section 12) added to the contract: `Draw.detail` (`fixed`, `grid`, `projected`), a uniform array
+`loft_detail` at group 0 binding 4 (`DETAIL_SLOTS` vec4) that the host fills each frame and shaders read at their
+`LOFT_DETAIL_SLOT` override (set by the compiler among the draw's constants), `View.cellPixels` (default
+`CELL_PIXELS` = 7), `HYSTERESIS`, and `FrameStats`. The host keeps one piece of memory between frames: each grid's last
+level, for hysteresis.
 
 Foam where the water meets a body is not a table: the sea reads the opaque scene's depth and foams where an opaque
 surface lies within the foam width in 3D. It needs no per-kind code and follows the drawn surface exactly.
@@ -734,7 +743,7 @@ export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strike
   `staysClear` is the least capsule-to-target distance at 60 Hz over a range (target: a vertical disc or a body's
   skeleton); `stopsAt` asks for contact at arming and no penetration over the attack's span; `minScreenSize` projects the
   feature's joint spheres through a named camera and takes the narrower side of their bounds; `budget` reads
-  `stats.triangles`. `loft check <scene.ts>` runs the module's exported `checks` and exits 1 on any failure.
+  `stats.maxTriangles` (the declared maximum, so it holds for every view). `loft check <scene.ts>` runs the module's exported `checks` and exits 1 on any failure.
 
 Where the plan met the code:
 
@@ -965,3 +974,97 @@ purity); fewer blobs with detail noise is done (above).
 - Close up (inside a cloud's edge) the Gaussians read as soft blur; the detail noise thins edges but does not add
   sharp structure. Clouds do not shadow layers, banks, the sea or bodies; the flash does not light bodies except
   through `skyFlash`. Order inside one depth bin is lost (a bin is ~1/24 of the blobs' depth range).
+
+## 12. Level of detail, the sea's grid, outlines and profiling (as built, 2026-11-11)
+
+Before this, every frame drew the authored grids at every distance: 117k to 158k triangles in the serpent, the brig
+and the islandback, of which the sea (a fixed 73,728-triangle grid) was half or more and the inflated ink outlines a
+sixth to a quarter. Now the host draws about as many as the screen can show. Tools: `tools/triangles.ts` (declared and
+drawn triangles per view, best-case ms, lossless shots), `tools/picdiff.ts` (picture differences, side-by-side sheets),
+`tools/dolly.ts` (a camera dolly at a fixed time: popping, swimming), `loft profile` (12.4).
+
+### 12.1 Grids sized by the screen (`Detail` kind `grid`; `src/draw/grid_detail.ts`, `src/host/detail.ts`)
+
+- Every lit `draw.surface` (bodies, fins, hull planks, sails; copies through `draw.points` too) states levels: the
+  authored counts halved per level, each axis floored at 8 cells round a closed direction (an octagon) and 2 along an
+  open one. Glazed surfaces and flat strokes stay fixed (a ship's ropes are one grid joined by zero-width cells, which
+  halving would break). `draw.relief` and the tracers are unchanged.
+- The compiler measures each surface once at rest (time 0, inputs and params at their defaults, as a static
+  `tabulate`): 5 x 5 grid points give the longest grid line per axis (a level's `cell` is those over its counts) and
+  the surface's reach from its anchor (the grid's centre; a copy's origin). Per frame the pose posts only where each
+  copy is (table `bound_<name>`: anchor point and scale, one vec4 per copy), a few microseconds per drawable.
+  Measuring every frame (16 points per drawable) took the fleet's pose from 0.45 to 3.9 ms. Given up: a surface that
+  grows far beyond its rest shape on an input is sized by its rest shape.
+- The host takes the coarsest level whose cells are at most `cellPixels` across at the sphere's nearest point, keeps
+  last frame's level while its cells stay within `HYSTERESIS` (1.25) beyond the bounds that would choose it afresh, and
+  skips a copy under a pixel across or wholly behind the eye. Copies are drawn in runs of one level (`firstInstance`
+  keeps `instance_index` the copy's index), so a row of teeth may become two or three draw calls. A surface and its
+  hull outline share one choice.
+- Tests: `tests/detail.test.ts` (the serpent over a 30x dolly: cells within 1/2.2 to 1 times the target except at the
+  finest and coarsest levels; no switch while the camera breathes 3%, where choosing afresh would switch; a dolly out
+  only ever coarsens, sometimes by two levels at once where one axis is at its floor and the other no longer sets the
+  cell size) and `tests/detail.gpu.test.ts` (default against `cellPixels: 0` at 1280 x 800).
+- Measured against full density: worst mean difference 0.082 of 255 and 0.24% of pixels by more than 16, islandback
+  from the game camera (the legs' knees shade slightly differently on a coarser grid). The close-ups are byte-identical:
+  bodies there are at their authored density. Measuring at the sphere's nearest point is conservative: the brig from
+  the game camera keeps its finest hull (cells 4 px; the next level would be 8.1 against a target of 7).
+
+### 12.2 The sea: a projected grid (`Detail` kind `projected`; `src/geom/sea.ts`)
+
+The grid is laid over the image of the still water. The host finds the NDC rows whose rays meet y = 0 within `reach`
+(bisection on one depth per row, true for a camera without roll), widens the screen by how far a crest lifted by the
+swell's amplitude moves at the bottom edge, and chooses nx x ny cells of `SEA_CELL` (2.25) x `cellPixels` pixels.
+Each vertex is the point of still water its pixel sees, lifted to the exact height function there. About 9,500
+triangles at 1280 x 800 with water to every edge. `tests/sea.grid.gpu.test.ts` runs the sea's own vertex stage in a
+compute pass for three cameras: every edge belongs to one or two triangles, the one-triangle edges are exactly the
+grid's rim (no cracks), and every vertex is within 2e-6 of the CPU's height at its own (x, z). `SeaSpec.grid` is gone.
+
+The vertices slide over the water as the camera moves. Colour, crest, slope and foam are per pixel, so what moves is
+the straight edges' cut through the crests, at most A (pi c / L)^2 / 2 for cells c; the dolly sheets
+(`out/triangles/dolly_*.webp`) show no swimming. The far sea lost the old grid's light seams (its far cells were 25
+units across and their edges showed in the brig's close-up). Where the whirlpool's funnel is steep, the woodblock
+sea's printed lines and the foam round floating debris sit a few pixels from where the old grid (0.06-unit cells at
+the view centre) put them: same look, not the same pixels (maelstrom, 1.8 to 2.4% of pixels by more than 16).
+The sea's cost is its fragment stage, not its triangles (12.4).
+
+### 12.3 Outlines: hull or screen (`Scene.outline`; `src/draw/ink.ts`)
+
+`outline: "screen"` drops the second draw and inks silhouettes in one full-screen pass: a pixel is ink where an
+outlined surface within the hull's width (8 directions x 6 radii, up to 8 px) is nearer than its own surface by more
+than a step. Which surfaces are outlined travels in the picture's alpha (0.49 mark outlined, 0.51 + 0.49 mark not); the
+pass restores the plain mark for the style's own passes. The default stays `"hull"`: after level of detail the hull
+draws of the islandback cost 0.09 to 0.13 ms (profiled, game camera and close-up) against 1.2 to 1.9 ms for the pass,
+and the pass cannot do two things the hull does: fill the inside of an open one-sided surface seen through its opening
+(the islandback's shell aperture, which the hull shows as ink) and ink silhouettes under the water (the water's blend
+raises the alpha over the flag).
+
+### 12.4 Profiling (`GpuLoaded.profile`, `src/host/profile.ts`, `loft profile`)
+
+With the `timestamp-query` feature (which `headlessDevice` now requests when the adapter has it), the host can draw a
+profiling frame: every draw, the depth resolve, the multisample resolve, each post pass and the readback copy in a
+pass of its own. A stage's cost is its completion delta (passes overlap on Apple GPUs), and every timed pass issues an
+off-screen triangle (an empty pass is coalesced and its timestamps repeat the previous ones). Dawn quantises
+timestamps to 65.5 us and bun-webgpu cannot turn that off, so a draw's figure is a mean over a block of frames, the
+best of six blocks: good to about 10 us, and still noisy on a loaded machine (a second run can differ by 2x for a
+small draw). `loft profile <scene> [--view] [--frames] [--outline hull|screen]` prints draws by cost, totals per thing
+(the label up to its first `_` or space: a ship's parts group, the serpent's separately placed parts do not), the
+fixed stages, and the CPU pose per table (`Compiled.poseProfile`, each table without the tables it read).
+
+### 12.5 A ship is about 40 draws (measured, not changed)
+
+`examples/fleet.ts` is 119 draws for three ships and `examples/scenes/the_strike.ts` 80 for one ship and the serpent:
+a brig is 45 draws (hull, deck, two bulwarks, transom, two rails, rudder, masts, yards, booms, gaffs, bowsprit: one
+draw each plus one hull-outline draw each; sails, jibs, pennant: one each; the rigging: one). Profiled (12.4) a brig
+costs 0.7 to 1.4 ms of GPU from the three-quarter camera, a sloop 0.2 to 0.45 ms and a galleon 0.2 to 0.5 ms, while
+their triangles are a few thousand each after level of detail: the cost is per draw (about 15 to 30 us each in the
+profiling frame, which also pays a pass per draw), not per triangle. Level of detail does not change the draw count.
+
+To bring a ship to three draws (designed, not built): (1) one draw of every rigid opaque part (hull planks, deck,
+bulwarks, transom, rails, rudder, and the spars, which are all sweeps): a drawable that takes several surfaces and
+selects one per instance by `instance_index` with a `switch` in the vertex stage (uniform per instance, so one pipeline
+and no divergence within a copy), each part's grid size read from `loft_detail` per instance as now; the spars could
+instead be one instanced sweep reading a stacked station table. (2) One draw of the cloth (sails, jibs, pennant):
+one sheet family whose per-sail corners, billow and team colour come from a per-frame table indexed by instance.
+(3) The rigging, already one draw. Outlines then need either the screen pass (12.3) or one more draw of (1) inflated.
+Two things the host would need: per-instance vertex counts within one call (`drawIndirect` per run, or a fixed
+vertex count per call with surplus vertices collapsed), and the compiler's shader key being the family, not the part.

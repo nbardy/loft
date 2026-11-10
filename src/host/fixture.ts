@@ -278,7 +278,7 @@ const SIZE_PX: f32 = 7.0;
 // ---- the draw list ----------------------------------------------------------------------------------------------
 
 const draw = (d: Pick<Draw, "label" | "shader" | "vertices"> & Partial<Draw>): Draw => ({
-  instances: 1, pass: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, ...d,
+  instances: 1, pass: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" }, ...d,
 });
 const draws: Draw[] = [
   draw({ label: "ground", shader: "ground", vertices: 6 }),
@@ -312,7 +312,7 @@ export const fixture: Artefact = {
     side: { kind: "orthographic", eye: [0, 1.5, 12], target: [0, 1, 0], height: 5 },
   },
   stats: {
-    triangles: draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0),
+    maxTriangles: draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0),
     draws: draws.length,
     curveRows: 2,
     stations: STATIONS,

@@ -5,6 +5,7 @@ import type { Verdict } from "../check.ts";
 /** A picture or clip that was made, or the reason it was not. File paths are relative to the page. */
 export type Media = { readonly kind: "ok"; readonly file: string } | { readonly kind: "failed"; readonly error: string };
 
+/** `triangles`: drawn in the timed frame (after the host's level of detail), not the declared maximum. */
 export type Numbers = { readonly triangles: number; readonly draws: number; readonly compileMs: number; readonly loadMs: number; readonly msPerFrame: number };
 
 /** `none`: the module exports no `checks`. */
