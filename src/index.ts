@@ -14,3 +14,9 @@ export { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawS
 export { emitFn, emitShaderFn } from "./compile/bind.ts";
 export { TableBudgetError } from "./compile/tables.ts";
 export type { Artefact } from "./artefact.ts";
+export { limb, polyline, unit, type Limb, type LimbSpec } from "./geom/limb.ts";
+export { gait, course, type Course, type Gait, type GaitSpec } from "./geom/gait.ts";
+export { fan, rayOf, catenary, type FanSpec } from "./geom/fan.ts";
+export { shell, horn, whorl, ridgePhase, type ShellSpec, type HornSpec } from "./geom/spiral.ts";
+export { mirror, array, reflect } from "./geom/symmetry.ts";
+export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type BeatSpec, type StrikeSpec } from "./geom/motion.ts";
