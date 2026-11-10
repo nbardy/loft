@@ -111,6 +111,31 @@ it under water. v0: `toon`.
 - Local form and sculpt layers: stamps and displacement tables over (m, v) (`tabulate` of a function of (m, v)), the
   mesh round trip (`bake` out with body coordinates as UVs; fit back as a radius function plus a sculpt layer).
 
+### 2.5 Creature parts (`src/geom/`, as built)
+
+Short functions over maps; every argument is a number, a curve or an expression an art director would name. All are
+closed form (no solver state), so any of them can be read at another time. Tests: `tests/geom.parts.test.ts`
+(geometry, CPU) and `tests/creatures.gpu.test.ts` (the two examples build every pipeline).
+
+| Part | File | What it is |
+|---|---|---|
+| `limb({ root, target, lengths, bend, foot? }) -> { joints, knots, spine(m) }` | `limb.ts` | two or three segments by the law of cosines. In reach the tip is on the target and the middle joint on the `bend` side; out of reach the chain lies straight along the line to the target; lengths always kept. Three segments hold the last one along `foot` (default down) and reach the ankle; if the ankle is out of reach the last segment points from where it got to toward the target. `spine` is the polyline by arc fraction, for a strand (pinch its girth at `knots`). `polyline(m, points, knots)`, `unit(v)` |
+| `gait({ feet, phase, course, stride, period, duty, lift }) -> { body, travelled, foot(i), planted(i) }` | `gait.ts` | feet homes in the body's course frame; foot i is planted where the course put its home at the middle of this cycle's stance (cycle `floor(t / period + phase[i])`) and swings on an arc to the next plant. `course.line`, `course.arc` (with `facing`, so a crab walks sideways). A planted foot is fixed in the world while the body moves |
+| `fan({ rays, sag, scallop, slack? }) -> Surface` | `fan.ts` | a membrane between rays (curves, root 0 to tip 1; `rayOf(body)` makes a flexing body a ray). u across (ray k at k / (n - 1)), v along. Between rays: the ruled surface, bellied by `sag` toward d/du x d/dv, its free edge cut toward the root by `scallop` x chord; both profiles are the normalised catenary `catenary(f, slack)`. Passes through every ray exactly |
+| `shell({ turns, growth, aperture, umbilicus, spire, aspect?, coil?, ridges? }) -> Surface` | `spiral.ts` | Raup's coiling (W = `growth` per whorl, D = `umbilicus`, T = `spire`), apex at the origin, spire up; ridges a whole number per whorl, folded into the section. p(u + 1/turns) = growth x p(u) exactly; the front faces out for either coil. `whorl(u, turns)`, `ridgePhase(u, turns, perTurn)` for paint in its own coordinates |
+| `horn({ name, length, curl, taper, girth, out, toward, twist?, paint }) -> Strand` | `spiral.ts` | the same law in a plane: a tube on an equiangular spiral whose radius grows with the spiral (e^(k theta) = 1 + m (taper - 1), so arc length is linear in m). Horns, claws, pincer fingers, teeth, tusks (curl 0 is a cone). Sliders may drive length, curl, taper, girth |
+| `mirror(part, name)`, `mirror.surface(s)` | `symmetry.ts` | reflection across z = 0 of the part's own coordinates. A strand: spine and frame seed reflected, twist negated, paint at v -> 0.5 - v. A surface: reflected and read at u -> 1 - u so its front still faces out. Mirror before placing; a part placed at v on a host pairs with its mirror placed at 0.5 - v |
+| `array(part, count, placement)` | `symmetry.ts` | named copies `<name>_<i>` of a strand (or drawn surface) in rigid charts; each its own drawable (and shadow). For identical copies use `draw.points` |
+| `rigid(frame) -> Chart` | `rig.ts` | a closed-form frame (a hovering root, a gait's body) as a chart, so parts are authored in the creature's frame and placed on it |
+| `lookAt({ from, target, yaw, pitch })`, `breathe`, `beat(r, { rate, amplitude, lag, down })`, `strike(s, { anticipation, follow, timing })` | `motion.ts` | yaw/pitch held within limits; a skewed breath; a wing beat on a clock delayed by `lag * r` along the wing (the tip trails the root), with a phase warp for a quicker downstroke; a strike envelope over a 0..1 input: wind-up to -anticipation, hit at 1, follow-through to 1 + follow, back to 0 |
+
+Examples: `examples/stormwing.ts` (fans between polyline finger bones, a fluke on the tail's own frame, mirrored horns
+and eyes, a wing-clap on the `strike` input with a lightning stroke) and `examples/islandback.ts` (eight three-segment
+legs on a gait, a Raup shell, unequal claws whose pincer fingers are horns, stalked eyes by `lookAt`, a claw slam on
+the `slam` input). Learned on the way: a vertical bolt is a dot from a top-down camera (throw it along the sea); a
+pincer that opens vertically hides behind its palm from above (open it in the palm's flat plane); and a shell's
+aperture faces wherever the coil ends (u = 1 at `turns` whorls), so turn the shell to put it away from the camera.
+
 ## 3. The Artefact (`src/artefact.ts`, done)
 
 Read that file; it is the host contract. In short: a fixed prelude (bind group 0: frame, inputs, params, curves), an
