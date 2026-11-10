@@ -1,5 +1,6 @@
 // Command-line parsing. Every command is one variant of `Command`; main.ts dispatches on `kind` and nothing else
 // looks at argv. Bad input throws `UsageError` naming the offending flag.
+import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
 
 export class UsageError extends Error {}
 
@@ -12,6 +13,7 @@ export type ViewName = string;
 type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>> };
 
 export type Command =
+  | GalleryCommand
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName })
@@ -26,6 +28,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
   dev    <scene> [--port 5173]
   check  <scene>   (runs the scene module's exported \`checks\` on the CPU; exits 1 if any fails)
   --style toon|woodblock|biolume|papercraft  (render, clip, frames, dev) draws the scene in that style instead of its own
+  gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
@@ -72,7 +75,8 @@ function parseParam(text: string): [string, number] {
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
-  if (!["render", "clip", "frames", "dev", "bake", "check"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (name === "gallery") return parseGalleryArgs(rest);
 
   const flags = new Map<string, string[]>();
   const positional: string[] = [];
