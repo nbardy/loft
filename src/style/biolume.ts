@@ -3,8 +3,9 @@
 // faintly where bodies break the water. Two post passes: the glow smeared down the water as a reflection, then bloom,
 // which glows whatever is bright (in this picture, only what emits).
 
-import { add, dot, exp, fract, length, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
+import { abs, add, dot, exp, fract, length, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
 import { hash22, luminance, noise2 } from "../lib/index.ts";
+import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Rgb, Style } from "../style.ts";
 import { POST_COMMON, rgb } from "./shared.ts";
@@ -128,6 +129,11 @@ export function biolume(): Style {
       const spec = dot(ctx.normal, half);
       const sheen = add(mul(smoothstep(0.75, 1.0, spec), 0.22), mul(smoothstep(0.975, 0.99, add(spec, mul(noise2(mul(xz, 4)), 0.012))), 0.3));
       let c: Expr<"vec3"> = add(mul(rgb(C.water), add(0.75, mul(ctx.crest, 0.35))), mul(rgb(C.moon), sheen));
+      // Moonlit ripple lines along the swell, faint, fading with distance before they can alias.
+      const ripple = add(mul(ctx.phase, 6), mul(ctx.crest, 0.8));
+      const rfw = max(fwidth(ripple), 1e-4);
+      const rline = mul(sub(1, smoothstep(sub(0.06, rfw), add(0.06, rfw), abs(sub(fract(ripple), 0.5)))), sub(1, smoothstep(0.1, 0.3, rfw)));
+      c = add(c, mul(rgb(C.moon), mul(rline, mul(add(0.5, mul(ctx.crest, 0.5)), 0.07))));
       const cell = mul(xz, 2.5);
       const h = hash22(cell);
       const spark = mul(smoothstep(0.93, 0.99, h.x), sub(1, smoothstep(0.0, 0.08, length(sub(fract(cell), add(mul(h, 0.6), 0.2))))));
