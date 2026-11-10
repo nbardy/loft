@@ -209,6 +209,7 @@ export class Sea implements Chart, Drawable {
     return {
       point: (u, v) => { const p = xz(u, v); return this.frame(vec3(p.x, p.y, 0)).o; },
       normal: (u, v) => { const p = xz(u, v); return this.frame(vec3(p.x, p.y, 0)).y; },
+      anchor: (u, v) => vec3(u, v, 0), // the water follows the camera: nothing of it is fixed but its grid
       topology: { u: ["free", "free"], v: "free" },
       skeleton: NO_SKELETON,
     };

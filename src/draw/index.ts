@@ -6,6 +6,7 @@ import { add, clamp, cross, div, length, lift, max, mul, sub, type In } from "..
 import { viewDir } from "../lib/wgsl.ts";
 import type { Drawable } from "../compile/context.ts";
 import { NO_SKELETON, type Curve, type F, type P3, type Paint, type Points, type Surface } from "../map/types.ts";
+import { atRest } from "../map/surface.ts";
 import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface.ts";
 import { drawField } from "./field.ts";
 import { drawRelief } from "./relief.ts";
@@ -44,7 +45,7 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
     return div(c, max(length(c), 1e-12));
   };
   const point = (u: F, v: F): P3 => add(curve(u), mul(side(u), mul(sub(mul(v, 2), 1), lift<"f32">(width(u)))));
-  return { point, normal: (u) => mul(viewDir(curve(u)), -1), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
+  return { point, normal: (u) => mul(viewDir(curve(u)), -1), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
 }
 
 export const draw = {

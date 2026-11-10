@@ -90,6 +90,10 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
   const arcs = [0];
   for (let k = 1; k < n; k++) arcs.push((arc += v3.len(v3.sub(s.pos[k], s.pos[k - 1]))));
   const total = Math.max(arc, 1e-9);
+  // Arc length along the rest spine, in its own units: lane r.w, which a body's anchor (its skin straightened at rest,
+  // DESIGN.md 2.6) reads so patterns ride the body. It changes only with what the rest pose reads (params, inputs).
+  const restArcs = [0];
+  for (let k = 1; k < n; k++) restArcs.push(restArcs[k - 1]! + v3.len(v3.sub(s.rest[k]!, s.rest[k - 1]!)));
 
   const seed = v3.axpy(-v3.dot(s.up, tan[0]), tan[0], s.up);
   // A tangent parallel to `up` leaves no seed direction: fall back to a fixed perpendicular (a decision, not an error).
@@ -134,6 +138,6 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
     const o = at + k * STATION_VEC4S * 4;
     out[o] = s.pos[k][0]; out[o + 1] = s.pos[k][1]; out[o + 2] = s.pos[k][2]; out[o + 3] = arcs[k] / total;
     out[o + 4] = q[0]; out[o + 5] = q[1]; out[o + 6] = q[2]; out[o + 7] = q[3];
-    out[o + 8] = s.halfWidth[k] * keep; out[o + 9] = s.halfWidth[k] * s.aspect[k] * keep; out[o + 10] = stretch; out[o + 11] = 0;
+    out[o + 8] = s.halfWidth[k] * keep; out[o + 9] = s.halfWidth[k] * s.aspect[k] * keep; out[o + 10] = stretch; out[o + 11] = restArcs[k]!;
   }
 }

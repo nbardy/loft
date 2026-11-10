@@ -3,7 +3,7 @@
 
 import { lift, variable } from "../expr.ts";
 import type { Sea } from "../geom/sea.ts";
-import type { Style } from "../style.ts";
+import { shadeVariables, type Style } from "../style.ts";
 import { emitFn, type Slots } from "./bind.ts";
 
 export const lit = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
@@ -12,8 +12,8 @@ export const vec3Lit = (v: readonly number[]): string => `vec3<f32>(${v.map(lit)
 /** The style's and the sea's functions. Emitted once, before the drawables' shared code is collected. */
 export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [number, number, number]): string {
   const c = <T extends "f32" | "vec3">(name: string, ty: T) => variable(`c_${name}`, ty);
-  const shadeCtx = { base: c("base", "vec3"), normal: c("normal", "vec3"), sun: lift<"vec3">(sun), view: c("view", "vec3"), world: c("world", "vec3"), depth: c("depth", "f32") };
-  const shadeArgs = [["c_base", "vec3"], ["c_normal", "vec3"], ["c_view", "vec3"], ["c_world", "vec3"], ["c_depth", "f32"]] as const;
+  const shadeCtx = shadeVariables(sun);
+  const shadeArgs = [["c_base", "vec3"], ["c_normal", "vec3"], ["c_view", "vec3"], ["c_world", "vec3"], ["c_depth", "f32"], ["c_uv", "vec2"], ["c_anchor", "vec3"], ["c_id", "f32"]] as const;
   const layerCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), amount: c("amount", "f32") };
   const layerArgs = [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_amount", "f32"]] as const;
   const xz = variable("xz", "vec2");
@@ -23,6 +23,7 @@ export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [n
     emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [sea.gradient(xz)], (v) => v[0]),
     emitFn(slots, "shade", shadeArgs, "vec3<f32>", [style.shade(shadeCtx)], (v) => v[0]),
     emitFn(slots, "ink", shadeArgs, "vec3<f32>", [style.ink(shadeCtx)], (v) => v[0]),
+    emitFn(slots, "mark", shadeArgs, "f32", [style.mark(shadeCtx)], (v) => v[0]),
     emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0]),
     emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sun) })], (v) => v[0]),
     emitFn(slots, "outline_world", [], "f32", [style.outline], (v) => v[0]),
@@ -32,7 +33,9 @@ export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [n
 /** Helpers with no scene content: a surface vertex, grid corners, pixel sizes, the outline width, sea footprints. */
 export const CORE_WGSL = /* wgsl */ `
 /// A surface sample in the vertex stage: world position, unit normal, surface coordinates.
-struct SurfV { pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32> };
+struct SurfV { pos: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, anchor: vec3<f32> };
+/// A stable identity in [0, 1) for copy i of a drawable whose own is id (golden-ratio steps, so neighbours differ).
+fn copy_id(id: f32, i: u32) -> f32 { return fract(id + f32(i) * 0.6180340); }
 /// Grid corner offsets of the six vertices of a quad: triangles (0,0)(1,0)(1,1) and (0,0)(1,1)(0,1).
 fn quad_corner(c: u32) -> vec2<u32> {
   return vec2<u32>(select(0u, 1u, c == 1u || c == 2u || c == 4u), select(0u, 1u, c == 2u || c == 4u || c == 5u));

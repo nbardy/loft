@@ -18,7 +18,8 @@ export const v3 = {
 
 /** The plane y = 0 as (u, v) in [0, 1]^2 scaled by `size`: point (u size, 0, -v size), normal +y (su x sv). */
 export function plane(size: number): Surface {
-  return { point: (u, v) => vec3(mul(u, size), 0, mul(v, -size)), normal: () => lift<"vec3">([0, 1, 0]), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
+  const point = (u: F, v: F): P3 => vec3(mul(u, size), 0, mul(v, -size));
+  return { point, normal: () => lift<"vec3">([0, 1, 0]), anchor: point, topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
 }
 
 /** The direction of sphere coordinates (u, v): polar angle pi u from +y, azimuth 2 pi v. su x sv points out. */
@@ -40,7 +41,8 @@ export const sphereUv = (d: V3): [number, number] => {
 };
 /** A sphere of radius R about the origin with its analytic normal. */
 export function sphere(R: number): Surface {
-  return { point: (u, v) => mul(sphereDir(u, v), R), normal: (u, v) => sphereDir(u, v), topology: { u: ["pole", "pole"], v: "periodic" }, skeleton: NO_SKELETON };
+  const point = (u: F, v: F): P3 => mul(sphereDir(u, v), R);
+  return { point, normal: (u, v) => sphereDir(u, v), anchor: point, topology: { u: ["pole", "pole"], v: "periodic" }, skeleton: NO_SKELETON };
 }
 
 const U0 = variable("t_u0", "f32"), V0 = variable("t_v0", "f32");

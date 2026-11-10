@@ -53,6 +53,7 @@ export function displace(s: Surface, height: Height): Surface {
   return {
     point: (u, v) => at([moved] as const, u, v)[0],
     normal: (u, v) => at([normal] as const, u, v)[0],
+    anchor: s.anchor,
     topology: s.topology,
     skeleton: s.skeleton,
   };

@@ -53,6 +53,14 @@ export const NO_SKELETON: Skeleton = { joints: 0, joint: (k) => { throw new Erro
 export interface Surface {
   point(u: F, v: F): P3;
   normal(u: F, v: F): P3;
+  /**
+   * Where (u, v) sits in the surface's own rest space: a function of (u, v) alone, not of time or of where the surface
+   * has been moved, at about world scale. Patterns that should stick to a thing (a style's facets, line wobble,
+   * hatching) are written over it, so they ride the surface instead of sliding through it as it moves. A body's is
+   * its skin straightened along its rest arc length; a copy's is its own (not its placement's); an analytic surface's
+   * is its point at time 0.
+   */
+  anchor(u: F, v: F): P3;
   readonly topology: Topology;
   readonly skeleton: Skeleton;
 }

@@ -12,7 +12,7 @@
 
 import {
   add, clamp, cos, cross, div, f, fetch, floor, lift, lt, ge, max, min, mix, mul, normalize, pow, saturate, select, sin, sqrt,
-  sub, substitute, TAU, time, length, type Env, type Expr, type In, type TableFill, type TablePrep, type TableSource,
+  sub, substitute, TAU, time, length, vec3, type Env, type Expr, type In, type TableFill, type TablePrep, type TableSource,
 } from "../expr.ts";
 import { compose, rotate, world } from "./chart.ts";
 import { poseStrand, STATION_VEC4S, type V3 } from "./transport.ts";
@@ -96,6 +96,14 @@ export function stationSample(t: TableSource, m: F): FrameSample {
   return { p, der, t: qrot(q, lift<"vec3">([1, 0, 0])), d: qrot(q, lift<"vec3">([0, 1, 0])), s: qrot(q, lift<"vec3">([0, 0, 1])), stretch };
 }
 
+/**
+ * sign(x) |x|^k written as x (x^2)^((k-1)/2), floored inside the pow (WGSL's pow is undefined at 0). It must be
+ * continuous through 0: the earlier sign(x) pow(max(|x|, 1e-6), k) jumped by 2 (1e-6)^k there, and on the dorsal
+ * line cos(angle) is +6e-17 in f64 but -4e-8 in f32, so CPU and GPU landed on opposite sides of a 2e-4 step
+ * (caught by the CPU-against-GPU surface test at squareness 3).
+ */
+const superPow = (x: F, k: number): F => mul(x, pow(max(mul(x, x), 1e-12), (k - 1) / 2));
+
 /** Finite-difference step in m for the taper slope (the lean of the normal along the spine). */
 const SLOPE_H = 1e-3;
 
@@ -170,11 +178,7 @@ export class Body implements Surface, Chart, Placeable<Body> {
     const n = this.section.squareness, e = 2 / n;
     const angle = mul(v, TAU);
     const c = cos(angle), s = sin(angle);
-    // sign(x) |x|^k written as x (x^2)^((k-1)/2), floored inside the pow (WGSL's pow is undefined at 0). It must be
-    // continuous through 0: the earlier sign(x) pow(max(|x|, 1e-6), k) jumped by 2 (1e-6)^k there, and on the dorsal
-    // line cos(angle) is +6e-17 in f64 but -4e-8 in f32, so CPU and GPU landed on opposite sides of a 2e-4 step
-    // (caught by the CPU-against-GPU surface test at squareness 3).
-    const sp = (x: F, k: number) => mul(x, pow(max(mul(x, x), 1e-12), (k - 1) / 2));
+    const sp = superPow;
     const x = sp(c, e), y = sp(s, e);
     const A = a(m), B = mul(A, aspect(m));
     const pos = add(st.p, add(mul(st.s, mul(A, x)), mul(st.d, mul(B, y))));
@@ -190,6 +194,20 @@ export class Body implements Surface, Chart, Placeable<Body> {
   }
 
   point(u: F, v: F): P3 { return this.now([this.ring(u, v).pos])[0]; }
+  /**
+   * The skin straightened at rest: (arc length along the rest spine, the rest section's ring). A function of (u, v)
+   * alone (rest arc lengths are lane r.w of the stations; the section is read at time 0), so a pattern over it rides the
+   * body through any bend, and every slice of the body (`at(t)`) has the same anchor.
+   */
+  anchor(u: F, v: F): P3 {
+    const t = this.table, span = t.entries - 1;
+    const x = mul(clamp(u, 0, 1), span);
+    const k = min(floor(x), span - 1);
+    const s = mix(fetch(t, k, 2).w, fetch(t, add(k, 1), 2).w, sub(x, k));
+    const [a, aspect] = substitute([this.halfWidth(u), this.section.aspect(u)], time, f(0)) as F[];
+    const e = 2 / this.section.squareness, angle = mul(v, TAU);
+    return vec3(s, mul(a, superPow(cos(angle), e)), mul(mul(a, aspect), superPow(sin(angle), e)));
+  }
   normal(u: F, v: F): P3 { return this.now([this.ring(u, v).normal])[0]; }
 
   /**

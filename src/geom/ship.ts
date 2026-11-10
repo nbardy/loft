@@ -18,7 +18,7 @@ import { through } from "../curve.ts";
 import type { Drawable } from "../compile/context.ts";
 import { drawSurface, spacing } from "../draw/surface.ts";
 import { place } from "../map/chart.ts";
-import { framed, mapNormal, sheet, thicken } from "../map/surface.ts";
+import { atRest, framed, mapNormal, sheet, thicken } from "../map/surface.ts";
 import type { Chart, F, Frame, P3, Paint, Skeleton, Surface } from "../map/types.ts";
 import { afloat, type Waters } from "./afloat.ts";
 import { Hull, type HullSpec, type Rgb } from "./hull.ts";
@@ -344,7 +344,7 @@ function framedChart(point: (u: F, v: F) => P3, chart: Chart): Surface {
   return framedFrame(point, chart.frame(lift<"vec3">([0, 0, 0])));
 }
 function framedFrame(point: (u: F, v: F) => P3, G: Frame): Surface {
-  return framed({ point, normal: mapNormal(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, scale: lift<"f32">(1) });
+  return framed({ point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, scale: lift<"f32">(1) });
 }
 
 /** A wave travelling across the cloth, -1..1: two crossing trains so it never looks like a single ripple. */
@@ -404,7 +404,7 @@ function pennant(top: P3, wl: P3, length: number, width: number): Surface {
     const along = add(add(root, mul(wl, mul(u, length))), mul(side, mul(mul(add(wave, mul(wave2, 0.3)), u), length * 0.08)));
     return add(add(along, mul(UP, mul(sub(v, 0.5), w))), vec3(0, mul(mul(u, u), -length * 0.12), 0));
   };
-  return { point, normal: mapNormal(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } };
+  return { point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } };
 }
 
 /** A skeleton given in local coordinates, carried to the world. */

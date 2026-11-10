@@ -92,7 +92,7 @@ export class Hull {
       return { u: i / (n - 1), curve: (v: F) => this.section(u, v) };
     });
     const skinPoint = (u: F, v: F): P3 => through(u, this.stations.map((s) => s.curve(v)));
-    this.skin = { point: skinPoint, normal: mapNormal(skinPoint), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
+    this.skin = { point: skinPoint, normal: mapNormal(skinPoint), anchor: skinPoint, topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
     const L = this.lines;
     // The deck edge: the rail lowered by the bulwark and drawn in a little.
     const deckEdge = (u: F, v: number): P3 => {
@@ -103,7 +103,7 @@ export class Hull {
       const camber = mul(mul(v, sub(1, v)), 4 * 0.025 * L.beam);
       return add(mix(deckEdge(u, 1), deckEdge(u, 0), v), vec3(0, camber, 0));
     };
-    this.deck = { point: deckPoint, normal: mapNormal(deckPoint), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
+    this.deck = { point: deckPoint, normal: mapNormal(deckPoint), anchor: deckPoint, topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
     this.bulwarks = [
       sheet((u) => skinPoint(lift<"f32">(u), lift<"f32">(1)), (u) => deckEdge(lift<"f32">(u), 1)),
       sheet((u) => skinPoint(lift<"f32">(u), lift<"f32">(0)), (u) => deckEdge(lift<"f32">(u), 0)),

@@ -27,6 +27,7 @@ function mirrorSurface(s: Surface): Surface {
   return {
     point: (u, v) => reflect(s.point(flip(u), v)),
     normal: (u, v) => reflect(s.normal(flip(u), v)),
+    anchor: (u, v) => reflect(s.anchor(flip(u), v)),
     topology: { u: swapEnds(s.topology.u), v: s.topology.v },
     skeleton: { joints: s.skeleton.joints, joint: (k) => { const j = s.skeleton.joint(k); return { p: reflect(j.p), r: j.r }; } },
   };

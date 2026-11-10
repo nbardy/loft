@@ -100,8 +100,8 @@ tests and the baker. A scene module's default export is a `Scene`. Working examp
 ### 2.3 Style (`src/style.ts`)
 
 A style is a program in the same language: `{ shade(ctx), ink(ctx), outline, water(ctx), shadow(ctx), sky(ctx), post,
-clear }`. `shade` lights a base colour (body coordinates are not in its context: paint has already used them) and tints
-it under water. v0: `toon`.
+clear }`. `shade` lights a base colour and tints it under water; its context carries the surface's coordinates, anchor
+and identity for patterns that must ride the body (2.6). v0: `toon`.
 
 ### 2.4 Planned (unchanged in intent; to be written on section 7)
 
@@ -146,7 +146,8 @@ the viewer (which recompiles: a style is shader code, so a new style is a new ar
 
 | Member | Called from | Context |
 |---|---|---|
-| `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea |
+| `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea, and the body: `uv` (the surface's coordinates), `anchor` (`Surface.anchor` there), `id` (a hash of the drawable's name in [0, 1), varied per copy) |
+| `mark(ctx)` | the same fragments; written to the picture's alpha | a number the style's post passes read back (`post_color(uv).a`) where a body was drawn; 1 for none |
 | `outline` | the hull's offset (never under 1.5 px) | a world width, usually a param |
 | `water(ctx)` | the sea's fragment stage | `WaterCtx`: normal, sun, view, world, crest (-1..1), distance, `foam`, `contact`, `phase` |
 | `shadow(ctx)` | cast shadows laid on the water | `LayerCtx`: world, view, distance, coverage |
@@ -196,10 +197,20 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
 **The style sheet**: `bun src/style/sheet.ts [--out out/style_sheet.webp] [--size 640x400]`: rows toon, woodblock,
 biolume, papercraft; columns serpent, shell, serpent_scales; one camera (`SHEET_CAMERA`).
 
-**Limits, as built.** Patterns that should stick to a body (papercraft's facets, woodblock's line wobble) are in world
-space, so on a moving body they slide slowly through it; anchoring them needs body coordinates in `ShadeCtx`, which
-`shade` deliberately does not have (paint has used them), so it would be a change to the compiler's style emission.
-Screen-space paper grain is fixed to the frame (the paper), so it does not swim with the camera but the picture moves
+**Patterns that ride the body** (as built 2026-11-11). Every `Surface` has an `anchor(u, v)`: a point that depends only
+on (u, v), at about world scale. A body's is its skin straightened at rest: (arc length along the rest spine, the rest
+section's ring), with the rest arc lengths in the station table's spare lane (`r.w`) and the section read at time 0, so
+every slice of a body has the same anchor. A copy's (`framed`, `draw.points`) is its own surface's, scaled; a carried
+or displaced surface keeps its base's; a closed-form surface's is its point at time 0 (one that reads a host's table,
+such as a crest on a body, keeps that table's motion: a slice is not a substitution). A traced solid's is its world
+point. Papercraft's Voronoi lattice is laid in the anchor (directions found there are carried to the world through the
+screen: the same screen offset applied to the world point's derivatives), and woodblock's line weight is its `mark`
+(noise over the anchor), which the key-line pass reads from alpha. A drawable evaluates the anchor only for a style
+that reads it (`readsBody`), so toon's frames and cost are unchanged (its reference frame is byte-identical).
+Test: `tests/style.anchor.test.ts` (the line weight at fixed body coordinates is the same at two times while the body
+moves there). Pictures: `out/polish/serpent_close_{papercraft,woodblock}_{before,after}.webp`.
+
+**Limits, as built.** Screen-space paper grain is fixed to the frame (the paper), so it does not swim with the camera but the picture moves
 under it. Bloom is one pass with no downsampled mips (40 taps out to 30 px at 800 px high).
 
 ## 3. The Artefact (`src/artefact.ts`, done)
