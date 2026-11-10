@@ -315,3 +315,94 @@ generic.
   first; a sweep's name also names its table.
 - **Params are global by name.** Two scenes declaring one param with different defaults cannot be loaded in one process
   (the shell demo and the serpent did, through `toon.outline`). Unchanged here; worth a scene-scoped registry.
+
+## 8. Relief: form finer than the curves (as built, 2026-11-11)
+
+Curves give gesture and mass; relief is the layer above, written in a surface's own coordinates (u, v) so it rides
+the body through any animation. Code: `src/relief/` (heights, sculpt layers, displacement, the tracer) and
+`src/draw/relief.ts` (the drawable). Examples: `examples/serpent_relief.ts`, `examples/shell_relief.ts`.
+
+### 8.1 API
+
+```ts
+type Height = (u: F, v: F) => F;                      // world units above the surface
+type Patch = { size: [lu, lv]; wrap: "none" | "u" | "v" | "uv" };   // world size of the (u, v) square, closed directions
+bump(patch, { at, radius, height, profile })          // profile: smooth | dome | cone | spike | crater | plateau
+ridge(patch, path, { width, height, profile }); crease(patch, path, { width, depth, sharpness })   // path: (u, v) polyline
+flatten(patch, h, region, level); inflate(patch, h, region, amount)   // region: { kind: "disc" | "band", ..., falloff }
+sum(...hs); smoothMax(k, ...hs); clampHeight(h, lo, hi); scaled(h, by); level(c)
+sculptLayer(name, samples, [nu, nv], { wrap })        // a Height backed by a static table; sampleGrid(fn, [nu, nv], { wrap })
+displace(surface, height): Surface                    // vertex-stage displacement; normal of the displaced map
+draw.relief(name, surface, { height: (site) => F, hMax, fold, paint: (point) => rgb, steps, grid, outline: "ink" | "none" })
+// site = { u, v, cell: fold(vec2(u, v)) }; point = site + { h }
+```
+
+- Stamps measure distances in the patch, so they are round in world units where the patch's size is right (a body's
+  girth varies, so a stamp is stretched where the girth differs from `size[1]`). Differences in a closed direction go
+  to the nearest copy, so stamps straddle the seam of a body.
+- `sculptLayer`: samples at k / n in a closed direction (wrapping), k / (n - 1) in an open one (clamped). Lookup is
+  bicubic Hermite with Catmull-Rom slopes stored per sample (one vec4: value, d/di, d/dj, d2/didj), so it interpolates
+  the samples, is C1 (no facets in relief normals) and costs four fetches. This is the table a sculpting tool's
+  displacement bake fills.
+- `displace` differentiates `point + height normal` symbolically (`jacobian` from src/grad.ts), which needs the
+  derivative of the base normal: exact for a sweep's analytic normal.
+- `draw.relief` takes the fold as an option so height and paint see the same cell: paint by cell identity is
+  `site.cell.id`. Its bakeable is `displace(surface, height)` with the paint at the relief's height.
+
+### 8.2 How the tracer works
+
+The vertex stage draws the surface at the top of a shell (`1.02 hMax` plus the ink width) and passes the shell frame
+(point S, tangents Su, Sv, normal N and its derivatives Nu, Nv, all from `shellFrame`, by symbolic differentiation of
+the surface's own expressions) to the fragment stage as varyings. In the fragment stage the view ray is expressed in
+(u, v, height) by a second-order local model (src/relief/trace.ts header): J = [Su Sv N] inverted, height corrected by
+the second fundamental form, (u, v) by the shape operator times the height. Along the ray the height is a quadratic in
+t, so the span inside the shell (to just below the base, or back out of the top: a silhouette) is closed form. The
+march samples f(t) = h(t) - H(u(t), v(t)) evenly over that span, brackets the first sign change and refines it with 5
+steps of safeguarded regula falsi. The normal is (Su + Hu N + H Nu) x (Sv + Hv N + H Nv) with the height's gradient
+taken symbolically. Fragment depth is written at the hit, so relief meets the sea (foam) and other bodies correctly.
+
+- **Misses are discarded**; a miss that came within the ink width of the relief is drawn as ink at its closest
+  approach. The strand's inverted hull would outline the shell, not the relief.
+- **Level of detail**: hpix = hMax / (pixel size at the fragment). Samples = clamp(ceil(0.6 hpix / max(|cos|, 0.15)),
+  6, steps). Below one pixel (hpix < 1) there is no march: the ray meets the surface lifted to the height at the pixel
+  (one height evaluation, so the waterline stays right), shaded with the surface's normal. The relief's normal is
+  blended in over hpix 1 to 4. The march and the plain path are written as expressions, so the CPU tests run the code
+  the shaders run.
+- **Two guards on the model**, both found in pictures: the shell is never thicker than 0.35 of the local radius of
+  curvature (|dN| / |dS|) (stray slivers at the spiral shell's thin apex), and a march slides at most 0.75 of the
+  radius of curvature in the ray's direction.
+
+### 8.3 Measured accuracy (tests/relief.trace.test.ts, CPU f64)
+
+- Displaced sphere, point and normal against the closed form: below 1e-4 (in practice ~1e-12).
+- Flat patch, ramp: every ray within 1e-5 at 0, 45 and 75 degrees from the normal (16 samples).
+- Flat patch, hemisphere bump (radius 0.1, unbounded slope at the rim): perpendicular rays within 1e-5 and normals
+  within 1 - cos < 1e-6; at 75 degrees with 32 samples, 99.5% of rays within 1e-4, the rest only where the true hit is
+  within 6 degrees of tangent (a linear search can step over a sliver that thin).
+- **Curvature limit.** On a sphere of radius R against the exactly displaced sphere the error is C hMax (hMax / R)^2:
+  second order, halving twice per doubling of R. C is 0.7-1.3 at 60 degrees from the normal and 4-5.3 at 75;
+  perpendicular rays are exact. Hit or miss agree with the displaced sphere for R >= 10 hMax at 60 degrees and
+  R >= 40 hMax at 75. In practice: keep R >= 10 hMax; below about 5 hMax (with the ink pad counted in the shell)
+  grazing silhouettes crack. The serpent's flank, where its superellipse section (squareness 2.3) turns under, has a
+  local radius of about 0.3: at hMax 0.1 it cracked visibly, at 0.06 a thin crack remains at the most grazing views.
+
+### 8.4 Cost (best case of 40-60 frames, 1280 x 800, M-series GPU under load average ~14)
+
+| Scene, camera | plain | relief |
+|---|---|---|
+| serpent, `three` (about 23 units) | 4.7 ms | 8.2 ms |
+| serpent, 0.4 x that distance | 4.0 ms | 8.8 ms |
+| serpent at about 80 units (relief switches off: hpix < 1 for hMax 0.06 at fovY 0.6) | 5.1 ms | 6.2 ms |
+| serpent at about 160 units | 4.1 ms | 4.4 ms |
+| shell, `three` | 3.8 ms | 5.3 ms |
+
+What remains at the switch-off distance is the heavier vertex stage (the symbolic shell frame on a 200 x 40 grid,
+against 160 x 28 for the strand) and the loss of early depth rejection that writing fragment depth costs.
+
+### 8.5 Not done or not known
+
+- Traced silhouettes and ink are not multisampled (one fragment per pixel decides), so they stair-step at one pixel.
+- The march has no early exit (`iterate` runs its count); a distance-guided march where a motif's distance is known
+  is not built.
+- No CPU-against-GPU agreement test for the march itself (the expressions it is made of are covered by expr tests).
+- Relief is one-sided (back faces culled): an open surface needs its inside drawn separately (the shell does).
