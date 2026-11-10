@@ -58,7 +58,7 @@ test("JS and WGSL backends agree", async () => {
   expect(error?.message ?? null).toBeNull();
 
   const rows = device.createBuffer({ size: ramp.samples.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(rows, 0, ramp.samples);
+  device.queue.writeBuffer(rows, 0, ramp.samples as Float32Array<ArrayBuffer>);
   const bytes = us.length * cases.length * 16;
   const result = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });

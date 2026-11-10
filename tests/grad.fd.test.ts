@@ -179,7 +179,7 @@ test("row derivatives agree between CPU and GPU", async () => {
   const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } });
   expect((await device.popErrorScope())?.message ?? null).toBeNull();
   const rows = device.createBuffer({ size: ramp.samples.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(rows, 0, ramp.samples);
+  device.queue.writeBuffer(rows, 0, ramp.samples as Float32Array<ArrayBuffer>);
   const bytes = us.length * wide.length * 16;
   const result = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
