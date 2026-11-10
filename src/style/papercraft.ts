@@ -5,7 +5,7 @@
 // The sea is layered cut-paper sheets with scalloped edges, each casting a small shadow on the one below. A post
 // pass adds ambient occlusion in creases (from the opaque scene's depth) and paper fibre.
 
-import { add, dot, fract, max, mix, mul, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
+import { add, dot, fract, max, mix, mul, normalize, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
 import { fwidth, wgslFn } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
@@ -22,11 +22,18 @@ const C = {
   backdropTop: [0.7, 0.78, 0.84],
 } as const satisfies Record<string, Rgb>;
 
-/** Size of a facet cell, world units, and how far each facet is tilted off the surface, as a share of its normal. */
-const CELL = 0.5, TILT = 0.45;
+/**
+ * Size of a facet cell, world units; how far each fan triangle slopes toward its edge of the cell (a cell is folded
+ * into a low pyramid, raised or sunk), and how far each is tilted at random, as shares of the normal.
+ */
+const CELL = 0.55, SLOPE = 0.24, TILT = 0.12;
 
 /**
- * The facet at p: xyz its normal, w the distance (world units, in the cell lattice) from p to the nearest cell wall.
+ * The facet at p: xyz its normal, w the distance (world units) from p to the nearest fold. The surface is cut into
+ * the cells of a 3D Voronoi lattice, and each cell into a fan of triangles, one per neighbouring cell (the pixel's
+ * triangle is the one toward its second-nearest site). A cell is lit with the surface's normal carried to its site
+ * by the normal's screen-space derivatives (so it is a plane touching the surface there, not the surface itself),
+ * and each fan triangle slopes from the site toward its edge: folded paper, from shading alone.
  * Derivatives come first, in uniform control flow (WGSL's rule); the search is the 27 neighbouring cells.
  */
 const facet = wgslFn<"vec4">({
@@ -48,21 +55,28 @@ fn pc_facet(n: vec3<f32>, p: vec3<f32>) -> vec4<f32> {
   let base = vec3<i32>(floor(q));
   var d1 = 1e9;
   var d2 = 1e9;
+  var d3 = 1e9;
   var s1 = vec3<f32>(0.0);
   var s2 = vec3<f32>(0.0);
-  var id = vec3<i32>(0);
+  var s3 = vec3<f32>(0.0);
+  var id1 = vec3<i32>(0);
+  var id2 = vec3<i32>(0);
   for (var k = -1; k <= 1; k++) {
     for (var j = -1; j <= 1; j++) {
       for (var i = -1; i <= 1; i++) {
         let c = base + vec3<i32>(i, j, k);
         let s = vec3<f32>(c) + 0.15 + 0.7 * pc_hash3(c);
         let d = dot(s - q, s - q);
-        if (d < d1) { d2 = d1; s2 = s1; d1 = d; s1 = s; id = c; } else if (d < d2) { d2 = d; s2 = s; }
+        if (d < d1) { d3 = d2; s3 = s2; d2 = d1; s2 = s1; id2 = id1; d1 = d; s1 = s; id1 = c; }
+        else if (d < d2) { d3 = d2; s3 = s2; d2 = d; s2 = s; id2 = c; }
+        else if (d < d3) { d3 = d; s3 = s; }
       }
     }
   }
-  // Distance to the bisector of the two nearest sites: (|q - s2|^2 - |q - s1|^2) / (2 |s2 - s1|).
+  // Distances to the bisectors (|q - b|^2 - |q - a|^2) / (2 |b - a|): the cell wall (sites 1, 2) and the spoke
+  // between this fan triangle and the next (sites 2, 3).
   let wall = (d2 - d1) / (2.0 * max(length(s2 - s1), 1e-4)) * ${CELL};
+  let spoke = (d3 - d2) / (2.0 * max(length(s3 - s2), 1e-4)) * ${CELL};
   // The surface normal carried to the site: solve r = a dpx + b dpy in least squares, then n + a dnx + b dny.
   let r = s1 * ${CELL} - p;
   let g = vec3<f32>(dot(dpx, dpx), dot(dpx, dpy), dot(dpy, dpy));
@@ -72,8 +86,12 @@ fn pc_facet(n: vec3<f32>, p: vec3<f32>) -> vec4<f32> {
   let carried = n + ab.x * dnx + ab.y * dny;
   // A carried normal that turned past the surface's own (a cell across a sharp rim) keeps the surface's.
   let flat = select(n, normalize(carried), dot(carried, n) > 0.3 * length(carried));
-  let tilted = normalize(flat + (pc_hash3(id + vec3<i32>(17, 5, 11)) - 0.5) * ${TILT * 2});
-  return vec4<f32>(tilted, wall);
+  // The fan triangle slopes toward its edge of the cell: up for a raised cell, down for a sunk one.
+  let toward = s2 - s1 - flat * dot(s2 - s1, flat);
+  let raised = select(-1.0, 1.0, pc_hash3(id1).x > 0.35);
+  let slope = toward / max(length(toward), 1e-5) * (${SLOPE} * raised);
+  let jitter = (pc_hash3(id1 * 3 + id2 + vec3<i32>(17, 5, 11)) - 0.5) * ${TILT * 2};
+  return vec4<f32>(normalize(flat + slope + jitter), min(wall, spoke));
 }`,
 });
 
@@ -133,9 +151,12 @@ export function papercraft(): Style {
       const f = facet(ctx.normal, ctx.world);
       const n = f.xyz;
       // Soft studio light: a wrapped warm key from the sun's side, a cool fill from above.
-      const key = saturate(mul(add(dot(n, ctx.sun), 0.15), 1 / 1.15));
-      const fill = add(0.38, mul(n.y, 0.12));
-      const light = add(mul(rgb(C.fill), fill), mul(rgb(C.key), mul(key, 0.8)));
+      // The key comes from the sun's side but leans toward the camera and up, as a studio key over a model does,
+      // so the side a high game camera sees is lit.
+      const keyDir = normalize(add(add(ctx.sun, mul(ctx.view, 0.7)), vec3(0, 0.4, 0)));
+      const key = saturate(mul(add(dot(n, keyDir), 0.1), 1 / 1.1));
+      const fill = add(0.5, mul(n.y, 0.12));
+      const light = add(mul(rgb(C.fill), fill), mul(rgb(C.key), mul(key, 0.68)));
       // Fold lines along the cell walls: a pixel or so wide at any distance.
       const fw = max(fwidth(f.w), 1e-5);
       const fold = sub(1, smoothstep(mul(fw, 0.6), mul(fw, 1.6), f.w));
@@ -148,7 +169,7 @@ export function papercraft(): Style {
       // Sheets laid along the swell, two edges per wavelength of the largest swell, bent by the height field and
       // round scattered domes so each edge is a chain of arcs. Each sheet is one of a few blues.
       const domes = cellular2(mul(xz, 0.3)).x;
-      const s = add(add(mul(ctx.phase, 2), mul(ctx.crest, 0.35)), mul(domes, 0.3));
+      const s = add(add(mul(ctx.phase, 2), mul(ctx.crest, 0.35)), mul(domes, 0.2));
       const k = round(s);
       const x = sub(s, k);
       const fw = max(fwidth(s), 1e-4);

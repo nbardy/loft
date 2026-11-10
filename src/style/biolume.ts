@@ -3,8 +3,8 @@
 // faintly where bodies break the water. Two post passes: the glow smeared down the water as a reflection, then bloom,
 // which glows whatever is bright (in this picture, only what emits).
 
-import { add, dot, exp, max, min, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
-import { luminance, noise2 } from "../lib/index.ts";
+import { add, dot, exp, fract, length, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
+import { hash22, luminance, noise2 } from "../lib/index.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Rgb, Style } from "../style.ts";
 import { POST_COMMON, rgb } from "./shared.ts";
@@ -108,8 +108,9 @@ export function biolume(): Style {
       const facing = saturate(dot(ctx.normal, ctx.view));
       // Dark skin under a faint moon, the paint's own hue barely kept.
       const skin = mul(mix(rgb(C.body), mul(ctx.base, 0.08), 0.5), add(0.5, mul(saturate(ndl), 0.8)));
-      // Emission fades a little toward the silhouette so the rim, not the pattern, draws the outline.
-      const glow = mul(glowOf(ctx.base), mul(0.85, add(0.4, mul(facing, 0.6))));
+      // Emission is brightest where the surface faces the eye and falls toward the silhouette, as light through
+      // translucent tissue does; the rim, not the pattern, draws the outline.
+      const glow = mul(glowOf(ctx.base), mul(0.8, add(0.2, mul(mul(facing, facing), 0.8))));
       const rim = mul(rgb(C.cyan), mul(pow(sub(1, facing), 3), 0.55));
       const c = add(add(skin, glow), rim);
       // Under water the body sinks into the dark, its light lasting longer than its skin.
@@ -121,11 +122,17 @@ export function biolume(): Style {
     water: (ctx) => {
       const facing = saturate(dot(ctx.normal, ctx.view));
       const xz = ctx.world.xz;
-      // Faint moonlit swell, so the water reads as a surface and not a void: a broad sheen and sparse glints.
+      // Faint moonlit swell, so the water reads as a surface and not a void: a broad sheen, glints, and sparse
+      // plankton that twinkle (one per cell of a world-space lattice: they stay where they are as the camera moves).
       const half = normalize(add(ctx.sun, ctx.view));
       const spec = dot(ctx.normal, half);
-      const sheen = add(mul(smoothstep(0.9, 1.0, spec), 0.1), mul(smoothstep(0.985, 0.995, add(spec, mul(noise2(mul(xz, 4)), 0.01))), 0.25));
+      const sheen = add(mul(smoothstep(0.75, 1.0, spec), 0.22), mul(smoothstep(0.975, 0.99, add(spec, mul(noise2(mul(xz, 4)), 0.012))), 0.3));
       let c: Expr<"vec3"> = add(mul(rgb(C.water), add(0.75, mul(ctx.crest, 0.35))), mul(rgb(C.moon), sheen));
+      const cell = mul(xz, 2.5);
+      const h = hash22(cell);
+      const spark = mul(smoothstep(0.93, 0.99, h.x), sub(1, smoothstep(0.0, 0.08, length(sub(fract(cell), add(mul(h, 0.6), 0.2))))));
+      const twinkle = add(0.5, mul(sin(add(mul(time, 2.3), mul(h.y, 40))), 0.5));
+      c = add(c, mul(rgb(C.cyan), mul(spark, mul(twinkle, 0.5))));
       // Where bodies disturb the water it glows: a soft halo through the contact band, the foam brighter on it,
       // flickering along its edge.
       const near = saturate(ctx.contact);

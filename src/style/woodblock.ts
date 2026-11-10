@@ -149,7 +149,7 @@ export function woodblock(): Style {
       c = mix(c, rgb(P.indigo), rim);
       c = mix(c, rgb(P.cream), max(foam, speck));
       // The far sea fades in two flat steps toward the haze at the horizon.
-      const far = add(mul(edgeOf(ctx.distance, 70, 1), 0.45), mul(edgeOf(ctx.distance, 140, 1), 0.4));
+      const far = add(mul(edgeOf(ctx.distance, 70, 1, 8), 0.45), mul(edgeOf(ctx.distance, 140, 1, 8), 0.4));
       c = mix(c, rgb(SEA.haze), far);
       // Opaque: a print shows nothing under its water.
       return vec4(c, 1);

@@ -4,7 +4,7 @@
 // PRELUDE_WGSL, POST_WGSL and `sceneWgsl` (DESIGN.md 3). Everything defined here is prefixed `sty_` so it cannot
 // collide with a library function that `sceneWgsl` happens to carry.
 
-import { add, max, mul, smoothstep, sub, vec3, type Expr } from "../expr.ts";
+import { add, max, min, mul, smoothstep, sub, vec3, type Expr } from "../expr.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { Rgb } from "../style.ts";
 
@@ -12,11 +12,13 @@ export const rgb = (c: Rgb): Expr<"vec3"> => vec3(c[0], c[1], c[2]);
 export const wgslRgb = (c: Rgb): string => `vec3<f32>(${c.map((x) => x.toFixed(4)).join(", ")})`;
 
 /**
- * 0 below `edge`, 1 above, antialiased over about a pixel of x's change (never narrower than `soft`). Fragment stage
- * only (it takes a derivative), so only in uniform control flow.
+ * 0 below `edge`, 1 above, antialiased over about a pixel of x's change (never narrower than `soft`, never wider
+ * than `widest`, in units of x). Fragment stage only (it takes a derivative), so only in uniform control flow.
  */
-export function edgeOf(x: Expr<"f32">, edge: number | Expr<"f32">, soft: number): Expr<"f32"> {
-  const w = max(mul(fwidth(x), 0.75), soft);
+export function edgeOf(x: Expr<"f32">, edge: number | Expr<"f32">, soft: number, widest = 0.05): Expr<"f32"> {
+  // Capped: where x jumps between neighbouring pixels (the contact band does where the search ring starts to find a
+  // body) an uncapped width spread that jump into half-covered pixels, a dotted ghost of the silhouette on the water.
+  const w = min(max(mul(fwidth(x), 0.75), soft), widest);
   return smoothstep(sub(edge, w), add(edge, w), x);
 }
 
