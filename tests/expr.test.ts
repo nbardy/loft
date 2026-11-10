@@ -58,7 +58,9 @@ test("JS and WGSL backends agree", async () => {
   expect(error?.message ?? null).toBeNull();
 
   const rows = device.createBuffer({ size: ramp.samples.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(rows, 0, ramp.samples);
+  // A copy is ArrayBuffer-backed: tsgo's parallel checker resolves GPUAllowSharedBufferSource from @webgpu/types or
+  // the DOM lib nondeterministically, and the former rejects Float32Array<ArrayBufferLike> (an intermittent TS2345).
+  device.queue.writeBuffer(rows, 0, new Float32Array(ramp.samples));
   const bytes = us.length * cases.length * 16;
   const result = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
