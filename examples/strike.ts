@@ -7,9 +7,10 @@
 // the shape and the strike follows. Run `loft check examples/strike.ts` for the checks.
 
 import {
-  abs, add, atan2, div, input, length, lift, mix, mod, mul, normalize, palette, scene, sea, sin, smoothstep, strand, sub, TAU, through, time, toon, vec2, vec3,
-  type Expr,
+  add, atan2, div, input, length, lift, mod, mul, normalize, scene, sea, ship, smoothstep, sub, time, toon, vec2,
+  type Expr, type ShipSpec,
 } from "../src/index.ts";
+import { sloopSpec } from "./fleet.ts";
 import { animate, attack, hit, part, smear, telegraph, wake, type Target } from "../src/spacetime/index.ts";
 import { budget, landsInside, minScreenSize, staysClear, stopsAt } from "../src/check.ts";
 import { restGape, restSpine, S, serpent } from "./serpent.ts";
@@ -21,35 +22,21 @@ const water = sea({
   ],
 });
 
-// ---- a ship stand-in: a hull about 5 long riding the swell, broadside to the serpent -------------------------------
+// ---- the ships: small cutters (src/geom/ship.ts) afloat on the swell, broadside to the serpent ---------------------
 
-const HALF_BEAM = 0.95, HULL = 5;
-function ship(name: string, at: Expr<"vec2">, heading: Expr<"vec2">) {
-  const along = (s: number) => add(at, mul(heading, (s - 0.5) * HULL));
-  const deck = (s: number) => { const xz = along(s); return vec3(xz.x, add(water.height(xz), 0.28 + 0.12 * (s - 0.5) ** 2 * 4), xz.y); };
-  const hull = strand({
-    name, spine: (m) => through(m, [0, 0.35, 0.7, 1].map(deck)), stations: 8,
-    girth: (m) => mul(sub(1, mul(mul(sub(m, 0.45), sub(m, 0.45)), 1.6)), HALF_BEAM), section: { aspect: 0.55, squareness: 3.2 },
-    tips: [{ round: 0.06 }, { point: 0.22 }],
-    paint: (m, v) => {
-      const side = palette.countershade(v, { back: [0.62, 0.43, 0.25], belly: [0.42, 0.1, 0.08] });
-      // A pale strake along each side at mid-height (v = 0 and 0.5), stopping short of the bow.
-      const strake = mul(smoothstep(0.16, 0.1, abs(sin(mul(v, TAU)))), smoothstep(0.9, 0.8, m));
-      return mix(side, vec3(0.95, 0.92, 0.84), strake);
-    },
-    detail: { along: 40, around: 20 },
-  });
-  // A cabin and a mast, so it reads as a ship from above.
-  const mid = deck(0.42);
-  const cabin = strand({
-    name: `${name}Cabin`, spine: (m) => through(m, [add(mid, mul(vec3(heading.x, 0, heading.y), -0.7)), add(mid, mul(vec3(heading.x, 0, heading.y), 0.5))].map((p) => add(p, vec3(0, 0.55, 0)))),
-    stations: 4, girth: 0.5, section: { aspect: 0.9, squareness: 4 }, tips: [{ round: 0.15 }, { round: 0.15 }], paint: [0.9, 0.86, 0.76], detail: { along: 12, around: 16 },
-  });
-  const mast = strand({
-    name: `${name}Mast`, spine: (m) => through(m, [add(deck(0.6), vec3(0, 0.3, 0)), add(deck(0.6), vec3(0, 3.2, 0))]), stations: 4, girth: 0.07,
-    tips: ["open", { point: 0.1 }], paint: [0.35, 0.24, 0.15], detail: { along: 8, around: 8 },
-  });
-  return { hull, things: [hull, cabin, mast] };
+const WIND = [0.8, 0.6] as const;
+/** A cutter about 5.6 long: the fleet's sloop, smaller. Its half-beam is where the bite's lane stops short. */
+const cutter = (name: string, team: readonly [number, number, number]): ShipSpec => ({
+  ...sloopSpec, name, length: 5.6, beam: 1.9, depth: 0.75, freeboard: 0.55, mastHeight: 5.5, bowsprit: 1.8,
+  colours: { ...sloopSpec.colours, team },
+});
+const HALF_BEAM = 0.95;
+function afloatShip(spec: ShipSpec, at: Expr<"vec2">, heading: Expr<"vec2">) {
+  const s = ship(spec);
+  const chart = s.afloatChart(water, { at, heading: atan2(heading.y, heading.x), wind: WIND });
+  // The target is the hull itself (its signed distance), so contact at arming reads as contact, not as the half-unit
+  // gap to the capsules of a stand-in.
+  return { things: s.placed(chart, WIND), target: s.target(chart) };
 }
 
 /** The ships' positions: what the game moves. */
@@ -62,8 +49,8 @@ const stern = input("ship2.at", "vec2", [-3.3, -5.8]);
 const ANCHOR: readonly [number, number] = [7.4, 0];
 const biteDir = normalize(sub(bow, lift<"vec2">(ANCHOR)));
 const bowHeading = vec2(mul(biteDir.y, -1), biteDir.x);
-const bowShip = ship("ship", bow, bowHeading);
-const biteTarget: Target = { kind: "body", body: bowShip.hull };
+const bowShip = afloatShip(cutter("ship", [0.85, 0.15, 0.12]), bow, bowHeading);
+const biteTarget: Target = bowShip.target;
 const bite = attack({
   name: "bite",
   arm: input("bite.arm", "f32", [2.4]),
@@ -72,7 +59,7 @@ const bite = attack({
   part: "head",
   motion: {
     kind: "lunge",
-    hit: hit.capsule({ a: add(lift<"vec2">(ANCHOR), mul(biteDir, 1.2)), b: sub(bow, mul(biteDir, HALF_BEAM + 0.05)), radius: input("bite.radius", "f32", [0.95]) }),
+    hit: hit.capsule({ a: add(lift<"vec2">(ANCHOR), mul(biteDir, 1.2)), b: sub(bow, mul(biteDir, HALF_BEAM - 0.42)), radius: input("bite.radius", "f32", [0.95]) }),
     reach: 0.3, lead: 1.95, height: 0.8, coil: 1.6, rise: 1.1, approach: 0.3, neck: 1.6,
   },
 });
@@ -85,8 +72,8 @@ const toStern = sub(stern, lift<"vec2">(PIVOT));
 // The ship's bearing from the pivot, unwrapped past the sweep's start, less the angle its near half-beam subtends.
 const sternBearing = add(SWEEP_FROM, mod(sub(atan2(toStern.y, toStern.x), SWEEP_FROM), Math.PI * 2));
 const sternHeading = normalize(toStern);
-const sternShip = ship("ship2", stern, sternHeading);
-const lashTarget: Target = { kind: "body", body: sternShip.hull };
+const sternShip = afloatShip(cutter("ship2", [0.13, 0.45, 0.85]), stern, sternHeading);
+const lashTarget: Target = sternShip.target;
 const lash = attack({
   name: "lash",
   arm: input("lash.arm", "f32", [5.6]),
@@ -95,7 +82,7 @@ const lash = attack({
   part: "tail",
   motion: {
     kind: "sweep",
-    hit: hit.arc({ centre: PIVOT, inner: 1.2, outer: 7.4, from: SWEEP_FROM, to: sub(sternBearing, div(HALF_BEAM + 0.1, length(toStern))) }),
+    hit: hit.arc({ centre: PIVOT, inner: 1.2, outer: 7.4, from: SWEEP_FROM, to: sub(sternBearing, div(HALF_BEAM - 0.08, length(toStern))) }),
     root: 0.72, height: 0.25, inset: 0.45,
   },
   timing: { windup: 0.7, strike: 0.32, travel: 3 },
@@ -141,11 +128,11 @@ export default scene({
 
 export const checks = [
   landsInside(strikes.bite),
-  stopsAt(strikes.bite, biteTarget),
+  stopsAt(strikes.bite, biteTarget, { contact: 0.1 }),
   staysClear(parts.body, biteTarget, { until: bite.arm, label: "bite: body clear of the ship until arming" }),
   staysClear(parts.head, biteTarget, { until: bite.arm, margin: 0.02, label: "bite: head clear of the ship until arming" }),
   landsInside(strikes.lash),
-  stopsAt(strikes.lash, lashTarget),
+  stopsAt(strikes.lash, lashTarget, { contact: 0.1 }),
   staysClear(parts.body, lashTarget, { until: lash.arm, label: "lash: body clear of ship2 until arming" }),
   minScreenSize(parts.eye, "three", 4, { at: bite.arm }),
   budget({ triangles: 400_000 }),

@@ -22,6 +22,7 @@ import { atRest, framed, mapNormal, sheet, thicken } from "../map/surface.ts";
 import type { Chart, F, Frame, P3, Paint, Skeleton, Surface } from "../map/types.ts";
 import { afloat, type Waters } from "./afloat.ts";
 import { Hull, type HullSpec, type Rgb } from "./hull.ts";
+import type { Target } from "../spacetime/attack.ts";
 import { lines, type Rope } from "./lines.ts";
 import { strand, type Strand } from "./strand.ts";
 
@@ -116,11 +117,20 @@ export class Ship {
 
   /** Float the ship on the water (the sea, or a whirlpool in it) and assemble it there. */
   afloat(water: Waters, p: Placement): Drawable[] {
-    const chart = afloat(water, {
+    return this.placed(this.afloatChart(water, p), p.wind);
+  }
+
+  /** The rigid chart `afloat` puts the ship in (for `target`, or to place more things on the ship). */
+  afloatChart(water: Waters, p: Placement): Chart {
+    return afloat(water, {
       at: p.at, heading: p.heading, length: this.hull.lines.length * 0.8, beam: this.hull.lines.beam,
       wind: { direction: p.wind, heel: this.spec.heel },
     });
-    return this.placed(chart, p.wind);
+  }
+
+  /** The hull in `chart` as an attack's target: checks measure its signed distance (src/geom/hull_distance.ts). */
+  target(chart: Chart): Target {
+    return { kind: "hull", hull: this.hull, frame: chart.frame(lift<"vec3">([0, 0, 0])) };
   }
 
   /** The ship in a rigid chart (its frame at the origin is the ship's), with the wind blowing toward `wind`. */

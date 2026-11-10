@@ -649,8 +649,15 @@ Where the plan met the code:
   Before: each copy and sample posed the whole body (1054 stations against 142). CPU pose, best of 3000 interleaved
   in one process: 0.47 -> 0.22 ms with smear and wake (0.11 without); `tools/strike_bench.ts` on the loaded machine:
   2.1-4.0 -> 1.5-2.2 ms (0.5-0.7 without). Tests: `tests/spacetime.slices.test.ts`.
-- **Targets are skeletons.** The stand-in hull's capsules are as wide as its beam, so "contact" at arming is a gap of
-  about 0.45 to the capsule surface, not zero; real ships will want a hull distance function as their target kind.
+- **A ship is its hull** (polish pass, 2026-11-11). `Target` has a third kind, `{ kind: "hull", hull, frame }`
+  (`Ship.target(chart)`, with `Ship.afloatChart` the chart `afloat` uses): checks move the chain into the ship's frame
+  and measure the hull's signed distance (`src/geom/hull_distance.ts`: the skin sampled 64 x 65, closed across the rail
+  and at both ends, nearest strips first with box pruning, inside by the parity of an upward ray; within 1e-3 of the
+  closed-form skin, `tests/hull.distance.test.ts`), at points along each capsule half its smaller radius apart, skipping
+  any whose distance to the hull's box cannot beat the best. `examples/strike.ts` now strikes two cutters built by
+  `ship` (the fleet's sloop, smaller): contact at arming reads 0.044 (bite) and 0.093 (lash) with `contact: 0.1`, where
+  the stand-in read 0.46 against a 0.6 allowance. A sample point inside a raked bow was called outside by the first
+  sign test (point in the section nearest along the length); the parity ray replaced it.
 ## 10. Ships, afloat, and the whirlpool (as built)
 
 Library functions on the map algebra; examples `examples/brig.ts`, `examples/fleet.ts`, `examples/maelstrom.ts`.

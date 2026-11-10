@@ -14,6 +14,7 @@ import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
 import type { Part, Strike, Target } from "./spacetime/attack.ts";
 import { hitSdf } from "./spacetime/hit.ts";
+import { hullBoxDistance, hullDistance, type HullDistance } from "./geom/hull_distance.ts";
 
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
@@ -142,7 +143,33 @@ function gap(probe: Probe, chain: readonly Joint[], target: Target, t: number): 
       const b = chainOf(target.body);
       return chainGap(chain, probe.joints(b.skeleton, b.range, t));
     }
+    case "hull": {
+      const f = target.frame;
+      const [o, x, y, z] = probe.eval([f.o, f.x, f.y, f.z], t) as unknown as V3[];
+      const local = (p: V3): V3 => { const d = subV(p, o!); return [dotV(d, x!), dotV(d, y!), dotV(d, z!)]; };
+      return hullGap(chain.map((j) => ({ p: local(j.p), r: j.r })), hullDistance(target.hull));
+    }
   }
+}
+
+/**
+ * Least distance from a chain of tapered capsules to a hull (negative: inside it): the hull's signed distance at points
+ * along each capsule's axis, no farther apart than half the smaller radius, less the radius there. Exact to that
+ * spacing (the distance is 1-Lipschitz, so between samples it can dip by at most a quarter radius below them).
+ */
+function hullGap(a: readonly Joint[], h: HullDistance): number {
+  let best = Infinity;
+  for (let i = 0; i + 1 < a.length; i++) {
+    const p0 = a[i]!.p, p1 = a[i + 1]!.p, r0 = a[i]!.r, r1 = a[i + 1]!.r;
+    const n = Math.max(1, Math.ceil(Math.hypot(...subV(p1, p0)) / Math.max(0.5 * Math.min(r0, r1), 0.01)));
+    for (let k = 0; k <= n; k++) {
+      const s = k / n, p = lerp(p0, p1, s), r = r0 + (r1 - r0) * s;
+      // The box is a lower bound: a sample that cannot beat the best so far is not measured.
+      if (hullBoxDistance(h, p) - r >= best) continue;
+      best = Math.min(best, h.distance(p) - r);
+    }
+  }
+  return best;
 }
 
 /** Times from t0 to t1 (inclusive of t0, exclusive of t1) at the check rate. */
