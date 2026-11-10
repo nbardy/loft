@@ -175,7 +175,7 @@ export default scene({
     side: { kind: "perspective", eye: [-1, 6, 34], target: [-1, 4, 0], fovY: 0.6 },
     top: { kind: "orthographic", eye: [-1, 40, 0.001], target: [-1, 0, 0], height: 24 },
     three: { kind: "perspective", eye: [16, 13, 20], target: [0, 4, 0], fovY: 0.6 },
-    game: { kind: "perspective", eye: [-16, 34, 24], target: [0, 2, 0], fovY: 0.6 },
+    game: { kind: "perspective", eye: [16, 34, 22], target: [0, 2, 0], fovY: 0.6 },
     face: { kind: "perspective", eye: [13, 9, 5.5], target: [4.6, 5.4, 0], fovY: 0.5 },
   },
 });
