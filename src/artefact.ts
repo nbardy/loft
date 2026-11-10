@@ -49,7 +49,9 @@ export type Camera =
   | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number }
   | { readonly kind: "orthographic"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly height: number };
 
+/** `slot` is a float offset into the `inputs` array; an input occupies as many floats as its type has components. */
 export type InputSlot = { readonly name: string; readonly ty: NumTy; readonly slot: number; readonly def: readonly number[] };
+/** `slot` is a float offset into the `params` array. `min` and `max` are for editors: a host does not clamp. */
 export type ParamSlot = { readonly name: string; readonly slot: number; readonly def: number; readonly min: number; readonly max: number };
 
 /** A per-frame table in bind group 1, declared in `sceneWgsl` as `var<storage, read> NAME: array<vec4<f32>>`. */
@@ -65,7 +67,7 @@ export type Draw = {
   readonly pass: "opaque" | "transparent";
   readonly cull: "none" | "back" | "front";
   readonly depthWrite: boolean;
-  /** alpha: straight alpha over. add: additive. */
+  /** alpha: straight alpha over (src-alpha, one-minus-src-alpha). add: additive scaled by alpha (src-alpha, one). */
   readonly blend: "none" | "alpha" | "add";
   /** Scene geometry, or construction lines the host can show and hide. */
   readonly layer: "scene" | "construction";
@@ -118,6 +120,8 @@ export interface Host {
 }
 export interface Loaded {
   frame(view: View): Promise<Uint8Array>;
+  /** Draw the same frame into a texture the caller owns (a canvas's current texture), sized as the view. */
+  draw(view: View, target: GPUTexture): Promise<void>;
   /** Replace table-backed curve data without rebuilding pipelines. */
   setCurves(curves: Float32Array): void;
   destroy(): void;
