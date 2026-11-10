@@ -23,9 +23,10 @@
 //
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts) stays clean.
 
-import { POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type FrameStats, type PostPass, type Host, type Loaded, type View } from "../artefact.ts";
+import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type FrameStats, type PostPass, type Host, type Loaded, type View } from "../artefact.ts";
 import { CURVE_N, type NumTy } from "../expr.ts";
 import { cameraMatrices } from "./camera.ts";
+import { planFrame, type Memory, type Plan } from "./detail.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 
@@ -97,6 +98,30 @@ function checkArtefact(a: Artefact): { paramFloats: number } {
     if (!(d.shader in a.shaders)) fail(`draw "${d.label}" names unknown shader "${d.shader}"`);
     // Opaque draws are what scene depth is made of; one cannot read it while it is being written.
     if (d.sceneDepth === true && d.pass === "opaque") fail(`draw "${d.label}" sets sceneDepth but is opaque; only transparent draws can read the opaque scene's depth`);
+  }
+  const bySlot = new Map<number, string>();
+  for (const d of a.draws) {
+    const detail = d.detail;
+    switch (detail.kind) {
+      case "fixed": break;
+      case "grid": {
+        const buf = a.dynamic.find((b) => b.name === detail.bound.buffer);
+        if (!buf) fail(`draw "${d.label}" reads its bounds from "${detail.bound.buffer}", which is not a dynamic buffer`);
+        if (detail.bound.offset + 2 * d.instances > buf!.vec4s) fail(`draw "${d.label}": its bounds overrun "${detail.bound.buffer}"`);
+        if (detail.levels.length === 0 || detail.levels[0]!.vertices !== d.vertices) fail(`draw "${d.label}": its finest level must have the draw's ${d.vertices} vertices`);
+        if (detail.slot + d.instances > DETAIL_SLOTS) fail(`draw "${d.label}": slots ${detail.slot}..${detail.slot + d.instances} exceed ${DETAIL_SLOTS}`);
+        break;
+      }
+      case "projected":
+        if (detail.slot + 2 > DETAIL_SLOTS) fail(`draw "${d.label}": slot ${detail.slot} exceeds ${DETAIL_SLOTS}`);
+        break;
+    }
+    // A slot is one choice: draws sharing it (a surface and its ink) must describe the same detail.
+    if (detail.kind !== "fixed") {
+      const key = JSON.stringify(detail), seen = bySlot.get(detail.slot);
+      if (seen !== undefined && seen !== key) fail(`draw "${d.label}" shares level-of-detail slot ${detail.slot} with a draw whose detail differs`);
+      bySlot.set(detail.slot, key);
+    }
   }
   for (const p of a.post ?? []) if (!(p.shader in a.shaders)) fail(`post pass "${p.label}" names unknown shader "${p.shader}"`);
   return { paramFloats };
@@ -275,10 +300,7 @@ export type Schedule =
   };
 
 export type Drawn = { readonly draw: Draw; readonly pipeline: GPURenderPipeline; readonly index: number };
-/** One draw call: what a frame's plan says to issue for a draw. */
-export type Run = { readonly vertices: number; readonly instances: number; readonly first: number };
-/** A frame's draw calls, by index into `Artefact.draws` (layer filtering already applied: a hidden draw has none). */
-export type Plan = readonly (readonly Run[])[];
+export type { Plan, Run } from "./detail.ts";
 /** What every schedule's recording shares: the artefact's clear colour, its draws and bind groups 0 and 1. */
 export type Scene = {
   readonly clear: GPUColor;
@@ -298,12 +320,6 @@ function drawAll(pass: GPURenderPassEncoder, list: readonly Drawn[], plan: Plan)
   for (const d of list) drawOne(pass, d, plan);
 }
 
-
-/** The frame's draw calls: every draw as declared; construction lines only when the view asks for them. */
-function planOf(a: Artefact, view: View): Plan {
-  const shown = (d: Draw) => d.layer === "scene" || view.construction === true;
-  return a.draws.map((d) => (shown(d) ? [{ vertices: d.vertices, instances: d.instances, first: 0 }] : []));
-}
 
 /** What a plan draws (FrameStats): scene triangles, and the draw calls issued. */
 function statsOf(plan: Plan): FrameStats {
@@ -449,6 +465,10 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const inputBuf = buffer("inputs", a.inputFloats * 4, STORAGE);
   const paramBuf = buffer("params", paramFloats * 4, STORAGE);
   const curveBuf = buffer("curves", a.curves.byteLength, STORAGE);
+  const detailBuf = buffer("loft_detail", DETAIL_SLOTS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+  const detail = new Float32Array(DETAIL_SLOTS * 4);
+  // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames.
+  const memory: Memory = new Map();
   if (a.curves.length > 0) device.queue.writeBuffer(curveBuf, 0, a.curves as Float32Array<ArrayBuffer>); // Dawn warns on empty writes
   const dynamic = a.dynamic.map((d) => ({ ...d, gpu: buffer(d.name, d.vec4s * 16, STORAGE) }));
 
@@ -457,12 +477,12 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const storageEntry = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: VISIBILITY, buffer: { type: "read-only-storage" } });
   const layout0 = device.createBindGroupLayout({
     label: "loft prelude",
-    entries: [{ binding: 0, visibility: VISIBILITY, buffer: { type: "uniform" } }, storageEntry(1), storageEntry(2), storageEntry(3)],
+    entries: [{ binding: 0, visibility: VISIBILITY, buffer: { type: "uniform" } }, storageEntry(1), storageEntry(2), storageEntry(3), { binding: 4, visibility: VISIBILITY, buffer: { type: "uniform" } }],
   });
   const layout1 = device.createBindGroupLayout({ label: "loft scene tables", entries: dynamic.map((d) => storageEntry(d.binding)) });
   const group0 = device.createBindGroup({
     layout: layout0,
-    entries: [frameBuf, inputBuf, paramBuf, curveBuf].map((b, binding) => ({ binding, resource: { buffer: b } })),
+    entries: [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf].map((b, binding) => ({ binding, resource: { buffer: b } })),
   });
   const group1 = device.createBindGroup({ layout: layout1, entries: dynamic.map((d) => ({ binding: d.binding, resource: { buffer: d.gpu } })) });
   // Group 2 layouts: exactly the ones documented on SCENE_DEPTH_WGSL and POST_WGSL.
@@ -551,7 +571,9 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     device.queue.writeBuffer(frameBuf, 0, frameUniform(view));
     if (state.inputs.length > 0) device.queue.writeBuffer(inputBuf, 0, state.inputs as Float32Array<ArrayBuffer>);
     if (state.params.length > 0) device.queue.writeBuffer(paramBuf, 0, state.params as Float32Array<ArrayBuffer>);
-    return planOf(a, view);
+    const plan = planFrame(a, view, tables, memory, detail);
+    device.queue.writeBuffer(detailBuf, 0, detail);
+    return plan;
   };
 
   /** The shared drawing code, for `frame` and `draw` alike: every pass of the schedule, ending in `out`. */
@@ -641,7 +663,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       curves = next.slice();
     },
     destroy: () => {
-      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, ...dynamic.map((d) => d.gpu)]) b.destroy();
+      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf, ...dynamic.map((d) => d.gpu)]) b.destroy();
       for (const t of targets?.textures ?? []) t.destroy();
       readback?.texture.destroy(); readback?.buffer.destroy();
       targets = undefined; readback = undefined;

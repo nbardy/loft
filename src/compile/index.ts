@@ -3,13 +3,13 @@
 // the first time anything reads it); then the tables are packed, the shared WGSL is assembled, each shader module gets
 // the library functions `sceneWgsl` does not already hold, the draws are ordered by phase and the pose function built.
 
-import type { Artefact, Draw, FrameState, PostPass } from "../artefact.ts";
+import { DETAIL_SLOTS, type Artefact, type Detail, type Draw, type FrameState, type PostPass } from "../artefact.ts";
 import { compileJs, type Env, type Expr, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
 import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
-import { PASS_OF, PHASES, type CompileContext, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
+import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
-import { poseFrame, poseFunction, poseProfile, Tables } from "./tables.ts";
+import { poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
 export type CpuFn = (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
@@ -86,7 +86,14 @@ export function compileScene(scene: Scene): Compiled {
   const envOf = (state: FrameState): Omit<Env, "tables"> => ({ vars: {}, ...readEnv(state.inputs, state.params), curves: state.curves });
 
   // Stable sort by phase: within a phase, the order drawables emitted.
-  const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, ...d }) => ({ ...d, pass: PASS_OF[phase] }));
+  const detailOf = detailSlots(layout.placed);
+  const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, ...d }) => {
+    const resolved = detailOf(detail, d);
+    // The shader reads its level from `loft_detail[LOFT_DETAIL_SLOT + instance]` (an override, so one module serves
+    // every slot it is drawn with).
+    const constants = resolved.kind === "fixed" ? d.constants : { ...d.constants, LOFT_DETAIL_SLOT: resolved.slot };
+    return { ...d, constants, detail: resolved, pass: PASS_OF[phase] };
+  });
   const triangles = draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0);
   const artefact: Artefact = {
     version: 1,
@@ -111,4 +118,33 @@ export function compileScene(scene: Scene): Compiled {
     return t;
   };
   return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table };
+}
+
+/**
+ * Slots in `loft_detail` for each draw's level of detail, and its bound table's place in the dynamic buffers. One
+ * choice per bound table (a surface and its ink outline name the same one), one per projected spec.
+ */
+function detailSlots(placed: TableLayout["placed"]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
+  const slots = new Map<object, number>();
+  let next = 0;
+  const slotFor = (key: object, n: number, label: string): number => {
+    const known = slots.get(key);
+    if (known !== undefined) return known;
+    if (next + n > DETAIL_SLOTS) throw new Error(`compile: draw "${label}" needs ${n} level-of-detail slots; the scene has used ${next} of ${DETAIL_SLOTS}`);
+    slots.set(key, next);
+    next += n;
+    return next - n;
+  };
+  return (spec, d) => {
+    switch (spec.kind) {
+      case "fixed": return spec;
+      case "grid": {
+        const p = placed.get(spec.bound);
+        if (!p) throw new Error(`compile: draw "${d.label}" states bounds in table "${spec.bound.name}", which was never declared (ctx.table)`);
+        if (spec.bound.entries !== d.instances || spec.bound.lanes !== 2) throw new Error(`compile: draw "${d.label}": its bound table must have 2 lanes and one entry per instance (${d.instances}), got ${spec.bound.lanes} x ${spec.bound.entries}`);
+        return { kind: "grid", slot: slotFor(spec.bound, d.instances, d.label), bound: { buffer: bufferName(p.buffer), offset: p.offset }, levels: spec.levels };
+      }
+      case "projected": return { ...spec, slot: slotFor(spec, 2, d.label) };
+    }
+  };
 }

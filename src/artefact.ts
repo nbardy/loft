@@ -17,6 +17,12 @@
 
 import { CURVE_N, type NumTy } from "./expr.ts";
 
+/**
+ * Slots in the level-of-detail table (`loft_detail`, group 0 binding 4): a uniform array of vec4, 64 KiB, the default
+ * `maxUniformBufferBindingSize`. A uniform, not a storage buffer, so the per-stage storage budget stays the tables'.
+ */
+export const DETAIL_SLOTS = 4096;
+
 /** Prepended by the host to every shader module, before `Artefact.sceneWgsl` and the shader itself. */
 export const PRELUDE_WGSL = /* wgsl */ `
 struct Frame {
@@ -31,6 +37,7 @@ struct Frame {
 @group(0) @binding(1) var<storage, read> inputs: array<f32>;        // host inputs, by slot
 @group(0) @binding(2) var<storage, read> params: array<f32>;        // tunable numbers, by slot
 @group(0) @binding(3) var<storage, read> curves: array<vec4<f32>>;  // rows of CURVE_N samples
+@group(0) @binding(4) var<uniform> loft_detail: array<vec4<f32>, ${DETAIL_SLOTS}>;  // per-frame level of detail (Draw.detail)
 
 const CURVE_N: u32 = ${CURVE_N}u;
 /// Sample curve row \`r\` at x in [0, 1]: linear interpolation, clamped at the ends.
@@ -124,8 +131,43 @@ export type ParamSlot = { readonly name: string; readonly slot: number; readonly
 /** A per-frame table in bind group 1, declared in `sceneWgsl` as `var<storage, read> NAME: array<vec4<f32>>`. */
 export type DynamicBuffer = { readonly name: string; readonly binding: number; readonly vec4s: number };
 
+/**
+ * How a draw's size is chosen each frame. The host writes a vec4 per slot into `loft_detail` before the frame and
+ * issues the vertex count that goes with it.
+ *
+ * fixed      `vertices` x `instances`, as declared; no slot.
+ * grid       a grid of cells over two axes, at one of `levels` (finest first; `levels[0].vertices` is `Draw.vertices`).
+ *            Per instance i, slot `slot + i` receives `(cells[0], cells[1], 0, 0)` and the instance is drawn with that
+ *            level's `vertices`. The pose's per-frame tables hold, per instance, two vec4 at `bound.offset + 2 i` of
+ *            dynamic buffer `bound.buffer`: (centre xyz, radius) of a sphere holding it, and (world length along axis 0,
+ *            along axis 1, 0, 0). The host picks, per instance, the coarsest level whose cells are at most
+ *            `View.cellPixels` across on screen at the sphere's nearest point, keeping the previous frame's level while
+ *            its cells stay within [1 / HYSTERESIS, HYSTERESIS] of that rule's bounds, and skips an instance whose
+ *            sphere is under a pixel across or wholly behind the eye. Instances are drawn in runs of one level
+ *            (`firstInstance`), so `@builtin(instance_index)` still names the copy.
+ * projected  a grid laid over the image of the plane y = `plane` out to view depth `reach`: the host chooses
+ *            nx x ny cells of `cell` x `View.cellPixels` pixels covering NDC x in [-1 - m, 1 + m] and NDC y in
+ *            [y0, y1] (the rows whose ray meets the plane within `reach`, widened by m), where m is the screen movement of
+ *            a point of the plane lifted by `lift`, and writes `(nx, ny, y0, y1)` to `slot`, with m in the slot's
+ *            neighbour `slot + 1` as `(m, 0, 0, 0)`. It draws 6 nx ny vertices, or nothing when no row meets the plane.
+ */
+export type Detail =
+  | { readonly kind: "fixed" }
+  | {
+    readonly kind: "grid";
+    readonly slot: number;
+    readonly bound: { readonly buffer: string; readonly offset: number };
+    readonly levels: readonly { readonly cells: readonly [number, number]; readonly vertices: number }[];
+  }
+  | { readonly kind: "projected"; readonly slot: number; readonly cell: number; readonly plane: number; readonly reach: number; readonly lift: number };
+
+/** A grid keeps its level while its cells stay within this factor beyond the bounds that would choose it afresh. */
+export const HYSTERESIS = 1.25;
+
 export type Draw = {
   readonly label: string;
+  /** How its vertex count is chosen per frame. Two draws with one slot (a surface and its ink) share the choice. */
+  readonly detail: Detail;
   /** Key into `Artefact.shaders`. The module has entry points `vs` and `fs`. */
   readonly shader: string;
   readonly vertices: number;

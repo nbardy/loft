@@ -5,7 +5,7 @@
 // a drawable emits (`fetch`), or declared with `ctx.table` when the drawable writes raw WGSL that reads one. The
 // compiler owns bindings, table packing, the pose function and draw order; nothing in src/compile changes for a new kind.
 
-import type { Draw } from "../artefact.ts";
+import type { Detail, Draw } from "../artefact.ts";
 import type { LibFn, TableSource } from "../expr.ts";
 import type { Sea } from "../geom/sea.ts";
 import type { Grid } from "../draw/surface.ts";
@@ -29,8 +29,18 @@ export const PASS_OF: Readonly<Record<Phase, Draw["pass"]>> = {
   background: "opaque", opaque: "opaque", water: "transparent", "on-water": "transparent", transparent: "transparent",
 };
 
+/**
+ * A draw's level of detail as a drawable states it (the artefact's `Detail` before slots and table offsets exist):
+ * a grid names the per-frame table of its bounds (two lanes per instance, declared through `ctx.table`); the compiler
+ * gives each bound table, and each projected spec, its slots. Draws stating the same bound table share one choice.
+ */
+export type DetailSpec =
+  | { readonly kind: "fixed" }
+  | { readonly kind: "grid"; readonly bound: TableSource; readonly levels: Extract<Detail, { kind: "grid" }>["levels"] }
+  | Omit<Extract<Detail, { kind: "projected" }>, "slot">;
+
 /** A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. */
-export type DrawSpec = Omit<Draw, "pass"> & { readonly phase: Phase };
+export type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; readonly detail: DetailSpec };
 
 /**
  * A shader module: its code (entry points `vs` and `fs`) and the library functions that code calls. The compiler puts
@@ -74,7 +84,7 @@ export interface Drawable {
 /** A draw with the defaults most draws share; each field still has to be meant. */
 export function drawSpec(d: Pick<DrawSpec, "label" | "shader" | "vertices"> & Partial<DrawSpec>): DrawSpec {
   return {
-    instances: 1, phase: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {},
+    instances: 1, phase: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" },
     ...d,
   };
 }

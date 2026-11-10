@@ -278,7 +278,7 @@ const SIZE_PX: f32 = 7.0;
 // ---- the draw list ----------------------------------------------------------------------------------------------
 
 const draw = (d: Pick<Draw, "label" | "shader" | "vertices"> & Partial<Draw>): Draw => ({
-  instances: 1, pass: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, ...d,
+  instances: 1, pass: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" }, ...d,
 });
 const draws: Draw[] = [
   draw({ label: "ground", shader: "ground", vertices: 6 }),

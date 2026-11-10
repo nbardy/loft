@@ -48,8 +48,8 @@ const probe: Artefact = {
       }`,
   },
   draws: [
-    { label: "ground", shader: "ground", vertices: 6, instances: 1, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {} },
-    { label: "probe", shader: "probe", vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, sceneDepth: true },
+    { label: "ground", shader: "ground", vertices: 6, instances: 1, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" } },
+    { label: "probe", shader: "probe", vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" }, sceneDepth: true },
   ],
   pose: () => ({}),
   cameras: {},

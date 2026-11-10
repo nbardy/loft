@@ -5,7 +5,8 @@
 
 import { add, cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { boundTable, gridDetail } from "./grid_detail.ts";
 import { carry, rotate } from "../map/chart.ts";
 import { framed } from "../map/surface.ts";
 import type { Chart, F, P3, Paint, Points, Skeleton, Surface } from "../map/types.ts";
@@ -95,9 +96,9 @@ export class SurfaceDrawable implements Drawable {
     const frag = fragment(ctx, this);
     const instances = countOf(this.copies);
     const NU = this.grid.u.count, NV = this.grid.v.count;
+    const detail = detailOf(ctx, this);
     const code = [
-      `override NU: u32 = ${NU}u;`,
-      `override NV: u32 = ${NV}u;`,
+      cellsWgsl(detail, NU, NV),
       frag.overrides,
       `const ID: f32 = ${lit(nameId(this.name))};`,
       vertex.code, frag.fns.code,
@@ -111,8 +112,9 @@ struct VOut {
   @location(4) @interpolate(flat) id: f32,
 };
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
-  let ij = vec2<u32>((vi / 6u) / NV, (vi / 6u) % NV) + quad_corner(vi % 6u);
-  let s = surf_${this.name}(f32(ij.x) / f32(NU), f32(ij.y) / f32(NV), f32(ii));
+  let n = grid_cells(ii);
+  let ij = vec2<u32>((vi / 6u) / n.y, (vi / 6u) % n.y) + quad_corner(vi % 6u);
+  let s = surf_${this.name}(f32(ij.x) / f32(n.x), f32(ij.y) / f32(n.y), f32(ii));
   let p = ${frag.push};
   var out: VOut;
   out.clip = frame.view_proj * vec4<f32>(p, 1.0);
@@ -125,9 +127,41 @@ struct VOut {
 }
 ${frag.main}`,
     ].join("\n");
-    const base = { label: this.name, shader: key, vertices: 6 * NU * NV, instances, constants: { NU, NV } };
+    const base = { label: this.name, shader: key, vertices: 6 * NU * NV, instances, constants: constantsOf(detail, NU, NV), detail: detail.spec };
     const shader: Shader = { code, libs: [...vertex.libs, ...frag.fns.libs] };
     return { shaders: { [key]: shader }, draws: frag.draws(base) };
+  }
+}
+
+/**
+ * How a drawn surface's grid size is chosen: fixed at the authored counts, or by the host from the surface's size on
+ * screen (lit surfaces: bodies, sheets, hulls, sails). Glazed surfaces (the sea's own grid is its business; markers and
+ * smears on it) and flat strokes (whose grids carry structure, such as a ship's ropes joined by zero-width cells) stay
+ * fixed.
+ */
+type SurfaceDetail = { readonly kind: "fixed"; readonly spec: DetailSpec } | { readonly kind: "grid"; readonly spec: DetailSpec };
+
+function detailOf(ctx: CompileContext, d: SurfaceDrawable): SurfaceDetail {
+  switch (d.look.kind) {
+    case "lit": {
+      const bound = boundTable(d.name, d.surface, { u: d.grid.u.at, v: d.grid.v.at }, d.copies);
+      ctx.table(bound);
+      return { kind: "grid", spec: gridDetail(bound, d.grid.u.count, d.grid.v.count, d.surface.topology) };
+    }
+    case "flat": case "glazed": return { kind: "fixed", spec: { kind: "fixed" } };
+  }
+}
+/** `fn grid_cells(ii) -> vec2<u32>`: the cell counts this instance is drawn with. */
+function cellsWgsl(d: SurfaceDetail, nu: number, nv: number): string {
+  switch (d.kind) {
+    case "fixed": return `override NU: u32 = ${nu}u;\noverride NV: u32 = ${nv}u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(NU, NV); }`;
+    case "grid": return `override LOFT_DETAIL_SLOT: u32 = 0u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(loft_detail[LOFT_DETAIL_SLOT + ii].xy); }`;
+  }
+}
+function constantsOf(d: SurfaceDetail, nu: number, nv: number): Readonly<Record<string, number>> {
+  switch (d.kind) {
+    case "fixed": return { NU: nu, NV: nv };
+    case "grid": return {};
   }
 }
 
@@ -215,7 +249,7 @@ function placedSurface(s: Surface, c: Copies): Surface {
   }
 }
 
-type Base = Pick<DrawSpec, "label" | "shader" | "vertices" | "instances" | "constants">;
+type Base = Pick<DrawSpec, "label" | "shader" | "vertices" | "instances" | "constants" | "detail">;
 type Frag = { readonly overrides: string; readonly fns: Shader; readonly push: string; readonly main: string; readonly draws: (b: Base) => DrawSpec[] };
 
 const LIT_PRE = /* wgsl */ `

@@ -36,7 +36,7 @@ export type TableLayout = {
 
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 const accessor = (name: string): string => `t_${name}`;
-const bufferName = (k: number): string => `loft_tables_${k}`;
+export const bufferName = (k: number): string => `loft_tables_${k}`;
 const vec4sOf = (t: TableSource): number => t.entries * t.lanes;
 const UNFILLED: TableFill = () => { throw new Error("internal: a table was read while it was being prepared"); };
 
