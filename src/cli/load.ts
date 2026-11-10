@@ -1,7 +1,8 @@
 // The only place the CLI touches the other agents' modules. They are imported dynamically, by URL, so this file
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
 import { resolve } from "node:path";
-import type { Artefact, Host } from "../artefact.ts";
+import type { Artefact } from "../artefact.ts";
+import type { GpuHost } from "../host/host.ts";
 import type { Source, StyleChoice } from "./args.ts";
 
 async function importFrom<T>(rel: string): Promise<T> {
@@ -30,7 +31,7 @@ export async function loadArtefact(source: Source): Promise<Artefact> {
 }
 
 /** The scene in the chosen style (`--style`): its own, or the named one swapped in without touching the scene. */
-async function styled(scene: unknown, style: StyleChoice): Promise<unknown> {
+export async function styled(scene: unknown, style: StyleChoice): Promise<unknown> {
   switch (style.kind) {
     case "scene": return scene;
     case "named": {
@@ -42,9 +43,9 @@ async function styled(scene: unknown, style: StyleChoice): Promise<unknown> {
 }
 
 /** A host drawing into an offscreen texture on bun's headless WebGPU. */
-export async function headlessHost(): Promise<Host> {
+export async function headlessHost(): Promise<GpuHost> {
   const headless = await importFrom<Record<string, unknown>>("../host/headless.ts");
   const device = await need<() => Promise<GPUDevice>>(headless, "headlessDevice", "src/host/headless.ts")();
   const index = await importFrom<Record<string, unknown>>("../host/index.ts");
-  return need<(d: GPUDevice) => Host>(index, "createHost", "src/host/index.ts")(device);
+  return need<(d: GPUDevice) => GpuHost>(index, "createHost", "src/host/index.ts")(device);
 }

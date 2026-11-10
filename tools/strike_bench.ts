@@ -28,5 +28,5 @@ for (const [label, things] of Object.entries(variants)) {
     best.pose = Math.min(best.pose, ms.pose); best.encode = Math.min(best.encode, ms.encode); best.readback = Math.min(best.readback, ms.readback); best.total = Math.min(best.total, total);
   }
   loaded.destroy();
-  console.log(`${label.padEnd(18)} best of ${N}: total ${best.total.toFixed(2)} ms (pose ${best.pose.toFixed(2)}, encode ${best.encode.toFixed(2)}, gpu+readback ${best.readback.toFixed(2)})  ${artefact.stats.triangles} triangles, ${artefact.stats.draws} draws, ${artefact.stats.stations} stations`);
+  console.log(`${label.padEnd(18)} best of ${N}: total ${best.total.toFixed(2)} ms (pose ${best.pose.toFixed(2)}, encode ${best.encode.toFixed(2)}, gpu+readback ${best.readback.toFixed(2)})  ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws, ${artefact.stats.stations} stations`);
 }

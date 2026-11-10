@@ -12,6 +12,7 @@ import { commitOf, closureHash, discover, headCommit, sha, type Discovered } fro
 import type { GalleryCommand } from "./gallery_args.ts";
 import { renderPage, type Checks, type Entry, type GalleryData, type Media, type Numbers } from "./gallery_page.ts";
 import { headlessHost } from "./load.ts";
+import type { GpuHost } from "../host/host.ts";
 import { writeWebp } from "./image.ts";
 import { openVideo } from "./video.ts";
 
@@ -99,7 +100,7 @@ async function withNamedStyle(scene: unknown, name: string): Promise<unknown> {
   return styles.withStyle(scene, styles.styleNamed(name));
 }
 
-async function renderScene(host: Host, d: Extract<Discovered, { kind: "scene" }>, cmd: GalleryCommand, store: Store): Promise<Entry> {
+async function renderScene(host: GpuHost, d: Extract<Discovered, { kind: "scene" }>, cmd: GalleryCommand, store: Store): Promise<Entry> {
   const source = relative(cmd.out, d.path);
   const scene = d.module.default;
   const optionsOf = (...extra: readonly string[]) => [`${cmd.size.width}x${cmd.size.height}`, ...extra];
@@ -145,10 +146,10 @@ async function renderScene(host: Host, d: Extract<Discovered, { kind: "scene" }>
     }
 
     // Best case: the minimum of a few frames after the stills above warmed everything.
-    let best = Infinity;
+    let best = Infinity, drawn = 0;
     for (let i = 0; i < TIMING_FRAMES; i++) {
       const t0 = performance.now();
-      await loaded.frame({ camera: first.camera, ...cmd.size, time: STILL_TIME + i / FPS, params: {} });
+      drawn = (await loaded.frameTimed({ camera: first.camera, ...cmd.size, time: STILL_TIME + i / FPS, params: {} })).drawn.triangles;
       best = Math.min(best, performance.now() - t0);
     }
 
@@ -172,7 +173,7 @@ async function renderScene(host: Host, d: Extract<Discovered, { kind: "scene" }>
     }
 
     const checks = await runChecksOf(scene, d.module.checks);
-    const numbers: Numbers = { triangles: base.artefact.stats.triangles, draws: base.artefact.stats.draws, compileMs, loadMs, msPerFrame: best };
+    const numbers: Numbers = { triangles: drawn, draws: base.artefact.stats.draws, compileMs, loadMs, msPerFrame: best };
     const everything = [...cameras, ...styles].every((x) => x.media.kind === "ok") && clip.kind === "ok";
     // The meta file is written last and only for a fully successful scene, so its presence means "all outputs exist".
     if (everything) {

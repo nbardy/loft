@@ -282,7 +282,7 @@ export function budget(o: { readonly triangles: number }): Check {
   return {
     name: `triangle budget ${o.triangles}`,
     run(probe) {
-      const n = probe.artefact.stats.triangles;
+      const n = probe.artefact.stats.maxTriangles;
       return { name: this.name, pass: n <= o.triangles, value: n, measured: `${n} triangles`, limit: `<= ${o.triangles}` };
     },
   };

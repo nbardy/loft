@@ -9,7 +9,7 @@ import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
 import { PASS_OF, PHASES, type CompileContext, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
-import { poseFrame, poseFunction, Tables } from "./tables.ts";
+import { poseFrame, poseFunction, poseProfile, Tables } from "./tables.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
 export type CpuFn = (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
@@ -21,6 +21,8 @@ export type Compiled = {
   frame(state: FrameState): TableFrame;
   /** Expressions on the CPU over a frame. Their leaves must already be in the artefact (anything drawn reads them). */
   cpu(roots: readonly Expr[]): CpuFn;
+  /** CPU milliseconds of one pose per table, each without the tables it read (for `loft profile`). */
+  poseProfile(state: FrameState): ReadonlyMap<string, number>;
   /** A per-frame table of the artefact, by name (for raw-WGSL tables, which no expression names). */
   table(name: string): TableSource;
 };
@@ -100,7 +102,7 @@ export function compileScene(scene: Scene): Compiled {
     ...(post.length > 0 ? { post } : {}),
     pose: poseFunction(layout, envOf),
     cameras: scene.cameras,
-    stats: { triangles, draws: draws.length, curveRows: leaves.rows, stations: layout.stations },
+    stats: { maxTriangles: triangles, draws: draws.length, curveRows: leaves.rows, stations: layout.stations },
   };
   const byName = new Map([...layout.placed.keys()].map((t) => [t.name, t]));
   const table = (name: string): TableSource => {
@@ -108,5 +110,5 @@ export function compileScene(scene: Scene): Compiled {
     if (!t) throw new Error(`compile: no table named "${name}" (tables: ${[...byName.keys()].join(", ")})`);
     return t;
   };
-  return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, cpu, table };
+  return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table };
 }

@@ -9,11 +9,11 @@ import { openVideo } from "./video.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
-async function open(cmd: Exclude<Command, { kind: "dev" | "bake" | "check" | "gallery" }>, sweep: Sweep) {
+async function open(cmd: Exclude<Command, { kind: "dev" | "bake" | "check" | "gallery" | "profile" }>, sweep: Sweep) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   checkInputs(artefact, cmd.inputs, sweep);
-  console.log(`compile  ${ms(t)}  (${artefact.stats.triangles} triangles, ${artefact.stats.draws} draws)`);
+  console.log(`compile  ${ms(t)}  (${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
   t = performance.now();
   const loaded: Loaded = await (await headlessHost()).load(artefact);
   console.log(`load     ${ms(t)}`);
@@ -83,6 +83,7 @@ async function main(argv: readonly string[]) {
     case "bake": return (await import("../bake/command.ts")).bake(cmd);
     case "check": return (await import("./check.ts")).check(cmd);
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
+    case "profile": return (await import("./profile.ts")).profile(cmd);
   }
 }
 

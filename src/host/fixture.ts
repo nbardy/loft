@@ -312,7 +312,7 @@ export const fixture: Artefact = {
     side: { kind: "orthographic", eye: [0, 1.5, 12], target: [0, 1, 0], height: 5 },
   },
   stats: {
-    triangles: draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0),
+    maxTriangles: draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0),
     draws: draws.length,
     curveRows: 2,
     stations: STATIONS,

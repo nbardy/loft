@@ -189,7 +189,11 @@ export type Artefact = {
   pose(state: FrameState): Readonly<Record<string, Float32Array>>;
   /** Views the scene suggests, by name. */
   readonly cameras: Readonly<Record<string, Camera>>;
-  readonly stats: { readonly triangles: number; readonly draws: number; readonly curveRows: number; readonly stations: number };
+  /**
+   * `maxTriangles`: what the draw list declares (every draw's vertices / 3 x instances, scene layer), the most a frame
+   * can draw; a host drawing at a coarser level of detail draws fewer (`FrameStats`). `draws`: draws declared.
+   */
+  readonly stats: { readonly maxTriangles: number; readonly draws: number; readonly curveRows: number; readonly stations: number };
 };
 
 /** One frame to draw. Missing inputs and params take the artefact's defaults; `time` also fills the `time` input. */
@@ -203,6 +207,12 @@ export type View = {
   readonly construction?: boolean;
 };
 
+/**
+ * What a host actually drew for one frame: triangles submitted (every draw call's vertices / 3 x instances, construction
+ * lines included when shown) and draw calls issued.
+ */
+export type FrameStats = { readonly triangles: number; readonly draws: number };
+
 /** What every host implements. `frame` returns tightly packed RGBA8, top row first. */
 export interface Host {
   load(artefact: Artefact): Promise<Loaded>;
@@ -210,7 +220,7 @@ export interface Host {
 export interface Loaded {
   frame(view: View): Promise<Uint8Array>;
   /** Draw the same frame into a texture the caller owns (a canvas's current texture), sized as the view. */
-  draw(view: View, target: GPUTexture): Promise<void>;
+  draw(view: View, target: GPUTexture): Promise<FrameStats>;
   /** Replace table-backed curve data without rebuilding pipelines. */
   setCurves(curves: Float32Array): void;
   destroy(): void;

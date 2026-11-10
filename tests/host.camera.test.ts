@@ -66,7 +66,7 @@ function markers(points: readonly (readonly [number, number, number])[]): Artefa
     draws: [{ label: "marks", shader: "mark", vertices: 6, instances: points.length, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {} }],
     pose: () => ({ points: table }),
     cameras: {},
-    stats: { triangles: 2 * points.length, draws: 1, curveRows: 0, stations: 0 },
+    stats: { maxTriangles: 2 * points.length, draws: 1, curveRows: 0, stations: 0 },
   };
 }
 

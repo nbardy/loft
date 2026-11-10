@@ -2,7 +2,7 @@
 // State that should survive a reload (camera, time, changed values, panel) lives in sessionStorage under one key; the
 // page saves it on `pagehide`, which covers both a manual reload and the reload `loft dev` triggers after a rebuild.
 // Build errors and the reload after a fix are owned by /live.js (src/cli/dev.ts), which does not depend on this file.
-import type { Artefact, Camera, View } from "../src/artefact.ts";
+import type { Artefact, Camera, FrameStats, View } from "../src/artefact.ts";
 import { orbit } from "../src/host/camera.ts";
 import { COLOR_FORMAT, createHost, type GpuLoaded } from "../src/host/host.ts";
 import { FALLBACK_CAMERAS } from "../src/cli/cameras.ts";
@@ -218,6 +218,7 @@ async function start() {
   let windowStart = last;
   let frames = 0;
   let latest = { cpu: 0, frame: 0 };
+  let drawn: FrameStats = { triangles: 0, draws: 0 };
   const tick = async (now: number) => {
     const dt = (now - last) / 1000;
     last = now;
@@ -239,7 +240,7 @@ async function start() {
     const view: View = { camera: state.camera!, width, height, time: state.time, params: state.params, construction: state.construction };
     const t0 = performance.now();
     try {
-      await loaded.draw(view, context.getCurrentTexture());
+      drawn = await loaded.draw(view, context.getCurrentTexture());
       clearError();
     } catch (e) {
       showError(`draw failed:\n${e instanceof Error ? e.message : String(e)}`);
@@ -256,7 +257,7 @@ async function start() {
     requestAnimationFrame(tick);
   };
   const readoutText = (head: string) =>
-    `${head}\ncpu ${latest.cpu.toFixed(1)} ms\n${artefact.stats.triangles.toLocaleString("en-US")} triangles  ${artefact.stats.draws} draws\n${canvas.width} x ${canvas.height} px @${(window.devicePixelRatio || 1).toFixed(2)}x`;
+    `${head}\ncpu ${latest.cpu.toFixed(1)} ms\n${drawn.triangles.toLocaleString("en-US")} triangles drawn (of ${artefact.stats.maxTriangles.toLocaleString("en-US")})  ${drawn.draws} draw calls\n${canvas.width} x ${canvas.height} px @${(window.devicePixelRatio || 1).toFixed(2)}x`;
   requestAnimationFrame(tick);
 }
 
