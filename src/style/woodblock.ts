@@ -36,11 +36,22 @@ const BAND = { black: 0.08, indigo: 0.34, pale: 0.6, warm: 0.28 } as const;
  * silhouette: only the NEAR side is inked, so an edge gets one line, not one on each surface) or turns sharply (a
  * crease). The half-width wanders with low-frequency noise in world space, so the line swells and thins like a cut
  * one, and it is thinner far away. The colour block is read slightly out of register; the key line is not.
+ *
+ * A step is measured against the plane through the pixel, not against the pixel's own depth: a plane's inverse view
+ * depth (its view depth, for an orthographic camera) is affine in screen space, so its second difference across the
+ * pixel is zero, however steeply it recedes. (A step relative to the depth, as the fixture's ink pass has, inked a
+ * grazing plate solid black toward the horizon, where neighbouring pixels are metres apart in depth.)
  */
 const KEYLINE = /* wgsl */ `${POST_COMMON}
 const WB_INK: vec3<f32> = ${wgslRgb(P.black)};
+/// Opposite directions are adjacent: k and k ^ 1.
 const WB_DIRS = array<vec2<f32>, 8>(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
-  vec2(0.7071, 0.7071), vec2(-0.7071, 0.7071), vec2(0.7071, -0.7071), vec2(-0.7071, -0.7071));
+  vec2(0.7071, 0.7071), vec2(-0.7071, -0.7071), vec2(0.7071, -0.7071), vec2(-0.7071, 0.7071));
+/// Nearness at px, affine in screen space over a plane: 1 / depth (perspective) or -depth (orthographic).
+fn wb_near(px: vec2<f32>) -> f32 {
+  let z = sty_view_depth(px);
+  return select(-z, 1.0 / max(z, 1e-6), frame.eye.w > 0.5);
+}
 
 @fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
   let px = in.px.xy;
@@ -50,22 +61,28 @@ const WB_DIRS = array<vec2<f32>, 8>(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1
   if (!sty_solid(px) || sty_submerged(px)) { return vec4<f32>(colour, 1.0); }
   let p = scene_position(px);
   let z = sty_view_depth(px);
+  let g0 = wb_near(px);
+  // A step beyond the plane, as a share of the nearness (perspective: about the relative jump in depth) or in world
+  // units (orthographic).
+  let unit = select(1.0, g0, frame.eye.w > 0.5);
   // Half-width in pixels: 1.3 to 3.5 at the reference size, wandering along the line.
   let wobble = sty_noise(p.xz * 1.3 + vec2<f32>(p.y * 1.7, 0.0));
-  let w = scale * (1.3 + 2.2 * wobble * wobble) * clamp(18.0 / z, 0.6, 1.4);
-  // Offsets of at least a whole pixel: textureLoad floors, and a sub-pixel offset reads the same texel (a zero
-  // difference, a NaN normal, and solid black where it propagated, at small sizes).
+  let w = max(scale * (1.3 + 2.2 * wobble * wobble) * clamp(18.0 / z, 0.6, 1.4), 1.0);
+  // Offsets of at least a whole pixel: textureLoad floors, so a smaller offset could read the pixel itself.
   let s = max(round(1.5 * scale), 1.0);
   let n = sty_normal(px, s);
   var ink = 0.0;
   for (var k = 0u; k < 8u; k++) {
-    let q = px + WB_DIRS[k] * w;
-    let d = sty_view_depth(q) - z;
-    // A step: large against the depth (a plane receding from the eye is not one) and in world units.
-    let silhouette = min(smoothstep(0.02, 0.05, d / z), smoothstep(0.1, 0.25, d));
+    let o = WB_DIRS[k] * w;
+    let far = wb_near(px + o);
+    let back = wb_near(px - o);
+    // How much less near the neighbour is than the plane through this pixel and its opposite neighbour predicts.
+    let beyond = (2.0 * g0 - back - far) / unit;
+    let d = sty_view_depth(px + o) - z;
+    let silhouette = min(smoothstep(0.04, 0.08, beyond), smoothstep(0.1, 0.25, d));
     // A crease: the surface turns by more than about 55 degrees within the line's width, with no step.
     let nq = sty_normal(px + WB_DIRS[k] * max(w * 0.7, 1.0), s);
-    let crease = (1.0 - smoothstep(0.45, 0.6, dot(n, nq))) * (1.0 - smoothstep(0.05, 0.15, abs(d) / z));
+    let crease = (1.0 - smoothstep(0.45, 0.6, dot(n, nq))) * (1.0 - smoothstep(0.02, 0.05, abs(beyond)));
     ink = max(ink, max(silhouette, crease));
   }
   return vec4<f32>(mix(colour, WB_INK, ink), 1.0);
@@ -96,13 +113,16 @@ export const WOODBLOCK_POST = {
 } as const satisfies Record<string, PostSpec>;
 
 /** The palette colour a lit value prints in: black, indigo, pale blue, cream, or vermilion for a warm paint. */
+// Every edge here is antialiased by about a pixel and no more (`soft` is tiny): a wider minimum turned a slowly
+// changing value (n.l across a grazing flank, a soft paint gradient) into a visible gradient between two inks, which
+// the palette test caught on the shell.
 function inked(base: Expr<"vec3">, value: Expr<"f32">): Expr<"vec3"> {
   let c: Expr<"vec3"> = rgb(P.black);
-  c = mix(c, rgb(P.indigo), edgeOf(value, BAND.black, 0.004));
-  c = mix(c, rgb(P.pale), edgeOf(value, BAND.indigo, 0.004));
-  c = mix(c, rgb(P.cream), edgeOf(value, BAND.pale, 0.004));
+  c = mix(c, rgb(P.indigo), edgeOf(value, BAND.black, 1e-5));
+  c = mix(c, rgb(P.pale), edgeOf(value, BAND.indigo, 1e-5));
+  c = mix(c, rgb(P.cream), edgeOf(value, BAND.pale, 1e-5));
   const warmth = min(sub(base.x, base.y), sub(base.x, base.z));
-  return mix(c, rgb(P.vermilion), edgeOf(warmth, BAND.warm, 0.004));
+  return mix(c, rgb(P.vermilion), edgeOf(warmth, BAND.warm, 1e-5));
 }
 
 export function woodblock(): Style {
@@ -115,7 +135,7 @@ export function woodblock(): Style {
     post: [WOODBLOCK_POST.keyline, WOODBLOCK_POST.paper],
     shade: (ctx) => {
       // Two tones of light (lit, shadow), then the value bands: each paint region prints in at most two inks.
-      const lit = edgeOf(dot(ctx.normal, ctx.sun), 0.0, 0.01);
+      const lit = edgeOf(dot(ctx.normal, ctx.sun), 0.0, 1e-5);
       const value = mul(luminance(ctx.base), mix(0.66, 1.06, lit));
       return inked(ctx.base, value);
     },
