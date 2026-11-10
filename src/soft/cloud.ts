@@ -62,7 +62,7 @@ function profileAt(profile: readonly (readonly [number, number])[], h: number): 
 const TIERS = [
   { share: 0.1, radius: 0.34, out: [0.0, 0.4], density: 0.6 },
   { share: 0.3, radius: 0.2, out: [0.4, 0.78], density: 1.0 },
-  { share: 0.6, radius: 0.11, out: [0.76, 1.0], density: 1.8 },
+  { share: 0.6, radius: 0.11, out: [0.76, 1.0], density: 2.6 },
 ] as const;
 
 /** A billowing mass of puffs. */

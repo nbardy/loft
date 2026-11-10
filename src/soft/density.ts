@@ -176,6 +176,7 @@ const KMAX: u32 = ${KMAX}u;
 const SUN_DIR: vec3<f32> = ${v3(sun)};
 const SUN_LIGHT: vec3<f32> = ${v3(o.sun)};
 const SHADOWING: f32 = ${f(o.shadowing)};
+const SELF: f32 = 0.35;
 var<private> soft_e: array<vec4<f32>, ${KMAX + 1}>;   // (tau, centroid, spread, 0)
 var<private> soft_c: array<vec3<f32>, ${KMAX + 1}>;   // light
 var<private> soft_n: u32;
@@ -213,8 +214,10 @@ fn soft_light(albedo: vec3<f32>, tauSun: f32, tauUp: f32, flash: vec3<f32>, cosv
 /// The other puffs' depth toward a light at q (in the puff's units), between its values one radius behind and in front.
 fn soft_others(q: vec3<f32>, k: vec3<f32>, u: vec3<f32>, lo: f32, hi: f32) -> f32 {
   let ku = k * u;
+  // Half the slope of the line through the two samples: the full slope gave every surface puff its own hard terminator
+  // (a cloud of lit spheres); light scattered sideways inside a cloud softens it.
   let f = clamp(dot(q, ku) / max(length(ku), 1e-9), -1.0, 1.0);
-  return mix(lo, hi, 0.5 + 0.5 * f);
+  return mix(lo, hi, 0.5 + 0.25 * f);
 }
 /// One element (a puff, or one side of a bank) on [ia0, ib0]: its pieces, each lit where it is seen, pushed.
 fn soft_element(O: vec4<f32>, D: vec4<f32>, ia0: f32, ib0: f32, a0: vec4<f32>, k: vec3<f32>, albedo: vec3<f32>, others: vec4<f32>, flash: vec3<f32>, o: vec3<f32>, d: vec3<f32>, seed: f32) {
@@ -247,9 +250,13 @@ fn soft_element(O: vec4<f32>, D: vec4<f32>, ia0: f32, ib0: f32, a0: vec4<f32>, k
     let Op = k * (p - a0.xyz);
     let selfSun = a0.w * loft_gauss_tail(Op, k * SUN_DIR);
     let selfUp = a0.w * loft_gauss_tail(Op, vec3<f32>(0.0, k.y, 0.0));
-    let sunOthers = SHADOWING * soft_others(Op, k, SUN_DIR, others.x, others.y);
-    let upOthers = SHADOWING * soft_others(Op, k, vec3<f32>(0.0, 1.0, 0.0), others.z, others.w);
-    soft_push(vec4<f32>(tau, r.y, r.z, 0.0), soft_light(albedo, sunOthers + selfSun, upOthers + selfUp, flash, cosv));
+    let sunOthers = soft_others(Op, k, SUN_DIR, others.x, others.y);
+    let upOthers = soft_others(Op, k, vec3<f32>(0.0, 1.0, 0.0), others.z, others.w);
+    // Shadowing scales the whole depth toward a light, the puff's own part too: scaling only the others' part left each
+    // puff's self-shadow dominant, and every puff of a backlit cloud drew as a bright ring round a dark middle.
+    // A puff's own shadow counts a third: exact for a lone Gaussian, it lit each lump of a cloud as a separate sphere
+    // with its own hard terminator, where light scattered sideways through the mass softens it.
+    soft_push(vec4<f32>(tau, r.y, r.z, 0.0), soft_light(albedo, SHADOWING * (sunOthers + SELF * selfSun), SHADOWING * (upOthers + SELF * selfUp), flash, cosv));
   }
 }
 @fragment fn fs(in: VOut) -> @location(0) vec4<f32> {

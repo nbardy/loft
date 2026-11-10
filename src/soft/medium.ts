@@ -230,7 +230,10 @@ export function lightPass(ps: readonly CpuPuff[], flashes: readonly { at: number
       // The path to the flash crosses this puff's own half too: count every puff.
       const tau = depthThrough(ps, -1, q.c, u, dist);
       const fall = (f.reach * f.reach) / (f.reach * f.reach + dist * dist);
-      for (let a = 0; a < 3; a++) light[a] += f.power * f.colour[a] * fall * Math.exp(-tau);
+      // Through the same octaves of extinction the shader uses for sunlight (multiple scattering): a flash inside a
+      // thick cloud lights it from within instead of only the few puffs in direct sight of the channel.
+      const through = (Math.exp(-tau) + 0.5 * Math.exp(-0.3 * tau) + 0.25 * Math.exp(-0.09 * tau)) / 1.75;
+      for (let a = 0; a < 3; a++) light[a] += f.power * f.colour[a] * fall * through;
     }
     out.set([q.c[0], q.c[1], q.c[2], q.d, q.k[0], q.k[1], q.k[2], 0, q.col[0], q.col[1], q.col[2], 0, light[0], light[1], light[2], 0, sunBack, sunFront, upBack, upFront], i * 20);
   });
