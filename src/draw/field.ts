@@ -84,7 +84,7 @@ export const LIPSCHITZ_LIMIT = 1.01;
 const CHECK_SAMPLES = 20000;
 /** Hit when the distance is below this many pixels. */
 const HIT = 0.3;
-/** Plain steps taken after a hit. */
+/** Refining steps taken after a hit (secant steps on the distance along the ray). */
 const REFINE = 2;
 
 const P = variable("p", "vec3"), N = variable("n", "vec3");
@@ -176,10 +176,11 @@ const HIT: f32 = ${num(HIT)};
   var prevDist = 0.0;
   var prevT = t0;
   var exhausted = true;
+  var hitDist = 0.0;
   for (var i = 0u; i < STEPS; i++) {
     let fp = fp0 + fpk * (t - t0);
     let dist = field_d(o + d * t, fp);
-    if (dist < HIT * fp) { hit = true; exhausted = false; break; }
+    if (dist < HIT * fp) { hit = true; hitDist = dist; exhausted = false; break; }
     // The closest the surface can come to the ray between this sample and the last: it lies outside both spheres of
     // free space, so at most at the circle where they meet, x back from here and h from the ray. (The sampled
     // distances alone miss the closest approach by up to a step, which drew silhouettes and ink as random grain.)
@@ -202,7 +203,20 @@ const HIT: f32 = ${num(HIT)};
   // the point reached as the hit leaves no hole; the error is under a pixel because the distance is already small.
   hit = hit || exhausted;
   if (hit) {
-    for (var r = 0u; r < ${REFINE}u; r++) { t += field_d(o + d * t, fp0 + fpk * (t - t0)) * SAFETY; }
+    // Secant steps on the last two samples: the distance is nearly linear along the ray at the surface, so this
+    // converges fast even at an oblique hit, where a plain step (t += d) only removes a share cos(angle) of the error
+    // per step (that left 7e-3 world units at 3 pixels in from a sphere's silhouette).
+    var ta = prevT;
+    var da = prevDist;
+    var db = hitDist;
+    for (var r = 0u; r < ${REFINE}u; r++) {
+      let slope = (db - da) / (t - ta);
+      let tn = select(t + db * SAFETY, t - db / slope, slope < -1e-6 && t > ta);
+      ta = t;
+      da = db;
+      t = tn;
+      db = field_d(o + d * t, fp0 + fpk * (t - t0));
+    }
   }
   let tq = select(nearT, t, hit);
   let p = o + d * tq;

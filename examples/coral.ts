@@ -72,7 +72,7 @@ const reef = draw.field("coral", field, {
 export default scene({
   sea: sea({ swell: [{ direction: [1, 0.35], length: 11, height: 0.22, speed: 1.1 }, { direction: [-0.3, 1], length: 5, height: 0.06, speed: 0.7 }], foam: 0.35 }),
   things: [reef],
-  style: toon({ bands: 3, outline: 0.018, shadow: [0.66, 0.5, 0.86] }),
+  style: toon({ bands: 3, shadow: [0.66, 0.5, 0.86] }),
   sun: [-0.5, 0.75, 0.35],
   cameras: {
     three: { kind: "perspective", eye: [9, 5.5, 10], target: [0, 0.4, 0], fovY: 0.62 },

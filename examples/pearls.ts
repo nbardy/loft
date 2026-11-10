@@ -41,7 +41,7 @@ const pearls = impostors("pearls", {
 export default scene({
   sea: swell,
   things: [pearls],
-  style: toon({ bands: 3, outline: 0.025 }),
+  style: toon({ bands: 3 }),
   sun: [-0.45, 0.8, 0.4],
   cameras: {
     three: { kind: "perspective", eye: [10, 6.5, 11], target: [0, -0.3, 0], fovY: 0.6 },

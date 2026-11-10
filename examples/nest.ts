@@ -73,7 +73,7 @@ const drawn = draw.field("nest", field, {
 export default scene({
   sea: sea({ swell: [{ direction: [1, 0.2], length: 9, height: 0.16, speed: 0.9 }] }),
   things: [drawn],
-  style: toon({ bands: 3, outline: 0.02, shadow: [0.55, 0.5, 0.85] }),
+  style: toon({ bands: 3, shadow: [0.55, 0.5, 0.85] }),
   sun: [-0.4, 0.8, 0.45],
   cameras: {
     three: { kind: "perspective", eye: [-4.2, 4.4, 7.2], target: [0, 1.0, 0], fovY: 0.62 },
