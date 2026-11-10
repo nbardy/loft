@@ -73,7 +73,21 @@ export type Draw = {
   readonly layer: "scene" | "construction";
   /** WGSL `override` constants for this draw (for example the grid density). */
   readonly constants: Readonly<Record<string, number>>;
+  /**
+   * Transparent draws only. When set, the host prepends SCENE_DEPTH_WGSL to this draw's shader, so its fragment stage
+   * can read the opaque scene behind it: `scene_depth(px)` (the depth buffer value, 0 near to 1 far) and
+   * `scene_position(px)` (the world position of the opaque surface at that pixel). Used for foam where things meet,
+   * soft volume edges and depth fades.
+   */
+  readonly sceneDepth?: boolean;
 };
+
+/**
+ * A full-screen pass run after the scene is drawn and resolved, in list order. The module has one entry point, `fs`;
+ * the host supplies the vertex stage and prepends POST_WGSL, which gives `post_color(uv)` (the picture so far),
+ * `scene_depth(px)` and `scene_position(px)`. Used by styles: ink lines from depth edges, paper grain, bloom.
+ */
+export type PostPass = { readonly label: string; readonly shader: string };
 
 /** What a host hands the pose function every frame. `inputs` and `params` are laid out by slot. */
 export type FrameState = { readonly time: number; readonly inputs: Float32Array; readonly params: Float32Array };
@@ -92,6 +106,8 @@ export type Artefact = {
   readonly sceneWgsl: string;
   readonly shaders: Readonly<Record<string, string>>;
   readonly draws: readonly Draw[];
+  /** Full-screen passes after the scene. Absent means none. */
+  readonly post?: readonly PostPass[];
   /**
    * Evaluate everything that is computed once per frame on the CPU: spine stations, waterlines, shadows.
    * Returns one Float32Array per dynamic buffer, keyed by name, of length `vec4s * 4`. Pure: same state, same output.

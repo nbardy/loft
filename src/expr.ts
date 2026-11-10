@@ -40,7 +40,22 @@ type Fn =
   | "mix" | "clamp" | "smoothstep" | "length" | "distance" | "dot" | "cross"
   | "lt" | "gt" | "le" | "ge" | "and" | "or" | "not" | "select";
 
+/**
+ * A named function written once in each backend's language: the way to add vocabulary (noise, a custom falloff) that
+ * the built-in operators cannot express compactly. `wgsl` is the full function definition, named `name`. `js` is the
+ * CPU twin, or "gpu-only" for functions that may only be used in shader stages (evaluating one on the CPU throws).
+ * `deps` are other library functions the WGSL body calls.
+ */
+export type LibFn = {
+  readonly name: string;
+  readonly ret: Ty;
+  readonly wgsl: string;
+  readonly js: ((...args: any[]) => number | number[] | boolean) | "gpu-only";
+  readonly deps?: readonly LibFn[];
+};
+
 type Node =
+  | { readonly op: "lib"; readonly ty: Ty; readonly fn: LibFn; readonly args: readonly Expr[] }
   | { readonly op: "const"; readonly ty: Ty; readonly v: readonly number[] }
   | { readonly op: "var"; readonly ty: Ty; readonly name: string }
   | { readonly op: "input"; readonly ty: NumTy; readonly spec: InputSpec }
@@ -138,6 +153,16 @@ export function row(r: Row, x: In<"f32">): Expr<"vec4"> {
   return Expr.make({ op: "row", ty: "vec4", row: r, x: xe }, `r:${r.id}:${xe.id}`);
 }
 
+const libs = new Map<string, LibFn>();
+/** Call a library function. Two different functions may not share a name. */
+export function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T> {
+  const seen = libs.get(fn.name);
+  if (seen && seen !== fn) throw new Error(`library function "${fn.name}" is defined twice`);
+  libs.set(fn.name, fn);
+  const xs = args.map((a) => lift(a));
+  return Expr.make({ op: "lib", ty: fn.ret, fn, args: xs }, `l:${fn.name}:${xs.map((a) => a.id).join(",")}`);
+}
+
 // ---- constructors and access --------------------------------------------------------------------------------------
 
 function vecOf(ty: VecTy, parts: readonly Num[]): Expr {
@@ -229,7 +254,7 @@ function children(e: Expr): readonly Expr[] {
   switch (n.op) {
     case "const": case "var": case "input": case "param": return [];
     case "row": return [n.x];
-    case "call": case "vec": return n.args;
+    case "call": case "vec": case "lib": return n.args;
     case "get": return [n.a];
   }
 }
@@ -249,7 +274,7 @@ export function topo(roots: readonly Expr[]): Expr[] {
 }
 
 /** The leaves a set of expressions depends on: what a compiler must bind before emitting them. */
-export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs: InputSpec[]; params: ParamSpec[]; rows: Row[] } {
+export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs: InputSpec[]; params: ParamSpec[]; rows: Row[]; libs: LibFn[] } {
   const vars = new Map<string, Ty>();
   const ins = new Map<string, InputSpec>(), ps = new Map<string, ParamSpec>(), rs = new Map<number, Row>();
   for (const e of topo(roots)) {
@@ -259,7 +284,21 @@ export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs:
     else if (n.op === "param") ps.set(n.spec.name, n.spec);
     else if (n.op === "row") rs.set(n.row.id, n.row);
   }
-  return { vars, inputs: [...ins.values()], params: [...ps.values()], rows: [...rs.values()] };
+  return { vars, inputs: [...ins.values()], params: [...ps.values()], rows: [...rs.values()], libs: libsOf(roots) };
+}
+
+/** The library functions a set of expressions uses, each after the functions it depends on. */
+export function libsOf(roots: readonly Expr[]): LibFn[] {
+  const out: LibFn[] = [];
+  const seen = new Set<LibFn>();
+  const add = (fn: LibFn): void => {
+    if (seen.has(fn)) return;
+    seen.add(fn);
+    for (const d of fn.deps ?? []) add(d);
+    out.push(fn);
+  };
+  for (const e of topo(roots)) if (e.node.op === "lib") add(e.node.fn);
+  return out;
 }
 
 // ---- emitting code ------------------------------------------------------------------------------------------------
@@ -292,6 +331,7 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
     case "row": return bind.row(n.row, ref(n.x));
     case "vec": return `${WGSL_TY[n.ty]}(${n.args.map(ref).join(", ")})`;
     case "get": return `${ref(n.a)}.${n.sel}`;
+    case "lib": return `${n.fn.name}(${n.args.map(ref).join(", ")})`;
     case "call": {
       const splat = (a: Expr): string => (SPLAT.has(n.fn) && n.ty !== "f32" && a.ty === "f32" ? `${WGSL_TY[n.ty]}(${ref(a)})` : ref(a));
       const a = n.args.map(splat);
@@ -310,9 +350,10 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
 
 /**
  * Straight-line WGSL for a set of expressions: one `let` per shared node, in dependency order.
- * Returns the statements and, for each root, the name (or inline source) that holds its value.
+ * Returns the statements, for each root the name (or inline source) that holds its value, and the library
+ * functions the statements call.
  */
-export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { lines: string[]; out: string[] } {
+export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { lines: string[]; out: string[]; libs: LibFn[] } {
   const names = new Map<number, string>();
   const lines: string[] = [];
   const ref = (x: Expr): string => names.get(x.id)!;
@@ -326,7 +367,8 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { li
       names.set(e.id, name);
     }
   }
-  return { lines, out: roots.map(ref) };
+  // `libs`: definitions the caller must place at module scope (once per module) for the statements to compile.
+  return { lines, out: roots.map(ref), libs: libsOf(roots) };
 }
 
 // ---- the JavaScript backend ---------------------------------------------------------------------------------------
@@ -395,6 +437,7 @@ export type Env = {
  */
 export function compileJs(roots: readonly Expr[]): (env: Env) => (V | boolean)[] {
   const rows: Row[] = [];
+  const fns: LibFn[] = [];
   const body: string[] = [];
   const names = new Map<number, string>();
   const ref = (x: Expr): string => names.get(x.id)!;
@@ -410,16 +453,22 @@ export function compileJs(roots: readonly Expr[]): (env: Env) => (V | boolean)[]
       case "vec": src = `R.vec(${SIZE[n.ty]}, ${n.args.map(ref).join(", ")})`; break;
       case "get": src = `R.get(${ref(n.a)}, ${JSON.stringify(n.sel)})`; break;
       case "call": src = `R.${n.fn}(${n.args.map(ref).join(", ")})`; break;
+      case "lib":
+        if (n.fn.js === "gpu-only") throw new Error(`library function "${n.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
+        if (!fns.includes(n.fn)) fns.push(n.fn);
+        src = `fns[${fns.indexOf(n.fn)}](${n.args.map(ref).join(", ")})`;
+        break;
     }
     const name = `e${e.id}`;
     body.push(`const ${name} = ${src};`);
     names.set(e.id, name);
   }
   body.push(`return [${roots.map(ref).join(", ")}];`);
-  const run = new Function("R", "rows", "vars", "inputs", "params", body.join("\n")) as
-    (r: typeof R, rows: Float32Array[], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"]) => (V | boolean)[];
+  const run = new Function("R", "rows", "fns", "vars", "inputs", "params", body.join("\n")) as
+    (r: typeof R, rows: Float32Array[], fns: LibFn["js"][], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"]) => (V | boolean)[];
   const samples = rows.map((r) => r.samples);
-  return (env) => run(R, samples, env.vars, env.inputs, env.params);
+  const impls = fns.map((fn) => fn.js);
+  return (env) => run(R, samples, impls, env.vars, env.inputs, env.params);
 }
 
 /** Evaluate once on the CPU. For repeated evaluation, keep the function from `compileJs`. */
