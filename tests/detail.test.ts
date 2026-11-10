@@ -38,11 +38,11 @@ test("from scratch, each body's cells are between 1/2.2 and 1 times the pixel ta
       const t = tables[g.detail.bound.buffer]!;
       levels.get(slot)!.forEach((level, i) => {
         if (level < 0) return;
-        const b = (g.detail.bound.offset + 2 * i) * 4;
-        const depth = (t[b]! - eye[0]) * fwd[0]! + (t[b + 1]! - eye[1]) * fwd[1]! + (t[b + 2]! - eye[2]) * fwd[2]! - t[b + 3]!;
+        const b = (g.detail.bound.offset + i) * 4;
+        const scale = Math.abs(t[b + 3]!);
+        const depth = (t[b]! - eye[0]) * fwd[0]! + (t[b + 1]! - eye[1]) * fwd[1]! + (t[b + 2]! - eye[2]) * fwd[2]! - scale * g.detail.radius;
         const pxPerUnit = H / (2 * Math.tan(FOV / 2) * Math.max(depth, 1e-3));
-        const cells = g.detail.levels[level]!.cells;
-        const cellPx = Math.max(t[b + 4]! / cells[0], t[b + 5]! / cells[1]) * pxPerUnit;
+        const cellPx = scale * g.detail.levels[level]!.cell * pxPerUnit;
         const finest = level === 0, coarsest = level === g.detail.levels.length - 1;
         if (!finest) expect([g.label, cellPx <= CELL_PIXELS * 1.0001]).toEqual([g.label, true]);
         if (!coarsest) expect([g.label, cellPx > CELL_PIXELS / 2.2]).toEqual([g.label, true]);

@@ -33,17 +33,16 @@ function clipW(c: Camera, x: number, y: number, z: number): { readonly w: number
 }
 
 /**
- * The level for one instance, or -1 not to draw it. `prev` is last frame's (-1 for none). Cells of level k are
- * `max(length_a / cells_a)` world units across, seen at the sphere's nearest point.
+ * The level for one instance, or -1 not to draw it. `prev` is last frame's (-1 for none). `cellPx(k)` is level k's
+ * largest cell on screen at the instance's nearest point.
  */
-export function chooseLevel(levels: Extract<Detail, { kind: "grid" }>["levels"], lengths: readonly [number, number], pxPerUnitNear: number, pxAcross: number, target: number, prev: number): number {
+export function chooseLevel(levels: number, cellPx: (k: number) => number, pxAcross: number, target: number, prev: number): number {
   if (pxAcross < MIN_PIXELS) return -1;
-  const cellPx = (k: number) => Math.max(lengths[0] / levels[k]!.cells[0], lengths[1] / levels[k]!.cells[1]) * pxPerUnitNear;
   let fresh = 0;
-  while (fresh + 1 < levels.length && cellPx(fresh + 1) <= target) fresh++;
-  if (prev < 0 || prev >= levels.length) return fresh;
+  while (fresh + 1 < levels && cellPx(fresh + 1) <= target) fresh++;
+  if (prev < 0 || prev >= levels) return fresh;
   if (cellPx(prev) > target * HYSTERESIS) return fresh;
-  if (prev + 1 < levels.length && cellPx(prev + 1) <= target / HYSTERESIS) return fresh;
+  if (prev + 1 < levels && cellPx(prev + 1) <= target / HYSTERESIS) return fresh;
   return prev;
 }
 
@@ -52,13 +51,13 @@ function gridRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, c: Camera, t
   const seen = memory.get(d.slot) ?? new Int16Array(draw.instances).fill(-1);
   const chosen = new Int16Array(draw.instances);
   for (let i = 0; i < draw.instances; i++) {
-    const b = (d.bound.offset + 2 * i) * 4;
+    const b = (d.bound.offset + i) * 4;
     const { w, perspective } = clipW(c, t[b]!, t[b + 1]!, t[b + 2]!);
-    const r = t[b + 3]!;
+    const scale = Math.abs(t[b + 3]!), r = scale * d.radius;
     const behind = w + r * perspective <= c.m.near;
     // The sphere's nearest point; at the eye or nearer than the near plane the view is as large as it gets.
-    const near = Math.max(w - r * perspective, c.m.near);
-    const level = behind ? -1 : chooseLevel(d.levels, [t[b + 4]!, t[b + 5]!], pixelsPerUnit(c, near), 2 * r * pixelsPerUnit(c, Math.max(w, c.m.near)), target, seen[i]!);
+    const near = pixelsPerUnit(c, Math.max(w - r * perspective, c.m.near));
+    const level = behind ? -1 : chooseLevel(d.levels.length, (k) => scale * d.levels[k]!.cell * near, 2 * r * pixelsPerUnit(c, Math.max(w, c.m.near)), target, seen[i]!);
     chosen[i] = level;
     if (level >= 0) {
       const cells = d.levels[level]!.cells;

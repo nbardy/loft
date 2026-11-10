@@ -10,6 +10,7 @@ import { Slots } from "./bind.ts";
 import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
+import { measureRest } from "../draw/grid_detail.ts";
 import { poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
@@ -97,7 +98,14 @@ export function compileScene(scene: Scene): Compiled {
   const envOf = (state: FrameState): Omit<Env, "tables"> => ({ vars: {}, ...readEnv(state.inputs, state.params), curves: state.curves });
 
   // Stable sort by phase: within a phase, the order drawables emitted.
-  const detailOf = detailSlots(layout.placed);
+  // Rest: time 0, every input and param at its default (as a static `tabulate` is filled).
+  const restState: FrameState = {
+    time: 0, curves: leaves.curves,
+    inputs: (() => { const x = new Float32Array(leaves.inputFloats); for (const s of leaves.inputs) x.set(s.def, s.slot); return x; })(),
+    params: (() => { const x = new Float32Array(leaves.params.reduce((n, q) => Math.max(n, q.slot + 1), 0)); for (const q of leaves.params) x[q.slot] = q.def; return x; })(),
+  };
+  const restFrame = poseFrame(layout, envOf, restState).frame;
+  const detailOf = detailSlots(layout.placed, (roots) => cpu(roots)(restFrame));
   const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, ...d }) => {
     const resolved = detailOf(detail, d);
     // The shader reads its level from `loft_detail[LOFT_DETAIL_SLOT + instance]` (an override, so one module serves
@@ -132,11 +140,13 @@ export function compileScene(scene: Scene): Compiled {
 }
 
 /**
- * Slots in `loft_detail` for each draw's level of detail, and its bound table's place in the dynamic buffers. One
- * choice per bound table (a surface and its ink outline name the same one), one per projected spec.
+ * Slots in `loft_detail` for each draw's level of detail, its bound table's place in the dynamic buffers, and a grid's
+ * shape measured at rest (`rest` evaluates expressions in the rest frame). One choice per bound table (a surface and its
+ * ink outline name the same one), one per projected spec.
  */
-function detailSlots(placed: TableLayout["placed"]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
+function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[]) => (V | boolean)[]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
   const slots = new Map<object, number>();
+  const measured = new Map<object, ReturnType<typeof measureRest>>();
   let next = 0;
   const slotFor = (key: object, n: number, label: string): number => {
     const known = slots.get(key);
@@ -152,8 +162,15 @@ function detailSlots(placed: TableLayout["placed"]): (spec: DetailSpec, d: Pick<
       case "grid": {
         const p = placed.get(spec.bound);
         if (!p) throw new Error(`compile: draw "${d.label}" states bounds in table "${spec.bound.name}", which was never declared (ctx.table)`);
-        if (spec.bound.entries !== d.instances || spec.bound.lanes !== 2) throw new Error(`compile: draw "${d.label}": its bound table must have 2 lanes and one entry per instance (${d.instances}), got ${spec.bound.lanes} x ${spec.bound.entries}`);
-        return { kind: "grid", slot: slotFor(spec.bound, d.instances, d.label), bound: { buffer: bufferName(p.buffer), offset: p.offset }, levels: spec.levels };
+        if (spec.bound.entries !== d.instances || spec.bound.lanes !== 1) throw new Error(`compile: draw "${d.label}": its bound table must have 1 lane and one entry per instance (${d.instances}), got ${spec.bound.lanes} x ${spec.bound.entries}`);
+        const m = measured.get(spec.bound) ?? (() => {
+          const values = rest([...spec.rest.samples, spec.rest.anchor]) as number[][];
+          const r = measureRest(values.slice(0, -1), values[values.length - 1]!);
+          measured.set(spec.bound, r);
+          return r;
+        })();
+        const levels = spec.counts.map((cells) => ({ cells, vertices: 6 * cells[0] * cells[1], cell: Math.max(m.lengths[0] / cells[0], m.lengths[1] / cells[1]) }));
+        return { kind: "grid", slot: slotFor(spec.bound, d.instances, d.label), bound: { buffer: bufferName(p.buffer), offset: p.offset }, radius: m.radius, levels };
       }
       case "projected": return { ...spec, slot: slotFor(spec, 2, d.label) };
     }

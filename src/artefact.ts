@@ -138,13 +138,14 @@ export type DynamicBuffer = { readonly name: string; readonly binding: number; r
  * fixed      `vertices` x `instances`, as declared; no slot.
  * grid       a grid of cells over two axes, at one of `levels` (finest first; `levels[0].vertices` is `Draw.vertices`).
  *            Per instance i, slot `slot + i` receives `(cells[0], cells[1], 0, 0)` and the instance is drawn with that
- *            level's `vertices`. The pose's per-frame tables hold, per instance, two vec4 at `bound.offset + 2 i` of
- *            dynamic buffer `bound.buffer`: (centre xyz, radius) of a sphere holding it, and (world length along axis 0,
- *            along axis 1, 0, 0). The host picks, per instance, the coarsest level whose cells are at most
- *            `View.cellPixels` across on screen at the sphere's nearest point, keeping the previous frame's level while
- *            its cells stay within [1 / HYSTERESIS, HYSTERESIS] of that rule's bounds, and skips an instance whose
- *            sphere is under a pixel across or wholly behind the eye. Instances are drawn in runs of one level
- *            (`firstInstance`), so `@builtin(instance_index)` still names the copy.
+ *            level's `vertices`. The shape is measured by the compiler at rest: `cell` is a level's largest cell, world
+ *            units, and `radius` the surface's reach from its anchor point, both at scale 1. Per frame the pose's tables
+ *            hold one vec4 per instance at `bound.offset + i` of dynamic buffer `bound.buffer`: (anchor point xyz,
+ *            scale). The host picks, per instance, the coarsest level whose cells (scale x cell) are at most
+ *            `View.cellPixels` across on screen at the nearest point of the sphere (anchor, scale x radius), keeping the
+ *            previous frame's level while its cells stay within [1 / HYSTERESIS, HYSTERESIS] of that rule's bounds, and
+ *            skips an instance whose sphere is under a pixel across or wholly behind the eye. Instances are drawn in
+ *            runs of one level (`firstInstance`), so `@builtin(instance_index)` still names the copy.
  * projected  a grid laid over the image of the plane y = `plane` out to view depth `reach`: the host chooses
  *            nx x ny cells of `cell` x `View.cellPixels` pixels covering NDC x in [-1 - m, 1 + m] and NDC y in
  *            [y0, y1] (the rows whose ray meets the plane within `reach`, widened by m), where m is the screen movement of
@@ -157,7 +158,8 @@ export type Detail =
     readonly kind: "grid";
     readonly slot: number;
     readonly bound: { readonly buffer: string; readonly offset: number };
-    readonly levels: readonly { readonly cells: readonly [number, number]; readonly vertices: number }[];
+    readonly radius: number;
+    readonly levels: readonly { readonly cells: readonly [number, number]; readonly vertices: number; readonly cell: number }[];
   }
   | { readonly kind: "projected"; readonly slot: number; readonly cell: number; readonly plane: number; readonly reach: number; readonly lift: number };
 

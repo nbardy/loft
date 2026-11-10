@@ -6,7 +6,7 @@
 // compiler owns bindings, table packing, the pose function and draw order; nothing in src/compile changes for a new kind.
 
 import type { Detail, Draw } from "../artefact.ts";
-import type { LibFn, TableSource } from "../expr.ts";
+import type { Expr, LibFn, TableSource } from "../expr.ts";
 import type { Sea } from "../geom/sea.ts";
 import type { Grid } from "../draw/surface.ts";
 import type { Paint, Skeleton, Surface } from "../map/types.ts";
@@ -37,7 +37,15 @@ export const PASS_OF: Readonly<Record<Phase, Draw["pass"]>> = {
  */
 export type DetailSpec =
   | { readonly kind: "fixed" }
-  | { readonly kind: "grid"; readonly bound: TableSource; readonly levels: Extract<Detail, { kind: "grid" }>["levels"] }
+  | {
+    readonly kind: "grid";
+    /** One lane per instance: (anchor point, scale), per frame. */
+    readonly bound: TableSource;
+    /** Cell counts per level, finest first. */
+    readonly counts: readonly (readonly [number, number])[];
+    /** What the compiler measures at rest: 5 x 5 grid points (u fastest) and the anchor point (src/draw/grid_detail.ts). */
+    readonly rest: { readonly samples: readonly Expr<"vec3">[]; readonly anchor: Expr<"vec3"> };
+  }
   | Omit<Extract<Detail, { kind: "projected" }>, "slot">;
 
 /** A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. */

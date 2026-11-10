@@ -883,10 +883,12 @@ drawn triangles per view, best-case ms, lossless shots), `tools/picdiff.ts` (pic
   authored counts halved per level, each axis floored at 8 cells round a closed direction (an octagon) and 2 along an
   open one. Glazed surfaces and flat strokes stay fixed (a ship's ropes are one grid joined by zero-width cells, which
   halving would break). `draw.relief` and the tracers are unchanged.
-- The pose pass measures bounds per copy each frame (table `bound_<name>`, 2 vec4 per copy): the surface at 4 x 4 grid
-  points gives a sphere and the longest grid line along each axis. Copies share one evaluation of their surface; a
-  copy's sphere is centred on its origin with the surface's reach as radius (reading each copy's axes too doubled the
-  cost). About 0.03 to 0.1 ms of CPU per drawable on this machine.
+- The compiler measures each surface once at rest (time 0, inputs and params at their defaults, as a static
+  `tabulate`): 5 x 5 grid points give the longest grid line per axis (a level's `cell` is those over its counts) and
+  the surface's reach from its anchor (the grid's centre; a copy's origin). Per frame the pose posts only where each
+  copy is (table `bound_<name>`: anchor point and scale, one vec4 per copy), a few microseconds per drawable.
+  Measuring every frame (16 points per drawable) took the fleet's pose from 0.45 to 3.9 ms. Given up: a surface that
+  grows far beyond its rest shape on an input is sized by its rest shape.
 - The host takes the coarsest level whose cells are at most `cellPixels` across at the sphere's nearest point, keeps
   last frame's level while its cells stay within `HYSTERESIS` (1.25) beyond the bounds that would choose it afresh, and
   skips a copy under a pixel across or wholly behind the eye. Copies are drawn in runs of one level (`firstInstance`

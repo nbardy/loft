@@ -147,9 +147,10 @@ type SurfaceDetail = { readonly kind: "fixed" | "grid" | "projected"; readonly s
 function detailOf(ctx: CompileContext, d: SurfaceDrawable): SurfaceDetail {
   switch (d.look.kind) {
     case "lit": {
-      const bound = boundTable(d.name, d.surface, { u: d.grid.u.at, v: d.grid.v.at }, d.copies);
+      const at = { u: d.grid.u.at, v: d.grid.v.at };
+      const bound = boundTable(d.name, d.surface, at, d.copies);
       ctx.table(bound);
-      return { kind: "grid", spec: gridDetail(bound, d.grid.u.count, d.grid.v.count, d.surface.topology) };
+      return { kind: "grid", spec: gridDetail(bound, d.surface, at, d.copies, d.grid.u.count, d.grid.v.count) };
     }
     case "flat": return { kind: "fixed", spec: { kind: "fixed" } };
     case "glazed": return d.look.detail.kind === "fixed" ? { kind: "fixed", spec: d.look.detail } : { kind: "projected", spec: d.look.detail };
