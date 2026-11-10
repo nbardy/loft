@@ -141,6 +141,9 @@ and GPU backends agree by test, so a field that passes on the CPU is safe to mar
 
 ## 7. Not known
 
+Where the marching cost goes, the published ways to cut it, and four schedules derived for Loft are in
+[`tracing_sota.md`](tracing_sota.md) (2026-11-11), with pictures in [`marching/index.html`](marching/index.html).
+
 - Step budgets and frame cost on the M4's integrated GPU and in a browser.
 - How far shell tracing can be pushed before curvature error shows.
 - Whether fragment-stage depth costs more than the triangles it saves at RTS camera distance, where most relief is
