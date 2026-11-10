@@ -4,8 +4,9 @@
 // opaque body found from the scene's depth.
 
 import {
-  add, cos, cross, distance, exp, lift, mul, normalize, sign, abs, sin, smoothstep, sub, substitute, time, vec2, vec3, type Expr, type In,
+  add, cross, distance, exp, lift, max, mul, normalize, sign, abs, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
 } from "../expr.ts";
+import { gradient } from "../grad.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
 import { eyePosition, viewDir, wgslFn } from "../lib/wgsl.ts";
@@ -24,8 +25,27 @@ export type SwellSpec = {
   readonly phase?: number;
 };
 
+/**
+ * A deformation of the sea (a whirlpool, src/geom/whirlpool.ts): a map of the sea plane that is exactly the identity
+ * outside its reach. The sea evaluates its swell, and the deformation its own marks, in the deformation's coordinates,
+ * so everything on the water winds with it; the surface is also pushed down by `dip`.
+ */
+export interface SeaDeform {
+  /** Where the water at sea-plane point xz (world x, z) at time t sits in the deformation's own plane coordinates. */
+  toLocal(xz: Expr<"vec2">, t: In<"f32">): Expr<"vec2">;
+  /** How far the surface is pushed down at sea-plane point xz (0 outside the reach). */
+  dip(xz: Expr<"vec2">): F;
+  /**
+   * Its marks on the water at sea-plane point xz, for a pixel footprint `fp` (world units): foam 0..1, and a shade
+   * added to the swell's crest value (-1 trough .. 1 crest). Both 0 outside the reach. GPU or CPU.
+   */
+  look(xz: Expr<"vec2">, t: In<"f32">, fp: F): { readonly foam: F; readonly shade: F };
+}
+
 export type SeaSpec = {
   readonly swell: readonly SwellSpec[];
+  /** Deformations of the water, applied in order (each sees the previous one's coordinates). Default none. */
+  readonly deform?: readonly SeaDeform[];
   /** Cells per side of the sea grid. Default 192. */
   readonly grid?: number;
   /** Reach of the grid from its centre, world units. Default 400. */
@@ -36,6 +56,9 @@ export type SeaSpec = {
 
 /** One sinusoidal component, canonical: unit direction, wavenumber, amplitude, angular frequency, phase. */
 type Wave = { readonly dir: readonly [number, number]; readonly k: number; readonly amp: number; readonly omega: number; readonly phase: number };
+
+/** The free variable the sea's gradient is taken with respect to (then replaced by the point asked about). */
+const SEA_XZ = variable("loft_sea_xz", "vec2");
 
 /** Growth of the sea grid's cells away from its centre: offset = reach (e^(K|u|) - 1) / (e^K - 1). */
 const SEA_GROWTH = 6;
@@ -106,7 +129,7 @@ export class Sea implements Chart, Drawable {
   readonly surfaces: readonly Bakeable[] = [];
   private readonly drawn: SurfaceDrawable;
 
-  constructor(readonly waves: readonly Wave[], readonly grid: number, readonly reach: number, readonly foam: number) {
+  constructor(readonly waves: readonly Wave[], readonly grid: number, readonly reach: number, readonly foam: number, readonly deforms: readonly SeaDeform[] = []) {
     // Transparent: what shows through the water is the submerged body (tinted by its own shader) or, where nothing
     // is below, the sky shader's under-horizon colour.
     this.drawn = drawGlazed("sea", this.surface(), {
@@ -120,17 +143,33 @@ export class Sea implements Chart, Drawable {
     return add(sub(mul(add(mul(xz.x, w.dir[0]), mul(xz.y, w.dir[1])), w.k), mul(t, w.omega)), w.phase);
   }
 
-  /** Surface height at a point of the xz plane. */
-  height(xz: Expr<"vec2">, t: In<"f32"> = time): F {
+  /** The swell alone, in the plane coordinates it is evaluated in (the deformations' local coordinates). */
+  private swellAt(xz: Expr<"vec2">, t: In<"f32">): F {
     return this.waves.reduce<F>((h, w) => add(h, mul(sin(this.phaseOf(w, xz, t)), w.amp)), lift<"f32">(0));
   }
 
-  /** d(height)/dx and d(height)/dz, analytic. */
+  /** Where the water at a sea-plane point sits in the last deformation's coordinates (xz itself with none). */
+  local(xz: Expr<"vec2">, t: In<"f32"> = time): Expr<"vec2"> {
+    return this.deforms.reduce((p, d) => d.toLocal(p, t), xz);
+  }
+
+  /** Surface height at a point of the xz plane: the swell where that water came from, less every deformation's dip. */
+  height(xz: Expr<"vec2">, t: In<"f32"> = time): F {
+    return this.deforms.reduce<F>((h, d) => sub(h, d.dip(xz)), this.swellAt(this.local(xz, t), t));
+  }
+
+  /**
+   * d(height)/dx and d(height)/dz. Symbolic (src/grad.ts) through the deformations' maps, which no hand-written
+   * gradient could follow; with none, it reduces to the swell's analytic gradient (the constructors simplify).
+   */
   gradient(xz: Expr<"vec2">, t: In<"f32"> = time): Expr<"vec2"> {
-    return this.waves.reduce<Expr<"vec2">>(
-      (g, w) => add(g, mul(vec2(w.dir[0], w.dir[1]), mul(cos(this.phaseOf(w, xz, t)), w.amp * w.k))),
-      lift<"vec2">([0, 0]),
-    );
+    const g = gradient(this.height(SEA_XZ, t), SEA_XZ);
+    return substitute([g], SEA_XZ, xz)[0] as Expr<"vec2">;
+  }
+
+  /** Floating on the open sea: a point given in sea coordinates is where it is and has not turned (afloat.ts). */
+  carry(at: Expr<"vec2">): { readonly xz: Expr<"vec2">; readonly turn: F } {
+    return { xz: at, turn: lift<"f32">(0) };
   }
 
   /** (x, z, height above the surface) to the point and a frame there: y the water's normal, x along +x on the slope. */
@@ -170,15 +209,19 @@ export class Sea implements Chart, Drawable {
     // stripes toward the horizon): fade that detail out by the pixel's footprint.
     const detail = sub(1, smoothstep(0.04, 0.2, fp.div(shortest)));
     const g = mul(this.gradient(xz), detail);
+    // The deformations' marks, each in its own coordinates (foam arms winding into a whirlpool, a darker throat).
+    const marks = this.deforms.map((d) => d.look(xz, time, fp));
+    const swell = this.swellAt(this.local(xz), time);
     return fr.style.water({
       normal: normalize(vec3(mul(g.x, -1), 1, mul(g.y, -1))),
       sun: lift<"vec3">(fr.sun),
       view: mul(viewDir(fr.world), -1),
       world: fr.world,
-      // Per pixel, not the interpolated vertex height: far grid cells are large and their edges would show.
-      crest: mul(this.height(xz).div(amplitude), detail),
+      // Per pixel, not the interpolated vertex height: far grid cells are large and their edges would show. The crest
+      // is the swell's alone (where the water came from); a dip is shading the deformation chooses, not a trough.
+      crest: marks.reduce<F>((c, m) => add(c, m.shade), mul(swell.div(amplitude), detail)),
       distance: distance(fr.world, eyePosition()),
-      foam: contactFoam(fr.world, fr.px, fp, this.foam),
+      foam: marks.reduce<F>((f, m) => max(f, m.foam), contactFoam(fr.world, fr.px, fp, this.foam)),
     });
   }
 }
@@ -195,5 +238,5 @@ export function sea(spec: SeaSpec): Sea {
   if (!(Number.isInteger(grid) && grid >= 8)) throw new Error(`sea: grid must be an integer >= 8, got ${grid}`);
   const foam = spec.foam ?? 0.3;
   if (!(foam > 0)) throw new Error(`sea: foam width must be positive, got ${foam}`);
-  return new Sea(waves, grid, spec.reach ?? 400, foam);
+  return new Sea(waves, grid, spec.reach ?? 400, foam, spec.deform ?? []);
 }
