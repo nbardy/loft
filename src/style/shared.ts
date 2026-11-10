@@ -55,7 +55,9 @@ fn sty_normal(px: vec2<f32>, s: f32) -> vec3<f32> {
   let yb = p - scene_position(px - vec2<f32>(0.0, s));
   let dx = select(xb, xa, dot(xa, xa) < dot(xb, xb));
   let dy = select(yb, ya, dot(ya, ya) < dot(yb, yb));
-  let n = normalize(cross(dy, dx));
+  // A zero cross product (no surface change across the offsets) has no direction: report the eye's, not a NaN.
+  let c = cross(dy, dx);
+  let n = select(-frame.forward.xyz, normalize(c), dot(c, c) > 1e-20);
   let toward = select(-frame.forward.xyz, frame.eye.xyz - p, frame.eye.w > 0.5);
   return select(-n, n, dot(n, toward) > 0.0);
 }

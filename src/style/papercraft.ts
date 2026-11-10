@@ -5,7 +5,7 @@
 // The sea is layered cut-paper sheets with scalloped edges, each casting a small shadow on the one below. A post
 // pass adds ambient occlusion in creases (from the opaque scene's depth) and paper fibre.
 
-import { add, dot, f, max, mix, mul, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
+import { add, dot, fract, max, mix, mul, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
 import { fwidth, wgslFn } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
@@ -23,7 +23,7 @@ const C = {
 } as const satisfies Record<string, Rgb>;
 
 /** Size of a facet cell, world units, and how far each facet is tilted off the surface, as a share of its normal. */
-const CELL = 0.42, TILT = 0.22;
+const CELL = 0.5, TILT = 0.45;
 
 /**
  * The facet at p: xyz its normal, w the distance (world units, in the cell lattice) from p to the nearest cell wall.
@@ -90,7 +90,7 @@ const PC_R: f32 = 0.6;
   let scale = max(frame.viewport.y / 800.0, 0.375);
   if (sty_solid(px) && !sty_submerged(px)) {
     let p = scene_position(px);
-    let n = sty_normal(px, 1.5 * scale);
+    let n = sty_normal(px, max(round(1.5 * scale), 1.0));
     let rpx = clamp(PC_R / pixel_world(p), 3.0 * scale, 60.0 * scale);
     let turn = 6.2831853 * fract(52.9829189 * fract(dot(floor(px), vec2<f32>(0.06711056, 0.00583715))));
     var occ = 0.0;
@@ -117,13 +117,13 @@ export const PAPERCRAFT_POST = { studio: { label: "papercraft studio", wgsl: STU
 /** Paint as coloured card: less saturated, never quite black or white. */
 const card = (c: Expr<"vec3">): Expr<"vec3"> => {
   const grey = mul(vec3(1.04, 1.0, 0.93), luminance(c));
-  return add(mul(mix(c, grey, 0.35), 0.82), 0.1);
+  return add(mul(mix(c, grey, 0.45), 0.78), 0.2);
 };
 
 export function papercraft(): Style {
   const outline = param("papercraft.outline", 0.0, { min: 0, max: 0.1 });
-  /** Sheet colour for layer k (k is about -3..3 over the swell). */
-  const sheet = (k: Expr<"f32">): Expr<"vec3"> => mix(rgb(C.sheetDeep), rgb(C.sheetLight), saturate(add(mul(k, 0.16), 0.5)));
+  /** Sheet k's colour: one of the blues between deep and light, by a golden-ratio walk so neighbours differ. */
+  const sheet = (k: Expr<"f32">): Expr<"vec3"> => mix(rgb(C.sheetDeep), rgb(C.sheetLight), add(mul(fract(mul(k, 0.618034)), 0.55), 0.25));
   return {
     name: "papercraft",
     outline,
@@ -133,21 +133,22 @@ export function papercraft(): Style {
       const f = facet(ctx.normal, ctx.world);
       const n = f.xyz;
       // Soft studio light: a wrapped warm key from the sun's side, a cool fill from above.
-      const key = saturate(mul(add(dot(n, ctx.sun), 0.3), 1 / 1.3));
-      const fill = add(0.5, mul(n.y, 0.18));
-      const light = add(mul(rgb(C.fill), fill), mul(rgb(C.key), mul(key, 0.62)));
+      const key = saturate(mul(add(dot(n, ctx.sun), 0.15), 1 / 1.15));
+      const fill = add(0.38, mul(n.y, 0.12));
+      const light = add(mul(rgb(C.fill), fill), mul(rgb(C.key), mul(key, 0.8)));
       // Fold lines along the cell walls: a pixel or so wide at any distance.
       const fw = max(fwidth(f.w), 1e-5);
       const fold = sub(1, smoothstep(mul(fw, 0.6), mul(fw, 1.6), f.w));
-      return mul(mul(card(ctx.base), light), sub(1, mul(fold, 0.22)));
+      return mul(mul(card(ctx.base), light), sub(1, mul(fold, 0.14)));
     },
     // The hull is the card's cut edge: a little darker than the card.
     ink: (ctx) => mul(card(ctx.base), 0.55),
     water: (ctx) => {
       const xz = ctx.world.xz;
-      // Contours of the swell bent round scattered domes: the sheets' edges come out as chains of arcs.
-      const domes = cellular2(mul(xz, 0.55)).x;
-      const s = add(add(mul(ctx.crest, 1.6), mul(noise2(mul(xz, 0.12)), 1.2)), mul(domes, 0.7));
+      // Sheets laid along the swell, two edges per wavelength of the largest swell, bent by the height field and
+      // round scattered domes so each edge is a chain of arcs. Each sheet is one of a few blues.
+      const domes = cellular2(mul(xz, 0.3)).x;
+      const s = add(add(mul(ctx.phase, 2), mul(ctx.crest, 0.35)), mul(domes, 0.3));
       const k = round(s);
       const x = sub(s, k);
       const fw = max(fwidth(s), 1e-4);
@@ -158,11 +159,11 @@ export function papercraft(): Style {
       const cut = mul(mul(sub(1, smoothstep(0, add(0.05, fw), x)), cover), 0.35);
       c = mix(mul(c, sub(1, shade)), rgb(C.cut), cut);
       // Far off, the sheets merge into one tone instead of shimmering.
-      c = mix(c, sheet(f(0)), smoothstep(0.12, 0.35, fw));
+      c = mix(c, mix(rgb(C.sheetDeep), rgb(C.sheetLight), 0.52), smoothstep(0.12, 0.35, fw));
       // Foam: a white cut-paper collar with scalloped edges and a shadow under it.
-      const collar = sub(mul(ctx.foam, 1.2), mul(cellular2(mul(xz, 3.5)).x, 0.35));
-      const foam = edgeOf(collar, 0.3, 0.01);
-      c = mix(mul(c, sub(1, mul(edgeOf(collar, 0.18, 0.01), 0.18))), rgb(C.cut), foam);
+      const collar = sub(ctx.contact, mul(cellular2(mul(xz, 3.5)).x, 0.45));
+      const foam = edgeOf(collar, 0.1, 0.01);
+      c = mix(mul(c, sub(1, mul(mul(edgeOf(collar, -0.05, 0.01), edgeOf(ctx.contact, 0.05, 0.01)), 0.2))), rgb(C.cut), foam);
       // Distance haze toward the backdrop.
       c = mix(c, rgb(C.backdrop), saturate(mul(sub(ctx.distance, 40), 1 / 120)));
       return vec4(c, 1);

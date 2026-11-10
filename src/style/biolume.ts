@@ -14,7 +14,7 @@ const C = {
   magenta: [1.0, 0.22, 0.85],
   night: [0.006, 0.012, 0.024],
   horizon: [0.02, 0.04, 0.07],
-  water: [0.012, 0.03, 0.055],
+  water: [0.02, 0.045, 0.08],
   body: [0.035, 0.04, 0.07],
   moon: [0.35, 0.45, 0.7],
 } as const satisfies Record<string, Rgb>;
@@ -83,13 +83,16 @@ export const BIOLUME_POST = {
   bloom: { label: "biolume bloom", wgsl: BLOOM },
 } as const satisfies Record<string, PostSpec>;
 
-/** Light from a paint: cyan or magenta by hue (reds and purples magenta), as strong as the paint is bright and vivid. */
+/**
+ * Light from a paint: as strong as the paint is bright and vivid; magenta for purples, pinks and reds (red and blue
+ * both above green), cyan for the rest (creams, yellows, greens, blues).
+ */
 function glowOf(base: Expr<"vec3">): Expr<"vec3"> {
   const hi = max(max(base.x, base.y), base.z), lo = min(min(base.x, base.y), base.z);
   const vivid = sub(hi, lo);
-  const strength = smoothstep(0.5, 0.95, add(mul(luminance(base), 0.75), mul(vivid, 0.6)));
-  const redness = saturate(sub(mul(sub(base.x, base.y), 2.2), 0.35));
-  return mul(mix(rgb(C.cyan), rgb(C.magenta), redness), strength);
+  const strength = smoothstep(0.42, 0.7, add(mul(luminance(base), 0.45), mul(vivid, 0.6)));
+  const purple = smoothstep(0.08, 0.22, sub(mul(add(base.x, base.z), 0.5), base.y));
+  return mul(mix(rgb(C.cyan), rgb(C.magenta), purple), strength);
 }
 
 export function biolume(): Style {
@@ -118,16 +121,19 @@ export function biolume(): Style {
     water: (ctx) => {
       const facing = saturate(dot(ctx.normal, ctx.view));
       const xz = ctx.world.xz;
-      // Faint moonlit swell, so the water is a surface and not a void.
+      // Faint moonlit swell, so the water reads as a surface and not a void: a broad sheen and sparse glints.
       const half = normalize(add(ctx.sun, ctx.view));
-      const sheen = mul(smoothstep(0.93, 1.0, dot(ctx.normal, half)), 0.12);
-      let c: Expr<"vec3"> = add(mul(rgb(C.water), add(0.7, mul(ctx.crest, 0.3))), mul(rgb(C.moon), sheen));
-      // Foam glows where bodies break the water, flickering along its edge.
-      const flicker = add(0.7, mul(noise2(mul(xz, 3.0)), 0.3));
-      c = add(c, mul(rgb(C.cyan), mul(ctx.foam, mul(flicker, 0.9))));
+      const spec = dot(ctx.normal, half);
+      const sheen = add(mul(smoothstep(0.9, 1.0, spec), 0.1), mul(smoothstep(0.985, 0.995, add(spec, mul(noise2(mul(xz, 4)), 0.01))), 0.25));
+      let c: Expr<"vec3"> = add(mul(rgb(C.water), add(0.75, mul(ctx.crest, 0.35))), mul(rgb(C.moon), sheen));
+      // Where bodies disturb the water it glows: a soft halo through the contact band, the foam brighter on it,
+      // flickering along its edge.
+      const near = saturate(ctx.contact);
+      const flicker = add(0.65, mul(noise2(mul(xz, 3.0)), 0.35));
+      c = add(c, mul(rgb(C.cyan), add(mul(mul(near, near), 0.22), mul(ctx.foam, mul(flicker, 0.75)))));
       c = mix(c, rgb(C.horizon), fog(ctx.distance));
       // Translucent looking down, so light under the surface shows; opaque toward grazing angles.
-      const alpha = saturate(max(add(0.55, mul(pow(sub(1, facing), 3), 0.45)), ctx.foam));
+      const alpha = saturate(max(add(0.6, mul(pow(sub(1, facing), 3), 0.4)), ctx.foam));
       return vec4(c, alpha);
     },
     shadow: (ctx) => vec4(vec3(0, 0, 0), mul(ctx.amount, 0.3)),

@@ -169,6 +169,12 @@ export class Sea implements Chart, Drawable {
     };
   }
 
+  /** The phase of the largest swell at xz, in cycles (0 everywhere for a sea without swell: it has no crests). */
+  private dominantPhase(xz: Expr<"vec2">): F {
+    const w = this.waves.reduce<Wave | undefined>((best, v) => (best === undefined || v.amp > best.amp ? v : best), undefined);
+    return w === undefined ? lift<"f32">(0) : mul(this.phaseOf(w, xz, time), 1 / (2 * Math.PI));
+  }
+
   /** The water's colour at a pixel: the style's `water`, with the swell's slope and crest, and contact foam. */
   private water(fr: Fragment): Expr<"vec4"> {
     const amplitude = Math.max(this.waves.reduce((a, w) => a + w.amp, 0), 1e-3);
@@ -190,6 +196,7 @@ export class Sea implements Chart, Drawable {
       distance: distance(fr.world, eyePosition()),
       foam: contactFoam(fr.world, band, fp, this.foam),
       contact: band,
+      phase: this.dominantPhase(xz),
     });
   }
 }
