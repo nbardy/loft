@@ -97,8 +97,8 @@ export default scene({
 - `fan({ rays, sag, scallop, paint }) -> Sheet`: a membrane between rays (a wing, a fluke). Rays are spines.
 - `shell({ profile, turns?, growth?, angular?, paint }) -> Shell`: a lathe; with `turns` and `growth` a spiral shell
   or horn (Raup's parameters).
-- `scatter({ on, count, at(i), thing, scale? }) -> Scatter`: instances of `thing` placed at body coordinates
-  `(m, v, rho)` on a host and oriented by its frame.
+- `scatter({ name, on, count, at(i), thing, scale? }) -> Scatter`: instances of `thing` placed at body coordinates
+  `(m, v, rho)` on a host and oriented by its chart's frame (done; the example's teeth and dorsal spikes).
 - `mesh({ positions, indices, paint }) -> Mesh`: explicit triangles are a full citizen.
 
 ### 2.3 Charts and the scene graph (`src/chart.ts`)
@@ -112,7 +112,7 @@ interface Chart {
 }
 compose(outer, inner): Chart
 place(thing, { in: chart, how: "deformed" | "rigid", at?: [..] })
-attach(thing, { to: strand, m, v, rho })
+attach(thing, { to: strand, m, v, rho })    // done: the example's head, jaw, horns and eyes
 ```
 
 - `sea(...)` is the root chart: `(x, z, height above the surface)`, with a swell that moves in time. It is also a
@@ -138,14 +138,15 @@ from the body, so they cannot disagree.
 ### 2.5 Soft things, evaluated per pixel (`src/field.ts`)
 
 - `decal(canvas, colour(local))`: a function painted on a canvas (the sea), antialiased by screen-space derivatives.
-  Foam collars where a strand crosses the water, cast shadows (capsule shadows from the skeleton), wakes and
-  telegraphs are decals the compiler derives; scenes can add their own.
+  Cast shadows (capsule shadows from the skeleton), wakes and telegraphs are decals; each is drawn as its own small
+  patch of the sea surface in the `"on-water"` phase, so its cost is the area it covers. Foam where the water meets a
+  body comes from scene depth (section 3).
 - `cloud(blobs)`: Gaussian blobs integrated analytically along the view ray. No marching, no sorting.
 - `glow(polyline, { width, colour })`: falloff of distance to a line (lightning, beams).
 
 ### 2.6 Style (`src/style.ts`)
 
-A style is a program in the same language: `{ shade(ctx) -> colour, outline?, water(ctx), sky(ctx), post?(ctx) }`
+A style is a program in the same language: `{ shade(ctx) -> colour, ink, outline, water(ctx), shadow(ctx), sky(ctx), post }`
 where `ctx` carries base colour, normal, sun and view directions, body coordinates `(m, v, rho)`, world position and
 depth below the surface. Styles are swappable without touching a scene. v0: `toon`. Planned: `woodblock`,
 `papercraft`, `ink`, `biolume`.
@@ -188,32 +189,121 @@ access to scene depth (for foam where things meet and soft volume edges), and a 
 ## 3. The Artefact (`src/artefact.ts`, done)
 
 Read that file; it is the host contract. In short: a fixed prelude (bind group 0: frame, inputs, params, curves), an
-artefact-declared bind group 1 of per-frame tables, complete shader modules, a list of buffer-less draws, and
-`pose(state)` which computes the per-frame tables on the CPU.
+artefact-declared bind group 1 of per-frame tables, complete shader modules, a list of buffer-less draws, optional
+post passes, and `pose(state)` which computes the per-frame tables on the CPU. `FrameState.curves` is the curve table
+the host holds now, so a `setCurves` edit moves the CPU pose exactly as it moves the GPU.
 
-Per-frame tables the compiler emits (all `array<vec4<f32>>`):
+Per-frame tables are declared by drawables (`ctx.table`, section 4.1); the compiler packs them, in declaration order,
+into as few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8 storage buffers
+and group 0 uses 3. Each table is read through its accessor, `t_<name>(i: u32) -> vec4<f32>`, which adds its offset.
+More than 5 buffers' worth (or one table over 128 MiB) fails at compile time with `TableBudgetError`. The tables the
+built-in kinds declare (all `array<vec4<f32>>`):
 
-| Table | Per entry | Contents |
-|---|---|---|
-| `stations` | 3 vec4 | `p` (xyz position, w arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, unused) |
-| `collars` | 2 vec4 | where strands cross the water: centre xz, radii, angle, age |
-| `shadows` | 2 vec4 | capsules projected along the sun onto the sea |
+| Table | Declared by | Per entry | Contents |
+|---|---|---|---|
+| `stations` | the compiler, for every slice any drawable asked for | 3 vec4 | `p` (xyz position, w arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, unused) |
+| `shadows` | `src/draw/shadows.ts`, from every `Skeleton` | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
 
-Slices at other times (for telegraphs, smears, wakes) are more ranges in `stations`.
+A slice is a strand at a time (`time`, `time + offset`, an input): each is its own range in `stations`.
+
+Foam where the water meets a body is not a table: the sea reads the opaque scene's depth (`Draw.sceneDepth`) and
+foams where an opaque surface lies within the foam width in 3D (a ring of taps at that width on screen). It replaced
+the CPU waterline "collar" table: it needs no per-kind code (any opaque thing gets foam), its cost per sea pixel is
+fixed, and it follows the drawn surface exactly. What it cannot see is a waterline hidden behind the body, which the
+camera cannot see either.
 
 ## 4. Capabilities (the open type system)
 
 ```ts
-interface Surface   { surface(m: Expr<"f32">, v: Expr<"f32">): SurfacePoint }        // can be sampled into triangles
-interface Chart     { toWorld(...); toLocal?(...) }                                    // is a coordinate system
-interface Skeleton  { capsules(): CapsuleChain }                                       // shadows, collision, footprints
-interface Field     { at(p: Expr<"vec3">): Expr<"f32"> }                               // has a value at a point
-interface Canvas    { paintable: true; toLocal(world): Expr<"vec3"> }                 // decals can be painted on it
-interface Drawable  { draws(ctx: CompileContext): DrawSpec[] }                          // knows how to schedule itself
+interface Surface   { surface(st, m, v): SurfacePoint }                 // pos, normal, radial: can be sampled into triangles
+interface Chart     { toWorld(...); toLocal?(...) }                     // is a coordinate system
+interface Skeleton  { skeleton(ctx: CompileContext): StationRange }     // capsules: shadows, collision, footprints
+interface Attachable<T> { placed(p: Placement): T }                     // can ride a host's chart (`attach`)
+interface Field     { at(p: Expr<"vec3">): Expr<"f32"> }                // has a value at a point (planned)
+interface Drawable  { readonly name: string; draws(ctx: CompileContext): Emitted }   // knows how to schedule itself
 ```
 
 A new kind of thing is a new object implementing some of these. `Drawable` is the extension point for the compiler:
-a type that can emit its own shader and tables needs no change to the compiler.
+a type that can emit its own shaders and tables needs no change to the compiler. `Strand`, `Crest`, `Scatter`, `Sea`,
+the sky and the shadows are all plain drawables (`src/geom/`, `src/draw/`); `scene()` adds the sky, the sea and the
+shadows in front of the scene's things.
+
+### 4.1 What a drawable can ask for (`src/compile/context.ts`)
+
+```ts
+interface CompileContext {
+  readonly slots: Slots;            // emit expressions as WGSL: emitFn(ctx.slots, name, args, ret, roots, combine)
+  readonly style: Style; readonly sea: Sea; readonly sun: V3;
+  readonly things: readonly Drawable[];                        // for derived drawables (shadows of every Skeleton)
+  table(spec: { name; vec4s; fill(frame: PoseFrame, out: Float32Array) }): TableRef;   // TableRef.wgsl = accessor
+  evaluate(roots: readonly Expr[]): CpuRef;                    // per-frame CPU values; read with frame.values(ref)
+  stations(strand: Strand, at?: Expr<"f32">): StationRange;    // a slice: default `time`
+  chart(strand: Strand, at?: Expr<"f32">): ChartRef;           // WGSL fn (m, v, rho) -> BodyPoint, and its CPU twin
+  shared(key: string, wgsl: string): void;                     // module-scope WGSL in sceneWgsl, once per key
+  post(pass: { label; wgsl }): void;                           // a full-screen pass (the style's come first)
+}
+interface PoseFrame { env; table(ref): Float32Array; values(ref); seaHeight(x, z) }    // what a fill sees
+type Emitted = { shaders: Record<string, string>; draws: DrawSpec[] };                   // DrawSpec = Draw with a phase
+type Phase = "background" | "opaque" | "water" | "on-water" | "transparent";
+```
+
+- **Order** is stated, not wired: a draw names its phase; opaque phases run first, then transparent; within a phase,
+  draws run in the order drawables emit them. Anything laid on the water after it is `"on-water"`.
+- **Scene depth**: a transparent draw sets `sceneDepth: true` and may call `scene_depth(px)` / `scene_position(px)`.
+- **Charts.** `BodyPoint` is the point at `(m, v, rho)`, the skin normal at `(m, v)`, and a frame: `x` the spine
+  tangent, `y` the outward direction at `v` within the section (no taper lean), `z = x cross y`. `attach(part, { to,
+  m, v, rho })` authors the part in that frame and the pose pass places it on the host's chart every frame (exact,
+  at every slice); `scatter({ on, count, at(i), thing, scale })` places copy `i` (`instance_index`) on it in the
+  vertex stage. `compileScene(scene)` returns the artefact plus `chart(strand, at)` and `frame(state)`, so checks and
+  tests can evaluate the CPU twins over a frame.
+- **The CPU backend** (`compileJs`) is scalarised (no array per vector op) and folds constants as it emits, so the
+  pose pass is plain arithmetic on what actually varies.
+
+### 4.2 Writing a new kind of thing
+
+One module. This one draws a ring of markers on the water around a strand's head, from a table the pose pass fills:
+
+```ts
+import { draw, type CompileContext, type Drawable, type Emitted, type Strand } from "loft";
+
+export function headMarker(body: Strand): Drawable {
+  return {
+    name: "headMarker",
+    draws(ctx: CompileContext): Emitted {
+      const chart = ctx.chart(body);                                  // the body, posed every frame
+      const t = ctx.table({ name: "headMarker", vec4s: 1, fill: (frame, out) => {
+        const p = chart.cpu(frame)(0, 0.25, 0).pos;                    // the head, on the CPU
+        out.set([p[0], p[2], 1.5, 0]);                                 // centre xz, radius
+      } });
+      const code = /* wgsl */ `
+struct VOut { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32> };
+@vertex fn vs(@builtin(vertex_index) vi: u32) -> VOut {
+  let m = ${t.wgsl}(0u);
+  let c = vec2<f32>(quad_corner(vi)) * 2.0 - 1.0;
+  let xz = m.xy + c * (m.z + 0.2);
+  var out: VOut;
+  out.world = vec3<f32>(xz.x, sea_height(xz), xz.y);
+  out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
+  return out;
+}
+@fragment fn fs(in: VOut) -> @location(0) vec4<f32> {
+  let m = ${t.wgsl}(0u);
+  let d = abs(distance(in.world.xz, m.xy) - m.z);
+  return vec4<f32>(1.0, 0.3, 0.2, 1.0 - smoothstep(0.05, 0.08, d));
+}`;
+      return {
+        shaders: { headMarker: code },
+        draws: [draw({ label: "head marker", shader: "headMarker", vertices: 6, phase: "on-water",
+                       cull: "none", depthWrite: false, blend: "alpha" })],
+      };
+    },
+  };
+}
+```
+
+Add it to a scene's `things`. Nothing in `src/compile` changes: the compiler packs the table, binds it, fills it each
+frame after the stations it reads, and runs the draw after the sea. A telegraph is the same with
+`ctx.chart(body, input("attack.arm", "f32", [0]))`.
 
 ## 5. Milestones and ownership
 

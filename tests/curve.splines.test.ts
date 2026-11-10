@@ -15,8 +15,8 @@ test("through passes through every control point", () => {
   });
 });
 
-// Catches: the constant-m fast path (used for every pose station) drifting from the general expression the vertex
-// stage could use, e.g. a phantom weight folded onto the wrong point.
+// Catches: constant folding in the JavaScript backend (every pose station is a spline at a constant m, folded to its
+// four nonzero terms) changing the value the general expression gives with m bound at run time.
 test("through at a constant m equals the general form", () => {
   for (const m of [0, 0.03, 0.2, 0.25, 0.49, 0.5, 0.77, 0.999, 1]) {
     const fast = evaluate(through(lift(m), pts), env) as number[];

@@ -158,8 +158,12 @@ export type Draw = {
  */
 export type PostPass = { readonly label: string; readonly shader: string };
 
-/** What a host hands the pose function every frame. `inputs` and `params` are laid out by slot. */
-export type FrameState = { readonly time: number; readonly inputs: Float32Array; readonly params: Float32Array };
+/**
+ * What a host hands the pose function every frame. `inputs` and `params` are laid out by slot. `curves` is the curve
+ * table as the host holds it now: `Artefact.curves` until a `setCurves`, the last data set after it (so an edited
+ * curve moves the CPU pose exactly as it moves the GPU).
+ */
+export type FrameState = { readonly time: number; readonly inputs: Float32Array; readonly params: Float32Array; readonly curves: Float32Array };
 
 export type Artefact = {
   readonly version: 1;

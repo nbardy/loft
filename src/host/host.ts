@@ -196,7 +196,7 @@ function asFloats(name: string, value: number | readonly number[], floats: numbe
 }
 
 /** Defaults from the artefact, overridden by the view. Unknown names throw: a typo must not silently do nothing. */
-function frameState(a: Artefact, slots: Slots, paramFloats: number, view: View): FrameState {
+function frameState(a: Artefact, slots: Slots, paramFloats: number, curves: Float32Array, view: View): FrameState {
   const inputs = new Float32Array(a.inputFloats);
   for (const s of a.inputs) inputs.set(s.def, s.slot);
   for (const [name, value] of Object.entries(view.inputs ?? {})) {
@@ -214,7 +214,7 @@ function frameState(a: Artefact, slots: Slots, paramFloats: number, view: View):
     if (slot === undefined) throw new Error(`view param "${name}": the artefact declares no such param`);
     params[slot] = value;
   }
-  return { time: view.time, inputs, params };
+  return { time: view.time, inputs, params, curves };
 }
 
 function frameUniform(view: View): Float32Array<ArrayBuffer> {
@@ -497,8 +497,10 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   };
 
   /** Pose and upload. Every `writeBuffer` precedes the one submit that reads it, so queue ordering is not a concern. */
+  // The curve data the GPU holds, so the pose pass reads the same curves (FrameState.curves).
+  let curves = a.curves;
   const upload = (view: View): void => {
-    const state = frameState(a, slots, paramFloats, view);
+    const state = frameState(a, slots, paramFloats, curves, view);
     const tables = a.pose(state);
     for (const name of Object.keys(tables)) if (!declared.has(name)) throw new Error(`pose returned "${name}", which is not a declared dynamic buffer`);
     for (const d of dynamic) {
@@ -582,9 +584,11 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
         device.queue.submit([encoder.finish()]);
       });
     },
-    setCurves: (curves) => {
-      if (curves.length !== a.curves.length) throw new Error(`setCurves: got ${curves.length} floats; the artefact has ${a.curves.length}`);
-      if (curves.length > 0) device.queue.writeBuffer(curveBuf, 0, curves as Float32Array<ArrayBuffer>);
+    setCurves: (next) => {
+      if (next.length !== a.curves.length) throw new Error(`setCurves: got ${next.length} floats; the artefact has ${a.curves.length}`);
+      if (next.length > 0) device.queue.writeBuffer(curveBuf, 0, next as Float32Array<ArrayBuffer>);
+      // A copy: the caller may keep editing its array, and the pose must see what the GPU was given.
+      curves = next.slice();
     },
     destroy: () => {
       for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, ...dynamic.map((d) => d.gpu)]) b.destroy();

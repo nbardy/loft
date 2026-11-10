@@ -2,6 +2,8 @@
 // local (x, z, height above the surface) with a swell that moves in time. Whirlpool, compose and placement are M2.
 
 import { add, cos, lift, mul, sin, sub, time, vec2, vec3, type Expr, type In } from "./expr.ts";
+import type { CompileContext, Drawable, Emitted } from "./compile/context.ts";
+import { seaDraws } from "./draw/sea.ts";
 
 export interface Chart {
   /** Local coordinates to world. Always available. */
@@ -29,14 +31,18 @@ export type SeaSpec = {
   readonly grid?: number;
   /** Reach of the grid from its centre, world units. Default 400. */
   readonly reach?: number;
+  /** Width of the foam band where the water meets a body, world units. Default 0.3. */
+  readonly foam?: number;
 };
 
 /** One sinusoidal component, canonical: unit direction, wavenumber, amplitude, angular frequency, phase. */
 type Wave = { readonly dir: readonly [number, number]; readonly k: number; readonly amp: number; readonly omega: number; readonly phase: number };
 
-export class Sea implements Chart {
-  readonly kind = "sea" as const;
-  constructor(readonly waves: readonly Wave[], readonly grid: number, readonly reach: number) {}
+export class Sea implements Chart, Drawable {
+  readonly name = "sea";
+  constructor(readonly waves: readonly Wave[], readonly grid: number, readonly reach: number, readonly foam: number) {}
+
+  draws(ctx: CompileContext): Emitted { return seaDraws(ctx, this); }
 
   private phaseOf(w: Wave, xz: Expr<"vec2">, t: In<"f32">): Expr<"f32"> {
     return add(sub(mul(add(mul(xz.x, w.dir[0]), mul(xz.y, w.dir[1])), w.k), mul(t, w.omega)), w.phase);
@@ -75,5 +81,7 @@ export function sea(spec: SeaSpec): Sea {
   });
   const grid = spec.grid ?? 192;
   if (!(Number.isInteger(grid) && grid >= 8)) throw new Error(`sea: grid must be an integer >= 8, got ${grid}`);
-  return new Sea(waves, grid, spec.reach ?? 400);
+  const foam = spec.foam ?? 0.3;
+  if (!(foam > 0)) throw new Error(`sea: foam width must be positive, got ${foam}`);
+  return new Sea(waves, grid, spec.reach ?? 400, foam);
 }

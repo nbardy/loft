@@ -136,7 +136,10 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
 
 // ---- readers -------------------------------------------------------------------------------------------------------
 
-/** WGSL: quaternion rotation and the interpolated station. Lives in `sceneWgsl`; reads `stations` from group 1. */
+/** The stations table's name (its WGSL accessor is `t_stations`). */
+export const STATIONS_TABLE = "stations";
+
+/** WGSL: quaternion rotation and the interpolated station. Lives in `sceneWgsl`; reads the stations table. */
 export const STATIONS_WGSL = /* wgsl */ `
 fn qrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
@@ -154,22 +157,22 @@ fn station_at(base: u32, count: u32, m: f32) -> StationSample {
   let x = clamp(m, 0.0, 1.0) * span;
   let k = min(u32(floor(x)), count - 2u);
   let f = x - f32(k);
-  let p1 = stations[(base + k) * 3u].xyz;
-  let p2 = stations[(base + k + 1u) * 3u].xyz;
+  let p1 = t_stations((base + k) * 3u).xyz;
+  let p2 = t_stations((base + k + 1u) * 3u).xyz;
   // Mirrored phantom ends, as in \`through\`. The index is clamped first so it never leaves the strand's range.
-  let p0 = select(stations[(base + max(k, 1u) - 1u) * 3u].xyz, 2.0 * p1 - p2, k == 0u);
-  let p3 = select(stations[(base + min(k + 2u, count - 1u)) * 3u].xyz, 2.0 * p2 - p1, k + 2u >= count);
+  let p0 = select(t_stations((base + max(k, 1u) - 1u) * 3u).xyz, 2.0 * p1 - p2, k == 0u);
+  let p3 = select(t_stations((base + min(k + 2u, count - 1u)) * 3u).xyz, 2.0 * p2 - p1, k + 2u >= count);
   let a = p2 - p0;
   let b = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
   let c = 3.0 * p1 - p0 + p3 - 3.0 * p2;
   var out: StationSample;
   out.p = 0.5 * (2.0 * p1 + a * f + b * f * f + c * f * f * f);
   out.der = 0.5 * (a + 2.0 * b * f + 3.0 * c * f * f) * span;
-  let q = normalize(mix(stations[(base + k) * 3u + 1u], stations[(base + k + 1u) * 3u + 1u], f));
+  let q = normalize(mix(t_stations((base + k) * 3u + 1u), t_stations((base + k + 1u) * 3u + 1u), f));
   out.t = qrot(q, vec3<f32>(1.0, 0.0, 0.0));
   out.d = qrot(q, vec3<f32>(0.0, 1.0, 0.0));
   out.s = qrot(q, vec3<f32>(0.0, 0.0, 1.0));
-  out.stretch = mix(stations[(base + k) * 3u + 2u].z, stations[(base + k + 1u) * 3u + 2u].z, f);
+  out.stretch = mix(t_stations((base + k) * 3u + 2u).z, t_stations((base + k + 1u) * 3u + 2u).z, f);
   return out;
 }
 `;

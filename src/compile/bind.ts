@@ -3,7 +3,7 @@
 // a param used only by the pose pass still gets a slot the host can set.
 
 import type { InputSlot, ParamSlot } from "../artefact.ts";
-import { CURVE_N, emitWgsl, leaves, type Bind, type Env, type Expr, type InputSpec, type NumTy, type ParamSpec, type Row } from "../expr.ts";
+import { CURVE_N, emitWgsl, leaves, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy, type ParamSpec, type Row } from "../expr.ts";
 
 const FLOATS: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
@@ -11,7 +11,14 @@ export class Slots {
   private readonly inputMap = new Map<string, InputSlot>();
   private readonly paramMap = new Map<string, ParamSlot>();
   private readonly rowMap = new Map<number, { readonly row: Row; readonly slot: number }>();
+  private readonly libList: LibFn[] = [];
   private inputFloats = 0;
+
+  /** Library functions emitted code calls, each after its dependencies; their definitions go in `sceneWgsl`. */
+  lib(fns: readonly LibFn[]): void {
+    for (const fn of fns) if (!this.libList.includes(fn)) this.libList.push(fn);
+  }
+  libs(): readonly LibFn[] { return this.libList; }
 
   input(spec: InputSpec): InputSlot {
     const seen = this.inputMap.get(spec.name);
@@ -98,7 +105,7 @@ const WGSL_TY: Record<string, string> = { f32: "f32", vec2: "vec2<f32>", vec3: "
  * variables of the same name; `extra` binds more variables (for example the fields of a station sample) and `pre` is
  * hand-written code that runs first and defines them. `ret` combines the root values into the return expression.
  */
-export function wgslFn(
+export function emitFn(
   slots: Slots,
   name: string,
   args: readonly (readonly [string, NumTy])[],
@@ -109,7 +116,8 @@ export function wgslFn(
 ): string {
   const vars: Record<string, string> = { ...(opts.extra ?? {}) };
   for (const [a] of args) vars[a] = a;
-  const { lines, out: values } = emitWgsl(roots, slots.wgsl(vars));
+  const { lines, out: values, libs } = emitWgsl(roots, slots.wgsl(vars));
+  slots.lib(libs);
   const sig = args.map(([a, t]) => `${a}: ${WGSL_TY[t]}`).join(", ");
   return [`fn ${name}(${sig}) -> ${out} {`, ...(opts.pre ?? []).map((l) => `  ${l}`), ...lines.map((l) => `  ${l}`), `  return ${ret(values)};`, `}`].join("\n");
 }

@@ -106,9 +106,6 @@ export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3
   if (n < 2) throw new Error(`through: need at least two control points, got ${n}`);
   const p = points.map((q) => lift<"vec3">(q));
   const me = lift<"f32">(m);
-  // A constant m (the pose pass samples stations at fixed m) has known weights: emit only the four nonzero terms. The
-  // general form would rebuild every kernel weight per station, and the JavaScript backend does not fold constants.
-  if (me.node.op === "const") return throughAt(me.node.v[0], p);
   const tau = mul(clamp(me, 0, 1), n - 1);
   const w = p.map((_, j) => kernel(sub(tau, j)) as Expr<"f32">);
   // Phantom points are linear in the real ones: fold their weights onto them.
@@ -118,22 +115,6 @@ export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3
   w[n - 1] = add(w[n - 1], mul(after, 2));
   w[n - 2] = sub(w[n - 2], after);
   return p.map((q, j) => mul(q, w[j])).reduce((s, x) => add(s, x)) as Expr<"vec3">;
-}
-
-/** The kernel in plain numbers (the same function as `kernel`). */
-function kernelAt(x: number): number {
-  const a = Math.abs(x);
-  return a < 1 ? 1.5 * a ** 3 - 2.5 * a * a + 1 : a < 2 ? -0.5 * a ** 3 + 2.5 * a * a - 4 * a + 2 : 0;
-}
-
-function throughAt(m: number, p: readonly Expr<"vec3">[]): Expr<"vec3"> {
-  const n = p.length;
-  const tau = Math.min(1, Math.max(0, m)) * (n - 1);
-  const w = p.map((_, j) => kernelAt(tau - j));
-  const before = kernelAt(tau + 1), after = kernelAt(tau - n);
-  w[0] += 2 * before; w[1] -= before; w[n - 1] += 2 * after; w[n - 2] -= after;
-  const terms = p.flatMap((q, j) => (w[j] === 0 ? [] : [w[j] === 1 ? q : mul(q, w[j])]));
-  return terms.reduce((s, x) => add(s, x)) as Expr<"vec3">;
 }
 
 // ---- stateless motion operators -----------------------------------------------------------------------------------

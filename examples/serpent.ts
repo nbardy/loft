@@ -1,10 +1,11 @@
-// A sea serpent as data: named numbers, curves, and closed-form motion. Every part (head, jaw, horns, eyes, fins) is
-// written in terms of the body's spine, so it moves with the body; foam collars and shadows are derived by the
-// compiler. Head toward +x. Ported from keel's preview_probe `serpent.rs`.
+// A sea serpent as data: named numbers, curves, and closed-form motion. The head rides the neck's chart, the jaw,
+// horns and eyes ride the head's, and teeth and dorsal spikes are scattered on head, jaw and body in body coordinates,
+// so every part moves with the body exactly; foam and shadows are derived by the compiler. Head toward +x. Ported
+// from keel's preview_probe `serpent.rs`.
 
 import {
-  add, crest, cross, dot, frameOf, keys, mul, normalize, palette, param, retarded, rotate, scene, sea, sin, skinPoint,
-  smoothstep, strand, sub, TAU, through, time, toon, vec3, wave, abs, cos, fract, mix, type Expr, type In,
+  add, attach, crest, lift, cross, dot, floor, keys, lt, mod, mul, normalize, palette, param, retarded, rotate, scatter, scene,
+  sea, select, sin, smoothstep, strand, sub, TAU, through, time, toon, vec3, wave, abs, cos, mix, type Expr, type In,
 } from "../src/index.ts";
 
 const S = {
@@ -72,13 +73,17 @@ const body = strand({
   detail: { along: 160, around: 28 },
 });
 
-// ---- head: a skull riding the neck's first frame, a hinged jaw, horns, eyes ---------------------------------------
+// ---- head: a skull riding the neck's first frame, a hinged jaw, horns, eyes -------------------------------------
+//
+// Each part is authored in its host's local frame at the attachment point: x along the host's spine (toward increasing
+// m), y out of its skin at v, z = x cross y.
 
-const neckTop = frameOf(body, 0);
-const forward = rotate(mul(neckTop.t, -1), neckTop.s, S.headPitch);
-const crown = rotate(neckTop.d, neckTop.s, S.headPitch);
+/** Directions in the frame of the top of the neck (m = 0, on the spine): x runs down the neck, y is the back. */
+const X: In<"vec3"> = [1, 0, 0], Y: In<"vec3"> = [0, 1, 0], Z: In<"vec3"> = [0, 0, 1];
+const forward = rotate(mul(lift<"vec3">(X), -1), Z, S.headPitch);
+const crown = rotate(Y, Z, S.headPitch);
 const hw = S.headWidth / 2, hh = S.headHeight / 2, hl = S.headLength;
-const backOfHead = add(neckTop.p, mul(neckTop.t, 0.12 * hl));
+const backOfHead = mul(lift<"vec3">(X), 0.12 * hl);
 const skullPoints = [0, 0.35, 0.7, 1].map((u) => add(backOfHead, sub(mul(forward, hl * u), mul(crown, 0.06 * hl * u * u))));
 
 /** Width keys and height keys at the same positions become a girth curve and an aspect curve. */
@@ -86,7 +91,7 @@ function section(at: readonly number[], width: readonly number[], height: readon
   return { girth: keys(at.map((x, i) => [x, width[i]] as const)), aspect: keys(at.map((x, i) => [x, height[i] / width[i]] as const)) };
 }
 const skull = section([0, 0.3, 0.62, 1], [hw * 0.8, hw, hw * 0.78, hw * S.snout], [hh * 0.85, hh, hh * 0.72, hh * S.snout * 0.8]);
-const head = strand({
+const head = attach(strand({
   name: "head",
   spine: (m) => through(m, skullPoints),
   stations: 12,
@@ -99,31 +104,37 @@ const head = strand({
     palette.countershade(v, { back: mix(vec3(...S.back), vec3(...S.band), smoothstep(0.55, 1.0, m)), belly: S.belly }),
     vec3(...S.mouth), mul(smoothstep(0.8, 0.9, mul(sin(mul(v, TAU)), -1)), smoothstep(0.3, 0.4, m))),
   detail: { along: 48, around: 28 },
-});
+}), { to: body, m: 0, v: 0.25, rho: 0 });
 
+// The jaw hangs from the head's spine at m = 0.25 in the frame facing the belly (v = 0.75): x forward along the head,
+// y down. Opening turns it about z, toward y.
 const gape = mul(add(1, mul(sin(mul(time, 0.9)), 0.4)), S.jawGape);
-const hinge = sub(through(0.25, skullPoints), mul(crown, hh * 0.9));
-const jawForward = rotate(forward, neckTop.s, gape);
-const jawCrown = rotate(crown, neckTop.s, gape);
+const jawDir = vec3(cos(gape), sin(gape), 0);
+const hinge = vec3(0, hh * 0.9, 0);
 const chin = section([0, 0.45, 1], [hw * 0.7, hw * 0.72, hw * S.snout * 0.95], [hh * 0.3, hh * 0.26, hh * 0.16]);
-const jaw = strand({
+const jaw = attach(strand({
   name: "jaw",
-  spine: (m) => through(m, [sub(hinge, mul(jawForward, 0.15 * S.jawLength)), add(hinge, mul(jawForward, 0.5 * S.jawLength)), add(hinge, mul(jawForward, S.jawLength))]),
+  spine: (m) => through(m, [sub(hinge, mul(jawDir, 0.15 * S.jawLength)), add(hinge, mul(jawDir, 0.5 * S.jawLength)), add(hinge, mul(jawDir, S.jawLength))]),
   stations: 8,
   girth: (m) => chin.girth(m).x,
   section: { aspect: (m) => chin.aspect(m).x, squareness: 2.6 },
   tips: [{ round: 0.15 }, { round: 0.12 }],
-  up: jawCrown,
+  // The jaw's back faces the head's belly side: up is -y, turned with the jaw.
+  up: vec3(sin(gape), mul(cos(gape), -1), 0),
   // The top of the jaw is the floor of the mouth.
   paint: (_m, v) => mix(palette.countershade(v, { back: S.back, belly: S.belly }), vec3(...S.mouth), smoothstep(0.75, 0.85, sin(mul(v, TAU)))),
   detail: { along: 32, around: 24 },
-});
+}), { to: head, m: 0.25, v: 0.75, rho: 0 });
 
-/** A horn: a strand on a logarithmic-spiral spine leaving `base` along `out` and curling toward `back`. */
-function horn(name: string, base: Expr<"vec3">, out: Expr<"vec3">, backward: Expr<"vec3">) {
+/**
+ * A horn on the head's skin at round-position v: a strand on a logarithmic-spiral spine leaving the skin along y
+ * (tilted forward a little) and curling back along -x (the head's x runs toward the snout).
+ */
+function horn(name: string, v: number) {
   const TIGHTEN = 0.45, N = 7, curl = S.hornCurl;
-  const o = normalize(out);
-  const b = normalize(sub(backward, mul(o, dot(backward, o))));
+  const o = normalize(vec3(0.3 * Math.sin(S.headPitch), 1, 0));
+  const back = vec3(-1, 0.2, 0);
+  const b = normalize(sub(back, mul(o, dot(back, o))));
   const norm = Math.hypot(1, TIGHTEN);
   const e1 = [-TIGHTEN / norm, 1 / norm], e2 = [-1 / norm, -TIGHTEN / norm];
   const scale = S.hornLength / ((norm / TIGHTEN) * (1 - Math.exp(-TIGHTEN * curl)));
@@ -131,40 +142,68 @@ function horn(name: string, base: Expr<"vec3">, out: Expr<"vec3">, backward: Exp
     const th = (curl * i) / (N - 1), r = Math.exp(-TIGHTEN * th);
     const d = [r * Math.cos(th) - 1, r * Math.sin(th)];
     const alongOut = d[0] * e1[0] + d[1] * e1[1], toward = d[0] * e2[0] + d[1] * e2[1];
-    return i === 0 ? sub(base, mul(o, S.hornGirth * 0.6)) : add(base, add(mul(o, alongOut * scale), mul(b, toward * scale)));
+    return i === 0 ? mul(o, -S.hornGirth * 0.6) : add(mul(o, alongOut * scale), mul(b, toward * scale));
   });
   const profile = keys([[0, S.hornGirth], [0.45, S.hornGirth * 0.62], [1, S.hornGirth * 0.08]]);
-  return strand({
+  return attach(strand({
     name, spine: (m) => through(m, pts), stations: 12, girth: (m) => profile(m).x, tips: ["open", { point: 0.2 }],
     up: cross(o, b),
     paint: (m) => mix(vec3(...S.bone), mul(vec3(...S.bone), 0.62), smoothstep(0.2, 1.0, m)),
     detail: { along: 24, around: 12 },
-  });
+  }), { to: head, m: 0.14, v, rho: 1 });
 }
 
-/** An eye: a two-point strand with round tips is a ball. Amber, with a slit pupil facing out. */
-function eye(name: string, socket: { pos: Expr<"vec3">; normal: Expr<"vec3"> }) {
-  const r = S.eyeSize, c = add(socket.pos, mul(socket.normal, r * 0.25));
-  return strand({
-    name, spine: (m) => through(m, [sub(c, mul(socket.normal, r)), add(c, mul(socket.normal, r))]), stations: 4,
-    girth: r, tips: [{ round: 0.5 }, { round: 0.5 }], up: crown,
-    paint: (m, v) => {
+/** An eye: a two-point strand with round tips is a ball, set into the skin along y. Amber, with a slit pupil facing out. */
+function eye(name: string, v: number) {
+  const r = S.eyeSize, c = vec3(0, r * 0.25, 0);
+  // The slit stands upright: its frame starts from the head's crown, which in this frame lies along -z or +z.
+  const up: In<"vec3"> = [0, 0, -Math.sign(Math.cos(TAU * v))];
+  return attach(strand({
+    name, spine: (m) => through(m, [sub(c, mul(lift<"vec3">(Y), r)), add(c, mul(lift<"vec3">(Y), r))]), stations: 4,
+    girth: r, tips: [{ round: 0.5 }, { round: 0.5 }], up,
+    paint: (m, vv) => {
       const iris = mix(mul(vec3(...S.iris), 0.7), vec3(...S.iris), smoothstep(0.55, 0.8, m));
-      const slit = mul(smoothstep(0.8, 0.86, m), sub(1, smoothstep(0.25, 0.4, abs(cos(mul(v, TAU))))));
+      const slit = mul(smoothstep(0.8, 0.86, m), sub(1, smoothstep(0.25, 0.4, abs(cos(mul(vv, TAU))))));
       return mix(iris, vec3(0.04, 0.02, 0.06), slit);
     },
     detail: { along: 16, around: 16 },
-  });
+  }), { to: head, m: 0.47, v, rho: 1 });
 }
 
 const parts = [-1, 1].flatMap((side) => {
   const tag = side < 0 ? "L" : "R";
-  const root = skinPoint(head, 0.14, 0.25 + (side * S.hornSplay) / TAU);
-  const socket = skinPoint(head, 0.47, 0.25 + side * (0.25 - 0.8 / TAU));
-  return [
-    horn(`horn${tag}`, root.pos, add(root.normal, mul(crown, 0.3)), sub(mul(crown, 0.2), forward)),
-    eye(`eye${tag}`, socket),
-  ];
+  return [horn(`horn${tag}`, 0.25 + (side * S.hornSplay) / TAU), eye(`eye${tag}`, 0.25 + side * (0.25 - 0.8 / TAU))];
+});
+
+// ---- teeth and spikes: small strands scattered in body coordinates -------------------------------------------------
+
+/** A cone standing on the local y axis, root slightly sunk into the skin. */
+const cone = (name: string, length: number, girth: number, lean: number, paint: readonly [number, number, number]) => strand({
+  name, spine: (m) => through(m, [[0, -0.15 * length, 0], [lean * 0.4 * length, 0.5 * length, 0], [lean * length, length, 0]]),
+  stations: 5, girth, tips: ["open", { point: 0.85 }], up: [1, 0, 0], paint, detail: { along: 8, around: 8 },
+});
+const tooth = cone("tooth", S.toothLength, S.toothLength * 0.24, 0.1, S.bone);
+
+/** Instance i of `n` per side: which side (-1, 1) and its index along the row. */
+const row = (i: Expr<"f32">, n: number) => ({ j: mod(i, n), side: select(lt(i, n), -1, 1) });
+const teethUp = scatter({
+  name: "teethUp", on: head, count: 2 * S.teeth, thing: tooth,
+  at: (i) => { const { j, side } = row(i, S.teeth); return { m: add(0.45, mul(add(j, 0.5), 0.42 / S.teeth)), v: add(0.75, mul(side, 0.1)), rho: 0.92 }; },
+  scale: (i) => add(0.8, mul(row(i, S.teeth).j, 0.45 / S.teeth)),
+});
+const teethDown = scatter({
+  name: "teethDown", on: jaw, count: 2 * S.teeth, thing: tooth,
+  at: (i) => { const { j, side } = row(i, S.teeth); return { m: add(0.34, mul(add(j, 0.5), 0.5 / S.teeth)), v: add(0.25, mul(side, 0.12)), rho: 0.92 }; },
+  scale: (i) => add(0.7, mul(row(i, S.teeth).j, 0.3 / S.teeth)),
+});
+
+const SPIKES = 7;
+const spike = cone("spike", 0.55, 0.13, 0.7, [0.86, 0.26, 0.34]);
+const spikes = scatter({
+  name: "spikes", on: body, count: SPIKES, thing: spike,
+  at: (i) => ({ m: add(0.63, mul(i, 0.19 / (SPIKES - 1))), v: 0.25, rho: 0.9 }),
+  // Smaller toward the tail.
+  scale: (i) => sub(1.1, mul(floor(i), 0.45 / (SPIKES - 1))),
 });
 
 // ---- fins ---------------------------------------------------------------------------------------------------------
@@ -179,18 +218,14 @@ const dorsal = crest({
   flutter: (m) => mul(sin(mul(sub(mul(m, 2.5), mul(time, S.swimRate * 2)), TAU)), 0.3),
   rows: 120,
 });
-const tailFin = crest({
-  on: body, from: 0.84, to: 0.995, name: "tailfin",
+// The tail fin is two lobes splayed either side of the dorsal line: a single membrane went edge-on (a thin spike)
+// whenever the tail swung its plane through the camera, which the rising tail does in the three-quarter view.
+const TAIL_SPLAY = 0.09;
+const tailFins = [-1, 1].map((side) => crest({
+  on: body, from: 0.84, to: 0.995, name: `tailfin${side < 0 ? "L" : "R"}`, v: 0.25 + side * TAIL_SPLAY,
   height: keys([[0, 0], [0.45, 0.7], [0.85, 1.5], [1, 0]]),
   paint: S.membrane, rays: 6, sag: 0.25, rake: 0.9, rows: 48,
-});
-
-/** Teeth: a sawtooth membrane along the mouth's edge, one row per side per jaw. */
-const tooth = (x: Expr<"f32">, grow: number) => mul(sub(1, abs(sub(mul(fract(mul(x, S.teeth)), 2), 1))), mul(add(0.75, mul(x, grow)), S.toothLength));
-const teeth = [-1, 1].flatMap((side) => [
-  crest({ on: head, name: `teethUp${side < 0 ? "L" : "R"}`, from: 0.42, to: 0.9, v: 0.75 + side * 0.1, height: (x: Expr<"f32">) => tooth(x, 0.5), paint: () => vec3(...S.bone), sag: 0, rays: 1, rake: 0, rows: 48 }),
-  crest({ on: jaw, name: `teethDown${side < 0 ? "L" : "R"}`, from: 0.3, to: 0.86, v: 0.25 + side * 0.12, height: (x: Expr<"f32">) => tooth(x, 0.3), paint: () => vec3(...S.bone), sag: 0, rays: 1, rake: 0, rows: 48 }),
-]);
+}));
 
 export default scene({
   sea: sea({
@@ -199,7 +234,7 @@ export default scene({
       { direction: [-0.3, 1], length: 6.5, height: 0.12, speed: 0.8, phase: 1.3 },
     ],
   }),
-  things: [body, head, jaw, ...parts, ...teeth, dorsal, tailFin],
+  things: [body, head, jaw, ...parts, teethUp, teethDown, spikes, dorsal, ...tailFins],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {

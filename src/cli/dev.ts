@@ -10,16 +10,42 @@ const ROOT = resolve(import.meta.dir, "../..");
 type DevCommand = Extract<Command, { kind: "dev" }>;
 type Built = { readonly kind: "ok"; readonly js: string } | { readonly kind: "error"; readonly text: string };
 
-/** Compile errors surface in the page, not at bundle time, so a scene that throws still loads the viewer. */
+/**
+ * The scene and the compiler are imported lazily (`import()` stays inside the one bundle), so a scene that throws while
+ * its module evaluates is an error the viewer can show, not a blank page: the viewer's own code is already running.
+ */
 function sceneModule(cmd: DevCommand): string {
   const idx = JSON.stringify(resolve(ROOT, "src/index.ts"));
   switch (cmd.source.kind) {
     case "fixture":
-      return `import { fixture } from ${JSON.stringify(resolve(ROOT, "src/host/fixture.ts"))};\nexport const sceneName = "fixture";\nexport const build = () => fixture;\n`;
+      return `export const sceneName = "fixture";\nexport const build = async () => (await import(${JSON.stringify(resolve(ROOT, "src/host/fixture.ts"))})).fixture;\n`;
     case "file":
-      return `import scene from ${JSON.stringify(resolve(cmd.source.path))};\nimport { compile } from ${idx};\nexport const sceneName = ${JSON.stringify(cmd.source.path)};\nexport const build = () => compile(scene);\n`;
+      return `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport const build = async () => {\n  const [mod, { compile }] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx})]);\n  return compile(mod.default);\n};\n`;
   }
 }
+
+/**
+ * Served as /live.js and independent of the bundle, so a build that fails still gets its error on the page and the page
+ * still reloads when the file is fixed. `reload` keeps nothing itself: the viewer saves its state on `pagehide`.
+ */
+const LIVE_JS = `
+const box = document.getElementById("buildError");
+let wasConnected = false;
+function connect() {
+  const ws = new WebSocket("ws://" + location.host + "/ws");
+  ws.onopen = () => { if (wasConnected) location.reload(); wasConnected = true; };
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === "reload") location.reload();
+    else { box.textContent = "build failed:\\n" + msg.text; box.hidden = false; }
+  };
+  ws.onclose = () => setTimeout(connect, 500);
+}
+connect();
+`;
+
+/** Only these edits can change what the page shows; screenshots and logs written beside a scene must not rebuild. */
+const SOURCE_FILE = /\.(ts|tsx|js|json|wgsl|css|html)$/;
 
 async function bundle(cmd: DevCommand): Promise<Built> {
   const result = await Bun.build({
@@ -54,17 +80,16 @@ export async function dev(cmd: DevCommand): Promise<void> {
       switch (url.pathname) {
         case "/": return new Response(Bun.file(resolve(ROOT, "viewer/index.html")));
         case "/style.css": return new Response(Bun.file(resolve(ROOT, "viewer/style.css")));
-        case "/app.js":
-          return built.kind === "ok"
-            ? new Response(built.js, { headers: { "content-type": "text/javascript", "cache-control": "no-store" } })
-            : new Response(`document.addEventListener("DOMContentLoaded",()=>{const e=document.getElementById("error");e.textContent=${JSON.stringify("build failed:\n" + built.text)};e.hidden=false;});`, { headers: { "content-type": "text/javascript" } });
+        case "/live.js": return new Response(LIVE_JS, { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
+        // A failed build serves an empty module: live.js owns showing the error and the reload that follows the fix.
+        case "/app.js": return new Response(built.kind === "ok" ? built.js : "", { headers: { "content-type": "text/javascript", "cache-control": "no-store" } });
         case "/favicon.ico": return new Response(null, { status: 204 });
         case "/ws": return srv.upgrade(req) ? undefined : new Response("expected a WebSocket", { status: 426 });
         default: return new Response("not found", { status: 404 });
       }
     },
     websocket: {
-      open: (ws) => { sockets.add(ws); },
+      open: (ws) => { sockets.add(ws); if (built.kind === "error") ws.send(JSON.stringify({ type: "error", text: built.text })); },
       close: (ws) => { sockets.delete(ws); },
       message() {},
     },
@@ -83,7 +108,7 @@ export async function dev(cmd: DevCommand): Promise<void> {
   const dirs = [resolve(ROOT, "src"), resolve(ROOT, "examples"), resolve(ROOT, "viewer")];
   if (cmd.source.kind === "file") dirs.push(dirname(resolve(cmd.source.path)));
   for (const d of new Set(dirs)) {
-    try { watch(d, { recursive: true }, rebuild); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
+    try { watch(d, { recursive: true }, (_event, file) => { if (file === null || SOURCE_FILE.test(file)) rebuild(); }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
   }
   console.log(`loft dev  http://localhost:${server.port}/  (${cmd.source.kind === "file" ? cmd.source.path : "fixture"})  ctrl-c to stop`);
   await new Promise(() => {});

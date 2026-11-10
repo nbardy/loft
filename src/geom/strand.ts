@@ -7,9 +7,14 @@
 // the same expression is emitted to WGSL for the vertex stage and to JavaScript for checks.
 
 import {
-  add, clamp, cos, cross, div, dot, length, lift, max, mix, mul, normalize, pow, saturate, sin, sqrt, sub,
-  TAU, variable, vec3, type Expr, type In,
+  add, clamp, cos, cross, div, dot, length, lift, max, mul, normalize, pow, saturate, sin, sqrt, sub,
+  TAU, vec3, type Expr, type In,
 } from "../expr.ts";
+import type { CompileContext, Drawable, Emitted, Skeleton, StationRange } from "../compile/context.ts";
+import { strandDraws } from "../draw/strand.ts";
+import type { FrameSample } from "./frame.ts";
+// Re-exported for src/bake (another owner's files import them from here).
+export { FRAME_VARS, FRAME_WGSL, type FrameSample } from "./frame.ts";
 
 export type Rgb = readonly [number, number, number];
 type Fn1 = (m: Expr<"f32">) => Expr<"f32">;
@@ -73,33 +78,29 @@ function tipLaw(tip: Tip, x: Expr<"f32">): Expr<"f32"> {
 
 const fn1 = (x: Fn1 | number): Fn1 => (typeof x === "number" ? () => lift<"f32">(x) : x);
 
-/** Interpolated pose at some m, as expressions bound by whoever emits the surface (WGSL locals or JS values). */
-export type FrameSample = {
-  readonly p: Expr<"vec3">;
-  /** d(position)/dm on the interpolated spine. */
-  readonly der: Expr<"vec3">;
-  readonly t: Expr<"vec3">;
-  readonly d: Expr<"vec3">;
-  readonly s: Expr<"vec3">;
-  readonly stretch: Expr<"f32">;
+export type SurfacePoint = {
+  readonly pos: Expr<"vec3">;
+  /** The skin's outward normal (leaning along the spine where the radius changes, facing along it at a closing tip). */
+  readonly normal: Expr<"vec3">;
+  /** The outward direction at v within the cross-section: the normal without the taper's lean. Frames ride this. */
+  readonly radial: Expr<"vec3">;
+  readonly radii: readonly [Expr<"f32">, Expr<"f32">];
 };
 
-/** The frame sample as free variables, named as WGSL `StationSample` fields (`st.p`, ...). */
-export const FRAME_VARS: FrameSample = {
-  p: variable("st_p", "vec3"), der: variable("st_der", "vec3"), t: variable("st_t", "vec3"),
-  d: variable("st_d", "vec3"), s: variable("st_s", "vec3"), stretch: variable("st_stretch", "f32"),
-};
-export const FRAME_WGSL: Readonly<Record<string, string>> = {
-  st_p: "st.p", st_der: "st.der", st_t: "st.t", st_d: "st.d", st_s: "st.s", st_stretch: "st.stretch",
-};
+/**
+ * Where a strand's spine lives. `world`: the spine expression is in world coordinates. `on`: it is in the local frame
+ * of a host's chart at (m, v, rho) (x along the host's spine, y out of its skin, z = x cross y; see `BodyPoint`), so
+ * the part rides the host exactly; the pose pass places it every frame.
+ */
+export type Placement =
+  | { readonly kind: "world" }
+  | { readonly kind: "on"; readonly host: Strand; readonly m: number; readonly v: number; readonly rho: number };
 
-export type SurfacePoint = { readonly pos: Expr<"vec3">; readonly normal: Expr<"vec3">; readonly radii: readonly [Expr<"f32">, Expr<"f32">] };
 
 /** Finite-difference step in m for the taper slope (the lean of the normal along the spine). */
 const SLOPE_H = 1e-3;
 
-export class Strand {
-  readonly kind = "strand" as const;
+export class Strand implements Drawable, Skeleton {
   constructor(
     readonly name: string,
     readonly spine: (m: Expr<"f32">) => Expr<"vec3">,
@@ -114,7 +115,19 @@ export class Strand {
     readonly around: number,
     readonly up: Expr<"vec3">,
     readonly level: number,
+    readonly placement: Placement,
   ) {}
+
+  /** The same strand, placed differently (see `attach`). */
+  placed(placement: Placement): Strand {
+    return new Strand(
+      this.name, this.spine, this.stations, this.girth, this.aspect, this.squareness, this.twist, this.tips, this.paint,
+      this.along, this.around, this.up, this.level, placement,
+    );
+  }
+
+  draws(ctx: CompileContext): Emitted { return strandDraws(ctx, this); }
+  skeleton(ctx: CompileContext): StationRange { return ctx.stations(this); }
 
   /** Tip closure at m: both ends multiplied. */
   closure(m: Expr<"f32">): Expr<"f32"> {
@@ -158,8 +171,9 @@ export class Strand {
     const gl = max(sqrt(add(mul(gx, gx), mul(gy, gy))), 1e-9);
     const nx = div(gx, gl), ny = div(gy, gl);
     const lean = add(mul(slopeA, mul(x, nx)), mul(slopeB, mul(y, ny)));
-    const normal = normalize(sub(add(mul(st.s, nx), mul(st.d, ny)), mul(st.t, lean)));
-    return { pos, normal, radii: [A, B] };
+    const inPlane = add(mul(st.s, nx), mul(st.d, ny));
+    const normal = normalize(sub(inPlane, mul(st.t, lean)));
+    return { pos, normal, radial: normalize(inPlane), radii: [A, B] };
   }
 }
 
@@ -179,34 +193,11 @@ export function strand(spec: StrandSpec): Strand {
     name, spec.spine, stations, fn1(spec.girth), fn1(spec.section?.aspect ?? 1), squareness,
     spec.twist ?? (() => lift<"f32">(0)), [canonicalTip(tips[0], name), canonicalTip(tips[1], name)], paintFn,
     Math.round(spec.detail?.along ?? 96), Math.round(spec.detail?.around ?? 24),
-    lift<"vec3">(spec.up ?? [0, 1, 0]), spec.level ?? 0,
+    lift<"vec3">(spec.up ?? [0, 1, 0]), spec.level ?? 0, { kind: "world" },
   );
 }
 
-// ---- closed-form frames for attaching parts ---------------------------------------------------------------------
-
-/**
- * A frame at m built in closed form from the spine expression: tangent by a finite difference, dorsal = `up` made
- * perpendicular. It is the pose pass's frame exactly at m = 0 (where the rotation-minimising frame is seeded), and a
- * close approximation on a gently curving spine; parts attached with it (heads, horns, eyes) are expressions, so they
- * move with the body without reading the pose table. Proper attachment (`attach`, DESIGN 2.3) is M2.
- */
-export function frameOf(body: Strand, m: number): { p: Expr<"vec3">; der: Expr<"vec3">; t: Expr<"vec3">; d: Expr<"vec3">; s: Expr<"vec3"> } {
-  const h = 2e-3;
-  const m0 = Math.max(0, m - h), m1 = Math.min(1, m + h);
-  const p = body.spine(lift<"f32">(m));
-  const der = div(sub(body.spine(lift<"f32">(m1)), body.spine(lift<"f32">(m0))), m1 - m0);
-  const t = normalize(der);
-  const d = normalize(sub(body.up, mul(t, dot(body.up, t))));
-  return { p, der, t, d, s: cross(t, d) };
-}
-
-/** A point on a strand's skin at (m, v, rho) using `frameOf`, with its outward normal. At rest (stretch 1). */
-export function skinPoint(body: Strand, m: number, v: number, rho = 1): { pos: Expr<"vec3">; normal: Expr<"vec3">; frame: ReturnType<typeof frameOf> } {
-  const fr = frameOf(body, m);
-  const sp = body.surface({ ...fr, stretch: lift<"f32">(1) }, lift<"f32">(m), lift<"f32">(v));
-  return { pos: mix(fr.p, sp.pos, rho), normal: sp.normal, frame: fr };
-}
+// ---- helpers ------------------------------------------------------------------------------------------------
 
 /** Rotate v about the unit axis by angle (Rodrigues), as an expression. */
 export function rotate(v: In<"vec3">, axis: In<"vec3">, angle: In<"f32">): Expr<"vec3"> {

@@ -4,7 +4,10 @@
 
 import { abs, add, cross, lift, mix, mul, normalize, sin, smoothstep, sub, vec3, type Expr } from "../expr.ts";
 import type { Curve } from "../curve.ts";
-import type { FrameSample, Rgb, Strand } from "./strand.ts";
+import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
+import { crestDraws } from "../draw/crest.ts";
+import type { FrameSample } from "./frame.ts";
+import type { Rgb, Strand } from "./strand.ts";
 
 type Fn1 = (x: Expr<"f32">) => Expr<"f32">;
 
@@ -33,8 +36,7 @@ export type CrestSpec = {
   readonly rows?: number;
 };
 
-export class Crest {
-  readonly kind = "crest" as const;
+export class Crest implements Drawable {
   constructor(
     readonly name: string,
     readonly host: Strand,
@@ -50,6 +52,8 @@ export class Crest {
     readonly rows: number,
   ) {}
 
+  draws(ctx: CompileContext): Emitted { return crestDraws(ctx, this); }
+
   /** Host m at span position x. */
   hostM(x: Expr<"f32">): Expr<"f32"> {
     return mix(lift<"f32">(this.from), lift<"f32">(this.to), x);
@@ -57,8 +61,10 @@ export class Crest {
 
   /**
    * The membrane at (x, f) over the host's station sample at m = hostM(x). The root sits slightly inside the skin
-   * (rho 0.85) so no gap shows where it meets the body. The normal is the sheet's (tangent x rise); the fragment
-   * stage turns it toward the viewer, since a membrane has two faces.
+   * (rho 0.85) so no gap shows where it meets the body. It rises along the section's outward direction, not the skin
+   * normal: near a closing tip the normal turns to face along the spine, and a fin standing on it became a spike
+   * shooting out of the tail. The normal is the sheet's (tangent x rise); the fragment stage turns it toward the
+   * viewer, since a membrane has two faces.
    */
   point(st: FrameSample, x: Expr<"f32">, f: Expr<"f32">): { pos: Expr<"vec3">; normal: Expr<"vec3"> } {
     const m = this.hostM(x);
@@ -66,8 +72,8 @@ export class Crest {
     const root = mix(st.p, skin.pos, 0.85);
     const between = sin(mul(x, Math.PI * this.rays));
     const h = mul(this.height(x), sub(1, mul(mul(between, between), this.sag)));
-    const rise = add(skin.normal, mul(st.t, this.rake));
-    const sway = mul(cross(st.t, skin.normal), mul(this.flutter(m), mul(h, mul(f, f))));
+    const rise = add(skin.radial, mul(st.t, this.rake));
+    const sway = mul(cross(st.t, skin.radial), mul(this.flutter(m), mul(h, mul(f, f))));
     const pos = add(add(root, mul(rise, mul(h, f))), sway);
     return { pos, normal: normalize(cross(st.t, rise)) };
   }

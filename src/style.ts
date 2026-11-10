@@ -6,6 +6,8 @@ import {
   add, clamp, dot, exp, fract, lift, max, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, abs, TAU,
   vec3, vec4, type Expr, type In,
 } from "./expr.ts";
+import type { PostSpec } from "./compile/context.ts";
+import { fwidth } from "./lib/wgsl.ts";
 
 export type Rgb = readonly [number, number, number];
 
@@ -20,7 +22,7 @@ export type ShadeCtx = {
   readonly depth: Expr<"f32">;
 };
 
-/** What a sea fragment knows: its normal, and the decal masks the compiler derived for this pixel. */
+/** What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. */
 export type WaterCtx = {
   readonly normal: Expr<"vec3">;
   readonly sun: Expr<"vec3">;
@@ -30,10 +32,17 @@ export type WaterCtx = {
   readonly crest: Expr<"f32">;
   /** Distance from the eye. */
   readonly distance: Expr<"f32">;
-  /** Foam coverage, 0..1, antialiased. */
+  /** Foam coverage, 0..1, antialiased: where the water meets a body (from the opaque scene's depth). */
   readonly foam: Expr<"f32">;
-  /** Cast-shadow coverage, 0..1, antialiased. */
-  readonly shadow: Expr<"f32">;
+};
+
+/** A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. */
+export type LayerCtx = {
+  readonly world: Expr<"vec3">;
+  readonly view: Expr<"vec3">;
+  readonly distance: Expr<"f32">;
+  /** Coverage, 0..1, antialiased. */
+  readonly amount: Expr<"f32">;
 };
 
 export type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> };
@@ -47,6 +56,10 @@ export type Style = {
   readonly outline: Expr<"f32">;
   /** Sea colour and alpha (what shows through the water below it is already tinted by `shade`). */
   water(ctx: WaterCtx): Expr<"vec4">;
+  /** A cast shadow on the water, as colour and alpha blended over the water already drawn. */
+  shadow(ctx: LayerCtx): Expr<"vec4">;
+  /** Full-screen passes after the scene, in order (ink from depth edges, paper grain); empty for none. */
+  readonly post: readonly PostSpec[];
   /** Background along a view ray, above and below the horizon. */
   sky(ctx: SkyCtx): Expr<"vec3">;
   /** Clear colour: the horizon. */
@@ -88,15 +101,23 @@ export function toon(spec: ToonSpec = {}): Style {
   const rimColour = rgb(spec.rim ?? [0.75, 0.95, 1.0]);
   const outline = param("toon.outline", spec.outline ?? 0.04, { min: 0, max: 0.2 });
 
-  /** 0..1 in `bands` flat steps over n.l, with narrow smooth edges. */
+  /**
+   * A hard edge of x at `edge`, antialiased: as wide as x changes over about a pixel, never narrower than `soft`.
+   * (A fixed width in n.l was thinner than a pixel wherever the surface turns fast, and those edges stair-stepped.)
+   */
+  const edgeOf = (x: Expr<"f32">, edge: number, soft: number): Expr<"f32"> => {
+    const w = max(mul(fwidth(x), 0.75), soft);
+    return smoothstep(sub(edge, w), add(edge, w), x);
+  };
+
+  /** 0..1 in `bands` flat steps over n.l, with narrow antialiased edges. */
   const banded = (ndl: Expr<"f32">): Expr<"f32"> => {
     let lit: Expr<"f32"> = lift<"f32">(0);
-    for (let k = 0; k < bands - 1; k++) {
-      const edge = -0.2 + (0.7 * (k + 0.5)) / (bands - 1);
-      lit = add(lit, smoothstep(edge - 0.02, edge + 0.02, ndl));
-    }
+    for (let k = 0; k < bands - 1; k++) lit = add(lit, edgeOf(ndl, -0.2 + (0.7 * (k + 0.5)) / (bands - 1), 0.008));
     return mul(lit, 1 / (bands - 1));
   };
+
+  const fogOf = (distance: Expr<"f32">): Expr<"f32"> => { const f = sub(1, exp(mul(distance, -0.008))); return saturate(mul(f, f)); };
 
   /** Below the sea surface, colour sinks toward the deep water with depth. */
   const submerge = (c: Expr<"vec3">, depth: Expr<"f32">): Expr<"vec3"> =>
@@ -106,14 +127,15 @@ export function toon(spec: ToonSpec = {}): Style {
     name: "toon",
     outline,
     clear: horizonC,
+    post: [],
     shade: (ctx) => {
       const ndl = dot(ctx.normal, ctx.sun);
       const lit = banded(ndl);
       const lightC = mix(shadowTint, vec3(1.08, 1.04, 0.96), lit);
       const facing = saturate(dot(ctx.normal, ctx.view));
-      const rim = mul(smoothstep(0.62, 0.68, sub(1, facing)), mul(0.45, add(0.35, mul(lit, 0.65))));
+      const rim = mul(edgeOf(sub(1, facing), 0.65, 0.01), mul(0.45, add(0.35, mul(lit, 0.65))));
       const half = normalize(add(ctx.sun, ctx.view));
-      const gloss = mul(smoothstep(0.975, 0.982, dot(ctx.normal, half)), 0.16);
+      const gloss = mul(edgeOf(dot(ctx.normal, half), 0.9785, 0.0015), 0.16);
       const c = add(add(mul(ctx.base, lightC), mul(rimColour, rim)), vec3(gloss, gloss, gloss));
       return submerge(c, ctx.depth);
     },
@@ -127,14 +149,15 @@ export function toon(spec: ToonSpec = {}): Style {
       const half = normalize(add(ctx.sun, ctx.view));
       const glint = smoothstep(0.985, 0.99, dot(ctx.normal, half));
       c = mix(c, foam, mul(glint, 0.8));
-      c = mix(c, seaShadow, mul(ctx.shadow, 0.55));
       c = mix(c, foam, ctx.foam);
-      const fog = sub(1, exp(mul(ctx.distance, -0.008)));
-      c = mix(c, horizon, saturate(mul(fog, fog)));
+      c = mix(c, horizon, fogOf(ctx.distance));
       // Opaque where foam or grazing; see-through looking down, where submerged bodies show (already tinted).
-      const alpha = saturate(max(max(add(0.55, mul(grazing, 0.45)), ctx.foam), mul(ctx.shadow, 0.6)));
+      const alpha = saturate(max(add(0.55, mul(grazing, 0.45)), ctx.foam));
       return vec4(c, alpha);
     },
+    // Laid over the fogged water: mixing the shadow colour in and then fogging (as one shader did before) equals
+    // fogging the shadow colour and mixing it over the fogged water, which is what a layer can do.
+    shadow: (ctx) => vec4(mix(seaShadow, horizon, fogOf(ctx.distance)), mul(ctx.amount, 0.55)),
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(horizon, zenith, pow(saturate(up), 0.6));

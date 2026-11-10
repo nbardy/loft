@@ -22,3 +22,9 @@ export function wgslFn<T extends Ty>(spec: WgslFnSpec<T>): (...args: In[]) => Ex
   const fn: LibFn = { name: spec.name, ret: spec.ret, wgsl: spec.wgsl, js: "gpu-only", deps: spec.deps ?? [] };
   return (...args) => lib<T>(fn, ...args);
 }
+
+/**
+ * How much `x` changes from one pixel to the next (WGSL `fwidth`): the width to antialias an edge of `x` with.
+ * Fragment stage only, and only in uniform control flow (WGSL's derivative rule); GPU-only.
+ */
+export const fwidth = wgslFn<"f32">({ name: "loft_fwidth", ret: "f32", wgsl: "fn loft_fwidth(x: f32) -> f32 { return fwidth(x); }" });

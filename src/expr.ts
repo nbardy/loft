@@ -439,104 +439,233 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { li
   return { lines, out: roots.map(ref), libs: libsOf(roots) };
 }
 
+// ---- rewriting ----------------------------------------------------------------------------------------------------
+
+/** A node with new children, interned under the same key scheme its constructor uses. */
+function rebuild(e: Expr, kids: readonly Expr[]): Expr {
+  const n = e.node;
+  const ids = kids.map((k) => k.id).join(",");
+  switch (n.op) {
+    case "const": case "var": case "input": case "param": return e;
+    case "row": return Expr.make({ ...n, x: kids[0] as Expr<"f32"> }, `r:${n.row.id}:${kids[0].id}`);
+    case "lib": return Expr.make({ ...n, args: kids }, `l:${n.fn.name}:${ids}`);
+    case "call": return Expr.make({ ...n, args: kids }, `f:${n.fn}:${ids}`);
+    case "vec": return Expr.make({ ...n, args: kids }, `V:${n.ty}:${ids}`);
+    case "get": return Expr.make({ ...n, a: kids[0] }, `g:${kids[0].id}:${n.sel}`);
+  }
+}
+
+/**
+ * The same expressions with every occurrence of `from` replaced by `to`. This is how a body is taken at another time:
+ * substitute `time` with `time + offset` (or with an input) in everything it is built from.
+ */
+export function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[] {
+  if (from.ty !== to.ty) throw new Error(`substitute: cannot replace a ${from.ty} with a ${to.ty}`);
+  const done = new Map<number, Expr>();
+  for (const e of topo(roots)) {
+    if (e === from) { done.set(e.id, to); continue; }
+    const kids = children(e), mapped = kids.map((k) => done.get(k.id)!);
+    done.set(e.id, mapped.every((k, i) => k === kids[i]) ? e : rebuild(e, mapped));
+  }
+  return roots.map((r) => done.get(r.id)!);
+}
+
 // ---- the JavaScript backend ---------------------------------------------------------------------------------------
+//
+// Scalarised: every vector node becomes one JS local per component, so evaluation allocates nothing but the returned
+// roots (and the arguments of library calls, whose CPU twins take arrays). Constant subgraphs are folded while code is
+// emitted: an operation whose operands are all known is computed once, at compile time, by the same function the
+// emitted code would have called, so folding cannot change a result. The pose pass is full of these (a tip law at a
+// station's fixed m, a spline's kernel weights at a fixed parameter). Curve-row lookups are never folded: their tables
+// can be edited at run time. Exact identities (x * 0, x * 1, x + 0) are applied too, which is why a spline evaluated
+// at a constant m costs only its four nonzero terms; for a non-finite x they give 0 where the GPU would give NaN.
 
 type V = number | number[];
-const map1 = (g: (x: number) => number) => (a: V): V => (typeof a === "number" ? g(a) : a.map(g));
-const map2 = (g: (x: number, y: number) => number) => (a: V, b: V): V => {
-  if (typeof a === "number") return typeof b === "number" ? g(a, b) : b.map((y) => g(a, y));
-  return typeof b === "number" ? a.map((x) => g(x, b)) : a.map((x, i) => g(x, b[i]));
-};
-const map3 = (g: (x: number, y: number, z: number) => number) => (a: V, b: V, c: V): V => {
-  const n = [a, b, c].reduce<number>((m, x) => (typeof x === "number" ? m : x.length), 0);
-  const at = (x: V, i: number): number => (typeof x === "number" ? x : x[i]);
-  if (n === 0) return g(a as number, b as number, c as number);
-  return Array.from({ length: n }, (_, i) => g(at(a, i), at(b, i), at(c, i)));
-};
-const dotV = (a: V, b: V): number => (typeof a === "number" ? a * (b as number) : a.reduce((s, x, i) => s + x * (b as number[])[i], 0));
-const lenV = (a: V): number => Math.sqrt(dotV(a, a));
+type Scalar = number | boolean;
+/** One component during emission: source text, or a value known at compile time. */
+type C = string | Scalar;
+
+const jsLit = (x: Scalar): string => (typeof x === "boolean" ? String(x) : x < 0 || Object.is(x, -0) ? `(${x})` : String(x));
+const src = (c: C): string => (typeof c === "string" ? c : jsLit(c));
+const allKnown = (cs: readonly C[]): cs is Scalar[] => cs.every((c) => typeof c !== "string");
+
 const smooth = (lo: number, hi: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
   return t * t * (3 - 2 * t);
 };
+/** Helpers the emitted code calls (functions too long to inline). */
+const HELPERS = { ss: smooth };
 
-/** The JS runtime the emitted code calls. Semantics match WGSL for every op the WGSL backend emits. */
-export const R = {
-  add: map2((x, y) => x + y), sub: map2((x, y) => x - y), mul: map2((x, y) => x * y), div: map2((x, y) => x / y),
-  min: map2(Math.min), max: map2(Math.max), pow: map2(Math.pow), atan2: map2(Math.atan2),
-  mod: map2((x, y) => x - y * Math.floor(x / y)), step: map2((edge, x) => (x >= edge ? 1 : 0)),
-  neg: map1((x) => -x), abs: map1(Math.abs), sign: map1(Math.sign), floor: map1(Math.floor),
-  fract: map1((x) => x - Math.floor(x)), sqrt: map1(Math.sqrt), exp: map1(Math.exp), log: map1(Math.log),
-  sin: map1(Math.sin), cos: map1(Math.cos), tan: map1(Math.tan), saturate: map1((x) => Math.min(1, Math.max(0, x))),
-  normalize: (a: V): V => { const l = lenV(a); return typeof a === "number" ? Math.sign(a) : a.map((x) => x / l); },
-  mix: map3((a, b, t) => a + (b - a) * t), clamp: map3((x, lo, hi) => Math.min(hi, Math.max(lo, x))), smoothstep: map3(smooth),
-  length: lenV, distance: (a: V, b: V): number => lenV(map2((x, y) => x - y)(a, b)), dot: dotV,
-  cross: (a: number[], b: number[]): number[] => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
-  lt: (a: number, b: number): boolean => a < b, gt: (a: number, b: number): boolean => a > b,
-  le: (a: number, b: number): boolean => a <= b, ge: (a: number, b: number): boolean => a >= b,
-  and: (a: boolean, b: boolean): boolean => a && b, or: (a: boolean, b: boolean): boolean => a || b, not: (a: boolean): boolean => !a,
-  select: (c: boolean, yes: V, no: V): V => (c ? yes : no),
-  vec: (size: number, ...parts: V[]): number[] => {
-    const flat = parts.flatMap((p) => (typeof p === "number" ? [p] : p));
-    return flat.length === 1 ? Array.from({ length: size }, () => flat[0]) : flat;
-  },
-  get: (a: number[], sel: string): V => {
-    const picked = [...sel].map((ch) => a["xyzw".indexOf(ch)]);
-    return picked.length === 1 ? picked[0] : picked;
-  },
-  /** Sample a curve row at x: linear interpolation between CURVE_N samples, clamped. */
-  row: (samples: Float32Array, x: number): number[] => {
-    const s = Math.min(1, Math.max(0, x)) * (CURVE_N - 1);
-    const i = Math.min(CURVE_N - 2, Math.floor(s)), t = s - i;
-    return [0, 1, 2, 3].map((c) => samples[i * 4 + c] * (1 - t) + samples[(i + 1) * 4 + c] * t);
-  },
+/** A scalar operation: its source form, and its value as the same function (used to fold). */
+type Op = { readonly js: (...a: string[]) => string; readonly f: (...a: never[]) => Scalar };
+const op = <A extends Scalar[]>(js: (...a: string[]) => string, f: (...a: A) => Scalar): Op => ({ js, f: f as unknown as Op["f"] });
+const math1 = (name: string, f: (x: number) => number) => op((a) => `Math.${name}(${a})`, f);
+
+/** Operations applied component by component (scalars broadcast). Semantics match WGSL for every op it emits. */
+const EACH: Partial<Record<Fn, Op>> = {
+  add: op((a, b) => `(${a} + ${b})`, (a: number, b: number) => a + b),
+  sub: op((a, b) => `(${a} - ${b})`, (a: number, b: number) => a - b),
+  mul: op((a, b) => `(${a} * ${b})`, (a: number, b: number) => a * b),
+  div: op((a, b) => `(${a} / ${b})`, (a: number, b: number) => a / b),
+  min: op((a, b) => `Math.min(${a}, ${b})`, Math.min), max: op((a, b) => `Math.max(${a}, ${b})`, Math.max),
+  pow: op((a, b) => `Math.pow(${a}, ${b})`, Math.pow), atan2: op((a, b) => `Math.atan2(${a}, ${b})`, Math.atan2),
+  mod: op((a, b) => `(${a} - ${b} * Math.floor(${a} / ${b}))`, (a: number, b: number) => a - b * Math.floor(a / b)),
+  step: op((e, x) => `(${x} >= ${e} ? 1 : 0)`, (e: number, x: number) => (x >= e ? 1 : 0)),
+  neg: op((a) => `(-${a})`, (a: number) => -a),
+  abs: math1("abs", Math.abs), sign: math1("sign", Math.sign), floor: math1("floor", Math.floor), sqrt: math1("sqrt", Math.sqrt),
+  exp: math1("exp", Math.exp), log: math1("log", Math.log), sin: math1("sin", Math.sin), cos: math1("cos", Math.cos), tan: math1("tan", Math.tan),
+  fract: op((a) => `(${a} - Math.floor(${a}))`, (a: number) => a - Math.floor(a)),
+  saturate: op((a) => `Math.min(1, Math.max(0, ${a}))`, (a: number) => Math.min(1, Math.max(0, a))),
+  mix: op((a, b, t) => `(${a} + (${b} - ${a}) * ${t})`, (a: number, b: number, t: number) => a + (b - a) * t),
+  clamp: op((x, lo, hi) => `Math.min(${hi}, Math.max(${lo}, ${x}))`, (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x))),
+  smoothstep: op((lo, hi, x) => `H.ss(${lo}, ${hi}, ${x})`, smooth),
+  lt: op((a, b) => `(${a} < ${b})`, (a: number, b: number) => a < b), gt: op((a, b) => `(${a} > ${b})`, (a: number, b: number) => a > b),
+  le: op((a, b) => `(${a} <= ${b})`, (a: number, b: number) => a <= b), ge: op((a, b) => `(${a} >= ${b})`, (a: number, b: number) => a >= b),
+  and: op((a, b) => `(${a} && ${b})`, (a: boolean, b: boolean) => a && b), or: op((a, b) => `(${a} || ${b})`, (a: boolean, b: boolean) => a || b),
+  not: op((a) => `(!${a})`, (a: boolean) => !a),
 };
+const SELECT = op((c, y, n) => `(${c} ? ${y} : ${n})`, (c: boolean, y: number, n: number) => (c ? y : n));
+
+/** x * 0, x * 1, x + 0, x - 0, x / 1: the identities that make a sum of mostly-zero weights cost only its terms. */
+function identity(fn: Fn, a: C, b: C): C | undefined {
+  switch (fn) {
+    case "mul": return a === 0 || b === 0 ? 0 : a === 1 ? b : b === 1 ? a : undefined;
+    case "add": return a === 0 ? b : b === 0 ? a : undefined;
+    case "sub": return b === 0 ? a : undefined;
+    case "div": return b === 1 ? a : undefined;
+    default: return undefined;
+  }
+}
+
+/** Where curve rows are read from on the CPU. */
+export type RowSource =
+  /** Each row's own samples, as authored (one-off evaluation, tests). */
+  | { readonly kind: "own" }
+  /**
+   * A curve table laid out by slot, passed in `Env.curves` on every call: a compiled artefact's pose, so a host's
+   * `setCurves` edit reaches the CPU exactly as it reaches the GPU.
+   */
+  | { readonly kind: "table"; readonly slot: (r: Row) => number };
+const OWN_ROWS: RowSource = { kind: "own" };
 
 /** What the CPU evaluator reads leaves from. */
 export type Env = {
   readonly vars: Readonly<Record<string, V | boolean>>;
   readonly inputs: Readonly<Record<string, V>>;
   readonly params: Readonly<Record<string, number>>;
+  /** The curve table, required by functions compiled with a `table` row source (and ignored by the others). */
+  readonly curves?: Float32Array;
 };
+
+const COMPS: Record<Ty, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4, bool: 1 };
 
 /**
  * Compile expressions to one JavaScript function. Call it with an `Env`; it returns one value per root
  * (a number, an array for vectors, a boolean). Missing inputs and params take their declared defaults.
  */
-export function compileJs(roots: readonly Expr[]): (env: Env) => (V | boolean)[] {
-  const rows: Row[] = [];
+export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (env: Env) => (V | boolean)[] {
+  const ownRows: Row[] = [];
   const fns: LibFn[] = [];
   const body: string[] = [];
-  const names = new Map<number, string>();
-  const ref = (x: Expr): string => names.get(x.id)!;
-  for (const e of topo(roots)) {
-    const n = e.node;
-    let src: string;
-    switch (n.op) {
-      case "const": src = n.ty === "bool" ? String(n.v[0] !== 0) : n.v.length === 1 ? String(n.v[0]) : `[${n.v.join(",")}]`; break;
-      case "var": src = `vars[${JSON.stringify(n.name)}]`; break;
-      case "input": src = `(inputs[${JSON.stringify(n.spec.name)}] ?? ${n.spec.def.length === 1 ? n.spec.def[0] : `[${n.spec.def.join(",")}]`})`; break;
-      case "param": src = `(params[${JSON.stringify(n.spec.name)}] ?? ${n.spec.def})`; break;
-      case "row": rows.push(n.row); src = `R.row(rows[${rows.length - 1}], ${ref(n.x)})`; break;
-      case "vec": src = `R.vec(${SIZE[n.ty]}, ${n.args.map(ref).join(", ")})`; break;
-      case "get": src = `R.get(${ref(n.a)}, ${JSON.stringify(n.sel)})`; break;
-      case "call": src = `R.${n.fn}(${n.args.map(ref).join(", ")})`; break;
-      case "lib":
-        if (n.fn.js === "gpu-only") throw new Error(`library function "${n.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
-        if (!fns.includes(n.fn)) fns.push(n.fn);
-        src = `fns[${fns.indexOf(n.fn)}](${n.args.map(ref).join(", ")})`;
-        break;
+  const comps = new Map<number, C[]>();
+  let n = 0;
+  const local = (code: string): string => { const name = `t${n++}`; body.push(`const ${name} = ${code};`); return name; };
+  const apply = (o: Op, xs: readonly C[]): C => (allKnown(xs) ? o.f(...(xs as never[])) : local(o.js(...xs.map(src))));
+  const at = (cs: readonly C[], i: number): C => (cs.length === 1 ? cs[0] : cs[i]);
+  const each = (fn: Fn, args: readonly C[][]): C[] => {
+    const o = EACH[fn]!;
+    const width = Math.max(...args.map((a) => a.length));
+    return Array.from({ length: width }, (_, i) => {
+      const xs = args.map((a) => at(a, i));
+      return (xs.length === 2 ? identity(fn, xs[0], xs[1]) : undefined) ?? apply(o, xs);
+    });
+  };
+  const sum = (cs: readonly C[]): C => cs.reduce((s, c) => each("add", [[s], [c]])[0]);
+  const dot = (a: readonly C[], b: readonly C[]): C => sum(each("mul", [a as C[], b as C[]]));
+  const leaf = (code: string, ty: Ty): C[] => {
+    const name = local(code);
+    return COMPS[ty] === 1 ? [name] : Array.from({ length: COMPS[ty] }, (_, i) => `${name}[${i}]`);
+  };
+  const rowAt = (r: Row, x: C): C[] => {
+    const [arr, off] = rows.kind === "own" ? [`rows[${ownRows.push(r) - 1}]`, 0] : ["curves", rows.slot(r) * CURVE_N * 4];
+    const read = (i: C, c: number): string => (typeof i === "number" ? `${arr}[${off + i * 4 + c}]` : `${arr}[${off + c} + ${i} * 4]`);
+    if (typeof x === "number") {
+      const s = Math.min(1, Math.max(0, x)) * (CURVE_N - 1);
+      const i = Math.min(CURVE_N - 2, Math.floor(s)), t = s - i;
+      return [0, 1, 2, 3].map((c) => local(`${read(i, c)} * ${jsLit(1 - t)} + ${read(i + 1, c)} * ${jsLit(t)}`));
     }
-    const name = `e${e.id}`;
-    body.push(`const ${name} = ${src};`);
-    names.set(e.id, name);
+    const s = local(`Math.min(1, Math.max(0, ${src(x)})) * ${CURVE_N - 1}`);
+    const i = local(`Math.min(${CURVE_N - 2}, Math.floor(${s}))`), t = local(`${s} - ${i}`);
+    return [0, 1, 2, 3].map((c) => local(`${read(i, c)} * (1 - ${t}) + ${arr}[${off + c} + (${i} + 1) * 4] * ${t}`));
+  };
+
+  for (const e of topo(roots)) {
+    const nd = e.node;
+    const kid = (x: Expr): C[] => comps.get(x.id)!;
+    let out: C[];
+    switch (nd.op) {
+      case "const": out = nd.ty === "bool" ? [nd.v[0] !== 0] : [...nd.v]; break;
+      case "var": out = leaf(`vars[${JSON.stringify(nd.name)}]`, nd.ty); break;
+      case "input": out = leaf(`(inputs[${JSON.stringify(nd.spec.name)}] ?? ${nd.spec.def.length === 1 ? nd.spec.def[0] : `[${nd.spec.def.join(",")}]`})`, nd.ty); break;
+      case "param": out = leaf(`(params[${JSON.stringify(nd.spec.name)}] ?? ${nd.spec.def})`, "f32"); break;
+      case "row": out = rowAt(nd.row, kid(nd.x)[0]); break;
+      case "vec": {
+        const parts = nd.args.flatMap(kid);
+        out = parts.length === 1 ? Array.from({ length: COMPS[nd.ty] }, () => parts[0]) : parts;
+        break;
+      }
+      case "get": { const a = kid(nd.a); out = [...nd.sel].map((ch) => a["xyzw".indexOf(ch)]); break; }
+      case "lib": {
+        if (nd.fn.js === "gpu-only") throw new Error(`library function "${nd.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
+        if (!fns.includes(nd.fn)) fns.push(nd.fn);
+        const args = nd.args.map((a) => { const c = kid(a); return c.length === 1 ? src(c[0]) : `[${c.map(src).join(", ")}]`; });
+        out = leaf(`fns[${fns.indexOf(nd.fn)}](${args.join(", ")})`, nd.ty);
+        break;
+      }
+      case "call": {
+        const a = nd.args.map(kid);
+        switch (nd.fn) {
+          case "normalize": {
+            if (a[0].length === 1) { out = each("sign", a); break; }
+            const l = apply(EACH.sqrt!, [dot(a[0], a[0])]);
+            out = each("div", [a[0], [l]]);
+            break;
+          }
+          case "length": out = [apply(EACH.sqrt!, [dot(a[0], a[0])])]; break;
+          case "distance": { const d = each("sub", a); out = [apply(EACH.sqrt!, [dot(d, d)])]; break; }
+          case "dot": out = [dot(a[0], a[1])]; break;
+          case "cross": {
+            const [x, y] = a;
+            const term = (i: number, j: number): C => each("sub", [each("mul", [[x[i]], [y[j]]]), each("mul", [[x[j]], [y[i]]])])[0];
+            out = [term(1, 2), term(2, 0), term(0, 1)];
+            break;
+          }
+          case "select": {
+            const c = a[0][0];
+            const width = Math.max(a[1].length, a[2].length);
+            out = Array.from({ length: width }, (_, i) => (typeof c === "boolean" ? (c ? at(a[1], i) : at(a[2], i)) : apply(SELECT, [c, at(a[1], i), at(a[2], i)])));
+            break;
+          }
+          default: out = each(nd.fn, a);
+        }
+        break;
+      }
+    }
+    comps.set(e.id, out);
   }
-  body.push(`return [${roots.map(ref).join(", ")}];`);
-  const run = new Function("R", "rows", "fns", "vars", "inputs", "params", body.join("\n")) as
-    (r: typeof R, rows: Float32Array[], fns: LibFn["js"][], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"]) => (V | boolean)[];
-  const samples = rows.map((r) => r.samples);
+  const value = (r: Expr): string => { const c = comps.get(r.id)!; return r.ty === "f32" || r.ty === "bool" ? src(c[0]) : `[${c.map(src).join(", ")}]`; };
+  body.push(`return [${roots.map(value).join(", ")}];`);
+  const run = new Function("H", "rows", "fns", "vars", "inputs", "params", "curves", body.join("\n")) as
+    (h: typeof HELPERS, rows: Float32Array[], fns: LibFn["js"][], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"], curves: Float32Array | undefined) => (V | boolean)[];
+  const samples = ownRows.map((r) => r.samples);
   const impls = fns.map((fn) => fn.js);
-  return (env) => run(R, samples, impls, env.vars, env.inputs, env.params);
+  if (rows.kind === "table") {
+    return (env) => {
+      if (!env.curves) throw new Error("compileJs: this function reads curves from a table; pass Env.curves");
+      return run(HELPERS, samples, impls, env.vars, env.inputs, env.params, env.curves);
+    };
+  }
+  return (env) => run(HELPERS, samples, impls, env.vars, env.inputs, env.params, undefined);
 }
 
 /** Evaluate once on the CPU. For repeated evaluation, keep the function from `compileJs`. */
