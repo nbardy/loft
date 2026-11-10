@@ -140,7 +140,7 @@ export class FieldDrawable implements Drawable {
     const key = `field.${this.name}`;
     const code = [traceWgsl(this.o.bounds), outlineWgsl(this.o.outline), field.code, normal.code, paint.code, fragmentWgsl(safety)].join("\n");
     return {
-      shaders: { [key]: { code, libs: [...field.libs, ...normal.libs, ...paint.libs] } },
+      shaders: { [key]: { code, libs: [...new Set([...field.libs, ...normal.libs, ...paint.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
     };
   }
