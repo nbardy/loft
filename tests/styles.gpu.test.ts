@@ -37,7 +37,9 @@ test.each(STYLE_NAMES.map((s) => [s]))("every example compiles, builds its pipel
 
 // Regression guard for the interface changes (WaterCtx.contact and .phase split the sea's contact foam into a band
 // and toon's shaping of it): toon's frame must equal the one rendered at the commit before any style work, byte for
-// byte. Regenerate the reference only on purpose: `bun tests/fixtures/make_toon_reference.ts`.
+// byte. Regenerate the reference only on purpose: `bun tests/fixtures/make_toon_reference.ts`. Regenerated 2026-11-11
+// when copies made with draw.points began to cast shadows (52 pixels of the sea darker under the spikes, nothing else);
+// the body-coordinate change to styles just before it left this frame byte-identical.
 test("toon renders exactly as before the style interface grew", async () => {
   const ref = gunzipSync(readFileSync(TOON_REFERENCE.path));
   const a = compile(serpent);

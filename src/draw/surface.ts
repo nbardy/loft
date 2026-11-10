@@ -3,7 +3,7 @@
 // of a set of `Points`; the fragment stage evaluates the look per pixel. The surface coordinates (u, v) reach the
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
-import { cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "../expr.ts";
+import { add, cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { carry, rotate } from "../map/chart.ts";
@@ -163,7 +163,12 @@ function carriedCopies(c: Copies, chart: Chart): Copies {
 function skeletonsOf(s: Surface, c: Copies): readonly Skeleton[] {
   switch (c.kind) {
     case "one": return [s.skeleton];
-    case "points": return []; // copies do not cast (a row of teeth under a head)
+    // Each copy casts with the surface's own chain carried by its placement (copies used not to cast at all, so a
+    // fleet of instanced ships or a ring of spikes left no shadow on the water).
+    case "points": return s.skeleton.joints < 2 ? [] : Array.from({ length: c.points.count }, (_, i) => {
+      const at = c.points.at(f(i));
+      return { joints: s.skeleton.joints, joint: (k: number) => { const j = s.skeleton.joint(k); return { p: add(at.frame.o, mul(rotate(at.frame, j.p), at.scale)), r: mul(j.r, at.scale) }; } };
+    });
   }
 }
 

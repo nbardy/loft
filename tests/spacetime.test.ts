@@ -77,7 +77,7 @@ test("checks pass the example's attacks and fail a bad one", () => {
   const inTheWay: Target = { kind: "disc", centre: vec2(10.2, 0.75), radius: f(0.4) };
   const early: Check[] = [staysClear(strikes.bite.part, inTheWay, { until: strikes.bite.attack.arm }), stopsAt(strikes.bite, inTheWay)];
   for (const v of runChecks(strike, early, { compiled })) expect(v.pass).toBe(false);
-});
+}, 120000); // the hull targets (src/geom/hull_distance.ts) take 3-10 s of CPU on a loaded machine
 
 // ---- the telegraph against the analytic shape, on a real render ---------------------------------------------------
 

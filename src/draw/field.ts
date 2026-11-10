@@ -38,6 +38,7 @@ import { gradient } from "../grad.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import { lipschitz } from "../lib/sdf3.ts";
+import { fieldShadow, shadowSkeleton } from "./field_shadow.ts";
 import type { F, Field, P3, Skeleton } from "../map/types.ts";
 import { aabbOf, outlineWgsl, PROXY_VERTICES, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 
@@ -118,7 +119,12 @@ export function checkField(name: string, field: Field, b: TraceBound): number {
 }
 
 export class FieldDrawable implements Drawable {
-  readonly skeletons: readonly Skeleton[] = [];
+  private shadow: Skeleton[] | undefined;
+  /** A soft blob fitted to the solid (src/draw/field_shadow.ts), found on first use: sampling costs a few ms. */
+  get skeletons(): readonly Skeleton[] {
+    this.shadow ??= [shadowSkeleton(fieldShadow(this.field, this.o.bounds, fieldPixel))];
+    return this.shadow;
+  }
   /** Traced: there is no surface to bake. */
   readonly surfaces: readonly Bakeable[] = [];
 

@@ -231,7 +231,7 @@ throws). The tables the library declares:
 | Table | Declared by | Per entry | Contents |
 |---|---|---|---|
 | `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, 0) |
-| `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
+| `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
 | any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f |
 
 `stats.stations` counts the entries of tables whose role is `"stations"`.
@@ -449,8 +449,11 @@ grow({ count, motif, step }), kifs({ count, fold, scale, offset })   // src/lib/
   `{ id, centre, hash }` and must stay inside its cell; radius 0 is an absent copy. `paint({ p, normal, local, cell })`.
 - **In the scene.** Both write `frag_depth` (clip z / w of the hit), so they cut triangle bodies exactly and the sea's
   contact foam appears where they meet the water with no code of their own (seen in coral, nest and pearls). Lit by
-  the style's `shade` with the underwater depth like any body. Opaque phase, no shadows cast (`skeletons` empty), not
-  bakeable.
+  the style's `shade` with the underwater depth like any body. Opaque phase, not bakeable. A field casts a soft blob
+  (2026-11-11, `src/draw/field_shadow.ts`): its field sampled once on a 22^3 grid in its bound at time 0, the inside
+  points above the still water fitted with a short capsule chain (principal horizontal axis, extent, spread, mean
+  height); a field the CPU cannot evaluate casts from its bound. It does not follow a field that moves. Impostors cast
+  nothing yet.
 - **Edges.** A traced edge is inside its proxy, so MSAA does not see it. Coverage is written as
   `@builtin(sample_mask)` (round(4c) of 4 samples, bits turned per pixel), from how close a missed ray came in pixels,
   estimated between two samples as where their spheres of free space meet (the sampled distances alone gave grain).
