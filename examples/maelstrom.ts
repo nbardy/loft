@@ -29,7 +29,7 @@ const WIND = [0.6, 0.8] as const;
 const along = (x: number, z: number): number => Math.atan2(z, x) + Math.PI / 2;
 const at = (r: number, a: number): [number, number] => [r * Math.cos(a), r * Math.sin(a)];
 
-const brigAt = at(15, 2.2), sloopAt = at(10.5, 2.75);
+const brigAt = at(15.5, 0.6), sloopAt = at(10.5, 2.75);
 const ships = [
   ...ship({ ...brigSpec, name: "brigM" }).afloat(vortex, { at: brigAt, heading: along(...brigAt) - 0.25, wind: WIND }),
   ...ship({ ...sloopSpec, name: "sloopM" }).afloat(vortex, { at: sloopAt, heading: along(...sloopAt) - 0.2, wind: WIND }),
@@ -84,8 +84,8 @@ export default scene({
     front: { kind: "perspective", eye: [44, 16, 10], target: [0, -1, 0], fovY: 0.7 },
     side: { kind: "perspective", eye: [0, 18, 48], target: [0, -1.5, 0], fovY: 0.7 },
     top: { kind: "perspective", eye: [0, 62, 0.01], target: [0, 0, 0], fovY: 0.75 },
-    three: { kind: "perspective", eye: [-34, 24, 30], target: [0, -1.5, 0], fovY: 0.7 },
-    ships: { kind: "perspective", eye: [-26, 9, 12], target: [-9, 1, 8], fovY: 0.6 },
+    three: { kind: "perspective", eye: [-30, 31, 36], target: [0, -2.5, 2], fovY: 0.7 },
+    wall: { kind: "perspective", eye: [-4, 5, 26], target: [-3, -1, 6], fovY: 0.6 },
     throat: { kind: "perspective", eye: [10, 12, 14], target: [0, -3.5, 0], fovY: 0.7 },
   },
 });
