@@ -943,3 +943,22 @@ best of six blocks: good to about 10 us, and still noisy on a loaded machine (a 
 small draw). `loft profile <scene> [--view] [--frames] [--outline hull|screen]` prints draws by cost, totals per thing
 (the label up to its first `_` or space: a ship's parts group, the serpent's separately placed parts do not), the
 fixed stages, and the CPU pose per table (`Compiled.poseProfile`, each table without the tables it read).
+
+### 12.5 A ship is about 40 draws (measured, not changed)
+
+`examples/fleet.ts` is 119 draws for three ships and `examples/scenes/the_strike.ts` 80 for one ship and the serpent:
+a brig is 45 draws (hull, deck, two bulwarks, transom, two rails, rudder, masts, yards, booms, gaffs, bowsprit: one
+draw each plus one hull-outline draw each; sails, jibs, pennant: one each; the rigging: one). Profiled (12.4) a brig
+costs 0.7 to 1.4 ms of GPU from the three-quarter camera, a sloop 0.2 to 0.45 ms and a galleon 0.2 to 0.5 ms, while
+their triangles are a few thousand each after level of detail: the cost is per draw (about 15 to 30 us each in the
+profiling frame, which also pays a pass per draw), not per triangle. Level of detail does not change the draw count.
+
+To bring a ship to three draws (designed, not built): (1) one draw of every rigid opaque part (hull planks, deck,
+bulwarks, transom, rails, rudder, and the spars, which are all sweeps): a drawable that takes several surfaces and
+selects one per instance by `instance_index` with a `switch` in the vertex stage (uniform per instance, so one pipeline
+and no divergence within a copy), each part's grid size read from `loft_detail` per instance as now; the spars could
+instead be one instanced sweep reading a stacked station table. (2) One draw of the cloth (sails, jibs, pennant):
+one sheet family whose per-sail corners, billow and team colour come from a per-frame table indexed by instance.
+(3) The rigging, already one draw. Outlines then need either the screen pass (12.3) or one more draw of (1) inflated.
+Two things the host would need: per-instance vertex counts within one call (`drawIndirect` per run, or a fixed
+vertex count per call with surplus vertices collapsed), and the compiler's shader key being the family, not the part.
