@@ -34,6 +34,11 @@ export type WaterCtx = {
   readonly distance: Expr<"f32">;
   /** Foam coverage, 0..1, antialiased: where the water meets a body (from the opaque scene's depth). */
   readonly foam: Expr<"f32">;
+  /**
+   * How close a body is, continuously: 1 at the body, 0 at the sea's foam width, negative beyond it (as far as the
+   * search sees). `foam` is this band shaped one way; a style that wants its own shape (clawed, scalloped) uses this.
+   */
+  readonly contact: Expr<"f32">;
 };
 
 /** A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. */

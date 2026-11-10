@@ -3,7 +3,9 @@
 
 export class UsageError extends Error {}
 
-export type Source = { readonly kind: "file"; readonly path: string } | { readonly kind: "fixture" };
+/** The style a scene is drawn in: its own, or one of `src/style/index.ts`'s by name (`--style`). */
+export type StyleChoice = { readonly kind: "scene" } | { readonly kind: "named"; readonly name: string };
+export type Source = { readonly kind: "file"; readonly path: string; readonly style: StyleChoice } | { readonly kind: "fixture" };
 export type Size = { readonly width: number; readonly height: number };
 export type ViewName = string;
 
@@ -21,6 +23,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
   dev    <scene> [--port 5173]
+  --style toon|woodblock|biolume|papercraft  (render, clip, frames, dev) draws the scene in that style instead of its own
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
@@ -37,6 +40,7 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--view": { value: true, commands: ["clip", "frames"] },
   "--times": { value: true, commands: ["frames"] },
   "--port": { value: true, commands: ["dev"] },
+  "--style": { value: true, commands: ["render", "clip", "frames", "dev"] },
 };
 
 function num(flag: string, text: string): number {
@@ -91,7 +95,9 @@ export function parseArgs(argv: readonly string[]): Command {
   if (positional.length > 1) throw new UsageError(`unexpected argument "${positional[1]}"`);
   if (fixture && positional.length === 1) throw new UsageError("give either a scene file or --fixture, not both");
   if (!fixture && positional.length === 0) throw new UsageError(`${name}: needs a scene file (or --fixture)`);
-  const source: Source = fixture ? { kind: "fixture" } : { kind: "file", path: positional[0]! };
+  const styleName = one("--style");
+  if (fixture && styleName !== undefined) throw new UsageError("--style: the fixture is a compiled artefact, not a scene; it has no style to change");
+  const source: Source = fixture ? { kind: "fixture" } : { kind: "file", path: positional[0]!, style: styleName === undefined ? { kind: "scene" } : { kind: "named", name: styleName } };
 
   if (name === "dev") return { kind: "dev", source, port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };
 

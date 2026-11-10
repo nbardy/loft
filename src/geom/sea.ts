@@ -65,17 +65,17 @@ const RING = Array.from({ length: 16 }, (_, k) => {
 const fl = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 
 /**
- * Foam where the water at p (seen at pixel px) meets an opaque body, 0..1, antialiased by the pixel footprint fp, for
- * a band `width` wide. A sea pixel is foamy when some opaque surface lies within the band of it in 3D: a ring of taps
- * round the pixel, at the band's size on screen, finds the body on either side of the waterline (behind the water and
- * above it), so any opaque thing gets its waterline foam, at a cost per pixel that does not grow with the scene. It
- * reads the scene's depth, so it may only be called from a draw with `sceneDepth` (its definition goes in that
- * draw's module, not in sceneWgsl).
+ * How close the water at p (seen at pixel px) is to an opaque body, for a band `width` wide: 1 at the body, 0 at the
+ * band's edge, below 0 beyond it. A sea pixel is near a body when some opaque surface lies within the band of it in
+ * 3D: a ring of taps round the pixel, at the band's size on screen, finds the body on either side of the waterline
+ * (behind the water and above it), so any opaque thing gets its waterline, at a cost per pixel that does not grow
+ * with the scene. It reads the scene's depth, so it may only be called from a draw with `sceneDepth` (its definition
+ * goes in that draw's module, not in sceneWgsl).
  */
-const contactFoam = wgslFn<"f32">({
-  name: "loft_contact_foam", ret: "f32", wgsl: /* wgsl */ `
+const contactBand = wgslFn<"f32">({
+  name: "loft_contact_band", ret: "f32", wgsl: /* wgsl */ `
 const LOFT_FOAM_RING = array<vec2<f32>, 16>(${RING.map(([x, y]) => `vec2<f32>(${fl(+x.toFixed(6))}, ${fl(+y.toFixed(6))})`).join(", ")});
-fn loft_contact_foam(p: vec3<f32>, px: vec2<f32>, fp: f32, width: f32) -> f32 {
+fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   // The band's width on screen; at least a pixel (far away), at most 40 (a body filling the view).
   let r = clamp(width / pixel_world(p), 1.0, 40.0);
   // The ring turns from pixel to pixel (interleaved gradient noise, fixed in screen space): a fixed ring overestimates
@@ -88,10 +88,19 @@ fn loft_contact_foam(p: vec3<f32>, px: vec2<f32>, fp: f32, width: f32) -> f32 {
   if (gap < 2.0 * width) {
     for (var k = 8u; k < 16u; k++) { gap = min(gap, distance(scene_position(px + rot * LOFT_FOAM_RING[k] * r), p)); }
   }
-  // Full at the body, gone at the foam width; the threshold wobbles slowly so the edge reads as lapping foam.
+  return 1.0 - gap / width;
+}`,
+});
+
+/**
+ * Foam from the contact band, 0..1, antialiased by the pixel footprint fp: full at the body, gone at the foam width;
+ * the threshold wobbles slowly so the edge reads as lapping foam.
+ */
+const contactFoam = wgslFn<"f32">({
+  name: "loft_contact_foam", ret: "f32", wgsl: /* wgsl */ `
+fn loft_contact_foam(p: vec3<f32>, band: f32, fp: f32, width: f32) -> f32 {
   let t = frame.time.x;
   let wobble = 0.12 * sin(p.x * 2.3 + t * 1.9) * sin(p.z * 2.9 - t * 1.4);
-  let band = 1.0 - gap / width;
   let aa = max(fp / width, 1e-3);
   let core = smoothstep(0.42 + wobble - aa, 0.42 + wobble + aa, band);
   let fringe = smoothstep(0.12 + wobble - aa, 0.12 + wobble + aa, band);
@@ -166,6 +175,7 @@ export class Sea implements Chart, Drawable {
     const shortest = this.waves.reduce((l, w) => Math.min(l, (2 * Math.PI) / w.k), 1e3);
     const xz = fr.world.xz;
     const fp = seaFootprint(fr.world);
+    const band = contactBand(fr.world, fr.px, this.foam);
     // Where a pixel covers a good part of the shortest wave, its slope and crest shading can only alias (bands of
     // stripes toward the horizon): fade that detail out by the pixel's footprint.
     const detail = sub(1, smoothstep(0.04, 0.2, fp.div(shortest)));
@@ -178,7 +188,8 @@ export class Sea implements Chart, Drawable {
       // Per pixel, not the interpolated vertex height: far grid cells are large and their edges would show.
       crest: mul(this.height(xz).div(amplitude), detail),
       distance: distance(fr.world, eyePosition()),
-      foam: contactFoam(fr.world, fr.px, fp, this.foam),
+      foam: contactFoam(fr.world, band, fp, this.foam),
+      contact: band,
     });
   }
 }
