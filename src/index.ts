@@ -8,7 +8,7 @@ export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb
 export { crest, type CrestSpec } from "./geom/crest.ts";
 export { sea, Sea, type SeaSpec, type SwellSpec } from "./geom/sea.ts";
 export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type LayerCtx, type SkyCtx, type ToonSpec } from "./style.ts";
-export { scene, type Scene, type SceneSpec } from "./scene.ts";
+export { scene, DEFAULT_OUTLINE, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { compile, compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
 export { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type PostSpec, type Shader, type TableRef } from "./compile/context.ts";
 export { emitFn, emitShaderFn } from "./compile/bind.ts";

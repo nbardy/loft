@@ -261,7 +261,7 @@ function slotsOf(a: Artefact): Slots {
   };
 }
 
-function frameUniform(view: View): Float32Array<ArrayBuffer> {
+export function frameUniform(view: View): Float32Array<ArrayBuffer> {
   const m = cameraMatrices(view.camera, view.width / view.height);
   const u = new Float32Array(FRAME_FLOATS);
   u.set(m.viewProj, 0);

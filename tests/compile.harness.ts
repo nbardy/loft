@@ -1,7 +1,7 @@
 // Shared by the compile.* tests: a device, frame states, and a compute probe that runs WGSL against an artefact's own
 // bindings (the host contract's explicit layouts), so a test can call any function in `sceneWgsl` or in a shader.
 import { setupGlobals } from "bun-webgpu";
-import { PRELUDE_WGSL, type Artefact, type FrameState } from "../src/artefact.ts";
+import { DETAIL_SLOTS, PRELUDE_WGSL, type Artefact, type FrameState } from "../src/artefact.ts";
 
 let device: Promise<GPUDevice> | undefined;
 export async function gpu(): Promise<GPUDevice> {
@@ -18,7 +18,7 @@ export const VERTEX = 0x1, FRAGMENT = 0x2, COMPUTE = 0x4;
 export function layouts(dev: GPUDevice, a: Artefact, visibility: number): [GPUBindGroupLayout, GPUBindGroupLayout] {
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility, buffer: { type: "read-only-storage" } });
   return [
-    dev.createBindGroupLayout({ entries: [{ binding: 0, visibility, buffer: { type: "uniform" } }, storage(1), storage(2), storage(3)] }),
+    dev.createBindGroupLayout({ entries: [{ binding: 0, visibility, buffer: { type: "uniform" } }, storage(1), storage(2), storage(3), { binding: 4, visibility, buffer: { type: "uniform" } }] }),
     dev.createBindGroupLayout({ entries: a.dynamic.map((d) => storage(d.binding)) }),
   ];
 }
@@ -65,7 +65,8 @@ export async function probe(a: Artefact, state: FrameState, module: string, code
   const encoder = dev.createCommandEncoder();
   const pass = encoder.beginComputePass();
   pass.setPipeline(pipeline);
-  pass.setBindGroup(0, group(g0, [frame, buffer(state.inputs), buffer(state.params), buffer(state.curves)]));
+  const detail = dev.createBuffer({ size: DETAIL_SLOTS * 16, usage: GPUBufferUsage.UNIFORM });
+  pass.setBindGroup(0, group(g0, [frame, buffer(state.inputs), buffer(state.params), buffer(state.curves), detail]));
   pass.setBindGroup(1, group(g1, a.dynamic.map((d) => buffer(tables[d.name]))));
   pass.setBindGroup(2, group(g2, [out, buffer(Float32Array.from(xs.flatMap((x) => [...x, 0, 0, 0, 0].slice(0, 4))))]));
   pass.dispatchWorkgroups(xs.length);
