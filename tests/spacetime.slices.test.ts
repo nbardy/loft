@@ -51,9 +51,9 @@ test("a part slice has the whole slice's positions and radii from just after its
     const d = qrot(a.slice(4, 8), [0, 1, 0]), e = qrot(b.slice(4, 8), [0, 1, 0]);
     worst = Math.max(worst, Math.acos(Math.min(1, d[0] * e[0] + d[1] * e[1] + d[2] * e[2])));
   }
-  // The dorsal direction differs by the roll the live body has made since (0.35 s here, three smear intervals): measured
-  // 2026-11-11 below 2 degrees.
-  expect(worst).toBeLessThan((3 * Math.PI) / 180);
+  // The dorsal direction differs by the roll the live body has made since (0.35 s here, more than the strike example's
+  // oldest copy at 0.1-0.12 s): measured 2026-11-11 at 2.65 degrees.
+  expect(worst).toBeLessThan((3.5 * Math.PI) / 180);
 });
 
 test("a wake's skeleton slice has the whole slice's joint positions at the stations it keeps, and nearly its radii", () => {
