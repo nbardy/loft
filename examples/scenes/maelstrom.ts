@@ -34,7 +34,7 @@ const SERPENT = {
 
 const COLOURS = {
   back: [0.1, 0.12, 0.28], belly: [0.95, 0.9, 0.74], band: [0.28, 0.4, 0.72], membrane: [0.88, 0.22, 0.14],
-  bone: [0.98, 0.94, 0.82], iris: [0.95, 0.3, 0.1], mouth: [0.85, 0.2, 0.15], spike: [0.88, 0.22, 0.14],
+  bone: [0.98, 0.94, 0.82], iris: [0.95, 0.3, 0.1], mouth: [0.85, 0.2, 0.15],
 } as const;
 
 // ---- the water ----------------------------------------------------------------------------------------------------
@@ -126,7 +126,6 @@ export default scene({
   style: woodblock(),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
-    top: { kind: "orthographic", eye: [0, 60, 0.001], target: [0, 0, 0], height: 44 },
     game: { kind: "perspective", eye: [-32, 34, 2], target: [3, 1, 5], fovY: 0.66 },
     hero: { kind: "perspective", eye: [29, 6, -10], target: [2, 4.5, 5], fovY: 0.8 },
     close: { kind: "perspective", eye: [11, 16, 30], target: [5, 4, 9], fovY: 0.55 },

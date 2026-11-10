@@ -7,14 +7,14 @@
 import {
   abs, add, cos, crest, cross, dot, draw, keys, lift, lt, mix, mod, mul, normalize, on, palette, place, points, rotateAbout as rotate,
   select, sin, smoothstep, strand, sub, TAU, through, time, vec3,
-  type Drawable, type Expr, type F, type In, type P3, type Strand,
+  type Drawable, type F, type In, type P3, type Strand,
 } from "../../../src/index.ts";
 
 export type Rgb = readonly [number, number, number];
 
 export type WyrmColours = {
   readonly back: Rgb; readonly belly: Rgb; readonly band: Rgb; readonly membrane: Rgb;
-  readonly bone: Rgb; readonly iris: Rgb; readonly mouth: Rgb; readonly spike: Rgb;
+  readonly bone: Rgb; readonly iris: Rgb; readonly mouth: Rgb;
 };
 
 export type WyrmSpec = {
@@ -165,7 +165,3 @@ export function wyrm(s: WyrmSpec): Wyrm {
 
   return { body, head, jaw, eyes, things: [body, head, jaw, ...horns, ...eyes, teethUp, teethDown, dorsal, ...tailFins] };
 }
-
-/** Points through which `through` passes, as expressions (helpers for authoring spines as control points). */
-export const pts = (ps: readonly (readonly [number, number, number] | P3)[]): P3[] => ps.map((p) => lift<"vec3">(p as In<"vec3">));
-export type { Expr };

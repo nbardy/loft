@@ -58,7 +58,7 @@ const spinePoints: P3[] = Array.from({ length: N }, (_, i) => {
 
 const C = {
   back: [0.05, 0.05, 0.1], belly: [0.25, 0.3, 0.38], band: [0.1, 0.12, 0.22], membrane: [0.9, 0.2, 0.75],
-  bone: [0.7, 0.95, 1.0], iris: [1.0, 1.0, 0.85], mouth: [0.95, 0.2, 0.7], spike: [0.9, 0.2, 0.75],
+  bone: [0.7, 0.95, 1.0], iris: [1.0, 1.0, 0.85], mouth: [0.95, 0.2, 0.7],
 } as const;
 const hunter = wyrm({
   name: "hunter", spine: (m) => through(m, spinePoints), stations: 64, girth: H.girth, size: H.size,
