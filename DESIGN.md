@@ -492,7 +492,7 @@ against 160 x 28 for the strand) and the loss of early depth rejection that writ
   is not built.
 - No CPU-against-GPU agreement test for the march itself (the expressions it is made of are covered by expr tests).
 - Relief is one-sided (back faces culled): an open surface needs its inside drawn separately (the shell does).
-## 8. Space-time: attacks, telegraph, smear, wake, checks (as built)
+## 9. Space-time: attacks, telegraph, smear, wake, checks (as built)
 
 The game's simulation owns gameplay: per attack it supplies a hit shape on the water, an arming time and a warning
 duration. Loft takes those as host inputs, defines the attack once, and derives the pose, the marker, the smear, the
