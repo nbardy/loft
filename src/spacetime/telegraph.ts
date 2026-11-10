@@ -43,8 +43,8 @@ export type TelegraphStyle = {
 };
 
 export const DANGER: TelegraphStyle = {
-  bone: [0.98, 0.93, 0.8], fill: [0.95, 0.12, 0.07], ink: [0.12, 0.02, 0.03], flash: [1.0, 0.97, 0.88],
-  spacing: 0.85, edge: 0.13, line: 0.06, fillFrom: 0.2, fillTo: 0.6, teethFrom: 0.35, teethTo: 1.1, fade: 0.3,
+  bone: [0.98, 0.93, 0.8], fill: [1.0, 0.26, 0.08], ink: [0.12, 0.02, 0.03], flash: [1.0, 0.97, 0.88],
+  spacing: 0.85, edge: 0.13, line: 0.06, fillFrom: 0.25, fillTo: 0.78, teethFrom: 0.35, teethTo: 1.1, fade: 0.3,
 };
 
 /** Grid cells of the patch: enough to follow the swell under a shape some units across. */

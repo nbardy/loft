@@ -73,7 +73,7 @@ const bite = attack({
   motion: {
     kind: "lunge",
     hit: hit.capsule({ a: add(lift<"vec2">(ANCHOR), mul(biteDir, 1.2)), b: sub(bow, mul(biteDir, HALF_BEAM + 0.05)), radius: input("bite.radius", "f32", [0.95]) }),
-    reach: 0.3, lead: 1.95, height: 0.8, coil: 1.6, rise: 1.1, approach: 0.3,
+    reach: 0.3, lead: 1.95, height: 0.8, coil: 1.6, rise: 1.1, approach: 0.3, neck: 1.6,
   },
 });
 
@@ -132,7 +132,7 @@ export default scene({
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
-    three: { kind: "perspective", eye: [16, 21, 25], target: [3, 0, 0], fovY: 0.62 },
+    three: { kind: "perspective", eye: [13, 16, 18], target: [3.5, 0, -0.5], fovY: 0.62 },
     side: { kind: "perspective", eye: [3, 4.5, 33], target: [3, 1.2, 0], fovY: 0.62 },
     top: { kind: "orthographic", eye: [3, 40, 0.001], target: [3, 0, 0], height: 24 },
     bite: { kind: "perspective", eye: [16, 10, 13], target: [11, 1, 0.5], fovY: 0.6 },

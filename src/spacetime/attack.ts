@@ -12,7 +12,7 @@
 // lands where the hit shape says at that instant and never travels past it (it stops at the target's hull).
 
 import {
-  add, clamp, compileJs, div, length, lift, mix, mul, normalize, smoothstep, sub, time, variable, vec2, vec3, type Expr, type In,
+  add, clamp, compileJs, div, length, max, lift, mix, mul, normalize, smoothstep, sub, time, variable, vec2, vec3, type Expr, type In,
 } from "../expr.ts";
 import { response } from "../curve.ts";
 import type { Drawable } from "../compile/context.ts";
@@ -48,7 +48,10 @@ export type Timing = {
   readonly strike: number;
   /** Damping of the strike: below 1 it recoils after landing. */
   readonly zeta: number;
-  /** Initial response of the strike, below 0 for anticipation (a flinch backward before it goes). */
+  /**
+   * Initial response of the strike, below 0 for a flinch backward before it goes. Not 0 means the strike starts with a
+   * velocity step (the response's derivative at 0 is r zeta w0), so the default is 0 and the coil is the anticipation.
+   */
   readonly anticipation: number;
   /** Seconds after landing before the body starts to let go. */
   readonly hold: number;
@@ -57,7 +60,7 @@ export type Timing = {
   /** Body m per second at which the motion runs along the body. */
   readonly travel: number;
 };
-const DEFAULT_TIMING: Timing = { windup: 0.85, strike: 0.3, zeta: 0.5, anticipation: -0.9, hold: 0.12, recover: 0.55, travel: 2.2 };
+const DEFAULT_TIMING: Timing = { windup: 0.85, strike: 0.3, zeta: 0.5, anticipation: 0, hold: 0.12, recover: 0.55, travel: 2.2 };
 
 /** A lunge: the m = 0 end of the spine is laid along the lane and lands with the part's tip on the shape's far end. */
 export type LungeSpec = {
@@ -69,7 +72,7 @@ export type LungeSpec = {
   readonly lead: number;
   /** Height of the spine's m = 0 above the still water at landing. */
   readonly height: number;
-  /** How far back along the lane, and how high, the end coils during the wind-up. */
+  /** How far back along the lane, and how high, the end coils from its rest position during the wind-up. */
   readonly coil: number;
   readonly rise: number;
   /**
@@ -77,6 +80,8 @@ export type LungeSpec = {
    * hung forward of its neck at a pitch levels out when the neck meets it at that pitch.
    */
   readonly approach: number;
+  /** Least length of the neck's control arm behind the end (world units): keeps the end leading its neck. */
+  readonly neck: number;
 };
 /** A sweep: the m = 1 end of the spine swings round the arc's centre from its `from` angle to its `to` angle. */
 export type SweepSpec = {
@@ -213,12 +218,16 @@ function lungeSpine(a: Attack, m: LungeSpec, rest: Spine): Spine {
   return (s) => {
     // The motion runs down the body after the head: each m reads the clock of its distance from the end.
     const env = a.envelope(sub(time, mul(s, 1 / a.timing.travel)));
-    const coiled = add(sub(lane.spineTip, mul(dir3, m.coil)), mul(up, m.rise));
+    // The wind-up pulls back from where the end is now (away from the target, and up): anticipation, not approach.
+    const coiled = add(sub(rest(lift<"f32">(0)), mul(dir3, m.coil)), mul(up, m.rise));
     const head = mix(coiled, lane.spineTip, env.q);
     // A quadratic Bezier from the head back along the lane (leaving it at the approach angle) to where the rest
     // posture continues.
     const root = rest(lift<"f32">(m.reach));
-    const half = mul(length(sub(vec2(head.x, head.z), vec2(root.x, root.z))), 0.5);
+    // The control arm never shrinks below `neck`: when the coiled head stands right over the root, a short arm let
+    // the stations bunch at the head, and the anticipation pulled the end back past its neighbours, flipping the
+    // tangent (the head swung round in one frame at the start of the strike, 2026-11-11).
+    const half = max(mul(length(sub(vec2(head.x, head.z), vec2(root.x, root.z))), 0.5), m.neck);
     const ctrl = sub(sub(head, mul(dir3, half)), mul(up, mul(half, Math.tan(m.approach))));
     const u = clamp(mul(s, 1 / m.reach), 0, 1), v = sub(1, u);
     const posed = add(add(mul(head, mul(v, v)), mul(ctrl, mul(mul(u, v), 2))), mul(root, mul(u, u)));
