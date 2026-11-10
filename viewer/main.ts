@@ -7,7 +7,7 @@ import { orbit } from "../src/host/camera.ts";
 import { COLOR_FORMAT, createHost, type GpuLoaded } from "../src/host/host.ts";
 import { FALLBACK_CAMERAS } from "../src/cli/cameras.ts";
 // @ts-expect-error virtual module supplied by `loft dev` (src/cli/dev.ts)
-import { build, sceneName } from "scene:current";
+import { build, sceneName, startStyle, styleNames } from "scene:current";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("view");
@@ -17,8 +17,9 @@ const KEY = `loft.viewer.${sceneName as string}`;
 const NARROW = "(max-width: 700px)";
 
 /** `params` holds only values the user moved away from the scene's defaults, so edits to a default in the file show up. */
-type Saved = { camera: Camera | null; time: number; params: Record<string, number>; construction: boolean; playing: boolean; speed: number; collapsed: boolean | null };
-const state: Saved = { camera: null, time: 0, params: {}, construction: false, playing: true, speed: 1, collapsed: null };
+/** `style`: "scene" for the scene's own, else a style's name; null until chosen here (then `loft dev --style` decides). */
+type Saved = { camera: Camera | null; time: number; params: Record<string, number>; construction: boolean; playing: boolean; speed: number; collapsed: boolean | null; style: string | null };
+const state: Saved = { camera: null, time: 0, params: {}, construction: false, playing: true, speed: 1, collapsed: null, style: null };
 
 let dirty = true; // something changed since the last drawn frame
 function restore() {
@@ -68,8 +69,16 @@ async function start() {
 
   let artefact: Artefact;
   let loaded: GpuLoaded;
+  // ---- style: the scene recompiles in the chosen one (a style is a program, so it is a new artefact) ----
+  const names = styleNames as readonly string[];
+  const style = state.style !== null && (state.style === "scene" || names.includes(state.style)) ? state.style : (startStyle as string);
+  const picker = $<HTMLSelectElement>("style");
+  for (const n of ["scene", ...names]) picker.append(new Option(n === "scene" ? "scene's own" : n, n));
+  picker.value = style;
+  picker.disabled = names.length === 0; // the fixture is a compiled artefact
+  picker.onchange = () => { state.style = picker.value; persist(); location.reload(); };
   try {
-    artefact = await (build as () => Promise<Artefact>)();
+    artefact = await (build as (style: string) => Promise<Artefact>)(style);
     loaded = await createHost(device).load(artefact);
   } catch (e) {
     return showError(`scene failed to compile or load:\n${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);

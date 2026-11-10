@@ -65,9 +65,9 @@ fn wb_near(px: vec2<f32>) -> f32 {
   // A step beyond the plane, as a share of the nearness (perspective: about the relative jump in depth) or in world
   // units (orthographic).
   let unit = select(1.0, g0, frame.eye.w > 0.5);
-  // Half-width in pixels: 1.3 to 3.5 at the reference size, wandering along the line.
+  // Half-width in pixels: 1.5 to 4.7 at the reference size, wandering along the line.
   let wobble = sty_noise(p.xz * 1.3 + vec2<f32>(p.y * 1.7, 0.0));
-  let w = max(scale * (1.3 + 2.2 * wobble * wobble) * clamp(18.0 / z, 0.6, 1.4), 1.0);
+  let w = max(scale * (1.5 + 3.2 * wobble * wobble) * clamp(18.0 / z, 0.6, 1.4), 1.0);
   // Offsets of at least a whole pixel: textureLoad floors, so a smaller offset could read the pixel itself.
   let s = max(round(1.5 * scale), 1.0);
   let n = sty_normal(px, s);
