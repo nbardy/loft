@@ -215,6 +215,12 @@ fn trace_mask(c: f32, px: vec2<f32>) -> u32 {
 fn trace_shade(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
   return shade(base, n, -d, p, sea_height(p.xz) - p.y);
 }
+/// Ink width in pixels for a pixel of world size fp: the style's width (as a hull outline has it), at least 1.5 px,
+/// and at most 4 px. The cap is for traced solids only: their ink is measured as closest approach, so a branch at
+/// the lens would otherwise wear a band tens of pixels wide over everything behind it.
+fn ink_px(fp: f32) -> f32 {
+  return clamp(outline_world() / fp, 1.5, 4.0);
+}
 fn trace_ink(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>) -> vec3<f32> {
   return ink(base, n, -d, p, sea_height(p.xz) - p.y);
 }`;

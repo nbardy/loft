@@ -4,3 +4,4 @@ export * from "./sdf2.ts";
 export * from "./wgsl.ts";
 export * from "./fold.ts";
 export * from "./sdf3.ts";
+export * from "./grow.ts";

@@ -151,6 +151,7 @@ const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 function fragmentWgsl(safety: number): string {
   return /* wgsl */ `
 override STEPS: u32 = 64u;
+const DEBUG: bool = ${process.env.LOFT_FIELD_DEBUG === "1"};
 const SAFETY: f32 = ${num(safety)};
 const HIT: f32 = ${num(HIT)};
 // The style's shading takes screen-space derivatives (band edges) after a loop whose exit differs per pixel. Every
@@ -167,43 +168,55 @@ const HIT: f32 = ${num(HIT)};
   // Pixel size is affine along the ray (it is proportional to clip w).
   let fp0 = pixel_world(o + d * t0);
   let fpk = (pixel_world(o + d * max(t1, t0 + 1e-3)) - fp0) / max(t1 - t0, 1e-3);
-  let detail = fp0;
   var t = t0;
   var hit = false;
   var nearT = t0;        // where the ray came closest (in pixels) without hitting
   var nearPx = 1e30;
   var inked = false;
-  var prevPx = 1e30;
+  var prevDist = 0.0;
   var prevT = t0;
+  var exhausted = true;
   for (var i = 0u; i < STEPS; i++) {
     let fp = fp0 + fpk * (t - t0);
-    let dist = field_d(o + d * t, detail);
-    let px = dist / fp;
-    if (px < HIT) { hit = true; break; }
-    // A near miss: the distance stopped falling within ink width of the surface. In front of anything further on.
-    // (ink_width in pixels is max(style width / pixel, 1.5): no matrix per step.)
-    if (INK_ON && px > prevPx && prevPx < max(outline_world() / (fp0 + fpk * (prevT - t0)), 1.5)) { inked = true; nearT = prevT; nearPx = prevPx; break; }
-    if (px < nearPx) { nearPx = px; nearT = t; }
-    prevPx = px;
+    let dist = field_d(o + d * t, fp);
+    if (dist < HIT * fp) { hit = true; exhausted = false; break; }
+    // The closest the surface can come to the ray between this sample and the last: it lies outside both spheres of
+    // free space, so at most at the circle where they meet, x back from here and h from the ray. (The sampled
+    // distances alone miss the closest approach by up to a step, which drew silhouettes and ink as random grain.)
+    let s = t - prevT;
+    let x = (dist * dist - prevDist * prevDist + s * s) / max(2.0 * s, 1e-20);
+    let between = i > 0u && x > 0.0 && x < s;
+    let h = select(dist, sqrt(max(dist * dist - x * x, 0.0)), between);
+    let th = select(t, t - x, between);
+    let hPx = h / (fp0 + fpk * (th - t0));
+    // A near miss: the ray passed within the ink width of a surface and is moving away from it. In front of anything
+    // further on.
+    if (INK_ON && between && dist > prevDist && hPx < ink_px(fp0 + fpk * (th - t0))) { inked = true; nearT = th; nearPx = hPx; exhausted = false; break; }
+    if (hPx < nearPx) { nearPx = hPx; nearT = th; }
+    prevDist = dist;
     prevT = t;
     t += dist * SAFETY;
-    if (t > t1) { break; }
+    if (t > t1) { exhausted = false; break; }
   }
+  // Out of steps while still inside the bound: the march is crawling along a surface (grazing, or a crease). Taking
+  // the point reached as the hit leaves no hole; the error is under a pixel because the distance is already small.
+  hit = hit || exhausted;
   if (hit) {
-    for (var r = 0u; r < ${REFINE}u; r++) { t += field_d(o + d * t, detail) * SAFETY; }
+    for (var r = 0u; r < ${REFINE}u; r++) { t += field_d(o + d * t, fp0 + fpk * (t - t0)) * SAFETY; }
   }
   let tq = select(nearT, t, hit);
   let p = o + d * tq;
-  let n = field_n(p, detail);
-  let base = field_paint(p, n, detail);
   let fp = fp0 + fpk * (tq - t0);
-  let inkPx = ink_width(p) / fp;
+  let n = field_n(p, fp);
+  let base = field_paint(p, n, fp);
+  let inkPx = ink_px(fp);
   // Coverage: full on a hit; on a miss, falling from full to none over one pixel beyond the hit threshold (or beyond
   // the ink band).
   let edge = select(HIT, inkPx, INK_ON);
   let cover = select(clamp(1.0 + edge - nearPx, 0.0, 1.0), 1.0, hit || inked);
   let useInk = INK_ON && !hit;
-  let colour = select(trace_shade(base, n, p, d), trace_ink(base, n, p, d), useInk);
+  var colour = select(trace_shade(base, n, p, d), trace_ink(base, n, p, d), useInk);
+  if (DEBUG) { colour = select(select(select(vec3<f32>(0.2, 0.3, 1.0), vec3<f32>(1.0, 0.0, 0.0), exhausted), vec3<f32>(0.0), inked), vec3<f32>(0.2, 1.0, 0.3), hit); }
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
   return TraceOut(vec4<f32>(colour, 1.0), trace_depth(p), mask);
