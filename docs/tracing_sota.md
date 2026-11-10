@@ -336,7 +336,10 @@ When no precondition holds the compiler reports which ones failed. It does not f
 
 ## 6. Order of work
 
-1. Merge `wave3/triangles` and `wave3/tracer` and read `loft profile`. Until then there is no per-object GPU time.
+1. Merge `wave3/triangles` and `wave3/tracer` and read `loft profile`. Done. In `examples/scenes/the_strike.ts` at the
+   game camera the serpent's draws sum to about 0.15 ms of GPU and the ship to 0.32 ms in 45 draws; the sea is 1.5 ms,
+   and the CPU pose and upload is 5.4 ms, more than every draw together. The next cost for many objects is the CPU
+   pose, not the GPU.
 2. Unfold, on the coral. Done: 1.3 to 1.5 ms against 4.9 to 6.8 ms (5.3). Still to do: the compiler choosing it.
 3. Solve onto the body, on a creature with blended parts.
 4. The slope and interval readings: hulls without hand bounds, the check as a proof, pruning.
