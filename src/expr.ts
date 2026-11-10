@@ -353,8 +353,14 @@ export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs:
 export function libsOf(roots: readonly Expr[]): LibFn[] {
   const out: LibFn[] = [];
   const seen = new Set<LibFn>();
+  const byName = new Map<string, LibFn>();
   const add = (fn: LibFn): void => {
     if (seen.has(fn)) return;
+    // Two different definitions under one name would both be placed in the module and fail to compile there with an
+    // error that does not say why. A function reached only through `deps` never passes through `lib()`, so check here.
+    const other = byName.get(fn.name);
+    if (other && other !== fn) throw new Error(`library function "${fn.name}" is defined by two different objects`);
+    byName.set(fn.name, fn);
     seen.add(fn);
     for (const d of fn.deps ?? []) add(d);
     out.push(fn);
