@@ -6,12 +6,13 @@
 // by exactly the cloud in front of it and the cloud has a soft edge where it meets it) and to the sea.
 //
 // Per pixel, in two passes over the blobs (each pass tests a cluster's bounding sphere before its blobs):
-//   1. the depth range [lo, hi] along the ray where blobs matter (from closest approaches only: no erfc);
+//   1. closest approaches only (no erfc): the depth range [lo, hi] along the ray where blobs matter, and a coarse
+//      estimate of where they become opaque (blobs wholly behind that are skipped by pass 2);
 //   2. each blob's optical depth on the segment (closed form), the depth at which the eye sees it (the median of the
 //      first-scattering depth), its light there, deposited into BINS depth bins spanning [lo, hi] (split linearly
 //      between the two nearest bins, so a blob moving in depth changes the picture continuously).
-// Layers and banks are cut into 8 pieces along the ray, each deposited where it is seen: in front of the blobs into a
-// front bin, behind them into a back bin, among them into the depth bins. The bins are then composited front to back:
+// Layers and banks are cut into 8 pieces along the ray, each deposited where it is seen: outside the blobs' range into
+// FOG fixed bins over the whole ray (merged by depth with the others), among the blobs into the depth bins. The bins are then composited front to back:
 // ordering at the resolution of a bin, from a fixed partition, so nothing is sorted and nothing is dropped. (A first
 // version kept the 16 strongest pieces per pixel and merged the rest; which pieces were kept changed from one pixel to
 // the next, and drew hard-edged discs into the cloud.) Alpha is exact: 1 - exp(-total depth).
