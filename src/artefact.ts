@@ -205,7 +205,15 @@ export type View = {
   readonly inputs?: Readonly<Record<string, number | readonly number[]>>;
   readonly params?: Readonly<Record<string, number>>;
   readonly construction?: boolean;
+  /**
+   * Level of detail: the size, in pixels, a grid cell should have on screen (`Draw.detail`); default `CELL_PIXELS`.
+   * 0 draws every grid at its finest (the authored density).
+   */
+  readonly cellPixels?: number;
 };
+
+/** The default `View.cellPixels`. */
+export const CELL_PIXELS = 7;
 
 /**
  * What a host actually drew for one frame: triangles submitted (every draw call's vertices / 3 x instances, construction
