@@ -26,7 +26,7 @@ const coordOf = (a: Axis, k: number): number => (a.closed ? k / a.n : k / (a.n -
 /** The table: one vec4 per sample, entry i + nu * j. */
 export class SculptTable implements TableSource {
   readonly lanes = 1;
-  readonly role = "data";
+  readonly role = "static";
   readonly entries: number;
   private readonly data: Float32Array;
 

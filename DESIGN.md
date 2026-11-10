@@ -226,13 +226,19 @@ walking the expressions it emits (`fetch`), or a raw-WGSL drawable declares one 
 declaration order, into as few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8
 storage buffers and group 0 uses 3; `fetch(t, i, lane)` reads `t_<name>(u32(i) * lanes + lane)`. More than 5 buffers'
 worth fails at compile time with `TableBudgetError`. A fill may read other tables (they fill on first read; a cycle
-throws). The tables the library declares:
+throws). A table whose `role` is `"static"` (a static `tabulate`, a sculpt layer, a field's distance brick or mesh) is
+filled once when the artefact is compiled and packed into buffers of its own, `Artefact.statics` (bindings after the
+per-frame ones, the same budget of 5), which the host uploads once at load; the pose function never returns them, so a
+brick of megabytes costs nothing per frame (added 2026-11-11, optional in the contract: absent means none). The tables
+the library declares:
 
 | Table | Declared by | Per entry | Contents |
 |---|---|---|---|
 | `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, 0) |
 | `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
-| any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f |
+| any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f (static: uploaded once) |
+| `<field>_brick` | `draw.field` with schedule `brick` or `auto` (static) | coarse cells, then bricks | `src/map/brick.ts`: per coarse cell (slot or -1, lower bound, union mask), then 9^3 samples per brick |
+| `<field>_mesh`, `<field>_tris` | `draw.field` with schedule `mesh` or `auto` | 2 vec4 / 1 vec4 | vertices (position, normal); triangle corners, 4 indices per vec4 |
 
 `stats.stations` counts the entries of tables whose role is `"stations"`.
 
@@ -246,7 +252,8 @@ interface Drawable {
   readonly name: string;
   draws(ctx: CompileContext): Emitted;          // { shaders: { key: { code, libs } }, draws: DrawSpec[] }
   readonly skeletons: readonly Skeleton[];      // what it casts shadows with (empty for none)
-  readonly surfaces: readonly Bakeable[];       // what it draws that the baker can evaluate (empty for none)
+  readonly surfaces: readonly Bakeable[];       // what it draws that the baker can evaluate (empty for none): a surface
+                                                // on its grid, or a triangle mesh (a field drawn as one)
 }
 interface CompileContext {
   readonly slots: Slots;                        // emit expressions: emitShaderFn(ctx.slots, { name, args, out, roots, ret })
@@ -350,7 +357,9 @@ interchangeable, and where the table is filled decides the schedule:
 | never (the function is evaluated where it is used) | everything analytic |
 
 So "bake or analytic" is one line of code per function, and a hand-edited table (a sculpt layer, a painted map) is the
-same object as a computed one. In the expression layer this needs one new leaf, `fetch(table, index, lane)`, for
+same object as a computed one. The three-variable table is a field's distance brick (`src/map/brick.ts`, 7.7): a
+function of a point sampled once into a static table, whose lookup is a guaranteed lower bound of the function rather
+than an interpolation (a tracer steps by it). In the expression layer this needs one new leaf, `fetch(table, index, lane)`, for
 per-frame tables; interpolation is ordinary expressions on top. With it a body's chart is an expression like any
 other: no hand-written chart shader, and differentiation, folding and CPU evaluation all pass through it.
 
@@ -424,7 +433,8 @@ Two per-pixel tracers (docs/folding_and_tracing.md 3.1 and 3.2), each one module
 Examples: `examples/coral.ts`, `examples/nest.ts` (fields), `examples/pearls.ts` (impostors).
 
 ```ts
-draw.field(name, field, { bounds, paint, steps, outline, safety? })   // field: (p) => distance
+draw.field(name, field, { bounds, paint, steps, outline, schedule, safety? })   // field: (p) => distance
+// schedule: "trace" | "brick" | "mesh" | "auto"
 impostors(name, { cell, shape, bounds, paint, cells, outline })      // shape: (cell) => sphere | capsule | cone
 bound.box(min, max) | bound.sphere(c, r) | bound.capsule(a, b, r)    // TraceBound, a field's bound
 fieldPixel                                                           // world size of a pixel: a field's level of detail
@@ -438,8 +448,38 @@ grow({ count, motif, step }), kifs({ count, fold, scale, offset })   // src/lib/
 - **Field march.** Steps by the distance (times `safety`, default 1); a hit is a distance under 0.3 pixels at that
   range, the pixel size being affine along the ray. Out of steps inside the bound counts as a hit. Two secant steps
   refine a hit (2e-4 of the analytic intersection in the tests; plain steps left 7e-3 at oblique hits). Normal: the
-  symbolic gradient of the field (`grad.ts`), once per pixel. `paint({ p, normal })`; per-copy identity comes from
-  evaluating the fold again at `p` (pure functions, so this is the same expression).
+  field's gradient by differences on a tetrahedron a quarter of a pixel across (four evaluations; it was the symbolic
+  gradient, which differentiates through a fold's loop: on the coral it cost about as much as the march, and its
+  registers slowed the rest of the shader). A ray that covers nothing skips the normal and the paint (most of a
+  bound's pixels). `paint({ p, normal })`; per-copy identity comes from evaluating the fold again at `p` (pure
+  functions, so this is the same expression).
+- **Schedules** (2026-11-11, `schedule`). `trace`: the formula at every step. `brick`: the field (at full detail,
+  scaled by its step scale) is sampled once into a distance brick, and the march steps by the brick, evaluating the
+  formula only within the band where hits, near misses and coverage are decided (`march_band`: the ink or hit width
+  plus a pixel, times 1.2); the formula also gives the refinement and the normal, so the surface is as crisp as
+  traced. `mesh`: a closed triangle mesh extracted from the brick's samples (surface nets, `src/map/nets.ts`), normals
+  from the field's gradient, paint per pixel at the interpolated point, ink as an inverted hull of the traced ink
+  width; bakeable to glTF (`Bakeable` is a surface or a mesh). `auto`: a field whose leaves read time, an input, a
+  param, a curve row or a per-frame table (`varianceOf`), or a GPU-only function, is traced; a static one whose
+  formula is cheap (`evaluationCost` below `BRICK_WORTH` = 1000 nodes: the nest is 215, the coral 2612) is traced
+  too, because a brick lookup (scattered loads) costs more than its formula; a static expensive one that reads
+  `fieldPixel` is bricked (its shape follows the pixel at every distance, which no one mesh shows); any other is
+  bricked and meshed, the mesh drawn instead whenever a brick cell is under 1.5 pixels at the bound's nearest point
+  (each draw's vertex stage hides it otherwise). `brick` or `mesh` asked of a changing field is `FieldScheduleError`,
+  naming what it reads.
+- **The brick** (`src/map/brick.ts`). The bound's box in coarse cells of 8^3 fine cells, the fine cell the bound's
+  diagonal / 256. A coarse cell with no point within one fine cell (the band) of the surface stores one lower bound
+  (proved from a sample at its centre); every other one owns a brick of 9^3 samples. The lookup is the best of the
+  eight corner cones of p's fine cell, max_c (d_c - |p - c|): a lower bound of a 1-Lipschitz field outside the solid
+  (trilinear interpolation is not: across a thin branch it exceeds the distance by up to half a cell diagonal), within
+  a cell diagonal of it where |d| is below the band. Baking refines a cube only where the sample at its centre cannot
+  prove it far from the surface, so exact samples are those of fine cells near the surface (coral: 339k evaluations,
+  1.0 to 1.5 s, 4.0 MB; nest 1.19M, 2.1 to 2.7 s, 10.3 MB). The march's free-space steps are one call (a run of
+  over-relaxed brick steps with fall-back), so a SIMD group does not evaluate the field once per brick step for the one
+  ray that needs it. Each coarse cell also stores which members of a union at the field's root (`min(a, b, ...)`) can
+  be nearest anywhere in it at any level of detail (Lipschitz again, at full detail against the coarsest; this assumes,
+  as the level of detail does, that a coarser level only removes parts); the others are not evaluated (coral: three
+  trees, mostly one per cell). A drawable bakes once per process (memoised on the drawable).
 - **Level of detail.** `fieldPixel` is the pixel size at the point evaluated, per step, so an `iterate` count built
   from it falls with distance (coral: stop when a branch is under half a pixel). Per step, not per ray: per ray it
   was the pixel size at the bound entry, which is zero with the camera inside the bound.
@@ -476,12 +516,36 @@ Corrections to the specification:
 - **Params are global by name** (7.6) bites examples: all three tracer examples use the default `toon.outline` so they
   load in one test process.
 
-Cost, best case at 1280x800 on this (heavily loaded) machine, tracer only (frame minus the same frame without the
-traced draw): coral about 11 to 14 ms at its overview cameras, 36 ms in the close-up that fills the screen, about 4 ms
-at twice the camera distance and 23 ms at 0.6 times; nest about 1 to 7 ms (noisy); pearls about 3 to 6 ms. The step
-cap (32 to 192 for coral, 16 to 96 cells for pearls) changes almost nothing: rays end by hitting, by the pixel
-threshold or by leaving the bound well before the cap. Cost follows screen coverage times the field's cost per
-evaluation (coral is 3 trees x up to 10 levels per step).
+Cost, before the schedules (2026-11-10), best case at 1280x800 on this (heavily loaded) machine, tracer only (frame
+minus the same frame without the traced draw): coral about 11 to 14 ms at its overview cameras, 36 ms in the close-up
+that fills the screen, about 4 ms at twice the camera distance and 23 ms at 0.6 times; nest about 1 to 7 ms (noisy);
+pearls about 3 to 6 ms. The step cap (32 to 192 for coral, 16 to 96 cells for pearls) changes almost nothing: rays end
+by hitting, by the pixel threshold or by leaving the bound well before the cap. Cost follows screen coverage times the
+field's cost per evaluation (coral is 3 trees x up to 10 levels per step).
+
+Cost after (2026-11-11), `bun tools/tracer_bench.ts <tag> 40 <scene> base,trace,brick,mesh,own <old checkout>`: the GPU's
+own time (timestamp queries) for a pass holding only the traced draws, best of 40, every row and camera interleaved
+in the same rounds (wall-clock differences moved by milliseconds with the load). `base` is the starting commit; `own`
+is the example's `auto`.
+
+| coral, ms | three | front | side | top | close | far (2x) |
+|---|---|---|---|---|---|---|
+| before | 12.6 | 16.0 | 16.4 | 14.5 | 38.8 | 3.7 |
+| trace | 8.3 | 10.6 | 10.8 | 10.3 | 35.0 | 2.6 |
+| brick (= auto) | 4.5 to 4.9 | 5.7 | 6.1 to 6.2 | 6.7 | 22.6 to 25.2 | 1.8 to 1.9 |
+| mesh (not chosen: blobs) | 1.4 | 1.4 | 1.4 | 1.3 | 1.7 | 1.0 |
+
+Nest (auto: traced) 1.4 / 1.6 / 1.2 / 1.6 / 3.3 / 0.4, unchanged; bricked it is twice as slow (3.0 / 6.2 / 0.8) and
+meshed 1.6 to 1.8 (532k triangles). Pearls unchanged (1.0 to 1.7). What gave what on the coral overview (12.6 -> 4.5):
+the normal by differences and no shading for misses about 4 ms (the trace row), the brick's free-space skipping about
+2 ms, union culling about 1.3 ms. Not reached: 2 ms. What remains is evaluations of the formula the band needs (per
+SIMD group of 32 pixels at most 2.6 of them, against 9.4 traced, counted on the GPU) at about 0.8 ms each over the
+bound's pixels, plus the paint (all three trees, the author's) and the refinement and normal on hits; a brick lookup
+costs about a tenth of an evaluation, and finer bricks (384, 512 cells) did not help. A mesh fine enough to keep the
+coral's twigs (they are a few pixels wide at every distance) would need far more than 512 cells per diagonal (at 512:
+406k triangles, 3 ms, tips still knobs). Pictures before and after differ in under 1.1% of pixels by more than 8 of 255
+(2.2% from straight above), only along edges (the normal and the derivatives at silhouettes); pearls byte-identical.
+`out/tracer/final/` (not in git) holds them.
 ## 8. Relief: form finer than the curves (as built, 2026-11-11)
 
 Curves give gesture and mass; relief is the layer above, written in a surface's own coordinates (u, v) so it rides

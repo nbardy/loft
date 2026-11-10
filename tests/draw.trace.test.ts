@@ -6,7 +6,7 @@ import coral from "../examples/coral.ts";
 import nest from "../examples/nest.ts";
 import pearls from "../examples/pearls.ts";
 import {
-  add, bound, compileScene, cos, draw, FieldSafetyError, impostors, mul, scene, sea, sin, spacing, sub, surface, toon, vec3,
+  add, bound, compileJs, compileScene, cos, draw, FieldSafetyError, impostors, min, mul, scene, sea, sin, spacing, sub, surface, toon, variable, vec3,
   f, type F, type ImpostorShape, type Scene,
 } from "../src/index.ts";
 import { cameraMatrices, type CameraMatrices, type Vec3 } from "../src/host/camera.ts";
@@ -108,40 +108,86 @@ const pixelAt = (cam: Camera, p: Vec3) => (cam.kind === "orthographic" ? cam.hei
 const C: Vec3 = [0, 1, 0];
 const LO: Vec3 = [-0.6, 0.3, -0.5], HI: Vec3 = [0.7, 1.4, 0.8];
 
+/** A folded union: two kaleidoscopic levels of a mirrored sphere, with a box beside it (two members of a min). */
+const kaleido = kifs({ count: 2, fold: fold3.mirror(0), scale: 2, offset: [1, 0.5, 0] });
+const folded = (p: Parameters<typeof sdSphere>[0]) => {
+  const q = sub(p, vec3(0, 1, 0));
+  const g = kaleido(q);
+  return min(g.toWorld(sdSphere(g.x, 0.9)), sdBox3(sub(q, vec3(0, -0.8, 0.9)), vec3(0.3, 0.2, 0.25)));
+};
+/** The analytic intersection of a ray with a field, marched on the CPU in f64 to 1e-7 inside [lo, hi]. */
+function marchCpu(field: (q: Vec3) => number, r: Ray, lo: number, hi: number): number | undefined {
+  let t = lo;
+  for (let i = 0; i < 2000 && t < hi; i++) {
+    const d = field(at(r, t));
+    if (d < 1e-7) return t;
+    t += d;
+  }
+  return undefined;
+}
+const SCHEDULES = ["trace", "brick", "mesh"] as const;
+
 // Catches: a wrong ray origin or direction (perspective or orthographic), a march that stops a fraction of a pixel short
 // (plain refining steps left 7e-3 here at oblique hits; the secant refinement gives 2e-4), depth written from the wrong point, and a half-pixel offset.
+// For the brick: a lookup that overshoots (holes), a skip that stops on the wrong side of the band, union masks that
+// drop the nearest member (the folded field is a min of two). Not the mesh: a rasterised surface's depth is per sample
+// and the host keeps a pixel's nearest, which this probe reads on the pixel-centre ray (up to half a pixel's slope in
+// front: 2e-2 here). Its vertices are checked on the CPU (field.brick.test.ts) and its depth by the next test.
 for (const camera of cameras) {
-  test(`traced sphere and box hit the analytic ray intersection to 1e-3 (${camera.kind})`, async () => {
+  test(`traced and brick-marched sphere, box and folded field hit the analytic intersection to 1e-3 (${camera.kind})`, async () => {
     const m = cameraMatrices(camera, W / H);
-    for (const shape of ["sphere", "box"] as const) {
-      const field = shape === "sphere" ? (p: Parameters<typeof sdSphere>[0]) => sdSphere(sub(p, vec3(...C)), 1) : (p: Parameters<typeof sdSphere>[0]) => sdBox3(sub(p, vec3(0.05, 0.85, 0.15)), vec3(0.65, 0.55, 0.65));
-      const s = sceneOf(draw.field("probe", field, { bounds: bound.box([-1.2, -0.2, -1.2], [1.2, 2.2, 1.2]), paint: () => vec3(1, 0, 0), steps: 96, outline: "none" }));
-      const got = await positions(s, ["probe"], camera, W, H);
-      let worst = 0, checked = 0;
-      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-        const r = rayAt(m, x, y, W, H);
-        const want = shape === "sphere" ? hitSphere(r, C, 1) : hitBox(r, LO, HI);
-        if (!want) continue;
-        const p = at(r, want.t);
-        // Skip pixels within three pixels of a silhouette or a box edge: there the pixel's coverage is partial by design.
-        const margin = 3 * pixelAt(camera, p);
-        if (("inside" in want ? want.inside : want.edge) < margin) continue;
-        const g = got[y * W + x];
-        if (!g) throw new Error(`${shape}: pixel (${x}, ${y}) should show the surface at ${p.map((v) => v.toFixed(3))} but shows none`);
-        worst = Math.max(worst, dist(g, p));
-        checked++;
+    const foldedCpu = (() => {
+      const P = variable("p", "vec3");
+      const run = compileJs([folded(P)]);
+      return (q: Vec3) => run({ vars: { p: [...q] }, inputs: {}, params: {} })[0] as number;
+    })();
+    const BOUND = bound.box([-1.2, -0.2, -1.2], [1.2, 2.2, 1.2]);
+    for (const shape of ["sphere", "box", "folded"] as const) {
+      const field = shape === "sphere" ? (p: Parameters<typeof sdSphere>[0]) => sdSphere(sub(p, vec3(...C)), 1) : shape === "box" ? (p: Parameters<typeof sdSphere>[0]) => sdBox3(sub(p, vec3(0.05, 0.85, 0.15)), vec3(0.65, 0.55, 0.65)) : folded;
+      // The analytic hit and how far inside the silhouette (or from a box edge, or from a depth jump) the pixel is.
+      const want = (r: Ray): { t: number; margin: number } | undefined => {
+        switch (shape) {
+          case "sphere": { const h = hitSphere(r, C, 1); return h && { t: h.t, margin: h.inside }; }
+          case "box": { const h = hitBox(r, LO, HI); return h && { t: h.t, margin: h.edge }; }
+          case "folded": {
+            const t = marchCpu(foldedCpu, r, 0, 40);
+            return t === undefined ? undefined : { t, margin: Infinity };
+          }
+        }
+      };
+      for (const schedule of ["trace", "brick"] as const) {
+        const s = sceneOf(draw.field("probe", field, { bounds: BOUND, paint: () => vec3(1, 0, 0), steps: 96, outline: "none", schedule }));
+        const got = await positions(s, ["probe"], camera, W, H);
+        let worst = 0, checked = 0;
+        for (let y = 3; y < H - 3; y++) for (let x = 3; x < W - 3; x++) {
+          const r = rayAt(m, x, y, W, H);
+          const w = want(r);
+          if (!w) continue;
+          const p = at(r, w.t);
+          // Skip pixels within three pixels of a silhouette or an edge: there the pixel's coverage is partial by design.
+          // For the folded field (no closed form): every neighbour three pixels away hits too, at nearly the same depth.
+          const px3 = 3 * pixelAt(camera, p);
+          if (w.margin < px3) continue;
+          if (shape === "folded" && [[3, 0], [-3, 0], [0, 3], [0, -3]].some(([dx, dy]) => { const n = want(rayAt(m, x + dx!, y + dy!, W, H)); return !n || Math.abs(n.t - w.t) > 0.1; })) continue;
+          const g = got[y * W + x];
+          if (!g) throw new Error(`${shape} ${schedule}: pixel (${x}, ${y}) should show the surface at ${p.map((v) => v.toFixed(3))} but shows none`);
+          worst = Math.max(worst, dist(g, p));
+          checked++;
+        }
+        console.log(`${camera.kind} ${shape} ${schedule}: ${checked} pixels, worst ${worst.toExponential(2)}`);
+        expect(checked).toBeGreaterThan(shape === "folded" ? 200 : 2000);
+        expect([shape, schedule, worst < 1e-3]).toEqual([shape, schedule, true]);
       }
-      expect(checked).toBeGreaterThan(2000);
-      expect([shape, worst < 1e-3]).toEqual([shape, true]);
     }
-  }, 120000);
+  }, 300000);
 }
 
 // Catches: depth written in another convention than the rasteriser's (linear depth, a missing w divide, the proxy's
 // own depth): a traced sphere and a triangle sphere of the same size would then not cut each other where they meet.
-test("a traced sphere and a triangle sphere interpenetrate where their analytic surfaces cross", async () => {
+// The same for a brick-marched and a meshed sphere: all three schedules must meet triangle bodies identically.
+for (const schedule of SCHEDULES) test(`a ${schedule} field sphere and a triangle sphere interpenetrate where their analytic surfaces cross`, async () => {
   const A: Vec3 = [-0.45, 1, 0], B: Vec3 = [0.45, 1, 0.1];
-  const traced = draw.field("traced", (p) => sdSphere(sub(p, vec3(...A)), 1), { bounds: bound.sphere([...A], 1.05), paint: () => vec3(1, 0.05, 0.05), steps: 96, outline: "none" });
+  const traced = draw.field("traced", (p) => sdSphere(sub(p, vec3(...A)), 1), { bounds: bound.sphere([...A], 1.05), paint: () => vec3(1, 0.05, 0.05), steps: 96, outline: "none", schedule });
   // u from pole to pole, v round; z negated so that d/du x d/dv points outward (the lit side, back faces culled).
   const ball = surface((u: F, v: F) => {
     const b = mul(u, Math.PI), a = mul(v, Math.PI * 2);
@@ -213,7 +259,7 @@ test("impostor spheres hit where the analytic ray-sphere intersection says, cell
 test("a field with a dropped stretch factor is refused by name at compile time; the correct one compiles", () => {
   const fold = kifs({ count: 3, fold: fold3.mirror(0), scale: 2, offset: [1, 0.5, 0] });
   const b = bound.box([-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]);
-  const opts = { bounds: b, paint: () => vec3(1, 1, 1), steps: 32, outline: "none" } as const;
+  const opts = { bounds: b, paint: () => vec3(1, 1, 1), steps: 32, outline: "none", schedule: "trace" } as const;
   const dropped = sceneOf(draw.field("dropped", (p) => sdSphere(fold(p).x, 0.9), opts));
   let caught: unknown;
   try { compileScene(dropped); } catch (e) { caught = e; }

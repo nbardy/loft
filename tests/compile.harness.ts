@@ -19,7 +19,7 @@ export function layouts(dev: GPUDevice, a: Artefact, visibility: number): [GPUBi
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility, buffer: { type: "read-only-storage" } });
   return [
     dev.createBindGroupLayout({ entries: [{ binding: 0, visibility, buffer: { type: "uniform" } }, storage(1), storage(2), storage(3)] }),
-    dev.createBindGroupLayout({ entries: a.dynamic.map((d) => storage(d.binding)) }),
+    dev.createBindGroupLayout({ entries: [...a.dynamic, ...(a.statics ?? [])].map((d) => storage(d.binding)) }),
   ];
 }
 
@@ -66,7 +66,8 @@ export async function probe(a: Artefact, state: FrameState, module: string, code
   const pass = encoder.beginComputePass();
   pass.setPipeline(pipeline);
   pass.setBindGroup(0, group(g0, [frame, buffer(state.inputs), buffer(state.params), buffer(state.curves)]));
-  pass.setBindGroup(1, group(g1, a.dynamic.map((d) => buffer(tables[d.name]))));
+  // Statics follow the dynamic buffers in binding order (compile/tables.ts), so the array index is the binding.
+  pass.setBindGroup(1, group(g1, [...a.dynamic.map((d) => buffer(tables[d.name])), ...(a.statics ?? []).map((d) => buffer(d.data))]));
   pass.setBindGroup(2, group(g2, [out, buffer(Float32Array.from(xs.flatMap((x) => [...x, 0, 0, 0, 0].slice(0, 4))))]));
   pass.dispatchWorkgroups(xs.length);
   pass.end();
