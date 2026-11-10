@@ -17,6 +17,7 @@ export type { Artefact } from "./artefact.ts";
 export { bound, type TraceBound, type TraceOutline } from "./draw/trace.ts";
 export { checkField, FieldDrawable, fieldPixel, FieldSafetyError, LIPSCHITZ_LIMIT, measureField, type FieldHit, type FieldSafetyFailure } from "./draw/field.ts";
 export { impostors, Impostors, type Cell, type ImpostorHit, type ImpostorOptions, type ImpostorShape } from "./draw/impostors.ts";
+export { Copies, drawCopies, type CopiesHit, type CopiesOptions } from "./draw/copies.ts";
 export { limb, polyline, unit, type Limb, type LimbSpec } from "./geom/limb.ts";
 export { gait, course, type Course, type Gait, type GaitSpec } from "./geom/gait.ts";
 export { fan, rayOf, catenary, type FanSpec } from "./geom/fan.ts";

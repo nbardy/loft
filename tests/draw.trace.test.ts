@@ -5,6 +5,7 @@ import { SCENE_DEPTH_WGSL, PRELUDE_WGSL, type Artefact, type Camera, type Draw }
 import coral from "../examples/coral.ts";
 import nest from "../examples/nest.ts";
 import pearls from "../examples/pearls.ts";
+import coralList from "../examples/coral_list.ts";
 import {
   add, bound, compileJs, compileScene, cos, draw, FieldSafetyError, impostors, min, mul, scene, sea, sin, spacing, sub, surface, toon, variable, vec3,
   f, type F, type ImpostorShape, type Scene,
@@ -253,6 +254,60 @@ test("impostor spheres hit where the analytic ray-sphere intersection says, cell
   }
 }, 120000);
 
+/** Ray against a capsule (Quilez's closed form), transcribed independently of the shader's. */
+function hitCapsule(r: Ray, a: Vec3, b: Vec3, rad: number): number | undefined {
+  const dot = (u: Vec3, v: Vec3) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+  const ba: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]], oa: Vec3 = [r.o[0] - a[0], r.o[1] - a[1], r.o[2] - a[2]];
+  const baba = dot(ba, ba), bard = dot(ba, r.d), baoa = dot(ba, oa), rdoa = dot(r.d, oa), oaoa = dot(oa, oa);
+  const qa = baba - bard * bard, qb = baba * rdoa - baoa * bard, qc = baba * oaoa - baoa * baoa - rad * rad * baba, h = qb * qb - qa * qc;
+  if (h < 0) return undefined;
+  const t = (-qb - Math.sqrt(h)) / qa, y = baoa + t * bard;
+  if (y > 0 && y < baba) return t;
+  const oc: Vec3 = y <= 0 ? oa : [r.o[0] - b[0], r.o[1] - b[1], r.o[2] - b[2]];
+  const cb = dot(r.d, oc), hc = cb * cb - dot(oc, oc) + rad * rad;
+  return hc > 0 ? -cb - Math.sqrt(hc) : undefined;
+}
+
+// Catches: a copy's box that does not hold it (turned the wrong way for a slanted or end-on copy: pixels that should show
+// a capsule show none), the copies' table read with the wrong stride, the wrong copy's ends reaching a pixel, and the
+// depth written. Capsules lie along x, slanted, and nearly toward the camera, and two of them cross.
+test("listed capsules hit where the analytic ray-capsule intersection says, copy by copy", async () => {
+  const caps: { a: Vec3; b: Vec3; r: number }[] = [
+    { a: [-1.2, 0.6, 0], b: [1.0, 0.6, 0.2], r: 0.22 },
+    { a: [-0.4, 0.3, -0.8], b: [0.5, 1.9, 0.6], r: 0.16 },
+    { a: [0.2, 1.2, -0.6], b: [1.3, 1.9, 1.0], r: 0.3 },
+    { a: [-1.0, 1.5, 0.4], b: [-0.9, 1.6, 0.5], r: 0.35 },
+  ];
+  const listed = draw.copies("probe", {
+    kind: "capsule", copies: caps.map((c, k) => ({ a: c.a, ra: c.r, b: c.b, rb: c.r, level: 0, id: [k, 0, 0] as const })),
+    paint: () => vec3(1, 0, 0), outline: "none", minPixels: 0, keepLevels: 0, inkBack: 0,
+  });
+  for (const camera of cameras) {
+    const got = await positions(sceneOf(listed), ["probe"], camera, W, H);
+    const m = cameraMatrices(camera, W / H);
+    const tAt = (x: number, y: number): number | undefined => {
+      const r = rayAt(m, x, y, W, H);
+      const ts = caps.map((c) => hitCapsule(r, c.a, c.b, c.r)).filter((t): t is number => t !== undefined && t > 0);
+      return ts.length === 0 ? undefined : Math.min(...ts);
+    };
+    let worst = 0, checked = 0;
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      const t = tAt(x, y);
+      if (t === undefined) continue;
+      // Away from silhouettes and from where one capsule passes in front of another: every neighbour hits at nearly the same t.
+      const around = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, 1], [-1, 1], [1, -1]].map(([i, j]) => tAt(x + 2 * i!, y + 2 * j!));
+      if (around.some((u) => u === undefined || Math.abs(u - t) > 0.08)) continue;
+      const g = got[y * W + x];
+      if (!g) throw new Error(`${camera.kind}: pixel (${x}, ${y}) should show a capsule but shows none`);
+      worst = Math.max(worst, dist(g, at(rayAt(m, x, y, W, H), t)));
+      checked++;
+    }
+    console.log(`${camera.kind} listed capsules: ${checked} pixels, worst ${worst.toExponential(2)}`);
+    expect(checked).toBeGreaterThan(600);
+    expect([camera.kind, worst < 1e-3]).toEqual([camera.kind, true]);
+  }
+}, 120000);
+
 // Catches: the check not running at compile time, not sampling where the field is used, or missing a classic mistake:
 // a scale fold whose stretch factor was dropped (the distance at the folded point, used as if it were a world
 // distance, overshoots by the zoom: 2^3 = 8 here). The correct field passes, and an explicit safety silences it.
@@ -284,7 +339,7 @@ test("every traced example's shaders, and impostor capsules and cones, build pip
     paint: () => vec3(1, 1, 1), cells: 16, outline: "silhouette",
   }));
   const errors: string[] = [];
-  for (const s of [coral, nest, pearls, sceneOf(...kinds)]) {
+  for (const s of [coral, coralList, nest, pearls, sceneOf(...kinds)]) {
     const a = compileScene(s).artefact;
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
     const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });

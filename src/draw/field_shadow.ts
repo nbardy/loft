@@ -56,20 +56,30 @@ export function fieldShadow(field: Field, b: TraceBound, px: Expr<"f32">): Field
   const above = all.filter((p) => p[1] > 0);
   const pts = above.length >= 2 ? above : all;
   if (pts.length < 2) return fromBound(b, `only ${pts.length} of ${GRID ** 3} samples fell inside the solid`);
-  const n = pts.length, mean = [0, 1, 2].map((a) => pts.reduce((s, p) => s + p[a]!, 0) / n) as unknown as V3;
+  const cell = Math.max((max[0] - min[0]) / GRID, (max[2] - min[2]) / GRID);
+  return { kind: "sampled", inside: pts.length, chain: fitBlob(pts.map((q) => ({ p: q, w: 1 })), cell / 2) };
+}
+
+/**
+ * The blob of weighted points, as a capsule chain: along the horizontal principal axis of the points, as long as their
+ * extent along it, as wide as 1.5 times their spread across it (at least `minRadius`), at their mean height. Needs two
+ * points or more. Shared by every drawable whose solid is known as points: a field's inside samples, a list's copies.
+ */
+export function fitBlob(pts: readonly { readonly p: V3; readonly w: number }[], minRadius: number): readonly { readonly p: V3; readonly r: number }[] {
+  if (pts.length < 2) throw new Error(`fitBlob: ${pts.length} points; a blob needs at least two`);
+  const n = pts.reduce((s, q) => s + q.w, 0), mean = [0, 1, 2].map((a) => pts.reduce((s, q) => s + q.w * q.p[a]!, 0) / n) as unknown as V3;
   // The horizontal covariance's principal axis (closed form for a 2x2 symmetric matrix).
   let sxx = 0, szz = 0, sxz = 0;
-  for (const p of pts) { const x = p[0] - mean[0], z = p[2] - mean[2]; sxx += x * x; szz += z * z; sxz += x * z; }
+  for (const { p, w } of pts) { const x = p[0] - mean[0], z = p[2] - mean[2]; sxx += w * x * x; szz += w * z * z; sxz += w * x * z; }
   const angle = 0.5 * Math.atan2(2 * sxz, sxx - szz), ax = Math.cos(angle), az = Math.sin(angle);
   let lo = Infinity, hi = -Infinity, across = 0;
-  for (const p of pts) {
+  for (const { p, w } of pts) {
     const x = p[0] - mean[0], z = p[2] - mean[2], s = x * ax + z * az, t = -x * az + z * ax;
-    lo = Math.min(lo, s); hi = Math.max(hi, s); across += t * t;
+    lo = Math.min(lo, s); hi = Math.max(hi, s); across += w * t * t;
   }
-  const cell = Math.max((max[0] - min[0]) / GRID, (max[2] - min[2]) / GRID);
-  const r = Math.max(1.5 * Math.sqrt(across / n), cell / 2);
+  const r = Math.max(1.5 * Math.sqrt(across / n), minRadius);
   const a = Math.min(lo + r, (lo + hi) / 2), e = Math.max(hi - r, (lo + hi) / 2);
-  return { kind: "sampled", inside: n, chain: chainOf([mean[0] + ax * a, mean[1], mean[2] + az * a], [mean[0] + ax * e, mean[1], mean[2] + az * e], r) };
+  return chainOf([mean[0] + ax * a, mean[1], mean[2] + az * a], [mean[0] + ax * e, mean[1], mean[2] + az * e], r);
 }
 
 /** The blob as a skeleton (constant joints). */

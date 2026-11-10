@@ -546,6 +546,48 @@ coral's twigs (they are a few pixels wide at every distance) would need far more
 406k triangles, 3 ms, tips still knobs). Pictures before and after differ in under 1.1% of pixels by more than 8 of 255
 (2.2% from straight above), only along edges (the normal and the derivatives at silhouettes); pearls byte-identical.
 `out/tracer/final/` (not in git) holds them.
+### 7.8 Unfold: a fold listed (`src/lib/similar.ts`, `draw.copies`; as built, 2026-11-11)
+
+A fold made of shifts, turns, mirrors and uniform scales has two readings, derived from one chain of generators
+(`gen.shift`, `gen.turn`, `gen.mirror`, `gen.shrink`):
+
+```ts
+ask(chain)(p)        // a point to its folded point, id and stretch: compose in front of a field
+list(chain, frame)   // a frame to the frames of its copies, with the ids `ask` reports in them
+tree({ part, step }) // branching recursion: .at(p, count) asked, .branches(levels, root) listed
+```
+
+`draw.copies(name, { kind, copies, paint, outline, minPixels, keepLevels, inkBack })` draws a list: one instance per
+copy, its oriented box with front faces culled, and one exact ray intersection per covered pixel (the closed forms of
+`impostors`). Depth is written per copy, so the nearest hit over the copies is the hit of their union. `paint` is given
+the copy's level and id, so it does not evaluate the field again. A copy under `minPixels` across is not drawn. The
+copies cast one blob shadow, fitted as a traced field's is (`fitBlob`).
+
+The two readings are the same solid where every copy stays on its own side of its mirrors
+(`tests/similar.test.ts`: to 1e-4, branch for branch). A copy that crosses a mirror is cut when asked and whole when
+listed.
+
+Ink differs from the march's. A march inks an inner silhouette only when a sample happens to fall just before the
+closest approach, so its crowns carry little ink inside. A list knows every near miss. It writes a thin band at the
+near miss and the rest of the width `inkBack` ink widths further back, so the full outline shows against the far
+background and gives way to a neighbour close behind.
+
+Measured on the coral (three trees, 3,069 branches), GPU time of the draw alone at 1280x800, best of 40, same rounds
+(`bun tools/tracer_bench.ts <tag> 40 coral,coral_list own`):
+
+| ms | three | front | side | top | close | far |
+|---|---:|---:|---:|---:|---:|---:|
+| `examples/coral.ts`, marched through its brick | 4.92 | 5.96 | 6.09 | 6.82 | 25.89 | 1.90 |
+| `examples/coral_list.ts`, listed | 1.38 | 1.51 | 1.51 | 1.31 | 3.08 | 0.72 |
+
+Compile is 31 ms against 7.2 s (there is no bake), and static tables are 0.14 MB against 4.04 MB. The pictures differ
+in 1.5% to 9.5% of pixels by more than 8/255, depending on the camera: the ink described above, the shadow blob's fit,
+and branches the fold cuts.
+
+Not done: `draw.field` does not choose this schedule by itself; an author writes the list. A level-dependent step, a
+part that is not a sphere, capsule or rounded cone, and blends between copies (docs/tracing_sota.md 5.5) are not
+covered.
+
 ## 8. Relief: form finer than the curves (as built, 2026-11-11)
 
 Curves give gesture and mass; relief is the layer above, written in a surface's own coordinates (u, v) so it rides

@@ -10,6 +10,7 @@ import { atRest } from "../map/surface.ts";
 import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface.ts";
 import { drawField } from "./field.ts";
 import { drawRelief } from "./relief.ts";
+import { drawCopies } from "./copies.ts";
 import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
 export type { DensityOptions };
@@ -24,6 +25,7 @@ export type Bounds = { readonly min: readonly [number, number, number]; readonly
 
 export type { FieldOptions } from "./field.ts";
 export type { ReliefOptions } from "./relief.ts";
+export type { CopiesHit, CopiesOptions } from "./copies.ts";
 
 export type CurveOptions = {
   /** Half-width of the stroke at u, world units. */
@@ -66,6 +68,8 @@ export const draw = {
   field: drawField,
   /** Relief shell-traced on a surface, in its own coordinates (scales, spikes, barnacles). */
   relief: drawRelief,
+  /** Listed copies of a simple solid, each intersected exactly per pixel (a fold run backwards: trees, coral, spines). */
+  copies: drawCopies,
   /**
    * A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to
    * the opaque scene, lit by the sun, the sky and flashes inside it (`src/soft/density.ts`).

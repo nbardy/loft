@@ -164,6 +164,28 @@ fn imp_sd(p: vec3<f32>, a: vec4<f32>, b: vec4<f32>) -> f32 {
   return (sqrt(x2 * a2 * il2) + y * rr) * il2 - a.w;
 }`;
 
+/** The intersector and distance of each kind, for drawables that intersect one listed shape per draw (copies.ts). */
+export function shapeWgsl(kind: ImpostorShape["kind"]): string {
+  switch (kind) {
+    case "sphere": return SPHERE;
+    case "capsule": return CAPSULE;
+    case "cone": return CONE;
+  }
+}
+
+/** WGSL `imp_closest(o, d, a, b)`: the point of the ray o + t d nearest the segment a-b (as t), for a miss's closest approach. */
+export const CLOSEST_WGSL = /* wgsl */ `
+fn imp_closest(o: vec3<f32>, d: vec3<f32>, a: vec3<f32>, b: vec3<f32>) -> f32 {
+  let ba = b - a;
+  let w = o - a;
+  let bb = dot(ba, ba);
+  let db = dot(d, ba);
+  let den = bb - db * db;
+  // s on the segment, t on the ray (d is unit). A sphere (bb = 0) or a parallel ray uses the segment's start.
+  let s = select(clamp((dot(w, ba) - db * dot(w, d)) / den, 0.0, 1.0), 0.0, den < 1e-9 * max(bb, 1e-20) || bb < 1e-20);
+  return max(dot(a + ba * s - o, d), 0.0);
+}`;
+
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(num).join(", ")})`;
 
@@ -211,17 +233,7 @@ override CELLS: u32 = 64u;
 const CELL: vec3<f32> = ${v3(c)};
 const KLO: vec3<f32> = ${v3(lo)};
 const KHI: vec3<f32> = ${v3(hi)};
-/// The point of the ray o + t d nearest the segment a-b (as t), for the closest approach of a miss.
-fn imp_closest(o: vec3<f32>, d: vec3<f32>, a: vec3<f32>, b: vec3<f32>) -> f32 {
-  let ba = b - a;
-  let w = o - a;
-  let bb = dot(ba, ba);
-  let db = dot(d, ba);
-  let den = bb - db * db;
-  // s on the segment, t on the ray (d is unit). A sphere (bb = 0) or a parallel ray uses the segment's start.
-  let s = select(clamp((dot(w, ba) - db * dot(w, d)) / den, 0.0, 1.0), 0.0, den < 1e-9 * max(bb, 1e-20) || bb < 1e-20);
-  return max(dot(a + ba * s - o, d), 0.0);
-}
+${CLOSEST_WGSL}
 @diagnostic(off, derivative_uniformity)
 @fragment fn fs(in: TraceIn) -> TraceOut {
   let d = view_dir(in.world);

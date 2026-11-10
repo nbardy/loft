@@ -187,14 +187,24 @@ export const PROXY_VERTICES = CUBE.length;
 export function traceWgsl(b: TraceBound, show: string): string {
   const o = obbOf(b);
   return /* wgsl */ `${spanWgsl(b)}
-const LOFT_CUBE = array<vec3<f32>, ${CUBE.length}>(${CUBE.map(v3).join(", ")});
 struct TraceIn { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32> };
-struct TraceOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32, @builtin(sample_mask) mask: u32 };
 @vertex fn vs(@builtin(vertex_index) vi: u32) -> TraceIn {
   let c = LOFT_CUBE[vi];
   let w = ${v3(o.c)} + ${v3(o.axes[0])} * (c.x * ${num(o.half[0])}) + ${v3(o.axes[1])} * (c.y * ${num(o.half[1])}) + ${v3(o.axes[2])} * (c.z * ${num(o.half[2])});
   return TraceIn(select(HIDDEN_VERTEX, frame.view_proj * vec4<f32>(w, 1.0), ${show}), w);
 }
+${tracePlumbingWgsl()}`;
+}
+
+/**
+ * What every per-pixel tracer needs whatever its proxy: the unit cube's corners (`LOFT_CUBE`, ${CUBE.length} vertices), the
+ * fragment output, the view ray's origin, depth, the coverage mask, and the shading helpers. A drawable with its own
+ * vertex stage (one box per copy, src/draw/copies.ts) takes this without `traceWgsl`'s single static bound.
+ */
+export function tracePlumbingWgsl(): string {
+  return /* wgsl */ `
+const LOFT_CUBE = array<vec3<f32>, ${CUBE.length}>(${CUBE.map(v3).join(", ")});
+struct TraceOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32, @builtin(sample_mask) mask: u32 };
 /// The view ray through a point of the proxy: origin on the eye (perspective) or on the plane through the eye
 /// across the view (orthographic), and unit direction. One formula for both cameras.
 fn trace_origin(w: vec3<f32>, d: vec3<f32>) -> vec3<f32> {

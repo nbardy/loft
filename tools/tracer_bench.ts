@@ -20,6 +20,7 @@ import { gpuTimer, type GpuTimer } from "./gpu_time.ts";
 import { writeWebp } from "../src/cli/image.ts";
 import { FieldDrawable, type FieldSchedule } from "../src/draw/field.ts";
 import coral from "../examples/coral.ts";
+import coralList from "../examples/coral_list.ts";
 import nest from "../examples/nest.ts";
 import pearls from "../examples/pearls.ts";
 
@@ -29,7 +30,7 @@ const which = (process.argv[4] ?? "coral,nest,pearls").split(",");
 const schedules = (process.argv[5] ?? "own").split(",") as (FieldSchedule | "own" | "base")[];
 const baseDir = process.argv[6];
 const W = 1280, H = 800;
-const SCENES: Record<string, Scene> = { coral, nest, pearls };
+const SCENES: Record<string, Scene> = { coral, coral_list: coralList, nest, pearls };
 /** The draws a traced example adds (its field or impostors, and a meshed field's ink hull). */
 const traced = (label: string): boolean => /^(coral|nest|pearls)(_ink)?$/.test(label);
 

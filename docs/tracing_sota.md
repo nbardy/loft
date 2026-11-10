@@ -1,6 +1,6 @@
 # Marching, tracing and the alternatives: state of the art, and what follows for Loft (2026-11-11)
 
-Status: research and derivation. Nothing in section 5 is built. Counts in section 3 come from a CPU model of one small
+Status: research and derivation. Of section 5, only 5.3 (unfold) is built. Counts in section 3 come from a CPU model of one small
 picture (`tools/explain_marching_3d.ts`); they are operation counts, not GPU time. Published numbers are marked by how
 they were checked:
 
@@ -232,6 +232,11 @@ orbit: () => Points<{ transform, id }>    // list: one instance per copy
 This is the existing rule "a fold composes for things you ask and becomes instancing for things you list", made
 automatic: the compiler can count both costs and choose.
 
+**Built and measured (2026-11-11).** `src/lib/similar.ts` derives both readings from one chain of generators and
+`draw.copies` draws the list (DESIGN.md 7.8). On the coral, GPU time of the draw alone at 1280x800 fell from 4.9 to
+6.8 ms (marched through its brick; 12.6 to 16.4 ms before the brick) to 1.3 to 1.5 ms, and the close-up from 25.9 ms
+to 3.1 ms. The compiler does not yet choose between the readings; `examples/coral_list.ts` writes the list.
+
 ### 5.4 Solve onto the body: one root per vertex
 
 Take a field G in a body's coordinates, written with the usual blends, carves and warps. For each vertex `(m, v)` of
@@ -332,7 +337,7 @@ When no precondition holds the compiler reports which ones failed. It does not f
 ## 6. Order of work
 
 1. Merge `wave3/triangles` and `wave3/tracer` and read `loft profile`. Until then there is no per-object GPU time.
-2. Unfold, on the coral. It has the largest counted gain and the coral is the slow case.
+2. Unfold, on the coral. Done: 1.3 to 1.5 ms against 4.9 to 6.8 ms (5.3). Still to do: the compiler choosing it.
 3. Solve onto the body, on a creature with blended parts.
 4. The slope and interval readings: hulls without hand bounds, the check as a proof, pruning.
 5. Hull march, for blends that fail the one-root check.
