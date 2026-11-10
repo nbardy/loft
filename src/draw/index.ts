@@ -1,13 +1,13 @@
 // One generic drawable per signature (DESIGN.md 7.4). `draw.surface`, `draw.curve` and `draw.points` are implemented;
-// `draw.field`, `draw.relief` and `draw.density` are specified here (their options and what they draw) and belong to
+// `draw.relief` is built (relief.ts); `draw.field` and `draw.density` are specified here (their options and what they draw) and belong to
 // the tracers of docs/folding_and_tracing.md.
 
 import { add, clamp, cross, div, length, lift, max, mul, sub, type In } from "../expr.ts";
 import { viewDir } from "../lib/wgsl.ts";
 import type { Drawable } from "../compile/context.ts";
-import type { Warp } from "../map/types.ts";
 import { NO_SKELETON, type Curve, type Density, type F, type Field, type P3, type Paint, type Points, type Surface } from "../map/types.ts";
 import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface.ts";
+import { drawRelief } from "./relief.ts";
 
 /** A drawable that can be drawn once per point of a `Points`. */
 export interface Instanceable {
@@ -32,15 +32,7 @@ export type FieldOptions = {
   /** A safety factor below 1 for fields whose stretch is only a bound (twist, bend, noise warps). */
   readonly lipschitz: number;
 };
-export type ReliefOptions = {
-  /** Height above the surface at (u, v), in world units, at most `hMax`. */
-  readonly height: (u: F, v: F) => F;
-  readonly hMax: number;
-  /** A fold in (u, v) applied before `height`: one motif, any number of copies. */
-  readonly fold: Warp<"vec2">;
-  readonly paint: Paint;
-  readonly steps: number;
-};
+export type { ReliefOptions } from "./relief.ts";
 export type DensityOptions = { readonly bounds: Bounds; readonly colour: In<"vec3">; readonly steps: number };
 
 export type CurveOptions = {
@@ -85,7 +77,7 @@ export const draw = {
   /** A distance field, sphere-traced inside its bounds (folded and recursive solids). */
   field: notYet("draw.field") as (name: string, field: Field, o: FieldOptions) => Drawable,
   /** Relief shell-traced on a surface, in its own coordinates (scales, spikes, barnacles). */
-  relief: notYet("draw.relief") as (name: string, surface: Surface, o: ReliefOptions) => Drawable,
+  relief: drawRelief,
   /** A density integrated along the view ray (cloud, fog). */
   density: notYet("draw.density") as (name: string, density: Density, o: DensityOptions) => Drawable,
 };
