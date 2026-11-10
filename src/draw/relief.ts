@@ -50,6 +50,8 @@ const MIN_STEPS = 6;
 const DENSITY = 0.6;
 /** Below this many pixels of relief height the march is skipped; the relief's normal is fully used above DETAIL_FULL. */
 const SUBPIXEL = 1, DETAIL_FULL = 4;
+/** The shell's thickness at most this fraction of the local radius of curvature. */
+const CURVATURE_CAP = 0.35;
 
 const S = variable("s", "f32"), T = variable("t", "f32");
 const U = variable("u", "f32"), V = variable("v", "f32"), H = variable("h", "f32");
@@ -122,7 +124,11 @@ struct VOut {
 @vertex fn vs(@builtin(vertex_index) vi: u32) -> VOut {
   let ij = vec2<u32>((vi / 6u) / NV, (vi / 6u) % NV) + quad_corner(vi % 6u);
   let s = shell_${n}(f32(ij.x) / f32(NU), f32(ij.y) / f32(NV));
-  let top = HMAX * 1.02 + ${ink.pad("s.base")};
+  // The shell is never thicker than a third of the surface's radius of curvature (|dN| / |dS| along u and v): past
+  // that the tracer's second-order model invents hits. Found at the spiral shell's apex (2026-11-11), where the tube is
+  // thinner than the relief's shell and stray slivers hung below it. Relief taller than the cap is clipped there.
+  let kappa = max(length(s.nu) / max(length(s.su), 1e-9), length(s.nv) / max(length(s.sv), 1e-9));
+  let top = min(HMAX * 1.02 + ${ink.pad("s.base")}, ${lit(CURVATURE_CAP)} / max(kappa, 1e-6));
   let p = s.base + s.n * top;
   var out: VOut;
   out.clip = frame.view_proj * vec4<f32>(p, 1.0);
