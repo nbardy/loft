@@ -27,6 +27,9 @@ export type TriangleMesh = {
 /** A CPU field: distance at a point (already 1-Lipschitz, at full detail). */
 export type CpuField = (x: number, y: number, z: number) => number;
 
+/** Most Newton steps per vertex. */
+const NEWTON = 3;
+
 /** The surface's mesh from the brick's samples; `field` is the analytic field the brick was baked from. */
 export function surfaceNets(brick: Brick, field: CpuField): TriangleMesh {
   const h = brick.cell, [nx, ny, nz] = brick.dims;
@@ -39,7 +42,9 @@ export function surfaceNets(brick: Brick, field: CpuField): TriangleMesh {
   const gradAt = (x: number, y: number, z: number): V3 => {
     // Tetrahedral differences: sum_k s_k f(p + e s_k) over the corners (1,-1,-1), (-1,-1,1), (-1,1,-1), (1,1,1).
     const a = field(x + e, y - e, z - e), b = field(x - e, y - e, z + e), c = field(x - e, y + e, z - e), d = field(x + e, y + e, z + e);
-    return [a - b - c + d, -a - b + c + d, -a + b - c + d];
+    // The sum is 4 e times the gradient (sum_k s_k s_k^T = 4 I).
+    const k = 1 / (4 * e);
+    return [(a - b - c + d) * k, (-a - b + c + d) * k, (-a + b - c + d) * k];
   };
   const S = (i: number, j: number, k: number) => brick.sample(i, j, k);
 
@@ -69,16 +74,21 @@ export function surfaceNets(brick: Brick, field: CpuField): TriangleMesh {
         sx += (n & 1) + (bit === 1 ? t : 0); sy += ((n >> 1) & 1) + (bit === 2 ? t : 0); sz += (n >> 2) + (bit === 4 ? t : 0); c++;
       }
       let px = brick.origin[0] + (i + sx / c) * h, py = brick.origin[1] + (j + sy / c) * h, pz = brick.origin[2] + (k + sz / c) * h;
-      // One Newton step onto the surface along the gradient, kept within a cell (a thin feature's far side must not
-      // pull the vertex across it).
-      const f0 = field(px, py, pz);
-      const g = gradAt(px, py, pz);
-      const gl = Math.hypot(g[0], g[1], g[2]);
-      const nx_ = gl > 0 ? g[0] / gl : 0, ny_ = gl > 0 ? g[1] / gl : 1, nz_ = gl > 0 ? g[2] / gl : 0;
-      if (gl > 0) {
+      // Newton steps onto the surface along the gradient (one lands exactly for a true distance where it is smooth; near
+      // an edge of a solid the differences straddle a crease and it takes a second or third), each kept within a cell
+      // so a thin feature's far side cannot pull the vertex across it.
+      let g: V3 = [0, 1, 0];
+      for (let it = 0; it < NEWTON; it++) {
+        const f0 = field(px, py, pz);
+        if (it > 0 && Math.abs(f0) < 1e-3 * h) break;
+        const gg = gradAt(px, py, pz);
+        const gl = Math.hypot(gg[0], gg[1], gg[2]);
+        if (!(gl > 0)) break;
+        g = [gg[0] / gl, gg[1] / gl, gg[2] / gl];
         const step = Math.max(-h, Math.min(h, f0 / gl));
-        px -= nx_ * step; py -= ny_ * step; pz -= nz_ * step;
+        px -= g[0] * step; py -= g[1] * step; pz -= g[2] * step;
       }
+      const [nx_, ny_, nz_] = g;
       vertexOf.set(cellKey(i, j, k), pos.length / 3);
       pos.push(px, py, pz);
       nrm.push(nx_, ny_, nz_);
