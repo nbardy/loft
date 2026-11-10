@@ -26,7 +26,7 @@
 import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type FrameStats, type PostPass, type Host, type Loaded, type View } from "../artefact.ts";
 import { CURVE_N, type NumTy } from "../expr.ts";
 import { cameraMatrices } from "./camera.ts";
-import { planFrame, type Memory, type Plan } from "./detail.ts";
+import { planFrame, slotsUsed, type Memory, type Plan } from "./detail.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 
@@ -467,6 +467,8 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const curveBuf = buffer("curves", a.curves.byteLength, STORAGE);
   const detailBuf = buffer("loft_detail", DETAIL_SLOTS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
   const detail = new Float32Array(DETAIL_SLOTS * 4);
+  // Only the slots the artefact uses are uploaded each frame (the rest of the 64 KiB array is never read).
+  const detailFloats = Math.max(4, slotsUsed(a) * 4);
   // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames.
   const memory: Memory = new Map();
   if (a.curves.length > 0) device.queue.writeBuffer(curveBuf, 0, a.curves as Float32Array<ArrayBuffer>); // Dawn warns on empty writes
@@ -572,7 +574,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     if (state.inputs.length > 0) device.queue.writeBuffer(inputBuf, 0, state.inputs as Float32Array<ArrayBuffer>);
     if (state.params.length > 0) device.queue.writeBuffer(paramBuf, 0, state.params as Float32Array<ArrayBuffer>);
     const plan = planFrame(a, view, tables, memory, detail);
-    device.queue.writeBuffer(detailBuf, 0, detail);
+    device.queue.writeBuffer(detailBuf, 0, detail, 0, detailFloats);
     return plan;
   };
 
