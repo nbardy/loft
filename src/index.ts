@@ -2,7 +2,7 @@
 export * from "./expr.ts";
 export { keys, ramp, through, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";
 export * from "./map/index.ts";
-export { draw, NotImplementedError, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type ReliefOptions } from "./draw/index.ts";
+export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type ReliefOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb } from "./geom/strand.ts";
 export { crest, type CrestSpec } from "./geom/crest.ts";
@@ -34,3 +34,4 @@ export { afloat, afloatFrame, rigid, type AfloatSpec, type Waters } from "./geom
 export { hull, Hull, type HullSpec, type HullLook, type Lines, type Station } from "./geom/hull.ts";
 export { ship, Ship, type ShipSpec, type ShipColours, type Placement } from "./geom/ship.ts";
 export { lines, type Rope, type LinesSpec } from "./geom/lines.ts";
+export * from "./soft/index.ts";

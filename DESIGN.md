@@ -718,3 +718,86 @@ placed body (fins) and wrong for solids. `examples/maelstrom.ts` coils the serpe
 
 Best-case frame times at 1280x800 on a heavily loaded machine (headless, including readback): brig 7.7 ms, fleet
 12.9 ms, maelstrom 11.3 ms.
+## 11. Soft things (`src/soft/`, as built)
+
+Soft things are integrals and distances evaluated per pixel, not stacks of polygons. All of them are exported from
+`loft` (`src/soft/index.ts`); `examples/storm.ts` uses every one.
+
+### 8.1 Closed forms (`gauss.ts`)
+
+A Gaussian density `d0 exp(-|K (p - c)|^2)` (K the inverse radii; 0 on an axis is unbounded) has, along a ray, a
+quadratic exponent, so its optical depth over a segment is `exp(-qmin) / s * G(a, b)` with `G` an erf difference.
+erfc is Numerical Recipes' `erfcc` (fractional error < 1.2e-7, so tails keep relative accuracy); when `s L < 0.05` the
+closed form cancels and Simpson's rule on the exponent is used instead (this also covers a ray parallel to a layer).
+WGSL and a JavaScript twin; both are tested against numerical integration to 1e-4 (`tests/soft.gauss.test.ts`).
+
+### 8.2 Media and `draw.density` (`medium.ts`, `density.ts`, `cloud.ts`)
+
+```ts
+const m = medium("storm", { puffs: [...thunderhead({...}).puffs, layer({...})], banks: [bank({...})], flashes: [...] });
+draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.3, shadowing: 0.8, detail: { kind: "noise", amount: 1, scale: 2.5 }, haze: 0.004 })
+```
+
+- Kinds: `blob` (bounded Gaussian), `layer` (Gaussian in height: haze, ground fog), `bank` (a layer ending at a soft
+  vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D), `flash` (a point light
+  whose power is an expression of time). Every number may follow time. `Medium.density(p)` is the same sum as an
+  expression (the 7.1 `Density` signature).
+- Per frame on the CPU (the pose pass): blobs are evaluated, sorted on a Morton curve and grouped 8 to a bounding
+  sphere (`<name>_clusters`); the light pass computes each blob's optical depth through the *other* blobs toward the sun
+  and the zenith, one radius behind and in front of its centre, and the flash light reaching it through the medium.
+  O(N^2), culled by cluster spheres and closest approach.
+- Per pixel: the bound's back faces are drawn at depth 0 (so the camera may be inside), the ray is clipped to the box,
+  to `scene_position` (bodies inside a cloud are veiled by exactly what is in front of them and the cloud has a soft
+  edge on them) and to the swell. Pass 1 (no erfc) finds the blobs' depth range and an opacity cut; pass 2 integrates
+  each blob, lights it at the median first-scattering depth, and deposits it into 24 depth bins over that range; layers
+  and banks go in 8 pieces into those bins or 8 fixed bins over the whole ray; bins are merged by depth and composited
+  front to back. Nothing is sorted; nothing is dropped; alpha is exact.
+- Light: octaves of extinction (single plus softer multiple-scattering lobes), a Henyey-Greenstein forward lobe, sky
+  light = the style's `sky` at the zenith, flashes per blob. `shadowing` scales depths toward lights (stylised: < 1
+  keeps sunlit faces white); a blob's own shadow counts a third (at full strength every lump drew as its own sphere).
+- `cloud({ at, size, profile, blobs, turbulence, billow, drift, density, colour, seed, seconds })`: three tiers of puffs
+  (few large core, medium lobes, many small dense surface puffs: a Gaussian's edge is crisper the denser it is), a
+  level base, boiling from noise, drift; returns puffs and the bounds that hold them for `seconds`. `thunderhead({ at,
+  height, width, blobs, seed, drift, seconds })` is a profile preset.
+
+Corrections found by looking: lighting a puff at its centroid drew dark discs with bright rims (now: where seen); a
+capped list of 16 strongest pieces per pixel drew hard-edged discs where its membership changed (now: bins); a piece
+count growing with length drew streaks along view rays (now: fixed); one bin in front of the blobs drew the outline of
+the rain shaft into the fog (now: fixed fog bins).
+
+### 8.3 Glows, lightning, rain (`glow.ts`, `lightning.ts`, `rain.ts`)
+
+- `glow(name, curve, { segments, width, halo, colour, core, intensity, veil })`, `glows(name, strokes, ...)` for a
+  family, `flare(name, at, { size, halo, rays, ... })`. Strokes are sampled per frame into a table (any CPU-evaluable
+  curve). Each segment is a view-plane quad; a pixel is lit by the nearest segment of a window of 6 either side only, so
+  a curve's picture does not depend on how it is cut (tested). Core never thinner than a pixel (dims instead); additive;
+  hidden behind opaque bodies; `veil: { kind: "medium", medium }` attenuates by the medium's closed-form depth up to the
+  curve, so a bolt inside a cloud shows through it.
+- `bolt({ from, to, wander, roughness, levels, branches, schedule, segments })`: midpoint displacement in closed form
+  (a sum over levels of hat functions times hashed offsets), deterministic in (seed, strike index); branches leave the
+  channel at hashed points. `strikeAt(schedule)` is a pure function of time; `flicker(since)` (four return strokes),
+  `afterglow(since, s)`, `boltFlash` (a medium flash at the bolt's top), `sheetFlash` (in-cloud lightning at hashed
+  points), `skyFlash` (an additive wash).
+- `rain(name, spec)`: one camera-facing quad per streak, place and fall hashed from (index, cycle), slanted by wind,
+  faded at both ends and below a pixel's width, cut at the swell; `splashes(name, rain, spec)`: the ring each streak
+  made at its last landing, laid on the sea (`on-water`).
+
+### 8.4 Costs (best of 25, 1280x800, draw to texture without readback, heavily loaded machine; numbers vary ~2x run to run)
+
+| Scene | ms per frame (of which CPU pose) |
+|---|---|
+| storm, views three / side / front / low / edge | 44-58 / 56-60 / 53-68 / 63-81 / 76-91 (pose 11-19) |
+| serpent alone (same machine) | 2-9 |
+| thunderhead only, 65 / 130 / 260 / 520 blobs, ~15% of the screen | 4.5 / 8 / 15 / 34 |
+| same, ~50% / filling the screen, 260 blobs | 31-36 / 45-59 (pose 5-9) |
+
+Cost is linear in blob count and in covered pixels; the CPU light pass is O(N^2) (0.9 ms at 65 blobs, ~20 ms at 520)
+and each active flash adds another pass. Not real time for a 260-blob storm on this machine; the levers not yet pulled
+are half-resolution integration (needs host support), fewer blobs with more detail noise, and a light pass that reuses
+the previous frame (would break purity).
+
+### 8.5 Known limits
+
+- Close up (inside a cloud's edge) the Gaussians read as soft blur; the detail noise thins edges but does not add
+  sharp structure. Clouds do not shadow layers, banks, the sea or bodies; the flash does not light bodies except
+  through `skyFlash`. Order inside one depth bin is lost (a bin is ~1/24 of the blobs' depth range).
