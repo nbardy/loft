@@ -217,6 +217,15 @@ export class Body implements Surface, Chart, Placeable<Body> {
     return this.remake(compose(chart, this.chart), time, new Map(), this.table.base);
   }
 
+  /**
+   * The same body placed in `chart`, posting its own table under `tableName`. `placed` keeps the table's name (the
+   * placed body replaces the unplaced one); this is for carrying a whole creature somewhere while its unplaced self
+   * is still read, as the host its other parts are placed on (src/geom/whirlpool.ts coils the serpent this way).
+   */
+  placedAs(chart: Chart, tableName: string): Body {
+    return this.remake(compose(chart, this.chart), time, new Map(), tableName);
+  }
+
   /** The same kind of body elsewhere or at another time (a subclass that carries more, such as a look, overrides it). */
   protected remake(chart: Chart, slice: F, slices: Slices, tableName: string): Body {
     return new Body(this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName);
@@ -240,7 +249,10 @@ export class StationTable implements TableSource {
     const roots: Expr[] = [];
     // The spine reaches the world through the chart; for a body on a host this reads the host's table, which the pose
     // pass fills first (tables are filled on first read).
-    ms.forEach((m, k) => roots.push(b.chart.frame(local[k]).o, b.transport.twist(m), b.halfWidth(m), b.section.aspect(m)));
+    // The local spine too: stretch is measured on it (DESIGN.md 7.6), not on the placed one, so a chart that bends or
+    // lengthens the spine (a whirlpool winding a body into a coil) does not thin the body. Measuring the placed spine
+    // against the local rest thinned a coiled serpent by 1 / sqrt(5) (found by tests/ships.whirlpool.test.ts).
+    ms.forEach((m, k) => roots.push(b.chart.frame(local[k]).o, b.transport.twist(m), b.halfWidth(m), b.section.aspect(m), local[k]));
     roots.push(rotate(b.chart.frame(local[0]), b.transport.up));
     const run = p.compile(b.slice === time ? roots : substitute(roots, time, b.slice));
     // Stretch is measured against the rest pose: the local spine at time 0. It depends only on params, non-time inputs
@@ -260,14 +272,15 @@ export class StationTable implements TableSource {
       }
       return restValues;
     };
-    const PER = 4;
+    const PER = 5;
     return (frame, out) => {
       const v = run(frame);
-      const pos: V3[] = [], twist: number[] = [], halfWidth: number[] = [], aspect: number[] = [];
+      const pos: V3[] = [], twist: number[] = [], halfWidth: number[] = [], aspect: number[] = [], here: V3[] = [];
       for (let k = 0; k < n; k++) {
         pos.push(v[k * PER] as V3); twist.push(v[k * PER + 1] as number); halfWidth.push(v[k * PER + 2] as number); aspect.push(v[k * PER + 3] as number);
+        here.push(v[k * PER + 4] as V3);
       }
-      poseStrand({ pos, rest: restOf(frame), twist, halfWidth, aspect, up: v[n * PER] as V3, level: b.transport.level }, out, 0);
+      poseStrand({ pos, local: here, rest: restOf(frame), twist, halfWidth, aspect, up: v[n * PER] as V3, level: b.transport.level }, out, 0);
     };
   }
 }

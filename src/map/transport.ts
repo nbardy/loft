@@ -54,7 +54,9 @@ export function qrot(q: Q4 | readonly number[], v: V3): V3 {
 export type StrandSamples = {
   /** Spine positions at m_k = k / (count - 1). */
   readonly pos: readonly V3[];
-  /** The same spine at rest (stretch is measured against it). */
+  /** The spine in its own coordinates, before placement: stretch is measured on it. */
+  readonly local: readonly V3[];
+  /** The local spine at rest (stretch is measured against it). */
   readonly rest: readonly V3[];
   /** Twist (radians about the tangent) at each station. */
   readonly twist: readonly number[];
@@ -127,7 +129,7 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
     if (q[0] * prevQ[0] + q[1] * prevQ[1] + q[2] * prevQ[2] + q[3] * prevQ[3] < 0) q = [-q[0], -q[1], -q[2], -q[3]];
     prevQ = q;
 
-    const stretch = v3.len(knotDerivative(s.pos, k)) / Math.max(v3.len(knotDerivative(s.rest, k)), 1e-9);
+    const stretch = v3.len(knotDerivative(s.local, k)) / Math.max(v3.len(knotDerivative(s.rest, k)), 1e-9);
     const keep = 1 / Math.sqrt(Math.max(stretch, 0.05));
     const o = at + k * STATION_VEC4S * 4;
     out[o] = s.pos[k][0]; out[o + 1] = s.pos[k][1]; out[o + 2] = s.pos[k][2]; out[o + 3] = arcs[k] / total;

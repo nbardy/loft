@@ -634,3 +634,87 @@ Where the plan met the code:
   serve the wake for much less; not built.
 - **Targets are skeletons.** The stand-in hull's capsules are as wide as its beam, so "contact" at arming is a gap of
   about 0.45 to the capsule surface, not zero; real ships will want a hull distance function as their target kind.
+## 10. Ships, afloat, and the whirlpool (as built)
+
+Library functions on the map algebra; examples `examples/brig.ts`, `examples/fleet.ts`, `examples/maelstrom.ts`.
+
+### 8.1 A hull from its lines (`src/geom/hull.ts`)
+
+`hull({ length, beam, depth, freeboard, sheer: [aft, fore], castle: [aft, fore], entry, run, widest, fullness, deadrise,
+tumblehome, transom, rake, stations, bulwark })` returns a `Hull`: `skin`, `deck`, `bulwarks` (inner faces), `transom`
+(Surfaces), `stations` (the section curves), the closed-form lines (`x(u)`, `half(u)`, `keel(u)`, `sheerAt(u)`,
+`section(u, v)`), `skeleton()` and `paint(look)`. Ship coordinates: x toward the bow, y up, z to starboard, waterline
+y = 0. The skin's u runs stern (0) to bow (1); v runs port deck edge (0), keel (1/2), starboard deck edge (1), so
+d/du x d/dv points out. Each station is a section curve (a superellipse quarter of exponent `fullness` up to the turn of
+the bilge, floor lifted by `deadrise`, then topsides drawn in by `tumblehome`, meeting at a common vertical tangent).
+The skin is a uniform Catmull-Rom loft through the stations, so it passes through every station exactly. Fullness eases
+toward both ends; the lower stern sections pinch to the post (a wineglass stern) by a *bounded* factor: as a power of the
+breadth, neighbouring stations differed by orders of magnitude at the keel and the loft's overshoot folded the skin
+there. Strakes, wale, gun ports, trim band and boot-top are paint in the skin's (u, v), from the same closed-form lines.
+
+### 8.2 A ship (`src/geom/ship.ts`, `src/geom/lines.ts`)
+
+`ship(spec)` takes the hull's numbers plus `name, masts (1..3), mastHeight, mastRake, tiers (square sails per mast; 0 a
+fore-and-aft rig), yard, spanker, jibs, bowsprit, billow, flutter, heel, ports, colours { hull, bottom, wale, trim, deck,
+spar, cloth, rope, team }`. `ship.afloat(waters, { at, heading, wind })` returns its drawables; `ship.placed(chart, wind)`
+puts it in any rigid chart. Masts, yards, bowsprit, boom and gaff are strands placed through the chart; hull surfaces,
+sails and the pennant are surfaces framed by the chart's frame at the origin. The wind is given on the sea plane and read
+in the ship's frame: yards brace to it (clamped, `abs` of the fore-aft component so a head wind does not flip them),
+booms swing to leeward, and every sail bellies along `dot(wind, sail normal)` (negative is aback), with a flutter of two
+crossing travelling waves that grows as the sail luffs. Team colour is the cloth's stripes and the pennant. All ropes of a
+ship are one stroke (`lines(name, ropes, spec)`): end points filled per frame on the CPU into a table, three zero-width
+vertices round each rope so the cells joining ropes have no area. `sloop`, `brig`, `galleon` in the examples differ only
+in their specs.
+
+### 8.3 Afloat (`src/geom/afloat.ts`)
+
+`afloat(waters, { at, heading, length, beam, lift, wind: { direction, heel } })` is a rigid chart (`rigid(frame)`;
+`at(t)` substitutes time in the frame). `Waters` is `{ carry(at) -> { xz, turn }, height(xz) }`: the sea (identity), or
+a whirlpool's chart. The water is sampled at bow, stern, port and starboard; the origin sits at their mean, the bow axis
+rises by (bow - stern) / length, the starboard axis by (starboard - port) / beam (made perpendicular to the bow), then
+the hull heels to leeward by `heel` times the wind's component across it, breathing with a slow gust.
+
+### 8.4 Sea deformations and the whirlpool (`src/geom/sea.ts`, `src/geom/whirlpool.ts`)
+
+`sea({ swell, deform: [d, ...] })` takes `SeaDeform`s: `toLocal(xz, t)` (sea plane to the deformation's coordinates),
+`dip(xz)`, `calm(xz)` (how much swell survives) and `look(xz, t, fp)` (foam, shade). Height is
+`swell(toLocal(xz)) * calm - dip`; the gradient is now symbolic (`src/grad.ts`) through the maps; the water's crest,
+foam and shading are evaluated in the deformation's coordinates.
+
+`whirlpool({ at, radius, spin, depth, drift, throat, arms })`. With s = r / R and the radial clock
+L = tan(pi (s - 1/2)), the flow is dL/dt = -c (c = pi drift / R) and d(angle)/dt = spin sigmoid(-L): inward at a constant
+rate in L (ds/dt vanishes to second order at the rim, so the field is C1 across it), turning at `spin` at the centre and
+not at all at the rim. Its characteristic coordinates xi = L + c t and eta = angle - (spin / c) softplus(-L) are the
+whirlpool's coordinates (presented as a plane: radius R (1/2 + atan(xi) / pi), angle eta). Forward (`flow`) and inverse
+(`toLocal`) are closed form; outside the radius both are exactly the identity (`select`), and inside the map reaches the
+identity at the rim with every derivative. The map is the same steady spiral at all times moved inward by c t, so a
+straight line given in whirlpool coordinates is a spiral at every time, and paint periodic in xi never winds tighter.
+Drift must be positive (no characteristic coordinates otherwise). The funnel is depth (1 - s^2)^3 / (1 + (s/throat)^2);
+the swell calms toward the throat (where, wound in, it aliased into a moire); foam arms are `fold2.spiral` of the point
+exp(0.55 xi)(cos eta, sin eta), dashed by a hash of the fold cell, antialiased by the analytic rate of the band lane per
+world unit, faded at rim and throat.
+
+`pool.in(sea)` is a `PoolChart` (Chart and Waters): coordinates (x, y, z) with (x, z) whirlpool coordinates and y the
+height above the water (so a body authored in world coordinates over a calm sea is placed by its own numbers); frame y
+the water's normal, x the whirlpool's x turned with the water. `velocity(c)` is `derivative(frame(c).o, time)` (the
+time derivative of the map, vertical motion included); `drift(xz)` the water's horizontal velocity at a sea-plane point
+(the same derivative at `toLocal(xz)`), for a game's simulation.
+
+### 8.5 Carrying a whole creature (`src/map/sweep.ts`, `src/draw/surface.ts`)
+
+`Body.placedAs(chart, tableName)` is `placed` with its own table, so the unplaced body can still be read as the host of
+its parts. `SurfaceDrawable.through(chart)` carries a drawable: copies' frames are carried (skeleton placement); a
+single surface's points are mapped and its normals turned with the chart's frame, which is right for thin things riding a
+placed body (fins) and wrong for solids. `examples/maelstrom.ts` coils the serpent this way: its body rebuilt from
+`bodySpec` with more stations, its other strands `placedAs`, its crests, teeth and spikes `through`.
+
+### 8.6 Corrections made on the way
+
+- **Stretch is measured on the local spine.** 7.6 said so, but `StationTable` measured the *placed* spine against the
+  local rest, so a body placed in a bending chart was thinned by 1 / sqrt(stretch) (a coiled serpent to 0.45 of its
+  girth). `StrandSamples` now carries `local`; identical for unplaced and rigidly placed bodies.
+- **Params are global by name** (7.6) bites here too: every ship example uses `toon({ outline: 0.04 })` so they load
+  with the serpent.
+
+Best-case frame times at 1280x800 on a heavily loaded machine (headless, including readback): brig 7.7 ms, fleet
+12.9 ms, maelstrom 11.3 ms.

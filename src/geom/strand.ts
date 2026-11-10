@@ -82,6 +82,7 @@ export class Strand extends Body implements Drawable {
 
   override at(t: F): Strand { return super.at(t) as Strand; }
   override placed(chart: Chart): Strand { return super.placed(chart) as Strand; }
+  override placedAs(chart: Chart, tableName: string): Strand { return super.placedAs(chart, tableName) as Strand; }
   protected override remake(chart: Chart, slice: F, slices: Slices, tableName: string): Strand {
     return new Strand([this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName], this.look);
   }

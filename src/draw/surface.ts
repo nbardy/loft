@@ -6,8 +6,9 @@
 import { cos, f, mix, mul, variable, vec2, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { carry, rotate } from "../map/chart.ts";
 import { framed } from "../map/surface.ts";
-import type { F, P3, Paint, Points, Skeleton, Surface } from "../map/types.ts";
+import type { Chart, F, P3, Paint, Points, Skeleton, Surface } from "../map/types.ts";
 import type { Style } from "../style.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
@@ -76,6 +77,17 @@ export class SurfaceDrawable implements Drawable {
     return new SurfaceDrawable(name, this.surface, this.grid, this.look, { kind: "points", points });
   }
 
+  /**
+   * This drawable carried through a chart, for parts of something that is itself being placed there whole (the
+   * serpent's fins and teeth, coiled into a whirlpool with it). Copies keep their shape: each copy's frame is carried
+   * (placement acts on the skeleton). A single surface has no skeleton to carry, so its points are mapped through the
+   * chart and its normals turned with the chart's frame: right for thin things riding a placed body (a fin), which
+   * the chart bends with that body; a solid would be sheared (DESIGN.md 7.6), so place a body instead.
+   */
+  through(chart: Chart): SurfaceDrawable {
+    return new SurfaceDrawable(this.name, carriedSurface(this.surface, this.copies, chart), this.grid, this.look, carriedCopies(this.copies, chart));
+  }
+
   draws(ctx: CompileContext): Emitted {
     const key = `surface.${this.name}`;
     const vertex = vertexFn(ctx, this, `surf_${this.name}`);
@@ -119,6 +131,27 @@ const countOf = (c: Copies): number => {
     case "points": return c.points.count;
   }
 };
+
+function carriedSurface(s: Surface, c: Copies, chart: Chart): Surface {
+  switch (c.kind) {
+    case "one": return {
+      point: (u, v) => chart.frame(s.point(u, v)).o,
+      normal: (u, v) => rotate(chart.frame(s.point(u, v)), s.normal(u, v)),
+      topology: s.topology,
+      skeleton: { joints: s.skeleton.joints, joint: (k) => { const j = s.skeleton.joint(k); return { p: chart.frame(j.p).o, r: j.r }; } },
+    };
+    case "points": return s; // the copies' frames are carried instead
+  }
+}
+function carriedCopies(c: Copies, chart: Chart): Copies {
+  switch (c.kind) {
+    case "one": return c;
+    case "points": {
+      const pts = c.points;
+      return { kind: "points", points: { count: pts.count, at: (i) => { const a = pts.at(i); return { frame: carry(chart, a.frame), scale: a.scale }; } } };
+    }
+  }
+}
 
 function skeletonsOf(s: Surface, c: Copies): readonly Skeleton[] {
   switch (c.kind) {
