@@ -46,7 +46,10 @@ export type Look =
   /** `paint` as the final colour, unlit, opaque: strokes and ink lines. */
   | { readonly kind: "flat"; readonly paint: Paint }
   /** Its own colour and alpha, blended over what is behind it (the sea): no depth write. */
-  | { readonly kind: "glazed"; readonly colour: (f: Fragment) => Expr<"vec4">; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean };
+  | { readonly kind: "glazed"; readonly colour: (f: Fragment) => Expr<"vec4">; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail: GlazedDetail };
+
+/** A glazed surface's grid: as authored, or laid over the screen by the host (the sea). */
+export type GlazedDetail = { readonly kind: "fixed" } | Extract<DetailSpec, { kind: "projected" }>;
 
 /** One copy, or one per point. */
 type Copies = { readonly kind: "one" } | { readonly kind: "points"; readonly points: Points };
@@ -139,7 +142,7 @@ ${frag.main}`,
  * smears on it) and flat strokes (whose grids carry structure, such as a ship's ropes joined by zero-width cells) stay
  * fixed.
  */
-type SurfaceDetail = { readonly kind: "fixed"; readonly spec: DetailSpec } | { readonly kind: "grid"; readonly spec: DetailSpec };
+type SurfaceDetail = { readonly kind: "fixed" | "grid" | "projected"; readonly spec: DetailSpec };
 
 function detailOf(ctx: CompileContext, d: SurfaceDrawable): SurfaceDetail {
   switch (d.look.kind) {
@@ -148,7 +151,8 @@ function detailOf(ctx: CompileContext, d: SurfaceDrawable): SurfaceDetail {
       ctx.table(bound);
       return { kind: "grid", spec: gridDetail(bound, d.grid.u.count, d.grid.v.count, d.surface.topology) };
     }
-    case "flat": case "glazed": return { kind: "fixed", spec: { kind: "fixed" } };
+    case "flat": return { kind: "fixed", spec: { kind: "fixed" } };
+    case "glazed": return d.look.detail.kind === "fixed" ? { kind: "fixed", spec: d.look.detail } : { kind: "projected", spec: d.look.detail };
   }
 }
 /** `fn grid_cells(ii) -> vec2<u32>`: the cell counts this instance is drawn with. */
@@ -156,12 +160,13 @@ function cellsWgsl(d: SurfaceDetail, nu: number, nv: number): string {
   switch (d.kind) {
     case "fixed": return `override NU: u32 = ${nu}u;\noverride NV: u32 = ${nv}u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(NU, NV); }`;
     case "grid": return `override LOFT_DETAIL_SLOT: u32 = 0u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(loft_detail[LOFT_DETAIL_SLOT + ii].xy); }`;
+    case "projected": return `override LOFT_DETAIL_SLOT: u32 = 0u;\nfn grid_cells(ii: u32) -> vec2<u32> { return vec2<u32>(loft_detail[LOFT_DETAIL_SLOT].xy); }`;
   }
 }
 function constantsOf(d: SurfaceDetail, nu: number, nv: number): Readonly<Record<string, number>> {
   switch (d.kind) {
     case "fixed": return { NU: nu, NV: nv };
-    case "grid": return {};
+    case "grid": case "projected": return {};
   }
 }
 
@@ -327,8 +332,8 @@ export function drawSurface(name: string, surface: Surface, o: SurfaceOptions): 
 }
 
 /** A surface with its own colour and alpha over what is behind it (the sea; a decal surface). */
-export function drawGlazed(name: string, surface: Surface, o: { readonly colour: (f: Fragment) => Expr<"vec4">; readonly grid: Grid; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean }): SurfaceDrawable {
-  return new SurfaceDrawable(name, surface, o.grid, { kind: "glazed", colour: o.colour, phase: o.phase, sceneDepth: o.sceneDepth }, { kind: "one" });
+export function drawGlazed(name: string, surface: Surface, o: { readonly colour: (f: Fragment) => Expr<"vec4">; readonly grid: Grid; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail?: GlazedDetail }): SurfaceDrawable {
+  return new SurfaceDrawable(name, surface, o.grid, { kind: "glazed", colour: o.colour, phase: o.phase, sceneDepth: o.sceneDepth, detail: o.detail ?? { kind: "fixed" } }, { kind: "one" });
 }
 
 /** A surface whose paint is its final colour (a stroke, an ink line). */
