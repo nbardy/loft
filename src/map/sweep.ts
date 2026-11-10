@@ -217,6 +217,15 @@ export class Body implements Surface, Chart, Placeable<Body> {
     return this.remake(compose(chart, this.chart), time, new Map(), this.table.base);
   }
 
+  /**
+   * The same body placed in `chart`, posting its own table under `tableName`. `placed` keeps the table's name (the
+   * placed body replaces the unplaced one); this is for carrying a whole creature somewhere while its unplaced self
+   * is still read, as the host its other parts are placed on (src/geom/whirlpool.ts coils the serpent this way).
+   */
+  placedAs(chart: Chart, tableName: string): Body {
+    return this.remake(compose(chart, this.chart), time, new Map(), tableName);
+  }
+
   /** The same kind of body elsewhere or at another time (a subclass that carries more, such as a look, overrides it). */
   protected remake(chart: Chart, slice: F, slices: Slices, tableName: string): Body {
     return new Body(this.name, this.spine, this.section, this.transport, chart, slice, slices, tableName);

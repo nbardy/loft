@@ -36,6 +36,11 @@ export interface SeaDeform {
   /** How far the surface is pushed down at sea-plane point xz (0 outside the reach). */
   dip(xz: Expr<"vec2">): F;
   /**
+   * How much of the swell survives at sea-plane point xz, 0..1 (1 outside the reach). A whirlpool smooths the swell
+   * toward its throat, where the swell wound into it would otherwise crowd below a pixel.
+   */
+  calm(xz: Expr<"vec2">): F;
+  /**
    * Its marks on the water at sea-plane point xz, for a pixel footprint `fp` (world units): foam 0..1, and a shade
    * added to the swell's crest value (-1 trough .. 1 crest). Both 0 outside the reach. GPU or CPU.
    */
@@ -155,7 +160,8 @@ export class Sea implements Chart, Drawable {
 
   /** Surface height at a point of the xz plane: the swell where that water came from, less every deformation's dip. */
   height(xz: Expr<"vec2">, t: In<"f32"> = time): F {
-    return this.deforms.reduce<F>((h, d) => sub(h, d.dip(xz)), this.swellAt(this.local(xz, t), t));
+    const swell = this.deforms.reduce<F>((h, d) => mul(h, d.calm(xz)), this.swellAt(this.local(xz, t), t));
+    return this.deforms.reduce<F>((h, d) => sub(h, d.dip(xz)), swell);
   }
 
   /**
@@ -211,7 +217,7 @@ export class Sea implements Chart, Drawable {
     const g = mul(this.gradient(xz), detail);
     // The deformations' marks, each in its own coordinates (foam arms winding into a whirlpool, a darker throat).
     const marks = this.deforms.map((d) => d.look(xz, time, fp));
-    const swell = this.swellAt(this.local(xz), time);
+    const swell = this.deforms.reduce<F>((h, d) => mul(h, d.calm(xz)), this.swellAt(this.local(xz), time));
     return fr.style.water({
       normal: normalize(vec3(mul(g.x, -1), 1, mul(g.y, -1))),
       sun: lift<"vec3">(fr.sun),

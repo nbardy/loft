@@ -31,7 +31,7 @@ const brig = ship(brigSpec);
 export default scene({
   sea: water,
   things: brig.afloat(water, { at: [0, 0], heading: 0.15, wind: WIND }),
-  style: toon({ bands: 3, outline: 0.035 }),
+  style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.5, 0.7, 0.45],
   cameras: {
     front: { kind: "perspective", eye: [22, 5, 4], target: [0, 4.5, 0], fovY: 0.62 },

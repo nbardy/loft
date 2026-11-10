@@ -131,6 +131,11 @@ export class Whirlpool implements SeaDeform {
     return mul(this.funnel(div(r, this.spec.radius)), this.spec.depth);
   }
 
+  /** The swell fades toward the throat: full beyond half the radius, gone at a tenth of it. */
+  calm(xz: V2): F {
+    return smoothstep(0.1, 0.5, div(length(sub(xz, this.centre)), this.spec.radius));
+  }
+
   /**
    * Foam arms from the spiral fold, evaluated at the whirlpool coordinates (xi, eta): the fold's log-radius lane is
    * proportional to xi, so its bands are periodic in xi and stream inward without ever winding tighter. A minor fold
@@ -159,12 +164,12 @@ export class Whirlpool implements SeaDeform {
       return mul(mul(mul(across, along), kept), resolved);
     };
     const A = this.arms;
-    const arms = band(A, 2 * A, 0.2, 0.25);
-    const streaks = mul(band(2 * A + 1, 6 * A + 3, 0.08, 0.45), 0.55);
+    const arms = band(A, 2 * A, 0.16, 0.3);
+    const streaks = mul(band(2 * A + 1, 6 * A + 3, 0.06, 0.5), 0.5);
     const envelope = mul(smoothstep(0.06, 0.2, w.s), sub(1, smoothstep(0.72, 0.97, w.s)));
-    const foam = select(w.inside, mul(max(arms, streaks), envelope), 0);
+    const foam = select(w.inside, mul(max(arms, streaks), mul(envelope, 0.9)), 0);
     // The throat darkens toward the deep-water colour; the funnel wall a little.
-    const shade = select(w.inside, mul(pow(this.funnel(w.s), 0.6), -1.7), 0);
+    const shade = select(w.inside, mul(pow(this.funnel(w.s), 0.5), -2.6), 0);
     return { foam, shade };
   }
 
