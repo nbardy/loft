@@ -492,3 +492,79 @@ against 160 x 28 for the strand) and the loss of early depth rejection that writ
   is not built.
 - No CPU-against-GPU agreement test for the march itself (the expressions it is made of are covered by expr tests).
 - Relief is one-sided (back faces culled): an open surface needs its inside drawn separately (the shell does).
+## 8. Space-time: attacks, telegraph, smear, wake, checks (as built)
+
+The game's simulation owns gameplay: per attack it supplies a hit shape on the water, an arming time and a warning
+duration. Loft takes those as host inputs, defines the attack once, and derives the pose, the marker, the smear, the
+wake and the checks from it by evaluating bodies at other times (`body.at(t)`); nothing is stored between frames.
+Code: `src/spacetime/` (`hit.ts`, `attack.ts`, `telegraph.ts`, `smear.ts`, `wake.ts`), `src/check.ts`,
+`src/cli/check.ts`; example `examples/strike.ts`; tools `tools/strike_targets.ts`, `tools/strike_bench.ts`.
+
+```ts
+const bite = attack({
+  name: "bite", arm: input("bite.arm", "f32", [2.4]), warn: input("bite.warn", "f32", [1.6]),
+  target: { kind: "body", body: ship.hull }, part: "head",
+  motion: { kind: "lunge", hit: hit.capsule({ a, b, radius }), reach: 0.3, lead: 1.95, height: 0.8, coil: 1.6, rise: 1.1, approach: 0.3, neck: 1.6 },
+});
+const lash = attack({ ..., part: "tail", motion: { kind: "sweep", hit: hit.arc({ centre, inner, outer, from, to }), root: 0.72, height: 0.25, inset: 0.45 } });
+const serpent = animate(restSpine, [bite, lash], (spine) => ({ things, parts: { head: part("head", head, { tip: 1 }), tail: part("tail", body, { from: 0.8, to: 1, tip: 1 }) } }));
+things: [...serpent.things, telegraph(bite), smear(serpent.strikes.bite, { over: 0.12, samples: 4 }), wake(body, { over: 1.6 })]
+export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strikes.bite, target), staysClear(part, target, { until: bite.arm }), minScreenSize(eye, "three", 4), budget({ triangles })];
+```
+
+- **Hit shapes** (`Hit = Capsule | Disc | Arc`, every field an expression). One handler per kind for each question:
+  `hitSdf` (signed distance in the xz plane: the one expression the telegraph draws and the checks evaluate),
+  `hitPatch` (the patch it is drawn on: an oriented rectangle, a square, a polar sector), `hitContour` (distance, position
+  along the nearest edge in whole teeth per edge piece, tooth pitch). An arc is an annular sector at most a half turn.
+- **Motion** (`Attack.pose(rest)`): `spine(m) = mix(rest(m), pose(m, q), w(m) p)` at a retarded clock per m. `p` is the
+  posture envelope (coils in over `windup` before the strike, lets go after `hold` by a critically damped `response`);
+  `q` is an underdamped `response` divided by its own first peak, so it is exactly 1 at the arming time and never above
+  1: the striking end lands where the hit shape says and never passes it (recoil after landing comes free). The lunge
+  places spine m = 0 on the lane (capsule: the tip half a radius short of `b`; disc: the centre, approached from where
+  the end rests now), `lead` behind the striking tip, the neck a Bezier back to `rest(reach)`; the wind-up pulls back
+  and up from the rest pose. Its motion runs down the body after the head (clock `t - m / travel`). The sweep swings the
+  spine from `root` to m = 1 round the arc's centre, from `from` to `to`, each point `inset` inside the edges; its
+  motion runs toward the tip like a whip (clock `t + (1 - m) / travel`). Exactness at T holds only at the striking end;
+  the rest of the body is at its own clock.
+- **Parts and strikes**: `animate(rest, attacks, build)` composes the attacks' spines (each moves its own stretch) and
+  binds each attack to the part it names (`Part`: a strand and an m range with a tip); a missing part throws.
+- **Telegraph** (`telegraph(attack, { style })`): a glazed patch of the sea surface over the shape (28 x 10 cells, phase
+  `on-water`), coloured per pixel from the distance: orange-red fill, a bone edge with inward teeth, an ink line round
+  the bone, antialiased by `fwidth` of the distance. Over the warning the teeth grow (in multiples of their spacing, at
+  most 0.8 of the inradius), the fill strengthens and throbs faster; from the arming time it flashes the whole shape for
+  `<attack>.flashSeconds` (an input, default 1/30: one frame at the host's rate, which only the host knows), then fades.
+- **Smear** (`smear(strike, { over, samples, speed, opacity })`): copies of the part's stretch of its body at
+  `time - k dt`, each a glazed surface lit by the scene's style with the part's own paint, back faces dropped, opacity
+  falling with age and following the tip's speed between the copy and the next younger one (shown only while fast).
+- **Wake** (`wake(body, { over, samples, spread })`): a raw-WGSL drawable in the manner of the shadows. The pose pass
+  evaluates the skeleton of each past slice and the sea's height at that slice's time; a joint's waterline is a disc of
+  radius `sqrt(r^2 - h^2)`, consecutive joints a tapered capsule widened with age, each drawn as its own small sea patch.
+  A capsule draws only where no younger slice's capsule covers the pixel and where it is the deepest of its chain
+  neighbours, so each pixel is foamed once, by the youngest slice that left it. Row 0 (now) is read but never drawn.
+- **Checks** (`src/check.ts`): values with a name and a `run(probe)`. `Probe` holds a `compileScene` result and input
+  overrides and evaluates expressions on the CPU at any time (each time is a pose of the tables it reads). Skeleton
+  capsules are what is measured (radius = the larger half-axis, so distances are conservative). `landsInside` samples
+  the part's footprint (its capsules from above) at the arming time and reports the share where `hitSdf > 0`;
+  `staysClear` is the least capsule-to-target distance at 60 Hz over a range (target: a vertical disc or a body's
+  skeleton); `stopsAt` asks for contact at arming and no penetration over the attack's span; `minScreenSize` projects the
+  feature's joint spheres through a named camera and takes the narrower side of their bounds; `budget` reads
+  `stats.triangles`. `loft check <scene.ts>` runs the module's exported `checks` and exits 1 on any failure.
+
+Where the plan met the code:
+
+- **A coiled pose needs a control arm with a floor.** When the wound-up head stood right over the neck's root, the
+  Bezier's control point collapsed onto the head, the stations bunched there, and the strike's first frame pulled the
+  end back past its neighbours: the transported tangent flipped and the head swung round in one frame (head tip at
+  218 units/s against 38 for the spine end). `neck` keeps the arm at least that long; found by differencing the
+  pose at 60 Hz, not from the pictures.
+- **`response` with `r < 0` starts with a velocity step** (its derivative at 0 is `r zeta w0`), which reads as a pop
+  at the start of a strike. The default anticipation is 0; the coil supplies it.
+- **The head's pitch is the neck's business.** A head hung forward of the neck at a pitch dove into the water when the
+  neck met it horizontally; `approach` makes the neck climb into the head so it levels out, and `lead` (spine end to
+  tip) is a number of the creature measured once, then verified by `landsInside` and `stopsAt`.
+- **Past slices are full poses.** Each smear copy and each wake sample is a body slice with its own transported
+  stations (a head copy also slices the body it rides). In the example that is 1054 stations against 142 and about
+  2.5 to 3 ms of extra CPU pose per frame (best case). A skeleton-only slice (spine points and radii without frames) would
+  serve the wake for much less; not built.
+- **Targets are skeletons.** The stand-in hull's capsules are as wide as its beam, so "contact" at arming is a gap of
+  about 0.45 to the capsule surface, not zero; real ships will want a hull distance function as their target kind.

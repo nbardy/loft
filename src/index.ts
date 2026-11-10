@@ -25,3 +25,5 @@ export { mirror, array, reflect } from "./geom/symmetry.ts";
 export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type BeatSpec, type StrikeSpec } from "./geom/motion.ts";
 export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
+export * from "./spacetime/index.ts";
+export { landsInside, staysClear, stopsAt, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type Verdict, type Measured } from "./check.ts";

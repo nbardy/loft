@@ -14,6 +14,7 @@ export type Command =
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName })
   | { readonly kind: "dev"; readonly source: Source; readonly port: number }
+  | { readonly kind: "check"; readonly path: string }
   | { readonly kind: "bake"; readonly source: Source; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } };
 
 export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
@@ -21,6 +22,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
   dev    <scene> [--port 5173]
+  check  <scene>   (runs the scene module's exported \`checks\` on the CPU; exits 1 if any fails)
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
@@ -66,7 +68,7 @@ function parseParam(text: string): [string, number] {
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
-  if (!["render", "clip", "frames", "dev", "bake"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake", "check"].includes(name)) throw new UsageError(`unknown command "${name}"`);
 
   const flags = new Map<string, string[]>();
   const positional: string[] = [];
@@ -93,6 +95,10 @@ export function parseArgs(argv: readonly string[]): Command {
   if (!fixture && positional.length === 0) throw new UsageError(`${name}: needs a scene file (or --fixture)`);
   const source: Source = fixture ? { kind: "fixture" } : { kind: "file", path: positional[0]! };
 
+  if (name === "check") {
+    if (source.kind !== "file") throw new UsageError("check: needs a scene file (a fixture has no checks)");
+    return { kind: "check", path: source.path };
+  }
   if (name === "dev") return { kind: "dev", source, port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };
 
   const out = one("--out");
