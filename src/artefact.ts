@@ -45,6 +45,73 @@ fn view_dir(world: vec3<f32>) -> vec3<f32> {
 }
 `;
 
+/**
+ * Prepended by the host to the shader of a draw with `sceneDepth` set, right after PRELUDE_WGSL (it reads `frame`)
+ * and before `Artefact.sceneWgsl`.
+ *
+ * Binding layout (a second host must match it exactly):
+ *   @group(2) @binding(0)  texture_2d<f32>, format r32float, sample type unfilterable-float, single-sampled,
+ *                          view size = view size, visible to vertex and fragment stages.
+ * Contents: the opaque scene's depth, resolved after the opaque draws and before the transparent ones. The scene is
+ * drawn 4x multisampled; each texel holds the MINIMUM (nearest) of the pixel's four depth samples, so a pixel that
+ * any opaque surface touches reports a depth that really exists on that surface. (An average would invent depths
+ * between a silhouette and what lies behind it: false foam and doubled ink lines along every edge.) The price is up to
+ * half a pixel of offset on a sloped surface. Pixels no opaque draw covers hold 1 (the cleared depth).
+ * Transparent draws with depth writes do not change it: it is the OPAQUE scene only.
+ *
+ * `px` is in pixels as in `@builtin(position).xy` (pixel centres at +0.5, y down). It is clamped to the image, so a
+ * neighbour lookup at the border repeats the edge pixel instead of reading out of bounds.
+ * `scene_position` reconstructs with `frame.inv_view_proj`; where scene_depth is 1 it returns a point on the far plane.
+ */
+export const SCENE_DEPTH_WGSL = /* wgsl */ `
+@group(2) @binding(0) var loft_scene_depth: texture_2d<f32>;
+
+/// Opaque scene depth at pixel px: 0 near to 1 far; 1 where no opaque surface is.
+fn scene_depth(px: vec2<f32>) -> f32 {
+  let size = vec2<i32>(textureDimensions(loft_scene_depth));
+  return textureLoad(loft_scene_depth, clamp(vec2<i32>(floor(px)), vec2<i32>(0), size - 1), 0).x;
+}
+/// World position of the opaque surface seen at pixel px (on the far plane where there is none).
+fn scene_position(px: vec2<f32>) -> vec3<f32> {
+  let ndc = vec2<f32>(px.x * frame.viewport.z * 2.0 - 1.0, 1.0 - px.y * frame.viewport.w * 2.0);
+  let h = frame.inv_view_proj * vec4<f32>(ndc, scene_depth(px), 1.0);
+  return h.xyz / h.w;
+}
+`;
+
+/**
+ * Prepended by the host to the shader of every post pass, right after PRELUDE_WGSL and before `Artefact.sceneWgsl`.
+ * It includes SCENE_DEPTH_WGSL (same group 2 binding 0, same contents), so a post shader has `scene_depth` and
+ * `scene_position` too, and it supplies the vertex stage. The artefact's module defines only
+ *   @fragment fn fs(in: PostIn) -> @location(0) vec4<f32>
+ * where `in.px` is `@builtin(position)` and `in.uv` the matching uv (0..1, v down).
+ *
+ * Binding layout (a second host must match it exactly), all visible to vertex and fragment stages:
+ *   @group(2) @binding(0)  texture_2d<f32>, r32float, unfilterable-float: the opaque scene depth (see SCENE_DEPTH_WGSL)
+ *   @group(2) @binding(1)  texture_2d<f32>, rgba8unorm, filterable float, single-sampled: the picture so far (the
+ *                          resolved scene for the first pass, the previous pass's output after that)
+ *   @group(2) @binding(2)  sampler, filtering: linear min/mag, clamp-to-edge on u and v, no mipmaps
+ * The vertex stage is `post_vs`: one triangle of 3 vertices covering the viewport, no culling, no depth, no blending.
+ * Groups 0 and 1 are bound as for draws. The output target is rgba8unorm, single-sampled, view-sized; the last
+ * pass writes the frame. `post_color` at a pixel centre returns that pixel exactly (bilinear weights are 1 and 0).
+ */
+export const POST_WGSL = /* wgsl */ `${SCENE_DEPTH_WGSL}
+@group(2) @binding(1) var loft_post_colour: texture_2d<f32>;
+@group(2) @binding(2) var loft_post_sampler: sampler;
+
+struct PostIn { @builtin(position) px: vec4<f32>, @location(0) uv: vec2<f32> };
+
+@vertex fn post_vs(@builtin(vertex_index) vi: u32) -> PostIn {
+  // (0,0), (2,0), (0,2) in uv: one triangle whose inside covers the whole viewport.
+  let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+  return PostIn(vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0), uv);
+}
+/// The picture so far at uv (0..1, v down), bilinearly filtered, clamped at the edges.
+fn post_color(uv: vec2<f32>) -> vec4<f32> {
+  return textureSampleLevel(loft_post_colour, loft_post_sampler, uv, 0.0);
+}
+`;
+
 export type Camera =
   | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number }
   | { readonly kind: "orthographic"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly height: number };
@@ -74,7 +141,8 @@ export type Draw = {
   /** WGSL `override` constants for this draw (for example the grid density). */
   readonly constants: Readonly<Record<string, number>>;
   /**
-   * Transparent draws only. When set, the host prepends SCENE_DEPTH_WGSL to this draw's shader, so its fragment stage
+   * Transparent draws only (a host rejects it on an opaque draw at load). When set, the host prepends
+   * SCENE_DEPTH_WGSL (after PRELUDE_WGSL) to this draw's shader and binds group 2, so its fragment stage
    * can read the opaque scene behind it: `scene_depth(px)` (the depth buffer value, 0 near to 1 far) and
    * `scene_position(px)` (the world position of the opaque surface at that pixel). Used for foam where things meet,
    * soft volume edges and depth fades.
@@ -84,8 +152,9 @@ export type Draw = {
 
 /**
  * A full-screen pass run after the scene is drawn and resolved, in list order. The module has one entry point, `fs`;
- * the host supplies the vertex stage and prepends POST_WGSL, which gives `post_color(uv)` (the picture so far),
- * `scene_depth(px)` and `scene_position(px)`. Used by styles: ink lines from depth edges, paper grain, bloom.
+ * the host supplies the vertex stage and prepends POST_WGSL (after PRELUDE_WGSL), which gives `post_color(uv)` (the
+ * picture so far), `scene_depth(px)` and `scene_position(px)`. Used by styles: ink lines from depth edges, paper grain,
+ * bloom. The last pass's output is the frame.
  */
 export type PostPass = { readonly label: string; readonly shader: string };
 

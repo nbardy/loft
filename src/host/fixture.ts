@@ -2,13 +2,18 @@
 // built and tested first. It is also the worked example of the contract in src/artefact.ts.
 //
 // The scene: a swaying tube (a stand-in for a strand) built in the vertex shader from a `stations` table that the
-// pose function animates with time, a checkered ground quad, a translucent fin along the tube's back, and a
-// construction overlay that marks each station. It uses each contract feature at least once:
+// pose function animates with time, a checkered ground quad, a pool of water the tube dips through, a translucent fin
+// along the tube's back, a construction overlay that marks each station, and two post passes (ink, then paper). It
+// uses each contract feature at least once:
 //   curve()                girth profile (row 0) and fin height (row 1)
 //   params[...]            "tube.girth" scales the radius in the vertex shader; "tube.sway" drives the pose
 //   inputs[...]            "tube.belly" (vec3) colours the underside; "time" (slot 0) is filled from View.time
 //   override               SEG, the number of segments around the tube, set per draw through `constants`
 //   transparent draw       the fin: straight alpha over, no depth write, no culling
+//   sceneDepth             the water: scene_position gives how far below the surface the opaque world is, which
+//                          sets the water's opacity and draws foam where the surface meets the tube
+//   post                   "ink" draws lines on the near side of depth edges; "paper" adds grain and a vignette
+//                          (two passes, so the chaining of post_color is exercised)
 //   construction layer     station markers, shown only when View.construction is set
 //   cameras                "three" (perspective) and "side" (orthographic)
 
@@ -197,6 +202,67 @@ struct Out { @builtin(position) clip: vec4<f32>, @location(0) up: f32 };
 }
 `;
 
+const water = /* wgsl */ `
+const WATER_Y: f32 = 1.05;
+const POOL: vec2<f32> = vec2<f32>(6.5, 3.2);   // half extents in x and z
+const FOAM: f32 = 0.09;                         // depth below the surface, in world units, that reads as foam
+struct Out { @builtin(position) clip: vec4<f32> };
+
+@vertex fn vs(@builtin(vertex_index) vi: u32) -> Out {
+  let corner = array<vec2<f32>, 6>(vec2(-1.0, -1.0), vec2(-1.0, 1.0), vec2(1.0, 1.0), vec2(-1.0, -1.0), vec2(1.0, 1.0), vec2(1.0, -1.0))[vi] * POOL;
+  return Out(frame.view_proj * vec4<f32>(corner.x, WATER_Y, corner.y, 1.0));
+}
+
+@fragment fn fs(in: Out) -> @location(0) vec4<f32> {
+  // Seen from above the water, whatever opaque lies behind the surface lies below it, so below >= 0 here.
+  let below = WATER_Y - scene_position(in.clip.xy).y;
+  let deep = 1.0 - exp(-1.6 * below);
+  let tint = mix(vec3<f32>(0.42, 0.74, 0.78), vec3<f32>(0.10, 0.33, 0.48), deep);
+  let foam = 1.0 - smoothstep(0.4 * FOAM, FOAM, below);
+  return vec4<f32>(mix(tint, vec3<f32>(0.97, 0.98, 1.0), foam), mix(0.3 + 0.5 * deep, 0.95, foam));
+}
+`;
+
+// Post passes: only fs; POST_WGSL supplies PostIn, post_vs, post_color, scene_depth and scene_position.
+const ink = /* wgsl */ `
+const INK: vec3<f32> = vec3<f32>(0.10, 0.09, 0.16);
+/// Distance along the view direction to the opaque surface at px (both camera kinds).
+fn view_depth(px: vec2<f32>) -> f32 { return dot(scene_position(px) - frame.eye.xyz, frame.forward.xyz); }
+
+@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
+  // Ink only the NEAR side of a depth edge: a pixel whose neighbour is farther. Testing both sides would draw every
+  // edge twice, once on each surface. A step must be large relative to the depth (so a plane receding from a far
+  // camera is not an edge) and in world units (so a plane passing under the eye, where depth nears 0, is not either).
+  let z = view_depth(in.px.xy);
+  var edge = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let o = array<vec2<f32>, 4>(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0))[k];
+    let d = view_depth(in.px.xy + o) - z;
+    edge = max(edge, min(smoothstep(0.03, 0.08, d / z), smoothstep(0.25, 0.5, d)));
+  }
+  // Lines fade with distance, so the far rim of the ground (which meets the empty background) stays soft.
+  let ink = edge * smoothstep(22.0, 15.0, z);
+  return vec4<f32>(mix(post_color(in.uv).rgb, INK, ink), 1.0);
+}
+`;
+
+const paper = /* wgsl */ `
+/// A hash of the pixel index (DESIGN.md: no randomness except hashes of indices).
+fn grain_hash(p: vec2<u32>) -> f32 {
+  var h = p.x * 1664525u + p.y * 1013904223u;
+  h = (h ^ (h >> 16u)) * 2246822519u;
+  h = (h ^ (h >> 13u)) * 3266489917u;
+  return f32(h ^ (h >> 16u)) / 4294967295.0;
+}
+
+@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
+  let c = post_color(in.uv).rgb;
+  let vignette = 1.0 - 0.3 * smoothstep(0.45, 0.85, length(in.uv - 0.5));
+  let grain = (grain_hash(vec2<u32>(in.px.xy)) - 0.5) * 0.05;
+  return vec4<f32>(c * vignette + grain, 1.0);
+}
+`;
+
 const marks = /* wgsl */ `
 const SIZE_PX: f32 = 7.0;
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> @builtin(position) vec4<f32> {
@@ -217,6 +283,7 @@ const draw = (d: Pick<Draw, "label" | "shader" | "vertices"> & Partial<Draw>): D
 const draws: Draw[] = [
   draw({ label: "ground", shader: "ground", vertices: 6 }),
   draw({ label: "tube", shader: "tube", vertices: (STATIONS - 1) * SEG * 6, constants: { SEG } }),
+  draw({ label: "water", shader: "water", vertices: 6, pass: "transparent", cull: "none", depthWrite: false, blend: "alpha", sceneDepth: true }),
   draw({ label: "fin", shader: "fin", vertices: (STATIONS - 1) * 6, pass: "transparent", cull: "none", depthWrite: false, blend: "alpha" }),
   draw({ label: "station marks", shader: "marks", vertices: 6, instances: STATIONS, pass: "transparent", cull: "none", depthWrite: false, layer: "construction" }),
 ];
@@ -236,8 +303,9 @@ export const fixture: Artefact = {
   curves,
   dynamic: [{ name: "stations", binding: 0, vec4s: STATIONS * 3 }],
   sceneWgsl,
-  shaders: { tube, ground, fin, marks },
+  shaders: { tube, ground, water, fin, marks, ink, paper },
   draws,
+  post: [{ label: "ink", shader: "ink" }, { label: "paper", shader: "paper" }],
   pose,
   cameras: {
     three: { kind: "perspective", eye: [-7, 5, -9], target: [0, 1, 0], fovY: 0.7 },
