@@ -1,6 +1,6 @@
 // The sky: one full-screen triangle behind everything, coloured by the style along each view ray.
 
-import { draw, type Drawable } from "../compile/context.ts";
+import { drawSpec, type Drawable } from "../compile/context.ts";
 
 const SKY_WGSL = /* wgsl */ `
 struct VOut {
@@ -24,5 +24,7 @@ struct VOut {
 
 export const sky: Drawable = {
   name: "sky",
-  draws: () => ({ shaders: { sky: SKY_WGSL }, draws: [draw({ label: "sky", shader: "sky", vertices: 3, phase: "background", cull: "none", depthWrite: false })] }),
+  skeletons: [],
+  surfaces: [],
+  draws: () => ({ shaders: { sky: { code: SKY_WGSL, libs: [] } }, draws: [drawSpec({ label: "sky", shader: "sky", vertices: 3, phase: "background", cull: "none", depthWrite: false })] }),
 };

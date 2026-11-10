@@ -1,9 +1,14 @@
 // Slots: where each leaf of the expression graph lives at run time. Assigned lazily, in order of first use, as the
 // compiler emits code (so there is one pass, and the order is deterministic). CPU-only expressions register too, so
-// a param used only by the pose pass still gets a slot the host can set.
+// a param used only by the pose pass still gets a slot the host can set. A per-frame table an expression fetches is
+// handed to the compiler's table registry the first time it is seen, exactly like a curve row gets a slot.
 
 import type { InputSlot, ParamSlot } from "../artefact.ts";
-import { CURVE_N, emitWgsl, leaves, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy, type ParamSpec, type Row } from "../expr.ts";
+import {
+  CURVE_N, emitWgsl, leaves, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy, type ParamSpec, type Row,
+  type TableSource,
+} from "../expr.ts";
+import type { Shader, TableRef } from "./context.ts";
 
 const FLOATS: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
@@ -13,6 +18,16 @@ export class Slots {
   private readonly rowMap = new Map<number, { readonly row: Row; readonly slot: number }>();
   private readonly libList: LibFn[] = [];
   private inputFloats = 0;
+  private sealed = false;
+
+  /** `table`: the compiler's registry, which declares (and prepares) a table the first time it is seen. */
+  constructor(private readonly table: (t: TableSource) => TableRef) {}
+
+  /** After this, a leaf that has no slot yet is an error (it would not be in the artefact). */
+  seal(): void { this.sealed = true; }
+  private fresh(what: string): void {
+    if (this.sealed) throw new Error(`compile: ${what} was first used after the artefact was laid out`);
+  }
 
   /** Library functions emitted code calls, each after its dependencies; their definitions go in `sceneWgsl`. */
   lib(fns: readonly LibFn[]): void {
@@ -23,6 +38,7 @@ export class Slots {
   input(spec: InputSpec): InputSlot {
     const seen = this.inputMap.get(spec.name);
     if (seen) return seen;
+    this.fresh(`input "${spec.name}"`);
     const made: InputSlot = { name: spec.name, ty: spec.ty, slot: this.inputFloats, def: spec.def };
     this.inputFloats += FLOATS[spec.ty];
     this.inputMap.set(spec.name, made);
@@ -32,6 +48,7 @@ export class Slots {
   param(spec: ParamSpec): ParamSlot {
     const seen = this.paramMap.get(spec.name);
     if (seen) return seen;
+    this.fresh(`param "${spec.name}"`);
     const made: ParamSlot = { name: spec.name, slot: this.paramMap.size, def: spec.def, min: spec.min, max: spec.max };
     this.paramMap.set(spec.name, made);
     return made;
@@ -40,6 +57,7 @@ export class Slots {
   row(r: Row): number {
     const seen = this.rowMap.get(r.id);
     if (seen) return seen.slot;
+    this.fresh(`curve row "${r.label}"`);
     const slot = this.rowMap.size;
     this.rowMap.set(r.id, { row: r, slot });
     return slot;
@@ -51,6 +69,7 @@ export class Slots {
     for (const s of l.inputs) this.input(s);
     for (const p of l.params) this.param(p);
     for (const r of l.rows) this.row(r);
+    for (const t of l.tables) this.table(t);
   }
 
   /** A WGSL binding of leaves; free variables map through `vars` (name -> WGSL source), and an unknown one throws. */
@@ -72,6 +91,7 @@ export class Slots {
       },
       param: (spec) => `params[${this.param(spec).slot}]`,
       row: (r, x) => `curve(${this.row(r)}u, ${x})`,
+      table: (t, i, lane) => `${this.table(t).wgsl}(u32(${i}) * ${t.lanes}u + ${lane}u)`,
     };
   }
 
@@ -100,24 +120,33 @@ export type { Env };
 
 const WGSL_TY: Record<string, string> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3<f32>", vec4: "vec4<f32>", bool: "bool" };
 
-/**
- * A WGSL function whose body is straight-line code for `roots`. `args` are (name, type) pairs and are bound as free
- * variables of the same name; `extra` binds more variables (for example the fields of a station sample) and `pre` is
- * hand-written code that runs first and defines them. `ret` combines the root values into the return expression.
- */
-export function emitFn(
-  slots: Slots,
-  name: string,
-  args: readonly (readonly [string, NumTy])[],
-  out: string,
-  roots: readonly Expr[],
-  ret: (values: readonly string[]) => string,
-  opts: { readonly pre?: readonly string[]; readonly extra?: Readonly<Record<string, string>> } = {},
-): string {
-  const vars: Record<string, string> = { ...(opts.extra ?? {}) };
-  for (const [a] of args) vars[a] = a;
-  const { lines, out: values, libs } = emitWgsl(roots, slots.wgsl(vars));
-  slots.lib(libs);
-  const sig = args.map(([a, t]) => `${a}: ${WGSL_TY[t]}`).join(", ");
-  return [`fn ${name}(${sig}) -> ${out} {`, ...(opts.pre ?? []).map((l) => `  ${l}`), ...lines.map((l) => `  ${l}`), `  return ${ret(values)};`, `}`].join("\n");
+type FnSpec = {
+  readonly name: string;
+  /** (name, type) pairs, bound as free variables of the same name. */
+  readonly args: readonly (readonly [string, NumTy])[];
+  /** The WGSL return type. */
+  readonly out: string;
+  readonly roots: readonly Expr[];
+  /** Combines the root values into the return expression. */
+  readonly ret: (values: readonly string[]) => string;
+};
+
+function fnSource(slots: Slots, f: FnSpec): { code: string; libs: LibFn[] } {
+  const vars: Record<string, string> = {};
+  for (const [a] of f.args) vars[a] = a;
+  const { lines, out: values, libs } = emitWgsl(f.roots, slots.wgsl(vars));
+  const sig = f.args.map(([a, t]) => `${a}: ${WGSL_TY[t]}`).join(", ");
+  return { code: [`fn ${f.name}(${sig}) -> ${f.out} {`, ...lines.map((l) => `  ${l}`), `  return ${f.ret(values)};`, `}`].join("\n"), libs };
+}
+
+/** A WGSL function for `sceneWgsl` (shared by every shader): its library functions go there too. */
+export function emitFn(slots: Slots, name: string, args: FnSpec["args"], out: string, roots: readonly Expr[], ret: FnSpec["ret"]): string {
+  const s = fnSource(slots, { name, args, out, roots, ret });
+  slots.lib(s.libs);
+  return s.code;
+}
+
+/** A WGSL function for one shader module: the code, and the library functions it calls (for that module's `Shader`). */
+export function emitShaderFn(slots: Slots, f: FnSpec): Shader {
+  return fnSource(slots, f);
 }

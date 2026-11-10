@@ -1,6 +1,7 @@
-// Cast shadows on the water, from every thing with a skeleton.
+// Cast shadows on the water, from every thing's skeletons.
 //
-// Each spine segment above the water, projected along the sun onto the local sea surface, is a tapered capsule;
+// The pose pass evaluates each skeleton's joints (expressions over the bodies' own tables, the same ones the vertex
+// stage reads) and the sea's height on the CPU. Each segment above the water, projected along the sun onto the local sea surface, is a tapered capsule;
 // softer and fainter the higher it is (strand_kit::cast_shadow). The pose pass writes the capsules to a table, and
 // each is drawn as its own small instanced patch of the sea surface laid over the water, so a shadow costs the area
 // it covers, not the area of the sea. (The sea's fragment stage used to loop over every capsule for every sea pixel:
@@ -9,21 +10,39 @@
 // Overlap: shadows combine by max, not by stacking. A patch draws only the pixels where its own capsule is at least
 // as dark as its neighbours' in the same chain (ties go to the later one), so the joints of a chain are drawn once.
 
-import { STATION_VEC4S, type V3 } from "../geom/stations.ts";
-import { draw, isSkeleton, type CompileContext, type Drawable, type Emitted, type PoseFrame, type StationRange } from "../compile/context.ts";
+import { variable, vec2, vec4, type TableSource } from "../expr.ts";
+import { drawSpec, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
 
 /** vec4s per capsule: (end a xz, end b xz), (radius a, radius b, strength, softness), (has previous, has next, 0, 0). */
 const ENTRY = 3;
 /** Quads per side of a capsule's patch: enough to follow the swell under a capsule a few units long. */
 const PATCH = 4;
 
+/** The table's name (its accessor is `t_shadows`). */
+export const SHADOWS_TABLE = "shadows";
+
 export const shadows: Drawable = {
   name: "shadows",
+  skeletons: [],
+  surfaces: [],
   draws(ctx: CompileContext): Emitted {
-    const chains = ctx.things.filter(isSkeleton).map((t) => t.skeleton(ctx));
-    const capacity = chains.reduce((n, c) => n + c.count - 1, 0);
-    const table = ctx.table({ name: "shadows", vec4s: 1 + ENTRY * Math.max(capacity, 1), fill: (frame, out) => fillShadows(frame, chains, ctx.sun, out) });
-    const t = table.wgsl;
+    // A chain of fewer than two joints has no segment (and a surface with nothing to cast has none at all).
+    const chains = ctx.things.flatMap((t) => t.skeletons).filter((s) => s.joints >= 2);
+    const capacity = chains.reduce((n, c) => n + c.joints - 1, 0);
+    const X = variable("x", "f32"), Z = variable("z", "f32");
+    const source: TableSource = {
+      name: SHADOWS_TABLE, lanes: 1, entries: 1 + ENTRY * Math.max(capacity, 1), role: "data",
+      prepare: (p) => {
+        const joints = chains.map((c) => p.compile(Array.from({ length: c.joints }, (_, k) => { const j = c.joint(k); return vec4(j.p, j.r); })));
+        const height = p.compile([ctx.sea.height(vec2(X, Z))]);
+        return (frame, out) => {
+          const vars = { x: 0, z: 0 };
+          const seaHeight = (x: number, z: number): number => { vars.x = x; vars.z = z; return height(frame, vars)[0] as number; };
+          fillShadows(joints.map((j) => j(frame) as number[][]), seaHeight, ctx.sun, out);
+        };
+      },
+    };
+    const t = ctx.table(source).wgsl;
     const code = /* wgsl */ `
 const PATCH: u32 = ${PATCH}u;
 struct VOut {
@@ -76,28 +95,26 @@ fn capsule_shadow(i: u32, p: vec2<f32>, px: f32) -> f32 {
   return sea_shadow(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s);
 }`;
     return {
-      shaders: { shadows: code },
-      draws: [draw({ label: "shadows", shader: "shadows", vertices: 6 * PATCH * PATCH, instances: Math.max(capacity, 1), phase: "on-water", cull: "none", depthWrite: false, blend: "alpha" })],
+      shaders: { shadows: { code, libs: [] } },
+      draws: [drawSpec({ label: "shadows", shader: "shadows", vertices: 6 * PATCH * PATCH, instances: Math.max(capacity, 1), phase: "on-water", cull: "none", depthWrite: false, blend: "alpha" })],
     };
   },
 };
 
 const smooth = (x: number): number => { const t = Math.min(1, Math.max(0, x)); return t * t * (3 - 2 * t); };
 
-/** Projects the chains' stations along the sun onto the sea; writes the count to the header. */
-export function fillShadows(frame: PoseFrame, chains: readonly StationRange[], sun: V3, out: Float32Array): void {
+/** Projects the chains' joints (x, y, z, radius) along the sun onto the sea; writes the count to the header. */
+export function fillShadows(chains: readonly (readonly number[][])[], seaHeight: (x: number, z: number) => number, sun: V3, out: Float32Array): void {
   let n = 0;
   for (const c of chains) {
-    const table = frame.table(c.table);
     const foot = (k: number): { xz: [number, number]; h: number; r: number } => {
-      const o = (c.base + k) * STATION_VEC4S * 4;
-      const p: V3 = [table[o], table[o + 1], table[o + 2]];
-      const h = p[1] - frame.seaHeight(p[0], p[2]);
+      const [x, y, z, r] = c[k];
+      const h = y - seaHeight(x, z);
       const lift = Math.max(h, 0) / sun[1];
-      return { xz: [p[0] - sun[0] * lift, p[2] - sun[2] * lift], h, r: Math.max(table[o + 8], table[o + 9]) };
+      return { xz: [x - sun[0] * lift, z - sun[2] * lift], h, r };
     };
     let a = foot(0), linked = false;
-    for (let k = 1; k < c.count; k++) {
+    for (let k = 1; k < c.length; k++) {
       const b = foot(k);
       const h = Math.min(a.h, b.h);
       if (h > 0.02 && Math.max(a.r, b.r) > 1e-3) {
@@ -116,3 +133,4 @@ export function fillShadows(frame: PoseFrame, chains: readonly StationRange[], s
   }
   out[0] = n;
 }
+

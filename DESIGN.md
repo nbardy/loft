@@ -10,7 +10,7 @@ contract for building it.
 ```
  authoring code (TypeScript)          the compiler (TypeScript)             a host
  builds a scene description   --->    scene -> Artefact              --->   draws an Artefact
- src/geom, src/scene, src/style       src/compile                           src/host (WebGPU: browser, bun headless)
+ src/map, src/draw, src/geom, ...     src/compile                           src/host (WebGPU: browser, bun headless)
                                       Artefact = WGSL + tables + draw list  later: Rust/wgpu inside the game
 ```
 
@@ -21,7 +21,7 @@ an Artefact; it never runs authoring code.
 Five ideas, in the order the code depends on them:
 
 1. **Expressions** (`src/expr.ts`, done). Authoring code builds `Expr` values. One DAG, two backends (JS, WGSL), tested
-   to agree.
+   to agree, with `fetch` (an entry of a per-frame table) and `iterate` (a real loop) as well as arithmetic.
 2. **Curves are the atoms.** A curve is any function of one variable, `(x: Expr<f32>) => Expr<T>`. Curves built from
    keys are stored as rows of a table, so editing one is a buffer write, not a recompile. Named numbers are `param`s
    with the same property.
@@ -35,275 +35,138 @@ Five ideas, in the order the code depends on them:
 5. **Description and schedule are separate.** The scene says what things are. The compiler decides where each part is
    evaluated: per frame on the CPU (spine stations), per vertex (surfaces), per pixel (fields on the sea, volumes).
 
-Open types: a "shape" is any object that implements one or more capability interfaces (section 4). Functions ask for
-capabilities, never for concrete classes. The one rule: everything is pure.
+Open types: a shape is a function whose signature says how it can be drawn (section 7); an object may be several
+(a body is a Surface, a Chart and a Skeleton). The one rule: everything is pure.
 
-## 2. Authoring API (target)
+## 2. Authoring API
+
+Everything is built on the map algebra of section 7: shapes are functions over `Expr`, drawn by one generic drawable
+per signature. The names below are the library on top of it.
 
 ```ts
-import { compile, crest, keys, palette, param, scene, sea, strand, through, time, toon, vec3, wave } from "loft";
+import { crest, draw, keys, on, palette, param, place, points, scene, sea, strand, through, toon, vec3, wave } from "loft";
 
 const girth = keys([[0, 0.3], [0.06, 0.9], [0.45, 1.0], [0.85, 0.4], [1, 0.02]]);   // a table-backed curve
-
-const body = strand({
+const body = strand({                                  // a sweep (a Surface, a Chart, a Skeleton) that draws itself
   name: "serpent",
-  // The spine: any function of m (and time). `through` is a spline through control points, which may move.
   spine: (m) => through(m, [[-9, 0.4, 0], [-4, 0.9, 1.5], [0, 0.6, -1.2], [4, 1.8, 0.4], [7, 3.2, 0]])
-                  .add(wave(m, { axis: [0, 0, 1], waves: 1.6, rate: 0.5, grow: keys([[0, 0.1], [1, 1]]) })),
+                  .add(wave(m, { axis: [0, 0, 1], waves: 1.6, rate: 0.5 })),
   stations: 40,
   girth: (m) => girth(m).x.mul(param("serpent.girth", 1.1)),
-  section: { aspect: (m) => keys([[0, 1.15], [1, 0.7]])(m).x, squareness: 2.3 },
+  section: { aspect: 0.9, squareness: 2.3 },
   paint: (m, v) => palette.countershade(v, { back: [0.16, 0.13, 0.33], belly: [0.86, 0.82, 0.62] }),
 });
-
-const fin = crest({ on: body, from: 0.12, to: 0.8, height: keys([[0, 0], [0.3, 1.2], [1, 0]]), paint: [0.75, 0.2, 0.28] });
+const head = place(strand(headSpec), on(body, [0, 0.25, 0]));     // headSpec's spine is in the neck's frame there
+const spikes = draw.points("spikes", place(points(7, (i) => ({ at: vec3(i.mul(0.03).add(0.6), 0.25, 0.9), scale: 1 })), body), spike);
+                                                                      // spike: another strand, drawn once per point
+const fin = crest({ on: body, name: "fin", from: 0.12, to: 0.8, height: keys([[0, 0], [0.3, 1.2], [1, 0]]), paint: [0.75, 0.2, 0.28] });
 
 export default scene({
   sea: sea({ swell: [{ direction: [1, 0.3], length: 14, height: 0.25, speed: 1.1 }] }),
-  things: [body, fin],
+  things: [body, head, spikes, fin],
   style: toon({ bands: 3, outline: 0.045 }),
   sun: [-0.6, 0.5, -0.6],
   cameras: { three: { kind: "perspective", eye: [-14, 9, -13], target: [0, 1, 0], fovY: 0.6 } },
 });
 ```
 
-`compile(scene) -> Artefact`. A scene module's default export is a `Scene`.
+`compile(scene) -> Artefact`; `compileScene(scene) -> { artefact, frame(state), cpu(roots), table(name) }` for checks,
+tests and the baker. A scene module's default export is a `Scene`. Working examples: `examples/serpent.ts`,
+`examples/shell.ts` (a surface written as a map, painted through a fold), `examples/serpent_scales.ts`.
 
 ### 2.1 Curves (`src/curve.ts`)
 
-- `type Curve<T> = (x: In<"f32">) => Expr<T>`.
-- `keys(points, { interp?: "smooth" | "linear" })`: keyed scalar or vector curve, sampled into a table row
-  (`CURVE_N` samples, vec4 each). Returns `Curve<"vec4">`; use `.x`, `.xyz`.
-- `ramp(colours)`: evenly spaced colour stops, table-backed.
-- `through(m, points)`: an interpolating cubic spline through control points that may themselves be expressions
-  (so a spine can move). Returns `Expr<"vec3">`. Closed form (a sum of basis weights), no table.
-- Motion operators, all closed-form in time (no state): `wave(m, {...})` (a travelling lateral wave with an amplitude
-  envelope), `retarded(t, m, speed)` (= `t - m / speed`: follow-through with no state), `response(t, { f, zeta, r })`
-  (step response of a second-order system: easing with anticipation when `r < 0` and overshoot when `zeta < 1`),
-  `pulse(t, t0, t1)`.
+- `type Curve<T> = (x: In<"f32">) => Expr<T>`; the map signature `Curve` is `Curve<"vec3">`.
+- `keys(points, { interp?: "smooth" | "linear" })`: keyed curve sampled into a curve row (`CURVE_N` vec4s), so an edit
+  is a buffer write. `ramp(colours)`. `through(m, points)`: closed-form Catmull-Rom through points that may move.
+- Motion, all closed form in time: `wave`, `retarded(t, m, speed)`, `response(t, { f, zeta, r })`, `pulse`.
+- `keys` makes a new row per call: build a curve once, outside the functions that use it (the compiler refuses a row
+  first seen after layout, which is how that mistake shows).
 
-### 2.2 Bodies (`src/geom/`)
+### 2.2 The library (`src/geom/`)
 
-- `strand(spec) -> Strand`. Spec: `name`, `spine(m)`, `stations` (how many frames the pose pass computes), `girth(m)`
-  (half-width), `section` (`aspect(m)` = height over width, `squareness` superellipse exponent), `twist(m)`,
-  `tips` (`"round" | "point" | "open"` at each end), `paint(m, v)`, `detail` (density hints).
-  A `Strand` is a `Surface`, a `Chart`, and has a `Skeleton`.
-  - Frames along the spine are rotation-minimising (double reflection, Wang et al. 2008), computed in the pose pass.
-  - Volume is preserved: where the spine is locally shorter than at rest by a factor k, radii scale by 1 / sqrt(k).
-  - Vertices are generated in the vertex shader from the station table and the curve tables. Grid density is a WGSL
-    `override`, so level of detail never touches the description.
-- `crest({ on, from, to, height, v?, paint, sag?, flutter? }) -> Sheet`: a membrane standing on a strand's surface
-  along a line of constant `v`.
-- `fan({ rays, sag, scallop, paint }) -> Sheet`: a membrane between rays (a wing, a fluke). Rays are spines.
-- `shell({ profile, turns?, growth?, angular?, paint }) -> Shell`: a lathe; with `turns` and `growth` a spiral shell
-  or horn (Raup's parameters).
-- `scatter({ name, on, count, at(i), thing, scale? }) -> Scatter`: instances of `thing` placed at body coordinates
-  `(m, v, rho)` on a host and oriented by its chart's frame (done; the example's teeth and dorsal spikes).
-- `mesh({ positions, indices, paint }) -> Mesh`: explicit triangles are a full citizen.
+- `strand(spec) -> Strand`: `sweep` with defaults and a look. Spec: `name`, `spine(m)`, `stations`, `girth(m)`,
+  `section` (`aspect(m)`, `squareness`), `twist(m)`, `tips` (`"round" | "point" | "open"` or with lengths), `up`,
+  `level`, `paint(m, v)`, `detail` (rings along, segments around). A `Strand` is a `Body` and a `Drawable`; placing it
+  (`place(s, chart)`) or slicing it (`s.at(t)`) keeps its look; `draw.points(name, pts, s)` instances it.
+  Body coordinates: m in [0, 1] along the spine, v in [0, 1] round it (0.25 the dorsal line, 0.75 the belly), rho out
+  as a fraction of the thickness (skin at 1). Frames are rotation-minimising (Wang et al. 2008) with optional levelling;
+  radii scale by 1 / sqrt(stretch) (volume preservation).
+- `crest(spec) -> SurfaceDrawable`: a `sheet` standing on the line of constant v of a body, rising along its section's
+  outward direction, raked and fluttering; drawn two-sided with ink on its free edge.
+- `sea(spec) -> Sea`: the root chart (x, z, height above the water), and the water as a glazed surface in that chart:
+  a camera-following grid, the style's `water`, foam where any opaque body meets it (from scene depth).
 
-### 2.3 Charts and the scene graph (`src/chart.ts`)
+### 2.3 Style (`src/style.ts`)
 
-```ts
-interface Chart {
-  /** Local coordinates to world. Always available. */
-  toWorld(local: Expr<"vec3">): Expr<"vec3">;
-  /** World to local, where the chart has an inverse. */
-  toLocal?(world: Expr<"vec3">): Expr<"vec3">;
-}
-compose(outer, inner): Chart
-place(thing, { in: chart, how: "deformed" | "rigid", at?: [..] })
-attach(thing, { to: strand, m, v, rho })    // done: the example's head, jaw, horns and eyes
-```
+A style is a program in the same language: `{ shade(ctx), ink(ctx), outline, water(ctx), shadow(ctx), sky(ctx), post,
+clear }`. `shade` lights a base colour (body coordinates are not in its context: paint has already used them) and tints
+it under water. v0: `toon`.
 
-- `sea(...)` is the root chart: `(x, z, height above the surface)`, with a swell that moves in time. It is also a
-  `Surface` (the water) and a `Canvas` for pixel-time decals.
-- `whirlpool({ at, radius, spin(r), depth(r), drift })` is a chart: a twist that accumulates with time, a funnel and
-  an inward drift, the identity beyond its radius.
-- `deformed`: every vertex of the child is mapped through the chart in the vertex shader (it bends with the parent).
-  `rigid`: the child keeps its shape; its position and orientation come from the chart's value and Jacobian.
+### 2.4 Planned (unchanged in intent; to be written on section 7)
 
-### 2.4 Space-time (`src/spacetime.ts`)
-
-```ts
-interface SpaceTime<B> { readonly span: readonly [number, number]; at(t: In<"f32">): B }
-telegraph(obj, { arm, style })     // the footprint on the sea of obj.at(arm): a toothed marker, pixel-time
-smear(obj, { over, samples })      // ghosts of the recent past, fading with age
-wake(obj, { over })                // foam where the body crossed the water in the recent past
-```
-
-A body whose spec reads `time` is already a space-time object; `at(t)` substitutes the time. The game simulation owns
-hit shapes and timings: an attack is built *from* the sim's capsule and arming time, and the telegraph is derived
-from the body, so they cannot disagree.
-
-### 2.5 Soft things, evaluated per pixel (`src/field.ts`)
-
-- `decal(canvas, colour(local))`: a function painted on a canvas (the sea), antialiased by screen-space derivatives.
-  Cast shadows (capsule shadows from the skeleton), wakes and telegraphs are decals; each is drawn as its own small
-  patch of the sea surface in the `"on-water"` phase, so its cost is the area it covers. Foam where the water meets a
-  body comes from scene depth (section 3).
-- `cloud(blobs)`: Gaussian blobs integrated analytically along the view ray. No marching, no sorting.
-- `glow(polyline, { width, colour })`: falloff of distance to a line (lightning, beams).
-
-### 2.6 Style (`src/style.ts`)
-
-A style is a program in the same language: `{ shade(ctx) -> colour, ink, outline, water(ctx), shadow(ctx), sky(ctx), post }`
-where `ctx` carries base colour, normal, sun and view directions, body coordinates `(m, v, rho)`, world position and
-depth below the surface. Styles are swappable without touching a scene. v0: `toon`. Planned: `woodblock`,
-`papercraft`, `ink`, `biolume`.
-
-### 2.7 Checks (`src/check.ts`)
-
-Assertions evaluated on the CPU from the same description: `clearance(a, b, { min, over })` (capsule distances
-through time), `minScreenSize(feature, camera, px)`, `budget({ triangles })`.
-
-### 2.8 Local form, sculpt layers and the round trip with meshes (M2)
-
-Form is layered, coarse to fine, and every layer above the first is expressed in the body's own coordinates
-`(m, v)`, so it rides the body through animation, re-posing and changes of density, and editing a lower layer does
-not destroy a higher one (the multiresolution idea behind sculpt layers in ZBrush, Mudbox and Blender's Multires).
-
-| Layer | Form | Edited by |
-|---|---|---|
-| gesture, mass, section | curves (`spine`, `girth`, `section`) | code |
-| local form | `stamp`s: analytic bumps, creases and ridges placed at `(m, v)` with a radius and a falloff (the analytic counterpart of sculpt brushes: draw, inflate, crease, pinch, flatten) | code |
-| free form | a sculpt layer: a displacement table over `(m, v)` (scalar along `rho`, or a vector in the body frame for overhangs) | a person in a sculpting tool, or a fit from an imported mesh |
-| paint | functions and tables over `(m, v)` | code, or painted |
-
-Round trip:
-
-- **Out:** `bake(body, density) -> glTF` with the body coordinates as the UV map (the unwrap is free) and skin weights
-  from the stations. Any sculpting tool can open it.
-- **Back:** the difference between the sculpted mesh and the base, baked into that UV map, is the sculpt layer.
-  Standard displacement baking.
-- **Absorb:** `fit(mesh, skeleton)` casts a ray outward from the spine for each `(m, v)` and records where it meets
-  the mesh, giving a radius function. Its smooth part is re-fitted into `girth` and `section` curves and the residual
-  becomes a sculpt layer. This is how a generated or hand-made mesh becomes a Loft body. It is valid only where each
-  ray meets the surface once (the same limit as folding).
-
-Operators borrowed from modelling tools, as functions in the same language: `mirror`, `array` along a curve,
-`solidify` (thickness for a sheet), `bend` / `twist` / `taper` and `lattice` (deformers are charts), `shrinkwrap`
-(attach at a host's `rho`), `displace`, `cut` (remove where another body's `rho < 1`). Shader vocabulary still to add
-to the expression layer: gradient and cellular noise with fractal sums, `remap`, polar coordinates, a Fresnel term,
-access to scene depth (for foam where things meet and soft volume edges), and a raw-WGSL node as an escape hatch.
+- Space-time: `telegraph(obj, { arm })`, `smear`, `wake` from `body.at(t)` slices.
+- Soft things: `decal` (a glazed surface laid on the sea), `cloud` (`draw.density`), `glow` (`draw.curve`).
+- Checks evaluated on the CPU through `compileScene(...).cpu`: `clearance`, `minScreenSize`, `budget`.
+- Local form and sculpt layers: stamps and displacement tables over (m, v) (`tabulate` of a function of (m, v)), the
+  mesh round trip (`bake` out with body coordinates as UVs; fit back as a radius function plus a sculpt layer).
 
 ## 3. The Artefact (`src/artefact.ts`, done)
 
 Read that file; it is the host contract. In short: a fixed prelude (bind group 0: frame, inputs, params, curves), an
 artefact-declared bind group 1 of per-frame tables, complete shader modules, a list of buffer-less draws, optional
-post passes, and `pose(state)` which computes the per-frame tables on the CPU. `FrameState.curves` is the curve table
-the host holds now, so a `setCurves` edit moves the CPU pose exactly as it moves the GPU.
+post passes, and `pose(state)` which fills the per-frame tables on the CPU. `FrameState.curves` is the curve table the
+host holds now, so a `setCurves` edit moves the CPU pose exactly as it moves the GPU.
 
-Per-frame tables are declared by drawables (`ctx.table`, section 4.1); the compiler packs them, in declaration order,
-into as few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8 storage buffers
-and group 0 uses 3. Each table is read through its accessor, `t_<name>(i: u32) -> vec4<f32>`, which adds its offset.
-More than 5 buffers' worth (or one table over 128 MiB) fails at compile time with `TableBudgetError`. The tables the
-built-in kinds declare (all `array<vec4<f32>>`):
+Per-frame tables are `TableSource`s (`src/expr.ts`): `entries` entries of `lanes` vec4s, a `role`, and `prepare(p)`,
+which the compiler calls once (with `p.compile(roots)` for CPU expressions) to get the fill. The compiler finds them by
+walking the expressions it emits (`fetch`), or a raw-WGSL drawable declares one with `ctx.table`. They are packed, in
+declaration order, into as few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8
+storage buffers and group 0 uses 3; `fetch(t, i, lane)` reads `t_<name>(u32(i) * lanes + lane)`. More than 5 buffers'
+worth fails at compile time with `TableBudgetError`. A fill may read other tables (they fill on first read; a cycle
+throws). The tables the library declares:
 
 | Table | Declared by | Per entry | Contents |
 |---|---|---|---|
-| `stations` | the compiler, for every slice any drawable asked for | 3 vec4 | `p` (xyz position, w arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, unused) |
-| `shadows` | `src/draw/shadows.ts`, from every `Skeleton` | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
+| `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, 0) |
+| `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
+| any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f |
 
-A slice is a strand at a time (`time`, `time + offset`, an input): each is its own range in `stations`.
+`stats.stations` counts the entries of tables whose role is `"stations"`.
 
-Foam where the water meets a body is not a table: the sea reads the opaque scene's depth (`Draw.sceneDepth`) and
-foams where an opaque surface lies within the foam width in 3D (a ring of taps at that width on screen). It replaced
-the CPU waterline "collar" table: it needs no per-kind code (any opaque thing gets foam), its cost per sea pixel is
-fixed, and it follows the drawn surface exactly. What it cannot see is a waterline hidden behind the body, which the
-camera cannot see either.
+Foam where the water meets a body is not a table: the sea reads the opaque scene's depth and foams where an opaque
+surface lies within the foam width in 3D. It needs no per-kind code and follows the drawn surface exactly.
 
-## 4. Capabilities (the open type system)
+## 4. Drawables (`src/compile/context.ts`)
 
 ```ts
-interface Surface   { surface(st, m, v): SurfacePoint }                 // pos, normal, radial: can be sampled into triangles
-interface Chart     { toWorld(...); toLocal?(...) }                     // is a coordinate system
-interface Skeleton  { skeleton(ctx: CompileContext): StationRange }     // capsules: shadows, collision, footprints
-interface Attachable<T> { placed(p: Placement): T }                     // can ride a host's chart (`attach`)
-interface Field     { at(p: Expr<"vec3">): Expr<"f32"> }                // has a value at a point (planned)
-interface Drawable  { readonly name: string; draws(ctx: CompileContext): Emitted }   // knows how to schedule itself
-```
-
-A new kind of thing is a new object implementing some of these. `Drawable` is the extension point for the compiler:
-a type that can emit its own shaders and tables needs no change to the compiler. `Strand`, `Crest`, `Scatter`, `Sea`,
-the sky and the shadows are all plain drawables (`src/geom/`, `src/draw/`); `scene()` adds the sky, the sea and the
-shadows in front of the scene's things.
-
-### 4.1 What a drawable can ask for (`src/compile/context.ts`)
-
-```ts
-interface CompileContext {
-  readonly slots: Slots;            // emit expressions as WGSL: emitFn(ctx.slots, name, args, ret, roots, combine)
-  readonly style: Style; readonly sea: Sea; readonly sun: V3;
-  readonly things: readonly Drawable[];                        // for derived drawables (shadows of every Skeleton)
-  table(spec: { name; vec4s; fill(frame: PoseFrame, out: Float32Array) }): TableRef;   // TableRef.wgsl = accessor
-  evaluate(roots: readonly Expr[]): CpuRef;                    // per-frame CPU values; read with frame.values(ref)
-  stations(strand: Strand, at?: Expr<"f32">): StationRange;    // a slice: default `time`
-  chart(strand: Strand, at?: Expr<"f32">): ChartRef;           // WGSL fn (m, v, rho) -> BodyPoint, and its CPU twin
-  shared(key: string, wgsl: string): void;                     // module-scope WGSL in sceneWgsl, once per key
-  post(pass: { label; wgsl }): void;                           // a full-screen pass (the style's come first)
+interface Drawable {
+  readonly name: string;
+  draws(ctx: CompileContext): Emitted;          // { shaders: { key: { code, libs } }, draws: DrawSpec[] }
+  readonly skeletons: readonly Skeleton[];      // what it casts shadows with (empty for none)
+  readonly surfaces: readonly Bakeable[];       // what it draws that the baker can evaluate (empty for none)
 }
-interface PoseFrame { env; table(ref): Float32Array; values(ref); seaHeight(x, z) }    // what a fill sees
-type Emitted = { shaders: Record<string, string>; draws: DrawSpec[] };                   // DrawSpec = Draw with a phase
+interface CompileContext {
+  readonly slots: Slots;                        // emit expressions: emitShaderFn(ctx.slots, { name, args, out, roots, ret })
+  readonly style: Style; readonly sea: Sea; readonly sun: V3; readonly things: readonly Drawable[];
+  table(t: TableSource): TableRef;              // only for raw WGSL; fetched tables are found by themselves
+  post(pass: { label; wgsl }): void;
+}
 type Phase = "background" | "opaque" | "water" | "on-water" | "transparent";
 ```
 
-- **Order** is stated, not wired: a draw names its phase; opaque phases run first, then transparent; within a phase,
-  draws run in the order drawables emit them. Anything laid on the water after it is `"on-water"`.
-- **Scene depth**: a transparent draw sets `sceneDepth: true` and may call `scene_depth(px)` / `scene_position(px)`.
-- **Charts.** `BodyPoint` is the point at `(m, v, rho)`, the skin normal at `(m, v)`, and a frame: `x` the spine
-  tangent, `y` the outward direction at `v` within the section (no taper lean), `z = x cross y`. `attach(part, { to,
-  m, v, rho })` authors the part in that frame and the pose pass places it on the host's chart every frame (exact,
-  at every slice); `scatter({ on, count, at(i), thing, scale })` places copy `i` (`instance_index`) on it in the
-  vertex stage. `compileScene(scene)` returns the artefact plus `chart(strand, at)` and `frame(state)`, so checks and
-  tests can evaluate the CPU twins over a frame.
-- **The CPU backend** (`compileJs`) is scalarised (no array per vector op) and folds constants as it emits, so the
-  pose pass is plain arithmetic on what actually varies.
+- Every library drawable is a `SurfaceDrawable` (`draw.surface`, `draw.glazed`, `draw.curve`, `draw.points`) except the
+  sky and the shadows, which are raw WGSL. Nothing in `src/compile` knows a kind of thing.
+- A shader module lists the library functions it calls; the compiler puts each either in `sceneWgsl` (when the shared
+  functions use it too) or in that module. This is what lets a function that reads scene depth (the sea's contact foam)
+  be an ordinary GPU-only library function.
+- Order is stated, not wired: a draw names its phase; within a phase, the order drawables emit.
+- The CPU backend (`compileJs`) is scalarised and folds constants as it emits; a fetch at a constant index is a direct
+  array read, so the pose pass is plain arithmetic on what varies.
 
-### 4.2 Writing a new kind of thing
-
-One module. This one draws a ring of markers on the water around a strand's head, from a table the pose pass fills:
-
-```ts
-import { draw, type CompileContext, type Drawable, type Emitted, type Strand } from "loft";
-
-export function headMarker(body: Strand): Drawable {
-  return {
-    name: "headMarker",
-    draws(ctx: CompileContext): Emitted {
-      const chart = ctx.chart(body);                                  // the body, posed every frame
-      const t = ctx.table({ name: "headMarker", vec4s: 1, fill: (frame, out) => {
-        const p = chart.cpu(frame)(0, 0.25, 0).pos;                    // the head, on the CPU
-        out.set([p[0], p[2], 1.5, 0]);                                 // centre xz, radius
-      } });
-      const code = /* wgsl */ `
-struct VOut { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32> };
-@vertex fn vs(@builtin(vertex_index) vi: u32) -> VOut {
-  let m = ${t.wgsl}(0u);
-  let c = vec2<f32>(quad_corner(vi)) * 2.0 - 1.0;
-  let xz = m.xy + c * (m.z + 0.2);
-  var out: VOut;
-  out.world = vec3<f32>(xz.x, sea_height(xz), xz.y);
-  out.clip = frame.view_proj * vec4<f32>(out.world, 1.0);
-  return out;
-}
-@fragment fn fs(in: VOut) -> @location(0) vec4<f32> {
-  let m = ${t.wgsl}(0u);
-  let d = abs(distance(in.world.xz, m.xy) - m.z);
-  return vec4<f32>(1.0, 0.3, 0.2, 1.0 - smoothstep(0.05, 0.08, d));
-}`;
-      return {
-        shaders: { headMarker: code },
-        draws: [draw({ label: "head marker", shader: "headMarker", vertices: 6, phase: "on-water",
-                       cull: "none", depthWrite: false, blend: "alpha" })],
-      };
-    },
-  };
-}
-```
-
-Add it to a scene's `things`. Nothing in `src/compile` changes: the compiler packs the table, binds it, fills it each
-frame after the stations it reads, and runs the draw after the sea. A telegraph is the same with
-`ctx.chart(body, input("attack.arm", "f32", [0]))`.
+A new kind of thing is one module: build a map and hand it to a generic drawable, or write a `Drawable` with raw WGSL
+that declares its table with `ctx.table` (see `src/draw/shadows.ts`, which reads every skeleton's joints through the
+same expressions the vertex stage uses, and fills its table on the CPU).
 
 ## 5. Milestones and ownership
 
@@ -337,10 +200,10 @@ telegraph, smear, wake and checks; clouds and glow; more styles.
 
 ## 7. The rethink: everything is a map (v0.2)
 
-Sections 2.2 to 2.5 describe kinds of thing (strand, crest, sea, decal, cloud), each with its own hand-written shader
-template. Extending Loft to folding, to arbitrary analytic surfaces, to points and to traced solids kind by kind would
-multiply those templates. This section replaces the kinds with one small algebra. Sections 2.2 to 2.5 remain as the
-library of *names* built on it.
+Loft used to describe kinds of thing (strand, crest, sea, decal, cloud), each with its own hand-written shader
+template. Extending it to folding, to arbitrary analytic surfaces, to points and to traced solids kind by kind would
+multiply those templates. This section replaces the kinds with one small algebra (built: 7.5; corrections: 7.6).
+Section 2 is the library of *names* built on it.
 
 ### 7.1 A shape is a function, and its signature says how it can be drawn
 
@@ -394,26 +257,61 @@ other: no hand-written chart shader, and differentiation, folding and CPU evalua
 One generic drawable per signature, each assembled from expressions:
 
 ```ts
-draw.surface(surface, { paint, density, sides, outline })   // grid in the vertex stage; normals from the map itself
-draw.curve(curve, { width, paint })                          // stroke
-draw.points(points, thing)                                   // instances of any drawable
-draw.field(field, { bounds, paint, steps })                  // sphere-traced
-draw.relief(surface, { height, fold, steps })                // shell-traced on a surface
-draw.density(density, { bounds })                            // integrated
+draw.surface(name, surface, { paint, grid, sides, outline })  // grid in the vertex stage; normals from the map itself
+draw.curve(name, curve, { width, paint, segments })          // stroke
+draw.points(name, points, thing)                             // instances of any instanceable drawable
+draw.field(name, field, { bounds, paint, steps, lipschitz })  // sphere-traced (specified, not built)
+draw.relief(name, surface, { height, hMax, fold, paint, steps }) // shell-traced on a surface (specified)
+draw.density(name, density, { bounds, colour, steps })       // integrated (specified)
 ```
 
 `strand`, `crest`, `fan`, `shell`, `sea`, `scatter`, `attach`, `decal`, `cloud`, `glow` become short library functions
 that build maps and hand them to these. A baked mesh is `tabulate` of a `Surface` on a grid, so baking any surface is
 generic.
 
-### 7.5 What changes in the code
+### 7.5 What changed in the code (as built)
 
-| Layer | Change |
+| Layer | Now |
 |---|---|
-| `src/expr.ts` | `fetch` for per-frame tables; a loop form `iterate`; `src/grad.ts` adds symbolic differentiation |
-| `src/map/` (new) | the signatures, `warp`, `place`, the products, `tabulate` |
-| `src/draw/` | the generic drawables; the per-kind templates in `src/compile/shaders.ts` are deleted as their kinds move over |
-| `src/geom/`, `src/chart.ts` | become library functions over `src/map/` |
-| `src/bake/` | bakes any `Surface` by sampling it; body discovery by probing is deleted |
+| `src/expr.ts` | `fetch(table, index, lane)` (a leaf over a `TableSource`), `iterate(count, init, step)` (a real loop in both backends; `count` may be an expression); `leaves` reports tables; `substitute` rebuilds loops |
+| `src/map/` | the signatures (`types.ts`), `warp` and `tile`, `place`/`on`/`compose`/`points`, the products (`sweep`, `sheet`, `lathe`, `loft`, `extrude`, `thicken`, `surface`), `tabulate`, frame transport |
+| `src/draw/` | `draw.surface`, `draw.glazed`, `draw.curve`, `draw.points` (implemented); `draw.field`, `draw.relief`, `draw.density` (specified: options types, throw `NotImplementedError`); the sky and shadows |
+| `src/geom/` | `strand`, `crest`, `sea` as library functions; `scatter`, `attach`, the chart WGSL and its CPU twin, the station reader in WGSL and its JS mirror, and every per-kind shader template are gone |
+| `src/compile/` | slots, the table registry and packing, shared WGSL, the pose function; no kind of thing appears in it |
+| `src/bake/` | bakes every `Drawable.surfaces` entry by sampling its expressions; colours converted to linear |
 | contract, host, CLI, viewer | unchanged |
 
+### 7.6 Where the first version of this section was wrong or awkward
+
+- **One `warp` cannot dispatch.** Paint and fields are plain functions, so `warp(shape, F)` cannot tell them apart at
+  run time. It is a namespace, one function per signature: `warp.paint`, `warp.field`, `warp.surface`, `warp.curve`,
+  `warp.points`. A motif that needs the cell's identity uses `tile(F, motif)`, which hands it the whole fold result.
+  The fold values are `src/lib/fold.ts`'s, whose result also carries `toWorld(d)` (inversion needs more than a stretch),
+  so `warp.field` goes through that, not through `stretch`.
+- **A slice is not a substitution.** Substituting `time` cannot move a per-frame table to another time, so a chart has
+  `at(t)`, and a body taken at another time (`body.at(t)`) posts its own table, placed on its host's slice at t.
+- **Placement acts on the local spine, and stretch is measured there.** The rest pose is the spine at time 0; a placed
+  spine reads its host's table, which holds only the current frame, so stretch (and volume preservation) is measured on
+  the unplaced spine. Exact for rigid placement (`on`); a bending chart would need its own rest table.
+- **`paint` is three looks.** A lit surface takes `paint(u, v)` and the style; the sea needs its own colour and alpha,
+  scene depth and the camera (`draw.glazed`, whose colour sees a `Fragment`: world point, pixel, (u, v), style, sun); a
+  stroke is unlit (`draw.curve`). And "outline" is two things: an inverted hull for closed one-sided surfaces, ink along
+  the v = 1 edge for two-sided sheets (which have no back faces to draw a hull with).
+- **A surface needs more than a point.** It carries its `normal` (finite differences of the map by default; a sweep's is
+  analytic, which is better near closing tips than any difference), its `topology` (periodic edges, poles, caps: what
+  the baker needs to close a solid) and its `skeleton` (an empty chain for none).
+- **A table needs a compile-time hook.** Fills evaluate CPU expressions (a body's spine, a host's chart), and only the
+  compiler knows the slots, so a table is prepared once (`prepare(p)`, with `p.compile(roots)`). Each table compiles its
+  own CPU function; the pose pass lost the sharing of subexpressions across bodies it had as one program (best-case pose
+  0.31 -> 0.42 ms for the serpent).
+- **Library functions that read scene depth cannot be shared.** `sceneWgsl` goes into every module, and scene depth is
+  bound only for some draws, so each shader module carries its own library functions unless `sceneWgsl` already has them.
+- **A sheet is ruled.** `sheet(root, edge)` interpolates linearly from root to edge, so the crest's sideways flutter is
+  now a straight lean of the membrane, where it used to curve as f^2. Not visible in the pictures.
+- **"Baking any surface" means any surface the CPU can evaluate.** The sea follows the camera and a stroke faces it;
+  they bake to nothing and are reported as skipped. Static `tabulate` is evaluated at compile time with every input and
+  param at its default.
+- **Drawables are named.** A drawn shape needs a name (it keys its shader and its tables), so every `draw.*` takes one
+  first; a sweep's name also names its table.
+- **Params are global by name.** Two scenes declaring one param with different defaults cannot be loaded in one process
+  (the shell demo and the serpent did, through `toon.outline`). Unchanged here; worth a scene-scoped registry.

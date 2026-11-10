@@ -4,7 +4,8 @@ import serpent from "../examples/serpent.ts";
 import { bakeScene, triangleCount, vertexCount, type BodyMesh } from "../src/bake/index.ts";
 import { compileJs, variable } from "../src/expr.ts";
 import { scene, sea, toon, type Drawable } from "../src/index.ts";
-import { bent, bentScene, CYLINDER, cylinderScene } from "./bake.fixtures.ts";
+import { bent, bentScene, CYLINDER, cylinderScene, torusScene } from "./bake.fixtures.ts";
+import { toLinear } from "../src/bake/index.ts";
 
 const density = { along: 24, around: 24 };
 const at = (a: Float32Array, i: number): [number, number, number] => [a[3 * i], a[3 * i + 1], a[3 * i + 2]];
@@ -65,10 +66,11 @@ test("a straight constant-radius tube bakes to the analytic cylinder to 1e-4", (
   expect(signedVolume(tube) / (0.5 * N * radius * radius * Math.sin((2 * Math.PI) / N) * length)).toBeCloseTo(1, 4);
 });
 
-// Catches: flipped winding, a seam or tip that leaves an open edge, normals that are not unit length.
+// Catches: flipped winding, a seam or tip that leaves an open edge, normals that are not unit length; on bodies, on
+// the serpent's placed parts and instanced teeth, and on a torus that is only a map of (u, v).
 test("every body is a closed, consistently wound, outward solid with unit normals", () => {
-  for (const sc of [cylinderScene, bentScene, serpent]) {
-    for (const b of bakeScene(sc, { time: 1.2, density: { along: 20, around: 16 } }).bodies.filter((x) => x.kind === "strand")) {
+  for (const sc of [cylinderScene, bentScene, serpent, torusScene]) {
+    for (const b of bakeScene(sc, { time: 1.2, density: { along: 20, around: 16 } }).bodies.filter((x) => x.closed)) {
       for (let i = 0; i < b.indices.length; i++) expect(b.indices[i]).toBeLessThan(vertexCount(b));
       for (let i = 0; i < vertexCount(b); i++) expect(Math.abs(Math.hypot(...at(b.normals, i)) - 1)).toBeLessThan(1e-4);
       const { undirectedCounts, unmatched } = edgeBalance(b);
@@ -116,11 +118,20 @@ test("crests are single two-sided sheets, rooted on the host, with their normal 
   expect(triangleCount(fin)).toBeGreaterThan(0);
 });
 
-// Catches: a drawable kind the baker does not know being dropped without a word.
-test("an unknown drawable is skipped with its name in the result", () => {
-  const custom: Drawable = { name: "mystery", draws: () => ({ shaders: {}, draws: [] }) };
+// Catches: a drawable that draws no bakeable surface being dropped without a word.
+test("a drawable with no surface is reported as skipped by name", () => {
+  const custom: Drawable = { name: "mystery", draws: () => ({ shaders: {}, draws: [] }), skeletons: [], surfaces: [] };
   const baked = bakeScene(scene({ sea: sea({ swell: [] }), style: toon(), sun: [0, 1, 0], things: [bent, custom] }), { time: 0, density });
   expect(baked.bodies.map((b) => b.name)).toEqual(["bent"]);
-  expect(baked.skipped.map((s) => s.name)).toEqual(["mystery"]);
+  expect(baked.skipped.map((s) => s.name)).toEqual(["sky", "sea", "shadows", "mystery"]);
 });
 
+
+// Catches: display-referred colours written to COLOR_0, which glTF defines as linear (the file would look washed out),
+// or a conversion applied twice. The tube is painted [0.2, 0.5, 0.8] in sRGB.
+test("vertex colours are the authored sRGB paint converted to linear", () => {
+  const [tube] = bakeScene(cylinderScene, { time: 0, density }).bodies;
+  const want = [0.2, 0.5, 0.8].map(toLinear);
+  expect(want[1]).toBeCloseTo(0.214, 3); // sRGB 0.5 is linear 0.214
+  for (let i = 0; i < vertexCount(tube); i++) for (let c = 0; c < 3; c++) expect(tube.colors[3 * i + c]).toBeCloseTo(want[c], 6);
+});

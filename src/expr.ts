@@ -6,8 +6,9 @@
 // is what lets one description be evaluated wherever the schedule says.
 //
 // Rules: expressions are pure. A leaf is a constant, a free variable (bound by the consumer: u, v, a world point), a
-// host input (time, game state), a tunable parameter (a named number that can change without recompiling), or a
-// lookup into a table-backed curve.
+// host input (time, game state), a tunable parameter (a named number that can change without recompiling), a lookup
+// into a table-backed curve, or an entry of a per-frame table (`fetch`). `iterate` is the one non-leaf form with a
+// body: a loop over a small tuple of state, emitted as a real loop by both backends.
 
 export type Ty = "f32" | "vec2" | "vec3" | "vec4" | "bool";
 export type NumTy = Exclude<Ty, "bool">;
@@ -54,6 +55,70 @@ export type LibFn = {
   readonly deps?: readonly LibFn[];
 };
 
+// ---- per-frame tables -----------------------------------------------------------------------------------------------
+
+/**
+ * A table of vec4s that a compiler fills once per frame on the CPU and binds for every shader: `entries` entries of
+ * `lanes` vec4s each. `fetch(table, index, lane)` reads one. A compiler discovers the tables an expression uses by
+ * walking it (as it discovers params and curve rows) and calls `prepare` once to get the fill.
+ */
+export interface TableSource {
+  /** An identifier, unique in a compiled scene. */
+  readonly name: string;
+  readonly lanes: number;
+  readonly entries: number;
+  /** "stations": a body's transported frames (counted in `Artefact.stats.stations`); "data": anything else. */
+  readonly role: "stations" | "data";
+  /** Called once per compilation; returns the per-frame fill. `p.compile` gives CPU functions over a frame. */
+  prepare(p: TablePrep): TableFill;
+}
+/** Fill `out` (`entries * lanes * 4` floats, zeroed) for this frame. Pure: the same frame, the same numbers. */
+export type TableFill = (frame: TableFrame, out: Float32Array) => void;
+/** What a fill sees: this frame's environment, and other tables (filled on first read; a cycle is an error). */
+export interface TableFrame {
+  readonly env: Env;
+  table(t: TableSource): Float32Array;
+}
+/** What a table may ask of the compiler while it is prepared. */
+export interface TablePrep {
+  /**
+   * Compile expressions for the CPU, reading curves, inputs, params and tables from a frame; free variables are bound
+   * per call. Compiled once, here; called every frame.
+   */
+  compile(roots: readonly Expr[]): (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
+}
+
+const tableIds = new WeakMap<TableSource, number>();
+let nextTable = 0;
+/** A number per table object, for interning keys (two tables may share nothing but their name). */
+const tableId = (t: TableSource): number => {
+  let id = tableIds.get(t);
+  if (id === undefined) tableIds.set(t, (id = nextTable++));
+  return id;
+};
+
+// ---- loops ------------------------------------------------------------------------------------------------------
+
+/**
+ * One `iterate` form. The step was called once with fresh free variables (`state`, `index`) to give `next`. `inner`
+ * are the nodes of the body that depend on those variables (in dependency order): they are what runs each time round.
+ * Everything else the body reads is `outer` and is computed once, before the loop.
+ */
+export type Loop = {
+  readonly id: number;
+  readonly count: Expr<"f32">;
+  readonly init: readonly Expr[];
+  readonly state: readonly Expr[];
+  readonly index: Expr<"f32">;
+  readonly next: readonly Expr[];
+  readonly inner: readonly Expr[];
+  readonly outer: readonly Expr[];
+  /** The step as authored, kept so `substitute` can rebuild the body with fresh variables. */
+  readonly step: (state: readonly Expr[], i: Expr<"f32">) => readonly Expr[];
+  /** The final state, one expression per component (the loop's results). */
+  readonly results: readonly Expr[];
+};
+
 /** The node kinds. Exported so other modules (differentiation, analysis) can walk the graph; build nodes only through the constructors below. */
 export type Node =
   | { readonly op: "lib"; readonly ty: Ty; readonly fn: LibFn; readonly args: readonly Expr[] }
@@ -64,7 +129,11 @@ export type Node =
   | { readonly op: "row"; readonly ty: "vec4"; readonly row: Row; readonly x: Expr<"f32"> }
   | { readonly op: "call"; readonly ty: Ty; readonly fn: Fn; readonly args: readonly Expr[] }
   | { readonly op: "vec"; readonly ty: VecTy; readonly args: readonly Expr[] }
-  | { readonly op: "get"; readonly ty: NumTy; readonly a: Expr; readonly sel: string };
+  | { readonly op: "get"; readonly ty: NumTy; readonly a: Expr; readonly sel: string }
+  /** Entry `index` (truncated to an integer), vec4 number `lane`, of a per-frame table. */
+  | { readonly op: "fetch"; readonly ty: "vec4"; readonly table: TableSource; readonly lane: number; readonly index: Expr<"f32"> }
+  /** Component `k` of a loop's final state. */
+  | { readonly op: "iterate"; readonly ty: NumTy; readonly loop: Loop; readonly k: number };
 
 type Wider<A extends NumTy, B extends NumTy> = A extends "f32" ? B : A;
 /** A vector written as a plain array. TypeScript cannot see its length, so its result type is "some vector". */
@@ -170,6 +239,54 @@ export function param(name: string, def: number, range?: { min?: number; max?: n
 export function row(r: Row, x: In<"f32">): Expr<"vec4"> {
   const xe = lift<"f32">(x);
   return Expr.make({ op: "row", ty: "vec4", row: r, x: xe }, `r:${r.id}:${xe.id}`);
+}
+
+/**
+ * Entry `index` of a per-frame table, vec4 number `lane` of that entry. `index` must lie in [0, entries) (it is
+ * truncated to an integer; out of range is undefined on the GPU and throws nowhere, so callers clamp).
+ */
+export function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4"> {
+  if (!(Number.isInteger(lane) && lane >= 0 && lane < table.lanes)) throw new Error(`fetch: table "${table.name}" has ${table.lanes} lanes, asked for lane ${lane}`);
+  const ie = lift<"f32">(index);
+  return Expr.make({ op: "fetch", ty: "vec4", table, lane, index: ie }, `F:${tableId(table)}:${lane}:${ie.id}`);
+}
+
+let nextLoop = 0;
+/**
+ * Repeat `step` `count` times from `init`: a real loop in both backends (the body is emitted once, whatever the count).
+ * The state is a small tuple of numeric expressions; `step(state, i)` returns the next state (same types), with `i`
+ * the iteration number 0, 1, ... as an f32. `count` may be an expression (it is truncated to an integer), so the depth
+ * of a fold can depend on distance. Pure: the step is a function of the state and the index.
+ */
+export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S): S {
+  const id = nextLoop++;
+  // A bool state would type-check through `as` casts; the loop's locals are numbers.
+  const state = init.map((e, j) => {
+    if ((e.ty as Ty) === "bool") throw new Error("iterate: state components must be numbers");
+    return variable(`_L${id}s${j}`, e.ty);
+  });
+  const index = variable(`_L${id}i`, "f32");
+  const next = step(state as unknown as S, index);
+  if (next.length !== init.length) throw new Error(`iterate: step returned ${next.length} components, the state has ${init.length}`);
+  next.forEach((e, j) => { if (e.ty !== init[j].ty) throw new Error(`iterate: state component ${j} is ${init[j].ty} but the step returned ${e.ty}`); });
+  // Inner: depends (transitively) on this loop's variables. Outer: read by the body but computed before the loop.
+  const own = new Set<number>([index.id, ...state.map((v) => v.id)]);
+  const dependent = new Set<number>();
+  const inner: Expr[] = [];
+  const outer = new Map<number, Expr>();
+  for (const e of topo(next)) {
+    if (own.has(e.id)) continue;
+    if (children(e).some((c) => own.has(c.id) || dependent.has(c.id))) { dependent.add(e.id); inner.push(e); }
+  }
+  for (const e of inner) for (const c of children(e)) if (!own.has(c.id) && !dependent.has(c.id)) outer.set(c.id, c);
+  for (const e of next) if (!own.has(e.id) && !dependent.has(e.id)) outer.set(e.id, e);
+  const results: Expr[] = [];
+  const loop: Loop = {
+    id, count: lift<"f32">(count), init, state, index, next, inner, outer: [...outer.values()],
+    step: step as unknown as Loop["step"], results,
+  };
+  init.forEach((e, k) => results.push(Expr.make({ op: "iterate", ty: e.ty as NumTy, loop, k }, `I:${id}:${k}`)));
+  return results as unknown as S;
 }
 
 const libs = new Map<string, LibFn>();
@@ -319,7 +436,26 @@ function children(e: Expr): readonly Expr[] {
     case "row": return [n.x];
     case "call": case "vec": case "lib": return n.args;
     case "get": return [n.a];
+    case "fetch": return [n.index];
+    // The loop's results depend on what it reads from outside; its body is reached through `everything`.
+    case "iterate": return [n.loop.count, ...n.loop.init, ...n.loop.outer];
   }
+}
+
+/** Every node reachable from the roots, including the bodies of loops (but not the loops' own variables). */
+function everything(roots: readonly Expr[]): Expr[] {
+  const out: Expr[] = [];
+  const seen = new Set<number>();
+  const walk = (list: readonly Expr[]): void => {
+    for (const e of list) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+      if (e.node.op === "iterate") walk(e.node.loop.inner);
+    }
+  };
+  walk(topo(roots));
+  return out;
 }
 
 /** Every node reachable from the roots, dependencies first. */
@@ -337,17 +473,20 @@ export function topo(roots: readonly Expr[]): Expr[] {
 }
 
 /** The leaves a set of expressions depends on: what a compiler must bind before emitting them. */
-export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs: InputSpec[]; params: ParamSpec[]; rows: Row[]; libs: LibFn[] } {
+export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs: InputSpec[]; params: ParamSpec[]; rows: Row[]; tables: TableSource[]; libs: LibFn[] } {
   const vars = new Map<string, Ty>();
   const ins = new Map<string, InputSpec>(), ps = new Map<string, ParamSpec>(), rs = new Map<number, Row>();
-  for (const e of topo(roots)) {
+  const ts = new Set<TableSource>();
+  // Loop variables never reach here: `everything` walks a body's nodes, not the loop's own variables.
+  for (const e of everything(roots)) {
     const n = e.node;
     if (n.op === "var") vars.set(n.name, n.ty);
     else if (n.op === "input") ins.set(n.spec.name, n.spec);
     else if (n.op === "param") ps.set(n.spec.name, n.spec);
     else if (n.op === "row") rs.set(n.row.id, n.row);
+    else if (n.op === "fetch") ts.add(n.table);
   }
-  return { vars, inputs: [...ins.values()], params: [...ps.values()], rows: [...rs.values()], libs: libsOf(roots) };
+  return { vars, inputs: [...ins.values()], params: [...ps.values()], rows: [...rs.values()], tables: [...ts], libs: libsOf(roots) };
 }
 
 /** The library functions a set of expressions uses, each after the functions it depends on. */
@@ -366,7 +505,7 @@ export function libsOf(roots: readonly Expr[]): LibFn[] {
     for (const d of fn.deps ?? []) add(d);
     out.push(fn);
   };
-  for (const e of topo(roots)) if (e.node.op === "lib") add(e.node.fn);
+  for (const e of everything(roots)) if (e.node.op === "lib") add(e.node.fn);
   return out;
 }
 
@@ -379,6 +518,8 @@ export type Bind = {
   param(spec: ParamSpec): string;
   /** A vec4 lookup of `row` at the already-emitted scalar source `x`. */
   row(row: Row, x: string): string;
+  /** vec4 `lane` of entry `index` (already-emitted f32 source, an integer value) of a per-frame table. */
+  table(table: TableSource, index: string, lane: number): string;
 };
 
 const lit = (n: number): string => (Number.isInteger(n) ? n.toFixed(1) : String(n));
@@ -401,6 +542,8 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
     case "vec": return `${WGSL_TY[n.ty]}(${n.args.map(ref).join(", ")})`;
     case "get": return `${ref(n.a)}.${n.sel}`;
     case "lib": return `${n.fn.name}(${n.args.map(ref).join(", ")})`;
+    case "fetch": return bind.table(n.table, ref(n.index), n.lane);
+    case "iterate": throw new Error("internal: a loop is emitted as statements, not as an expression");
     case "call": {
       const splat = (a: Expr): string => (SPLAT.has(n.fn) && n.ty !== "f32" && a.ty === "f32" ? `${WGSL_TY[n.ty]}(${ref(a)})` : ref(a));
       const a = n.args.map(splat);
@@ -418,24 +561,45 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
 }
 
 /**
- * Straight-line WGSL for a set of expressions: one `let` per shared node, in dependency order.
- * Returns the statements, for each root the name (or inline source) that holds its value, and the library
+ * WGSL statements for a set of expressions: one `let` per shared node, in dependency order, and a `for` loop per
+ * `iterate`. Returns the statements, for each root the name (or inline source) that holds its value, and the library
  * functions the statements call.
  */
 export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { lines: string[]; out: string[]; libs: LibFn[] } {
   const names = new Map<number, string>();
-  const lines: string[] = [];
   const ref = (x: Expr): string => names.get(x.id)!;
-  for (const e of topo(roots)) {
-    const src = wgslNode(e, ref, bind);
-    const leaf = e.node.op === "const" || e.node.op === "var";
-    if (leaf) names.set(e.id, src);
-    else {
-      const name = `${prefix}${e.id}`;
-      lines.push(`let ${name}: ${WGSL_TY[e.ty]} = ${src};`);
-      names.set(e.id, name);
+  const emit = (list: readonly Expr[], lines: string[]): void => {
+    for (const e of list) {
+      if (names.has(e.id)) continue;
+      const n = e.node;
+      if (n.op === "iterate") { loop(n.loop, lines); continue; }
+      const src = wgslNode(e, ref, bind);
+      if (n.op === "const" || n.op === "var") names.set(e.id, src);
+      else {
+        const name = `${prefix}${e.id}`;
+        lines.push(`let ${name}: ${WGSL_TY[e.ty]} = ${src};`);
+        names.set(e.id, name);
+      }
     }
-  }
+  };
+  const loop = (l: Loop, lines: string[]): void => {
+    const L = `${prefix}L${l.id}`;
+    l.init.forEach((e, j) => lines.push(`var ${L}s${j}: ${WGSL_TY[e.ty]} = ${ref(e)};`));
+    lines.push(`for (var ${L}i = 0u; ${L}i < u32(${ref(l.count)}); ${L}i++) {`);
+    l.state.forEach((v, j) => names.set(v.id, `${L}s${j}`));
+    names.set(l.index.id, `f32(${L}i)`);
+    const body: string[] = [];
+    emit(l.inner, body);
+    // Read every next value before assigning any: a step may return one state variable as another (a swap).
+    l.next.forEach((e, j) => body.push(`let ${L}n${j}: ${WGSL_TY[e.ty]} = ${ref(e)};`));
+    l.next.forEach((_, j) => body.push(`${L}s${j} = ${L}n${j};`));
+    lines.push(...body.map((b) => `  ${b}`), "}");
+    // The body's names are scoped to the loop.
+    for (const e of [...l.inner, ...l.state, l.index]) names.delete(e.id);
+    l.results.forEach((r, j) => names.set(r.id, `${L}s${j}`));
+  };
+  const lines: string[] = [];
+  emit(topo(roots), lines);
   // `libs`: definitions the caller must place at module scope (once per module) for the statements to compile.
   return { lines, out: roots.map(ref), libs: libsOf(roots) };
 }
@@ -453,6 +617,8 @@ function rebuild(e: Expr, kids: readonly Expr[]): Expr {
     case "call": return Expr.make({ ...n, args: kids }, `f:${n.fn}:${ids}`);
     case "vec": return Expr.make({ ...n, args: kids }, `V:${n.ty}:${ids}`);
     case "get": return Expr.make({ ...n, a: kids[0] }, `g:${kids[0].id}:${n.sel}`);
+    case "fetch": return Expr.make({ ...n, index: kids[0] as Expr<"f32"> }, `F:${tableId(n.table)}:${n.lane}:${kids[0].id}`);
+    case "iterate": throw new Error("internal: loops are rebuilt by `substitute`, not `rebuild`");
   }
 }
 
@@ -463,8 +629,24 @@ function rebuild(e: Expr, kids: readonly Expr[]): Expr {
 export function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[] {
   if (from.ty !== to.ty) throw new Error(`substitute: cannot replace a ${from.ty} with a ${to.ty}`);
   const done = new Map<number, Expr>();
+  const loops = new Map<number, readonly Expr[]>();
   for (const e of topo(roots)) {
     if (e === from) { done.set(e.id, to); continue; }
+    const n = e.node;
+    if (n.op === "iterate") {
+      // A loop whose outside changed is a new loop: the step runs again with fresh variables (sharing the old body's
+      // variables would let two loops' bodies share hash-consed nodes, which are scoped to one loop each).
+      const kids = children(e);
+      if (kids.every((k) => done.get(k.id) === k)) { done.set(e.id, e); continue; }
+      let made = loops.get(n.loop.id);
+      if (!made) {
+        const l = n.loop;
+        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => substitute(l.step(s, i), from, to) as Expr<NumTy>[]);
+        loops.set(n.loop.id, made);
+      }
+      done.set(e.id, made[n.k]);
+      continue;
+    }
     const kids = children(e), mapped = kids.map((k) => done.get(k.id)!);
     done.set(e.id, mapped.every((k, i) => k === kids[i]) ? e : rebuild(e, mapped));
   }
@@ -481,7 +663,8 @@ export function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[]
 // can be edited at run time. Exact identities (x * 0, x * 1, x + 0) are applied too, which is why a spline evaluated
 // at a constant m costs only its four nonzero terms; for a non-finite x they give 0 where the GPU would give NaN.
 
-type V = number | number[];
+/** A CPU value: a number, or the components of a vector. */
+export type V = number | number[];
 type Scalar = number | boolean;
 /** One component during emission: source text, or a value known at compile time. */
 type C = string | Scalar;
@@ -556,6 +739,8 @@ export type Env = {
   readonly params: Readonly<Record<string, number>>;
   /** The curve table, required by functions compiled with a `table` row source (and ignored by the others). */
   readonly curves?: Float32Array;
+  /** This frame's per-frame tables, required by functions that `fetch`. */
+  readonly tables?: (t: TableSource) => Float32Array;
 };
 
 const COMPS: Record<Ty, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4, bool: 1 };
@@ -567,7 +752,10 @@ const COMPS: Record<Ty, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4, bool: 1 }
 export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (env: Env) => (V | boolean)[] {
   const ownRows: Row[] = [];
   const fns: LibFn[] = [];
-  const body: string[] = [];
+  const tableList: TableSource[] = [];
+  const head: string[] = [];
+  let body: string[] = [];
+  const top = body;
   const comps = new Map<number, C[]>();
   let n = 0;
   const local = (code: string): string => { const name = `t${n++}`; body.push(`const ${name} = ${code};`); return name; };
@@ -599,74 +787,113 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
     const i = local(`Math.min(${CURVE_N - 2}, Math.floor(${s}))`), t = local(`${s} - ${i}`);
     return [0, 1, 2, 3].map((c) => local(`${read(i, c)} * (1 - ${t}) + ${arr}[${off + c} + (${i} + 1) * 4] * ${t}`));
   };
+  /** Each table is looked up once per call, before anything else runs. */
+  const tableVar = (t: TableSource): string => {
+    let k = tableList.indexOf(t);
+    if (k < 0) { k = tableList.push(t) - 1; head.push(`const T${k} = tables(tsrc[${k}]);`); }
+    return `T${k}`;
+  };
+  // The GPU reads entry u32(index): truncation toward zero, which `| 0` matches for the in-range indices allowed.
+  const fetchAt = (t: TableSource, i: C, lane: number): C[] => {
+    const T = tableVar(t);
+    if (typeof i === "number") { const o = (Math.trunc(i) * t.lanes + lane) * 4; return [0, 1, 2, 3].map((c) => `${T}[${o + c}]`); }
+    const o = local(`(${src(i)} | 0) * ${t.lanes * 4} + ${lane * 4}`);
+    return [0, 1, 2, 3].map((c) => local(`${T}[${o} + ${c}]`));
+  };
 
-  for (const e of topo(roots)) {
+  const emitList = (list: readonly Expr[]): void => {
+    for (const e of list) {
+      if (comps.has(e.id)) continue;
+      const nd = e.node;
+      if (nd.op === "iterate") { loop(nd.loop); continue; }
+      comps.set(e.id, node(e));
+    }
+  };
+  /** A loop: its state as mutable locals (one per component), the body emitted once inside a `for`. */
+  const loop = (l: Loop): void => {
+    const L = `L${l.id}`;
+    const stateNames = l.init.map((e, j) => Array.from({ length: COMPS[e.ty] }, (_, c) => `${L}s${j}_${c}`));
+    l.init.forEach((e, j) => {
+      const c = comps.get(e.id)!;
+      body.push(`let ${stateNames[j].map((name, k) => `${name} = ${src(at(c, k))}`).join(", ")};`);
+    });
+    const count = comps.get(l.count.id)![0];
+    body.push(`for (let ${L}i = 0, ${L}n = Math.trunc(${src(count)}); ${L}i < ${L}n; ${L}i++) {`);
+    const outer = body;
+    body = [];
+    l.state.forEach((v, j) => comps.set(v.id, stateNames[j]));
+    comps.set(l.index.id, [`${L}i`]);
+    emitList(l.inner);
+    // Read every next value before assigning any (a step may swap state components).
+    const nexts = l.next.map((e) => comps.get(e.id)!.map((c) => (typeof c === "string" ? local(c) : c)));
+    l.next.forEach((e, j) => stateNames[j].forEach((name, k) => body.push(`${name} = ${src(at(nexts[j], k))};`)));
+    outer.push(...body.map((b) => `  ${b}`), "}");
+    body = outer;
+    for (const e of [...l.inner, ...l.state, l.index]) comps.delete(e.id);
+    l.results.forEach((r, j) => comps.set(r.id, stateNames[j]));
+  };
+  const node = (e: Expr): C[] => {
     const nd = e.node;
     const kid = (x: Expr): C[] => comps.get(x.id)!;
-    let out: C[];
     switch (nd.op) {
-      case "const": out = nd.ty === "bool" ? [nd.v[0] !== 0] : [...nd.v]; break;
-      case "var": out = leaf(`vars[${JSON.stringify(nd.name)}]`, nd.ty); break;
-      case "input": out = leaf(`(inputs[${JSON.stringify(nd.spec.name)}] ?? ${nd.spec.def.length === 1 ? nd.spec.def[0] : `[${nd.spec.def.join(",")}]`})`, nd.ty); break;
-      case "param": out = leaf(`(params[${JSON.stringify(nd.spec.name)}] ?? ${nd.spec.def})`, "f32"); break;
-      case "row": out = rowAt(nd.row, kid(nd.x)[0]); break;
+      case "const": return nd.ty === "bool" ? [nd.v[0] !== 0] : [...nd.v];
+      case "var": return leaf(`vars[${JSON.stringify(nd.name)}]`, nd.ty);
+      case "input": return leaf(`(inputs[${JSON.stringify(nd.spec.name)}] ?? ${nd.spec.def.length === 1 ? nd.spec.def[0] : `[${nd.spec.def.join(",")}]`})`, nd.ty);
+      case "param": return leaf(`(params[${JSON.stringify(nd.spec.name)}] ?? ${nd.spec.def})`, "f32");
+      case "row": return rowAt(nd.row, kid(nd.x)[0]);
+      case "fetch": return fetchAt(nd.table, kid(nd.index)[0], nd.lane);
+      case "iterate": throw new Error("internal: a loop is emitted as statements");
       case "vec": {
         const parts = nd.args.flatMap(kid);
-        out = parts.length === 1 ? Array.from({ length: COMPS[nd.ty] }, () => parts[0]) : parts;
-        break;
+        return parts.length === 1 ? Array.from({ length: COMPS[nd.ty] }, () => parts[0]) : parts;
       }
-      case "get": { const a = kid(nd.a); out = [...nd.sel].map((ch) => a["xyzw".indexOf(ch)]); break; }
+      case "get": { const a = kid(nd.a); return [...nd.sel].map((ch) => a["xyzw".indexOf(ch)]); }
       case "lib": {
         if (nd.fn.js === "gpu-only") throw new Error(`library function "${nd.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
         if (!fns.includes(nd.fn)) fns.push(nd.fn);
         const args = nd.args.map((a) => { const c = kid(a); return c.length === 1 ? src(c[0]) : `[${c.map(src).join(", ")}]`; });
-        out = leaf(`fns[${fns.indexOf(nd.fn)}](${args.join(", ")})`, nd.ty);
-        break;
+        return leaf(`fns[${fns.indexOf(nd.fn)}](${args.join(", ")})`, nd.ty);
       }
       case "call": {
         const a = nd.args.map(kid);
         switch (nd.fn) {
           case "normalize": {
-            if (a[0].length === 1) { out = each("sign", a); break; }
+            if (a[0].length === 1) return each("sign", a);
             const l = apply(EACH.sqrt!, [dot(a[0], a[0])]);
-            out = each("div", [a[0], [l]]);
-            break;
+            return each("div", [a[0], [l]]);
           }
-          case "length": out = [apply(EACH.sqrt!, [dot(a[0], a[0])])]; break;
-          case "distance": { const d = each("sub", a); out = [apply(EACH.sqrt!, [dot(d, d)])]; break; }
-          case "dot": out = [dot(a[0], a[1])]; break;
+          case "length": return [apply(EACH.sqrt!, [dot(a[0], a[0])])];
+          case "distance": { const d = each("sub", a); return [apply(EACH.sqrt!, [dot(d, d)])]; }
+          case "dot": return [dot(a[0], a[1])];
           case "cross": {
             const [x, y] = a;
             const term = (i: number, j: number): C => each("sub", [each("mul", [[x[i]], [y[j]]]), each("mul", [[x[j]], [y[i]]])])[0];
-            out = [term(1, 2), term(2, 0), term(0, 1)];
-            break;
+            return [term(1, 2), term(2, 0), term(0, 1)];
           }
           case "select": {
             const c = a[0][0];
             const width = Math.max(a[1].length, a[2].length);
-            out = Array.from({ length: width }, (_, i) => (typeof c === "boolean" ? (c ? at(a[1], i) : at(a[2], i)) : apply(SELECT, [c, at(a[1], i), at(a[2], i)])));
-            break;
+            return Array.from({ length: width }, (_, i) => (typeof c === "boolean" ? (c ? at(a[1], i) : at(a[2], i)) : apply(SELECT, [c, at(a[1], i), at(a[2], i)])));
           }
-          default: out = each(nd.fn, a);
+          default: return each(nd.fn, a);
         }
-        break;
       }
     }
-    comps.set(e.id, out);
-  }
+  };
+
+  emitList(topo(roots));
   const value = (r: Expr): string => { const c = comps.get(r.id)!; return r.ty === "f32" || r.ty === "bool" ? src(c[0]) : `[${c.map(src).join(", ")}]`; };
-  body.push(`return [${roots.map(value).join(", ")}];`);
-  const run = new Function("H", "rows", "fns", "vars", "inputs", "params", "curves", body.join("\n")) as
-    (h: typeof HELPERS, rows: Float32Array[], fns: LibFn["js"][], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"], curves: Float32Array | undefined) => (V | boolean)[];
+  top.push(`return [${roots.map(value).join(", ")}];`);
+  const run = new Function("H", "rows", "fns", "vars", "inputs", "params", "curves", "tables", "tsrc", [...head, ...top].join("\n")) as
+    (h: typeof HELPERS, rows: Float32Array[], fns: LibFn["js"][], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"], curves: Float32Array | undefined, tables: Env["tables"], tsrc: TableSource[]) => (V | boolean)[];
   const samples = ownRows.map((r) => r.samples);
   const impls = fns.map((fn) => fn.js);
-  if (rows.kind === "table") {
-    return (env) => {
-      if (!env.curves) throw new Error("compileJs: this function reads curves from a table; pass Env.curves");
-      return run(HELPERS, samples, impls, env.vars, env.inputs, env.params, env.curves);
-    };
-  }
-  return (env) => run(HELPERS, samples, impls, env.vars, env.inputs, env.params, undefined);
+  const needCurves = rows.kind === "table" && /\bcurves\[/.test(top.join("\n"));
+  return (env) => {
+    if (needCurves && !env.curves) throw new Error("compileJs: this function reads curves from a table; pass Env.curves");
+    if (tableList.length > 0 && !env.tables) throw new Error(`compileJs: this function reads the per-frame table "${tableList[0].name}"; pass Env.tables`);
+    return run(HELPERS, samples, impls, env.vars, env.inputs, env.params, env.curves, env.tables, tableList);
+  };
 }
 
 /** Evaluate once on the CPU. For repeated evaluation, keep the function from `compileJs`. */

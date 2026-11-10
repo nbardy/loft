@@ -23,7 +23,7 @@ generator*: `transform(i)` walks the group (lattice index to translation, sector
 to `rotate(i * phi) * scale(s^i)`). Branching recursion of depth N costs `b^N` instances.
 
 In Loft's terms this is already the capability split: a `Field` folds by composition; a `Surface` folds its paint and
-its displacement by composing in its parameter domain; copies of a `Surface` in space are a `scatter` with a
+its displacement by composing in its parameter domain; copies of a `Surface` in space are `draw.points` with a
 generator.
 
 ## 2. The folds
@@ -117,7 +117,7 @@ For repeated soft things: a field of clouds, endless rain streaks, foam cells.
 | Addition | Why |
 |---|---|
 | Symbolic differentiation on the DAG (`grad`, `jacobian`) | One mechanism, four uses: normals of traced fields, stretch factors of folds, the Jacobian of a chart (computed by finite differences on the CPU in the scene-graph proof, where it dominated the cost), and pixel footprints. The DAG is pure and hash-consed, so derivative rules per operator are enough and shared subexpressions stay shared. |
-| A loop form (`iterate(n, state, step)`) | Fold iteration is unrolled today, which grows the shader with depth and fixes the count at compile time. A real loop keeps code small and lets depth depend on distance. |
+| A loop form (`iterate(n, state, step)`; built in `src/expr.ts`, a real loop in both backends) | Fold iteration was unrolled, which grows the shader with depth and fixes the count at compile time. A real loop keeps code small and lets depth depend on distance. |
 | Screen-space derivative operators (fragment stage only) | Edge widths in pixels. Important trap: the derivative of a *folded* coordinate jumps at every seam and draws a line there. The footprint must come from the unfolded coordinate times the fold's stretch, which is what `grad` provides. |
 | `Fold` as a value: `{ p, id, stretch }`, composable | So folds chain, and the stretch is carried instead of remembered. |
 | 3D distance primitives and operators | sphere, box, capsule, rounded cone, torus; union, subtract, intersect and their smooth forms; round; shell; revolve and extrude of the existing 2D distance functions. |

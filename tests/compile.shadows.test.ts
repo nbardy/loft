@@ -9,7 +9,7 @@ import { stateAt } from "./compile.harness.ts";
 test("a raised bar casts one linked chain of capsules along the sun onto the water", () => {
   const bar = strand({ name: "bar", spine: (m) => through(m, [[-3, 2, 0.5], [3, 2, 0.5]]), stations: 16, girth: 0.5, tips: "open", paint: [1, 1, 1] });
   const c = compileScene(scene({ sea: sea({ swell: [] }), things: [bar], style: toon(), sun: [0.5, 1, 0] }));
-  const t = c.frame(stateAt(c.artefact, 0)).table({ name: "shadows", wgsl: "t_shadows" });
+  const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
   const s = Array.from({ length: t[0] }, (_, i) => Array.from(t.subarray(4 + i * 12, 16 + i * 12)));
   expect(s.length).toBe(15);
   s.forEach(([ax, az, bx, bz, ra, rb, strength, , prev, next], i) => {

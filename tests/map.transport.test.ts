@@ -1,6 +1,17 @@
-// The pose pass's frames and radii (src/geom/stations.ts), on spines with known answers.
+// Frames transported along a spine (src/map/transport.ts) and the sweep's reading of them (`stationSample`, the
+// expressions both backends evaluate), on spines with known answers.
 import { expect, test } from "bun:test";
-import { poseStrand, qrot, quatFromColumns, stationAt, STATION_VEC4S, v3, type V3 } from "../src/geom/stations.ts";
+import { compileJs, variable, type TableSource } from "../src/expr.ts";
+import { stationSample } from "../src/map/sweep.ts";
+import { poseStrand, qrot, quatFromColumns, STATION_VEC4S, v3, type V3 } from "../src/map/transport.ts";
+
+/** The interpolated station of a posed table at m, through the same expressions the vertex stage runs. */
+function stationAt(table: Float32Array, count: number, m: number): { p: V3; der: V3 } {
+  const t: TableSource = { name: "probe", lanes: STATION_VEC4S, entries: count, role: "stations", prepare: () => () => {} };
+  const s = stationSample(t, variable("m", "f32"));
+  const [p, der] = compileJs([s.p, s.der])({ vars: { m }, inputs: {}, params: {}, tables: () => table }) as V3[];
+  return { p, der };
+}
 
 type Spec = Parameters<typeof poseStrand>[0];
 const N = 64;
@@ -69,15 +80,15 @@ test("compressing a strand to half its length keeps its volume", () => {
 });
 
 // Catches: the interpolated spine missing the stations it interpolates, or the derivative scaled per index instead of per m.
-test("station_at passes through the stations and its derivative matches the curve", () => {
+test("the station sample passes through the stations and its derivative matches the curve", () => {
   const pos = Array.from({ length: 9 }, (_, k): V3 => [k, Math.sin(k * 0.7) * 2, Math.cos(k * 0.4)]);
   const t = posed(pos);
   for (let k = 0; k < 9; k++) {
-    const p = stationAt(t, 0, 9, k / 8).p;
+    const p = stationAt(t, 9, k / 8).p;
     for (let i = 0; i < 3; i++) expect(Math.abs(p[i] - pos[k][i])).toBeLessThan(1e-6);
   }
   const h = 1e-5, m = 0.43;
-  const fd = v3.scale(v3.sub(stationAt(t, 0, 9, m + h).p, stationAt(t, 0, 9, m - h).p), 1 / (2 * h));
-  const der = stationAt(t, 0, 9, m).der;
+  const fd = v3.scale(v3.sub(stationAt(t, 9, m + h).p, stationAt(t, 9, m - h).p), 1 / (2 * h));
+  const der = stationAt(t, 9, m).der;
   for (let i = 0; i < 3; i++) expect(Math.abs(fd[i] - der[i])).toBeLessThan(1e-3 * Math.max(1, Math.abs(der[i])));
 });

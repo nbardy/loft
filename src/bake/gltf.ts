@@ -99,5 +99,5 @@ export function writeGlb(baked: Baked): Uint8Array {
 
 /** One line per body: the counts the CLI prints. */
 export function summary(baked: Baked): string[] {
-  return baked.bodies.map((b) => `${b.name.padEnd(14)} ${b.kind.padEnd(7)} ${String(vertexCount(b)).padStart(7)} vertices ${String(triangleCount(b)).padStart(7)} triangles`);
+  return baked.bodies.map((b) => `${b.name.padEnd(14)} ${(b.closed ? "solid" : "sheet").padEnd(7)} ${String(vertexCount(b)).padStart(7)} vertices ${String(triangleCount(b)).padStart(7)} triangles`);
 }

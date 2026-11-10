@@ -35,6 +35,7 @@ export async function runGpu(exprs: readonly Expr[], samples: readonly Sample[])
     input: (spec) => { throw new Error(`input ${spec.name} not bound in the test harness`); },
     param: (spec) => { throw new Error(`param ${spec.name} not bound in the test harness`); },
     row: () => { throw new Error("rows not bound in the test harness"); },
+    table: (t) => { throw new Error(`table ${t.name} not bound in the test harness`); },
   };
   const { lines, out, libs } = emitWgsl(exprs, bind);
   const pack = (o: string, ty: Ty): string => {

@@ -1,14 +1,16 @@
-// The `stations` table: the once-per-frame CPU pose of every strand, and the two readers of it (WGSL for the vertex
-// stage, JavaScript for checks and tests), kept side by side because they must agree.
+// Frames transported along a spine, on the CPU, once per frame: the part of a sweep that cannot be computed locally
+// (DESIGN.md 7.3). The result is a per-frame table that the sweep's expressions read with `fetch` (src/map/sweep.ts),
+// so the GPU and the CPU read it through the same expressions.
 //
-// Layout, 3 vec4 per station (DESIGN.md section 3):
+// Layout, 3 vec4 per station:
 //   p = (position xyz, arc fraction)       q = frame quaternion (x, y, z, w)       r = (half-width, half-height, stretch, 0)
 // The frame quaternion maps local x to the tangent (toward increasing m), local y to the dorsal direction and local z
 // to the side (= tangent x dorsal). Stations are uniform in the spine parameter m.
 //
-// Interpolation between stations: positions by uniform Catmull-Rom over the stations (so the drawn spine is C1 and
-// passes through every station), frames by normalised lerp of quaternions, stretch linearly. Tangents at stations
-// are central differences, which is exactly the Catmull-Rom derivative at a knot, so frames and the drawn curve agree.
+// Interpolation between stations (`stationSample` in sweep.ts): positions by uniform Catmull-Rom over the stations (so
+// the drawn spine is C1 and passes through every station), frames by normalised lerp of quaternions, stretch linearly.
+// Tangents at stations are central differences, which is exactly the Catmull-Rom derivative at a knot, so frames and
+// the drawn curve agree.
 
 export const STATION_VEC4S = 3;
 
@@ -132,72 +134,4 @@ export function poseStrand(s: StrandSamples, out: Float32Array, at: number): voi
     out[o + 4] = q[0]; out[o + 5] = q[1]; out[o + 6] = q[2]; out[o + 7] = q[3];
     out[o + 8] = s.halfWidth[k] * keep; out[o + 9] = s.halfWidth[k] * s.aspect[k] * keep; out[o + 10] = stretch; out[o + 11] = 0;
   }
-}
-
-// ---- readers -------------------------------------------------------------------------------------------------------
-
-/** The stations table's name (its WGSL accessor is `t_stations`). */
-export const STATIONS_TABLE = "stations";
-
-/** WGSL: quaternion rotation and the interpolated station. Lives in `sceneWgsl`; reads the stations table. */
-export const STATIONS_WGSL = /* wgsl */ `
-fn qrot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
-  return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-}
-struct StationSample {
-  p: vec3<f32>,      // position on the interpolated spine
-  der: vec3<f32>,    // d(position)/dm
-  t: vec3<f32>,      // frame: tangent, dorsal, side
-  d: vec3<f32>,
-  s: vec3<f32>,
-  stretch: f32,
-};
-fn station_at(base: u32, count: u32, m: f32) -> StationSample {
-  let span = f32(count - 1u);
-  let x = clamp(m, 0.0, 1.0) * span;
-  let k = min(u32(floor(x)), count - 2u);
-  let f = x - f32(k);
-  let p1 = t_stations((base + k) * 3u).xyz;
-  let p2 = t_stations((base + k + 1u) * 3u).xyz;
-  // Mirrored phantom ends, as in \`through\`. The index is clamped first so it never leaves the strand's range.
-  let p0 = select(t_stations((base + max(k, 1u) - 1u) * 3u).xyz, 2.0 * p1 - p2, k == 0u);
-  let p3 = select(t_stations((base + min(k + 2u, count - 1u)) * 3u).xyz, 2.0 * p2 - p1, k + 2u >= count);
-  let a = p2 - p0;
-  let b = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
-  let c = 3.0 * p1 - p0 + p3 - 3.0 * p2;
-  var out: StationSample;
-  out.p = 0.5 * (2.0 * p1 + a * f + b * f * f + c * f * f * f);
-  out.der = 0.5 * (a + 2.0 * b * f + 3.0 * c * f * f) * span;
-  let q = normalize(mix(t_stations((base + k) * 3u + 1u), t_stations((base + k + 1u) * 3u + 1u), f));
-  out.t = qrot(q, vec3<f32>(1.0, 0.0, 0.0));
-  out.d = qrot(q, vec3<f32>(0.0, 1.0, 0.0));
-  out.s = qrot(q, vec3<f32>(0.0, 0.0, 1.0));
-  out.stretch = mix(t_stations((base + k) * 3u + 2u).z, t_stations((base + k + 1u) * 3u + 2u).z, f);
-  return out;
-}
-`;
-
-export type StationSample = { p: V3; der: V3; t: V3; d: V3; s: V3; stretch: number };
-
-/** JavaScript mirror of WGSL `station_at`, for checks and the CPU-against-GPU test. */
-export function stationAt(table: Float32Array, base: number, count: number, m: number): StationSample {
-  const span = count - 1;
-  const x = Math.min(1, Math.max(0, m)) * span;
-  const k = Math.min(Math.floor(x), count - 2);
-  const f = x - k;
-  const P = (i: number): V3 => { const o = (base + i) * 12; return [table[o], table[o + 1], table[o + 2]]; };
-  const p1 = P(k), p2 = P(k + 1);
-  const p0 = k === 0 ? v3.sub(v3.scale(p1, 2), p2) : P(k - 1);
-  const p3 = k + 2 >= count ? v3.sub(v3.scale(p2, 2), p1) : P(k + 2);
-  const a = v3.sub(p2, p0);
-  const b = v3.sub(v3.add(v3.sub(v3.scale(p0, 2), v3.scale(p1, 5)), v3.scale(p2, 4)), p3);
-  const c = v3.sub(v3.add(v3.sub(v3.scale(p1, 3), p0), p3), v3.scale(p2, 3));
-  const p = v3.scale(v3.add(v3.add(v3.scale(p1, 2), v3.scale(a, f)), v3.add(v3.scale(b, f * f), v3.scale(c, f * f * f))), 0.5);
-  const der = v3.scale(v3.add(a, v3.add(v3.scale(b, 2 * f), v3.scale(c, 3 * f * f))), 0.5 * span);
-  const o1 = (base + k) * 12 + 4, o2 = (base + k + 1) * 12 + 4;
-  const raw = [0, 1, 2, 3].map((i) => table[o1 + i] * (1 - f) + table[o2 + i] * f);
-  const l = Math.hypot(raw[0], raw[1], raw[2], raw[3]);
-  const q = raw.map((x) => x / l) as Q4;
-  const stretch = table[(base + k) * 12 + 10] * (1 - f) + table[(base + k + 1) * 12 + 10] * f;
-  return { p, der, t: qrot(q, [1, 0, 0]), d: qrot(q, [0, 1, 0]), s: qrot(q, [0, 0, 1]), stretch };
 }

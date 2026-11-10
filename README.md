@@ -28,6 +28,7 @@ cameras, a time bar, one slider per param (no recompile), a construction toggle 
 ## Where things live
 
 - `src/expr.ts`, `src/artefact.ts`: expressions and the compiler/host contract
-- `src/curve.ts`, `src/geom/`, `src/scene.ts`, `src/style.ts`, `src/compile/`: authoring API and compiler
+- `src/map/`: the map algebra (signatures, warp, place, products, tables as functions); `src/draw/`: one drawable per signature
+- `src/curve.ts`, `src/geom/` (strand, crest, sea), `src/scene.ts`, `src/style.ts`, `src/lib/`: the library; `src/compile/`: the compiler; `src/bake/`: any surface to glTF
 - `src/host/`: WebGPU host (browser canvas and bun headless)
 - `src/cli/`: the commands; `viewer/`: the live page; `tests/`: tests; `out/`: generated output (gitignored)

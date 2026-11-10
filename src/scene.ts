@@ -1,16 +1,15 @@
 // A scene says what things are; `compile` decides where each part is evaluated.
 
 import type { Camera } from "./artefact.ts";
-import type { Sea } from "./chart.ts";
-import type { Drawable } from "./compile/context.ts";
+import type { Drawable, V3 } from "./compile/context.ts";
 import { shadows } from "./draw/shadows.ts";
 import { sky } from "./draw/sky.ts";
-import type { V3 } from "./geom/stations.ts";
+import type { Sea } from "./geom/sea.ts";
 import type { Style } from "./style.ts";
 
 export type SceneSpec = {
   readonly sea: Sea;
-  /** Strands, crests, scatters, or any other `Drawable`. */
+  /** Strands, crests, drawn surfaces and points, or any other `Drawable`. */
   readonly things: readonly Drawable[];
   readonly style: Style;
   /** Direction toward the sun (normalised here). */

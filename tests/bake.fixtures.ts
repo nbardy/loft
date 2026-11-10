@@ -1,5 +1,5 @@
 // Scenes for the bake tests: a straight cylinder with analytic geometry, a curved tapered body, and the serpent.
-import { add, crest, mul, scene, sea, strand, through, toon, vec3, wave, type Scene } from "../src/index.ts";
+import { add, cos, crest, draw, mul, scene, sea, sin, spacing, strand, surface, through, toon, vec3, wave, type F, type Scene } from "../src/index.ts";
 
 const base = { sea: sea({ swell: [{ direction: [1, 0], length: 10, height: 0.2, speed: 1 }] }), style: toon(), sun: [0.3, 0.8, 0.2] as [number, number, number] };
 
@@ -17,5 +17,12 @@ export const bent = strand({
   stations: 16, girth: (m) => mul(add(0.2, mul(m, 0.3)), 1), section: { aspect: 0.8, squareness: 2.5 }, tips: [{ round: 0.1 }, { point: 0.2 }],
   paint: (m, v) => vec3(m, v, 0.5),
 });
-export const bentFin = crest({ on: bent, from: 0.2, to: 0.8, height: 0.6, paint: [0.9, 0.3, 0.3] });
+export const bentFin = crest({ on: bent, name: "bent_crest", from: 0.2, to: 0.8, height: 0.6, paint: [0.9, 0.3, 0.3] });
 export const bentScene: Scene = scene({ ...base, things: [bent, bentFin] });
+
+/** A torus written directly as a map of (u, v), periodic both ways: no strand, no table, its normal from the map. */
+export const torusScene: Scene = scene({ ...base, things: [draw.surface("torus", surface((u: F, v: F) => {
+  // v runs round the tube clockwise seen along +u, so d/du x d/dv points out of the tube.
+  const a = mul(u, Math.PI * 2), b = mul(v, -Math.PI * 2), ring = add(2, mul(cos(b), 0.6));
+  return vec3(mul(ring, cos(a)), add(mul(sin(b), 0.6), 1), mul(ring, sin(a)));
+}, { u: "periodic", v: "periodic" }), { paint: () => vec3(0.5, 0.5, 0.5), grid: { u: spacing.even(16), v: spacing.even(8) }, sides: "one", outline: "none" })] });

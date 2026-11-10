@@ -3,8 +3,8 @@
 import { expect, test } from "bun:test";
 import { setupGlobals } from "bun-webgpu";
 import {
-  add, atan2, clamp, compileJs, cos, cross, CURVE_N, emitWgsl, length, lt, mix, mod, mul, normalize, param, pow, row, Row,
-  select, sin, smoothstep, step, sub, time, variable, vec3, type Bind, type Expr,
+  abs, add, atan2, clamp, compileJs, cos, cross, CURVE_N, emitWgsl, f, fetch, floor, iterate, length, lt, mix, mod, mul, normalize,
+  param, pow, row, Row, select, sin, smoothstep, step, sub, time, variable, vec2, vec3, type Bind, type Expr, type TableSource,
 } from "../src/expr.ts";
 
 const u = variable("u", "f32");
@@ -31,6 +31,7 @@ test("JS and WGSL backends agree", async () => {
     input: (spec) => (spec.name === "time" ? "cfg.x" : (() => { throw new Error(spec.name); })()),
     param: () => "cfg.y",
     row: (_r, x) => `curve(${x})`,
+    table: () => { throw new Error("no tables here"); },
   };
   const { lines, out } = emitWgsl(cases.map((c) => (c.ty === "vec3" ? c : vec3(c as Expr<"f32">, 0, 0))), bind);
   const code = `
@@ -85,3 +86,95 @@ test("JS and WGSL backends agree", async () => {
   // f32 on the GPU against f64 on the CPU: 1e-4 relative is the floor for single precision through sin/pow/atan2.
   expect(worst).toBeLessThan(1e-4);
 });
+
+/** Run expressions of the free variable `u` (f32) on the GPU, with one per-frame table bound; return vec3 per (u, case). */
+async function onGpu(exprs: readonly Expr[], us: readonly number[], table: TableSource, data: Float32Array): Promise<Float32Array> {
+  await setupGlobals();
+  const device = await (await navigator.gpu.requestAdapter())!.requestDevice();
+  const bind: Bind = {
+    variable: (name) => name,
+    input: () => { throw new Error("no inputs here"); },
+    param: () => { throw new Error("no params here"); },
+    row: () => { throw new Error("no rows here"); },
+    table: (t, i, lane) => `tbl[u32(${i}) * ${t.lanes}u + ${lane}u]`,
+  };
+  const { lines, out } = emitWgsl(exprs.map((c) => (c.ty === "vec3" ? c : vec3(c as Expr<"f32">, 0, 0))), bind);
+  const code = `
+    @group(0) @binding(0) var<storage, read> tbl: array<vec4<f32>>;
+    @group(0) @binding(1) var<storage, read_write> result: array<vec4<f32>>;
+    @compute @workgroup_size(1) fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+      let u = array<f32, ${us.length}>(${us.join(", ")})[gid.x];
+      ${lines.join("\n      ")}
+      ${out.map((o, i) => `result[gid.x * ${exprs.length}u + ${i}u] = vec4<f32>(${o}, 0.0);`).join("\n      ")}
+    }`;
+  device.pushErrorScope("validation");
+  const pipeline = await device.createComputePipelineAsync({ layout: "auto", compute: { module: device.createShaderModule({ code }), entryPoint: "main" } });
+  const error = await device.popErrorScope();
+  if (error) throw new Error(`${error.message}\n${code}`);
+  const tb = device.createBuffer({ size: data.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+  device.queue.writeBuffer(tb, 0, data as Float32Array<ArrayBuffer>);
+  const bytes = us.length * exprs.length * 16;
+  const result = device.createBuffer({ size: bytes, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+  const read = device.createBuffer({ size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [tb, result].map((buffer, binding) => ({ binding, resource: { buffer } })) });
+  const encoder = device.createCommandEncoder();
+  const pass = encoder.beginComputePass();
+  pass.setPipeline(pipeline); pass.setBindGroup(0, group); pass.dispatchWorkgroups(us.length); pass.end();
+  encoder.copyBufferToBuffer(result, 0, read, 0, bytes);
+  device.queue.submit([encoder.finish()]);
+  await read.mapAsync(GPUMapMode.READ);
+  return new Float32Array(read.getMappedRange().slice(0));
+}
+
+// Catches: `fetch` reading a different entry or lane on the two backends (row-major against lane-major, the index not
+// truncated the same way, an offset applied on one side only), and `iterate` diverging: the body run a different number
+// of times, state assigned in sequence so a swap overwrites itself, an outer value recomputed inside the loop from the
+// wrong scope, a count that is an expression, a nested loop, and a loop whose body reads the table.
+test("fetch and iterate agree between JS and WGSL", async () => {
+  const lanes = 3, entries = 7;
+  const data = Float32Array.from({ length: entries * lanes * 4 }, (_, i) => Math.cos(i * 0.71) * 3 + i * 0.01);
+  const table: TableSource = { name: "probe", lanes, entries, role: "data", prepare: () => () => {} };
+  const k = floor(mul(u, entries - 0.01));
+  // A kaleidoscopic fold, six times: abs, shift, rotate, scale; the scale accumulates in the second component.
+  const [q, scale] = iterate(6, [vec2(u, mul(u, 0.3)), f(1)], ([p, s]) => {
+    const f = sub(abs(p), vec2(0.42, 0.18));
+    const c = cos(0.62), sn = sin(0.62);
+    return [vec2(sub(mul(f.x, c), mul(f.y, sn)), add(mul(f.x, sn), mul(f.y, c))).mul(1.55), mul(s, 1.55)];
+  });
+  // The state swaps every step: after an odd count the components are exchanged.
+  const [a, b] = iterate(5, [u, add(u, 10)], ([x, y]) => [y, x]);
+  // A count that depends on u, a body that reads the table at the iteration index, and a loop nested in another.
+  const [acc] = iterate(add(floor(mul(u, 5)), 1), [f(0)], ([s], i) => [add(s, fetch(table, i, 1).y)]);
+  const [nest] = iterate(3, [f(0)], ([s], i) => {
+    const [inner] = iterate(add(i, 2), [s], ([t], j) => [add(mul(t, 0.5), add(j, i))]);
+    return [add(inner, u)];
+  });
+  const cases: Expr[] = [
+    fetch(table, k, 0).xyz, fetch(table, add(k, 0.999), 2).xyz.mul(u), mix(fetch(table, 2, 1).xyz, fetch(table, 6, 0).xyz, u),
+    vec3(q.x, q.y, scale), vec3(a, b, 0), acc, nest,
+  ];
+  const us = [0.03, 0.31, 0.52, 0.77, 0.98];
+  const gpu = await onGpu(cases, us, table, data);
+  const run = compileJs(cases);
+  let worst = 0;
+  us.forEach((uv, j) => {
+    const cpu = run({ vars: { u: uv }, inputs: {}, params: {}, tables: () => data });
+    cases.forEach((_, i) => {
+      const want = typeof cpu[i] === "number" ? [cpu[i] as number, 0, 0] : (cpu[i] as number[]);
+      for (let c = 0; c < 3; c++) {
+        const got = gpu[(j * cases.length + i) * 4 + c];
+        const err = Math.abs(got - want[c]) / Math.max(1, Math.abs(want[c]));
+        if (err > 1e-4) console.log(`case ${i} u=${uv} comp ${c}: gpu ${got} cpu ${want[c]}`);
+        worst = Math.max(worst, err);
+      }
+    });
+    // The loops did what they say, not merely the same wrong thing on both sides.
+    expect(cpu[4]).toEqual([uv + 10, uv, 0]);
+    expect((cpu[3] as number[])[2]).toBeCloseTo(1.55 ** 6, 6);
+    const n = Math.floor(uv * 5) + 1;
+    expect(cpu[5] as number).toBeCloseTo(Array.from({ length: n }, (_, i) => data[(i * lanes + 1) * 4 + 1]).reduce((x, y) => x + y, 0), 6);
+  });
+  expect(worst).toBeLessThan(1e-4);
+});
+
+
