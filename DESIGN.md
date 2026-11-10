@@ -95,7 +95,8 @@ tests and the baker. A scene module's default export is a `Scene`. Working examp
 - `crest(spec) -> SurfaceDrawable`: a `sheet` standing on the line of constant v of a body, rising along its section's
   outward direction, raked and fluttering; drawn two-sided with ink on its free edge.
 - `sea(spec) -> Sea`: the root chart (x, z, height above the water), and the water as a glazed surface in that chart:
-  a camera-following grid, the style's `water`, foam where any opaque body meets it (from scene depth).
+  a projected grid of cells a constant size on screen (section 12), the style's `water`, foam where any opaque body
+  meets it (from scene depth).
 
 ### 2.3 Style (`src/style.ts`)
 
@@ -148,7 +149,7 @@ the viewer (which recompiles: a style is shader code, so a new style is a new ar
 |---|---|---|
 | `shade(ctx)`, `ink(ctx)` | every lit surface's fragment stage (`ink` for the hull and border outlines) | `ShadeCtx`: base colour (the paint), normal, sun, view, world point, depth below the sea, and the body: `uv` (the surface's coordinates), `anchor` (`Surface.anchor` there), `id` (a hash of the drawable's name in [0, 1), varied per copy) |
 | `mark(ctx)` | the same fragments; written to the picture's alpha | a number the style's post passes read back (`post_color(uv).a`) where a body was drawn; 1 for none |
-| `outline` | the hull's offset (never under 1.5 px) | a world width, usually a param |
+| `outline` | the hull's offset (never under 1.5 px), or the screen ink pass's width (section 12.3) | a world width, usually a param |
 | `water(ctx)` | the sea's fragment stage | `WaterCtx`: normal, sun, view, world, crest (-1..1), distance, `foam`, `contact`, `phase` |
 | `shadow(ctx)` | cast shadows laid on the water | `LayerCtx`: world, view, distance, coverage |
 | `sky(ctx)` | the background | view direction, sun |
@@ -234,7 +235,15 @@ throws). The tables the library declares:
 | `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
 | any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f |
 
-`stats.stations` counts the entries of tables whose role is `"stations"`.
+`stats.stations` counts the entries of tables whose role is `"stations"`. `stats.maxTriangles` is what the draw list
+declares, the most a frame can draw; what a frame actually drew (after level of detail) is the host's `FrameStats`
+(`Loaded.draw`, `GpuLoaded.frameTimed`).
+
+Level of detail (section 12) added to the contract: `Draw.detail` (`fixed`, `grid`, `projected`), a uniform array
+`loft_detail` at group 0 binding 4 (`DETAIL_SLOTS` vec4) that the host fills each frame and shaders read at their
+`LOFT_DETAIL_SLOT` override (set by the compiler among the draw's constants), `View.cellPixels` (default
+`CELL_PIXELS` = 7), `HYSTERESIS`, and `FrameStats`. The host keeps one piece of memory between frames: each grid's last
+level, for hysteresis.
 
 Foam where the water meets a body is not a table: the sea reads the opaque scene's depth and foams where an opaque
 surface lies within the foam width in 3D. It needs no per-kind code and follows the drawn surface exactly.
@@ -628,7 +637,7 @@ export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strike
   `staysClear` is the least capsule-to-target distance at 60 Hz over a range (target: a vertical disc or a body's
   skeleton); `stopsAt` asks for contact at arming and no penetration over the attack's span; `minScreenSize` projects the
   feature's joint spheres through a named camera and takes the narrower side of their bounds; `budget` reads
-  `stats.triangles`. `loft check <scene.ts>` runs the module's exported `checks` and exits 1 on any failure.
+  `stats.maxTriangles` (the declared maximum, so it holds for every view). `loft check <scene.ts>` runs the module's exported `checks` and exits 1 on any failure.
 
 Where the plan met the code:
 
