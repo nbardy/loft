@@ -66,6 +66,8 @@ type Node =
   | { readonly op: "get"; readonly ty: NumTy; readonly a: Expr; readonly sel: string };
 
 type Wider<A extends NumTy, B extends NumTy> = A extends "f32" ? B : A;
+/** A vector written as a plain array. TypeScript cannot see its length, so its result type is "some vector". */
+export type Lit = readonly number[];
 /** Anything accepted where an expression of type T is wanted: plain numbers lift to constants. */
 export type In<T extends Ty = Ty> = Expr<T> | (T extends "f32" ? number : T extends "bool" ? boolean : readonly number[]);
 export type Num = Expr<NumTy> | number | readonly number[];
@@ -87,10 +89,26 @@ export class Expr<T extends Ty = Ty> {
   }
 
   // Fluent forms of the common operators. `a.add(b)` is `add(a, b)`.
-  add<B extends NumTy>(this: Expr<NumTy>, b: In<B>): Expr<Wider<T & NumTy, B>> { return add(this as never, b) as never; }
-  sub<B extends NumTy>(this: Expr<NumTy>, b: In<B>): Expr<Wider<T & NumTy, B>> { return sub(this as never, b) as never; }
-  mul<B extends NumTy>(this: Expr<NumTy>, b: In<B>): Expr<Wider<T & NumTy, B>> { return mul(this as never, b) as never; }
-  div<B extends NumTy>(this: Expr<NumTy>, b: In<B>): Expr<Wider<T & NumTy, B>> { return div(this as never, b) as never; }
+  add(b: number): Expr<T>;
+  add<B extends NumTy>(b: Expr<B>): Expr<Wider<T & NumTy, B>>;
+  add(b: Lit): Expr<T extends "f32" ? VecTy : T>;
+  add<B extends NumTy = "f32">(b: Expr<B> | number | Lit): Expr<Wider<T & NumTy, B>>;
+  add(b: In<NumTy>): Expr { return add(this as never, b as never); }
+  sub(b: number): Expr<T>;
+  sub<B extends NumTy>(b: Expr<B>): Expr<Wider<T & NumTy, B>>;
+  sub(b: Lit): Expr<T extends "f32" ? VecTy : T>;
+  sub<B extends NumTy = "f32">(b: Expr<B> | number | Lit): Expr<Wider<T & NumTy, B>>;
+  sub(b: In<NumTy>): Expr { return sub(this as never, b as never); }
+  mul(b: number): Expr<T>;
+  mul<B extends NumTy>(b: Expr<B>): Expr<Wider<T & NumTy, B>>;
+  mul(b: Lit): Expr<T extends "f32" ? VecTy : T>;
+  mul<B extends NumTy = "f32">(b: Expr<B> | number | Lit): Expr<Wider<T & NumTy, B>>;
+  mul(b: In<NumTy>): Expr { return mul(this as never, b as never); }
+  div(b: number): Expr<T>;
+  div<B extends NumTy>(b: Expr<B>): Expr<Wider<T & NumTy, B>>;
+  div(b: Lit): Expr<T extends "f32" ? VecTy : T>;
+  div<B extends NumTy = "f32">(b: Expr<B> | number | Lit): Expr<Wider<T & NumTy, B>>;
+  div(b: In<NumTy>): Expr { return div(this as never, b as never); }
   get x(): Expr<"f32"> { return get(this, "x"); }
   get y(): Expr<"f32"> { return get(this, "y"); }
   get z(): Expr<"f32"> { return get(this, "z"); }
@@ -202,9 +220,31 @@ function call(fn: Fn, ty: Ty, xs: readonly In[]): Expr {
   return Expr.make({ op: "call", ty, fn, args }, `f:${fn}:${args.map((a) => a.id).join(",")}`);
 }
 
-const binary = (fn: Fn) => <A extends NumTy, B extends NumTy>(a: In<A>, b: In<B>): Expr<Wider<A, B>> =>
-  call(fn, wider(lift(a).ty, lift(b).ty), [a, b]) as Expr<Wider<A, B>>;
-const unary = (fn: Fn) => <A extends NumTy>(a: In<A>): Expr<A> => call(fn, lift(a).ty, [a]) as Expr<A>;
+// Overloads, not one generic signature: a type parameter cannot be inferred from a plain `number` argument, and with
+// a single signature `mul(x, 2)` came out as "some numeric type" instead of the type of `x` (found by the first code
+// written against this file).
+interface Binary {
+  (a: number, b: number): Expr<"f32">;
+  <A extends NumTy>(a: Expr<A>, b: number): Expr<A>;
+  <B extends NumTy>(a: number, b: Expr<B>): Expr<B>;
+  <A extends NumTy, B extends NumTy>(a: Expr<A>, b: Expr<B>): Expr<Wider<A, B>>;
+  <A extends NumTy>(a: Expr<A>, b: Lit): Expr<A extends "f32" ? VecTy : A>;
+  <B extends NumTy>(a: Lit, b: Expr<B>): Expr<B extends "f32" ? VecTy : B>;
+  (a: Lit, b: Lit | number): Expr<VecTy>;
+  (a: number, b: Lit): Expr<VecTy>;
+  // Last: arguments typed as "an expression or a plain value" (a function parameter of type `In<"f32">`). The type
+  // parameter is inferred from the expression half of the union; where the argument is only a number there is nothing
+  // to infer from, so it defaults to "f32" (what a number lifts to) instead of the whole constraint.
+  <A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit): Expr<Wider<A, B>>;
+}
+interface Unary {
+  (a: number): Expr<"f32">;
+  <A extends NumTy>(a: Expr<A>): Expr<A>;
+  (a: Lit): Expr<VecTy>;
+  <A extends NumTy = "f32">(a: Expr<A> | number | Lit): Expr<A>;
+}
+const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(lift(a).ty, lift(b).ty), [a, b])) as Binary;
+const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
 export const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div");
 export const min = binary("min"), max = binary("max"), pow = binary("pow");
@@ -221,14 +261,27 @@ export const sin = unary("sin"), cos = unary("cos"), tan = unary("tan");
 export const saturate = unary("saturate");
 export const normalize = unary("normalize");
 
-export function mix<A extends NumTy, B extends NumTy>(a: In<A>, b: In<B>, t: In<NumTy>): Expr<Wider<A, B>> {
-  return call("mix", wider(lift(a).ty, lift(b).ty), [a, b, t]) as Expr<Wider<A, B>>;
+export function mix(a: number, b: number, t: In<NumTy>): Expr<"f32">;
+export function mix<A extends NumTy, B extends NumTy>(a: Expr<A>, b: Expr<B>, t: In<NumTy>): Expr<Wider<A, B>>;
+export function mix<A extends NumTy>(a: Expr<A>, b: number | Lit, t: In<NumTy>): Expr<A extends "f32" ? NumTy : A>;
+export function mix<B extends NumTy>(a: number | Lit, b: Expr<B>, t: In<NumTy>): Expr<B extends "f32" ? NumTy : B>;
+export function mix(a: Lit, b: Lit, t: In<NumTy>): Expr<VecTy>;
+export function mix<A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, t: In<NumTy>): Expr<Wider<A, B>>;
+export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
+  return call("mix", wider(lift(a).ty, lift(b).ty), [a, b, t]);
 }
-export function clamp<A extends NumTy>(x: In<A>, lo: In<NumTy>, hi: In<NumTy>): Expr<A> {
-  return call("clamp", lift(x).ty, [x, lo, hi]) as Expr<A>;
+export function clamp(x: number, lo: number, hi: number): Expr<"f32">;
+export function clamp<A extends NumTy>(x: Expr<A>, lo: In<NumTy>, hi: In<NumTy>): Expr<A>;
+export function clamp(x: Lit, lo: In<NumTy>, hi: In<NumTy>): Expr<VecTy>;
+export function clamp<A extends NumTy = "f32">(x: Expr<A> | number | Lit, lo: In<NumTy>, hi: In<NumTy>): Expr<A>;
+export function clamp(x: In<NumTy>, lo: In<NumTy>, hi: In<NumTy>): Expr {
+  return call("clamp", lift(x).ty, [x, lo, hi]);
 }
-export function smoothstep<A extends NumTy>(lo: In<NumTy>, hi: In<NumTy>, x: In<A>): Expr<A> {
-  return call("smoothstep", wider(lift(lo).ty, lift(hi).ty, lift(x).ty), [lo, hi, x]) as Expr<A>;
+export function smoothstep(lo: number, hi: number, x: number): Expr<"f32">;
+export function smoothstep<A extends NumTy>(lo: In<NumTy>, hi: In<NumTy>, x: Expr<A>): Expr<A>;
+export function smoothstep<A extends NumTy = "f32">(lo: In<NumTy>, hi: In<NumTy>, x: Expr<A> | number | Lit): Expr<A>;
+export function smoothstep(lo: In<NumTy>, hi: In<NumTy>, x: In<NumTy>): Expr {
+  return call("smoothstep", wider(lift(lo).ty, lift(hi).ty, lift(x).ty), [lo, hi, x]);
 }
 export const length = (a: In<NumTy>): Expr<"f32"> => call("length", "f32", [a]) as Expr<"f32">;
 export const distance = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> => call("distance", "f32", [a, b]) as Expr<"f32">;
@@ -241,8 +294,13 @@ export const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> => call("and", "
 export const or = (a: In<"bool">, b: In<"bool">): Expr<"bool"> => call("or", "bool", [a, b]) as Expr<"bool">;
 export const not = (a: In<"bool">): Expr<"bool"> => call("not", "bool", [a]) as Expr<"bool">;
 /** `yes` where the condition holds, otherwise `no`. Both sides are always evaluated. */
-export function select<A extends NumTy, B extends NumTy>(cond: In<"bool">, yes: In<A>, no: In<B>): Expr<Wider<A, B>> {
-  return call("select", wider(lift(yes).ty, lift(no).ty), [cond, yes, no]) as Expr<Wider<A, B>>;
+export function select(cond: In<"bool">, yes: number, no: number): Expr<"f32">;
+export function select<A extends NumTy, B extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: Expr<B>): Expr<Wider<A, B>>;
+export function select<A extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: number | Lit): Expr<A extends "f32" ? NumTy : A>;
+export function select<B extends NumTy>(cond: In<"bool">, yes: number | Lit, no: Expr<B>): Expr<B extends "f32" ? NumTy : B>;
+export function select<A extends NumTy = "f32", B extends NumTy = "f32">(cond: In<"bool">, yes: Expr<A> | number | Lit, no: Expr<B> | number | Lit): Expr<Wider<A, B>>;
+export function select(cond: In<"bool">, yes: In<NumTy>, no: In<NumTy>): Expr {
+  return call("select", wider(lift(yes).ty, lift(no).ty), [cond, yes, no]);
 }
 
 export const TAU = Math.PI * 2;
