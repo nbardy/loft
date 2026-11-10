@@ -164,7 +164,10 @@ export class Hull {
     const e = div(2, this.fullnessAt(u));
     const cb = powz(cos(a), e), sb = powz(sin(a), e);
     // Toward the stern the lower sections pinch in to the sternpost (a wineglass stern): the transom is wide only above.
-    const zLow = mul(mul(B, sb), powz(sb, mul(smoothstep(0.32, 0, u), 2.2)));
+    // A bounded factor, not a power of sb: as a power, neighbouring stations differed by orders of magnitude near the
+    // keel, the loft's Catmull-Rom overshoot flipped the sign of z there and the skin folded along the keel (caught by
+    // the outward-normal test in tests/ships.test.ts).
+    const zLow = mul(mul(B, sb), sub(1, mul(mul(smoothstep(0.32, 0, u), 0.75), sub(1, sb))));
     const yLow = add(sub(yb, mul(add(D, yb), cb)), mul(mul(zLow, cb), L.deadrise));
     const zTop = mul(B, sub(1, mul(mul(tau, tau), L.tumblehome)));
     const yTop = add(yb, mul(sub(F_, yb), tau));
