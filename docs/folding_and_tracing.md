@@ -1,8 +1,8 @@
 # Folding space, and the tracers that draw folded things (design note, 2026-11-10)
 
-Status: design, not built. Statements about techniques are from the author's knowledge, not re-read today. Cost
-figures do not exist yet and must be measured on the target machines. The 2D demo in `out/fold_demo.ts` (spiral
-tiling, kaleidoscope, scales) is the only part that has run, and only on the CPU backend.
+Status: design note of 2026-11-10. Since built: 3.1 and 3.2 (`draw.field`, `impostors`) and 3.3 (`draw.relief`);
+DESIGN.md 7.7 and section 8 say what was built and what it costs, and override this note where they differ. Statements
+about techniques are from the author's knowledge, not re-read today. Corrections from building 3.1 are marked below.
 
 ## 1. What a fold is
 
@@ -73,7 +73,12 @@ For free-standing solids: recursive shells, fractal coral, a rock field.
 - Start and end the march at a proxy: a box, a sphere, or a strand's own hull drawn as ordinary triangles.
 - Write colour and `frag_depth`, so traced solids intersect triangle bodies and the sea correctly.
 - Normals from the field's gradient. Finite differences cost four more evaluations; a symbolic gradient costs about
-  one (section 4).
+  one (section 4). *Correction (2026-11-11):* not through a fold's loop. Differentiating `iterate` carries the
+  derivatives through every level; on the coral it cost 27 field evaluations on the CPU and, on the GPU, about as much
+  as the whole march (its registers slowed the rest of the shader), so the tracer uses the four differences.
+- A static field is a table (2026-11-11): sampled once into a distance brick whose lookup is a lower bound, the march
+  steps by it in free space and asks the formula only near the surface; or extracted once into a triangle mesh. Both
+  are `draw.field` schedules (DESIGN.md 7.7), chosen by `auto` from the field's leaves and the formula's cost.
 - Known costs: writing depth from the fragment stage disables early depth rejection, so proxies should be tight and
   drawn front to back; multisampling does not antialias a traced silhouette inside its proxy, so the edge must be
   faded from the footprint.
@@ -141,7 +146,8 @@ and GPU backends agree by test, so a field that passes on the CPU is safe to mar
 
 ## 7. Not known
 
-- Step budgets and frame cost on the M4's integrated GPU and in a browser.
+- Step budgets and frame cost in a browser. (On this machine's GPU: DESIGN.md 7.7. Scattered loads from a storage
+  buffer cost about a tenth of a coral evaluation each, so a brick only pays for an expensive formula.)
 - How far shell tracing can be pushed before curvature error shows.
 - Whether fragment-stage depth costs more than the triangles it saves at RTS camera distance, where most relief is
   below a pixel and should be dropped by level of detail anyway.

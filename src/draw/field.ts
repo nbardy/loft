@@ -26,6 +26,10 @@
 // moving away from it is ink: the first such near miss along the ray, so inner silhouettes (a branch in front of
 // another) get ink too. Ink is the style's width, at least 1.5 and at most 4 pixels (trace.ts `ink_px`).
 //
+// Schedules (`FieldSchedule`, DESIGN.md 7.7). The march's free-space steps come from `march_skip`: none when traced; a
+// run of steps by the brick's lower bound when bricked, after which one sample of the field itself decides the rest, as
+// above. STEPS bounds the field's own samples. A meshed field draws its triangles instead of the proxy.
+//
 // The safety check (section 6): at compile time the field is sampled on the CPU with `lipschitz` inside its bound; a
 // field that can overshoot (measured constant above 1) fails with `FieldSafetyError`, which names the field and the
 // measured value and suggests a step scale. Passing `safety` scales every step by it and skips the check: a deliberate
@@ -52,8 +56,10 @@ export const fieldPixel: F = variable("loft_field_px", "f32");
 /**
  * Where the field is evaluated (DESIGN.md 7.7). `trace`: the formula at every step of every pixel. `brick`: the field is
  * sampled once into a distance brick (src/map/brick.ts) and the march steps by the brick, evaluating the formula only
- * within a few pixels of the surface, for the hit, the normal and the paint. Only a static field can be bricked: one
- * that reads time, an input, a param, a curve or a per-frame table is refused by name (`FieldScheduleError`).
+ * within a few pixels of the surface, for the hit, the normal and the paint. `mesh`: a triangle mesh extracted once from
+ * the brick (src/map/nets.ts), painted per pixel. `auto`: chosen from the field (see `plan`). Only a static field can be
+ * bricked or meshed: one that reads time, an input, a param, a curve or a per-frame table is refused by name
+ * (`FieldScheduleError`).
  */
 export type FieldSchedule = "trace" | "brick" | "mesh" | "auto";
 
@@ -65,7 +71,7 @@ export type FieldOptions = {
   readonly bounds: TraceBound;
   /** Base colour at a hit (lit by the style). To vary per copy, evaluate the fold at `hit.p` and use its `id`. */
   readonly paint: (hit: FieldHit) => P3;
-  /** Most sphere-tracing steps per pixel. */
+  /** Most samples of the field per pixel (steps by a brick's bound are not counted). */
   readonly steps: number;
   /** Ink on silhouettes (the toon outline of a traced solid), or none. */
   readonly outline: TraceOutline;

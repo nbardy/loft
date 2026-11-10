@@ -6,11 +6,13 @@
 // and wall-clock frame differences moved by milliseconds with the load. Pictures are the whole scene through the host,
 // written as raw RGBA (for differencing) and WebP (for looking) under `out/tracer/<tag>/<schedule>/`.
 //
-// `bun tools/tracer_bench.ts <tag> [rounds] [scene,scene] [schedule,schedule]`. Schedules: the scene's own (`own`)
-// or trace | brick | mesh | auto for every draw.field. Cameras: the scene's own, plus `far` (the overview `three` at
-// twice its distance). Prints compile time (the bake included) and the static tables' size.
+// `bun tools/tracer_bench.ts <tag> [rounds] [scene,scene] [schedule,schedule] [base-dir]`. Schedules: the scene's own
+// (`own`) or trace | brick | mesh | auto for every draw.field, and `base`: the scene as compiled by another checkout of
+// this repository at base-dir (for example `git archive <ref> | tar -x -C dir`, node_modules linked), so a before and an
+// after are timed in the same rounds. Cameras: the scene's own, plus `far` (the overview `three` at twice its distance).
+// Prints compile time (the bake included) and the static tables' size.
 import { mkdirSync, writeFileSync } from "node:fs";
-import type { Camera } from "../src/artefact.ts";
+import type { Artefact, Camera } from "../src/artefact.ts";
 import { compile, type Scene } from "../src/index.ts";
 import { setupGlobals } from "bun-webgpu";
 import { createHost } from "../src/host/index.ts";
@@ -24,15 +26,24 @@ import pearls from "../examples/pearls.ts";
 const tag = process.argv[2] ?? "now";
 const rounds = Number(process.argv[3] ?? 30);
 const which = (process.argv[4] ?? "coral,nest,pearls").split(",");
-const schedules = (process.argv[5] ?? "own").split(",") as (FieldSchedule | "own")[];
+const schedules = (process.argv[5] ?? "own").split(",") as (FieldSchedule | "own" | "base")[];
+const baseDir = process.argv[6];
 const W = 1280, H = 800;
 const SCENES: Record<string, Scene> = { coral, nest, pearls };
 /** The draws a traced example adds (its field or impostors, and a meshed field's ink hull). */
 const traced = (label: string): boolean => /^(coral|nest|pearls)(_ink)?$/.test(label);
 
 /** The scene with every field drawn on the given schedule (a fresh drawable: its bake is its own). */
-const withSchedule = (s: Scene, k: FieldSchedule | "own"): Scene =>
-  k === "own" ? s : { ...s, things: s.things.map((t) => (t instanceof FieldDrawable ? new FieldDrawable(t.name, t.field, { ...t.o, schedule: k }) : t)) };
+const withSchedule = (s: Scene, k: FieldSchedule | "own" | "base"): Scene =>
+  k === "own" || k === "base" ? s : { ...s, things: s.things.map((t) => (t instanceof FieldDrawable ? new FieldDrawable(t.name, t.field, { ...t.o, schedule: k }) : t)) };
+
+/** The example compiled by the checkout at `baseDir` (its own modules: nothing is shared with this one). */
+async function baseArtefact(name: string): Promise<Artefact> {
+  if (!baseDir) throw new Error("schedule base: pass the base checkout's directory as the fifth argument");
+  const root = new URL(`file://${process.cwd()}/${baseDir}/`);
+  const scene = (await import(new URL(`examples/${name}.ts`, root).href)).default;
+  return (await import(new URL("src/index.ts", root).href)).compile(scene) as Artefact;
+}
 
 const far = (c: Camera): Camera => {
   if (c.kind !== "perspective") throw new Error("far: perspective cameras only");
@@ -48,7 +59,7 @@ for (const name of which) {
   let cams: [string, Camera][] = [];
   for (const k of schedules) {
     const t0 = performance.now();
-    const a = compile(withSchedule(SCENES[name]!, k));
+    const a: Artefact = k === "base" ? await baseArtefact(name) : compile(withSchedule(SCENES[name]!, k));
     const ms = performance.now() - t0;
     const mb = (a.statics ?? []).reduce((n, s) => n + s.data.byteLength, 0) / 2 ** 20;
     console.log(`${name} ${k}: compile ${ms.toFixed(0)} ms, static tables ${mb.toFixed(2)} MB, ${a.stats.triangles} triangles`);
