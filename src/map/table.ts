@@ -6,6 +6,8 @@ import { clamp, compileJs, f, fetch, floor, min, mix, mul, sub, vec4, type Expr,
 import type { F } from "./types.ts";
 
 export type Schedule = "static" | "frame";
+/** A static table is uploaded once (compile/tables.ts); a frame table is filled by every pose. */
+const ROLE: Readonly<Record<Schedule, TableSource["role"]>> = { static: "static", frame: "data" };
 
 const pad = (e: Expr<NumTy>): Expr<"vec4"> => {
   switch (e.ty) {
@@ -37,7 +39,7 @@ export function tabulate<T extends NumTy>(name: string, fn: (x: F) => Expr<T>, n
   const ty = samples[0].ty as T;
   const roots = samples.map(pad);
   const table: TableSource = {
-    name, lanes: 1, entries: n, role: "data",
+    name, lanes: 1, entries: n, role: ROLE[when],
     prepare: (p) => {
       switch (when) {
         case "static": {

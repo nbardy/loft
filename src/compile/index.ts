@@ -94,6 +94,7 @@ export function compileScene(scene: Scene): Compiled {
     params: leaves.params,
     curves: leaves.curves,
     dynamic: layout.dynamic,
+    ...(layout.statics.length > 0 ? { statics: layout.statics } : {}),
     sceneWgsl,
     shaders,
     draws,

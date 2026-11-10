@@ -67,8 +67,12 @@ export interface TableSource {
   readonly name: string;
   readonly lanes: number;
   readonly entries: number;
-  /** "stations": a body's transported frames (counted in `Artefact.stats.stations`); "data": anything else. */
-  readonly role: "stations" | "data";
+  /**
+   * "stations": a body's transported frames (counted in `Artefact.stats.stations`); "data": anything else filled per
+   * frame; "static": filled once, when the artefact is compiled (its fill must not read the frame: it is called with
+   * none), and uploaded once by the host (`Artefact.statics`): a keyed curve, a sculpt layer, a distance brick.
+   */
+  readonly role: "stations" | "data" | "static";
   /** Called once per compilation; returns the per-frame fill. `p.compile` gives CPU functions over a frame. */
   prepare(p: TablePrep): TableFill;
 }

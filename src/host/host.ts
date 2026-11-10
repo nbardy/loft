@@ -86,6 +86,12 @@ function checkArtefact(a: Artefact): { paramFloats: number } {
     if (!(d.vec4s > 0)) fail(`dynamic buffer "${d.name}" has ${d.vec4s} vec4s`);
     names.add(d.name); bindings.add(d.binding);
   }
+  for (const d of a.statics ?? []) {
+    if (names.has(d.name)) fail(`static buffer "${d.name}" declared twice`);
+    if (bindings.has(d.binding)) fail(`static buffer "${d.name}" reuses binding ${d.binding}`);
+    if (!(d.data.length > 0 && d.data.length % 4 === 0)) fail(`static buffer "${d.name}" has ${d.data.length} floats (a positive multiple of 4)`);
+    names.add(d.name); bindings.add(d.binding);
+  }
   for (const d of a.draws) {
     if (!(d.shader in a.shaders)) fail(`draw "${d.label}" names unknown shader "${d.shader}"`);
     // Opaque draws are what scene depth is made of; one cannot read it while it is being written.
@@ -425,6 +431,10 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   const curveBuf = buffer("curves", a.curves.byteLength, STORAGE);
   if (a.curves.length > 0) device.queue.writeBuffer(curveBuf, 0, a.curves as Float32Array<ArrayBuffer>); // Dawn warns on empty writes
   const dynamic = a.dynamic.map((d) => ({ ...d, gpu: buffer(d.name, d.vec4s * 16, STORAGE) }));
+  // Static tables: written once, here (absent means none).
+  const statics = (a.statics ?? []).map((d) => ({ binding: d.binding, gpu: buffer(d.name, d.data.byteLength, STORAGE) }));
+  (a.statics ?? []).forEach((d, k) => device.queue.writeBuffer(statics[k]!.gpu, 0, d.data as Float32Array<ArrayBuffer>));
+  const group1Buffers = [...dynamic, ...statics];
 
   // Explicit layouts, every binding visible to both stages (artefact.ts header): a shader may use any subset, and
   // `layout: "auto"` would drop the bindings a particular shader never reads.
@@ -433,12 +443,12 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     label: "loft prelude",
     entries: [{ binding: 0, visibility: VISIBILITY, buffer: { type: "uniform" } }, storageEntry(1), storageEntry(2), storageEntry(3)],
   });
-  const layout1 = device.createBindGroupLayout({ label: "loft scene tables", entries: dynamic.map((d) => storageEntry(d.binding)) });
+  const layout1 = device.createBindGroupLayout({ label: "loft scene tables", entries: group1Buffers.map((d) => storageEntry(d.binding)) });
   const group0 = device.createBindGroup({
     layout: layout0,
     entries: [frameBuf, inputBuf, paramBuf, curveBuf].map((b, binding) => ({ binding, resource: { buffer: b } })),
   });
-  const group1 = device.createBindGroup({ layout: layout1, entries: dynamic.map((d) => ({ binding: d.binding, resource: { buffer: d.gpu } })) });
+  const group1 = device.createBindGroup({ layout: layout1, entries: group1Buffers.map((d) => ({ binding: d.binding, resource: { buffer: d.gpu } })) });
   // Group 2 layouts: exactly the ones documented on SCENE_DEPTH_WGSL and POST_WGSL.
   const sceneDepthEntry: GPUBindGroupLayoutEntry = { binding: 0, visibility: VISIBILITY, texture: { sampleType: "unfilterable-float", viewDimension: "2d" } };
   const depthLayout = device.createBindGroupLayout({ label: "loft scene depth", entries: [sceneDepthEntry] });
@@ -600,7 +610,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       curves = next.slice();
     },
     destroy: () => {
-      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, ...dynamic.map((d) => d.gpu)]) b.destroy();
+      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, ...group1Buffers.map((d) => d.gpu)]) b.destroy();
       for (const t of targets?.textures ?? []) t.destroy();
       readback?.texture.destroy(); readback?.buffer.destroy();
       targets = undefined; readback = undefined;

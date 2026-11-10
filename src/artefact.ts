@@ -123,6 +123,12 @@ export type ParamSlot = { readonly name: string; readonly slot: number; readonly
 
 /** A per-frame table in bind group 1, declared in `sceneWgsl` as `var<storage, read> NAME: array<vec4<f32>>`. */
 export type DynamicBuffer = { readonly name: string; readonly binding: number; readonly vec4s: number };
+/**
+ * A table filled once, when the artefact was compiled (a distance brick, a sculpt layer, a mesh), in bind group 1 beside
+ * the dynamic buffers (bindings distinct from theirs), declared in `sceneWgsl` the same way. The host uploads `data`
+ * once, at load; the pose function never returns it.
+ */
+export type StaticBuffer = { readonly name: string; readonly binding: number; readonly data: Float32Array };
 
 export type Draw = {
   readonly label: string;
@@ -175,6 +181,8 @@ export type Artefact = {
   /** rows x CURVE_N x 4 floats. Static until a table-backed curve is edited. */
   readonly curves: Float32Array;
   readonly dynamic: readonly DynamicBuffer[];
+  /** Tables uploaded once at load. Absent means none. */
+  readonly statics?: readonly StaticBuffer[];
   /** Bind group 1 declarations plus generated functions shared by every shader. */
   readonly sceneWgsl: string;
   readonly shaders: Readonly<Record<string, string>>;
