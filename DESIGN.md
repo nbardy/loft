@@ -647,8 +647,9 @@ Where the plan met the code:
   a part placed on a body at a constant m (`on(body, c)`) takes its host's slice with `Body.atNear`, which posts only
   the stations up to that m (a head copy reads 5 of the body's 48); a smear copy is `Body.partAt(t, from)`, the stations
   from the part's start, its first frame seeded from the live body's (positions and radii exact, frames within the roll
-  made since: 2.65 degrees at 0.35 s, older than any copy in the example); a wake sample is `Body.skeletonAt(t, stations)`, positions and radii at every
-  third station and no frames (stretch measured between kept stations: radii within 15% at the neck, 3% elsewhere).
+  made since: 2.65 degrees at 0.35 s, older than any copy in the example); a wake sample is
+  `Body.skeletonAt(t, stations)`, positions and radii at every third station and no frames (stretch measured between
+  kept stations: radii within 15% at the neck, 3% elsewhere).
   Before: each copy and sample posed the whole body (1054 stations against 142). CPU pose, best of 3000 interleaved
   in one process: 0.47 -> 0.22 ms with smear and wake (0.11 without); `tools/strike_bench.ts` on the loaded machine:
   2.1-4.0 -> 1.5-2.2 ms (0.5-0.7 without). Tests: `tests/spacetime.slices.test.ts`.
