@@ -13,21 +13,24 @@ export type Command =
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName })
-  | { readonly kind: "dev"; readonly source: Source; readonly port: number };
+  | { readonly kind: "dev"; readonly source: Source; readonly port: number }
+  | { readonly kind: "bake"; readonly source: Source; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } };
 
 export const USAGE = `usage: loft <command> <scene.ts | --fixture> [flags]
   render <scene> --out f.webp [--views front,side,top,three] [--time 1.0] [--size 1280x800] [--param name=value ...] [--construction]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
-  dev    <scene> [--port 5173]`;
+  dev    <scene> [--port 5173]
+  bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
   "--fixture": { value: false, commands: ["render", "clip", "frames", "dev"] },
-  "--out": { value: true, commands: ["render", "clip", "frames"] },
+  "--out": { value: true, commands: ["render", "clip", "frames", "bake"] },
   "--size": { value: true, commands: ["render", "clip", "frames"] },
   "--param": { value: true, commands: ["render", "clip", "frames"] },
   "--views": { value: true, commands: ["render"] },
-  "--time": { value: true, commands: ["render"] },
+  "--time": { value: true, commands: ["render", "bake"] },
+  "--density": { value: true, commands: ["bake"] },
   "--construction": { value: false, commands: ["render"] },
   "--seconds": { value: true, commands: ["clip"] },
   "--fps": { value: true, commands: ["clip"] },
@@ -63,7 +66,7 @@ function parseParam(text: string): [string, number] {
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
-  if (!["render", "clip", "frames", "dev"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake"].includes(name)) throw new UsageError(`unknown command "${name}"`);
 
   const flags = new Map<string, string[]>();
   const positional: string[] = [];
@@ -94,8 +97,16 @@ export function parseArgs(argv: readonly string[]): Command {
 
   const out = one("--out");
   if (out === undefined) throw new UsageError(`${name}: --out is required`);
-  const wantExt = name === "clip" ? ".mp4" : ".webp";
+  const wantExt = name === "clip" ? ".mp4" : name === "bake" ? ".glb" : ".webp";
   if (!out.endsWith(wantExt)) throw new UsageError(`--out: ${name} writes ${wantExt} files, got "${out}"`);
+  if (name === "bake") {
+    const d = /^(\d+)x(\d+)$/.exec(one("--density") ?? "48x16");
+    if (!d || Number(d[1]) < 2 || Number(d[2]) < 3) throw new UsageError(`--density: "${one("--density")}" is not ALONGxAROUND (at least 2x3), e.g. 48x16`);
+    return {
+      kind: "bake", source, path: positional[0]!, out, density: { along: Number(d[1]), around: Number(d[2]) },
+      time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
+    };
+  }
   const shared: Shared = {
     source,
     size: parseSize(one("--size") ?? "1280x800"),

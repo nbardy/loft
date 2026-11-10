@@ -8,7 +8,7 @@ import { openVideo } from "./video.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
-async function open(cmd: Exclude<Command, { kind: "dev" }>) {
+async function open(cmd: Exclude<Command, { kind: "dev" | "bake" }>) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   console.log(`compile  ${ms(t)}  (${artefact.stats.triangles} triangles, ${artefact.stats.draws} draws)`);
@@ -76,6 +76,7 @@ async function main(argv: readonly string[]) {
     case "frames": return frames(cmd);
     case "clip": return clip(cmd);
     case "dev": return (await import("./dev.ts")).dev(cmd);
+    case "bake": return (await import("../bake/command.ts")).bake(cmd);
   }
 }
 
