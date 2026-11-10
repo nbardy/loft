@@ -5,19 +5,26 @@
 // nothing from here).
 //
 // The march. A hit is a distance below HIT pixels at that range (the pixel's world size is affine along a ray, so it
-// costs one multiply-add per step): far away, small folds fall below a pixel and the march ends early. Steps are capped.
-// A hit is refined by REFINE more plain steps, which for a true distance land on the surface to second order (the hit
-// threshold alone left errors of a third of a pixel). Normals are the field's symbolic gradient (grad.ts), evaluated
-// once at the hit; paint sees the hit point and normal (and may evaluate any fold there for its cell identity).
+// costs one multiply-add per step): far away, small folds fall below a pixel and the march ends early. Steps are capped;
+// a ray that runs out of steps inside the bound takes the point reached as its hit (it is crawling along a surface),
+// which leaves no hole. A hit is refined by REFINE secant steps on the last two distances, which lands within 2e-4 of
+// the analytic intersection where plain steps left 7e-3 at oblique hits. Normals are the field's symbolic gradient
+// (grad.ts), evaluated once at the hit; paint sees the hit point and normal (and may evaluate any fold there for its
+// cell identity).
 //
-// Level of detail. A field may read `fieldPixel`, the world size of one pixel where the ray enters the bound, to choose
-// its fold depth (an `iterate` count): a constant per pixel, so the field marched along one ray is one fixed function
-// whose distance bound holds. On the CPU it is 0 (full detail) and, for the safety check, also the bound's size.
+// Level of detail. A field may read `fieldPixel`, the world size of one pixel at the point being evaluated, to choose
+// its fold depth (an `iterate` count), so depth falls with distance along each ray. (It was the pixel size where the
+// ray enters the bound, constant per ray; with the camera inside the bound that is the eye's, zero, and far twigs were
+// drawn at full depth as sub-pixel grain.) Changing depth along a ray is safe for recursions where fewer levels draw a
+// subset of the parts (`grow`): a coarse step can only pass parts that are below a pixel there. On the CPU it is 0
+// (full detail) and, for the safety check, also the bound's size (the coarsest).
 //
-// Edges. Rays that miss track how close they came, in pixels; within a pixel of the hit threshold the pixel is partly
-// covered (sample mask, trace.ts), shaded at the closest point. With `outline: "silhouette"` a ray that passes within the
-// style's ink width of the surface (the same width the hull outline of a triangle body has) is ink: the first such near
-// miss along the ray, so inner silhouettes (a branch in front of another) get ink too.
+// Edges. Between two samples the surface can come no closer to the ray than where the two spheres of free space
+// meet; that closest-approach estimate (not the sampled distances, which drew silhouettes and ink as random grain)
+// decides coverage and ink. Within a pixel of the hit threshold a pixel is partly covered (sample mask, trace.ts),
+// shaded at the closest point. With `outline: "silhouette"` a ray that passes within the ink width of a surface while
+// moving away from it is ink: the first such near miss along the ray, so inner silhouettes (a branch in front of
+// another) get ink too. Ink is the style's width, at least 1.5 and at most 4 pixels (trace.ts `ink_px`).
 //
 // The safety check (section 6): at compile time the field is sampled on the CPU with `lipschitz` inside its bound; a
 // field that can overshoot (measured constant above 1) fails with `FieldSafetyError`, which names the field and the
@@ -33,8 +40,8 @@ import type { F, Field, P3, Skeleton } from "../map/types.ts";
 import { aabbOf, outlineWgsl, PROXY_VERTICES, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 
 /**
- * The world size of one pixel where the view ray enters the field's bound. A field may read it to choose its level of
- * detail (fold depth). Bound per pixel on the GPU; 0 (full detail) on the CPU.
+ * The world size of one pixel at the point the field is evaluated at. A field may read it to choose its level of detail
+ * (fold depth). Bound per step on the GPU; 0 (full detail) on the CPU.
  */
 export const fieldPixel: F = variable("loft_field_px", "f32");
 
@@ -151,7 +158,6 @@ const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 function fragmentWgsl(safety: number): string {
   return /* wgsl */ `
 override STEPS: u32 = 64u;
-const DEBUG: bool = ${process.env.LOFT_FIELD_DEBUG === "1"};
 const SAFETY: f32 = ${num(safety)};
 const HIT: f32 = ${num(HIT)};
 // The style's shading takes screen-space derivatives (band edges) after a loop whose exit differs per pixel. Every
@@ -229,8 +235,7 @@ const HIT: f32 = ${num(HIT)};
   let edge = select(HIT, inkPx, INK_ON);
   let cover = select(clamp(1.0 + edge - nearPx, 0.0, 1.0), 1.0, hit || inked);
   let useInk = INK_ON && !hit;
-  var colour = select(trace_shade(base, n, p, d), trace_ink(base, n, p, d), useInk);
-  if (DEBUG) { colour = select(select(select(vec3<f32>(0.2, 0.3, 1.0), vec3<f32>(1.0, 0.0, 0.0), exhausted), vec3<f32>(0.0), inked), vec3<f32>(0.2, 1.0, 0.3), hit); }
+  let colour = select(trace_shade(base, n, p, d), trace_ink(base, n, p, d), useInk);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
   return TraceOut(vec4<f32>(colour, 1.0), trace_depth(p), mask);
