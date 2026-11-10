@@ -9,7 +9,8 @@ import type { Draw } from "../artefact.ts";
 import type { LibFn, TableSource } from "../expr.ts";
 import type { Sea } from "../geom/sea.ts";
 import type { Grid } from "../draw/surface.ts";
-import type { Paint, Skeleton, Surface } from "../map/types.ts";
+import type { P3, Paint, Skeleton, Surface } from "../map/types.ts";
+import type { TriangleMesh } from "../map/nets.ts";
 import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
@@ -60,7 +61,14 @@ export interface CompileContext {
 }
 
 /** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */
-export type Bakeable = { readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two" };
+export type SurfaceBakeable = { readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two" };
+/** A closed triangle mesh a drawable draws (a field's, src/map/nets.ts), with the paint of a point and its normal. */
+export type MeshBakeable = { readonly name: string; readonly mesh: TriangleMesh; readonly paint: (hit: { readonly p: P3; readonly normal: P3 }) => P3 };
+/**
+ * What the baker can evaluate. The two are told apart by their `mesh` member (bake/mesh.ts), so the surface drawables
+ * that build the first kind did not change when the second was added.
+ */
+export type Bakeable = SurfaceBakeable | MeshBakeable;
 
 export interface Drawable {
   readonly name: string;

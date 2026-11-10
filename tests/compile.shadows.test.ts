@@ -44,7 +44,7 @@ test("copies made with draw.points each cast their own chain, carried by their p
 // water casts a blob centred under it, shifted 2 * 0.5 = 1 toward -x by the sun.
 test("a traced solid casts a soft blob fitted to its inside", () => {
   const ball = draw.field("ball", (p) => sub(length(sub(p, vec3(3, 2, -1))), 1), {
-    bounds: bound.sphere([3, 2, -1], 1.2), paint: () => vec3(1, 1, 1), steps: 32, outline: "none",
+    bounds: bound.sphere([3, 2, -1], 1.2), paint: () => vec3(1, 1, 1), steps: 32, outline: "none", schedule: "trace",
   });
   const c = compileScene(scene({ sea: sea({ swell: [] }), things: [ball], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));

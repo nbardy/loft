@@ -179,10 +179,12 @@ const CUBE = cubeCorners();
 export const PROXY_VERTICES = CUBE.length;
 
 /**
- * Module-scope WGSL for a traced draw: the bound's span, the proxy vertex stage `vs`, and the fragment helpers. The
- * fragment stage of the caller defines `fs(in: TraceIn) -> TraceOut`.
+ * Module-scope WGSL for a traced draw: the bound's span, the proxy vertex stage `vs`, and the fragment helpers
+ * (`traceShadeWgsl`). The fragment stage of the caller defines `fs(in: TraceIn) -> TraceOut`. `show` is a WGSL bool
+ * expression evaluated per vertex: where it is false the proxy is moved behind the near plane and draws nothing (a
+ * field drawn as a mesh from far away and traced up close switches between them per frame this way).
  */
-export function traceWgsl(b: TraceBound): string {
+export function traceWgsl(b: TraceBound, show: string): string {
   const o = obbOf(b);
   return /* wgsl */ `${spanWgsl(b)}
 const LOFT_CUBE = array<vec3<f32>, ${CUBE.length}>(${CUBE.map(v3).join(", ")});
@@ -191,7 +193,7 @@ struct TraceOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f3
 @vertex fn vs(@builtin(vertex_index) vi: u32) -> TraceIn {
   let c = LOFT_CUBE[vi];
   let w = ${v3(o.c)} + ${v3(o.axes[0])} * (c.x * ${num(o.half[0])}) + ${v3(o.axes[1])} * (c.y * ${num(o.half[1])}) + ${v3(o.axes[2])} * (c.z * ${num(o.half[2])});
-  return TraceIn(frame.view_proj * vec4<f32>(w, 1.0), w);
+  return TraceIn(select(HIDDEN_VERTEX, frame.view_proj * vec4<f32>(w, 1.0), ${show}), w);
 }
 /// The view ray through a point of the proxy: origin on the eye (perspective) or on the plane through the eye
 /// across the view (orthographic), and unit direction. One formula for both cameras.
@@ -211,6 +213,17 @@ fn trace_mask(c: f32, px: vec2<f32>) -> u32 {
   let r = u32(fract(52.9829189 * fract(dot(floor(px), vec2<f32>(0.06711056, 0.00583715)))) * 4.0) & 3u;
   return ((bits << r) | (bits >> (4u - r))) & 15u;
 }
+${traceShadeWgsl()}`;
+}
+
+/**
+ * The lighting a traced solid gets, shared with a field drawn as a mesh (so the two look the same): the style's
+ * shade, mark and ink at a world point, the ink width in pixels, and the clip position that hides a vertex.
+ */
+export function traceShadeWgsl(): string {
+  return /* wgsl */ `
+/// A clip position behind the near plane: a triangle with all three corners here is clipped away.
+const HIDDEN_VERTEX: vec4<f32> = vec4<f32>(0.0, 0.0, -2.0, 1.0);
 /// The style's lit colour of a traced point, as a triangle body's fragment would get it.
 /// A traced solid has no surface coordinates: (u, v) is 0 and its anchor is the world point (DESIGN.md 2.6).
 fn trace_shade(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32) -> vec3<f32> {

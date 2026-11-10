@@ -88,7 +88,7 @@ function reef(name: string, heads: readonly { readonly at: readonly [number, num
       const t = div(g.level, MAX_LEVELS);
       return hsv(add(mix(hue, hue + 0.2, t), mul(sub(hash3(g.id), 0.5), 0.06)), mix(0.85, 0.65, t), mix(0.85, 1.0, t));
     },
-    steps: 96, outline: "silhouette",
+    steps: 96, outline: "silhouette", schedule: "brick",
   });
 }
 const reefs = [reef("reefA", REEF_A, 0.93), reef("reefB", REEF_B, 0.02)];

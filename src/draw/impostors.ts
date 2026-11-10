@@ -197,7 +197,7 @@ export class Impostors implements Drawable {
     });
     const box = bound.box(this.lo.map((l, i) => (l - 0.5) * c[i]) as unknown as V3, this.hi.map((h, i) => (h + 0.5) * c[i]) as unknown as V3);
     const key = `impostors.${this.name}`;
-    const code = [traceWgsl(box), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi)].join("\n");
+    const code = [traceWgsl(box, "true"), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi)].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...shapeFn.libs, ...paint.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { CELLS: this.o.cells } })],

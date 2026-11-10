@@ -7,7 +7,7 @@
 // Triangles wind counter-clockwise seen from the side d/du x d/dv points to, which is the side its normal faces.
 
 import { compileScene, type CpuFn } from "../compile/index.ts";
-import type { Bakeable } from "../compile/context.ts";
+import type { MeshBakeable, SurfaceBakeable } from "../compile/context.ts";
 import { variable, type Expr } from "../expr.ts";
 import type { End, Topology } from "../map/types.ts";
 import type { Scene } from "../scene.ts";
@@ -73,7 +73,7 @@ const endsOf = (t: Topology): readonly [End, End] => (t.u === "periodic" ? ["fre
 const U = variable("u", "f32"), W = variable("v", "f32");
 
 /** One surface: a (rows + 1) x (cols + 1) grid of samples, its pole rows collapsed and its cap ends closed. */
-function bakeSurface(s: Bakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh {
+function bakeSurface(s: SurfaceBakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh {
   const run = cpu([s.surface.point(U, W), s.surface.normal(U, W), s.paint(U, W)]);
   const uAt = cpu([s.grid.u.at(U)]), vAt = cpu([s.grid.v.at(W)]);
   const rows = d.along, cols = d.around;
@@ -125,6 +125,23 @@ function bakeSurface(s: Bakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame:
   return b.finish(isClosed(s.surface.topology), s.sides === "two");
 }
 
+const MP = variable("bake_p", "vec3"), MN = variable("bake_n", "vec3");
+
+/** A triangle mesh (a field's): its own vertices, normals and triangles, the paint evaluated at each vertex. */
+function bakeMesh(m: MeshBakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0]): BodyMesh {
+  const run = cpu([m.paint({ p: MP, normal: MN })]);
+  const b = new Builder(m.name);
+  const { positions: P, normals: N, indices } = m.mesh;
+  for (let i = 0; i < P.length / 3; i++) {
+    const pos = [P[i * 3]!, P[i * 3 + 1]!, P[i * 3 + 2]!], normal = [N[i * 3]!, N[i * 3 + 1]!, N[i * 3 + 2]!];
+    const colour = run(frame, { bake_p: pos, bake_n: normal })[0] as number[];
+    // A mesh has no surface coordinates; its uvs are 0.
+    b.vertex({ pos, normal, uv: [0, 0], colour });
+  }
+  for (let t = 0; t < indices.length; t += 3) b.triangle(indices[t]!, indices[t + 1]!, indices[t + 2]!);
+  return b.finish(true, false);
+}
+
 export function bakeScene(scene: Scene, options: BakeOptions): Baked {
   const { time, density } = options;
   if (!Number.isFinite(time)) throw new Error(`bake: time must be a finite number, got ${time}`);
@@ -136,7 +153,8 @@ export function bakeScene(scene: Scene, options: BakeOptions): Baked {
   const inputs = new Float32Array(Math.max(1, a.inputFloats));
   for (const s of a.inputs) inputs.set(s.name === "time" ? [time] : s.def, s.slot);
   const frame = c.frame({ time, inputs, params: Float32Array.from(a.params.map((p) => p.def)), curves: a.curves });
-  const bodies = scene.things.flatMap((t) => t.surfaces.map((s) => bakeSurface(s, c.cpu, frame, density)));
+  // The two kinds of bakeable are told apart by their `mesh` member (compile/context.ts).
+  const bodies = scene.things.flatMap((t) => t.surfaces.map((s) => ("mesh" in s ? bakeMesh(s, c.cpu, frame) : bakeSurface(s, c.cpu, frame, density))));
   const skipped = scene.things.filter((t) => t.surfaces.length === 0).map((t) => ({ name: t.name, reason: "draws no surface that can be evaluated on the CPU" }));
   return { time, bodies, skipped };
 }

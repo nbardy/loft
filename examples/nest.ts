@@ -68,6 +68,7 @@ const drawn = draw.field("nest", field, {
   paint,
   steps: 128,
   outline: "silhouette",
+  schedule: "brick",
 });
 
 export default scene({

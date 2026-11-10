@@ -115,7 +115,7 @@ for (const camera of cameras) {
     const m = cameraMatrices(camera, W / H);
     for (const shape of ["sphere", "box"] as const) {
       const field = shape === "sphere" ? (p: Parameters<typeof sdSphere>[0]) => sdSphere(sub(p, vec3(...C)), 1) : (p: Parameters<typeof sdSphere>[0]) => sdBox3(sub(p, vec3(0.05, 0.85, 0.15)), vec3(0.65, 0.55, 0.65));
-      const s = sceneOf(draw.field("probe", field, { bounds: bound.box([-1.2, -0.2, -1.2], [1.2, 2.2, 1.2]), paint: () => vec3(1, 0, 0), steps: 96, outline: "none" }));
+      const s = sceneOf(draw.field("probe", field, { bounds: bound.box([-1.2, -0.2, -1.2], [1.2, 2.2, 1.2]), paint: () => vec3(1, 0, 0), steps: 96, outline: "none", schedule: "trace" }));
       const got = await positions(s, ["probe"], camera, W, H);
       let worst = 0, checked = 0;
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -141,7 +141,7 @@ for (const camera of cameras) {
 // own depth): a traced sphere and a triangle sphere of the same size would then not cut each other where they meet.
 test("a traced sphere and a triangle sphere interpenetrate where their analytic surfaces cross", async () => {
   const A: Vec3 = [-0.45, 1, 0], B: Vec3 = [0.45, 1, 0.1];
-  const traced = draw.field("traced", (p) => sdSphere(sub(p, vec3(...A)), 1), { bounds: bound.sphere([...A], 1.05), paint: () => vec3(1, 0.05, 0.05), steps: 96, outline: "none" });
+  const traced = draw.field("traced", (p) => sdSphere(sub(p, vec3(...A)), 1), { bounds: bound.sphere([...A], 1.05), paint: () => vec3(1, 0.05, 0.05), steps: 96, outline: "none", schedule: "trace" });
   // u from pole to pole, v round; z negated so that d/du x d/dv points outward (the lit side, back faces culled).
   const ball = surface((u: F, v: F) => {
     const b = mul(u, Math.PI), a = mul(v, Math.PI * 2);
@@ -213,7 +213,7 @@ test("impostor spheres hit where the analytic ray-sphere intersection says, cell
 test("a field with a dropped stretch factor is refused by name at compile time; the correct one compiles", () => {
   const fold = kifs({ count: 3, fold: fold3.mirror(0), scale: 2, offset: [1, 0.5, 0] });
   const b = bound.box([-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]);
-  const opts = { bounds: b, paint: () => vec3(1, 1, 1), steps: 32, outline: "none" } as const;
+  const opts = { bounds: b, paint: () => vec3(1, 1, 1), steps: 32, outline: "none", schedule: "trace" } as const;
   const dropped = sceneOf(draw.field("dropped", (p) => sdSphere(fold(p).x, 0.9), opts));
   let caught: unknown;
   try { compileScene(dropped); } catch (e) { caught = e; }
