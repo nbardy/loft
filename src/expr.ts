@@ -263,8 +263,10 @@ export const normalize = unary("normalize");
 
 export function mix(a: number, b: number, t: In<NumTy>): Expr<"f32">;
 export function mix<A extends NumTy, B extends NumTy>(a: Expr<A>, b: Expr<B>, t: In<NumTy>): Expr<Wider<A, B>>;
-export function mix<A extends NumTy>(a: Expr<A>, b: number | Lit, t: In<NumTy>): Expr<A extends "f32" ? NumTy : A>;
-export function mix<B extends NumTy>(a: number | Lit, b: Expr<B>, t: In<NumTy>): Expr<B extends "f32" ? NumTy : B>;
+export function mix<A extends NumTy>(a: Expr<A>, b: number, t: In<NumTy>): Expr<A>;
+export function mix<B extends NumTy>(a: number, b: Expr<B>, t: In<NumTy>): Expr<B>;
+export function mix<A extends NumTy>(a: Expr<A>, b: Lit, t: In<NumTy>): Expr<A extends "f32" ? VecTy : A>;
+export function mix<B extends NumTy>(a: Lit, b: Expr<B>, t: In<NumTy>): Expr<B extends "f32" ? VecTy : B>;
 export function mix(a: Lit, b: Lit, t: In<NumTy>): Expr<VecTy>;
 export function mix<A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, t: In<NumTy>): Expr<Wider<A, B>>;
 export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
@@ -296,8 +298,10 @@ export const not = (a: In<"bool">): Expr<"bool"> => call("not", "bool", [a]) as 
 /** `yes` where the condition holds, otherwise `no`. Both sides are always evaluated. */
 export function select(cond: In<"bool">, yes: number, no: number): Expr<"f32">;
 export function select<A extends NumTy, B extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: Expr<B>): Expr<Wider<A, B>>;
-export function select<A extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: number | Lit): Expr<A extends "f32" ? NumTy : A>;
-export function select<B extends NumTy>(cond: In<"bool">, yes: number | Lit, no: Expr<B>): Expr<B extends "f32" ? NumTy : B>;
+export function select<A extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: number): Expr<A>;
+export function select<B extends NumTy>(cond: In<"bool">, yes: number, no: Expr<B>): Expr<B>;
+export function select<A extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: Lit): Expr<A extends "f32" ? VecTy : A>;
+export function select<B extends NumTy>(cond: In<"bool">, yes: Lit, no: Expr<B>): Expr<B extends "f32" ? VecTy : B>;
 export function select<A extends NumTy = "f32", B extends NumTy = "f32">(cond: In<"bool">, yes: Expr<A> | number | Lit, no: Expr<B> | number | Lit): Expr<Wider<A, B>>;
 export function select(cond: In<"bool">, yes: In<NumTy>, no: In<NumTy>): Expr {
   return call("select", wider(lift(yes).ty, lift(no).ty), [cond, yes, no]);
