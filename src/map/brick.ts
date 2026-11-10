@@ -62,6 +62,11 @@ export function varianceOf(e: Expr): Variance {
 }
 
 export type BrickSpec = {
+  /**
+   * A number stored per coarse cell beside its bound (read in WGSL by `<fn>_tag(p)`), from the cell's centre and half
+   * diagonal: a field's union mask (src/draw/field.ts), or 0.
+   */
+  readonly tag: (centre: V3, halfDiagonal: number) => number;
   /** The box to cover (the solid must lie inside it). */
   readonly box: { readonly min: V3; readonly max: V3 };
   /** Fine cell size, world units. */
@@ -96,7 +101,10 @@ export type Brick = {
   sample(i: number, j: number, k: number): number;
   /** A brick's own samples, (BRICK + 1)^3, x fastest (a view into the table). */
   samples(slot: number): Float32Array;
-  /** WGSL: `fn <fn>(p: vec3<f32>) -> f32`, the lookup, reading the table through its accessor `t_<name>`. */
+  /**
+   * WGSL: `fn <fn>(p: vec3<f32>) -> f32`, the lookup, and `fn <fn>_tag(p: vec3<f32>) -> f32`, the tag of p's coarse
+   * cell, both reading the table through its accessor `t_<name>`.
+   */
   wgsl(fn: string): string;
 };
 
@@ -189,10 +197,14 @@ export function bakeBrick(name: string, d: Expr<"f32">, pvar: string, spec: Bric
     refine(bnd, ci, cj, ck, 0, 0, 0, BRICK);
   }
 
-  // The table: coarse cells (vec4: slot or -1, lower bound, 0, 0), then the pool.
+  // The table: coarse cells (vec4: slot or -1, lower bound, tag, 0), then the pool.
   const cellFloats = coarseCount * 4;
   const data = new Float32Array(cellFloats + cells.length * BRICK_FLOATS);
   for (let c = 0; c < coarseCount; c++) { data[c * 4] = slotOf[c]!; data[c * 4 + 1] = slotOf[c]! >= 0 ? 0 : lowerOf[c]!; }
+  for (let ck = 0; ck < nz; ck++) for (let cj = 0; cj < ny; cj++) for (let ci = 0; ci < nx; ci++) {
+    const half = BRICK / 2;
+    data[(ci + nx * (cj + ny * ck)) * 4 + 2] = spec.tag(at(ci * BRICK + half, cj * BRICK + half, ck * BRICK + half), halfDiag(BRICK));
+  }
   for (const { at: [ci, cj, ck], slot } of cells) {
     const bnd = bounds[slot]!;
     const base = cellFloats + slot * BRICK_FLOATS;
@@ -247,10 +259,16 @@ export function bakeBrick(name: string, d: Expr<"f32">, pvar: string, spec: Bric
   const num = (x: number) => (Number.isInteger(x) ? `${x}.0` : String(x));
   const wgsl = (fn: string): string => /* wgsl */ `
 fn ${fn}_load(k: u32) -> f32 { return t_${name}(k >> 2u)[k & 3u]; }
+/// p in coarse cells.
+fn ${fn}_coarse(p: vec3<f32>) -> vec3<f32> { return (p - vec3<f32>(${origin.map(num).join(", ")})) * ${num(1 / (BRICK * h))}; }
+fn ${fn}_tag(p: vec3<f32>) -> f32 {
+  let c = clamp(vec3<i32>(floor(${fn}_coarse(p))), vec3<i32>(0), vec3<i32>(${nx - 1}, ${ny - 1}, ${nz - 1}));
+  return t_${name}(u32(c.x + ${nx} * (c.y + ${ny} * c.z))).z;
+}
 /// Lower bound of the field at p from the brick "${name}" (src/map/brick.ts): one load in an empty coarse cell, else
 /// the best of the eight corner cones of p's fine cell.
 fn ${fn}(p: vec3<f32>) -> f32 {
-  let g = (p - vec3<f32>(${origin.map(num).join(", ")})) * ${num(1 / (BRICK * h))};
+  let g = ${fn}_coarse(p);
   let c = clamp(vec3<i32>(floor(g)), vec3<i32>(0), vec3<i32>(${nx - 1}, ${ny - 1}, ${nz - 1}));
   let cv = t_${name}(u32(c.x + ${nx} * (c.y + ${ny} * c.z)));
   if (cv.x < 0.0) { return cv.y; }

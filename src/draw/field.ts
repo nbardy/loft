@@ -8,9 +8,9 @@
 // costs one multiply-add per step): far away, small folds fall below a pixel and the march ends early. Steps are capped;
 // a ray that runs out of steps inside the bound takes the point reached as its hit (it is crawling along a surface),
 // which leaves no hole. A hit is refined by REFINE secant steps on the last two distances, which lands within 2e-4 of
-// the analytic intersection where plain steps left 7e-3 at oblique hits. Normals are the field's symbolic gradient
-// (grad.ts), evaluated once at the hit; paint sees the hit point and normal (and may evaluate any fold there for its
-// cell identity).
+// the analytic intersection where plain steps left 7e-3 at oblique hits. Normals are the field's gradient by
+// differences over a quarter pixel (`NORMAL_WGSL`), evaluated once at the hit; paint sees the hit point and normal (and
+// may evaluate any fold there for its cell identity).
 //
 // Level of detail. A field may read `fieldPixel`, the world size of one pixel at the point being evaluated, to choose
 // its fold depth (an `iterate` count), so depth falls with distance along each ray. (It was the pixel size where the
@@ -33,8 +33,7 @@
 
 import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
-import { compileJs, div, f, length, libsOf, max, mul, substitute, variable, type Expr, type TableSource } from "../expr.ts";
-import { gradient } from "../grad.ts";
+import { compileJs, f, leaves, libsOf, mul, topo, substitute, variable, type Expr, type LibFn, type TableSource } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted } from "../compile/context.ts";
 import { lipschitz } from "../lib/sdf3.ts";
@@ -153,9 +152,60 @@ export function checkField(name: string, field: Field, b: TraceBound): number {
  */
 type Plan =
   | { readonly kind: "trace" }
-  | { readonly kind: "brick"; readonly brick: Brick }
-  | { readonly kind: "mesh"; readonly brick: Brick; readonly mesh: TriangleMesh }
-  | { readonly kind: "switch"; readonly brick: Brick; readonly mesh: TriangleMesh };
+  | { readonly kind: "brick"; readonly sampled: Sampled }
+  | { readonly kind: "mesh"; readonly mesh: TriangleMesh }
+  | { readonly kind: "switch"; readonly sampled: Sampled; readonly mesh: TriangleMesh };
+
+/**
+ * A field sampled once: its brick, and the members of its union (the arguments of the `min`s at its root, at the
+ * GPU's level of detail): one member, or several culled per coarse cell by the mask the brick stores as its tag.
+ */
+type Sampled = { readonly brick: Brick; readonly union: readonly Expr<"f32">[] };
+
+/** Most union members culled by a mask (bits of an integer held exactly by an f32). */
+const UNION_MAX = 24;
+
+/**
+ * Expression nodes one evaluation of a field runs: each node once, a loop's body once per iteration, its count taken at
+ * full detail at the bound's centre. A count that reads anything else (an enclosing loop's state) counts as one
+ * iteration, which only makes the estimate low (so `auto` keeps tracing). A brick lookup is a few scattered loads; on
+ * the machine this was measured on (GPU timestamps, 2026-11-11) those cost more than the nest's formula (215 nodes:
+ * traced 1.7 ms, bricked 3.5 ms at its overview) and far less than the coral's (2612 nodes: 7.3 -> 4.3 ms).
+ */
+export function evaluationCost(e: Expr<"f32">, centre: readonly [number, number, number]): number {
+  const seen = new Set<number>();
+  const countOf = (c: Expr<"f32">): number => {
+    const at0 = substitute([c], fieldPixel, f(0))[0] as Expr<"f32">;
+    if ([...leaves([at0]).vars.keys()].some((v) => v !== "p")) return 1;
+    return Math.max(0, Math.trunc(compileJs([at0])({ vars: { p: [...centre] }, inputs: {}, params: {} })[0] as number));
+  };
+  const visit = (list: readonly Expr[], times: number): number => {
+    let n = 0;
+    for (const x of list) {
+      if (seen.has(x.id)) continue;
+      seen.add(x.id);
+      const nd = x.node;
+      n += times;
+      if (nd.op === "iterate" && !seen.has(-1 - nd.loop.id)) {
+        seen.add(-1 - nd.loop.id);
+        n += visit(nd.loop.inner, times * countOf(nd.loop.count));
+      }
+    }
+    return n;
+  };
+  return visit(topo([e]), 1);
+}
+/** Nodes per evaluation above which `auto` bricks a static field (between the nest's and the coral's: see above). */
+export const BRICK_WORTH = 1000;
+
+/** Whether a field's shape depends on the pixel size (its level of detail). */
+const readsPixel = (e: Expr<"f32">): boolean => leaves([e]).vars.has("loft_field_px");
+
+/** The arguments of the `min`s at the root of an expression (itself when its root is not a `min`). */
+function unionOf(e: Expr<"f32">): Expr<"f32">[] {
+  const n = e.node;
+  return n.op === "call" && n.fn === "min" && n.ty === "f32" ? n.args.flatMap((a) => unionOf(a as Expr<"f32">)) : [e];
+}
 
 export class FieldDrawable implements Drawable {
   private shadow: Skeleton[] | undefined;
@@ -206,30 +256,38 @@ export class FieldDrawable implements Drawable {
   plan(): Plan {
     if (this.planned) return this.planned;
     const v = this.variance();
-    const sampled = (): { brick: Brick; mesh: () => TriangleMesh } => {
+    const sampled = (): Sampled & { mesh: () => TriangleMesh } => {
       if (v.kind !== "static") throw new FieldScheduleError(this.name, this.o.schedule, v);
       const safety = this.stepScale();
       const box = aabbOf(this.o.bounds);
       const diag = Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]);
       const cell = diag / BRICK_CELLS;
       const d = mul(this.full(), safety);
-      const brick = bakeBrick(`${this.name}_brick`, d, "p", { box, cell, band: BRICK_BAND * cell });
+      const members = unionOf(this.field(P));
+      const union = members.length >= 2 && members.length <= UNION_MAX ? members : [this.field(P)];
+      const brick = bakeBrick(`${this.name}_brick`, d, "p", { tag: unionMask(union, safety, diag), box, cell, band: BRICK_BAND * cell });
       const run = compileJs([d]);
       const vars = { p: [0, 0, 0] };
       const env = { vars, inputs: {}, params: {} };
       const cpu = (x: number, y: number, z: number): number => { vars.p = [x, y, z]; return run(env)[0] as number; };
-      return { brick, mesh: () => surfaceNets(brick, cpu) };
+      return { brick, union, mesh: () => surfaceNets(brick, cpu) };
     };
     const made = ((): Plan => {
       switch (this.o.schedule) {
         case "trace": return { kind: "trace" };
-        case "brick": return { kind: "brick", brick: sampled().brick };
-        case "mesh": { const b = sampled(); return { kind: "mesh", brick: b.brick, mesh: b.mesh() }; }
-        // A field that changes (or that the CPU cannot sample) is traced; a static one is sampled and switches.
+        case "brick": return { kind: "brick", sampled: sampled() };
+        case "mesh": return { kind: "mesh", mesh: sampled().mesh() };
+        // A field that changes (or that the CPU cannot sample) is traced. A static one is bricked; one whose shape does
+        // not follow the pixel size also gets a mesh, drawn instead whenever its cells are small on screen. A field that
+        // reads `fieldPixel` is drawn at the pixel's level of detail at every distance, which no one mesh can show
+        // (the coral's twigs are a few pixels wide at every distance: as a mesh they were blobs even at 512 cells).
+        // A static field cheaper than BRICK_WORTH is traced too: its formula costs less than the brick's lookups.
         case "auto": {
           if (v.kind !== "static") return { kind: "trace" };
+          const box = aabbOf(this.o.bounds);
+          if (evaluationCost(this.field(P), [0, 1, 2].map((k) => (box.min[k]! + box.max[k]!) / 2) as unknown as [number, number, number]) < BRICK_WORTH) return { kind: "trace" };
           const b = sampled();
-          return { kind: "switch", brick: b.brick, mesh: b.mesh() };
+          return readsPixel(this.field(P)) ? { kind: "brick", sampled: b } : { kind: "switch", sampled: b, mesh: b.mesh() };
         }
       }
     })();
@@ -242,29 +300,42 @@ export class FieldDrawable implements Drawable {
     const p = this.plan();
     const args = [["p", "vec3"], ["loft_field_px", "f32"]] as const;
     const d = this.field(P);
-    const field = emitShaderFn(ctx.slots, { name: "field_d", args, out: "f32", roots: [d], ret: (v) => v[0] });
+    /** `fn field_d(p, fp) -> f32`: the field, or the min over the members of its union that p's coarse cell keeps. */
+    const fieldOf = (union: readonly Expr<"f32">[]): { code: string; libs: readonly LibFn[] } => {
+      if (union.length === 1) return emitShaderFn(ctx.slots, { name: "field_d", args, out: "f32", roots: [union[0]!], ret: (v) => v[0] });
+      const members = union.map((m, k) => emitShaderFn(ctx.slots, { name: `field_u${k}`, args, out: "f32", roots: [m], ret: (v) => v[0] }));
+      const code = [...members.map((m) => m.code), /* wgsl */ `
+// The union's members that can be nearest in p's coarse cell (the brick's tag); the others are skipped, not evaluated.
+fn field_d(p: vec3<f32>, fp: f32) -> f32 {
+  let keep = u32(brick_lower_tag(p));
+  var d = 1e30;
+${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}(p, fp)); }`).join("\n")}
+  return d;
+}`].join("\n");
+      return { code, libs: [...new Set(members.flatMap((m) => m.libs))] };
+    };
+    const field = p.kind === "brick" || p.kind === "switch" ? fieldOf(p.sampled.union) : fieldOf([d]);
     const paint = emitShaderFn(ctx.slots, {
       name: "field_paint", args: [["p", "vec3"], ["n", "vec3"], ["loft_field_px", "f32"]], out: "vec3<f32>",
       roots: [this.o.paint({ p: P, normal: N as Expr<"vec3"> })], ret: (v) => v[0],
     });
-    const g = gradient(d, P);
-    const normal = emitShaderFn(ctx.slots, { name: "field_n", args, out: "vec3<f32>", roots: [div(g, max(length(g), 1e-12))], ret: (v) => v[0] });
     const id = `const FIELD_ID: f32 = ${lit(nameId(this.name))};`;
-    const libs = [...new Set([...field.libs, ...normal.libs, ...paint.libs])];
+    const libs = [...new Set([...field.libs, ...paint.libs])];
     // The proxy and its march: the field's formula at every step, or steps by its brick.
     const traced = (skip: string, show: string): Emitted => {
       const key = `field.${this.name}`;
-      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, normal.code, paint.code, skip, fragmentWgsl(safety)].join("\n");
+      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety)].join("\n");
       return {
         shaders: { [key]: { code, libs } },
         draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
       };
     };
-    const meshed = (mesh: TriangleMesh, show: string): Emitted => {
+    /** `show`: a WGSL bool per vertex; `gate`: the code it calls. */
+    const meshed = (mesh: TriangleMesh, show: string, gate: string): Emitted => {
       const vertices = ctx.table(meshTable(`${this.name}_mesh`, mesh));
       const tris = ctx.table(indexTable(`${this.name}_tris`, mesh));
       const key = `field.${this.name}.mesh`;
-      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show)].join("\n");
+      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, gate, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show)].join("\n");
       const n = mesh.indices.length;
       const ink: DrawSpec[] = this.o.outline === "silhouette" ? [drawSpec({ label: `${this.name}_ink`, shader: key, vertices: n, cull: "front", constants: { INK_HULL: 1 } })] : [];
       return {
@@ -275,14 +346,54 @@ export class FieldDrawable implements Drawable {
     const both = (a: Emitted, b: Emitted): Emitted => ({ shaders: { ...a.shaders, ...b.shaders }, draws: [...a.draws, ...b.draws] });
     switch (p.kind) {
       case "trace": return traced(TRACE_SKIP, "true");
-      case "brick": return traced(brickSkip(ctx, p.brick), "true");
-      case "mesh": return meshed(p.mesh, "true");
+      case "brick": return traced(brickSkip(ctx, p.sampled.brick), "true");
+      case "mesh": return meshed(p.mesh, "true", "");
       case "switch": {
-        const choose = useMeshWgsl(this.o.bounds, p.brick.cell);
-        return both(traced(`${choose}\n${brickSkip(ctx, p.brick)}`, "!field_use_mesh()"), meshed(p.mesh, "field_use_mesh()"));
+        const choose = useMeshWgsl(this.o.bounds, p.sampled.brick.cell);
+        return both(traced(`${choose}\n${brickSkip(ctx, p.sampled.brick)}`, "!field_use_mesh()"), meshed(p.mesh, "field_use_mesh()", choose));
       }
     }
   }
+}
+
+/**
+ * The unit normal at a hit: the field's gradient by differences on a tetrahedron a quarter of a pixel across (Quilez),
+ * four evaluations of the field's own code. It was the symbolic gradient (grad.ts), which differentiates through a
+ * fold's loop: on the coral it cost about as much as the whole march, and its registers slowed every other part of the
+ * shader (measured with GPU timestamps, 2026-11-11: brick schedule 10.1 -> 7.7 ms at the overview).
+ */
+const NORMAL_WGSL = /* wgsl */ `
+fn field_n(p: vec3<f32>, fp: f32) -> vec3<f32> {
+  let e = max(fp * 0.25, 1e-6);
+  let k = vec2<f32>(1.0, -1.0);
+  let g = k.xyy * field_d(p + k.xyy * e, fp) + k.yyx * field_d(p + k.yyx * e, fp) + k.yxy * field_d(p + k.yxy * e, fp) + k.xxx * field_d(p + k.xxx * e, fp);
+  return g / max(length(g), 1e-20);
+}`;
+
+/**
+ * The union mask of a coarse cell (centre c, half diagonal r): bit k is set unless member k provably cannot be the
+ * nearest anywhere in the cell, at any level of detail. Each member scaled by the step scale is 1-Lipschitz, so in the
+ * cell member k is at least u_k(c) - r at full detail and the union at most min_j u_j(c) + r at the coarsest detail
+ * (the pixel size the bound's diagonal); a member whose lower bound exceeds that is never the min. This assumes, as the
+ * level of detail already does (header), that a coarser level only removes parts: a distance between full detail's
+ * and the coarsest's. A cell keeps at least the nearest member at its centre.
+ */
+function unionMask(union: readonly Expr<"f32">[], safety: number, diag: number): (c: readonly [number, number, number], r: number) => number {
+  if (union.length === 1) return () => 1;
+  const at = (px: number) => union.map((m) => mul(substitute([m], fieldPixel, f(px))[0] as Expr<"f32">, safety));
+  const run = compileJs([...at(0), ...at(diag)]);
+  const vars = { p: [0, 0, 0] };
+  const env = { vars, inputs: {}, params: {} };
+  const n = union.length;
+  return (c, r) => {
+    vars.p = [...c];
+    const v = run(env) as number[];
+    const coarsest = Math.min(...v.slice(n));
+    let mask = 0;
+    // A relative margin for rounding: dropping a member wrongly would cut a hole; keeping one wrongly costs time.
+    for (let k = 0; k < n; k++) if (v[k]! - r <= coarsest + r + 1e-5 * (1 + Math.abs(coarsest))) mask |= 1 << k;
+    return mask;
+  };
 }
 
 /** The trace schedule's skip: none (every step is the field's own). */
@@ -479,7 +590,8 @@ fn march_band(fp: f32) -> f32 {
       ta = t;
       da = db;
       t = tn;
-      db = field_d(o + d * t, fp0 + fpk * (t - t0));
+      // The last step's new distance would be read by no one.
+      if (r + 1u < ${REFINE}u) { db = field_d(o + d * t, fp0 + fpk * (t - t0)); }
       pairExact = true;
     }
   }

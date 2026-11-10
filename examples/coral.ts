@@ -67,7 +67,7 @@ const reef = draw.field("coral", field, {
   paint,
   steps: 96,
   outline: "silhouette",
-  schedule: "brick",
+  schedule: "auto",
 });
 
 export default scene({
