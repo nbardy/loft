@@ -272,34 +272,21 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   let base = paint_${d.name}(in.uv.x, in.uv.y);`;
       const cull = look.sides === "one" ? "back" : "none";
       switch (look.outline) {
-        case "hull": return {
-          overrides: "override INK: f32 = 0.0;", fns: paintFn(look.paint), push: "s.pos + s.normal * (INK * ink_width(s.pos))",
-          // INK is an override, so this branch is uniform (the style's shading takes screen-space derivatives), and the
-          // outline pass does not pay for the shading it would throw away.
-          main: `${head}
-  let mk = mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id);
-  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk); }
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
-}`,
-          draws: (b) => [
-            drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
-            drawSpec({ ...b, label: `${b.label} outline`, cull: "front", constants: { ...b.constants, INK: 1 } }),
-          ],
-        };
+        case "hull": return hullOutline(ctx, head, paintFn(look.paint), cull);
         case "border": return {
           overrides: "", fns: paintFn(look.paint), push: "s.pos",
           // Ink along the v = 1 edge, in the surface's own coordinates: about two pixels wide at any distance.
           main: `${head}
   let fw = fwidth(in.uv.y);
   let edge = 1.0 - smoothstep(fw * 1.0, fw * 2.2, 1.0 - in.uv.y);
-  return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id));
+  return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
         case "none": return {
           overrides: "", fns: paintFn(look.paint), push: "s.pos",
           main: `${head}
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id));
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
@@ -320,6 +307,33 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
         draws: (b) => [drawSpec({ ...b, phase: look.phase, cull: "none", depthWrite: false, blend: "alpha", sceneDepth: look.sceneDepth })],
       };
     }
+  }
+}
+
+/** A closed surface's ink: a second draw pushed out along the normal (hull), or a flag for the screen pass. */
+function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: DrawSpec["cull"]): Frag {
+  switch (ctx.outline) {
+    case "hull": return {
+      overrides: "override INK: f32 = 0.0;", fns: paint, push: "s.pos + s.normal * (INK * ink_width(s.pos))",
+      // INK is an override, so this branch is uniform (the style's shading takes screen-space derivatives), and the
+      // outline pass does not pay for the shading it would throw away.
+      main: `${head}
+  let mk = mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id);
+  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk); }
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
+}`,
+      draws: (b) => [
+        drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
+        drawSpec({ ...b, label: `${b.label} outline`, cull: "front", constants: { ...b.constants, INK: 1 } }),
+      ],
+    };
+    case "screen": return {
+      overrides: "", fns: paint, push: "s.pos",
+      main: `${head}
+  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", true)});
+}`,
+      draws: (b) => [drawSpec({ ...b, cull })],
+    };
   }
 }
 

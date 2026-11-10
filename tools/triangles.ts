@@ -2,7 +2,7 @@
 // (compile only), then per view the triangles drawn after the host's level of detail and the best-case milliseconds
 // per frame (the machine is shared: only the minimum over many frames says what the work costs).
 //
-//   bun tools/triangles.ts [--frames 20] [--size 1280x800] [--shots out/triangles/after] [--cells 7] [scene.ts ...]
+//   bun tools/triangles.ts [--frames 20] [--size 1280x800] [--shots out/triangles/after] [--cells 7] [--outline hull|screen] [scene.ts ...]
 //
 // With `--shots DIR` it also writes every view as a lossless PNG (for picture differences) and a WebP to look at.
 // `--cells` is `View.cellPixels` (0: every grid at its finest, the authored density).
@@ -13,7 +13,7 @@ import { encodePng, writeWebp } from "../src/cli/image.ts";
 import { compile } from "../src/index.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost } from "../src/host/index.ts";
-import type { Scene } from "../src/scene.ts";
+import type { OutlineMethod, Scene } from "../src/scene.ts";
 
 /** The views measured: each scene's game camera (or one like it) and a close-up. */
 export const VIEWS: Readonly<Record<string, Readonly<Record<string, Camera>>>> = {
@@ -41,11 +41,13 @@ const frames = Number(flag("--frames") ?? 20);
 const [width, height] = (flag("--size") ?? "1280x800").split("x").map(Number) as [number, number];
 const shots = flag("--shots");
 const cells = flag("--cells");
+const outline = flag("--outline") as OutlineMethod | undefined;
 const files = args.length > 0 ? args : Object.keys(VIEWS);
 
 const host = createHost(await headlessDevice());
 for (const file of files) {
-  const scene = (await import(resolve(file))).default as Scene;
+  const own = (await import(resolve(file))).default as Scene;
+  const scene: Scene = outline === undefined ? own : { ...own, outline };
   const artefact = compile(scene);
   const groups = new Map<string, number>();
   let total = 0;

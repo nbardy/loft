@@ -19,7 +19,8 @@ const f2 = (x: number) => x.toFixed(3).padStart(8);
 export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promise<void> {
   const mod = (await import(resolve(cmd.path))) as { default?: Scene };
   if (mod.default === undefined) throw new Error(`${cmd.path} has no default export (it must export a scene)`);
-  const compiled = compileScene((await styled(mod.default, cmd.style)) as Scene);
+  const styledScene = (await styled(mod.default, cmd.style)) as Scene;
+  const compiled = compileScene(cmd.outline === "scene" ? styledScene : { ...styledScene, outline: cmd.outline });
   const a = compiled.artefact;
   const view = { camera: resolveCamera(a, cmd.view), ...cmd.size, time: cmd.time };
   const loaded = await createHost(await headlessDevice()).load(a);

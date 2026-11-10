@@ -9,6 +9,7 @@ import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
 import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
+import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
 import { poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
@@ -44,11 +45,19 @@ export function compileScene(scene: Scene): Compiled {
   };
   const prep: TablePrep = { compile: cpu };
   const posts: PostSpec[] = [...scene.style.post];
+  let screenInk = false;
+  const markOut = (mark: string, inked: boolean): string => {
+    switch (scene.outline) {
+      case "hull": return mark;
+      case "screen": screenInk ||= inked; return `loft_mark_ink(${mark}, ${inked})`;
+    }
+  };
 
   const ctx: CompileContext = {
     slots, style: scene.style, sea: scene.sea, sun: scene.sun, things: scene.things,
     table: (t) => tables.declare(t, prep),
     post: (p) => { posts.push(p); },
+    outline: scene.outline, markOut,
   };
 
   const modules: Record<string, Shader> = {};
@@ -65,11 +74,13 @@ export function compileScene(scene: Scene): Compiled {
     }
     specs.push(...e.draws);
   }
+  // The ink pass runs first: it restores the plain mark in alpha for the style's own passes.
+  if (screenInk) posts.unshift({ label: "ink outline", wgsl: INK_POST });
   const style = styleWgsl(slots, scene.style, scene.sea, scene.sun);
   const layout = tables.layout();
   slots.seal();
   const shared = slots.libs();
-  const sceneWgsl = [layout.wgsl, CORE_WGSL, style, ...shared.map((l) => l.wgsl)].join("\n");
+  const sceneWgsl = [layout.wgsl, CORE_WGSL, MARK_WGSL, style, ...shared.map((l) => l.wgsl)].join("\n");
   const shaders: Record<string, string> = {};
   for (const [k, m] of Object.entries(modules)) {
     const own = m.libs.filter((l) => !shared.includes(l));

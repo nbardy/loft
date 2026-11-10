@@ -13,6 +13,7 @@ import type { Paint, Skeleton, Surface } from "../map/types.ts";
 import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
+import type { OutlineMethod } from "../scene.ts";
 import type { Slots } from "./bind.ts";
 
 /** What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). */
@@ -67,6 +68,13 @@ export interface CompileContext {
   table(t: TableSource): TableRef;
   /** Add a full-screen pass after the scene (after the style's own). */
   post(pass: PostSpec): void;
+  /** How ink outlines are drawn in this scene. */
+  readonly outline: OutlineMethod;
+  /**
+   * The alpha an opaque fragment writes for `mark` (WGSL expression `mark`): the mark itself with hull outlines; with
+   * screen outlines, the mark and whether this surface is outlined (src/draw/ink.ts), and asking for the ink pass.
+   */
+  markOut(mark: string, inked: boolean): string;
 }
 
 /** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */

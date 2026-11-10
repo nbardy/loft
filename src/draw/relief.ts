@@ -164,7 +164,7 @@ struct FOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
   let ink_c = ink(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID);
   let clip = frame.view_proj * vec4<f32>(r.world, 1.0);
   var out: FOut;
-  out.colour = vec4<f32>(select(lit_c, ink_c, r.kind < 0.75), mark(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID));
+  out.colour = vec4<f32>(select(lit_c, ink_c, r.kind < 0.75), ${ctx.markOut("mark(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID)", false)});
   out.depth = clip.z / clip.w;
   return out;
 }`,
