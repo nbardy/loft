@@ -155,6 +155,36 @@ depth below the surface. Styles are swappable without touching a scene. v0: `too
 Assertions evaluated on the CPU from the same description: `clearance(a, b, { min, over })` (capsule distances
 through time), `minScreenSize(feature, camera, px)`, `budget({ triangles })`.
 
+### 2.8 Local form, sculpt layers and the round trip with meshes (M2)
+
+Form is layered, coarse to fine, and every layer above the first is expressed in the body's own coordinates
+`(m, v)`, so it rides the body through animation, re-posing and changes of density, and editing a lower layer does
+not destroy a higher one (the multiresolution idea behind sculpt layers in ZBrush, Mudbox and Blender's Multires).
+
+| Layer | Form | Edited by |
+|---|---|---|
+| gesture, mass, section | curves (`spine`, `girth`, `section`) | code |
+| local form | `stamp`s: analytic bumps, creases and ridges placed at `(m, v)` with a radius and a falloff (the analytic counterpart of sculpt brushes: draw, inflate, crease, pinch, flatten) | code |
+| free form | a sculpt layer: a displacement table over `(m, v)` (scalar along `rho`, or a vector in the body frame for overhangs) | a person in a sculpting tool, or a fit from an imported mesh |
+| paint | functions and tables over `(m, v)` | code, or painted |
+
+Round trip:
+
+- **Out:** `bake(body, density) -> glTF` with the body coordinates as the UV map (the unwrap is free) and skin weights
+  from the stations. Any sculpting tool can open it.
+- **Back:** the difference between the sculpted mesh and the base, baked into that UV map, is the sculpt layer.
+  Standard displacement baking.
+- **Absorb:** `fit(mesh, skeleton)` casts a ray outward from the spine for each `(m, v)` and records where it meets
+  the mesh, giving a radius function. Its smooth part is re-fitted into `girth` and `section` curves and the residual
+  becomes a sculpt layer. This is how a generated or hand-made mesh becomes a Loft body. It is valid only where each
+  ray meets the surface once (the same limit as folding).
+
+Operators borrowed from modelling tools, as functions in the same language: `mirror`, `array` along a curve,
+`solidify` (thickness for a sheet), `bend` / `twist` / `taper` and `lattice` (deformers are charts), `shrinkwrap`
+(attach at a host's `rho`), `displace`, `cut` (remove where another body's `rho < 1`). Shader vocabulary still to add
+to the expression layer: gradient and cellular noise with fractal sums, `remap`, polar coordinates, a Fresnel term,
+access to scene depth (for foam where things meet and soft volume edges), and a raw-WGSL node as an escape hatch.
+
 ## 3. The Artefact (`src/artefact.ts`, done)
 
 Read that file; it is the host contract. In short: a fixed prelude (bind group 0: frame, inputs, params, curves), an
