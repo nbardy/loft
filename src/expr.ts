@@ -34,7 +34,7 @@ export class Row {
 export type ParamSpec = { readonly name: string; readonly def: number; readonly min: number; readonly max: number };
 export type InputSpec = { readonly name: string; readonly ty: NumTy; readonly def: readonly number[] };
 
-type Fn =
+export type Fn =
   | "add" | "sub" | "mul" | "div" | "neg" | "min" | "max" | "pow" | "mod" | "atan2" | "step"
   | "abs" | "sign" | "floor" | "fract" | "sqrt" | "exp" | "log" | "sin" | "cos" | "tan" | "saturate" | "normalize"
   | "mix" | "clamp" | "smoothstep" | "length" | "distance" | "dot" | "cross"
@@ -54,7 +54,8 @@ export type LibFn = {
   readonly deps?: readonly LibFn[];
 };
 
-type Node =
+/** The node kinds. Exported so other modules (differentiation, analysis) can walk the graph; build nodes only through the constructors below. */
+export type Node =
   | { readonly op: "lib"; readonly ty: Ty; readonly fn: LibFn; readonly args: readonly Expr[] }
   | { readonly op: "const"; readonly ty: Ty; readonly v: readonly number[] }
   | { readonly op: "var"; readonly ty: Ty; readonly name: string }

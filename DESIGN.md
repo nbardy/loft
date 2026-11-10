@@ -334,3 +334,86 @@ telegraph, smear, wake and checks; clouds and glow; more styles.
 - Known Dawn/bun-webgpu facts: `getCompilationInfo` is not implemented (validate with `pushErrorScope("validation")`
   and pipeline creation); `queue.writeBuffer` calls are ordered with the queue, not with encoder commands, so a
   buffer rewritten between passes of one submit holds only its last value.
+
+## 7. The rethink: everything is a map (v0.2)
+
+Sections 2.2 to 2.5 describe kinds of thing (strand, crest, sea, decal, cloud), each with its own hand-written shader
+template. Extending Loft to folding, to arbitrary analytic surfaces, to points and to traced solids kind by kind would
+multiply those templates. This section replaces the kinds with one small algebra. Sections 2.2 to 2.5 remain as the
+library of *names* built on it.
+
+### 7.1 A shape is a function, and its signature says how it can be drawn
+
+| Signature | Name | Drawn by | Examples |
+|---|---|---|---|
+| index -> frame | `Points` | instancing another drawable, or splats | teeth, spikes, rain, a fleet |
+| (u) -> point | `Curve` | a stroke: a ribbon or tube with a width function | ropes, lightning, ink lines, trails |
+| (u, v) -> point | `Surface` | a grid evaluated in the vertex stage | bodies, sails, fins, shells, the sea |
+| (u, v, w) -> point | `Chart` | its boundary as a surface; things placed inside it | the space around a body; the sea; a whirlpool |
+| point -> distance | `Field` | a tracer inside a bound (`docs/folding_and_tracing.md`) | folded and recursive solids |
+| point -> density | `Density` | integration along the view ray | cloud, fog |
+| coordinates -> colour | `Paint` | the fragment stage | bands, scales, markers on the water |
+
+All of them are TypeScript closures over `Expr`, so they are pure, may read `time` and inputs, and compile to both
+backends. An object may be several at once (a body is a `Surface`, a `Chart` and a `Skeleton`).
+
+### 7.2 Three operators
+
+- **Compose in front (a domain map, a `Warp`).** `warp(shape, F)` evaluates the shape at `F(x)`. On a `Field` or a
+  `Paint` this is folding: mirror, repeat, polar repeat, spiral, kaleidoscope. On a `Surface` or `Curve` it
+  reparametrises (for example concentrating samples toward a tip). On `Points` it maps the index (a generator for
+  instances). A `Warp` returns `{ x, id, stretch }`: the mapped coordinate, the cell it came from, and the local
+  change of length, so distances stay distances.
+- **Compose behind (a range map, a `Chart`).** `place(shape, chart)` puts a shape in a coordinate system: on the sea,
+  in a whirlpool, on a body, through a bend or twist. Placement acts on skeletons by default (the lesson of the
+  scene-graph proof: mapping every skin vertex through a growing twist shears bodies into slivers).
+- **Multiply (a product of domains).** `sweep(curve, section)` is a surface (and a chart); `sheet(curveA, curveB)`,
+  `loft(curves)`, `lathe(profile)`, `extrude`, `thicken(surface, height)` likewise; `points x shape` is instancing;
+  `shape x time-interval` is a trail or a smear.
+
+A strand is therefore not a primitive. It is `sweep(spine, section)` with frames transported along the spine.
+
+### 7.3 A table is a function too
+
+`tabulate(f, n)` samples a function and returns a function that interpolates the samples. The two are
+interchangeable, and where the table is filled decides the schedule:
+
+| Filled | Is today called |
+|---|---|
+| once, when the scene is built | a keyed curve, a baked mesh, a texture, a sculpt layer, a distance-field brick |
+| once per frame on the CPU | the stations of a body (frames cannot be computed locally: they are transported along the spine) |
+| never (the function is evaluated where it is used) | everything analytic |
+
+So "bake or analytic" is one line of code per function, and a hand-edited table (a sculpt layer, a painted map) is the
+same object as a computed one. In the expression layer this needs one new leaf, `fetch(table, index, lane)`, for
+per-frame tables; interpolation is ordinary expressions on top. With it a body's chart is an expression like any
+other: no hand-written chart shader, and differentiation, folding and CPU evaluation all pass through it.
+
+### 7.4 Drawing
+
+One generic drawable per signature, each assembled from expressions:
+
+```ts
+draw.surface(surface, { paint, density, sides, outline })   // grid in the vertex stage; normals from the map itself
+draw.curve(curve, { width, paint })                          // stroke
+draw.points(points, thing)                                   // instances of any drawable
+draw.field(field, { bounds, paint, steps })                  // sphere-traced
+draw.relief(surface, { height, fold, steps })                // shell-traced on a surface
+draw.density(density, { bounds })                            // integrated
+```
+
+`strand`, `crest`, `fan`, `shell`, `sea`, `scatter`, `attach`, `decal`, `cloud`, `glow` become short library functions
+that build maps and hand them to these. A baked mesh is `tabulate` of a `Surface` on a grid, so baking any surface is
+generic.
+
+### 7.5 What changes in the code
+
+| Layer | Change |
+|---|---|
+| `src/expr.ts` | `fetch` for per-frame tables; a loop form `iterate`; `src/grad.ts` adds symbolic differentiation |
+| `src/map/` (new) | the signatures, `warp`, `place`, the products, `tabulate` |
+| `src/draw/` | the generic drawables; the per-kind templates in `src/compile/shaders.ts` are deleted as their kinds move over |
+| `src/geom/`, `src/chart.ts` | become library functions over `src/map/` |
+| `src/bake/` | bakes any `Surface` by sampling it; body discovery by probing is deleted |
+| contract, host, CLI, viewer | unchanged |
+
