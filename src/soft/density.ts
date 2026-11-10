@@ -24,7 +24,7 @@
 // forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. Flash light is
 // per blob (CPU, through the medium) plus a small even share.
 
-import { add, max, mul, variable } from "../expr.ts";
+import { exp, mul, variable } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Shader, type V3 } from "../compile/context.ts";
 import { fbm3 } from "../lib/noise.ts";
@@ -48,7 +48,7 @@ export type DensityOptions = {
    */
   readonly shadowing: number;
   /**
-   * Detail: each piece's optical depth is multiplied by 1 + amount * noise at the point the eye sees, in the puff's own
+   * Detail: each piece's optical depth is multiplied by exp(amount * noise) at the point the eye sees, in the puff's own
    * frame (so the detail rides with it), with cells `scale` world units across. It breaks up the Gaussian edges into
    * wisps and lumps at the cost of one noise lookup per piece. `{ kind: "none" }` for smooth puffs.
    */
@@ -96,8 +96,11 @@ function detailFn(ctx: CompileContext, d: DensityOptions["detail"]): Shader {
   switch (d.kind) {
     case "none": return { code: "fn soft_detail(p: vec3<f32>) -> f32 { return 1.0; }", libs: [] };
     case "noise": {
-      const n = fbm3(mul(DP, 1 / d.scale), { octaves: 2, lacunarity: 2.03, gain: 0.5 });
-      return emitShaderFn(ctx.slots, { name: "soft_detail", args: [["p", "vec3"]], out: "f32", roots: [max(add(mul(n, d.amount), 1), 0)], ret: (v) => v[0] });
+      const n = fbm3(mul(DP, 1 / d.scale), { octaves: 1, lacunarity: 2.03, gain: 0.5 });
+      // exp(amount * noise), not 1 + amount * noise clamped at 0: on a Gaussian's edge a factor e^x moves the edge by
+      // about x / (2 q) radii, so the noise reshapes the silhouette into lumps; the clamped form punched holes through
+      // front puffs at large amounts (dark specks of the puffs behind showing through white tops).
+      return emitShaderFn(ctx.slots, { name: "soft_detail", args: [["p", "vec3"]], out: "f32", roots: [exp(mul(n, d.amount))], ret: (v) => v[0] });
     }
   }
 }
@@ -159,6 +162,15 @@ fn soft_sea(o: vec3<f32>, d: vec3<f32>) -> f32 {
 fn soft_end(px: vec2<f32>, o: vec3<f32>, d: vec3<f32>) -> f32 {
   return min(dot(scene_position(px) - o, d), soft_sea(o, d));
 }`;
+}
+
+/**
+ * A layer's own depth toward the sun. Its density varies with height only, so the tail along any upward direction u is
+ * the vertical tail divided by u.y: one erfc per piece instead of two (24 pieces per pixel over a hazy screen). The
+ * general form stays for a sun at or below the horizon.
+ */
+function layerSunTail(sun: V3): string {
+  return sun[1] > 0.05 ? `let selfSun = selfUp * ${f(1 / sun[1])};` : "let selfSun = a0.w * loft_gauss_tail(Op, k * SUN_DIR);";
 }
 
 function densityWgsl(m: Medium, acc: MediumAccess, o: DensityOptions, sun: V3): string {
@@ -264,8 +276,8 @@ fn soft_piece(O: vec4<f32>, D: vec4<f32>, pa: f32, pb: f32, a0: vec4<f32>, k: ve
   if (tau < 1e-5) { return; }
   let t = soft_seen(r, tau, pa, pb);
   let Op = k * (o + d * t - a0.xyz);
-  let selfSun = a0.w * loft_gauss_tail(Op, k * SUN_DIR);
   let selfUp = a0.w * loft_gauss_tail(Op, k);
+  ${layerSunTail(sun)}
   soft_deposit(t, tau, soft_light(albedo, SHADOWING * selfSun, SHADOWING * selfUp, vec3<f32>(0.0), dot(d, SUN_DIR)));
 }
 /// A layer or one side of a bank on [ia, ib], in pieces at fixed fractions of it (each deposited where it is seen).
@@ -304,15 +316,19 @@ fn soft_extended(O: vec4<f32>, D: vec4<f32>, ia: f32, ib: f32, a0: vec4<f32>, k:
     acc += soft_bin[b].x;
     if (acc > 8.0) { cut = mix(t0, t1, f32(b + 1u) / f32(BINS)); break; }
   }
-  if (soft_lo > soft_hi) { soft_lo = t1; soft_hi = t1; }
+  // No blob matters on this ray (most of a haze-covered screen): pass 2 and the depth bins are skipped, and every
+  // piece of fog goes to the fog bins (an empty range [lo, hi] sends every depth there). The bins hold nothing yet:
+  // pass 1 deposits only for blobs it counts.
+  let blobs = soft_lo <= soft_hi;
   soft_t0 = t0;
   soft_t1 = t1;
-  for (var b = 0u; b < BINS; b++) { soft_bin[b] = vec4<f32>(0.0); }
+  if (blobs) { for (var b = 0u; b < BINS; b++) { soft_bin[b] = vec4<f32>(0.0); } }
   for (var b = 0u; b < FOG; b++) { soft_fog[b] = vec4<f32>(0.0); }
   soft_sky = ${f(o.sky)} * sky(vec3<f32>(0.0, 1.0, 0.0));
   soft_amb = ${acc.blobs}(${NB}u * 5u).xyz;
   let cosv = dot(d, SUN_DIR);
-  // Pass 2: every blob's depth, where it is seen, its light there.${clusterLoop(m, acc, `${blobHead}
+  // Pass 2: every blob's depth, where it is seen, its light there.
+  if (blobs) {${clusterLoop(m, acc, `${blobHead}
       let s = sqrt(al);
       // Too faint to see (its whole-line depth below 1e-3), or wholly behind where the cloud is opaque.
       if (a0.w * 1.7725 / s * exp(-qmin) < 1e-3 || tm - 2.0 / s > cut) { continue; }
@@ -330,14 +346,15 @@ fn soft_extended(O: vec4<f32>, D: vec4<f32>, ia: f32, ib: f32, a0: vec4<f32>, k:
       let selfUp = a0.w * loft_gauss_tail(Op, vec3<f32>(0.0, k.y, 0.0));
       let sunOthers = soft_others(Op, k, SUN_DIR, a4.x, a4.y);
       let upOthers = soft_others(Op, k, vec3<f32>(0.0, 1.0, 0.0), a4.z, a4.w);
-      soft_deposit(t, tau, soft_light(a2.xyz, SHADOWING * (sunOthers + SELF * selfSun), SHADOWING * (upOthers + SELF * selfUp), a3.xyz, cosv));`)}${layers}${banks}
+      soft_deposit(t, tau, soft_light(a2.xyz, SHADOWING * (sunOthers + SELF * selfSun), SHADOWING * (upOthers + SELF * selfUp), a3.xyz, cosv));`)}
+  }${layers}${banks}
   // Front to back: the two sets of bins merged by depth (each is in order already).
   var trans = 1.0;
   var colour = vec3<f32>(0.0);
   var seen = 0.0;
-  var ib = 0u;
+  var ib = select(BINS, 0u, blobs);
   var jf = 0u;
-  for (var n = 0u; n < BINS + FOG; n++) {
+  for (var n = ib; n < BINS + FOG; n++) {
     let tb = mix(soft_lo, soft_hi, (f32(ib) + 0.5) / f32(BINS));
     let tf = mix(t0, t1, (f32(jf) + 0.5) / f32(FOG));
     let fogNext = jf < FOG && (ib >= BINS || tf < tb);

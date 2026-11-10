@@ -768,7 +768,11 @@ draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.
   keeps sunlit faces white); a blob's own shadow counts a third (at full strength every lump drew as its own sphere).
 - `cloud({ at, size, profile, blobs, turbulence, billow, drift, density, colour, seed, seconds })`: three tiers of puffs
   (few large core, medium lobes, many small dense surface puffs: a Gaussian's edge is crisper the denser it is), a
-  level base, boiling from noise, drift; returns puffs and the bounds that hold them for `seconds`. `thunderhead({ at,
+  level base, boiling from noise, drift; returns puffs and the bounds that hold them for `seconds`. The tiers are
+  calibrated for 260 puffs; with fewer, each is larger by the cube root of the ratio (the same volume filled) and its
+  density lower by as much (the same depth through its middle). `examples/storm.ts` uses 96, with the detail carried by
+  noise (`detail` multiplies a piece's depth by exp(amount x noise), one octave: a factor e^x moves a Gaussian's edge
+  by about x / 2q radii, so the silhouette becomes lumps; the earlier 1 + amount x noise, clamped, punched holes). `thunderhead({ at,
   height, width, blobs, seed, drift, seconds })` is a profile preset.
 
 Corrections found by looking: lighting a puff at its centroid drew dark discs with bright rims (now: where seen); a
@@ -783,7 +787,8 @@ the rain shaft into the fog (now: fixed fog bins).
   curve). Each segment is a view-plane quad; a pixel is lit by the nearest segment of a window of 6 either side only, so
   a curve's picture does not depend on how it is cut (tested). Core never thinner than a pixel (dims instead); additive;
   hidden behind opaque bodies; `veil: { kind: "medium", medium }` attenuates by the medium's closed-form depth up to the
-  curve, so a bolt inside a cloud shows through it.
+  curve, so a bolt inside a cloud shows through it. The veil is evaluated once per segment, at its middle, in the vertex
+  stage: per pixel it was a full pass over the medium for every pixel of a halo, more than the cloud itself cost.
 - `bolt({ from, to, wander, roughness, levels, branches, schedule, segments })`: midpoint displacement in closed form
   (a sum over levels of hat functions times hashed offsets), deterministic in (seed, strike index); branches leave the
   channel at hashed points. `strikeAt(schedule)` is a pure function of time; `flicker(since)` (four return strokes),
@@ -795,6 +800,28 @@ the rain shaft into the fog (now: fixed fog bins).
 
 ### 8.4 Costs (best of 25, 1280x800, draw to texture without readback, heavily loaded machine; numbers vary ~2x run to run)
 
+Polish pass (2026-11-11), `bun tools/storm_bench.ts 30`, best of 30, drawn into a texture and waited for, the start of
+the pass and the end measured back to back, twice:
+
+| storm view | before (260 puffs) | after (96 puffs) |
+|---|---|---|
+| three (the wide view) | 21.1, 21.5 ms (pose 4.8-5.6) | 11.1, 15.4 ms (pose 2.1-2.2) |
+| front | 29.4-32.0 | 18.0-18.4 |
+| side | 24.6-24.7 | 16.9-17.7 |
+| low | 32.1-33.0 | 17.1-20.3 |
+| edge | 58.1-60.7 | 28.7-32.4 |
+
+What moved it: 96 larger puffs with noise detail (per-pixel blob work and the O(N^2) light pass, 6.8 -> 0.8 ms of CPU);
+the glow veil per segment instead of per pixel; one detail octave instead of two (about 1.5 ms); rays that meet no
+puff skip pass 2 and the depth bins (most of a hazy screen); a layer's depth toward the sun is its vertical depth over
+sun.y (one erfc per fog piece fewer). The light pass is still every pair (a grid was not needed at 96). Other views
+than the wide one stay above 16 ms: the fog layer and bank are integrated in 3 x 8 pieces over the whole lower screen
+(about 3.5 ms) and the edge view puts the camera inside the cloud. Pictures: `out/polish/storm_before.webp`,
+`out/polish/storm_after.webp`; test: `tests/soft.storm.test.ts` (coverage, brightness, contrast and blurred difference
+against the 260-puff cloud).
+
+Before the polish pass:
+
 | Scene | ms per frame (of which CPU pose) |
 |---|---|
 | storm, views three / side / front / low / edge | 44-58 / 56-60 / 53-68 / 63-81 / 76-91 (pose 11-19) |
@@ -804,8 +831,8 @@ the rain shaft into the fog (now: fixed fog bins).
 
 Cost is linear in blob count and in covered pixels; the CPU light pass is O(N^2) (0.9 ms at 65 blobs, ~20 ms at 520)
 and each active flash adds another pass. Not real time for a 260-blob storm on this machine; the levers not yet pulled
-are half-resolution integration (needs host support), fewer blobs with more detail noise, and a light pass that reuses
-the previous frame (would break purity).
+are half-resolution integration (needs host support) and a light pass that reuses the previous frame (would break
+purity); fewer blobs with detail noise is done (above).
 
 ### 8.5 Known limits
 

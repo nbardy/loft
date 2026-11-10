@@ -11,7 +11,7 @@ import {
 } from "../src/index.ts";
 
 const S = {
-  base: 10.5, height: 30, width: 46, blobs: 260,
+  base: 10.5, height: 30, width: 46, blobs: 96,
   cloudAt: [-6, 0, -16] as const,
   boltFrom: [-1, 16, -11] as const, boltTo: [9, -0.3, -4] as const,
   rainAt: [-8, -15] as const, rainRadius: 8,
@@ -43,7 +43,7 @@ const storm = medium("storm", {
 });
 const cloud = draw.density("thunderhead", storm, {
   bounds: unionBox([head.bounds, { min: [-260, -1, -260], max: [260, 9, 260] }]),
-  sun: S.sunLight, sky: 0.9, forward: 0.3, shadowing: 0.8, detail: { kind: "noise", amount: 1.0, scale: 2.5 }, haze: 0.004,
+  sun: S.sunLight, sky: 0.9, forward: 0.3, shadowing: 0.8, detail: { kind: "noise", amount: 2, scale: 1.5 }, haze: 0.004,
 });
 
 // ---- the bolt: a white-hot core in a blue halo while it flickers, a violet afterglow, a flare where it meets the sea
