@@ -75,6 +75,21 @@ export function gaussRay(O: readonly number[], D: readonly number[], t0: number,
   return { tau: (e / s) * g, tc, spread: Math.min(L * 0.288675, 0.707107 / s) };
 }
 
+/** The optical depth part of `gaussRay` alone (no centroid), allocating nothing: what the CPU light pass calls. */
+export function gaussDepth(O: readonly number[], D: readonly number[], t0: number, t1: number): number {
+  const L = Math.max(t1 - t0, 0);
+  const alpha = D[0] * D[0] + D[1] * D[1] + D[2] * D[2] + D[3] * D[3];
+  const al = Math.max(alpha, 1e-20);
+  const tm = -(O[0] * D[0] + O[1] * D[1] + O[2] * D[2] + O[3] * D[3]) / al;
+  const s = Math.sqrt(al);
+  const q = (t: number): number => {
+    const x = O[0] + D[0] * t, y = O[1] + D[1] * t, z = O[2] + D[2] * t, w = O[3] + D[3] * t;
+    return x * x + y * y + z * z + w * w;
+  };
+  if (s * L < SIMPSON) return (L / 6) * (Math.exp(-q(t0)) + 4 * Math.exp(-q(t0 + 0.5 * L)) + Math.exp(-q(t0 + L)));
+  return (Math.exp(-q(tm)) / s) * gseg(s * (t0 - tm), s * (t0 + L - tm));
+}
+
 /** int_0^infinity exp(-|O + D t|^2) dt, 3 components (toward the sun from a point). */
 export function gaussTail(O: readonly number[], D: readonly number[]): number {
   const alpha = Math.max(D[0] * D[0] + D[1] * D[1] + D[2] * D[2], 1e-12);
@@ -94,13 +109,15 @@ fn loft_erfcp(z: f32) -> f32 {
   return t * exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196 + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
 }
 fn loft_gseg(a: f32, b: f32) -> f32 {
-  let pos = loft_erfcp(max(a, 0.0)) - loft_erfcp(max(b, 0.0));
-  let neg = loft_erfcp(max(-b, 0.0)) - loft_erfcp(max(-a, 0.0));
-  let mid = 2.0 - loft_erfcp(max(-a, 0.0)) - loft_erfcp(max(b, 0.0));
-  return ${SQRT_PI_2} * select(select(mid, neg, b <= 0.0), pos, a >= 0.0);
+  // erfc at |a| and |b| once each; the three cases (both ends above the centre, both below, astride) are differences
+  // of those two of the same sign, so the tails keep their relative accuracy.
+  let pa = loft_erfcp(abs(a));
+  let pb = loft_erfcp(abs(b));
+  return ${SQRT_PI_2} * select(select(2.0 - pa - pb, pb - pa, b <= 0.0), pa - pb, a >= 0.0);
 }
 fn loft_gtail(a: f32) -> f32 {
-  return ${SQRT_PI_2} * select(2.0 - loft_erfcp(max(-a, 0.0)), loft_erfcp(max(a, 0.0)), a >= 0.0);
+  let pa = loft_erfcp(abs(a));
+  return ${SQRT_PI_2} * select(2.0 - pa, pa, a >= 0.0);
 }
 fn loft_q4(o: vec4<f32>, d: vec4<f32>, t: f32) -> f32 { let p = o + d * t; return dot(p, p); }
 fn loft_gauss_ray(o: vec4<f32>, d: vec4<f32>, t0: f32, t1: f32) -> vec3<f32> {

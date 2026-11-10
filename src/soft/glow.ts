@@ -14,7 +14,7 @@ import { lift, variable, vec4, type Expr, type In, type TableSource } from "../e
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import type { F, P3, Skeleton } from "../map/types.ts";
-import { tauFunction, type Medium } from "./medium.ts";
+import { accessMedium, tauFunction, type Medium } from "./medium.ts";
 
 export type Rgb = readonly [number, number, number];
 
@@ -107,9 +107,7 @@ function veilWgsl(ctx: CompileContext, v: Veil, fn: string): Shader {
   switch (v.kind) {
     case "clear": return { code: "fn glow_veil(o: vec3<f32>, d: vec3<f32>, t: f32) -> f32 { return 1.0; }", libs: [] };
     case "medium": {
-      const t = v.medium.tables(ctx.sun);
-      const banks = t.banks.kind === "some" ? { kind: "some" as const, wgsl: ctx.table(t.banks.table).wgsl } : { kind: "none" as const };
-      const f = tauFunction(v.medium, fn, { puffs: ctx.table(t.puffs).wgsl, banks });
+      const f = tauFunction(v.medium, fn, accessMedium(v.medium, ctx.sun, (t) => ctx.table(t)));
       return { code: `${f.code}\nfn glow_veil(o: vec3<f32>, d: vec3<f32>, t: f32) -> f32 { return exp(-${fn}(o, d, 0.0, t)); }`, libs: f.libs };
     }
   }

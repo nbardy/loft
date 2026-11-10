@@ -5,7 +5,7 @@
 import { expect, test } from "bun:test";
 import { compileJs, compileScene, draw, scene, sea, toon, variable, vec3, type Expr } from "../src/index.ts";
 import { gaussRay, gaussTail, GAUSS_WGSL } from "../src/soft/gauss.ts";
-import { bank, blob, layer, medium, tauFunction, type Medium } from "../src/soft/medium.ts";
+import { accessMedium, bank, blob, layer, medium, tauFunction, type Medium } from "../src/soft/medium.ts";
 import { probe, stateAt } from "./compile.harness.ts";
 
 /** Composite Simpson's rule with n (even) intervals. */
@@ -76,8 +76,8 @@ function numericTau(m: Medium, o: number[], d: number[], t0: number, t1: number)
   return simpson((t) => run({ vars: { p: [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t] }, inputs: {}, params: {} })[0] as number, t0, t1, 4000);
 }
 
-// Catches: optical depths of a medium's parts not adding (a puff skipped by the closest-approach cull while it still
-// contributes, a table lane read from the wrong entry), and a fog bank's edge split wrong (fog on the clear side, the
+// Catches: optical depths of a medium's parts not adding (a blob skipped by its cluster's sphere or the closest-approach
+// cull while it still contributes, the per-frame sort losing or duplicating a blob, a lane read from the wrong entry), and a fog bank's edge split wrong (fog on the clear side, the
 // soft edge's term left out, a ray parallel to the edge). The GPU sums the medium's own table; the reference
 // integrates the medium's density expression.
 test("a medium's optical depth on the GPU is the sum of its parts, as numerically integrated", async () => {
@@ -90,7 +90,7 @@ test("a medium's optical depth on the GPU is the sum of its parts, as numericall
     banks: [bank({ height: 1, thickness: 2, density: 0.2, colour: [1, 1, 1], edge: { through: [3, 0], clear: [1, 0.2], softness: 1.5 } })],
   });
   const c = compileScene(scene({ sea: swell, things: [draw.density("paircloud", m, OPTS)], style: toon(), sun: [0.3, 1, 0.2] }));
-  const tau = tauFunction(m, "probe_tau", { puffs: "t_pair_puffs", banks: { kind: "some", wgsl: "t_pair_banks" } });
+  const tau = tauFunction(m, "probe_tau", accessMedium(m, [0, 1, 0], (t) => ({ wgsl: `t_${t.name}` })));
   const rays: { o: number[]; d: number[]; t0: number; t1: number }[] = [
     { o: [-12, 4.2, 0.1], d: [1, 0, 0], t0: 0, t1: 30 },          // through both blobs
     { o: [-10, 0.8, -3], d: norm([1, 0.02, 0.15]), t0: 0, t1: 25 }, // along the fog, across the bank's edge
