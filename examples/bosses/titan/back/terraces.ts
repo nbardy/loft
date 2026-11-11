@@ -222,9 +222,10 @@ export const terraces: BackOption = {
       // Stone: pale, with sparse level strata (lines of the hull's height) that wander a little; on a flute, ribs instead.
       const h = hullH(G, a);
       // Broken into dashes of unequal length, so no stratum closes into a ring.
-      const dash = cut(add(sin(add(mul(a, 7), mul(h, 11))), mul(sin(add(mul(a, 17), 1.3)), 0.6)), 0.15);
-      const strata = mul(mul(sub(1, cut(abs(sub(fract(add(mul(h, 3.2), mul(sin(mul(a, 3)), 0.12))), 0.5)), 0.035)), cut(G, add(at.w, 0.06))), dash);
-      const stone = mix(ink(I.stone), ink(I.bark), max(mul(strata, 0.85), mul(flutes, mul(ribLine(XF, 0.1), 0.8))));
+      const dash = cut(add(sin(add(mul(a, 7), mul(h, 11))), mul(sin(add(mul(a, 17), 1.3)), 0.6)), -0.45);
+      const strata = mul(mul(sub(1, cut(abs(sub(fract(add(mul(h, 6.5), mul(sin(mul(a, 3)), 0.12))), 0.5)), 0.045)), cut(G, add(at.w, 0.06))), dash);
+      // Cream with stone-dark lines, as the paint-overs' cliffs (grey stone read as a bald drum under the turf).
+      const stone = mix(mix(ink(I.cream), ink(I.stone), 0.35), ink(I.bark), max(mul(strata, 0.8), mul(flutes, mul(ribLine(XF, 0.1), 0.8))));
       // Turf: the cap, down to its wandering edge, and hanging over each plate's tip in a tongue; and the ledges' treads.
       const tongue = mul(mul(T.tongue, sub(1, cut(abs(XF), 0.6))), flutes);
       const turfEdge = add(add(at.w, mul(sin(add(mul(a, 23), 0.4)), 0.008)), tongue);

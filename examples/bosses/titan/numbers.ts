@@ -93,7 +93,7 @@ export const S = {
   terraces: {
     /** How far the crown stands over the atoll's `top`; how high over the water the rim is round the tail (beside the
      * carapace it is the carapace's rim line). */
-    crown: 1.2, rim: 0.5,
+    crown: 0.7, rim: 0.5,
     /** The cap (G: 0 the crown, 1 the rim): out to G = `at` it is turf, nearly level (it falls `drop` of the island's
      * height to its edge), reaching `radius` of the rim's radius; its edge wanders by `wander` in G. Below it the cliff
      * falls as `1 - t^cliff` (t: 0 at the cap's edge, 1 at the rim): a rounded shoulder, steepest at the water. */
