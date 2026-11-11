@@ -18,10 +18,15 @@ import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
 import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
 import { base as backBase } from "./titan/back/base.ts";
+import { spires } from "./titan/back/spires.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
+import { plated } from "./titan/carapace/plated.ts";
 import { base as clawsBase } from "./titan/claws/base.ts";
+import { fiddler } from "./titan/claws/fiddler.ts";
 import { base as faceBase } from "./titan/face/base.ts";
+import { mask } from "./titan/face/mask.ts";
 import { base as legsBase } from "./titan/legs/base.ts";
+import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { rig } from "./titan/rig.ts";
 import type { BackOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
@@ -34,19 +39,34 @@ const CAMERAS: Readonly<Record<string, Camera>> = {
   top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
   // The Grab from low and to the side: the claw closing across the beam, the lift and the squeeze.
   grab: { kind: "perspective", eye: [21, 5.5, -3], target: [8.5, 2.2, -6.5], fovY: 0.6 },
+  // For comparing variants (`loft variants`): a far step back (the whole silhouette, the ship and the crush disc), the
+  // face head on, the legs from the right side at water level, the back from above and behind.
+  far: { kind: "perspective", eye: [33, 21, 21], target: [3, 1.5, -1], fovY: 0.6 },
+  // `close`'s eye with a longer lens: from lower or nearer, the resting claws cover the mouth.
+  face: { kind: "perspective", eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 },
+  legs: { kind: "perspective", eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 },
+  back: { kind: "perspective", eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 },
 };
 
 export const design = makeDesign({
   name: "reefback_titan",
   numbers: S as Numbers,
   slots: {
-    carapace: { base: carapaceBase } satisfies Record<string, CarapaceOption>,
-    legs: { base: legsBase } satisfies Record<string, LegsOption>,
-    claws: { base: clawsBase } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase } satisfies Record<string, FaceOption>,
-    back: { base: backBase } satisfies Record<string, BackOption>,
+    carapace: { base: carapaceBase, plated } satisfies Record<string, CarapaceOption>,
+    legs: { base: legsBase, stilt } satisfies Record<string, LegsOption>,
+    claws: { base: clawsBase, fiddler } satisfies Record<string, ClawsOption>,
+    face: { base: faceBase, mask } satisfies Record<string, FaceOption>,
+    back: { base: backBase, spires } satisfies Record<string, BackOption>,
   },
-  variants: {},
+  variants: {
+    stilt: { about: "the base crab up on stilt legs", pick: { legs: "stilt" } },
+    fiddler: { about: "one huge crusher, one small cutter", pick: { claws: "fiddler" } },
+    ironclad: { about: "plated shell, stone spires, a masked stare", pick: { carapace: "plated", back: "spires", face: "mask" } },
+    // Stilt legs put the cutter's shoulder 2.5 above the water; the fiddler's 0.8 cutter spans 4.46, short of a wrist
+    // 4.2 out and 2.25 down (4.76): the pair alone fails the grip check (middle 0.19 off). Closing 3.6 out (4.25) it grips
+    // as the fiddler does on base legs (0.058 off). Neither option is wrong; the variant settles their meeting.
+    stiltFiddler: { about: "a fiddler on stilts, taking the ship nearer", pick: { legs: "stilt", claws: "fiddler" }, numbers: { grabWristReach: 3.6 } },
+  },
   compare: ["far", "face", "legs", "back"],
   build: (o, n) => {
     // Numbers, then what the claws offer the rig, then the rig, then each slot drawn on it, then the scene.

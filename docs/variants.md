@@ -97,3 +97,128 @@ from 20 lines (reusing the base's parts) to the base's 200; plus two lines.
 
 Pictures: the base variant renders bit-identical frames to main for `game`, `three`, `close` at t = 1.0, 3.6, 11.3:
 the same expressions, built in the same order, drawn in the same order. Checks: base passes the same 4.
+
+## Adding an option
+
+An option is one file in the slot's folder under `examples/bosses/titan/`, plus two lines in
+`examples/bosses/reefback_titan.ts` (the import, and the entry in that slot's table). Copy the nearest option and
+change it; `legs/stilt.ts` (21 lines) and `face/mask.ts` (27) are the short examples.
+
+What a slot receives and must return (`titan/slots.ts` is the contract; the type checker holds you to it):
+
+| slot | `draw` receives | returns |
+|---|---|---|
+| carapace | the rig | `{ hull, things }`: `hull` is the strand the face's beard rides, m from tail (0) to front (1), v round from the top |
+| legs | the rig | drawables; leg k goes from a root on the body to `rig.walk.foot(k)` (k = 0..3 left, 4..7 right) |
+| claws | the rig and its own offer | `{ things, crush, cutterFingers }`: the crusher bound to `rig.crush` by `animate` (part "crusherPalm"), the cutter's two fingers |
+| face | the rig and the carapace | drawables |
+| back | the rig | drawables riding `rig.shell` (the shell frame: the body's, read late, pitching on after the slam) |
+
+The rig (`titan/rig.ts`, type `Rig`) gives every option: `n` (the numbers of this build: read inks and sizes from it,
+never import `S`), `body` and `shell` frames, `local(p)` (crab coordinates to world), `shoulder(side)`, the walk, both
+attacks (`crush`, `grab`) with their clocks (`crushAfter`, `grabOn`, `grabEnv`, `grabBeat`), `keel`, `gripRest`, and
+`shipNow` (where the held ship is).
+
+Rules an option keeps:
+
+- **Build nothing at import.** Every expression is made inside `draw`, from the build's numbers. A module-level
+  expression would be shared by every variant and built from the wrong numbers.
+- **Names are the scene's.** Every drawable needs a name unique in the scene (`scene` refuses two things with one name).
+  Replacing a part, reuse its name (`titan`, `leg<L|R><i>`); adding one, pick a new name.
+- **Needing other numbers** (a higher body, a bigger claw): put them in the option's `numbers`. They apply to the whole
+  crab. Two chosen options that set one number differently are an error naming both; a named variant's `numbers` win.
+- **A claw that changes the grip's shape** must say so in its `offer` (`closedDepth(width)`, `restGap`, `crushLead`):
+  the rig places the ship and lands Claw Crush by them. `claws/base.ts` derives them for the base pincer;
+  `clawsOf(look)` makes an option that keeps that mechanism and changes its paint and numbers (`claws/fiddler.ts`).
+- **Faces** can compose the base face's parts: `faceKit(rig)` gives the clocks (`rouse`, `brace`, `blink`), `eyeParts`,
+  `plate`, `brow`, `gullet`, `beard`.
+
+A named variant is one entry in the design's `variants`: `{ about, pick: { slot: "option" }, numbers? }`.
+
+**Cameras** are the design's (`CAMERAS` in `reefback_titan.ts`). `far`, `face`, `legs` and `back` are the comparison
+columns (`compare`); add a camera there and name it in `--views`, or add it to `compare` to make it a default column.
+
+**Commands:**
+
+```sh
+bun src/cli/main.ts variants examples/bosses/reefback_titan.ts                 # every named variant: out/variants/reefback_titan/sheet.webp and <variant>/<camera>.webp
+bun src/cli/main.ts variants examples/bosses/reefback_titan.ts --only base,stilt --views far,legs --time 3.6
+bun src/cli/main.ts render examples/bosses/reefback_titan.ts --variant legs=stilt,face=mask --views game,close --out out/variants/try.webp
+bun src/cli/main.ts check examples/bosses/reefback_titan.ts                    # every named variant
+bun src/cli/main.ts check examples/bosses/reefback_titan.ts --variant stilt,face=mask
+bun src/cli/main.ts check examples/bosses/reefback_titan.ts --combinations     # every combination of options
+bun src/cli/main.ts dev examples/bosses/reefback_titan.ts --variant ironclad
+bun test tests/variants.check.test.ts                                           # every named variant passes
+```
+
+`--variant` works on `render`, `clip`, `frames`, `check`, `profile`, `build` and `dev`.
+
+**What the checks require** (four for this crab):
+
+1. Claw Crush: the crusher's palm lands inside the hit disc (at most 2% of its footprint outside). The palm lands centred
+   on the disc, so a bigger crusher needs a bigger `crushRadius`: the base disc fits a crusher of about 1.43.
+2. Claw Crush's warning starts before the claw first moves.
+3. The Grab's warning starts before the cutter first moves, and covers the ship.
+4. The cutter's two fingers close on the ship's beam and keep it through the hold: the grip's middle within a tenth of
+   the beam of the ship's middle, the gap within a tenth of the beam.
+
+## Limits today (what an option cannot change)
+
+- **The face is drawn in crab coordinates for the base carapace's front** (the brow's V at x = 4.93, eyes at 4.05). A
+  carapace option that moves the front (another `carapace.to`) leaves the face where it was. The rig would have to
+  publish face mounts computed from the carapace numbers; the base's literal coordinates were kept for bit-identical
+  pictures.
+- **The beard rides the carapace's surface coordinates**, so a carapace option keeps the strand's (m, v) convention.
+- **Checks are the design's**, not an option's: an option cannot add a check (a fortress crab cannot ask that its claws
+  cover the face). It would need a `checks` field on the option's return.
+- **The attacks are the rig's**: an option cannot add an attack or change its timing except through numbers. Claw Crush's
+  timing (wind-up 1.15 s, strike 0.3 s, ...) is written in `rig.ts`, not in the numbers.
+- **One claw mechanism**: the Grab's pose math (both fingers at one angle, symmetric about the palm) is the base claw's.
+  A different mechanism (one fixed finger) writes its own `draw` and `offer`; the rig needs only the offer.
+- **The draw order is the design's**: carapace, back, face, legs, claws, then the world.
+- **Cameras are fixed in the world**: a variant that raises or grows the crab can leave a close camera's frame (the
+  stilt crab's face sits 1.25 higher in `face`).
+- **Params**: the crab declares none. Loft's parameter registry is global (`src/expr.ts`, `param`): two variants built in
+  one process (the sheet, `check`) that declared one param with different defaults would fail with "declared twice".
+  The fix, in `src/expr.ts`: intern a param by its whole spec (`p:${name}:${def}:${min}:${max}`, not `p:${name}`), drop
+  the process-wide `params` map, and do the "declared twice with different defaults" check in `leaves()`, where `ps`
+  is filled per compiled scene. Then a clash is an error within one scene, not across a process.
+
+## Scored against the build (2026-11-11)
+
+Files, predicted and actual lines:
+
+| file | predicted | actual |
+|---|---|---|
+| `reefback_titan.ts` (the design) | ~90 | 104 (four named variants, nine cameras) |
+| `titan/numbers.ts` | ~100 | 70 |
+| `titan/ink.ts` | ~20 | 26 |
+| `titan/slots.ts` | ~80 | 40 |
+| `titan/rig.ts` | ~220 | 176 |
+| `titan/carapace/base.ts` | ~25 | 24 |
+| `titan/legs/base.ts` | ~35 | 35 |
+| `titan/claws/base.ts` | ~130 | 156 (the pincer derivation and `clawsOf`) |
+| `titan/face/base.ts` | ~215 | 227 (the parts split into `faceKit`) |
+| `titan/back/base.ts` | ~165 | 172 |
+
+A second option, plus two lines in the design each: legs `stilt` 21 lines, carapace `plated` 25, claws `fiddler` 19,
+face `mask` 27, back `spires` 27. None of them needed an edit to the rig or to another slot.
+
+Pictures: as predicted. The base variant's `game`, `three` and `close` frames at t = 1.0, 3.6 and 11.3 have the same
+SHA-256 of their RGBA as c0959b4's (9 of 9). Expression ids are only names: shifting every id by building seven
+unrelated expressions first also left the pixels identical. Checks: base passes the same 4.
+
+Not predicted, found by the checks:
+
+- **The base crush disc only just fits the base crusher.** The palm lands centred, so a crusher above about 1.43 puts
+  its palm partly outside a 3.4 disc. A fiddler needs a bigger hit disc (6.2 for a 2.4 crusher, 1.5% outside). The
+  fiddler option asks for it; this is a gameplay change and the variant says so.
+- **A cutter below about 0.8 loses the ship in the lift** (0.7 closes, then drifts 0.199 off at t = 11.3). My first
+  explanation (the arm's reach at the close) was wrong: moving the wrist nearer made it worse.
+- **Two valid options can fail together.** Of the 32 combinations of the five proof options, 24 pass. The 8 that fail
+  are exactly those with stilt legs *and* fiddler claws (grip middle 0.19 off): the stilt body raises the shoulder to
+  2.5 above the water and the fiddler's 0.8 cutter spans 4.46, short of a wrist 4.2 out and 2.25 down (4.76). With the
+  wrist 3.6 out (4.25) the pair grips as well as the fiddler alone (0.058 off, measured). The named variant
+  `stiltFiddler` settles it with that number. This is the case the variant's own `numbers` exist for.
+- Combinations that differ only in carapace, face or back always score the same as each other: those slots do not
+  reach the checks. The checks see only the numbers and the claws.
