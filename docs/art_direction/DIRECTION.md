@@ -186,3 +186,96 @@ Weak or unfinished:
   point must become a host input.
 - The contrast was measured on one frame by a throwaway script, not by a check.
 
+
+## Contact foam (2026-11-11)
+
+The owner, looking at the islander: "the little white web-like patterns where his legs touch the water are strange; do
+a little set of 4-5 of those to explore better patterns." This section is the theory and the predictions, written
+before any pattern was built; the score is appended below it.
+
+### What is there now, and why it reads as a web
+
+The woodblock's contact foam (`src/style/woodblock.ts`) is a function of two things only: the sea's contact band
+(`Contact.near.band`: 1 at a body, 0 at the sea's foam width, negative beyond) and the water's world xz. Today's
+pattern, now named `ridge`, draws a collar where the band is over 0.6 and "fingers" where `abs(noise2(xz * 3.4))` is
+under 0.3 of the band. The zero set of a smooth noise is a set of closed wandering curves about one lattice cell
+(0.29 world units) across, so a thin neighbourhood of it is a net, not fingers: nothing in it points away from the
+body. Checked against the picture (`game` camera, t = 3.6, feet enlarged three times): filaments 1 to 2 px wide
+enclosing cells about 10 px across, with 1 px specks round them. The diagnosis holds.
+
+### The instrument: what the band is, measured before designing on it
+
+One debug render (the band printed as grey, not kept): from the `game` camera the band's positive part round a foot
+is a blob 60 to 90 px wide and about 40 px tall; it is smooth where it is over about 0.3 and grainy below that
+(radial hatching: the band is a minimum over 16 taps on a ring that turns from pixel to pixel). From the `legs`
+camera, at water level, the same region is a sliver about 100 px wide and 4 to 8 px tall. Numbers that follow from
+the cameras: the crab's sea has foam width 0.85; a near-side foot is 36.7 from the `game` eye, so 35 px per world
+unit, the band is 30 px wide across the screen and 22 px along the view (the eye is 47 degrees up); the far feet 28 px
+per unit. From `legs` 80 px per unit, so the ring is at its 40 px cap and the band is 3.8 px deep.
+
+Three consequences every pattern below is designed on:
+
+1. **Everything happens inside 30 px of the body at game size.** A feature must be 2 px or more to survive, so a
+   pattern has room for about three things across the band (three rings, a 12 px collar and a 12 px tooth).
+2. **No direction from the band's gradient.** The brief's first idea takes the fingers' direction from the band's
+   gradient. A screen derivative of the band differences two pixels whose rings are turned differently; below 0.3 the
+   grain is larger than the slope (1/30 per pixel), and fingers are exactly what lives there. Rejected before
+   building. Direction has to come from somewhere smooth: the band's level sets (a threshold that dips makes a tooth
+   that must point down the band), a fixed world direction, or the sea's own printed lines.
+3. **Hard edges belong above band 0.2**; below it only things that tolerate grain (dots, a line thinning to nothing).
+
+A theorem used twice below (DERIVATION, mine). Let the foam be the set band > T(xz). If T varies along one world
+direction only, T = g(n . xz), then along any line parallel to the level lines of g the set is {band > constant}, which
+contains the body's edge whenever it is not empty: every piece of foam is joined to the collar along that line. No
+islands and no closed loops, whatever the amplitude, so teeth may be as long as the band is wide. A T that varies in
+two directions has no such guarantee: its teeth pinch off once its slope exceeds the band's (amplitude over period
+greater than 1 over the foam width). A union of such sets keeps the property.
+
+### The six patterns (today's and five)
+
+All sizes are at the `game` camera, 1280 x 800, at a near-side foot (35 px per unit). P is a period in world units.
+
+| pattern | what it is | at a foot, predicted | smallest feature | inherited / mine |
+|---|---|---|---|---|
+| `ridge` (today) | collar, filaments on the zero lines of a noise, specks | a net of 1-2 px filaments, 10 px meshes | 1 px specks: do not survive as shapes | the existing code |
+| `claws` | a cream collar whose edge is thorns: three families of parallel teeth 60 degrees apart (each T = c + a tri(n . xz / P), unioned), concave-sided, a key line round the whole | an irregular star, 12 to 18 tips, tips 6 to 10 px long, 10 px apart; collar 10 px | the tips (sub-pixel needles that fade); teeth 3 px wide half way | the claw from Hokusai and from the crash foam (`examples/bosses/lib/impact.ts`); the three-comb union and its no-island argument are mine |
+| `rings` | three thin cream arcs on the band's level lines, broken, moving outward and thinning to nothing, no fill | arcs 9 px apart (7 up the screen), 3 px wide at the foot thinning to 1; the outermost ragged from the grain | the outer arc, 1 px | Hiroshige's ripple lines round posts and boats; the brief |
+| `apron` | one flat cream shape with a scalloped edge and one key line: T rises with the distance to a square lattice of points (period 0.36), so the edge is round lobes meeting in cusps | 45 px wide, 33 tall, about 11 lobes 12 px wide and 5 deep, key line 1.5 px; slope 0.71 of the band's, so no islands | the key line, 1.5 px | the scalloped foam edge of the prints (seigaiha scales); the lattice-distance threshold is the plain way to get it |
+| `stipple` | printed dots only, two lattices (periods 0.17 and 0.105), each dot's radius growing with the band past its own hashed threshold | 40 to 60 dots within 20 px of the foot, 2 to 4 px across at the body, 1 px at the edge | the outer dots, 1 px: they fade, they do not flicker | the dotted spray of the Great Wave; today's `specks` |
+| `breakers` | a narrow collar, and wherever one of the sea's own printed swell lines comes within the band it breaks: the line swells into a cream blade along itself, tapering away from the body (T = c - a (1 - d / dw), d the distance to the line the sea already computes) | collar 9 px; a spindle through the foot along the swell line, 11 px wide at the foot and reaching 27 px out each side, present about 2 s of every 2.9 s as lines pass (lines 2.6 apart moving 0.9 a second) | the blade tips | mine: the foam's direction comes from the print's own wave lines, so it moves with the sea instead of on its own |
+
+From the `legs` camera every pattern is a strip 4 to 8 px tall: `apron` and `claws` a solid cream strip with a line
+under it, `breakers` the same but thinner with a blade lying along it now and then, `rings` and `stipple` a pale
+broken strip (their features are under a pixel tall there and average out; they must do so without shimmer). Along the
+island's waterline (a long edge) `apron`, `stipple` and `breakers` should be at their best and `rings` at its weakest
+(parallel lines beside a long wall read as stripes). Round the ship (a 3-unit hull) all five have room.
+
+In motion: every pattern but `rings` and `breakers` is fixed in the world, so round a planted foot it stands still.
+`rings` drift outward 3.7 px a second; `breakers` slide with the swell lines at 0.9 units (31 px) a second. A foot
+that lifts takes its foam with it in every pattern, today's included (the band is the 3D distance to the body, so it
+falls as the foot rises: the foam shrinks in over a few frames, it does not pop). Expected failure: the edges that
+sit below band 0.2 crawl (the ring's turn is fixed to the screen, the body moves under it).
+
+The fifth idea in the brief, foam that follows the walk, is not built: the style sees only the band, which has no
+clock and no body. A footfall belongs to the sea's `marks` (a deformation the rig drives), which is where the slam's
+ring wave is being put.
+
+### Predicted cost
+
+Today's foam is priced in `docs/gpu_native.md` ("The sea"): the style's contact foam was 0.16 ms over the whole sea
+beside 0.33 for the band, and near quads now cost 0.20 ms a frame in total, so the pattern is about 0.065 ms of the
+frame (one timer tick), of which the gradient noise is about 0.04. No new pattern evaluates a gradient noise; `stipple`
+has two cell hashes (today: one), the others none. Predicted difference from `ridge`, fast clock state:
+
+| pattern | at 1280 x 800 | at 2560 x 1600 (four times the pixels, to rise above the tick) |
+|---|---|---|
+| `claws` | 0 or -1 tick | -0.16 ms |
+| `rings` | 0 or -1 tick | -0.20 ms |
+| `apron` | -1 tick | -0.20 ms |
+| `stipple` | 0 or -1 tick | -0.13 ms |
+| `breakers` | -1 tick | -0.22 ms |
+
+Wrong if any pattern is slower than `ridge` at 2560 x 1600, or if the five differ from each other by more than
+0.13 ms there. None needs a wider band or any read the band does not already make.
+
+Predicted ranking, before looking: `apron`, `breakers`, `rings`, `claws`, `stipple`.
