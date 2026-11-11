@@ -33,6 +33,7 @@ import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
+import { terraces } from "./titan/back/terraces.ts";
 import { spiral } from "./titan/back/spiral.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
 import { kabuto } from "./titan/carapace/kabuto.ts";
@@ -197,7 +198,7 @@ export const design = makeDesign({
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk, jitter, mourner } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine, headland, spiral } satisfies Record<string, BackOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland, terraces, spiral } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
     // How white water is printed (docs/art_direction/DIRECTION.md, "White water"). `base` is the rolling foam with
     // curled heads for the collar, the wave's crest and the bursts; the others are the style's other collars, with the
@@ -257,7 +258,8 @@ export const design = makeDesign({
       about: "the islander with a head: heavy brows over big eyes sunk in it, a mandible mouth that gapes, long antennae",
       // The great claw is the fiddler's, carried out to the side: beside the face, as the islander carries it, it stood
       // over the right eye from the game camera while the crab turned to the Grab (claws/fiddler.ts, `fiddlerAside`).
-      pick: { claws: "fiddlerAside", face: "brow", back: "headland" },
+      // Its back is its own: the terraces (back/terraces.ts; DIRECTION.md, Round 5), not the islander's.
+      pick: { claws: "fiddlerAside", face: "brow", back: "terraces" },
       numbers: { temper: SHOW_OFF },
     },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's

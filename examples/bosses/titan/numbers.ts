@@ -22,6 +22,9 @@ export const S = {
     // dark olive thorny body, and shrine vermilion as its one accent.
     straw: [0.86, 0.79, 0.58], strawDark: [0.52, 0.43, 0.27], thorn: [0.34, 0.31, 0.2], thornDark: [0.15, 0.13, 0.09],
     shrine: [0.8, 0.16, 0.1], shrineDark: [0.42, 0.07, 0.06], paper: [0.97, 0.86, 0.6],
+    // Sea growth (examples/bosses/lib/growth.ts; read only by a back that grows it): a mussel's blue-black, kelp's olive,
+    // a fan coral's deeper red beside the branching coral's pink (`coral`).
+    mussel: [0.15, 0.19, 0.31], kelp: [0.43, 0.46, 0.17], coralDeep: [0.8, 0.33, 0.27],
     // The brow face's mouth (face/brow.ts; no other option reads them): the dark maroon behind the mandibles, its tongue.
     maw: [0.25, 0.06, 0.08], tongue: [0.7, 0.3, 0.3],
   } satisfies Record<string, V3>,
@@ -84,6 +87,53 @@ export const S = {
     light: { height: 3.0, girth: [0.5, 0.34] as const, lean: 0.28, inset: 0.8, size: 0.5, gulls: 3 },
   },
 
+  // ---- the terraces (back/terraces.ts): a turf cap on cream cliffs with broad shell plates laid up them; read only by it ----
+  // Bearings are degrees round the island's centre from the bow (+x), positive toward the right flank (+z). Heights are
+  // above the still water unless said; lengths are crab units.
+  terraces: {
+    /** How far the crown stands over the atoll's `top`; how high over the water the rim is round the tail (beside the
+     * carapace it is the carapace's rim line). */
+    crown: 0.7, rim: 0.5,
+    /** The cap (G: 0 the crown, 1 the rim): out to G = `at` it is turf, nearly level (it falls `drop` of the island's
+     * height to its edge), reaching `radius` of the rim's radius; its edge wanders by `wander` in G. Below it the cliff
+     * falls as `1 - t^cliff` (t: 0 at the cap's edge, 1 at the rim): a rounded shoulder, steepest at the water. */
+    cap: { at: 0.42, radius: 0.55, drop: 0.2, wander: 0.05 }, cliff: 1.0,
+    /** The island's outline as shares of the atoll's radii: at the bow and at the tail (an egg), and its lumps. */
+    outline: { bow: 0.9, tail: 1.1, lumps: 0.025 },
+    /** The shell plates laid over the cliff, each [its root's bearing at the rim, how far its bearing turns back as it
+     * climbs to its tip (degrees), its half-width (degrees) at its widest, its tip's G, how far it stands out of the
+     * hull]. Three broad plates, then three narrow blades; all lean the same way (the paint-overs' lower left to
+     * upper right). Broad plates at three corners of the island (one arching over the beach), blades between, every
+     * gap unequal; the game camera sees the first broad plate and the two blades beside it. */
+    plates: [[34, 30, 36, 0.43, 0.48], [158, 34, 38, 0.42, 0.5], [272, 30, 33, 0.44, 0.46], [96, 18, 15, 0.56, 0.32], [212, 20, 12, 0.6, 0.28], [330, 24, 17, 0.54, 0.34]] as const,
+    /** Turf ledges cut into the cliff, each [G of its tread's inner edge, the tread's width in G, its middle bearing,
+     * its half-span (degrees)]: arcs, not rings; the plates cross them. */
+    ledges: [[0.6, 0.07, 140, 28], [0.66, 0.06, 296, 22]] as const,
+    /** The plates' ribs: lines across a broad plate (sparse); how far past its tip a plate's ribs run on as stone
+     * flutes (in G), and how far the turf hangs down over its tip (in G). */
+    ribs: 7, flute: 0.12, tongue: 0.07,
+    /** The point: its bearing, how far its tip is from the island's centre, its half-width, its rock's height at the
+     * light and at the tip. */
+    point: { bearing: 192, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
+    /** The beach under the plates' arch: its middle bearing, half its span, how far the sand runs beyond the rim, how
+     * high the rim lifts over it. */
+    beach: { bearing: 164, span: 15, sand: 1.4, arch: 0.7, cove: 0.11 },
+    /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
+     * stack [distance from the island's centre, bearing, height, girth]. */
+    shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
+    /** Two groves, each [G, bearing, trees]: one left of the crown, one forward-right, open turf and the crown between.
+     * Neither stands on the sight lines from the light to the game and far cameras, which cross the cap's right half
+     * toward the tail (2.1 and 1.25 from the centre), and both are behind x = -0.5 (the head and its antennae). */
+    groves: [[0.26, -60, 5], [0.3, 40, 4]] as const,
+    /**
+     * The light on the point (back/beacon.ts): how far from the island's centre its foot stands, the tower's height, its
+     * girth at foot and top, the share of the tower that is crust, the lantern room's size, its gulls. Then its structure,
+     * for an attack to move later: `lean` (the tangent of its angle out along the point; 0 upright), `rise` (how far the
+     * tower stands up out of the mound on its segmented neck; 0 down, and the neck is not drawn), `shutters` (0 shut,
+     * 1 flung open).
+     */
+    light: { at: 7.0, height: 3.6, girth: [0.64, 0.46] as const, crust: 0.3, size: 1.0, gulls: 2, lean: 0.24, rise: 0, shutters: 0 },
+  },
   // ---- the spiral shell (back/spiral.ts): a hermit's shell, one tube coiled by Raup's law; read only by it ----
   // (docs/art_direction/DIRECTION.md, Round 5.) The coil turns counterclockwise going back from the mouth, seen from its
   // face: the picked picture's hand (crab_round5/back_spiral_pick.webp). Its mouth is at the front, facing down over
