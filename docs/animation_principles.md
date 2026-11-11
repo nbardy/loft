@@ -28,8 +28,10 @@ Use this when a monster moves correctly and still looks dead.
 
 Work through this in order. Each step is one or two lines in a scene.
 
-1. **Give every action three beats.** `const b = beats(sub(time, attack.arm), { anticipate: 0.6, act: 0.15, settle: 1.2 })`.
-   The wind-up should be several times longer than the action.
+1. **Give every action three beats.** For an attack, `const b = attack.beats(time, 1.2)`: the wind-up and the action are
+   the attack's own `windup` and `strike` (and a hold's seconds), so they are stated once; only the settle is the
+   body's. For anything else, `beats(since, { anticipate: 0.6, act: 0.15, settle: 1.2 })`. The wind-up should be several
+   times longer than the action.
 2. **Wind up the other way.** Drive the pose by `anticipated(b.anticipate)` so the claw rises before it falls and the
    neck pulls back before it strikes.
 3. **Land with weight.** Stretch along the motion during `act` (`squash(stretchOf(speed))`), then `impact(b.after)` at
@@ -55,7 +57,10 @@ Work through this in order. Each step is one or two lines in a scene.
 
 ## Grabs
 
-`src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release.
+`src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release. In a
+scene with a game, make it an attack instead (`motion: { kind: "grip", ... }`, `effect: hold(...)`; see
+`docs/attacks_that_hold.md` and the Reefback Titan): the attack owns the beats, the warning, the held thing's place and
+size (`held()`, `thing()`, `squeezed()`), and `attack.grip(rest)` gives the same palm and gap as `grab`.
 
 - `grab(since, { rest, from, to?, radius, squeeze, pulses, ... }, beats)` gives the palm's place, the `gap` between
   the gripping surfaces, the held thing's place, its squeezed size and a `held` flag. The gap follows the thing's
@@ -69,7 +74,13 @@ Work through this in order. Each step is one or two lines in a scene.
 
 A whole ship takes the same size: `ship.placed(chart, wind, grab.squeezed(1, "z"))` squeezes hull, sails and rigging
 across the beam as one, and `shifted(chart, offset)` lifts it off the water it floats on (`sized` and `shifted` in
-`src/map/chart.ts`). Spars keep their thickness. Nothing checks that the gripper reaches the thing.
+`src/map/chart.ts`). Spars keep their thickness.
+
+`gripReaches(attack, [fingerA, fingerB], { middle, gap })` (src/check.ts) checks the drawn fingers: at the closing
+instant and through the hold, the points of their surfaces nearest the thing's middle must be centred on it and the
+thing's width apart. It measures surfaces, not finger axes or tips: the gap is between surfaces, so a finger's axis at
+the contact must stand its radius further out. `warned(attack)` checks the warning starts before the motion does and
+covers where the thing is taken.
 
 ## What is not here yet
 
