@@ -22,7 +22,8 @@ export { checkField, FieldDrawable, fieldPixel, FieldSafetyError, LIPSCHITZ_LIMI
 export { impostors, Impostors, type Cell, type ImpostorHit, type ImpostorOptions, type ImpostorShape } from "./draw/impostors.ts";
 export { Copies, drawCopies, type CopiesHit, type CopiesOptions } from "./draw/copies.ts";
 export { limb, polyline, unit, type Limb, type LimbSpec } from "./geom/limb.ts";
-export { gait, course, type Course, type Gait, type GaitSpec } from "./geom/gait.ts";
+export { gait, course, type Course, type Gait, type GaitSpec, type Pace } from "./geom/gait.ts";
+export { carriage, footing, headingIn, replants, towardIn, type Carriage, type Footing, type FootingSpec, type Replant, type ReplantSpec, type Stamp, type Stance, type StepTiming, type Toward } from "./geom/stance.ts";
 export { fan, rayOf, catenary, type FanSpec } from "./geom/fan.ts";
 export { shell, horn, whorl, ridgePhase, type ShellSpec, type HornSpec } from "./geom/spiral.ts";
 export { mirror, array, reflect } from "./geom/symmetry.ts";
@@ -40,7 +41,7 @@ export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, releasesAt, throwLands, fliesClear, letsGoClean, shoves, frontFirst, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
-export { expressionsRead, spansOnScreen, staysInView, type Mark } from "./check.ts";
+export { expressionsRead, spansOnScreen, staysInView, limbsReach, type Mark, type Reaching } from "./check.ts";
 export { movable, type Sun } from "./sun.ts";
 export { STYLES, STYLE_NAMES, styleNamed, withStyle, withLight, light, LIGHT, type LightName, type LightRecipe, woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";

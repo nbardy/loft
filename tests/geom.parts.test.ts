@@ -58,7 +58,7 @@ test("a limb reaches its target exactly in range, points straight at it out of r
 test("a planted foot stays fixed in the world while the body walks over it", () => {
   const phase = [0, 0.5, 0.25, 0.75];
   const feet: V3[] = [[2, -1, 1.5], [2, -1, -1.5], [-2, -1, 1.5], [-2, -1, -1.5]];
-  const g = gait({ feet, phase, course: course.arc([1, 0, 2], 0.4, 9, Math.PI / 2), stride: 1.6, period: 1.7, duty: 0.6, lift: 0.5 });
+  const g = gait({ feet, phase, course: course.arc([1, 0, 2], 0.4, 9, Math.PI / 2), stride: 1.6, pace: { kind: "time", period: 1.7 }, duty: 0.6, lift: 0.5 });
   const ev = run([...feet.map((_, i) => g.foot(i)), ...feet.map((_, i) => vec3(g.planted(i), 0, 0)), g.body.o]);
   const dt = 1 / 240;
   for (let i = 0; i < feet.length; i++) {

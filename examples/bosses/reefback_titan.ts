@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type WoodblockLook, type WoodblockSpec } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type WoodblockLook, type WoodblockSpec } from "../../src/index.ts";
 import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
@@ -137,7 +137,7 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
       const face = o.face.draw(r, carapace, claws);
       const back = o.back.draw(r);
       return {
-        things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
+        things: [...carapace.things, ...back, ...face.things, ...legs.things, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
         strikes: { crush: claws.crush },
         holds: { grab: r.grab },
         waves: { crush: r.crush },
@@ -146,6 +146,9 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
         rig: r,
       checks: [
         landsInside(claws.crush), warned(r.crush), warned(r.grab),
+        // Every leg inside its reach over the whole loop, with the body's full range of motion: never a straight snapped
+        // line (2% of the span short of it), never folded (10% of the span off it), the knee outboard (docs/stance.md).
+        limbsReach(legs.limbs, { period: n.crushPeriod, slack: tolerance.share(0.02), fold: tolerance.share(0.1) }),
         // The fingers are curled horns a fifth of the beam thick near their tips: a tenth of the beam either way is a close grip.
         // The hold ends in the whip, so this also says the drawn claw keeps the ship through the stroke (its arm reaches).
         gripReaches(r.grab, claws.cutterFingers, { middle: tolerance.share(0.1), gap: tolerance.share(0.1) }),
