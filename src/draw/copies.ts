@@ -10,19 +10,29 @@
 // in front, as the traced union's is.
 //
 // Level of detail is per copy, in the vertex stage: a copy thinner than `minPixels` on screen is not drawn.
+//
+// Carried copies (`carry`, added 2026-11-11 for examples/bosses/reefback_titan.ts: coral, trees and a ruin on a
+// walking crab's shell). The list stays static, given in the carrying frame's coordinates; the frame is a closed-form
+// expression evaluated per vertex (a rigid motion: unit axes, so radii are unchanged), and the copies are moved into
+// the world before the box is built. `paint` then sees the hit in the frame's coordinates, so patterns ride the
+// copies. Not carried, the frame is the identity and the copies are where the list says. The shadow blob is still
+// fitted once to the list as given (it does not follow the frame): right only while the frame stays near the world's.
 
 import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
-import { variable, type Expr, type TableSource } from "../expr.ts";
+import { lift, variable, type Expr, type TableSource } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Branch, Part } from "../lib/similar.ts";
-import type { F, P3, Skeleton } from "../map/types.ts";
+import type { F, Frame, P3, Skeleton } from "../map/types.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
 import { CLOSEST_WGSL, shapeWgsl } from "./impostors.ts";
 import { outlineWgsl, PROXY_VERTICES, tracePlumbingWgsl, type TraceOutline } from "./trace.ts";
 
-/** What `paint` sees at a hit: the world point and normal, and which copy it is on (its level and id, as when asked). */
+/**
+ * What `paint` sees at a hit: the point and normal (in the carrying frame's coordinates when carried, else the world's),
+ * and which copy it is on (its level and id, as when asked).
+ */
 export type CopiesHit = { readonly p: P3; readonly normal: P3; readonly level: F; readonly id: Expr<"vec3"> };
 
 export type CopiesOptions = {
@@ -38,7 +48,14 @@ export type CopiesOptions = {
   readonly keepLevels: number;
   /** How far behind a near miss its ink is written, in ink widths: a surface closer behind than that shows instead. */
   readonly inkBack: number;
+  /**
+   * A rigid frame (unit, orthogonal axes) the copies ride: `copies` are given in its coordinates. Absent, they are in
+   * the world.
+   */
+  readonly carry?: Frame;
 };
+
+const WORLD_FRAME: Frame = { o: lift<"vec3">([0, 0, 0]), x: lift<"vec3">([1, 0, 0]), y: lift<"vec3">([0, 1, 0]), z: lift<"vec3">([0, 0, 1]) };
 
 const P = variable("p", "vec3"), N = variable("n", "vec3"), ID = variable("copy_id", "vec3"), LEVEL = variable("copy_level", "f32");
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
@@ -92,13 +109,18 @@ export class Copies implements Drawable {
       name: "copies_paint", args: [["p", "vec3"], ["n", "vec3"], ["copy_id", "vec3"], ["copy_level", "f32"]], out: "vec3<f32>",
       roots: [this.o.paint({ p: P, normal: N, level: LEVEL, id: ID })], ret: (v) => v[0],
     });
+    const c = this.o.carry ?? WORLD_FRAME;
+    const carry = emitShaderFn(ctx.slots, {
+      name: "copies_carry", args: [], out: "array<vec3<f32>, 4>", roots: [c.o, c.x, c.y, c.z],
+      ret: (v) => `array<vec3<f32>, 4>(${v.join(", ")})`,
+    });
     const key = `copies.${this.name}`;
     const code = [
       tracePlumbingWgsl(), outlineWgsl(this.o.outline), `const COPIES_ID: f32 = ${lit(nameId(this.name))};`,
-      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels),
+      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels),
     ].join("\n");
     return {
-      shaders: { [key]: { code, libs: paint.libs } },
+      shaders: { [key]: { code, libs: [...new Set([...paint.libs, ...carry.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, instances: this.o.copies.length, cull: "front", constants: { INK_BACK: this.o.inkBack } })],
     };
   }
@@ -112,10 +134,20 @@ struct CopyIn {
   @location(1) @interpolate(flat) a: vec4<f32>,
   @location(2) @interpolate(flat) b: vec4<f32>,
   @location(3) @interpolate(flat) k: vec4<f32>,
+  // The carrying frame's origin and axes, for paint in its coordinates.
+  @location(4) @interpolate(flat) fo: vec3<f32>,
+  @location(5) @interpolate(flat) fx: vec3<f32>,
+  @location(6) @interpolate(flat) fy: vec3<f32>,
+  @location(7) @interpolate(flat) fz: vec3<f32>,
 };
+fn copies_to_world(f: array<vec3<f32>, 4>, q: vec3<f32>) -> vec3<f32> { return f[0] + f[1] * q.x + f[2] * q.y + f[3] * q.z; }
+fn copies_to_local(in: CopyIn, w: vec3<f32>) -> vec3<f32> { return vec3<f32>(dot(w, in.fx), dot(w, in.fy), dot(w, in.fz)); }
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> CopyIn {
-  let a = ${tab}(ii * 3u);
-  let b = ${tab}(ii * 3u + 1u);
+  let f = copies_carry();
+  let a0 = ${tab}(ii * 3u);
+  let b0 = ${tab}(ii * 3u + 1u);
+  let a = vec4<f32>(copies_to_world(f, a0.xyz), a0.w);
+  let b = vec4<f32>(copies_to_world(f, b0.xyz), b0.w);
   let k = ${tab}(ii * 3u + 2u);
   let mid = (a.xyz + b.xyz) * 0.5;
   let r = max(a.w, b.w);
@@ -131,7 +163,7 @@ struct CopyIn {
   let pad = select(0.0, ink_px(fp) * fp, INK_ON) + fp;
   let c = LOFT_CUBE[vi];
   let w = mid + x * (c.x * (r + pad)) + y * (c.y * (r + pad)) + z * (c.z * (len * 0.5 + r + pad));
-  return CopyIn(select(HIDDEN_VERTEX, frame.view_proj * vec4<f32>(w, 1.0), shown), w, a, b, k);
+  return CopyIn(select(HIDDEN_VERTEX, frame.view_proj * vec4<f32>(w, 1.0), shown), w, a, b, k, f[0], f[1], f[2], f[3]);
 }
 override INK_BACK: f32 = 2.0;
 @diagnostic(off, derivative_uniformity)
@@ -153,7 +185,7 @@ override INK_BACK: f32 = 2.0;
   let ba = in.b.xyz - in.a.xyz;
   let nm = normalize(p - (in.a.xyz + ba * clamp(dot(p - in.a.xyz, ba) / max(dot(ba, ba), 1e-20), 0.0, 1.0)));
   let n = select(nm, h.yzw, hit);
-  let base = copies_paint(p, n, in.k.xyz, in.k.w);
+  let base = copies_paint(copies_to_local(in, p - in.fo), copies_to_local(in, n), in.k.xyz, in.k.w);
   let colour = select(trace_shade(base, n, p, d, COPIES_ID), trace_ink(base, n, p, d, COPIES_ID), INK_ON && !hit);
   // Ink in two bands. Within the copy's own radius of it (at least 0.75 px) the ink sits at the near miss, in front of
   // whatever is behind: a thin line round every copy. The rest of the style's width is written INK_BACK ink widths
