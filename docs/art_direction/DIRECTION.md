@@ -186,3 +186,89 @@ Weak or unfinished:
   point must become a host input.
 - The contrast was measured on one frame by a throwaway script, not by a check.
 
+
+## Round 4: the headland (2026-11-11)
+
+The owner, on the islander: "the islander is great, but the lighthouse is nice as well. Can we do island back and make
+the lighthouse hang off to one side on a point, and some more coastline, and integrate the island back and shell a
+little better." So: a new back, `headland` (`examples/bosses/titan/back/headland.ts`), a carapace that carries it
+(`carapace/encrusted.ts`), and the `islander` variant picks both. The base back, the lighthouse back and every other
+variant are as they were.
+
+What was wrong with the islander's island, looked at from `game`, `far` and `back`:
+
+- it is a drum: a stone wall 4.65 tall standing on the red carapace, capped green. Stone meets shell on one smooth arc;
+- its coast is one lumpy circle (lumps of 8%): nothing on it has a name;
+- the fort's tower is the one vertical, on the crown, behind the great claw from the game camera.
+
+### What is built, and why there
+
+**One shell.** The island no longer stands on the carapace: its lowest tier *is* shell. Round the sides and the tail the
+island's foot is a brick tier with the carapace's own rim line carried round it at the carapace's rim height, so the
+shell reads as running on under the whole island (the hermit's shell). Rock grows on that tier's shoulder. Three
+boundaries, none a straight seam: moss over stone in hanging tongues with roots below them; stone over brick as a
+crust that drips to the rim in places and lets brick windows show through in others; and at the nape (the front, over
+the carapace) no cliff at all, a ramp of turf and rock running down onto the carapace at a shallow angle so the
+crossing line wanders, with barnacles and crust patches scattered ahead of it on the red. The cliff's strata are
+level lines at a fixed spacing in height, and the brick tier and the carapace's flanks carry growth ridges at the same
+heights, so a line can be followed from shell into stone.
+
+**The point, on the right flank, in the tail quarter** (115 degrees round from the bow toward the right). Why:
+
+- the left is impossible from the `game` camera: the island already sits at the top of that frame, and a light of any
+  height on the far (left) flank stands above the frame's top edge and directly behind the eyestalks (projected: its
+  top at y = -20 of 800, x = 765, the left eye at x = 764). On the right the same light is wholly inside the frame;
+- the right is the near side to `game` and `far`, so the spike is as large as it can be;
+- the left is the small claw's side, where the ship is taken and (another worker, this week) thrown up and out;
+- on the right it must miss the great claw and the legs. At rest the great claw stands forward of the island; cocked
+  it is thrown back over the right shoulder, over the island's front (x above -1); the slam is ahead-right. The legs'
+  feet are at x = -2.6 and forward. So the free sector is behind the last leg. The body yaws up to 0.195 rad (toward
+  the Grab) while the feet stay planted, which carries a point 8 out by 1.56 toward that last foot: at 115 degrees the
+  tip (x = -5.7) comes to x = -4.2, a clear unit from the foot at -2.6. At 105 degrees it would touch. Further aft
+  than 115 the `back` camera loses the light off its bottom edge (at 119 the tower's foot is on the edge).
+
+**The fort goes**: its tower was the island's one vertical and the light replaces it. What stays on the crown is the
+ruin's footings: broken wall stubs and rubble under 0.9 tall. One thing the eye goes to on the island.
+
+**Coast.** Named features, all on the right flank where the game camera sees the shore: the point with the light; a
+stair down the point's spine from the plateau to the light's door; skerries (three stacks, shrinking) off the tip; a
+cove in the corner between the point and the island with a pale beach at the waterline; a reef shelf (a pale ledge at
+the waterline) round the point's foot. Round the tail and the left (seen only from `back`): a second, blunt nose and a
+notch, and the brick tier's shoulder carrying coral and barnacles.
+
+Inherited: the base atoll (its closed-form profile surface, moss tufts, coral heads, trees, the ruin's stones, the
+copies list); the fiddler's lighthouse and gulls (tower, gallery, lantern, the rock after the slam, the scatter); from
+the round 2 pictures, the garden crab's growth hanging over its shell's rim and the fiddler's light leaning away behind.
+New: the shell tier under the island with the carapace's rim line carried round it, the cape as an inset family of
+ellipses joined to the coast by a smooth maximum (every layer of the profile gets a true inset, so cliffs keep their
+width on the cape's flanks), strata and ridges at shared heights, the nape ramp, the coast features.
+
+### Predictions (written before the first render of this back)
+
+Crab coordinates (x forward, y up, z right; the water is at y = -1.35). `game` and `far` at 1280 x 800, body at rest.
+
+1. **The point.** Its tip is 4.2 beyond the island's rim along its bearing (8.8 from the island's centre), at
+   (-5.7, 8.0): 3.9 beyond the carapace's flank (z = 4.1). Its top falls from 2.9 at the island to 0.9 at the tip. From
+   `game` the rim-to-tip run is 155 px (rim (436, 210), tip (300, 290)); from `far`, 150 px.
+2. **The light.** Tower 3.8, lantern 0.6: 4.4 tall, leaning 17 degrees out along the point, its top 0.5 beyond the
+   tip. From `game`: 132 px from foot to lantern top (foot (325, 274), top (260, 159)), 43 px across at the foot; from
+   `far` 130 px. The fiddler's is 7.4 tall. It is the leftmost thing above the water in both frames, and it is the
+   island's highest point on screen.
+3. **Readable from `game`**, with the smallest dimension of each: the point and its light (43 px); the skerries
+   (stacks 1.1, 0.8 and 0.6 across: 38, 28, 21 px, foam round each); the beach (1.8 by 0.7: about 60 by 17 px). I
+   expect these three to be named at a glance. The reef shelf (0.35 wide: 9 px) will read as a pale line along the
+   point's foot but may not be named as a reef; the stair (0.22 wide: 6 px, 130 px long) will read as a path.
+4. **The seam.** The boundary between island inks (stone, moss) and crab inks (brick) will reverse direction at least
+   ten times round the coast the `back` camera sees, wandering at least 0.4 either way (25 px in `back`), where the
+   base's is one arc. No stone face taller than 2.1 anywhere on the main island (the base's is 4.65).
+5. **Clear of the crab.** At no time in the 16 s cycle does the point, the light or a gull's circle intersect the
+   great claw, the small claw, a leg or the ship. Nearest approach: the last right leg's foot, 1.0 from the tip at the
+   Grab's full yaw. From `game` the light never overlaps the eyestalks (300 px apart on screen at rest).
+6. **Checks and pictures.** The islander passes its 7 checks with the eyes' measured sizes unchanged (59.0, 42.5 px:
+   nothing of the island is near them). The base variant's three `game` hashes are unchanged.
+7. **Cost** (`game`, 1280 x 800, t = 1; before: 90 draws, 106,003 triangles, 2.10 ms GPU in the fast clock state).
+   After: 102 draws (the fort's tower leaves, 2; the tower, gallery and lantern arrive, 6; four gulls, 8), about
+   131,000 triangles (the island's grid grows from 48 x 96 to about 56 x 160, twice with its outline: +17,400; the
+   light and gulls +8,000; about 60 more copies in the reef list, +700; the tower -1,150), and at most 2.40 ms (+0.25:
+   the copies +0.08, the strands +0.10, the island's paint and grid +0.05). The carapace's paint is two more line
+   patterns on a draw that costs 0.07 ms: unresolved by the timer.
