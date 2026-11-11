@@ -12,7 +12,7 @@ import { cameraMatrices, project } from "./host/camera.ts";
 import type { Body } from "./map/sweep.ts";
 import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
-import type { Arming, Part, Strike, Target } from "./spacetime/attack.ts";
+import type { Arming, Attack, Effect, Hold, Motion, Part, Strike, Target } from "./spacetime/attack.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { hullBoxDistance, hullDistance, type HullDistance } from "./geom/hull_distance.ts";
 
@@ -294,6 +294,116 @@ export function minScreenSize(feature: Measured, camera: string, pixels: number,
 }
 const norm = (a: V3): V3 => { const l = Math.hypot(...a); return [a[0] / l, a[1] / l, a[2] / l]; };
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+// ---- holds --------------------------------------------------------------------------------------------------------
+
+/**
+ * How far a measurement may be from what it should be: a distance in world units, or a share of a reference that the
+ * check taking it names (for `gripReaches`, the held thing's width). A value, so a check never takes a bare number.
+ */
+export type Tolerance = { readonly kind: "units"; readonly units: number } | { readonly kind: "share"; readonly share: number };
+export const tolerance = {
+  units: (units: number): Tolerance => {
+    if (!(units >= 0 && Number.isFinite(units))) throw new Error(`tolerance.units: need a finite distance >= 0, got ${units}`);
+    return { kind: "units", units };
+  },
+  share: (share: number): Tolerance => {
+    if (!(share >= 0 && Number.isFinite(share))) throw new Error(`tolerance.share: need a finite share >= 0, got ${share}`);
+    return { kind: "share", share };
+  },
+};
+/** The distance a tolerance allows, given the reference its check names. */
+function allowance(t: Tolerance, reference: number): number {
+  switch (t.kind) {
+    case "units": return t.units;
+    case "share": return t.share * reference;
+  }
+}
+const describe = (t: Tolerance, allowed: number, of: string): string => {
+  switch (t.kind) {
+    case "units": return fmt(allowed);
+    case "share": return `${fmt(allowed)} (${(t.share * 100).toFixed(0)}% of ${of})`;
+  }
+};
+
+/** The point of a chain's surface nearest p (the chain's capsules, tapered), and how far p is from it (negative inside). */
+function nearestSurface(chain: readonly Joint[], p: V3): { readonly at: V3; readonly d: number } {
+  let best = { at: chain[0]!.p, d: Infinity };
+  for (let i = 0; i + 1 < chain.length; i++) {
+    const [s] = closest(chain[i]!.p, chain[i + 1]!.p, p, p);
+    const q = lerp(chain[i]!.p, chain[i + 1]!.p, s), r = chain[i]!.r + (chain[i + 1]!.r - chain[i]!.r) * s;
+    const to = subV(p, q), len = Math.hypot(...to);
+    if (len - r < best.d) best = { at: len > 1e-9 ? [q[0] + (to[0] / len) * r, q[1] + (to[1] / len) * r, q[2] + (to[2] / len) * r] : q, d: len - r };
+  }
+  return best;
+}
+
+/**
+ * A two-sided gripper (a claw's fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing
+ * instant (the arming time) and at every sampled instant of the hold, the point of each drawn finger's surface nearest
+ * the thing's middle is found. The grip's middle (halfway between those points) must be within `middle` of the thing's
+ * middle, and their distance apart within `gap` of the thing's width times its crush. Shares are of the thing's width.
+ * It measures the drawn fingers, not the attack's own grip, which matches by construction. Measured over the first arming.
+ */
+export function gripReaches(attack: Attack<Motion, Hold>, fingers: readonly [Measured, Measured], o: { readonly middle: Tolerance; readonly gap: Tolerance; readonly rate?: number }): Check {
+  const [a, b] = fingers.map(chainOf) as [ReturnType<typeof chainOf>, ReturnType<typeof chainOf>], rate = o.rate ?? 30;
+  const roots = [attack.thing(), attack.crush(), attack.effect.radius];
+  return {
+    name: `${attack.name}: ${a.name} and ${b.name} close on the thing and keep it`,
+    run(probe) {
+      const T = probe.scalar(attack.first);
+      const sample = (t: number) => {
+        const [thing, crush, radius] = probe.eval(roots, t) as [number[], number, number];
+        const c: V3 = [thing[0]!, thing[1]!, thing[2]!];
+        const pa = nearestSurface(probe.joints(a.skeleton, a.range, t), c).at, pb = nearestSurface(probe.joints(b.skeleton, b.range, t), c).at;
+        const mid: V3 = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
+        const apart = Math.hypot(...subV(pa, pb)), want = 2 * radius * crush;
+        return { t, width: 2 * radius, middle: Math.hypot(...subV(mid, c)), apart, want, gap: Math.abs(apart - want) };
+      };
+      const close = sample(T);
+      const okMiddle = allowance(o.middle, close.width), okGap = allowance(o.gap, close.width);
+      // The worst instant is the one nearest to failing, on either measure.
+      const score = (s: typeof close) => Math.max(s.middle / okMiddle, s.gap / okGap);
+      const worst = times(T, T + attack.effect.seconds, rate).map(sample).reduce((w, s) => (score(s) > score(w) ? s : w), close);
+      const line = (s: typeof close) => `middle ${fmt(s.middle)} off, ${fmt(s.apart, 2)} apart (want ${fmt(s.want, 2)})`;
+      return {
+        name: this.name, pass: score(worst) <= 1, value: score(worst),
+        measured: `closing: ${line(close)}; worst t=${fmt(worst.t, 2)}: ${line(worst)}`,
+        limit: `middle <= ${describe(o.middle, okMiddle, "width")}, gap within ${describe(o.gap, okGap, "width")}`,
+      };
+    },
+  };
+}
+
+/**
+ * The warning comes first and covers what is taken: it starts no later than the motion's first movement
+ * (`warn >= span.before`), and for a hold the thing's footprint where it is taken (a disc of its radius round its
+ * middle) lies inside the warned hit shape. Measured at the first arming.
+ */
+export function warned(attack: Attack): Check {
+  return {
+    name: `${attack.name}: the warning comes first and covers what is taken`,
+    run(probe) {
+      const lead = attack.span.before, warn = probe.scalar(attack.warn);
+      const early = warn - lead;
+      const cover = covered(probe, attack.effect, attack);
+      const pass = early >= 0 && cover.inside;
+      return { name: this.name, pass, value: early, measured: `warns ${fmt(warn, 2)} s, moves ${fmt(lead, 2)} s before arming; ${cover.measured}`, limit: `warning >= first movement; ${cover.limit}` };
+    },
+  };
+}
+/** What the warned shape must cover, by effect: a hit's shape is its own place; a hold's thing must be inside it. */
+function covered(probe: Probe, e: Effect, a: Attack): { readonly inside: boolean; readonly measured: string; readonly limit: string } {
+  switch (e.kind) {
+    case "instant": return { inside: true, measured: "a hit (its shape is its place)", limit: "-" };
+    case "hold": {
+      const T = probe.scalar(a.first);
+      const [at, r] = probe.eval([e.at, e.radius], T) as [number[], number];
+      const d = probe.planar((p) => hitSdf(a.hit, p), T)(at[0]!, at[2]!) + r;
+      return { inside: d <= 0, measured: `the thing's footprint ${fmt(-d)} inside the shape's edge`, limit: "footprint inside" };
+    }
+  }
+}
 
 /** The compiled scene draws at most `triangles` triangles. */
 export function budget(o: { readonly triangles: number }): Check {
