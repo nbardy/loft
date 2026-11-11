@@ -787,6 +787,62 @@ attack, numbers with defaults: `lean` 0.34, `rise` 0 (a segmented neck out of th
    branch before starting); fiddler `0cdc48fb9d08d13c` (t = 1), `f306729c859bd6c3` (t = 12.4); the headland itself
    (`bruiser,back=headland`, to be recorded before the refactor that shares its helpers).
 
+### Fifth pass: the screw was the wrong form (a second engineer, after merging main ada7ee2)
+
+The first four passes were not scored in writing. Judged now against the paint-overs, the fourth pass from `back`
+(`bruiser`, t = 1): the island reads as a **cinnamon roll**. Nine red stripes of nearly one width wind evenly into a
+pinwheel at the crown; every edge is a spiral, so the eye circles and finds no big shape; the ribs are 22 to a group,
+close and even, so each stripe is a uniform hatch; the light is small and lies on a white blob of sand; the growth is
+white dots spread round the rim. From `game` the island is a green disc behind the claw. What the paint-overs have
+that this lacks: (1) a **level turf cap** with two clumps of trees, broad and flat, the biggest single shape; (2) under it
+**pale stone cliffs with sparse level strata**; (3) **a few broad plates laid on the cliffs like leaves**, each convex,
+wide low and **pointed at its tip** under the turf, unequal in width, with stone between them; (4) a tall light
+standing up off a rock at one corner; (5) growth in fistfuls at the plates' feet, none higher up.
+
+The screw's insight was right (every plate leans the same way, so the blades rise lower left to upper right from every
+side) and its execution made it a thread; a thread is a uniform pattern, not three shapes. Replaced:
+
+- **Hull** (mine): the surface's v is the bearing again. A level cap to G = 0.42 (falls 0.1 of the island's height,
+  reaching half the rim's radius; its edge wanders 0.05 in G), then a cliff falling as `1 - t^1.5`: a rounded shoulder,
+  steepest at the water. Crown 1.2 over the atoll's top, as before.
+- **Plates** (mine, from the paint-overs): a list of five, each a root bearing at the rim, a sweep (its middle turns
+  back 30 to 36 degrees as it climbs: the screw's handedness, kept), a half-width, a tip's G and a thickness. Across a
+  plate `x` runs -1 to 1; it stands out of the hull as `sqrt(1 - x^2)`, a little more on its leading edge (a shingle's
+  lip), its width a leaf's: widest a quarter of the way up, drawn to a point at the tip. Three broad (half-widths 24 to
+  30 degrees) all on the half of the island the game camera sees (bearings 332, 42, 108); two narrow blades on the
+  coast's side (166 over the beach, 250 by the point). Unequal gaps: 70, 66 and 224 degrees, the last holding the coast.
+- **One form through the materials** (the paint-overs' note): a plate's ribs (7 across it, sparse) run on past its
+  red tip as stone flutes, up to the cap; the turf hangs down over the tip in a tongue. Stone elsewhere has level
+  strata, two or three to the cliff.
+- **Ledges** (the "terraces"): two turf treads cut into the cliff as arcs (not rings), at G 0.6 round bearing 140 and
+  0.68 round 330, which the plates cross.
+- **The cove** (the paint-overs' "recessed crescent beach"): the rim is pulled in by 0.11 of the radius over the beach
+  (176 +- 22) and the sand runs out 1.9 beyond the original line: a crescent set into the island, the rim arched over it.
+- **The light**: taller and leaning more (height 3.6, girth 0.78 to 0.54, lantern 1.0 of the fiddler's, lean 0.36); its
+  crusted foot is the point's top, with the kit's crust clusters round it. Point, shelf, stacks, groves, growth kit,
+  shore code and `keepClear`: inherited from the first build.
+
+#### Predictions for the fifth pass (`bun tools/terraces_theory.ts`; bruiser at rest, 1280 x 800)
+
+1. **Plates, `game`.** Three broad red shapes, rim to tip 138, 146 and 138 px, 57 to 85 px across at their middles,
+   leaning one way. The aside claw covers everything below about y = 190 between x = 400 and 670, so the rims of the
+   middle and right plates are hidden: I expect each broad plate to show 60 to 100 px of its upper part above the claw,
+   tips at y 198 to 246. The first broad plate (root 332, rim at x = 710) shows whole.
+2. **The light, `game`.** Mound at (542, 191), finial at (522, 40): 152 px mound to finial (the headland's 109), 42 px
+   across its foot; the finial 40 px inside the top edge at rest, 20 or more at the slam's pitch. **`back`**: 242 px, finial
+   at (80, 544), in frame by 80 px; the point's tip at (210, 744).
+3. **The beach.** `back`: a pale crescent 235 px long and up to 137 px deep from the cove's back to the sand's edge, at the
+   frame's bottom. `game`: 106 px end to end, mostly behind the claw (as before: a stated miss of the brief that the
+   bruiser's claw causes).
+4. **The cap, `back`.** 255 px across between bearings 40 and 220; with the two groves, the largest single shape.
+5. **Evenness.** No two neighbouring plates of the same width or gap; no rib spacing under 6 px from `back`.
+6. **Clear.** Front rim on the centre line at x = 1.96 (head's back at 2.6); thrown ship 15.2 from the nearest of the
+   point, light and left-tail rim; last right foot to stack 1: 5.0. `bruiser` 16 of 16.
+7. **Cost.** The same draws and triangles as the fourth pass (grid 46 x 144, the same list within 10%): against the
+   headland, within 1,500 triangles; frame within 0.07 ms (one tick) of it in the slow state.
+8. **Unchanged.** Base `game` hashes as main's (`0c1b1e4368820ff8`, `0db3c25b4d11121b`, `2315edeb83c975e9`); islander and
+   fiddler as taken after the merge, unless the spiral's barnacles are swapped for the kit.
+
 ## Round 4: the fiddler's and the spider crab's faces (2026-11-12)
 
 The owner, after the islander: "did we refine other crabs' gestures and faces?" We had not. The islander's face is a
