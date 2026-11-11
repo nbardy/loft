@@ -12,6 +12,10 @@ export const S = {
     black: [0.075, 0.07, 0.09], indigo: [0.13, 0.2, 0.37], cream: [0.93, 0.88, 0.75],
     brick: [0.66, 0.22, 0.13], brickDark: [0.42, 0.12, 0.09], moss: [0.47, 0.56, 0.24], mossDeep: [0.2, 0.32, 0.17],
     stone: [0.7, 0.63, 0.5], bark: [0.3, 0.2, 0.14], coral: [0.86, 0.56, 0.46],
+    // The stilt direction's inks (read only by its options; the base never paints with them): bone-and-straw legs, a
+    // dark olive thorny body, and shrine vermilion as its one accent.
+    straw: [0.86, 0.79, 0.58], strawDark: [0.52, 0.43, 0.27], thorn: [0.34, 0.31, 0.2], thornDark: [0.15, 0.13, 0.09],
+    shrine: [0.8, 0.16, 0.1], shrineDark: [0.42, 0.07, 0.06], paper: [0.97, 0.86, 0.6],
   } satisfies Record<string, V3>,
   /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
   shadowIndigo: 0.42,

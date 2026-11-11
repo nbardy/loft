@@ -21,6 +21,9 @@ import type { ClawsOffer } from "./slots.ts";
 export type Rig = {
   readonly n: Numbers;
   readonly walk: Gait;
+  /** Each foot's phase in the walk (a share of the cycle, as given to `gait`): foot k plants when
+   * `time / n.period + footPhase[k]` crosses a whole number. Options that react to a step (foam, a swinging lantern) read it. */
+  readonly footPhase: readonly number[];
   readonly crush: BodyAttack;
   /** Seconds since this cycle's slam (0 before it): the body's thud, the shell's follow-through, the eyes' whip. */
   readonly crushAfter: F;
@@ -170,7 +173,7 @@ export function rig(n: Numbers, offer: ClawsOffer): Rig {
   });
 
   return {
-    n, walk, crush, crushAfter, grab, grabOn, grabEnv, grabBeat, keel, gripRest, shipNow, body, shell, local, shoulder,
+    n, walk, footPhase: phase, crush, crushAfter, grab, grabOn, grabEnv, grabBeat, keel, gripRest, shipNow, body, shell, local, shoulder,
     world: { sea: water, warnings: [telegraph(crush, { style: warnStyle }), telegraph(grab, { style: warnStyle })], crash, boat },
   };
 }

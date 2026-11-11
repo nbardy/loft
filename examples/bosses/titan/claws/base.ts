@@ -13,7 +13,20 @@ import type { ClawsOffer, ClawsOption } from "../slots.ts";
 
 type Ink = Numbers["ink"];
 /** What a claw option may change of the drawing without touching the mechanism: the palm's paint over its (m, v). */
-export type ClawLook = { readonly about: string; readonly numbers?: ClawsOption["numbers"]; readonly palm: (I: Ink, m: F, v: F) => P3 };
+export type ClawLook = {
+  readonly about: string; readonly numbers?: ClawsOption["numbers"]; readonly palm: (I: Ink, m: F, v: F) => P3;
+  /** The arm's paint over its (m, v), `elbow` the elbow's arc fraction. Absent: the base's mottled brick (`BASE_ARM`). */
+  readonly arm?: (I: Ink, m: F, v: F, elbow: F) => P3;
+  /** The fingers' paint along the horn (m root to tip). Absent: the base's brick to cream to a black point (`BASE_FINGER`). */
+  readonly finger?: (I: Ink, m: F) => P3;
+};
+
+export const BASE_ARM = (I: Ink, m: F, v: F, elbow: F): P3 => {
+  const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
+  const ring = sub(1, cut(abs(sub(m, elbow)), 0.022));
+  return mix(mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.25)), vec3(...I.black), ring);
+};
+export const BASE_FINGER = (I: Ink, m: F): P3 => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965));
 
 /** Size of a claw: palm length, palm half-width, arm segment lengths. */
 const clawDims = (n: Numbers, size: number) => ({ len: n.clawPalm * size, fat: n.clawFat * size, arm: n.armLengths.map((l) => l * (0.55 + 0.45 * size)) as unknown as readonly [number, number] });
@@ -34,7 +47,10 @@ const clawDims = (n: Numbers, size: number) => ({ len: n.clawPalm * size, fat: n
 function pincer(n: Numbers) {
   const len = n.clawPalm * n.cutter, fat = n.clawFat * n.cutter;
   /** The finger's contact station (m = 0.85 of the horn): its chord from the hinge, the chord's angle, and its radius. */
-  const chord = (2.315 / 2.755) * len * 0.95, phi = -0.366, contactR = 0.138 * n.cutter;
+  // The contact radius is the horn's girth (0.44 fat) at m = 0.85, so it scales with clawFat as well as the cutter. (It
+  // read the cutter alone until 2026-11-11: right for the base's clawFat 1.1, wrong for a thinner claw. The ratio is
+  // exactly 1 for the base, so its ship sits where it did.)
+  const chord = (2.315 / 2.755) * len * 0.95, phi = -0.366, contactR = 0.138 * n.cutter * (n.clawFat / 1.1);
   const hinges = 2 * 0.35 * fat * (0.55 + 0.3 * Math.sin(0.88 * Math.PI)) * Math.sqrt(1 - ((0.88 - 0.7) / 0.3) ** 2);
   return { len, chord, phi, contactR, hinges };
 }
@@ -62,6 +78,7 @@ export function clawsOf(look: ClawLook): ClawsOption {
     about: look.about, ...(look.numbers === undefined ? {} : { numbers: look.numbers }), offer,
     draw: ({ n, body, local, shoulder, crush, grab, grabOn, grabEnv, keel, gripRest }) => {
       const I = n.ink;
+      const armPaint = look.arm ?? BASE_ARM, fingerPaint = look.finger ?? BASE_FINGER;
       const FREE: Grip = { on: lift<"f32">(0), angle: lift<"f32">(0), along: vec3(1, 0, 0) };
 
       function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold: F, grip: Grip = FREE) {
@@ -73,11 +90,7 @@ export function clawsOf(look: ClawLook): ClawsOption {
         const along = unit(mix(free, grip.along, grip.on));
         const armStrand = strand({
           name: `${name}Arm`, spine: arm.spine, stations: 16, girth: (m) => mul(d.fat, sub(0.42, mul(m, 0.1))), tips: ["round", "round"], up: body.y,
-          paint: (m, v) => {
-            const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
-            const ring = sub(1, cut(abs(sub(m, arm.knots[1]!)), 0.022));
-            return mix(mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.25)), vec3(...I.black), ring);
-          },
+          paint: (m, v) => armPaint(I, m, v, arm.knots[1]!),
           detail: { along: 40, around: 14 },
         });
         const palm = strand({
@@ -95,7 +108,7 @@ export function clawsOf(look: ClawLook): ClawsOption {
           const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
           return place(horn({
             name: fname, length: d.len * 0.95, curl: 0.8, taper: 0.16, girth: mul(d.fat, 0.44), out: [1, -0.15, 0], toward: [0, -1, 0],
-            paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
+            paint: (m) => fingerPaint(I, m),
           }), rigid(hinged));
         };
         const fingers = [finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)] as const;
