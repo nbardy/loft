@@ -58,39 +58,44 @@ export const S = {
   },
 
   // ---- the spiral shell (back/spiral.ts): a hermit's shell, one tube coiled by Raup's law; read only by it ----
+  // (docs/art_direction/DIRECTION.md, Round 5.) The coil turns counterclockwise going back from the mouth, seen from its
+  // face: the picked picture's hand (crab_round5/back_spiral_pick.webp). Its mouth is at the front, facing down over
+  // the carapace's back half, the tube coming down into it.
   spiral: {
     /** Raup's numbers. `whorls`: turns of the tube from its tip to the mouth. `growth` (W): how much every length grows
      * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
     whorls: 3.25, growth: 2.0,
     /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
      * touches the axis (Raup's D = 0): a shell with no navel. */
-    mouth: { radial: 2.5, axial: 3.3 },
+    mouth: { radial: 2.2, axial: 3.2 },
     /** Raup's T as a slope: how far each turn's crown steps down from the tip's plane per unit of its distance from the
-     * axis. 0 is a flat spiral face; 0.2 a low cone, so the curl stands proud. */
-    spire: 0.2,
+     * axis. 0 is a flat spiral face; 0.15 a low cone, so the curl stands a little proud. */
+    spire: 0.15,
     /** The axis (it points out of the spiral's face, toward the tip): raised by `tilt` above level, toward the crab's
-     * right flank, and swung back by `rake` (radians). */
-    tilt: 0.4, rake: 0.0,
-    /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane: -pi/2 is straight
-     * below the axis, opening forward. */
-    mouthAt: -1.5708,
-    /** Where the body sits in the mouth: the mouth's plane cuts the carapace's centre line `in` ahead of its tail end,
-     * `up` above the body's origin and `side` to the right; the mouth's outer lip passes `lip` below that point. */
-    seat: { in: 0.6, up: 0.0, side: 0.0, lip: 2.0 },
+     * right flank (the side the game and back cameras see), and swung back by `rake` (radians). */
+    tilt: 0.3, rake: 0.0,
+    /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane: 0 is straight ahead
+     * of the axis, so the mouth faces down; 0.15 lifts its front lip, so it faces down and a little forward. */
+    mouthAt: 0.15,
+    /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
+     * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
+     * centre, is 2 radial - lip behind it). */
+    seat: { in: 1.07, up: 1.26, side: 0.3, lip: 1.9 },
     /** The printed bands: cream for `cream` of each ring (the rest is brick); `at` is where the cream band's middle lies
      * across a ring (0: on the suture, so the cream straddles the line where two turns meet; 0.5: midway between
      * sutures); `proud` is how far a cream band stands out of the tube, as a share of its section. */
-    band: { cream: 0.4, at: 0.0, proud: 0.05 },
+    band: { cream: 0.3, at: 0.0, proud: 0.05 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
-    lip: { flare: 0.1, thick: 0.14, throat: 0.22 },
+    lip: { flare: 0.12, thick: 0.2, throat: 0.22 },
     /** The light: where it stands on the last turn (turns back from the mouth, and round the section from the tube's
      * outer side toward the spiral's face, radians), its height and girth, its size against the fiddler's, its gulls.
      * `pose` is what it could later be animated by, with the defaults it is drawn in: `lean` (the tangent of its angle,
-     * out and back), `rise` (how far a segmented neck lifts it, units), `shutters` (0 shut, 1 open). */
-    light: { back: 0.42, round: 0.3, height: 3.0, girth: [0.55, 0.38] as const, size: 0.55, gulls: 3, pose: { lean: 0.3, rise: 0, shutters: 0 } },
-    /** Two groves, each [turns back from the mouth, round the section (radians, as the light), trees, the turf's radius]. */
-    groves: [[0.3, 0.05, 4, 1.25], [0.82, 0.55, 3, 0.95]] as const,
+     * out and back), `rise` (how far a segmented neck lifts it, units; 0: no neck), `shutters` (0 shut, 1 open). */
+    light: { back: 0.3, round: 0.6, height: 1.9, girth: [0.55, 0.4] as const, size: 0.45, gulls: 0, pose: { lean: 0.25, rise: 0, shutters: 0 } },
+    /** Two groves, each [turns back from the mouth, round the section (radians, as the light), trees, the turf's radius]:
+     * one on the crown beside the light, one lower on the forward shoulder behind the eyestalks. */
+    groves: [[0.18, 0.9, 4, 1.2], [0.05, 1.0, 3, 0.9]] as const,
   },
 
   // ---- claws: the right (crusher) 1.4 times the left ----

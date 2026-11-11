@@ -32,6 +32,7 @@ import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
+import { spiral } from "./titan/back/spiral.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
 import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
@@ -172,7 +173,7 @@ export const design = makeDesign({
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland, spiral } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
     // The contact foam's pattern (docs/art_direction/DIRECTION.md, "Contact foam"). `base` is the print as it was.
     foam: {
@@ -221,8 +222,10 @@ export const design = makeDesign({
     // water with the atoll on its back, one great claw, and the dandy's face (face/dandy.ts). The fiddler claws ask for a
     // crush disc of 4.4, as on the fiddler.
     islander: {
-      about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
-      pick: { claws: "fiddler", face: "dandy", back: "headland" },
+      about: "the island crab as a fiddler: low, a spiral hermit's shell on its back, one great claw, a vain face on tall eyestalks",
+      // Its back is the spiral shell (DIRECTION.md, Round 5: "the best back design for when it's a stick-eye crab, as
+      // that is a hermit crab"); the headland stays an option (`--variant islander,back=headland`).
+      pick: { claws: "fiddler", face: "dandy", back: "spiral" },
       // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
       numbers: { temper: SHOW_OFF },
     },

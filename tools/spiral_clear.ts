@@ -83,7 +83,8 @@ for (let t = 0; t < n.crushPeriod; t += 1 / rate) {
 console.log("least distance to the shell's outside (crab units; below 0 is inside the shell), when, and where on the limb (crab coordinates):");
 for (const [name, v] of [...least].sort((a, b) => a[1].gap - b[1].gap)) console.log(`  ${name.padEnd(13)} ${v.gap >= REACH * CELL ? `over ${(REACH * CELL).toFixed(1)}` : v.gap.toFixed(2).padStart(6)}  at t = ${v.when.toFixed(1)}  (${v.at.map((c) => c.toFixed(1)).join(", ")})`);
 
-// The carapace enters the mouth by design; ahead of the mouth's plane it must be clear of the shell above it.
+// The carapace is tucked under the mouth by design; ahead of the outer lip it must be clear of the shell.
+const lipFront = Math.max(...Array.from({ length: 72 }, (_, j) => twin.at(0, (j / 72) * TAU)[0]));
 if (hull !== undefined) {
   const roots = [hull.point(UU, VV)];
   let best = Infinity, where: V = [0, 0, 0];
@@ -91,8 +92,8 @@ if (hull !== undefined) {
   for (let i = 0; i <= 60; i++) for (let j = 0; j < 40; j++) {
     const w = probe.eval(roots, 0, { clear_u: i / 60, clear_v: j / 40 })[0] as unknown as V, d0 = sub(w, o!);
     const p: V = [dot(d0, x!), dot(d0, y!), dot(d0, z!)];
-    if (p[0] < P.seat[0] + 0.5) continue;
+    if (p[0] < lipFront + 0.3) continue;
     const d = gapTo(p); if (d < best) { best = d; where = p; }
   }
-  console.log(`carapace, more than 0.5 ahead of the mouth's plane: ${best.toFixed(2)} from the shell at (${where.map((c) => c.toFixed(1)).join(", ")})`);
+  console.log(`carapace, more than 0.3 ahead of the outer lip (x = ${lipFront.toFixed(2)}): ${best.toFixed(2)} from the shell at (${where.map((c) => c.toFixed(1)).join(", ")})`);
 }

@@ -25,7 +25,7 @@
 //   in, as the next band). So the paint is a function of phi alone: `bandAt`.
 // - In the mouth's plane the turn before takes the inner 1/W of the mouth; the body has the outer crescent, 2 r (1 - 1/W) deep.
 
-import { add, compileJs, cos, exp, floor, log, max, mul, saturate, sin, smoothstep, sqrt, sub, variable, vec3, type F, type P3 } from "../../../../src/index.ts";
+import { add, compileJs, cos, exp, floor, log, max, min, mul, saturate, sin, smoothstep, sqrt, sub, variable, vec3, type F, type P3 } from "../../../../src/index.ts";
 import { TAU, type V3 } from "../ink.ts";
 import type { Numbers } from "../numbers.ts";
 
@@ -36,10 +36,26 @@ const crossV = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a
 const unitV = (a: V3): V3 => mulV(a, 1 / Math.hypot(a[0], a[1], a[2]));
 
 /** The surface's grid: cells along the outside from tip to lip, round the lip's roll, down the throat; and round the section. */
-export const GRID = { outer: 124, roll: 6, throat: 14, round: 36 } as const;
+export const GRID = { outer: 60, roll: 6, throat: 8, round: 32 } as const;
 const NU = GRID.outer + GRID.roll + GRID.throat;
 /** The stations in u, each on a grid line: where the outside ends at the lip, and where the roll ends in the throat. */
 export const U = { lip: GRID.outer / NU, throat: (GRID.outer + GRID.roll) / NU } as const;
+
+/**
+ * Where the drawn grid's lines fall in u (s: the grid line's share, 0 to 1): along the outside, spaced by the tube's
+ * size, so a turn W times smaller gets about W times fewer cells (each about the same on screen); the lip's roll and
+ * the throat as they are. A mix of that (two parts) and even spacing in turns (one part), so the curl keeps enough
+ * cells to read as round. Each station (U.lip, U.throat) stays on a grid line.
+ */
+export function gridU(n: Numbers): (s: F) => F {
+  const W = n.spiral.growth, whorls = n.spiral.whorls, q0 = W ** -whorls;
+  return (s: F): F => {
+    const f = mul(min(s, U.lip), 1 / U.lip);
+    const bySize = mul(log(add(q0, mul(f, 1 - q0))), -1 / Math.log(W));
+    const back = add(mul(bySize, 2 / 3), mul(sub(1, f), whorls / 3));
+    return add(mul(sub(1, mul(back, 1 / whorls)), U.lip), max(sub(s, U.lip), 0));
+  };
+}
 
 /**
  * The shell in plain numbers, from the build's: the axis (unit, out of the spiral's face), the coil plane's two axes
@@ -52,7 +68,7 @@ export function planOf(n: Numbers) {
   const axis: V3 = [-Math.sin(S.rake) * Math.cos(S.tilt), Math.sin(S.tilt), Math.cos(S.rake) * Math.cos(S.tilt)];
   const fore = unitV(addV([1, 0, 0], mulV(axis, -axis[0])));
   const rise = crossV(axis, fore);
-  const outAt = (back: number): V3 => { const psi = S.mouthAt - TAU * back; return addV(mulV(fore, Math.cos(psi)), mulV(rise, Math.sin(psi))); };
+  const outAt = (back: number): V3 => { const psi = S.mouthAt + TAU * back; return addV(mulV(fore, Math.cos(psi)), mulV(rise, Math.sin(psi))); };
   /** The body's point in the mouth (crab coordinates), and from it the tip: the outer lip passes `seat.lip` beyond the body's point. */
   const seat: V3 = [n.carapace.from + S.seat.in, S.seat.up, S.seat.side];
   const tip = addV(addV(seat, mulV(outAt(0), -(2 * r - S.seat.lip))), mulV(axis, t));
@@ -117,7 +133,7 @@ export function shellMap(n: Numbers) {
   const axis = vec3(...p.axis), fore = vec3(...p.fore), rise = vec3(...p.rise), tip = vec3(...p.tip);
   /** The coil's point for a section scaled by `k`: turns back from the mouth, round the section. */
   const coil = (back: F, phi: F, k: F): P3 => {
-    const s = exp(mul(back, -p.lnW)), psi = sub(S.mouthAt, mul(back, TAU));
+    const s = exp(mul(back, -p.lnW)), psi = add(S.mouthAt, mul(back, TAU));
     const out = add(mul(fore, cos(psi)), mul(rise, sin(psi)));
     return add(tip, mul(add(mul(out, add(p.c, mul(mul(k, p.r), cos(phi)))), mul(axis, add(-p.t, mul(mul(k, p.a), sin(phi))))), s));
   };
@@ -130,13 +146,15 @@ export function shellMap(n: Numbers) {
   /** The flare toward the mouth: the section grows by `lip.flare` over the last `flareOver` of a turn. */
   const flared = (back: F): F => add(1, mul(sub(1, smoothstep(0, L.flareOver, back)), S.lip.flare));
   const outside = (back: F, phi: F): P3 => coil(back, phi, mul(flared(back), add(1, proud(phi))));
-  // v runs with phi: with u from tip to mouth, d/du x d/dv then faces out of the tube (checked in tools/spiral_theory.ts).
-  const phiOf = (v: F): F => mul(v, TAU);
+  // v runs against phi: the coil turns counterclockwise going back (seen from the face), so with u from tip to mouth
+  // d/du x d/dv faces out of the tube only if v turns the other way (checked in tools/spiral_theory.ts).
+  const phiOf = (v: F): F => mul(v, -TAU);
   const point = (u: F, v: F): P3 => {
     const phi = phiOf(v);
-    // Along the outside: `whorls` back at u = 0, the lip at U.lip; the tip closes over the first two cells.
+    // Along the outside: `whorls` back at u = 0, the lip at U.lip; the tip closes over its last tenth of a turn (by
+    // turns, not cells: the drawn grid is spaced by the tube's size, `gridU`).
     const along = saturate(mul(u, 1 / U.lip));
-    const closeTip = sqrt(saturate(mul(u, NU / 2)));
+    const closeTip = sqrt(saturate(mul(mul(along, p.whorls), 10)));
     // Round the lip (w from 0 to 1): the section shrinks from its flared size to the throat's while the roll leans
     // a little past the mouth's plane, a half-round bead.
     const w = saturate(mul(sub(u, U.lip), 1 / (U.throat - U.lip)));
@@ -159,8 +177,9 @@ export function shellTwin(n: Numbers) {
   const at = (back: number, phi: number): V3 => f({ vars: { spiral_back: back, spiral_phi: phi }, inputs: {}, params: {} })[0] as unknown as V3;
   const normal = (back: number, phi: number): V3 => {
     const e = 1e-3, db = addV(at(back - e, phi), mulV(at(back + e, phi), -1)), dp = addV(at(back, phi + e), mulV(at(back, phi - e), -1));
-    // `back` falls toward the mouth and phi turns from the outer side to the face: (toward the mouth) x (d/dphi) points out.
-    return unitV(crossV(db, dp));
+    // `back` falls toward the mouth and phi turns from the outer side to the face; with the coil turning counterclockwise
+    // going back (seen from the face), (d/dphi) x (toward the mouth) points out.
+    return unitV(crossV(dp, db));
   };
   const U2 = variable("spiral_u", "f32"), V2 = variable("spiral_v", "f32");
   const g = compileJs([m.point(U2, V2)]);
@@ -172,7 +191,7 @@ export function shellTwin(n: Numbers) {
    */
   const inside = (q: V3): boolean => {
     const p = m.plan, d = addV(q, mulV(p.tip, -1)), h = dotV(d, p.axis), x = dotV(d, p.fore), y = dotV(d, p.rise);
-    const rho = Math.hypot(x, y), turn = (n.spiral.mouthAt - Math.atan2(y, x)) / TAU, first = turn - Math.floor(turn);
+    const rho = Math.hypot(x, y), turn = (Math.atan2(y, x) - n.spiral.mouthAt) / TAU, first = turn - Math.floor(turn);
     for (let back = first; back <= p.whorls; back += 1) {
       const s = p.W ** -back;
       if (((rho / s - p.c) / p.r) ** 2 + ((h / s + p.t) / p.a) ** 2 < 1) return true;

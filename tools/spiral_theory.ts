@@ -103,27 +103,21 @@ console.log(`mouth centre ${fv(mouthCentre)}; its plane faces ${fv(cross(P.axis,
 const above = lips.filter((q) => q[1] > WATER);
 console.log(`lip above the water: ${fmt((above.length / lips.length) * 100, 0)}% of its round; lowest lip point ${fmt(Math.min(...lips.map((q) => q[1])) - WATER)} from the water (below 0: under it)`);
 {
-  // The crescent: in the mouth's plane, from the turn before (the inner 1/W) to the outer lip. Is the carapace's
-  // section at the plane inside it? Corners of the section's box, in the mouth's own coordinates.
-  const xPlane = P.seat[0], h = hullAt(xPlane);
-  const corners: V[] = [[-1, -1], [-1, 1], [1, -1], [1, 1], [0, 1], [0, -1], [1, 0], [-1, 0]].map(([sz, sy]) => [xPlane, h.spine + sy! * h.tall * (sz === 0 ? 1 : 0.75), sz! * h.half * (sy === 0 ? 1 : 0.8)] as V);
-  let worst = Infinity, inner = Infinity;
-  for (const q of corners) {
-    const d = sub(q, mouthCentre), rad = dot(d, out0) / P.r, ax = dot(d, P.axis) / P.a;
-    worst = Math.min(worst, 1 - Math.hypot(rad, ax));
-    // The turn before, in the same plane: the mouth's section shrunk by W about the tip.
-    const dp = sub(q, add(P.tip, mul(add(mul(out0, P.c), mul(P.axis, -P.t)), 1 / SP.growth)));
-    inner = Math.min(inner, Math.hypot(dot(dp, out0) / (P.r / SP.growth), dot(dp, P.axis) / (P.a / SP.growth)) - 1);
-  }
-  console.log(`carapace section at the mouth's plane (x = ${fmt(xPlane)}): ${fmt(h.half * 2)} wide, ${fmt(h.tall * 2)} tall; inside the outer lip by at least ${fmt(worst * 100, 0)}% of the section, outside the turn before by ${fmt(inner * 100, 0)}% of its section (both must be above 0)`);
-  let over = Infinity, where: V = [0, 0, 0];
+  // The mouth faces down and forward over the carapace's back half (the picked picture): the body is tucked under it.
+  // Sample the carapace's upper surface (stand-in: carapace/base.ts) and sort it by where it is against the shell:
+  // ahead of the outer lip it must be clear of the shell; under the hood, inside the shell's coil is hidden (the tail in
+  // the inner turn); just outside it, the lip rests on it.
+  const lipFront = Math.max(...lips.map((q) => q[0]));
+  let ahead = Infinity, aheadAt: V = [0, 0, 0], hidden = 0, under = 0, poke = 0;
   for (let i = 0; i <= 60; i++) for (let j = 0; j <= 24; j++) {
-    const x = xPlane + 0.5 + ((C.to - xPlane - 0.5) * i) / 60, hh = hullAt(x), a = (j / 24) * Math.PI, e = 2 / 2.3;
+    const x = C.from + ((C.to - C.from) * i) / 60, hh = hullAt(x), a = (j / 24) * Math.PI, e = 2 / 2.3;
     const q: V = [x, hh.spine + Math.sin(a) ** e * hh.tall, Math.sign(Math.cos(a)) * Math.abs(Math.cos(a)) ** e * hh.half];
-    const d = gapTo(q); if (d < over) { over = d; where = q; }
+    const d = gapTo(q);
+    if (x > lipFront + 0.3) { if (d < ahead) { ahead = d; aheadAt = q; } continue; }
+    under++; if (d < 0) hidden++; if (d < 0 && d > -0.35) poke++;
   }
-  console.log(`the carapace's top, more than 0.5 ahead of the mouth's plane, is ${fmt(over)} from the shell that hangs over it (at ${fv(where)}; below 0 it comes through the shell's wall, not its mouth)`);
-  console.log(`the crescent the body has: ${fmt(2 * P.r * (1 - 1 / SP.growth))} deep across the coil, ${fmt(2 * P.a)} along the axis`);
+  console.log(`the outer lip's front at x = ${fmt(lipFront)}; the carapace ahead of it is ${fmt(ahead)} from the shell at its nearest (${fv(aheadAt)}; must be above 0)`);
+  console.log(`under the hood: ${fmt((hidden / under) * 100, 0)}% of the carapace's top is inside the shell (hidden), ${fmt((poke / under) * 100, 0)}% within 0.35 of its wall (where a seam could show)`);
 }
 
 // ---- 4. the crab's limbs at rest -------------------------------------------------------------------------------------
