@@ -26,17 +26,20 @@ const unit = (a: V): V => mul(a, 1 / Math.hypot(...a));
 const mix = (a: V, b: V, t: number): V => add(mul(a, 1 - t), mul(b, t));
 
 const W = 1280, H = 800;
+/** A crab at home plays to the game camera (rig.ts, the audience of a boss on its own). */
+const AUDIENCE: V = [23, 27, 21];
 
 /** One eye under one expression, in world coordinates with the body at rest: what lib/stalk_eyes.ts draws. */
 type Eye = {
   readonly root: V; readonly middle: V; readonly radius: number;
-  readonly facing: V; readonly target: V; readonly turn: number; readonly slide: number;
+  readonly audience: V; readonly below: number; readonly target: V; readonly turn: number; readonly slide: number;
   readonly upper: number; readonly lower: number; readonly slant: number; readonly pupil: number;
 };
 
 function drawn(e: Eye, px: (p: V) => readonly [number, number]) {
   const g = unit(sub(e.target, e.middle));
-  const F = unit(mix(unit(sub(e.facing, e.middle)), g, e.turn));
+  // The socket faces its audience, `below` lower (lib/stalk_eyes.ts, `lookOf`).
+  const F = unit(mix(unit(sub(unit(sub(e.audience, e.middle)), [0, e.below, 0])), g, e.turn));
   const side0 = unit(cross(F, [0, 1, 0])), up0 = cross(side0, F);
   const side = add(mul(side0, Math.cos(e.slant)), mul(up0, Math.sin(e.slant))), up = sub(mul(up0, Math.cos(e.slant)), mul(side0, Math.sin(e.slant)));
   const gx = dot(g, side0) * e.slide, gy = dot(g, up0) * e.slide;
@@ -110,7 +113,7 @@ function camerasOf(ride: number) {
     const root = world(e.root);
     const tip = bentTip({ root, along: [0, 1, 0], a: [0, 0, 1], b: [1, 0, 0], length: q.length, lean: q.lean, bow: [q.bow, 0], crook: q.crook }).tip;
     return {
-      root, middle: tip, radius: e.radius * c.swell, facing: J.FACING, target: mix(mix(J.AUDIENCE, SHIP, c.ship), DISC, c.disc), turn: J.TURN, slide: J.SLIDE,
+      root, middle: tip, radius: e.radius * c.swell, audience: AUDIENCE, below: J.BELOW, target: mix(mix(AUDIENCE, SHIP, c.ship), DISC, c.disc), turn: J.TURN, slide: J.SLIDE,
       upper: q.upper, lower: q.lower, slant: q.slant, pupil: c.pupil,
     };
   });
@@ -130,7 +133,7 @@ function camerasOf(ride: number) {
     const along = unit([e.leaves[0], e.leaves[1], e.leaves[2] * e.side]), across = unit(cross(along, [0, 1, 0])), down = cross(along, across);
     const b = bentTip({ root, along, a: across, b: down, length: q.length, lean: q.lean, crook: [0, q.droop] });
     return {
-      root, middle: add(b.tip, mul(b.heading, e.radius * M.HANG)), radius: e.radius, facing: M.FACING, target: mix(mix(world(M.WATER), SHIP, c.ship), DISC, c.disc), turn: M.TURN, slide: M.SLIDE,
+      root, middle: add(b.tip, mul(b.heading, e.radius * M.HANG)), radius: e.radius, audience: AUDIENCE, below: M.BELOW, target: mix(mix(world(M.WATER), SHIP, c.ship), DISC, c.disc), turn: M.TURN, slide: M.SLIDE,
       upper: q.upper, lower: q.lower, slant: q.slant, pupil: c.pupil,
     };
   });

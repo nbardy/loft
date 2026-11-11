@@ -3,7 +3,8 @@
 // eye hung from a crook like a lantern: the difference is the pose and `hang`.
 //
 // The eyeball, the sliding pupil and the lid as a spherical lune hinged on the eye's corners are the islander's
-// (titan/face/dandy.ts), taken out so another creature can wear them. New here: the stalk is a bent spine, so its
+// (titan/face/dandy.ts). lib/face_parts.ts has them too (`eyeball`, `lid`), for an eye of fixed size with an iris, set
+// in a head; this file's ball swells and has none, so only the hinge is shared. New here: the stalk is a bent spine, so its
 // shape is part of the expression; the ball may swell (through a sized chart, so the strand's volume keeping does not
 // turn a swollen ball into an egg); and the ball may hang beyond the stalk's tip along the stalk's own heading.
 //
@@ -15,6 +16,7 @@ import {
 } from "../../../src/index.ts";
 import type { Bent } from "../../../src/geom/bend.ts";
 import { sized } from "../../../src/map/chart.ts";
+import { lidHinge } from "./face_parts.ts";
 import { edgeOf } from "../../../src/style/shared.ts";
 
 type V3 = readonly [number, number, number];
@@ -83,7 +85,7 @@ export function stalkEye(e: StalkEyeSpec): StalkEye {
   const gx = tabF("gx", look.gaze[0]), gy = tabF("gy", look.gaze[1]), pupilR = tabF("pupil", e.pupil);
   const upper = tabF("upper", e.lids.upper), lower = tabF("lower", e.lids.lower), slant = tabF("slant", e.lids.slant);
   // The lids' hinge, tipped by the slant.
-  const side = add(mul(side0, cos(slant)), mul(up0, sin(slant))), up = sub(mul(up0, cos(slant)), mul(side0, sin(slant)));
+  const { side, up } = lidHinge({ front, side: side0, up: up0 }, slant);
 
   const stalk = strand({
     name: `stalk${e.tag}`, spine: (m) => b.spine(m), stations: 8,
@@ -137,12 +139,17 @@ export function stalkEye(e: StalkEyeSpec): StalkEye {
   };
 }
 
-/** The socket's facing and the pupil's slide for a look: the socket turns `turn` of the way from `facing` to the look
- * and the pupil slides the rest, `slide` of the radius when the look is square to the socket (titan/face/dandy.ts: a
- * high camera sees white, pupil and where it looks only if the eye does not turn all the way). */
-export function lookOf(o: { readonly from: P3; readonly facing: P3; readonly target: P3; readonly up: P3; readonly turn: number; readonly slide: number }): Look {
+/**
+ * The socket's facing and the pupil's slide for a look at `target`. The socket faces its `audience`, `below` lower (the
+ * sine of the angle: an eye squarely on a camera high above shows the lower cameras its underside); it turns `turn` of
+ * the way from there to the look and the pupil slides the rest, `slide` of the radius when the look is square to the
+ * socket (titan/face/dandy.ts: a high camera sees white, pupil and where it looks only if the eye does not turn all the
+ * way). The audience is a place in the world, so a creature that is placed and turned still plays to it.
+ */
+export function lookOf(o: { readonly from: P3; readonly audience: P3; readonly below: number; readonly target: P3; readonly up: P3; readonly turn: number; readonly slide: number }): Look {
   const look = unit(sub(o.target, o.from));
-  const front = unit(mix(unit(sub(o.facing, o.from)), look, o.turn));
+  const facing = unit(sub(unit(sub(o.audience, o.from)), mul(o.up, o.below)));
+  const front = unit(mix(facing, look, o.turn));
   const side0 = unit(cross(front, o.up)), up0 = cross(side0, front);
   return { front, gaze: [mul(dot(look, side0), o.slide), mul(dot(look, up0), o.slide)] };
 }

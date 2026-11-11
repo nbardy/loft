@@ -19,7 +19,10 @@
 //   turns down, or up a very little; the two rostral horns of a spider crab.
 //
 // The face is a score (src/geom/expression.ts). Where it looks is part of each expression: at rest the water ahead of
-// it; the ship is `rig.shipNow`; the slam's place is the rig's `crush.centre` input.
+// it; the ship is `rig.shipNow`; the slam's place `rig.crushCentre`; the other boat `rig.boatTwoAt` and how far the slam's
+// wave has pushed it; the sockets face `rig.audience`. Every other place is in the crab's own axes, so the face sits and
+// looks rightly on a crab that is placed and turned (examples/bosses/crab_lineup.ts). Its triumph also plays through a
+// taunt (`rig.dance`), where there is one.
 //
 // Inherited: the eyeball, sliding pupil and lune lids (the islander's, by way of lib/stalk_eyes.ts); the brows, mouth
 // and horns of face/patient.ts; a score over the fight's clocks. Mine: the eye as a pendulum with nothing keyed (its
@@ -27,8 +30,8 @@
 // bends by, stiffness as a channel (wrath holds the eyes out on stiff arms; grief lets them hang).
 
 import {
-  abs, add, alive, cast, clamp, cross, div, during, expressionsRead, fract, horn, lift, max, minScreenSize, mix, mul, place, rigid, score, show, sin, smoothstep,
-  strand, sub, through, time, tolerance, unit, vec3,
+  abs, add, added, alive, cast, clamp, cross, div, during, expressionsRead, fract, horn, lift, max, minScreenSize, mix, mul, place, rigid, score, show, sin, smoothstep,
+  staysInView, strand, sub, through, time, tolerance, unit, vec3,
   type Expression, type F, type P3, type Posed, type Score,
 } from "../../../../src/index.ts";
 import { bent } from "../../../../src/geom/bend.ts";
@@ -39,9 +42,10 @@ import { cut, perFrame, type V3 } from "../ink.ts";
 import type { Rig } from "../rig.ts";
 import type { FaceOption } from "../slots.ts";
 
-/** Where the sockets face when nothing turns them: the game camera's bearing (23, 27, 21), 10 degrees lower, as the
- * islander's. (Planned 25 degrees lower, so the heavy lid showed first; the theory put the pupil on the eye's rim.) */
-export const FACING = [23, 19, 16] as const;
+/** How far below its audience (`rig.audience`: the game camera, when the crab is at home) the sockets face when nothing
+ * turns them: the sine of about 10 degrees, as the islander's. (Planned 25 degrees lower, so the heavy lid showed
+ * first; the theory put the pupil on the eye's rim.) */
+export const BELOW = 0.17;
 /** How far the socket turns toward what it looks at, and how far the pupil slides (face/dandy.ts). It looks down at the
  * water, nearly square to its socket, so the turn and the slide are short: at 0.25 and 0.5 the pupil sat on the rim
  * from the game camera. */
@@ -61,14 +65,15 @@ export const WATER = [14, -7, 2] as const;
  *   the socket (2.0 hangs plumb). lift: the whole stalk raised at the socket. splay: apart. aside: both to its right.
  * - stiff: 0 the eyes hang loose and swing; 1 they are held and do not.
  * - smile: the mouth's corners, up (1) or down (-1). brow: the brows' inner ends, up (1, grief) or down (-1, wrath).
- * - ship, disc: how far its look goes from the water to the ship, or to the slam's place.
+ * - ship, disc, boat: how far its look goes from the water to the ship, to the slam's place, or to the second boat
+ *   (which the slam's wave carries off).
  * - shake: a slow shudder.
  */
-export type Channel = "upper" | "lower" | "slant" | "pupil" | "flinch" | "reach" | "droop" | "lift" | "splay" | "aside" | "stiff" | "smile" | "brow" | "ship" | "disc" | "shake";
+export type Channel = "upper" | "lower" | "slant" | "pupil" | "flinch" | "reach" | "droop" | "lift" | "splay" | "aside" | "stiff" | "smile" | "brow" | "ship" | "disc" | "boat" | "shake";
 
 export const CAST = cast<Channel, "want" | "strain" | "triumph" | "fury" | "wince">(
   // At rest it mourns: lids half down and drooping outward, small pupils on the water, the eyes hanging plumb.
-  { upper: 1.0, lower: 0.25, slant: -0.4, pupil: 0.28, flinch: 0, reach: 1, droop: 2.0, lift: 0, splay: 0, aside: 0, stiff: 0, smile: -0.3, brow: 0.6, ship: 0, disc: 0, shake: 0 },
+  { upper: 1.0, lower: 0.25, slant: -0.4, pupil: 0.28, flinch: 0, reach: 1, droop: 2.0, lift: 0, splay: 0, aside: 0, stiff: 0, smile: -0.3, brow: 0.6, ship: 0, disc: 0, boat: 0, shake: 0 },
   {
     // It wants the ship, and is sorry: the eyes drawn out toward it on lifted stalks, the lids raised, the brows high.
     want: { upper: 0.6, lower: 0.15, slant: -0.25, pupil: 0.36, reach: 1.12, droop: 1.55, lift: 0.15, aside: -0.4, splay: -0.1, smile: -0.1, brow: 1, ship: 1 },
@@ -113,6 +118,8 @@ export const DAMPING = 0.22;
 /** The jolts each action gives the sockets, units / s: [across (toward its right), fore]. Signs are the socket's change
  * of velocity; the eyes are left behind and swing the other way first. */
 export const JOLTS = { snatch: [0.7, 0], release: [-0.9, 0.6], slam: [0, -1.8] } as const;
+/** How far the eyes hang forward of the body at the bottom of a taunt's bow, and across at the end of its sway, radians. */
+const BOW = { fore: 0.45, across: 0.35 };
 /** A lid's least angles, radians: the upper is never out of sight. */
 const LID_MIN = { upper: 0.3, lower: 0.15 };
 
@@ -141,7 +148,7 @@ export const poseOf = (c: Expression<Channel>, e: EyeSpec) => eyeFrom(JS, c, e);
 const LOOK_AWAY = 2.5;
 
 export function scoreOf(rig: Rig): Score<Channel, Mood> {
-  const { crush, grab } = rig;
+  const { crush, grab, dance } = rig;
   return score(CAST, (t) => {
     const ctau = crush.envelope(t).tau;
     const gb = grab.beats(t, LOOK_AWAY), gtau = grab.envelope(t).tau;
@@ -153,7 +160,13 @@ export function scoreOf(rig: Rig): Score<Channel, Mood> {
     // Wrath gathers through the whole warning and wind-up, and breaks a moment after the blow.
     const wrathful = mul(during(add(ctau, crush.warn), { from: 0.1, rise: 1.0 }), sub(1, smoothstep(0.1, 0.4, ctau)));
     const wincing = during(ctau, { from: 0.12, rise: 0.3, to: 1.3, fall: 1.6 });
-    return [show("want", attending), show("strain", straining), show("triumph", consoled), show("fury", wrathful), show("wince", wincing)];
+    // Its open eye follows the second boat as the wave carries it off, for a long time.
+    const watching = during(ctau, { from: 0.8, rise: 1.0, to: 5.0, fall: 2.0 });
+    // The taunt (rig.dance.on is 0 for a crab that has none): the same small solace all through it.
+    return [
+      show("want", attending), show("strain", straining), show("triumph", max(consoled, dance.on)), show("fury", wrathful), show("wince", wincing),
+      added({ boat: 1 }, watching),
+    ];
   });
 }
 
@@ -163,8 +176,8 @@ export const mourner: FaceOption = {
   about: "a mourner: two heavy-lidded eyes hung from drooping stalks like lanterns, swinging slowly; sad brows, a small mouth, two rostral horns",
   // The face camera stands 2.5 lower for it: its eyes hang below the body, under that frame's bottom edge.
   numbers: { faceRise: -2.5 },
-  draw: (rig) => {
-    const { n, body, local, shipNow, crushAfter, grabEnv } = rig;
+  draw: (rig, _carapace, claws) => {
+    const { n, body, local, shipNow, crushAfter, grabEnv, dance } = rig;
     const I = n.ink;
     const theScore = scoreOf(rig);
     const tabF = (name: string, e: F): F => perFrame(`mourner_${name}`, e);
@@ -173,7 +186,10 @@ export const mourner: FaceOption = {
     const at = (x: number, y: number, z: number): V3 => [F0 + x, y * H, z];
     const inBody = (v: V3): P3 => add(add(mul(body.x, v[0]), mul(body.y, v[1])), mul(body.z, v[2]));
     const water = local(vec3(...WATER));
-    const disc = vec3(rig.inputs.crushCentre.x, 0, rig.inputs.crushCentre.y);
+    const disc = vec3(rig.crushCentre.x, 0, rig.crushCentre.y);
+    // The second boat, where the slam's wave has carried it (rig.ts: its stand-in rides `crush.pushed`).
+    const carried = rig.crush.pushed(rig.boatTwoAt);
+    const otherBoat = perFrame("mourner_otherBoat", vec3(add(rig.boatTwoAt.x, carried.x), 0.6, add(rig.boatTwoAt.y, carried.y)));
     const sinceThrow = sub(grabEnv.tau, n.grabSeconds.hold);
 
     const eye = (e: EyeSpec, i: number) => {
@@ -186,8 +202,11 @@ export const mourner: FaceOption = {
       // right) and jolted by the snatch, the throw and the slam. `stiff` holds it.
       const arm = pendulum({ length: armOf(e), gravity: n.gravity, damping: DAMPING });
       const loose = tabF(`${e.tag}_loose`, sub(1, c.stiff));
-      const swingAcross = arm.answer(time, [sway(n.sway, n.period), jolt(grabEnv.tau, JOLTS.snatch[0]), jolt(sinceThrow, JOLTS.release[0])]);
-      const swingFore = arm.answer(time, [jolt(sinceThrow, JOLTS.release[1]), jolt(crushAfter, JOLTS.slam[1])]);
+      // In a taunt it bows and sways slowly (rig.ts: the body drops by `temper.rise` on each move): slower than the eyes'
+      // own swing, so they hang plumb while the body tips, which against the body is a swing forward with the bow and
+      // across with the sway. (The accents' instants are not the rig's to give, so this is not a jolt.)
+      const swingAcross = add(arm.answer(time, [sway(n.sway, n.period), jolt(grabEnv.tau, JOLTS.snatch[0]), jolt(sinceThrow, JOLTS.release[0])]), mul(dance.swing, BOW.across));
+      const swingFore = add(arm.answer(time, [jolt(sinceThrow, JOLTS.release[1]), jolt(crushAfter, JOLTS.slam[1])]), mul(dance.wave, BOW.fore));
       // A slow shudder when the mood says so, and a breath that never stops; each eye its own.
       const shudder = mul(mul(tremor(time, 2.7, 5 + i), 0.08), c.shake);
       const droop = tabF(`${e.tag}_droop`, add(q.droop, alive(time, 0.05, 71 + i, 0.09, n.crushPeriod)));
@@ -209,8 +228,8 @@ export const mourner: FaceOption = {
       const sinceBlink = abs(sub(mul(fract(div(time, every)), every), e.blinkAt));
       const blink = mul(sub(1, smoothstep(0.15, 0.6, sinceBlink)), sub(1, max(c.ship, c.disc)));
       const shut = Math.PI / 2 + 0.08;
-      const lookAt = (target: P3) => (middle: P3) => lookOf({ from: middle, facing: vec3(...FACING), target, up: body.y, turn: TURN, slide: SLIDE });
-      const target = mix(mix(water, shipNow, c.ship), disc, c.disc);
+      const lookAt = (target: P3) => (middle: P3) => lookOf({ from: middle, audience: rig.audience, below: BELOW, target, up: body.y, turn: TURN, slide: SLIDE });
+      const target = mix(mix(mix(water, shipNow, c.ship), disc, c.disc), otherBoat, c.boat);
       return stalkEye({
         tag: e.tag, prefix: "mourner",
         stalk: {
@@ -266,6 +285,8 @@ export const mourner: FaceOption = {
         // And from the camera that holds the whole crab, where they are smaller.
         minScreenSize(right.ball, "far", 36),
         expressionsRead(theScore, { ...right.marks, ...left.marks }, { camera: "game", period: n.crushPeriod, apart: tolerance.share(0.25), of: right.width }),
+        // Neither eye is behind a claw from the game camera for longer than half a second at a stretch.
+        staysInView({ eyeR: right.middle, eyeL: left.middle }, claws.things, { camera: "game", period: n.crushPeriod, hidden: tolerance.units(0.5) }),
       ],
     };
   },

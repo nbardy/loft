@@ -19,7 +19,10 @@
 //   or at the bottom (a sneer).
 //
 // The face is a score (src/geom/expression.ts), as the islander's is. Where it looks is part of each expression: the
-// ship is `rig.shipNow`, the slam's place is the rig's `crush.centre` input, the other boat is `rig.boatTwoAt`.
+// ship is `rig.shipNow`, the slam's place `rig.crushCentre`, the other boat `rig.boatTwoAt` and how far the slam's wave
+// has pushed it, the audience `rig.audience`; every other place is in the crab's own axes, so the face sits and looks
+// rightly on a crab that is placed and turned (examples/bosses/crab_lineup.ts). Its triumph also plays through a taunt
+// (`rig.dance`), where there is one.
 //
 // Inherited: the eyeball, sliding pupil and lune lids (the islander's, by way of lib/stalk_eyes.ts); the audience-facing
 // socket; a score over the fight's clocks. Mine: stalks whose bending is the pose, eyes on separate restless clocks,
@@ -27,7 +30,7 @@
 
 import {
   abs, add, added, alive, cast, clamp, div, dot, expressionsRead, floor, fract, lt, max, minScreenSize, mix, mul, pick, score, select,
-  show, sin, smoothstep, strand, sub, swing, time, tolerance, unit, vec3, during,
+  show, sin, smoothstep, staysInView, strand, sub, swing, time, tolerance, unit, vec3, during,
   type Expression, type F, type P3, type Posed, type Score,
 } from "../../../../src/index.ts";
 import { bent } from "../../../../src/geom/bend.ts";
@@ -37,11 +40,10 @@ import { cut, perFrame, TAU, type V3 } from "../ink.ts";
 import type { Rig } from "../rig.ts";
 import type { FaceOption } from "../slots.ts";
 
-/** Where the audience is: the game camera's eye (reefback_titan.ts, the `game` camera). */
-export const AUDIENCE = [23, 27, 21] as const;
-/** Where the sockets face when nothing turns them: the audience's bearing, 10 degrees lower (face/dandy.ts found that
- * squarely at a camera 40 degrees up the eyes showed the lower cameras their undersides). */
-export const FACING = [23, 19, 16] as const;
+/** How far below its audience (`rig.audience`: the game camera, when the crab is at home) the sockets face when nothing
+ * turns them: the sine of about 10 degrees (face/dandy.ts found that squarely at a camera 40 degrees up the eyes showed
+ * the lower cameras their undersides). */
+export const BELOW = 0.17;
 /** How far the socket turns toward what it looks at (a share of the way), and how far the pupil slides when the look
  * is square to the socket (a share of the radius). SLIDE plus the largest pupil stays under 1. */
 export const TURN = 0.2, SLIDE = 0.32;
@@ -60,18 +62,18 @@ export const TURN = 0.2, SLIDE = 0.32;
  * - bow: both bend near the root toward the great claw's side (negative: toward the ship's). crane: the tips curl
  *   forward. cross: the tips curl toward each other.
  * - jaw: the teeth, 0 shut to 1 parted. sneer: their bottoms splay (1), or their tops (-1: a grin).
- * - ship, disc: how far its look goes from the audience to the ship, or to the slam's place. roam: how much each eye
- *   wanders off on its own restless clock.
+ * - ship, disc, boat: how far its look goes from the audience to the ship, to the slam's place, or to the second boat
+ *   (which the slam's wave carries off). roam: how much each eye wanders off on its own restless clock.
  * - shake: how hard it trembles. flush: how red its lids are: bone at 0 (a shut eye is a pale ball with a lash line,
  *   as on the sheet), the great claw's vermilion at 1 (rage).
  */
 export type Channel =
   | "upper" | "lower" | "slant" | "pupil" | "swell" | "flinch" | "tall" | "lean" | "aside" | "spread" | "bow" | "crane" | "cross"
-  | "jaw" | "sneer" | "ship" | "disc" | "roam" | "shake" | "flush";
+  | "jaw" | "sneer" | "ship" | "disc" | "boat" | "roam" | "shake" | "flush";
 
 export const CAST = cast<Channel, "want" | "strain" | "triumph" | "fury" | "wince">(
   // At rest it cannot rest: bug eyes wide open, wandering separately, the stalks a little apart and twitching.
-  { upper: 0.1, lower: 0, slant: 0, pupil: 0.42, swell: 1, flinch: 0, tall: 1, lean: 0.06, aside: 0, spread: 0.1, bow: 0, crane: 0.12, cross: 0, jaw: 0.1, sneer: 0, ship: 0, disc: 0, roam: 1, shake: 0.4, flush: 0 },
+  { upper: 0.1, lower: 0, slant: 0, pupil: 0.42, swell: 1, flinch: 0, tall: 1, lean: 0.06, aside: 0, spread: 0.1, bow: 0, crane: 0.12, cross: 0, jaw: 0.1, sneer: 0, ship: 0, disc: 0, boat: 0, roam: 1, shake: 0.4, flush: 0 },
   {
     // It wants the ship: both stalks bowed hard over toward it and craned, pupils swollen. (The tips first crowded
     // together, as on the sheet: from the face camera one eye then hid the other.)
@@ -147,7 +149,7 @@ export const poseOf = (c: Expression<Channel>, e: EyeSpec) => eyeFrom(JS, c, e);
 const LOOK_AWAY = 1.0;
 
 export function scoreOf(rig: Rig): Score<Channel, Mood> {
-  const { n, crush, grab } = rig;
+  const { n, crush, grab, dance } = rig;
   return score(CAST, (t) => {
     const cb = crush.beats(t, n.crushSettle), ctau = crush.envelope(t).tau;
     const gb = grab.beats(t, LOOK_AWAY), gtau = grab.envelope(t).tau;
@@ -163,9 +165,16 @@ export function scoreOf(rig: Rig): Score<Channel, Mood> {
     const laugh = sin(mul(t, TAU * 6));
     // The pop: at the release the stalks overshoot upward and ring; the eyes with them.
     const sinceThrow = sub(gtau, n.grabSeconds.hold);
+    // Once it has winced it must see what it did: both eyes go to the second boat as the wave carries it off.
+    const gloating = during(ctau, { from: 0.5, rise: 0.2, to: 3.2, fall: 0.6 });
+    // The taunt (rig.dance.on is 0 for a crab that has none): triumph all through it, to the audience, bobbing up on
+    // every move and leaning with its swing.
+    const pleased = max(triumphant, dance.on);
     return [
-      show("want", attending), show("strain", straining), show("triumph", triumphant), show("fury", furious), show("wince", wincing),
-      added({ tall: mul(laugh, 0.04), jaw: mul(sub(laugh, 1), 0.22) }, triumphant),
+      show("want", attending), show("strain", straining), show("triumph", pleased), show("fury", furious), show("wince", wincing),
+      added({ boat: 1, roam: -0.85 }, gloating),
+      added({ ship: -0.5, tall: mul(dance.wave, 0.12), aside: mul(dance.swing, 0.25), crane: mul(dance.wave, -0.2) }, dance.on),
+      added({ tall: mul(laugh, 0.04), jaw: mul(sub(laugh, 1), 0.22) }, pleased),
       added({ jaw: mul(max(tremor(t, 8, 3), 0), 0.3) }, straining),
       added({ tall: swing(sinceThrow, 0.22, 2.6, 0.2), swell: swing(sinceThrow, 0.12, 3.1, 0.3) }),
     ];
@@ -181,15 +190,18 @@ export const jitter: FaceOption = {
   about: "manic and bug-eyed: two white eyes on very tall thin vermilion stalks that bend, cross and twitch, each wandering on its own; two teeth",
   // The face camera stands 1.9 higher for it: the stalks are 1.6 times the islander's and left that frame's top.
   numbers: { faceRise: 1.9 },
-  draw: (rig) => {
+  draw: (rig, _carapace, claws) => {
     const { n, body, local, shipNow, crushAfter } = rig;
     const I = n.ink;
     const theScore = scoreOf(rig);
     const tabF = (name: string, e: F): F => perFrame(`jitter_${name}`, e);
     const tabV = (name: string, e: P3): P3 => perFrame(`jitter_${name}`, e);
-    const audience = vec3(...AUDIENCE);
-    const disc = vec3(rig.inputs.crushCentre.x, 0, rig.inputs.crushCentre.y);
-    const otherBoat = vec3(rig.boatTwoAt.x, 0.6, rig.boatTwoAt.y);
+    const audience = rig.audience;
+    const disc = vec3(rig.crushCentre.x, 0, rig.crushCentre.y);
+    // The second boat, where the slam's wave has carried it (rig.ts: its stand-in rides `crush.pushed`).
+    const carried = rig.crush.pushed(rig.boatTwoAt);
+    const otherBoat = tabV("otherBoat", vec3(add(rig.boatTwoAt.x, carried.x), 0.6, add(rig.boatTwoAt.y, carried.y)));
+    const fixedOn = (c: Posed<Channel>): P3 => mix(mix(mix(audience, shipNow, c.ship), disc, c.disc), otherBoat, c.boat);
     // What an eye may wander off to: you (most often), its own great claw at rest, the other boat, the ship, the sky,
     // the light on its own back, nothing. (Half of each list was first the audience: two holds in three then chose the
     // same place as the last, and the eye did not move.)
@@ -206,8 +218,8 @@ export const jitter: FaceOption = {
       const d = dart(time, { every: e.restless.every, snap: e.restless.snap, period: n.crushPeriod, seed: e.restless.seed });
       const place = (hold: F): P3 => pick(floor(mul(chosen(hold, e.restless.seed), haunts[i]!.length)), haunts[i]!);
       const wander = mix(place(d.before), place(d.now), d.arrive);
-      const roam = tabF(`${e.tag}_roam`, c.roam);
-      const target = tabV(`${e.tag}_target`, mix(mix(mix(audience, shipNow, c.ship), disc, c.disc), wander, roam));
+      const roam = tabF(`${e.tag}_roam`, clamp(c.roam, 0, 1));
+      const target = tabV(`${e.tag}_target`, mix(fixedOn(c), wander, roam));
       // The stalk leans after its look (from the root: the tip's own place depends on this), so every jump flicks it.
       const toward = unit(sub(target, base));
       // It trembles in bursts, each stalk at its own rate; whips after the slam, the tip against the root.
@@ -226,7 +238,7 @@ export const jitter: FaceOption = {
         ],
       });
       // It blinks on four jumps in ten, as the jump starts: one eye at a time, since each has its own clock.
-      const lookAt = (at: P3) => (middle: P3) => lookOf({ from: middle, facing: vec3(...FACING), target: at, up: body.y, turn: TURN, slide: SLIDE });
+      const lookAt = (at: P3) => (middle: P3) => lookOf({ from: middle, audience, below: BELOW, target: at, up: body.y, turn: TURN, slide: SLIDE });
       const flush = tabF(`${e.tag}_flush`, mix(0.22, 1, clamp(c.flush, 0, 1)));
       const blink = mul(mul(select(lt(chosen(d.now, e.restless.seed + 3), 0.4), 1, 0), sub(1, smoothstep(0.05, 0.14, d.since))), roam);
       const shut = Math.PI / 2 + 0.08;
@@ -251,7 +263,7 @@ export const jitter: FaceOption = {
         // The marks are the expression's own pose: no wandering, no tremble, no whip, no blink.
         posed: {
           bent: bent({ root: base, along: body.y, a: body.z, b: body.x, length: q.length, lean: q.lean, bow: [q.bow, 0], crook: q.crook }),
-          look: lookAt(mix(mix(audience, shipNow, c.ship), disc, c.disc)), upper: q.upper, lower: q.lower,
+          look: lookAt(fixedOn(c)), upper: q.upper, lower: q.lower,
         },
       });
     };
@@ -279,6 +291,8 @@ export const jitter: FaceOption = {
         minScreenSize(right.ball, "game", 48), minScreenSize(left.ball, "game", 40),
         // Every named expression shows in a cycle, and any two differ on screen by a quarter of the right eye's width.
         expressionsRead(theScore, { ...right.marks, ...left.marks }, { camera: "game", period: n.crushPeriod, apart: tolerance.share(0.25), of: right.width }),
+        // Neither eye is behind a claw from the game camera for longer than half a second at a stretch.
+        staysInView({ eyeR: right.middle, eyeL: left.middle }, claws.things, { camera: "game", period: n.crushPeriod, hidden: tolerance.units(0.5) }),
       ],
     };
   },
