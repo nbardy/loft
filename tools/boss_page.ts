@@ -30,14 +30,15 @@ const section = (m: (typeof MONSTERS)[number]): string => {
   const have = existsSync(`${OUT}${m.name}`) ? readdirSync(`${OUT}${m.name}`) : [];
   const img = (file: string, label: string) => (have.includes(file) ? `<figure><img src="${m.name}/${file}" alt="${label}"><figcaption>${label}</figcaption></figure>` : "");
   const frames = have.find((f) => /frames\.webp$/.test(f));
-  const styles = have.filter((f) => /(biolume|papercraft)\.webp$/.test(f));
+  const STYLE_ROW = [["three.webp", "Print, thick line (the scene's own style)"], ["style_toon.webp", "Toon, thick line"], ["style_papercraft.webp", "Papercraft"], ["style_biolume.webp", "Biolume"]] as const;
   return `<section>
 <h2>${m.title}</h2><p class="subject">${m.subject}</p>
 <div class="pair"><figure>${oldStill(m.name)}<figcaption>Old, in the game</figcaption></figure>${img("game.webp", "New, game camera")}</div>
-<div class="pair">${img("three.webp", "Three-quarter")}${img("close.webp", "Close")}</div>
+<div class="pair">${img("close.webp", "Close")}</div>
+<h3>The same scene in four styles</h3>
+<div class="quad">${STYLE_ROW.map(([f, label]) => img(f, label)).join("")}</div>
 ${frames ? `<figure><img src="${m.name}/${frames}" alt="attack"><figcaption>The attack, frame by frame</figcaption></figure>` : ""}
 ${have.includes("clip.mp4") ? `<figure><video src="${m.name}/clip.mp4" controls loop muted playsinline></video><figcaption>Six seconds</figcaption></figure>` : ""}
-<div class="pair">${styles.map((f) => img(f, `Same scene, ${/biolume/.test(f) ? "biolume" : "papercraft"} style`)).join("")}</div>
 </section>`;
 };
 
@@ -52,6 +53,8 @@ const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta n
   .lede, .subject, figcaption, .missing { color: var(--soft); } .subject { margin: 0 0 12px; }
   section { border-top: 1px solid var(--line); padding-top: 22px; margin-top: 30px; }
   .pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  .quad { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 12px; margin-bottom: 12px; }
+  h3 { font-size: 16px; margin: 18px 0 8px; color: var(--soft); font-weight: 600; }
   figure { margin: 0 0 12px; } figcaption { font-size: 13.5px; margin-top: 4px; }
   img, video { display: block; width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--line); background: #0b0f14; }
 </style></head><body><main>
