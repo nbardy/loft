@@ -76,7 +76,7 @@ const prizeHeld = prize.placed(
 const boats = draw.posed("boats", posed(3, (i) => ({
   at: pick(i, GRABS.map((g) => g.thing)),
   turn: turn.none,
-  size: { kind: "axes" as const, k: pick(i, GRABS.map((g, k) => { const z = g.squeezed(SIZES[k]!); if (z.kind !== "axes") throw new Error("unreachable"); return z.k; })) },
+  size: size.axes(pick(i, GRABS.map((g, k) => g.squeezed(SIZES[k]!).k))),
 })), hull);
 
 export default scene({

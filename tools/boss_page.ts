@@ -37,8 +37,9 @@ const section = (m: (typeof MONSTERS)[number]): string => {
 <div class="pair">${img("close.webp", "Close")}</div>
 <h3>The same scene in four styles</h3>
 <div class="quad">${STYLE_ROW.map(([f, label]) => img(f, label)).join("")}</div>
+${img("grab.webp", "The grab: reach, close on the ship's beam, lift, squeeze, set down")}
 ${frames ? `<figure><img src="${m.name}/${frames}" alt="attack"><figcaption>The attack, frame by frame</figcaption></figure>` : ""}
-${have.includes("clip.mp4") ? `<figure><video src="${m.name}/clip.mp4" controls loop muted playsinline></video><figcaption>Six seconds</figcaption></figure>` : ""}
+${have.includes("clip.mp4") ? `<figure><video src="${m.name}/clip.mp4" controls loop muted playsinline></video><figcaption>In motion</figcaption></figure>` : ""}
 </section>`;
 };
 

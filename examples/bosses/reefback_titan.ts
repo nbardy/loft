@@ -359,7 +359,6 @@ const claws = [...crusher.things, ...cutter.things];
 /** The ship, where the grab has it; after the release it slips back to where it was taken. */
 const shipNow = tabV("ship", add(take.thing, mul(sub(vec3(...GRIP_FROM), vec3(...GRIP_TO)), slowInOut(div(sub(grabSince, grabEnd), S.grabFlee)))));
 const squeezedSize = take.squeezed(1, "z");
-if (squeezedSize.kind !== "axes") throw new Error("grab.squeezed gives a size by axes");
 const boat = scaleShip.placed(shifted(shipChart, sub(shipNow, vec3(...GRIP_FROM))), WIND, size.axes(tabV("squeeze", squeezedSize.k)));
 
 /** The claw reaches: at the closing instant the fingertips stand a beam apart, either side of the hull's middle. */

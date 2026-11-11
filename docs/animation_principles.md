@@ -15,7 +15,7 @@ Use this when a monster moves correctly and still looks dead.
 | 2 | Anticipation | A move the other way first tells the audience what is coming | `anticipated(u)` dips before it drives. `beats(since, { anticipate, act, settle })` gives the wind-up its own beat. `response(t, { r: < 0 })` starts the wrong way |
 | 3 | Staging | Present one idea so it is "completely and unmistakably clear": placement, light, camera, no needless detail | Not a formula. Check it: `minScreenSize`, the `game` camera's silhouette, one action at a time. See the checklist below |
 | 4 | Straight ahead and pose to pose | Animate frame by frame for fluid action, or set key poses and fill between them for control | Formulas of time are straight ahead. `keys` and `through` are pose to pose. Use poses for the readable extremes and formulas for what flows between them |
-| 5 | Follow through and overlapping action | Loose parts keep moving after the body stops. Parts move at different rates; trailing parts take time to catch up (drag). A still character keeps a little motion (the moving hold) | `swing(after, amount)` for what keeps going. `dragged(t, along, lag)` for the clock a trailing part reads. `alive(t, amount, seed)` and `breathe` for the moving hold. `response` for a part that settles |
+| 5 | Follow through and overlapping action | Loose parts keep moving after the body stops. Parts move at different rates; trailing parts take time to catch up (drag). A still character keeps a little motion (the moving hold) | `swing(after, amount)` for what keeps going. `dragged(t, along, lag)` for the clock a trailing part reads. `alive(t, amount, seed)` and `breathe` for the moving hold (give `alive` a `period` where the motion must loop). `response` for a part that settles |
 | 6 | Slow in and slow out | Things take time to speed up and to stop: more of the time is spent near the extremes | `slowInOut(u, power)`, `slowIn`, `slowOut` |
 | 7 | Arc | Natural movement follows arcs; straight lines read as mechanical | `arc(a, b, u, lift)`. Prefer turning a part about a joint to sliding it |
 | 8 | Secondary action | A smaller action supports the main one and must not distract from it | `echo(f, t, delay, gain)`: a later, smaller copy of the main motion |
@@ -62,8 +62,9 @@ Work through this in order. Each step is one or two lines in a scene.
   `radius`: it opens to the thing's width plus a margin by two thirds of the reach, closes to the width, and narrows
   by `squeeze` on each pulse. The thing's place and radius may be host inputs, so one formula takes any ship.
 - A squeezed thing keeps its volume: narrowed to k across the grip, it grows by 1 / sqrt(k) the other two ways.
-- A gripper is whatever turns `gap` into a pose. `fingerAngle(gap, length)` is the angle for a claw's fingers or a
-  jaw. `wrap({ centre, axis, radius: gap / 2 + body, length, pitch })` is a coil whose number of turns follows from
+- `windup` makes the gripper draw back from the thing before it reaches.
+- A gripper is whatever turns `gap` into a pose. `fingerAngle(gap, length)` is the angle for a claw's two fingers or
+  a jaw; `pincerAngle(gap, length)` is the opening of a pincer with one fixed finger (a crab's claw). `wrap({ centre, axis, radius: gap / 2 + body, length, pitch })` is a coil whose number of turns follows from
   the body's length, so it goes round a small ship more times than a large one and gains turns as it tightens.
 
 A whole ship takes the same size: `ship.placed(chart, wind, grab.squeezed(1, "z"))` squeezes hull, sails and rigging

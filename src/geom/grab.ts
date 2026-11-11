@@ -14,12 +14,13 @@
 // `wrap` for coils and tentacles.
 
 import { add, atan2, clamp, cos, cross, div, lift, lt, max, mix, mul, normalize, select, sin, sqrt, sub, vec3, type Expr, type In } from "../expr.ts";
-import { size } from "../map/chart.ts";
 import type { Size } from "../map/types.ts";
-import { arc, slowIn, slowInOut, slowOut } from "./lively.ts";
+import { anticipated, arc, slowIn, slowInOut, slowOut } from "./lively.ts";
 
 type F = Expr<"f32">;
 type P3 = Expr<"vec3">;
+/** A size along each axis: what a squeeze always is, so a caller can read its lengths without asking its kind. */
+export type AxesSize = Extract<Size, { kind: "axes" }>;
 const TAU = Math.PI * 2;
 
 /** Seconds in each part of a grab. `hold` is the carry and the squeeze together. */
@@ -47,6 +48,12 @@ export type GrabSpec = {
   readonly squeeze?: number;
   /** How many times it squeezes during the hold. Default 1. */
   readonly pulses?: number;
+  /**
+   * Anticipation: how far the gripper first draws back from the thing before it reaches, as `anticipated`'s `back`
+   * (1.7 draws back a tenth of the way). Default 0: it leaves gently and arrives gently. With a wind-up it leaves
+   * the wrong way and arrives at speed.
+   */
+  readonly windup?: number;
 };
 
 export type Grab = {
@@ -60,7 +67,7 @@ export type Grab = {
    * The thing's size, `base` times: narrowed along `across` (the axis of the thing the grip closes on; default x)
    * while squeezed, grown along the other two, volume kept.
    */
-  squeezed(base?: In<"f32">, across?: "x" | "y" | "z"): Size;
+  squeezed(base?: In<"f32">, across?: "x" | "y" | "z"): AxesSize;
   /** The thing's width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak. */
   readonly crush: F;
   /** 1 while the thing is in the grip, else 0. The game's rule for "this ship is held" reads the same number. */
@@ -85,7 +92,13 @@ export function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab {
   const uOpen = clamp(mul(uRelease, 2), 0, 1), uWithdraw = clamp(sub(mul(uRelease, 2), 1), 0, 1);
 
   const carry = arc(from, to, slowInOut(uHold), carryLift, up);
-  const palm = select(lt(t, tClosed), arc(rest, from, slowInOut(uReach), reachLift, up), select(lt(t, tLetGo), carry, arc(to, rest, slowInOut(uWithdraw), reachLift, up)));
+  // With a wind-up the reach parameter dips below 0 first; `arc` clamps at 0, so the part below is added back as a
+  // straight draw away from the thing.
+  const windup = spec.windup ?? 0;
+  if (!(windup >= 0)) throw new Error(`grab: windup must be at least 0, got ${windup}`);
+  const drive = windup > 0 ? anticipated(uReach, windup) : slowInOut(uReach);
+  const reaching = add(arc(rest, from, drive, reachLift, up), mul(sub(rest, from), max(mul(drive, -1), 0)));
+  const palm = select(lt(t, tClosed), reaching, select(lt(t, tLetGo), carry, arc(to, rest, slowInOut(uWithdraw), reachLift, up)));
 
   const width = mul(spec.radius, 2), open = mul(width, 1 + margin), restGap = lift<"f32">(spec.restGap ?? open);
   const pulse = sin(mul(uHold, Math.PI * pulses)), crush = sub(1, mul(depth, mul(pulse, pulse)));
@@ -98,7 +111,7 @@ export function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab {
   return {
     palm, gap, crush,
     thing: select(lt(t, tClosed), from, select(lt(t, tLetGo), carry, to)),
-    squeezed: (base = 1, axis = "x") => size.axes(mul(vec3(axis === "x" ? crush : across, axis === "y" ? crush : across, axis === "z" ? crush : across), base)),
+    squeezed: (base = 1, axis = "x") => ({ kind: "axes", k: mul(vec3(axis === "x" ? crush : across, axis === "y" ? crush : across, axis === "z" ? crush : across), base) }),
     held: select(lt(t, tClosed), 0, select(lt(t, tLetGo), 1, 0)),
   };
 }
@@ -106,10 +119,21 @@ export function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab {
 /**
  * The angle each of two fingers (or the two halves of a jaw) stands off the grip's forward axis so that their tips are
  * `gap` apart: fingers of `length`, hinged `hinge` apart at the palm. A gap the fingers cannot span gives a right angle.
+ * For a curved finger, `length` is its chord (hinge to tip, straight) and the result is the chord's angle: subtract the
+ * angle the chord makes with the finger's root to get the hinge's.
  */
 export function fingerAngle(gap: In<"f32">, length: In<"f32">, hinge: In<"f32"> = 0): F {
   const s = clamp(div(sub(gap, hinge), mul(length, 2)), -1, 1);
   return atan2(s, sqrt(max(sub(1, mul(s, s)), 0)));
+}
+
+/**
+ * A pincer: one finger fixed, one moving, both of `length` (hinge to tip, straight) from one hinge. The angle between
+ * them for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A crab's claw, a beak.
+ */
+export function pincerAngle(gap: In<"f32">, length: In<"f32">): F {
+  const s = clamp(div(gap, mul(length, 2)), 0, 1);
+  return mul(2, atan2(s, sqrt(max(sub(1, mul(s, s)), 0))));
 }
 
 export type WrapSpec = {

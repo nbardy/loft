@@ -135,11 +135,18 @@ export const echo = (f: (t: F) => F, t: In<"f32">, delay: In<"f32">, gain: In<"f
 
 /**
  * The moving hold. A still pose kept alive: two slow swings that never line up, in -1..1 times `amount`. `seed` gives
- * each part its own, so nothing breathes in step.
+ * each part its own, so nothing breathes in step. With `period` (seconds) the two swings take whole numbers of turns
+ * in it, the nearest to `hz` and to 1.618 `hz` that differ, so a motion that must loop in `period` still loops.
  */
-export function alive(t: In<"f32">, amount: In<"f32">, seed: In<"f32"> = 0, hz = 0.23): F {
+export function alive(t: In<"f32">, amount: In<"f32">, seed: In<"f32"> = 0, hz = 0.23, period?: number): F {
   const s = lift<"f32">(seed), ph = mul(hash3(vec3(s, 17.3, 4.1)), TAU);
-  const a = sin(add(mul(t, hz * TAU), ph)), b = sin(add(mul(t, hz * TAU * 1.618), mul(ph, 2.3)));
+  let hzA = hz, hzB = hz * 1.618;
+  if (period !== undefined) {
+    if (!(period > 0)) throw new Error(`alive: period must be positive, got ${period}`);
+    const ka = Math.max(1, Math.round(hz * period)), kb = Math.max(ka + 1, Math.round(hz * 1.618 * period));
+    hzA = ka / period; hzB = kb / period;
+  }
+  const a = sin(add(mul(t, hzA * TAU), ph)), b = sin(add(mul(t, hzB * TAU), mul(ph, 2.3)));
   return mul(amount, add(mul(a, 0.62), mul(b, 0.38)));
 }
 
