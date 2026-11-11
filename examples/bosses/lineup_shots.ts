@@ -57,12 +57,13 @@ export const WIDE: Format = {
  * the square trucks along the row two crabs at a time for the slam (following the cascade) and the taunt (following
  * the call and answer and the cascade), and holds a wider frame on the middle pair for the throw in unison. fovY 0.25
  * (about 96 mm) from 96 to 135 away: a frame 24 to 34 units wide at the row. From 60 with fovY 0.4 (the second strip)
- * the boats thrown 38 forward landed 22 from the lens and their sails filled the square's foreground.
+ * the boats thrown 38 forward landed 22 from the lens and their sails filled the square's foreground. The throw's target
+ * is 11 up, not 8.5: at 8.5 (the third strip) its lower third was empty sea.
  */
 export const SQUARE: Format = {
   name: "square", width: 1080, height: 1080, cuts: [
     { at: 0, shot: { kind: "move", name: "slam", from: along(100, 3.5, 8, SPACING, 0.25), to: along(100, 3.5, 8, -SPACING, 0.25), start: 1.75, end: 3.75 } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(135, 3.5, 8.5, 0, 0.25) } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(135, 3.5, 11, 0, 0.25) } },
     { at: beat(32), shot: { kind: "move", name: "taunt", from: along(96, 3.5, 8, SPACING, 0.25), to: along(96, 3.5, 8, -SPACING, 0.25), start: beat(33), end: beat(47) } },
   ],
 };
