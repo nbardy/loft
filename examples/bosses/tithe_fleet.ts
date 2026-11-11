@@ -2,12 +2,14 @@
 // small living ship (blue sails) for scale. Woodblock print: black hulls, bone rags, one red pennant on the flagship.
 // Subject: the game's design notes, section 6.5 (room-runners-arena-lib, notes/design/2026-11-01_fleet_spells_bosses.md).
 //
-// Nothing is see-through or glowing: the ghost is in the shapes. Rags hang in torn strips slit to the yard; masts are
-// snapped at different heights, a broken topmast leans on the rail; planks are missing (the ribs show); weed hangs at a
-// waterline that has climbed the topsides; chains drape the sides; every hull lists and trims as no sound ship would,
-// and rolls uneasily on two slow incommensurate clocks; a pale wake trails each.
+// Nothing is see-through or glowing: the ghost is in the shapes. The hulls are solid black with a bone rim under the
+// rail (from the strategy camera, a hull of plank lines read as line-work); rags hang in torn strips slit to the yard;
+// masts are snapped at different heights, a broken topmast leans on the rail; a few planks are missing (the ribs show);
+// weed hangs at a waterline that has climbed the topsides; chains drape the sides; every hull lists and trims as no
+// sound ship would, and rolls uneasily on two slow incommensurate clocks; a pale wake trails each. The flagship is
+// 18 long, its escorts 7.4 and the living sloop 3.8, so the flagship dwarfs them.
 //
-// Draws: every kind of part is ONE instanced draw for all the ships that have it (examples/bosses/tithe/kit.ts):
+// Draws: every kind of part is ONE posed draw for all the ships that have it (`posedList`, examples/bosses/tithe/kit.ts):
 //   flagship hull (2, with its outline), deck, bulwarks, transom             5
 //   escort hulls (2), decks, bulwarks, transoms (three copies each)          5
 //   spars (every mast, yard, bowsprit and fallen spar of all four ships)     1
@@ -15,29 +17,33 @@
 //   pennant                                                                  1
 //   rigging (every rope, one stroke), chains and weed (one stroke)           2
 //   wakes (one glazed strip for all four)                                    1
-//   broadside: two telegraphs, every puff/shell/splash, shell trails        4
-// = 21 for the fleet and its attack (the level of detail may split an instanced draw into runs of two or three levels),
-// against about 180 for four ships built by `ship`. The living sloop is `ship` itself, about 25 more.
+//   broadside: two telegraphs, every puff/shell/splash (2, with its
+//   outline), shell trails, the foam where the shells land (one a side)     7
+// = 24 for the fleet and its attack (the level of detail may split a posed draw into runs of two or three levels),
+// against about 180 for four ships built by `ship`. The living sloop is the shared scale ship, about 25 more.
 //
 // The signature attack is the flagship's Spectral Broadside: two capsules along the beams (src/spacetime telegraphs),
 // a ripple of the gun ports opening from stern to bow as the tell, a jolt and a billow of the rags as it fires, smoke
 // puffs, shells in flight with trails, and splash columns where they land at the arming time. It loops on time.
 
 import {
-  abs, add, clamp, cos, div, exp, floor, fract, lift, lt, mapNormal, max, mix, mul, saturate, select, sin, smoothstep,
-  step, sub, time, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, ship, spacing,
+  abs, add, clamp, cos, div, every, exp, floor, fract, lift, mapNormal, max, mix, mul, pick, posedList, saturate, sin, size,
+  smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, spacing,
   woodblock, NO_SKELETON, WOODBLOCK_PALETTE,
-  type Drawable, type Expr, type F, type Frame, type Hull, type HullSpec, type P3, type Paint, type Points, type Rope, type Sea,
-  type ShipSpec, type Surface,
+  type Drawable, type Expr, type F, type Frame, type Hull, type HullSpec, type P3, type Paint, type PoseSpec, type Poses,
+  type Rope, type Sea, type Surface,
 } from "../../src/index.ts";
 import { atRest } from "../../src/map/surface.ts";
 import { noise2 } from "../../src/lib/noise.ts";
 import { sdBox } from "../../src/lib/sdf2.ts";
 import { fwidth } from "../../src/lib/wgsl.ts";
 import {
-  ballPoint, bulwarkLoop, dirWorld, frameOf, framePiece, linesOf, pieces, ragPoint, ridingFrame, slice, sparPiece, toWorld,
-  tubePoint, unit, v3, type Piece, type Riding, type V3,
+  ballPoint, bulwarkLoop, dirWorld, frameOf, framePose, linesOf, ragPoint, ridingFrame, slice, sparPose, toWorld,
+  tubePoint, unitPart, v3, type Riding, type V3,
 } from "./tithe/kit.ts";
+import { sailInked, scaleShip } from "./lib/scale_ship.ts";
+import { impactFoam, type Splash } from "./lib/impact.ts";
+import { PRINT_WARNING } from "./lib/warning.ts";
 
 // =====================================================================================================================
 // The numbers an art director changes
@@ -46,12 +52,9 @@ import {
 /** Paints. Woodblock prints each by its lit value (black < 0.08, indigo < 0.34, pale < 0.6, cream), red as vermilion. */
 export const INK = {
   hull: [0.055, 0.05, 0.065], // black: below the black band lit or not
-  seam: [0.21, 0.21, 0.27], // plank seams: indigo lines inside the black
   hollow: [0.27, 0.27, 0.33], // where planks are missing: indigo, crossed by black ribs
-  lid: [0.5, 0.5, 0.52], // gun-port frames: pale in the light, indigo in shadow
   bone: [0.93, 0.89, 0.78], // rags, the rail's rim, opened ports, smoke and shells: cream in the light, pale in shadow
-  weed: [0.44, 0.5, 0.42], // weed at the waterline: pale strands
-  deck: [0.25, 0.23, 0.28], // decks: indigo planks with black seams
+  weed: [0.24, 0.28, 0.24], // weed at the waterline: indigo strands in the black (pale ones read as line-work)
   spar: [0.05, 0.045, 0.055], // masts, yards: black (lit value must stay under 0.08)
   pennant: [0.82, 0.24, 0.15], // the one red thing
   chain: WOODBLOCK_PALETTE.pale, // chains and weed strands (flat strokes: their colour is final)
@@ -63,18 +66,18 @@ export const FLAGSHIP_HULL: HullSpec = {
   length: 18, beam: 5.4, depth: 2.0, freeboard: 1.8, sheer: [1.0, 1.2], castle: [2.1, 1.0], entry: 2.6, run: 3.2,
   fullness: 3.2, deadrise: 0.12, tumblehome: 0.22, transom: 0.7, rake: 0.42, widest: 0.5,
 };
-/** The escorts' lines (all three share them): a brig, 10.5 long. */
+/** The escorts' lines (all three share them): a brig, 7.4 long, so the flagship dwarfs it. */
 export const ESCORT_HULL: HullSpec = {
-  length: 10.5, beam: 3.1, depth: 1.2, freeboard: 1.0, sheer: [0.35, 0.55], castle: [0.55, 0.2], entry: 2.1, run: 2.6,
+  length: 7.4, beam: 2.2, depth: 0.85, freeboard: 0.7, sheer: [0.25, 0.4], castle: [0.4, 0.15], entry: 2.1, run: 2.6,
   fullness: 2.7, tumblehome: 0.12, transom: 0.55, rake: 0.5,
 };
 
 /** Where each ghost rides and how wrong it rides. Flagship first. Headings in radians from +x toward +z. */
 export const RIDING: readonly Omit<Riding, "length" | "beam">[] = [
   { at: [0, 0], heading: 0, sink: 0.75, list: -0.07, roll: 0.035, trim: 0.015, phase: 0 }, // 4 degrees to port
-  { at: [17, -14], heading: 0.12, sink: 0.42, list: 0.13, roll: 0.05, trim: 0.035, phase: 1.3 }, // heeled, bow down
-  { at: [-16, 13], heading: -0.1, sink: 0.38, list: -0.17, roll: 0.06, trim: -0.02, phase: 2.9 }, // hard over to port
-  { at: [-21, -15], heading: 0.18, sink: 0.5, list: 0.06, roll: 0.07, trim: -0.05, phase: 4.4 }, // stern sinking
+  { at: [17, -14], heading: 0.12, sink: 0.3, list: 0.13, roll: 0.05, trim: 0.035, phase: 1.3 }, // heeled, bow down
+  { at: [-16, 13], heading: -0.1, sink: 0.27, list: -0.17, roll: 0.06, trim: -0.02, phase: 2.9 }, // hard over to port
+  { at: [-21, -15], heading: 0.18, sink: 0.35, list: 0.06, roll: 0.07, trim: -0.05, phase: 4.4 }, // stern sinking
 ];
 
 /** The rigs. Masts fore to aft: place along the hull (u), height as a share of `mast`, the share still standing, lean. */
@@ -94,19 +97,19 @@ export const RIGS: readonly Rig[] = [
     ],
   },
   {
-    mast: 10, bowsprit: 3.2, masts: [
+    mast: 7, bowsprit: 2.3, masts: [
       { u: 0.69, height: 0.92, kept: 0.56, lean: 0.06, yards: [{ at: 0.37, span: 1.8, cant: 0.05, rag: 0.9 }] },
       { u: 0.41, height: 1, kept: 0.92, lean: -0.03, yards: [{ at: 0.37, span: 2, cant: -0.12, rag: 1 }, { at: 0.62, span: 1.5, cant: 0.3, rag: 0.7 }] },
     ],
   },
   {
-    mast: 10, bowsprit: 1.4, masts: [
+    mast: 7, bowsprit: 1, masts: [
       { u: 0.69, height: 0.92, kept: 1, lean: -0.02, yards: [{ at: 0.37, span: 1.8, cant: -0.08, rag: 1 }, { at: 0.62, span: 1.4, cant: 0.04, rag: 0.85 }, { at: 0.83, span: 1.05, cant: -0.4, rag: 0 }] },
       { u: 0.41, height: 1, kept: 0.42, lean: 0.1, yards: [{ at: 0.37, span: 2, cant: 0.5, rag: 0.6 }] },
     ],
   },
   {
-    mast: 10, bowsprit: 3.4, masts: [
+    mast: 7, bowsprit: 2.4, masts: [
       { u: 0.69, height: 0.92, kept: 0.38, lean: -0.05, yards: [{ at: 0.37, span: 1.8, cant: -0.25, rag: 0.8 }] },
       { u: 0.41, height: 1, kept: 0.78, lean: 0.04, yards: [{ at: 0.37, span: 2, cant: 0.08, rag: 1 }, { at: 0.62, span: 1.5, cant: -0.15, rag: 0.8 }] },
     ],
@@ -141,18 +144,7 @@ export const BROADSIDE = {
 /** The pale wake behind each ghost: length as a multiple of the hull's. */
 export const WAKE = { length: 1.6, spread: 0.36 };
 
-/** The living ship: a small cutter with blue sails, inside the starboard broadside's lane. */
-const LIVING: ShipSpec = {
-  name: "living",
-  length: 6, beam: 1.9, depth: 0.8, freeboard: 0.52, sheer: [0.15, 0.27], entry: 1.7, run: 2.2, fullness: 2.1,
-  deadrise: 0.35, tumblehome: 0.02, transom: 0.45, rake: 0.7,
-  masts: 1, mastHeight: 8, mastRake: 0.04, tiers: 0, jibs: 2, bowsprit: 2.6,
-  billow: 0.12, flutter: 0.04, heel: 0.2, ports: 0,
-  colours: {
-    hull: [0.36, 0.2, 0.1], bottom: [0.85, 0.85, 0.8], wale: [0.95, 0.92, 0.84], trim: [0.95, 0.78, 0.3], deck: [0.84, 0.7, 0.5],
-    spar: [0.62, 0.45, 0.25], cloth: [0.18, 0.4, 0.86], rope: [0.2, 0.15, 0.1], team: [0.95, 0.85, 0.3],
-  },
-};
+/** The living ship (lib/scale_ship.ts), inside the starboard broadside's lane. */
 const LIVING_AT = { at: [4, 19] as const, heading: 2.5 };
 
 // =====================================================================================================================
@@ -169,10 +161,26 @@ const water: Sea = sea({
 const flagHull = hull(FLAGSHIP_HULL), escortHull = hull(ESCORT_HULL);
 const hulls: readonly Hull[] = [flagHull, escortHull, escortHull, escortHull];
 
-// The broadside's clock: seconds from this loop's arming time (negative before it).
+// =====================================================================================================================
+// The living ship and the Spectral Broadside (declared first: the flagship's jolt reads the broadside's clock)
+// =====================================================================================================================
+
+const living = scaleShip;
+const livingChart = living.afloatChart(water, { ...LIVING_AT, wind: WIND });
+
 const B = BROADSIDE;
-const arm = add(mul(floor(div(time, B.period)), B.period), B.armAt);
-const clock = sub(time, arm);
+/** The two capsules along the flagship's beams (it lies at the origin, bow along +x): the game's hit shapes. */
+const lane = (side: number) => {
+  const a0 = FLAGSHIP_HULL.beam / 2 + 1;
+  return hit.capsule({ a: [0, side * a0], b: [0, side * (a0 + B.reach)], radius: B.radius });
+};
+/** A broadside moves no body part: a remote attack, its hit shape and schedule only. The target is the living ship. */
+const broadside = (side: number, name: string) => attack({
+  name, arm: every(B.period, B.armAt), warn: B.warn, target: living.target(livingChart), motion: { kind: "remote", hit: lane(side) },
+});
+const broadsides = [broadside(1, "broadside_starboard"), broadside(-1, "broadside_port")] as const;
+// The broadside's clock: seconds from this cycle's arming time (negative before it). Both sides fire together.
+const clock = sub(time, broadsides[0].arm);
 /** 0 before the warning, rising to 1 at arming, gone shortly after the guns fire. */
 const tell = mul(saturate(div(add(clock, B.warn), B.warn)), sub(1, smoothstep(0.1, 0.8, clock)));
 /** A kick that rises in a tenth of a second and dies away (x e^(1 - x)), from when the guns fire. */
@@ -183,8 +191,8 @@ const frames: Frame[] = RIDING.map((r, k) => ridingFrame(water, {
   ...(k === 0 ? { jolt: mul(kick(add(clock, B.flight), 0.12), B.jolt) } : {}),
 }, WIND));
 /** Every ghost's frame, once per frame on the CPU; everything on a ship reads its frame from here. */
-const ships = pieces("ships", frames.map(framePiece));
-const G = RIDING.map((_, k) => frameOf(ships.points, k));
+const ships = posedList("ships", frames.map(framePose));
+const G = RIDING.map((_, k) => frameOf(ships, k));
 
 /** The wind in a ship's own (level) coordinates, from its heading: numbers, since the headings are. */
 const windIn = (heading: number): V3 => {
@@ -203,12 +211,13 @@ const inside = (d: F): F => { const w = max(fwidth(d), 1e-4); return sub(1, smoo
 type HullLook = { readonly sink: number; readonly tiers: readonly number[]; readonly pitch: number; readonly ports: readonly [number, number]; readonly tell: F };
 
 /**
- * A ghost's hull in its own (u, v), from its lines: black planking with indigo seams, strakes gone here and there with
- * the ribs showing through, gun ports in tiers (they open stern to bow, bone, as `tell` goes 0 to 1), a bone rim under
- * the rail, weed hanging at the waterline it now sits at.
+ * A ghost's hull in its own (u, v), from its lines: solid black, a few strakes gone with the ribs showing through, gun
+ * ports in tiers (black until they open stern to bow, bone, as `tell` goes 0 to 1), a broad bone rim under the rail,
+ * weed hanging at the waterline it now sits at. (Indigo plank seams and pale port lids read as line-work from the
+ * strategy camera, not as a black hull.)
  */
 function ghostHullPaint(h: Hull, o: HullLook): Paint {
-  const PLANK = 0.3;
+  const PLANK = 0.3, RIM = 0.22;
   return (u, v) => {
     // Height up the side without evaluating the section (two superellipse pows per pixel cost the flagship's hull and
     // its outline draw, which pays the paint too, 0.77 ms from the game camera). Above the turn of the bilge, which is
@@ -219,16 +228,13 @@ function ghostHullPaint(h: Hull, o: HullLook): Paint {
     const w = abs(sub(mul(v, 2), 1));
     const y = add(yb, mul(sub(top, yb), div(sub(w, wb), sub(1, wb))));
     let c: Expr<"vec3"> = rgb(INK.hull);
-    // Seams between strakes, and butt joints staggered strake by strake.
     const sy = div(y, PLANK), strake = floor(sy);
-    const seam = sub(sub(0.5, abs(sub(fract(sy), 0.5))), 0.06);
-    c = mix(c, rgb(INK.seam), inside(seam));
     // Missing strakes: a hashed few, above the water and below the rim; ribs show through.
     const cell = floor(div(add(x, mul(hashF(strake), 3)), 2.2));
-    const gone = mul(mul(step(0.78, hashF(add(mul(strake, 17.3), cell))), step(o.sink + 0.25, y)), step(0.4, sub(top, y)));
+    const gone = mul(mul(step(0.9, hashF(add(mul(strake, 17.3), cell))), step(o.sink + 0.25, y)), step(0.5, sub(top, y)));
     const rib = inside(sub(abs(sub(fract(div(x, 0.5)), 0.5)), 0.38).mul(-1));
     c = mix(c, mix(rgb(INK.hollow), rgb(INK.hull), rib), mul(gone, inside(sub(abs(sub(fract(sy), 0.5)), 0.42))));
-    // Gun ports: lids framed pale, the port dark until it opens.
+    // Gun ports: black until they open, bone.
     const n = Math.round((o.ports[1] - o.ports[0]) * h.lines.length / o.pitch);
     const col = floor(div(x, o.pitch));
     const along = saturate(div(sub(add(mul(col, o.pitch), 0.5 * o.pitch), h.x(lift<"f32">(o.ports[0]))), (o.ports[1] - o.ports[0]) * h.lines.length));
@@ -237,11 +243,10 @@ function ghostHullPaint(h: Hull, o: HullLook): Paint {
     for (const ty of o.tiers) {
       const q = vec2(mul(sub(fract(div(x, o.pitch)), 0.5), o.pitch), sub(y, ty));
       const box = sdBox(q, vec2(0.17, 0.14));
-      c = mix(c, rgb(INK.lid), mul(inside(sub(box, 0.06)), inRange));
-      c = mix(c, mix(rgb(INK.seam), rgb(INK.bone), open), mul(inside(box), inRange));
+      c = mix(c, rgb(INK.bone), mul(mul(inside(box), inRange), open));
     }
     // The bone rim under the rail: what reads from the strategy camera.
-    c = mix(c, rgb(INK.bone), inside(sub(sub(top, y), 0.13)));
+    c = mix(c, rgb(INK.bone), inside(sub(sub(top, y), RIM)));
     // Weed: strands of hashed length hanging from above the waterline.
     const k = floor(mul(x, 2.6));
     const weedTop = add(o.sink + 0.12, mul(hashF(add(k, 5.1)), 0.45));
@@ -252,12 +257,11 @@ function ghostHullPaint(h: Hull, o: HullLook): Paint {
 }
 const hashF = (x: F): F => fract(mul(sin(mul(x, 127.1)), 43758.5453));
 
-/** Decks: indigo planks along the ship with black seams, a few planks gone (black). */
+/** Decks: black, a few planks gone to the indigo hold below. */
 const deckPaint: Paint = (u, v) => {
   const pv = mul(v, 12), plank = floor(pv);
-  const seam = inside(sub(abs(sub(fract(pv), 0.5)), 0.43).mul(-1));
-  const gone = step(0.8, hashF(add(mul(plank, 7.1), floor(add(mul(u, 9), hashF(plank))))));
-  return mix(mix(rgb(INK.deck), rgb(INK.hull), seam), rgb(INK.hull), gone);
+  const gone = step(0.85, hashF(add(mul(plank, 7.1), floor(add(mul(u, 9), hashF(plank))))));
+  return mix(rgb(INK.hull), rgb(INK.hollow), gone);
 };
 /** The transom: black, a row of bone gallery lights under the taffrail. */
 const transomPaint: Paint = (u, v) => {
@@ -277,12 +281,12 @@ const ragPaint = (seed: number): Paint => (u, v) => {
 // Hulls: one instanced draw per part per hull type
 // =====================================================================================================================
 
-function hullParts(tag: string, h: Hull, at: Points, look: HullLook): Drawable[] {
+function hullParts(tag: string, h: Hull, at: Poses, look: HullLook): Drawable[] {
   return [
-    draw.surface(`${tag}_hull`, { ...h.skin, skeleton: h.skeleton() }, { paint: ghostHullPaint(h, look), grid: { u: spacing.ends(120, 0.35), v: spacing.even(48) }, sides: "one", outline: "hull" }).instanced(`${tag}_hull`, at),
-    draw.surface(`${tag}_deck`, h.deck, { paint: deckPaint, grid: { u: spacing.even(48), v: spacing.even(6) }, sides: "one", outline: "none" }).instanced(`${tag}_deck`, at),
-    draw.surface(`${tag}_bulwark`, bulwarkLoop(h), { paint: () => rgb(INK.hull), grid: { u: spacing.even(96), v: spacing.even(1) }, sides: "two", outline: "none" }).instanced(`${tag}_bulwark`, at),
-    draw.surface(`${tag}_transom`, h.transom, { paint: transomPaint, grid: { u: spacing.even(24), v: spacing.even(4) }, sides: "one", outline: "none" }).instanced(`${tag}_transom`, at),
+    draw.surface(`${tag}_hull`, { ...h.skin, skeleton: h.skeleton() }, { paint: ghostHullPaint(h, look), grid: { u: spacing.ends(120, 0.35), v: spacing.even(48) }, sides: "one", outline: "hull" }).posed(`${tag}_hull`, at),
+    draw.surface(`${tag}_deck`, h.deck, { paint: deckPaint, grid: { u: spacing.even(48), v: spacing.even(6) }, sides: "one", outline: "none" }).posed(`${tag}_deck`, at),
+    draw.surface(`${tag}_bulwark`, bulwarkLoop(h), { paint: () => rgb(INK.hull), grid: { u: spacing.even(96), v: spacing.even(1) }, sides: "two", outline: "none" }).posed(`${tag}_bulwark`, at),
+    draw.surface(`${tag}_transom`, h.transom, { paint: transomPaint, grid: { u: spacing.even(24), v: spacing.even(4) }, sides: "one", outline: "none" }).posed(`${tag}_transom`, at),
   ];
 }
 
@@ -290,7 +294,7 @@ function hullParts(tag: string, h: Hull, at: Points, look: HullLook): Drawable[]
 // Rigs: spars, rags, ropes, chains and weed, in each ship's frame
 // =====================================================================================================================
 
-type Built = { spars: Piece[]; rags: Piece[]; ropes: Rope[]; chains: Rope[]; mainTop: V3 };
+type Built = { spars: PoseSpec[]; rags: PoseSpec[]; ropes: Rope[]; chains: Rope[]; mainTop: V3 };
 
 const sway = (rate: number, phase: number, amp: number): F => mul(sin(add(mul(time, rate), phase)), amp);
 
@@ -307,7 +311,7 @@ function rig(k: number): Built {
     const dir = v3.norm([-0.05, 1, m.lean]);
     const at = (f: number): V3 => v3.add(foot, v3.mul(dir, f * h0));
     const top = at(m.kept);
-    out.spars.push(sparPiece(g, foot, top, girth * (0.75 + 0.25 * m.height)));
+    out.spars.push(sparPose(g, foot, top, girth * (0.75 + 0.25 * m.height)));
     if (m.kept * h0 > tallest) { tallest = m.kept * h0; out.mainTop = top; }
     // Shrouds to the rails (three a side), and two broken ones hanging from the break.
     for (const side of [-1, 1]) {
@@ -319,7 +323,7 @@ function rig(k: number): Built {
       const fallLen = Math.min((1 - m.kept) * h0, 0.6 * h0);
       const restOn = rail(Math.min(Math.max(m.u - 0.08 * side, 0.08), 0.92), side);
       const d = v3.norm(v3.sub(restOn, top));
-      out.spars.push(sparPiece(g, v3.add(top, v3.mul(d, -0.3)), v3.add(top, v3.mul(d, fallLen)), girth * 0.6));
+      out.spars.push(sparPose(g, v3.add(top, v3.mul(d, -0.3)), v3.add(top, v3.mul(d, fallLen)), girth * 0.6));
       for (const s of [-1, 1]) out.ropes.push({ a: lift<"vec3">(top), b: add(lift<"vec3">(v3.add(top, [0.4 * s, -0.55 * m.kept * h0, 0.7 * s])), vec3(sway(0.8, i + s, 0.3), 0, sway(0.6, i * 2 + s, 0.4))), sag: 0.05 });
     }
     // Yards that survive below the break, each with its rag hanging to the yard below (or toward the deck).
@@ -329,13 +333,13 @@ function rig(k: number): Built {
       const along = v3.norm([0.12 * (j % 2 === 0 ? 1 : -1), Math.sin(y.cant), Math.cos(y.cant)]);
       const span = y.span * Lh.beam;
       const a = v3.add(c, v3.mul(along, -span / 2)), b = v3.add(c, v3.mul(along, span / 2));
-      out.spars.push(sparPiece(g, a, b, girth * 0.55));
+      out.spars.push(sparPose(g, a, b, girth * 0.55));
       // A lift parted: one yardarm's rope hangs loose and swings.
       out.ropes.push({ a: lift<"vec3">(b), b: add(lift<"vec3">(v3.add(b, [0, -2.2, 0.3])), vec3(sway(1.1, i + j, 0.25), 0, sway(0.7, i * 3 + j, 0.35))), sag: 0.02 });
       if (y.rag > 0) {
         const below = j > 0 ? at(kept[j - 1].at)[1] + girth : L.deck(m.u) + 0.9;
         const drop = Math.max((c[1] - below) * y.rag, 1.2);
-        out.rags.push(ragPiece(g, c, along, span * 0.92, drop, wl, k === 0 ? tell : lift<"f32">(0), k + i * 1.7 + j * 2.3));
+        out.rags.push(ragPose(g, c, along, span * 0.92, drop, wl, k === 0 ? tell : lift<"f32">(0), k + i * 1.7 + j * 2.3));
       }
     });
     // A stay forward: to the mast before it, or from the foremast to the bowsprit's end.
@@ -344,7 +348,7 @@ function rig(k: number): Built {
   });
   // The bowsprit.
   const root: V3 = [L.x(1) - 0.08 * Lh.length, L.sheer(1) - 0.15, 0];
-  out.spars.push(sparPiece(g, root, bowspritEnd(L, Lh, R), girth * 0.6));
+  out.spars.push(sparPose(g, root, bowspritEnd(L, Lh, R), girth * 0.6));
   // Chains: the anchor cable from the hawse into the water, and lengths draped along both sides.
   for (const side of [-1, 1]) {
     const hawse: V3 = [L.x(0.95) - 0.1, L.sheer(0.95) - 0.45, side * 0.35 * L.half(0.85)];
@@ -376,34 +380,32 @@ function bowspritEnd(L: ReturnType<typeof linesOf>, Lh: Hull["lines"], R: Rig): 
 /**
  * A rag on a yard: the unit rag stretched across the yard (x), down (y) and out along its belly (z). It bellies
  * downwind: when the wind is on its other face it is turned end for end (x and z both flipped, so it is not mirrored).
+ * A turn's axes are perpendicular, so the rag hangs square to its yard: on a canted yard it hangs tilted with the cant
+ * (it was sheared to hang plumb, which a pose cannot do; the rag's plane, and so its belly, is the same).
  */
-function ragPiece(g: Frame, centre: V3, along: V3, width: number, drop: number, wl: V3, tellK: F, phase: number): Piece {
+function ragPose(g: Frame, centre: V3, along: V3, width: number, drop: number, wl: V3, tellK: F, phase: number): PoseSpec {
   const up: V3 = [0, 1, 0];
   const face = v3.norm(v3.cross(along, up));
   const across = v3.dot(wl, face);
   const sgn = across >= 0 ? 1 : -1;
+  const square = v3.norm(v3.sub(up, v3.mul(along, v3.dot(along, up))));
   const belly = mul(mul(RAGS.billow * width * (0.35 + 0.65 * Math.abs(across)), add(1, sway(0.7, phase, RAGS.breathe))), add(1, mul(tellK, RAGS.tellBillow)));
-  return {
-    o: toWorld(g, centre), x: dirWorld(g, v3.mul(along, width * sgn)), y: dirWorld(g, v3.mul(up, drop)),
-    z: mul(dirWorld(g, v3.mul(face, sgn)), belly), size: Math.max(width, drop),
-  };
+  return { at: toWorld(g, centre), turn: turn.axes(dirWorld(g, v3.mul(along, sgn)), dirWorld(g, square)), size: size.axes(vec3(width, drop, belly)) };
 }
 
 const built = RIDING.map((_, k) => rig(k));
 
 // ---- the rig's draws ---------------------------------------------------------------------------------------------
 
-const sparSet = pieces("spars", built.flatMap((b) => b.spars));
-const spars = draw.surface("tithe_spars", unit(sparSet.table, tubePoint(0.4), { u: ["pole", "pole"], v: "periodic" }), {
+const spars = draw.surface("tithe_spars", unitPart(tubePoint(0.4), { u: ["pole", "pole"], v: "periodic" }), {
   paint: () => rgb(INK.spar), grid: { u: spacing.even(6), v: spacing.even(10) }, sides: "one", outline: "none",
-}).instanced("tithe_spars", sparSet.points);
+}).posed("tithe_spars", posedList("spars", built.flatMap((b) => b.spars)));
 
 /** Rags in two draws: the flagship's (its tell billows them) and the escorts'; each alternates two tear patterns. */
-function ragDraw(name: string, list: readonly Piece[], seed: number): Drawable {
-  const set = pieces(name, list);
-  return draw.surface(name, unit(set.table, ragPoint({ strips: RAGS.strips, seed, swing: seed }), { u: ["free", "free"], v: "free" }), {
+function ragDraw(name: string, list: readonly PoseSpec[], seed: number): Drawable {
+  return draw.surface(name, unitPart(ragPoint({ strips: RAGS.strips, seed, swing: seed }), { u: ["free", "free"], v: "free" }), {
     paint: ragPaint(seed), grid: { u: spacing.even(RAGS.strips * 6), v: spacing.even(10) }, sides: "two", outline: "border",
-  }).instanced(name, set.points);
+  }).posed(name, posedList(name, list));
 }
 const rags = [ragDraw("tithe_flag_rags", built[0].rags, 3.1), ragDraw("tithe_escort_rags", built.slice(1).flatMap((b) => b.rags), 8.7)];
 
@@ -423,11 +425,11 @@ function pennant(): Drawable {
     return add(along, vec3(0, add(across, mul(mul(u, u), -length * 0.1)), 0));
   };
   const surf: Surface = { point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
-  const at = pieces("pennant", [{ ...framePiece(G[0]), o: toWorld(G[0], v3.add(built[0].mainTop, [0, 0.15, 0])) }]);
+  const at = posedList("pennant", [{ ...framePose(G[0]), at: toWorld(G[0], v3.add(built[0].mainTop, [0, 0.15, 0])) }]);
   return draw.surface("tithe_pennant", surf, {
     paint: (u, v) => mix(rgb(INK.pennant), mul(rgb(INK.pennant), 0.72), inside(sub(abs(sub(v, 0.5)), 0.32).mul(-1))),
     grid: { u: spacing.even(36), v: spacing.even(2) }, sides: "two", outline: "border",
-  }).instanced("tithe_pennant", at.points);
+  }).posed("tithe_pennant", at);
 }
 
 // =====================================================================================================================
@@ -441,7 +443,6 @@ function pennant(): Drawable {
  */
 function wakes(): Drawable {
   const S = 28, per = S + 3, N = RIDING.length, cells = N * per;
-  const pick = (k: F, vals: readonly number[]): F => vals.slice(0, -1).reduceRight<F>((acc, v, j) => select(lt(k, j + 0.5), v, acc), lift<"f32">(vals[vals.length - 1]));
   const where = (u: F) => {
     const x = mul(u, cells);
     const k = clamp(floor(mul(add(x, 0.5), 1 / per)), 0, N - 1);
@@ -477,43 +478,24 @@ function wakes(): Drawable {
 }
 
 // =====================================================================================================================
-// The living ship
-// =====================================================================================================================
-
-const living = ship(LIVING);
-const livingChart = living.afloatChart(water, { ...LIVING_AT, wind: WIND });
-
-// =====================================================================================================================
-// The Spectral Broadside
+// The Spectral Broadside: what it throws
 // =====================================================================================================================
 
 const FH = linesOf(flagHull);
 const PORT_TIERS = [RIDING[0].sink + 0.42, RIDING[0].sink + 0.98] as const;
 const PORTS: readonly [number, number] = [0.27, 0.74];
 
-/** The two capsules along the flagship's beams (it lies at the origin, bow along +x): the game's hit shapes. */
-const lane = (side: number) => {
-  const a0 = FLAGSHIP_HULL.beam / 2 + 1;
-  return hit.capsule({ a: [0, side * a0], b: [0, side * (a0 + B.reach)], radius: B.radius });
-};
-/**
- * An `Attack` needs a creature's motion (a lunge or a sweep of a spine); a broadside moves no spine, so this lunge is
- * never posed: only its hit shape, arming time and warning are read (by the telegraph). The target is the living ship.
- */
-const broadside = (side: number, name: string) => attack({
-  name, arm, warn: B.warn, target: living.target(livingChart), part: "flagship",
-  motion: { kind: "lunge", hit: lane(side), reach: 0.5, lead: 1, height: 0, coil: 0, rise: 0, approach: 0, neck: 1 },
-});
-const MARKER = { bone: WOODBLOCK_PALETTE.cream, fill: WOODBLOCK_PALETTE.vermilion, ink: WOODBLOCK_PALETTE.black, flash: WOODBLOCK_PALETTE.cream };
-const telegraphs = [telegraph(broadside(1, "broadside_starboard"), { style: MARKER }), telegraph(broadside(-1, "broadside_port"), { style: MARKER })];
+const telegraphs = broadsides.map((a) => telegraph(a, { style: PRINT_WARNING }));
 
 /**
  * What the guns throw, as copies of one ball: two smoke puffs per gun, the shell in flight, a splash column and a
- * crown where it lands. Each copy's frame and size are a function of the broadside's clock (size 0 when it is not
- * there), so one table and one draw carry the whole volley.
+ * crown where it lands. Each copy's place and size are a function of the broadside's clock (size 0 when it is not
+ * there), so one table and one draw carry the whole volley (inked round, as a print's spray is). Where each shell lands
+ * the water bursts into foam (lib/impact.ts), one draw a side.
  */
-function volley(): { readonly balls: Drawable; readonly trails: Drawable } {
-  const g = G[0], list: Piece[] = [], trails: Rope[] = [];
+function volley(): { readonly balls: Drawable; readonly trails: Drawable; readonly foam: readonly Drawable[] } {
+  const g = G[0], list: PoseSpec[] = [], trails: Rope[] = [];
+  const splashes: Record<number, Splash[]> = { 1: [], [-1]: [] };
   const up = dirWorld(g, [0, 1, 0]);
   for (const side of [1, -1]) {
     const out = dirWorld(g, [0, 0, side]);
@@ -531,7 +513,7 @@ function volley(): { readonly balls: Drawable; readonly trails: Drawable } {
         const a = sub(age, delay);
         const grow = mul(smoothstep(0, 0.14, a), mul(add(1, mul(max(a, 0), 0.5)), sub(1, smoothstep(1.1, 1.9, a))));
         const o = add(add(mouth, mul(out, add(0.3, mul(reach, sub(1, exp(mul(max(a, 0), -2.6))))))), mul(up, mul(max(a, 0), 0.45)));
-        list.push({ o, x: vec3(r, 0, 0), y: vec3(0, r * 0.8, 0), z: vec3(0, 0, r), size: r, show: mul(grow, step(0, a)) });
+        list.push({ at: o, turn: turn.none, size: size.axes(mul(vec3(r, r * 0.8, r), mul(grow, step(0, a)))) });
       }
       // The shell: from the port to its landing point on the lane, on an arc.
       const dist = FLAGSHIP_HULL.beam / 2 + 4 + (B.reach - 6) * hashN(j * 3.1 + side);
@@ -542,23 +524,26 @@ function volley(): { readonly balls: Drawable; readonly trails: Drawable } {
         const flat = mix(mouth, vec3(land.x, landY, land.y), s);
         return add(flat, vec3(0, mul(mul(mul(s, sub(1, s)), 4), B.arc), 0));
       };
-      list.push({ o: shellAt(age), x: vec3(0.32, 0, 0), y: vec3(0, 0.32, 0), z: vec3(0, 0, 0.32), size: 0.32, show: live(0, B.flight) });
+      list.push({ at: shellAt(age), turn: turn.none, size: size.axes(mul(vec3(0.32, 0.32, 0.32), live(0, B.flight))) });
       trails.push({ a: shellAt(age), b: shellAt(max(sub(age, 0.16), 0)), sag: 0 });
       // The splash where it lands: a column that rises and falls, and a low crown round it.
       const a2 = sub(age, B.flight);
       const rise = mul(sin(mul(saturate(div(a2, 0.95)), Math.PI)), live(0, 0.95));
       const centre = vec3(land.x, landY, land.y);
-      list.push({ o: centre, x: vec3(0.55, 0, 0), y: vec3(0, B.splash, 0), z: vec3(0, 0, 0.55), size: B.splash, show: rise });
-      list.push({ o: centre, x: vec3(1.5, 0, 0), y: vec3(0, 0.45, 0), z: vec3(0, 0, 1.5), size: 1.5, show: mul(mul(smoothstep(0, 0.12, a2), sub(1, smoothstep(0.6, 1.3, a2))), step(0, a2)) });
+      list.push({ at: centre, turn: turn.none, size: size.axes(mul(vec3(0.55, B.splash, 0.55), rise)) });
+      list.push({ at: centre, turn: turn.none, size: size.axes(mul(vec3(1.5, 0.45, 1.5), mul(mul(smoothstep(0, 0.12, a2), sub(1, smoothstep(0.6, 1.3, a2))), step(0, a2)))) });
+      splashes[side]!.push({ at: land, since: a2 });
     }
   }
-  const set = pieces("volley", list);
   return {
-    balls: draw.surface("tithe_volley", unit(set.table, ballPoint(), { u: ["pole", "pole"], v: "periodic" }), {
-      paint: () => rgb(INK.bone), grid: { u: spacing.even(10), v: spacing.even(14) }, sides: "one", outline: "none",
-    }).instanced("tithe_volley", set.points),
-    // Wide enough that the key line (which inks a stroke's edges) leaves cream down the middle.
+    balls: draw.surface("tithe_volley", unitPart(ballPoint(), { u: ["pole", "pole"], v: "periodic" }), {
+      paint: () => rgb(INK.bone), grid: { u: spacing.even(10), v: spacing.even(14) }, sides: "one", outline: "hull",
+    }).posed("tithe_volley", posedList("volley", list)),
     trails: lines("tithe_trails", trails, { width: 0.2, colour: WOODBLOCK_PALETTE.cream }),
+    foam: ([1, -1] as const).map((side) => impactFoam(`tithe_splash_${side > 0 ? "starboard" : "port"}`, water, {
+      area: lane(side), pad: 1.5, splashes: splashes[side]!, reach: 2.2, seconds: 1.2,
+      foam: WOODBLOCK_PALETTE.cream, line: WOODBLOCK_PALETTE.black,
+    })),
   };
 }
 const hashN = (x: number): number => { const s = Math.sin(x * 127.1) * 43758.5453; return s - Math.floor(s); };
@@ -569,18 +554,18 @@ const shots = volley();
 // =====================================================================================================================
 
 const flagLook: HullLook = { sink: RIDING[0].sink, tiers: PORT_TIERS, pitch: 1.05, ports: PORTS, tell };
-const escortLook: HullLook = { sink: 0.45, tiers: [0.85], pitch: 1.0, ports: [0.3, 0.7], tell: lift<"f32">(0) };
+const escortLook: HullLook = { sink: 0.32, tiers: [0.6], pitch: 0.75, ports: [0.3, 0.7], tell: lift<"f32">(0) };
 
 export default scene({
   sea: water,
   things: [
-    ...hullParts("tithe_flag", flagHull, slice(ships.points, 0, 1), flagLook),
-    ...hullParts("tithe_escort", escortHull, slice(ships.points, 1, 3), escortLook),
+    ...hullParts("tithe_flag", flagHull, slice(ships, 0, 1), flagLook),
+    ...hullParts("tithe_escort", escortHull, slice(ships, 1, 3), escortLook),
     spars, ...rags, pennant(), rigging, chains, wakes(),
-    ...telegraphs, shots.balls, shots.trails,
+    ...telegraphs, shots.balls, shots.trails, ...shots.foam,
     ...living.placed(livingChart, WIND),
   ],
-  style: woodblock(),
+  style: sailInked(woodblock()),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     game: { kind: "perspective", eye: [-38, 46, 36], target: [-4, 0, -2], fovY: 0.62 },

@@ -7,7 +7,12 @@
 // Signature attack (the design note's Lightning Field, one circle): a marked spot on the water is telegraphed; the
 // thunderhead darkens and crackles; the serpent rears and darts its head down over the spot (an `attack` lunge, so the
 // pose is derived from the hit shape and arming time); at the arming time a bolt drops from its maw to the mark and
-// the sea foams where it lands. The attack loops on time (every LOOP seconds); `strike.at` moves the mark.
+// the sea foams where it lands (lib/impact.ts). The attack arms every STRIKE.loop seconds (`every`); `strike.at` moves
+// the mark.
+//
+// From the strategy camera the head leads: the serpent holds its bearing toward the cameras (it sways about it rather
+// than flowing round its loop), so the head is the nearest thing, high on its weave, and the body trails away round the
+// back of the heap. (Flowing round, the head was a dot at the far end and the body a dark bar across the cloud's face.)
 //
 // Phases (input `phase`, 1 to 3, continuous): 1 airborne; 2 Storm Eye (the cloud opens into a ring round the
 // serpent, which rises, its wings spread and the mane swells); 3 Last Breath (the heap tears into scattered lobes and
@@ -16,15 +21,17 @@
 // Coordinates: y up, the cloud's axis on x = z = 0. The serpent's head is at its spine's m = 0.
 
 import {
-  abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette, place,
-  points, rain, scene, sea, select, ship, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, length, lt,
-  displaced, flicker, afterglow, strikeAt, saturate, pow, through,
-  type Drawable, type F, type P3, type Style,
+  abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette,
+  points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, length, lt,
+  displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_SEA,
+  type Drawable, type F, type P3, type PaintAt,
 } from "../../src/index.ts";
 import { fwidth } from "../../src/lib/wgsl.ts";
-import { animate, attack, hit, part, telegraph } from "../../src/spacetime/index.ts";
+import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { wyrm, type Wyrm } from "../scenes/lib/wyrm.ts";
-import { PLAYER, sloop } from "../scenes/lib/fleet.ts";
+import { sailInked, scaleShip } from "./lib/scale_ship.ts";
+import { impactFoam } from "./lib/impact.ts";
+import { PRINT_WARNING } from "./lib/warning.ts";
 
 // ---- the numbers an art director would change ---------------------------------------------------------------------
 
@@ -45,7 +52,8 @@ const SERPENT = {
   arc: 2.5,                // radians of the loop its body covers (head to tail)
   weave: 4.2,              // how far it dips below and rises above the loop's plane (in and out of the lobes)
   weaves: 2,               // dips per turn
-  flow: 0.16,              // radians per second it slides along its loop
+  bearing: 0.78,           // radians from +x toward +z where the head holds: toward the strategy cameras
+  drift: 0.14, driftRate: 0.035, // radians it slides to and fro along its loop about that bearing, Hz
   girth: 1.35, size: 2.5, stations: 64,
   sway: 0.6, swayRate: 0.5, // the S-wave down the body (world units, Hz)
   wingSpan: 9.5, wingBeat: 0.32, wingRate: 0.45, // longest wing ray, beat amplitude (radians), Hz
@@ -53,7 +61,9 @@ const SERPENT = {
 };
 /** The marked spot and its strike. */
 const STRIKE = {
-  at: [7, 9] as const,     // default mark on the water (x, z)
+  // Default mark on the water (x, z): off to the side of the head's bearing, so from the strategy camera the head dives
+  // across the view and the bolt and the foam show (at [7, 9] it dived toward the camera and its wings hid them).
+  at: [12, 2.5] as const,
   radius: 3.2,             // the hit disc
   loop: 7,                 // seconds between strikes
   arm: 4.2,                // seconds into each loop the bolt lands
@@ -61,8 +71,8 @@ const STRIKE = {
   hover: 7.5,              // height the head darts down to above the mark
   boltWidth: 0.6,          // half-width of the bolt at its top
 };
-/** The ship for scale, and the weather. */
-const SHIP = { at: [17, 9] as const, heading: 2.6, length: 4.5 };
+/** The ship for scale (lib/scale_ship.ts), and the weather. */
+const SHIP = { at: [17, 9] as const, heading: 2.6 };
 const WIND: readonly [number, number] = [0.8, 0.5];
 const RAIN = { count: 2600, radius: 9, length: 2.4, width: 0.035, opacity: 0.6 };
 const SUN: readonly [number, number, number] = [-0.35, 0.8, 0.5];
@@ -77,7 +87,6 @@ const COLOURS = {
   back: [0.15, 0.2, 0.38], belly: [0.93, 0.88, 0.75], bone: [0.95, 0.9, 0.78],
   iris: [0.9, 0.22, 0.12], mouth: [0.08, 0.06, 0.1], bolt: [1, 0.98, 0.92],
 } as const;
-const TELEGRAPH = { bone: [0.93, 0.88, 0.75], fill: [0.82, 0.25, 0.16], ink: [0.075, 0.07, 0.09], flash: [1, 0.98, 0.92] } as const;
 
 // ---- inputs and the clocks derived from them ----------------------------------------------------------------------
 
@@ -87,9 +96,17 @@ const eye = smoothstep(1.3, 2.0, phase);     // 0 -> 1 into phase 2
 const breath = smoothstep(2.3, 3.0, phase);  // 0 -> 1 into phase 3
 const mark = input("strike.at", "vec2", [...STRIKE.at]);
 
-/** This loop's arming time: the attack repeats every STRIKE.loop seconds. */
-const arm = add(mul(floor(mul(time, 1 / STRIKE.loop)), STRIKE.loop), STRIKE.arm);
-const since = sub(time, arm);
+// ---- the strike: the hit disc and its schedule (the lunge it poses is applied to the serpent below) -----------------
+
+const bolt = attack({
+  name: "bolt", arm: every(STRIKE.loop, STRIKE.arm), warn: STRIKE.warn,
+  target: { kind: "disc", centre: mark, radius: lift<"f32">(STRIKE.radius) },
+  part: "head",
+  motion: { kind: "lunge", hit: hit.disc({ centre: mark, radius: STRIKE.radius }), reach: 0.4, lead: 2.5, height: STRIKE.hover, coil: 3, rise: 3.5, approach: 0.5, neck: 4 },
+  timing: { windup: 1.0, strike: 0.35, hold: 0.25, recover: 0.6, travel: 1.6 },
+});
+/** Seconds from this cycle's strike (negative before it). */
+const since = sub(time, bolt.arm);
 /** 0 -> 1 over the warning, 0 again once the strike has landed and faded. */
 const warning = mul(saturate(add(mul(since, 1 / STRIKE.warn), 1)), sub(1, smoothstep(0.2, 0.8, since)));
 
@@ -97,17 +114,9 @@ const sun = normalize(vec3(...SUN));
 
 // ---- the printed cloud lobe ---------------------------------------------------------------------------------------
 
-/**
- * A flattened ball of radius 1: u from the top pole (0) to the bottom (1), v once round. (Bottom to top, the lathe's
- * d/du x d/dv points inward: the lobes were drawn inside out, as bowls, and lit against the paint's own light.)
- */
+/** A flattened ball of radius 1: u from the top pole (0) to the bottom (1), v once round. */
 const lobeProfile = (u: F) => vec2(sin(mul(u, Math.PI)), mul(cos(mul(u, Math.PI)), CLOUD.flatten));
 const LOBE = lathe(lobeProfile, ["pole", "pole"]);
-/** The lobe's outward normal at (u, v), in the world (copies are placed unrotated). */
-function lobeNormal(u: F, v: F): P3 {
-  const r = sin(mul(u, Math.PI)), a = mul(v, -Math.PI * 2);
-  return normalize(vec3(mul(r, cos(a)), mul(cos(mul(u, Math.PI)), 1 / CLOUD.flatten), mul(r, sin(a))));
-}
 /** The paint luminance that prints `target` on whichever side of the style's terminator the normal is. */
 const aim = (n: P3, target: In1) => mul(target, select(lt(dot(n, sun), 0), 1 / 0.66, 1 / 1.06));
 type In1 = F | number;
@@ -127,11 +136,12 @@ function line(d: F, w: In1): F {
 /**
  * A lobe's print: three inks from the light (cream, pale, indigo), stepped by `shade` (0 the crown's light, 1 a
  * belly in shadow), and the curl: a spiral line in the face turned to the viewer, plus an inner contour along the top
- * of the face, as the carver cuts the edge of a billow.
+ * of the face, as the carver cuts the edge of a billow. Each copy's curl sits at its own place on the face (a hash of
+ * the copy and the heap's `salt`), so the lobes do not repeat.
  */
-function lobePaint(shade: F): (u: F, v: F) => P3 {
-  return (u, v) => {
-    const n = lobeNormal(u, v);
+function lobePaint(shade: F, salt: number): (u: F, v: F, at: PaintAt) => P3 {
+  return (_u, _v, at) => {
+    const n = at.normal;
     const ns = dot(n, sun);
     // Steps of the light, moved toward shadow by `shade`.
     const lit = sub(ns, mul(shade, 0.7));
@@ -139,8 +149,9 @@ function lobePaint(shade: F): (u: F, v: F) => P3 {
     // The face toward the viewer, as a disc: q in the plane across the view, |q| < 1.
     const q = vec2(dot(n, vec3(...E1)), dot(n, vec3(...E2)));
     const facing = dot(n, vec3(...VIEW));
-    // A spiral from a centre low and to one side of the face, three turns out to a third of the face.
-    const c = sub(q, vec2(-0.22, -0.28));
+    // A spiral from a centre low and to one side of the face (moved about per copy), three turns out to a third of it.
+    const centre = vec2(add(-0.22, mul(sub(h1(at.copy, salt), 0.5), 0.36)), add(-0.24, mul(sub(h1(at.copy, salt + 1), 0.5), 0.3)));
+    const c = sub(q, centre);
     const r = length(c), th = atan2(c.y, c.x);
     const turns = sub(mul(r, 9), mul(th, 1 / (Math.PI * 2)));
     const spiral = mul(mul(line(abs(sub(fract(add(turns, 0.5)), 0.5)), 0.12), sub(1, smoothstep(0.3, 0.36, r))), smoothstep(0.2, 0.4, facing));
@@ -182,10 +193,10 @@ function heap(n: number, o: { readonly y: number; readonly rise: number; readonl
 }
 
 const lobeGrid = { u: spacing.even(14), v: spacing.even(22) };
-const crownLobe = draw.surface("tmLobe", LOBE, { paint: lobePaint(crownShade), grid: lobeGrid, sides: "one", outline: "none" });
-const bellyLobe = draw.surface("tmLobeDark", LOBE, { paint: lobePaint(bellyShade), grid: lobeGrid, sides: "one", outline: "none" });
+const crownLobe = draw.surface("tmLobe", LOBE, { paint: lobePaint(crownShade, 1), grid: lobeGrid, sides: "one", outline: "none" });
+const bellyLobe = draw.surface("tmLobeDark", LOBE, { paint: lobePaint(bellyShade, 2), grid: lobeGrid, sides: "one", outline: "none" });
 const crownLobes = draw.points("tmCrown", heap(CLOUD.crownLobes, { y: CLOUD.height + 1, rise: CLOUD.crown, inner: 0.05, size: CLOUD.crownSize }), crownLobe);
-const rimLobe = draw.surface("tmLobeRim", LOBE, { paint: lobePaint(add(0.15, crownShade)), grid: { u: spacing.even(10), v: spacing.even(16) }, sides: "one", outline: "none" });
+const rimLobe = draw.surface("tmLobeRim", LOBE, { paint: lobePaint(add(0.15, crownShade), 3), grid: { u: spacing.even(10), v: spacing.even(16) }, sides: "one", outline: "none" });
 const rimLobes = draw.points("tmRim", heap(CLOUD.rimLobes, { y: CLOUD.height + 0.6, rise: 0.5, inner: 0.97, size: CLOUD.rimSize }), rimLobe);
 const bellyLobes = draw.points("tmBelly", heap(CLOUD.bellyLobes, { y: CLOUD.height - 2.2, rise: 0.8, inner: 0.35, size: CLOUD.bellySize }), bellyLobe);
 
@@ -199,11 +210,15 @@ function loopAt(th: F): P3 {
   return vec3(mul(r, cos(th)), y, mul(r, sin(th)));
 }
 const CONTROL = 18;
-/** The rest posture: head leading along the loop (decreasing angle), an S-wave travelling down the body. */
+/**
+ * The rest posture: the head at `bearing` (toward the cameras), the body trailing round the loop behind the heap, the
+ * whole sliding to and fro about that bearing; an S-wave travelling down the body.
+ */
 const restSpine = (m: F): P3 => {
+  const slide = mul(sin(mul(time, SERPENT.driftRate * Math.PI * 2)), SERPENT.drift);
   const pts = Array.from({ length: CONTROL }, (_, k) => {
     const s = k / (CONTROL - 1);
-    const th = add(mul(time, -SERPENT.flow), s * SERPENT.arc);
+    const th = add(slide, SERPENT.bearing + s * SERPENT.arc);
     const p = loopAt(th);
     const outward = vec3(cos(th), 0, sin(th));
     const sway = mul(sin(sub(s * 5, mul(time, SERPENT.swayRate * Math.PI * 2))), SERPENT.sway * (0.3 + s));
@@ -212,15 +227,7 @@ const restSpine = (m: F): P3 => {
   return through(m, pts);
 };
 
-// ---- the strike: the hit disc, the lunge it poses, the bolt ---------------------------------------------------------
-
-const bolt = attack({
-  name: "bolt", arm, warn: STRIKE.warn,
-  target: { kind: "disc", centre: mark, radius: lift<"f32">(STRIKE.radius) },
-  part: "head",
-  motion: { kind: "lunge", hit: hit.disc({ centre: mark, radius: STRIKE.radius }), reach: 0.4, lead: 2.5, height: STRIKE.hover, coil: 3, rise: 3.5, approach: 0.5, neck: 4 },
-  timing: { windup: 1.0, strike: 0.35, hold: 0.25, recover: 0.6, travel: 1.6 },
-});
+// ---- the serpent, posed by the strike -------------------------------------------------------------------------------
 
 /** The roar: the jaw drops through the wind-up and snaps at the strike; it hangs open in Last Breath. */
 const gape = add(add(0.12, mul(warning, 0.55)), mul(breath, 0.3));
@@ -291,7 +298,7 @@ const wings = [1, -1].map((side) => draw.surface(side > 0 ? "tmWingR" : "tmWingL
 
 // ---- the mane: cloud lobes riding the back, growing into the tail ---------------------------------------------------
 
-const maneLobe = draw.surface("tmManeLobe", LOBE, { paint: lobePaint(add(mul(warning, 0.4), mul(breath, 1.0))), grid: { u: spacing.even(10), v: spacing.even(16) }, sides: "one", outline: "none" });
+const maneLobe = draw.surface("tmManeLobe", LOBE, { paint: lobePaint(add(mul(warning, 0.4), mul(breath, 1.0)), 4), grid: { u: spacing.even(10), v: spacing.even(16) }, sides: "one", outline: "none" });
 const mane = draw.points("tmMane", points(SERPENT.maneLobes, (i) => {
   const s = mul(i, 1 / (SERPENT.maneLobes - 1));
   const m = mix(sub(0.32, mul(breath, 0.12)), 1.0, s);
@@ -305,7 +312,10 @@ const mane = draw.points("tmMane", points(SERPENT.maneLobes, (i) => {
 /** Where the bolt leaves the jaw (on the jaw's skin, near its tip). */
 const mouth = maw.jaw.frame(vec3(0.7, 0.75, 1)).o;
 const markAt = vec3(mark.x, -0.3, mark.y);
-const strikeIndex = floor(mul(time, 1 / STRIKE.loop));
+/** The strike's number: each cycle's bolt is its own shape. (The library's `bolt()` takes expressions now, but it keeps a
+ * schedule of its own beside the attack's and draws only as an additive glow; this stroke is printed flat, keyed by the
+ * attack's cycle.) */
+const strikeIndex = bolt.cycle(time);
 const boltCurve = (u: F | number): P3 => displaced(lift<"f32">(u), mouth, markAt, 6, 0.11, add(mul(strikeIndex, 13), 1));
 const boltLight = max(min(flicker(since), 1), mul(afterglow(since, 0.3), 0.8));
 const strokeBolt = draw.curve("tmBolt", boltCurve, {
@@ -342,21 +352,12 @@ const shower = rain("tmRain", {
   centre: [0, 0], radius: RAIN.radius, top: CLOUD.height - 3, count: RAIN.count, speed: 15, wind: [WIND[0] * 2.5, WIND[1] * 2.5],
   length: RAIN.length, width: RAIN.width, colour: [0.93, 0.9, 0.82], opacity: RAIN.opacity, flash: boltLight, seed: 7,
 });
-const scout = ship(sloop("scout", SHIP.length, PLAYER)).afloat(water, { at: [...SHIP.at], heading: SHIP.heading, wind: WIND });
-
-// ---- the print: woodblock, its sky turned toward the storm ---------------------------------------------------------
-
-const base = woodblock();
-const storm: Style = {
-  ...base,
-  // A storm sky: the indigo block printed low over a narrow cream horizon, graded (bokashi) as the print's sky is.
-  sky: (ctx) => {
-    const up = ctx.dir.y;
-    const cream = vec3(0.93, 0.88, 0.75), haze = vec3(0.7, 0.76, 0.78), indigo = vec3(0.13, 0.2, 0.37);
-    const above = mix(mix(cream, haze, smoothstep(0.0, 0.06, up)), indigo, smoothstep(0.08, 0.3, up));
-    return mix(above, haze, sub(1, smoothstep(-0.002, 0.0, up)));
-  },
-};
+const scout = scaleShip.afloat(water, { at: [...SHIP.at], heading: SHIP.heading, wind: WIND });
+/** The sea foams where the bolt lands. */
+const strikeFoam = impactFoam("tmStrikeFoam", water, {
+  area: hit.disc({ centre: mark, radius: STRIKE.radius }), pad: 1.5, splashes: [{ at: mark, since }],
+  reach: STRIKE.radius * 1.3, seconds: 1.3, foam: COLOURS.belly, line: [0.075, 0.07, 0.09],
+});
 
 const creature: Drawable[] = serpent.things.filter((t) => !/Crest|Tail[LR]$/.test(t.name));
 
@@ -364,15 +365,16 @@ export default scene({
   sea: water,
   things: [
     ...creature, ...wings, mane, crownLobes, rimLobes, bellyLobes, strokeBolt, ...sparks,
-    ...scout, telegraph(bolt, { style: TELEGRAPH }), shower,
+    ...scout, telegraph(bolt, { style: PRINT_WARNING }), strikeFoam, shower,
   ],
-  style: storm,
+  // A storm sky: the indigo block printed low over a narrow cream horizon, the haze below it.
+  style: sailInked(woodblock({ sky: { haze: [0, 0.06], band: [0.08, 0.3], below: WOODBLOCK_SEA.haze } })),
   sun: SUN,
   cameras: {
     game: { kind: "perspective", eye: [40, 50, 46], target: [4, 10, 3], fovY: 0.62 },
     three: { kind: "perspective", eye: [36, 20, 38], target: [2, 11, 2], fovY: 0.72 },
     // The head over the mark as the bolt leaves its maw (render it at a time near STRIKE.arm, e.g. 4.3).
-    close: { kind: "perspective", eye: [20, 15, 24], target: [7, 7, 8], fovY: 0.55 },
+    close: { kind: "perspective", eye: [24.5, 14, 19.5], target: [11.5, 6, 3.5], fovY: 0.55 },
     top: { kind: "orthographic", eye: [0, 90, 0.001], target: [0, 0, 0], height: 60 },
   },
 });

@@ -1,88 +1,34 @@
 // The ghost fleet's kit: parts drawn once for the whole fleet.
 //
 // A ship from `src/geom/ship.ts` is about 45 draws (DESIGN.md 12.5) and its GPU cost follows the draw count, so four
-// ships that way are about 180 draws. Here every kind of part is ONE instanced draw for every ship that has it: the
-// copies' frames are expressions (each ship's frame on the swell, the attack's clock) evaluated once per frame on the
-// CPU into a table (`pieces`), and the vertex stage fetches its copy's frame from that table. A unit part (a tube, a
-// rag, a ball) is stretched into place by its frame: the frame's axes carry the copy's size along each axis.
-//
-// `framed` (src/map/surface.ts) turns a copy's normal by its frame, which is right only for a rotation. For a stretched
-// frame (axes of lengths a, b, c) the normal must be turned by the inverse transpose; turning n' = (n.x / a^2,
-// n.y / b^2, n.z / c^2) by the frame gives exactly that. `unit` builds that n' by fetching the copy's own axes with
-// the vertex stage's instance index (the variable `i` that `draw.points` binds, src/draw/surface.ts). Only the normal
-// reads it: the compiler measures a surface's rest size from its points alone, on the CPU, where `i` is unbound.
+// ships that way are about 180 draws. Here every kind of part is ONE posed draw for every ship that has it: each copy's
+// pose (where it goes, its turn and its size along each axis) is an expression of each ship's frame on the swell and of
+// the attack's clock, listed by `posedList` (src/map/chart.ts), which fills one table per frame on the CPU; the vertex
+// stage fetches its copy's pose. A unit part (a tube, a rag, a ball) is stretched into place by its size, and the
+// library turns its normal by the cofactor of the stretch.
 
 import {
-  abs, add, cos, div, dot, evaluate, fetch, floor, fract, lift, lt, max, mix, mul, pow, select, sin, smoothstep, sub,
-  time, TAU, variable, vec2, vec3, afloatFrame, lathe, mapNormal,
-  type Expr, type F, type Frame, type Hull, type In, type P3, type Points, type Surface, type TableSource, type Topology, type Waters,
+  abs, add, cos, evaluate, floor, fract, lift, lt, max, mix, mul, pow, select, sin, size, smoothstep, sub, turn,
+  time, TAU, vec2, vec3, afloatFrame, lathe, mapNormal, NO_SKELETON,
+  type Expr, type F, type Frame, type Hull, type In, type P3, type PoseSpec, type Poses, type Surface, type Topology, type Waters,
 } from "../../../src/index.ts";
 import { atRest } from "../../../src/map/surface.ts";
 
 export type V3 = readonly [number, number, number];
 
-// ---- pieces: frames per copy, filled on the CPU ------------------------------------------------------------------
+// ---- poses -------------------------------------------------------------------------------------------------------
 
-/**
- * One copy of a unit part: where its origin goes and its three axes in the world WITH their lengths (the unit part's
- * x, y and z are stretched to them; keep x cross y along +z so the copy is not mirrored). `size` is the largest of the
- * lengths at full size (what the host sizes and culls the copy by); `show` scales the whole copy (0 hides it, and a
- * copy under a pixel is not drawn).
- */
-export type Piece = { readonly o: P3; readonly x: P3; readonly y: P3; readonly z: P3; readonly size: number; readonly show?: In<"f32"> };
-
-export type Pieces = { readonly points: Points; readonly table: TableSource };
-
-/** Copies' frames in one table (lanes: origin and scale, x, y, z), filled per frame from the pieces' expressions. */
-export function pieces(name: string, list: readonly Piece[]): Pieces {
-  if (list.length < 1) throw new Error(`pieces "${name}": need at least one piece`);
-  for (const p of list) if (!(p.size > 0)) throw new Error(`pieces "${name}": size must be positive, got ${p.size}`);
-  const table: TableSource = {
-    name: `pieces_${name}`, lanes: 4, entries: list.length, role: "data",
-    prepare: (prep) => {
-      const run = prep.compile(list.flatMap((p) => {
-        const k = 1 / p.size;
-        return [p.o, mul(p.x, k), mul(p.y, k), mul(p.z, k), mul(lift<"f32">(p.show ?? 1), p.size)];
-      }));
-      return (frame, out) => {
-        const v = run(frame);
-        list.forEach((_, j) => {
-          const [o, x, y, z, s] = v.slice(5 * j, 5 * j + 5) as [number[], number[], number[], number[], number];
-          out.set([...o, s, ...x, 0, ...y, 0, ...z, 0], 16 * j);
-        });
-      };
-    },
-  };
-  const points: Points = {
-    count: list.length,
-    at: (i) => {
-      const a = fetch(table, i, 0);
-      return { frame: { o: a.xyz, x: fetch(table, i, 1).xyz, y: fetch(table, i, 2).xyz, z: fetch(table, i, 3).xyz }, scale: a.w };
-    },
-  };
-  return { points, table };
-}
-
-/** Copies `from .. from + count - 1` of a set of points. */
-export function slice(p: Points, from: number, count: number): Points {
+/** Copies `from .. from + count - 1` of a set of poses. */
+export function slice(p: Poses, from: number, count: number): Poses {
   return { count, at: (i) => p.at(add(i, from)) };
 }
 
-/** The frame of copy k of a set of pieces, as expressions (fetched from its table on either side). */
-export const frameOf = (p: Points, k: number): Frame => p.at(lift<"f32">(k)).frame;
+/** The frame of copy k of a set of poses, as expressions (fetched from its table on either side). */
+export const frameOf = (p: Poses, k: number): Frame => p.at(lift<"f32">(k)).frame;
 
-/** A unit surface drawn through stretched frames: its normal made ready for `framed` (see the header). */
-export function unit(table: TableSource, point: (u: F, v: F) => P3, topology: Topology): Surface {
-  const n0 = mapNormal(point);
-  const i = variable("i", "f32");
-  const inv = (lane: number): F => { const a = fetch(table, i, lane).xyz; return div(1, max(dot(a, a), 1e-10)); };
-  return {
-    point,
-    normal: (u, v) => { const n = n0(u, v); return vec3(mul(n.x, inv(1)), mul(n.y, inv(2)), mul(n.z, inv(3))); },
-    anchor: atRest(point),
-    topology,
-    skeleton: { joints: 0, joint: () => { throw new Error("a unit part casts no shadow"); } },
-  };
+/** A unit part's surface: its points; posed copies stretch it, and cast no shadow. */
+export function unitPart(point: (u: F, v: F) => P3, topology: Topology): Surface {
+  return { point, normal: mapNormal(point), anchor: atRest(point), topology, skeleton: NO_SKELETON };
 }
 
 // ---- unit parts --------------------------------------------------------------------------------------------------
@@ -162,8 +108,8 @@ export function ridingFrame(water: Waters, r: Riding, wind: readonly [number, nu
   return { o: sub(g.o, vec3(0, sink, 0)), x: x2, y: y2, z: z1 };
 }
 
-/** A frame as a piece (it is already orthonormal: size 1). */
-export const framePiece = (g: Frame): Piece => ({ o: g.o, x: g.x, y: g.y, z: g.z, size: 1 });
+/** A ship's frame as a pose (it is orthonormal: turned to its axes, size 1). */
+export const framePose = (g: Frame): PoseSpec => ({ at: g.o, turn: turn.axes(g.x, g.y), size: size.even(1) });
 
 /** A point given in a frame's coordinates, in the world. */
 export const toWorld = (g: Frame, p: In<"vec3">): P3 => {
@@ -189,14 +135,14 @@ const v3 = {
 };
 export { v3 };
 
-/** A spar from a to b (ship coordinates) of radius r at its foot, in ship frame g: a piece of the unit tube. */
-export function sparPiece(g: Frame, a: V3, b: V3, r: number): Piece {
+/** A spar from a to b (ship coordinates) of radius r at its foot, in ship frame g: a pose of the unit tube. */
+export function sparPose(g: Frame, a: V3, b: V3, r: number): PoseSpec {
   const d = v3.sub(b, a), len = v3.len(d);
   if (!(len > 1e-6)) throw new Error("spar: its ends coincide");
   const ey = v3.norm(d);
   const ref: V3 = Math.abs(ey[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
-  const ex = v3.norm(v3.cross(ey, ref)), ez = v3.cross(ex, ey);
-  return { o: toWorld(g, a), x: dirWorld(g, v3.mul(ex, r)), y: dirWorld(g, v3.mul(ey, len)), z: dirWorld(g, v3.mul(ez, r)), size: len };
+  const ex = v3.norm(v3.cross(ey, ref));
+  return { at: toWorld(g, a), turn: turn.axes(dirWorld(g, ex), dirWorld(g, ey)), size: size.axes([r, len, r]) };
 }
 
 /** The hull's lines as numbers (positions of masts and chainplates are decided when the ship is). */
