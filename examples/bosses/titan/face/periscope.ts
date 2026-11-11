@@ -52,6 +52,6 @@ export const periscope: FaceOption = {
       };
     };
     // Not twins: the left stalk a little shorter, whipping slower and further.
-    return [...k.eyeParts(eye("R", 1, 2.95, [0.6, 1.5])), ...k.eyeParts(eye("L", -1, 2.65, [0.75, 1.2])), k.plate(1), k.plate(-1), k.gullet()];
+    return { things: [...k.eyeParts(eye("R", 1, 2.95, [0.6, 1.5])), ...k.eyeParts(eye("L", -1, 2.65, [0.75, 1.2])), k.plate(1), k.plate(-1), k.gullet()], checks: [] };
   },
 };

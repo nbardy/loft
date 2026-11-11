@@ -8,6 +8,7 @@
 import type { Artefact, Camera, FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
 import { Expr, lift, time, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
+import type { Score } from "./geom/expression.ts";
 import { cameraMatrices, project } from "./host/camera.ts";
 import type { Body } from "./map/sweep.ts";
 import type { Skeleton } from "./map/types.ts";
@@ -295,6 +296,87 @@ export function minScreenSize(feature: Measured, camera: string, pixels: number,
 }
 const norm = (a: V3): V3 => { const l = Math.hypot(...a); return [a[0] / l, a[1] / l, a[2] / l]; };
 const cross = (a: V3, b: V3): V3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
+// ---- expressions --------------------------------------------------------------------------------------------------
+
+/** A drawn length: two world points (closed forms of the clock) whose difference a viewer sees: an eye's middle to its
+ * lid's edge, a stalk's root to its tip, an eye's middle to its pupil. */
+export type Mark = { readonly from: In<"vec3">; readonly to: In<"vec3"> };
+
+/**
+ * A score's expressions (src/geom/expression.ts) read from a camera. Over one `period` of the clock:
+ * - every named expression, and the rest, is at some instant at least `shown` of the face (default 0.9). A layer that a
+ *   later one always covers never shows, however it is written;
+ * - at those instants any two of them differ on screen: for at least one mark its drawn vector (`from` to `to`, in
+ *   pixels) changes by at least `apart`, a share of `of`'s length on screen (say, an eye's width) or world units at
+ *   `of`'s scale.
+ * A mark is measured from its own `from`, so the body's travel between the two instants does not count as a change of
+ * expression. Each expression is measured in the middle of its longest stretch within 0.02 of its peak.
+ */
+export function expressionsRead<K extends string, N extends string>(score: Score<K, N>, marks: Readonly<Record<string, Mark>>, o: {
+  readonly camera: string; readonly period: number; readonly apart: Tolerance; readonly of: Mark;
+  readonly shown?: number; readonly rate?: number; readonly size?: readonly [number, number];
+}): Check {
+  const names = ["rest", ...Object.keys(score.cast.named)] as (N | "rest")[];
+  const markNames = Object.keys(marks);
+  if (markNames.length === 0) throw new Error("expressionsRead: no marks to measure");
+  const shown = o.shown ?? 0.9, rate = o.rate ?? 10, [w, h] = o.size ?? [1280, 800];
+  const shares = score.shares(time);
+  const shareRoots = names.map((n) => shares[n]);
+  const markRoots = [o.of, ...markNames.map((m) => marks[m]!)].flatMap((m) => [lift<"vec3">(m.from), lift<"vec3">(m.to)]);
+  return {
+    name: `expressions read apart from "${o.camera}"`,
+    run(probe) {
+      const cam: Camera | undefined = probe.artefact.cameras[o.camera];
+      if (cam === undefined) throw new Error(`expressionsRead: the scene has no camera "${o.camera}" (cameras: ${Object.keys(probe.artefact.cameras).join(", ")})`);
+      const m = cameraMatrices(cam, w / h);
+      const ts = times(0, o.period, rate);
+      const table = ts.map((t) => probe.eval(shareRoots, t) as number[]);
+      // Each expression's instant: the middle of its longest stretch near its peak.
+      const peaks = names.map((name, i) => {
+        const most = Math.max(...table.map((row) => row[i]!));
+        let best: readonly [number, number] = [0, -1], from = -1;
+        for (let k = 0; k <= ts.length; k++) {
+          const near = k < ts.length && table[k]![i]! >= most - 0.02;
+          if (near && from < 0) from = k;
+          if (!near && from >= 0) { if (k - 1 - from > best[1] - best[0]) best = [from, k - 1]; from = -1; }
+        }
+        return { name, most, t: ts[Math.floor((best[0] + best[1]) / 2)]! };
+      });
+      const hidden = peaks.filter((p) => p.most < shown);
+      const showing = peaks.map((p) => `${p.name} ${fmt(p.most, 2)} t=${fmt(p.t, 1)}`).join(", ");
+      // Each mark's drawn vector at each expression's instant, in pixels; the first is the reference.
+      const drawn = peaks.map((p) => {
+        const pts = probe.eval(markRoots, p.t) as number[][];
+        return Array.from({ length: pts.length / 2 }, (_, k) => {
+          const a = project(m, pts[2 * k] as unknown as V3, w, h), b = project(m, pts[2 * k + 1] as unknown as V3, w, h);
+          return { px: [b.x - a.x, b.y - a.y] as const, world: Math.hypot(...subV(pts[2 * k + 1] as unknown as V3, pts[2 * k] as unknown as V3)) };
+        });
+      });
+      const ref = drawn[0]![0]!, refPx = Math.hypot(...ref.px);
+      const [least, leastSaid] = ((t: Tolerance): readonly [number, string] => {
+        switch (t.kind) {
+          case "share": return [t.share * refPx, `${(t.share * 100).toFixed(0)}% of ${fmt(refPx, 1)} px`];
+          case "units": return [t.units * (refPx / ref.world), `${fmt(t.units)} units`];
+        }
+      })(o.apart);
+      let closest = { px: Infinity, pair: "", mark: "" };
+      for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+        let far = { px: 0, mark: "" };
+        for (const [k, mark] of markNames.entries()) {
+          const a = drawn[i]![k + 1]!.px, b = drawn[j]![k + 1]!.px, d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+          if (d > far.px) far = { px: d, mark };
+        }
+        if (far.px < closest.px) closest = { px: far.px, pair: `${names[i]} / ${names[j]}`, mark: far.mark };
+      }
+      return {
+        name: this.name, pass: hidden.length === 0 && closest.px >= least, value: closest.px,
+        measured: `${hidden.length > 0 ? `never shown: ${hidden.map((p) => p.name).join(", ")}; ` : ""}closest pair ${closest.pair}: ${fmt(closest.px, 1)} px (${closest.mark}); ${showing}`,
+        limit: `each >= ${fmt(shown, 2)} of the face; any two >= ${fmt(least, 1)} px (${leastSaid})`,
+      };
+    },
+  };
+}
 
 // ---- holds --------------------------------------------------------------------------------------------------------
 

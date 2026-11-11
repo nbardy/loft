@@ -40,6 +40,7 @@ import { fiddler } from "./titan/claws/fiddler.ts";
 import { gauntlet } from "./titan/claws/gauntlet.ts";
 import { tongs } from "./titan/claws/tongs.ts";
 import { base as faceBase } from "./titan/face/base.ts";
+import { dandy } from "./titan/face/dandy.ts";
 import { mask } from "./titan/face/mask.ts";
 import { patient } from "./titan/face/patient.ts";
 import { periscope } from "./titan/face/periscope.ts";
@@ -87,7 +88,7 @@ export const design = makeDesign({
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase, mask, periscope, patient } satisfies Record<string, FaceOption>,
+    face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
   },
@@ -117,6 +118,13 @@ export const design = makeDesign({
     },
     // The heikegani: the carapace's front a scowling samurai war mask, armour on every limb, a keep and two pines on top.
     mask: { about: "a samurai crab: war-mask face, lacquer armour, a keep and two pines", pick: { carapace: "kabuto", face: "mask", legs: "armoured", claws: "gauntlet", back: "keep" } },
+    // The island crab with the fiddler's identity (docs/art_direction/DIRECTION.md, Round 3): the base crab, low in the
+    // water with the atoll on its back, one great claw, and the dandy's face (face/dandy.ts). The fiddler claws ask for a
+    // crush disc of 4.4, as on the fiddler.
+    islander: {
+      about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
+      pick: { claws: "fiddler", face: "dandy" },
+    },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
     // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
     // Arms long enough for its 0.8 cutter (5.15 + 4.95: grip 0.058 off, measured) make its 2.4 crusher span 16.5 to reach
@@ -136,7 +144,7 @@ export const design = makeDesign({
     return {
       scene: scene({
         sea: r.world.sea,
-        things: [...carapace.things, ...back, ...face, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
+        things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
         style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) }),
         sun: [0.15, 0.8, 0.6],
         cameras: camerasFor(n),
@@ -178,6 +186,8 @@ export const design = makeDesign({
           standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 2.5, impulse: tolerance.share(0.02) })],
           host: () => [],
         }),
+        // What the chosen face asks of itself (slots.ts, `Face`): none for a face that asks nothing.
+        ...face.checks,
       ],
     };
   },

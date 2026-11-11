@@ -4,7 +4,7 @@
 // legs raise the body), and a `draw` from the rig. The claws also *offer* the rig two measurements before the rig is
 // built (the Grab places the ship by them), because the attacks' geometry depends on the claws' shape.
 
-import type { Drawable, Measured, Placer, Strand, Strike } from "../../../src/index.ts";
+import type { Check, Drawable, Measured, Placer, Strand, Strike } from "../../../src/index.ts";
 import type { Option } from "../../../src/design.ts";
 import type { Numbers } from "./numbers.ts";
 import type { Rig } from "./rig.ts";
@@ -35,8 +35,11 @@ export type Claws = { readonly things: readonly Drawable[]; readonly crush: Stri
 export type ClawsOption = Opt & { readonly offer: (n: Numbers) => ClawsOffer; readonly draw: (rig: Rig, offer: ClawsOffer) => Claws };
 
 /** The face on the front of the carapace (crab coordinates: the base face's brow V at x = 4.93 for the base carapace; a
- * face may place itself from `n.carapace` instead, as face/mask.ts does). */
-export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace) => readonly Drawable[] };
+ * face may place itself from `n.carapace` instead, as face/mask.ts does). `checks` are what this face asks of itself
+ * (an eye large enough to read from the game camera, expressions that differ on screen): they join the design's, so a
+ * variant with this face passes only if they do. A face that asks nothing returns none. */
+export type Face = { readonly things: readonly Drawable[]; readonly checks: readonly Check[] };
+export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace) => Face };
 
 /** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. */
 export type BackOption = Opt & { readonly draw: (rig: Rig) => readonly Drawable[] };

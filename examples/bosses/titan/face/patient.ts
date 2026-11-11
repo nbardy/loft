@@ -66,6 +66,6 @@ export const patient: FaceOption = {
         detail: { along: 12, around: 8 },
       }), rigid({ o: local(o), x: body.x, y: body.y, z: body.z }));
     };
-    return [...k.eyeParts(eye("R", 1)), ...k.eyeParts(eye("L", -1)), brow(1), brow(-1), mouth, rostrum(1), rostrum(-1)];
+    return { things: [...k.eyeParts(eye("R", 1)), ...k.eyeParts(eye("L", -1)), brow(1), brow(-1), mouth, rostrum(1), rostrum(-1)], checks: [] };
   },
 };

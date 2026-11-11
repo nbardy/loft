@@ -29,11 +29,13 @@ export { alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, ove
 export { ringWave, RingWave, type RingSpec } from "./geom/ring.ts";
 export { pose, poseFrame, placedBy, blendFrames, hosted, STAND_IN, type Pose, type Placer, type StandIn, type Hosted } from "./geom/placing.ts";
 export { thrown, throwOf, tumbled, SET_DOWN, type Ending, type SetDown, type Thrown, type ThrownSpec, type Throw } from "./geom/grab.ts";
+export { cast, score, show, only, added, during, ExpressionError, type Cast, type Expression, type Layer, type Posed, type Score } from "./geom/expression.ts";
 export { grab, gripper, heldThing, fingerAngle, pincerAngle, wrap, type AxesSize, type Grab, type GrabBeats, type GrabSpec, type GripperSpec, type Held, type WrapSpec } from "./geom/grab.ts";
 export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, releasesAt, throwLands, fliesClear, shoves, frontFirst, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
+export { expressionsRead, type Mark } from "./check.ts";
 export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
