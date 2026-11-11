@@ -4,7 +4,7 @@
 // legs raise the body), and a `draw` from the rig. The claws also *offer* the rig two measurements before the rig is
 // built (the Grab places the ship by them), because the attacks' geometry depends on the claws' shape.
 
-import type { Check, Drawable, Measured, Strand, Strike } from "../../../src/index.ts";
+import type { Check, ContactFoam, Drawable, Measured, Strand, Strike } from "../../../src/index.ts";
 import type { Option } from "../../../src/design.ts";
 import type { Numbers } from "./numbers.ts";
 import type { Rig } from "./rig.ts";
@@ -43,3 +43,8 @@ export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace) =
 
 /** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. */
 export type BackOption = Opt & { readonly draw: (rig: Rig) => readonly Drawable[] };
+
+/** The foam printed where the crab, its island and the ship meet the water: a pattern of the woodblock's (`foam`). It
+ * draws nothing of its own and asks no numbers; it is a slot so two patterns can be compared from the command line
+ * (`--variant islander,foam=apron`). */
+export type FoamOption = Opt & { readonly pattern: ContactFoam };

@@ -16,7 +16,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
+import { foam, gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
 import { base as backBase } from "./titan/back/base.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
@@ -40,7 +40,7 @@ import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { rig } from "./titan/rig.ts";
-import type { BackOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
+import type { BackOption, CarapaceOption, ClawsOption, FaceOption, FoamOption, LegsOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
 // comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
@@ -77,6 +77,15 @@ export const design = makeDesign({
     claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
+    // The contact foam's pattern (docs/art_direction/DIRECTION.md, "Contact foam"). `base` is the print as it was.
+    foam: {
+      base: { about: "ridge: filaments along the zero lines of a noise (the print as it was)", pattern: foam.ridge() },
+      rings: { about: "thin broken ripple arcs moving outward, no fill", pattern: foam.rings() },
+      apron: { about: "one flat scalloped shape with a key line", pattern: foam.apron() },
+      stipple: { about: "printed dots, dense at the body", pattern: foam.stipple() },
+      breakers: { about: "the swell's own lines breaking into blades on the body", pattern: foam.breakers() },
+      curls: { about: "rolling lobes with curled heads and a ripple arc (the round 4 pictures)", pattern: foam.curls() },
+    } satisfies Record<string, FoamOption>,
   },
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
@@ -131,7 +140,7 @@ export const design = makeDesign({
       scene: scene({
         sea: r.world.sea,
         things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.boat],
-        style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) }),
+        style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: o.foam.pattern }),
         sun: [0.15, 0.8, 0.6],
         cameras: camerasFor(n),
       }),

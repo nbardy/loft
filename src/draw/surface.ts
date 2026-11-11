@@ -381,6 +381,7 @@ export function withFragment(c: GlazedColour, g: (f: Fragment) => Fragment): Gla
 const FWIDTH = (fwidth(variable("x", "f32")).node as Extract<Expr["node"], { op: "lib" }>).fn;
 const FWIDTH_QUAD: LibFn = { name: "loft_fwidth_quad", ret: "f32", wgsl: "@diagnostic(off, derivative_uniformity) fn loft_fwidth_quad(x: f32) -> f32 { return fwidth(x); }", js: "gpu-only" };
 const DERIVATIVE = /\b(fwidth|dpdx|dpdy)(Fine|Coarse)?\s*\(/;
+const QUAD_COVERED = /@diagnostic\(off,\s*derivative_uniformity\)/;
 
 /** A case's colour with every `fwidth` replaced by FWIDTH_QUAD. */
 function quadSafe(root: Expr<"vec4">): Expr<"vec4"> {
@@ -391,7 +392,9 @@ function quadSafe(root: Expr<"vec4">): Expr<"vec4"> {
 
 /** A case's function as emitted, refused if it still reaches a derivative WGSL would reject in a branch. */
 function quadDerivatives(name: string, s: Shader): Shader {
-  const reaches = (l: LibFn): boolean => l !== FWIDTH_QUAD && (DERIVATIVE.test(l.wgsl) || (l.deps ?? []).some(reaches));
+  // A library function that turns the diagnostic off for itself has said its derivatives are of values every pixel of
+  // the quad computes (FWIDTH_QUAD; the sea's contact level): it is covered.
+  const reaches = (l: LibFn): boolean => !QUAD_COVERED.test(l.wgsl) && (DERIVATIVE.test(l.wgsl) || (l.deps ?? []).some(reaches));
   const bad = s.libs.filter(reaches).map((l) => l.name);
   if (bad.length > 0 || /\bloft_fwidth\(/.test(s.code)) throw new Error(`draw.surface: case function "${name}" takes a derivative quadSafe does not cover (${bad.join(", ") || "loft_fwidth in a loop"}); give it a quad-safe twin`);
   return s;

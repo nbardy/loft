@@ -3,9 +3,10 @@
 // gradient. The black key line is the outline hull: geometry, thick and of even weight, antialiased by the frame's
 // own multisampling. (It was a post pass that cut lines from depth and normal edges, one decision per pixel: the lines
 // came out ragged and broken beside the hull outlines of the other styles, and it cost 0.37 ms a frame. 2026-11-11.)
-// Then paper. The sea is flat blues with printed lines along the swell's contours and clawed foam where it meets a body.
+// Then paper. The sea is flat blues with printed lines along the swell's contours and foam where it meets a body, in one
+// of several patterns (`ContactFoam`).
 
-import { abs, add, distance, dot, f, fract, length, lt, max, min, mix, mul, param, saturate, select, smoothstep, sub, vec4, type Expr } from "../expr.ts";
+import { abs, add, and, atan2, distance, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, param, saturate, select, sin, smoothstep, step, sub, time, vec2, vec4, type Expr } from "../expr.ts";
 import { noise2, hash22, luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
@@ -92,6 +93,51 @@ export const print = {
   },
 };
 
+// ---- the foam where a body meets the water --------------------------------------------------------------------------
+
+/**
+ * The pattern printed where the water meets a body (docs/art_direction/DIRECTION.md, "Contact foam"). Each is a function
+ * of the sea's contact band and the water's world position, and prints exactly nothing where no body is near. Lengths
+ * are world units; a pattern's sizes suit a sea whose foam width (`SeaSpec.foam`) is about three of its periods.
+ *  - `ridge`: a collar, filaments along the zero lines of a noise field, an indigo rim and specks. The print as it was.
+ *  - `rings`: `count` thin arcs along the band's level lines, broken, moving outward `drift` rings a second; no fill.
+ *  - `apron`: one flat shape with a scalloped edge (lobes `lobe` wide) and one key line; nothing inside it.
+ *  - `stipple`: printed dots only (the larger `dot` apart), dense at the body and thinning outward.
+ *  - `breakers`: a narrow collar, and a blade of foam along each of the sea's printed swell lines where it meets the body.
+ *  - `curls`: a low collar of round lobes `lobe` apart lying over each other, the larger with a curled head, and a
+ *    ripple arc beyond: the round 4 pictures' rolling foam.
+ * `ridge` reads the sea's contact band; the others its contact level (`Contact`), which costs four more depth reads.
+ */
+export type ContactFoam =
+  | { readonly kind: "ridge" }
+  | { readonly kind: "rings"; readonly count: number; readonly drift: number }
+  | { readonly kind: "apron"; readonly lobe: number }
+  | { readonly kind: "stipple"; readonly dot: number }
+  | { readonly kind: "breakers"; readonly reach: number }
+  | { readonly kind: "curls"; readonly lobe: number };
+
+const positive = (what: string, x: number): number => {
+  if (!(x > 0)) throw new Error(`woodblock foam: ${what} must be positive, got ${x}`);
+  return x;
+};
+
+export const foam = {
+  /** The print as it was: filaments along the zero lines of a noise. */
+  ridge(): ContactFoam { return { kind: "ridge" }; },
+  /** Ripple arcs. `count`: arcs across the band, default 3; `drift`: arcs a second outward, default 0.4. */
+  rings(o: { readonly count?: number; readonly drift?: number } = {}): ContactFoam {
+    return { kind: "rings", count: positive("rings count", o.count ?? 3), drift: o.drift ?? 0.4 };
+  },
+  /** A flat scalloped apron. `lobe`: the width of a scallop, default 0.36. */
+  apron(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "apron", lobe: positive("apron lobe", o.lobe ?? 0.36) }; },
+  /** Printed dots. `dot`: the spacing of the larger dots, default 0.17. */
+  stipple(o: { readonly dot?: number } = {}): ContactFoam { return { kind: "stipple", dot: positive("stipple dot", o.dot ?? 0.17) }; },
+  /** The swell's own lines breaking on the body. `reach`: how far down the band a blade runs (0..1), default 0.6. */
+  breakers(o: { readonly reach?: number } = {}): ContactFoam { return { kind: "breakers", reach: positive("breakers reach", o.reach ?? 0.6) }; },
+  /** Rolling lobes with curled heads. `lobe`: the spacing of the lobes, default 0.42. */
+  curls(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "curls", lobe: positive("curls lobe", o.lobe ?? 0.42) }; },
+};
+
 // ---- the sky and the water --------------------------------------------------------------------------------------------
 
 /**
@@ -114,6 +160,8 @@ export type WoodblockSpec = {
   readonly print?: Print;
   readonly sky?: Partial<WoodblockSky>;
   readonly water?: { readonly eye?: WoodblockEye };
+  /** The pattern of the foam where a body meets the water. Default `foam.ridge()`, the print as it was. */
+  readonly foam?: ContactFoam;
 };
 
 /**
@@ -217,6 +265,7 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   const rule = spec.print ?? print.bands();
   const sky: WoodblockSky = { ...SKY, ...spec.sky };
   const eye: WoodblockEye = spec.water?.eye ?? { kind: "none" };
+  const pattern: ContactFoam = spec.foam ?? foam.ridge();
   const outline = param("woodblock.outline", 0.05, { min: 0, max: 0.2 });
   return {
     name: "woodblock",
@@ -249,7 +298,12 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       const drawn = sub(1, smoothstep(sub(width, fw), add(width, fw), d));
       const line = mul(mix(drawn, mul(width, 2), crowd), smoothstep(-0.6, -0.1, h));
       c = mix(c, rgb(SEA.line), mul(line, 0.9));
-      c = clawed(c, inks, ctx.contact, xz);
+      // What the swell's lines offer a foam that rides them: how far this is from the nearest line (0 on it, in line
+      // spacings) and how much of a line is printed here (none in the troughs). Not their crowding: that is a screen
+      // derivative, and a foam's edge takes the derivative of whatever shapes it (a derivative of a derivative, which
+      // the sea's cases refuse); where lines crowd the band is a pixel or two wide and has no room for a blade anyway.
+      const lines: SwellLines = { off: d, live: smoothstep(-0.6, -0.1, h) };
+      c = foamed(pattern, ctx.contact, { under: c, inks, xz, swell: h, lines });
       // The far sea fades toward the haze at the horizon as a bokashi (a graded wiping of the block, as the sky's): two
       // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
       // maelstrom's view (examples/maelstrom.ts --style woodblock).
@@ -271,25 +325,181 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   };
 }
 
-/**
- * Clawed foam, from how close a body is: a collar at the body, and fingers that taper outward along the zero lines of a
- * noise field (thin where |noise| is small, narrower the farther out), with an indigo line round the whole shape and
- * loose specks of spray beyond it. None where no body is near: there the band is below -800, where the foam (band >
- * 0.02), the rim (> 0.05) and the specks (> -0.4) are all exactly 0.
- */
-function clawed(c: Expr<"vec3">, inks: WoodblockInks, contact: Contact, xz: Expr<"vec2">): Expr<"vec3"> {
+/** The swell's printed lines here: `off` 0 on a line to 0.5 half way between two; `live` 0..1, how much of a line prints. */
+type SwellLines = { readonly off: Expr<"f32">; readonly live: Expr<"f32"> };
+/** What a foam pattern is printed on: the water's colour so far, where, and the swell there (-1 trough .. 1 crest). */
+type FoamOn = { readonly under: Expr<"vec3">; readonly inks: WoodblockInks; readonly xz: Expr<"vec2">; readonly swell: Expr<"f32">; readonly lines: SwellLines };
+/** The same, where a body is near: `band` and `level` as `Contact` gives them (1 at the body, 0 at the sea's foam width). */
+type FoamNear = FoamOn & { readonly band: Expr<"f32">; readonly level: Expr<"f32"> };
+
+/** The contact foam: nothing where the sea found no body near, the pattern where one may be. */
+function foamed(p: ContactFoam, contact: Contact, on: FoamOn): Expr<"vec3"> {
   switch (contact.kind) {
-    case "clear": return c;
-    case "near": {
-      const near = contact.band;
-      const ridge = abs(noise2(mul(xz, 3.4)));
-      const shape = max(sub(near, 0.6), sub(mul(near, 0.3), ridge));
-      const foam = mul(edgeOf(shape, 0, 0.004), edgeOf(near, 0.02, 0.01));
-      const rim = mul(mul(edgeOf(shape, -0.06, 0.004), sub(1, foam)), edgeOf(near, 0.05, 0.01));
-      const speck = mul(specks(mul(xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
-      return mix(mix(c, rgb(inks.indigo), rim), rgb(inks.cream), max(foam, speck));
-    }
+    case "clear": return on.under;
+    case "near": return patterned(p, { ...on, band: contact.band, level: contact.level });
   }
+}
+
+/** One handler per pattern. */
+function patterned(p: ContactFoam, on: FoamNear): Expr<"vec3"> {
+  switch (p.kind) {
+    case "ridge": return ridge(on);
+    case "rings": return rings(p, on);
+    case "apron": return apron(p, on);
+    case "stipple": return stipple(p, on);
+    case "breakers": return breakers(p, on);
+    case "curls": return curls(p, on);
+  }
+}
+
+/**
+ * Ridge foam, from how close a body is: a collar at the body, and filaments that taper outward along the zero lines of
+ * a noise field (thin where |noise| is small, narrower the farther out), with an indigo line round the whole shape and
+ * loose specks of spray beyond it. None where no body is near: there the band is below -800, where the foam (band >
+ * 0.02), the rim (> 0.05) and the specks (> -0.4) are all exactly 0. (The zero lines of a noise are closed curves: it
+ * prints a net, not claws. It is the default so that every picture made before the other patterns is unchanged.)
+ */
+function ridge(on: FoamNear): Expr<"vec3"> {
+  const near = on.band;
+  const ridge = abs(noise2(mul(on.xz, 3.4)));
+  const shape = max(sub(near, 0.6), sub(mul(near, 0.3), ridge));
+  const foam = mul(edgeOf(shape, 0, 0.004), edgeOf(near, 0.02, 0.01));
+  const rim = mul(mul(edgeOf(shape, -0.06, 0.004), sub(1, foam)), edgeOf(near, 0.05, 0.01));
+  const speck = mul(specks(mul(on.xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
+  return mix(mix(on.under, rgb(on.inks.indigo), rim), rgb(on.inks.cream), max(foam, speck));
+}
+
+/** xz along the unit direction at `degrees` from +x, in periods of `period`. */
+const along = (xz: Expr<"vec2">, degrees: number, period: number): Expr<"f32"> => {
+  const a = (degrees * Math.PI) / 180;
+  return dot(xz, vec2(Math.cos(a) / period, Math.sin(a) / period));
+};
+
+/** How much of the key black a foam's key line prints: a little of the water shows through, as the crash foam's does. */
+const KEY = 0.9;
+
+/**
+ * A flat cream shape with one key line round it: cream where `shape` (in units of the level) is above 0, the key line
+ * where it is within `line` below. Both only where the level is above 0.04, so nothing prints where no body is near.
+ */
+function flat(on: FoamNear, shape: Expr<"f32">, line: number): Expr<"vec3"> {
+  const near = edgeOf(on.level, 0.04, 0.01);
+  const cream = mul(edgeOf(shape, 0, 0.004), near);
+  const key = mul(mul(edgeOf(shape, -line, 0.004), sub(1, cream)), near);
+  return mix(mix(on.under, rgb(on.inks.black), mul(key, KEY)), rgb(on.inks.cream), cream);
+}
+
+/**
+ * Thin arcs along the level's own lines, `count` of them across the level, drifting outward `drift` arcs a second (0:
+ * still): each thins to nothing toward the level's outer edge, and is broken by its own slow mask, which also tapers
+ * its ends. `from`..`to` is the part of the level they are drawn in. Coverage 0..1.
+ */
+function arcs(on: FoamNear, o: { readonly count: number; readonly drift: number; readonly from: number; readonly to: number; readonly weight: number }): Expr<"f32"> {
+  const phase = add(mul(on.level, o.count), mul(time, o.drift));
+  const off = abs(sub(fract(phase), 0.5)); // 0 on an arc
+  const n = floor(phase);
+  const mask = mul(sin(add(along(on.xz, 25, 0.45), mul(n, 2.4))), sin(add(along(on.xz, 115, 0.38), mul(n, 1.7))));
+  const inside = mul(smoothstep(o.from, o.from + 0.25, on.level), sub(1, smoothstep(o.to - 0.08, o.to, on.level)));
+  const half = mul(mul(inside, smoothstep(-0.45, 0.05, mask)), o.weight);
+  return mul(edgeOf(sub(half, off), 0.01, 0.004, 0.08), edgeOf(on.level, 0.04, 0.01));
+}
+
+/** Ripple arcs only: no fill. */
+function rings(p: Extract<ContactFoam, { kind: "rings" }>, on: FoamNear): Expr<"vec3"> {
+  return mix(on.under, rgb(on.inks.cream), arcs(on, { count: p.count, drift: p.drift, from: 0.06, to: 1.2, weight: 0.17 }));
+}
+
+/**
+ * A flat apron with a scalloped edge: the threshold rises with the distance to the nearest point of a square lattice,
+ * so the edge bulges round each point and meets its neighbours in cusps. The threshold varies in two directions, so a
+ * lobe can pinch off into an island once its slope (0.3 a lobe) exceeds the level's (1 a foam width): it does not while
+ * a lobe is wider than 0.3 of the sea's foam width. It breathes a little with the swell.
+ */
+function apron(p: Extract<ContactFoam, { kind: "apron" }>, on: FoamNear): Expr<"vec3"> {
+  const q = vec2(along(on.xz, 27, p.lobe), along(on.xz, 117, p.lobe));
+  const lattice = length(sub(fract(q), 0.5)); // 0 at a lattice point, 0.71 farthest from all
+  const shape = add(sub(sub(on.level, 0.36), mul(lattice, 0.3)), mul(on.swell, 0.05));
+  return flat(on, shape, 0.06);
+}
+
+/**
+ * Printed dots. Two lattices of cells, one dot a cell: the dot's radius grows from nothing as the level passes the
+ * cell's own hashed threshold, so dots are dense and large at the body and few and small outward, and a dot comes and
+ * goes by size, never at once.
+ */
+function stipple(p: Extract<ContactFoam, { kind: "stipple" }>, on: FoamNear): Expr<"vec3"> {
+  // The pixel's size on the water, world units: smooth (the position is), where fwidth of a dot's own distance would
+  // jump at every cell border.
+  const pixel = max(fwidth(on.xz.x), fwidth(on.xz.y));
+  const layer = (degrees: number, period: number, big: number): Expr<"f32"> => {
+    const q = vec2(along(on.xz, degrees, period), along(on.xz, degrees + 90, period));
+    const h = hash22(q);
+    const r = length(sub(sub(fract(q), 0.5), mul(sub(h, 0.5), 0.3)));
+    const radius = mul(saturate(mul(sub(on.level, add(mul(h.x, 0.75), 0.05)), 1 / 0.3)), big);
+    const fw = max(mul(pixel, 0.75 / period), 1e-4);
+    const disc = sub(1, smoothstep(sub(radius, fw), add(radius, fw), r));
+    // Where a cell is under about two pixels the dots cannot be drawn: print their share of the cell instead (the
+    // same tone, no shimmer). A dot smaller than a pixel prints as its share of that pixel; none prints none.
+    const share = mul(mul(radius, radius), Math.PI);
+    return mul(mix(disc, share, smoothstep(0.25, 0.6, fw)), saturate(mul(radius, 1 / 0.02)));
+  };
+  const dots = max(layer(12, p.dot, 0.36), layer(51, p.dot * 0.62, 0.32));
+  return mix(on.under, rgb(on.inks.cream), dots);
+}
+
+/**
+ * The swell's own lines breaking on the body: a narrow collar, and along each printed line that comes within the level
+ * a blade of foam that tapers away from the body. The blades move with the swell because the lines do.
+ */
+function breakers(p: Extract<ContactFoam, { kind: "breakers" }>, on: FoamNear): Expr<"vec3"> {
+  // 1 on a line, 0 from 0.07 of the spacing away; squared, so a blade's sides are concave.
+  const on_line = saturate(sub(1, mul(on.lines.off, 1 / 0.07)));
+  const blade = mul(mul(on_line, on_line), on.lines.live);
+  const shape = add(sub(on.level, 0.7), mul(blade, p.reach));
+  return flat(on, shape, 0.06);
+}
+
+/**
+ * Rolling foam, after the round 4 pictures (docs/art_direction/crab_round4): a low cream collar of round lobes, each
+ * with its key line and lying over the one behind it, the larger ones with a curled head; and a ripple arc or two
+ * beyond. One lobe a cell of a jittered lattice, its radius growing with the level (large at the body, nothing at the
+ * outer edge); where lobes overlap the one with the higher hash is in front, its outline printed over the others.
+ */
+function curls(p: Extract<ContactFoam, { kind: "curls" }>, on: FoamNear): Expr<"vec3"> {
+  const q = vec2(along(on.xz, 21, p.lobe), along(on.xz, 111, p.lobe));
+  const cell = floor(q), at = sub(q, cell);
+  // The four cells whose lobes can reach here: this one and the three on the pixel's side of it (a lobe's centre is
+  // within 0.2 of its cell's middle and its radius at most 0.74, so it never reaches past the middle of a neighbour).
+  const side = vec2(select(lt(at.x, 0.5), -1, 1), select(lt(at.y, 0.5), -1, 1));
+  const grow = smoothstep(0.1, 0.6, on.level);
+  const line = 0.1; // the key line's width, in cells
+  // The lobe in front here: its hash, how far inside its edge this is (positive inside, in cells), and where in it
+  // (the offset from its centre over its radius, for the curl).
+  let front: Expr<"f32"> = f(-1), inside: Expr<"f32"> = f(-1), local: Expr<"vec2"> = vec2(0, 0);
+  for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+    const c = add(cell, vec2(mul(side.x, i), mul(side.y, j)));
+    const h = hash22(c);
+    const off = sub(q, add(add(c, 0.5), mul(sub(h, 0.5), 0.4)));
+    const radius = mul(grow, mix(0.5, 0.74, h.y));
+    const s = sub(radius, length(off));
+    // A lobe covers a pixel if the pixel is in it or on its key line; a lobe of no size covers none.
+    const wins = and(gt(s, -line), and(gt(radius, 0.12), gt(h.x, front)));
+    inside = select(wins, s, inside);
+    local = select(wins, off.div(max(radius, 1e-3)), local);
+    front = select(wins, h.x, front);
+  }
+  const covered = edgeOf(front, 0, 1e-5);
+  const cream = mul(edgeOf(inside, 0, 0.004), covered);
+  // The curled head: one turn of a spiral in key ink inside the front lobe, from its edge inward, tapering.
+  const rn = length(local);
+  const turn = add(mul(atan2(local.y, local.x), 1 / (2 * Math.PI)), mul(rn, 1.35));
+  const arm = abs(sub(fract(add(turn, mul(front, 7))), 0.5));
+  const curl = mul(mul(edgeOf(sub(mul(sub(1, rn), 0.16), arm), 0, 0.004, 0.1), smoothstep(0.2, 0.3, rn)), mul(cream, step(0.45, front)));
+  const key = max(mul(sub(covered, cream), KEY), mul(curl, KEY));
+  const near = edgeOf(on.level, 0.04, 0.01);
+  const lobes = mix(mix(on.under, rgb(on.inks.cream), mul(cream, near)), rgb(on.inks.black), mul(key, near));
+  // Beyond the collar, a ripple arc or two on the level's own lines.
+  return mix(lobes, rgb(on.inks.cream), mul(arcs(on, { count: 5, drift: 0, from: 0.03, to: 0.3, weight: 0.14 }), sub(1, covered)));
 }
 
 /** Round specks of spray, one per cell of p at a hashed spot, on about a third of the cells; 0..1 coverage. */
