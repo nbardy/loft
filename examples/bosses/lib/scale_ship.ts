@@ -1,0 +1,52 @@
+// The one small living ship every boss picture carries for scale (docs/art_direction/DIRECTION.md: "each monster
+// dwarfs a ship; every picture has one small ship with blue sails for scale"). The game's sloop at 3.8 units, a warm
+// brown hull, cream trim and team stripe, and sails in the print's blue. Each scene places it (`scaleShip.afloat`, or
+// `afloatChart` when an attack targets it); what it is is decided here only.
+//
+// The blue has to print blue in every rule a boss prints by (src/style/woodblock.ts, `Print`):
+//  - `keys` (the Maelstrom Wyrm): the scene lists `SAIL` among its keys, so the cloth prints in SAIL's two inks;
+//  - `overprint` (the Reefback Titan): the cloth prints as painted, its shadow side overprinted;
+//  - `bands` (the Lamp, Thundermaw, the Tithe Fleet): a paint prints by value in black, indigo, pale blue and cream,
+//    and the one accent is red or yellow, so the sails came out pale blue-grey. `sailInked` prints the cloth in
+//    SAIL's inks instead. It is the one work-round left for a library gap: `print.bands` has no second accent and no
+//    blue hue. A blue `AccentHue` (or a list of accents) in src/style/woodblock.ts would delete it.
+
+import { distance, dot, mix, ship, sub, type Rgb, type ShipColours, type Style } from "../../../src/index.ts";
+import { edgeOf, rgb } from "../../../src/style/shared.ts";
+import { sloop } from "../../scenes/lib/fleet.ts";
+
+/** Hull length, world units: small beside every monster, and still a ship from the strategy camera. */
+export const SCALE_SHIP_LENGTH = 3.8;
+
+/** The sailcloth: the paint, and the two inks it prints in (shadow side, lit side). */
+export const SAIL = { key: [0.2, 0.4, 0.9], shadow: [0.14, 0.26, 0.6], lit: [0.26, 0.46, 0.86] } as const satisfies { key: Rgb; shadow: Rgb; lit: Rgb };
+
+/** Wood, cream and black: no warm accent on the ship (the Lamp's yellow and the bosses' vermilion stay theirs). */
+export const SCALE_SHIP_COLOURS: ShipColours = {
+  hull: [0.45, 0.28, 0.14], bottom: [0.45, 0.28, 0.14], wale: [0.05, 0.05, 0.06], trim: [0.92, 0.87, 0.74],
+  deck: [0.45, 0.28, 0.14], spar: [0.45, 0.28, 0.14], cloth: SAIL.key, rope: [0.05, 0.05, 0.06], team: [0.92, 0.87, 0.74],
+};
+
+export const scaleShip = ship(sloop("scaleShip", SCALE_SHIP_LENGTH, SCALE_SHIP_COLOURS));
+
+/**
+ * How near a paint must be to the sail's (rgb distance) to print in its inks: the cloth's seams and tabling are 0.86
+ * and 0.82 of it (0.18 away), and print as the cloth, as they do under `keys`.
+ */
+const SAIL_REACH = 0.2;
+
+/**
+ * A `bands` print with the sailcloth printed in SAIL's inks (shadow and lit by the same hard terminator as the print's
+ * own light). Every other paint prints as the style prints it. See the header: a work-round for `print.bands`.
+ */
+export function sailInked(style: Style): Style {
+  return {
+    ...style,
+    shade: (ctx) => {
+      const lit = edgeOf(dot(ctx.normal, ctx.sun), 0, 1e-5);
+      const sail = mix(rgb(SAIL.shadow), rgb(SAIL.lit), lit);
+      const isSail = edgeOf(sub(SAIL_REACH, distance(ctx.base, rgb(SAIL.key))), 0, 1e-5);
+      return mix(style.shade(ctx), sail, isSail);
+    },
+  };
+}

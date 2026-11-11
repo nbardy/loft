@@ -13,22 +13,24 @@
 // flat across a capsule on the water (src/spacetime/rear.ts). It is an `attack` like any other: the warning is the
 // capsule drawn on the water (`telegraph`), the pose is derived from the attack's envelopes, and after the slam that
 // arch's pearl gland swells open (the game's exposure window); the head rears, turns to the lane, roars and flares its
-// gills through it. Here the attack loops on time (it arms LASH.at seconds
-// into every loop); a game sets `lash.at` and `lash.warn` instead.
+// gills through it; where it slams down the water bursts into clawed foam (lib/impact.ts). Here the attack arms
+// every LOOP seconds, first `lash.at` seconds in (`every`); a game sets `lash.at` and `lash.warn` instead.
 //
 // The style is woodblock with its body inks retuned for this monster (DIRECTION.md: slate and olive coils, vermilion
 // gills and pearl glands): every paint below is one of the keys in INKS, and each key prints in two inks, shadow and
-// lit. The sea, the key line and the paper are woodblock's own.
+// lit (`print.keys`). The sea, the key line and the paper are woodblock's own; the whirlpool's foam arms are printed
+// by the style from the whirlpool's own foam, and its eye in the key black (`water.eye`).
 
 import {
-  abs, add, clamp, cos, crest, cross, distance, div, dot, draw, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, min, mix,
-  mod, mul, normalize, on, place, points, pow, scene, sea, select, ship, sin, smoothstep, spacing, step, strand, sub, TAU, through, time,
-  vec2, vec3, vec4, whirlpool, length, woodblock, type Chart, type Expr, type F, type Frame, type In, type P3, type ShadeCtx, type Style,
+  abs, add, clamp, cos, crest, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, mix,
+  mod, mul, normalize, on, pick, place, points, pow, print, scene, sea, select, sin, smoothstep, spacing, step, strand, sub, TAU, through,
+  time, vec2, vec3, whirlpool, length, woodblock, type Chart, type F, type Frame, type In, type P3,
 } from "../../src/index.ts";
-import { animate, attack, hit, part, telegraph } from "../../src/spacetime/index.ts";
+import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { landsInside } from "../../src/check.ts";
-import { edgeOf } from "../../src/style/shared.ts";
-import { sloop } from "../scenes/lib/fleet.ts";
+import { SAIL, scaleShip } from "./lib/scale_ship.ts";
+import { impactFoam } from "./lib/impact.ts";
+import { PRINT_WARNING } from "./lib/warning.ts";
 
 type Rgb = readonly [number, number, number];
 
@@ -106,54 +108,18 @@ const INKS = {
   vermilion: { key: [0.85, 0.22, 0.12], shadow: [0.6, 0.15, 0.1], lit: [0.82, 0.25, 0.16] },
   pearl: { key: [0.97, 0.97, 0.95], shadow: [0.66, 0.72, 0.78], lit: [0.98, 0.96, 0.9] },
   wood: { key: [0.45, 0.28, 0.14], shadow: [0.27, 0.16, 0.09], lit: [0.5, 0.33, 0.18] },
-  sail: { key: [0.2, 0.4, 0.9], shadow: [0.14, 0.26, 0.6], lit: [0.26, 0.46, 0.86] },
+  // The scale ship's sailcloth (lib/scale_ship.ts): its hull, trim and ropes are wood, cream and black above.
+  sail: SAIL,
 } as const satisfies Record<string, { key: Rgb; shadow: Rgb; lit: Rgb }>;
 
 /** How dark the funnel's shading must be (the whirlpool's crest shade, negative) before it prints as the black eye. */
 const SEA_EYE = 1.5;
 
-/** The scale ship: a small sloop with blue sails, at the rim beyond where the lash lands. */
-const SHIP = { length: 3.8, beyond: 4.2, along: -1.4 };
+/** The scale ship (lib/scale_ship.ts): at the rim beyond where the lash lands. */
+const SHIP = { beyond: 4.2, along: -1.4 };
 
-// ==== the style: woodblock, with this monster's inks ================================================================
-
-/** An index expression equals a whole number. */
-const is = (i: F, k: number) => lt(abs(sub(i, k)), 0.5);
 const K = (k: keyof typeof INKS) => INKS[k].key;
 const rgb = (c: Rgb) => vec3(c[0], c[1], c[2]);
-
-/** The nearest key's ink in shadow or lit (two tones of light, as woodblock's own shade). */
-function printed(ctx: ShadeCtx): Expr<"vec3"> {
-  const lit = edgeOf(dot(ctx.normal, ctx.sun), 0.0, 1e-5);
-  const inks = Object.values(INKS);
-  let best: F = distance(ctx.base, rgb(inks[0]!.key));
-  let colour: Expr<"vec3"> = mix(rgb(inks[0]!.shadow), rgb(inks[0]!.lit), lit);
-  for (const ink of inks.slice(1)) {
-    const d = distance(ctx.base, rgb(ink.key));
-    colour = select(lt(d, best), mix(rgb(ink.shadow), rgb(ink.lit), lit), colour);
-    best = min(best, d);
-  }
-  return colour;
-}
-
-/**
- * Woodblock's water, plus what it leaves out: the whirlpool's foam arms (`ctx.foam` carries them; woodblock prints only
- * its own clawed contact foam) printed in cream, and the eye of the pool printed near black.
- */
-function wyrmPrint(): Style {
-  const base = woodblock();
-  return {
-    ...base,
-    shade: printed,
-    water: (ctx) => {
-      const c = base.water(ctx);
-      const arms = edgeOf(ctx.foam, 0.45, 0.02);
-      const eye = edgeOf(mul(ctx.crest, -1), SEA_EYE, 0.02);
-      const inked = mix(mix(c.xyz, rgb(INKS.cream.lit), arms), rgb(INKS.black.lit), mul(eye, 0.85));
-      return vec4(inked, c.w);
-    },
-  };
-}
 
 // ==== the water =====================================================================================================
 
@@ -216,11 +182,9 @@ const laneAngle = lashAngle + LASH.bearing;
 const laneA: [number, number] = [lashR * Math.cos(lashAngle), lashR * Math.sin(lashAngle)];
 const laneB: [number, number] = [laneA[0] + LASH.length * Math.cos(laneAngle), laneA[1] + LASH.length * Math.sin(laneAngle)];
 
-/** The loop's arming time: `lash.at` seconds into every loop. */
-const cycleStart = mul(floor(div(time, LOOP)), LOOP);
 const lash = attack({
   name: "lash",
-  arm: add(cycleStart, input("lash.at", "f32", [LASH.at])),
+  arm: every(LOOP, input("lash.at", "f32", [LASH.at])),
   warn: input("lash.warn", "f32", [LASH.warn]),
   target: { kind: "disc", centre: lift<"vec2">(laneB), radius: lift<"f32">(0.5) },
   part: "coil",
@@ -301,14 +265,12 @@ const pearl = strand({
   name: "wyrmPearl", spine: (m) => through(m, [[0, -0.42, 0], [0, 0.42, 0]]), stations: 4, girth: 0.45,
   tips: [{ round: 0.5 }, { round: 0.5 }], up: [1, 0, 0], paint: K("pearl"), detail: { along: 10, around: 12 },
 });
-const archAt = (k: F, pick: (a: (typeof ARCHES)[number]) => number): F =>
-  ARCHES.slice(1).reduce<F>((acc, a, i) => select(is(k, i + 1), pick(a), acc), lift<"f32">(pick(ARCHES[0])));
 /** How far the pearl sits out of the skin (rho), and how much it swells while its gland is open. */
 const PEARL = { out: 0.86, open: 0.45 };
 const pearls = draw.points("wyrmPearls", place(points(ARCHES.length, (k) => ({
-  at: vec3(archAt(k, (a) => a.at), 0.25, PEARL.out),
+  at: vec3(pick(k, ARCHES.map((a) => a.at)), 0.25, PEARL.out),
   // The lashed arch's gland swells open after the slam.
-  scale: add(1, mul(select(is(k, LASH.arch), open, 0), PEARL.open)),
+  scale: add(1, mul(select(eq(k, LASH.arch), open, 0), PEARL.open)),
 })), body), pearl);
 
 // ==== the ship ======================================================================================================
@@ -317,10 +279,26 @@ const shipBearing = laneAngle + SHIP.along / (POOL.radius + SHIP.beyond);
 const shipR = Math.hypot(laneB[0], laneB[1]) + SHIP.beyond;
 const shipAt: [number, number] = [shipR * Math.cos(shipBearing), shipR * Math.sin(shipBearing)];
 const WIND = [0.6, 0.8] as const;
-const scaleShip = ship(sloop("skiff", SHIP.length, {
-  hull: K("wood"), bottom: K("wood"), wale: K("black"), trim: K("cream"), deck: K("wood"), spar: K("wood"),
-  cloth: K("sail"), rope: K("black"), team: K("cream"),
-})).afloat(vortex, { at: shipAt, heading: shipBearing + Math.PI / 2, wind: WIND });
+const skiff = scaleShip.afloat(vortex, { at: shipAt, heading: shipBearing + Math.PI / 2, wind: WIND });
+
+// ==== the slam's water ==============================================================================================
+// Where the loop lands (src/spacetime/rear.ts): its top `inset` short of the lane's end, its two legs at the loop's
+// half-width either side of the lane. The top lands at the arming time; the legs follow down the body.
+const laneDir: [number, number] = [Math.cos(laneAngle), Math.sin(laneAngle)];
+const laneSide: [number, number] = [-laneDir[1], laneDir[0]];
+const loopHalf = LASH.radius - B.radius * 1.25, loopReach = LASH.length - B.radius * 1.25;
+const onLane = (along: number, across: number): [number, number] =>
+  [laneA[0] + laneDir[0] * along + laneSide[0] * across, laneA[1] + laneDir[1] * along + laneSide[1] * across];
+const slamSince = sub(time, lash.arm);
+const slam = impactFoam("wyrmSlam", water, {
+  area: hit.capsule({ a: laneA, b: laneB, radius: LASH.radius }), pad: 2.5,
+  splashes: [
+    { at: onLane(loopReach - 0.6 * loopHalf, 0), since: slamSince },
+    { at: onLane(0.55 * (loopReach - loopHalf), loopHalf), since: sub(slamSince, 0.12) },
+    { at: onLane(0.55 * (loopReach - loopHalf), -loopHalf), since: sub(slamSince, 0.12) },
+  ],
+  reach: 2.8, seconds: 1.5, foam: INKS.cream.lit, line: INKS.black.lit,
+});
 
 // ==== the head ======================================================================================================
 // Reference: the East Asian dragon as the woodblock printers cut it (Hokusai's and Kuniyoshi's sea dragons), built on
@@ -423,7 +401,7 @@ const TEETH = 5;
 const teethOn = (name: string, host: Chart, from: number, to: number, edge: number, spread: number, size: number) =>
   draw.points(name, place(points(2 * TEETH, (i) => {
     const j = mod(i, TEETH), side = select(lt(i, TEETH), -1, 1);
-    const fang = select(is(j, TEETH - 2), 2.2, 1);
+    const fang = select(eq(j, TEETH - 2), 2.2, 1);
     return { at: vec3(add(from, mul(j, (to - from) / (TEETH - 1))), add(edge, mul(side, spread)), 0.9), scale: mul(mul(add(0.9, mul(j, 0.08)), fang), size) };
   }), host), tooth);
 const teeth = [teethOn("wyrmTeethUp", head, 0.32, 0.9, 0.75, 0.115, 1.05 * S), teethOn("wyrmTeethDown", jaw, 0.32, 0.92, 0.25, 0.13, 0.85 * S)];
@@ -538,10 +516,10 @@ export default scene({
   sea: water,
   things: [
     ...restAnimated.things, head, jaw, ...teeth, ...eyes, brow, nostrils, antlers, whiskers, ...gills, ridge, pearls,
-    telegraph(lash, { style: { fill: INKS.vermilion.lit, bone: INKS.cream.lit, ink: INKS.black.lit, flash: [1, 0.97, 0.9], fillFrom: 0.4, fillTo: 0.92, spacing: 1.1, edge: 0.2 } }),
-    ...scaleShip,
+    telegraph(lash, { style: { ...PRINT_WARNING, spacing: 1.1, edge: 0.2 } }),
+    slam, ...skiff,
   ],
-  style: wyrmPrint(),
+  style: woodblock({ print: print.keys(INKS), water: { eye: { kind: "ink", below: -SEA_EYE, amount: 0.85 } } }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     // Pulled back and aimed past the pool so the head, held high at the far side, clears the top of the frame.
