@@ -87,7 +87,7 @@ export const S = {
     light: { height: 3.0, girth: [0.5, 0.34] as const, lean: 0.28, inset: 0.8, size: 0.5, gulls: 3 },
   },
 
-  // ---- the terraces (back/terraces.ts): the island as one screw of shell plates that become terraces; read only by it ----
+  // ---- the terraces (back/terraces.ts): a turf cap on cream cliffs with broad shell plates laid up them; read only by it ----
   // Bearings are degrees round the island's centre from the bow (+x), positive toward the right flank (+z). Heights are
   // above the still water unless said; lengths are crab units.
   terraces: {

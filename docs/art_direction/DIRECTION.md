@@ -843,6 +843,51 @@ side) and its execution made it a thread; a thread is a uniform pattern, not thr
 8. **Unchanged.** Base `game` hashes as main's (`0c1b1e4368820ff8`, `0db3c25b4d11121b`, `2315edeb83c975e9`); islander and
    fiddler as taken after the merge, unless the spiral's barnacles are swapped for the kit.
 
+#### Amended while building (before scoring), and why
+
+- The broad plates first sat all on the game camera's half (332, 42, 108). The first render showed the aside claw covers
+  that half's lower flank from `game` (x 400 to 670 below y = 190), and every other camera saw bare stone: moved to
+  three corners (34, 158 arching over the beach, 272) with blades at 96, 212, 330; leaf widest a fifth of the way up,
+  full to near the tip ((1 - s)^0.45 (1 + 0.6 s)); the cliff a straight cone (`cliff` 1.0) so a high camera sees the
+  plates' faces. The first leaf (widest a quarter up, then tapering) left the upper cliff bare.
+- The point from 206 to 192 and the beach to 164 +- 15: the render put the light's foot behind the cap from `game`
+  (the body at t = 1 stands about 0.6 higher than the rest pose the theory used; the finial measured 17 px above its
+  prediction). A silhouette test (the theory's hull projected, raised 0.6) gave 190 or less as clear of the cap.
+- Crown 1.2 to 0.7 and cream stone with strata 6.5 to the island's height: the paint-overs' island is a low wedge with
+  pale, finely lined cliffs; ours read as a bald drum under the turf.
+- Light 3.6 tall, girth 0.64 to 0.46, lean 0.24 (0.36 laid it over toward the high cameras).
+
+#### Scored (2026-11-12, at the fifth pass's last commit; bruiser, t = 1, 1280 x 800)
+
+1. **Plates, `game`: missed.** One broad plate shows (the bow-right one, about 90 px, its lower half behind the
+   antennae) and one blade; the other two broad plates are on the far side. Wrong in the reasoning: I placed plates for
+   the cameras before checking what the bruiser's own claw and antennae cover; there is no bearing where three broad
+   plates show from `game` with the claw aside. From `back`: the beach plate 265 px rim to tip, about 330 across; a
+   blade 150 px. From the paint-overs' four cameras: two or three broad plates each.
+2. **The light, `game`.** Finial at (457, 45) (point at 192; predicted for 206: (522, 49)); mound to finial 125 px
+   (predicted 143), 38 px across its foot (42). Its crusted foot shows in white water beside the cap, left of it: it
+   reads as a light on rock off the island's corner; the point's rock itself is mostly behind the claw's tip. `back`:
+   205 px or more, the foot cut by the frame's bottom edge (predicted 220, in frame by 80: missed, the point moved
+   toward that camera).
+3. **The beach.** `back`: a pale crescent under the beach plate's arch, about 270 px visible before the frame's edge
+   (predicted 235 by 137). `game`: hidden by the claw (as predicted).
+4. **The cap, `back`.** 300 px across (predicted 255 with the higher crown).
+5. **Evenness.** Plate half-widths 36, 38, 33 and blades 15, 12, 17; gaps between roots 62, 62, 54, 60, 58, 64 degrees:
+   **nearly even** in bearing, unequal only in width. A remaining fault; a bunched order (34, 80, 150, 200, 268, 316:
+   gaps 46 to 78) is the next thing to try.
+6. **Clear.** `bruiser` 16 of 16; the thrown ship's nearest target is the body (2.13), not the island; every variant's
+   count as main's; the lineup with the bruiser in the islander's slot 44 of 44.
+7. **Cost.** Draws: 131, the same as the headland's (the back's own: island 2, list 1, light 12 with outlines).
+   Triangles over the base atoll: +14,372 (headland +13,656; predicted within 1,500: held). The list: 342 copies (the
+   first build's 692 halved: 6 seam clusters, lighter recipes). Time, under load (the lighting worker profiled at the
+   same time; frames 2.1 to 2.8 ms, between the two clock states): in the one round where both builds sat in the same
+   state, the back's own draws 0.354 ms against the headland's 0.314 (+0.04, under one tick: island 0.131 against
+   0.157, list 0.223 against 0.157). Other rounds moved ours wholesale to 0.69 to 0.73 (a state change, not like for
+   like). Not a clean slow-state reading; the list is about one tick dearer than the headland's.
+8. **Unchanged.** Base `0c1b1e4368820ff8`, `0db3c25b4d11121b`, `2315edeb83c975e9` (held); fiddler `247e38d376bb6f99`
+   (t = 1), `bbb893662a1c567f` (t = 11.3) (held). Islander changed by the barnacle swap: `175282b767d91ee8` to
+   `6bab240b7cfd410a` (t = 1), `9146c0ee531360d8` to `590f10d1a79b8352` (t = 11.3).
+
 ## Round 4: the fiddler's and the spider crab's faces (2026-11-12)
 
 The owner, after the islander: "did we refine other crabs' gestures and faces?" We had not. The islander's face is a
