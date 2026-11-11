@@ -1,4 +1,4 @@
-# Lighting the print: recipes
+# Lighting the print: looks and recipes
 
 The woodblock style (`src/style/woodblock.ts`) lights its bodies by a recipe: a record of shading treatments, each on or
 off with its own options. With no recipe the style is the print as it was (the rule's own two tones, split at
@@ -8,44 +8,71 @@ predicted and what came out: `docs/art_direction/DIRECTION.md`, "Lighting and sh
 
 ## Picking one
 
-```ts
-import { LIGHT, light, woodblock } from "loft";
+A look is chosen by one word. In a scene:
 
-woodblock({ light: LIGHT.threeTone })                 // a named recipe
-woodblock({ light: light.recipe({                     // your own: every treatment not given is off
+```ts
+import { LIGHT, LOOKS, light, paint, seaPalette, woodblock } from "loft";
+
+woodblock({ light: LIGHT.threeTone })                       // a lighting recipe
+woodblock(LOOKS.engraving.on({ print: myRule }))            // a whole look over the scene's own spec
+woodblock({ light: light.recipe({                           // your own: every treatment not given is off
   core: light.core(light.edge.section({ at: 0.3 })),
   rim: light.rim({ width: 0.08 }),
 }) })
+woodblock({ paint: { mottle: paint.mottle() }, water: { palette: seaPalette.deep() } })   // palette options, each off by default
 ```
 
-From the command line, on any scene drawn in the woodblock style, without editing it:
+The crab's design has the looks as a slot declared a look (`looks: ["foam", "light"]` in
+`examples/bosses/reefback_titan.ts`), so it does not multiply `check --combinations`:
 
 ```
-bun src/cli/main.ts render examples/bosses/crab_lineup.ts --light cel --views lineup --time 2.5 --out out/x.webp
+bun src/cli/main.ts render examples/bosses/reefback_titan.ts --variant bruiser,light=engraving --views game --out out/x.webp
 ```
 
-`--light` works with `render`, `clip`, `frames`, `profile`, `build` and `variants`. It asks the scene's style for one of
-its named lightings (`Style.lights`), so it is not a slot of a design and does not multiply `check --combinations`. An
-unknown name fails and lists the names.
+On any scene drawn in the woodblock style, without editing it, `--light <look>` (with `render`, `clip`, `frames`,
+`profile`, `build`, `variants`) asks the style for the look of that name (`Style.lights`); an unknown name fails and
+lists the names:
 
-## The library (`LIGHT`)
+```
+bun src/cli/main.ts clip examples/bosses/crab_lineup.ts --light engraving --view lineup --seconds 24 --out out/x.mp4
+```
 
-Cost is what the recipe adds to a normal frame of the bruiser from `game` at 1280x800, beside the print as it is in the
-same timing rounds (COST_NOTE).
+The sun is the host input `sun` on the crab and the lineup: `--input sun=-0.95,0.3,0.05` puts it low behind the lineup.
+
+## The looks (`LOOKS`)
+
+Cost is what the look adds to a normal frame of the bruiser from `game` at 1280x800, beside the print as it is in
+alternating timing rounds (COST_NOTE).
 
 | Name | What it is | For | Cost |
 |---|---|---|---|
 | `flat` | No shading: every surface in its lit ink, and the key line. | A diagram, a far camera, a base to build on. | COST_flat |
-| `twoTone` | The shadow side of every form, and the shadows the parts cast on each other. | The default cel look; reads at game size. | COST_twoTone |
-| `threeTone` | `twoTone` and a hard lighter shape on each form's sunward shoulder. | A wet shell; close cameras. | COST_threeTone |
-| `bokashi` | Flat inks with a graded wash under every form and up from the water. | The quiet print; a still. The one soft recipe. | COST_bokashi |
-| `hatched` | The shadow side drawn in lines across the form, swelling as it turns away. | An engraving; close and middle cameras. | COST_hatched |
-| `contact` | Flat inks, and a dark band where a part lies on another or stands in the water. | Separating parts without lighting them. | COST_contact |
-| `rim` | The body mostly under a deep indigo block, a cream edge toward the light. | Night, a storm, a lamp behind. | COST_rim |
-| `cel` | Two tones, cast shadows, contact bands, sparse highlights. | The nearest match to the painted `shade_best`. | COST_cel |
+| `twoTone` | The shadow side of every form in a warm block, and the shadows the parts cast on each other. | The cel look; reads at game size. | COST_twoTone |
+| `threeTone` | `twoTone` and a hard cream shape on each form's lit shoulder. | A wet shell; close cameras. | COST_threeTone |
+| `bokashi` | Flat inks, each form's lower half and its foot washed into indigo. | The quiet print; a still. The one soft look. | COST_bokashi |
+| `hatched` | The shadow side engraved: lines round the form in each ink's own shade, 5 to 10 px apart at any distance, ragged ends. | The video; close and middle cameras. | COST_hatched |
+| `contact` | Flat inks, a dark band where a part lies on another or stands in the water. | Separating parts without lighting them. | COST_contact |
+| `rim` | The body mostly under a deep indigo block, a cream edge toward the sun. | Night, a storm, a lamp behind. | COST_rim |
+| `cel` | Two tones, cast shadows, contact bands, sparse highlights (the painted `shade_best` mix). | The richest game-camera look. | COST_cel |
+| `sunset` | Hatched toward a light fixed up-left of the camera, undersides washed violet, a gold rim toward the sun. | The sun low behind the subject: fronts stay readable. | COST_sunset |
+| `referencePalette` | The print's own two tones in the reference palette (below). | The reference pictures' colour without changing the light. | COST_referencePalette |
+| `engraving` | `hatched` in the reference palette. **The four-crab video's look.** | The video, a poster. | COST_engraving |
+| `engravingSunset` | `sunset` in the reference palette. | The video with the sun behind the line. | COST_engravingSunset |
 
-A recipe that casts shadows or bands overlaps (`twoTone`, `threeTone`, `contact`, `rim`, `cel`) pays for drawing them
-after the bodies; the others shade in the bodies' own fragments and add no draw.
+A look that casts shadows or bands overlaps (`twoTone`, `threeTone`, `contact`, `rim`, `cel`) pays for drawing them
+after the bodies (a phase `on-bodies`); the others shade in the bodies' own fragments and add no draw.
+
+## The reference palette (options of the style, each off by default)
+
+`REFERENCE_PAINT` and the deep sea are what `referencePalette`, `engraving` and `engravingSunset` turn on.
+
+| Option | What it does |
+|---|---|
+| `paint.warm: paint.hotter()` | A paint whose red stands above its green and blue by 0.33 is multiplied by (1.27, 1.18, 1): brick (0.66, 0.22, 0.13) to (0.84, 0.26, 0.13). |
+| `paint.mottle: paint.mottle()` | Darker blotches (0.74 of the paint) on the warm paints, from two octaves of noise in the surface's own anchor (they ride the body, never swim), about 0.4 units across. |
+| `paint.line: paint.swelling()` | The key line up to 0.05 heavier inside the hull on the side away from the light. |
+| `outline: 1.4` | The key line 1.4 times the param `woodblock.outline` (a factor: the param is one per process). |
+| `water.palette: seaPalette.deep()` | The sea one deep indigo (0.08, 0.17, 0.30), darker troughs, thin cream lines, a dark far haze. The foam is untouched. |
 
 ## The treatments
 
@@ -54,7 +81,7 @@ Each is a field of `LightRecipe`, a sum type with an `off`, built by `light.<nam
 | Field | On | Options (defaults) |
 |---|---|---|
 | `core` | The shadow block printed flat on the shadow side of a terminator. | `light.core(edge)`; an edge is `light.edge.section({ at: 0.4, key })` or `light.edge.sun({ at, key })` |
-| `hatch` | Lines across the form whose weight swells from nothing above the terminator to `cap` below it. | `edge` (section at 0.25), `over` 0.5, `deep` 0.5, `cap` 0.8, `spacing` 0.2, `least` 5.5 px |
+| `hatch` | Lines round the form (constant length along its spine) whose weight swells from nothing above the terminator to `cap` below it; the period on screen kept between `least` and 2 `least` px by splitting or merging lines (measured on the lines' own screen rate); none on rings seen end on; each line's end moved by a hash of its index. | `edge` (section at 0.3, key 60 off the lens), `over` 0.16, `deep` 0.32, `cap` 0.72, `spacing` 0.2, `least` 5 px, `ragged` 0.1 |
 | `waterline` | A flat band where a body stands in the water. | `height` 0.22, `amount` 1 |
 | `bokashi` | The block wiped to a grade: up from the water, and round every underside. | `foot` 2.2, `under` [-0.15, 0.75], `amount` 1 |
 | `rim` | A light edge inside the key line on the key's side, cut out of the block. | `width` 0.1, `ink` cream, `amount` 0.9, `key` the sun |
@@ -65,7 +92,7 @@ Each is a field of `LightRecipe`, a sum type with an `off`, built by `light.<nam
 
 Two ideas the options name:
 
-- **The key** (`light.key.sun()`, `light.key.offLens(45)`). The game camera looks down the sun (23 degrees off it), and
+- **The key** (`light.key.sun()`, `light.key.offLens(45)`, `light.key.camera(side, up)`; `camera` is a light fixed to the camera, for a sun behind the subject). The game camera looks down the sun (23 degrees off it), and
   a form lit from behind the lens has no shadow side: a ball shows 4% of itself in shadow. `offLens(n)` is the sun
   swung away from the view axis, in the plane of the two, until it is `n` degrees off; a camera already further off
   sees the sun itself. It is one direction for the whole picture and turns with the camera, not with the things. Cast

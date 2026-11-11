@@ -11,7 +11,7 @@
 // Everything goes under out/shade/ (git-ignored). Each command prints one line per item, not the renderer's log.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { LOOKS } from "../src/style/woodblock.ts";
 
 const OUT = "out/shade";
@@ -19,8 +19,8 @@ const CRAB = "examples/bosses/reefback_titan.ts", LINEUP = "examples/bosses/crab
 /** The print as it is first, then the library. */
 const ALL = ["asPrinted", ...Object.keys(LOOKS)];
 const REFS: Readonly<Record<string, string>> = {
-  flat: "shade/shade_flat", twoTone: "shade/shade_two_tone", threeTone: "shade/shade_three_tone", bokashi: "shade/shade_bokashi", hatched: "shade/shade_hatched",
-  contact: "shade/shade_contact", rim: "shade/shade_rim", cel: "shade/shade_best_game", referencePalette: "crab_round4/stalk_hybrid", engraving: "shade/shade_hatched",
+  flat: "shading/shade_flat", twoTone: "shading/shade_two_tone", threeTone: "shading/shade_three_tone", bokashi: "shading/shade_bokashi", hatched: "shading/shade_hatched",
+  contact: "shading/shade_contact", rim: "shading/shade_rim", cel: "shading/shade_best_game", referencePalette: "crab_round4/stalk_hybrid", engraving: "shading/shade_hatched",
   sunset: "lineup/face_pass", engravingSunset: "lineup/lineup_wide",
 };
 const ART = `${process.env.HOME}/git/loft/docs/art_direction`;
@@ -57,11 +57,11 @@ function stills(): void {
 function lineup(): void {
   mkdirSync(`${OUT}/lineup`, { recursive: true });
   for (const r of pick(["asPrinted", ...VIDEO_LOOKS])) {
-    const dir = `${OUT}/lineup/${r}`;
-    if (existsSync(dir) && !args.includes("--force")) continue;
+    const out = `${OUT}/lineup/${r}.webp`;
+    if (existsSync(out) && !args.includes("--force")) continue;
     const t = performance.now();
-    const log = loft(["frames", LINEUP, ...lightOf(r), ...sunOf(r), "--view", "lineup", "--times", "2.5,18", "--size", "1280x720", "--out", dir]);
-    console.log(`lineup_${r}  ${((performance.now() - t) / 1000).toFixed(0)} s  ${hashes(log)}  ${readdirSync(dir).join(" ")}`);
+    loft(["frames", LINEUP, ...lightOf(r), ...sunOf(r), "--view", "lineup", "--times", "2.5,18", "--size", "1280x720", "--out", out]);
+    console.log(`lineup_${r}  ${((performance.now() - t) / 1000).toFixed(0)} s  ${run("magick", ["identify", "-format", "%wx%h", out])}`);
   }
 }
 
@@ -98,20 +98,18 @@ function sheets(): void {
   // The lineup: a row per look, t = 2.5 and 18.
   const lines: string[] = [];
   for (const r of ["asPrinted", ...VIDEO_LOOKS]) {
-    const dir = `${OUT}/lineup/${r}`;
-    if (!existsSync(dir)) continue;
-    const frames = readdirSync(dir).filter((f) => /\.(webp|png)$/.test(f)).sort();
-    const tiles = frames.map((f, i) => { const d = `${tmp}/line_${r}_${i}.png`; run("magick", [`${dir}/${f}`, "-resize", "960x540!", ...label(`${r}: ${f}`), d]); return d; });
-    if (tiles.length === 0) continue;
+    const strip = `${OUT}/lineup/${r}.webp`;
+    if (!existsSync(strip)) continue;
+    const tiles = ["2.5", "18"].map((time, i) => { const d = `${tmp}/line_${r}_${i}.png`; run("magick", [strip, "-crop", `1280x720+${i * 1280}+0`, "+repage", "-resize", "960x540!", ...label(`${r}: t = ${time}`), d]); return d; });
     const row = `${tmp}/linerow_${r}.png`;
     run("magick", [...tiles, "+append", row]);
     lines.push(row);
   }
   if (lines.length > 0) { run("magick", [...lines, "-append", "-quality", "90", `${OUT}/sheet_lineup.webp`]); console.log(`wrote ${OUT}/sheet_lineup.webp (${lines.length} rows)`); }
   // The video look beside its references: the lineup in `engraving` and `engravingSunset`, lineup_wide, stalk_hybrid, the crab close.
-  const eng = `${OUT}/lineup/engraving`, sun = `${OUT}/lineup/engravingSunset`;
+  const eng = `${OUT}/lineup/engraving.webp`, sun = `${OUT}/lineup/engravingSunset.webp`;
   if (existsSync(eng) && existsSync(sun)) {
-    const first = (dir: string) => `${dir}/${readdirSync(dir).filter((f) => /\.(webp|png)$/.test(f)).sort()[0]}`;
+    const first = (strip: string) => { const d = `${tmp}/first_${strip.length}_${strip.endsWith("Sunset.webp") ? 1 : 0}.png`; run("magick", [strip, "-crop", "1280x720+0+0", "+repage", d]); return d; };
     const a = `${tmp}/v0.png`, b = `${tmp}/v1.png`, c = `${tmp}/v2.png`, d = `${tmp}/v3.png`;
     run("magick", [first(eng), "-resize", "960x540!", ...label("ours: engraving, t = 2.5", 22), a]);
     run("magick", [`${ART}/lineup/lineup_wide.webp`, "-resize", "960x540^", "-gravity", "center", "-extent", "960x540", ...label("reference: lineup_wide", 22), b]);
