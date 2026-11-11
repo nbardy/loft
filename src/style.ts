@@ -76,9 +76,12 @@ export type Contact =
   | { readonly kind: "clear" }
   /**
    * A body may be near. `band`: how close, continuously: 1 at the body, 0 at the sea's foam width, negative beyond it
-   * (as far as the search sees).
+   * (as far as the search sees). It is grainy from pixel to pixel and sits on two plateaus (src/geom/sea.ts,
+   * `loft_contact_band`): good for a soft edge or for specks, not for a clean shape. `level`: the same closeness without
+   * the grain or the plateaus, one value per 2 x 2 pixels (`loft_contact_level`), for a style that cuts flat shapes
+   * from it. Each is computed only if the style reads it.
    */
-  | { readonly kind: "near"; readonly band: Expr<"f32"> };
+  | { readonly kind: "near"; readonly band: Expr<"f32">; readonly level: Expr<"f32"> };
 
 /** A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. */
 export type LayerCtx = {

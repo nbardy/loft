@@ -88,6 +88,20 @@ What the crab's face found (docs/art_direction/DIRECTION.md, Round 3):
   both the white and the body.
 - The stalks' pose is the largest thing that changes, so it carries the most from far away; lids next; pupils last.
 
+What its second face found (Round 4: `examples/bosses/titan/face/brow.ts`, a head with brows, sunk eyes and a mouth; its
+parts are in `examples/bosses/lib/face_parts.ts` for any creature):
+
+- A lid's angle is not its cover. Seen from in front, a lid `a` radians down from the top of the eye hides
+  (1 - cos a) / 2 of it: 0.64 of a quarter turn hides 23%, and "half-lidded" is 1.3 to 1.5 rad.
+- A brow that rides the eye must still face the viewer. Lying on the eye's own slope a raised brow shows its edge (11 px
+  where the same bar facing front is 19).
+- An eye sunk in a head cannot turn. Put the iris truly under the look while the look is in front of the eye and hold
+  it at the rim past that (`gazeOf`): it rolls to its corner after a ship thrown behind its ear, and still shows iris.
+- A blink is an `only` layer, so the check does not see it: `expressionsRead` takes rest in the middle of its longest
+  stretch, and a blink timed there has rest measured with its eyes shut. Time blinks off that instant.
+- A face is hidden by what stands in front of it. `staysInView(points, blockers, { camera, period, hidden })` says for
+  how long; the islander's banner claw stood over this face's right eye for 2 s of the Grab from the game camera.
+
 ## Grabs
 
 `src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release. In a

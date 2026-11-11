@@ -113,7 +113,7 @@ What a slot receives and must return (`titan/slots.ts` is the contract; the type
 | carapace | the rig | `{ hull, things }`: `hull` is the strand the face's beard rides, m from tail (0) to front (1), v round the section with `sin(2 pi v)` its height (1 on top at v = 0.25, -1 underneath; v = 0 is a flank) |
 | legs | the rig | drawables; leg k goes from a root on the body to `rig.walk.foot(k)` (k = 0..3 left, 4..7 right) |
 | claws | the rig and its own offer | `{ things, crush, cutterFingers }`: the crusher bound to `rig.crush` by `animate` (part "crusherPalm"), the cutter's two fingers |
-| face | the rig and the carapace | `{ things, checks }`: the drawables, and what this face asks of itself (none, or as `face/dandy.ts`: its eyes' size from the game camera, its expressions told apart) |
+| face | the rig, the carapace and the claws as drawn | `{ things, checks }`: the drawables, and what this face asks of itself (none, or as `face/dandy.ts`: its eyes' size from the game camera, its expressions told apart; `face/brow.ts` also asks that the claws keep off it, `staysInView`) |
 | back | the rig | drawables riding `rig.shell` (the shell frame: the body's, read late, pitching on after the slam). A back that builds beyond the atoll's cylinder also gives `keepClear(rig)`: what a thrown ship must fly clear of besides that cylinder (`back/headland.ts`: its capes and its light); the design adds them to `fliesClear` |
 
 The rig (`titan/rig.ts`, type `Rig`) gives every option: `n` (the numbers of this build: read inks and sizes from it,
@@ -171,8 +171,9 @@ bun test tests/variants.check.test.ts                                           
   from the carapace numbers (`n.carapace`), as `face/mask.ts` does; the carapace option then sets them (`kabuto`).
 - **The beard rides the carapace's surface coordinates**, so a carapace option keeps the strand's (m, v) convention.
 - **Checks are the design's**, except a face's: a face returns `checks` beside its `things` and they join the design's
-  for any variant that picks it (2026-11-11, the islander). The other slots still cannot add one (a fortress crab cannot
-  ask that its claws cover the face): each would need the same field on its return.
+  for any variant that picks it (2026-11-11, the islander), and a face is given the claws, so it can ask that they keep
+  off it (the bruiser). The other slots still cannot add one (a fortress crab cannot ask that its claws cover the face):
+  each would need the same field on its return.
 - **The attacks are the rig's**: an option cannot add an attack or change its timing except through numbers. Claw Crush's
   timing (wind-up 1.15 s, strike 0.3 s, ...) is written in `rig.ts`, not in the numbers.
 - **One claw mechanism**: the Grab's pose math (both fingers at one angle, symmetric about the palm) is the base claw's.

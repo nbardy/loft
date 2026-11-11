@@ -2,7 +2,7 @@
 // really takes the thing its hold owns.
 import { expect, test } from "bun:test";
 import {
-  add, attack, compileJs, compileScene, gripReaches, hit, hold, hosted, input, lift, mul, pose, Probe, releasesAt, scene, sea, STAND_IN, strand, throwLands,
+  add, attack, compileJs, compileScene, emote, variable, gripReaches, hit, hold, hosted, input, lift, mul, pose, Probe, releasesAt, scene, sea, STAND_IN, strand, throwLands,
   thrown, tolerance, toon, vec2, vec3, type F, type Placer,
 } from "../src/index.ts";
 
@@ -75,4 +75,20 @@ test("one input name may carry a different default in a different scene", () => 
   expect(compileJs([a])({ vars: {}, inputs: {}, params: {} })[0]).toBe(1);
   expect(compileJs([b])({ vars: {}, inputs: {}, params: {} })[0]).toBe(2);
   expect(compileJs([b])({ vars: {}, inputs: { "hold.test.at": 5 }, params: {} })[0]).toBe(5);
+});
+
+// Catches: a manner that moves an accent off its beat. An emote's move must be at its top exactly on each accent however
+// early it starts, however long it is held and however sharply it eases (the crab lineup's four temperaments play one
+// taunt on one set of beats), and the emote must be over (`on` 0) before it arms and after its last move has left.
+test("an emote's move is at its top on every accent, in any manner", () => {
+  const t = variable("emote_test_t", "f32"), accents = [1, 2, 2.5, 4];
+  for (const manner of [{ lead: 0.25, hold: 0, fall: 0.25, snap: 2 }, { lead: 0.7, hold: 0.15, fall: 0.7, snap: 1.5 }, { lead: 0.18, hold: 0.6, fall: 0.3, snap: 8 }]) {
+    const b = emote({ name: "taunt", arm: 10, accents, ...manner, offbeat: 0.25, shuffle: 0.22, settle: 0.4 }).beats(t);
+    const run = compileJs([b.wave, b.on]);
+    const at = (x: number) => run({ vars: { emote_test_t: x }, inputs: {}, params: {} }) as number[];
+    for (const a of accents) expect(at(10 + a)[0]).toBeCloseTo(1, 5);
+    expect(at(9)[1]).toBe(0);
+    expect(at(10 + 4 + manner.hold + manner.fall + 0.41)[1]).toBeCloseTo(0, 5);
+    expect(at(10 + 1 - manner.lead - 0.01)[0]).toBeCloseTo(0, 2);
+  }
 });

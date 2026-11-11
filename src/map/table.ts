@@ -3,6 +3,7 @@
 // compiled (`"static"`), or every frame by a pose stage (`"frame"`, a map). Either way the shaders read it with `fetch`.
 
 import { clamp, compileJs, div, f, fetch, floor, mapOf, min, mix, mul, sub, vec4, type Expr, type In, type NumTy, type TableSource } from "../expr.ts";
+import { scopedName } from "../expr.ts";
 import type { F } from "./types.ts";
 
 export type Schedule = "static" | "frame";
@@ -33,7 +34,8 @@ const unpad = <T extends NumTy>(ty: T, e: Expr<"vec4">): Expr<T> => {
  * interpolant (clamped outside [0, 1]). Static tables are evaluated once, at compile time, with every input and
  * param at its default (so a static table must not depend on time); frame tables follow time, inputs and params.
  */
-export function tabulate<T extends NumTy>(name: string, fn: (x: F) => Expr<T>, n: number, when: Schedule): (x: In<"f32">) => Expr<T> {
+export function tabulate<T extends NumTy>(given: string, fn: (x: F) => Expr<T>, n: number, when: Schedule): (x: In<"f32">) => Expr<T> {
+  const name = scopedName(given);
   if (!(Number.isInteger(n) && n >= 2)) throw new Error(`tabulate "${name}": need an integer n >= 2 samples, got ${n}`);
   const samples = Array.from({ length: n }, (_, k) => fn(f(k / (n - 1))));
   const ty = samples[0].ty as T;

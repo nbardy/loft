@@ -6,7 +6,7 @@
 // overshoot, and anticipation with r < 0), `retarded` (the clock a part further along a body reads: drag), `pulse`,
 // `ease`, `breathe` (a moving hold), `strike`, `lookAt`.
 
-import { add, clamp, cos, div, exp, lift, max, min, mix, mul, pow, select, lt, sin, sqrt, sub, vec3, type Expr, type In } from "../expr.ts";
+import { add, clamp, cos, div, exp, lift, max, min, mix, mul, pow, select, lt, sin, sqrt, sub, vec3, type Expr, type In, namespaceSeed } from "../expr.ts";
 import { hash3 } from "../lib/noise.ts";
 import { size } from "../map/chart.ts";
 import type { Size } from "../map/types.ts";
@@ -131,6 +131,33 @@ export const dragged = (t: In<"f32">, along: In<"f32">, lag: In<"f32">): F => su
 /** Secondary action. A smaller, later echo of a main motion `f` of the clock: `f(t - delay) * gain`. */
 export const echo = (f: (t: F) => F, t: In<"f32">, delay: In<"f32">, gain: In<"f32">): F => mul(f(sub(t, delay)), gain);
 
+// ---- loops -------------------------------------------------------------------------------------------------------------
+
+/** Whether what is being built must loop: free (any rates), or every `seconds` (every idle swing takes whole turns in it). */
+type Looping = { readonly kind: "free" } | { readonly kind: "loop"; readonly seconds: number };
+let loop: Looping = { kind: "free" };
+/**
+ * Build something that must loop every `seconds`: while `build` runs, every `alive` not given a period of its own takes
+ * this one, so idle motion written without a thought for looping comes round exactly.
+ */
+export function looping<T>(seconds: number, build: () => T): T {
+  if (!(seconds > 0 && Number.isFinite(seconds))) throw new Error(`looping: the period must be a positive number of seconds, got ${seconds}`);
+  const before = loop;
+  loop = { kind: "loop", seconds };
+  try { return build(); } finally { loop = before; }
+}
+/** The two rates of a moving hold: as asked, or the nearest whole numbers of turns in the loop that differ. */
+function swings(hz: number, l: Looping): { readonly hzA: number; readonly hzB: number } {
+  switch (l.kind) {
+    case "free": return { hzA: hz, hzB: hz * 1.618 };
+    case "loop": {
+      if (!(l.seconds > 0)) throw new Error(`alive: period must be positive, got ${l.seconds}`);
+      const ka = Math.max(1, Math.round(hz * l.seconds)), kb = Math.max(ka + 1, Math.round(hz * 1.618 * l.seconds));
+      return { hzA: ka / l.seconds, hzB: kb / l.seconds };
+    }
+  }
+}
+
 // ---- the moving hold, exaggeration, twins ----------------------------------------------------------------------------------
 
 /**
@@ -139,13 +166,10 @@ export const echo = (f: (t: F) => F, t: In<"f32">, delay: In<"f32">, gain: In<"f
  * in it, the nearest to `hz` and to 1.618 `hz` that differ, so a motion that must loop in `period` still loops.
  */
 export function alive(t: In<"f32">, amount: In<"f32">, seed: In<"f32"> = 0, hz = 0.23, period?: number): F {
-  const s = lift<"f32">(seed), ph = mul(hash3(vec3(s, 17.3, 4.1)), TAU);
-  let hzA = hz, hzB = hz * 1.618;
-  if (period !== undefined) {
-    if (!(period > 0)) throw new Error(`alive: period must be positive, got ${period}`);
-    const ka = Math.max(1, Math.round(hz * period)), kb = Math.max(ka + 1, Math.round(hz * 1.618 * period));
-    hzA = ka / period; hzB = kb / period;
-  }
+  // In a namespace each instance has its own seeds (four crabs built by one rig do not idle in step); outside any, the
+  // seed is the one given.
+  const ns = namespaceSeed(), s = ns === 0 ? lift<"f32">(seed) : add(seed, ns), ph = mul(hash3(vec3(s, 17.3, 4.1)), TAU);
+  const { hzA, hzB } = swings(hz, period === undefined ? loop : { kind: "loop", seconds: period });
   const a = sin(add(mul(t, hzA * TAU), ph)), b = sin(add(mul(t, hzB * TAU), mul(ph, 2.3)));
   return mul(amount, add(mul(a, 0.62), mul(b, 0.38)));
 }
