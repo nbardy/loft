@@ -162,6 +162,15 @@ fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
 const contactLevel = wgslFn<"f32">({
   name: "loft_contact_level", ret: "f32", wgsl: /* wgsl */ `
 const LOFT_LEVEL_RING = array<vec2<f32>, 16>(${RING.map(([x, y]) => `vec2<f32>(${fl(+x.toFixed(6))}, ${fl(+y.toFixed(6))})`).join(", ")});
+/// How far the water at p is from the body point q, for the level: across the water in full; up and down, nothing for
+/// the first quarter of the width and double beyond it. A tap that lands a little way up a leg or a cliff (or down
+/// its sunk part) then reads the distance to where that body stands in the water, whichever height it landed at, so
+/// the level does not step with the taps' spacing; and a body well above the water (a belly, a raised claw) is far.
+fn loft_level_gap(q: vec3<f32>, p: vec3<f32>, width: f32) -> f32 {
+  let d = q - p;
+  let up = 2.0 * max(abs(d.y) - 0.25 * width, 0.0);
+  return sqrt(dot(d.xz, d.xz) + up * up);
+}
 @diagnostic(off, derivative_uniformity)
 fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   let r = clamp(width / pixel_world(p), 1.0, 40.0);
@@ -171,17 +180,17 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   let turn = m * (6.2831853 / 32.0);
   let rot = mat2x2<f32>(cos(turn), sin(turn), -sin(turn), cos(turn));
   // Capped, so the differences below are exact enough where a tap reads the far plane.
-  var gap = min(distance(scene_position(px), p), 4.0 * width);
+  var gap = min(loft_level_gap(scene_position(px), p, width), 4.0 * width);
   var toward = vec2<f32>(0.0);
   for (var k = 0u; k < 16u; k++) {
     let v = rot * LOFT_LEVEL_RING[k] * r;
-    let g = distance(scene_position(px + v), p);
+    let g = loft_level_gap(scene_position(px + v), p, width);
     if (g < gap) { gap = g; toward = v; }
   }
   let ray = toward;
   for (var k = 0u; k < 4u; k++) {
     let v = ray * ((f32(k) + (m + 0.5) * 0.25) * 0.25);
-    let g = distance(scene_position(px + v), p);
+    let g = loft_level_gap(scene_position(px + v), p, width);
     if (g < gap) { gap = g; toward = v; }
   }
   // The least gap of the quad, and the offset of the tap that found it. A fine derivative is (the right pixel) - (the
