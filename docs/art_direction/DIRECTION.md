@@ -524,3 +524,80 @@ Weak or unfinished:
   It is there to compare patterns from the command line; once one is chosen it should become the scene's own option.
 - GPU timing under this load is good to about a tick; the order of the five costs is not established, only that all
   are above `ridge`.
+
+## White water (2026-11-12)
+
+The owner, on the contact-foam sheet: "this is sick, this style for the white water interaction", of the round 4
+reference row (rolling cream foam, curled spiral heads, bold key lines). So that is the style for all white water:
+the collar where a body stands in the sea, a slam's burst, the ring wave's crest, a landing. This section is the
+design and its predictions, written before building; the score follows it. `curls` (above) is the starting point and
+its named gap is the brief: equal circles in a row, where the reference has a few large hooked heads on a rolling mass.
+
+### What white water is made of
+
+One painter, `rollingFoam` (to be `src/style/whitewater.ts`), draws white water from three things an event gives it: a
+**mass** (0 where there is none to 1 in the thick of it: the contact level for a collar, a splash's own shape for a
+burst, the sea's marks for a wave's crest), a **lean** (a direction on the water the heads curl toward, or none), and a
+**head** size (the world radius of the largest curled head). From them, back to front:
+
+1. **the roll**: round lobes on a jittered lattice a third of a head apart, sized by the mass: large and overlapping
+   into one cream mass where the mass is high, shrinking outward into separate **droplets**; one key line round the
+   mass, and inner arcs only on about half the lobes (every lobe outlined is what read as pebbles);
+2. **the heads**: one to a cell of a coarser lattice (2.4 head radii apart), present in about two cells in three, of
+   unequal size (half to full). A head is a **hook**, not a circle: its edge is one turn of a spiral, r = R (1 - 0.4 a)
+   for a the share of a turn from the beak, so it has a pointed beak overhanging a notch 0.4 R deep; the same spiral
+   goes on inward for a turn and a half as a channel of water between two key lines, closing to a line. The beak
+   points along the lean (all heads curl the same way); with no lean, by the cell's hash;
+3. events with a centre add a **crown**: pointed fingers round it (the angle is known there, so teeth can point
+   outward, which the collar's cannot).
+
+The spiral is a level set of u = (1 - r / R) / 0.4 - a: outside the head u < 0, the edge and every inner turn are the
+whole numbers, and u steps by exactly 1 across the beak's line, so "on a whole number" is continuous there. Mine; the
+hooked wave head itself is Hokusai's and the references'.
+
+It is a set of shared pieces that each drawer calls, not a sum type of events inside the style. An event's drawer
+already owns what the painter needs and the style cannot see: the collar is the sea's contact case, the crest is the
+sea's marks, a burst is its own patch on the water with its own clock (`examples/bosses/lib/impact.ts`). A dispatcher
+in the style would have to be handed all of that through one door. What is a sum type is the choice a scene makes:
+the collar's pattern (`ContactFoam` gains `roll`) and how the sea's marks print (`flat`, as now, or `heads`).
+
+What the sea must hand the style that it does not now, both added readouts: the sea's foam width beside the contact
+level (so a pattern's sizes follow the scene's sea: the other bosses' is 0.3, the crab's 0.85), the direction the
+largest swell travels (the collar's lean), and a lean beside a deformation's marks (the ring wave's is outward).
+
+### Predictions
+
+At the `game` camera, 1280 x 800, a near foot (35 px a unit), the crab's sea (foam width 0.85, so head R = 0.29,
+10 px):
+
+| what | predicted |
+|---|---|
+| collar at a foot, `game` | a cream mass 45 to 55 px wide with **2 or 3 heads** 10 to 20 px across (4 or 5 coarse cells touch the collar, two in three hold a head, sizes half to full), each showing its notch (4 px on the largest) and no inner spiral (drawn only where R is over 9 px); 3 to 6 droplets of 2 to 4 px beyond; one arc |
+| collar close (`back`, the island; about 55 px a unit) | heads 16 to 32 px across with a turn and a half of channel 2 to 3 px wide, beaks all toward the swell's travel; lobes behind them with few inner lines |
+| along the hull (3 units) | 4 coarse cells: 2 or 3 heads of unequal size over about 10 lobes; big, small, small, big by the hash, not by design |
+| slam, first 0.25 of its life | a crown of about 14 pointed fingers round the disc, each 0.3 of the reach long |
+| slam, after | a ring of heads (R = 0.5: 35 px across at `game`, spirals visible), beaks outward, thinning to droplets as it fades |
+| the ring wave's crest | a line of heads (R = 0.35) one deep along the front, beaks outward, breaking into separate heads and then droplets by three quarters of its reach |
+| landing | the slam's crown at the splash's smaller reach (heads R = 0.3) |
+| swims or pops | no: every lobe and head is fixed to the water; sizes follow the mass |
+
+Not predicted to work: a bow wave for a moving hull needs the hull's velocity, which neither the style nor the sea has;
+it would be a drawer of its own fed by the rig. Built last if at all.
+
+Where the reasoning is most likely wrong: a head is sized by the mass at each pixel, not at its centre, so a large head
+across a steep mass is squeezed on its far side and its spiral with it; and the heads sit wherever the lattice puts
+them, not on the mass's edge, where the reference has them.
+
+### Budget
+
+- The collar: no more than `curls` costs, +0.10 ms a frame over `ridge` at 1280 x 800 (measured before). By count it is
+  `curls` plus one cell hash (the heads' lattice is searched one cell deep; `curls` has four hashes and an arctangent,
+  this five and one): predicted equal within what can be measured.
+- A burst (`impactFoam`): today one gradient noise and three edges over its patch while live; the painter is five
+  hashes and an arctangent there: predicted up to twice the patch's cost for the 1.4 s it lives, under 0.05 ms.
+- The crest: today one threshold on a number the sea already has. Anything drawn costs more than that; the budget
+  cannot be "no dearer". To keep it small the crest gets the heads only (one hash, one arctangent), no roll:
+  predicted under 0.05 ms while the pulse is on the screen, nothing otherwise.
+- How it will be measured, with other workers on the GPU: `profile` of old and new built in turn (A, B, A, B, six of
+  each, 2560 x 1600 and 1280 x 800), the median and the whole range reported; a difference smaller than the range
+  between runs of one build is reported as not resolved, with no number.
