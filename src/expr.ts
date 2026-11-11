@@ -518,7 +518,7 @@ export function children(e: Expr): readonly Expr[] {
 }
 
 /** Every node reachable from the roots, including the bodies of loops (but not the loops' own variables). */
-function everything(roots: readonly Expr[]): Expr[] {
+export function everything(roots: readonly Expr[]): Expr[] {
   const out: Expr[] = [];
   const seen = new Set<number>();
   const walk = (list: readonly Expr[]): void => {

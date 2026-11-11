@@ -285,6 +285,123 @@ PREDICTED size: 900 to 1,100 lines of Rust on wgpu, by part, against the TypeScr
 No part interprets the scene: every number a pipeline needs is in the file. The plan (about a fifth of it) is the one
 algorithm; phase 4 deletes it.
 
+## Rates (2026-11-11)
+
+A compiled scene was about 4 MB of WGSL and took 2 to 3 s to load. This section says why, from the graph, and what
+lowering it by rate does.
+
+### The idea
+
+Every node has a rate, the slowest clock at which its value changes: build (a constant) < frame (time, inputs,
+params, curve rows, a table entry at a fixed index) < copy < item (a table entry, a vertex, a pixel). A program runs
+at the rate of its invocations: a map run of more than one entry, and every vertex or fragment function, faster than
+a frame; a scan, a run of one entry (a list element) once per frame. A node slower than the program that reads it is
+recomputed for nothing in every invocation, and in every program that reads it.
+
+Lowering, per program (`src/compile/rates.ts`, classified once in `rates`):
+
+1. **Fold build constants in f32.** Each node whose operands are all constants is replaced by its value, rounded to
+   f32, computed by the operation the CPU backend already uses.
+2. **Lift the per-frame frontier into frame values.** A per-frame node read by a node that stays is lifted when its
+   program runs faster than a frame, or when two or more once-per-frame programs of the scene read it, and its
+   sub-graph costs at least `LIFT_MIN` = 3 operations (a fetch replaces it: one storage read and an accessor's index
+   arithmetic). Lifted values are evaluated by a frame-values table: one entry per value, all of them computed by one
+   invocation that shares work between them (a new program kind, `values`), read back by a fetch at a constant index.
+   Phase 1's `<name>_common` (work shared between the runs of one table) is the case "two programs of one table" and
+   goes; the rule is now scene-wide.
+3. **Where a value waits.** A value that reads a per-frame table must be computed after it. Values go to the
+   frame-values table of depth d = 1 + the deepest table they read (0 if none), depth being measured on the tables'
+   programs as authored. Why this cannot make a cycle: give a table of depth k the potential 2k + 1 and the
+   frame-values table of depth d the potential 2d; every read goes from a higher potential to a lower one (a table
+   that reads a value of depth d contained it, so its own depth is at least d; a value of depth d reads tables of depth
+   at most d - 1).
+
+What is inherited: constant folding, and rates themselves: the computation frequencies of Stanford's real-time shading
+language (Proudfoot et al., 2001: constant, per primitive group, per vertex, per fragment) and Direct3D effects'
+preshaders (uniform-only expressions taken out of a shader and run once per draw). What is mine: a frame's slow work
+is itself a GPU program in the artefact (a pose stage writing a table), not CPU code beside it; one rule (frontier,
+faster reader or two readers, cost) for shaders and pose programs alike, which subsumes `_common`; the scene-wide
+sharing among once-per-frame programs; the depth assignment and its acyclicity argument.
+
+### The census (before building)
+
+`bun tools/rates_census.ts <scene>` walks every program the compiler lowers (each shader function and each run or
+scan of a table, as authored: phase 1's `_common` tables are left out). Nodes are the statements `emitWgsl` writes
+(everything but constants and variables), loop bodies included. "Build" are folded away; "frame" and "item" are by
+rate (the remainder, a few thousand per scene, are loop bodies, not rated).
+
+| Scene | nodes as authored | build | frame | item | phase 1 emitted (let lines) | frontier values | frame-values nodes | nodes after |
+|---|---|---|---|---|---|---|---|---|
+| maelstrom_wyrm | 122,015 | 39,939 | 53,285 | 25,930 | 91,781 | 310 | 4,719 | 42,971 |
+| reefback_titan | 111,850 | 47,688 | 33,216 | 28,823 | 86,855 | 245 | 3,709 | 47,086 |
+| thundermaw | 104,122 | 45,226 | 32,366 | 24,001 | 80,656 | 382 | 5,573 | 41,188 |
+| tithe_fleet | 97,706 | 44,008 | 21,569 | 30,995 | 88,640 | 281 | 1,583 | 44,514 |
+| wreckers_lamp | 86,266 | 47,239 | 15,852 | 20,816 | 66,701 | 125 | 1,104 | 30,415 |
+| grab | 78,713 | 31,998 | 29,445 | 15,903 | 57,431 | 91 | 1,130 | 23,953 |
+
+Where the volume is: build constants are 37 to 55% of the graph, the largest single cause. Per-frame work is 15 to 44%,
+almost all of it in once-per-frame programs (reefback: 27,093 of 33,216), where it is not wasted GPU work but code
+written several times: 1,415 distinct per-frame nodes are read by two or more such programs, 17,777 times. Per-frame
+work inside faster programs, the waste the hypothesis named, is smaller: 1,906 to 8,942 nodes per scene.
+
+The six large ship functions of reefback (2,216 to 2,945 nodes) are mostly build constants, not the ship's frame:
+`bound_scaleShip_deck_0` has 2,835 build, 110 frame and no per-entry nodes; it is a run of one entry (a bound of one
+instance), so it runs once per frame anyway. `body_scaleShip_railS_spine_0` (a map over the rail's stations) has
+1,737 build, 88 frame, 399 per entry. The build part is the rest shape evaluated at fixed parameters (a spline's
+weights at a fixed station). The ship's frame, 106 to 110 nodes, is the per-frame part each repeats; it goes to the
+frame values once. So the hypothesis was right about the mechanism and wrong about the weight: folding removes
+about four times what lifting does in these functions.
+
+Per copy: shader functions with a copy argument (a surface's instance, `p_copy`, `copy_id`, `cell_id`, read as per
+copy by the census only) hold 70 to 757 per-copy nodes of 20,000 to 44,000. Not worth a stage; not done.
+
+### Predictions
+
+Bytes are the unique WGSL chunks (as `loft build` prints, KB = 1024 bytes): the text that is not a node's `let` line
+(preludes, raw WGSL of drawables, writes, declarations: measured per scene) plus 42.5 bytes per node (phase 1's mean
+let line, 42.1 to 42.9 in all six scenes), plus a write per frame value. Range: ±8% on the node part (fetch lines are
+longer, folded literals vary).
+
+| Scene | WGSL before, KB | predicted after, KB | largest module before, KB | predicted largest after, KB | frame-values nodes |
+|---|---|---|---|---|---|
+| maelstrom_wyrm | 4,053 | 2,070 (1,930-2,210) | 906 (pose level 0) | 210-310 | 4,719 |
+| reefback_titan | 4,074 | 2,410 (2,260-2,570) | 762 (pose level 1) | 245-430 | 3,709 |
+| thundermaw | 3,607 | 2,000 (1,870-2,140) | 794 (pose level 0) | 200-305 | 5,573 |
+| tithe_fleet | 4,019 | 2,170 (2,030-2,320) | 732 (pose level 3) | 360-520 | 1,583 |
+| wreckers_lamp | 2,983 | 1,510 (1,410-1,610) | 806 (pose level 0) | 280-410 | 1,104 |
+| grab | 2,526 | 1,160 (1,080-1,250) | 777 (pose level 0) | 225-310 | 1,130 |
+
+The largest module after is a pose level: the low end is the largest level's nodes after lowering, at phase 1's
+levels; the high end allows two of today's levels to land on one (tables that read a frame-values table move a level
+later). The largest shader module (a ship's hull, about 200 KB in every scene) falls to about 155 KB.
+
+Pose stage GPU time: **no material change**, least reading after within 0.75 to 1.35 times the least before, with 2 to
+6 more levels. Reason: the time is the scans' serial steps (reefback's levels 1 to 5 hold its 33 scans and take most
+of its 0.10 to 0.25 ms), which lowering does not touch; build constants were already free at run time (WGSL and Metal
+fold a `let` of literals); what lifting removes from faster programs ran in parallel; what it adds is one invocation
+per frame-values table (up to about 2,400 nodes, serially about 5 to 15 us) and the levels they insert.
+
+Load (modules and pipelines from files, least of several rounds): taking 0.4 s as the cost that does not scale with
+the text (about 100 pipelines), after = 0.4 + (before - 0.4) x (bytes after / bytes before). Least readings before
+(this machine, load average 5 to 21): maelstrom 2.31, reefback 2.12, thundermaw 2.24, tithe 1.67, wreckers 1.44, grab
+1.36 s; predicted 1.38, 1.42, 1.42, 1.09, 0.93, 0.84 s, ±25%.
+
+Pictures: under 0.1% of pixels differ by more than 8/255 (f32 folding and moving evaluation between stages change
+low bits only). The CPU reading still agrees with the GPU to 1e-4.
+
+Wrong if: bytes after fall outside the ranges; the largest module is a shader, or a pose level above 520 KB; pose time
+leaves 0.75 to 1.35x; load after is not below 0.8x before in least readings.
+
+### The stronger formulation, measured
+
+Programs that are the same graph up to constants (eight legs, 404 shadow points, 95 rope ends) could be emitted once
+and driven by a table of their constants. From the census, after folding and lifting, the repeats beyond the first
+hold (up to constants / up to constants, tables and curve rows): maelstrom 11,586 / 15,405 nodes, reefback 11,903 /
+22,795, thundermaw 11,637 / 15,793, tithe 19,186 / 21,202, wreckers 8,997 / 10,758, grab 6,554 / 9,325: a further 25
+to 50% of what remains. The largest single source is lists of isomorphic entries (`shadows_at`: 404 runs of 7 nodes
+in reefback, each starting a SIMD group of its own: 16,096 invocations at its level). Turning such a list into one map
+run over a table of constants removes the code and the idle invocations both. It should come next.
+
 ## Phase 3: textures and layers
 
 A texture is a table with two or three indices and mip levels. It is written as a function and baked by the

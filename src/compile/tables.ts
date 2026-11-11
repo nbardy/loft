@@ -30,6 +30,7 @@ import {
   type TableFill, type TableFrame, type TablePrep, type TableSource, type V,
 } from "../expr.ts";
 import type { TableRef } from "./context.ts";
+import type { Program } from "./rates.ts";
 
 /** WebGPU's default limits, which every adapter supports. */
 export const STORAGE_BUFFERS_PER_STAGE = 8;
@@ -127,7 +128,7 @@ const STATIC: TableFillKind = { kind: "cpu", why: "filled once, at build" };
  * Classify a declared table into its canonical form, once (the boundary: nothing after this asks what a table is).
  * `prep` is the compiler's, for hand-written fills; `c` registers a program's expressions.
  */
-function classify(t: TableSource, prep: TablePrep, c: TableCompiler): Canon {
+function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (group: readonly Program[]) => (readonly Expr[])[]): Canon {
   if (!("program" in t)) {
     const reads: TableSource[] = [];
     const fill = t.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
@@ -153,6 +154,7 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler): Canon {
         return run;
       });
       if (start !== t.entries) throw new Error(`table "${t.name}": its runs cover ${start} entries; the table has ${t.entries}`);
+      lower(runs.map((r, k) => ({ name: `${t.name}_${k}`, roots: r.lanes, vars: new Map([[(r.i.node as { name: string }).name, "item" as const]]), runs: r.count > 1 ? "item" as const : "frame" as const })));
       const shared = hoistShared(t.name, runs);
       const roots = shared.runs.flatMap((r) => r.lanes);
       c.register(roots);
@@ -169,6 +171,7 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler): Canon {
       next.forEach((e, j) => { if (e.ty !== p.init[j]!.ty) throw new Error(`table "${t.name}": state component ${j} is ${p.init[j]!.ty} but the step returned ${e.ty}`); });
       checkLanes(lanes, "the scan's step");
       const roots = [...p.init, ...next, ...lanes];
+      lower([{ name: t.name, roots, vars: new Map([...state, i].map((v) => [(v.node as { name: string }).name, "item" as const])), runs: "frame" }]);
       c.register(roots);
       return { kind: "scan", first: p.first, steps: p.steps, init: p.init, state, i, next, lanes, reads: leaves(roots).tables };
     }
@@ -302,8 +305,16 @@ export class Tables {
     const d: Declared = { table: t, canon: undefined };
     this.declared.set(t, d);
     this.names.set(t.name, t);
-    d.canon = classify(t, prep, this.c);
+    d.canon = classify(t, prep, this.c, (g) => this.lowerGroup(g));
     return ref;
+  }
+
+  /** Every program lowered, by group (for tools: tools/rates_census.ts). */
+  readonly programs: (readonly Program[])[] = [];
+  lower(p: Program): readonly Expr[] { return this.lowerGroup([p])[0]!; }
+  private lowerGroup(group: readonly Program[]): (readonly Expr[])[] {
+    this.programs.push(group);
+    return group.map((p) => p.roots);
   }
 
   layout(): TableLayout {

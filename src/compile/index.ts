@@ -7,6 +7,7 @@ import { DETAIL_SLOTS, type Artefact, type Detail, type Draw, type FrameState, t
 import { compileJs, type Env, type Expr, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
 import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
+import type { Program } from "./rates.ts";
 import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
@@ -27,6 +28,8 @@ export type Compiled = {
   poseProfile(state: FrameState): ReadonlyMap<string, number>;
   /** A per-frame table of the artefact, by name (for raw-WGSL tables, which no expression names). */
   table(name: string): TableSource;
+  /** Every program the compiler lowered (src/compile/rates.ts), by group: for tools/rates_census.ts. */
+  readonly programs: readonly (readonly Program[])[];
 };
 
 export function compile(scene: Scene): Artefact {
@@ -36,7 +39,7 @@ export function compile(scene: Scene): Artefact {
 export function compileScene(scene: Scene): Compiled {
   // The slots and the table registry need each other: a fetched table is declared on first sight, and classifying it
   // registers the leaves of its program (or compiles the CPU expressions of a hand-written fill).
-  const slots: Slots = new Slots((t) => tables.declare(t, prep));
+  const slots: Slots = new Slots((t) => tables.declare(t, prep), (p) => tables.lower(p));
   const rows: RowSource = { kind: "table", slot: (r) => slots.row(r) };
   const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars) });
   const cpu = (roots: readonly Expr[]): CpuFn => {
@@ -140,7 +143,7 @@ export function compileScene(scene: Scene): Compiled {
     if (!t) throw new Error(`compile: no table named "${name}" (tables: ${[...byName.keys()].join(", ")})`);
     return t;
   };
-  return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table };
+  return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table, programs: tables.programs };
 }
 
 /**
@@ -186,7 +189,7 @@ function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[
  * program at time 0 with every input and param at its default, curve rows as authored.
  */
 export function readTablesAlone(roots: readonly TableSource[]): (t: TableSource) => Float32Array {
-  const slots: Slots = new Slots((t) => tables.declare(t, prep));
+  const slots: Slots = new Slots((t) => tables.declare(t, prep), (p) => tables.lower(p));
   const prep: TablePrep = { compile: (r) => { slots.register(r); const run = compileJs(r); return (frame, vars = {}) => run({ ...frame.env, vars }); } };
   const tables = new Tables({ register: (r) => slots.register(r), cpu: (r) => compileJs(r), wgsl: (v) => slots.wgsl(v) });
   for (const t of roots) tables.declare(t, prep);
