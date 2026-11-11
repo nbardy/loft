@@ -3,7 +3,7 @@
 // attacks, and a smear's copies are the body at earlier times.
 import { expect, test } from "bun:test";
 import strike, { checks, strikes } from "../examples/strike.ts";
-import { PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
+import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
 import {
   attack, compile, compileScene, f, fetch, hit, hitSdf, landsInside, Probe, runChecks, scene, sea, staysClear, stopsAt, sub, telegraph, time, toon, vec2,
   type Check, type Hit, type Target,
@@ -123,11 +123,11 @@ test("the strike example's shaders build pipelines", async () => {
   const dev = await gpu();
   const a: Artefact = compiled.artefact;
   const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
-  const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });
+  const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
   const errors: string[] = [];
   for (const d of a.draws) {
     dev.pushErrorScope("validation");
-    const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
+    const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
     try {
       await dev.createRenderPipelineAsync({
         layout: dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth] : [g0, g1] }),

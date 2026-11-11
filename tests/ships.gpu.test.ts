@@ -1,7 +1,7 @@
 // The ship examples on a real GPU device (bun-webgpu / Dawn): every shader builds and every draw makes a pipeline, and
 // the whirlpool's map evaluated in WGSL agrees with its CPU twin.
 import { expect, test } from "bun:test";
-import { PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
+import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
 import brig from "../examples/brig.ts";
 import fleet from "../examples/fleet.ts";
 import maelstrom from "../examples/maelstrom.ts";
@@ -11,11 +11,11 @@ import { FRAGMENT, gpu, layouts, probe, stateAt, VERTEX } from "./compile.harnes
 async function pipelineErrors(a: Artefact): Promise<string[]> {
   const dev = await gpu();
   const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
-  const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });
+  const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
   const errors: string[] = [];
   for (const d of a.draws) {
     dev.pushErrorScope("validation");
-    const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
+    const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
     const layout = dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth] : [g0, g1] });
     const blend = d.blend === "alpha" ? { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const : undefined;
     try {

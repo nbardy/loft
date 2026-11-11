@@ -1,7 +1,7 @@
 // The tracers (draw.field, impostors) on a real GPU: where they put the surface, what depth they write, the safety
 // check, and that every traced example builds. What each test would catch is said at the test.
 import { beforeAll, expect, test } from "bun:test";
-import { SCENE_DEPTH_WGSL, PRELUDE_WGSL, type Artefact, type Camera, type Draw } from "../src/artefact.ts";
+import { SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, PRELUDE_WGSL, type Artefact, type Camera, type Draw } from "../src/artefact.ts";
 import coral from "../examples/coral.ts";
 import nest from "../examples/nest.ts";
 import pearls from "../examples/pearls.ts";
@@ -342,10 +342,10 @@ test("every traced example's shaders, and impostor capsules and cones, build pip
   for (const s of [coral, coralList, nest, pearls, sceneOf(...kinds)]) {
     const a = compileScene(s).artefact;
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
-    const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });
+    const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
     for (const d of a.draws) {
       dev.pushErrorScope("validation");
-      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
+      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
       try {
         await dev.createRenderPipelineAsync({
           layout: dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth] : [g0, g1] }),

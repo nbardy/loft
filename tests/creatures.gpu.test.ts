@@ -2,7 +2,7 @@
 // contract's layouts, at rest and with their attack inputs declared (the inputs only change buffer contents, so one
 // build covers every pose).
 import { expect, test } from "bun:test";
-import { PRELUDE_WGSL, SCENE_DEPTH_WGSL } from "../src/artefact.ts";
+import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL } from "../src/artefact.ts";
 import stormwing from "../examples/stormwing.ts";
 import islandback from "../examples/islandback.ts";
 import { compileScene } from "../src/index.ts";
@@ -18,10 +18,10 @@ test("the creature examples build every pipeline", async () => {
     const a = compileScene(sc).artefact;
     expect(a.inputs.map((i) => i.name)).toContain(input);
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
-    const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });
+    const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
     for (const d of a.draws) {
       dev.pushErrorScope("validation");
-      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
+      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
       const layout = dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth] : [g0, g1] });
       const blend = d.blend === "alpha" ? { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const : undefined;
       try {
