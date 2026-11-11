@@ -218,6 +218,9 @@ export const LIGHT = {
    */
   sunset: light.recipe({
     hatch: light.hatch({ edge: light.edge.section({ at: 0.2, key: light.key.camera(-35, 30) }) }),
+    // The undersides washed into the violet, so the picture is lit from behind and not at noon; the faces' upper halves
+    // keep their lit ink.
+    bokashi: light.bokashi({ foot: 1.5, under: [-0.25, 0.7], amount: 0.6 }),
     rim: light.rim({ width: 0.09, ink: [1.0, 0.7, 0.32], amount: 0.95 }),
     block: light.block({ ink: [0.3, 0.12, 0.32], amount: 0.5, value: 0.72 }),
   }),

@@ -220,7 +220,7 @@ export const paint = {
 export const seaPalette = {
   swell: (): SeaPalette => ({ kind: "swell" }),
   deep: (o: Partial<Omit<Extract<SeaPalette, { kind: "deep" }>, "kind">> = {}): SeaPalette => ({
-    kind: "deep", sea: o.sea ?? [0.08, 0.17, 0.3], trough: o.trough ?? [0.055, 0.12, 0.24], line: o.line ?? [0.8, 0.68, 0.52], width: o.width ?? [0.012, 0.04], haze: o.haze ?? [0.42, 0.45, 0.55],
+    kind: "deep", sea: o.sea ?? [0.08, 0.17, 0.3], trough: o.trough ?? [0.055, 0.12, 0.24], line: o.line ?? [0.8, 0.68, 0.52], width: o.width ?? [0.012, 0.04], haze: o.haze ?? [0.17, 0.24, 0.38],
   }),
 };
 
