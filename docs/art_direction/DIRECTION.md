@@ -766,3 +766,80 @@ them, not on the mass's edge, where the reference has them.
 - How it will be measured, with other workers on the GPU: `profile` of old and new built in turn (A, B, A, B, six of
   each, 2560 x 1600 and 1280 x 800), the median and the whole range reported; a difference smaller than the range
   between runs of one build is reported as not resolved, with no number.
+
+### Scored (2026-11-12, after building; merged with main 9f7d0e2)
+
+Pictures (git-ignored, `out/water/`): `sheet_white_water.webp` (ours beside each reference: the collar at a foot, close,
+the hull and the shoreline, the slam at four instants, the ring at the second boat, the landing), `sheet_styles.webp`
+(every selectable collar on the crab), `sheet_bosses.webp` (the other four bosses before and after),
+`lineup_t2.5.webp` (four crabs, the slam cascade), and clips of one 22 s cycle from `game` and `arena`.
+
+What was built is the design above with four changes, each forced by a picture:
+
+1. **A shape has to be sized by the mass at its own centre.** Sized at each pixel, a lobe as wide as the level's whole
+   range was cut along the level's own (rough) lines: a torn edge. The sea now returns, with the contact level, the unit
+   direction across the water to the nearest body point (`Contact.near.toward`: the hit the level already found,
+   carried through the same quad sharing); the level rises that way by 1 / width a unit, so the level at a lobe's or a
+   head's centre is known to first order and the shape is one whole circle or hook. For a mass that is a formula (a
+   splash, a wave's mark) the slope is taken from screen derivatives (`slopeOf`). This is the one thing the first
+   round lacked, and it is what the prediction named as most likely wrong.
+2. **The roll has no inner lines at all.** Half the lobes outlined still read as bubbles. The roll is one cream shape
+   with a scalloped edge; the lines inside the white water are the heads' spirals only.
+3. **The droplets are their own layer** (sparse dots with a thin key line in the outer fringe), not the roll's small
+   lobes: those made a froth.
+4. **The crown stands on the foam's outer edge and behind it**, with curved fingers. On the front itself it was hidden;
+   in front, it was a flat star that covered the curls.
+
+| what | predicted | seen |
+|---|---|---|
+| collar at a foot, `game` | a mass 45 to 55 px wide, 2 or 3 heads of 10 to 20 px with a notch, 3 to 6 droplets, one arc | a scalloped mass about 50 px wide with 1 or 2 hooked heads (15 to 25 px), 2 to 5 droplets; the arc is faint |
+| collar close | heads 16 to 32 px with a turn and a half of channel | heads 20 to 40 px, one turn of channel between two key lines (the spiral was made bolder: it winds in by half the head a turn, not 0.4) |
+| along the hull | 2 or 3 heads of unequal size over about 10 lobes | 3 heads of unequal size on one mass; the rhythm is the hash's, as predicted, and reads as irregular, not as big-small-small-big |
+| slam, first quarter | a crown of about 14 pointed fingers | 13 curved fingers behind a boil of rolling foam with curled heads |
+| slam, after | a ring of heads, beaks outward, thinning to droplets | that; the ring is thick and full of heads (a burst holds a head in 0.45 of its cells, a collar in 0.75) |
+| the crest | a line of heads one deep, breaking up by three quarters of its reach | a line of small hooked heads on the face that carries the boat, thinning to separate heads and droplets |
+| landing | the slam's crown, smaller | a small crown, a boil, a ring round the hull |
+| swims or pops | no | no popping seen in the stills of consecutive instants; the 22 s clips were rendered and not reviewed frame by frame |
+
+Against the references, what ours still lacks:
+
+- **Height.** The references' splashes stand up (a crown seen from the side, a wave front with a face). Ours is paint on
+  the water's surface: the crown is a flat star from above, and from the low `lineup` camera a burst is a thin band.
+- **The big sweep.** A reference head is larger than the mass it rises from and trails a tapering tail; ours are hooks
+  set into a scalloped mass, never larger than the collar is wide.
+- **Line weight.** The references' key line is heavier than ours (a tenth of a head, never under 1.5 px).
+- **The long ripple lines** outside the collar (smooth, like the sea's own lines); ours are the level's arcs, short and
+  a little rough.
+- **A bow wave and wake** for a moving hull: not built. It needs the hull's velocity, which neither the style nor the
+  sea has; it would be a drawer of its own fed by the rig.
+- **Lean relative to the body's edge.** The collar's heads curl the way the swell travels, all one way in the world;
+  the bursts' and the crest's curl outward. A lean that follows the body's edge needs a direction that is constant over
+  a head, and the level's is per pixel.
+
+Which bosses use it: the crab (collar, crest and bursts, by default: its `foam` slot's base); the wyrm, thundermaw and
+the lamp take the roll collar only. Left as they were, and why: the whirlpool's arms (as heads they broke into a
+dotted band; the flat spiral lines are better), the fleet (from its camera the hulls' foam is a few pixels and no
+different), and the other bosses' bursts (not looked at at their own instants, so not switched).
+
+Cost, `profile` (normal frame, least of 40), islander, `game`, 2560 x 1600, main and this branch in turn. The machine's
+load average was 60 to 90 throughout (seven workers); `tools/sea_bench.ts` and the 1280 x 800 runs were dropped.
+
+| instant | main (ridge), four or three runs | this branch (roll) | difference |
+|---|---|---|---|
+| t = 1.0, the collar only | 5.51, 5.51, 5.57, 8.45 | 6.09, 6.09, 6.09, 7.08 | +0.55 at the medians (+0.14 ms a 1280 x 800 frame) |
+| t = 12.4, the slam's burst and the crest too | 5.70, 5.77, 5.77 | 6.82, 6.88, 6.88 | +1.1 (+0.28 a frame) |
+
+Against the budget: the collar was to cost no more than `curls` (+0.10 over `ridge`); it reads +0.14. Three of four
+pairs agree to a timer tick and one run of each build is an outlier a third higher, so the sign is certain and the
+amount is good to about 0.03: it is probably over the budget by a little, from the droplets' hash, the direction's
+derivatives and the arctangent. The burst and the crest together add about 0.14 a frame while they are on screen,
+against the 0.10 predicted for the two. Neither was measured at 1280 x 800 or in a quiet machine.
+
+New base hashes (`game`, 1280 x 800, the base crab): t = 1.0 `00623051d0eb03ef`, t = 3.6 `9ca615e4fe5b5b4c`,
+t = 11.3 `322b7f7a5d7aa8c0` (main 9f7d0e2: `4d1bff1565296878`, `b6bceaf3bf6754fa`, `c1fe2acaa48c6e88`; the first was
+re-measured here, the other two are as given).
+
+Decisions the owner might reverse: the collar's heads curling with the swell (not with the body); the crown as flat
+claws on the water; the roll with no inner lines; a burst holding fewer heads than a collar; the whirlpool's arms left
+flat; the crab's `foam` slot kept as a look (the other collars one pick away) instead of removed.
+
