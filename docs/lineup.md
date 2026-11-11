@@ -394,3 +394,44 @@ One strip (960x540), one fix (the outer pair from 12 to 16 out, the main framing
 - **The underlying conflict.** Our crabs' bodies are small on a 20-unit leg span (3.4 to 4.4 high). A body at 35% of
   the height leaves a frame two crabs wide, so the main framing can have big bodies or four characters, not both. The
   target picture has both because its crabs are drawn with bodies three to four times larger against their legs.
+
+## Third staging (2026-11-12): the edit gives each crab its moment, predicted before the render
+
+The second staging's conflict (bodies of 3.4 to 4.4 on 20-unit legs leave a frame two crabs wide when a body is a
+third of its height) is answered in the edit, not the art: each crab is framed alone and large on its own beats, and
+the frame holds all four only where the ensemble is the point. Formation: an open row, 20 apart (16 left the fiddler's
+great claw within reach of the islander's face), nearly facing the camera; the props keep their lanes and their
+staging (shoved boats riding outward out of frame, throws forward over the singles' cameras, landed boats parked by the
+host between the cuts at 16.0 and 6.0). Cameras: fovY 0.4; a single straight in front of its crab, eye 3 above the
+water (2 grazed the feet's foam collar into a line), 26 to 31 away for the low crabs, 40 for the spider crab aimed at
+7 up; a pair from 82; the wides from 114 (first bar, the release, the splashes) and 100 (the last bar, so the seam is a
+cut that hides the shoved boats going home).
+
+**The edit** (beats from the loop's first downbeat; 48 in the loop; every cut on a beat; bodies by the stand-in times
+1.14, the second staging's measured ratio):
+
+| Beats | Shot | Body of its subject |
+|---|---|---|
+| 0 to 4 | wide, all four: the cascade's wind-ups | 10 to 13% (the spider crab 24%) |
+| 4, 5, 6, 7 | islander, fiddler, samurai, spider crab alone, each on its own slam | 57, 51, 52, 73% |
+| 8 to 10, 10 to 12 | the left pair, the right pair: the rings carry the boats out | 13 to 17%, 17 and 33% |
+| 12 to 15, 15 to 18 | the left pair, the right pair: claws rise to the boats | as above |
+| 18, 19, 20, 21 | each alone as the grips close (19) and squeeze (20) | 57, 51, 52, 73% |
+| 22 to 26 | wide: the whip (23), the release of all four (24, 12.0), the flight | 10 to 24% |
+| 26, 27, 28, 29 | each alone, watching its boat go over the camera | as the singles |
+| 30 to 32 | wide: the four splashes in the foreground (30, 15.0) | 10 to 24% |
+| 32 to 39 | call and answer, each alone on its accent: islander 32, fiddler 33, samurai 34, spider crab 35, again 36 to 39 | as the singles |
+| 40, 41, 42, 43 | the cascade, a single a beat | as the singles |
+| 44 to 48 | wide (tighter): the unison bar; the loop closes on all four | 11 to 27% |
+
+Large (body at least 35% of the height): **6 beats, 3.0 s, for each crab**; equal by construction (from 58 the spider
+crab, tall on its stilts, was large in its pair too and had 11). The spider crab's body is shell top to waterline,
+9 units on its stilts: it is large from much further than the low crabs, so its single stands at 40.
+
+Square: the same edit with the middle wides as pairs (the whip and release on the left pair then the right, the
+splashes on the middle pair); the wide only for the first and last bars. Singles give the same bodies as in 16:9 (the
+height sets them).
+
+Checks predicted: 44 of 44 (the crabs' places changed, nothing relative to each crab did). The foam at standing feet:
+the style's collar is there by default; whether it reads from 3 above the water is the strip's question (item 5 of the
+owner's notes): if not, the singles' eye goes up until it does.
