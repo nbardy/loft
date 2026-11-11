@@ -10,15 +10,20 @@ test("every named variant of the Reefback Titan passes its checks", () => {
   const out = r.stdout.toString();
   const rows = /variant\s+checks\n([\s\S]*?)\n\n(\d+) of (\d+) variants pass/.exec(out);
   expect(rows, `no summary in:\n${out}\n${r.stderr.toString()}`).not.toBeNull();
-  // Nine checks each: Claw Crush lands and is warned, the Grab is warned, grips and lets go as it says, its ship flies
-  // as released, lands and keeps clear, the slam's ring waits for its front and shoves the second boat.
-  for (const name of ["base", "stilt", "fiddler", "fiddlerBaseDisc"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+9/9 pass$`, "m"));
+  // Ten checks each: Claw Crush lands and is warned, the Grab is warned, grips and lets go as it says, its ship flies
+  // as released, lands, keeps clear and leaves the fingers cleanly, the slam's ring waits for its front and carries the
+  // second boat.
+  for (const name of ["base", "stilt", "fiddler", "fiddlerBaseDisc"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+10/10 pass$`, "m"));
   // The islander's face asks three more of itself (titan/face/dandy.ts): each eye's size from the game camera, and that
   // its expressions show and differ on screen.
-  expect(rows![1]).toMatch(/^islander\s+12\/12 pass$/m);
-  // The samurai's face asks six (titan/face/mask.ts): each eye's size from the game camera, a brow plate's length, the
-  // roar's gape, that its expressions show and differ on screen, and that its struck poses hold dead still.
-  expect(rows![1]).toMatch(/^mask\s+15\/15 pass$/m);
+  expect(rows![1]).toMatch(/^islander\s+13\/13 pass$/m);
+  // The bruiser's face asks five (titan/face/brow.ts): each eye's size, its expressions told apart, the width of its roar,
+  // and that the claws keep off the eyes and the mouth from the game camera.
+  expect(rows![1]).toMatch(/^bruiser\s+15\/15 pass$/m);
+  // The samurai's face asks seven (titan/face/mask.ts): each eye's size from the game camera, a brow plate's length, the
+  // roar's gape, that its expressions show and differ on screen, that the claws keep off it, and that its struck poses
+  // hold dead still.
+  expect(rows![1]).toMatch(/^mask\s+17\/17 pass$/m);
   expect(rows![2]).toBe(rows![3]);
   expect(r.exitCode).toBe(0);
 }, 600_000);

@@ -25,7 +25,7 @@ export const patient: FaceOption = {
     const at = (x: number, y: number, z: number): V3 => [F0 + x, y * H, z];
 
     const grabEye = mul(smoothstep(0, 0.5, add(grabEnv.tau, grab.warn)), sub(1, smoothstep(0, 1, grabBeat.settle)));
-    const crushAt = vec3(n.crushCentre[0], 0, n.crushCentre[1]);
+    const crushAt = vec3(rig.crushCentre.x, 0, rig.crushCentre.y);
     const eye = (tag: "L" | "R", s: 1 | -1): Eye => {
       const base = local(at(-0.55, 0.36, s * 0.62));
       // At rest it looks ahead and a little up, over the horizon, wandering slowly (from the high cameras that turns the pupils

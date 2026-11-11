@@ -37,6 +37,7 @@ import type { FaceOption } from "../slots.ts";
 import { faceKit } from "./base.ts";
 
 /** Where the audience is: the game camera's eye (reefback_titan.ts, the `game` camera). It looks there at rest. */
+/** Where the audience stands when the crab is at home (the game camera). A placed crab reads `rig.audience`. */
 export const AUDIENCE = [23, 27, 21] as const;
 /** Where the sockets face at rest: the audience's bearing, 10 degrees lower. Faced square at a camera 40 degrees up, the
  * eyes showed the lower cameras (`face`, `far`) their undersides and their brows sat behind them: stargazing. */
@@ -153,7 +154,8 @@ export function scoreOf(rig: Rig): Score<Channel, Mood> {
     // It laughs: the stalks bob and the mouth chatters, five times a second.
     const laugh = sin(mul(t, TAU * 5));
     return [
-      show("covet", attending), show("strain", straining), show("glee", gleeful), show("glare", glaring), show("wince", wincing),
+      // Glee after the throw, and all through a taunt (rig.dance.on is 0 for a crab that has none).
+      show("covet", attending), show("strain", straining), show("glee", max(gleeful, rig.dance.on)), show("glare", glaring), show("wince", wincing),
       only("wince", ["upper", "lower"], blink),
       added({ tall: mul(laugh, 0.05), jaw: mul(sub(laugh, 1), 0.2) }, gleeful),
     ];
@@ -176,7 +178,7 @@ export const dandy: FaceOption = {
       return Object.fromEntries(CAST.channels.map((ch) => [ch, tabF(`${tag}_${ch}`, c[ch])])) as Posed<Channel>;
     };
     const w = TAU / n.period;
-    const audience = vec3(...AUDIENCE), disc = vec3(n.crushCentre[0], 0, n.crushCentre[1]);
+    const audience = rig.audience, disc = vec3(rig.crushCentre.x, 0, rig.crushCentre.y);
 
     const eye = (e: EyeSpec, i: number) => {
       const c = posed(e.tag, e.lag), q = eyeFrom(GPU, c, e), R = e.radius;

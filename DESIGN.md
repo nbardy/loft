@@ -164,7 +164,13 @@ What grew, additively, for these styles (both in `WaterCtx`, built by `src/geom/
 - `contact`: how close a body is, continuously (1 at the body, 0 at the sea's foam width, negative beyond). The sea's
   contact search was split into this band and toon's shaping of it (`foam`), with the same arithmetic, so toon's frame
   is byte-identical to the one before (`tests/styles.gpu.test.ts`). `foam` is near-binary (two smoothed thresholds),
-  so a style that wants its own foam shape (clawed, scalloped) needs the band.
+  so a style that wants its own foam shape (clawed, scalloped) needs the band. The band is grainy (its ring of taps
+  turns by a hash at every pixel) and sits on two plateaus (the ring has two radii): enough for a soft edge or specks.
+  A style that cuts flat shapes reads `contact.level` instead (2026-11-11): the same closeness from 21 taps, the four
+  pixels of a quad turning the ring by four fixed quarter steps and sharing the least gap through two fine derivatives,
+  four more taps along the nearest hit's direction, the gap measured across the water (height counted double beyond a
+  quarter of the width), and the quad's value tilted toward the hit so it varies per pixel. Either is emitted only if
+  the style reads it. `level`'s own lines are still rough by a pixel or two: use it to size shapes drawn in the world.
 - `phase`: the phase of the largest swell, in cycles. Contours of the height field of two crossed swells close into
   rings (a topographic map); lines of constant phase run along the crests, which is what a printed or cut sea follows.
 
@@ -191,7 +197,12 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
   the rule above with an accent of hue `red` or `yellow` and its inks by luminance; `print.keys({ slate: { key, shadow,
   lit }, ... })`, each paint in its nearest key's two inks; `print.overprint({ ink, amount, value, black })`, every paint
   already an ink, its shadow side overprinted), `sky` (`haze` and `band` ranges of the view's height, the colour
-  `below` the horizon) and `water.eye` (the key black where a deformation darkens the water below a crest value).
+  `below` the horizon), `water.eye` (the key black where a deformation darkens the water below a crest value) and `foam`
+  (the pattern of the contact foam, a sum type `ContactFoam` built by `foam.ridge()`, the fingers along a noise's zero
+  lines above and the default; `foam.curls()`, round lobes with curled heads and a ripple arc; `foam.apron()`, one flat
+  scalloped shape; `foam.rings()`, ripple arcs; `foam.stipple()`, dots; `foam.breakers()`, blades along the printed swell
+  lines: docs/art_direction/DIRECTION.md, "Contact foam"). Every pattern but `ridge` reads `Contact.near.level`, the
+  sea's closeness without the band's grain (`loft_contact_level`, src/geom/sea.ts), which is computed only then.
   `woodblock()` is unchanged pixel for pixel.
 - `biolume`: night sky and water; skin near black; a paint's light is `glowOf(base)`: as strong as it is bright and
   vivid, magenta for purples and reds, cyan for the rest, brightest facing the eye; cyan fresnel rim and hull; the water

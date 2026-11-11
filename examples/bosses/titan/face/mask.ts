@@ -28,8 +28,8 @@
 // nod and turn of the whole face as channels, tusks, and every expression as a struck pose.
 
 import {
-  abs, add, added, cast, clamp, cos, cross, div, dot, draw, drawnLength, expressionsRead, fract, holdsStill, length, lift, max, min, minScreenSize, mix,
-  mul, score, show, sin, smoothstep, spacing, sqrt, strand, struck, sub, surface, through, time, tolerance, unit, vec2, vec3,
+  abs, add, added, cast, clamp, cos, cross, div, dot, draw, expressionsRead, fract, holdsStill, length, lift, max, min, minScreenSize, mix,
+  mul, only, score, show, sin, smoothstep, spacing, spansOnScreen, sqrt, staysInView, strand, struck, sub, surface, through, time, tolerance, unit, vec2, vec3,
   type Expression, type F, type P3, type Posed, type Score, type Struck,
 } from "../../../../src/index.ts";
 import { cut, perFrame, TAU } from "../ink.ts";
@@ -72,27 +72,28 @@ const GAP = 0.1;
  *   look has gone from the audience to the ship.
  * - jaw: 0 shut to 1 dropped; bare: how far the lips part over the teeth; grim: how far the corners turn down; skew:
  *   1 the mouth pulled to the crab's right.
- * - nod: radians the whole mask tips up (chin up); turn: radians the face turns to the crab's right inside the helmet:
- *   its features slide across the sphere while the rim, the brim and the cheek guards stay.
+ * - nod: radians the whole mask tips up (chin up). The face turns inside the helmet (its features slide across the
+ *   sphere while the rim, the brim and the cheek guards stay): turn is radians to the crab's right, and play is the
+ *   share of the way round to its audience (`rig.audience`) it turns besides, wherever that is.
  */
-export type Channel = "brow" | "vee" | "cock" | "lidU" | "lidL" | "wink" | "pupil" | "cross" | "ship" | "jaw" | "bare" | "grim" | "skew" | "nod" | "turn";
+export type Channel = "brow" | "vee" | "cock" | "lidU" | "lidL" | "wink" | "pupil" | "cross" | "ship" | "jaw" | "bare" | "grim" | "skew" | "nod" | "turn" | "play";
 
 export const CAST = cast<Channel, "wanting" | "straining" | "triumphant" | "furious" | "wincing">(
   // Stern: brows low in a shallow V, lids a third down, the pupils square on you, the teeth just showing in a grimace.
-  { brow: 0, vee: 0, cock: 0, lidU: 0.5, lidL: 0.2, wink: 0, pupil: 0.3, cross: 0, ship: 0, jaw: 0, bare: 0.35, grim: 0.5, skew: 0, nod: 0, turn: 0.1 },
+  { brow: 0, vee: 0, cock: 0, lidU: 0.5, lidL: 0.2, wink: 0, pupil: 0.3, cross: 0, ship: 0, jaw: 0, bare: 0.35, grim: 0.5, skew: 0, nod: 0, turn: 0, play: 0.2 },
   {
     // It wants the ship: the face turns a little to it, the eyes slide all the way, the near brow cocks, the jaw loosens.
-    wanting: { cock: 1.3, vee: -0.2, lidU: 0.08, lidL: 0, pupil: 0.32, ship: 1, jaw: 0.25, bare: 0.7, grim: 0.2, nod: -0.03, turn: -0.06 },
+    wanting: { cock: 1.3, vee: -0.2, lidU: 0.08, lidL: 0, pupil: 0.32, ship: 1, jaw: 0.25, bare: 0.7, grim: 0.2, nod: -0.03, turn: -0.06, play: 0 },
     // The squeeze: eyes screwed to slits under brows crushed down, every tooth bared, chin tucked.
-    straining: { brow: -0.28, vee: 0.3, lidU: 0.85, lidL: 0.8, pupil: 0.22, jaw: 0.06, bare: 1, grim: 0.85, nod: -0.09, turn: 0.03 },
+    straining: { brow: -0.28, vee: 0.3, lidU: 0.85, lidL: 0.8, pupil: 0.22, jaw: 0.06, bare: 1, grim: 0.85, nod: -0.09, play: 0.06 },
     // Let go (a mie): the face snaps round to the audience, chin up, brows high and still angled, eyes wide, the lips
     // sealed in a proud bow, the lids level: it looks down at you. (Brows flung apart over pin pupils in round whites read
     // as fright, not pride.)
-    triumphant: { brow: 0.45, vee: 0.15, cock: 0.2, lidU: 0.3, lidL: 0.35, pupil: 0.28, bare: 0, grim: 0.9, nod: 0.16, turn: 0.25 },
+    triumphant: { brow: 0.45, vee: 0.15, cock: 0.2, lidU: 0.3, lidL: 0.35, pupil: 0.28, bare: 0, grim: 0.9, nod: 0.16, play: 0.5 },
     // Before the slam (a mie, with the nirami): brows in a deep V, eyes wide and crossed, the jaw dropped in a roar.
-    furious: { brow: -0.05, vee: 0.9, lidU: 0.05, lidL: 0, pupil: 0.22, cross: 1, jaw: 1, bare: 1, grim: 0.7, nod: -0.07, turn: 0.25 },
+    furious: { brow: -0.05, vee: 0.9, lidU: 0.05, lidL: 0, pupil: 0.22, cross: 1, jaw: 1, bare: 1, grim: 0.7, nod: -0.07, play: 0.5 },
     // The impact: the near eye shut and its brow jammed down, the mouth dragged to that side, the head jolted back.
-    wincing: { brow: -0.1, vee: 0.25, cock: -1.3, lidU: 0.55, lidL: 0.5, wink: 1, pupil: 0.24, jaw: 0.1, bare: 0.9, grim: 0.3, skew: 1, nod: 0.07, turn: 0 },
+    wincing: { brow: -0.1, vee: 0.25, cock: -1.3, lidU: 0.55, lidL: 0.5, wink: 1, pupil: 0.24, jaw: 0.1, bare: 0.9, grim: 0.3, skew: 1, nod: 0.07, play: 0 },
   },
 );
 export type Mood = keyof typeof CAST.named;
@@ -133,7 +134,7 @@ export function featuresOf<T>(o: Arith<T>, c: Readonly<Record<Channel, T>>) {
     };
   };
   return {
-    pitch: o.add(TILT, c.nod), shift: o.mul(c.turn, R), right: one(1), left: one(-1), pupil: c.pupil, ship: c.ship,
+    pitch: o.add(TILT, c.nod), turn: c.turn, play: c.play, right: one(1), left: one(-1), pupil: c.pupil, ship: c.ship,
     mouth: { centre: o.mul(c.skew, MOUTH.skew[0]), drop: o.mul(o.clamp(c.jaw, 0, 1.2), MOUTH.drop), at: (s: T, taper: T) => mouthAt(o, c, s, taper) },
   };
 }
@@ -146,6 +147,8 @@ export const featuresIn = (c: Expression<Channel>) => featuresOf(JS, c);
 export const SNAP = 0.13, FLINCH = 0.08;
 /** Seconds before the slam that the glare is struck: when the rising crusher has cleared the face from the game camera. */
 export const GLARE = 1.0;
+/** The longest a claw may stand between the game camera and an eye or the mouth, seconds. */
+const CLAW_ACROSS = 0.3;
 
 export function scoreOf(rig: Rig): { readonly score: Score<Channel, Mood>; readonly poses: Readonly<Record<Mood, Struck>> } {
   const { n, crush, grab } = rig;
@@ -181,6 +184,11 @@ export function scoreOf(rig: Rig): { readonly score: Score<Channel, Mood>; reado
       show("wanting", p.wanting.weight), show("straining", p.straining.weight),
       added({ brow: mul(sin(mul(t, TAU * 11)), 0.05), nod: mul(sin(mul(t, TAU * 9)), 0.012), jaw: mul(sin(mul(t, TAU * 13)), 0.04) }, tremble),
       show("triumphant", p.triumphant.weight), show("furious", p.furious.weight), show("wincing", p.wincing.weight),
+      // The taunt (rig.dance; nothing for a crab that has none): on each of its accents the body strikes a pose and
+      // holds it, and the face is its mie: the triumph, with the eyes crossed. The weight is the dance's own move (not
+      // a function of this score's clock: the face reads its score on the scene's clock only), so the face lands on
+      // the frame the gauntlet does and holds exactly as long.
+      show("triumphant", rig.dance.wave), only("furious", ["cross"], rig.dance.wave),
     ];
   });
   return { score: theScore, poses: posesAt(time) };
@@ -199,7 +207,7 @@ const ell = (x: F, y: F, cx: number, cy: number, rx: number, ry: number): F => l
 
 export const mask: FaceOption = {
   about: "a kabuki war mask: lacquer brow plates, flat black-rimmed eyes that cross, a fanged mouth; poses struck and held",
-  draw: (rig) => {
+  draw: (rig, _carapace, claws) => {
     const { n, body, local, shipNow } = rig;
     const I = n.ink, C = n.carapace;
     const { score: theScore, poses } = scoreOf(rig);
@@ -214,8 +222,11 @@ export const mask: FaceOption = {
     const O = local([C.to + PROUD - R, CY, 0]);
     const cp = cos(f.pitch), sp = sin(f.pitch);
     const N = tabV("out", add(mul(body.x, cp), mul(body.y, sp))), U = tabV("up", sub(mul(body.y, cp), mul(body.x, sp))), Z = body.z;
-    /** How far the features have slid to the crab's right: the turn, in units along the face. */
-    const slid = tabF("slid", f.shift);
+    // How far the features have slid to the crab's right, in units along the face: the turn, and `play` of the way round
+    // to the audience, wherever the rig says that is (the game camera for a crab at home, 29 degrees round; a staged
+    // crab's is its scene's).
+    const toAudience = unit(sub(rig.audience, add(O, mul(N, R))));
+    const slid = tabF("slid", mul(add(f.turn, mul(f.play, dot(toAudience, Z))), R));
     /** The unit direction from the sphere's centre to the face at angles (th across, ph up). */
     const dirAt = (th_: F | number, ph_: F | number): P3 => {
       const th = lift<"f32">(th_), ph = lift<"f32">(ph_);
@@ -410,13 +421,16 @@ export const mask: FaceOption = {
         // disc is turned 45 degrees from the game camera and is about 40 px across).
         minScreenSize(right.ball, "game", 48), minScreenSize(left.ball, "game", 48),
         // A brow plate is a visible bar: at least 55 px from end to end.
-        drawnLength("the right brow plate", browR.ends, "game", 55),
+        spansOnScreen("the right brow plate", browR.ends, "game", 55, { at: 0 }),
         // The roar is a visible shape: lip to lip at least 16 px, measured in the glare's hold.
-        drawnLength("the roar's gape", gape, "game", 16, { at: n.crushFirst - 0.5 }),
+        spansOnScreen("the roar's gape", gape, "game", 16, { at: n.crushFirst - 0.5 }),
         // Every named expression shows in a cycle, and any two differ on screen by a quarter of the right eye's width.
         expressionsRead(theScore, marks, { camera: "game", period: n.crushPeriod, apart: tolerance.share(0.25), of: right.width }),
         // The poses that are held are held dead still: through each hold every channel is the cast's own number (to a
         // thousandth of its spread across the cast: f32). The strain trembles by design and is not in the list.
+        // The claws keep off the face: from the game camera neither eye nor the mouth is behind a claw for more than
+        // CLAW_ACROSS seconds at a stretch (the crusher crosses on its way up; the glare is struck once it has passed).
+        staysInView({ eyeR: right.centre, eyeL: left.centre, mouth: lipTop }, claws.things, { camera: "game", period: n.crushPeriod, hidden: tolerance.units(CLAW_ACROSS) }),
         holdsStill(theScore, { wanting: poses.wanting, triumphant: poses.triumphant, furious: poses.furious, wincing: poses.wincing }, { period: n.crushPeriod, within: tolerance.share(1e-3) }),
       ],
     };

@@ -3,6 +3,7 @@
 // mapping every skin vertex through a chart that bends or twists shears a body into slivers.
 
 import { abs, add, cos, cross, dot, fetch, lift, listOf, max, mul, sin, sub, vec3, vec4, type In, type TableSource } from "../expr.ts";
+import { scopedName } from "../expr.ts";
 import type { Chart, F, Frame, P3, Placeable, Placed, Points, Posed, Poses, Size } from "./types.ts";
 
 const X = lift<"vec3">([1, 0, 0]), Y = lift<"vec3">([0, 1, 0]), Z = lift<"vec3">([0, 0, 1]);
@@ -153,7 +154,8 @@ export function posed(count: number, spec: (i: F) => PoseSpec): PoseSet {
  * stage fetches its copy's. Cheaper than a closed form in the index when the poses share nothing, and the only way to
  * write them when they do not. In the world's coordinates (not placeable). Every copy's size is of one kind.
  */
-export function posedList(name: string, specs: readonly PoseSpec[]): Poses {
+export function posedList(given: string, specs: readonly PoseSpec[]): Poses {
+  const name = scopedName(given);
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`posedList "${name}": names must be identifiers (they name a table)`);
   if (specs.length < 1) throw new Error(`posedList "${name}": no copies`);
   const kind = specs[0]!.size.kind;
