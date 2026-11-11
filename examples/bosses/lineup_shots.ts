@@ -41,7 +41,8 @@ const along = (d: number, h: number, ty: number, z: number, fovY: number): Lens 
  * 16:9. fovY 0.28 rad is about an 85 mm lens on a full frame (24 / (2 tan 0.14)): the long end of the references'
  * 75 to 85 mm, where the four fill the width with their faces at 90 px or more. Three shots cut on downbeats: the slam
  * (the main framing, where the targets are measured), the throw (pulled back, so the boats thrown forward land in
- * frame), the taunt (a slow push in on the faces). The cut at 6.0 hides the thrown boats going home (the grab's cycle
+ * frame), the taunt (a slow push in on the faces from the slam's framing to 112; to 100, the second strip cut the
+ * islander in half at the left edge). The cut at 6.0 hides the thrown boats going home (the grab's cycle
  * turns there) and the cut at the seam the shoved ones (the crushes' cycles turn at 0).
  */
 export const WIDE: Format = {

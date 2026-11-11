@@ -206,10 +206,14 @@ the claw crosses the face for the slam's half second.
 |---|---|---|---|
 | 16:9 1920x1080 | 0.0 | slam (the main framing) | (120, 3, 0), (0, 10.5, 0), 0.28 |
 | | 6.0 (bar 4) | throw: pulled back so the landings are in frame | (138, 3, 0), (0, 11, 0), 0.28 |
-| | 16.0 (bar 9) | taunt: a push in over the eight seconds, eased | (108, 3.5, 0) to (100, 4, 0), target (0, 9.5, 0) to (0, 9, 0), 0.28 |
-| square 1080x1080 | 0.0 | slam: a truck along the row following the cascade, 1.75 to 3.75 s | (75, 3.5, z), (0, 8.5, z), 0.4; z from 12.5 (islander and fiddler) to -12.5 (samurai and spider crab) |
-| | 6.0 | throw: the middle pair and half of each neighbour | (100, 3.5, 0), (0, 9, 0), 0.4 |
-| | 16.0 | taunt: a truck along the row, 16.5 to 23.5 s | (72, 3.5, z), (0, 8.5, z), 0.4; z from 12.5 to -12.5 |
+| | 16.0 (bar 9) | taunt: a push in over the eight seconds, eased | (122, 3, 0) to (112, 3.5, 0), target (0, 10.5, 0) to (0, 10, 0), 0.28 (first (108, 3.5) to (100, 4): the islander was cut in half) |
+| square 1080x1080 | 0.0 | slam: a truck along the row following the cascade, 1.75 to 3.75 s | (100, 3.5, z), (0, 8, z), 0.25; z from 12.5 (islander and fiddler) to -12.5 (samurai and spider crab) |
+| | 6.0 | throw: the middle pair and half of each neighbour | (135, 3.5, 0), (0, 8.5, 0), 0.25 |
+| | 16.0 | taunt: a truck along the row, 16.5 to 23.5 s | (96, 3.5, z), (0, 8, z), 0.25; z from 12.5 to -12.5 |
+
+The square was first planned at fovY 0.4 from 72 to 100 (about 59 mm): the strip left a third of it sky; closer, at 60, the
+boats thrown 38 forward landed 22 from the lens and filled its foreground. A longer lens from further gives the same
+framing with that foreground three times further off.
 
 ### Framing, predicted (stand-in times 0.9; at each crab's largest moment; left to right islander, fiddler, samurai, spider crab)
 
