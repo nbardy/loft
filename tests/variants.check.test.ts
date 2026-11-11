@@ -9,7 +9,7 @@ test("every named variant of the Reefback Titan passes its checks", () => {
   const out = r.stdout.toString();
   const rows = /variant\s+checks\n([\s\S]*?)\n\n(\d+) of (\d+) variants pass/.exec(out);
   expect(rows, `no summary in:\n${out}\n${r.stderr.toString()}`).not.toBeNull();
-  for (const name of ["base", "stilt", "fiddler", "ironclad", "stiltFiddler"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+4/4 pass$`, "m"));
+  for (const name of ["base", "stilt", "fiddler", "mask", "stiltFiddler"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+4/4 pass$`, "m"));
   expect(rows![2]).toBe(rows![3]);
   expect(r.exitCode).toBe(0);
 }, 600_000);

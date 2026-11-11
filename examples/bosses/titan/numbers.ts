@@ -12,6 +12,9 @@ export const S = {
     black: [0.075, 0.07, 0.09], indigo: [0.13, 0.2, 0.37], cream: [0.93, 0.88, 0.75],
     brick: [0.66, 0.22, 0.13], brickDark: [0.42, 0.12, 0.09], moss: [0.47, 0.56, 0.24], mossDeep: [0.2, 0.32, 0.17],
     stone: [0.7, 0.63, 0.5], bark: [0.3, 0.2, 0.14], coral: [0.86, 0.56, 0.46],
+    // The mask direction's dark lacquer (armour, helmet): lighter than the line black so ink lines still read on it.
+    // The base reads none of it.
+    lacquer: [0.14, 0.1, 0.12],
   } satisfies Record<string, V3>,
   /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
   shadowIndigo: 0.42,

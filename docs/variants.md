@@ -147,7 +147,7 @@ bun src/cli/main.ts render examples/bosses/reefback_titan.ts --variant legs=stil
 bun src/cli/main.ts check examples/bosses/reefback_titan.ts                    # every named variant
 bun src/cli/main.ts check examples/bosses/reefback_titan.ts --variant stilt,face=mask
 bun src/cli/main.ts check examples/bosses/reefback_titan.ts --combinations     # every combination of options
-bun src/cli/main.ts dev examples/bosses/reefback_titan.ts --variant ironclad
+bun src/cli/main.ts dev examples/bosses/reefback_titan.ts --variant mask
 bun test tests/variants.check.test.ts                                           # every named variant passes
 ```
 
