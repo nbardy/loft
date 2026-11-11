@@ -43,7 +43,9 @@ const TAUNT_ARMS = beat(29);
  * What the scene changes of a crab's numbers: its attacks' seconds on beats, and its props in a lane in front of it
  * (docs/lineup.md, "The formation and the props"). The crab alone keeps its own.
  */
-const onTheBeat = (k: number, variant: string) => ({
+/** Where crab k's thrown boat lands, in its axes: a fan, the outer two outward. */
+const FAN = [[38, 6], [38, 0], [38, -4], [38, -8]] as const;
+const onTheBeat = (k: number) => ({
   crushPeriod: PERIOD, period: BAR,
   // Three beats from the claw's first movement to its landing. The warning starts at the loop's seam for every crab
   // (2.0 + 0.5 k before its slam): a cycle turns where its warning starts, and the shoved boat goes home when its cycle
@@ -58,9 +60,10 @@ const onTheBeat = (k: number, variant: string) => ({
   grabSeconds: { windup: 0.9, reach: 5 * BEAT - 0.9 - 0.22, close: 0.22, hold: 5 * BEAT, release: 1.3 },
   // The boat taken nearly straight ahead of the left shoulder, in the crab's lane.
   grabBearing: -0.26,
-  // Thrown forward and to the camera's right, landing in the foreground sea in frame (the spider crab's less far right:
-  // it is the last in the row). Drawn straight back before the whip (`side` 0).
-  throw: { ...S.throw, side: 0, stroke: BEAT, follow: 0.25, flight: 6 * BEAT, land: variant.startsWith("stilt") ? [26, -5] as const : [26, -8] as const, turns: 2 },
+  // Thrown forward, toward the camera, landing in the foreground sea in frame, the four fanned out (with the toe-in,
+  // about 18 either side of the middle in the world). 38 forward: a throw must carry 25 from where the boat was taken
+  // (`throwLands`; 26 forward carried 15). Drawn straight back before the whip (`side` 0).
+  throw: { ...S.throw, side: 0, stroke: BEAT, follow: 0.25, flight: 6 * BEAT, land: FAN[k]!, turns: 2 },
   // The shoved boat starts at the front-left of the disc (the camera's left), side on, stern toward the slam, and
   // rides forward and to the left; it stays where the ride leaves it until its cycle turns at the seam.
   boatTwo: { ...S.boatTwo, bearing: 0.6, heading: -2.2, keep: PERIOD },
@@ -118,7 +121,7 @@ export const cameras: Readonly<Record<string, Camera>> = Object.fromEntries([
 export function lineupScene(o: { readonly line: readonly string[]; readonly look: string }) {
   if (o.line.length !== 4) throw new Error(`crab lineup: four variants, left to right; got ${o.line.length}`);
   const line = lineup({
-    members: o.line.map((variant, k) => ({ name: `crab${k}`, design, variant, numbers: onTheBeat(k, variant), how: how(k) })),
+    members: o.line.map((variant, k) => ({ name: `crab${k}`, design, variant, numbers: onTheBeat(k), how: how(k) })),
     // The swells' periods are 12 s and 8 s: whole turns in the loop.
     water: { swell: [{ direction: [1, 0.3], length: 13, height: 0.2, speed: 13 / 12 }, { direction: [-0.3, 1], length: 6, height: 0.07, speed: 6 / 8, phase: 1.3 }], foam: 0.85 },
     loop: { kind: "every", seconds: PERIOD },
