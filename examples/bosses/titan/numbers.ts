@@ -22,6 +22,8 @@ export const S = {
     // dark olive thorny body, and shrine vermilion as its one accent.
     straw: [0.86, 0.79, 0.58], strawDark: [0.52, 0.43, 0.27], thorn: [0.34, 0.31, 0.2], thornDark: [0.15, 0.13, 0.09],
     shrine: [0.8, 0.16, 0.1], shrineDark: [0.42, 0.07, 0.06], paper: [0.97, 0.86, 0.6],
+    // The brow face's mouth (face/brow.ts; no other option reads them): the dark maroon behind the mandibles, its tongue.
+    maw: [0.25, 0.06, 0.08], tongue: [0.7, 0.3, 0.3],
   } satisfies Record<string, V3>,
   /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
   shadowIndigo: 0.42,

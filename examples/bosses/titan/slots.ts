@@ -37,9 +37,10 @@ export type ClawsOption = Opt & { readonly offer: (n: Numbers) => ClawsOffer; re
 /** The face on the front of the carapace (crab coordinates: the base face's brow V at x = 4.93 for the base carapace; a
  * face may place itself from `n.carapace` instead, as face/mask.ts does). `checks` are what this face asks of itself
  * (an eye large enough to read from the game camera, expressions that differ on screen): they join the design's, so a
- * variant with this face passes only if they do. A face that asks nothing returns none. */
+ * variant with this face passes only if they do. A face that asks nothing returns none. It is given the claws as drawn,
+ * so it can ask that they keep off it (`staysInView`; face/brow.ts). */
 export type Face = { readonly things: readonly Drawable[]; readonly checks: readonly Check[] };
-export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace) => Face };
+export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace, claws: Claws) => Face };
 
 /** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. `keepClear` is what a
  * thrown ship must fly clear of besides the atoll's own cylinder, which the design states for every back

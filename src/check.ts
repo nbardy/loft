@@ -378,6 +378,84 @@ export function expressionsRead<K extends string, N extends string>(score: Score
   };
 }
 
+/** A mark is at least `pixels` long on screen from a named camera at time `at`: a mouth's corners in its roar, an eye's opening. */
+export function spansOnScreen(what: string, mark: Mark, camera: string, pixels: number, o: { readonly at: CheckTime; readonly size?: readonly [number, number] }): Check {
+  const [w, h] = o.size ?? [1280, 800];
+  const roots = [lift<"vec3">(mark.from), lift<"vec3">(mark.to)];
+  return {
+    name: `${what} from "${camera}" is at least ${pixels} px`,
+    run(probe) {
+      const cam: Camera | undefined = probe.artefact.cameras[camera];
+      if (cam === undefined) throw new Error(`spansOnScreen: the scene has no camera "${camera}" (cameras: ${Object.keys(probe.artefact.cameras).join(", ")})`);
+      const t = timeOf(probe, o.at), m = cameraMatrices(cam, w / h);
+      const [a, b] = (probe.eval(roots, t) as unknown as V3[]).map((p) => project(m, p, w, h));
+      const across = Math.hypot(b!.x - a!.x, b!.y - a!.y);
+      return { name: this.name, pass: across >= pixels, value: across, measured: `${fmt(across, 1)} px at t=${fmt(t, 2)}`, limit: `>= ${pixels} px` };
+    },
+  };
+}
+
+/** Whether the segment from p to q passes through a chain of tapered capsules. */
+function crosses(chain: readonly Joint[], p: V3, q: V3): boolean {
+  for (let i = 0; i + 1 < chain.length; i++) {
+    const [s, t] = closest(chain[i]!.p, chain[i + 1]!.p, p, q);
+    const a = lerp(chain[i]!.p, chain[i + 1]!.p, s), b = lerp(p, q, t);
+    if (Math.hypot(...subV(a, b)) < chain[i]!.r + (chain[i + 1]!.r - chain[i]!.r) * s) return true;
+  }
+  return false;
+}
+
+/**
+ * Named points (an eye's middle, a mouth) stay in view of a camera: over one `period` of the clock, none of them is
+ * behind any of `blockers` for longer than `hidden` at a stretch (`tolerance.units`: seconds; `tolerance.share`: of the
+ * period). A point is behind a blocker when the line of sight from it to the camera passes through the blocker's
+ * skeleton (its chain of capsules, whose radii are the larger of each section's half-width and half-height: a flat
+ * part seen edge-on is counted as hiding more than it does, so a pass is safe and a failure may need a look).
+ * Blockers with no skeleton hide nothing here.
+ */
+export function staysInView(points: Readonly<Record<string, In<"vec3">>>, blockers: readonly { readonly name: string; readonly skeletons: readonly Skeleton[] }[], o: {
+  readonly camera: string; readonly period: number; readonly hidden: Tolerance; readonly rate?: number;
+}): Check {
+  const names = Object.keys(points);
+  if (names.length === 0) throw new Error("staysInView: no points to watch");
+  const rate = o.rate ?? 20;
+  const roots = names.map((n) => lift<"vec3">(points[n]!));
+  const chains = blockers.flatMap((b) => b.skeletons.filter((s) => s.joints > 1).map((s) => ({ name: b.name, skeleton: s })));
+  return {
+    name: `${names.join(", ")} stay in view of "${o.camera}"`,
+    run(probe) {
+      const cam: Camera | undefined = probe.artefact.cameras[o.camera];
+      if (cam === undefined) throw new Error(`staysInView: the scene has no camera "${o.camera}" (cameras: ${Object.keys(probe.artefact.cameras).join(", ")})`);
+      // Where the line of sight from a point ends: the eye, or for a camera of parallel rays a point far back along them.
+      const sightEnd = ((): (p: V3) => V3 => {
+        switch (cam.kind) {
+          case "perspective": return () => cam.eye;
+          case "orthographic": { const back = subV(cam.eye, cam.target); return (p) => [p[0] + back[0], p[1] + back[1], p[2] + back[2]]; }
+        }
+      })();
+      const allowed = allowance(o.hidden, o.period);
+      const ts = times(0, o.period, rate);
+      // For each point: its longest hidden stretch (samples in a row), all its hidden samples, and what hid it longest.
+      const run = names.map(() => ({ now: 0, longest: 0, total: 0, at: 0, by: "" }));
+      for (const t of ts) {
+        const ps = probe.eval(roots, t) as unknown as V3[];
+        const posed = chains.map((c) => ({ name: c.name, joints: probe.joints(c.skeleton, [0, c.skeleton.joints - 1], t) }));
+        for (const [i, p] of ps.entries()) {
+          const by = posed.find((c) => crosses(c.joints, p, sightEnd(p)));
+          const r = run[i]!;
+          if (by === undefined) { r.now = 0; continue; }
+          r.now++; r.total++;
+          if (r.now > r.longest) { r.longest = r.now; r.at = t; r.by = by.name; }
+        }
+      }
+      const worst = run.reduce((a, b) => (b.longest > a.longest ? b : a));
+      const seconds = worst.longest / rate;
+      const said = run.map((r, i) => `${names[i]} ${fmt(r.longest / rate, 2)} s${r.longest > 0 ? ` (by ${r.by}, until t=${fmt(r.at, 2)}; ${fmt(r.total / rate, 2)} s in all)` : ""}`).join(", ");
+      return { name: this.name, pass: seconds <= allowed, value: seconds, measured: `longest hidden: ${said}`, limit: `each <= ${describe(o.hidden, allowed, "the period")} s at a stretch` };
+    },
+  };
+}
+
 // ---- holds --------------------------------------------------------------------------------------------------------
 
 /**
