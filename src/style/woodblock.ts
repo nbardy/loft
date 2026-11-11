@@ -413,12 +413,14 @@ function rings(p: Extract<ContactFoam, { kind: "rings" }>, on: FoamNear): Expr<"
  * Round lobes on a jittered lattice, `period` apart, each growing with the level: full size near the body, nothing at
  * the level's outer edge. A lobe's edge is a circle in the world, so it is clean whatever the level's small steps do;
  * the level only sizes it. Of the lobes that cover a pixel (it is inside one, or within `line` cells outside it, on
- * its key line) the one with the higher hash is in front. Returned for the pixel: `front`, the front lobe's hash (-1
+ * its key line) the one with the higher hash is in front. `sizes`: the least and greatest radius at full growth, in
+ * cells. (A wider range, 0.3 to 0.8 with most lobes small, was tried for the curls: the lobes stopped overlapping and
+ * the collar read as loose bubbles, not a mass.) Returned for the pixel: `front`, the front lobe's hash (-1
  * where none covers it); `inside`, how far inside that lobe's edge this is, in cells (negative on its key line);
  * `local`, where in that lobe (the offset from its centre over its radius); `union`, how far inside the nearest edge
  * of all the lobes together (negative outside them all).
  */
-function lobes(on: FoamNear, period: number, line: number): { readonly front: Expr<"f32">; readonly inside: Expr<"f32">; readonly local: Expr<"vec2">; readonly union: Expr<"f32"> } {
+function lobes(on: FoamNear, period: number, line: number, sizes: readonly [number, number] = [0.44, 0.78]): { readonly front: Expr<"f32">; readonly inside: Expr<"f32">; readonly local: Expr<"vec2">; readonly union: Expr<"f32"> } {
   const q = vec2(along(on.xz, 21, period), along(on.xz, 111, period));
   const cell = floor(q), at = sub(q, cell);
   // The four cells whose lobes can reach here: this one and the three on the pixel's side of it (a lobe's centre is
@@ -430,7 +432,7 @@ function lobes(on: FoamNear, period: number, line: number): { readonly front: Ex
     const c = add(cell, vec2(mul(side.x, i), mul(side.y, j)));
     const h = hash22(c);
     const off = sub(q, add(add(c, 0.5), mul(sub(h, 0.5), 0.4)));
-    const radius = mul(grow, mix(0.44, 0.78, h.y));
+    const radius = mul(grow, mix(sizes[0], sizes[1], h.y));
     // A lobe under an eighth of a cell is not drawn, and a small one has a thinner key line: at full width the line
     // round a lobe that small printed a black blot with a cream dot in it.
     const s = select(gt(radius, 0.12), sub(radius, length(off)), -1);
