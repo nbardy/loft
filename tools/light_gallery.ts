@@ -1,146 +1,142 @@
-// The lighting library drawn for comparison (docs/lighting.md): every named recipe of the woodblock style, and the print
-// as it is, on the crab from four cameras, on another boss, and on the four-crab lineup; then labelled sheets.
+// The lighting library drawn for comparison (docs/lighting.md): every named look of the woodblock style, and the print
+// as it is, on the crab from `game` (true size and close) beside its painted reference; the four-crab lineup in the
+// video's looks; the video look beside the reference pictures; clips; and the cost of each look.
 //
-//   bun tools/light_gallery.ts stills [--only cel,rim]     one process per scene and recipe (a scene per process)
-//   bun tools/light_gallery.ts sheets                      the sheets, from the stills (ImageMagick)
-//   bun tools/light_gallery.ts clips [--only cel]          8 s of the crab's game camera per recipe, and the sun swung under `cel`
-//   bun tools/light_gallery.ts cost [--rounds 3]           the normal frame per recipe, the print as it is measured beside each
+//   bun tools/light_gallery.ts stills [--only a,b] [--force]   the crab, one process per look (a scene per process)
+//   bun tools/light_gallery.ts lineup [--only a,b] [--force]   the lineup, t = 2.5 and 18, one load per look
+//   bun tools/light_gallery.ts sheets                          the sheets, from the stills (ImageMagick)
+//   bun tools/light_gallery.ts clips [--only a,b]              22 s of the crab's game camera per look
+//   bun tools/light_gallery.ts cost [--rounds 3] [--scene crab|lineup] [--only a,b]
 //
-// Everything goes under out/shade/ (git-ignored).
+// Everything goes under out/shade/ (git-ignored). Each command prints one line per item, not the renderer's log.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { LIGHT } from "../src/style/light.ts";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { LOOKS } from "../src/style/woodblock.ts";
 
 const OUT = "out/shade";
-const CRAB = "examples/bosses/reefback_titan.ts", WYRM = "examples/bosses/maelstrom_wyrm.ts", LINEUP = "examples/bosses/crab_lineup.ts";
+const CRAB = "examples/bosses/reefback_titan.ts", LINEUP = "examples/bosses/crab_lineup.ts";
 /** The print as it is first, then the library. */
-const RECIPES = ["asPrinted", ...Object.keys(LIGHT)];
+const ALL = ["asPrinted", ...Object.keys(LOOKS)];
 const REFS: Readonly<Record<string, string>> = {
-  flat: "shade_flat", twoTone: "shade_two_tone", threeTone: "shade_three_tone", bokashi: "shade_bokashi", hatched: "shade_hatched", contact: "shade_contact", rim: "shade_rim", cel: "shade_best",
+  flat: "shade/shade_flat", twoTone: "shade/shade_two_tone", threeTone: "shade/shade_three_tone", bokashi: "shade/shade_bokashi", hatched: "shade/shade_hatched",
+  contact: "shade/shade_contact", rim: "shade/shade_rim", cel: "shade/shade_best_game", referencePalette: "crab_round4/stalk_hybrid", engraving: "shade/shade_hatched",
+  sunset: "lineup/face_pass", engravingSunset: "lineup/lineup_wide",
 };
-const REF_DIR = `${process.env.HOME}/git/loft/docs/art_direction/shading`;
+const ART = `${process.env.HOME}/git/loft/docs/art_direction`;
+/** The lineup's sun for the sunset looks: low behind the crabs (the camera looks down -x). */
+const SUNSET_SUN = "-0.95,0.3,0.05";
+const VIDEO_LOOKS = ["hatched", "engraving", "engravingSunset"];
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => { const i = args.indexOf(name); return i < 0 ? undefined : args[i + 1]; };
 const only = flag("--only")?.split(",");
-const chosen = RECIPES.filter((r) => only === undefined || only.includes(r));
+const pick = (names: readonly string[]) => names.filter((r) => only === undefined || only.includes(r));
 const lightOf = (r: string): string[] => (r === "asPrinted" ? [] : ["--light", r]);
+const sunOf = (r: string): string[] => (r.toLowerCase().includes("sunset") ? ["--input", `sun=${SUNSET_SUN}`] : []);
 
 function run(cmd: string, argv: readonly string[]): string {
   const r = spawnSync(cmd, argv, { encoding: "utf8", maxBuffer: 1 << 26 });
-  if (r.status !== 0) throw new Error(`${cmd} ${argv.join(" ")}\n${r.stdout}\n${r.stderr}`);
+  if (r.status !== 0) throw new Error(`${cmd} ${argv.join(" ")}\n${(r.stdout + r.stderr).split("\n").filter((l) => /rror|throw|at /.test(l)).slice(0, 12).join("\n")}`);
   return r.stdout + r.stderr;
 }
 const loft = (argv: readonly string[]): string => run("bun", ["src/cli/main.ts", ...argv]);
+const hashes = (log: string): string => log.split("\n").filter((l) => l.includes("rgba")).map((l) => l.trim().split(/\s+/).slice(-1)[0]).join(" ");
 
 function stills(): void {
   mkdirSync(`${OUT}/stills`, { recursive: true });
-  const jobs: { readonly name: string; readonly argv: readonly string[] }[] = chosen.flatMap((r) => [
-    { name: `crab_${r}`, argv: ["render", CRAB, "--variant", "bruiser", ...lightOf(r), "--views", "game,three,face,back", "--time", "6.3", "--size", "1280x800"] },
-    { name: `wyrm_${r}`, argv: ["render", WYRM, ...lightOf(r), "--views", "game,close", "--time", "3.0", "--size", "1280x800"] },
-    { name: `lineup_${r}`, argv: ["render", LINEUP, ...lightOf(r), "--views", "lineup", "--time", "2.5", "--size", "1280x720"] },
-  ]);
-  // `--scenes crab,wyrm,lineup`: which of the three (default all), in that order, so the cheap ones land first.
-  const scenes = (flag("--scenes") ?? "crab,wyrm,lineup").split(",");
-  const ordered = scenes.flatMap((sc) => jobs.filter((j) => j.name.startsWith(`${sc}_`)));
-  for (const j of ordered) {
-    const out = `${OUT}/stills/${j.name}.webp`;
+  for (const r of pick(ALL)) {
+    const out = `${OUT}/stills/crab_${r}.webp`;
     if (existsSync(out) && !args.includes("--force")) continue;
     const t = performance.now();
-    const log = loft([...j.argv, "--out", out]);
-    console.log(`${j.name}  ${((performance.now() - t) / 1000).toFixed(0)} s  ${log.split("\n").filter((l) => l.includes("rgba")).map((l) => l.trim().split(/\s+/).slice(-1)[0]).join(" ")}`);
+    const log = loft(["render", CRAB, "--variant", "bruiser", ...lightOf(r), ...sunOf(r), "--views", "game,face", "--time", "6.3", "--size", "1280x800", "--out", out]);
+    console.log(`crab_${r}  ${((performance.now() - t) / 1000).toFixed(0)} s  ${hashes(log)}`);
   }
 }
 
-/** One tile of a still: crop (w x h + x + y of the 1280 x 800 view at column, row of the sheet), scaled, labelled. */
-function tile(src: string, view: readonly [number, number], crop: readonly [number, number, number, number], size: readonly [number, number], label: string, dest: string): void {
-  const [w, h, x, y] = crop;
-  run("magick", [src, "-crop", `${w}x${h}+${view[0] * 1280 + x}+${view[1] * 800 + y}`, "+repage", "-filter", "point", "-resize", `${size[0]}x${size[1]}!`,
-    "-gravity", "NorthWest", "-fill", "white", "-undercolor", "#000000b0", "-pointsize", "20", "-annotate", "+6+4", ` ${label} `, dest]);
+function lineup(): void {
+  mkdirSync(`${OUT}/lineup`, { recursive: true });
+  for (const r of pick(["asPrinted", ...VIDEO_LOOKS])) {
+    const dir = `${OUT}/lineup/${r}`;
+    if (existsSync(dir) && !args.includes("--force")) continue;
+    const t = performance.now();
+    const log = loft(["frames", LINEUP, ...lightOf(r), ...sunOf(r), "--view", "lineup", "--times", "2.5,18", "--size", "1280x720", "--out", dir]);
+    console.log(`lineup_${r}  ${((performance.now() - t) / 1000).toFixed(0)} s  ${hashes(log)}  ${readdirSync(dir).join(" ")}`);
+  }
 }
+
+const label = (text: string, size = 20): string[] => ["-gravity", "NorthWest", "-fill", "white", "-undercolor", "#000000b0", "-pointsize", String(size), "-annotate", "+6+4", ` ${text} `];
 
 function sheets(): void {
   const tmp = `${OUT}/tiles`;
   mkdirSync(tmp, { recursive: true });
+  // The crab: game at true size (the crab's part of the frame), game doubled on the claw, face, the reference.
   const rows: string[] = [];
-  for (const r of RECIPES) {
-    const crab = `${OUT}/stills/crab_${r}.webp`;
-    if (!existsSync(crab)) continue;
-    // game at true size (the crab's part of the frame), game doubled on the crab, face, three on the legs and claw, back.
-    const parts: [readonly [number, number], readonly [number, number, number, number], readonly [number, number], string][] = [
-      [[0, 0], [640, 400, 200, 20], [640, 400], `${r}: game, true size`],
-      [[0, 0], [320, 200, 330, 150], [640, 400], "game x2"],
-      [[0, 1], [1280, 800, 0, 0], [640, 400], "face"],
-      [[1, 0], [800, 500, 380, 150], [640, 400], "three: legs and claw"],
-      [[1, 1], [1280, 800, 0, 0], [640, 400], "back"],
+  for (const r of ALL) {
+    const src = `${OUT}/stills/crab_${r}.webp`;
+    if (!existsSync(src)) continue;
+    const t = (i: number, argv: readonly string[]) => { const d = `${tmp}/${r}_${i}.png`; run("magick", [src, ...argv, d]); return d; };
+    const files = [
+      t(0, ["-crop", "640x400+200+40", "+repage", ...label(`${r}: game, true size`)]),
+      t(1, ["-crop", "320x200+330+150", "+repage", "-filter", "point", "-resize", "640x400!", ...label("game x2")]),
+      t(2, ["-crop", "1280x800+1280+0", "+repage", "-resize", "640x400!", ...label("face")]),
     ];
-    const files = parts.map(([view, crop, size, label], i) => { const d = `${tmp}/${r}_${i}.png`; tile(crab, view, crop, size, label, d); return d; });
     const ref = REFS[r];
-    if (ref !== undefined) {
-      const d = `${tmp}/${r}_ref.png`;
-      run("magick", [`${REF_DIR}/${ref}.webp`, "-resize", "640x400!", "-gravity", "NorthWest", "-fill", "white", "-undercolor", "#000000b0", "-pointsize", "20", "-annotate", "+6+4", " painted reference ", d]);
-      files.push(d);
-    } else {
-      const d = `${tmp}/${r}_ref.png`;
-      run("magick", ["-size", "640x400", "xc:#101018", d]);
-      files.push(d);
-    }
+    const d = `${tmp}/${r}_ref.png`;
+    if (ref !== undefined) run("magick", [`${ART}/${ref}.webp`, "-resize", "640x400^", "-gravity", "center", "-extent", "640x400", ...label(`reference: ${ref}`), d]);
+    else run("magick", ["-size", "640x400", "xc:#101018", d]);
+    files.push(d);
     const row = `${tmp}/row_${r}.png`;
     run("magick", [...files, "+append", row]);
     rows.push(row);
   }
   if (rows.length > 0) {
-    run("magick", [...rows, "-append", "-quality", "92", `${OUT}/sheet_recipes.webp`]);
-    // And small enough to take in at once.
-    run("magick", [`${OUT}/sheet_recipes.webp`, "-resize", "1920x", "-quality", "90", `${OUT}/sheet_recipes_small.webp`]);
-    console.log(`wrote ${OUT}/sheet_recipes.webp and sheet_recipes_small.webp`);
+    run("magick", [...rows, "-append", "-quality", "92", `${OUT}/sheet_looks.webp`]);
+    run("magick", [`${OUT}/sheet_looks.webp`, "-resize", "1600x", "-quality", "90", `${OUT}/sheet_looks_small.webp`]);
+    console.log(`wrote ${OUT}/sheet_looks.webp, sheet_looks_small.webp (${rows.length} rows)`);
   }
-
-  // The other boss and the lineup: a row per recipe.
-  const others: string[] = [];
-  for (const r of RECIPES) {
-    const wyrm = `${OUT}/stills/wyrm_${r}.webp`, line = `${OUT}/stills/lineup_${r}.webp`;
-    if (!existsSync(wyrm) || !existsSync(line)) continue;
-    const a = `${tmp}/${r}_w0.png`, b = `${tmp}/${r}_w1.png`, c = `${tmp}/${r}_l.png`;
-    tile(wyrm, [0, 0], [1280, 800, 0, 0], [640, 400], `${r}: wyrm, game`, a);
-    tile(wyrm, [1, 0], [1280, 800, 0, 0], [640, 400], "wyrm, close", b);
-    run("magick", [line, "-resize", "1280x720!", "-gravity", "center", "-background", "#101018", "-extent", "1280x720", "-crop", "1280x400+0+200", "+repage", "-gravity", "NorthWest", "-fill", "white", "-undercolor", "#000000b0", "-pointsize", "20", "-annotate", "+6+4", " lineup, t = 2.5 ", c]);
-    const row = `${tmp}/row2_${r}.png`;
-    run("magick", [a, b, c, "+append", row]);
-    others.push(row);
+  // The lineup: a row per look, t = 2.5 and 18.
+  const lines: string[] = [];
+  for (const r of ["asPrinted", ...VIDEO_LOOKS]) {
+    const dir = `${OUT}/lineup/${r}`;
+    if (!existsSync(dir)) continue;
+    const frames = readdirSync(dir).filter((f) => /\.(webp|png)$/.test(f)).sort();
+    const tiles = frames.map((f, i) => { const d = `${tmp}/line_${r}_${i}.png`; run("magick", [`${dir}/${f}`, "-resize", "960x540!", ...label(`${r}: ${f}`), d]); return d; });
+    if (tiles.length === 0) continue;
+    const row = `${tmp}/linerow_${r}.png`;
+    run("magick", [...tiles, "+append", row]);
+    lines.push(row);
   }
-  if (others.length > 0) { run("magick", [...others, "-append", "-quality", "92", `${OUT}/sheet_other_boss_and_lineup.webp`]); console.log(`wrote ${OUT}/sheet_other_boss_and_lineup.webp`); }
-
-  // The cel recipe beside the painted pictures it answers.
-  const cel = `${OUT}/stills/crab_cel.webp`;
-  if (existsSync(cel)) {
-    const t = (name: string, argv: readonly string[]) => { const d = `${tmp}/cel_${name}.png`; run("magick", [...argv, d]); return d; };
-    const lab = (text: string) => ["-gravity", "NorthWest", "-fill", "white", "-undercolor", "#000000b0", "-pointsize", "24", "-annotate", "+8+6", ` ${text} `];
-    const ours3 = t("ours3", [cel, "-crop", "1280x800+1280+0", "+repage", ...lab("cel, three")]);
-    const ref3 = t("ref3", [`${REF_DIR}/shade_best.webp`, "-resize", "1280x800!", ...lab("painted: shade_best")]);
-    const oursG = t("oursG", [cel, "-crop", "1280x800+0+0", "+repage", ...lab("cel, game")]);
-    const refG = t("refG", [`${REF_DIR}/shade_best_game.webp`, "-resize", "1280x800!", ...lab("painted: shade_best_game")]);
-    const top = t("top", [ours3, ref3, "+append"]), bottom = t("bottom", [oursG, refG, "+append"]);
-    run("magick", [top, bottom, "-append", "-quality", "92", `${OUT}/sheet_cel_against_painted.webp`]);
-    console.log(`wrote ${OUT}/sheet_cel_against_painted.webp`);
+  if (lines.length > 0) { run("magick", [...lines, "-append", "-quality", "90", `${OUT}/sheet_lineup.webp`]); console.log(`wrote ${OUT}/sheet_lineup.webp (${lines.length} rows)`); }
+  // The video look beside its references: the lineup in `engraving` and `engravingSunset`, lineup_wide, stalk_hybrid, the crab close.
+  const eng = `${OUT}/lineup/engraving`, sun = `${OUT}/lineup/engravingSunset`;
+  if (existsSync(eng) && existsSync(sun)) {
+    const first = (dir: string) => `${dir}/${readdirSync(dir).filter((f) => /\.(webp|png)$/.test(f)).sort()[0]}`;
+    const a = `${tmp}/v0.png`, b = `${tmp}/v1.png`, c = `${tmp}/v2.png`, d = `${tmp}/v3.png`;
+    run("magick", [first(eng), "-resize", "960x540!", ...label("ours: engraving, t = 2.5", 22), a]);
+    run("magick", [`${ART}/lineup/lineup_wide.webp`, "-resize", "960x540^", "-gravity", "center", "-extent", "960x540", ...label("reference: lineup_wide", 22), b]);
+    run("magick", [first(sun), "-resize", "960x540!", ...label("ours: engravingSunset, sun behind, t = 2.5", 22), c]);
+    const crab = `${OUT}/stills/crab_engraving.webp`;
+    if (existsSync(crab)) {
+      const e = `${tmp}/v4.png`, f = `${tmp}/v5.png`;
+      run("magick", [crab, "-crop", "1280x800+1280+0", "+repage", "-resize", "864x540!", ...label("ours: engraving, face", 22), e]);
+      run("magick", [`${ART}/crab_round4/stalk_hybrid.webp`, "-resize", "x540", ...label("reference: stalk_hybrid", 22), f]);
+      run("magick", [e, f, "+append", "-resize", "960x540!", d]);
+    } else run("magick", [`${ART}/crab_round4/stalk_hybrid.webp`, "-resize", "960x540^", "-gravity", "center", "-extent", "960x540", d]);
+    run("magick", [a, b, "+append", `${tmp}/vt.png`]);
+    run("magick", [c, d, "+append", `${tmp}/vb.png`]);
+    run("magick", [`${tmp}/vt.png`, `${tmp}/vb.png`, "-append", "-quality", "90", `${OUT}/sheet_video_look.webp`]);
+    console.log(`wrote ${OUT}/sheet_video_look.webp`);
   }
-  run("rm", ["-rf", tmp]);
+  rmSync(tmp, { recursive: true, force: true });
 }
 
 function clips(): void {
   mkdirSync(`${OUT}/clips`, { recursive: true });
-  for (const r of chosen) {
-    const out = `${OUT}/clips/${r}.mp4`;
+  for (const r of pick(["hatched", "engraving"])) {
+    const out = `${OUT}/clips/crab_${r}_22s.mp4`;
     if (existsSync(out) && !args.includes("--force")) continue;
-    loft(["clip", CRAB, "--variant", "bruiser", ...lightOf(r), "--view", "game", "--seconds", flag("--seconds") ?? "8", "--fps", "30", "--size", "1280x800", "--out", out]);
-    console.log(`wrote ${out}`);
-  }
-  if (only === undefined || only.includes("sun")) {
-    // The sun swung through 90 degrees about the vertical under the cel recipe, the crab's clock running: the cast
-    // shadows and the terminator must move only as the sun does.
-    const out = `${OUT}/clips/cel_sun_swing.mp4`;
-    loft(["clip", CRAB, "--variant", "bruiser", "--light", "cel", "--view", "three", "--seconds", "6", "--fps", "30", "--size", "1280x800", "--sweep", "sun=0.15,0.8,0.6..-0.6,0.8,0.15", "--out", out]);
+    loft(["clip", CRAB, "--variant", "bruiser", ...lightOf(r), "--view", "game", "--seconds", flag("--seconds") ?? "22", "--fps", "30", "--size", "1280x800", "--out", out]);
     console.log(`wrote ${out}`);
   }
 }
@@ -156,26 +152,27 @@ function frameMs(scene: string, extra: readonly string[], view: string, size: st
 function cost(): void {
   const rounds = Number(flag("--rounds") ?? "3");
   const which = flag("--scene") ?? "crab";
-  const [scene, extra, view, size] = which === "lineup" ? [LINEUP, [] as string[], "lineup", "1280x720"] : [CRAB, ["--variant", "bruiser"], "game", "1280x800"];
+  const [scene, extra, view, size] = which === "lineup" ? [LINEUP, [] as string[], "lineup", "1280x800"] : [CRAB, ["--variant", "bruiser"], "game", "1280x800"];
   const file = `${OUT}/cost_${which}.json`;
   const seen: Record<string, { base: number[]; with: number[] }> = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
   for (let k = 0; k < rounds; k++) {
-    for (const r of chosen.filter((x) => x !== "asPrinted")) {
-      // Alternated, the print as it is beside each recipe, so a pair shares the GPU's clock state as nearly as it can.
+    for (const r of pick(Object.keys(LOOKS))) {
+      // Alternated, the print as it is beside each look, so a pair shares the GPU's clock state as nearly as it can.
       const base = frameMs(scene, extra, view, size), lit = frameMs(scene, [...extra, "--light", r], view, size);
       (seen[r] ??= { base: [], with: [] }).base.push(base);
       seen[r]!.with.push(lit);
-      console.log(`round ${k}  ${r.padEnd(10)} as printed ${base.toFixed(2)}  ${r} ${lit.toFixed(2)}  difference ${(lit - base).toFixed(2)} ms`);
+      console.log(`round ${k}  ${r.padEnd(16)} as printed ${base.toFixed(2)}  with ${lit.toFixed(2)}  difference ${(lit - base).toFixed(2)} ms`);
       writeFileSync(file, JSON.stringify(seen, null, 1));
     }
   }
 }
 
-const command = args[0];
-switch (command) {
+switch (args[0]) {
   case "stills": stills(); break;
+  case "lineup": lineup(); break;
   case "sheets": sheets(); break;
   case "clips": clips(); break;
   case "cost": cost(); break;
-  default: console.error("usage: bun tools/light_gallery.ts stills|sheets|clips|cost [--only a,b] [--force]"); process.exit(2);
+  default: console.error("usage: bun tools/light_gallery.ts stills|lineup|sheets|clips|cost [--only a,b] [--force]"); process.exit(2);
 }
+

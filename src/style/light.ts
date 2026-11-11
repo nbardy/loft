@@ -196,7 +196,9 @@ export const LIGHT = {
   /** Two tones and a third: a hard lighter shape on every form's sunward shoulder. */
   threeTone: light.recipe({ core: light.core(), cast: light.cast(), highlight: light.highlight(), block: WARM }),
   /** Flat inks with a graded wash under every form and up from the water. The one soft recipe. */
-  bokashi: light.recipe({ bokashi: light.bokashi() }),
+  // The wash from a form's middle down (the painted reference grades the claw's whole lower half into indigo), in the
+  // print's indigo, deeper than the core's block: a grade that stops at a quarter strength reads as dirt, not form.
+  bokashi: light.recipe({ bokashi: light.bokashi({ under: [-0.3, 0.55] }), block: light.block({ ink: [0.13, 0.2, 0.37], amount: 0.62, value: 0.72 }) }),
   /** The shadow side drawn in lines across the form that swell as it turns away; no flat shadow. */
   hatched: light.recipe({ hatch: light.hatch(), block: ENGRAVED }),
   /** Flat inks, and a dark band wherever a part lies on another or stands in the water. */
