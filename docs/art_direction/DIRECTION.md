@@ -421,3 +421,88 @@ weight, the `game` camera at 1280 x 800.
    drawn, about 208 map tables, 38 to 42 scan tables. GPU frame: one to three timer ticks over the islander in the
    same clock state (0.07 to 0.2 ms): the head's vertex stage (5,900 vertices, each a five-point normal of a relief of
    eight bumps, twice) is the new work; its paint covers about 140 by 140 px.
+
+### Scored (the same day, after the build)
+
+"The face" and the predictions above stand as written before the first render. What changed after looking is under
+"What was wrong" below; the numbers in the code are the built ones.
+
+Pictures (`out/brow/`, with a page, `index.html`): `expression_sheet.webp` (each expression from `face` and from `game`
+with the head's window at its true size), `against_references.webp` (each render beside its reference picture),
+`variants_islander_bruiser.webp` (far, face, game), `in_head_vs_stalks.webp`, `bruiser_game_cycle.mp4` and
+`bruiser_face_cycle.mp4` (one 22 s loop each). `loft check` on the bruiser passes 14 of 14: the crab's nine and the
+face's five. After main's merge the bruiser carries the headland back, as the islander does.
+
+| | predicted | measured |
+|---|---|---|
+| right eyeball, `game`, 1280 x 800 | 58 px | 58.2 px (`minScreenSize`) |
+| left eyeball | 47 px | 47.8 px |
+| white and iris showing, eyes wide (greedy) | 52 and 42 px | 57 and 42 px (`tools/eye_pixels.ts` on the `game` frame); posing 52 (right); furious 54 and 30 |
+| eye white over its brow, luminance | at least 3 to 1 | 5.0 to 1 (white 0.861, brow 0.173; posing) |
+| the roar's mouth, hinge to hinge | 52 px | 49.0 px as first built; 59.1 px after the gape was widened (`spansOnScreen`; the limit is 40) |
+| every expression reaches 0.9 of the face | 7 of 7 | 7 of 7, each 1.00 |
+| closest pair | greedy and gloating, 20.6 px, in 14.5 to 27 | greedy and gleeful, 19.8 px as first built and 19.9 px now (the right lower lid; the limit is 14.6). In range; the pair was my second closest (21.5), not my closest |
+| told apart by eye at the game camera | at least 6 of 7, posing and gloating the weak pair | 6 of 7 in the sheet's true-size insets, my own judgement; posing and gloating are the pair I would mistake |
+| a claw over the face, longest stretch | at most 0.45 s, inside the strike | **wrong**: with the islander's claws the right eye's middle is behind the great claw's palm for 2.05 s at a stretch (2.45 s in all), in the Grab's reach, not the strike. With `fiddlerAside`: 0.05 s (`staysInView`) |
+| in the head or on stalks | in the head | in the head (below) |
+| draws, triangles drawn, tables | 120, about 147,000, about 208 map and 38 to 42 scan | 120, 147,601, 209 map and 39 scan, on the tree the prediction was made on. With the headland back merged the islander is 126 draws, 135,337 triangles, 202 map and 43 scan tables, and the bruiser 130, 161,625, 219 and 44: 4 draws, 26,288 triangles, 17 map tables more |
+| GPU frame | one to three timer ticks over the islander (0.07 to 0.2 ms) | 0.21 ms (three ticks) in the slow clock state: islander 5.44, 5.51, 5.37, 5.44, 5.44, 5.44, bruiser 5.70, 5.64, 5.64, 5.57, 5.70, 5.64, alternated. Not resolved in the fast state (islander 2.23, 2.88, 3.21; bruiser 2.16, 2.49). Every reading was taken with three other workers on the GPU |
+
+Prediction 5 (where the iris sits) was not measured as a number. In the pictures: centred on the game camera when
+posing, at the rim toward the ship (afloat, held and thrown 37 units off), low toward the disc; iris and pupil show in
+every one, though of the thrown ship's look only about half the iris shows from the game camera, behind the laugh's
+raised cheek lid.
+
+**In the head, or on short stalks** (`in_head_vs_stalks.webp`). In the head is shipped. On stalks the eyes are larger
+on screen (62 and 52 px of white and iris against 57 and 42) and stand above the head's outline, which I had not
+expected; I had said "no larger". But from the game camera the stalks themselves are behind the eyes and not seen, the
+right eye stands in front of the left in four of the seven expressions, and the brows leave the head, so the furious V
+is two bars in the air and the thing stops reading as a head. From `far` the stalked one does have the stronger outline.
+
+What was wrong, each a fault in the reasoning:
+
+- **The great claw hid the face** (the miss above). I reasoned about the claw's rest pose and its strike. I left out
+  that the body turns 0.14 rad toward the Grab, which turns the face away behind a claw that stands on the camera's
+  side, and that the claw waves then. At rest the banner stood 15 px from the right eye, which the arithmetic did say
+  (about 0.45 of a unit) and I called clear. The fiddler's rest pose is now a parameter (`claws/fiddler.ts`,
+  `fiddlerWith`; `fiddler` itself draws the same pictures), and the bruiser picks `fiddlerAside`: the wrist 0.8 further
+  back and 1.1 further out, the hand leaning out. Cost: the banner stands less tall beside the head than the islander's.
+- **Lids that were not half down.** I wrote a lid's angle as a share of a quarter turn and read the share as cover.
+  Seen from in front a lid `a` radians down hides (1 - cos a) / 2: posing's 0.64 was 23%, an open eye. Posing is 1.0
+  now (38% and 56%).
+- **A raised brow showed its edge.** The first brows lay on the eye's own slope, so raised they faced up the head:
+  11 px where the theory, once it measured the bar and not the arc it rides, said 19 facing front. They face front now.
+- **The moustache crossed the right eye.** I placed it from the dandy's numbers, on a face whose eyes are 1.7 across
+  and sit 0.5 above it. It hangs lower now (droop 0.5, shorter, thicker) and its lift is half what the dandy's is. From
+  the `face` camera its near half still crosses the right eye's lower rim in the laugh.
+- **The layout was too small for its parts.** Eyes of 1.7 and a mouth 1.2 tall on a head 4.2 tall left nothing for a
+  muzzle. The head is 0.68 of the carapace's half-width now (5.6 across), the eyes sit 0.2 higher and the mouth 0.15 lower.
+- **Posing was measured mid-blink.** `expressionsRead` takes rest in the middle of its longest stretch; my blink was
+  there, so the closest pair came out as posing and wincing at 19.4 px. The blink is a second and a half later now.
+  The check does not know about `only` layers.
+
+What the reference still has that this lacks (from `against_references.webp`):
+
+- its eyes are smaller in a heavier head and sit under the brows; these are frog's eyes, 0.4 of the head's width each,
+  which is why they read at game size and why the head reads as round, not robust;
+- its brows are long ridges of the head itself that sweep down the outside of the eyes and crease the head when they
+  move; these are short bars, and the head between them does not move (two furrow lines come and go);
+- its cheeks and jowls are separate bulging forms; these are relief on one smooth ball, which flat ink does not show,
+  and a fold line;
+- its gape takes the whole lower half of the face; this one's hollow is 2.6 wide of 5.6, with narrower tusks;
+- its shut eyes are creased lids in the body's red with crow's feet; these are coral domes with a lash line;
+- it is mottled all over; this face is kept plain so its features read.
+
+Weak or unfinished:
+
+- Posing and gloating are close: the same raised brow and half lids, told apart by the look and the cheek lid.
+- The clench (`grit`) barely reads; straining reads by its brows and slit eyes.
+- In the wince the right brow still lies partly on the shut lid.
+- The antennae follow their formulas (trail, flick, whip); I looked at them in the clips, not in a frames sheet across the slam.
+- The audience is the dandy's fixed point (the `game` camera's eye). If the game's camera orbits it must become an input.
+- The islander's own claws (`fiddler`) wave every 8 s, which was twice in the 16 s loop; in the 22 s loop the wave does
+  not meet itself at the seam (0.72 before it, 0.27 after). `fiddlerAside` waves twice a loop of any length. Not changed
+  for the islander: its pictures are held.
+- The headland's barnacles on the nape end where the head's back begins (about x = 2.6 at the middle); none is under it.
+- The blink is not checked, and where the iris sits is not checked.
+
