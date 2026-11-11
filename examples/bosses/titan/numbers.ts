@@ -67,27 +67,33 @@ export const S = {
     /** How far the crown stands over the atoll's `top`; how high over the water the rim is round the tail (beside the
      * carapace it is the carapace's rim line). */
     crown: 1.2, rim: 0.5,
+    /** How conical the hull is: the exponent on its radius (0.8 a mesa with steep sides, whose plates a high camera sees
+     * edge on; 1.25 a cone whose plates face up as well as out). */
+    cone: 1.1,
     /** The island's outline as shares of the atoll's radii: at the bow and at the tail (an egg), and its lumps. */
-    outline: { bow: 0.9, tail: 1.06, lumps: 0.025 },
+    outline: { bow: 0.9, tail: 1.1, lumps: 0.025 },
     /** The screw: thread groups from crown to rim, how hard its lines lean over as they climb (1 straight), how much
      * wider the groups are on one side than the other (0 even) and toward which bearing they are widest, and the whole
      * screw's turn (at 50 a broad plate rises from the right flank across the side the game camera sees). */
-    screw: { turns: 1.9, lean: 2.25, uneven: 0.16, widest: 60, phase: 50 },
+    screw: { turns: 2.2, lean: 2.25, uneven: 0.16, widest: 60, phase: 50 },
     /** How far a plate's lip stands out of the hull: the two blades of a group, then its broad plate. */
     lobes: [0.26, 0.3, 0.46] as const,
     /** Where (G: 0 crown, 1 rim) the plates give way to terraces, and the highest red at a plate's tip. */
-    terraced: [0.4, 0.6] as const, tip: 0.42,
+    terraced: [0.36, 0.56] as const, tip: 0.4,
+    /** How far below a plate's tip the turf hangs over its upper edge (in G). */
+    tongue: 0.14,
     /** The point: its bearing, how far its tip is from the island's centre, its half-width, its rock's height at the
      * light and at the tip. */
-    point: { bearing: 200, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
+    point: { bearing: 206, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
     /** The beach under the plates' arch: its middle bearing, half its span, how far the sand runs beyond the rim, how
      * high the rim lifts over it. */
-    beach: { bearing: 172, span: 20, sand: 1.9, arch: 0.7 },
+    beach: { bearing: 176, span: 22, sand: 1.9, arch: 0.7 },
     /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
      * stack [distance from the island's centre, bearing, height, girth]. */
     shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
-    /** Two groves, each [G, bearing, trees]: one left of the crown, one forward-right; open turf between. */
-    groves: [[0.2, -80, 5], [0.33, 55, 4]] as const,
+    /** Two groves, each [G, bearing, trees], both on the left of the crown with open turf between and to the right: the
+     * sight lines from the light to the game and far cameras cross the cap's right half. */
+    groves: [[0.24, -55, 5], [0.36, -125, 4]] as const,
     /**
      * The light on the point (back/beacon.ts): how far from the island's centre its foot stands, the tower's height, its
      * girth at foot and top, the share of the tower that is crust, the lantern room's size, its gulls. Then its structure,
@@ -95,7 +101,7 @@ export const S = {
      * tower stands up out of the mound on its segmented neck; 0 down, and the neck is not drawn), `shutters` (0 shut,
      * 1 flung open).
      */
-    light: { at: 7.2, height: 3.6, girth: [0.66, 0.45] as const, crust: 0.32, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
+    light: { at: 7.0, height: 3.2, girth: [0.66, 0.45] as const, crust: 0.32, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
   },
 
   // ---- claws: the right (crusher) 1.4 times the left ----

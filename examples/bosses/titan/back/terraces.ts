@@ -110,7 +110,7 @@ export const terraces: BackOption = {
     /** The hull's radius (a share of the outline) and height at G: a mound, steep at the rim like the carapace's flank
      * (the radius is a quarter turn's sine; the height falls as G^1.6, so the cap is a low cone and its risers stand 0.6 to 1.5). */
     const quarter = (G: F): F => mul(clamp(G, 0, 1), Math.PI / 2);
-    const hullR = (G: F): F => pow(max(sin(quarter(G)), 1e-6), 0.8);
+    const hullR = (G: F): F => pow(max(sin(quarter(G)), 1e-6), T.cone);
     /** The rim's height at a bearing: the carapace's rim line beside the carapace; round the tail, where the island
      * stands over open water, it comes down toward the water (the plates run down to the sea, as the pictures have them;
      * a rim at the carapace's height all round left a cream plinth under the island). */
@@ -201,7 +201,7 @@ export const terraces: BackOption = {
       const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(f, RIBS / 5.5), 0.3)), 0.5)), 0.035)), cut(sin(add(mul(G, 52), mul(f, 31))), 0.2));
       const turf = mix(ink(I.moss), ink(I.mossDeep), tuft);
       // Red reaches highest along a plate's lip and ends in a point there; turf hangs over the rest in tongues on the ribs.
-      const red = cut(G, add(add(T.tip, mul(0.21, pow(max(sub(1, x), 1e-4), 1.3))), mul(cos(mul(f, RIBS * TAU)), 0.014)));
+      const red = cut(G, add(add(T.tip, mul(T.tongue, pow(max(sub(1, x), 1e-4), 1.3))), mul(cos(mul(f, RIBS * TAU)), 0.014)));
       // Stone: pale, with strokes across the band (down a riser).
       const stroke = sub(1, cut(abs(sub(fract(add(mul(G, 19), mul(sin(mul(f, 37)), 0.12))), 0.5)), 0.07));
       const stone = mix(ink(I.stone), ink(I.bark), mul(stroke, 0.8));
@@ -293,8 +293,12 @@ export const terraces: BackOption = {
       ...run(valley(rad(96)), { recipe: RECIPES.seam, clusters: 3, size: 1.0, seed: 23, thin: 0.65 }),
       // The shelf: a reef's worth at the foot of the tallest stack.
       ...cluster(RECIPES.reef, ashore(0.35, rad(T.shelf.bearing + 9)), 1.2, 30),
-      // Beads at the tips of the three broad plates, where each turns to terrace (the pictures' signature).
-      ...[0, 1, 2].flatMap((g) => cluster(RECIPES.bead, thread(g, L3 - 0.03, T.tip + 0.03), 0.8, 40 + g)),
+      // Beads at the plates' tips, where each turns to turf (the pictures' signature): large on the three broad plates,
+      // small on the blades.
+      ...[0, 1, 2].flatMap((g) => [
+        ...cluster(RECIPES.bead, thread(g, L3 - 0.03, T.tip + 0.03), 0.95, 40 + g),
+        ...cluster(RECIPES.bead, thread(g, L1 - 0.025, T.tip + 0.04), 0.6, 43 + g), ...cluster(RECIPES.bead, thread(g, L2 - 0.025, T.tip + 0.04), 0.65, 46 + g),
+      ]),
       // Where the island meets the carapace, either side of the head: crust creeping forward onto the shell.
       ...[-58, 52].flatMap((b, k) => cluster(RECIPES.crust, facing(0.74, rad(b)), 0.75, 50 + k)),
     ];
