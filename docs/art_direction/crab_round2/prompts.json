@@ -1,0 +1,212 @@
+[
+  {
+    "name": "mask_wide",
+    "design": "mask",
+    "view": "wide",
+    "seed": 200,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal samurai crab, the heikegani: the whole front of its carapace is shaped like a scowling samurai war mask with heavy brow ridges and a grimacing mouth plate, its legs are layered lacquered armour plates like a samurai's shoulder guards, tied with cords, and on its back it carries a small castle keep with curved roofs and two crooked pine trees. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "mask_face",
+    "design": "mask",
+    "view": "face",
+    "seed": 201,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal samurai crab, the heikegani: the whole front of its carapace is shaped like a scowling samurai war mask with heavy brow ridges and a grimacing mouth plate, its legs are layered lacquered armour plates like a samurai's shoulder guards, tied with cords, and on its back it carries a small castle keep with curved roofs and two crooked pine trees. Extreme close-up of its face seen from the front at water level, filling the picture."
+  },
+  {
+    "name": "mask_legs",
+    "design": "mask",
+    "view": "legs",
+    "seed": 202,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal samurai crab, the heikegani: the whole front of its carapace is shaped like a scowling samurai war mask with heavy brow ridges and a grimacing mouth plate, its legs are layered lacquered armour plates like a samurai's shoulder guards, tied with cords, and on its back it carries a small castle keep with curved roofs and two crooked pine trees. Close-up from the side at water level of its legs and one claw, showing the shape of each joint and the foam where the legs stand in the sea."
+  },
+  {
+    "name": "mask_back",
+    "design": "mask",
+    "view": "back",
+    "seed": 203,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal samurai crab, the heikegani: the whole front of its carapace is shaped like a scowling samurai war mask with heavy brow ridges and a grimacing mouth plate, its legs are layered lacquered armour plates like a samurai's shoulder guards, tied with cords, and on its back it carries a small castle keep with curved roofs and two crooked pine trees. Seen from directly above, looking straight down on its back and what it carries, legs spread around it."
+  },
+  {
+    "name": "mask_wide2",
+    "design": "mask",
+    "view": "wide2",
+    "seed": 300,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal samurai crab, the heikegani: the whole front of its carapace is shaped like a scowling samurai war mask with heavy brow ridges and a grimacing mouth plate, its legs are layered lacquered armour plates like a samurai's shoulder guards, tied with cords, and on its back it carries a small castle keep with curved roofs and two crooked pine trees. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "stilt_wide",
+    "design": "stilt",
+    "view": "wide",
+    "seed": 210,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal spider crab wading through the sea: a small knobbly thorny body carried very high above the water on eight extremely long thin jointed legs like bamboo poles with swollen knuckle joints, long slender claws like tongs, small patient face with long eyestalks, and on its back a red shrine gate and hanging lanterns. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "stilt_face",
+    "design": "stilt",
+    "view": "face",
+    "seed": 211,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal spider crab wading through the sea: a small knobbly thorny body carried very high above the water on eight extremely long thin jointed legs like bamboo poles with swollen knuckle joints, long slender claws like tongs, small patient face with long eyestalks, and on its back a red shrine gate and hanging lanterns. Extreme close-up of its face seen from the front at water level, filling the picture."
+  },
+  {
+    "name": "stilt_legs",
+    "design": "stilt",
+    "view": "legs",
+    "seed": 212,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal spider crab wading through the sea: a small knobbly thorny body carried very high above the water on eight extremely long thin jointed legs like bamboo poles with swollen knuckle joints, long slender claws like tongs, small patient face with long eyestalks, and on its back a red shrine gate and hanging lanterns. Close-up from the side at water level of its legs and one claw, showing the shape of each joint and the foam where the legs stand in the sea."
+  },
+  {
+    "name": "stilt_back",
+    "design": "stilt",
+    "view": "back",
+    "seed": 213,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal spider crab wading through the sea: a small knobbly thorny body carried very high above the water on eight extremely long thin jointed legs like bamboo poles with swollen knuckle joints, long slender claws like tongs, small patient face with long eyestalks, and on its back a red shrine gate and hanging lanterns. Seen from directly above, looking straight down on its back and what it carries, legs spread around it."
+  },
+  {
+    "name": "stilt_wide2",
+    "design": "stilt",
+    "view": "wide2",
+    "seed": 301,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal spider crab wading through the sea: a small knobbly thorny body carried very high above the water on eight extremely long thin jointed legs like bamboo poles with swollen knuckle joints, long slender claws like tongs, small patient face with long eyestalks, and on its back a red shrine gate and hanging lanterns. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "fortress_wide",
+    "design": "fortress",
+    "view": "wide",
+    "seed": 220,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal box crab that is a living fortress: a broad round domed carapace like a stone drum tower, two huge flat shield-shaped claws folded shut over its face like castle gates with its eyes peering over the top, short thick legs tucked under like buttresses, battlements all round the rim of its back and a ruined fort inside the wall. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "fortress_face",
+    "design": "fortress",
+    "view": "face",
+    "seed": 221,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal box crab that is a living fortress: a broad round domed carapace like a stone drum tower, two huge flat shield-shaped claws folded shut over its face like castle gates with its eyes peering over the top, short thick legs tucked under like buttresses, battlements all round the rim of its back and a ruined fort inside the wall. Extreme close-up of its face seen from the front at water level, filling the picture."
+  },
+  {
+    "name": "fortress_legs",
+    "design": "fortress",
+    "view": "legs",
+    "seed": 222,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal box crab that is a living fortress: a broad round domed carapace like a stone drum tower, two huge flat shield-shaped claws folded shut over its face like castle gates with its eyes peering over the top, short thick legs tucked under like buttresses, battlements all round the rim of its back and a ruined fort inside the wall. Close-up from the side at water level of its legs and one claw, showing the shape of each joint and the foam where the legs stand in the sea."
+  },
+  {
+    "name": "fortress_back",
+    "design": "fortress",
+    "view": "back",
+    "seed": 223,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal box crab that is a living fortress: a broad round domed carapace like a stone drum tower, two huge flat shield-shaped claws folded shut over its face like castle gates with its eyes peering over the top, short thick legs tucked under like buttresses, battlements all round the rim of its back and a ruined fort inside the wall. Seen from directly above, looking straight down on its back and what it carries, legs spread around it."
+  },
+  {
+    "name": "fortress_wide2",
+    "design": "fortress",
+    "view": "wide2",
+    "seed": 302,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal box crab that is a living fortress: a broad round domed carapace like a stone drum tower, two huge flat shield-shaped claws folded shut over its face like castle gates with its eyes peering over the top, short thick legs tucked under like buttresses, battlements all round the rim of its back and a ruined fort inside the wall. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "fiddler_wide",
+    "design": "fiddler",
+    "view": "wide",
+    "seed": 230,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal fiddler crab: one gigantic claw as large as its whole body held high like a banner and the other claw tiny, two very tall thin periscope eyestalks, a smooth pebble-shaped carapace, proud comic posture, and on its back one leaning ruined lighthouse with gulls. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "fiddler_face",
+    "design": "fiddler",
+    "view": "face",
+    "seed": 231,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal fiddler crab: one gigantic claw as large as its whole body held high like a banner and the other claw tiny, two very tall thin periscope eyestalks, a smooth pebble-shaped carapace, proud comic posture, and on its back one leaning ruined lighthouse with gulls. Extreme close-up of its face seen from the front at water level, filling the picture."
+  },
+  {
+    "name": "fiddler_legs",
+    "design": "fiddler",
+    "view": "legs",
+    "seed": 232,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal fiddler crab: one gigantic claw as large as its whole body held high like a banner and the other claw tiny, two very tall thin periscope eyestalks, a smooth pebble-shaped carapace, proud comic posture, and on its back one leaning ruined lighthouse with gulls. Close-up from the side at water level of its legs and one claw, showing the shape of each joint and the foam where the legs stand in the sea."
+  },
+  {
+    "name": "fiddler_back",
+    "design": "fiddler",
+    "view": "back",
+    "seed": 233,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal fiddler crab: one gigantic claw as large as its whole body held high like a banner and the other claw tiny, two very tall thin periscope eyestalks, a smooth pebble-shaped carapace, proud comic posture, and on its back one leaning ruined lighthouse with gulls. Seen from directly above, looking straight down on its back and what it carries, legs spread around it."
+  },
+  {
+    "name": "fiddler_wide2",
+    "design": "fiddler",
+    "view": "wide2",
+    "seed": 303,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal fiddler crab: one gigantic claw as large as its whole body held high like a banner and the other claw tiny, two very tall thin periscope eyestalks, a smooth pebble-shaped carapace, proud comic posture, and on its back one leaning ruined lighthouse with gulls. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "garden_wide",
+    "design": "garden",
+    "view": "wide",
+    "seed": 240,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal decorator crab: its carapace is completely overgrown and dressed with branching coral, sea anemones, long kelp banners, broken shipwreck masts and a tilted stone ruin, its legs are shaggy with weed and crusted with barnacle clusters, and its face is half hidden under a fringe of kelp with two bright eyes looking out. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "garden_face",
+    "design": "garden",
+    "view": "face",
+    "seed": 241,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal decorator crab: its carapace is completely overgrown and dressed with branching coral, sea anemones, long kelp banners, broken shipwreck masts and a tilted stone ruin, its legs are shaggy with weed and crusted with barnacle clusters, and its face is half hidden under a fringe of kelp with two bright eyes looking out. Extreme close-up of its face seen from the front at water level, filling the picture."
+  },
+  {
+    "name": "garden_legs",
+    "design": "garden",
+    "view": "legs",
+    "seed": 242,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal decorator crab: its carapace is completely overgrown and dressed with branching coral, sea anemones, long kelp banners, broken shipwreck masts and a tilted stone ruin, its legs are shaggy with weed and crusted with barnacle clusters, and its face is half hidden under a fringe of kelp with two bright eyes looking out. Close-up from the side at water level of its legs and one claw, showing the shape of each joint and the foam where the legs stand in the sea."
+  },
+  {
+    "name": "garden_back",
+    "design": "garden",
+    "view": "back",
+    "seed": 243,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal decorator crab: its carapace is completely overgrown and dressed with branching coral, sea anemones, long kelp banners, broken shipwreck masts and a tilted stone ruin, its legs are shaggy with weed and crusted with barnacle clusters, and its face is half hidden under a fringe of kelp with two bright eyes looking out. Seen from directly above, looking straight down on its back and what it carries, legs spread around it."
+  },
+  {
+    "name": "garden_wide2",
+    "design": "garden",
+    "view": "wide2",
+    "seed": 304,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal decorator crab: its carapace is completely overgrown and dressed with branching coral, sea anemones, long kelp banners, broken shipwreck masts and a tilted stone ruin, its legs are shaggy with weed and crusted with barnacle clusters, and its face is half hidden under a fringe of kelp with two bright eyes looking out. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "aqueduct_wide",
+    "design": "aqueduct",
+    "view": "wide",
+    "seed": 250,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal crab made of ancient masonry: each leg is a tall arched stone pier of stacked blocks like the arches of a Roman aqueduct standing in the sea, its carapace is a slab of hexagonal basalt columns carrying a ruined amphitheatre, and its face is a carved keystone grimace with two narrow glowing red eye slits. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  },
+  {
+    "name": "aqueduct_face",
+    "design": "aqueduct",
+    "view": "face",
+    "seed": 251,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal crab made of ancient masonry: each leg is a tall arched stone pier of stacked blocks like the arches of a Roman aqueduct standing in the sea, its carapace is a slab of hexagonal basalt columns carrying a ruined amphitheatre, and its face is a carved keystone grimace with two narrow glowing red eye slits. Extreme close-up of its face seen from the front at water level, filling the picture."
+  },
+  {
+    "name": "aqueduct_legs",
+    "design": "aqueduct",
+    "view": "legs",
+    "seed": 252,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal crab made of ancient masonry: each leg is a tall arched stone pier of stacked blocks like the arches of a Roman aqueduct standing in the sea, its carapace is a slab of hexagonal basalt columns carrying a ruined amphitheatre, and its face is a carved keystone grimace with two narrow glowing red eye slits. Close-up from the side at water level of its legs and one claw, showing the shape of each joint and the foam where the legs stand in the sea."
+  },
+  {
+    "name": "aqueduct_back",
+    "design": "aqueduct",
+    "view": "back",
+    "seed": 253,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal crab made of ancient masonry: each leg is a tall arched stone pier of stacked blocks like the arches of a Roman aqueduct standing in the sea, its carapace is a slab of hexagonal basalt columns carrying a ruined amphitheatre, and its face is a carved keystone grimace with two narrow glowing red eye slits. Seen from directly above, looking straight down on its back and what it carries, legs spread around it."
+  },
+  {
+    "name": "aqueduct_wide2",
+    "design": "aqueduct",
+    "view": "wide2",
+    "seed": 305,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal crab made of ancient masonry: each leg is a tall arched stone pier of stacked blocks like the arches of a Roman aqueduct standing in the sea, its carapace is a slab of hexagonal basalt columns carrying a ruined amphitheatre, and its face is a carved keystone grimace with two narrow glowing red eye slits. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, and one tiny sailing ship with blue sails beside it for scale."
+  }
+]

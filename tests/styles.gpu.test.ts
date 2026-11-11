@@ -44,6 +44,8 @@ test.each(STYLE_NAMES.map((s) => [s]))("every example compiles, builds its pipel
 // bytes changed, almost all on the sea's interpolated surface; tests/detail.gpu.test.ts bounds the change at full size).
 // Regenerated again 2026-11-11 when the pose moved to the GPU (docs/gpu_native.md): the tables are f32 from compute
 // stages instead of f64 rounded on the CPU; 18 of 25000 pixels changed (23 bytes, at most 44 of 255, silhouette edges).
+// Regenerated again 2026-11-11 for rate lifting (docs/gpu_native.md "Rates": constants folded in f32, per-frame work
+// moved into frame values): 5 pixels changed by 1 of 255 in one channel each.
 test("toon renders exactly as before the style interface grew", async () => {
   const ref = gunzipSync(readFileSync(TOON_REFERENCE.path));
   const a = compile(serpent);

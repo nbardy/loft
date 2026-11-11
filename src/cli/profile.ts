@@ -1,7 +1,6 @@
 // `loft profile`: GPU milliseconds per draw (timestamp queries, best of N frames), totals per thing, the fixed stages,
 // and the CPU pose pass per table. The numbers come from `GpuLoaded.profile` (src/host/profile.ts), whose header says
 // how a stage's time is measured.
-import { resolve } from "node:path";
 import { compileScene } from "../compile/index.ts";
 import { createHost } from "../host/host.ts";
 import { POSE_ONE_PASS } from "../host/profile.ts";
@@ -11,6 +10,7 @@ import type { Scene } from "../scene.ts";
 import type { Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { styled } from "./load.ts";
+import { chosenAt } from "./variant.ts";
 
 /** The thing a draw belongs to: its label up to the first "_" or space (the library names parts `<thing>_<part>`). */
 export const thingOf = (label: string): string => /^[^_ ]+/.exec(label)![0];
@@ -18,15 +18,15 @@ export const thingOf = (label: string): string => /^[^_ ]+/.exec(label)![0];
 const f2 = (x: number) => x.toFixed(3).padStart(8);
 
 export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promise<void> {
-  const mod = (await import(resolve(cmd.path))) as { default?: Scene };
-  if (mod.default === undefined) throw new Error(`${cmd.path} has no default export (it must export a scene)`);
-  const styledScene = (await styled(mod.default, cmd.style)) as Scene;
+  const { scene } = await chosenAt(cmd.path, cmd.variant);
+  const styledScene = (await styled(scene, cmd.style)) as Scene;
   const compiled = compileScene(cmd.outline === "scene" ? styledScene : { ...styledScene, outline: cmd.outline });
   const a = compiled.artefact;
   const view = { camera: resolveCamera(a, cmd.view), ...cmd.size, time: cmd.time };
   const loaded = await createHost(await headlessDevice()).load(a);
   await loaded.frame(view); // warm up: first-use costs are not the draw's
   const p = await loaded.profile(view, cmd.frames);
+  const normal = await loaded.frameGpu(view, cmd.frames);
   loaded.destroy();
 
   // CPU pose per table, best of the same number of frames.
@@ -37,7 +37,8 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
 
   const out: string[] = [];
   out.push(`${cmd.path}  view ${cmd.view}  ${cmd.size.width}x${cmd.size.height}  t=${cmd.time}  best block mean over ${p.frames} frames  ${a.draws.length} draws declared`);
-  out.push(`GPU total ${p.total.toFixed(2)} ms (profiling frame: one pass per stage)   pass overhead ${p.passOverhead.toFixed(3)} ms per pass (subtracted in "net")`);
+  out.push(`normal frame: ${normal.ms.toFixed(2)} ms GPU (pose stages ${normal.pose.toFixed(3)}, draws and passes ${normal.draws.toFixed(2)}; least of ${cmd.frames} frames; timer tick ${normal.tick.toFixed(4)} ms as observed)`);
+  out.push(`GPU total ${p.total.toFixed(2)} ms (profiling frame: one pass per stage, for attribution)   pass overhead ${p.passOverhead.toFixed(3)} ms per pass (subtracted in "net")`);
   out.push("", "draw                              ms      net   triangles  instances  calls");
   for (const d of [...p.draws].sort((x, y) => y.net - x.net)) {
     out.push(`${d.label.padEnd(28).slice(0, 28)}${f2(d.ms)} ${f2(d.net)} ${String(d.triangles).padStart(11)} ${String(d.instances).padStart(10)} ${String(d.calls).padStart(6)}`);

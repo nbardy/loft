@@ -34,3 +34,24 @@ The subjects are the game's existing five bosses. The direction is new: the game
 
 Because style is separate from shape in Loft, the same scenes also render in the other styles. Woodblock is the one
 they are designed for.
+
+## Round 2: new directions for the crab (2026-11-11)
+
+`crab_round2/sheet.webp`: six designs by five views (two far step-backs, face, legs, back), generated with the Klein
+one-step model from `crab_round2/prompts.json` (`tools/crab_concepts.py`, run with the flux-klein-fast project's
+environment). Chosen to build as 3D variants of the Reefback Titan:
+
+- **mask**: the heikegani. The carapace is a scowling war mask; legs are lacquered armour plates; a keep and two pines
+  on the back.
+- **stilt**: a spider crab. A small thorny body carried high on very long thin legs, a foam ring at each foot, a red
+  shrine gate and lanterns on the back.
+- **fiddler**: one claw as large as the body, the other tiny; tall periscope eyes; a leaning lighthouse on the back.
+
+Not chosen: fortress (reads as a wall, not a crab; grey), garden (no silhouette from far away), aqueduct (the
+amphitheatre reads before the crab; the arched legs are worth stealing).
+
+All three are built as variants of the crab (`examples/bosses/reefback_titan.ts`, options under
+`examples/bosses/titan/`): `crab_round2/variants_sheet.webp` shows base, mask, stilt and fiddler at five cameras
+(`bun src/cli/main.ts variants examples/bosses/reefback_titan.ts --only base,mask,stilt,fiddler --views game,far,face,legs,back`).
+Every variant passes the crab's checks. Open: the fiddler asks for a crush disc of 4.4 (base 3.4); `fiddlerBaseDisc`
+is the largest claw that fits the base disc.

@@ -7,7 +7,7 @@ import { abs, add, dot, exp, fract, length, lift, max, min, mix, mul, normalize,
 import { hash22, luminance, noise2 } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
-import type { Rgb, Style } from "../style.ts";
+import type { Contact, Rgb, Style } from "../style.ts";
 import { POST_COMMON, rgb } from "./shared.ts";
 
 const C = {
@@ -142,9 +142,8 @@ export function biolume(): Style {
       c = add(c, mul(rgb(C.cyan), mul(spark, mul(twinkle, 0.5))));
       // Where bodies disturb the water it glows: a soft halo through the contact band, the foam brighter on it,
       // flickering along its edge.
-      const near = saturate(ctx.contact);
       const flicker = add(0.65, mul(noise2(mul(xz, 3.0)), 0.35));
-      c = add(c, mul(rgb(C.cyan), add(mul(mul(near, near), 0.22), mul(ctx.foam, mul(flicker, 0.75)))));
+      c = add(c, mul(rgb(C.cyan), add(halo(ctx.contact), mul(ctx.foam, mul(flicker, 0.75)))));
       c = mix(c, rgb(C.horizon), fog(ctx.distance));
       // Translucent looking down, so light under the surface shows; opaque toward grazing angles.
       const alpha = saturate(max(add(0.6, mul(pow(sub(1, facing), 3), 0.4)), ctx.foam));
@@ -157,4 +156,12 @@ export function biolume(): Style {
       return mix(above, rgb(C.water), sub(1, smoothstep(-0.002, 0.0, up)));
     },
   };
+}
+
+/** The glow round a body breaking the water: saturate(band)^2 x 0.22; nothing where no body is near (0 there exactly). */
+function halo(contact: Contact): Expr<"f32"> {
+  switch (contact.kind) {
+    case "clear": return lift<"f32">(0);
+    case "near": { const near = saturate(contact.band); return mul(mul(near, near), 0.22); }
+  }
 }

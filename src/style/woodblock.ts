@@ -9,7 +9,7 @@ import { abs, add, distance, dot, f, fract, length, lt, max, min, mix, mul, para
 import { noise2, hash22, luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
-import type { Rgb, ShadeCtx, Style } from "../style.ts";
+import type { Contact, Rgb, ShadeCtx, Style } from "../style.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
 
 /** The five inks. Everything a body shows is one of these (antialiased edges aside), unless a scene states its own. */
@@ -249,17 +249,7 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       const drawn = sub(1, smoothstep(sub(width, fw), add(width, fw), d));
       const line = mul(mix(drawn, mul(width, 2), crowd), smoothstep(-0.6, -0.1, h));
       c = mix(c, rgb(SEA.line), mul(line, 0.9));
-      // Clawed foam, from how close a body is: a collar at the body, and fingers that taper outward along the zero
-      // lines of a noise field (thin where |noise| is small, narrower the farther out), with an indigo line round the
-      // whole shape and loose specks of spray beyond it.
-      const near = ctx.contact;
-      const ridge = abs(noise2(mul(xz, 3.4)));
-      const shape = max(sub(near, 0.6), sub(mul(near, 0.3), ridge));
-      const foam = mul(edgeOf(shape, 0, 0.004), edgeOf(near, 0.02, 0.01));
-      const rim = mul(mul(edgeOf(shape, -0.06, 0.004), sub(1, foam)), edgeOf(near, 0.05, 0.01));
-      const speck = mul(specks(mul(xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
-      c = mix(c, rgb(inks.indigo), rim);
-      c = mix(c, rgb(inks.cream), max(foam, speck));
+      c = clawed(c, inks, ctx.contact, xz);
       // The far sea fades toward the haze at the horizon as a bokashi (a graded wiping of the block, as the sky's): two
       // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
       // maelstrom's view (examples/maelstrom.ts --style woodblock).
@@ -279,6 +269,27 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       return mix(above, rgb(sky.below), sub(1, smoothstep(-0.002, 0.0, up)));
     },
   };
+}
+
+/**
+ * Clawed foam, from how close a body is: a collar at the body, and fingers that taper outward along the zero lines of a
+ * noise field (thin where |noise| is small, narrower the farther out), with an indigo line round the whole shape and
+ * loose specks of spray beyond it. None where no body is near: there the band is below -800, where the foam (band >
+ * 0.02), the rim (> 0.05) and the specks (> -0.4) are all exactly 0.
+ */
+function clawed(c: Expr<"vec3">, inks: WoodblockInks, contact: Contact, xz: Expr<"vec2">): Expr<"vec3"> {
+  switch (contact.kind) {
+    case "clear": return c;
+    case "near": {
+      const near = contact.band;
+      const ridge = abs(noise2(mul(xz, 3.4)));
+      const shape = max(sub(near, 0.6), sub(mul(near, 0.3), ridge));
+      const foam = mul(edgeOf(shape, 0, 0.004), edgeOf(near, 0.02, 0.01));
+      const rim = mul(mul(edgeOf(shape, -0.06, 0.004), sub(1, foam)), edgeOf(near, 0.05, 0.01));
+      const speck = mul(specks(mul(xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
+      return mix(mix(c, rgb(inks.indigo), rim), rgb(inks.cream), max(foam, speck));
+    }
+  }
 }
 
 /** Round specks of spray, one per cell of p at a hashed spot, on about a third of the cells; 0..1 coverage. */

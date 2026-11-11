@@ -24,7 +24,9 @@ function sceneModule(cmd: DevCommand): string {
     case "file": {
       const styles = JSON.stringify(resolve(ROOT, "src/style/index.ts"));
       const start = JSON.stringify(cmd.source.style.kind === "named" ? cmd.source.style.name : "scene");
-      return `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport { STYLE_NAMES as styleNames } from ${styles};\nexport const startStyle = ${start};\nexport const build = async (style) => {\n  const [mod, { compile }, s] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx}), import(${styles})]);\n  return compile(style === "scene" ? mod.default : s.withStyle(mod.default, s.styleNamed(style)));\n};\n`;
+      // A design's chosen variant (validated when the server starts, src/cli/variant.ts), or the module's default export.
+      const pick = cmd.source.variant.kind === "ask" ? `mod.design.build(mod.design.resolve(${JSON.stringify(cmd.source.variant.ask)})).scene` : "mod.default";
+      return `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport { STYLE_NAMES as styleNames } from ${styles};\nexport const startStyle = ${start};\nexport const build = async (style) => {\n  const [mod, { compile }, s] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx}), import(${styles})]);\n  const scene = ${pick};\n  return compile(style === "scene" ? scene : s.withStyle(scene, s.styleNamed(style)));\n};\n`;
     }
   }
 }
@@ -71,6 +73,8 @@ async function bundle(cmd: DevCommand): Promise<Built> {
 }
 
 export async function dev(cmd: DevCommand): Promise<void> {
+  // An unknown variant, slot or option fails here, in the terminal, with the valid names; not later in the page.
+  if (cmd.source.kind === "file" && cmd.source.variant.kind === "ask") await (await import("./variant.ts")).chosenAt(cmd.source.path, cmd.source.variant);
   let built = await bundle(cmd);
   const sockets = new Set<{ send(s: string): void }>();
   const announce = () => {

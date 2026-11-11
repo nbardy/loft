@@ -45,10 +45,10 @@ export type WaterCtx = {
   /** Foam coverage, 0..1, antialiased: where the water meets a body (from the opaque scene's depth). */
   readonly foam: Expr<"f32">;
   /**
-   * How close a body is, continuously: 1 at the body, 0 at the sea's foam width, negative beyond it (as far as the
-   * search sees). `foam` is this band shaped one way; a style that wants its own shape (clawed, scalloped) uses this.
+   * Whether a body is near, as the sea found it. `foam` is its band shaped one way; a style that wants its own shape
+   * (clawed, scalloped) dispatches on this.
    */
-  readonly contact: Expr<"f32">;
+  readonly contact: Contact;
   /**
    * The foam the sea's deformations mark on the water here (a whirlpool's arms), 0..1, antialiased; 0 on a sea without
    * deformations. `foam` already holds it (the larger of this and the contact foam); a style that shapes its own
@@ -62,6 +62,23 @@ export type WaterCtx = {
    */
   readonly phase: Expr<"f32">;
 };
+
+/**
+ * How near a body is to a pixel of water. The sea draws its water in cases (src/geom/sea.ts) and tells the style which
+ * one it is in, so a style prints its contact foam only where a body can be near and does not compute it elsewhere.
+ */
+export type Contact =
+  /**
+   * No opaque surface lies within the sea's search of this pixel (or of the other pixels of its 2 x 2 quad): the
+   * band would be below -800 here, where every contact term of every style is exactly 0. `foam` holds only the
+   * deformations' marks. A style prints no contact foam.
+   */
+  | { readonly kind: "clear" }
+  /**
+   * A body may be near. `band`: how close, continuously: 1 at the body, 0 at the sea's foam width, negative beyond it
+   * (as far as the search sees).
+   */
+  | { readonly kind: "near"; readonly band: Expr<"f32"> };
 
 /** A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. */
 export type LayerCtx = {

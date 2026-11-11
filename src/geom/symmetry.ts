@@ -4,7 +4,7 @@
 // its front (d/du x d/dv) still faces out. `array` makes named copies of a strand in a row of charts (ribs, legs, oars).
 
 import { lift, neg, sub, time, vec3 } from "../expr.ts";
-import { SurfaceDrawable, type Look } from "../draw/surface.ts";
+import { SurfaceDrawable, withFragment, type Look } from "../draw/surface.ts";
 import { framed } from "../map/surface.ts";
 import { newSlices } from "../map/sweep.ts";
 import type { Chart, End, P3, Surface, Topology } from "../map/types.ts";
@@ -38,7 +38,7 @@ function mirrorLook(look: Look): Look {
   switch (look.kind) {
     case "lit": { const p = look.paint; return { ...look, paint: (u, v, at) => p(sub(1, u), v, at) }; }
     case "flat": { const p = look.paint; return { ...look, paint: (u, v, at) => p(sub(1, u), v, at) }; }
-    case "glazed": { const c = look.colour; return { ...look, colour: (f) => c({ ...f, u: sub(1, f.u) }) }; }
+    case "glazed": return { ...look, colour: withFragment(look.colour, (f) => ({ ...f, u: sub(1, f.u) })) };
   }
 }
 

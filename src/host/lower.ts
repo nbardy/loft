@@ -10,6 +10,9 @@
 //             1. opaque pass: 4x colour and 4x depth, both stored, no resolve
 //             2. depth resolve: a full-screen pass reads the 4x depth as texture_depth_multisampled_2d and writes the
 //                nearest of each pixel's samples to a single-sampled r32float texture (SCENE_DEPTH_WGSL, group 2)
+//          2a-2c. the clearance map (SCENE_CLEARANCE_WGSL): three passes drawing one fragment per 4 x 4 or 8 x 8 pixels
+//                into the top left of view-sized textures: whether a cell holds an opaque pixel, then along each row
+//                and down each column the distance to the nearest tile that does (docs/gpu_native.md "The sea")
 //             3. transparent pass: loads the stored colour and depth (so transparent draws still depth-test, and may
 //                still write depth), binds the resolved depth as group 2, resolves colour into the output, or into
 //                the first intermediate when there are post passes
@@ -21,7 +24,7 @@
 //
 // Imports no bun-only module (the browser host uses it).
 
-import { CURVE_N, DETAIL_SLOTS, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw } from "../artefact.ts";
+import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw } from "../artefact.ts";
 import { gridBounds, slotsUsed } from "./detail.ts";
 import {
   COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, SAMPLES, SCENE_DEPTH_FORMAT,
@@ -52,6 +55,76 @@ const DEPTH_RESOLVE_WGSL = /* wgsl */ `
 }
 `;
 
+/**
+ * The clearance map's passes (SCENE_CLEARANCE_WGSL), one module with entry points per pass. Each draws a rectangle
+ * at the top left of its view-sized target (two triangles, sized from the input texture, which is view-sized too), one
+ * fragment per cell of the pass's grid:
+ *   quads: per 4 x 4 pixels, 1 where any of the 16 depths is an opaque surface (r8unorm)
+ *   rows:  per 8 x 8 tile, along its row, the offset in tiles to the nearest tile holding an opaque pixel within 7, 8
+ *          for none (r8unorm, k / 255; one gather of a tile's four quads per tile looked at)
+ *   clear: down the column, min over offsets dy within 7 of sqrt(gap(k)^2 + gap(dy)^2), gap(d) = max(0, 8 |d| - 7) the
+ *          gap between two tiles' nearest pixel centres d tiles apart, capped at CLEARANCE_MAX, stored divided by
+ *          CLEARANCE_SCALE (r8unorm). The minimum over a column of row minima is the 2D minimum: the Euclidean
+ *          distance transform is separable (Felzenszwalb and Huttenlocher), 30 reads per tile instead of 225.
+ * A tile beyond 7 has a gap of at least 8 * 8 - 7 = 57, over the cap, so the bound holds without looking farther.
+ * Reads are branch-free and independent, so they issue together, and clamped (a cell at the image's edge reads its own
+ * last texels again; a tile read through a clamped index is counted at the offset asked for, never nearer than its
+ * own, and is read at its own offset too). Measured: with one fragment per 8 x 8 tile reading 64 depths the first pass
+ * was the largest (16,000 fragments too few to hide the reads' latency); per 4 x 4, four times as many fragments.
+ */
+const CLEARANCE_WGSL = /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var near: sampler;
+const TILE: i32 = ${CLEARANCE_TILE};
+const QUAD: i32 = ${CLEARANCE_TILE / 2};
+const REACH: i32 = 7;
+fn view() -> vec2<i32> { return vec2<i32>(textureDimensions(src)); }
+fn cells(side: i32) -> vec2<i32> { return (view() + side - 1) / side; }
+fn tiles() -> vec2<i32> { return cells(TILE); }
+fn gap(d: i32) -> f32 { return max(0.0, f32(TILE * abs(d) - (TILE - 1))); }
+fn cover(vi: u32, n: vec2<i32>) -> vec4<f32> {
+  let c = vec2<f32>(select(0.0, 1.0, vi == 1u || vi == 2u || vi == 4u), select(0.0, 1.0, vi == 2u || vi == 4u || vi == 5u));
+  let px = c * vec2<f32>(n) / vec2<f32>(view());
+  return vec4<f32>(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0, 0.0, 1.0);
+}
+@vertex fn quads_vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return cover(vi, cells(QUAD)); }
+@vertex fn tiles_vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return cover(vi, tiles()); }
+@fragment fn quads_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+  // Four gathers of 2 x 2 depths, at the corners between them; clamp-to-edge repeats the image's last texels.
+  let o = floor(p.xy) * f32(QUAD);
+  let size = vec2<f32>(view());
+  let m = min(min(textureGather(0, src, near, (o + vec2<f32>(1.0, 1.0)) / size), textureGather(0, src, near, (o + vec2<f32>(3.0, 1.0)) / size)),
+              min(textureGather(0, src, near, (o + vec2<f32>(1.0, 3.0)) / size), textureGather(0, src, near, (o + vec2<f32>(3.0, 3.0)) / size)));
+  return vec4<f32>(select(0.0, 1.0, min(min(m.x, m.y), min(m.z, m.w)) < 1.0), 0.0, 0.0, 1.0);
+}
+@fragment fn rows_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+  let t = vec2<i32>(floor(p.xy));
+  let last = tiles() - 1;
+  let size = vec2<f32>(view());
+  var k = REACH + 1;
+  for (var dx = -REACH; dx <= REACH; dx++) {
+    // Tile s's four quads (quads past the image's edge were never drawn and read 0).
+    let s = clamp(t + vec2<i32>(dx, 0), vec2<i32>(0), last);
+    let q = textureGather(0, src, near, (vec2<f32>(s * 2) + 1.0) / size);
+    let opaque = max(max(q.x, q.y), max(q.z, q.w)) > 0.5;
+    k = min(k, select(REACH + 1, abs(dx), opaque));
+  }
+  // The tile offset, an integer, exact in 8 bits.
+  return vec4<f32>(f32(k) / 255.0, 0.0, 0.0, 1.0);
+}
+@fragment fn clear_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+  let t = vec2<i32>(floor(p.xy));
+  let last = tiles() - 1;
+  var d2 = 1e8;
+  for (var dy = -REACH; dy <= REACH; dy++) {
+    let k = i32(round(textureLoad(src, clamp(t + vec2<i32>(0, dy), vec2<i32>(0), last), 0).x * 255.0));
+    let gx = gap(k);
+    d2 = min(d2, select(1e8, gx * gx + gap(dy) * gap(dy), k <= REACH));
+  }
+  return vec4<f32>(min(sqrt(d2), ${CLEARANCE_MAX}.0) / ${CLEARANCE_SCALE}.0, 0.0, 0.0, 1.0);
+}
+`;
+
 const BLEND: Record<Draw["blend"], GPUBlendState | undefined> = {
   none: undefined,
   // Straight alpha over.
@@ -64,7 +137,7 @@ const BLEND: Record<Draw["blend"], GPUBlendState | undefined> = {
 type Variant = "draw" | "sceneDepth" | "post";
 const VARIANT: Record<Variant, { readonly wgsl: string; readonly named: string }> = {
   draw: { wgsl: "", named: "" },
-  sceneDepth: { wgsl: SCENE_DEPTH_WGSL, named: " (with SCENE_DEPTH_WGSL)" },
+  sceneDepth: { wgsl: SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL, named: " (with SCENE_DEPTH_WGSL and SCENE_CLEARANCE_WGSL)" },
   post: { wgsl: POST_WGSL, named: " (as a post pass, with POST_WGSL)" },
 };
 const drawVariant = (d: Draw): Variant => (d.sceneDepth === true ? "sceneDepth" : "draw");
@@ -220,7 +293,8 @@ export function lower(a: Artefact): Bundle {
   const split = post.length > 0 || a.draws.some((d) => d.sceneDepth === true);
   // Group 2 layouts: exactly the ones documented on SCENE_DEPTH_WGSL and POST_WGSL; only a split frame has them.
   const sceneDepthEntry: LayoutEntry = { binding: 0, visibility: DRAWN, texture: { sampleType: "unfilterable-float", viewDimension: "2d", multisampled: false } };
-  const depthLayout = split ? bgls.add({ label: "loft scene depth", entries: [sceneDepthEntry] }) : -1;
+  const clearanceEntry: LayoutEntry = { binding: 1, visibility: DRAWN, texture: { sampleType: "unfilterable-float", viewDimension: "2d", multisampled: false } };
+  const depthLayout = split ? bgls.add({ label: "loft scene depth", entries: [sceneDepthEntry, clearanceEntry] }) : -1;
   const postLayout = split ? bgls.add({
     label: "loft post",
     entries: [
@@ -311,10 +385,10 @@ export function lower(a: Artefact): Bundle {
       entries: [{ binding: 0, visibility: ["FRAGMENT"], texture: { sampleType: "depth", viewDimension: "2d", multisampled: true } }],
     });
     const resolveModule = modules.add({ label: "loft depth resolve", chunks: [chunk(DEPTH_RESOLVE_WGSL)] });
-    const fullScreen = (label: string, layout: Id, module: Id, vs: string, format: GPUTextureFormat): Id => renders.add({
+    const fullScreen = (label: string, layout: Id, module: Id, vs: string, format: GPUTextureFormat, fs = "fs"): Id => renders.add({
       label, layout,
       vertex: { module, entryPoint: vs, constants: {} },
-      fragment: { module, entryPoint: "fs", constants: {}, targets: [{ format }] },
+      fragment: { module, entryPoint: fs, constants: {}, targets: [{ format }] },
       primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: "none" },
       multisample: { count: 1 },
     });
@@ -322,7 +396,21 @@ export function lower(a: Artefact): Bundle {
     const postPipelines = post.map((p) => fullScreen(`${p.shader} (${p.label})`, layoutOf("post"), moduleOf(p.shader, "post"), "post_vs", COLOR_FORMAT));
     const sampler = samplers.add({ label: "loft post", magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
     const resolveGroup = groups.add({ label: "loft depth resolve", layout: resolveLayout, entries: [{ binding: 0, texture: depth }] });
-    const depthGroup = groups.add({ label: "loft scene depth", layout: depthLayout, entries: [{ binding: 0, texture: sceneDepth }] });
+    // The clearance map: three passes, each reading the previous one's texture (CLEARANCE_WGSL).
+    const clearanceInput = bgls.add({
+      label: "loft clearance input",
+      entries: [{ binding: 0, visibility: DRAWN, texture: { sampleType: "unfilterable-float", viewDimension: "2d", multisampled: false } }, { binding: 1, visibility: DRAWN, sampler: { type: "non-filtering" } }],
+    });
+    const nearest = samplers.add({ label: "loft clearance", magFilter: "nearest", minFilter: "nearest", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+    const clearanceLayout = pls.add({ label: "loft clearance", bindGroupLayouts: [clearanceInput] });
+    const clearanceModule = modules.add({ label: "loft clearance", chunks: [chunk(CLEARANCE_WGSL)] });
+    const clearanceSteps = ([["quads", "quads_vs"], ["rows", "tiles_vs"], ["clear", "tiles_vs"]] as const).map(([step, vs]) => ({
+      step,
+      texture: textures.add({ label: `loft clearance ${step}`, format: "r8unorm", sampleCount: 1, usage: [RA, TB] }),
+      pipeline: fullScreen(`loft clearance ${step}`, clearanceLayout, clearanceModule, vs, "r8unorm", `${step}_fs`),
+    }));
+    const clearance = clearanceSteps[2]!.texture;
+    const depthGroup = groups.add({ label: "loft scene depth", layout: depthLayout, entries: [{ binding: 0, texture: sceneDepth }, { binding: 1, texture: clearance }] });
     // Ping-pong: pass k reads intermediate (k - 1) % 2 and writes k % 2; one post pass needs one intermediate.
     const n = post.length;
     const intermediates = Array.from({ length: Math.min(n, 2) }, (_, i) => {
@@ -343,7 +431,12 @@ export function lower(a: Artefact): Bundle {
       color: { view: { kind: "texture", texture: sceneDepth }, loadOp: "clear", storeOp: "store", clearValue: [1, 0, 0, 1] },
       bindGroups: [resolveGroup],
       commands: [{ kind: "fixed", pipeline: resolve, vertices: 3, instances: 1 }],
-    }, {
+    }, ...clearanceSteps.map((s, i): RenderPassDesc => ({
+      label: `loft clearance ${s.step}`,
+      color: { view: { kind: "texture", texture: s.texture }, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] },
+      bindGroups: [groups.add({ label: `loft clearance ${s.step} input`, layout: clearanceInput, entries: [{ binding: 0, texture: i === 0 ? sceneDepth : clearanceSteps[i - 1]!.texture }, { binding: 1, sampler: nearest }] })],
+      commands: [{ kind: "fixed", pipeline: s.pipeline, vertices: 6, instances: 1 }],
+    })), {
       label: "loft scene transparent",
       color: { view: { kind: "texture", texture: colour }, resolveTarget: outputOf(0), loadOp: "load", storeOp: "discard" },
       depth: { view: depth, depthLoadOp: "load", depthStoreOp: "discard" },
