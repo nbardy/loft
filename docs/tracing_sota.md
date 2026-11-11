@@ -334,7 +334,102 @@ The schedule is a property of the draw, chosen at compile time, with an author o
 
 When no precondition holds the compiler reports which ones failed. It does not fall back silently.
 
-## 6. Order of work
+## 6. Blends, warps and displacement on triangles
+
+The question: marching is the natural home of smooth blends, twists and noise-displaced surfaces, and triangles are
+what the hardware draws. Can a body have both? Labels as in section 5; MEASURED-2D means `tools/explain_blend.ts`.
+
+### 6.1 What exists
+
+| Need | Published way | What it leaves open for us |
+|---|---|---|
+| Twist, bend, taper | Move the vertices forward through the warp. The normal is the cofactor of the warp's Jacobian applied to the old normal, `det(J) J^-T n` (Barr, *Global and local deformations of solid primitives*, SIGGRAPH 1984; reported, the sentence itself not read). Lattice warps: Sederberg and Parry 1986 (reported) | Nothing. Loft's `place` composes a map behind a surface and has the symbolic Jacobian |
+| Displacement by a function | Displace the surface along its normal and take the normal from the function's derivatives (Blinn 1978 for the normal; Lee, Moreton, Hoppe, *Displaced subdivision surfaces*, 2000; Niessner and Loop, *Analytic displacement mapping using hardware tessellation*, 2013; all reported). Detail below the sampling rate is dropped or moved into shading (Norton, Rockwood, Skolmoski 1982; Olano and Baker, *LEAN mapping*, 2010; reported) | No published rule was found for where to split a procedural displacement between vertices and shading, or for how fine a grid must be after a warp |
+| A blend on one mesh | *Implicit Skinning* (Vaillant and others, SIGGRAPH 2013; follow-up 2014). One skinned mesh. Each frame every vertex is moved to its own iso-value of a field composed from one implicit surface per bone: `v += s (f(v) - iso) grad f / |grad f|^2` with s = 0.35, stopping where the gradient turns sharply (a contact), with a tangential relaxation toward the neighbours between steps (read in a walk-through of the paper; the paper itself would not open) | It needs one watertight mesh and each vertex's neighbours, and it moves vertices along the field's gradient, so they drift and have to be relaxed |
+| A blend's look without its geometry | Screen-space blending across the seam of two meshes after the scene is drawn (the MeshBlend plug-in for Unreal, 2024 to 2025; from its author's forum posts, reported). It mirrors colour across the seam and fades when something is in front | The silhouette is unchanged |
+| A blend by per-pixel roots | Draw a hull and solve the blended field per pixel (Loop and Blinn 2006; Kanamori, Szego, Nishita 2008; reported). Section 5.5 is of this kind | It is marching's cost, bounded |
+
+No source was found that combines all three on triangles, and none for the construction of 6.2.
+
+### 6.2 Push to blend: each part keeps its triangles
+
+Let parts have distance fields `f_i`, exact outside each part, and let F be their smooth union of radius K (5.5).
+Every part keeps its own mesh, coordinates and draw. In its vertex stage:
+
+```
+p      the vertex on the part's own surface, n its outward normal
+t      the first root of F(p + t n) = 0 in [0, K / 2], by Newton from 0; K / 2 if there is none
+p1     p + t n
+```
+
+Nothing is stitched and nothing is re-meshed. The parts still overlap inside. The depth test takes their union, and
+the union's outside is the blended surface.
+
+Why. DERIVATION, for two parts that are convex within K / 2 of their surfaces.
+
+- Along its own outward normal a vertex is exactly t from its part, so `F(p + t n) = smin(t, f_j(p + t n))`.
+- Every point y of the blended surface is reached. Let i be the part nearest y and p the foot of y on it; then
+  `y = p + f_i(y) n`, and `f_i(y) <= K / 4` because the blend lowers the nearer distance by at most K / 4. Between p
+  and y the blend is never positive: moving a distance s from y toward p lowers `f_i` by s and raises the gap to the
+  other part by between 0 and 2 s, and the blend term falls by at most half the rise of the gap, so by at most s. So
+  the ray from p is inside the solid until y, where it leaves.
+- No vertex leaves the solid. A pushed vertex is on F = 0. A vertex with no root in reach has F < 0 all the way, so
+  it stays inside, hidden by the other part.
+
+The reach has to be more than K / 4. MEASURED-2D, a disc and a capsule, K = 60 px, largest distance from the true
+contour (found by scanning the field) to the two pushed outlines:
+
+| Reach | 96 vertices | 192 | 384 | 768 |
+|---|---:|---:|---:|---:|
+| K / 4 | 2.46 px | 0.85 | 0.39 | 0.30 |
+| K / 2 | 0.54 px | 0.14 | 0.03 | 0.01 |
+| K | 0.54 px | 0.14 | 0.03 | 0.01 |
+
+With a reach of K / 4 the two outlines meet at the seam and stop, and the edges that cross the seam dip inside: the
+error stalls. With K / 2 each outline runs on past the seam along the true surface and the error is the chord's,
+falling four times per doubling. With K, long pushes stretch edges outside the solid (0.70 px at 96 vertices against
+0.35). Before the push the contour is 15.3 px from the outlines. The cost was 1.9 evaluations of the blend per vertex,
+at most 3 Newton steps; a vertex further than K from every neighbour pays one.
+
+Against Implicit Skinning: the push is along the part's own normal, not the field's gradient, so a vertex needs no
+neighbours and no relaxation and stays where its coordinates put it; and there is one mesh per part, with the depth
+buffer doing the union, where they have one mesh for the body.
+
+Past the seam the two meshes lie on the same surface. They have to shade alike there: the normal is `grad F` for both,
+and colour is mixed by the blend's own weight. Whether that hides the overlap in 3D is not tested.
+
+### 6.3 Displacement and warps go after the push
+
+```
+rest surface -> push to blend -> displace along grad F by h -> warp forward by W
+```
+
+- **Displace.** `p2 = p1 + h(p1) N`, with h a function in body coordinates and N the blended normal. The normal of
+  the displaced surface comes from the symbolic derivatives of h. Split h by wavelength: parts longer than two grid
+  cells move vertices; everything down to the pixel changes the normal; anything shorter than a pixel is dropped
+  (`footprint` in `src/grad.ts` gives the pixel). Detail that needs a silhouette finer than the grid is `draw.relief`.
+- **Warp.** `p3 = W(p2)`, normal `cof(J_W) N`. The vertices are exactly on the warped surface; the error is the
+  chord's, about `(d^2 / 8) |D^2 W|` for an edge of length d, so the grid needs `d <= sqrt(8 e / |D^2 W|)` for an
+  error of e. DERIVATION (also reached independently by the research pass); no published rule found.
+- **Carve.** For A minus B, draw A's pixels where `f_B > 0` and B's, facing inward, where `f_A < 0`. Each test is one
+  evaluation of the other part's field per pixel, and the cut is exact.
+
+Why this composes. A march puts a warp in front of the field, as an inverse map, and pays for it in shorter steps
+and lost distance (5.1). Triangles put it behind, as a forward map on vertices, and pay nothing. In the chain above
+the fields are only ever evaluated in rest coordinates, where they are exact distances, and only at vertices.
+
+### 6.4 Limits and unknowns
+
+- Tested in 2D on two convex parts with exact distances. Nothing is built in 3D.
+- A part has to be convex, or at least have no concavity tighter than K / 2, where it blends; otherwise a vertex's
+  distance to its own part along its normal is not t.
+- Three or more parts within K of one point: the reach bound above is for two. Not proven; 5.5 is the fallback.
+- A swept body's distance is not closed form. Its neighbours would see it as the rounded cones of its skeleton, so the
+  two sides of a seam would solve slightly different fields. The size of that mismatch is not measured.
+- The fillet needs vertices: about `sqrt(8 e R)` apart for a fillet of radius R, which is of the order of K.
+- Folds that cannot be listed still need the march.
+
+## 7. Order of work
 
 1. Merge `wave3/triangles` and `wave3/tracer` and read `loft profile`. Done. In `examples/scenes/the_strike.ts` at the
    game camera the serpent's draws sum to about 0.15 ms of GPU and the ship to 0.32 ms in 45 draws; the sea is 1.5 ms,
@@ -347,8 +442,9 @@ When no precondition holds the compiler reports which ones failed. It does not f
 6. Binned, low-resolution soft things.
 7. One instanced draw per kind of part. A ship is about 40 draws today, and section 4.3 says that is where the cost
    of many small objects sits.
+8. Push to blend (6.2) in 3D, on one limb joining a body, with displacement and a warp after it.
 
-## 7. Not known
+## 8. Not known
 
 - GPU time for any of section 5 on an M-series machine or in a browser.
 - Whether about 3 evaluations per vertex holds in 3D on a real creature's field.

@@ -4,10 +4,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import "./explain_marching.ts";
 import "./explain_marching_3d.ts";
+import "./explain_blend.ts";
 
 const OUT = new URL("../docs/marching/", import.meta.url).pathname;
 const n3 = JSON.parse(readFileSync(OUT + "numbers.json", "utf8"));
 const n2 = JSON.parse(readFileSync(OUT + "numbers_2d.json", "utf8")).skeletonRays;
+const nb = JSON.parse(readFileSync(OUT + "numbers_blend.json", "utf8")) as { coarse: Record<string, number>; sweep: { reachOverK: number; vertices: number; contourToOutlines: number }[] };
+const sweepRow = (reach: number) => nb.sweep.filter((r) => r.reachOverK === reach).map((r) => `<td class="num">${r.contourToOutlines.toFixed(2)}</td>`).join("");
 const int = (x: number) => Math.round(x).toLocaleString("en-US");
 const A = n3.A_march, B = n3.B_sharedCoarseMarch, C = n3.C_listAll;
 const insideRatio = (A.onHitPixels / C.raySolves).toFixed(0);
@@ -105,7 +108,17 @@ const html = `<!doctype html>
 <figure><img src="fig4_skeleton_rays.svg" alt="Rays from a spine meeting a blended body">
   <figcaption>The body is a smooth blend of ${9} circles, the kind of shape marching is used for. Each vertex is found along a ray from the spine by Newton's method, started from its neighbour's answer: ${n2.vertices} vertices, ${n2.evaluations} evaluations, ${n2.perVertex} per vertex, at most ${n2.worstNewtonSteps} steps. The triangles between vertices are then ordinary geometry. The cost does not depend on how many pixels the body covers, and the answer can be stored once if the shape does not change in its own coordinates.</figcaption></figure>
 
-<h2>5. Four ways Loft can draw a field</h2>
+<h2>5. A blend with each part's own triangles</h2>
+<figure><img src="fig6_push_to_blend.svg" alt="A disc and a capsule, each outline pushed onto the blended surface">
+  <figcaption>Two parts keep their own outlines (dashed, as authored). Each vertex is pushed along its own normal until it lies on the smooth union of the two distance fields. The outlines still overlap inside; their union is the blended shape. Nothing is stitched or re-meshed, and each vertex needs only its own position: ${nb.coarse.evaluationsPerVertex} evaluations per vertex here, at most ${nb.coarse.worstNewtonSteps} Newton steps.</figcaption></figure>
+<div class="wrap"><table>
+  <tr><th>How far a vertex may be pushed</th><th class="num">96 vertices</th><th class="num">192</th><th class="num">384</th><th class="num">768</th></tr>
+  <tr><td>A quarter of the blend radius</td>${sweepRow(0.25)}</tr>
+  <tr><td>Half the blend radius</td>${sweepRow(0.5)}</tr>
+</table></div>
+<p>The numbers are the largest distance, in pixels, from the true blended contour to the pushed outlines. With a quarter of the radius the outlines stop at the seam and the error stalls. With half, each runs on past the seam and the error falls four times per doubling. Before the push it is ${nb.coarse.contourToOutlinesBefore} px. This is a 2D test of two convex parts; nothing is built in 3D. After the push, displacement and twists are ordinary moves of vertices, which triangles do for free.</p>
+
+<h2>6. Four ways Loft can draw a field</h2>
 <div class="wrap"><table>
   <tr><th>Schedule</th><th>For</th><th>Cost grows with</th><th>Status</th></tr>
   <tr><td><b>Solve onto the body</b>: one root per vertex along the body's own rays</td><td>Blended bodies with a skeleton</td><td>Vertices</td><td>Counted in 2D here; not built</td></tr>
