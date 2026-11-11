@@ -73,14 +73,14 @@ export const CAST = cast<Channel, "want" | "strain" | "triumph" | "fury" | "winc
     // It wants the ship, and is sorry: the eyes drawn out toward it on lifted stalks, the lids raised, the brows high.
     want: { upper: 0.6, lower: 0.15, slant: -0.25, pupil: 0.36, reach: 1.12, droop: 1.55, lift: 0.15, aside: -0.4, splay: -0.1, smile: -0.1, brow: 1, ship: 1 },
     // The squeeze: lids shut tight and knotted toward the middle, the stalks drawn in short and curled under, shuddering.
-    strain: { upper: 1.25, lower: 0.9, slant: 0.35, pupil: 0.25, reach: 0.72, droop: 2.5, lift: -0.1, splay: -0.15, stiff: 0.6, smile: -0.8, brow: -0.5, ship: 1, shake: 1 },
+    strain: { upper: 1.08, lower: 1.0, slant: 0.35, pupil: 0.25, reach: 0.72, droop: 2.5, lift: -0.1, splay: 0.2, stiff: 0.6, smile: -0.8, brow: -0.5, ship: 1, shake: 1 },
     // Let go: it raises its eyes to watch the ship fly, with the smallest of smiles; the cheeks rise, the grief stays in
-    // the lids. The only time its pupils leave the water for the sky.
-    triumph: { upper: 0.75, lower: 0.75, slant: -0.5, pupil: 0.32, reach: 1.05, droop: 1.6, lift: 0.25, splay: 0.2, smile: 0.9, brow: 0.9, ship: 1 },
+    // the lids (lids at 0.75 each were a wide stare, not a smile; at 0.9 each, shut). The only time its pupils leave the water for the sky.
+    triumph: { upper: 0.8, lower: 0.85, slant: -0.5, pupil: 0.32, reach: 1.05, droop: 1.6, lift: 0.25, splay: 0.2, smile: 0.9, brow: 0.9, ship: 1 },
     // Before the slam: the stalks rise and stiffen and hold the eyes out at the disc; lids hard down to the middle.
     fury: { upper: 0.95, lower: 0.3, slant: 0.8, pupil: 0.16, reach: 1.1, droop: 1.0, lift: 0.3, splay: 0.25, aside: 0.2, stiff: 0.85, smile: -1, brow: -1, disc: 1, shake: 0.25 },
     // The blow, a moment after it: one eye shut, the other left half open on the damage; the stalks let go again.
-    wince: { flinch: 1, upper: 1.1, lower: 0.6, slant: -0.2, pupil: 0.22, reach: 0.85, droop: 2.3, splay: 0.1, stiff: 0.2, smile: -0.6, brow: 0.3, disc: 1 },
+    wince: { flinch: 1, upper: 0.9, lower: 0.5, slant: -0.2, pupil: 0.22, reach: 0.85, droop: 2.3, splay: 0.1, stiff: 0.2, smile: -0.6, brow: 0.3, disc: 1 },
   },
 );
 export type Mood = keyof typeof CAST.named;
@@ -92,17 +92,20 @@ export type EyeSpec = {
   /** The socket on the ball's front (x from the carapace's front, y as a share of its height, z), the way the stalk
    * leaves it (crab axes: forward, up, to its own side), the stalk's length and its radius at root and tip; the eye's radius. */
   readonly socket: V3; readonly leaves: V3; readonly length: number; readonly girth: readonly [number, number]; readonly radius: number;
-  /** What `flinch` adds to this eye's upper lid (the lower takes six tenths of it). */
-  readonly flinch: number;
+  /** What `flinch` adds to this eye's upper and lower lids. The shut eye's lids meet at its middle line: met lower
+   * down, the lash line was under the ball and a shut eye was a plain ball from above (face/dandy.ts found the same). */
+  readonly flinch: readonly [number, number];
   /** Seconds late it reads the score; seconds into each third of the loop it blinks. */
   readonly lag: number; readonly blinkAt: number;
 };
 /** How far below the stalk's end the eye's middle hangs, in its own radii. */
 export const HANG = 0.85;
-// Not twins: the left stalk is longer, so its eye hangs lower and swings slower; it is later in everything.
+// Not twins: the left stalk is longer, so its eye hangs lower and swings slower; it is later in everything. They leave
+// the sockets nearly straight ahead: splayed 20 degrees apart the eyes hung 3.5 apart, one of them among the legs and out
+// of the face camera's frame.
 export const EYES: readonly EyeSpec[] = [
-  { tag: "R", side: 1, socket: [-0.42, 0.2, 0.85], leaves: [0.85, 0.42, 0.3], length: 2.9, girth: [0.14, 0.09], radius: 0.62, flinch: 0.9, lag: 0.2, blinkAt: 1.4 },
-  { tag: "L", side: -1, socket: [-0.46, 0.17, -0.85], leaves: [0.82, 0.4, 0.36], length: 3.35, girth: [0.14, 0.09], radius: 0.58, flinch: -0.3, lag: 0.45, blinkAt: 3.1 },
+  { tag: "R", side: 1, socket: [-0.38, 0.2, 0.7], leaves: [0.88, 0.42, 0.12], length: 2.9, girth: [0.14, 0.09], radius: 0.62, flinch: [0.12, 0.5], lag: 0.2, blinkAt: 1.4 },
+  { tag: "L", side: -1, socket: [-0.42, 0.17, -0.7], leaves: [0.86, 0.4, 0.16], length: 3.35, girth: [0.14, 0.09], radius: 0.58, flinch: [-0.15, -0.1], lag: 0.45, blinkAt: 3.1 },
 ];
 /** The pendulum an eye is: its arm is the drooping half of the stalk and the hang below it; lightly damped. */
 export const armOf = (e: EyeSpec): number => 0.5 * e.length + HANG * e.radius;
@@ -121,8 +124,8 @@ const GPU: Arith<F> = { add: (a, b) => add(a, b), mul: (a, b) => mul(a, b), clam
  * right, and down) and its droop. One formula for the picture and for the theory (tools/faces_fs_theory.ts). */
 function eyeFrom<T>(o: Arith<T>, c: Readonly<Record<Channel, T>>, e: EyeSpec) {
   return {
-    upper: o.clamp(o.mul(o.add(c.upper, o.mul(c.flinch, e.flinch)), Math.PI / 2), LID_MIN.upper, Math.PI),
-    lower: o.clamp(o.mul(o.add(c.lower, o.mul(c.flinch, e.flinch * 0.6)), Math.PI / 2), LID_MIN.lower, Math.PI),
+    upper: o.clamp(o.mul(o.add(c.upper, o.mul(c.flinch, e.flinch[0])), Math.PI / 2), LID_MIN.upper, Math.PI),
+    lower: o.clamp(o.mul(o.add(c.lower, o.mul(c.flinch, e.flinch[1])), Math.PI / 2), LID_MIN.lower, Math.PI),
     slant: o.mul(c.slant, e.side),
     length: o.mul(c.reach, e.length),
     lean: [o.add(c.aside, o.mul(c.splay, e.side)), o.mul(c.lift, -1)] as const,
@@ -158,8 +161,8 @@ export function scoreOf(rig: Rig): Score<Channel, Mood> {
 
 export const mourner: FaceOption = {
   about: "a mourner: two heavy-lidded eyes hung from drooping stalks like lanterns, swinging slowly; sad brows, a small mouth, two rostral horns",
-  // The face camera stands 2.2 lower for it: its eyes hang below the body, under that frame's bottom edge.
-  numbers: { faceRise: -2.2 },
+  // The face camera stands 2.5 lower for it: its eyes hang below the body, under that frame's bottom edge.
+  numbers: { faceRise: -2.5 },
   draw: (rig) => {
     const { n, body, local, shipNow, crushAfter, grabEnv } = rig;
     const I = n.ink;
@@ -219,8 +222,9 @@ export const mourner: FaceOption = {
         ink: { white: I.cream, pupil: I.black, back: I.thornDark, glint: 0.2, ring: 0.05 },
         lids: {
           upper: mix(q.upper, shut, blink), lower: mix(q.lower, shut, blink), slant: q.slant,
-          // Straw-brown with a heavy black edge: between the cream and the sea it hangs against.
-          ink: (edge) => mix(vec3(...I.strawDark), vec3(...I.black), sub(1, cut(edge, 0.22))),
+          // Straw-brown with a heavy black edge: between the cream and the sea it hangs against, and lighter than the
+          // body (in the legs' dark straw alone, two shut eyes tucked under the ball were two more lumps of it).
+          ink: (edge) => mix(mix(vec3(...I.strawDark), vec3(...I.straw), 0.55), vec3(...I.black), sub(1, cut(edge, 0.22))),
         },
         // The marks are the expression's own pose: no swing, no shudder, no breath, no blink.
         posed: { bent: bent({ ...posed, length: q.length, lean: q.lean, crook: [0, q.droop] }), look: lookAt(target), upper: q.upper, lower: q.lower },
@@ -241,11 +245,12 @@ export const mourner: FaceOption = {
       spine: (m) => through(m, [front(0.92, s * 1.25, mul(browUp, -0.08)), front(1.08, s * 0.95, mul(browUp, 0.02)), front(1.12, s * 0.45, mul(browUp, 0.2))]),
       girth: (m) => mul(0.12, sub(1.25, mul(m, 0.5))), tips: ["round", "round"], paint: () => vec3(...I.black), detail: { along: 12, around: 8 },
     }), rigid(body));
-    // A small mouth, low on the front: its corners turn down, or up a very little.
+    // A small mouth, low on the front: its corners turn down, or up a very little. Straw, not black: a black line was
+    // lost in the ball's dark hatching.
     const mouth = place(strand({
       name: "mouth", stations: 6,
       spine: (m) => through(m, [front(-0.62, -0.55, mul(smile, 0.14)), front(-0.5, 0, mul(smile, -0.07)), front(-0.62, 0.55, mul(smile, 0.14))]),
-      girth: 0.085, tips: ["round", "round"], paint: () => vec3(...I.black), detail: { along: 12, around: 8 },
+      girth: 0.1, tips: ["round", "round"], paint: () => vec3(...I.straw), detail: { along: 12, around: 8 },
     }), rigid(body));
     // Two rostral horns from between the sockets, forward and up, diverging a little: a spider crab's beak (face/patient.ts).
     const rostrum = (s: 1 | -1) => place(horn({
@@ -259,7 +264,7 @@ export const mourner: FaceOption = {
         // The eyes hang inside the game camera's frame (the shrine does not), so the size a player sees is measured there.
         minScreenSize(right.ball, "game", 42), minScreenSize(left.ball, "game", 37),
         // And from the camera that holds the whole crab, where they are smaller.
-        minScreenSize(right.ball, "far", 30),
+        minScreenSize(right.ball, "far", 36),
         expressionsRead(theScore, { ...right.marks, ...left.marks }, { camera: "game", period: n.crushPeriod, apart: tolerance.share(0.25), of: right.width }),
       ],
     };
