@@ -69,7 +69,10 @@ place when posed, so a scene can define the attack before the body whose frame t
 
 `attack.beats(t, settle)` returns the beats on the attack's own clock: `anticipate` over the wind-up, `act` over the
 strike, `hold` over the effect, `release` over the motion's let-go, `settle` over `settle` seconds after it, and
-`after`, seconds since the release ended (since T for a hit: what `impact` and `swing` read). A scene states the seconds
+`after`, seconds since the release ended (since T for a hit: what `impact` and `swing` read). (Since 2026-11-11 there
+is also `flight`, over a thrown thing's time in the air, and for a hold that ends thrown `settle` and `after` begin
+when the thing has landed if that is later than the end of the release: the action is not over while its prize is in
+the air. `docs/throw_and_shove.md`.) A scene states the seconds
 once, in the attack.
 
 ## Checks
@@ -148,5 +151,7 @@ library already exports a `carry` (src/map/chart.ts).
 - A gripper other than two-sided: `gripReaches` measures two fingers; a coil (`wrap`) or a swallowing mouth needs its
   own check.
 - After the hold the game owns the thing again; the crab's ship slipping back to where it was taken is scene art.
+  (Since 2026-11-11 a hold may end thrown, and the crab's does: `docs/throw_and_shove.md`. `thing(t)` then covers the
+  flight and the landing, or the host's own boat from the release; the slip back is gone.)
 - The telegraph flashes at the arming time and fades, as for a hit; nothing marks the thing as held on the water.
 

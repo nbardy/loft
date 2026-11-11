@@ -109,6 +109,11 @@ A whole ship takes the same size: `ship.placed(chart, wind, grab.squeezed(1, "z"
 across the beam as one, and `shifted(chart, offset)` lifts it off the water it floats on (`sized` and `shifted` in
 `src/map/chart.ts`). Spars keep their thickness.
 
+A grab may end in a throw: `end: thrown({ land, flight, gravity, stroke, follow, drag, heave, placer })` on the hold
+(or on `grab`'s spec). The carry then ends at the wind-back place, the thing is whipped to its release velocity, flies,
+lands and bobs, all inside `thing`; the gripper follows through. `tumbled(frame, axis, turns, u)` turns it in the air.
+See `docs/throw_and_shove.md`.
+
 `gripReaches(attack, [fingerA, fingerB], { middle, gap })` (src/check.ts) checks the drawn fingers: at the closing
 instant and through the hold, the points of their surfaces nearest the thing's middle must be centred on it and the
 thing's width apart. It measures surfaces, not finger axes or tips: the gap is between surfaces, so a finger's axis at
