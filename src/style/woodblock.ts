@@ -132,10 +132,10 @@ export const foam = {
   apron(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "apron", lobe: positive("apron lobe", o.lobe ?? 0.36) }; },
   /** Printed dots. `dot`: the spacing of the larger dots, default 0.17. */
   stipple(o: { readonly dot?: number } = {}): ContactFoam { return { kind: "stipple", dot: positive("stipple dot", o.dot ?? 0.17) }; },
-  /** The swell's own lines breaking on the body. `reach`: how far down the band a blade runs (0..1), default 0.6. */
-  breakers(o: { readonly reach?: number } = {}): ContactFoam { return { kind: "breakers", reach: positive("breakers reach", o.reach ?? 0.6) }; },
-  /** Rolling lobes with curled heads. `lobe`: the spacing of the lobes, default 0.42. */
-  curls(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "curls", lobe: positive("curls lobe", o.lobe ?? 0.42) }; },
+  /** The swell's own lines breaking on the body. `reach`: how far down the level a blade runs (0..1), default 0.72. */
+  breakers(o: { readonly reach?: number } = {}): ContactFoam { return { kind: "breakers", reach: positive("breakers reach", o.reach ?? 0.72) }; },
+  /** Rolling lobes with curled heads. `lobe`: the spacing of the lobes, default 0.5. */
+  curls(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "curls", lobe: positive("curls lobe", o.lobe ?? 0.5) }; },
 };
 
 // ---- the sky and the water --------------------------------------------------------------------------------------------
@@ -406,20 +406,47 @@ function arcs(on: FoamNear, o: { readonly count: number; readonly drift: number;
 
 /** Ripple arcs only: no fill. */
 function rings(p: Extract<ContactFoam, { kind: "rings" }>, on: FoamNear): Expr<"vec3"> {
-  return mix(on.under, rgb(on.inks.cream), arcs(on, { count: p.count, drift: p.drift, from: 0.06, to: 1.2, weight: 0.17 }));
+  return mix(on.under, rgb(on.inks.cream), arcs(on, { count: p.count, drift: p.drift, from: 0.06, to: 1.2, weight: 0.2 }));
 }
 
 /**
- * A flat apron with a scalloped edge: the threshold rises with the distance to the nearest point of a square lattice,
- * so the edge bulges round each point and meets its neighbours in cusps. The threshold varies in two directions, so a
- * lobe can pinch off into an island once its slope (0.3 a lobe) exceeds the level's (1 a foam width): it does not while
- * a lobe is wider than 0.3 of the sea's foam width. It breathes a little with the swell.
+ * Round lobes on a jittered lattice, `period` apart, each growing with the level: full size near the body, nothing at
+ * the level's outer edge. A lobe's edge is a circle in the world, so it is clean whatever the level's small steps do;
+ * the level only sizes it. Of the lobes that cover a pixel (it is inside one, or within `line` cells outside it, on
+ * its key line) the one with the higher hash is in front. Returned for the pixel: `front`, the front lobe's hash (-1
+ * where none covers it); `inside`, how far inside that lobe's edge this is, in cells (negative on its key line);
+ * `local`, where in that lobe (the offset from its centre over its radius); `union`, how far inside the nearest edge
+ * of all the lobes together (negative outside them all).
  */
+function lobes(on: FoamNear, period: number, line: number): { readonly front: Expr<"f32">; readonly inside: Expr<"f32">; readonly local: Expr<"vec2">; readonly union: Expr<"f32"> } {
+  const q = vec2(along(on.xz, 21, period), along(on.xz, 111, period));
+  const cell = floor(q), at = sub(q, cell);
+  // The four cells whose lobes can reach here: this one and the three on the pixel's side of it (a lobe's centre is
+  // within 0.2 of its cell's middle and its radius at most 0.78, so it never reaches past the middle of a neighbour).
+  const side = vec2(select(lt(at.x, 0.5), -1, 1), select(lt(at.y, 0.5), -1, 1));
+  const grow = smoothstep(0.08, 0.6, on.level);
+  let front: Expr<"f32"> = f(-1), inside: Expr<"f32"> = f(-1), local: Expr<"vec2"> = vec2(0, 0), union: Expr<"f32"> = f(-1);
+  for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+    const c = add(cell, vec2(mul(side.x, i), mul(side.y, j)));
+    const h = hash22(c);
+    const off = sub(q, add(add(c, 0.5), mul(sub(h, 0.5), 0.4)));
+    const radius = mul(grow, mix(0.44, 0.78, h.y));
+    // A lobe under an eighth of a cell is not drawn, and a small one has a thinner key line: at full width the line
+    // round a lobe that small printed a black blot with a cream dot in it.
+    const s = select(gt(radius, 0.12), sub(radius, length(off)), -1);
+    const wins = and(gt(s, mul(smoothstep(0.12, 0.4, radius), -line)), gt(h.x, front));
+    inside = select(wins, s, inside);
+    local = select(wins, off.div(max(radius, 1e-3)), local);
+    front = select(wins, h.x, front);
+    union = max(union, s);
+  }
+  return { front, inside, local, union };
+}
+
+/** A flat apron with a scalloped edge: the lobes as one cream shape, one key line round it, nothing inside. */
 function apron(p: Extract<ContactFoam, { kind: "apron" }>, on: FoamNear): Expr<"vec3"> {
-  const q = vec2(along(on.xz, 27, p.lobe), along(on.xz, 117, p.lobe));
-  const lattice = length(sub(fract(q), 0.5)); // 0 at a lattice point, 0.71 farthest from all
-  const shape = add(sub(sub(on.level, 0.36), mul(lattice, 0.3)), mul(on.swell, 0.05));
-  return flat(on, shape, 0.06);
+  // `flat` takes a shape in units of the level; the lobes' is in cells, about a third of a foam width each.
+  return flat(on, mul(lobes(on, p.lobe, 0).union, 0.4), 0.075);
 }
 
 /**
@@ -434,8 +461,8 @@ function stipple(p: Extract<ContactFoam, { kind: "stipple" }>, on: FoamNear): Ex
   const layer = (degrees: number, period: number, big: number): Expr<"f32"> => {
     const q = vec2(along(on.xz, degrees, period), along(on.xz, degrees + 90, period));
     const h = hash22(q);
-    const r = length(sub(sub(fract(q), 0.5), mul(sub(h, 0.5), 0.3)));
-    const radius = mul(saturate(mul(sub(on.level, add(mul(h.x, 0.75), 0.05)), 1 / 0.3)), big);
+    const r = length(sub(sub(fract(q), 0.5), mul(sub(h, 0.5), 0.44)));
+    const radius = mul(mul(saturate(mul(sub(on.level, add(mul(h.x, 0.75), 0.05)), 1 / 0.3)), big), mix(0.55, 1, h.y));
     const fw = max(mul(pixel, 0.75 / period), 1e-4);
     const disc = sub(1, smoothstep(sub(radius, fw), add(radius, fw), r));
     // Where a cell is under about two pixels the dots cannot be drawn: print their share of the cell instead (the
@@ -443,63 +470,47 @@ function stipple(p: Extract<ContactFoam, { kind: "stipple" }>, on: FoamNear): Ex
     const share = mul(mul(radius, radius), Math.PI);
     return mul(mix(disc, share, smoothstep(0.25, 0.6, fw)), saturate(mul(radius, 1 / 0.02)));
   };
-  const dots = max(layer(12, p.dot, 0.36), layer(51, p.dot * 0.62, 0.32));
+  const dots = max(layer(12, p.dot, 0.27), layer(51, p.dot * 0.62, 0.27));
   return mix(on.under, rgb(on.inks.cream), dots);
 }
 
 /**
- * The swell's own lines breaking on the body: a narrow collar, and along each printed line that comes within the level
- * a blade of foam that tapers away from the body. The blades move with the swell because the lines do.
+ * The swell's own lines breaking on the body: a low collar of small lobes, and along each printed line that comes
+ * within the level a blade of foam that tapers away from the body. A blade's sides are cut by the distance to its line
+ * (smooth, in the world), only its tip by the level. The blades move with the swell because the lines do.
  */
 function breakers(p: Extract<ContactFoam, { kind: "breakers" }>, on: FoamNear): Expr<"vec3"> {
-  // 1 on a line, 0 from 0.07 of the spacing away; squared, so a blade's sides are concave.
-  const on_line = saturate(sub(1, mul(on.lines.off, 1 / 0.07)));
-  const blade = mul(mul(on_line, on_line), on.lines.live);
-  const shape = add(sub(on.level, 0.7), mul(blade, p.reach));
-  return flat(on, shape, 0.06);
+  // 1 on a line, 0 from 0.06 of the spacing away; squared, so a blade's sides are concave.
+  const on_line = saturate(sub(1, mul(on.lines.off, 1 / 0.06)));
+  const blade = add(sub(on.level, 0.8), mul(mul(mul(on_line, on_line), on.lines.live), p.reach));
+  // The collar is the lobes drawn in by a third of a cell: low, so the blades stand clear of it.
+  const collar = sub(mul(lobes(on, 0.3, 0).union, 0.4), 0.13);
+  return flat(on, max(blade, collar), 0.05);
 }
 
 /**
  * Rolling foam, after the round 4 pictures (docs/art_direction/crab_round4): a low cream collar of round lobes, each
- * with its key line and lying over the one behind it, the larger ones with a curled head; and a ripple arc or two
- * beyond. One lobe a cell of a jittered lattice, its radius growing with the level (large at the body, nothing at the
- * outer edge); where lobes overlap the one with the higher hash is in front, its outline printed over the others.
+ * with its key line and lying over the one behind it, the larger ones with a curled head (a turn and a half of a
+ * spiral cut out of the cream, so the water shows in it); and a ripple arc or two beyond.
  */
 function curls(p: Extract<ContactFoam, { kind: "curls" }>, on: FoamNear): Expr<"vec3"> {
-  const q = vec2(along(on.xz, 21, p.lobe), along(on.xz, 111, p.lobe));
-  const cell = floor(q), at = sub(q, cell);
-  // The four cells whose lobes can reach here: this one and the three on the pixel's side of it (a lobe's centre is
-  // within 0.2 of its cell's middle and its radius at most 0.74, so it never reaches past the middle of a neighbour).
-  const side = vec2(select(lt(at.x, 0.5), -1, 1), select(lt(at.y, 0.5), -1, 1));
-  const grow = smoothstep(0.1, 0.6, on.level);
-  const line = 0.1; // the key line's width, in cells
-  // The lobe in front here: its hash, how far inside its edge this is (positive inside, in cells), and where in it
-  // (the offset from its centre over its radius, for the curl).
-  let front: Expr<"f32"> = f(-1), inside: Expr<"f32"> = f(-1), local: Expr<"vec2"> = vec2(0, 0);
-  for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
-    const c = add(cell, vec2(mul(side.x, i), mul(side.y, j)));
-    const h = hash22(c);
-    const off = sub(q, add(add(c, 0.5), mul(sub(h, 0.5), 0.4)));
-    const radius = mul(grow, mix(0.5, 0.74, h.y));
-    const s = sub(radius, length(off));
-    // A lobe covers a pixel if the pixel is in it or on its key line; a lobe of no size covers none.
-    const wins = and(gt(s, -line), and(gt(radius, 0.12), gt(h.x, front)));
-    inside = select(wins, s, inside);
-    local = select(wins, off.div(max(radius, 1e-3)), local);
-    front = select(wins, h.x, front);
-  }
-  const covered = edgeOf(front, 0, 1e-5);
-  const cream = mul(edgeOf(inside, 0, 0.004), covered);
-  // The curled head: one turn of a spiral in key ink inside the front lobe, from its edge inward, tapering.
-  const rn = length(local);
-  const turn = add(mul(atan2(local.y, local.x), 1 / (2 * Math.PI)), mul(rn, 1.35));
-  const arm = abs(sub(fract(add(turn, mul(front, 7))), 0.5));
-  const curl = mul(mul(edgeOf(sub(mul(sub(1, rn), 0.16), arm), 0, 0.004, 0.1), smoothstep(0.2, 0.3, rn)), mul(cream, step(0.45, front)));
-  const key = max(mul(sub(covered, cream), KEY), mul(curl, KEY));
+  const l = lobes(on, p.lobe, 0.11);
+  const covered = edgeOf(l.front, 0, 1e-5);
+  const cream = mul(edgeOf(l.inside, 0, 0.004), covered);
+  // The curled head: an arm of a spiral from the lobe's edge inward, widest at the edge and tapering to its middle,
+  // in the lobes whose hash is over 0.6 (the ones most in front), and only where a cell is over about 18 pixels: in a
+  // smaller lobe the arm is a blot (from the game camera the collar is plain lobes, as in the round 4 game view).
+  const rn = length(l.local);
+  const turn = add(mul(atan2(l.local.y, l.local.x), 1 / (2 * Math.PI)), mul(rn, 1.5));
+  const arm = abs(sub(fract(add(turn, mul(l.front, 7))), 0.5));
+  const room = sub(1, smoothstep(0.045, 0.07, max(fwidth(on.xz.x), fwidth(on.xz.y)).div(p.lobe)));
+  const curl = mul(mul(mul(edgeOf(sub(mul(smoothstep(0.1, 0.9, rn), 0.14), arm), 0, 0.004, 0.1), cream), step(0.6, l.front)), room);
   const near = edgeOf(on.level, 0.04, 0.01);
-  const lobes = mix(mix(on.under, rgb(on.inks.cream), mul(cream, near)), rgb(on.inks.black), mul(key, near));
   // Beyond the collar, a ripple arc or two on the level's own lines.
-  return mix(lobes, rgb(on.inks.cream), mul(arcs(on, { count: 5, drift: 0, from: 0.03, to: 0.3, weight: 0.14 }), sub(1, covered)));
+  const ripple = mul(arcs(on, { count: 5, drift: 0, from: 0.02, to: 0.34, weight: 0.24 }), sub(1, covered));
+  const water = mix(on.under, rgb(on.inks.cream), ripple);
+  const keyed = mix(water, rgb(on.inks.black), mul(mul(sub(covered, cream), KEY), near));
+  return mix(keyed, rgb(on.inks.cream), mul(mul(cream, sub(1, curl)), near));
 }
 
 /** Round specks of spray, one per cell of p at a hashed spot, on about a third of the cells; 0..1 coverage. */
