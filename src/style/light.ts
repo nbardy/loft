@@ -1,0 +1,395 @@
+// Lighting for a print: a recipe of shading treatments, each on or off with its own options (docs/lighting.md).
+//
+// A recipe is a value. Each treatment is a sum type with an `off`; one function (`lit`) combines them in a fixed order,
+// with one handler per treatment. What they share is the print's shadow block: a tone, 1 where the block leaves the
+// paper alone and 0 where it prints whole. The core shadow, the hatching, the waterline band and the wash each give a
+// tone and the darkest wins (one block prints once, however many reasons it has to). The rim cuts its edge out of the
+// block. The highlight is a lighter ink on what the block left unprinted. A style prints the block over its lit inks
+// with `printedBlock`, or, when the recipe has shadows that fall from one thing on another (`cast`, `overlap`), hands
+// the tone on in its mark and lets `src/draw/light.ts` lower it and print the block afterwards (`Style.block`).
+//
+// Inherited: the overprinted shadow block, bokashi, the engraver's swelling cross line, paper left for a light, the
+// white line beside the key line (the print); two and three hard tones and a key light kept off the lens (cel
+// animation). Ours: the terminator measured round a form's section, the block carried in the picture's alpha, hatching
+// whose line count follows the screen.
+
+import { abs, add, div, dot, exp, f, floor, fract, gt, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec3, type Expr } from "../expr.ts";
+import { fwidth, pixelWorld, wgslFn } from "../lib/wgsl.ts";
+import type { BlockCast, BlockOverlap, Rgb, ShadeCtx } from "../style.ts";
+import { edgeOf, rgb } from "./shared.ts";
+
+type F = Expr<"f32">;
+type V = Expr<"vec3">;
+
+// ---- the treatments -------------------------------------------------------------------------------------------------
+
+/**
+ * Where the light that turns the forms comes from.
+ *  - `sun`: the scene's sun.
+ *  - `offLens`: the sun, but never nearer the lens than `least` degrees: when the camera looks down the sun (the
+ *    game camera is 23 degrees off it, and a ball then shows 4% of itself in shadow) the form light is the sun swung
+ *    away from the view axis, in the plane of the two, until it is `least` off. A camera already further off than
+ *    that sees the sun itself. One direction for the whole picture; it turns with the camera, not with the things.
+ */
+export type Key = { readonly kind: "sun" } | { readonly kind: "offLens"; readonly least: number };
+
+/**
+ * Where the shadow side begins, as a signed measure that is positive in the light.
+ *  - `sun`: N.K - at. `at` 0 is the geometric terminator; above 0 the shadow comes round toward the light.
+ *  - `section`: N.K - at |K across the form|, the form's long direction being dP/dm of the surface's own coordinates.
+ *    On a limb this puts the same share of every section in shadow however the limb points (a bare threshold blacks
+ *    out a limb that points at the sun and pulses as it swings); on an end cap, and on a surface with no coordinates
+ *    (a traced solid), it is the `sun` rule.
+ */
+export type Terminator =
+  | { readonly kind: "sun"; readonly at: number; readonly key: Key }
+  | { readonly kind: "section"; readonly at: number; readonly key: Key };
+
+/** The core shadow: the block printed flat on the shadow side of `edge`. */
+export type Core = { readonly kind: "off" } | { readonly kind: "flat"; readonly edge: Terminator };
+
+/**
+ * A third, lighter tone: `amount` of `ink` over the lit ink, hard-edged, where the surface faces half way between the
+ * key and the eye within `size` degrees (of the section, as the `section` terminator: every limb takes a stripe, a
+ * ball a patch of sin^2(size) of its disc). Never under the block.
+ */
+export type Highlight = { readonly kind: "off" } | { readonly kind: "shoulder"; readonly size: number; readonly ink: Rgb; readonly amount: number; readonly key: Key };
+
+/** Shadows one thing casts on another: from the capsules of every skeleton, onto bodies up to `reach` behind along the sun. */
+export type Cast = { readonly kind: "off" } | { readonly kind: "capsules"; readonly reach: number };
+
+/** A flat band where a body stands in the water: `amount` of the block from the waterline up to `height`. */
+export type Waterline = { readonly kind: "off" } | { readonly kind: "band"; readonly height: number; readonly amount: number };
+
+/** A flat band on whatever lies less than `gap` behind a nearer part, `width` wide round that part's outline. */
+export type Overlap = { readonly kind: "off" } | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number };
+
+/**
+ * Bokashi, the one soft thing: the block wiped to a grade. `foot`: full at the water, gone `foot` above it (a wash
+ * along one direction of the picture, as a printer wipes it). `under`: from nothing where the surface faces `under[0]`
+ * downward (-N.y) to full at `under[1]` (the underside of every form). The darker of the two, times `amount`.
+ */
+export type Bokashi = { readonly kind: "off" } | { readonly kind: "wash"; readonly foot: number; readonly under: readonly [number, number]; readonly amount: number };
+
+/**
+ * Shadow carried by lines across the form (rings of constant length along a body's spine; level lines on a traced
+ * solid). A line's weight swells from nothing `over` above `edge` (in N.K) to `cap` of the spacing `deep` below it.
+ * `spacing`: world units between lines. `least`: the fewest pixels a period may take: nearer than that the lines keep
+ * their spacing, further away every other line is dropped (cross-faded) and the rest thicken, so the tone holds and
+ * nothing is drawn finer than the screen.
+ */
+export type Hatch = { readonly kind: "off" } | { readonly kind: "cross"; readonly edge: Terminator; readonly over: number; readonly deep: number; readonly cap: number; readonly spacing: number; readonly least: number };
+
+/**
+ * A light edge inside the key line where the surface turns from the eye on the key's side: `width` world units (never
+ * under 1.5 pixels), `amount` of `ink`, cut out of the block. It reads only against a body the block has darkened.
+ */
+export type Rim = { readonly kind: "off" } | { readonly kind: "edge"; readonly width: number; readonly ink: Rgb; readonly amount: number; readonly key: Key };
+
+/** The shadow block's ink: the style's own (its print rule's), or stated: a full shadow is mix(colour, ink, amount) * value. */
+export type Block = { readonly kind: "rule" } | { readonly kind: "ink"; readonly ink: Rgb; readonly amount: number; readonly value: number };
+export type BlockInk = { readonly ink: Rgb; readonly amount: number; readonly value: number };
+
+export type LightRecipe = {
+  readonly core: Core;
+  readonly hatch: Hatch;
+  readonly waterline: Waterline;
+  readonly bokashi: Bokashi;
+  readonly rim: Rim;
+  readonly highlight: Highlight;
+  readonly cast: Cast;
+  readonly overlap: Overlap;
+  readonly block: Block;
+};
+
+// ---- building one ---------------------------------------------------------------------------------------------------
+
+const OFF = { kind: "off" } as const;
+const CREAM: Rgb = [0.93, 0.88, 0.75];
+
+function within(what: string, x: number, lo: number, hi: number): number {
+  if (!(x >= lo && x <= hi)) throw new Error(`light: ${what} must be in [${lo}, ${hi}], got ${x}`);
+  return x;
+}
+function positive(what: string, x: number): number {
+  if (!(x > 0)) throw new Error(`light: ${what} must be positive, got ${x}`);
+  return x;
+}
+
+/** The form light most recipes use: the sun kept 45 degrees off the lens. */
+const OFF_LENS: Key = { kind: "offLens", least: 45 };
+
+/** A terminator round the section at `at` (default 0.4), lit by `key` (default the sun kept 45 degrees off the lens). */
+function section(o: { readonly at?: number; readonly key?: Key } = {}): Terminator {
+  return { kind: "section", at: within("terminator", o.at ?? 0.4, -0.95, 0.95), key: o.key ?? OFF_LENS };
+}
+
+export const light = {
+  key: {
+    sun: (): Key => ({ kind: "sun" }),
+    offLens: (least = 45): Key => ({ kind: "offLens", least: within("offLens degrees", least, 0, 89) }),
+  },
+  edge: {
+    section,
+    sun: (o: { readonly at?: number; readonly key?: Key } = {}): Terminator => ({ kind: "sun", at: within("terminator", o.at ?? 0.4, -0.95, 0.95), key: o.key ?? OFF_LENS }),
+  },
+  core: (edge: Terminator = section()): Core => ({ kind: "flat", edge }),
+  highlight: (o: { readonly size?: number; readonly ink?: Rgb; readonly amount?: number; readonly key?: Key } = {}): Highlight =>
+    ({ kind: "shoulder", size: within("highlight size (degrees)", o.size ?? 13, 1, 60), ink: o.ink ?? CREAM, amount: within("highlight amount", o.amount ?? 0.32, 0, 1), key: o.key ?? OFF_LENS }),
+  cast: (o: { readonly reach?: number } = {}): Cast => ({ kind: "capsules", reach: positive("cast reach", o.reach ?? 9) }),
+  waterline: (o: { readonly height?: number; readonly amount?: number } = {}): Waterline =>
+    ({ kind: "band", height: positive("waterline height", o.height ?? 0.22), amount: within("waterline amount", o.amount ?? 1, 0, 1) }),
+  overlap: (o: { readonly width?: number; readonly gap?: number; readonly amount?: number } = {}): Overlap =>
+    ({ kind: "band", width: positive("overlap width", o.width ?? 0.16), gap: positive("overlap gap", o.gap ?? 1.6), amount: within("overlap amount", o.amount ?? 1, 0, 1) }),
+  bokashi: (o: { readonly foot?: number; readonly under?: readonly [number, number]; readonly amount?: number } = {}): Bokashi => {
+    const under = o.under ?? [-0.15, 0.75];
+    if (!(under[1] > under[0])) throw new Error(`light: bokashi under must rise, got [${under.join(", ")}]`);
+    return { kind: "wash", foot: positive("bokashi foot", o.foot ?? 2.2), under, amount: within("bokashi amount", o.amount ?? 1, 0, 1) };
+  },
+  hatch: (o: { readonly edge?: Terminator; readonly over?: number; readonly deep?: number; readonly cap?: number; readonly spacing?: number; readonly least?: number } = {}): Hatch => ({
+    kind: "cross", edge: o.edge ?? section({ at: 0.25 }), over: positive("hatch over", o.over ?? 0.5), deep: positive("hatch deep", o.deep ?? 0.5),
+    cap: within("hatch cap", o.cap ?? 0.8, 0, 1), spacing: positive("hatch spacing", o.spacing ?? 0.2), least: positive("hatch least pixels", o.least ?? 5.5),
+  }),
+  rim: (o: { readonly width?: number; readonly ink?: Rgb; readonly amount?: number; readonly key?: Key } = {}): Rim =>
+    ({ kind: "edge", width: positive("rim width", o.width ?? 0.1), ink: o.ink ?? CREAM, amount: within("rim amount", o.amount ?? 0.9, 0, 1), key: o.key ?? { kind: "sun" } }),
+  block: (o: BlockInk): Block => ({ kind: "ink", ink: o.ink, amount: within("block amount", o.amount, 0, 1), value: within("block value", o.value, 0, 1) }),
+  /** A recipe from the treatments given; every other one is off, and the block is the style's own ink. */
+  recipe: (r: Partial<LightRecipe> = {}): LightRecipe =>
+    ({ core: OFF, hatch: OFF, waterline: OFF, bokashi: OFF, rim: OFF, highlight: OFF, cast: OFF, overlap: OFF, block: { kind: "rule" }, ...r }),
+};
+
+// ---- the library ----------------------------------------------------------------------------------------------------
+
+/** A deeper, warmer block than the crab's indigo: a shadow of about 60% of the ink's value that keeps its hue. */
+const WARM: Block = light.block({ ink: [0.16, 0.07, 0.16], amount: 0.36, value: 0.92 });
+
+/**
+ * The named recipes (docs/lighting.md has a line each, with what it costs). `woodblock({ light: LIGHT.threeTone })`, or
+ * `--light threeTone` on any scene drawn in the woodblock style.
+ */
+export const LIGHT = {
+  /** No shading at all: every surface in its lit ink, the key line and nothing else. */
+  flat: light.recipe(),
+  /** Two tones: the shadow side of every form, and the shadows the parts cast on each other. */
+  twoTone: light.recipe({ core: light.core(), cast: light.cast(), block: WARM }),
+  /** Two tones and a third: a hard lighter shape on every form's sunward shoulder. */
+  threeTone: light.recipe({ core: light.core(), cast: light.cast(), highlight: light.highlight(), block: WARM }),
+  /** Flat inks with a graded wash under every form and up from the water. The one soft recipe. */
+  bokashi: light.recipe({ bokashi: light.bokashi() }),
+  /** The shadow side drawn in lines across the form that swell as it turns away; no flat shadow. */
+  hatched: light.recipe({ hatch: light.hatch(), block: light.block({ ink: [0.075, 0.07, 0.09], amount: 0.8, value: 1 }) }),
+  /** Flat inks, and a dark band wherever a part lies on another or stands in the water. */
+  contact: light.recipe({ waterline: light.waterline(), overlap: light.overlap({ width: 0.22 }), cast: light.cast({ reach: 1.2 }), block: WARM }),
+  /** Night, a storm, a lamp behind: the body mostly in a deep indigo block, a cream edge toward the light. */
+  rim: light.recipe({
+    core: light.core(light.edge.sun({ at: 0.72, key: light.key.sun() })), rim: light.rim(), cast: light.cast(),
+    block: light.block({ ink: [0.1, 0.13, 0.3], amount: 0.62, value: 0.8 }),
+  }),
+  /** The cel set: two tones, cast shadows, contact bands and sparse highlights. The nearest honest match to the painted `shade_best`. */
+  cel: light.recipe({
+    core: light.core(), cast: light.cast(), highlight: light.highlight(), waterline: light.waterline({ height: 0.14 }), overlap: light.overlap({ width: 0.1, gap: 1.2 }), block: WARM,
+  }),
+} as const satisfies Record<string, LightRecipe>;
+export type LightName = keyof typeof LIGHT;
+
+// ---- what a camera and a surface know ---------------------------------------------------------------------------------
+
+/** The unit direction from the picture toward the eye, one for the whole frame (minus the camera's forward). GPU-only. */
+const towardEye = wgslFn<"vec3">({ name: "loft_toward_eye", ret: "vec3", wgsl: "fn loft_toward_eye() -> vec3<f32> { return -frame.forward.xyz; }" });
+
+/**
+ * A surface's long direction at a fragment: the unit dP/dm, from the screen derivatives of the world point and of the
+ * surface's own coordinates (m along, v round; v wraps, so its derivative is taken the short way round). The zero
+ * vector where the coordinates do not vary (a traced solid: `ShadeCtx.uv` is (0, 0) there). Fragment stage only.
+ */
+const longDir = wgslFn<"vec3">({
+  name: "loft_long_dir", ret: "vec3",
+  wgsl: /* wgsl */ `fn loft_long_dir(p: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+  let ux = dpdx(uv);
+  let uy = dpdy(uv);
+  let vx = fract(ux.y + 0.5) - 0.5;
+  let vy = fract(uy.y + 0.5) - 0.5;
+  // dP/dm times the determinant of d(m, v)/d(screen): its direction is what is wanted, either way round.
+  let t = dpdx(p) * vy - dpdy(p) * vx;
+  let l2 = dot(t, t);
+  return select(vec3<f32>(0.0), t * inverseSqrt(max(l2, 1e-30)), l2 > 1e-24);
+}`,
+});
+
+/** The key light's direction. One handler per kind. */
+function keyOf(k: Key, ctx: ShadeCtx): V {
+  switch (k.kind) {
+    case "sun": return ctx.sun;
+    case "offLens": return offLens(ctx.sun, k.least);
+  }
+}
+
+/** The sun swung away from the eye, in the plane of the two, until it is `least` degrees off the view axis. */
+function offLens(sun: V, least: number): V {
+  const a = (least * Math.PI) / 180;
+  const eye = towardEye();
+  const along = dot(sun, eye);
+  // The sun's part across the view; a sun dead behind the lens has none, and is swung upward.
+  const across = add(sub(sun, mul(eye, along)), vec3(0, 1e-4, 0));
+  const swung = add(mul(normalize(across), Math.sin(a)), mul(eye, Math.cos(a)));
+  return select(gt(along, Math.cos(a)), swung, sun);
+}
+
+/** How much of a direction lies across the form's long direction, 0..1 (1 on a surface with no coordinates). */
+function across(dir: V, ctx: ShadeCtx): F {
+  const d = dot(dir, longDir(ctx.world, ctx.uv));
+  return sqrt(max(sub(1, mul(d, d)), 0));
+}
+
+/** The terminator's measure: positive in the light. One handler per rule. */
+function turn(t: Terminator, ctx: ShadeCtx): F {
+  const key = keyOf(t.key, ctx);
+  switch (t.kind) {
+    case "sun": return sub(dot(ctx.normal, key), t.at);
+    case "section": return sub(dot(ctx.normal, key), mul(across(key, ctx), t.at));
+  }
+}
+
+/** Height above the water. */
+const above = (ctx: ShadeCtx): F => mul(ctx.depth, -1);
+
+// ---- one handler per treatment: each a tone, 1 where the block does not print ----------------------------------------
+
+function cored(c: Core, ctx: ShadeCtx): F {
+  switch (c.kind) {
+    case "off": return f(1);
+    case "flat": return edgeOf(turn(c.edge, ctx), 0, 1e-5);
+  }
+}
+
+function hatched(h: Hatch, ctx: ShadeCtx): F {
+  switch (h.kind) {
+    case "off": return f(1);
+    case "cross": return sub(1, crossLines(h, ctx));
+  }
+}
+
+/** The lines' coverage, 0..1. */
+function crossLines(h: Extract<Hatch, { kind: "cross" }>, ctx: ShadeCtx): F {
+  // The share of a period a line takes: nothing `over` above the terminator, `cap` at `deep` below it.
+  const duty = mul(saturate(div(sub(h.over, turn(h.edge, ctx)), h.over + h.deep)), h.cap);
+  // Along the form: a body's anchor is its skin straightened at rest (x the length along the spine); a traced solid's
+  // is its world point, where lines at level heights are the engraver's for a cliff or a crown.
+  const along = select(gt(dot(ctx.uv, ctx.uv), 0), ctx.anchor.x, ctx.anchor.y);
+  const phase = div(along, h.spacing);
+  // Octaves by screen size: a period is never under `least` pixels. Level k keeps every 2^k-th line (lines sit on
+  // whole phases, so a coarser level's are among a finer one's); between two levels the dropped lines fade.
+  const level = max(div(log(div(mul(pixelWorld(ctx.world), h.least), h.spacing)), Math.LN2), 0);
+  const whole = floor(level), part = sub(level, whole);
+  const scale = exp(mul(whole, -Math.LN2));
+  const fw = max(mul(fwidth(phase), scale), 1e-5);
+  const line = (p: F, w: F): F => {
+    const off = abs(sub(fract(add(p, 0.5)), 0.5));
+    const half = mul(duty, 0.5);
+    // A line thinner than about a pixel prints as its share of that pixel.
+    return mul(sub(1, smoothstep(sub(half, mul(w, 0.75)), add(half, mul(w, 0.75)), off)), saturate(div(duty, mul(w, 1.5))));
+  };
+  const fine = mul(phase, scale);
+  return mix(line(fine, fw), line(mul(fine, 0.5), mul(fw, 0.5)), smoothstep(0.15, 0.85, part));
+}
+
+function waterlined(w: Waterline, ctx: ShadeCtx): F {
+  switch (w.kind) {
+    case "off": return f(1);
+    case "band": return sub(1, mul(edgeOf(sub(w.height, above(ctx)), 0, 1e-5), w.amount));
+  }
+}
+
+function washed(b: Bokashi, ctx: ShadeCtx): F {
+  switch (b.kind) {
+    case "off": return f(1);
+    case "wash": {
+      const foot = sub(1, smoothstep(0, b.foot, above(ctx)));
+      const under = smoothstep(b.under[0], b.under[1], mul(ctx.normal.y, -1));
+      return sub(1, mul(max(foot, under), b.amount));
+    }
+  }
+}
+
+/** The rim: how much of its edge is here (0 for none), and its ink. */
+function rimmed(r: Rim, ctx: ShadeCtx): { readonly edge: F; readonly ink: Rgb } {
+  switch (r.kind) {
+    case "off": return { edge: f(0), ink: [0, 0, 0] };
+    case "edge": {
+      // Pixels from the silhouette, to first order: how far the surface faces the eye over how fast that changes.
+      const facing = dot(ctx.normal, ctx.view);
+      const away = div(facing, max(fwidth(facing), 1e-5));
+      const wide = max(div(r.width, pixelWorld(ctx.world)), 1.5);
+      const inside = sub(1, smoothstep(sub(wide, 0.75), add(wide, 0.75), away));
+      return { edge: mul(mul(inside, edgeOf(dot(ctx.normal, keyOf(r.key, ctx)), 0.12, 1e-5)), r.amount), ink: r.ink };
+    }
+  }
+}
+
+/** The highlight on a colour the block has left `tone` unprinted. */
+function highlit(h: Highlight, c: V, tone: F, ctx: ShadeCtx): V {
+  switch (h.kind) {
+    case "off": return c;
+    case "shoulder": {
+      const half = normalize(add(keyOf(h.key, ctx), towardEye()));
+      const shape = edgeOf(sub(dot(ctx.normal, half), mul(across(half, ctx), Math.cos((h.size * Math.PI) / 180))), 0, 1e-5);
+      return mix(c, rgb(h.ink), mul(mul(shape, tone), h.amount));
+    }
+  }
+}
+
+// ---- the recipe ---------------------------------------------------------------------------------------------------------
+
+/**
+ * A recipe over a lit ink: the colour before the block (the highlight and the rim on it) and the block's tone. The
+ * fixed order: the block's own prints, the darkest winning (core, hatching, waterline, wash); the rim's edge cut out of
+ * the block; the highlight on what the block left; the rim's ink.
+ */
+export function lit(r: LightRecipe, ink: V, ctx: ShadeCtx): { readonly colour: V; readonly tone: F } {
+  const rim = rimmed(r.rim, ctx);
+  const tone = max(min(min(cored(r.core, ctx), hatched(r.hatch, ctx)), min(waterlined(r.waterline, ctx), washed(r.bokashi, ctx))), rim.edge);
+  return { colour: mix(highlit(r.highlight, ink, tone, ctx), rgb(rim.ink), rim.edge), tone };
+}
+
+/** The block's ink: the style's own, or the recipe's. */
+export function blockInk(b: Block, own: BlockInk): BlockInk {
+  switch (b.kind) {
+    case "rule": return own;
+    case "ink": return b;
+  }
+}
+
+/**
+ * How a block prints, as the two numbers a blend needs: where the tone is t the picture is colour * m + `add` * (1 - m)
+ * with m = mix(`floor`, 1, t). At t = 0 that is mix(colour, ink, amount) * value.
+ */
+export type Pull = { readonly floor: number; readonly add: Rgb };
+export function pullOf(b: BlockInk): Pull {
+  const floor = (1 - b.amount) * b.value;
+  if (!(floor < 1 - 1e-3)) throw new Error(`light: the shadow block prints nothing (amount ${b.amount}, value ${b.value}); give it an ink`);
+  const k = (b.amount * b.value) / (1 - floor);
+  return { floor, add: [b.ink[0] * k, b.ink[1] * k, b.ink[2] * k] };
+}
+
+/** The tone as the picture's alpha carries it: `floor` under a whole block, 1 where it does not print. */
+export const markOf = (p: Pull, tone: F): F => mix(p.floor, 1, tone);
+
+/** The block printed over a colour, in the fragment itself. */
+export function printedBlock(p: Pull, colour: V, tone: F): V {
+  const m = markOf(p, tone);
+  return add(mul(colour, m), mul(rgb(p.add), sub(1, m)));
+}
+
+/** What of a recipe is printed after the bodies are drawn. One handler per treatment. */
+export function castOf(c: Cast): BlockCast {
+  switch (c.kind) {
+    case "off": return { kind: "none" };
+    case "capsules": return { kind: "capsules", reach: c.reach };
+  }
+}
+export function overlapOf(o: Overlap): BlockOverlap {
+  switch (o.kind) {
+    case "off": return { kind: "none" };
+    case "band": return { kind: "band", width: o.width, gap: o.gap, amount: o.amount };
+  }
+}

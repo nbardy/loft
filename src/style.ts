@@ -94,6 +94,34 @@ export type LayerCtx = {
 
 export type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> };
 
+/**
+ * A shadow printed as a block after the bodies are drawn (docs/lighting.md). A style that has one writes a tone in its
+ * `mark` (the picture's alpha): 1 where nothing prints, down to `floor` where the block prints whole. Its bodies are
+ * drawn in `body`'s colour; `light` (src/draw/light.ts) then lowers the tone where a thing casts a shadow on another
+ * or lies over it (blending with min, so shadows over each other are one shadow), and prints the block once:
+ * picture * tone + `ink` * (1 - tone). The style's own post passes then find alpha 1 on every body.
+ */
+export type ShadowBlock = {
+  /** A body's colour before the block is printed. `Style.shade` stays the whole colour, for a fragment shaded on its own. */
+  body(ctx: ShadeCtx): Expr<"vec3">;
+  /** The ink the block adds where it prints whole, already scaled: a full shadow is colour * `floor` + `ink` * (1 - `floor`). */
+  readonly ink: Rgb;
+  /** The tone of a full shadow, in (0, 1). */
+  readonly floor: number;
+  /** Shadows a thing casts on the others. */
+  readonly cast: BlockCast;
+  /** A band on whatever lies close behind a nearer part. */
+  readonly overlap: BlockOverlap;
+};
+export type BlockCast =
+  | { readonly kind: "none" }
+  /** From the capsules of every thing's skeleton, as the shadows on the water are, onto bodies up to `reach` behind. */
+  | { readonly kind: "capsules"; readonly reach: number };
+export type BlockOverlap =
+  | { readonly kind: "none" }
+  /** `width` wide (world units) round a part that stands less than `gap` in front; `amount` of the block (0..1). */
+  | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number };
+
 export type Style = {
   readonly name: string;
   shade(ctx: ShadeCtx): Expr<"vec3">;
@@ -116,6 +144,13 @@ export type Style = {
   sky(ctx: SkyCtx): Expr<"vec3">;
   /** Clear colour: the horizon. */
   readonly clear: Rgb;
+  /** The style's shadow printed as a block after the bodies; absent for a style that shades each fragment whole. */
+  readonly block?: ShadowBlock;
+  /**
+   * The same style lit other ways, by name: what `--light name` chooses on any scene drawn in this style, without the
+   * scene being edited. Constructors, as `STYLES` are. Absent for a style with one lighting.
+   */
+  readonly lights?: Readonly<Record<string, () => Style>>;
 };
 
 const rgb = (c: Rgb): Expr<"vec3"> => vec3(c[0], c[1], c[2]);
@@ -276,7 +311,7 @@ export function readsBody(style: Style): boolean {
 }
 
 /** The shade context as the free variables the compiler emits `shade`, `ink` and `mark` over (src/compile/scene_wgsl.ts). */
-export function shadeVariables(sun: Rgb): ShadeCtx {
+export function shadeVariables(sun: In<"vec3">): ShadeCtx {
   return {
     base: variable("c_base", "vec3"), normal: variable("c_normal", "vec3"), sun: lift<"vec3">(sun), view: variable("c_view", "vec3"),
     world: variable("c_world", "vec3"), depth: variable("c_depth", "f32"), uv: variable("c_uv", "vec2"), anchor: variable("c_anchor", "vec3"),

@@ -13,10 +13,11 @@
 // as dark as its neighbours' in the same chain (ties go to the later one), so the joints of a chain are drawn once.
 
 import {
-  add, and, clamp, div, exp, fetch, gt, lift, listOf, lt, mapOf, max, min, mul, saturate, select, sub, vec2, vec4, type Expr, type MapRun, type TableSource,
+  add, and, clamp, div, exp, fetch, gt, lift, listOf, lt, mapOf, max, min, mul, saturate, select, sub, vec2, vec4, type Expr, type In, type MapRun, type TableSource,
 } from "../expr.ts";
-import { drawSpec, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
-import type { F } from "../map/types.ts";
+import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import type { F, Skeleton } from "../map/types.ts";
+import { sunParts } from "../sun.ts";
 
 /** vec4s per capsule: (end a xz, end b xz), (radius a, radius b, strength, softness), (has previous, has next, valid, 0). */
 const ENTRY = 3;
@@ -32,9 +33,9 @@ export const shadows: Drawable = {
   surfaces: [],
   draws(ctx: CompileContext): Emitted {
     // A chain of fewer than two joints has no segment (and a surface with nothing to cast has none at all).
-    const chains = ctx.things.flatMap((t) => t.skeletons).filter((s) => s.joints >= 2);
-    const capacity = chains.reduce((n, c) => n + c.joints - 1, 0);
-    const source = shadowTable(chains.map((c) => Array.from({ length: c.joints }, (_, k) => c.joint(k))), (xz) => ctx.sea.height(xz), ctx.sun);
+    const { chains, at } = casters(ctx.things);
+    const capacity = chains.reduce((n, c) => n + c.length - 1, 0);
+    const source = shadowTable(chains, (xz) => ctx.sea.height(xz), sunParts(ctx.sunAt), at);
     const t = ctx.table(source).wgsl;
     const code = /* wgsl */ `
 const PATCH: u32 = ${PATCH}u;
@@ -97,16 +98,40 @@ fn capsule_shadow(i: u32, p: vec2<f32>, px: f32) -> f32 {
 /** smoothstep(0, 1, x), written out (as the CPU fill had it). */
 const smooth = (x: F): F => { const t = saturate(x); return mul(mul(t, t), sub(3, mul(t, 2))); };
 
+/** A chain of joints that casts: each a point and a radius. */
+export type Chain = readonly { readonly p: Expr<"vec3">; readonly r: F }[];
+
+/** Every joint of some chains as a list, chain after chain: one entry (point, radius) each. */
+export function jointList(chains: readonly Chain[]): TableSource {
+  const listed = chains.flat().map((j) => [vec4(j.p, j.r)]);
+  return { name: `${SHADOWS_TABLE}_at`, lanes: 1, entries: Math.max(listed.length, 1), role: "data", program: listOf(listed.length > 0 ? listed : [[lift<"vec4">([0, 0, 0, 0])]]) };
+}
+
+const cast = new WeakMap<readonly Drawable[], { readonly chains: readonly Chain[]; readonly at: TableSource }>();
+/**
+ * What a scene's things cast shadows with: every skeleton of two joints or more as a chain, and the list of their
+ * joints. One per scene (keyed by its list of things), so the water's shadows and a style's shadows on the bodies
+ * (src/draw/light.ts) read one table.
+ */
+export function casters(things: readonly Drawable[]): { readonly chains: readonly Chain[]; readonly at: TableSource } {
+  const seen = cast.get(things);
+  if (seen !== undefined) return seen;
+  // A chain of fewer than two joints has no segment (and a surface with nothing to cast has none at all).
+  const chains = things.flatMap((t) => t.skeletons).filter((s: Skeleton) => s.joints >= 2).map((c) => Array.from({ length: c.joints }, (_, k) => c.joint(k)));
+  const made = { chains, at: jointList(chains) };
+  cast.set(things, made);
+  return made;
+}
+
 /**
  * The shadow capsules of some chains of joints: a list of every joint's foot (lifted along the sun onto the sea: xz,
- * height above the water, radius), then a map of one capsule per segment (ENTRY lanes), chain after chain.
+ * height above the water, radius), then a map of one capsule per segment (ENTRY lanes), chain after chain. `sun` is
+ * the unit direction toward the sun by component (numbers, or expressions when a host moves it).
  */
-export function shadowTable(chains: readonly (readonly { readonly p: Expr<"vec3">; readonly r: F }[])[], seaHeight: (xz: Expr<"vec2">) => F, sun: V3): TableSource {
+export function shadowTable(chains: readonly Chain[], seaHeight: (xz: Expr<"vec2">) => F, sun: readonly [In<"f32">, In<"f32">, In<"f32">], at: TableSource = jointList(chains)): TableSource {
   // The joints are a list (each its own expression); the sea under them is one closed form, a map of its own, so no
   // GPU branch per joint evaluates the sea.
-  const listed = chains.flat().map((j) => [vec4(j.p, j.r)]);
-  const n = Math.max(listed.length, 1);
-  const at: TableSource = { name: `${SHADOWS_TABLE}_at`, lanes: 1, entries: n, role: "data", program: listOf(listed.length > 0 ? listed : [[lift<"vec4">([0, 0, 0, 0])]]) };
+  const n = at.entries;
   const joints: TableSource = {
     name: `${SHADOWS_TABLE}_joints`, lanes: 1, entries: n, role: "data",
     program: mapOf(n, (i) => {

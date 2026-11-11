@@ -247,8 +247,13 @@ export type Draw = {
   readonly pass: "opaque" | "transparent";
   readonly cull: "none" | "back" | "front";
   readonly depthWrite: boolean;
-  /** alpha: straight alpha over (src-alpha, one-minus-src-alpha). add: additive scaled by alpha (src-alpha, one). */
-  readonly blend: "none" | "alpha" | "add";
+  /**
+   * alpha: straight alpha over (src-alpha, one-minus-src-alpha). add: additive scaled by alpha (src-alpha, one).
+   * alpha-min: the colour is left as it is and the target's alpha becomes the lesser of itself and the fragment's.
+   * alpha-pull: the target's own alpha mixes it toward the fragment's colour (dst * dstAlpha + src * (1 - dstAlpha)),
+   * and its alpha becomes the fragment's. The last two are a style's shadow block (src/draw/light.ts).
+   */
+  readonly blend: "none" | "alpha" | "add" | "alpha-min" | "alpha-pull";
   /** Scene geometry, or construction lines the host can show and hide. */
   readonly layer: "scene" | "construction";
   /** WGSL `override` constants for this draw (for example the grid density). */

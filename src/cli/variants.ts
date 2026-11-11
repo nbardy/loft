@@ -44,7 +44,7 @@ export async function variants(cmd: Extract<Command, { kind: "variants" }>): Pro
   for (const [i, r] of resolved.entries()) {
     const t = performance.now();
     const built = d.build(r);
-    const artefact = compile(await styled(built.scene, cmd.style));
+    const artefact = compile(await styled(built.scene, cmd.style, cmd.light));
     const loaded = await host.load(artefact);
     for (const [j, view] of views.entries()) {
       const rgba = await loaded.frame({ camera: resolveCamera(artefact, view), ...cmd.size, time: cmd.time });

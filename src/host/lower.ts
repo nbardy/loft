@@ -131,6 +131,10 @@ const BLEND: Record<Draw["blend"], GPUBlendState | undefined> = {
   alpha: { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } },
   // Additive, scaled by the fragment's alpha (straight alpha, like `alpha`); the target's alpha is left as it is.
   add: { color: { srcFactor: "src-alpha", dstFactor: "one" }, alpha: { srcFactor: "zero", dstFactor: "one" } },
+  // A shadow block's tone, lowered: colour untouched, alpha the lesser (WebGPU wants both factors "one" with min).
+  "alpha-min": { color: { srcFactor: "zero", dstFactor: "one" }, alpha: { operation: "min", srcFactor: "one", dstFactor: "one" } },
+  // The block printed: the target's alpha is how much of its colour stays; alpha is then the fragment's.
+  "alpha-pull": { color: { srcFactor: "one-minus-dst-alpha", dstFactor: "dst-alpha" }, alpha: { srcFactor: "one", dstFactor: "zero" } },
 };
 
 /** Which host WGSL a shader module is compiled with. A shader used in two ways is compiled once per way. */

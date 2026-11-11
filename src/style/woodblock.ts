@@ -11,6 +11,7 @@ import { noise2, hash22, luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Contact, Rgb, ShadeCtx, Style } from "../style.ts";
+import { blockInk, castOf, lit, LIGHT, markOf, overlapOf, printedBlock, pullOf, type BlockInk, type LightRecipe } from "./light.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
 
 /** The five inks. Everything a body shows is one of these (antialiased edges aside), unless a scene states its own. */
@@ -38,7 +39,7 @@ export type WoodblockInks = { readonly black: Rgb; readonly indigo: Rgb; readonl
  */
 const BAND = { black: 0.08, indigo: 0.34, pale: 0.6, warm: 0.28 } as const;
 /** Two tones of light: a paint's luminance is multiplied by these on its shadow and lit sides before the bands. */
-const LIGHT = { shadow: 0.66, lit: 1.06 } as const;
+const TONES = { shadow: 0.66, lit: 1.06 } as const;
 
 // ---- which paints print in which inks -------------------------------------------------------------------------------
 
@@ -162,6 +163,12 @@ export type WoodblockSpec = {
   readonly water?: { readonly eye?: WoodblockEye };
   /** The pattern of the foam where a body meets the water. Default `foam.ridge()`, the print as it was. */
   readonly foam?: ContactFoam;
+  /**
+   * How the bodies are lit: a recipe of shading treatments (src/style/light.ts; `LIGHT` has the named ones). Absent:
+   * the print as it was, the rule's own two tones split at N.L = 0. Under a recipe the rule prints its lit inks and the
+   * shadow is one overprinted block.
+   */
+  readonly light?: LightRecipe;
 };
 
 /**
@@ -201,28 +208,33 @@ function accentInk(a: Accent, base: Expr<"vec3">): Expr<"vec3"> {
 
 /** 0 on the shadow side of the terminator, 1 lit: two tones of light, a hard edge. */
 const litSide = (ctx: ShadeCtx): Expr<"f32"> => edgeOf(dot(ctx.normal, ctx.sun), 0.0, 1e-5);
+/**
+ * Which of a rule's two tones a fragment takes, asked for wherever the rule reads it: `litSide` for the print as it
+ * was, all light under a recipe (whose block prints the shadow).
+ */
+type Lit = () => Expr<"f32">;
 
 // Every edge here is antialiased by about a pixel and no more (`soft` is tiny): a wider minimum turned a slowly
 // changing value (n.l across a grazing flank, a soft paint gradient) into a visible gradient between two inks, which
 // the palette test caught on the shell.
 /** By value: black, indigo, pale blue or cream by the lit value in bands; the accent's ink for an accent paint. */
-function bands(inks: WoodblockInks, p: Extract<Print, { kind: "bands" }>, ctx: ShadeCtx): Expr<"vec3"> {
+function bands(inks: WoodblockInks, p: Extract<Print, { kind: "bands" }>, ctx: ShadeCtx, lit: Lit): Expr<"vec3"> {
   const accent = p.accent;
   const base = ctx.base;
-  const value = mul(luminance(base), mix(LIGHT.shadow, LIGHT.lit, litSide(ctx)));
+  const value = mul(luminance(base), mix(TONES.shadow, TONES.lit, lit()));
   let c: Expr<"vec3"> = rgb(inks.black);
   c = mix(c, rgb(inks.indigo), edgeOf(value, BAND.black, 1e-5));
   c = mix(c, rgb(inks.pale), edgeOf(value, BAND.indigo, 1e-5));
   c = mix(c, rgb(inks.cream), edgeOf(value, BAND.pale, 1e-5));
   const byValue = mix(c, accentInk(accent, base), edgeOf(standing(accent.hue, base), accent.margin, 1e-5));
   return p.named.reduce<Expr<"vec3">>((out, k) =>
-    mix(out, mix(rgb(k.shadow), rgb(k.lit), litSide(ctx)), edgeOf(sub(p.reach, distance(base, rgb(k.key))), 0, 1e-5)), byValue);
+    mix(out, mix(rgb(k.shadow), rgb(k.lit), lit()), edgeOf(sub(p.reach, distance(base, rgb(k.key))), 0, 1e-5)), byValue);
 }
 
 /** By name: the nearest key's ink, in shadow or lit. */
-function keyed(keys: readonly InkKey[], ctx: ShadeCtx): Expr<"vec3"> {
-  const lit = litSide(ctx);
-  const inkOf = (k: InkKey) => mix(rgb(k.shadow), rgb(k.lit), lit);
+function keyed(keys: readonly InkKey[], ctx: ShadeCtx, lit: Lit): Expr<"vec3"> {
+  const side = lit();
+  const inkOf = (k: InkKey) => mix(rgb(k.shadow), rgb(k.lit), side);
   let best: Expr<"f32"> = distance(ctx.base, rgb(keys[0]!.key));
   let colour = inkOf(keys[0]!);
   for (const k of keys.slice(1)) {
@@ -234,18 +246,51 @@ function keyed(keys: readonly InkKey[], ctx: ShadeCtx): Expr<"vec3"> {
 }
 
 /** As painted: lit side the paint, shadow side overprinted; near-black paint the key black on both. */
-function overprinted(inks: WoodblockInks, o: Extract<Print, { kind: "overprint" }>, ctx: ShadeCtx): Expr<"vec3"> {
+function overprinted(inks: WoodblockInks, o: Extract<Print, { kind: "overprint" }>, ctx: ShadeCtx, lit: Lit): Expr<"vec3"> {
   const shadow = mul(mix(ctx.base, rgb(o.ink), o.amount), o.value);
-  return mix(rgb(inks.black), mix(shadow, ctx.base, litSide(ctx)), edgeOf(luminance(ctx.base), o.black, 1e-5));
+  return mix(rgb(inks.black), mix(shadow, ctx.base, lit()), edgeOf(luminance(ctx.base), o.black, 1e-5));
 }
 
 /** The rule's shading. One handler per rule. */
-function printed(inks: WoodblockInks, p: Print, ctx: ShadeCtx): Expr<"vec3"> {
+function printed(inks: WoodblockInks, p: Print, ctx: ShadeCtx, lit: Lit): Expr<"vec3"> {
   switch (p.kind) {
-    case "bands": return bands(inks, p, ctx);
-    case "keys": return keyed(p.keys, ctx);
-    case "overprint": return overprinted(inks, p, ctx);
+    case "bands": return bands(inks, p, ctx, lit);
+    case "keys": return keyed(p.keys, ctx, lit);
+    case "overprint": return overprinted(inks, p, ctx, lit);
   }
+}
+
+/**
+ * The shadow block a rule prints under a recipe that states none: an overprint rule's own ink; for the rules whose
+ * shadow is a second ink per paint (bands, keys), the key block's indigo at the crab's depth.
+ */
+function ownBlock(inks: WoodblockInks, p: Print): BlockInk {
+  switch (p.kind) {
+    case "bands": case "keys": return { ink: inks.indigo, amount: 0.42, value: 0.78 };
+    case "overprint": return { ink: p.ink, amount: p.amount, value: p.value };
+  }
+}
+
+/** What a body's fragments are, for a style: its colour, its mark, and the shadow block if one is printed afterwards. */
+type Bodies = Pick<Style, "shade" | "mark" | "block">;
+
+/** The print as it was: the rule's two tones, split at N.L = 0. No post pass reads a mark. */
+function asPrinted(inks: WoodblockInks, rule: Print): Bodies {
+  return { shade: (ctx) => printed(inks, rule, ctx, () => litSide(ctx)), mark: () => f(1) };
+}
+
+/**
+ * Under a recipe: the rule's lit inks, and the recipe's tone of the shadow block. With nothing cast from one thing on
+ * another the block is printed in the fragment; otherwise the tone goes in the mark and the block is printed after the
+ * bodies (`Style.block`), `shade` staying the whole colour for a fragment shaded alone.
+ */
+function underRecipe(inks: WoodblockInks, rule: Print, recipe: LightRecipe): Bodies {
+  const pull = pullOf(blockInk(recipe.block, ownBlock(inks, rule)));
+  const both = (ctx: ShadeCtx) => lit(recipe, printed(inks, rule, ctx, () => f(1)), ctx);
+  const whole: Bodies["shade"] = (ctx) => { const b = both(ctx); return printedBlock(pull, b.colour, b.tone); };
+  const cast = castOf(recipe.cast), overlap = overlapOf(recipe.overlap);
+  if (cast.kind === "none" && overlap.kind === "none") return { shade: whole, mark: () => f(1) };
+  return { shade: whole, mark: (ctx) => markOf(pull, both(ctx).tone), block: { body: (ctx) => both(ctx).colour, ink: pull.add, floor: pull.floor, cast, overlap } };
 }
 
 /** The whirlpool's eye printed black over the water, or nothing. */
@@ -267,16 +312,17 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   const eye: WoodblockEye = spec.water?.eye ?? { kind: "none" };
   const pattern: ContactFoam = spec.foam ?? foam.ridge();
   const outline = param("woodblock.outline", 0.05, { min: 0, max: 0.2 });
+  const bodies: Bodies = spec.light === undefined ? asPrinted(inks, rule) : underRecipe(inks, rule, spec.light);
   return {
     name: "woodblock",
+    ...bodies,
+    // The named recipes on this same print: what `--light name` chooses.
+    lights: Object.fromEntries(Object.entries(LIGHT).map(([name, recipe]) => [name, () => woodblock({ ...spec, light: recipe })])),
     // The key line: the hull, this wide in world units and never under 1.5 px.
     outline,
     clear: inks.cream,
     post: [WOODBLOCK_POST.paper],
-    shade: (ctx) => printed(inks, rule, ctx),
     ink: () => rgb(inks.black),
-    // No post pass reads a mark.
-    mark: () => f(1),
     water: (ctx) => {
       const xz = ctx.world.xz;
       // Two flat blues, trough and crest, split along the swell's own contour (a little wobble, no blobs: the lines
