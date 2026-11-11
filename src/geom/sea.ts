@@ -147,13 +147,14 @@ fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
  * The same closeness as `loft_contact_band` (1 at a body, 0 at `width`, below 0 beyond), measured so that a style can
  * cut clean shapes from it. The band's ring turns by a hashed angle at every pixel and has two radii, so it is grainy
  * (a pixel whose ring misses a thin leg reads "nothing near" beside one whose ring hits it) and it sits on two
- * plateaus (a hit on the inner ring, a hit on the outer). Here, with four more reads than the band's seventeen:
+ * plateaus (a hit on the inner ring, a hit on the outer). Here, with four more reads near a body than the band's 17:
  *  - the four pixels of a 2 x 2 quad turn the ring by four fixed quarter steps and share what they find (the least gap
  *    of the four, taken with two fine derivatives): 32 directions a radius, no hash, so no grain and no holes round a
  *    body four pixels wide or more. The value is one per quad;
  *  - four more taps along the direction of the nearest hit, at radii that also differ by the pixel of the quad (16
  *    radii a quad), find the body's nearest edge that way, so the gap falls smoothly as the body nears instead of
- *    stepping from one ring to the other;
+ *    stepping from one ring to the other (the inner ring is read only where the scene's clearance says it can see
+ *    something, these only after a hit: 9 reads far from a body, 21 near one);
  *  - the quad's one gap is then tilted across its four pixels toward that hit (a pixel nearer the body by one pixel is
  *    nearer by one pixel's world size), so the level changes from pixel to pixel as a distance does and an edge cut
  *    from it is antialiased like any other, not stepped in twos.
@@ -184,21 +185,35 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   // Capped, so the differences below are exact enough where a tap reads the far plane.
   var gap = min(loft_level_gap(scene_position(px), p, width), 4.0 * width);
   var toward = vec2<f32>(0.0);
-  for (var k = 0u; k < 16u; k++) {
+  for (var k = 0u; k < 8u; k++) {
     let v = rot * LOFT_LEVEL_RING[k] * r;
     let g = loft_level_gap(scene_position(px + v), p, width);
     if (g < gap) { gap = g; toward = v; }
   }
-  let ray = toward;
-  for (var k = 0u; k < 4u; k++) {
-    let v = ray * ((f32(k) + (m + 0.5) * 0.25) * 0.25);
-    let g = loft_level_gap(scene_position(px + v), p, width);
-    if (g < gap) { gap = g; toward = v; }
+  // The inner ring is read only where it can see something: where the scene's clearance (a lower bound on the distance
+  // to any opaque pixel) is within its reach. Elsewhere every one of its taps reads the far plane, so skipping it
+  // changes nothing; most of the pixels this runs on are such, and their cost is their reads. (Skipping it as the band
+  // does, when the outer ring found nothing near, was tried: a pointed foot inside the outer ring lost its foam.)
+  if (scene_clearance(px) <= 0.55 * r + 1.0) {
+    for (var k = 8u; k < 16u; k++) {
+      let v = rot * LOFT_LEVEL_RING[k] * r;
+      let g = loft_level_gap(scene_position(px + v), p, width);
+      if (g < gap) { gap = g; toward = v; }
+    }
+  }
+  // Along the nearest hit, if a ring had one (with none there is no direction to look in).
+  if (dot(toward, toward) > 0.0) {
+    let ray = toward;
+    for (var k = 0u; k < 4u; k++) {
+      let v = ray * ((f32(k) + (m + 0.5) * 0.25) * 0.25);
+      let g = loft_level_gap(scene_position(px + v), p, width);
+      if (g < gap) { gap = g; toward = v; }
+    }
   }
   // The least gap of the quad, and the offset of the tap that found it. A fine derivative is (the right pixel) - (the
   // left) for both pixels of a pair, so the other pixel's value is this one's plus or minus it: plus on the left
   // pixel. Which pixel is the left one is read from the derivative of the parity itself, so nothing is assumed about
-  // where quads start. The offset is from its own pixel: re-based to the quad's middle below.
+  // where quads start. The offset is from its own pixel: re-based to the quad's middle here.
   let from_mid = cell - vec2<f32>(0.5);
   let hit = toward + from_mid;
   let sx = select(-1.0, 1.0, (dpdxFine(cell.x) > 0.0) == (cell.x < 0.5));
