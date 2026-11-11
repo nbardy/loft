@@ -47,9 +47,10 @@ export const S = {
   stalk: 2.4, eye: 0.3,
 
   // ---- Claw Crush: the hit disc on the water (world xz), its warning, its loop ----
-  // The show loops every 18 s: the Grab closes at 3.0 and throws its ship (down at 8.7), Claw Crush arms at 11.5 and
-  // its ring shoves the second boat, so one idea reads at a time. Both boats are back at their places at the loop's seam.
-  crushCentre: [9.6, 5.6] as const, crushRadius: 3.4, crushWarn: 1.5, crushFirst: 11.5, crushPeriod: 18,
+  // The show loops every 22 s: the Grab closes at 3.0 and throws its ship (down at 9.3), Claw Crush arms at 12.0 and
+  // its ring shoves the second boat, which coasts for the rest of the loop, so one idea reads at a time. Both boats are
+  // back at their places at the loop's seam.
+  crushCentre: [9.6, 5.6] as const, crushRadius: 3.4, crushWarn: 1.5, crushFirst: 12.0, crushPeriod: 22,
   // Pushed 1.2x and 1.5x from 6.5 and 2.0 (exaggeration): the claw climbs higher and pulls further back the wrong way.
   // At 8.5 (1.3x) the raised claw left the top of the game camera's frame.
   crushRise: 7.8, crushCoil: 3.0,
@@ -89,20 +90,25 @@ export const S = {
    * the default of the `throw.land` input; the farthest open water the game camera shows whole, its far right corner:
    * at (5.7, -21.0) the bowsprit and the sail's peak were cut by the frame), skids on under `drag` and heaves; the claw
    * follows through for `follow`. `turns` whole turns in the air, about the level axis across the throw.
+   * Since the owner's second note the landing is far (29 flown, 37 from the crab's middle): the game camera loses the
+   * ship through its top right corner and the `arena` and `throw` cameras show it land. The landing the game camera
+   * can show whole is (4.3, -19.6), with flight 2.6, stroke 0.5, follow 0.3 and one turn: 13.3 flown.
    */
-  throw: { back: 2.7, side: 0.9, up: 2.15, stroke: 0.5, follow: 0.3, flight: 2.6, land: [4.3, -19.6] as const, drag: 0.2, heave: { hz: 0.9, damping: 0.45 }, turns: 1 },
+  throw: { back: 2.7, side: 0.9, up: 2.15, stroke: 0.4, follow: 0.25, flight: 3.2, land: [-1.0, -35.0] as const, drag: 0.2, heave: { hz: 0.9, damping: 0.45 }, turns: 2 },
   /** The splash where the thrown ship lands: how far its foam runs, for how long, and the squash of the hull at touchdown. */
   splash: { reach: 3.6, seconds: 1.5, squash: 0.3 },
-  /** Claw Crush's ring wave: crest height at the disc's edge, pulse length, where it is gone, and how far a thing afloat at
-   * the edge ends up shoved under the stand-in's drag (`drag` s): the front gives it shove / drag = 2.8 units/s there,
-   * just under the wave's own 2.92 (the most the ring allows). At 4.6 over 1.6 s the second boat moved 105 pixels in the
-   * game camera, less than its own length; 5.6 over 2.0 s moves it 3.9. */
-  wave: { height: 0.8, length: 6, reach: 14, shove: 5.6, drag: 2.0 },
-  /** The second boat's default place: outside the crush disc, `distance` from its centre along `bearing` (at -0.88 and
-   * 7.5 the shove carried it to the game camera's right edge), lying at `heading` (quartering the ring, and side-on to
-   * the game camera; at 0.95 it was bow-on to the camera and read as a sail with no hull). Its stand-in keeps its shove for `keep` s after the slam, then
-   * the boat is back at its place: 6.5 is the loop's seam (crushPeriod - crushFirst). */
-  boatTwo: { bearing: -1.1, distance: 7.0, heading: -0.25, keep: 6.5, sail: [0.86, 0.79, 0.58] as const },
+  /** Claw Crush's ring wave: crest height at the disc's edge (the depth is 1.7; a crest breaks near 1.3), pulse length,
+   * where it is gone, and how far a thing afloat at the edge ends up shoved under the stand-in's drag (`drag` s: a heavy
+   * boat coasts). The front gives it shove / drag = 2.9 units/s there, the most the ring allows (the wave's own speed is
+   * 2.92). The first version (0.8 high, 4.6 over 1.6 s, then 5.6 over 2.0 s) moved the second boat one of its lengths:
+   * a nudge. */
+  wave: { height: 1.0, length: 6, reach: 12, shove: 8.7, drag: 3.0 },
+  /** The second boat's default place: `beyond` the crush disc's edge (whatever the disc's radius) along `bearing` from
+   * its centre, lying at `heading` (quartering the ring, and side-on to the game camera; bow-on it read as a sail with no
+   * hull). On bearing -1.35 the game frame has 10 units of open water for it to be shoved across, where the first boat
+   * floated before it was thrown (at -0.88 and -1.1 it reached the frame's right edge after 4). Its stand-in keeps its
+   * shove for `keep` s after the slam, then the boat is back at its place: 10 is the loop's seam (crushPeriod - crushFirst). */
+  boatTwo: { bearing: -1.35, beyond: 2.0, heading: -0.5, keep: 10.0, sail: [0.86, 0.79, 0.58] as const },
 } as const;
 
 /** The numbers as a build reads them: the same shape with every literal widened, so overrides may change them. */

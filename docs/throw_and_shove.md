@@ -178,14 +178,14 @@ clock. The defaults are the show.
 
 | Input | Meaning | Default (base) |
 |---|---|---|
-| `grab.arm` | when the Grab's grip closes; it repeats every 18 s from there | 3.0 |
-| `crush.arm` | when Claw Crush lands | 11.5 |
+| `grab.arm` | when the Grab's grip closes; it repeats every 22 s from there | 3.0 |
+| `crush.arm` | when Claw Crush lands | 12.0 |
 | `crush.centre` | the slam's disc on the water (x, z); its radius is the variant's number | 9.6, 5.6 |
 | `boat1.at` | where the first boat floats when the Grab arms (x, z). Hold it fixed from the warning to the release | 10.49, -8.40 (each variant's own: where its claw reaches) |
 | `boat1.heading` | its heading then, radians from +x toward +z. The claw comes along it | -0.75 |
 | `boat1.beam` | its width across the grip: the grip opens and closes by it | 1.19 |
-| `throw.land` | where the throw is aimed to land (x, z). The release velocity follows from it | 4.3, -19.6 |
-| `boat2.at`, `boat2.heading` | (stand-in only) where the second boat floats when Claw Crush arms, and its heading | 12.78, -0.64; -0.25 |
+| `throw.land` | where the throw is aimed to land (x, z). The release velocity follows from it | -1.0, -35.0 (far; 4.3, -19.6 is the farthest the `game` camera shows whole) |
+| `boat2.at`, `boat2.heading` | (stand-in only) where the second boat floats when Claw Crush arms, and its heading | 10.78, 0.33 (2.0 beyond the disc's edge); -0.5 |
 | `boat1.pose.at`, `.heading`, `.pitch`, `.heel` | (`boats=host` only) the first boat's transform, every frame: its origin (waterline amidships; x, y, z), heading, pitch (bow up), heel (to starboard) | its start, level |
 | `boat2.pose.at`, `.heading`, `.pitch`, `.heel` | (`boats=host` only) the second boat's | its start, level |
 
@@ -203,12 +203,12 @@ CPU each frame, as the checks do).
 | `handoff.squeeze` | its size along its own x, y, z while held (narrowed across the beam, volume kept) | factors |
 | `handoff.release.time`, `.at`, `.velocity` | the instant the grip lets go, and the boat's place and velocity then. A game's physics takes the boat from exactly here | s; world; units/s |
 | `handoff.release.spin` | the tumble Loft's stand-in gives it (a vector: radians per second about its direction). The claw gives none; a game may use it or not | rad/s |
-| `handoff.landing.time`, `.at`, `.rest` | where and when the stand-in's flight lands and stops: a prediction under g = 5 for a host that flies its own | s; world |
+| `handoff.landing.time`, `.at`, `.rest` | where and when the stand-in's flight lands and stops: a prediction under g = 5 and a flight of 3.2 s for a host that flies its own | s; world |
 | `holds.grab.thing()`, `.flight()`, `.toss()` | the boat's middle wherever it is (the host's pose after the release, with `boats=host`); the stand-in's flight share and seconds since touchdown; the throw's places | world; s |
 | `handoff.wave.arrival(place)` | seconds after `crush.arm` that the ring's front reaches a place (x, z); `waves.crush.arrives(place)` is the time itself | s |
 | `handoff.wave.lifts(place, t)` | how far the wave lifts the water at a place and time (below 0 in its trough; exactly 0 off the pulse) | world |
 | `handoff.wave.impulse(place)` | **an impulse per unit mass: a change of velocity, outward on the water (x, z), delivered at the arrival** | units/s |
-| `waves.crush.pushed(place)` | the stand-in's drift from that impulse under its drag of 2.0 s: `impulse x 2.0 x (1 - exp(-s / 2.0))` | world |
+| `waves.crush.pushed(place)` | the stand-in's drift from that impulse under its drag of 3.0 s: `impulse x 3.0 x (1 - exp(-s / 3.0))` | world |
 
 **The stand-ins are consumers of the same contract**, and checks say so: `releasesAt` (at the stated instant the boat
 is at the stated point and the grip has it at the stated velocity; it runs in both variants), `throwLands` (the
@@ -232,6 +232,10 @@ shove as a closed form bounded by causality and by the wave's own speed; the aft
 effect; the ring's reach as the live annulus so the sea pays for it only where and when it exists.
 
 ## Scored (2026-11-11)
+
+(The defaults scored here were replaced the same day after the owner's second note: see "Further", at the end, for
+the far throw and the full shove and their own score. The frame-time, hash and buffer figures below were taken with
+these first defaults; "Further" restates the ones that changed.)
 
 Measured on the built scene's own readouts through the CPU twin (the checks, and a script that samples
 `holds.grab.thing()` at 240 Hz). First with the inputs the predictions were made for, then as shipped.
@@ -377,3 +381,42 @@ open water along it. The loop is 22 s (the slam at 12.0), so the coasting boat h
 The boat moves at 2.3 falling to 1.2 over its first two seconds while the front runs at 2.92, so the crest takes
 about three seconds to pass under it: it should be seen to ride up, heel, and be left behind. GPU frame time: no
 change at t = 1 (the same draws); a live ring as before.
+
+### Scored
+
+| Quantity (base) | Predicted | Measured |
+|---|---|---|
+| release velocity | (-2.98, 6.90, -8.56), 11.39, 37.3 deg | (-2.98, 6.90, -8.56), 11.39, 37.3 deg |
+| release point; stroke | (8.53, 3.78, -7.60); 2.28 | (8.53, 3.78, -7.61); 2.28 |
+| touchdown | t = 9.30; 9.10 down, 9.07 along | t = 9.30; 9.11 down, 9.07 along |
+| apex | 8.54, 1.38 s after the release | 8.54, 1.38 s |
+| distance flown | 29.0 | 29.00 |
+| plunge; skid | 0.92 at 0.22 s; 1.81 | 0.92 at 0.22 s (0.19 back above at 0.84 s); 1.81 |
+| ends | (-1.60, -36.71): 36.9 from the crab's middle, 30.8 from where taken | (-1.60, -36.71): 36.86, 30.79 |
+| in the `game` frame after the release | 0.5 to 0.9 s | 0.92 s (its middle; out through the top right) |
+| `gripReaches`, six variants | pass | pass (islander: release at 11.51/s) |
+| front at boat two | 0.69 s (t = 12.69) | 0.69 s (t = 12.69) |
+| crest there | 0.79; islander 0.83 | 0.79 |
+| impulse there | 2.30; 2.40 | 2.30; 2.40 |
+| after 2 s; final; by the seam | 3.36; 6.90; 6.59 (islander 7.21 final) | 3.36; 6.90; 6.59 (7.21) |
+| on screen (game) | about 210 px | 208 px, (892, 521) to (1080, 431) |
+
+The one miss is the time in the game frame, 0.02 s over the range I gave: I estimated it from the ship's height at
+0.7 s, not from where the frame's corner is.
+
+What the pictures say. From `arena` the throw is a throw across the sea: the ship turns over twice, comes down 37
+from the crab, a speck with a splash, and floats. From `game` it is whipped up and out of the top right corner in
+under a second and does not come back: the landing is not in the game frame, and cannot be at this distance. The
+second boat is caught by the ring a little under a second after the slam, rides up on it heeled over while the crest
+passes (by the formulas the crest's 3 units take 2.3 s to pass under the moving boat; I said about three), and coasts
+to rest almost two of its lengths away, 208 pixels, by the end of the loop.
+"Several" boat lengths it is not: the ring's own rule (no faster than the wave, 2.92) and a 22 s loop give 6.9. More
+needs a faster wave, which means more gravity or deeper water for the whole scene, or a longer coast.
+
+With these defaults the base crab's proof frames (`tools/files_proof.ts --scene reefback_titan`) are
+`a3d75b86817f6746 9b5566eb6ad22c1e c088af216c3ff29e` (main at 74abcac: `a8c859adcfed3672 39665ec8b623160d
+19e2d2d4bfc5b710`). All six variants pass (nine checks each, the islander twelve); `boats=host` passes its six.
+
+Added to what is wrong or unfinished: the thrown ship's landing is outside the `game` frame; the follow-through's
+reach is not measured by any check (`gripReaches` ends at the release), and with the harder whip the grip's middle
+goes to about 4.5 of the arm's 4.9; the second boat's mast now shows in the bottom right corner of the `face` camera.

@@ -77,7 +77,11 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     back: at({ eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 }, 0, rise * 0.5),
     // The throw in profile, from ahead of the crab looking back at it: the claw cocks on the left of
     // the frame and the ship flies the whole arc to the right, against open water. Fixed in the world, as the game's.
-    throw: { kind: "perspective", eye: [44, 9.5, -9], target: [6, 2.6, -9], fovY: 0.6 },
+    throw: { kind: "perspective", eye: [58, 12, -16], target: [4, 3, -16], fovY: 0.6 },
+    // The whole arena: the game camera's direction, pulled back and aimed between the crab and where the thrown ship
+    // lands, so one frame holds the crab, both boats, the slam and its ring, and the landing. The game camera itself
+    // cannot: its frame ends 23.5 from the crab's middle, and the ship comes down 37 away.
+    arena: { kind: "perspective", eye: [39.8, 49.7, 21.4], target: [2, 0, -11], fovY: 0.6 },
   };
 };
 
@@ -169,8 +173,8 @@ export const design = makeDesign({
         ...placedBy<readonly Check[]>(r.placer.boat1, {
           standIn: () => [
             // The flight starts as released (2% of the release speed), comes down where and when the attack says (1% of
-            // the distance flown), and far: at least 12 from where the ship was taken, three of its lengths.
-            throwLands(r.grab, { least: 12, speed: tolerance.share(0.02), place: tolerance.share(0.01) }),
+            // the distance flown), and far: at least 25 from where the ship was taken, six and a half of its lengths.
+            throwLands(r.grab, { least: 25, speed: tolerance.share(0.02), place: tolerance.share(0.01) }),
             // In the air the ship (a ball of half its length) passes through neither the carapace nor the atoll (a
             // cylinder of its larger radius: the ship may not fly over the island at any height).
             fliesClear(r.grab, [
@@ -181,9 +185,9 @@ export const design = makeDesign({
           host: () => [],
         }),
         ...placedBy<readonly Check[]>(r.placer.boat2, {
-          // The second boat's drift starts at the ring's own impulse (2% of it) and ends at least 2.5 outward, two
-          // thirds of its length.
-          standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 2.5, impulse: tolerance.share(0.02) })],
+          // The second boat's drift starts at the ring's own impulse (2% of it) and ends at least 6 outward, a length
+          // and a half.
+          standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 6, impulse: tolerance.share(0.02) })],
           host: () => [],
         }),
         // What the chosen face asks of itself (slots.ts, `Face`): none for a face that asks nothing.

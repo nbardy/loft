@@ -112,7 +112,7 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
   const B2 = n.boatTwo, TH = n.throw;
   const start = {
     boat1: { at: [shoulderL[0] + Math.cos(n.grabBearing) * shipFar, shoulderL[2] + Math.sin(n.grabBearing) * shipFar] as const, heading: n.grabBearing },
-    boat2: { at: [n.crushCentre[0] + Math.cos(B2.bearing) * B2.distance, n.crushCentre[1] + Math.sin(B2.bearing) * B2.distance] as const, heading: B2.heading },
+    boat2: { at: [n.crushCentre[0] + Math.cos(B2.bearing) * (n.crushRadius + B2.beyond), n.crushCentre[1] + Math.sin(B2.bearing) * (n.crushRadius + B2.beyond)] as const, heading: B2.heading },
   };
   const IN = {
     /** When each attack arms (seconds; it repeats every `crushPeriod`): the Grab's grip closes, Claw Crush lands. */
@@ -170,10 +170,10 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
   // The Grab as an attack that holds. Its arming is the instant the grip closes; the warning is the same print-palette
   // marker as Claw Crush's, on the water where the ship is taken. Beats (seconds): wind-up 0.9 (the claw rises 3.3 over
   // its shoulder: the posture), reach 1.3 (it first draws back, the wrong way, then down and out on an arc, opening to 1.5
-  // beams by two thirds of the way), close 0.22 (fast: it lands), hold 3.1 (2.6 lifted on an arc and squeezed twice to
-  // half the beam while it is drawn back and cocked, then 0.5 of whip: uniform acceleration to the release velocity),
-  // release 1.3 (0.3 following the throw through, opening, then home); then the posture lets go and the arm swings
-  // once. The stand-in's ship flies 2.6 s, lands, skids and bobs; a host's ship is the host's from the release.
+  // beams by two thirds of the way), close 0.22 (fast: it lands), hold 3.1 (2.7 lifted on an arc and squeezed twice to
+  // half the beam while it is drawn back and cocked, then 0.4 of whip: uniform acceleration to the release velocity),
+  // release 1.3 (0.25 following the throw through, opening, then home); then the posture lets go and the arm swings
+  // once. The stand-in's ship flies 3.2 s, lands, skids and bobs; a host's ship is the host's from the release.
   const GS = n.grabSeconds;
   const grab = attack({
     name: "grab", arm: every(n.crushPeriod, IN.grabArm), warn: n.grabWarn,
