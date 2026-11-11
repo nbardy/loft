@@ -24,7 +24,7 @@
 // is the kit's (examples/bosses/lib/growth.ts), placed at named places of this surface (`facing`, `ashore`, `seam`).
 
 import {
-  abs, add, clamp, compileJs, cos, div, draw, floor, fract, framed, inFrame, lift, max, min, mix, mul, pick, pow, saturate, sin, smoothstep, sqrt, sub, surface,
+  abs, add, compileJs, cos, div, draw, floor, fract, framed, inFrame, lift, max, min, mix, mul, pick, pow, saturate, sin, smoothstep, sqrt, step, sub, surface,
   tabulate, variable, vec2, vec3, vec4, type Drawable, type F, type P3, type Target,
 } from "../../../../src/index.ts";
 import type { Branch } from "../../../../src/lib/index.ts";
@@ -152,9 +152,10 @@ export const terraces: BackOption = {
     /** Where a point (G, a) is on a plate: s along it (0 the rim, 1 the tip; above 1 past the tip), x across it (-1 to
      * 1 inside its width; a width of at least `least` of its half, so the flutes past the tip have one). */
     const onPlate = (P: Plate, G: F, a: F, least: number) => {
-      const s = max(div(sub(1, G), 1 - P.tip), 0);
-      const x = div(turnFrom(a, sub(P.root, mul(P.sweep, s))), mul(P.half, max(leaf(min(s, 1)), least)));
-      return { s, x };
+      const s = max(div(sub(1, G), 1 - P.tip), 0), d = turnFrom(a, sub(P.root, mul(P.sweep, s))), w = mul(P.half, leaf(min(s, 1)));
+      // `x` across the plate; `xLeast` across a width of at least `least` of its half (the flute past its tip). The two
+      // share the bearing's difference and the leaf, the dear parts (the paint evaluates every plate per pixel).
+      return { s, x: div(d, max(w, 1e-4)), xLeast: div(d, max(w, P.half * least)) };
     };
     /** How far the plates stand out of the hull at (G, a): the sum of them (they do not overlap). */
     const plateOut = (G: F, a: F): F => PLATES.map((P) => {
@@ -204,14 +205,15 @@ export const terraces: BackOption = {
       const at = shoreTable(v);
       const shore = blend({ beach: cut(at.z, 0.5), apron: cut(at.y, 0.5), cape: cut(at.x, 0.5) });
       // On a plate: which (at most one), its s and x. Past its tip, its flute (a narrow corridor of stone ribs).
-      const plates = PLATES.map((P) => ({ P, ...onPlate(P, G, a, 0), flute: onPlate(P, G, a, 0.3) }));
-      const inside = plates.map(({ s, x }) => mul(sub(1, cut(abs(x), 1)), sub(1, cut(s, 1))));
-      const red = inside.reduce((m, w) => max(m, w));
-      const X = plates.map(({ x }, k) => mul(x, inside[k]!)).reduce((m, w) => add(m, w));
-      // A flute: past the tip, up to `flute` in G, inside 0.3 of the plate's half; its x for the ribs.
-      const fluted = plates.map(({ P, flute }) => mul(mul(sub(1, cut(abs(flute.x), 1)), cut(flute.s, 1)), sub(1, cut(flute.s, 1 + T.flute / (1 - P.tip)))));
-      const XF = plates.map(({ flute }, k) => mul(flute.x, fluted[k]!)).reduce((m, w) => add(m, w));
-      const flutes = fluted.reduce((m, w) => max(m, w));
+      const plates = PLATES.map((P) => onPlate(P, G, a, 0.3));
+      // Each plate's depth inside its red (min(1 - |x|, 1 - s), positive inside) and inside its flute (past the tip, to
+      // `flute` in G, within 0.3 of its half). They do not overlap, so the one a pixel is on is chosen by plain steps and
+      // each edge is cut ONCE, on the deepest: a cut per plate cost a screen derivative each, 30 to a pixel.
+      const deep = plates.map(({ s, x }) => min(sub(1, abs(x)), sub(1, s)));
+      const deepF = plates.map(({ s, xLeast }, k) => min(sub(1, abs(xLeast)), min(sub(s, 1), sub(1 + T.flute / (1 - PLATES[k]!.tip), s))));
+      const X = plates.map(({ x }, k) => mul(x, step(0, deep[k]!))).reduce((m, w) => add(m, w));
+      const XF = plates.map(({ xLeast }, k) => mul(xLeast, step(0, deepF[k]!))).reduce((m, w) => add(m, w));
+      const red = cut(deep.reduce((m, w) => max(m, w)), 0), flutes = cut(deepF.reduce((m, w) => max(m, w)), 0);
 
       // The plate: brick with dark ribs along it (lines of x: they gather to the tip, a fan), a cream lip on its leading
       // edge, a black key line round it. (`1 - cut(|f - 0.5|, w)` is 1 inside the half-width w of the period's middle.)
@@ -291,14 +293,13 @@ export const terraces: BackOption = {
     const [broad0, broad1, broad2, blade0, blade1, blade2] = PLATES as unknown as readonly [Plate, Plate, Plate, Plate, Plate, Plate];
     const growth: Sprig[] = [
       // The light's foot: crust all round it, thickest to seaward; a seam's worth where the mound meets the water.
-      ...[0, 1, 2, 3, 4].flatMap((k) => cluster(RECIPES.crust, onMound(G0 * 1.15, Pb + 0.4 + k * 1.26, 0.12), k === 0 ? 1.05 : 0.75, 500 + k)),
+      ...[0, 1, 2].flatMap((k) => cluster(RECIPES.crust, onMound(G0 * 1.2, Pb + 0.4 + k * 2.1, 0.12), k === 0 ? 1.15 : 0.85, 500 + k)),
       ...cluster(RECIPES.seam, onMound(1.3, Pb - 0.9, 0.42), 1.3, 510),
-      ...cluster(RECIPES.reef, onMound(1.35, Pb + 1.6, 0.45), 1.05, 511),
       // The low seams, every one between a broad plate and a blade (round from the bow): denser where the camera sees.
-      ...run(seam(broad0, blade0, 0.62), { recipe: RECIPES.seam, clusters: 4, size: 1.3, seed: 21 }),
-      ...run(seam(blade0, broad1, 0.66), { recipe: RECIPES.seam, clusters: 3, size: 1.15, seed: 22, thin: 0.6 }),
-      ...run(seam(blade1, broad2, 0.68), { recipe: RECIPES.seam, clusters: 2, size: 1.0, seed: 23, thin: 0.5 }),
-      ...run(seam(broad2, blade2, 0.66), { recipe: RECIPES.seam, clusters: 3, size: 1.1, seed: 24, thin: 0.6 }),
+      ...run(seam(broad0, blade0, 0.62), { recipe: RECIPES.seam, clusters: 2, size: 1.35, seed: 21, rests: 0 }),
+      ...run(seam(blade0, broad1, 0.66), { recipe: RECIPES.seam, clusters: 2, size: 1.2, seed: 22, thin: 0.6, rests: 0 }),
+      ...run(seam(blade1, broad2, 0.68), { recipe: RECIPES.seam, clusters: 1, size: 1.05, seed: 23 }),
+      ...run(seam(broad2, blade2, 0.66), { recipe: RECIPES.seam, clusters: 1, size: 1.15, seed: 24 }),
       // The shelf: a reef's worth at the foot of the tallest stack.
       ...cluster(RECIPES.reef, ashore(0.35, rad(T.shelf.bearing + 9)), 1.2, 30),
       // Beads at the broad plates' tips, where each turns to turf (the pictures' signature).

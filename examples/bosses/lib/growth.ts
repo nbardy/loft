@@ -148,10 +148,10 @@ export type Recipe = readonly Part[];
 export const RECIPES = {
   /** A low seam or a valley between plates: barnacles thick, a mussel bed, a coral standing over them, kelp below. */
   seam: [
-    { motif: { kind: "barnacles", count: 5 }, many: 2, spread: 0.55, size: 1, sits: "middle" },
+    { motif: { kind: "barnacles", count: 6 }, many: 1, spread: 0.55, size: 1.1, sits: "middle" },
     { motif: { kind: "mussels", count: 5 }, many: 1, spread: 0.45, size: 1.1, sits: "middle" },
     { motif: { kind: "coral" }, many: 1, spread: 0.35, size: 0.85, sits: "high" },
-    { motif: { kind: "kelp", strands: 4 }, many: 1, spread: 0.3, size: 1.2, sits: "low" },
+    { motif: { kind: "kelp", strands: 3 }, many: 1, spread: 0.3, size: 1.2, sits: "low" },
   ],
   /** A reef flat: corals, a fan, mussels at their feet. */
   reef: [
@@ -162,7 +162,7 @@ export const RECIPES = {
   ],
   /** A crust: nothing but barnacles, with a mussel bed among them. */
   crust: [
-    { motif: { kind: "barnacles", count: 5 }, many: 3, spread: 0.6, size: 1, sits: "middle" },
+    { motif: { kind: "barnacles", count: 6 }, many: 2, spread: 0.6, size: 1.05, sits: "middle" },
     { motif: { kind: "mussels", count: 3 }, many: 1, spread: 0.3, size: 0.8, sits: "low" },
   ],
   /** Three or four barnacles in a knot: a bead on a plate's tip. */

@@ -81,7 +81,8 @@ export function beaconOn({ n, shell, crushAfter }: Pick<Rig, "n" | "shell" | "cr
       const line = sub(1, cut(abs(sub(m, tide)), 0.006));
       return mix(mix(mix(crust, ink(I.kelp), kelp), clean, cut(m, tide)), ink(I.black), line);
     },
-    detail: { along: 40, around: 28 },
+    // (20 by 20: the brick and the crust are paint; at 40 by 28 the tower was four times the headland's light.)
+    detail: { along: 20, around: 20 },
   }), rigid(shell));
 
   // The lantern room: a sill, glass in black mullions, a black roof swelling over the eaves and drawn up to a finial.
@@ -104,7 +105,7 @@ export function beaconOn({ n, shell, crushAfter }: Pick<Rig, "n" | "shell" | "cr
       const ribbed = mul(sub(1, cut(abs(sub(fract(mul(v, 8)), 0.5)), 0.06)), mul(cut(m, GLASS + 0.02), sub(1, cut(m, GLASS + 0.36))));
       return mix(mix(glass, ink(I.black), max(sill, cut(m, GLASS - 0.03))), ink(I.stone), max(ribbed, cut(m, GLASS + 0.4)));
     },
-    detail: { along: 24, around: 24 },
+    detail: { along: 14, around: 18 },
   }), rigid(shell));
 
   // The shutters: one strand, a board hinged under the eaves on either side of the lantern, joined through the roof

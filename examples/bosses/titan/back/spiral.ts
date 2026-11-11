@@ -17,6 +17,7 @@ import { cut, TAU, type V3 } from "../ink.ts";
 import type { Numbers } from "../numbers.ts";
 import type { Rig } from "../rig.ts";
 import type { BackOption } from "../slots.ts";
+import { branchOf, GROWTH_KINDS, growthPaints, sprout } from "../../lib/growth.ts";
 import { lightOn } from "./lighthouse.ts";
 import { bandAt, bandEdges, GRID, gridU, shellMap, shellTwin, U, vmath } from "./spiral_shell.ts";
 
@@ -24,7 +25,7 @@ const { add: addV, mul: mulV, unit: unitV } = vmath;
 const hash = (k: number) => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 
 /** What a copy in the growth list is: the paint dispatches on it (the id's first lane is its index here). */
-const KINDS = ["barnacle", "trunk", "crown", "plinth"] as const;
+const KINDS = [...GROWTH_KINDS, "trunk", "crown", "plinth"] as const;
 type Kind = (typeof KINDS)[number];
 const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, salt: number): Branch => ({ a, b, ra, rb, level, id: [KINDS.indexOf(kind), salt, 0] });
 
@@ -32,13 +33,11 @@ const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, s
 type Site = { readonly at: V3; readonly out: V3 };
 
 /**
- * One barnacle: a squat round cream cone standing out of the shell at a site. The only barnacle this back draws; the
- * growth kit (lib/growth.ts, on the terraces branch) replaces this function with `sprout({ kind: "barnacle" }, site,
- * size, seed)` mapped through `branchOf` (and its paints spread into `paints` below).
+ * One barnacle: the growth kit's acorn barnacle (lib/growth.ts), one to a site: a squat cream cone with a dark crater.
+ * The kit's barnacle has radius 0.3 of its size; this back's sizes were a radius of 0.62, so they are scaled by 0.62 / 0.3.
  */
 function barnacle(site: Site, size: number, salt: number): Branch {
-  const a = addV(site.at, mulV(site.out, -0.15 * size)), b = addV(site.at, mulV(site.out, 0.55 * size));
-  return cone("barnacle", a, b, 0.62 * size, 0.42 * size, 1, salt);
+  return branchOf(sprout({ kind: "barnacles", count: 1 }, site, (0.62 / 0.3) * size, salt)[0]!, KINDS.indexOf("barnacle"));
 }
 
 /** A broadleaf tree: a short trunk and three round crown blobs (the headland's, rounder). Trees grow up, not out. */
@@ -176,9 +175,9 @@ export const spiral: BackOption = {
       return barnacle({ at: addV(at, mulV(up0, 0.05)), out: up0 }, 0.3 + 0.12 * hash(k + 730), 740 + k);
     });
 
-    const paints: Record<Kind, (hit: { p: P3; id: P3 }) => P3> = {
-      // Barnacles: cream, pitted with small dark specks.
-      barnacle: ({ p: q }) => mix(ink(I.cream), ink(I.bark), cut(mul(mul(sin(mul(q.x, 11)), sin(add(mul(q.y, 11), 1))), sin(add(mul(q.z, 11), 2))), 0.42)),
+    const paints: Record<Kind, (hit: { p: P3; normal: P3; id: P3 }) => P3> = {
+      // The kit's growth (only its barnacles are used here).
+      ...growthPaints(I),
       trunk: () => ink(I.bark),
       crown: ({ p: q, id }) => {
         const swirl = add(sin(add(mul(q.x, 2.5), mul(sin(mul(q.y, 3)), 1.5))), sin(add(mul(q.z, 2.5), mul(sin(mul(q.x, 2.2)), 1.5))));
