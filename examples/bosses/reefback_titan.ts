@@ -13,19 +13,22 @@
 //   rounded cones riding the crab's frame (the `carry` option of draw.copies), plus the roofless tower as a strand;
 // - Claw Crush, the signature attack: a space-time `attack` on a disc ahead-right of the crab. Its lunge law poses the
 //   great claw's wrist target (wind up high and open, slam down onto the disc exactly at the arming time); its
-//   `telegraph` is the warning on the water. It loops on time: armed every `S.crushPeriod` seconds.
+//   `telegraph` is the warning on the water and clawed foam bursts where it lands. It arms every `S.crushPeriod`
+//   seconds (`every`), so its check measures the first arming.
 //
 // Crab coordinates: x forward, y up, z to its right; the body frame rides `S.ride` above the still water.
 
 import {
-  abs, add, attack, course, cos, cross, div, draw, dot, floor, framed, fract, gait, hit, horn, keys, length, lift, limb, lookAt, max, min, mix, mul,
-  place, points, rigid, rotateAbout, scene, sea, ship, sin, smoothstep, spacing, sqrt, step, strand, sub, surface, tabulate, telegraph, through, time,
-  unit, vec2, vec3, vec4, woodblock, type F, type Frame, type P3, type Style,
+  abs, add, animate, attack, course, cos, cross, div, draw, every, floor, framed, fract, gait, hit, horn, keys, landsInside, length, lift, limb,
+  lookAt, max, min, mix, mul, part, place, points, print, rigid, rotateAbout, scene, sea, sin, smoothstep, spacing, sqrt, step, strand, sub,
+  surface, tabulate, telegraph, through, time, unit, vec2, vec3, woodblock, type F, type Frame, type P3,
 } from "../../src/index.ts";
 import { rotate } from "../../src/map/chart.ts";
-import { hash3, luminance, noise2, type Branch } from "../../src/lib/index.ts";
-import { edgeOf, rgb } from "../../src/style/shared.ts";
-import { brig, PLAYER } from "../scenes/lib/fleet.ts";
+import { hash3, type Branch } from "../../src/lib/index.ts";
+import { edgeOf } from "../../src/style/shared.ts";
+import { scaleShip } from "./lib/scale_ship.ts";
+import { impactFoam } from "./lib/impact.ts";
+import { PRINT_WARNING } from "./lib/warning.ts";
 
 type V3 = readonly [number, number, number];
 
@@ -67,8 +70,8 @@ export const S = {
   /** The foam crash after the slam: how far the ring runs out (times the disc's radius), and for how long. */
   crashReach: 1.6, crashSeconds: 1.4,
 
-  // ---- the ship for scale (world xz, radians) ----
-  shipAt: [5, 15.5] as const, shipHeading: -1.15, shipLength: 4.6,
+  // ---- the ship for scale (lib/scale_ship.ts; world xz, radians) ----
+  shipAt: [5, 15.5] as const, shipHeading: -1.15,
 } as const;
 
 const I = S.ink;
@@ -76,25 +79,6 @@ const I = S.ink;
 /** A crisp ink edge: 1 where x is above `at`, about one pixel wide (from the screen-space derivative). A wide
  * smoothstep is a soft airbrushed fade, which the woodblock's flat inks never have. */
 const cut = (x: F, at: number | F): F => edgeOf(x, at, 1e-5);
-
-// ==== the style: the woodblock's key line, paper and sea, with this monster's inks ===================================
-
-/**
- * The woodblock's post passes, sea and sky, with bodies shaded in this monster's inks: every paint is already a flat
- * ink, lit side as painted, shadow side overprinted with indigo (two tones, a hard terminator).
- */
-function titanWoodblock(): Style {
-  const wb = woodblock();
-  return {
-    ...wb,
-    shade: (ctx) => {
-      const lit = edgeOf(dot(ctx.normal, ctx.sun), 0.0, 1e-5);
-      const shadow = mul(mix(ctx.base, rgb(I.indigo), S.shadowIndigo), S.shadowValue);
-      // Paint near black prints as the key block's black on both sides.
-      return mix(rgb(I.black), mix(shadow, ctx.base, lit), edgeOf(luminance(ctx.base), 0.1, 1e-5));
-    },
-  };
-}
 
 // ==== the walk: in place, the body swaying over feet that tread ======================================================
 
@@ -106,14 +90,26 @@ const walk = gait({ feet: feetHome, phase, course: course.line([0, 0, 0], 0), st
 const w = (2 * Math.PI) / S.period;
 const g = walk.body;
 
-// ---- Claw Crush: armed every crushPeriod seconds (looping on time), first at crushFirst ----
-// The arming time steps to the next cycle 3 s after each slam (the recovery is over by then).
-const crushArm = add(mul(floor(mul(add(sub(time, S.crushFirst), 3), 1 / S.crushPeriod)), S.crushPeriod), S.crushFirst);
-const crushDisc = hit.disc({ centre: S.crushCentre, radius: S.crushRadius });
+// ---- Claw Crush: the attack, defined once (here, since the body's lean reads its arming time) ----
+
+/** Size of a claw: palm length, palm half-width, arm segment lengths. */
+const clawDims = (size: number) => ({ len: S.clawPalm * size, fat: S.clawFat * size, arm: S.armLengths.map((l) => l * (0.55 + 0.45 * size)) as unknown as readonly [number, number] });
+const bigDims = clawDims(S.crusher);
+
+// The lunge law poses a two-point spine from the wrist (m = 0) back to the shoulder: its m = 0 end is the wrist's
+// target. During the wind-up it pulls back by `coil` and rises by `rise` (the claw lifts high), then lands `lead` short
+// of the disc's centre exactly at the arming time (so the palm, reaching on, covers the centre), and recovers.
+const crush = attack({
+  name: "crush", arm: every(S.crushPeriod, S.crushFirst), warn: S.crushWarn,
+  target: { kind: "disc", centre: vec2(...S.crushCentre), radius: lift<"f32">(S.crushRadius) },
+  part: "crusherPalm",
+  motion: { kind: "lunge", hit: hit.disc({ centre: S.crushCentre, radius: S.crushRadius }), reach: 1, lead: bigDims.len * 0.5, height: 0.7, coil: S.crushCoil, rise: S.crushRise, approach: 0.3, neck: 1 },
+  timing: { windup: 1.15, strike: 0.3, zeta: 0.55, hold: 0.45, recover: 0.5, travel: 50 },
+});
 
 // The body leans into the slam, on its own smooth envelope around the same arming time (longer and softer than the
 // attack's posture envelope, so the whole crab settles into the blow and back out of it).
-const lean0 = smoothstep(-1.5, -0.3, sub(time, crushArm)), lean1 = sub(1, smoothstep(0.4, 2.2, sub(time, crushArm)));
+const lean0 = smoothstep(-1.5, -0.3, sub(time, crush.arm)), lean1 = sub(1, smoothstep(0.4, 2.2, sub(time, crush.arm)));
 const lean = mul(lean0, lean1);
 const bob = add(mul(cos(mul(time, 2 * w)), S.bob), mul(lean, -0.25));
 const roll = add(mul(sin(mul(time, w)), S.roll), mul(lean, 0.06));
@@ -175,26 +171,12 @@ const legs = sides.flatMap((s, si) => S.legRoots.map((x, i) => {
   });
 }));
 
-// ==== Claw Crush: the attack, defined once ===========================================================================
+// ==== the claws: the crusher posed by Claw Crush ======================================================================
 
-/** Size of a claw: palm length, palm half-width, arm segment lengths. */
-const clawDims = (size: number) => ({ len: S.clawPalm * size, fat: S.clawFat * size, arm: S.armLengths.map((l) => l * (0.55 + 0.45 * size)) as unknown as readonly [number, number] });
-const bigDims = clawDims(S.crusher);
 const shoulder = (side: 1 | -1): V3 => [C.to - 1.1, -0.1, side * C.width * 0.55];
 const wristRest = (side: 1 | -1, size: number): V3 => [C.to + 1.0 * size, 0.4, side * (C.width * 0.55 + 0.6 * size)];
 
-// The lunge law poses a two-point spine from the wrist (m = 0) back to the shoulder: its m = 0 end is the wrist's
-// target. During the wind-up it pulls back by `coil` and rises by `rise` (the claw lifts high), then lands `lead` short
-// of the disc's centre exactly at the arming time (so the palm, reaching on, covers the centre), and recovers.
-const crush = attack({
-  name: "crush", arm: crushArm, warn: S.crushWarn,
-  target: { kind: "disc", centre: vec2(...S.crushCentre), radius: lift<"f32">(S.crushRadius) },
-  part: "crusherPalm",
-  motion: { kind: "lunge", hit: crushDisc, reach: 1, lead: bigDims.len * 0.5, height: 0.7, coil: S.crushCoil, rise: S.crushRise, approach: 0.3, neck: 1 },
-  timing: { windup: 1.15, strike: 0.3, zeta: 0.55, hold: 0.45, recover: 0.5, travel: 50 },
-});
 const env = crush.envelope(time);
-const crushWrist = crush.pose((m) => mix(local(wristRest(1, S.crusher)), local(shoulder(1)), m))(lift<"f32">(0));
 
 function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold: F) {
   const d = clawDims(size);
@@ -227,15 +209,20 @@ function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold
       paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
     }), rigid(hinged));
   };
-  return [armStrand, palm, finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)];
+  return { things: [armStrand, palm, finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)], palm };
 }
 // The crusher gapes wide in the wind-up and shuts on the hit; the cutter works slowly at rest.
 const crushGape = add(0.28, mul(mul(env.p, sub(1, smoothstep(0.55, 1, env.q))), 0.85));
 const cutterWrist = local(add(vec3(...wristRest(-1, S.cutter)), vec3(mul(sin(mul(time, 0.7)), 0.4), mul(sin(mul(time, 0.9)), 0.35), 0)));
+// The crusher's wrist is the m = 0 end of a spine from the wrist at rest back to the shoulder, posed by the crush; the
+// palm is the part that lands (its m = 1 end leads). In the attack the palm unfolds to drive straight on along its forearm.
+const crusher = animate((m) => mix(local(wristRest(1, S.crusher)), local(shoulder(1)), m), [crush], (spine) => {
+  const c = claw("crusher", 1, S.crusher, spine(lift<"f32">(0)), crushGape, sub(1, env.p));
+  return { things: c.things, parts: { crusherPalm: part("crusherPalm", c.palm, { tip: 1 }) } };
+});
 const claws = [
-  // In the attack the crusher's palm unfolds to drive straight on along its forearm.
-  ...claw("crusher", 1, S.crusher, crushWrist, crushGape, sub(1, env.p)),
-  ...claw("cutter", -1, S.cutter, cutterWrist, add(0.3, mul(max(sin(mul(time, 1.3)), 0), 0.35)), lift<"f32">(1)),
+  ...crusher.things,
+  ...claw("cutter", -1, S.cutter, cutterWrist, add(0.3, mul(max(sin(mul(time, 1.3)), 0), 0.35)), lift<"f32">(1)).things,
 ];
 
 // ==== the face: a grudging old giant ==================================================================================
@@ -251,8 +238,8 @@ const claws = [
 //   flare open on the black mouth; at the slam it screws the eye shut and clamps its mouth; then it stares, and
 //   settles back into the heavy-lidded chew.
 
-/** Seconds from this cycle's slam (crushArm), and the face's two attack envelopes, both 0 before and after a cycle. */
-const tA = sub(time, crushArm);
+/** Seconds from this cycle's slam (crush.arm), and the face's two attack envelopes, both 0 before and after a cycle. */
+const tA = sub(time, crush.arm);
 /** Roused: from the start of the wind-up, through the stare after the slam, settling back by 2.4 s. */
 const rouse = mul(smoothstep(-1.3, -0.95, tA), sub(1, smoothstep(0.9, 2.4, tA)));
 /** Braced: the eye screwed shut and the mouth clamped, at the slam. */
@@ -600,41 +587,23 @@ const water = sea({
   swell: [{ direction: [1, 0.3], length: 13, height: 0.2, speed: 0.9 }, { direction: [-0.3, 1], length: 6, height: 0.07, speed: 0.7, phase: 1.3 }],
   foam: 0.85,
 });
-// A small brig coming on toward the cameras with the wind behind it, so its square sails face them.
+// The scale ship (lib/scale_ship.ts) coming on toward the cameras with the wind behind it.
 const WIND: readonly [number, number] = [0.35, 1.0];
-const boat = ship(brig("brig", S.shipLength, PLAYER)).afloat(water, { at: S.shipAt, heading: S.shipHeading, wind: WIND });
-const warning = telegraph(crush, { style: { fill: I.brick, bone: I.cream, ink: I.black, flash: I.cream, spacing: 1.2, edge: 0.22, line: 0.09, fillTo: 0.88 } });
+const boat = scaleShip.afloat(water, { at: S.shipAt, heading: S.shipHeading, wind: WIND });
+const warning = telegraph(crush, { style: { ...PRINT_WARNING, spacing: 1.2, edge: 0.22, line: 0.09 } });
 
-/**
- * The crash: a ring of clawed cream foam running out from the disc's centre after the slam and breaking up as it
- * goes (fingers along the zero lines of a noise field, as the woodblock's contact foam), with an indigo line inside it.
- */
-const crashSince = sub(time, crushArm);
-const crashK = smoothstep(0, S.crashSeconds, crashSince);
+/** The crash: clawed cream foam bursting from the disc's centre at the slam and running out past its edge (lib/impact.ts). */
 const crashOuter = S.crushRadius * S.crashReach;
-const crash = draw.glazed("crash", surface((u: F, v: F) => {
-  const a = mul(v, 2 * Math.PI), r = mul(u, crashOuter + 0.5);
-  const x = add(S.crushCentre[0], mul(cos(a), r)), z = add(S.crushCentre[1], mul(sin(a), r));
-  return vec3(x, water.height(vec2(x, z)), z);
-}, { u: ["cap", "free"], v: "periodic" }), {
-  colour: (fr) => {
-    const d = vec2(sub(fr.world.x, S.crushCentre[0]), sub(fr.world.z, S.crushCentre[1]));
-    // The front runs out fast and slows (a square root of time), thinning as it goes.
-    const front = mul(mix(0.25, 1, sqrt(crashK)), crashOuter);
-    const band = sub(1, smoothstep(0.0, mix(1.1, 0.35, crashK), abs(sub(length(d), front))));
-    const fingers = abs(noise2(mul(vec2(fr.world.x, fr.world.z), 1.3)));
-    const foam = edgeOf(sub(band, mul(fingers, 1.6)), 0.15, 0.004);
-    const line = mul(edgeOf(sub(band, mul(fingers, 1.6)), -0.05, 0.004), sub(1, foam));
-    const live = mul(step(0, crashSince), sub(1, smoothstep(0.7, 1, crashK)));
-    return vec4(mix(rgb(I.indigo), rgb(I.cream), foam), mul(max(foam, mul(line, 0.8)), live));
-  },
-  grid: { u: spacing.even(12), v: spacing.even(48) }, phase: "on-water", sceneDepth: false,
+const crash = impactFoam("crash", water, {
+  area: hit.disc({ centre: S.crushCentre, radius: S.crushRadius }), pad: crashOuter - S.crushRadius + 1,
+  splashes: [{ at: S.crushCentre, since: sub(time, crush.arm) }],
+  reach: crashOuter, seconds: S.crashSeconds, foam: I.cream, line: I.black,
 });
 
 export default scene({
   sea: water,
   things: [carapace, atoll, reefList, tower, ...face, ...legs, ...claws, warning, crash, ...boat],
-  style: titanWoodblock(),
+  style: woodblock({ print: print.overprint({ ink: I.indigo, amount: S.shadowIndigo, value: S.shadowValue, black: 0.1 }) }),
   sun: [0.15, 0.8, 0.6],
   cameras: {
     game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 },
@@ -644,3 +613,6 @@ export default scene({
     top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
   },
 });
+
+export const strikes = crusher.strikes;
+export const checks = [landsInside(crusher.strikes.crush!)];
