@@ -119,10 +119,11 @@ export function faceKit(rig: Rig) {
     return mix(mix(base, vec3(...I.black), crease), vec3(...I.black), rim);
   };
 
-  /** A mouth plate (s = 1 right, -1 left) that closes like a door, working slowly; flared in the wind-up, clamped at the slam. */
-  function plate(s: 1 | -1) {
+  /** A mouth plate (s = 1 right, -1 left) that closes like a door, working slowly; flared in the wind-up, clamped at the slam.
+   * A face with its own score gives `drive` (0 clamped .. 1 flared) and the plate follows that instead. */
+  function plate(s: 1 | -1, drive?: F) {
     const chew = add(0.06, mul(max(sin(add(mul(time, 2.1), s * 1.3)), 0), 0.2));
-    const open = tabF(`mouth_${s < 0 ? "L" : "R"}`, mul(mix(chew, 1, rouse), sub(1, brace)));
+    const open = tabF(`mouth_${s < 0 ? "L" : "R"}`, drive ?? mul(mix(chew, 1, rouse), sub(1, brace)));
     const hinge = local([4.75, -0.3, s * 0.48]);
     const tipNow = local(add(vec3(5.3, -1.15, s * 0.22), vec3(mul(open, 0.25), mul(open, 0.2), mul(open, s * 0.85))));
     return strand({
@@ -222,6 +223,6 @@ export const base: FaceOption = {
       lidPaint: k.lidInk,
     };
 
-    return [brow, ...k.eyeParts(goodEye), ...k.eyeParts(deadEye), k.plate(1), k.plate(-1), k.gullet(), k.beard(carapace, BEARD)];
+    return { things: [brow, ...k.eyeParts(goodEye), ...k.eyeParts(deadEye), k.plate(1), k.plate(-1), k.gullet(), k.beard(carapace, BEARD)], checks: [] };
   },
 };

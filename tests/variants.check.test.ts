@@ -10,6 +10,9 @@ test("every named variant of the Reefback Titan passes its checks", () => {
   const rows = /variant\s+checks\n([\s\S]*?)\n\n(\d+) of (\d+) variants pass/.exec(out);
   expect(rows, `no summary in:\n${out}\n${r.stderr.toString()}`).not.toBeNull();
   for (const name of ["base", "stilt", "fiddler", "fiddlerBaseDisc", "mask"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+4/4 pass$`, "m"));
+  // The islander's face asks three more of itself (titan/face/dandy.ts): each eye's size from the game camera, and that
+  // its expressions show and differ on screen.
+  expect(rows![1]).toMatch(/^islander\s+7\/7 pass$/m);
   expect(rows![2]).toBe(rows![3]);
   expect(r.exitCode).toBe(0);
 }, 600_000);
