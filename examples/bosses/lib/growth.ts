@@ -93,7 +93,7 @@ function mussels(site: Site, size: number, seed: number, count: number): Sprig[]
   const { side, rise } = across(site);
   return Array.from({ length: count }, (_, j) => {
     // A fan about the root: each shell leans further to its side, the outer ones lower.
-    const f = count === 1 ? 0 : (j / (count - 1)) * 2 - 1, long = size * (0.5 + 0.18 * chance(seed + j)) * (1 - 0.25 * Math.abs(f));
+    const f = count === 1 ? 0 : (j / (count - 1)) * 2 - 1, long = size * (0.36 + 0.12 * chance(seed + j)) * (1 - 0.25 * Math.abs(f));
     const way = unit(plus(plus(plus(site.out, UP, 0.5), side, 1.1 * f), rise, 0.25 * (chance(seed * 3 + j) - 0.3)));
     const root = plus(plus(site.at, side, 0.16 * size * f), site.out, -0.04 * size);
     return { kind: "mussel", a: root, b: plus(root, way, long), ra: 0.07 * size, rb: 0.3 * long, lanes: [chance(seed * 13 + j), 0] as const };
@@ -127,11 +127,12 @@ function fan(site: Site, size: number, seed: number): Sprig[] {
 }
 
 function kelp(site: Site, size: number, seed: number, strands: number): Sprig[] {
-  const { side } = across(site), out: V3 = [site.out[0], 0, site.out[2]];
+  const { side, rise } = across(site);
   return Array.from({ length: strands }, (_, j) => {
     const f = strands === 1 ? 0 : (j / (strands - 1)) * 2 - 1, long = size * (0.9 + 0.5 * chance(seed + j)), salt = chance(seed * 3 + j);
-    // A ribbon in three lengths: it falls, swings out to its side and back.
-    const knots = [0, 1, 2, 3].map((k): V3 => plus(plus(plus(site.at, side, size * (0.28 * f + 0.16 * Math.sin(1.9 * k + 6 * salt) * (k > 0 ? 1 : 0))), UP, -(k / 3) * long), out, 0.1 * size * k));
+    // A ribbon in three lengths, lying down the surface from the site (on a steep face: hanging), swinging to its side
+    // and back, a little proud of the surface.
+    const knots = [0, 1, 2, 3].map((k): V3 => plus(plus(plus(site.at, side, size * (0.28 * f + 0.16 * Math.sin(1.9 * k + 6 * salt) * (k > 0 ? 1 : 0))), rise, -(k / 3) * long), site.out, 0.04 * size * (k + 1)));
     return [0, 1, 2].map((k): Sprig => ({ kind: "kelp", a: knots[k]!, b: knots[k + 1]!, ra: size * (0.105 - 0.02 * k), rb: size * (0.085 - 0.02 * k), lanes: [salt, 0] as const }));
   }).flat();
 }

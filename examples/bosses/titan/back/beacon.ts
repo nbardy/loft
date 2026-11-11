@@ -11,7 +11,7 @@
 // - `shutters`: 0 shut (two boards hanging over the lantern's glass on either side), 1 flung open like wings.
 
 import {
-  abs, add, cos, cross, fract, lift, max, min, mix, mul, normalize, place, polyline, rigid, saturate, sin, smoothstep, strand, sub, swing, alive, time, vec3,
+  abs, add, cos, cross, fract, lift, max, min, mix, mul, normalize, place, polyline, pow, rigid, saturate, sin, smoothstep, strand, sub, swing, alive, time, vec3,
   type Drawable, type F, type In, type P3,
 } from "../../../../src/index.ts";
 import { cut, TAU, type V3 } from "../ink.ts";
@@ -88,11 +88,11 @@ export function beaconOn({ n, shell, crushAfter }: Pick<Rig, "n" | "shell" | "cr
   const LANTERN = 1.5 * k, GLASS = 0.5, glassR = 0.5 * k;
   const profile = (m: F): F => {
     const roof = saturate(sub(mul(m, 1 / (1 - GLASS)), GLASS / (1 - GLASS)));
-    // Glass: a drum. Roof: out over the eaves, then an ogee in to the finial's stalk and its ball.
-    const ogee = add(mul(sub(1, roof), sub(1, roof)), mul(0.12, sub(1, roof)));
-    const ball = mul(0.16, max(sub(1, mul(abs(sub(roof, 0.9)), 9)), 0));
+    // Glass: a drum. Roof: a dome out over the eaves, drawn up to a stalk with a ball on it.
+    const dome = pow(max(cos(mul(min(mul(roof, 1.3), 1), Math.PI / 2)), 1e-5), 0.7);
+    const ball = mul(0.2, max(sub(1, mul(abs(sub(roof, 0.88)), 9)), 0));
     // (A smoothstep, not `cut`: an ink edge is a screen derivative and exists only in paint.)
-    return mix(glassR, mul(glassR * 1.22, max(mul(ogee, 0.9), add(0.07, ball))), smoothstep(GLASS - 0.012, GLASS + 0.012, m));
+    return mix(glassR, mul(glassR * 1.25, max(dome, add(0.06, ball))), smoothstep(GLASS - 0.012, GLASS + 0.012, m));
   };
   const lanternFoot = at(0.985);
   const lantern = place(strand({
@@ -100,7 +100,9 @@ export function beaconOn({ n, shell, crushAfter }: Pick<Rig, "n" | "shell" | "cr
     paint: (m, v) => {
       const glass = mix(ink(I.cream), ink(I.black), sub(1, cut(abs(sub(fract(mul(v, 8)), 0.5)), 0.09)));
       const sill = sub(1, cut(m, 0.07));
-      return mix(mix(glass, ink(I.black), max(sill, cut(m, GLASS - 0.03))), ink(I.cream), mul(cut(m, GLASS + 0.03), sub(1, cut(m, GLASS + 0.055))));
+      // The roof: black, with pale ribs from the finial to the eaves and a pale ball (from above a black roof is a disc).
+      const ribbed = mul(sub(1, cut(abs(sub(fract(mul(v, 8)), 0.5)), 0.06)), mul(cut(m, GLASS + 0.02), sub(1, cut(m, GLASS + 0.36))));
+      return mix(mix(glass, ink(I.black), max(sill, cut(m, GLASS - 0.03))), ink(I.stone), max(ribbed, cut(m, GLASS + 0.4)));
     },
     detail: { along: 24, around: 24 },
   }), rigid(shell));

@@ -87,7 +87,7 @@ export const S = {
      * stack [distance from the island's centre, bearing, height, girth]. */
     shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
     /** Two groves, each [G, bearing, trees]: one left of the crown, one forward-right; open turf between. */
-    groves: [[0.2, -80, 4], [0.33, 55, 3]] as const,
+    groves: [[0.2, -80, 5], [0.33, 55, 4]] as const,
     /**
      * The light on the point (back/beacon.ts): how far from the island's centre its foot stands, the tower's height, its
      * girth at foot and top, the share of the tower that is crust, the lantern room's size, its gulls. Then its structure,

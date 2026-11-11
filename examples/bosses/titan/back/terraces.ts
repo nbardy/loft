@@ -107,14 +107,15 @@ export const terraces: BackOption = {
     const ink = (k: V3): P3 => vec3(...k);
 
     // ---- the hull and the screw ----
-    /** The hull's radius (a share of the outline) and height at G: a mound, steep at the rim like the carapace's flank. */
+    /** The hull's radius (a share of the outline) and height at G: a mound, steep at the rim like the carapace's flank
+     * (the radius is a quarter turn's sine; the height falls as G^1.6, so the cap is a low cone and its risers stand 0.6 to 1.5). */
     const quarter = (G: F): F => mul(clamp(G, 0, 1), Math.PI / 2);
     const hullR = (G: F): F => pow(max(sin(quarter(G)), 1e-6), 0.8);
     /** The rim's height at a bearing: the carapace's rim line beside the carapace; round the tail, where the island
      * stands over open water, it comes down toward the water (the plates run down to the sea, as the pictures have them;
      * a rim at the carapace's height all round left a cream plinth under the island). */
     const rimLow = water + T.rim, rimAt = (a: F): F => mix(rimLow, rimY, smoothstep(-0.55, 0.2, cos(a)));
-    const hullY = (G: F, a: F): F => { const rim = rimAt(a); return add(rim, mul(sub(crownY, rim), pow(max(cos(quarter(G)), 1e-6), 1.25))); };
+    const hullY = (G: F, a: F): F => { const rim = rimAt(a); return add(rim, mul(sub(crownY, rim), sub(1, pow(max(clamp(G, 0, 1), 1e-6), 1.6)))); };
     /** Thread groups between the crown and G, and its inverse. */
     const TURNS = T.screw.turns, LEAN = T.screw.lean;
     const psi = (G: F): F => mul(TURNS, sub(1, pow(max(sub(1, clamp(G, 0, 1)), 1e-6), LEAN)));
@@ -194,14 +195,15 @@ export const terraces: BackOption = {
       // only while it is a blade.
       const band = max(third.mul(cut(f, L3)), mul(cut(x, 1), mul(sub(1, third), cut(G, T.terraced[0] + 0.07))));
       // Ribs: lines of the thread. On the plates dark red, close; on the turf every fourth, broken into tufts.
-      const rib = sub(1, cut(abs(sub(fract(mul(f, RIBS)), 0.5)), 0.4));
+      // (`1 - cut(|x - 0.5|, w)` is 1 inside the half-width w: w is half the line's share of its period.)
+      const rib = sub(1, cut(abs(sub(fract(mul(f, RIBS)), 0.5)), 0.085));
       const plate = mix(mix(mix(ink(I.brick), ink(I.brickDark), mul(rib, 0.85)), ink(I.cream), mul(cut(x, 0.88), sub(1, cut(x, 0.965)))), ink(I.black), cut(x, 0.965));
-      const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(f, RIBS / 5.5), 0.3)), 0.5)), 0.46)), cut(sin(add(mul(G, 52), mul(f, 31))), 0.45));
+      const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(f, RIBS / 5.5), 0.3)), 0.5)), 0.035)), cut(sin(add(mul(G, 52), mul(f, 31))), 0.2));
       const turf = mix(ink(I.moss), ink(I.mossDeep), tuft);
       // Red reaches highest along a plate's lip and ends in a point there; turf hangs over the rest in tongues on the ribs.
       const red = cut(G, add(add(T.tip, mul(0.21, pow(max(sub(1, x), 1e-4), 1.3))), mul(cos(mul(f, RIBS * TAU)), 0.014)));
       // Stone: pale, with strokes across the band (down a riser).
-      const stroke = sub(1, cut(abs(sub(fract(add(mul(G, 19), mul(sin(mul(f, 37)), 0.12))), 0.5)), 0.44));
+      const stroke = sub(1, cut(abs(sub(fract(add(mul(G, 19), mul(sin(mul(f, 37)), 0.12))), 0.5)), 0.07));
       const stone = mix(ink(I.stone), ink(I.bark), mul(stroke, 0.8));
       // Key lines where the form creases: at the broad plate's lip and its band's foot everywhere, at a blade's while it is a blade.
       const blade = cut(G, T.terraced[0] + 0.07);
@@ -216,7 +218,7 @@ export const terraces: BackOption = {
       // Beach: dark under the plates' lip, then sand, speckled.
       const sandInk = mix(ink(I.bark), mix(ink(I.cream), ink(I.stone), cut(dots, 0.8)), cut(sigma, SIGMA[1]));
       // Rock (the shelf, the point): stone with level strata, cracked on top, dark and wet at the water.
-      const strata = sub(1, cut(abs(sub(fract(add(mul(sigma, 26), mul(sin(mul(v, 40 * TAU)), 0.3))), 0.5)), 0.4));
+      const strata = sub(1, cut(abs(sub(fract(add(mul(sigma, 26), mul(sin(mul(v, 40 * TAU)), 0.3))), 0.5)), 0.09));
       const rock = mix(mix(ink(I.stone), ink(I.bark), mul(strata, 0.85)), ink(I.bark), cut(sigma, SIGMA[3] - 0.035));
       // The point's top is paler, crusted: cream with stone blots (the light's crust runs down into it).
       const crust = mix(mix(ink(I.cream), ink(I.stone), cut(dots, 0.35)), rock, cut(sigma, SIGMA[2] - 0.02));
@@ -302,7 +304,7 @@ export const terraces: BackOption = {
       // Round the grove's middle, not in a row: each tree its own step of bearing and height.
       const turn = (k / count) * TAU + g, far = k === 0 ? 0 : 0.085;
       const foot = facing(Math.max(G + far * Math.cos(turn), 0.04), rad(bearing) + (far * 5.5 * Math.sin(turn)) / Math.max(G * 4, 0.6)).at;
-      return broadleaf(cone, foot, 1.55 + 0.5 * hash(g * 7 + k), 40 + g * 10 + k);
+      return broadleaf(cone, foot, 1.15 + 0.4 * hash(g * 7 + k), 40 + g * 10 + k);
     }).flat());
 
     // ---- the stacks on the shelf: three tapered forms, shrinking outward; boulders on the sand ----
