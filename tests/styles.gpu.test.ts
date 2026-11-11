@@ -42,6 +42,8 @@ test.each(STYLE_NAMES.map((s) => [s]))("every example compiles, builds its pipel
 // the body-coordinate change to styles just before it left this frame byte-identical. Regenerated again 2026-11-11 for
 // level of detail: the sea became a projected grid and bodies at 200 x 125 draw at coarse levels (22210 of 100000
 // bytes changed, almost all on the sea's interpolated surface; tests/detail.gpu.test.ts bounds the change at full size).
+// Regenerated again 2026-11-11 when the pose moved to the GPU (docs/gpu_native.md): the tables are f32 from compute
+// stages instead of f64 rounded on the CPU; 18 of 25000 pixels changed (23 bytes, at most 44 of 255, silhouette edges).
 test("toon renders exactly as before the style interface grew", async () => {
   const ref = gunzipSync(readFileSync(TOON_REFERENCE.path));
   const a = compile(serpent);

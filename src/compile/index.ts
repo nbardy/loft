@@ -11,7 +11,7 @@ import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, t
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
 import { measureRest } from "../draw/grid_detail.ts";
-import { poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
+import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
 export type CpuFn = (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
@@ -23,7 +23,7 @@ export type Compiled = {
   frame(state: FrameState): TableFrame;
   /** Expressions on the CPU over a frame. Their leaves must already be in the artefact (anything drawn reads them). */
   cpu(roots: readonly Expr[]): CpuFn;
-  /** CPU milliseconds of one pose per table, each without the tables it read (for `loft profile`). */
+  /** CPU milliseconds of one frame per `cpu` table, each without the tables it read (for `loft profile`). */
   poseProfile(state: FrameState): ReadonlyMap<string, number>;
   /** A per-frame table of the artefact, by name (for raw-WGSL tables, which no expression names). */
   table(name: string): TableSource;
@@ -34,11 +34,11 @@ export function compile(scene: Scene): Artefact {
 }
 
 export function compileScene(scene: Scene): Compiled {
-  const tables = new Tables();
-  // The slots and the table registry need each other: a fetched table is declared on first sight, and preparing it
-  // compiles CPU expressions that register their own leaves.
+  // The slots and the table registry need each other: a fetched table is declared on first sight, and classifying it
+  // registers the leaves of its program (or compiles the CPU expressions of a hand-written fill).
   const slots: Slots = new Slots((t) => tables.declare(t, prep));
   const rows: RowSource = { kind: "table", slot: (r) => slots.row(r) };
+  const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars) });
   const cpu = (roots: readonly Expr[]): CpuFn => {
     slots.register(roots);
     const run = compileJs(roots, rows);
@@ -127,6 +127,9 @@ export function compileScene(scene: Scene): Compiled {
     shaders,
     draws,
     ...(post.length > 0 ? { post } : {}),
+    stages: layout.stages,
+    tables: layout.info,
+    cpuPose: cpuPoseFunction(layout, envOf),
     pose: poseFunction(layout, envOf),
     cameras: scene.cameras,
     stats: { maxTriangles: triangles, draws: draws.length, curveRows: leaves.rows, stations: layout.stations },
@@ -176,4 +179,19 @@ function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[
       case "projected": return { ...spec, slot: slotFor(spec, 2, d.label) };
     }
   };
+}
+
+/**
+ * The CPU reading of tables outside any scene (tests and tools): every table they read is declared and filled from its
+ * program at time 0 with every input and param at its default, curve rows as authored.
+ */
+export function readTablesAlone(roots: readonly TableSource[]): (t: TableSource) => Float32Array {
+  const slots: Slots = new Slots((t) => tables.declare(t, prep));
+  const prep: TablePrep = { compile: (r) => { slots.register(r); const run = compileJs(r); return (frame, vars = {}) => run({ ...frame.env, vars }); } };
+  const tables = new Tables({ register: (r) => slots.register(r), cpu: (r) => compileJs(r), wgsl: (v) => slots.wgsl(v) });
+  for (const t of roots) tables.declare(t, prep);
+  const layout = tables.layout();
+  const state: FrameState = { time: 0, inputs: new Float32Array(0), params: new Float32Array(0), curves: new Float32Array(0) };
+  const { frame } = poseFrame(layout, () => ({ vars: {}, inputs: {}, params: {} }), state);
+  return (t) => frame.table(t);
 }

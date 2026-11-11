@@ -17,7 +17,7 @@
 //   construction layer     station markers, shown only when View.construction is set
 //   cameras                "three" (perspective) and "side" (orthographic)
 
-import type { Artefact, Draw, FrameState } from "../artefact.ts";
+import { handPose, type Artefact, type Draw, type FrameState } from "../artefact.ts";
 import { CURVE_N } from "../expr.ts";
 
 const STATIONS = 24;
@@ -306,7 +306,7 @@ export const fixture: Artefact = {
   shaders: { tube, ground, water, fin, marks, ink, paper },
   draws,
   post: [{ label: "ink", shader: "ink" }, { label: "paper", shader: "paper" }],
-  pose,
+  ...handPose([{ name: "stations", binding: 0, vec4s: STATIONS * 3 }], pose, "a hand-written fixture: its stations are JavaScript"),
   cameras: {
     three: { kind: "perspective", eye: [-7, 5, -9], target: [0, 1, 0], fovY: 0.7 },
     side: { kind: "orthographic", eye: [0, 1.5, 12], target: [0, 1, 0], height: 5 },

@@ -19,7 +19,7 @@
 //     the blob the eye sees it), and the light reaching its centre from each flash through the medium.
 // The per-pixel shader adds each blob's own self-shadow at the point the ray sees, in closed form.
 
-import { div, dot, exp, lift, max, mul, sub, add, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
+import { div, dot, exp, lift, listOf, max, mul, sub, add, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
 import type { V3 } from "../compile/context.ts";
 import type { F, P3 } from "../map/types.ts";
 import { FAR, GAUSS_WGSL, gaussDepth, gaussTail } from "./gauss.ts";
@@ -178,47 +178,38 @@ function makeTables(m: Medium, sun: V3): MediumTables {
   const flashRoots = m.flashes.map((f) => vec4(f.at, f.power));
   const blobs: TableSource = {
     name: `${m.name}_blobs`, lanes: BLOB_LANES, entries: N + 1, role: "data",
-    prepare: (p) => {
+    program: { kind: "cpu", why: "sorts the blobs along a Morton curve and runs an O(N^2) light pass between them (a scan could; not ported in phase 1)", prepare: (p) => {
       const run = p.compile([...blobRoots, ...flashRoots]);
       return (frame, out) => {
         const v = run(frame) as number[][];
         const fl = m.flashes.map((f, j) => ({ at: v[3 * N + j].slice(0, 3), power: v[3 * N + j][3], colour: f.colour, reach: f.reach }));
         lightPass(sortAndCluster(v, N), fl, sun, out);
       };
-    },
+    } },
   };
   // The spheres are recomputed from the (sorted) blob table, which this fill reads: the same sort, no shared state.
   const clusters: TableSource = {
     name: `${m.name}_clusters`, lanes: 1, entries: NC, role: "data",
-    prepare: () => (frame, out) => {
+    program: { kind: "cpu", why: "bounding spheres of the sorted blobs, which are filled on the CPU", prepare: () => (frame, out) => {
       const b = frame.table(blobs);
       const sph = spheres(N, (j, a) => b[j * 20 + a], (j, a) => b[j * 20 + 4 + a]);
       out.set(sph);
-    },
+    } },
   };
   const layers: Optional = m.layers.length === 0 ? { kind: "none" } : (() => {
-    const roots = m.layers.flatMap((l) => [vec4(0, l.height, 0, l.density), vec4(l.colour, l.inv)]);
     const table: TableSource = {
       name: `${m.name}_layers`, lanes: 2, entries: m.layers.length, role: "data",
-      prepare: (p) => { const run = p.compile(roots); return (frame, out) => run(frame).forEach((x, i) => out.set(x as number[], i * 4)); },
+      program: listOf(m.layers.map((l) => [vec4(0, l.height, 0, l.density), vec4(l.colour, l.inv)])),
     };
     return { kind: "some", table, count: m.layers.length };
   })();
   const banks: Optional = m.banks.length === 0 ? { kind: "none" } : (() => {
-    const roots = m.banks.flatMap((b) => [vec4(0, b.layer.height, 0, b.layer.density), vec4(b.layer.colour, b.layer.inv)]);
     const table: TableSource = {
       name: `${m.name}_banks`, lanes: 3, entries: m.banks.length, role: "data",
-      prepare: (p) => {
-        const run = p.compile(roots);
-        return (frame, out) => {
-          const v = run(frame) as number[][];
-          m.banks.forEach((b, i) => {
-            out.set(v[2 * i], i * 12);
-            out.set(v[2 * i + 1], i * 12 + 4);
-            out.set([b.normal[0], b.normal[1], b.normal[0] * b.through[0] + b.normal[1] * b.through[1], 1 / b.softness], i * 12 + 8);
-          });
-        };
-      },
+      program: listOf(m.banks.map((b) => [
+        vec4(0, b.layer.height, 0, b.layer.density), vec4(b.layer.colour, b.layer.inv),
+        vec4(b.normal[0], b.normal[1], b.normal[0] * b.through[0] + b.normal[1] * b.through[1], 1 / b.softness),
+      ])),
     };
     return { kind: "some", table, count: m.banks.length };
   })();

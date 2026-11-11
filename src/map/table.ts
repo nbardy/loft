@@ -1,8 +1,8 @@
 // A table is a function too (DESIGN.md 7.3): `tabulate` samples a function of one variable into a table and returns
 // the function that interpolates the samples. Where the table is filled is the schedule: once, when the artefact is
-// compiled (`"static"`), or every frame on the CPU (`"frame"`). Either way the shaders read it with `fetch`.
+// compiled (`"static"`), or every frame by a pose stage (`"frame"`, a map). Either way the shaders read it with `fetch`.
 
-import { clamp, compileJs, f, fetch, floor, min, mix, mul, sub, vec4, type Expr, type In, type NumTy, type TableSource } from "../expr.ts";
+import { clamp, compileJs, div, f, fetch, floor, mapOf, min, mix, mul, sub, vec4, type Expr, type In, type NumTy, type TableSource } from "../expr.ts";
 import type { F } from "./types.ts";
 
 export type Schedule = "static" | "frame";
@@ -38,22 +38,17 @@ export function tabulate<T extends NumTy>(name: string, fn: (x: F) => Expr<T>, n
   const samples = Array.from({ length: n }, (_, k) => fn(f(k / (n - 1))));
   const ty = samples[0].ty as T;
   const roots = samples.map(pad);
-  const table: TableSource = {
-    name, lanes: 1, entries: n, role: ROLE[when],
-    prepare: (p) => {
-      switch (when) {
-        case "static": {
-          const data = new Float32Array(n * 4);
-          compileJs(roots)({ vars: {}, inputs: {}, params: {} }).forEach((v, k) => data.set(v as number[], k * 4));
-          return (_frame, out) => out.set(data);
-        }
-        case "frame": {
-          const run = p.compile(roots);
-          return (frame, out) => run(frame).forEach((v, k) => out.set(v as number[], k * 4));
-        }
+  const table = ((): TableSource => {
+    switch (when) {
+      case "static": {
+        const data = new Float32Array(n * 4);
+        compileJs(roots)({ vars: {}, inputs: {}, params: {} }).forEach((v, k) => data.set(v as number[], k * 4));
+        return { name, lanes: 1, entries: n, role: ROLE[when], prepare: () => (_frame, out) => out.set(data) };
       }
-    },
-  };
+      // A map: sample k is the function at k / (n - 1), filled by a pose stage.
+      case "frame": return { name, lanes: 1, entries: n, role: ROLE[when], program: mapOf(n, (k) => [pad(fn(div(k, n - 1)))]) };
+    }
+  })();
   return (x) => {
     const s = mul(clamp(x, 0, 1), n - 1);
     const k = min(floor(s), n - 2);

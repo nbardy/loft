@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import serpent from "../examples/serpent.ts";
 import { CELL_PIXELS, DETAIL_SLOTS, type Artefact, type Camera, type Detail } from "../src/artefact.ts";
 import { compile } from "../src/index.ts";
-import { planFrame, type Memory } from "../src/host/detail.ts";
+import { boundsFrom, planFrame, type Memory } from "../src/host/detail.ts";
 import { viewState } from "../src/host/host.ts";
 
 const a: Artefact = compile(serpent);
@@ -21,7 +21,7 @@ function choose(distance: number, memory: Memory) {
   const view = { camera: cameraAt(distance), width: W, height: H, time: 1 };
   const tables = a.pose(viewState(a, view));
   const out = new Float32Array(DETAIL_SLOTS * 4);
-  const plan = planFrame(a, view, tables, memory, out);
+  const plan = planFrame(a, view, boundsFrom(a, tables), memory, out);
   return { tables, out, plan, levels: new Map([...memory].map(([slot, l]) => [slot, [...l]])) };
 }
 

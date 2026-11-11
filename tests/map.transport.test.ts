@@ -1,9 +1,10 @@
 // Frames transported along a spine (src/map/transport.ts) and the sweep's reading of them (`stationSample`, the
 // expressions both backends evaluate), on spines with known answers.
 import { expect, test } from "bun:test";
-import { compileJs, variable, type TableSource } from "../src/expr.ts";
+import { compileJs, f, lift, listOf, variable, vec4, type TableSource } from "../src/expr.ts";
+import { readTablesAlone } from "../src/compile/index.ts";
 import { stationSample } from "../src/map/sweep.ts";
-import { poseStrand, qrot, quatFromColumns, STATION_VEC4S, v3, type V3 } from "../src/map/transport.ts";
+import { qrot, quatFromColumns, SAMPLE_VEC4S, STATION_VEC4S, stationScan, v3, type V3 } from "../src/map/transport.ts";
 
 /** The interpolated station of a posed table at m, through the same expressions the vertex stage runs. */
 function stationAt(table: Float32Array, count: number, m: number): { p: V3; der: V3 } {
@@ -13,15 +14,21 @@ function stationAt(table: Float32Array, count: number, m: number): { p: V3; der:
   return { p, der };
 }
 
-type Spec = Parameters<typeof poseStrand>[0];
+type Spec = { readonly local?: readonly V3[]; readonly rest?: readonly V3[]; readonly level?: number };
 const N = 64;
-function posed(pos: V3[], extra: Partial<Spec> = {}): Float32Array {
-  const out = new Float32Array(pos.length * STATION_VEC4S * 4);
-  poseStrand({
-    pos, local: pos, rest: pos, restStart: 0, twist: pos.map(() => 0), halfWidth: pos.map(() => 0.5), aspect: pos.map(() => 1), up: [0, 1, 0], level: 0, leastStretch: 0.05,
-    ...extra,
-  }, out, 0);
-  return out;
+/** The station table's program (the scan the pose stages run) read on the CPU, over constant samples. */
+function posed(pos: V3[], extra: Spec = {}): Float32Array {
+  const local = extra.local ?? pos, rest = extra.rest ?? pos;
+  const samples: TableSource = {
+    name: "samples", lanes: SAMPLE_VEC4S, entries: pos.length, role: "data",
+    program: listOf(pos.map((p, k) => [vec4(...p, 0), vec4(...local[k]!, 0.5), vec4(...rest[k]!, 1)])),
+  };
+  const up = lift<"vec3">([0, 1, 0]);
+  const stations: TableSource = {
+    name: "stations", lanes: STATION_VEC4S, entries: pos.length, role: "stations",
+    program: stationScan({ samples, first: 0, steps: pos.length, up, level: { up, rate: extra.level ?? 0 }, restStart: f(0), leastStretch: 0.05 }),
+  };
+  return readTablesAlone([stations])(stations);
 }
 const frameAt = (t: Float32Array, k: number) => {
   const q = Array.from(t.subarray(k * 12 + 4, k * 12 + 8));

@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { DETAIL_SLOTS, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Camera } from "../src/artefact.ts";
 import { compileScene, scene, sea, toon, variable, vec2 } from "../src/index.ts";
-import { planFrame } from "../src/host/detail.ts";
+import { boundsFrom, planFrame } from "../src/host/detail.ts";
 import { frameUniform, viewState } from "../src/host/host.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 
@@ -19,7 +19,7 @@ async function seaVertices(device: GPUDevice, camera: Camera, time: number): Pro
   const view = { camera, width: 1280, height: 800, time };
   const tables = a.pose(viewState(a, view));
   const detail = new Float32Array(DETAIL_SLOTS * 4);
-  const plan = planFrame(a, view, tables, new Map(), detail);
+  const plan = planFrame(a, view, boundsFrom(a, tables), new Map(), detail);
   const runs = plan[a.draws.indexOf(seaDraw)]!;
   const vertices = runs[0]!.vertices;
   const slot = seaDraw.detail.kind === "projected" ? seaDraw.detail.slot : -1;

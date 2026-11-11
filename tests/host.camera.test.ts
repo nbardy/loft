@@ -2,7 +2,7 @@
 // (column-major), WebGPU's [0, 1] depth range, the y flip to a top-row-first image, and the padded readback.
 // Expected pixels are derived by hand from the camera definitions, not from camera.ts.
 import { beforeAll, expect, test } from "bun:test";
-import type { Artefact, Camera } from "../src/artefact.ts";
+import { handPose, type Artefact, type Camera } from "../src/artefact.ts";
 import { cameraMatrices, orbit, project } from "../src/host/camera.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost, type GpuHost } from "../src/host/index.ts";
@@ -64,7 +64,7 @@ function markers(points: readonly (readonly [number, number, number])[]): Artefa
         }`,
     },
     draws: [{ label: "marks", shader: "mark", vertices: 6, instances: points.length, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" } }],
-    pose: () => ({ points: table }),
+    ...handPose([{ name: "points", binding: 0, vec4s: points.length }], () => ({ points: table }), "test markers"),
     cameras: {},
     stats: { maxTriangles: 2 * points.length, draws: 1, curveRows: 0, stations: 0 },
   };

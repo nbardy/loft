@@ -1,14 +1,17 @@
 // The wake: foam on the water where a body crossed the surface in the recent past (DESIGN.md 8), from the body taken
 // at earlier times (`body.skeletonAt(time - k dt)`), never from state kept between frames.
 //
-// The pose pass evaluates the skeleton of each past slice and the sea's height at that slice's time. Where a joint's
+// The pose stages evaluate the skeleton of each past slice and the sea's height at that slice's time. Where a joint's
 // sphere cuts the water, its waterline is a disc of radius sqrt(r^2 - h^2); consecutive joints make a tapered capsule,
 // widened as it ages. Each capsule is drawn as its own small patch of the sea surface (as shadows are), so the wake
 // costs the area it covers. A capsule draws only where the body had not been more recently (the younger slice's
 // capsules do not cover the pixel) and, along a chain, only where it is the deepest of its neighbours, so each pixel is
 // foamed by the youngest slice that left it: a trail that fades with age, with no foam stacked on foam.
 
-import { sub, time, variable, vec2, vec4, type TableSource } from "../expr.ts";
+import {
+  add, and, clamp, div, fetch, floor, gt, lift, listOf, lt, mapOf, max, mul, or, select, sqrt, sub, time, vec2, vec4, type Expr, type MapRun, type TableSource,
+} from "../expr.ts";
+import type { F } from "../map/types.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Body } from "../map/sweep.ts";
 import type { Skeleton } from "../map/types.ts";
@@ -44,24 +47,7 @@ class Wake implements Drawable {
     const kept = Array.from({ length: joints }, (_, j) => Math.round((j * (n - 1)) / (joints - 1)));
     const live: Skeleton = { joints, joint: (j) => this.body.skeleton.joint(kept[j]!) };
     const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? live : this.body.skeletonAt(sub(time, k * dt), kept)));
-    const X = variable("x", "f32"), Z = variable("z", "f32"), T = variable("t", "f32");
-    const source: TableSource = {
-      name: `wake_${this.body.name}`, lanes: 1, entries: ENTRY * (s.samples + 1) * segs, role: "data",
-      prepare: (p) => {
-        const chains = slices.map((sk) => p.compile(Array.from({ length: joints }, (_, k) => { const j = sk.joint(k); return vec4(j.p, j.r); })));
-        const height = p.compile([ctx.sea.height(vec2(X, Z), T)]);
-        return (frame, out) => {
-          const now = frame.env.inputs.time as number;
-          const vars = { x: 0, z: 0, t: 0 };
-          chains.forEach((chain, k) => {
-            vars.t = now - k * dt;
-            const js = chain(frame) as number[][];
-            const waterline = js.map(([x, y, z, r]) => { vars.x = x; vars.z = z; const h = y - (height(frame, vars)[0] as number); return Math.sqrt(Math.max(r * r - h * h, 0)); });
-            fillRow(js, waterline, k * dt, s.spread, out, k * segs);
-          });
-        };
-      },
-    };
+    const source = wakeTable(this.name, slices, joints, dt, s.spread, (xz, t) => ctx.sea.height(xz, t));
     const t = ctx.table(source).wgsl;
     const [fr, fg, fb] = s.colour;
     const code = /* wgsl */ `
@@ -151,18 +137,44 @@ fn wake_younger_covers(row: u32, j: u32, p: vec2<f32>) -> bool {
   }
 }
 
-/** One slice's capsules: segment j from joint j to j + 1, valid where either end cuts the water. */
-export function fillRow(joints: readonly (readonly number[])[], waterline: readonly number[], age: number, spread: number, out: Float32Array, first: number): void {
-  const segs = joints.length - 1;
-  const valid = (j: number): boolean => waterline[j] > 1e-3 || waterline[j + 1] > 1e-3;
-  for (let j = 0; j < segs; j++) {
-    if (!valid(j)) continue;
-    const a = joints[j], b = joints[j + 1];
-    // A joint clear of the water contributes no width; the capsule still reaches it so the foam tapers to a point.
-    const grow = spread * age;
-    out.set([a[0], a[2], b[0], b[2], waterline[j] + (waterline[j] > 1e-3 ? grow : 0), waterline[j + 1] + (waterline[j + 1] > 1e-3 ? grow : 0), age, 1,
-      j > 0 && valid(j - 1) ? 1 : 0, j + 1 < segs && valid(j + 1) ? 1 : 0, 0, 0], (first + j) * ENTRY * 4);
-  }
+/**
+ * The wake's capsules, two pose-stage maps. A list of every slice's joints with their waterline (where the joint's
+ * sphere cuts the sea at that slice's time: a disc of radius sqrt(r^2 - h^2)); then per slice, segment j from joint j to
+ * j + 1, valid where either end cuts the water, widened as it ages, linked to its valid neighbours. An invalid segment's
+ * entry is all zero.
+ */
+function wakeTable(name: string, slices: readonly Skeleton[], joints: number, dt: number, spread: number, seaHeight: (xz: Expr<"vec2">, t: F) => F): TableSource {
+  const segs = joints - 1;
+  // The joints are a list (each its own expression); the sea under them is one closed form, a map of its own, so no
+  // GPU branch per joint evaluates the sea. Entry i is slice floor(i / joints).
+  const lines = slices.flatMap((sk) => Array.from({ length: joints }, (_, j) => { const p = sk.joint(j); return [vec4(p.p, p.r)]; }));
+  const at: TableSource = { name: `${name}_at`, lanes: 1, entries: lines.length, role: "data", program: listOf(lines) };
+  const waterline: TableSource = {
+    name: `${name}_joints`, lanes: 1, entries: lines.length, role: "data",
+    program: mapOf(lines.length, (i) => {
+      const p = fetch(at, i, 0);
+      const h = sub(p.y, seaHeight(vec2(p.x, p.z), sub(time, mul(floor(div(i, joints)), dt))));
+      return [vec4(p.xyz, sqrt(max(sub(mul(p.w, p.w), mul(h, h)), 0)))];
+    }),
+  };
+  const zero = lift<"vec4">([0, 0, 0, 0]);
+  const runs: MapRun[] = slices.map((_, k) => ({
+    count: segs,
+    lanes: (j) => {
+      const J = (i: F): Expr<"vec4"> => fetch(waterline, add(clamp(i, 0, joints - 1), k * joints), 0);
+      const valid = (i: F): Expr<"bool"> => or(gt(J(i).w, 1e-3), gt(J(add(i, 1)).w, 1e-3));
+      const a = J(j), b = J(add(j, 1));
+      // A joint clear of the water contributes no width; the capsule still reaches it so the foam tapers to a point.
+      const grow = spread * k * dt;
+      const width = (w: F): F => add(w, select(gt(w, 1e-3), grow, 0));
+      const here = valid(j);
+      const prev = and(gt(j, 0.5), valid(sub(j, 1))), next = and(lt(j, segs - 1.5), valid(add(j, 1)));
+      return [
+        vec4(a.x, a.z, b.x, b.z), vec4(width(a.w), width(b.w), k * dt, 1), vec4(select(prev, 1, 0), select(next, 1, 0), 0, 0),
+      ].map((x) => select(here, x, zero));
+    },
+  }));
+  return { name, lanes: ENTRY, entries: slices.length * segs, role: "data", program: { kind: "map", runs } };
 }
 
 /** Foam on the water where the body crossed the surface over the last `over` seconds, fading with age. */

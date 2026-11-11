@@ -13,7 +13,7 @@
 // frame cost 16 surface evaluations per drawable: the fleet's pose went from 0.45 to 3.9 ms. What this gives up: a
 // surface that grows or stretches far beyond its rest shape (a wing unfolding on an input) is sized by its rest shape.
 
-import { f, lift, vec4, type Expr, type TableSource } from "../expr.ts";
+import { f, lift, listOf, mapOf, vec4, type TableProgram, type TableSource } from "../expr.ts";
 import type { DetailSpec } from "../compile/context.ts";
 import { sizeBound } from "../map/chart.ts";
 import type { F, P3, Poses, Surface, Topology } from "../map/types.ts";
@@ -49,23 +49,16 @@ function anchorOf(surface: Surface, at: GridAt, copies: BoundCopies): P3 {
   }
 }
 
-/** Per frame, per copy: (anchor point, scale). */
+/** Per frame, per copy: (anchor point, scale). A map: one copy's closed form in its index, or the one anchor. */
 export function boundTable(name: string, surface: Surface, at: GridAt, copies: BoundCopies): TableSource {
-  const entries = copies.kind === "one" ? 1 : copies.poses.count;
-  const roots = (): Expr[] => {
+  const program = (): TableProgram => {
     switch (copies.kind) {
-      case "one": return [vec4(anchorOf(surface, at, copies), 1)];
+      case "one": return listOf([[vec4(anchorOf(surface, at, copies), 1)]]);
       // A copy scaled along each axis is sized by its longest one.
-      case "poses": return Array.from({ length: copies.poses.count }, (_, i) => { const p = copies.poses.at(f(i)); return vec4(p.frame.o, sizeBound(p.size)); });
+      case "poses": return mapOf(copies.poses.count, (i) => { const p = copies.poses.at(i); return [vec4(p.frame.o, sizeBound(p.size))]; });
     }
   };
-  return {
-    name: `bound_${name}`, lanes: 1, entries, role: "data",
-    prepare: (p) => {
-      const run = p.compile(roots());
-      return (frame, out) => { (run(frame) as number[][]).forEach((v, i) => out.set(v, 4 * i)); };
-    },
-  };
+  return { name: `bound_${name}`, lanes: 1, entries: copies.kind === "one" ? 1 : copies.poses.count, role: "data", program: program() };
 }
 
 /**

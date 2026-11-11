@@ -5,17 +5,18 @@
 // line, 0.25 the dorsal line, 0.5 the other side, 0.75 the belly), rho is the distance out as a fraction of the
 // thickness (the skin is rho = 1).
 //
-// Frames cannot be computed locally (they are transported along the spine), so the sweep tabulates its spine once per
-// frame on the CPU (`transport.ts`) into a per-frame table, and everything else (the skin, its normal, the chart, the
-// skeleton) is ordinary expressions over `fetch`es of that table. The vertex stage, the pose pass of parts riding the
-// body, the shadows and the baker all evaluate the same expressions.
+// Frames cannot be computed locally (they are transported along the spine), so each frame the pose pass samples the
+// spine into a map (`spineSamples`) and carries frames along it with a scan (`transport.ts`), and everything else (the
+// skin, its normal, the chart, the skeleton) is ordinary expressions over `fetch`es of the station table. Both tables
+// are programs (docs/gpu_native.md): the GPU fills them in pose stages; tools read the same programs on the CPU.
 
 import {
-  add, clamp, cos, cross, div, f, fetch, floor, lift, lt, ge, max, min, mix, mul, normalize, pow, saturate, select, sin, sqrt,
-  sub, substitute, TAU, time, length, vec3, type Env, type Expr, type In, type TableFill, type TablePrep, type TableSource,
+  add, clamp, cos, cross, div, f, fetch, floor, iterate, lift, lt, ge, mapOf, max, min, mix, mul, neg, normalize, pick, pow, saturate, select,
+  sin, sqrt, sub, substitute, TAU, time, length, vec3, vec4, type Expr, type ProgramTable, type TableProgram, type TableSource,
 } from "../expr.ts";
 import { compose, rotate, world } from "./chart.ts";
-import { poseStrand, qrot as qrotNum, stationRadii, STATION_VEC4S, v3, type V3 } from "./transport.ts";
+import { rotateAbout, SAMPLE, SAMPLE_VEC4S, stationRadii, stationScan, STATION_VEC4S } from "./transport.ts";
+export { rotateAbout };
 import type { Chart, End, F, Frame, P3, Placeable, Skeleton, Surface, Topology } from "./types.ts";
 
 type Fn1 = (m: F) => F;
@@ -342,8 +343,8 @@ export class Body implements Surface, Chart, Placeable<Body> {
   }
 }
 
-/** A body's stations: entry k is station k (m = k / (stations - 1)); lanes p, q, r as in transport.ts. */
-export class StationTable implements TableSource {
+/** A body's stations: entry k is station k (m = k / (stations - 1)); lanes p, q, r as in transport.ts. A scan. */
+export class StationTable implements ProgramTable {
   readonly lanes = STATION_VEC4S;
   readonly entries: number;
   readonly role = "stations";
@@ -352,60 +353,77 @@ export class StationTable implements TableSource {
   }
   get name(): string { return this.base; }
 
-  prepare(p: TablePrep): TableFill {
+  /** Built when the compiler classifies the table (once). */
+  get program(): TableProgram {
     const b = this.body, span = this.entries - 1;
     // A prefix or a part posts some stations only; the entries outside them are never read (Body.atNear, Body.partAt).
     const [first, n] = postedRange(b.posted, this.entries);
-    const ms = Array.from({ length: n }, (_, k) => f((first + k) / span));
-    const local = ms.map((m) => b.spine(m));
-    // The rest pose over every station (memoised; it changes only with params), so a part's rest arc lengths and
-    // stretch are those of the whole body.
-    const restAll = restPose(p, Array.from({ length: this.entries }, (_, k) => b.spine(f(k / span))));
-    const seed = seedOf(b.posted, first);
-    const roots: Expr[] = [];
-    // The spine reaches the world through the chart; for a body on a host this reads the host's table, which the pose
-    // pass fills first (tables are filled on first read).
-    // The local spine too: stretch is measured on it (DESIGN.md 7.6), not on the placed one, so a chart that bends or
-    // lengthens the spine (a whirlpool winding a body into a coil) does not thin the body. Measuring the placed spine
-    // against the local rest thinned a coiled serpent by 1 / sqrt(5) (found by tests/ships.whirlpool.test.ts).
-    ms.forEach((m, k) => roots.push(b.chart.frame(local[k]).o, b.transport.twist(m), b.halfWidth(m), b.section.aspect(m), local[k]));
-    roots.push(rotate(b.chart.frame(local[0]), b.transport.up));
-    const run = p.compile(b.slice === time ? roots : substitute(roots, time, b.slice));
-    const PER = 5;
-    return (frame, out) => {
-      const v = run(frame);
-      const pos: V3[] = [], twist: number[] = [], halfWidth: number[] = [], aspect: number[] = [], here: V3[] = [];
-      for (let k = 0; k < n; k++) {
-        pos.push(v[k * PER] as V3); twist.push(v[k * PER + 1] as number); halfWidth.push(v[k * PER + 2] as number); aspect.push(v[k * PER + 3] as number);
-        here.push(v[k * PER + 4] as V3);
-      }
-      const rest = restAll(frame);
-      const up = seed(frame, v[n * PER] as V3, pos, twist[0]!);
-      poseStrand({ pos, local: here, rest: rest.slice(first, first + n), restStart: restArcTo(rest, first), twist, halfWidth, aspect, up, level: b.transport.level, leastStretch: b.section.leastStretch }, out, first * STATION_VEC4S * 4);
-    };
+    const samples = spineSamples(`${this.base}_spine`, b, b.chart, n, (i) => stationM(add(i, first), span), b.slice);
+    const up = seedOf(b, samples, first);
+    return stationScan({ samples, first, steps: n, up, level: { up, rate: b.transport.level }, restStart: restArcTo(b, first), leastStretch: b.section.leastStretch });
   }
 }
 
 /**
- * The rest pose of a spine (its local stations at time 0), as a fill reads it. Stretch is measured against it. It
- * depends only on params, non-time inputs and curves, which rarely change between frames, so the last one is kept (a
- * memo keyed on all of those, so the fill stays a function of its frame).
+ * m of station k (a whole number) of `span + 1`: k / span, and exactly 1 at the last. WGSL's division is good to 2.5
+ * ULP, so on the GPU 11 / 11 came out a little under 1, and a round tip's radius, sqrt(1 - q^2) at q -> 1, turned that
+ * into 1.5e-4 where the CPU has 0 (the crab's brow, caught by tests/pose.gpu.test.ts). A residual correction
+ * (m + (k - m span) / span) did not help on Metal, where the compiler is free to fold it to m. The ends are where tips
+ * close, and m = 0 is exact already.
  */
-function restPose(p: TablePrep, local: readonly P3[]): (frame: Parameters<TableFill>[0]) => V3[] {
-  const rest = p.compile(substitute(local, time, f(0)));
-  let restKey = "", restCurves = new Float32Array(0), restValues: V3[] = [];
-  return (frame) => {
-    const env: Env = frame.env;
-    const { time: _, ...inputs } = env.inputs;
-    const key = JSON.stringify([inputs, env.params]);
-    const curves = env.curves ?? new Float32Array(0);
-    if (key !== restKey || !sameFloats(curves, restCurves)) {
-      restValues = rest(frame) as V3[];
-      restKey = key;
-      restCurves = curves.slice();
-    }
-    return restValues;
+function stationM(k: F, span: number): F {
+  return select(lt(k, span - 0.5), div(k, span), 1);
+}
+
+/**
+ * A body's spine sampled at `count` values of m (`m(i)`, i the entry), at time `slice`: lanes as transport.ts's SAMPLE.
+ * The spine reaches the world through the chart; for a body on a host this reads the host's table, which an earlier
+ * pose stage fills. The local spine too: stretch is measured on it (DESIGN.md 7.6), not on the placed one, so a chart
+ * that bends or lengthens the spine (a whirlpool winding a body into a coil) does not thin the body. Measuring the
+ * placed spine against the local rest thinned a coiled serpent by 1 / sqrt(5) (found by tests/ships.whirlpool.test.ts).
+ * The rest spine is the local spine at time 0; it changes only with params and inputs, and is recomputed every frame
+ * (the CPU fill used to keep the last one; on the GPU it is a few more terms of the same map).
+ */
+function spineSamples(name: string, b: Body, chart: Chart, count: number, m: (i: F) => F, slice: F): TableSource {
+  const sample = (i: F): Expr<"vec4">[] => {
+    const mi = m(i), local = b.spine(mi);
+    const now = [chart.frame(local).o, b.transport.twist(mi), local, b.halfWidth(mi), b.section.aspect(mi)] as const;
+    const [world, twist, here, hw, aspect] = (slice === time ? now : substitute(now, time, slice)) as unknown as [P3, F, P3, F, F];
+    const [rest] = substitute([local], time, f(0)) as [P3];
+    return [vec4(world, twist), vec4(here, hw), vec4(rest, aspect)];
   };
+  return { name, lanes: SAMPLE_VEC4S, entries: count, role: "data", program: mapOf(count, sample) };
+}
+
+/**
+ * The direction a posted range's frames start from: the body's `up` through its chart at station 0; or for a part,
+ * the live body's dorsal direction at its first station, untwisted (the scan applies twist itself) and carried onto
+ * this slice's tangent there by the minimal rotation (the scan projects it off the tangent).
+ */
+function seedOf(b: Body, samples: TableSource, first: number): P3 {
+  const p = b.posted;
+  switch (p.kind) {
+    case "all": case "prefix": {
+      const [up] = substitute([rotate(b.chart.frame(fetch(samples, 0, SAMPLE.local).xyz), b.transport.up)], time, b.slice) as [P3];
+      return up;
+    }
+    case "part": {
+      const q = fetch(p.live.table, first, 1);
+      const tan = qrot(q, lift<"vec3">([1, 0, 0]));
+      return rotateAbout(qrot(q, lift<"vec3">([0, 1, 0])), tan, neg(fetch(samples, 0, SAMPLE.world).w));
+    }
+  }
+}
+
+/** Arc length along the rest spine (time 0) up to station k: 0 for k = 0, else a loop over the stations before it. */
+function restArcTo(b: Body, k: number): F {
+  const span = b.transport.stations - 1;
+  const rest = (m: F): P3 => substitute([b.spine(m)], time, f(0))[0] as P3;
+  const [s] = iterate(k, [f(0), rest(f(0))] as const, ([acc, prev], j) => {
+    const r = rest(div(add(j, 1), span));
+    return [add(acc, length(sub(r, prev))), r] as const;
+  });
+  return s;
 }
 
 /**
@@ -413,9 +431,11 @@ function restPose(p: TablePrep, local: readonly P3[]): (frame: Parameters<TableF
  * (the larger half-axis after volume preservation), what a wake reads. The cost of a slice is evaluating the spine at
  * each station (in examples/strike.ts the posed spine is about 2300 nodes), so a wake keeping every third station costs
  * a third of a full slice, which also transports a frame along every station. Positions equal the full slice's at the
- * stations kept; radii measure stretch between kept neighbours.
+ * stations kept; radii measure stretch between kept neighbours (exact positions; within 15% of the whole slice's radius
+ * at the serpent's neck, 3% elsewhere. Measuring it at the stations' own neighbours needs the spine at every station
+ * again; the live body's stretch instead lags by the slice's age, 8% at 0.35 s). A map over a samples map.
  */
-export class SkeletonTable implements TableSource {
+export class SkeletonTable implements ProgramTable {
   readonly lanes = 1;
   readonly entries: number;
   readonly role = "stations";
@@ -425,28 +445,13 @@ export class SkeletonTable implements TableSource {
     for (const k of stations) if (!(Number.isInteger(k) && k >= 0 && k < n)) throw new Error(`skeleton of "${body.name}": station ${k} is not one of its ${n}`);
   }
 
-  prepare(p: TablePrep): TableFill {
-    const b = this.body, n = this.entries, span = b.transport.stations - 1;
-    const ms = this.stations.map((k) => f(k / span));
-    const local = ms.map((m) => b.spine(m));
-    const chart = b.chart.at(this.t);
-    const roots = ms.flatMap((m, k) => [chart.frame(local[k]!).o, b.halfWidth(m), b.section.aspect(m), local[k]!]);
-    const run = p.compile(substitute(roots, time, this.t));
-    const restOf = restPose(p, local);
-    return (frame, out) => {
-      const v = run(frame);
-      const s = { local: [] as V3[], rest: restOf(frame), halfWidth: [] as number[], aspect: [] as number[], leastStretch: b.section.leastStretch };
-      for (let k = 0; k < n; k++) { s.halfWidth.push(v[4 * k + 1] as number); s.aspect.push(v[4 * k + 2] as number); s.local.push(v[4 * k + 3] as V3); }
-      for (let k = 0; k < n; k++) {
-        // Stretch between kept neighbours (exact positions; within 15% of the whole slice's radius at the serpent's
-        // neck, 3% elsewhere). Measuring it at the stations' own neighbours needs the spine at every station again; the
-        // live body's stretch instead lags by the slice's age (8% at 0.35 s).
-        const [ra, rb] = stationRadii(s, k);
-        const pk = v[4 * k] as V3;
-        // Rounded to f32 before the max, as the full table stores the two half-axes and the skeleton takes their max.
-        out.set([pk[0], pk[1], pk[2], Math.max(Math.fround(ra), Math.fround(rb))], 4 * k);
-      }
-    };
+  get program(): TableProgram {
+    const b = this.body, span = b.transport.stations - 1, kept = this.stations;
+    const samples = spineSamples(`${this.name}_spine`, b, b.chart.at(this.t), kept.length, (i) => stationM(pick(i, kept.map((k) => f(k))), span), this.t);
+    return mapOf(this.entries, (j) => {
+      const r = stationRadii(samples, j, b.section.leastStretch);
+      return [vec4(fetch(samples, j, SAMPLE.world).xyz, max(r.a, r.b))];
+    });
   }
 }
 
@@ -457,40 +462,6 @@ function postedRange(p: Posted, all: number): [number, number] {
     case "prefix": return [0, p.stations];
     case "part": return [p.first, all - p.first];
   }
-}
-
-type Seed = (frame: Parameters<TableFill>[0], up: V3, pos: readonly V3[], twist: number) => V3;
-/**
- * The direction a posted range's frames start from: the body's `up` (from station 0), or for a part the live body's
- * dorsal direction at its first station, untwisted (poseStrand applies twist itself) and carried onto this slice's
- * tangent there by the minimal rotation (poseStrand projects it off the tangent).
- */
-function seedOf(p: Posted, first: number): Seed {
-  switch (p.kind) {
-    case "all": case "prefix": return (_frame, up) => up;
-    case "part": {
-      const live = p.live;
-      return (frame, _up, pos, twist) => {
-        const t = frame.table(live.table), o = first * STATION_VEC4S * 4;
-        const q = [t[o + 4]!, t[o + 5]!, t[o + 6]!, t[o + 7]!];
-        const tan = qrotNum(q, [1, 0, 0]);
-        return v3.rotate(qrotNum(q, [0, 1, 0]), tan, -twist);
-      };
-    }
-  }
-}
-
-/** Arc length along the rest stations up to station k. */
-function restArcTo(rest: readonly V3[], k: number): number {
-  let s = 0;
-  for (let i = 1; i <= k; i++) s += v3.len(v3.sub(rest[i]!, rest[i - 1]!));
-  return s;
-}
-
-function sameFloats(a: Float32Array, b: Float32Array): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
 }
 
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
@@ -506,11 +477,4 @@ export function sweepArgs(name: string, spine: (m: F) => P3, section: Section, t
 /** A section swept along `spine` (in world coordinates; place it to put it elsewhere). */
 export function sweep(name: string, spine: (m: F) => P3, section: Section, transport: Transport): Body {
   return new Body(...sweepArgs(name, spine, section, transport));
-}
-
-/** Rotate v about the unit axis by angle (Rodrigues), as an expression. */
-export function rotateAbout(v: In<"vec3">, axis: In<"vec3">, angle: In<"f32">): P3 {
-  const ve = lift<"vec3">(v), a = lift<"vec3">(axis);
-  const c = cos(angle), s = sin(angle);
-  return add(add(mul(ve, c), mul(cross(a, ve), s)), mul(a, mul(sub(1, c), add(add(mul(a.x, ve.x), mul(a.y, ve.y)), mul(a.z, ve.z)))));
 }

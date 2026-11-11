@@ -55,11 +55,11 @@ test("a shader with an error is reported by name with the WGSL compiler message"
   expect(err).toContain("curvy");
 });
 
-test("a pose function returning a wrong-length or missing table is rejected by name", async () => {
-  const short = await host.load({ ...fixture, pose: () => ({ stations: new Float32Array(10) }) });
+test("cpu tables uploaded with the wrong length, or not at all, are rejected by name", async () => {
+  const short = await host.load({ ...fixture, cpuPose: () => [{ buffer: "stations", offset: 0, data: new Float32Array(10) }] });
   await expect(short.frame(base)).rejects.toThrow(/"stations" with 10 floats; expected 288/);
-  const missing = await host.load({ ...fixture, pose: () => ({}) });
-  await expect(missing.frame(base)).rejects.toThrow(/did not return dynamic buffer "stations"/);
+  const missing = await host.load({ ...fixture, cpuPose: () => [] });
+  await expect(missing.frame(base)).rejects.toThrow(/did not return cpu table "stations"/);
   // The host stays usable after a rejected frame (the readback guard and error scopes are released).
   await expect(short.frame(base)).rejects.toThrow(/stations/);
   short.destroy(); missing.destroy();

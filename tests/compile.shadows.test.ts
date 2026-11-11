@@ -3,6 +3,10 @@ import { expect, test } from "bun:test";
 import { bound, compileScene, draw, length, mul, points, scene, sea, strand, sub, through, toon, vec3 } from "../src/index.ts";
 import { stateAt } from "./compile.harness.ts";
 
+/** The valid capsules of a shadow table, in order: 12 floats each (lane 2's z is the valid flag). */
+const capsules = (t: Float32Array): number[][] =>
+  Array.from({ length: t.length / 12 }, (_, i) => Array.from(t.subarray(i * 12, i * 12 + 12))).filter((c) => c[10] === 1);
+
 // Catches: shadows cast along the wrong direction (toward the sun, or ignoring height), and broken chain links (the
 // flags that let a capsule's patch yield its joint to its neighbour, so a joint is not darkened twice). A bar at height
 // 2 under a sun tilted toward +x by 0.5 per unit up throws its shadow 1 unit toward -x.
@@ -10,7 +14,7 @@ test("a raised bar casts one linked chain of capsules along the sun onto the wat
   const bar = strand({ name: "bar", spine: (m) => through(m, [[-3, 2, 0.5], [3, 2, 0.5]]), stations: 16, girth: 0.5, tips: "open", paint: [1, 1, 1] });
   const c = compileScene(scene({ sea: sea({ swell: [] }), things: [bar], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
-  const s = Array.from({ length: t[0] }, (_, i) => Array.from(t.subarray(4 + i * 12, 16 + i * 12)));
+  const s = capsules(t);
   expect(s.length).toBe(15);
   s.forEach(([ax, az, bx, bz, ra, rb, strength, , prev, next], i) => {
     expect(az).toBeCloseTo(0.5, 4);
@@ -34,7 +38,7 @@ test("copies made with draw.points each cast their own chain, carried by their p
   const posts = draw.points("posts", points(3, (i) => ({ at: vec3(mul(sub(i, 1), 4), 2, 0), scale: 1 })), post);
   const c = compileScene(scene({ sea: sea({ swell: [] }), things: [posts], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
-  const s = Array.from({ length: t[0] }, (_, i) => Array.from(t.subarray(4 + i * 12, 16 + i * 12)));
+  const s = capsules(t);
   expect(s.length).toBe(3 * 5);
   const xs = [...new Set(s.map(([ax]) => Math.round(ax * 1e3) / 1e3))].sort((a, b) => a - b);
   expect(xs).toEqual([-5, -1, 3]);
@@ -48,7 +52,7 @@ test("a traced solid casts a soft blob fitted to its inside", () => {
   });
   const c = compileScene(scene({ sea: sea({ swell: [] }), things: [ball], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
-  const s = Array.from({ length: t[0] }, (_, i) => Array.from(t.subarray(4 + i * 12, 16 + i * 12)));
+  const s = capsules(t);
   expect(s.length).toBeGreaterThan(0);
   const cx = s.reduce((n, [ax, , bx]) => n + (ax + bx) / 2, 0) / s.length, cz = s.reduce((n, [, az, , bz]) => n + (az + bz) / 2, 0) / s.length;
   expect(Math.abs(cx - 2)).toBeLessThan(0.15);
