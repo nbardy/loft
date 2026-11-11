@@ -22,6 +22,8 @@ export const S = {
     // dark olive thorny body, and shrine vermilion as its one accent.
     straw: [0.86, 0.79, 0.58], strawDark: [0.52, 0.43, 0.27], thorn: [0.34, 0.31, 0.2], thornDark: [0.15, 0.13, 0.09],
     shrine: [0.8, 0.16, 0.1], shrineDark: [0.42, 0.07, 0.06], paper: [0.97, 0.86, 0.6],
+    // The brow face's mouth (face/brow.ts; no other option reads them): the dark maroon behind the mandibles, its tongue.
+    maw: [0.25, 0.06, 0.08], tongue: [0.7, 0.3, 0.3],
   } satisfies Record<string, V3>,
   /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
   shadowIndigo: 0.42,
@@ -39,6 +41,21 @@ export const S = {
   atoll: { centre: [-2.0, 0] as const, rx: 4.3, rz: 4.5, top: 2.9, base: -1.75, hills: 0.35, lumps: 0.08 },
   coralHeads: 18, trees: 6,
   fort: { at: [-2.6, -1.1] as const, height: 2.4, girth: 0.85, lean: 0.12 },
+
+  // ---- the headland (back/headland.ts): the island as a dome on a shell tier, a light on a point; read only by it ----
+  // Bearings are radians round the island's centre from the bow (+x), positive toward the right flank (+z).
+  headland: {
+    /** How much higher than its rim the cap's crown stands (the cap is a low dome). */
+    dome: 0.45,
+    /** The point: its bearing, how far its tip reaches beyond the shell's rim, its half-width, its top's height (crab y). */
+    point: { bearing: -2.094, reach: 2.3, half: 1.3, top: 0.9 },
+    /** The cove's two horns, each [bearing, reach beyond the rim, half-width, its top's height], and how far the beach
+     * between them runs out. The bow-side horn is a reef flat just above the water, so the game camera sees the beach over it. */
+    horns: [[1.92, 1.2, 0.7, -0.95], [2.58, 1.4, 0.85, 0.5]] as const, beach: 1.7,
+    /** The light on the point: the tower's height, its girth at foot and top, its lean (the tangent of its angle, out along
+     * the point), how far inside the tip its foot stands, its size against the fiddler's (gallery, lantern, gulls), its gulls. */
+    light: { height: 3.0, girth: [0.5, 0.34] as const, lean: 0.28, inset: 0.8, size: 0.5, gulls: 3 },
+  },
 
   // ---- claws: the right (crusher) 1.4 times the left ----
   crusher: 1.4, cutter: 1.0, clawPalm: 2.9, clawFat: 1.1, armLengths: [2.5, 2.4] as const,

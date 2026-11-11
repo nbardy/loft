@@ -23,11 +23,12 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, frontFirst, letsGoClean, gripReaches, landsInside, lift, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check, type Sea } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type ContactFoam, type Sea } from "../../src/index.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
 import { base as backBase } from "./titan/back/base.ts";
+import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
@@ -36,10 +37,11 @@ import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
 import { thorny } from "./titan/carapace/thorny.ts";
 import { base as clawsBase } from "./titan/claws/base.ts";
-import { fiddler } from "./titan/claws/fiddler.ts";
+import { fiddler, fiddlerAside } from "./titan/claws/fiddler.ts";
 import { gauntlet } from "./titan/claws/gauntlet.ts";
 import { tongs } from "./titan/claws/tongs.ts";
 import { base as faceBase } from "./titan/face/base.ts";
+import { brow, browStalk } from "./titan/face/brow.ts";
 import { dandy } from "./titan/face/dandy.ts";
 import { mask } from "./titan/face/mask.ts";
 import { patient } from "./titan/face/patient.ts";
@@ -50,7 +52,7 @@ import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { AT_HOME, stage, type Staging } from "./titan/rig.ts";
-import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
+import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, FoamOption, LegsOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
 // comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
@@ -86,10 +88,10 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
 };
 
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
-export const styleFor = (n: Numbers) => woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) });
+export const styleFor = (n: Numbers, pattern: ContactFoam) => woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: pattern });
 export const SUN = [0.15, 0.8, 0.6] as const;
 
-type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption };
+type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: FoamOption };
 
 /** Numbers, then what the claws offer the rig, then the rig's first stage; on the sea given, the rig and each slot drawn on it. */
 function assemble(o: Slots, n: Numbers, how: Staging) {
@@ -102,7 +104,7 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
       const carapace = o.carapace.draw(r);
       const legs = o.legs.draw(r);
       const claws = o.claws.draw(r, offer);
-      const face = o.face.draw(r, carapace);
+      const face = o.face.draw(r, carapace, claws);
       const back = o.back.draw(r);
       return {
         things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
@@ -134,6 +136,8 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
             fliesClear(r.grab, [
               { kind: "body", body: carapace.hull },
               { kind: "disc", centre: r.place2(n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
+              // And whatever the chosen back builds beyond that cylinder (slots.ts, `BackOption.keepClear`).
+              ...(o.back.keepClear?.(r) ?? []),
             ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
             // The claw's own fingers let it go: the hand has turned toward the throw, so the hull leaves between them, no
             // more than a tenth of its beam deeper into either than the grip itself, and clear of both in 0.45 s (a crab
@@ -157,16 +161,28 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
   };
 }
 
+/** The islander's temperament (and the bruiser's, the same crab with another face): broad, confident, posed for the camera. */
+const SHOW_OFF = { snap: 3, arrive: 0.25, hold: 0.12, leave: 0.25, jitter: 0, lag: 0.25, rise: 0.7, reach: 1.3, together: 0 };
+
 export const design = makeDesign({
   name: "reefback_titan",
   numbers: S as Numbers,
   slots: {
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
-    claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
+    claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
+    face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk } satisfies Record<string, FaceOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
+    // The contact foam's pattern (docs/art_direction/DIRECTION.md, "Contact foam"). `base` is the print as it was.
+    foam: {
+      base: { about: "ridge: filaments along the zero lines of a noise (the print as it was)", pattern: foam.ridge() },
+      rings: { about: "thin broken ripple arcs moving outward, no fill", pattern: foam.rings() },
+      apron: { about: "one flat scalloped shape with a key line", pattern: foam.apron() },
+      stipple: { about: "printed dots, dense at the body", pattern: foam.stipple() },
+      breakers: { about: "the swell's own lines breaking into blades on the body", pattern: foam.breakers() },
+      curls: { about: "rolling lobes with curled heads and a ripple arc (the round 4 pictures)", pattern: foam.curls() },
+    } satisfies Record<string, FoamOption>,
   },
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
@@ -206,9 +222,18 @@ export const design = makeDesign({
     // crush disc of 4.4, as on the fiddler.
     islander: {
       about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
-      pick: { claws: "fiddler", face: "dandy" },
+      pick: { claws: "fiddler", face: "dandy", back: "headland" },
       // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
-      numbers: { temper: { snap: 3, arrive: 0.25, hold: 0.12, leave: 0.25, jitter: 0, lag: 0.25, rise: 0.7, reach: 1.3, together: 0 } },
+      numbers: { temper: SHOW_OFF },
+    },
+    // The islander with a face that is a head (docs/art_direction/DIRECTION.md, Round 4): the islander's picks, and
+    // face/brow.ts in place of the dandy. `--variant bruiser,face=browStalk` is the same with its eyes on short stalks.
+    bruiser: {
+      about: "the islander with a head: heavy brows over big eyes sunk in it, a mandible mouth that gapes, long antennae",
+      // The great claw is the fiddler's, carried out to the side: beside the face, as the islander carries it, it stood
+      // over the right eye from the game camera while the crab turned to the Grab (claws/fiddler.ts, `fiddlerAside`).
+      pick: { claws: "fiddlerAside", face: "brow", back: "headland" },
+      numbers: { temper: SHOW_OFF },
     },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
     // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
@@ -224,7 +249,7 @@ export const design = makeDesign({
   build: (o, n) => {
     const a = assemble(o, n, AT_HOME), water = sea({ ...a.sea, deform: a.deforms }), m = a.finish(water);
     return {
-      scene: scene({ sea: water, things: m.things, style: styleFor(n), sun: SUN, cameras: camerasFor(n) }),
+      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam.pattern), sun: SUN, cameras: camerasFor(n) }),
       strikes: m.strikes, holds: m.holds, waves: m.waves, handoff: m.handoff, inputs: m.inputs, checks: [...m.checks, ...m.sceneChecks],
     };
   },

@@ -72,8 +72,24 @@ function offer(n: Numbers): ClawsOffer {
   return { crushLead: footprintLead(n), cutter: cutterGripper(n) };
 }
 
-export const fiddler: ClawsOption = {
-  about: "a fiddler: one great claw as long as the body, waved as a banner and slapped flat; a tiny cutter",
+/**
+ * How the great claw is carried at rest, the one thing a fiddler may change and keep everything proven about it (the
+ * strike, the disc, the cutter's grip): where its wrist rests, which way the hand stands, and when it waves.
+ */
+export type Banner = {
+  readonly about: string;
+  /** The wrist at rest, crab coordinates: ahead of the carapace's front end, above the body's origin, and out beyond the
+   * shoulder (which is 0.55 of the carapace's half-width out). */
+  readonly wrist: { readonly ahead: number; readonly up: number; readonly out: number };
+  /** The way the hand stands at rest, crab coordinates (made unit). */
+  readonly along: readonly [number, number, number];
+  /** The display wave: seconds from one wave to the next (each lasts half of that), and when the first begins. */
+  readonly wave: { readonly every: (n: Numbers) => number; readonly from: number };
+};
+
+/** A fiddler that carries its great claw as `banner` says. */
+export const fiddlerWith = (banner: Banner): ClawsOption => ({
+  about: banner.about,
   // The disc is the game's hit shape: a bigger hand needs a bigger disc (the DERIVATION). A gameplay change, stated.
   // The lunge's rise is cut from 7.8 to 0.4: the hand itself stands 8.6 above the wrist when cocked (theory.ts: the tip at
   // y ~30 px of 800 in the game camera; at 7.8 it left the frame).
@@ -90,9 +106,10 @@ export const fiddler: ClawsOption = {
 
     // ---- display: the banner waved twice a loop (at about 6.7 s and 14.7 s), never while the cutter works ----
     // In a taunt the banner waves on the dance's accents instead (rig.dance.display: its own display when there is none).
-    const wave = tabS("wave", rig.dance.display(mul(mul(max(sin(mul(sub(time, 4.7), TAU / 8)), 0), max(sin(mul(sub(time, 4.7), TAU / 8)), 0)), sub(1, grabOn))));
+    const turn = TAU / banner.wave.every(n), sinceWave = sub(time, banner.wave.from);
+    const wave = tabS("wave", rig.dance.display(mul(mul(max(sin(mul(sinceWave, turn)), 0), max(sin(mul(sinceWave, turn)), 0)), sub(1, grabOn))));
     const C = n.carapace;
-    const wristHome = vec3(C.to + 0.6, 1.2, C.width * 0.55 + 2.7);
+    const wristHome = vec3(C.to + banner.wrist.ahead, banner.wrist.up, C.width * 0.55 + banner.wrist.out);
     const drift = vec3(alive(time, 0.25, 41, 0.17), alive(time, 0.3, 42, 0.21), alive(time, 0.2, 43, 0.19));
     const restWrist = (m: F): P3 => mix(local(add(add(wristHome, mul(vec3(0, 1.1, 0.8), wave)), drift)), local(shoulder(1)), m);
 
@@ -105,7 +122,7 @@ export const fiddler: ClawsOption = {
       const p = env.p, q = env.q;
       // Display: up, leaning back; on the wave (the wrist lifted 1.1) it swings up and out to the side and back, as a
       // fiddler waves. (Swung forward, it lay down across the face and read as a lowered claw.) Face: out and forward.
-      const restA = unit(add(inBody(-0.3, 0.92, 0.15), inBody(mul(wave, 0.1), mul(wave, 0.35), mul(wave, 0.75))));
+      const restA = unit(add(inBody(...banner.along), inBody(mul(wave, 0.1), mul(wave, 0.35), mul(wave, 0.75))));
       const restN = inBody(0.7, 0, 0.7);
       // Cocked: thrown back over its shoulder, its face turned up toward the target. Landed: along the lane, face down.
       const backA = unit(sub(mul(up, 0.8), mul(toward, 0.6))), backN = unit(add(mul(up, 0.6), mul(toward, 0.8)));
@@ -170,4 +187,24 @@ export const fiddler: ClawsOption = {
     if (strike === undefined) throw new Error("claws/fiddler: the great claw is not bound to Claw Crush");
     return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers };
   },
-};
+});
+
+/** The fiddler as first built: the banner beside the face, leaning a little back, waved every 8 s. (That is twice in
+ * the 16 s loop it was made for; the loop is 22 s since the throw, so its wave no longer meets itself at the loop's seam.) */
+export const fiddler: ClawsOption = fiddlerWith({
+  about: "a fiddler: one great claw as long as the body, waved as a banner and slapped flat; a tiny cutter",
+  wrist: { ahead: 0.6, up: 1.2, out: 2.7 }, along: [-0.3, 0.92, 0.15], wave: { every: () => 8, from: 4.7 },
+});
+
+/**
+ * The same claw carried clear of a face on the head (face/brow.ts; docs/art_direction/DIRECTION.md, Round 4). From the
+ * game camera the banner beside the face stood 15 px from the right eye at rest and over it while the crab turned to
+ * the Grab (`staysInView`: the eye's middle behind the palm for 1.4 s). Here the wrist rests behind the carapace's front
+ * end and 1.1 further out, and the hand leans a little out to the side, away from the head. It waves twice a loop whatever the
+ * loop's length (so the wave meets itself at the seam): from 5.6 s, over the thrown ship's flight, and again while it poses.
+ */
+export const fiddlerAside: ClawsOption = fiddlerWith({
+  about: "the fiddler's great claw carried out to the side, clear of a face on the head",
+  wrist: { ahead: -0.2, up: 1.2, out: 3.8 }, along: [-0.3, 0.92, 0.3], wave: { every: (n) => n.crushPeriod / 2, from: 5.6 },
+});
+

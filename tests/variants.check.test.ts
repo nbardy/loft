@@ -17,6 +17,9 @@ test("every named variant of the Reefback Titan passes its checks", () => {
   // The islander's face asks three more of itself (titan/face/dandy.ts): each eye's size from the game camera, and that
   // its expressions show and differ on screen.
   expect(rows![1]).toMatch(/^islander\s+13\/13 pass$/m);
+  // The bruiser's face asks five (titan/face/brow.ts): each eye's size, its expressions told apart, the width of its roar,
+  // and that the claws keep off the eyes and the mouth from the game camera.
+  expect(rows![1]).toMatch(/^bruiser\s+15\/15 pass$/m);
   expect(rows![2]).toBe(rows![3]);
   expect(r.exitCode).toBe(0);
 }, 600_000);
