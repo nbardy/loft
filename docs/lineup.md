@@ -435,3 +435,36 @@ height sets them).
 Checks predicted: 44 of 44 (the crabs' places changed, nothing relative to each crab did). The foam at standing feet:
 the style's collar is there by default; whether it reads from 3 above the water is the strip's question (item 5 of the
 owner's notes): if not, the singles' eye goes up until it does.
+
+### Scored (third staging)
+
+One sheet of every shot's first frame (one load), two fixes, one full render.
+
+The fixes after the sheet: (1) in the slam singles each shoved boat, waiting at its disc's front edge, stood 11 to 15
+from the camera and its sails filled the frame: it now waits beside the disc, out to the side between the crabs
+(bearing 1.4 outward), and rides sideways, seen in the pairs that follow; (2) its ride ended in front of the neighbour
+(20 apart), so a sail stood before the spider crab through its throw and taunt singles: the host now parks the shoved
+boats too, from the cut at 6.0 to the seam (`boat2.at`, as the thrown boats' `throw.land`). And the singles were aimed
+lower: their near feet were below the frame's edge, so the foam at standing feet could not be judged.
+
+| | Predicted | Measured (the singles, shell top to waterline) |
+|---|---|---|
+| islander | 57% | about 44% |
+| fiddler | 51% | about 35% |
+| samurai | 52% | about 54% |
+| spider crab | 73% | about 54% |
+| large time each | 6 beats (3.0 s) | 6 beats each: the singles are the only frames over 35% (pairs 12 to 29%, wides 9 to 24%) |
+| neighbour across a single's face | none | none |
+| boats outside the events | none | none (the slam singles show each crab's own boat beside its disc; the grip singles the boat about to be taken; the wides the release and the four splashes) |
+| foam at standing feet | the style's collar, if it reads from 3 above the water | it is there and reads as small cream patches at each foot in every single; from 2 above the water it was a line |
+| horizon | | about 53% in the singles (aimed nearly level so the feet stay in), 55 to 60% in the pairs and wides |
+
+Wrong in the reasoning: the stand-in's bodies are boxes, and the low crabs' singles aimed lower lose a little height
+to perspective (the fiddler's 51% predicted at the first aim; 35% measured at the lower aim, which also puts its great
+claw across the frame's top-left). The four are within 20% of each other in large time by construction (equal beats);
+in body share they range from 35% (fiddler) to 54%.
+
+Character sheet: `tools/lineup_characters.sh` (each crab's best large frame cut from the 1080p clip beside its
+expression reference): the fiddler, the samurai and the spider crab read as their sheets; the islander's face is the
+weakest: small eyes on stalks, turned a little away, without the reference's brows and moustache (its face is the
+dandy; the reference sheet is the bruiser-like head).
