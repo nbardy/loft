@@ -776,3 +776,72 @@ weight, the `game` camera at 1280 x 800.
    tusks), about 152,500 to 155,500 triangles, about 45 more per-frame tables. GPU frame: at most two timer ticks more
    (0.13 ms) in either clock state; the face's paint covers under 2% of the picture.
 
+### Scored (2026-11-12, after the build; on main at 9f7d0e2 merged in: the lineup, the taunt, `rig.audience`)
+
+Pictures: `out/face_mask/expression_sheet.webp` (each expression from `face` and as a `game` crop with a true-size
+inset), `vs_reference.webp` (each beside its reference), `mie_strip.webp` (the triumph and the glare frame by frame),
+`game_through_cycle.webp`, `lineup.webp`, `cycle_mask_game.mp4` and `cycle_mask_face.mp4` (one 22 s cycle each).
+
+| | predicted | measured |
+|---|---|---|
+| eyes, `minScreenSize` (a ball of the eye's radius) | 56 and 54 px | 56.0 and 53.4 px |
+| eyes as drawn, `game` | discs 54 x 51 (right) and 36 x 49 (left) | by the theory on the final numbers 56 x 53 and 41 x 52; in the picture the right eye's white between its lids at rest is 46 x 31 px |
+| pupils, rest to crossed | 71 px apart to 49; each moves its own width | 67 to 49 by the theory on the final numbers; in the pictures the near pupil is seen jammed down against the nose, the far one is small |
+| white against its surround (luminance) | at least 4 to 1 | 4.70 to 1 (white 0.878, ring 0.187; `game`, t = 9.5; a throwaway script) |
+| brow plate, right | 87 px long | 82.2 px (`spansOnScreen`, held at 55) |
+| the roar, lip to lip | 30 px | 35.2 px (held at 16) |
+| every expression reaches 0.9 of the face | 7 of 7 | 7 of 7 |
+| closest pair | rest and straining, 18 px, in 14 to 22 | rest and wincing, 22.8 px (0.40 of the eye; the limit is 0.25): the cast changed after looking |
+| told apart by eye at true size | 6 of 6 | 6 of 6 in the sheet's insets, my own judgement; the triumph is the one I would not name without the label |
+| nothing hides the face | neither gauntlet crosses it at rest or in a hold | **missed**: the crusher crosses it on the way up (below) |
+| a snap | 4 frames, one carrying 82% | as designed (`mie_strip.webp`) |
+| held | wanting 2.57 s, triumphant 1.8, furious 1.24, wincing 0.55; 0 off | 2.53, 1.77, **0.80** (the glare was moved), 0.53, counting only 30 Hz samples strictly inside a hold; every channel exactly its pose's number |
+| checks | `mask` 15 of 15 | 17 of 17 on the merged tree (its ten, and seven of the face's: `staysInView` came with the merge); every other variant as on main, the lineup 40 of 40 |
+| draws | 135 | 141: an outlined strand is two draws, its body and its ink hull; I counted one |
+| GPU frame | at most two ticks more (0.13 ms) | slow clock state, under load (other workers were rendering): 4.78 to 4.85 and 4.72 to 4.78 in two pairs taken back to back in one tree (one tick each); 4.72 to 4.92 in a third pair taken across two trees. One unpaired fast-state reading of the new face: 1.18 ms |
+
+Where the reasoning was wrong:
+
+- **The game camera saw one eye.** The theory measured each eye alone, as round 3's did, and both were big enough.
+  The far eye was 60 degrees from the camera on the sphere's far side, behind the nose and its own brow plate. A flat
+  eye answers where a pupil sits; it does not answer which way the face is turned. The face now turns toward its
+  audience inside the helmet (its features slide across the sphere; the rim, the brim and the cheek guards stay): a
+  fifth of the way round at rest and half in a mie, which is also what a mie is. Since the merge the audience is the
+  rig's (`rig.audience`), so a staged crab turns to its own camera. The mask is tilted 0.4, not 0.3; the eyes are 1.1
+  from the middle, not 1.25; the plates stand 0.3 proud, not 0.42.
+- **The first glare had no pupils.** Crossed level, they sat under the brows' V. The theory moved the pupils and the
+  brows and never laid one over the other. They cross to the nose and down now.
+- **The crusher crosses the face.** I looked at two stills (rest and t = 11.3) and wrote that the gauntlets keep off
+  it. On its way up the crusher's forearm lies across the face from the game camera until about 1.1 s before the slam
+  (`staysInView` measures a point of it behind the palm's skeleton for 0.20 s; the forearm covers more for longer). A
+  mie struck at the warning was half over before it was seen. It is struck a second before the slam now, when the claw
+  has passed: the claw rises, then the face strikes. The hold is 0.84 s, not 1.24.
+- **Triumph first read as fright**: brows flung apart over pin pupils in round whites. The brows keep their angle now
+  and the lids are level.
+- Not reasoning, but found by looking: the gape's teeth followed the grid's rows in a sawtooth (the jaw's stretch was
+  a smooth step across two rows of the grid; it is a straight ramp across five now), and a fang's bump of a signed
+  distance made every upper tooth a fang.
+
+What the reference has that this lacks:
+
+- red brow plates, thick sculpted slabs; these are black lacquer bars (chosen for the game camera: a dark shape on red);
+- small eyes set deep under the brows; these are a third of the face each (chosen: the pupils must be seen to cross);
+- a sculpted nose and the folds round the mouth as forms; here two nostrils and ink lines;
+- a mouth plate with a heavy lower lip; here the lips are outlines;
+- in the wince, a mouth dragged far to one side; here the pull barely shows;
+- in the triumph, a huge closed bow of a mouth that carries the pride alone; here it reads from the `face` camera and
+  is a thin line from `game`;
+- a helmet brim that overhangs, big turned-back cheek guards, and the cords tied under the chin (none built).
+
+Weak or unfinished:
+
+- The triumph is the weakest pose: haughty, not triumphant.
+- From `game` the far eye is three quarters the width of the near one; the nirami reads on the near eye.
+- Only the face is still in a held pose: the body treads and sways under it (the rig's walk and its moving hold).
+- The glare's hold is short because of the crusher's path. A crusher that rose outside the face would give the whole
+  wind-up back.
+- The contrast figure is from a throwaway script, not a check.
+- `examples/bosses/lib/face_parts.ts` (the bruiser's) has brows, eyeballs and tusks of the same kind as this face's
+  own; the two should be unified.
+- The taunt's mie (the triumph with the eyes crossed, on `rig.dance.wave`) was looked at in the lineup's stills only.
+
