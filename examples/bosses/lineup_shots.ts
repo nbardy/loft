@@ -11,15 +11,31 @@ export const BEAT = 60 / BPM, BAR = 4 * BEAT, BARS = 12, PERIOD = BARS * BAR;
 /** Beat b (0 is the loop's first downbeat), in seconds. */
 export const beat = (b: number): number => b * BEAT;
 
-// ---- the formation: one row, the middle pair a little forward (a shallow chevron), each crab facing the audience ----
-/** Lateral spacing (world z) and how far the middle pair stands forward (world x, toward the camera). */
-export const SPACING = 12.5, ADVANCE = 3;
-/** Where the faces look: in front of the line at the taunt's middle distance, a little above the water. */
-export const AUDIENCE = [104, 3.5, 0] as const;
+// ---- the formation: a chevron. The middle pair (the fiddler and the samurai, the low crabs) 8 forward and 11 apart, the
+// outer pair 8 back and 12 out, so that the camera can come close enough for the middle pair's bodies to be a third of
+// the frame and the outer pair still stands in it, smaller and further, faces clear (docs/lineup.md, "Second staging").
+/** The middle pair's spacing (world z), the outer pair's offset from the middle, and how far forward / back each pair stands. */
+export const MIDDLE = 11, OUTER = 12, ADVANCE = 8;
+/** Where the faces look: the main framing's eye. */
+export const AUDIENCE = [40, 2.5, 0] as const;
 /** Crab k (0 .. 3, left to right as the camera sees it; the camera's left is +z): its place and heading (radians from +x toward +z). */
 export function standing(k: number): { readonly at: readonly [number, number]; readonly heading: number } {
-  const at = [k === 1 || k === 2 ? ADVANCE : 0, (1.5 - k) * SPACING] as const;
+  const middle = k === 1 || k === 2;
+  const at = [middle ? ADVANCE : -ADVANCE, middle ? (1.5 - k) * MIDDLE : (k === 0 ? OUTER : -OUTER)] as const;
   return { at, heading: Math.atan2(AUDIENCE[2] - at[1], AUDIENCE[0] - at[0]) };
+}
+
+// ---- the boats a host moves: the thrown boat, once landed, is parked out of every frame at the cut into the taunt ----
+/**
+ * Each crab's `throw.land` (in its own axes) at loop time t: where its thrown boat comes down from the throw until the
+ * cut into the taunt (16.0), and from there to the Grab's next cycle (6.0, another cut) a place far behind the row, out
+ * of every frame. The boat lies wherever `throw.land` says once it has landed, so moving the input moves it; both moves
+ * fall on cuts, and the throw itself (12.0 to 15.0) reads the true landing. Checks read the defaults (the true landing).
+ */
+export const PARKED = [-70, 0] as const;
+export function hostInputs(names: readonly string[], land: (k: number) => readonly [number, number], t: number): Record<string, readonly number[]> {
+  const u = ((t % PERIOD) + PERIOD) % PERIOD, parked = u >= beat(32) || u < beat(12);
+  return Object.fromEntries(names.map((n, k) => [`${n}.throw.land`, parked ? PARKED : land(k)]));
 }
 
 // ---- the shots ----
@@ -34,37 +50,31 @@ export type Shot =
 export type Format = { readonly name: string; readonly width: number; readonly height: number; readonly cuts: readonly { readonly at: number; readonly shot: Shot }[] };
 
 const lens = (eye: V3, target: V3, fovY: number): Lens => ({ eye, target, fovY });
-/** Looking along -x at world z `z`: the square's truck along the line. */
-const along = (d: number, h: number, ty: number, z: number, fovY: number): Lens => lens([d, h, z], [0, ty, z], fovY);
 
 /**
- * 16:9. fovY 0.28 rad is about an 85 mm lens on a full frame (24 / (2 tan 0.14)): the long end of the references'
- * 75 to 85 mm, where the four fill the width with their faces at 90 px or more. Three shots cut on downbeats: the slam
- * (the main framing, where the targets are measured), the throw (pulled back, so the boats thrown forward land in
- * frame), the taunt (a slow push in on the faces from the slam's framing to 112; to 100, the second strip cut the
- * islander in half at the left edge). The cut at 6.0 hides the thrown boats going home (the grab's cycle
- * turns there) and the cut at the seam the shoved ones (the crushes' cycles turn at 0).
+ * 16:9. fovY 0.4 rad (about 59 mm on a full frame): closer and wider than the first staging's 85 mm, which could not
+ * make the bodies large (a long lens from in front cannot shorten a row of four). The eye 2 above the water, below the
+ * faces. Three shots cut on downbeats: the slam wide (all four, the boats riding out across the foreground), the throw
+ * in the main framing (the middle pair's bodies a third of the height, the outer pair in frame behind; the thrown boats
+ * go over the camera), the taunt pushing in from the main framing to the middle pair's two faces. The cut at 6.0 hides the
+ * thrown boats going home (the grab's cycle turns there), the seam the shoved ones (the crushes' cycles turn at 0).
  */
 export const WIDE: Format = {
   name: "wide", width: 1920, height: 1080, cuts: [
-    { at: 0, shot: { kind: "still", name: "slam", lens: lens([120, 3, 0], [0, 10.5, 0], 0.28) } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([138, 3, 0], [0, 11, 0], 0.28) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([122, 3, 0], [0, 10.5, 0], 0.28), to: lens([112, 3.5, 0], [0, 10, 0], 0.28), start: beat(32), end: PERIOD } },
+    { at: 0, shot: { kind: "still", name: "slam", lens: lens([58, 3, 0], [0, 6.5, 0], 0.4) } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([40, 2, 0], [0, 4.8, 0], 0.4) } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([40, 2, 0], [0, 4.8, 0], 0.4), to: lens([30, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
   ],
 };
 /**
- * Square. Four across a square frame cannot be large (each crab a quarter of the width is a quarter of the height), so
- * the square trucks along the row two crabs at a time for the slam (following the cascade) and the taunt (following
- * the call and answer and the cascade), and holds a wider frame on the middle pair for the throw in unison. fovY 0.25
- * (about 96 mm) from 96 to 135 away: a frame 24 to 34 units wide at the row. From 60 with fovY 0.4 (the second strip)
- * the boats thrown 38 forward landed 22 from the lens and their sails filled the square's foreground. The throw's target
- * is 11 up, not 8.5: at 8.5 (the third strip) its lower third was empty sea.
+ * Square. Four across a square cannot be large, so: the slam wide (all four, small), the throw on the middle pair (the
+ * outer pair at the edges), the taunt pushing in to the middle pair's faces. fovY 0.4 as the 16:9.
  */
 export const SQUARE: Format = {
   name: "square", width: 1080, height: 1080, cuts: [
-    { at: 0, shot: { kind: "move", name: "slam", from: along(100, 3.5, 8, SPACING, 0.25), to: along(100, 3.5, 8, -SPACING, 0.25), start: 1.75, end: 3.75 } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(135, 3.5, 11, 0, 0.25) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: along(96, 3.5, 8, SPACING, 0.25), to: along(96, 3.5, 8, -SPACING, 0.25), start: beat(33), end: beat(47) } },
+    { at: 0, shot: { kind: "still", name: "slam", lens: lens([62, 3, 0], [0, 6.5, 0], 0.4) } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([44, 2, 0], [0, 5, 0], 0.4) } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([44, 2, 0], [0, 5, 0], 0.4), to: lens([33, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
   ],
 };
 export const FORMATS = { wide: WIDE, square: SQUARE } as const;

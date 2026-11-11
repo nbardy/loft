@@ -20,8 +20,8 @@ import { openVideo } from "../src/cli/video.ts";
 import { compile } from "../src/compile/index.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost } from "../src/host/host.ts";
-import { lineupScene, LINE, SCORE } from "../examples/bosses/crab_lineup.ts";
-import { BAR, BARS, BEAT, BPM, FORMATS, PERIOD, shotAt, type Format, type FormatName } from "../examples/bosses/lineup_shots.ts";
+import { FAN, lineupScene, LINE, SCORE } from "../examples/bosses/crab_lineup.ts";
+import { BAR, BARS, BEAT, BPM, FORMATS, hostInputs, PERIOD, shotAt, type Format, type FormatName } from "../examples/bosses/lineup_shots.ts";
 
 const argv = process.argv.slice(2);
 const flag = (name: string, d: string): string => { const i = argv.indexOf(name); if (i < 0) return d; const v = argv[i + 1]; if (v === undefined) throw new Error(`${name} needs a value`); argv.splice(i, 2); return v; };
@@ -46,7 +46,10 @@ const loadMs = performance.now() - t0;
 const loop = artefact.loop ?? OPEN;
 console.log(`line ${lineArg.join(" | ")}; look ${look}; compile ${(compileMs / 1000).toFixed(1)} s, load ${(loadMs / 1000).toFixed(1)} s; ${artefact.stats.draws} draws`);
 
-const at = (camera: Camera, t: number, width: number, height: number): Promise<Uint8Array> => loaded.frame({ camera, width, height, time: loopTime(loop, t) });
+// The host's boats (the landed thrown boats parked between cuts): every frame of every deliverable reads them.
+const members = lineArg.map((_, k) => `crab${k}`);
+const at = (camera: Camera, t: number, width: number, height: number): Promise<Uint8Array> =>
+  loaded.frame({ camera, width, height, time: loopTime(loop, t), inputs: hostInputs(members, (k) => FAN[k]!, t) });
 /** A frame of a format at time t, its camera the shot's, at a size scaled to `width`. */
 const shot = (f: Format, t: number, width: number): Promise<Frame> => { const height = Math.round((width * f.height) / f.width / 2) * 2; return at(shotAt(f, t).camera, t, width, height).then((rgba) => ({ width, height, rgba })); };
 const sheet = async (name: string, f: Format, times: readonly number[], width: number): Promise<void> => {

@@ -43,8 +43,13 @@ const TAUNT_ARMS = beat(29);
  * What the scene changes of a crab's numbers: its attacks' seconds on beats, and its props in a lane in front of it
  * (docs/lineup.md, "The formation and the props"). The crab alone keeps its own.
  */
-/** Where crab k's thrown boat lands, in its axes: a fan, the outer two outward. */
-const FAN = [[38, 6], [38, 0], [38, -4], [38, -8]] as const;
+/**
+ * Where crab k's thrown boat lands, in its axes: forward, over the camera (the main framing's eye is 32 in front of the
+ * middle pair, 48 in front of the outer pair), so a thrown boat leaves the picture by its top and lands out of it. The
+ * outer pair throw further (50) to clear the lens. A host parks the landed boat out of every frame between the cuts at
+ * 16.0 and 6.0 (`hostInputs`, lineup_shots.ts).
+ */
+export const FAN = [[50, 0], [38, 0], [38, -4], [50, -4]] as const;
 const onTheBeat = (k: number) => ({
   crushPeriod: PERIOD, period: BAR,
   // Three beats from the claw's first movement to its landing. The warning starts at the loop's seam for every crab
@@ -66,9 +71,10 @@ const onTheBeat = (k: number) => ({
   // thrown forward, the release velocity lies only about 48 degrees off the keel, and the hand's turn over the stroke
   // for two turns (pi 2 0.5 / 3.0, 60 degrees) carried the hull past it and out of the fingers (middle 0.35 to 0.62 off).
   throw: { ...S.throw, side: 0, stroke: BEAT, follow: 0.25, flight: 6 * BEAT, land: FAN[k]!, turns: 1 },
-  // The shoved boat starts at the front-left of the disc (the camera's left), side on, stern toward the slam, and
-  // rides forward and to the left; it stays where the ride leaves it until its cycle turns at the seam.
-  boatTwo: { ...S.boatTwo, bearing: 0.6, heading: -2.2, keep: PERIOD },
+  // The shoved boat starts at the disc's front edge on the side away from the middle, side on, stern toward the slam,
+  // and rides forward and outward (the left pair to the camera's left, the right pair to its right) out of the frame;
+  // it is home again on the cut at the seam.
+  boatTwo: { ...S.boatTwo, bearing: k < 2 ? 0.6 : -0.6, heading: k < 2 ? -2.2 : 2.2, keep: PERIOD },
 });
 
 const how = (k: number): Staging => ({
