@@ -518,7 +518,7 @@ export function children(e: Expr): readonly Expr[] {
 }
 
 /** Every node reachable from the roots, including the bodies of loops (but not the loops' own variables). */
-function everything(roots: readonly Expr[]): Expr[] {
+export function everything(roots: readonly Expr[]): Expr[] {
   const out: Expr[] = [];
   const seen = new Set<number>();
   const walk = (list: readonly Expr[]): void => {
@@ -616,7 +616,17 @@ export type Bind = {
   table(table: TableSource, index: string, lane: number): string;
 };
 
-const lit = (n: number): string => (Number.isInteger(n) ? n.toFixed(1) : String(n));
+/**
+ * A WGSL f32 literal: the shortest decimal that WGSL reads as the same f32 as `n` (a folded constant is an f32, whose
+ * full f64 spelling has up to 17 digits; every literal is converted to f32 where it is used, so the shorter spelling
+ * is the same value).
+ */
+const lit = (n: number): string => {
+  if (Number.isInteger(n)) return n.toFixed(1);
+  const f = Math.fround(n);
+  for (let p = 1; p < 17; p++) { const s = n.toPrecision(p); if (Math.fround(Number(s)) === f) return String(Number(s)); }
+  return String(n);
+};
 export const WGSL_TY: Readonly<Record<Ty, string>> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3<f32>", vec4: "vec4<f32>", bool: "bool" };
 
 /** Fns whose WGSL form needs every argument to have the result's type (a scalar is splatted to a vector). */
@@ -1002,6 +1012,122 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
     if (tableList.length > 0 && !env.tables) throw new Error(`compileJs: this function reads the per-frame table "${tableList[0].name}"; pass Env.tables`);
     return run(HELPERS, samples, impls, env.vars, env.inputs, env.params, env.curves, env.tables, tableList);
   };
+}
+
+// ---- folding ------------------------------------------------------------------------------------------------------
+
+const F32 = Math.fround;
+/** A constant node's components (f32-rounded), or undefined when a node is not a known constant. */
+type Known = readonly Scalar[] | undefined;
+const f32s = (xs: readonly Scalar[]): Scalar[] => xs.map((x) => (typeof x === "number" ? F32(x) : x));
+
+/**
+ * The value of a node whose operands are all known, in f32: every operation rounds its result to f32, as the GPU
+ * would (a compound operation such as `mix` or `smoothstep` is computed in f64 and rounded once). Undefined when an
+ * operand is unknown, the node is not foldable (a leaf the host sets, a curve row, a fetch, a loop, a GPU-only library
+ * function), or the value is not finite. The semantics are those of the JavaScript backend (`EACH`), which match WGSL.
+ */
+function foldNode(e: Expr, kid: (x: Expr) => Known): Known {
+  const n = e.node;
+  switch (n.op) {
+    case "const": return n.ty === "bool" ? [n.v[0] !== 0] : n.v.map(F32);
+    case "var": case "input": case "param": case "row": case "fetch": case "iterate": return undefined;
+    case "vec": {
+      const parts = n.args.map(kid);
+      if (parts.some((p) => p === undefined)) return undefined;
+      const flat = parts.flatMap((p) => p!);
+      return flat.length === 1 ? Array.from({ length: COMPS[n.ty] }, () => flat[0]!) : flat;
+    }
+    case "get": { const a = kid(n.a); return a && [...n.sel].map((ch) => a["xyzw".indexOf(ch)]!); }
+    case "lib": {
+      const js = n.fn.js;
+      if (js === "gpu-only") return undefined;
+      const args = n.args.map(kid);
+      if (args.some((a) => a === undefined)) return undefined;
+      const r = js(...args.map((a) => (a!.length === 1 ? a![0] : [...a!])));
+      return f32s(typeof r === "object" ? r : [r]);
+    }
+    case "call": {
+      const a = n.args.map(kid);
+      if (a.some((x) => x === undefined)) return undefined;
+      const xs = a as readonly (readonly Scalar[])[];
+      const at = (cs: readonly Scalar[], i: number): Scalar => (cs.length === 1 ? cs[0]! : cs[i]!);
+      const num = (cs: readonly Scalar[]): number[] => cs as number[];
+      const dot = (p: readonly number[], q: readonly number[]): number => p.reduce((s, x, i) => F32(s + F32(x * q[i]!)), 0);
+      switch (n.fn) {
+        case "normalize": {
+          const v = num(xs[0]!);
+          if (v.length === 1) return [Math.sign(v[0]!)];
+          const l = F32(Math.sqrt(dot(v, v)));
+          return v.map((x) => F32(x / l));
+        }
+        case "length": { const v = num(xs[0]!); return [F32(Math.sqrt(dot(v, v)))]; }
+        case "distance": { const d = num(xs[0]!).map((x, i) => F32(x - num(xs[1]!)[i]!)); return [F32(Math.sqrt(dot(d, d)))]; }
+        case "dot": return [dot(num(xs[0]!), num(xs[1]!))];
+        case "cross": {
+          const [x, y] = [num(xs[0]!), num(xs[1]!)];
+          const term = (i: number, j: number): number => F32(F32(x[i]! * y[j]!) - F32(x[j]! * y[i]!));
+          return [term(1, 2), term(2, 0), term(0, 1)];
+        }
+        case "select": {
+          const width = Math.max(xs[1]!.length, xs[2]!.length);
+          return Array.from({ length: width }, (_, i) => (xs[0]![0] ? at(xs[1]!, i) : at(xs[2]!, i)));
+        }
+        default: {
+          const o = EACH[n.fn]!;
+          const width = Math.max(...xs.map((x) => x.length));
+          return Array.from({ length: width }, (_, i) => { const r = o.f(...(xs.map((x) => at(x, i)) as never[])); return typeof r === "number" ? F32(r) : r; });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Folded form of each node seen (by id), and the constant value of those that are constants. Interned nodes never
+ * change, so this holds across calls: a sub-graph many programs share (a sea, a ship's frame) is folded once.
+ */
+const folded = new Map<number, Expr>();
+const foldedValue = new Map<number, Known>();
+const foldedLoops = new Map<number, readonly Expr[]>();
+
+/**
+ * The same expressions with every constant sub-graph replaced by its value, in f32 (`foldNode`): what a GPU would
+ * compute for it at every invocation, computed once at build. Loop bodies are folded through the loop's outside (a
+ * constant sub-graph a body reads is outside it); a loop whose outside changed is rebuilt once, as `replace` does.
+ */
+export function fold(roots: readonly Expr[]): Expr[] {
+  const visit = (e: Expr): Expr => {
+    const hit = folded.get(e.id);
+    if (hit !== undefined) return hit;
+    const kids = children(e);
+    const to = kids.map(visit);
+    let v: Known;
+    try { v = foldNode(e, (x) => foldedValue.get(x.id)); } catch { v = undefined; }
+    let out: Expr;
+    if (v !== undefined && v.every((x) => typeof x === "boolean" || Number.isFinite(x))) {
+      foldedValue.set(e.id, v);
+      out = e.node.op === "const" ? e : constant(e.ty, v.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)));
+      foldedValue.set(out.id, v);
+    } else if (to.every((k, i) => k === kids[i])) {
+      out = e;
+    } else if (e.node.op === "iterate") {
+      const n = e.node;
+      let made = foldedLoops.get(n.loop.id);
+      if (!made) {
+        const l = n.loop;
+        made = iterate(visit(l.count) as Expr<"f32">, l.init.map((x) => visit(x) as Expr<NumTy>), (st, i) => fold(l.step(st, i)) as Expr<NumTy>[]);
+        foldedLoops.set(n.loop.id, made);
+      }
+      out = made[n.k]!;
+    } else {
+      out = rebuild(e, to);
+    }
+    folded.set(e.id, out);
+    if (out !== e) folded.set(out.id, out);
+    return out;
+  };
+  return roots.map(visit);
 }
 
 /** Evaluate once on the CPU. For repeated evaluation, keep the function from `compileJs`. */

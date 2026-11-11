@@ -27,6 +27,7 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
   const loaded = await createHost(await headlessDevice()).load(a);
   await loaded.frame(view); // warm up: first-use costs are not the draw's
   const p = await loaded.profile(view, cmd.frames);
+  const normal = await loaded.frameGpu(view, cmd.frames);
   loaded.destroy();
 
   // CPU pose per table, best of the same number of frames.
@@ -37,7 +38,8 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
 
   const out: string[] = [];
   out.push(`${cmd.path}  view ${cmd.view}  ${cmd.size.width}x${cmd.size.height}  t=${cmd.time}  best block mean over ${p.frames} frames  ${a.draws.length} draws declared`);
-  out.push(`GPU total ${p.total.toFixed(2)} ms (profiling frame: one pass per stage)   pass overhead ${p.passOverhead.toFixed(3)} ms per pass (subtracted in "net")`);
+  out.push(`normal frame: ${normal.ms.toFixed(2)} ms GPU (pose stages ${normal.pose.toFixed(3)}, draws and passes ${normal.draws.toFixed(2)}; least of ${cmd.frames} frames; timer tick ${normal.tick.toFixed(4)} ms as observed)`);
+  out.push(`GPU total ${p.total.toFixed(2)} ms (profiling frame: one pass per stage, for attribution)   pass overhead ${p.passOverhead.toFixed(3)} ms per pass (subtracted in "net")`);
   out.push("", "draw                              ms      net   triangles  instances  calls");
   for (const d of [...p.draws].sort((x, y) => y.net - x.net)) {
     out.push(`${d.label.padEnd(28).slice(0, 28)}${f2(d.ms)} ${f2(d.net)} ${String(d.triangles).padStart(11)} ${String(d.instances).padStart(10)} ${String(d.calls).padStart(6)}`);

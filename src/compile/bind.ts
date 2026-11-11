@@ -9,6 +9,7 @@ import {
   type TableSource,
 } from "../expr.ts";
 import type { Shader, TableRef } from "./context.ts";
+import type { Program } from "./rates.ts";
 
 const FLOATS: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
@@ -20,8 +21,11 @@ export class Slots {
   private inputFloats = 0;
   private sealed = false;
 
-  /** `table`: the compiler's registry, which declares (and prepares) a table the first time it is seen. */
-  constructor(private readonly table: (t: TableSource) => TableRef) {}
+  /**
+   * `table`: the compiler's registry, which declares (and prepares) a table the first time it is seen. `lower`: the
+   * registry's lowering of a function's roots (src/compile/rates.ts), given the rate of each argument.
+   */
+  constructor(private readonly table: (t: TableSource) => TableRef, readonly lower: (p: Program) => readonly Expr[]) {}
 
   /** After this, a leaf that has no slot yet is an error (it would not be in the artefact). */
   seal(): void { this.sealed = true; }
@@ -91,7 +95,8 @@ export class Slots {
       },
       param: (spec) => `params[${this.param(spec).slot}]`,
       row: (r, x) => `curve(${this.row(r)}u, ${x})`,
-      table: (t, i, lane) => `${this.table(t).wgsl}(u32(${i}) * ${t.lanes}u + ${lane}u)`,
+      // An entry at a whole-number literal (a station at a fixed index, a frame value) is read at its offset.
+      table: (t, i, lane) => (/^\d+\.0$/.test(i) ? `${this.table(t).wgsl}(${Number(i) * t.lanes + lane}u)` : `${this.table(t).wgsl}(u32(${i}) * ${t.lanes}u + ${lane}u)`),
     };
   }
 
@@ -134,7 +139,10 @@ type FnSpec = {
 function fnSource(slots: Slots, f: FnSpec): { code: string; libs: LibFn[] } {
   const vars: Record<string, string> = {};
   for (const [a] of f.args) vars[a] = a;
-  const { lines, out: values, libs } = emitWgsl(f.roots, slots.wgsl(vars));
+  // Every argument varies per vertex or pixel (or per copy, which a function does not state; "item" is the safe
+  // reading: nothing that reads an argument is lifted).
+  const roots = slots.lower({ name: f.name, roots: f.roots, vars: new Map(f.args.map(([a]) => [a, "item"])), runs: "item" });
+  const { lines, out: values, libs } = emitWgsl(roots, slots.wgsl(vars));
   const sig = f.args.map(([a, t]) => `${a}: ${WGSL_TY[t]}`).join(", ");
   return { code: [`fn ${f.name}(${sig}) -> ${f.out} {`, ...lines.map((l) => `  ${l}`), `  return ${f.ret(values)};`, `}`].join("\n"), libs };
 }
