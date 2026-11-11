@@ -21,6 +21,7 @@ import type { Strand } from "../geom/strand.ts";
 import type { Hull } from "../geom/hull.ts";
 import type { Frame } from "../map/types.ts";
 import { hitInradius, laneOf, polar, type Arc, type Capsule, type Disc, type Hit } from "./hit.ts";
+import { rearLanding, rearSpine, type RearSpec } from "./rear.ts";
 
 type F = Expr<"f32">;
 type P3 = Expr<"vec3">;
@@ -100,6 +101,9 @@ export type SweepSpec = {
   readonly inset: number;
 };
 
+/** How an attack moves its part: the m = 0 end lunges, the m = 1 end sweeps, or a middle stretch rears and slams. */
+export type Motion = LungeSpec | SweepSpec | RearSpec;
+
 export type AttackSpec = {
   readonly name: string;
   /** Absolute time (seconds) at which the hit arms: the striking part lands then. */
@@ -109,7 +113,7 @@ export type AttackSpec = {
   readonly target: Target;
   /** The name of the creature's part that strikes. */
   readonly part: string;
-  readonly motion: LungeSpec | SweepSpec;
+  readonly motion: Motion;
   readonly timing?: Partial<Timing>;
 };
 
@@ -137,7 +141,7 @@ export class Attack {
   readonly warn: F;
   readonly target: Target;
   readonly part: string;
-  readonly motion: LungeSpec | SweepSpec;
+  readonly motion: Motion;
   readonly timing: Timing;
   /** Strike response frequency (Hz) and its value at the first peak, chosen so the peak comes `timing.strike` after the start. */
   private readonly f: number;
@@ -185,6 +189,7 @@ export class Attack {
     switch (m.kind) {
       case "lunge": return lungeSpine(this, m, rest);
       case "sweep": return sweepSpine(this, m, rest);
+      case "rear": return rearSpine(this, m, rest);
     }
   }
 
@@ -194,6 +199,7 @@ export class Attack {
     switch (m.kind) {
       case "lunge": return lungeLane(m, rest).spineTip;
       case "sweep": return sweepPoint(m, 1, lift<"f32">(1));
+      case "rear": return rearLanding(m);
     }
   }
 }
