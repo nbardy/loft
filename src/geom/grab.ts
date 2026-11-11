@@ -76,44 +76,84 @@ export type Grab = {
 
 /** A grab on the clock `since` (seconds since it began; before 0 the gripper is at rest). */
 export function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab {
-  for (const [k, v] of Object.entries(b)) if (!(v > 0 && Number.isFinite(v))) throw new Error(`grab: ${k} must be a positive, finite number of seconds; got ${v}`);
-  const margin = spec.margin ?? 0.5, depth = spec.squeeze ?? 0, pulses = spec.pulses ?? 1;
-  if (!(margin > 0)) throw new Error(`grab: margin must be positive (the grip has to open wider than the thing); got ${margin}`);
-  if (!(depth >= 0 && depth < 1)) throw new Error(`grab: squeeze must be in [0, 1) (a fraction of the thing's width); got ${depth}`);
-  if (!(Number.isInteger(pulses) && pulses >= 1)) throw new Error(`grab: pulses must be a positive integer (each squeeze ends released); got ${pulses}`);
+  const from = lift<"vec3">(spec.from), to = lift<"vec3">(spec.to ?? spec.from), up = lift<"vec3">(spec.up ?? [0, 1, 0]);
+  const carryLift = spec.carryLift ?? 0;
+  const t = lift<"f32">(since);
+  const h = heldThing(sub(t, b.reach + b.close), b.hold, from, (u) => arc(from, to, slowInOut(u), carryLift, up), spec.squeeze ?? 0, spec.pulses ?? 1);
+  return gripper(t, spec, b, h);
+}
 
-  const t = lift<"f32">(since), from = lift<"vec3">(spec.from), to = lift<"vec3">(spec.to ?? spec.from), rest = lift<"vec3">(spec.rest);
-  const up = spec.up ?? [0, 1, 0], reachLift = spec.reachLift ?? 0, carryLift = spec.carryLift ?? 0;
+/** A held thing on the hold's own clock: where it is and how it is squeezed. Shared by `grab` and an attack's hold. */
+export type Held = {
+  /** Where it is taken, and where it is let go (the carry's end). */
+  readonly from: P3;
+  readonly to: P3;
+  /** Its place: `from` until taken, carried during the hold, `to` after. */
+  readonly thing: P3;
+  /** Its width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak. */
+  readonly crush: F;
+  /** 1 while held, else 0. */
+  readonly held: F;
+  /** Its size, `base` times: narrowed along `across` while squeezed, grown along the other two, volume kept. */
+  squeezed(base?: In<"f32">, across?: "x" | "y" | "z"): AxesSize;
+};
+
+/**
+ * The thing a hold owns, on `since` (seconds since it was taken; negative before) for a hold of `seconds`: `carry(u)`
+ * is its place at u in [0, 1] of the hold (u = 0 must be `from`), squeezed `pulses` times to `1 - squeeze` of its width.
+ */
+export function heldThing(since: In<"f32">, seconds: number, from: P3, carry: (u: F) => P3, squeeze: number, pulses: number): Held {
+  if (!(seconds > 0 && Number.isFinite(seconds))) throw new Error(`hold: seconds must be a positive, finite number; got ${seconds}`);
+  if (!(squeeze >= 0 && squeeze < 1)) throw new Error(`hold: squeeze must be in [0, 1) (a fraction of the thing's width); got ${squeeze}`);
+  if (!(Number.isInteger(pulses) && pulses >= 1)) throw new Error(`hold: pulses must be a positive integer (each squeeze ends released); got ${pulses}`);
+  const t = lift<"f32">(since), u = clamp(div(t, seconds), 0, 1), to = carry(lift<"f32">(1));
+  const pulse = sin(mul(u, Math.PI * pulses)), crush = sub(1, mul(squeeze, mul(pulse, pulse)));
+  const across = div(1, sqrt(max(crush, 1e-3)));
+  return {
+    from, to, crush,
+    thing: select(lt(t, 0), from, select(lt(t, seconds), carry(u), to)),
+    held: select(lt(t, 0), 0, select(lt(t, seconds), 1, 0)),
+    squeezed: (base = 1, axis = "x") => ({ kind: "axes", k: mul(vec3(axis === "x" ? crush : across, axis === "y" ? crush : across, axis === "z" ? crush : across), base) }),
+  };
+}
+
+/** How a gripper moves, apart from the thing it takes: `GrabSpec` without the thing's place and carry. */
+export type GripperSpec = Pick<GrabSpec, "rest" | "radius" | "reachLift" | "up" | "margin" | "restGap" | "windup">;
+
+/**
+ * The gripper round a held thing `h`, on the grab's clock `since` (seconds since the reach began) and its beats: it
+ * reaches for `h.from`, closes, follows `h.thing` through the hold (b.hold must be the hold's seconds), opens at `h.to`
+ * and goes home to `rest`.
+ */
+export function gripper(since: In<"f32">, spec: GripperSpec, b: GrabBeats, h: Held): Grab {
+  for (const [k, v] of Object.entries(b)) if (!(v > 0 && Number.isFinite(v))) throw new Error(`grab: ${k} must be a positive, finite number of seconds; got ${v}`);
+  const margin = spec.margin ?? 0.5;
+  if (!(margin > 0)) throw new Error(`grab: margin must be positive (the grip has to open wider than the thing); got ${margin}`);
+
+  const t = lift<"f32">(since), rest = lift<"vec3">(spec.rest), from = h.from, to = h.to;
+  const up = spec.up ?? [0, 1, 0], reachLift = spec.reachLift ?? 0;
   const tClosed = b.reach + b.close, tLetGo = tClosed + b.hold;
   const uReach = clamp(div(t, b.reach), 0, 1), uClose = clamp(div(sub(t, b.reach), b.close), 0, 1);
-  const uHold = clamp(div(sub(t, tClosed), b.hold), 0, 1), uRelease = clamp(div(sub(t, tLetGo), b.release), 0, 1);
+  const uRelease = clamp(div(sub(t, tLetGo), b.release), 0, 1);
   // Release is two halves: the grip opens where it is, then the gripper withdraws. Withdrawing while still closed
   // would drag the thing it has just let go.
   const uOpen = clamp(mul(uRelease, 2), 0, 1), uWithdraw = clamp(sub(mul(uRelease, 2), 1), 0, 1);
 
-  const carry = arc(from, to, slowInOut(uHold), carryLift, up);
   // With a wind-up the reach parameter dips below 0 first; `arc` clamps at 0, so the part below is added back as a
   // straight draw away from the thing.
   const windup = spec.windup ?? 0;
   if (!(windup >= 0)) throw new Error(`grab: windup must be at least 0, got ${windup}`);
   const drive = windup > 0 ? anticipated(uReach, windup) : slowInOut(uReach);
   const reaching = add(arc(rest, from, drive, reachLift, up), mul(sub(rest, from), max(mul(drive, -1), 0)));
-  const palm = select(lt(t, tClosed), reaching, select(lt(t, tLetGo), carry, arc(to, rest, slowInOut(uWithdraw), reachLift, up)));
+  const palm = select(lt(t, tClosed), reaching, select(lt(t, tLetGo), h.thing, arc(to, rest, slowInOut(uWithdraw), reachLift, up)));
 
   const width = mul(spec.radius, 2), open = mul(width, 1 + margin), restGap = lift<"f32">(spec.restGap ?? open);
-  const pulse = sin(mul(uHold, Math.PI * pulses)), crush = sub(1, mul(depth, mul(pulse, pulse)));
   // The opening is complete at 0.65 of the reach (fact 1), and the grip closes at speed: it lands, it does not settle.
   const arriving = mix(mix(restGap, open, slowInOut(clamp(div(uReach, 0.65), 0, 1))), width, slowIn(uClose));
   const leaving = mix(mix(width, open, slowOut(uOpen)), restGap, slowInOut(uWithdraw));
-  const gap = select(lt(t, tClosed), arriving, select(lt(t, tLetGo), mul(width, crush), leaving));
+  const gap = select(lt(t, tClosed), arriving, select(lt(t, tLetGo), mul(width, h.crush), leaving));
 
-  const across = div(1, sqrt(max(crush, 1e-3)));
-  return {
-    palm, gap, crush,
-    thing: select(lt(t, tClosed), from, select(lt(t, tLetGo), carry, to)),
-    squeezed: (base = 1, axis = "x") => ({ kind: "axes", k: mul(vec3(axis === "x" ? crush : across, axis === "y" ? crush : across, axis === "z" ? crush : across), base) }),
-    held: select(lt(t, tClosed), 0, select(lt(t, tLetGo), 1, 0)),
-  };
+  return { palm, gap, crush: h.crush, thing: h.thing, squeezed: h.squeezed, held: h.held };
 }
 
 /**
