@@ -33,6 +33,7 @@ import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
+import { spiral } from "./titan/back/spiral.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
 import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
@@ -87,6 +88,9 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     // lands, so one frame holds the crab, both boats, the slam and its ring, and the landing. The game camera itself
     // cannot: its frame ends 23.5 from the crab's middle, and the ship comes down 37 away.
     arena: { kind: "perspective", eye: [39.8, 49.7, 21.4], target: [2, 0, -11], fovY: 0.6 },
+    // The camera of the spiral shell's picked picture (crab_round5/back_spiral_pick.webp): from behind, above and to the
+    // right, looking at the shell's face (DIRECTION.md, Round 5). Fixed in the world, as the game's.
+    pick: { kind: "perspective", eye: [-12, 17, 19], target: [-1.5, 2, 0], fovY: 0.6 },
   };
 };
 
@@ -190,7 +194,7 @@ export const design = makeDesign({
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk, jitter, mourner } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland, spiral } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
     // How white water is printed (docs/art_direction/DIRECTION.md, "White water"). `base` is the rolling foam with
     // curled heads for the collar, the wave's crest and the bursts; the others are the style's other collars, with the
@@ -237,8 +241,10 @@ export const design = makeDesign({
     // water with the atoll on its back, one great claw, and the dandy's face (face/dandy.ts). The fiddler claws ask for a
     // crush disc of 4.4, as on the fiddler.
     islander: {
-      about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
-      pick: { claws: "fiddler", face: "dandy", back: "headland" },
+      about: "the island crab as a fiddler: low, a spiral hermit's shell on its back, one great claw, a vain face on tall eyestalks",
+      // Its back is the spiral shell (DIRECTION.md, Round 5: "the best back design for when it's a stick-eye crab, as
+      // that is a hermit crab"); the headland stays an option (`--variant islander,back=headland`).
+      pick: { claws: "fiddler", face: "dandy", back: "spiral" },
       // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
       numbers: { temper: SHOW_OFF },
     },
