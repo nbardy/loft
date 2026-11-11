@@ -22,7 +22,7 @@
 import { add, atan2, clamp, cos, cross, div, dot, exp, lift, lt, max, mix, mul, normalize, select, sin, sqrt, sub, vec3, type Expr, type In } from "../expr.ts";
 import type { Frame, Size } from "../map/types.ts";
 import { anticipated, arc, slowIn, slowInOut, slowOut } from "./lively.ts";
-import { placedBy, type Placer } from "./placing.ts";
+import { placedBy, turnedAbout, type Placer } from "./placing.ts";
 
 type F = Expr<"f32">;
 type P3 = Expr<"vec3">;
@@ -248,16 +248,27 @@ function thrownCourse(e: Thrown, seconds: number, carry: (u: F) => P3): Course {
 }
 
 /**
- * A thing's axes in the air: `g` turned about `axis` (unit, fixed in space, through g's origin) by `turns` whole turns
- * spread evenly over the flight, whose share gone is `u` (0 before, 1 after: `Attack.flight().u`). A free body turns at
- * a constant rate, and whole turns bring it down the way up it left.
+ * The angle the hand turns a thrown thing through over the stroke, radians, so that it leaves turning at exactly the
+ * rate of its tumble: `turns` whole turns in the flight is a rate of 2 pi turns / flight, and a uniform angular
+ * acceleration from rest reaches that rate over the stroke after turning pi turns stroke / flight.
  */
-export function tumbled(g: Frame, axis: In<"vec3">, turns: number, u: In<"f32">): Frame {
-  if (!Number.isInteger(turns)) throw new Error(`tumbled: turns must be a whole number (the thing lands the way up it left); got ${turns}`);
-  const a = lift<"vec3">(axis), angle = mul(clamp(u, 0, 1), turns * TAU), c = cos(angle), s = sin(angle);
-  // Rodrigues' rotation of each axis.
-  const turn = (v: P3): P3 => add(add(mul(v, c), mul(cross(a, v), s)), mul(a, mul(sub(1, c), dot(a, v))));
-  return { o: g.o, x: turn(g.x), y: turn(g.y), z: turn(g.z) };
+export function handTurn(e: Pick<Thrown, "flight" | "stroke">, turns: number): number {
+  if (!Number.isInteger(turns)) throw new Error(`handTurn: turns must be a whole number (the thing lands the way up it left the hand); got ${turns}`);
+  return (Math.PI * turns * e.stroke) / e.flight;
+}
+/** The rate of that tumble, radians per second: the hand's own at the release, and the thing's through the flight (a free body's does not change). */
+export const tumbleRate = (e: Pick<Thrown, "flight">, turns: number): number => (TAU * turns) / e.flight;
+
+/**
+ * A thrown thing's axes in the hand and in the air: `g` (as it was taken) turned about `axis` (unit, fixed in space,
+ * through g's origin). Angular velocity is continuous, as velocity is: over the stroke (`whip`, its share gone: 0 until
+ * it starts, 1 from the release) the hand turns it with uniform angular acceleration through `handTurn`; over the
+ * flight (`u`, its share gone) it turns on at the rate it left with, `turns` whole turns, so it comes down as it left
+ * the hand. Both shares are `Attack.flight()`'s.
+ */
+export function tumbled(g: Frame, axis: In<"vec3">, e: Pick<Thrown, "flight" | "stroke">, turns: number, at: { readonly whip: In<"f32">; readonly u: In<"f32"> }): Frame {
+  const w = clamp(at.whip, 0, 1), angle = add(mul(mul(w, w), handTurn(e, turns)), mul(clamp(at.u, 0, 1), turns * TAU));
+  return turnedAbout(g, axis, angle);
 }
 
 /** A held thing on the hold's own clock: where it is and how it is squeezed. Shared by `grab` and an attack's hold. */

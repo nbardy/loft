@@ -251,11 +251,11 @@ function effectTail(e: Effect): number {
 export type Still = { readonly kind: "still" };
 /**
  * A ring wave leaves the edge of the hit disc at the arming time (src/geom/ring.ts): a crest `height` high there,
- * `length` long with its trough, running out at `speed` and gone at `reach` from the centre; a thing afloat at the
- * disc's edge is given `shove / drag` units per second outward when the front arrives, which under the stand-in's
- * linear drag (`drag` seconds) carries it `shove`. Height and impulse fall as 1 / sqrt(r).
+ * `length` long with its trough, running out at `speed` and gone at `reach` from the centre. Its front carries what
+ * floats with it, at `speed`, while its crest (falling as 1 / sqrt(r)) is at least `hold` high, then drops it; the
+ * stand-in coasts under a linear drag of `drag` seconds.
  */
-export type Ring = { readonly kind: "ring"; readonly speed: number; readonly height: number; readonly length: number; readonly reach: number; readonly shove: number; readonly drag: number };
+export type Ring = { readonly kind: "ring"; readonly speed: number; readonly height: number; readonly length: number; readonly reach: number; readonly hold: number; readonly drag: number };
 export type Aftermath = Still | Ring;
 
 export const STILL: Still = { kind: "still" };
@@ -276,7 +276,7 @@ function waterOf(a: Attack, w: Aftermath): Water {
     case "still": return w;
     case "ring": {
       const d = ringDisc(a.name, a.hit);
-      return { kind: "ring", wave: new RingWave({ centre: d.centre, radius: d.radius, since: (t) => sub(t, a.armAt(t)), speed: w.speed, height: w.height, length: w.length, reach: w.reach, shove: w.shove, drag: w.drag }) };
+      return { kind: "ring", wave: new RingWave({ centre: d.centre, radius: d.radius, since: (t) => sub(t, a.armAt(t)), speed: w.speed, height: w.height, length: w.length, reach: w.reach, hold: w.hold, drag: w.drag }) };
     }
   }
 }
@@ -538,13 +538,14 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
     return { ...throwOf(carried(h)(lift<"f32">(1)), h.end), releasedAt: released, landsAt: add(released, h.end.flight) };
   }
   /**
-   * The thrown thing's flight at clock t: `flying` 1 in the air (else 0), `u` the share of the flight gone (0 before
+   * The thrown thing's throw at clock t: `whip` the share of the stroke gone (0 until the stroke starts, 1 from the
+   * release: what the hand's turn reads), `flying` 1 in the air (else 0), `u` the share of the flight gone (0 before
    * the release, 1 from touchdown: what `tumbled` turns by), `landed` seconds since touchdown (negative before: what a
    * splash and a squash read).
    */
-  flight(this: Attack<Motion, Hold<Thrown>>, t: In<"f32"> = time): { readonly flying: F; readonly u: F; readonly landed: F } {
+  flight(this: Attack<Motion, Hold<Thrown>>, t: In<"f32"> = time): { readonly whip: F; readonly flying: F; readonly u: F; readonly landed: F } {
     const h = this.effect, since = sub(sub(t, this.armAt(t)), h.seconds);
-    return { flying: this.held_(t).flying, u: clamp(div(since, h.end.flight), 0, 1), landed: sub(since, h.end.flight) };
+    return { whip: clamp(add(div(since, h.end.stroke), 1), 0, 1), flying: this.held_(t).flying, u: clamp(div(since, h.end.flight), 0, 1), landed: sub(since, h.end.flight) };
   }
 
   // ---- the aftermath's readouts ----
@@ -557,7 +558,7 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
       case "ring": return [w.wave];
     }
   }
-  /** The ring's wave as a field a game samples: `arrival(place)`, `lifts(place, t)`, `impulse(place)`; and the stand-in's `shoved(place)`. */
+  /** The ring's wave as a field a game samples: `arrival(place)`, `speed`, `lag`, `holds(place)`, `lifts(place, t)`; and the stand-in's `ride(place)` and `shoved(place)`. */
   wave(this: Attack<Motion, Effect, Ring>): RingWave {
     const w = this.water;
     switch (w.kind) {
@@ -566,7 +567,7 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
       case "still": throw new Error(`attack "${this.name}": it leaves the water still; it has no wave`);
     }
   }
-  /** The stand-in's shove: how far a thing afloat whose own place is `place` (x, z), given the ring's impulse, has drifted at clock t. Exactly 0 until the front arrives. */
+  /** The stand-in's shove: how far a thing afloat whose own place is `place` (x, z) has been carried by the ring's front and coasted at clock t. Exactly 0 until the front's face takes it. */
   pushed(this: Attack<Motion, Effect, Ring>, place: In<"vec2">, t: In<"f32"> = time): V2 { return this.wave().pushed(place, t); }
   /** The time the ring's front reaches `place`, in the cycle clock t is in. */
   arrives(this: Attack<Motion, Effect, Ring>, place: In<"vec2">, t: In<"f32"> = time): F { return add(this.armAt(t), this.wave().arrival(place)); }

@@ -258,8 +258,45 @@ export function variable<T extends Ty>(name: string, ty: T): Expr<T> {
   return Expr.make({ op: "var", ty, name }, `v:${ty}:${name}`);
 }
 
-/** A value the host supplies every frame (time, game state, a target position). */
-export function input<T extends NumTy>(name: string, ty: T, def: readonly number[]): Expr<T> {
+// ---- namespaces ---------------------------------------------------------------------------------------------------
+//
+// Several instances of one thing in one scene (four crabs: src/lineup.ts) are built by the same code, which gives its
+// drawables, tables and inputs the same names. A namespace is a dynamic scope: while `build` runs inside
+// `namespaced(id, build)`, every name made at the constructors where names enter (a surface's, a body's, a tabulated
+// table's, an input's) is prefixed with the instance's id, so no builder has to know it is one of several. Outside any
+// namespace nothing is prefixed: one instance alone is named, and built, exactly as before.
+
+let namespace = "";
+/** Run `build` with every name it makes prefixed by `id` (an identifier). Namespaces do not nest. */
+export function namespaced<T>(id: string, build: () => T): T {
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(id)) throw new Error(`namespaced "${id}": the id must be letters and digits, starting with a letter (it prefixes identifiers and input names)`);
+  if (namespace !== "") throw new Error(`namespaced "${id}": already inside the namespace "${namespace}" (namespaces do not nest)`);
+  namespace = id;
+  try { return build(); } finally { namespace = ""; }
+}
+/** The namespace now ("" outside any). */
+export const currentNamespace = (): string => namespace;
+/**
+ * A number that differs from one namespace to the next and is 0 outside any: what makes instances built by the same
+ * code differ where their code asks for a seed (each crab of a line its own idle, not four copies of one puppet).
+ */
+export function namespaceSeed(): number {
+  let h = 0;
+  for (const c of namespace) h = (h * 31 + c.charCodeAt(0)) % 9973;
+  return namespace === "" ? 0 : 1 + (h % 97);
+}
+/** An identifier (a thing's or a table's name) in the namespace now: `id__name`. A name already in it is left alone, so a name may pass through two constructors. */
+export function scopedName(name: string): string {
+  return namespace === "" || name.startsWith(`${namespace}__`) ? name : `${namespace}__${name}`;
+}
+/** An input's name in the namespace now: `id.name`. */
+function scopedInput(name: string): string {
+  return namespace === "" || name.startsWith(`${namespace}.`) ? name : `${namespace}.${name}`;
+}
+
+/** A value the host supplies every frame (time, game state, a target position). In a namespace its name is the instance's: `id.name`. */
+export function input<T extends NumTy>(given: string, ty: T, def: readonly number[]): Expr<T> {
+  const name = scopedInput(given);
   if (def.length !== SIZE[ty]) throw new Error(`input "${name}": default has ${def.length} components, ${ty} needs ${SIZE[ty]}`);
   const spec: InputSpec = { name, ty, def };
   // An input's declaration belongs to the scene that reads it, not to the process: the variants of one design are
