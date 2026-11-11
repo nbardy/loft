@@ -361,7 +361,7 @@ const goodEye: Eye = {
   // At rest the stalk leans out and forward, a little tired; roused it stands up and leans toward the target.
   tip: add(baseR, add(mix(inBody(0.75, 1.75, 0.65), inBody(0.5, 2.35, 0.2), rouse), mul(lookR, 0.35))),
   look: lookR, radius: 0.64,
-  lid: add(mix(mix(mix(1.45, 3.0, blink(5.3, 3.9)), 0.5, rouse), 2.55, brace), mul(sin(mul(time, 0.6)), 0.1)),
+  lid: add(mix(mix(mix(1.15, 3.0, blink(5.3, 3.9)), 0.5, rouse), 2.55, brace), mul(sin(mul(time, 0.6)), 0.1)),
   slant: mix(0.38, 0.55, max(rouse, brace)),
   // A goat's bar pupil, wide and sleepy at rest; a pinpoint when roused.
   iris: (x, y) => {
