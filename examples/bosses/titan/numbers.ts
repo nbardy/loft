@@ -60,6 +60,9 @@ export const S = {
 
   // ---- eyes ----
   stalk: 2.4, eye: 0.3,
+  /** How much higher than the head mount's own the `face` camera stands and aims (reefback_titan.ts, `camerasFor`): a
+   * face on very tall stalks asks for more, one whose eyes hang below the body for less. The base asks for none. */
+  faceRise: 0,
 
   // ---- Claw Crush: the hit disc on the water (world xz), its warning, its loop ----
   // The show loops every 22 s: the Grab closes at 3.0 and throws its ship (down at 9.3), Claw Crush arms at 12.0 and
