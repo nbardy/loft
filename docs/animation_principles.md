@@ -55,6 +55,39 @@ Work through this in order. Each step is one or two lines in a scene.
 - Does it have one temperament that every feature serves?
 - Is anything on it symmetrical that need not be?
 
+## Expressions
+
+`src/geom/expression.ts`; the worked face is `examples/bosses/titan/face/dandy.ts` (the Reefback Titan's `islander`
+variant). Use it when a face has more than two states. Mixing each lid and stalk from envelopes inline works for
+"roused" and "braced"; with six moods it stops being readable, and nothing can check it.
+
+1. **Name the channels**: what the face is drawn from, as a string union. A channel is whatever one number can
+   drive: how far a lid is down, a stalk's height, a pupil's size, how far the look has gone from one target to
+   another. The library gives them no meaning; the face that draws them does.
+2. **Write the cast**: `cast(rest, { glare: { upper: 0.9, slant: 0.7 }, ... })`. The rest expression gives every
+   channel a number; each named expression lists only what departs from rest. Expressions are plain numbers, so they
+   can be printed, compared and predicted from before anything is drawn.
+3. **Write the score**: `score(cast, (t) => [show("glare", w1), show("wince", w2), only("wince", ["upper", "lower"],
+   blink), added({ jaw: chatter }, w3)])`. Layers apply in order, later over earlier. `show` takes the whole face
+   toward an expression, `only` some channels (a blink), `added` adds on top (a tremble). The weights are yours:
+   closed forms of the clock `t`, from an attack's beats and envelope or from `during(clock, { from, to, rise, fall })`.
+4. **Draw from it**: `score.at(time)` is one closed form per channel. A part that should arrive late reads
+   `score.at(sub(time, lag))`: one eye 0.14 s behind the other is one argument. Tabulate each channel once a frame
+   (`perFrame`) if paint reads it.
+5. **Check it**: `expressionsRead(score, marks, { camera, period, apart, of })` (src/check.ts). Marks are the drawn
+   vectors a viewer compares (an eye's middle to its lid's edge, a stalk's root to its tip), built from the same
+   expressions the parts are. The check fails if a named expression never shows in a cycle (a later layer always
+   covers it) or if two of them are the same picture from that camera (no mark changes by `apart`, a share of the
+   reference mark's length on screen). `minScreenSize` is the other half: the eye is large enough to carry it.
+
+What the crab's face found (docs/art_direction/DIRECTION.md, Round 3):
+
+- From a high camera, where a creature looks is invisible if the eye turns all the way to its target: the pupil goes
+  round the far side. Turn the socket part of the way and slide the iris the rest.
+- A lid in the body's own ink disappears on the body: a shut eye was a dark ball. Give lids an ink that differs from
+  both the white and the body.
+- The stalks' pose is the largest thing that changes, so it carries the most from far away; lids next; pupils last.
+
 ## Grabs
 
 `src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release. In a

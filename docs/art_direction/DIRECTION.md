@@ -75,11 +75,11 @@ What was wrong with the periscope face on this crab, measured on `claws=fiddler,
 ### The face
 
 Temperament: vain, a show-off, a bully (kept from the periscope). What is new is that the temperament does the
-staging: **the eyes face the audience and never quite leave it**. The socket turns three tenths of the way to what it
+staging: **the eyes face the audience and never quite leave it**. The socket turns a quarter of the way to what it
 looks at and the iris slides the rest across the white, so it watches the ship from the side of its eye, and the game
-camera always sees white, iris and pupil. Two lids an eye (a dark brow above, a brick cheek below), a moss-green iris
-(the island's own ink), everything bigger on the great claw's side (the right eye is larger, higher, wears its lid
-higher and leads by 0.14 s), and a handlebar moustache of two curled antennae.
+camera always sees white, iris and pupil. Two lids an eye (a brow above, a cheek below, painted coral), a moss-green
+iris (the island's own ink), everything bigger on the great claw's side (the right eye is larger, higher, wears its
+lid higher and leads by 0.14 s), and a handlebar moustache of two curled antennae.
 
 Kept from before: the eyeball on a stalk, the lid as a spherical lune and its ink, the stalks' whip after the slam,
 the door-plate mouth (all `faceKit`); watching the audience at rest and the stalks trailing the walk (the periscope).
@@ -94,11 +94,11 @@ fight by its own clocks.
 | strain | the hold; bites with each squeeze | slits under a scowl, stalks drawn down and trembling, mouth clamped |
 | glee | from the let-go, 1.5 s on | cheeks push the eyes into arches, stalks flung apart and back, laughing |
 | glare | Claw Crush's wind-up | brows hard down to the middle, pinpoint pupils, stalks low and thrust at the disc |
-| wince | the slam, 0.5 s | shut tight, stalks jolted down and apart, the lopsidedness thrown over |
+| wince | the slam, 0.5 s | shut tight on a lash line, stalks jolted down, the lopsidedness thrown over |
 
 Expression references were to be generated first (`tools/crab_faces.py`: six moods, each close and at game distance).
-A process from `~/git/flux-klein-fast` was running when this started, so the script was written and not run, and the
-shapes come from the round 2 fiddler pictures.
+A process from `~/git/flux-klein-fast` was running when this started, so the shapes came from the round 2 fiddler
+pictures and from looking at renders. FLUX_NOTE
 
 ### Predictions (written before the first render of this face)
 
@@ -124,4 +124,60 @@ weight, the `game` camera at 1280 x 800.
 5. **Cost.** On `claws=fiddler,face=periscope` the `game` frame is 2.62 ms of GPU time (the fast clock state; pose
    stages 0.39), 84 draws, 102,371 triangles drawn, 122 map tables. The islander: at most 2.75 ms (expected one timer
    tick more, 0.07), 90 draws, about 105,300 triangles, about 156 map tables.
+
+### Scored (the same day, after the build)
+
+Pictures: `out/face/expression_sheet.webp` (each expression from `face` and from `game`, with the game window at its
+true size), `out/face/variants/sheet.webp` (base, fiddler, islander through far, face, game),
+`out/face/islander_game_cycle.mp4` and `islander_face_cycle.mp4` (one 16 s cycle each). `loft check` on the islander
+passes 7 of 7: the crab's four and the face's three.
+
+| | predicted | measured |
+|---|---|---|
+| right eye, `game`, 1280 x 800 | 60 px | 59.0 px (`minScreenSize`) |
+| left eye | 45 px | 42.5 px (moved 0.5 further from the camera after looking; the theory on the final numbers says 44.2) |
+| white against its surround (luminance) | at least 3.5 to 1 | 3.56 to 1 (white 0.743, ring 0.209; `game`, t = 6.3) |
+| every expression reaches 0.9 of the face | 7 of 7 | 7 of 7, each 1.00 |
+| closest pair | rest and glee, 33 px, in 23 to 43 | rest and glee, 26.5 px (0.44 of the eye; the limit is 0.25) |
+| told apart by eye at the game camera | at least 6 of 7 | 7 of 7 in the sheet's true-size insets, my own judgement |
+| GPU frame | at most 2.75 ms (2.62 before) | 2.49 ms in the fast clock state; back to back in the slow one, 4.46 before and 4.52 after: one timer tick |
+| draws, triangles, map tables | 90, about 105,300, about 156 | 90, 106,003, 160 (and 2 scan tables, the moustache's, not predicted) |
+
+Prediction 4 (where the pupils sit) was not measured as a number. In the pictures the three looks are distinct: centred
+at rest, at the right edge of the eye toward the ship, low toward the disc.
+
+The numbers held; the first pictures did not. What was wrong, and each was a fault in the reasoning, not a slip:
+
+- **Shut eyes were two dark balls on a brick body**, the complaint this round started from. I had kept the base
+  face's lid ink (the body's dark brick) and argued that a dark surround makes the white read. It does, while there
+  is white. Wince and strain have almost none, and then the lid is the whole eye. The lids are now coral: lighter than
+  the body, darker than the white. The contrast figure passed with either ink and did not see this; a check of the
+  shut eye against the body would have.
+- **The two eyes overlapped from the game camera.** The theory measured each eye alone. They are 2.55 apart across
+  the body now (were 1.8).
+- **The first glee hid its pupils**: it looked down at the ship, behind its own raised cheeks. Glee now looks half at
+  the ship and half at the audience, which is also more like it.
+- **The first wince's lash line faced the water.** With the brow pulled right down the lids met below the eye's
+  middle, and the camera above saw only the brow's top. They meet on the middle line now.
+- **Facing the game camera squarely was wrong for every other camera**: from `face` and `far` (lower) the eyes showed
+  their undersides. The sockets face 10 degrees lower than the game camera; the pupils still look at it.
+- The socket's turn and the iris's slide were cut from 0.3 and 0.45 to 0.25 and 0.4: at the first numbers the pupil sat
+  on the eye's edge from the game camera when it looked at the ship.
+- The stalks were cut from 3.0 to 2.5 tall so the right eye stays inside the `face` camera's frame; it still touches
+  the top in glee. I had not looked at that camera in the theory at all.
+- The pair I expected to be confused, strain and glare, is not: the glare's slant reads. The weak one is glee, which
+  in a still reads as wide-eyed and pleased more than as laughing (the laugh is in the motion: the stalks bob and the
+  mouth chatters five times a second).
+
+Weak or unfinished:
+
+- From the game camera in covet the pupil fills the iris and sits at the eye's edge: the look reads (white eyes, black
+  pupils turned at the ship), the green does not.
+- At the slam the right eye drops onto the carapace and its stalk is hidden behind it from above.
+- The moustache reads as a smile from the front. That suits posing and glee; in the glare it lifts where a snarl
+  would turn down.
+- The mouth plates are driven by the score but are hidden from the game camera by the claws most of the cycle.
+- The audience is a fixed point (the `game` camera's eye, written in `face/dandy.ts`). If the game's camera orbits, the
+  point must become a host input.
+- The contrast was measured on one frame by a throwaway script, not by a check.
 

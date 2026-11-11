@@ -6,11 +6,11 @@
 //   glint. They are what reads from the game camera, so they are large: the right one 1.6 across, the left 1.24;
 // - not twins: everything on its great claw's side is bigger. The right eye is larger, stands higher, wears its lid
 //   higher (one raised brow, the smug look) and leads; the left reads the same score 0.14 s late;
-// - each eye has two lids, a dark upper one (the brow) and a brick lower one (the cheek). Between them they make every
-//   shape a face needs: half-lowered and uneven (posing), flung wide (greed), squeezed to slits (straining), pushed up
+// - each eye has two lids, an upper one (the brow) and a lower one (the cheek), painted coral like eye-shadow. Between
+//   them they make every shape a face needs: half-lowered and uneven (posing), flung wide (greed), squeezed to slits (straining), pushed up
 //   from below into arches (glee), slanted hard down to the middle (the glare), shut (the wince);
-// - the eyes face the audience, always: the socket turns only part of the way to what it looks at and the iris slides
-//   the rest of the way across the white, so it watches the ship and the disc from the side of its eye. That is the
+// - the eyes face the audience, always: the socket turns only a quarter of the way to what it looks at and the iris
+//   slides the rest of the way across the white, so it watches the ship and the disc from the side of its eye. That is the
 //   temperament (it is performing), and it is why a camera high above still sees white, iris and pupil when the crab
 //   looks down at the water (an eye that truly faced the ship showed that camera the back of its head);
 // - a handlebar moustache: two antennae curled up at the ends, that bristle, flare and droop with the mood;
@@ -21,10 +21,10 @@
 // gleeful from the let-go, glares through Claw Crush's wind-up, winces at the slam, and goes back to posing. Where it
 // looks is part of each expression: the ship is `rig.shipNow`, wherever the rig says the ship is.
 //
-// Inherited: the eyeball-on-a-stalk recipe, the lid as a spherical lune and its ink, the stalks' whip after the slam
-// and the mouth plates are faceKit's (face/base.ts); watching the audience at rest and the stalks trailing the walk's
-// sway are the periscope's. New here: the lower lid, the audience-facing socket with a sliding iris, the green iris,
-// the size and the lopsidedness, the moustache, and expressions as values.
+// Inherited: the eyeball-on-a-stalk recipe, the lid as a spherical lune, the stalks' whip after the slam and the mouth
+// plates are faceKit's (face/base.ts); watching the audience at rest and the stalks trailing the walk's sway are the
+// periscope's. New here: the lower lid, the audience-facing socket with a sliding iris, the green iris, the coral
+// lids, the size and the lopsidedness, the moustache, and expressions as values.
 
 import {
   abs, add, added, alive, cast, clamp, cos, cross, div, dot, draw, during, expressionsRead, fract, horn, length, max, minScreenSize, mix, mul,
@@ -36,8 +36,11 @@ import type { Rig } from "../rig.ts";
 import type { FaceOption } from "../slots.ts";
 import { faceKit } from "./base.ts";
 
-/** Where the audience is: the game camera's eye (reefback_titan.ts, the `game` camera). The eyes face it. */
+/** Where the audience is: the game camera's eye (reefback_titan.ts, the `game` camera). It looks there at rest. */
 export const AUDIENCE = [23, 27, 21] as const;
+/** Where the sockets face at rest: the audience's bearing, 10 degrees lower. Faced square at a camera 40 degrees up, the
+ * eyes showed the lower cameras (`face`, `far`) their undersides and their brows sat behind them: stargazing. */
+export const FACING = [23, 19, 16] as const;
 
 // ---- the channels, and the cast ----
 
@@ -63,13 +66,15 @@ export const CAST = cast<Channel, "covet" | "strain" | "glee" | "glare" | "wince
     // It wants the ship: eyes flung wide, pupils swollen, both stalks craned up, together and toward it; drooling.
     covet: { upper: 0.15, lower: 0.15, slant: -0.12, pupil: 0.44, tall: 1.15, spread: -0.3, lean: 0.7, aside: -0.7, cock: 0.2, jaw: 0.55, whisk: 0.25, ship: 1 },
     // The squeeze: eyes screwed to slits under a scowl, stalks drawn down and trembling, the mouth clamped.
-    strain: { upper: 0.92, lower: 0.85, slant: 0.45, pupil: 0.24, tall: 0.7, spread: -0.15, lean: 0.3, aside: -0.3, cock: 0.4, jaw: 0, whisk: -0.2, ship: 1, shake: 0.06 },
+    strain: { upper: 0.85, lower: 0.75, slant: 0.45, pupil: 0.24, tall: 0.7, spread: -0.15, lean: 0.3, aside: -0.3, cock: 0.4, jaw: 0, whisk: -0.2, ship: 1, shake: 0.06 },
     // Let go: the cheeks push the eyes into arches, stalks flung apart and back, laughing; it watches the ship go.
-    glee: { upper: 0.35, lower: 1.0, slant: -0.3, pupil: 0.38, tall: 1.1, spread: 0.75, lean: -0.5, aside: 0, cock: 0.6, jaw: 1, whisk: 0.5, ship: 1 },
+    glee: { upper: 0.3, lower: 0.95, slant: -0.3, pupil: 0.38, tall: 1.1, spread: 0.5, lean: -0.5, aside: 0, cock: 0.6, jaw: 1, whisk: 0.5, ship: 0.5 },
     // Before the slam: the brows drop hard to the middle over pinpoint pupils, stalks low and thrust at the disc, a roar.
     glare: { upper: 0.9, lower: 0.25, slant: 0.7, pupil: 0.16, tall: 0.78, spread: -0.25, lean: 1.0, aside: 0.5, cock: 0, jaw: 0.85, whisk: 0.35, disc: 1 },
-    // The impact: eyes shut tight, the brows up in the middle, stalks jolted down and apart, the lopsidedness thrown over.
-    wince: { upper: 1.3, lower: 0.8, slant: -0.45, pupil: 0.24, tall: 0.55, spread: 0.55, lean: -0.6, aside: 0, cock: -0.8, jaw: 0, whisk: -0.6, disc: 1 },
+    // The impact: eyes shut tight, the brows up in the middle, stalks jolted down, the lopsidedness thrown over. The lids
+    // meet at the eye's middle line, not below it: from the game camera, above, a brow pulled right down showed only
+    // its own top, a plain ball with no lash line.
+    wince: { upper: 0.95, lower: 1.2, slant: -0.45, pupil: 0.24, tall: 0.85, spread: 0.15, lean: -0.1, aside: -0.3, cock: -0.5, jaw: 0, whisk: -0.6, disc: 1 },
   },
 );
 export type Mood = keyof typeof CAST.named;
@@ -89,14 +94,14 @@ export type EyeSpec = {
 // Rooted off the middle, toward the little claw: the great claw stands at the crab's right and, from the game camera,
 // in front of anything on that side.
 export const EYES: readonly EyeSpec[] = [
-  { tag: "R", side: 1, root: [4.45, 0.85, 0.3], reach: [0.8, 3.0, -0.1], radius: 0.8, cockRise: 0.3, cockLid: 0.26, lag: 0, whip: [0.6, 1.5] },
-  { tag: "L", side: -1, root: [4.35, 0.85, -1.3], reach: [0.7, 2.5, -0.3], radius: 0.62, cockRise: -0.2, cockLid: -0.08, lag: 0.14, whip: [0.75, 1.2] },
+  { tag: "R", side: 1, root: [4.45, 0.85, 0.5], reach: [1.0, 2.5, -0.05], radius: 0.8, cockRise: 0.3, cockLid: 0.26, lag: 0, whip: [0.35, 1.5] },
+  { tag: "L", side: -1, root: [4.35, 0.85, -1.6], reach: [0.9, 2.15, -0.5], radius: 0.62, cockRise: -0.2, cockLid: -0.08, lag: 0.14, whip: [0.5, 1.2] },
 ];
 /** The iris's radius as a share of the eye's. */
 const IRIS = 0.5;
 /** How far the socket turns from the audience toward what it looks at (a share of the way), and how far the iris slides
  * across the eye when the look is square to the socket (a share of the eye's radius). SLIDE + IRIS stays under 1. */
-const TURN = 0.3, SLIDE = 0.45;
+const TURN = 0.25, SLIDE = 0.4;
 /** Which way a strand's section runs across the eyeball's front, against `side0`. */
 const BALL_ACROSS = 1;
 /** A lid's least angle, radians: fully raised it still shows as a rim. */
@@ -140,8 +145,10 @@ export function scoreOf(rig: Rig): Score<Channel, Mood> {
     const gleeful = mul(smoothstep(0.05, 0.3, gb.release), sub(1, smoothstep(0.35, 1, gb.settle)));
     const glaring = mul(smoothstep(0, 0.25, cb.anticipate), sub(1, smoothstep(-0.06, 0.02, ctau)));
     const wincing = during(ctau, { from: -0.06, rise: 0.08, to: 0.5, fall: 0.6 });
-    // A slow, superior blink every 4.3 s, only while it poses: the lids of a wince and nothing else.
-    const sinceBlink = abs(sub(mul(fract(div(t, 4.3)), 4.3), 0.5));
+    // A slow, superior blink three times a cycle (so the performance loops with the fight), seen only while it poses:
+    // the lids of a wince and nothing else.
+    const every = n.crushPeriod / 3;
+    const sinceBlink = abs(sub(mul(fract(div(t, every)), every), 1.2));
     const blink = mul(mul(sub(1, smoothstep(0.05, 0.2, sinceBlink)), sub(1, attending)), sub(1, max(glaring, wincing)));
     // It laughs: the stalks bob and the mouth chatters, five times a second.
     const laugh = sin(mul(t, TAU * 5));
@@ -182,7 +189,7 @@ export const dandy: FaceOption = {
       // The look: from the audience to the ship or the disc as the mood says. The socket turns part of the way; the iris
       // slides the rest across the eye, in the socket's own across and up.
       const look = unit(sub(mix(mix(audience, shipNow, c.ship), disc, c.disc), tip));
-      const front = tabV(`${e.tag}_front`, unit(mix(unit(sub(audience, tip)), look, TURN)));
+      const front = tabV(`${e.tag}_front`, unit(mix(unit(sub(vec3(...FACING), tip)), look, TURN)));
       const side0 = unit(cross(front, body.y)), up0 = cross(side0, front);
       const gx = tabF(`${e.tag}_gx`, mul(dot(look, side0), SLIDE)), gy = tabF(`${e.tag}_gy`, mul(dot(look, up0), SLIDE));
       const upper = tabF(`${e.tag}_upperAngle`, q.upper), lower = tabF(`${e.tag}_lowerAngle`, q.lower), slant = tabF(`${e.tag}_slantAngle`, q.slant);
@@ -208,7 +215,7 @@ export const dandy: FaceOption = {
           const pupil = mul(cut(sub(c.pupil, d), 0), onFront);
           const glint = mul(cut(sub(mul(c.pupil, 0.32), length(vec2(sub(x, sub(gx, mul(c.pupil, 0.35))), sub(y, add(gy, mul(c.pupil, 0.45)))))), 0), onFront);
           const white = mix(mix(mix(mix(vec3(...I.cream), vec3(...I.moss), iris), vec3(...I.black), ring), vec3(...I.black), pupil), vec3(...I.cream), glint);
-          // Dark behind: the white is a socket's opening, so it has its own dark surround against any background.
+          // Dark behind: the white is a socket's opening, so from the side and from behind it reads as an eye facing away.
           return mix(vec3(...I.brickDark), white, cut(m, 0.36));
         },
       });
@@ -222,7 +229,11 @@ export const dandy: FaceOption = {
         // `edge` is radians back from the lid's edge.
         paint: (u) => paint(mul(sub(1, u), sub(angle, BACK))), grid: { u: spacing.even(10), v: spacing.even(14) }, sides: "two", outline: "border",
       });
-      const cheekInk = (edge: F): P3 => mix(vec3(...I.brick), vec3(...I.black), sub(1, cut(edge, 0.16)));
+      // Painted lids, coral (the island's coral heads): lighter than the body and darker than the white, so a lid reads
+      // against both, and a shut eye is a pink ball with a black lash line. (In the body's dark brick, shut eyes were two
+      // dark balls on a brick body.) A heavy black rim at the edge and nothing else: with a crease behind it, a lowered
+      // lid was a striped ball.
+      const lidInk = (edge: F): P3 => mix(vec3(...I.coral), vec3(...I.black), sub(1, cut(edge, 0.2)));
       // The drawn points a viewer compares (and `expressionsRead` measures): the same expressions the parts are made of.
       const on = (dir: P3): P3 => add(tip, mul(dir, R));
       const marks = {
@@ -234,7 +245,7 @@ export const dandy: FaceOption = {
       };
       return {
         ball, marks, channels: c, width: { from: on(mul(side0, -1)), to: on(side0) },
-        things: [stalk, ball, lid(`cheek${e.tag}`, lower, -1, R * 1.07, cheekInk), lid(`lid${e.tag}`, upper, 1, R * 1.12, k.lidInk)],
+        things: [stalk, ball, lid(`cheek${e.tag}`, lower, -1, R * 1.07, lidInk), lid(`lid${e.tag}`, upper, 1, R * 1.12, lidInk)],
       };
     };
     const [right, left] = EYES.map(eye) as [ReturnType<typeof eye>, ReturnType<typeof eye>];
@@ -245,7 +256,8 @@ export const dandy: FaceOption = {
     const jaw = clamp(add(face.jaw, chew), 0, 1);
     // The moustache: two antennae from under the eyes, out to each side and curled up at the ends. `whisk` lifts them.
     const moustache = (s: 1 | -1) => {
-      const lift_ = add(add(face.whisk, alive(time, 0.05, 61 + s)), mul(sin(mul(time, TAU * 9 + s)), mul(face.shake, 1.5)));
+      // Lopsided with the rest of the face: the great claw's side rides higher, a smirk.
+      const lift_ = add(add(add(face.whisk, mul(face.cock, 0.14 * s)), alive(time, 0.05, 61 + s)), mul(sin(mul(time, TAU * 9 + s)), mul(face.shake, 1.5)));
       // About the body's x, a positive turn takes +z toward -y: each side lifts by turning the other way.
       const y = rotateAbout(body.y, body.x, mul(lift_, -s)), z = rotateAbout(body.z, body.x, mul(lift_, -s));
       return place(horn({

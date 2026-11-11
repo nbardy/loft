@@ -8,7 +8,7 @@
 // change there changes the prediction; the measured side is `loft check` (expressionsRead, minScreenSize).
 
 import { cameraMatrices, project } from "../src/host/camera.ts";
-import { AUDIENCE, CAST, EYES, lookOf, type Channel } from "../examples/bosses/titan/face/dandy.ts";
+import { AUDIENCE, CAST, EYES, FACING, lookOf, type Channel } from "../examples/bosses/titan/face/dandy.ts";
 import { S } from "../examples/bosses/titan/numbers.ts";
 
 type V = readonly [number, number, number];
@@ -35,7 +35,7 @@ function marks(c: Readonly<Record<Channel, number>>, e: (typeof EYES)[number]) {
   const k = lookOf(c, e);
   const base = world(e.root), tip = add(base, k.reach);
   const target = mix(mix(AUDIENCE, SHIP, c.ship), DISC, c.disc);
-  const a = unit(sub(AUDIENCE, tip)), g = unit(sub(target, tip));
+  const a = unit(sub(FACING, tip)), g = unit(sub(target, tip));
   const F = unit(mix(a, g, k.turn));
   const side0 = unit(cross(F, [0, 1, 0])), up0 = cross(side0, F);
   const side = add(mul(side0, Math.cos(k.slant)), mul(up0, Math.sin(k.slant))), up = sub(mul(up0, Math.cos(k.slant)), mul(side0, Math.sin(k.slant)));
