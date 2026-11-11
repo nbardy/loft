@@ -1,0 +1,86 @@
+[
+  {
+    "name": "posing_close",
+    "mood": "posing",
+    "view": "close",
+    "seed": 500,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is vain and posing: chin up, eyelids half lowered in smug disdain, pupils turned sideways toward the viewer, one eyestalk cocked higher than the other, a small smirk. Extreme close-up of its face and eyestalks seen from the front and a little above, filling the picture, a plain indigo sea behind."
+  },
+  {
+    "name": "posing_game",
+    "mood": "posing",
+    "view": "game",
+    "seed": 501,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is vain and posing: chin up, eyelids half lowered in smug disdain, pupils turned sideways toward the viewer, one eyestalk cocked higher than the other, a small smirk. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, one tiny sailing ship with blue sails beside it; the expression of its eyes still readable at this distance."
+  },
+  {
+    "name": "greedy_close",
+    "mood": "greedy",
+    "view": "close",
+    "seed": 510,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is greedy: both eyes wide open with small pupils fixed on a tiny sailing ship, the eyestalks leaning toward it and close together, mouth plates parted, hungry. Extreme close-up of its face and eyestalks seen from the front and a little above, filling the picture, a plain indigo sea behind."
+  },
+  {
+    "name": "greedy_game",
+    "mood": "greedy",
+    "view": "game",
+    "seed": 511,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is greedy: both eyes wide open with small pupils fixed on a tiny sailing ship, the eyestalks leaning toward it and close together, mouth plates parted, hungry. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, one tiny sailing ship with blue sails beside it; the expression of its eyes still readable at this distance."
+  },
+  {
+    "name": "straining_close",
+    "mood": "straining",
+    "view": "close",
+    "seed": 520,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is straining with effort as it squeezes something: eyes squinted to narrow slits under lowered slanted lids, eyestalks bent and trembling, mouth clenched tight. Extreme close-up of its face and eyestalks seen from the front and a little above, filling the picture, a plain indigo sea behind."
+  },
+  {
+    "name": "straining_game",
+    "mood": "straining",
+    "view": "game",
+    "seed": 521,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is straining with effort as it squeezes something: eyes squinted to narrow slits under lowered slanted lids, eyestalks bent and trembling, mouth clenched tight. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, one tiny sailing ship with blue sails beside it; the expression of its eyes still readable at this distance."
+  },
+  {
+    "name": "gleeful_close",
+    "mood": "gleeful",
+    "view": "close",
+    "seed": 530,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is gleeful, laughing as it throws something away: eyes wide and round with big pupils looking up, eyestalks flung apart in a V, mouth plates wide open. Extreme close-up of its face and eyestalks seen from the front and a little above, filling the picture, a plain indigo sea behind."
+  },
+  {
+    "name": "gleeful_game",
+    "mood": "gleeful",
+    "view": "game",
+    "seed": 531,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is gleeful, laughing as it throws something away: eyes wide and round with big pupils looking up, eyestalks flung apart in a V, mouth plates wide open. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, one tiny sailing ship with blue sails beside it; the expression of its eyes still readable at this distance."
+  },
+  {
+    "name": "furious_close",
+    "mood": "furious",
+    "view": "close",
+    "seed": 540,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is furious, about to slam its claw down: eyelids slanted steeply down toward the middle in a hard scowl, tiny pinpoint pupils, eyestalks pulled low and forward, mouth open in a roar. Extreme close-up of its face and eyestalks seen from the front and a little above, filling the picture, a plain indigo sea behind."
+  },
+  {
+    "name": "furious_game",
+    "mood": "furious",
+    "view": "game",
+    "seed": 541,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is furious, about to slam its claw down: eyelids slanted steeply down toward the middle in a hard scowl, tiny pinpoint pupils, eyestalks pulled low and forward, mouth open in a roar. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, one tiny sailing ship with blue sails beside it; the expression of its eyes still readable at this distance."
+  },
+  {
+    "name": "wincing_close",
+    "mood": "wincing",
+    "view": "close",
+    "seed": 550,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is wincing at an impact: both eyes screwed tightly shut, eyestalks pulled down and bent, the whole face flinching, spray flying. Extreme close-up of its face and eyestalks seen from the front and a little above, filling the picture, a plain indigo sea behind."
+  },
+  {
+    "name": "wincing_game",
+    "mood": "wincing",
+    "view": "game",
+    "seed": 551,
+    "prompt": "Japanese ukiyo-e woodblock print. Bold black key lines of varied weight around every form, flat colour with no gradients on the creature, a limited palette of deep indigo sea, cream paper and brick red, pattern lines instead of shading, cream claw-shaped foam where it breaks the water. The subject is a colossal brick-red fiddler crab, low in the water, carrying a small mossy green island with stone cliffs on its back, one gigantic vermilion claw and one tiny claw, and two tall thick eyestalks ending in big round cream-white eyes with black pupils and heavy dark eyelids, the left eye a little lower and smaller than the right. Its expression is wincing at an impact: both eyes screwed tightly shut, eyestalks pulled down and bent, the whole face flinching, spray flying. Seen from far away and high above at a three-quarter angle, the whole creature small in a wide empty indigo sea with long wave lines, one tiny sailing ship with blue sails beside it; the expression of its eyes still readable at this distance."
+  }
+]

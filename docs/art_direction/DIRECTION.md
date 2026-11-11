@@ -98,7 +98,12 @@ fight by its own clocks.
 
 Expression references were to be generated first (`tools/crab_faces.py`: six moods, each close and at game distance).
 A process from `~/git/flux-klein-fast` was running when this started, so the shapes came from the round 2 fiddler
-pictures and from looking at renders. FLUX_NOTE
+pictures and from looking at renders. The sheet was generated after the build, once no such process was running:
+`crab_round3/sheet.webp` (12 pictures, `crab_round3/prompts.json`). It did not shape this face; it is a second opinion
+on it. The model would not put eyes on the stalks: in all twelve the eyes sit on the carapace's front under heavy
+brows, and most of each expression is an open mouth (the greedy, gleeful and furious ones especially). This face has
+almost no mouth from the game camera. A mouth on the carapace's front that the game camera can see is the next thing
+to try.
 
 ### Predictions (written before the first render of this face)
 

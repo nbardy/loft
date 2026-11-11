@@ -67,6 +67,9 @@ t0 = perf_counter()
 pipe = Pipeline(bits=4)
 print(f"model ready in {perf_counter() - t0:.1f}s", flush=True)
 for job in jobs:
+    # A picture already there is kept (same prompt, same seed): a run that was cut short picks up where it stopped.
+    if (OUT / f"{job['name']}.webp").exists():
+        continue
     if free_gb() < MIN_FREE_GB:
         sys.exit(f"stopped before {job['name']}: only {free_gb():.1f} GB free")
     t = perf_counter()
