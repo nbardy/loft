@@ -346,7 +346,7 @@ Cost, `profile` (normal frame, least of 40 frames), islander, `game`. The machin
 | `breakers` | -0.22 | +0.27 | +0.20 (sea 1.76) |
 
 Every cost prediction was wrong in sign: I priced the patterns' arithmetic and predicted all five cheaper than `ridge`;
-all are dearer, by 0.05 to 0.10 ms of a fast-state 1280 x 800 frame (4% to 8% of the frame in either state), because
+all are dearer, by 0.05 to 0.10 ms of a fast-state 1280 x 800 frame (2% to 8% of the frame in either state), because
 they read the level and the level reads more than the band (which skips its inner ring unless the outer one found
 something; the level may not, see the comment at the code). `curls` adds four cell hashes and an arctangent to that.
 Not measured: a fast-state base frame after the merge (the fast readings that day were 1.9 to 2.4 ms for the new
