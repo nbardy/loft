@@ -69,7 +69,10 @@ place when posed, so a scene can define the attack before the body whose frame t
 
 `attack.beats(t, settle)` returns the beats on the attack's own clock: `anticipate` over the wind-up, `act` over the
 strike, `hold` over the effect, `release` over the motion's let-go, `settle` over `settle` seconds after it, and
-`after`, seconds since the release ended (since T for a hit: what `impact` and `swing` read). A scene states the seconds
+`after`, seconds since the release ended (since T for a hit: what `impact` and `swing` read). (Since 2026-11-11 there
+is also `flight`, over a thrown thing's time in the air, and for a hold that ends thrown `settle` and `after` begin
+when the thing has landed if that is later than the end of the release: the action is not over while its prize is in
+the air. `docs/throw_and_shove.md`.) A scene states the seconds
 once, in the attack.
 
 ## Checks

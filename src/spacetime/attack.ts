@@ -216,11 +216,25 @@ function effectSeconds(e: Effect): number {
   }
 }
 
+/** Seconds after a hold that its thing is in the air: none set down; thrown, the stand-in's flight. */
+function endingAir(e: Ending): number {
+  switch (e.kind) {
+    case "setDown": return 0;
+    case "thrown": return e.flight;
+  }
+}
 /** Seconds after a hold that its thing is still in motion: none set down; thrown, its flight and its settling on the water (to 1%). */
 function endingTail(e: Ending): number {
   switch (e.kind) {
     case "setDown": return 0;
     case "thrown": return e.flight + 4.6 * Math.max(e.drag, 1 / (2 * Math.PI * e.heave.hz * e.heave.damping));
+  }
+}
+/** Seconds after the effect that what it acted on is in the air. */
+function effectAir(e: Effect): number {
+  switch (e.kind) {
+    case "instant": return 0;
+    case "hold": return endingAir(e.end);
   }
 }
 /** Seconds after the effect that what it acted on is still in motion. */
@@ -284,10 +298,11 @@ function releaseSeconds(m: Motion): number {
 
 /**
  * The beats of an attack on its own clock: `anticipate` over the wind-up, `act` over the strike, `hold` over the
- * effect, `release` over the motion's let-go, `settle` after it; `after` is seconds since the release ended (since the
- * arming time, for a hit).
+ * effect, `release` over the motion's let-go, `flight` over a thrown thing's time in the air (a step at the hold's end
+ * otherwise), `settle` once the action is over: the part has let go and what it threw has landed. `after` is seconds
+ * since then (since the arming time, for a hit).
  */
-export type AttackBeat = Beat & { readonly hold: F; readonly release: F };
+export type AttackBeat = Beat & { readonly hold: F; readonly release: F; readonly flight: F };
 
 /**
  * When an attack arms: once at a time, or every `period` seconds from `first`. A value, so the pose, the telegraph and
@@ -471,7 +486,12 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
   beats(t: In<"f32">, settle: number): AttackBeat {
     if (!(settle >= 0 && Number.isFinite(settle))) throw new Error(`attack "${this.name}": settle must be a finite number of seconds, at least 0; got ${settle}`);
     const T = this.timing, tau = sub(t, this.armAt(t));
-    const hold = effectSeconds(this.effect), release = releaseSeconds(this.motion);
+    const hold = effectSeconds(this.effect), release = releaseSeconds(this.motion), air = effectAir(this.effect);
+    // The action is over when the part has let go and what it threw is down, whichever is later. A thrown thing flies on
+    // after the gripper is home (the crab's sloop for 2.6 s, its claw's release 1.3): until 2026-11-11 `settle` and
+    // `after` began with the end of the release, so a face that looked away "after the grab" turned from the ship in
+    // the air, before it landed.
+    const over = hold + Math.max(release, air);
     // A beat of no length is a step at its start: 0 before, 1 from then on.
     const span = (from: number, len: number): F => (len > 0 ? clamp(div(sub(tau, from), len), 0, 1) : select(lt(tau, from), 0, 1));
     return {
@@ -479,8 +499,9 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
       act: span(-T.strike, T.strike),
       hold: span(0, hold),
       release: span(hold, release),
-      settle: span(hold + release, settle),
-      after: sub(tau, hold + release),
+      flight: span(hold, air),
+      settle: span(over, settle),
+      after: sub(tau, over),
     };
   }
 
