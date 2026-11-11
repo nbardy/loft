@@ -8,6 +8,7 @@
 // - At each joint a cord binding: no lames, a pinch, cream with a twist line.
 
 import { abs, add, dot, fract, keys, lift, limb, min, mix, mul, sin, smoothstep, strand, sub, unit, vec3, type F } from "../../../../src/index.ts";
+import type { Reaching } from "../../../../src/check.ts";
 import { cut, sides, TAU } from "../ink.ts";
 import type { LegsOption } from "../slots.ts";
 
@@ -21,10 +22,13 @@ export const armoured: LegsOption = {
   draw: ({ n, walk, body, local }) => {
     const I = n.ink;
     const segs = keys([[0, 1], [0.4, 0.85], [0.8, 0.55], [1, 0.2]]);
-    return sides.flatMap((s, si) => n.legRoots.map((x, i) => {
+    const limbs: Reaching[] = [];
+    const things = sides.flatMap((s, si) => n.legRoots.map((x, i) => {
       const k = si * 4 + i;
       const root = local([x, -0.1, s * n.carapace.width * 0.85]);
-      const leg = limb({ root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) });
+      const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
+      const leg = limb(spec);
+      limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: mul(body.z, s) });
       const [j0, j1, j2] = leg.joints;
       // The knee's bend: 1 straight, falling as it folds. The lames' phase moves with it.
       const bend = dot(unit(sub(j1!, j0!)), unit(sub(j2!, j1!)));
@@ -55,5 +59,6 @@ export const armoured: LegsOption = {
         detail: { along: 120, around: 12 },
       });
     }));
+    return { things, limbs };
   },
 };

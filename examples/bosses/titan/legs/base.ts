@@ -2,6 +2,7 @@
 // the joints (a cream band before each, a black ring at it), cream dactyls to a black point.
 
 import { abs, add, keys, lift, limb, max, min, mix, mul, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
+import type { Reaching } from "../../../../src/check.ts";
 import { cut, mottle, sides } from "../ink.ts";
 import type { LegsOption } from "../slots.ts";
 
@@ -10,10 +11,13 @@ export const base: LegsOption = {
   draw: ({ n, walk, body, local }) => {
     const I = n.ink;
     const segs = keys([[0, 1], [0.4, 0.85], [0.8, 0.5], [1, 0.18]]);
-    return sides.flatMap((s, si) => n.legRoots.map((x, i) => {
+    const limbs: Reaching[] = [];
+    const things = sides.flatMap((s, si) => n.legRoots.map((x, i) => {
       const k = si * 4 + i;
       const root = local([x, -0.1, s * n.carapace.width * 0.85]);
-      const leg = limb({ root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) });
+      const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
+      const leg = limb(spec);
+      limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: mul(body.z, s) });
       const nearKnot = (m: F): F => leg.knots.slice(1, 3).reduce((d: F, kn) => min(d, abs(sub(m, kn))), lift<"f32">(1));
       const pinch = (m: F) => sub(1, mul(smoothstep(0.05, 0, nearKnot(m)), 0.3));
       return strand({
@@ -31,5 +35,6 @@ export const base: LegsOption = {
         detail: { along: 64, around: 12 },
       });
     }));
+    return { things, limbs };
   },
 };

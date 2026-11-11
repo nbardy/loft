@@ -18,6 +18,7 @@ import { hitPatch } from "../../../../src/spacetime/index.ts";
 import type { Expr } from "../../../../src/expr.ts";
 import { edgeOf, rgb } from "../../../../src/style/shared.ts";
 import { NO_SKELETON, type Surface } from "../../../../src/map/types.ts";
+import type { Reaching } from "../../../../src/check.ts";
 import { cut, sides } from "../ink.ts";
 import type { Numbers } from "../numbers.ts";
 import type { Rig } from "../rig.ts";
@@ -84,14 +85,17 @@ export const stilt: LegsOption = {
     const { n, walk, body, local, world } = rig;
     const I = n.ink;
     const total = n.legLengths[0] + n.legLengths[1] + n.legLengths[2];
-    return sides.flatMap((s, si) => n.legFeet.map(([fx, fz], i) => {
+    const limbs: Reaching[] = [];
+    const things = sides.flatMap((s, si) => n.legFeet.map(([fx, fz], i) => {
       const k = si * 4 + i;
       const angle = Math.atan2(fz, fx);
       const rootR = n.carapace.width * ROOT_OUT;
       const root = local([rootR * Math.cos(angle), ROOT_Y, s * rootR * Math.sin(angle)]);
       // The foot pole leans out along the leg's own bearing (world, horizontal).
       const out = vec3(Math.cos(angle), 0, s * Math.sin(angle));
-      const leg = limb({ root, target: walk.foot(k), lengths: n.legLengths, bend: body.y, foot: unit(add(vec3(0, -1, 0), mul(out, SPLAY))) });
+      const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: body.y, foot: unit(add(vec3(0, -1, 0), mul(out, SPLAY))) };
+      const leg = limb(spec);
+      limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: out });
       const knee1 = leg.knots[1]!, knee2 = leg.knots[2]!;
       const nearKnot = (m: F): F => min(abs(sub(m, knee1)), abs(sub(m, knee2)));
       // Bamboo nodes every 1.25 along the leg (world length), offset per leg so no two legs ring in step.
@@ -118,5 +122,6 @@ export const stilt: LegsOption = {
         footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, vec2(walk.foot(k).x, walk.foot(k).z), stepClock(rig, k), n),
       ];
     }).flat());
+    return { things, limbs };
   },
 };
