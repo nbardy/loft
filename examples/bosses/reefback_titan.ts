@@ -18,6 +18,7 @@ import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
 import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
 import { base as backBase } from "./titan/back/base.ts";
+import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
@@ -76,7 +77,7 @@ export const design = makeDesign({
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
   },
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
@@ -109,7 +110,7 @@ export const design = makeDesign({
     // crush disc of 4.4, as on the fiddler.
     islander: {
       about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
-      pick: { claws: "fiddler", face: "dandy" },
+      pick: { claws: "fiddler", face: "dandy", back: "headland" },
     },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
     // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).

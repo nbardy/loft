@@ -40,6 +40,21 @@ export const S = {
   coralHeads: 18, trees: 6,
   fort: { at: [-2.6, -1.1] as const, height: 2.4, girth: 0.85, lean: 0.12 },
 
+  // ---- the headland (back/headland.ts): the island as a dome on a shell tier, a light on a point; read only by it ----
+  // Bearings are radians round the island's centre from the bow (+x), positive toward the right flank (+z).
+  headland: {
+    /** How much higher than its rim the cap's crown stands (the cap is a low dome). */
+    dome: 0.45,
+    /** The point: its bearing, how far its tip reaches beyond the shell's rim, its half-width, its top's height (crab y). */
+    point: { bearing: -2.094, reach: 2.3, half: 1.3, top: 0.9 },
+    /** The cove's two horns, each [bearing, reach beyond the rim, half-width, its top's height], and how far the beach
+     * between them runs out. The bow-side horn is a reef flat just above the water, so the game camera sees the beach over it. */
+    horns: [[1.885, 1.3, 0.8, -0.95], [2.513, 1.3, 0.85, 0.5]] as const, beach: 1.0,
+    /** The light on the point: the tower's height, its girth at foot and top, its lean (the tangent of its angle, out along
+     * the point), how far inside the tip its foot stands, its size against the fiddler's (gallery, lantern, gulls), its gulls. */
+    light: { height: 3.0, girth: [0.5, 0.34] as const, lean: 0.28, inset: 0.8, size: 0.5, gulls: 3 },
+  },
+
   // ---- claws: the right (crusher) 1.4 times the left ----
   crusher: 1.4, cutter: 1.0, clawPalm: 2.9, clawFat: 1.1, armLengths: [2.5, 2.4] as const,
 
