@@ -12,12 +12,13 @@
 // cells c across a wave of length L and amplitude A (0.003 for the serpent's swell at 1-unit cells).
 
 import {
-  add, cross, distance, lift, max, mul, normalize, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
+  add, cross, distance, lift, max, mul, normalize, or, select, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
 import { CELL_PIXELS } from "../artefact.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
+import type { Contact } from "../style.ts";
 import { eyePosition, viewDir, wgslFn } from "../lib/wgsl.ts";
 import { NO_SKELETON, type Chart, type F, type Frame, type Skeleton, type Surface } from "../map/types.ts";
 
@@ -54,6 +55,11 @@ export interface SeaDeform {
    * added to the swell's crest value (-1 trough .. 1 crest). Both 0 outside the reach. GPU or CPU.
    */
   look(xz: Expr<"vec2">, t: In<"f32">, fp: F): { readonly foam: F; readonly shade: F };
+  /**
+   * Whether sea-plane point xz is in its reach. Where this is false the deformation must be exactly nothing: `toLocal`
+   * returns xz, `dip` 0, `calm` 1, `look` 0 and 0, bit for bit, so the sea may skip evaluating it there.
+   */
+  reaches(xz: Expr<"vec2">): Expr<"bool">;
 }
 
 export type SeaSpec = {
@@ -151,6 +157,42 @@ fn loft_contact_foam(p: vec3<f32>, band: f32, fp: f32, width: f32) -> f32 {
 }`,
 });
 
+/**
+ * 1 where the contact band at p (seen at pixel px) may see an opaque surface, 0 where it cannot: its taps reach at most
+ * r from px (r as in loft_contact_band), so the texels they read have centres within r + 0.71 of px; where the scene's
+ * clearance (SCENE_CLEARANCE_WGSL, a lower bound on the distance to any opaque pixel) exceeds r + 1, none of them is
+ * opaque and the band is 1 - (distance to the far plane) / width, below -800 in every camera. Same constraint as
+ * loft_contact_band: only in a draw with `sceneDepth`.
+ */
+const seaNear = wgslFn<"f32">({
+  name: "loft_sea_near", ret: "f32", wgsl: /* wgsl */ `
+fn loft_sea_near(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
+  return select(1.0, 0.0, scene_clearance(px) > clamp(width / pixel_world(p), 1.0, 40.0) + 1.0);
+}`,
+});
+
+/**
+ * The larger of x (0 or 1) over the pixel's 2 x 2 quad, so a choice made from it is the same on all four pixels. Each
+ * fine derivative is the difference between the two pixels of a pair: x + |dx| is the pair's larger, then down the
+ * column the same. Fragment stage, in uniform control flow.
+ */
+const quadMax = wgslFn<"f32">({
+  name: "loft_quad_max", ret: "f32", wgsl: /* wgsl */ `
+fn loft_quad_max(x: f32) -> f32 {
+  let a = min(x + abs(dpdxFine(x)), 1.0);
+  return min(a + abs(dpdyFine(a)), 1.0);
+}`,
+});
+
+/**
+ * The cases the water is drawn in, per 2 x 2 quad (docs/gpu_native.md "The sea"): whether a body may be near (the
+ * contact band and the style's contact foam are computed only then), and whether any deformation reaches the water
+ * (a whirlpool's map and marks are evaluated only then). Elsewhere what is skipped is exactly 0 or the identity.
+ */
+type ContactCase = Contact["kind"];
+type ReachCase = "open" | "deformed";
+const CONTACT_CASES: readonly ContactCase[] = ["clear", "near"];
+
 export class Sea implements Chart, Drawable {
   readonly name = "sea";
   readonly skeletons: readonly Skeleton[] = [];
@@ -164,8 +206,12 @@ export class Sea implements Chart, Drawable {
     // here are only its declared size (`stats.maxTriangles`): what it draws at 1280 x 800 with water to every edge.
     const lift = waves.reduce((a, w) => a + w.amp, 0);
     const declared = (pixels: number) => Math.ceil((pixels * 1.1) / (SEA_CELL * CELL_PIXELS));
+    // Case index: contact (clear 0, near 1) + 2 x reach (open 0, deformed 1); a sea with no deformation is always open.
+    const reaches: readonly ReachCase[] = deforms.length > 0 ? ["open", "deformed"] : ["open"];
+    const cases = reaches.flatMap((r) => CONTACT_CASES.map((c) => (fr: Fragment) => this.water(fr, c, r)));
     this.drawn = drawGlazed("sea", this.surface(), {
-      colour: (fr) => this.water(fr), grid: { u: spacing.even(declared(1280)), v: spacing.even(declared(800)) }, phase: "water", sceneDepth: true,
+      colour: { kind: "cases", choose: (fr) => this.choose(fr), cases },
+      grid: { u: spacing.even(declared(1280)), v: spacing.even(declared(800)) }, phase: "water", sceneDepth: true,
       detail: { kind: "projected", cell: SEA_CELL, plane: 0, reach, lift },
     });
   }
@@ -183,13 +229,26 @@ export class Sea implements Chart, Drawable {
 
   /** Where the water at a sea-plane point sits in the last deformation's coordinates (xz itself with none). */
   local(xz: Expr<"vec2">, t: In<"f32"> = time): Expr<"vec2"> {
-    return this.deforms.reduce((p, d) => d.toLocal(p, t), xz);
+    return localIn(this.deforms, xz, t);
+  }
+
+  /** The swell where the water at xz came from, calmed by the deformations (their dips not taken off). */
+  private calmed(deforms: readonly SeaDeform[], xz: Expr<"vec2">, t: In<"f32">): F {
+    return deforms.reduce<F>((h, d) => mul(h, d.calm(xz)), this.swellAt(localIn(deforms, xz, t), t));
+  }
+
+  private heightIn(deforms: readonly SeaDeform[], xz: Expr<"vec2">, t: In<"f32">): F {
+    return deforms.reduce<F>((h, d) => sub(h, d.dip(xz)), this.calmed(deforms, xz, t));
   }
 
   /** Surface height at a point of the xz plane: the swell where that water came from, less every deformation's dip. */
   height(xz: Expr<"vec2">, t: In<"f32"> = time): F {
-    const swell = this.deforms.reduce<F>((h, d) => mul(h, d.calm(xz)), this.swellAt(this.local(xz, t), t));
-    return this.deforms.reduce<F>((h, d) => sub(h, d.dip(xz)), swell);
+    return this.heightIn(this.deforms, xz, t);
+  }
+
+  private gradientIn(deforms: readonly SeaDeform[], xz: Expr<"vec2">, t: In<"f32">): Expr<"vec2"> {
+    const g = gradient(this.heightIn(deforms, SEA_XZ, t), SEA_XZ);
+    return substitute([g], SEA_XZ, xz)[0] as Expr<"vec2">;
   }
 
   /**
@@ -197,8 +256,7 @@ export class Sea implements Chart, Drawable {
    * gradient could follow; with none, it reduces to the swell's analytic gradient (the constructors simplify).
    */
   gradient(xz: Expr<"vec2">, t: In<"f32"> = time): Expr<"vec2"> {
-    const g = gradient(this.height(SEA_XZ, t), SEA_XZ);
-    return substitute([g], SEA_XZ, xz)[0] as Expr<"vec2">;
+    return this.gradientIn(this.deforms, xz, t);
   }
 
   /** Floating on the open sea: a point given in sea coordinates is where it is and has not turned (afloat.ts). */
@@ -237,20 +295,38 @@ export class Sea implements Chart, Drawable {
     return w === undefined ? lift<"f32">(0) : mul(this.phaseOf(w, xz, time), 1 / (2 * Math.PI));
   }
 
-  /** The water's colour at a pixel: the style's `water`, with the swell's slope and crest, and contact foam. */
-  private water(fr: Fragment): Expr<"vec4"> {
+  /**
+   * Which case a quad of water is drawn in (index into the cases built in the constructor): near if any pixel of the
+   * quad may see a body, deformed if any is in a deformation's reach. The same on all four pixels (quadMax), so every
+   * derivative inside a case reads pixels that ran it.
+   */
+  private choose(fr: Fragment): F {
+    const near = quadMax(seaNear(fr.world, fr.px, this.foam));
+    if (this.deforms.length === 0) return near;
+    const xz = fr.world.xz;
+    const inReach = this.deforms.map((d) => d.reaches(xz)).reduce((a, b) => or(a, b));
+    return add(near, mul(quadMax(select(inReach, 1, 0)), 2));
+  }
+
+  /**
+   * The water's colour at a pixel in one case: the style's `water`, with the swell's slope and crest, contact foam
+   * where a body may be near, and the deformations' marks where they reach. Outside those cases what is left out is
+   * exactly nothing (Contact "clear"; SeaDeform.reaches), so every case equals the whole where it runs.
+   */
+  private water(fr: Fragment, contactCase: ContactCase, reach: ReachCase): Expr<"vec4"> {
+    const deforms = reachedBy(this.deforms, reach);
     const amplitude = Math.max(this.waves.reduce((a, w) => a + w.amp, 0), 1e-3);
     const shortest = this.waves.reduce((l, w) => Math.min(l, (2 * Math.PI) / w.k), 1e3);
     const xz = fr.world.xz;
     const fp = seaFootprint(fr.world);
-    const band = contactBand(fr.world, fr.px, this.foam);
     // Where a pixel covers a good part of the shortest wave, its slope and crest shading can only alias (bands of
     // stripes toward the horizon): fade that detail out by the pixel's footprint.
     const detail = sub(1, smoothstep(0.04, 0.2, fp.div(shortest)));
-    const g = mul(this.gradient(xz), detail);
+    const g = mul(this.gradientIn(deforms, xz, time), detail);
     // The deformations' marks, each in its own coordinates (foam arms winding into a whirlpool, a darker throat).
-    const marks = this.deforms.map((d) => d.look(xz, time, fp));
-    const swell = this.deforms.reduce<F>((h, d) => mul(h, d.calm(xz)), this.swellAt(this.local(xz), time));
+    const marks = deforms.map((d) => d.look(xz, time, fp));
+    const swell = this.calmed(deforms, xz, time);
+    const contact = this.contactAt(fr, contactCase);
     return fr.style.water({
       normal: normalize(vec3(mul(g.x, -1), 1, mul(g.y, -1))),
       sun: lift<"vec3">(fr.sun),
@@ -260,11 +336,39 @@ export class Sea implements Chart, Drawable {
       // is the swell's alone (where the water came from); a dip is shading the deformation chooses, not a trough.
       crest: marks.reduce<F>((c, m) => add(c, m.shade), mul(swell.div(amplitude), detail)),
       distance: distance(fr.world, eyePosition()),
-      foam: marks.reduce<F>((f, m) => max(f, m.foam), contactFoam(fr.world, band, fp, this.foam)),
-      contact: band,
+      foam: marks.reduce<F>((f, m) => max(f, m.foam), this.contactFoamOf(fr, contact, fp)),
+      contact,
       marks: marks.reduce<F>((f, m) => max(f, m.foam), lift<"f32">(0)),
       phase: this.dominantPhase(xz),
     });
+  }
+
+  private contactAt(fr: Fragment, c: ContactCase): Contact {
+    switch (c) {
+      case "clear": return { kind: "clear" };
+      case "near": return { kind: "near", band: contactBand(fr.world, fr.px, this.foam) };
+    }
+  }
+
+  /** The sea's own shaping of the band into foam; 0 where no body is near (the band there is far below its edges). */
+  private contactFoamOf(fr: Fragment, c: Contact, fp: F): F {
+    switch (c.kind) {
+      case "clear": return lift<"f32">(0);
+      case "near": return contactFoam(fr.world, c.band, fp, this.foam);
+    }
+  }
+}
+
+/** Where the water at a sea-plane point sits in the last of these deformations' coordinates (xz itself with none). */
+function localIn(deforms: readonly SeaDeform[], xz: Expr<"vec2">, t: In<"f32">): Expr<"vec2"> {
+  return deforms.reduce((p, d) => d.toLocal(p, t), xz);
+}
+
+/** The deformations a case evaluates: none in the open sea (where every one is exactly nothing), all of them else. */
+function reachedBy(deforms: readonly SeaDeform[], r: ReachCase): readonly SeaDeform[] {
+  switch (r) {
+    case "open": return [];
+    case "deformed": return deforms;
   }
 }
 

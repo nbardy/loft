@@ -173,6 +173,14 @@ export class Whirlpool implements SeaDeform {
     return { foam, shade };
   }
 
+  /**
+   * Inside the radius. Beyond it every part is exactly nothing: `toLocal` and `look` select their outside values on
+   * this same test, `dip` is (max(1 - s^2, 0))^3 = 0 and `calm` is smoothstep(0.1, 0.5, s) = 1 for s >= 1.
+   */
+  reaches(xz: V2): Expr<"bool"> {
+    return this.polar(xz).inside;
+  }
+
   /** The whirlpool in a sea that it deforms: the chart things are placed in. */
   in(sea: Sea): PoolChart {
     if (!sea.deforms.includes(this)) throw new Error("whirlpool.in(sea): this sea does not take the whirlpool as a deformation (sea({ deform: [pool] }))");

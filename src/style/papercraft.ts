@@ -9,7 +9,7 @@ import { add, dot, fract, lift, max, mix, mul, normalize, param, round, saturate
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
 import { fwidth, wgslFn } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
-import type { Rgb, Style } from "../style.ts";
+import type { Contact, Rgb, Style } from "../style.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
 
 const C = {
@@ -191,10 +191,7 @@ export function papercraft(): Style {
       c = mix(mul(c, sub(1, shade)), rgb(C.cut), cut);
       // Far off, the sheets merge into one tone instead of shimmering.
       c = mix(c, mix(rgb(C.sheetDeep), rgb(C.sheetLight), 0.52), smoothstep(0.12, 0.35, fw));
-      // Foam: a white cut-paper collar with scalloped edges and a shadow under it.
-      const collar = sub(ctx.contact, mul(cellular2(mul(xz, 3.5)).x, 0.45));
-      const foam = edgeOf(collar, 0.1, 0.01);
-      c = mix(mul(c, sub(1, mul(mul(edgeOf(collar, -0.05, 0.01), edgeOf(ctx.contact, 0.05, 0.01)), 0.2))), rgb(C.cut), foam);
+      c = collared(c, ctx.contact, xz);
       // Distance haze toward the backdrop.
       c = mix(c, rgb(C.backdrop), saturate(mul(sub(ctx.distance, 40), 1 / 120)));
       return vec4(c, 1);
@@ -206,4 +203,16 @@ export function papercraft(): Style {
       return mix(above, rgb(C.sheetDeep), sub(1, smoothstep(-0.002, 0.0, up)));
     },
   };
+}
+
+/** Foam: a white cut-paper collar with scalloped edges and a shadow under it; none where no body is near. */
+function collared(c: Expr<"vec3">, contact: Contact, xz: Expr<"vec2">): Expr<"vec3"> {
+  switch (contact.kind) {
+    case "clear": return c;
+    case "near": {
+      const collar = sub(contact.band, mul(cellular2(mul(xz, 3.5)).x, 0.45));
+      const foam = edgeOf(collar, 0.1, 0.01);
+      return mix(mul(c, sub(1, mul(mul(edgeOf(collar, -0.05, 0.01), edgeOf(contact.band, 0.05, 0.01)), 0.2))), rgb(C.cut), foam);
+    }
+  }
 }
