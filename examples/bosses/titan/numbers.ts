@@ -22,6 +22,9 @@ export const S = {
     // dark olive thorny body, and shrine vermilion as its one accent.
     straw: [0.86, 0.79, 0.58], strawDark: [0.52, 0.43, 0.27], thorn: [0.34, 0.31, 0.2], thornDark: [0.15, 0.13, 0.09],
     shrine: [0.8, 0.16, 0.1], shrineDark: [0.42, 0.07, 0.06], paper: [0.97, 0.86, 0.6],
+    // Sea growth (examples/bosses/lib/growth.ts; read only by a back that grows it): a mussel's blue-black, kelp's olive,
+    // a fan coral's deeper red beside the branching coral's pink (`coral`).
+    mussel: [0.15, 0.19, 0.31], kelp: [0.43, 0.46, 0.17], coralDeep: [0.8, 0.33, 0.27],
     // The brow face's mouth (face/brow.ts; no other option reads them): the dark maroon behind the mandibles, its tongue.
     maw: [0.25, 0.06, 0.08], tongue: [0.7, 0.3, 0.3],
   } satisfies Record<string, V3>,
@@ -55,6 +58,43 @@ export const S = {
     /** The light on the point: the tower's height, its girth at foot and top, its lean (the tangent of its angle, out along
      * the point), how far inside the tip its foot stands, its size against the fiddler's (gallery, lantern, gulls), its gulls. */
     light: { height: 3.0, girth: [0.5, 0.34] as const, lean: 0.28, inset: 0.8, size: 0.5, gulls: 3 },
+  },
+
+  // ---- the terraces (back/terraces.ts): the island as one screw of shell plates that become terraces; read only by it ----
+  // Bearings are degrees round the island's centre from the bow (+x), positive toward the right flank (+z). Heights are
+  // above the still water unless said; lengths are crab units.
+  terraces: {
+    /** How far the crown stands over the atoll's `top`. */
+    crown: 1.2,
+    /** The island's outline as shares of the atoll's radii: at the bow and at the tail (an egg), and its lumps. */
+    outline: { bow: 0.9, tail: 1.06, lumps: 0.025 },
+    /** The screw: thread groups from crown to rim, how hard its lines lean over as they climb (1 straight), how much
+     * wider the groups are on one side than the other (0 even) and toward which bearing they are widest, and the whole
+     * screw's turn (at 50 a broad plate rises from the right flank across the side the game camera sees). */
+    screw: { turns: 1.9, lean: 2.25, uneven: 0.16, widest: 60, phase: 50 },
+    /** How far a plate's lip stands out of the hull: the two blades of a group, then its broad plate. */
+    lobes: [0.26, 0.3, 0.46] as const,
+    /** Where (G: 0 crown, 1 rim) the plates give way to terraces, and the highest red at a plate's tip. */
+    terraced: [0.4, 0.6] as const, tip: 0.42,
+    /** The point: its bearing, how far its tip is from the island's centre, its half-width, its rock's height at the
+     * light and at the tip. */
+    point: { bearing: 200, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
+    /** The beach under the plates' arch: its middle bearing, half its span, how far the sand runs beyond the rim, how
+     * high the rim lifts over it. */
+    beach: { bearing: 172, span: 20, sand: 1.2, arch: 0.55 },
+    /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
+     * stack [distance from the island's centre, bearing, height, girth]. */
+    shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
+    /** Two groves, each [G, bearing, trees]: one left of the crown, one forward-right; open turf between. */
+    groves: [[0.2, -80, 4], [0.33, 55, 3]] as const,
+    /**
+     * The light on the point (back/beacon.ts): how far from the island's centre its foot stands, the tower's height, its
+     * girth at foot and top, the share of the tower that is crust, the lantern room's size, its gulls. Then its structure,
+     * for an attack to move later: `lean` (the tangent of its angle out along the point; 0 upright), `rise` (how far the
+     * tower stands up out of the mound on its segmented neck; 0 down, and the neck is not drawn), `shutters` (0 shut,
+     * 1 flung open).
+     */
+    light: { at: 7.2, height: 3.4, girth: [0.78, 0.5] as const, crust: 0.36, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
   },
 
   // ---- claws: the right (crusher) 1.4 times the left ----

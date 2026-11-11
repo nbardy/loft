@@ -46,7 +46,7 @@ const U = { cap: 19 / NU, lip: 22 / NU, foot: 33 / NU, knee: 37 / NU, rim: 41 / 
 const OUT = { foot: 0.9, lip: 0.085, cap: 0.145, rim: 1.04, capeLip: 0.05, capeCap: 0.085, shelf: 0.07 } as const;
 
 /** The kinds of shore, and a value for each. At a bearing the shore is a blend of them (`shoreAt`). */
-type Shore<T> = { readonly shell: T; readonly beach: T; readonly apron: T; readonly cape: T };
+export type Shore<T> = { readonly shell: T; readonly beach: T; readonly apron: T; readonly cape: T };
 
 /** The plan in plain numbers, from the build's: world units per unit of outline radius (the mean of the atoll's radii),
  * the point and the horns as ovals (bearing, length to the tip and half-width as shares of the radii, top height), and
@@ -64,18 +64,50 @@ function planOf(n: Numbers) {
 const KINDS = ["coral", "trunk", "crown", "masonry", "rock", "barnacle"] as const;
 type Kind = (typeof KINDS)[number];
 
-const hash = (k: number) => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+export const hash = (k: number) => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
 /** A rounded cone of the reef list. `mark` rides in the id's third lane: a height the kind's paint measures from (a
  * rock's waterline, a barnacle's top). The other kinds' paints read no height and leave it 0. */
 const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, salt: number, mark = 0): Branch =>
   ({ a, b, ra, rb, level, id: [KINDS.indexOf(kind), salt, mark] });
 
-const sq = (x: F): F => mul(x, x);
+export const sq = (x: F): F => mul(x, x);
 /** The smooth maximum of radii (an 8-norm): the larger wins, and where two are equal the corner is filleted by 9%. */
-const join = (rs: readonly F[]): F => sqrt(sqrt(sqrt(rs.map((r) => sq(sq(sq(r)))).reduce((s, r) => add(s, r)))));
+export const join = (rs: readonly F[]): F => sqrt(sqrt(sqrt(rs.map((r) => sq(sq(sq(r)))).reduce((s, r) => add(s, r)))));
 /** Piecewise linear through (us[i], vs[i]), flat outside. */
-const stations = (u: F, us: readonly number[], vs: readonly F[]): F =>
+export const stations = (u: F, us: readonly number[], vs: readonly F[]): F =>
   vs.slice(1).reduce<F>((y, v, i) => add(y, mul(saturate(div(sub(u, us[i]!), us[i + 1]! - us[i]!)), sub(v, vs[i]!))), vs[0]!);
+
+/** A cape toward `bearing`, `long` to its tip and `half` across at the centre: a blunt half-oval (a superellipse of
+ * exponent 4) about the island's centre. Behind it (cos below 0) its radius is `half`, well inside the island. */
+export const cape = (a: F, bearing: number, long: number, half: number): F => {
+  const c2 = sq(max(cos(sub(a, bearing)), 0));
+  return div(1, sqrt(sqrt(add(mul(sq(c2), 1 / long ** 4), mul(sq(sub(1, c2)), 1 / half ** 4)))));
+};
+/** The one dispatcher over the kinds of shore: a value per kind, blended by how much the shore is each (shell is the rest). */
+export const blend = (w: { readonly beach: F; readonly apron: F; readonly cape: F }) =>
+  <T extends F | P3>(v: Shore<T>): T => mix(mix(mix(v.shell, v.beach, w.beach), v.apron, w.apron), v.cape, w.cape) as T;
+
+/** A broadleaf tree: a leaning trunk and three overlapping crown blobs (the base's). `put` makes a copy of the list the
+ * tree joins (each back's list has its own kinds; the tree needs `trunk` and `crown`). */
+export function broadleaf(put: (kind: "trunk" | "crown", a: V3, b: V3, ra: number, rb: number, level: number, salt: number) => Branch, foot: V3, h: number, salt: number): Branch[] {
+  const lean = [0.25 * (hash(salt) - 0.5), 0.25 * (hash(salt + 1) - 0.5)] as const;
+  const top: V3 = [foot[0] + lean[0] * h, foot[1] + h, foot[2] + lean[1] * h];
+  const blob = (dx: number, dy: number, dz: number, r: number, j: number) => put("crown", [top[0] + dx, top[1] + dy, top[2] + dz], [top[0] + dx, top[1] + dy + 0.01, top[2] + dz], r, r, 0, salt * 3 + j);
+  return [
+    put("trunk", [foot[0], foot[1] - 0.3, foot[2]], top, 0.16, 0.1, 0, salt),
+    blob(0, 0.35, 0, 0.75 * h * 0.45, 0), blob(0.45, 0.05, 0.3, 0.55 * h * 0.45, 1), blob(-0.4, 0.1, -0.35, 0.6 * h * 0.45, 2),
+  ];
+}
+type Inks = Numbers["ink"];
+type Hit = { readonly p: P3; readonly id: P3 };
+/** Crowns: deep moss, half of them with curling black lines. */
+export const crownPaint = (I: Inks) => ({ p, id }: Hit): P3 => {
+  const swirl = add(sin(add(mul(p.x, 2.5), mul(sin(mul(p.y, 3)), 1.5))), sin(add(mul(p.z, 2.5), mul(sin(mul(p.x, 2.2)), 1.5))));
+  return mix(vec3(...I.mossDeep), vec3(...I.black), mul(sub(1, cut(abs(sin(mul(swirl, 2.2))), 0.12)), step(0.5, hash3(id))));
+};
+/** Sea rock: stone with dark strata, dark and wet for its first third of a unit above its ground (the id's third lane). */
+export const rockPaint = (I: Inks) => ({ p, id }: Hit): P3 =>
+  mix(mix(vec3(...I.stone), vec3(...I.bark), sub(1, cut(abs(sin(add(mul(p.y, 9), mul(sin(mul(p.x, 5)), 1.2)))), 0.2))), vec3(...I.bark), sub(1, cut(sub(p.y, id.z), 0.3)));
 
 export const headland: BackOption = {
   about: "an island grown on the shell: a moss dome, scalloped cliffs, a cove, a light leaning off a point",
@@ -106,12 +138,6 @@ export const headland: BackOption = {
 
     // ---- outlines: radius (a share of the atoll's radii) over the bearing a ----
     const lumps = (a: F): F => add(1, mul(add(add(sin(add(mul(a, 3), 1.1)), mul(sin(add(mul(a, 5), 2.3)), 0.7)), mul(sin(add(mul(a, 9), 0.4)), 0.4)), A.lumps));
-    /** A cape toward `bearing`, `long` to its tip and `half` across at the centre: a blunt half-oval (a superellipse of
-     * exponent 4) about the island's centre. Behind it (cos below 0) its radius is `half`, well inside the island. */
-    const cape = (a: F, bearing: number, long: number, half: number): F => {
-      const c2 = sq(max(cos(sub(a, bearing)), 0));
-      return div(1, sqrt(sqrt(add(mul(sq(c2), 1 / long ** 4), mul(sq(sub(1, c2)), 1 / half ** 4)))));
-    };
     /** The point's outline inset by `d` (negative: outset). */
     const pointOut = (a: F, d: number): F => cape(a, POINT.bearing, POINT.long - d, POINT.half - d);
     const rimOf = (a: F): F => mul(OUT.rim, add(1, mul(sub(lumps(a), 1), 0.25)));
@@ -128,9 +154,6 @@ export const headland: BackOption = {
     const capeAt = (a: F): F => smoothstep(0, 0.06, sub(pointOut(a, 0), rimOf(a)));
     const apronAt = (a: F): F => smoothstep(0, 0.06, sub(hornEdge(a), rimOf(a)));
     const beachAt = (a: F): F => smoothstep(0.01, 0.08, sub(sandEdge(a), rimOf(a)));
-    /** The one dispatcher over the kinds of shore: a value per kind, blended by how much the shore is each (shell is the rest). */
-    const blend = (w: { readonly beach: F; readonly apron: F; readonly cape: F }) =>
-      <T extends F | P3>(v: Shore<T>): T => mix(mix(mix(v.shell, v.beach, w.beach), v.apron, w.apron), v.cape, w.cape) as T;
     const shoreAt = (a: F) => blend({ beach: beachAt(a), apron: apronAt(a), cape: capeAt(a) });
 
     // ---- heights ----
@@ -320,22 +343,12 @@ export const headland: BackOption = {
       return k % 3 === 2 ? barnacles(at, 0.32 + 0.15 * hash(k + 7), 300 + k) : coralHead([at[0], at[1] - 0.1, at[2]], 0.6 + 0.4 * hash(k + 7), 6 * hash(k + 3), k);
     }).flat();
 
-    /** A broadleaf tree: a leaning trunk and three overlapping crown blobs (the base's). */
-    function tree(foot: V3, h: number, salt: number): Branch[] {
-      const lean = [0.25 * (hash(salt) - 0.5), 0.25 * (hash(salt + 1) - 0.5)] as const;
-      const top: V3 = [foot[0] + lean[0] * h, foot[1] + h, foot[2] + lean[1] * h];
-      const blob = (dx: number, dy: number, dz: number, r: number, j: number) => cone("crown", [top[0] + dx, top[1] + dy, top[2] + dz], [top[0] + dx, top[1] + dy + 0.01, top[2] + dz], r, r, 0, salt * 3 + j);
-      return [
-        cone("trunk", [foot[0], foot[1] - 0.3, foot[2]], top, 0.16, 0.1, 0, salt),
-        blob(0, 0.35, 0, 0.75 * h * 0.45, 0), blob(0.45, 0.05, 0.3, 0.55 * h * 0.45, 1), blob(-0.4, 0.1, -0.35, 0.6 * h * 0.45, 2),
-      ];
-    }
     // Trees, each [share of the cap's radius, bearing, height], placed by looking: one tall on the crown, the rest round
     // the right flank and the tail, two small on the left. None within 0.9 of the sight lines from the light's foot to the
     // game and far cameras (they run from the point through the island's middle toward the bow's right), none on the stair,
     // none forward of the middle near the centre line (the head and its antennae).
     const TREES: readonly (readonly [number, number, number])[] = [[0.15, 2.52, 2.0], [0.8, 2.14, 1.8], [0.82, 2.93, 1.6], [0.82, 1.31, 1.7], [0.85, -2.55, 1.4], [0.85, -1.3, 1.3]];
-    const trees = TREES.slice(0, n.trees).flatMap(([f, bearing, h], k) => tree(onCap(f, bearing), h, 40 + k));
+    const trees = TREES.slice(0, n.trees).flatMap(([f, bearing, h], k) => broadleaf(cone, onCap(f, bearing), h, 40 + k));
 
     // Where the fort stood: its rubble, a scatter of cream stones on the knoll. No stub stands (the first build's ring of
     // them hid the light's foot and the stair from the game camera): the light is the island's one tower.
@@ -373,15 +386,10 @@ export const headland: BackOption = {
       // Coral: pink with cream specks.
       coral: ({ p }) => mix(vec3(...I.coral), vec3(...I.cream), cut(mul(mul(sin(mul(p.x, 9)), sin(add(mul(p.y, 9), 1))), sin(add(mul(p.z, 9), 2))), 0.33)),
       trunk: () => vec3(...I.bark),
-      // Crowns: deep moss, half of them with curling black lines.
-      crown: ({ p, id }) => {
-        const swirl = add(sin(add(mul(p.x, 2.5), mul(sin(mul(p.y, 3)), 1.5))), sin(add(mul(p.z, 2.5), mul(sin(mul(p.x, 2.2)), 1.5))));
-        return mix(vec3(...I.mossDeep), vec3(...I.black), mul(sub(1, cut(abs(sin(mul(swirl, 2.2))), 0.12)), step(0.5, hash3(id))));
-      },
+      crown: crownPaint(I),
       // The ruin: cream stone in courses.
       masonry: ({ p }) => mix(vec3(...I.cream), vec3(...I.bark), sub(1, cut(abs(sub(fract(mul(p.y, 3.2)), 0.5)), 0.045))),
-      // Sea rock: stone with dark strata, dark and wet for its first third of a unit above its ground.
-      rock: ({ p, id }) => mix(mix(vec3(...I.stone), vec3(...I.bark), sub(1, cut(abs(sin(add(mul(p.y, 9), mul(sin(mul(p.x, 5)), 1.2)))), 0.2))), vec3(...I.bark), sub(1, cut(sub(p.y, id.z), 0.3))),
+      rock: rockPaint(I),
       // Barnacles: cream, a small dark crater at the very top (the id's third lane is the top's height). The first build's
       // crater was a third of the cone and from a low camera they read as mushrooms.
       barnacle: ({ p, id }) => mix(vec3(...I.cream), vec3(...I.bark), cut(sub(p.y, id.z), -0.045)),

@@ -32,6 +32,7 @@ import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
+import { terraces } from "./titan/back/terraces.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
 import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
@@ -95,7 +96,7 @@ export const design = makeDesign({
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland, terraces } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
     // The contact foam's pattern (docs/art_direction/DIRECTION.md, "Contact foam"). `base` is the print as it was.
     foam: {
@@ -146,7 +147,8 @@ export const design = makeDesign({
       about: "the islander with a head: heavy brows over big eyes sunk in it, a mandible mouth that gapes, long antennae",
       // The great claw is the fiddler's, carried out to the side: beside the face, as the islander carries it, it stood
       // over the right eye from the game camera while the crab turned to the Grab (claws/fiddler.ts, `fiddlerAside`).
-      pick: { claws: "fiddlerAside", face: "brow", back: "headland" },
+      // Its back is its own: the terraces (back/terraces.ts; DIRECTION.md, Round 5), not the islander's.
+      pick: { claws: "fiddlerAside", face: "brow", back: "terraces" },
     },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
     // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
