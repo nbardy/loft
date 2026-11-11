@@ -23,7 +23,7 @@
 import {
   abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette,
   points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, print, length, lt,
-  displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_SEA,
+  displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_SEA, beats, dragged, slowInOut, swing, uneven, anticipated,
   type Drawable, type F, type P3, type PaintAt,
 } from "../../src/index.ts";
 import { fwidth } from "../../src/lib/wgsl.ts";
@@ -102,9 +102,14 @@ const bolt = attack({
   name: "bolt", arm: every(STRIKE.loop, STRIKE.arm), warn: STRIKE.warn,
   target: { kind: "disc", centre: mark, radius: lift<"f32">(STRIKE.radius) },
   part: "head",
-  motion: { kind: "lunge", hit: hit.disc({ centre: mark, radius: STRIKE.radius }), reach: 0.4, lead: 2.5, height: STRIKE.hover, coil: 3, rise: 3.5, approach: 0.5, neck: 4 },
-  timing: { windup: 1.0, strike: 0.35, hold: 0.25, recover: 0.6, travel: 1.6 },
+  // Pushed 1.5x and 1.4x (coil 3, rise 3.5): it draws further back and up the wrong way before it darts.
+  motion: { kind: "lunge", hit: hit.disc({ centre: mark, radius: STRIKE.radius }), reach: 0.4, lead: 2.5, height: STRIKE.hover, coil: 4.5, rise: 5, approach: 0.5, neck: 4 },
+  // A whip: a 1.2 s wind-up before a 0.2 s dart (it was 1.0 before 0.35); the body follows slower (travel 1.1, was 1.6),
+  // so it trails the head further.
+  timing: { windup: 1.2, strike: 0.2, hold: 0.25, recover: 0.6, travel: 1.1 },
 });
+/** The dart in three beats: the attack's own wind-up and strike, then 1.2 s of settle. */
+const dart = beats(add(sub(time, bolt.arm), 1.4), { anticipate: 1.2, act: 0.2, settle: 1.2 });
 /** Seconds from this cycle's strike (negative before it). */
 const since = sub(time, bolt.arm);
 /** 0 -> 1 over the warning, 0 again once the strike has landed and faded. */
@@ -230,7 +235,8 @@ const restSpine = (m: F): P3 => {
 // ---- the serpent, posed by the strike -------------------------------------------------------------------------------
 
 /** The roar: the jaw drops through the wind-up and snaps at the strike; it hangs open in Last Breath. */
-const gape = add(add(0.12, mul(warning, 0.55)), mul(breath, 0.3));
+// The jaw first clamps a little (anticipated dips below 0), then drops.
+const gape = add(add(0.12, mul(anticipated(warning, 2.2), 0.55)), mul(breath, 0.3));
 
 let built: Wyrm | undefined;
 const serpent = animate(restSpine, [bolt], (spine) => {
@@ -278,7 +284,12 @@ function wingRays(side: number) {
   const spread = add(1, mul(eye, 0.3));
   return roots.map((m0, k) => (r: F | number) => {
     const f = maw.body.frame(vec3(m0, 0.25, 0.6));
-    const beatAngle = mul(sin(sub(mul(time, SERPENT.wingRate * Math.PI * 2), k * 0.35 + 0)), SERPENT.wingBeat);
+    // Each side beats at its own rate and phase (no twins). In the wind-up the wings fold down against the body; at the
+    // dart they snap up and open and swing on, each ray further back a little later.
+    const own = uneven(side * 3 + 1, 0.12);
+    const fold = mul(mul(slowInOut(dart.anticipate), sub(1, dart.act)), -0.5);
+    const snap = swing(dragged(dart.after, k, 0.05), 0.75, 1.4, 0.25);
+    const beatAngle = add(add(mul(sin(sub(mul(time, mul(own, SERPENT.wingRate * Math.PI * 2)), k * 0.35 + (side > 0 ? 0 : 0.9))), SERPENT.wingBeat), fold), snap);
     const out = add(mul(f.z, mul(cos(beatAngle), side)), mul(f.y, add(sin(beatAngle), 0.55)));
     const dir = normalize(add(out, mul(f.x, sweep[k])));
     const len = mul(spread, SERPENT.wingSpan * reach[k]);
