@@ -298,3 +298,21 @@ What the strips say:
 - Weak: about eight boats stand along the waterline in front of the crabs through the slam (each crab's two, in lanes
   only 12.5 wide), a fence across their legs; the faces clear the sails, the legs do not. The islander's raised claw
   touches the left edge at its widest.
+
+The deliverables (`~/git/loft/out/lineup/`, after merging main d9e2ed6 with the planted feet): the four clips, H.264
+yuv420p, exactly 24.000 s (720 and 1440 frames). The seam: t = 0 and t = 24 the same frame (`9a5f8e3be9119fa3` wide,
+`bebf51d371a75567` square); the seam itself is a cut, as every shot change is, and the shot running into it has no jump
+of its own: its last two frames change 0.91 times (wide) and 1.32 times (square) the median of ordinary consecutive
+frames. So the sails' flutter and the contact foam's wobble, which are still not periodic, step only on a cut. Frame time
+5.24 ms at 1920 x 1080 and 4.06 at 1080 x 1080 (GPU, least of 8 rounds). Checks: the lineup 44 of 44; the seven
+single-crab variants all pass (base 16, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 11, islander 14, bruiser 16);
+the single crab's base `game` frames are byte-identical to main's (`00623051d0eb03ef`, `9ca615e4fe5b5b4c`,
+`322b7f7a5d7aa8c0` at t = 1.0, 3.6, 11.3, main's own files swapped in as the control).
+
+Re-render, one load, every deliverable:
+
+    cd ~/git/_wt/loft-stage && bun tools/lineup_deliver.ts ~/git/loft/out/lineup all --line islander,fiddler,mask,stilt --look default --formats wide,square --fps 30,60 --pick 16.5,22,13.5,2,3.5,12.3,15.15,21.5,9.5
+
+`--line islander,fiddler,mask,bruiser` puts the bruiser in the fourth slot; `--look` takes a name from `LOOKS` in the
+scene (today only `default`; an unknown one is refused, so a look that has not landed fails loudly instead of rendering
+the default).
