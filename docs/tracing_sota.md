@@ -345,11 +345,13 @@ what the hardware draws. Can a body have both? Labels as in section 5; MEASURED-
 |---|---|---|
 | Twist, bend, taper | Move the vertices forward through the warp. The normal is the cofactor of the warp's Jacobian applied to the old normal, `det(J) J^-T n` (Barr, *Global and local deformations of solid primitives*, SIGGRAPH 1984; reported, the sentence itself not read). Lattice warps: Sederberg and Parry 1986 (reported) | Nothing. Loft's `place` composes a map behind a surface and has the symbolic Jacobian |
 | Displacement by a function | Displace the surface along its normal and take the normal from the function's derivatives (Blinn 1978 for the normal; Lee, Moreton, Hoppe, *Displaced subdivision surfaces*, 2000; Niessner and Loop, *Analytic displacement mapping using hardware tessellation*, 2013; all reported). Detail below the sampling rate is dropped or moved into shading (Norton, Rockwood, Skolmoski 1982; Olano and Baker, *LEAN mapping*, 2010; reported) | No published rule was found for where to split a procedural displacement between vertices and shading, or for how fine a grid must be after a warp |
-| A blend on one mesh | *Implicit Skinning* (Vaillant and others, SIGGRAPH 2013; follow-up 2014). One skinned mesh. Each frame every vertex is moved to its own iso-value of a field composed from one implicit surface per bone: `v += s (f(v) - iso) grad f / |grad f|^2` with s = 0.35, stopping where the gradient turns sharply (a contact), with a tangential relaxation toward the neighbours between steps (read in a walk-through of the paper; the paper itself would not open) | It needs one watertight mesh and each vertex's neighbours, and it moves vertices along the field's gradient, so they drift and have to be relaxed |
-| A blend's look without its geometry | Screen-space blending across the seam of two meshes after the scene is drawn (the MeshBlend plug-in for Unreal, 2024 to 2025; from its author's forum posts, reported). It mirrors colour across the seam and fades when something is in front | The silhouette is unchanged |
+| A blend on one mesh | *Implicit Skinning* (Vaillant and others, SIGGRAPH 2013; follow-up 2014). One skinned mesh. Each frame every vertex is moved to its own iso-value of a field composed from one implicit surface per bone: `v += s (f(v) - iso) grad f / |grad f|^2` with s = 0.35, stopping where the gradient turns sharply (a contact), with a tangential relaxation toward the neighbours between steps (read in a walk-through of the paper; the paper itself would not open) | It works on one skinned mesh and needs each vertex's neighbours, and it moves vertices along the field's gradient, so they drift and have to be relaxed |
+| A blend's look without its geometry | Screen-space blending across the seam of two meshes after the scene is drawn (the MeshBlend plug-in for Unreal, 2024 to 2025; from its author's forum posts, reported). It mirrors the picture across the seam, costs about 0.45 ms at 2560x1400 on unstated hardware, and fades when something is in front | The silhouette is unchanged |
+| A blend by displacing meshes where they intersect | A Blender Geometry Nodes asset, Smart Mesh Blend 2, blends normals and materials by distance to the intersection and can displace geometry there; its documentation asks for the meshes to be subdivided or remeshed first (reported, not opened) | An authoring tool, not a per-frame rule with a stated surface |
 | A blend by per-pixel roots | Draw a hull and solve the blended field per pixel (Loop and Blinn 2006; Kanamori, Szego, Nishita 2008; reported). Section 5.5 is of this kind | It is marching's cost, bounded |
 
-No source was found that combines all three on triangles, and none for the construction of 6.2.
+No source was found that combines all three on triangles, and none for the construction of 6.2: two research passes
+and my own searches looked for it by description.
 
 ### 6.2 Push to blend: each part keeps its triangles
 
@@ -466,6 +468,16 @@ Read on 2026-11-11:
 - LSNIF (abstract): https://arxiv.org/abs/2504.21627
 
 Reported by the research pass, not opened by me:
+
+- Vaillant and others, Implicit Skinning (ACM TOG 32(4), 2013): https://irit.fr/~Loic.Barthe/implicitskinning.php ;
+  follow-up, Robust Iso-Surface Tracking (ACM TOG 33(6), 2014): https://hal.archives-ouvertes.fr/hal-01091820 . The
+  projection rule quoted in 6.1 is from a walk-through: https://solaire.cs.csub.edu/aestus/implicit-skinning-part-1/
+- Barr 1984: https://history.siggraph.org/?p=107435 ; Sederberg and Parry 1986: https://history.siggraph.org/?p=116034
+- Niessner and Loop 2013: https://niessnerlab.org/projects/niessner2013analytic.html ; Lee, Moreton, Hoppe 2000:
+  https://hhoppe.com/proj/dss/ ; Olano and Baker 2010: https://userpages.cs.umbc.edu/olano/papers/lean/
+- Loop and Blinn 2006: https://www.microsoft.com/en-us/research/wp-content/uploads/2006/01/p664-loop.pdf ;
+  Kanamori, Szego, Nishita 2008: https://kanamori.cs.tsukuba.ac.jp/projects/metaball/eg08_metaballs.pdf
+- MeshBlend: https://forums.unrealengine.com/t/meshblend-a-plugin-for-blending-meshes-landscapes-etc-in-unreal/1937887
 
 - Keeter, MPR: https://www.mattkeeter.com/research/mpr/
 - Polychronakis, Koulieris, Mania, inverted pyramid: https://diglib.eg.org/handle/10.2312/sr20231128
