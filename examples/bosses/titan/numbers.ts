@@ -64,8 +64,9 @@ export const S = {
   // Bearings are degrees round the island's centre from the bow (+x), positive toward the right flank (+z). Heights are
   // above the still water unless said; lengths are crab units.
   terraces: {
-    /** How far the crown stands over the atoll's `top`. */
-    crown: 1.2,
+    /** How far the crown stands over the atoll's `top`; how high over the water the rim is round the tail (beside the
+     * carapace it is the carapace's rim line). */
+    crown: 1.2, rim: 0.5,
     /** The island's outline as shares of the atoll's radii: at the bow and at the tail (an egg), and its lumps. */
     outline: { bow: 0.9, tail: 1.06, lumps: 0.025 },
     /** The screw: thread groups from crown to rim, how hard its lines lean over as they climb (1 straight), how much
@@ -81,7 +82,7 @@ export const S = {
     point: { bearing: 200, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
     /** The beach under the plates' arch: its middle bearing, half its span, how far the sand runs beyond the rim, how
      * high the rim lifts over it. */
-    beach: { bearing: 172, span: 20, sand: 1.2, arch: 0.55 },
+    beach: { bearing: 172, span: 20, sand: 1.9, arch: 0.7 },
     /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
      * stack [distance from the island's centre, bearing, height, girth]. */
     shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
@@ -94,7 +95,7 @@ export const S = {
      * tower stands up out of the mound on its segmented neck; 0 down, and the neck is not drawn), `shutters` (0 shut,
      * 1 flung open).
      */
-    light: { at: 7.2, height: 3.4, girth: [0.78, 0.5] as const, crust: 0.36, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
+    light: { at: 7.2, height: 3.6, girth: [0.66, 0.45] as const, crust: 0.32, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
   },
 
   // ---- claws: the right (crusher) 1.4 times the left ----

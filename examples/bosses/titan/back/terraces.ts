@@ -110,7 +110,11 @@ export const terraces: BackOption = {
     /** The hull's radius (a share of the outline) and height at G: a mound, steep at the rim like the carapace's flank. */
     const quarter = (G: F): F => mul(clamp(G, 0, 1), Math.PI / 2);
     const hullR = (G: F): F => pow(max(sin(quarter(G)), 1e-6), 0.8);
-    const hullY = (G: F): F => add(rimY, mul(crownY - rimY, pow(max(cos(quarter(G)), 1e-6), 1.25)));
+    /** The rim's height at a bearing: the carapace's rim line beside the carapace; round the tail, where the island
+     * stands over open water, it comes down toward the water (the plates run down to the sea, as the pictures have them;
+     * a rim at the carapace's height all round left a cream plinth under the island). */
+    const rimLow = water + T.rim, rimAt = (a: F): F => mix(rimLow, rimY, smoothstep(-0.55, 0.2, cos(a)));
+    const hullY = (G: F, a: F): F => { const rim = rimAt(a); return add(rim, mul(sub(crownY, rim), pow(max(cos(quarter(G)), 1e-6), 1.25))); };
     /** Thread groups between the crown and G, and its inverse. */
     const TURNS = T.screw.turns, LEAN = T.screw.lean;
     const psi = (G: F): F => mul(TURNS, sub(1, pow(max(sub(1, clamp(G, 0, 1)), 1e-6), LEAN)));
@@ -139,7 +143,7 @@ export const terraces: BackOption = {
       const from = sub(s, lightRho * R), mound = sub(1, smoothstep(0.35, 1.35, sqrt(add(mul(from, from), mul(t, t)))));
       const root = sub(1, smoothstep(T.outline.tail * R, T.outline.tail * R + 1.3, s));
       const across = mul(div(t, POINT.half * R), div(t, POINT.half * R));
-      return add(water, sub(add(add(T.point.low, mul(mound, T.point.top - T.point.low)), mul(root, rimY - water - T.point.low - 0.12)), mul(across, 0.18)));
+      return add(water, sub(add(add(T.point.low, mul(mound, T.point.top - T.point.low)), mul(root, T.rim - T.point.low - 0.1)), mul(across, 0.18)));
     };
 
     // ---- the surface ----
@@ -159,7 +163,7 @@ export const terraces: BackOption = {
       const lobe = mul(lobes(f), sub(1, tau)), rim = rimOf(a);
       const hullRho = add(mul(hullR(Gr), rim), mul(lobe, div(sin(quarter(G)), R)));
       // Over the beach the rim lifts: the plates arch over the sand.
-      const hullHeight = add(add(hullY(Gy), mul(lobe, cos(quarter(G)))), mul(mul(beachAt(a), T.beach.arch), smoothstep(0.7, 1, G)));
+      const hullHeight = add(add(hullY(Gy, a), mul(lobe, cos(quarter(G)))), mul(mul(beachAt(a), T.beach.arch), smoothstep(0.7, 1, G)));
       // Below the rim, by the kind of shore: [under the lip, the far edge of the top, the waterline, the foot].
       const sand = sandEdge(a), ledge = shelfEdge(a), tip = pointOut(a);
       const rhoAt = (k: 0 | 1 | 2 | 3): F => shore({
@@ -169,8 +173,8 @@ export const terraces: BackOption = {
       const rho = stations(sigma, SIGMA, [hullRho, rhoAt(0), rhoAt(1), rhoAt(2), rhoAt(3), lift<"f32">(0)]);
       const top = capeTop(rho, a);
       const yAt = (k: 0 | 1 | 2 | 3): F => shore({
-        shell: lift<"f32">([rimY - 0.14, water + 0.12, water - 0.3, A.base][k]!), beach: lift<"f32">([water + 0.6, water + 0.05, water - 0.25, A.base][k]!),
-        apron: lift<"f32">([water + 0.5, water + 0.2, water - 0.2, A.base][k]!), cape: [top, top, lift<"f32">(water - 0.2), lift<"f32">(A.base)][k]!,
+        shell: [sub(rimAt(a), 0.12), lift<"f32">(water + 0.1), lift<"f32">(water - 0.3), lift<"f32">(A.base)][k]!, beach: lift<"f32">([water + 0.5, water + 0.05, water - 0.25, A.base][k]!),
+        apron: lift<"f32">([water + 0.42, water + 0.2, water - 0.2, A.base][k]!), cape: [top, top, lift<"f32">(water - 0.2), lift<"f32">(A.base)][k]!,
       });
       const y = stations(sigma, SIGMA, [hullHeight, yAt(0), yAt(1), yAt(2), yAt(3), lift<"f32">(A.base - 0.2)]);
       return vec3(add(A.centre[0], mul(mul(rho, A.rx), cos(a))), y, add(A.centre[1], mul(mul(rho, A.rz), sin(a))));
@@ -192,13 +196,13 @@ export const terraces: BackOption = {
       // Ribs: lines of the thread. On the plates dark red, close; on the turf every fourth, broken into tufts.
       const rib = sub(1, cut(abs(sub(fract(mul(f, RIBS)), 0.5)), 0.4));
       const plate = mix(mix(mix(ink(I.brick), ink(I.brickDark), mul(rib, 0.85)), ink(I.cream), mul(cut(x, 0.88), sub(1, cut(x, 0.965)))), ink(I.black), cut(x, 0.965));
-      const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(f, RIBS / 4), 0.3)), 0.5)), 0.455)), cut(sin(add(mul(G, 70), mul(f, 31))), -0.3));
+      const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(f, RIBS / 5.5), 0.3)), 0.5)), 0.46)), cut(sin(add(mul(G, 52), mul(f, 31))), 0.45));
       const turf = mix(ink(I.moss), ink(I.mossDeep), tuft);
       // Red reaches highest along a plate's lip and ends in a point there; turf hangs over the rest in tongues on the ribs.
       const red = cut(G, add(add(T.tip, mul(0.21, pow(max(sub(1, x), 1e-4), 1.3))), mul(cos(mul(f, RIBS * TAU)), 0.014)));
       // Stone: pale, with strokes across the band (down a riser).
-      const stroke = sub(1, cut(abs(sub(fract(add(mul(G, 30), mul(sin(mul(f, 90)), 0.22))), 0.5)), 0.38));
-      const stone = mix(ink(I.stone), ink(I.bark), mul(stroke, 0.9));
+      const stroke = sub(1, cut(abs(sub(fract(add(mul(G, 19), mul(sin(mul(f, 37)), 0.12))), 0.5)), 0.44));
+      const stone = mix(ink(I.stone), ink(I.bark), mul(stroke, 0.8));
       // Key lines where the form creases: at the broad plate's lip and its band's foot everywhere, at a blade's while it is a blade.
       const blade = cut(G, T.terraced[0] + 0.07);
       const near = (at: number): F => sub(1, cut(abs(sub(f, at)), 0.0045));
@@ -207,8 +211,8 @@ export const terraces: BackOption = {
 
       // Below the rim, by the kind of shore.
       const dots = mul(sin(mul(v, 67 * TAU)), sin(mul(sigma, 60)));
-      // Shell: the carapace's black rim line and cream belly.
-      const belly = mix(ink(I.black), ink(I.cream), cut(sigma, 0.03));
+      // Shell: the carapace's black rim line; under it the shell's dark underside (cream, as the carapace's belly is, read as a plinth).
+      const belly = mix(ink(I.black), ink(I.brickDark), cut(sigma, 0.03));
       // Beach: dark under the plates' lip, then sand, speckled.
       const sandInk = mix(ink(I.bark), mix(ink(I.cream), ink(I.stone), cut(dots, 0.8)), cut(sigma, SIGMA[1]));
       // Rock (the shelf, the point): stone with level strata, cracked on top, dark and wet at the water.

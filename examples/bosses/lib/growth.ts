@@ -148,14 +148,14 @@ export const RECIPES = {
   /** A low seam or a valley between plates: barnacles thick, a mussel bed, a coral standing over them, kelp below. */
   seam: [
     { motif: { kind: "barnacles", count: 5 }, many: 2, spread: 0.55, size: 1, sits: "middle" },
-    { motif: { kind: "mussels", count: 4 }, many: 1, spread: 0.45, size: 0.9, sits: "middle" },
-    { motif: { kind: "coral" }, many: 1, spread: 0.35, size: 1.15, sits: "high" },
-    { motif: { kind: "kelp", strands: 3 }, many: 1, spread: 0.3, size: 0.9, sits: "low" },
+    { motif: { kind: "mussels", count: 5 }, many: 1, spread: 0.45, size: 1.1, sits: "middle" },
+    { motif: { kind: "coral" }, many: 1, spread: 0.35, size: 0.85, sits: "high" },
+    { motif: { kind: "kelp", strands: 4 }, many: 1, spread: 0.3, size: 1.2, sits: "low" },
   ],
   /** A reef flat: corals, a fan, mussels at their feet. */
   reef: [
-    { motif: { kind: "coral" }, many: 1, spread: 0.4, size: 1.1, sits: "middle" },
-    { motif: { kind: "fan" }, many: 1, spread: 0.5, size: 1.2, sits: "high" },
+    { motif: { kind: "coral" }, many: 1, spread: 0.4, size: 0.9, sits: "middle" },
+    { motif: { kind: "fan" }, many: 1, spread: 0.5, size: 1.1, sits: "high" },
     { motif: { kind: "mussels", count: 5 }, many: 1, spread: 0.35, size: 0.9, sits: "low" },
     { motif: { kind: "barnacles", count: 4 }, many: 1, spread: 0.7, size: 0.8, sits: "middle" },
   ],

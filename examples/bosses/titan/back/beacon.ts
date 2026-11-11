@@ -63,7 +63,7 @@ export function beaconOn({ n, shell, crushAfter }: Pick<Rig, "n" | "shell" | "cr
   // the line. Its foot flares, so the crust has a thickness and runs into the mound.
   const tower = place(strand({
     name: "beacon", spine: (m) => at(m), stations: 6, tips: [{ round: 0.05 }, "open"], up: [1, 0, 0],
-    girth: (m) => add(mix(g0, g1, m), mul(0.17 * g0, sub(1, smoothstep(0, B.crust, m)))),
+    girth: (m) => add(mix(g0, g1, m), mul(0.13 * g0, sub(1, smoothstep(0, B.crust, m)))),
     paint: (m, v) => {
       const turn = mul(v, TAU);
       const tide = add(B.crust, add(mul(sin(add(mul(turn, 3), 1)), 0.045), mul(sin(mul(turn, 7)), 0.028)));
@@ -121,7 +121,7 @@ export function beaconOn({ n, shell, crushAfter }: Pick<Rig, "n" | "shell" | "cr
     detail: { along: 24, around: 8 },
   }), rigid(shell));
 
-  const gallery = galleryRound({ n, shell }, at(0.93), g1 + 0.3 * k, k);
+  const gallery = galleryRound({ n, shell }, at(0.93), g1 + 0.2 * k, 0.6 * k);
   const gulls = gullsRound({ n, shell, crushAfter }, add(lanternFoot, mul(dir, LANTERN)), k * 0.62, B.gulls);
 
   // The neck: barnacled drums, one on another, from the mound up to the tower's foot. Only a risen tower has one.
