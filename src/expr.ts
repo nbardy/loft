@@ -17,8 +17,9 @@ export type VecTy = Exclude<NumTy, "f32">;
 const SIZE: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
 
-/** Samples per table-backed curve row. Each sample is a vec4. */
-export const CURVE_N = 64;
+// Defined beside the host contract, which the file loader imports without this module (docs/artefact_format.md).
+import { CURVE_N } from "./artefact.ts";
+export { CURVE_N };
 
 /** A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends. */
 export class Row {

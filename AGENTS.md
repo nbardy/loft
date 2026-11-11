@@ -11,3 +11,6 @@
 - Comparing two ways of drawing one thing in the same timing rounds: `bun tools/tracer_bench.ts`.
 - Pictures and other output go under `out/`, which git ignores.
 - Design as built: `DESIGN.md`. Research notes: `docs/`. Handoff prompts: `prompts/art_research/`.
+- A scene as files: `bun src/cli/main.ts build <scene> --out out/files/<name>`, drawn without the compiler by
+  `render --artefact <dir>`. Format: `docs/artefact_format.md`. `bun tools/check_loader_closure.ts` fails if the file
+  loader's imports reach the compiler; `bun tools/files_proof.ts` compares files, scene and phase-1 pixels.

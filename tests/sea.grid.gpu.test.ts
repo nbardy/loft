@@ -19,7 +19,7 @@ async function seaVertices(device: GPUDevice, camera: Camera, time: number): Pro
   const view = { camera, width: 1280, height: 800, time };
   const tables = a.pose(viewState(a, view));
   const detail = new Float32Array(DETAIL_SLOTS * 4);
-  const plan = planFrame(a, view, boundsFrom(a, tables), new Map(), detail);
+  const plan = planFrame(a.draws, view, boundsFrom(a.draws, tables), new Map(), detail);
   const runs = plan[a.draws.indexOf(seaDraw)]!;
   const vertices = runs[0]!.vertices;
   const slot = seaDraw.detail.kind === "projected" ? seaDraw.detail.slot : -1;

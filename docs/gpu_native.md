@@ -122,9 +122,168 @@ bounds (one extra submit and map).
 
 ## Phase 2: the artefact as files, and a Rust loader
 
-`loft build <scene> --out dir` writes a manifest (inputs, params, cameras, draws, pose stages, table layout), the
-shader modules and the static tables as binary. A loader creates pipelines and runs frames. Two loaders: the existing
-host, changed to read the files; and a small Rust crate on wgpu for the game.
+`loft build <scene> --out dir` writes a manifest, the WGSL and the static tables as binary. A loader creates pipelines
+and runs frames. Two loaders: the existing host, changed to read the files; and a small Rust crate on wgpu for the
+game (not written yet; see the end of this section). The format is `docs/artefact_format.md`.
+
+### The design (written before building, 2026-11-11)
+
+What is special here: the asset is a program, every per-frame quantity is already a GPU program (phase 1), and a
+frame is a pure function of (time, inputs, params, camera, view size, curves), with no state carried between frames
+except the host's level-of-detail hysteresis. So the file does not need a scene graph, meshes, materials or
+animation channels (glTF's model), and it need not describe "a scene" at all. It describes **what the host does**.
+
+1. **The file is the lowered host (mine).** The phase-1 host made decisions at load from the `Artefact`: the blend
+   factors behind `"alpha"`, plain or split passes, which shader is compiled with which host WGSL in front of it,
+   pipeline deduplication, buffer sizes and usages, the bind-group layouts. A second loader would have to copy those
+   decisions as code. Instead they are made once, by a pure function `lower(artefact)`, and written as WebGPU
+   descriptors: buffers, textures, samplers, bind-group layouts, pipeline layouts, modules, pipelines, bind groups,
+   and a frame recipe (writes, one compute pass, render passes with attachments and commands). The TypeScript host
+   becomes an executor of that value, and runs from it whether the value came from a compile or from files: one
+   host, not two, so the pictures cannot drift between the paths. Descriptor fields are WebGPU's own names
+   (inherited: the spec's dictionaries, which wgpu mirrors), so a loader maps them one to one.
+2. **A module is a list of content-addressed chunks (inherited idea: content addressing; its use here is mine).**
+   The host prepends `PRELUDE_WGSL`, a variant's WGSL and the scene's shared WGSL to every module; written whole,
+   that text would be stored once per module. A module is the concatenation of its chunks, in order, with nothing
+   between them; a chunk is stored once, named by a hash of its text.
+3. **The per-frame CPU work is a closed list of named writes (mine).** Frame uniform (from the camera), inputs,
+   params, the level-of-detail slots. Each is a variant of `FrameWrite` with its algorithm in the format document.
+   Everything else per frame is a GPU command. The level-of-detail plan is the one per-frame algorithm on the CPU;
+   it is data (`Detail` per draw, measured at build) plus a documented procedure, and it reads bounds the pose
+   stages wrote, through a readback listed in the manifest. Phase 4 moves it into a compute stage.
+4. **What cannot be data is refused by name.** A `cpu` table is JavaScript. `loft build` refuses a scene that has
+   any, listing them; the manifest's table list still records every table's fill (`map`, `scan`), and the build and
+   `loft render --artefact` print the count of each. The executor takes the `cpu` fills as a separate argument, a
+   sum type (`none` from files, `js` from a compile), so nothing in the file pretends to hold them.
+5. **Versioned from day one.** `format: "loft-artefact", version: 1`. The preludes are chunks in the file, so a
+   loader carries no copy of them.
+
+### Inventory: what an `Artefact` and the host's frame need at run time
+
+| Item | Today | In the file artefact |
+|---|---|---|
+| `shaders`, `sceneWgsl`, stage WGSL, preludes | strings, assembled by the host at load | chunks; modules list them |
+| draws: blend, cull, depth, constants, pass | enums the host translates | full render pipeline descriptors |
+| plain / split schedule, depth resolve, post ping-pong | host code | textures, bind groups and render passes |
+| `inputs`, `params` (defaults, ranges), `inputFloats` | data | data, plus the `inputs`/`params` writes; the `time` input is filled from the view's time (a named rule) |
+| `curves` | Float32Array | binary blob, uploaded at load; `setCurves` stays a loader call (no compiler needed) |
+| `statics` | Float32Array | binary blobs, uploaded at load |
+| `cameras` | data | data; camera to matrices is loader code (`src/host/camera.ts`, documented); the CLI's fallback cameras are a CLI facility |
+| `Detail` per draw (grid levels measured at rest by a CPU pose at build) | data | data, unchanged; the plan is a loader procedure |
+| level-of-detail bounds (read back each frame) | host code | a readback buffer and the copies into it, listed |
+| `tables` (where each lives, how filled) | data | data, for tools (`readTables`, counts) |
+| `stats` | data | data |
+| `cpuPose` | closure | not data: refused by name (0 tables in the six scenes below) |
+| `pose` (CPU reading of every table) | closure | tool-only: checks, baking and tests; a client never needs it |
+| `Compiled.frame`, `cpu`, `poseProfile`, `table` | closures | tool-only |
+| `--style`, `--outline` | change the scene before compiling | tool-only (a different build) |
+
+### Predictions
+
+Bytes (from the compiled artefacts of 2026-11-11; WGSL is the unique chunks: shaders that a draw or post pass uses,
+stage modules, the scene's shared WGSL, the preludes 1.4 + 0.7 + 1.4 KB and the depth resolve):
+
+| Scene | WGSL, MB | of which pose stages | blobs, KB | manifest, KB | written whole instead |
+|---|---|---|---|---|---|
+| maelstrom_wyrm | 4.11 | 2.85 | 9.2 | 60-100 | +1.0 MB |
+| reefback_titan | 4.01 | 2.80 | 9.9 | 80-130 | +1.1 MB |
+| thundermaw | 3.68 | 2.47 | 7.2 | 60-100 | +0.7 MB |
+| tithe_fleet | 4.11 | 2.16 | 0 | 60-100 | +0.7 MB |
+| wreckers_lamp | 3.00 | 2.04 | 15.7 | 60-100 | +0.6 MB |
+| grab | 2.58 | 1.70 | 0 | 40-70 | +0.4 MB |
+
+So the WGSL is about 97% of the bytes, and chunking saves 15 to 25% against whole modules. Deduplicating further
+(accessors, library functions shared between stage modules) is worth little: splitting maelstrom's 46 modules at
+top-level declarations, 4.08 MB holds 4.02 MB of distinct text (1.4% repeated). The volume is single functions:
+the largest is a 252 KB hoisted `_common` pose function and 130 to 190 KB surface functions. That is phase 1's
+code generation (expression trees emitted without sharing across lanes), not a format question.
+
+Load (phase-1 host, this machine under load, 640x400): compile 1.0 to 5.3 s, GPU load (modules and pipelines)
+0.9 to 4 s, once 17 s. From files: reading and parsing about 4 MB, under 50 ms; then the same modules and pipelines,
+so the same GPU load within the machine's noise. Files save the compile and nothing else; to load faster the WGSL
+must shrink (above) or pipelines be cached.
+
+Pictures: byte-identical. Three frames per scene (t = 1.0; t = 2.5; t = 2.5 with one input changed, or a param where
+the scene has no input that shows) through the phase-1 host (baseline SHA-256 of the RGBA, recorded before any
+change), through the new host from a compile, and through `loft render --artefact` from files. The modules are the
+same text and the descriptors the same values, so any difference is a bug in the lowering, not rounding.
+
+Wrong if: any frame's hash differs; a file loader's import closure reaches `src/compile` or `src/expr.ts`; files
+load more than 100 ms slower than the GPU load from a compile.
+
+### Measured (2026-11-11, as built; machine shared and heavily loaded)
+
+`bun tools/files_proof.ts` (pixels, bytes) and `bun tools/files_proof.ts --time 3` (load times: files and scene paths
+alternated, each a fresh process, three rounds; least and most).
+
+Pictures: **identical**, as predicted. All 18 frames (six scenes, three frames each, 640x400) have the same SHA-256
+of RGBA through the phase-1 host, the new host from a compile, and `files_frames` from files, in a process that
+loaded no compiler module (Bun's module registry, checked at the end of the run).
+
+| Scene | WGSL, MB (predicted) | blobs, B | manifest, KB (predicted) | saved against whole modules | read, ms | GPU load from files, s | compile, s | GPU load from a compile, s |
+|---|---|---|---|---|---|---|---|---|
+| maelstrom_wyrm | 4.11 (4.11) | 9,216 | 78 (60-100) | 1.01 MB, 19.7% | 18-26 | 4.6-10.5 | 7.7-13.3 | 6.2-20.0 |
+| reefback_titan | 4.01 (4.01) | 9,936 | 120 (80-130) | 1.07 MB, 21.0% | 4-58 | 3.0-21.9 | 2.3-13.1 | 4.4-59.4 |
+| thundermaw | 3.67 (3.68) | 7,168 | 78 (60-100) | 0.69 MB, 15.8% | 4-15 | 2.7-3.1 | 3.0-4.5 | 3.0-4.9 |
+| tithe_fleet | 4.11 (4.11) | 0 | 71 (60-100) | 0.67 MB, 14.0% | 3-46 | 2.3-2.7 | 4.5-5.7 | 2.0-3.1 |
+| wreckers_lamp | 3.00 (3.00) | 15,744 | 69 (60-100) | 0.59 MB, 16.4% | 6-11 | 1.8-2.2 | 1.5-1.6 | 1.6-2.4 |
+| grab | 2.58 (2.58) | 0 | 54 (40-70) | 0.35 MB, 12.0% | 2-9 | 0.94-1.48 | 0.92-1.30 | 1.03-1.59 |
+
+Against the predictions:
+
+- Bytes: hit, every scene, to the hundredth of a MB (the prediction was a sum of the compiled texts, and the files are
+  those texts). The savings of chunking came in at 12-21%, against 15-25% predicted: grab and the fleet, with fewer
+  and larger modules, fall below the band. Measured before building, deduplicating repeated text inside the compiler's
+  output would save 1.4%; the expectation from phase 1 that repeated accessors and table code dominate stage WGSL does
+  not hold for these scenes. The volume is single large functions (phase 1's code generation).
+- Reading the files: under 50 ms predicted; 2-26 ms in all rounds but two (46 and 58 ms, both in rounds where the
+  same machine took 13 s to compile). Hit, with those two readings at the edge.
+- GPU load from files against from a compile: predicted equal within 100 ms. Not resolvable on this machine today:
+  one scene's load swung 4.4 to 59 s across rounds. The least readings, which load only adds to, differ by -1.6 to
+  +0.3 s, files faster in the two largest scenes; no sign of a systematic cost on either side, which is what identical
+  modules and descriptors imply. The prediction stands as reasoning, not as a measurement.
+- What files save is the compile, 0.9 to 13 s here (1 to 5 s on a quieter machine, phase 1's figures), and nothing
+  else, as predicted. Loading faster than that needs less WGSL or cached pipelines (below).
+
+Failed once, not reproduced: a scene-path load of reefback (timing round, not the proof) failed in Dawn with "The stage
+(Fragment) of the entry point "fs" isn't the expected one (Vertex)" for `surface.cutterDactyl`; the same load passed
+in the proof run and in three rounds of the rerun. It matches the intermittent shader-module failure AGENTS.md records
+for the phase-1 host; it was not investigated.
+
+The no-compiler property is enforced three ways: `tools/check_loader_closure.ts` follows every runtime import from
+the loader's entries (`src/cli/run_files.ts`, `src/host/files.ts`, `tools/files_frames.ts`: 14 files, packages
+`bun-webgpu` and `node:*`) and fails on `src/compile/**`, `src/expr.ts`, `src/grad.ts`, `src/index.ts`, `examples/**`
+or a dynamic import whose path is not a literal; `tests/files.test.ts` runs it, and runs it on `tools/pose_time.ts`
+to show it can fail; and `loft render --artefact` checks Bun's module registry after drawing.
+
+### What phases 3 and 4 need from this format
+
+Phase 3 (textures and layers): `TextureDesc` gains a fixed size, mip levels and dimension (beside "view-sized"), and
+an `init` per mip from blobs or from a compute stage run once at load; `LayoutEntry` gains storage textures and the
+other view dimensions; a texture is bound by a view descriptor rather than its default view. A layer a style asks for is
+then a texture, a bind-group entry and a chunk of WGSL: no new kind of thing for the loader. The version moves to 2.
+
+Phase 4 (fewer draws, level of detail on the GPU): a `DrawCommand` variant `indirect` (buffer and offset: wgpu's
+`draw_indirect`, or one `multi_draw_indirect` per pipeline), buffers with `INDIRECT` usage, and a second compute pass
+after the pose that writes the arguments. Then `BoundsRead` is always `none`, the `grid` plan and the readback leave the
+format, and the loader's one algorithm with them; `cellPixels` becomes a frame write. Shaders shared across scenes
+fall out of content-addressed chunks: a shared directory of `wgsl/` whose names are hashes.
+
+### The Rust loader (not written: a cargo build would cost gigabytes of a nearly full disk)
+
+PREDICTED size: 900 to 1,100 lines of Rust on wgpu, by part, against the TypeScript that does the same:
+
+| Part | TypeScript today | Rust, lines |
+|---|---|---|
+| manifest types (serde) | `manifest.ts` 171 | 220-260 (wgpu-types' serde names are WebGPU's, so most enums deserialize directly; the rest are small `match`es) |
+| reading the directory | `files.ts` reading, 25 | 40 |
+| creating the objects, view-sized textures and groups | `host.ts` `createObjects`, about 90 | 200-250 (descriptors spelled out, lifetimes of views) |
+| a frame: writes, pose pass, bounds copy and map, passes | `host.ts` frame path, about 150 | 180-220 (async map through a callback and `poll`) |
+| frame state and the frame uniform, camera matrices | `host.ts` 40 + `camera.ts` 110 | 130-150 |
+| level-of-detail plan | `detail.ts` 216 | 170-200 |
+
+No part interprets the scene: every number a pipeline needs is in the file. The plan (about a fifth of it) is the one
+algorithm; phase 4 deletes it.
 
 ## Phase 3: textures and layers
 
