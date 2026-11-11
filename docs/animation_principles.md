@@ -53,8 +53,23 @@ Work through this in order. Each step is one or two lines in a scene.
 - Does it have one temperament that every feature serves?
 - Is anything on it symmetrical that need not be?
 
+## Grabs
+
+`src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release.
+
+- `grab(since, { rest, from, to?, radius, squeeze, pulses, ... }, beats)` gives the palm's place, the `gap` between
+  the gripping surfaces, the held thing's place, its squeezed size and a `held` flag. The gap follows the thing's
+  `radius`: it opens to the thing's width plus a margin by two thirds of the reach, closes to the width, and narrows
+  by `squeeze` on each pulse. The thing's place and radius may be host inputs, so one formula takes any ship.
+- A squeezed thing keeps its volume: narrowed to k across the grip, it grows by 1 / sqrt(k) the other two ways.
+- A gripper is whatever turns `gap` into a pose. `fingerAngle(gap, length)` is the angle for a claw's fingers or a
+  jaw. `wrap({ centre, axis, radius: gap / 2 + body, length, pitch })` is a coil whose number of turns follows from
+  the body's length, so it goes round a small ship more times than a large one and gains turns as it tightens.
+
+Limits today: the held thing must be drawn as a posed copy (`draw.posed`) to take the squeezed size; a full `ship()`
+is placed by a rigid chart and cannot be squeezed yet. Nothing checks that the gripper reaches the thing.
+
 ## What is not here yet
 
-- A grab: reaching for a ship, wrapping it by its size, lifting it and squeezing it. The pieces exist (charts that
-  carry things, per-axis sizes, attacks with hit shapes) but there is no helper that joins them.
+- A size on charts, so a whole ship (hull, masts, sails) can be squeezed as one.
 - Checks for these principles (for example, that an action's wind-up is longer than its action).

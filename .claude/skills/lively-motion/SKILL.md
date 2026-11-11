@@ -23,3 +23,9 @@ Rules of thumb:
 
 Render a frames sheet across the action and look at it before and after. Staging and appeal are not formulas: use the
 checklist at the end of the reference.
+
+## Grabs
+
+For a monster that takes hold of something (a claw on a ship, a coil round a hull), use `grab`, `fingerAngle` and
+`wrap` from `src/geom/grab.ts`; `examples/grab.ts` is the worked scene and `docs/animation_principles.md` has the
+section. Drive every gripper from the grab's `gap`, and draw the held thing at `thing` with `squeezed(base)`.

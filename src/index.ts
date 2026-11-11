@@ -25,6 +25,7 @@ export { shell, horn, whorl, ridgePhase, type ShellSpec, type HornSpec } from ".
 export { mirror, array, reflect } from "./geom/symmetry.ts";
 export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type BeatSpec, type StrikeSpec } from "./geom/motion.ts";
 export { alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, overshot, slowIn, slowInOut, slowOut, squash, stretchOf, swing, uneven, type Beat, type Beats } from "./geom/lively.ts";
+export { grab, fingerAngle, wrap, type Grab, type GrabBeats, type GrabSpec, type WrapSpec } from "./geom/grab.ts";
 export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
