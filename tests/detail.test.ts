@@ -21,7 +21,7 @@ function choose(distance: number, memory: Memory) {
   const view = { camera: cameraAt(distance), width: W, height: H, time: 1 };
   const tables = a.pose(viewState(a, view));
   const out = new Float32Array(DETAIL_SLOTS * 4);
-  const plan = planFrame(a, view, boundsFrom(a, tables), memory, out);
+  const plan = planFrame(a.draws, view, boundsFrom(a.draws, tables), memory, out);
   return { tables, out, plan, levels: new Map([...memory].map(([slot, l]) => [slot, [...l]])) };
 }
 

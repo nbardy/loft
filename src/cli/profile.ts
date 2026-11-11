@@ -3,7 +3,8 @@
 // how a stage's time is measured.
 import { resolve } from "node:path";
 import { compileScene } from "../compile/index.ts";
-import { createHost, POSE_ONE_PASS } from "../host/host.ts";
+import { createHost } from "../host/host.ts";
+import { POSE_ONE_PASS } from "../host/profile.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { viewState } from "../host/host.ts";
 import type { Scene } from "../scene.ts";

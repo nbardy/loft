@@ -9,11 +9,12 @@
 // projected: the rows of the image of a plane out to a view depth. Both the plane's rows and the margin are found here,
 // on the CPU, so the shader only maps a vertex index to NDC (the sea, src/geom/sea.ts).
 
-import { CELL_PIXELS, HYSTERESIS, type Artefact, type Detail, type Draw, type View } from "../artefact.ts";
+import { CELL_PIXELS, HYSTERESIS, type Detail, type View } from "../artefact.ts";
 import { cameraMatrices, type CameraMatrices } from "./camera.ts";
+import type { PlanDraw } from "./manifest.ts";
 
 export type Run = { readonly vertices: number; readonly instances: number; readonly first: number };
-/** A frame's draw calls, by index into `Artefact.draws` (a hidden draw has none). */
+/** A frame's draw calls, by index into the draws planned (`Manifest.plan`, `Artefact.draws`; a hidden draw has none). */
 export type Plan = readonly (readonly Run[])[];
 /** The level each instance of each grid slot drew last frame (-1: not drawn, or never). */
 export type Memory = Map<number, Int16Array>;
@@ -58,20 +59,20 @@ export function chooseLevel(levels: number, cellPx: (k: number) => number, pxAcr
 }
 
 /** Every instance at the finest level: the plan when no bounds have been read (Bounds "none"). */
-function finestRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, out: Float32Array): Run[] {
+function finestRuns(d: Extract<Detail, { kind: "grid" }>, draw: PlanDraw, out: Float32Array): Run[] {
   const cells = d.levels[0]!.cells;
   for (let i = 0; i < draw.instances; i++) out.set([cells[0], cells[1], 0, 0], (d.slot + i) * 4);
   return [{ vertices: d.levels[0]!.vertices, instances: draw.instances, first: 0 }];
 }
 
-function gridRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, c: Camera, bounds: Bounds, target: number, memory: Memory, out: Float32Array): Run[] {
+function gridRuns(d: Extract<Detail, { kind: "grid" }>, draw: PlanDraw, c: Camera, bounds: Bounds, target: number, memory: Memory, out: Float32Array): Run[] {
   switch (bounds.kind) {
     case "none": return finestRuns(d, draw, out);
     case "read": return chosenRuns(d, draw, c, bounds.at(d.slot), target, memory, out);
   }
 }
 
-function chosenRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, c: Camera, t: Float32Array, target: number, memory: Memory, out: Float32Array): Run[] {
+function chosenRuns(d: Extract<Detail, { kind: "grid" }>, draw: PlanDraw, c: Camera, t: Float32Array, target: number, memory: Memory, out: Float32Array): Run[] {
   const seen = memory.get(d.slot) ?? new Int16Array(draw.instances).fill(-1);
   const chosen = new Int16Array(draw.instances);
   for (let i = 0; i < draw.instances; i++) {
@@ -161,13 +162,13 @@ function projectedRuns(d: Extract<Detail, { kind: "projected" }>, c: Camera, tar
 }
 
 /** The frame's plan and `loft_detail` contents. `memory` carries each grid's levels from frame to frame. */
-export function planFrame(a: Artefact, view: View, bounds: Bounds, memory: Memory, out: Float32Array): Plan {
+export function planFrame(draws: readonly PlanDraw[], view: View, bounds: Bounds, memory: Memory, out: Float32Array): Plan {
   const m = cameraMatrices(view.camera, view.width / view.height);
   const c: Camera = { m, width: view.width, height: view.height, fy: Math.hypot(m.viewProj[1]!, m.viewProj[5]!, m.viewProj[9]!) };
   const target = view.cellPixels ?? CELL_PIXELS;
   // A surface and its outline share a slot: the first draw to reach it chooses, the second reuses the choice.
   const chosen = new Map<number, Run[]>();
-  const runsOf = (d: Draw): Run[] => {
+  const runsOf = (d: PlanDraw): Run[] => {
     const detail = d.detail;
     switch (detail.kind) {
       case "fixed": return [{ vertices: d.vertices, instances: d.instances, first: 0 }];
@@ -181,12 +182,12 @@ export function planFrame(a: Artefact, view: View, bounds: Bounds, memory: Memor
       case "projected": return projectedRuns(detail, c, target, out);
     }
   };
-  return a.draws.map((d) => (d.layer === "scene" || view.construction === true ? runsOf(d) : []));
+  return draws.map((d) => (d.layer === "scene" || view.construction === true ? runsOf(d) : []));
 }
 
-/** Slots `loft_detail` must hold for an artefact (checked at load against DETAIL_SLOTS by the compiler's allocation). */
-export function slotsUsed(a: Artefact): number {
-  return a.draws.reduce((n, d) => {
+/** Slots `loft_detail` must hold for these draws (checked against DETAIL_SLOTS by the compiler's allocation). */
+export function slotsUsed(draws: readonly PlanDraw[]): number {
+  return draws.reduce((n, d) => {
     switch (d.detail.kind) {
       case "fixed": return n;
       case "grid": return Math.max(n, d.detail.slot + d.instances);
@@ -195,10 +196,10 @@ export function slotsUsed(a: Artefact): number {
   }, 0);
 }
 
-/** The grids of an artefact: each grid slot once, with where its bounds live and how many instances it has. */
-export function gridBounds(a: Artefact): { readonly slot: number; readonly buffer: string; readonly offset: number; readonly instances: number }[] {
+/** The grids among these draws: each grid slot once, with where its bounds live and how many instances it has. */
+export function gridBounds(draws: readonly PlanDraw[]): { readonly slot: number; readonly buffer: string; readonly offset: number; readonly instances: number }[] {
   const seen = new Map<number, { slot: number; buffer: string; offset: number; instances: number }>();
-  for (const d of a.draws) {
+  for (const d of draws) {
     const detail = d.detail;
     switch (detail.kind) {
       case "fixed": case "projected": break;
@@ -209,7 +210,7 @@ export function gridBounds(a: Artefact): { readonly slot: number; readonly buffe
 }
 
 /** Bounds read from whole dynamic buffers (the CPU reading, `Artefact.pose`): for tools and tests. */
-export function boundsFrom(a: Artefact, tables: Readonly<Record<string, Float32Array>>): Bounds {
-  const at = new Map(gridBounds(a).map((g) => [g.slot, tables[g.buffer]!.subarray(g.offset * 4, (g.offset + g.instances) * 4)]));
+export function boundsFrom(draws: readonly PlanDraw[], tables: Readonly<Record<string, Float32Array>>): Bounds {
+  const at = new Map(gridBounds(draws).map((g) => [g.slot, tables[g.buffer]!.subarray(g.offset * 4, (g.offset + g.instances) * 4)]));
   return { kind: "read", at: (slot) => at.get(slot)! };
 }

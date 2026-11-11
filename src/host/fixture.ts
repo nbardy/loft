@@ -17,8 +17,7 @@
 //   construction layer     station markers, shown only when View.construction is set
 //   cameras                "three" (perspective) and "side" (orthographic)
 
-import { handPose, type Artefact, type Draw, type FrameState } from "../artefact.ts";
-import { CURVE_N } from "../expr.ts";
+import { CURVE_N, handPose, type Artefact, type Draw, type FrameState } from "../artefact.ts";
 
 const STATIONS = 24;
 const SEG = 20;

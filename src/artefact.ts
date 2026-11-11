@@ -15,7 +15,10 @@
 //   (`sceneWgsl`) and holds its per-frame tables. Hosts build EXPLICIT bind group layouts for both groups, with
 //   every binding visible to vertex and fragment stages, because a shader may use any subset.
 
-import { CURVE_N, type NumTy } from "./expr.ts";
+import type { NumTy } from "./expr.ts";
+
+/** Samples per table-backed curve row. Each sample is a vec4. */
+export const CURVE_N = 64;
 
 /**
  * Slots in the level-of-detail table (`loft_detail`, group 0 binding 4): a uniform array of vec4, 64 KiB, the default

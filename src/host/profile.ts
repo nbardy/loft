@@ -1,8 +1,10 @@
 // GPU time per draw and per fixed stage, from timestamp queries (`GpuLoaded.profile`).
 //
-// Timestamps are written per pass, so the profiling frame puts every stage in its own pass: each draw in a pass that
-// loads and stores the 4x colour and depth, the depth resolve, the multisample resolve, each post pass and the readback
-// copy. It is slower than a real frame and is only for measuring.
+// Timestamps are written per pass, so the profiling frame splits the frame's passes (the manifest's, src/host/manifest.ts)
+// into a pass per stage: a pass that draws planned draws becomes its start (its own loads and clears, stored), one pass
+// per draw that loads and stores its attachments, and, when it resolves, a resolve pass; a pass of fixed draws only (the
+// depth resolve, a post pass) is timed whole; then the readback copy. It is slower than a real frame and is only for
+// measuring.
 //
 // Two facts about Dawn on Metal (Apple's tile GPUs), measured while writing this, shape the arithmetic:
 // - Passes overlap: a pass's begin can precede the previous pass's end (the next vertex work runs while the previous
@@ -17,7 +19,12 @@
 // A pass of its own costs loading and storing the 4x attachments; that cost is measured as its own stage ("pass
 // overhead": a loaded and stored pass with the empty draw) and `net` subtracts it from each draw.
 
-import { COLOR_FORMAT, DEPTH_FORMAT, POSE_ONE_PASS, SAMPLES, SCENE_DEPTH_FORMAT, drawOne, recordPose, type Plan, type Scene, type Schedule } from "./host.ts";
+import type { Plan } from "./detail.ts";
+import { command, dispatchAll, passDescriptor, type Objects } from "./host.ts";
+import { COLOR_FORMAT, type RenderPassDesc } from "./manifest.ts";
+
+/** The profile's label for every pose stage run in one pass. */
+export const POSE_ONE_PASS = "pose stages, one pass";
 
 export type ProfileDraw = {
   readonly label: string;
@@ -33,7 +40,7 @@ export type ProfileDraw = {
 export type ProfileStage = { readonly label: string; readonly ms: number };
 export type Profile = {
   readonly draws: readonly ProfileDraw[];
-  /** clear, depth resolve, multisample resolve, each post pass, readback copy. */
+  /** Each scene pass's start (its clears), resolve passes, post passes, and the readback copy. */
   readonly stages: readonly ProfileStage[];
   /** The pose stages: each in a pass of its own, in order, then all of them in one pass (as a frame runs them, labelled POSE_ONE_PASS). */
   readonly poseStages: readonly ProfileStage[];
@@ -50,28 +57,34 @@ const NOOP_WGSL = /* wgsl */ `
 @vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return vec4<f32>(2.0, 2.0, f32(vi), 1.0); }
 @fragment fn fs() -> @location(0) vec4<f32> { return vec4<f32>(0.0); }`;
 
-type Noops = { readonly x4Depth: GPURenderPipeline; readonly x4: GPURenderPipeline; readonly x1: GPURenderPipeline };
-function noops(device: GPUDevice): Noops {
+/** A draw whose triangle lies outside the clip volume, for passes of a given colour format, samples and depth format. */
+function noops(device: GPUDevice): (format: GPUTextureFormat, samples: number, depth: GPUTextureFormat | undefined) => GPURenderPipeline {
   const module = device.createShaderModule({ label: "loft profile noop", code: NOOP_WGSL });
   const layout = device.createPipelineLayout({ bindGroupLayouts: [] });
-  const make = (count: number, depth: boolean): GPURenderPipeline => device.createRenderPipeline({
-    label: "loft profile noop", layout,
-    vertex: { module, entryPoint: "vs" },
-    fragment: { module, entryPoint: "fs", targets: [{ format: COLOR_FORMAT, writeMask: 0 }] },
-    primitive: { topology: "triangle-list" },
-    ...(depth ? { depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: "always" as const } } : {}),
-    multisample: { count },
-  });
-  return { x4Depth: make(SAMPLES, true), x4: make(SAMPLES, false), x1: make(1, false) };
+  const made = new Map<string, GPURenderPipeline>();
+  return (format, count, depth) => {
+    const key = `${format}|${count}|${depth}`;
+    const known = made.get(key);
+    if (known) return known;
+    const p = device.createRenderPipeline({
+      label: "loft profile noop", layout,
+      vertex: { module, entryPoint: "vs" },
+      fragment: { module, entryPoint: "fs", targets: [{ format, writeMask: 0 }] },
+      primitive: { topology: "triangle-list" },
+      ...(depth === undefined ? {} : { depthStencil: { format: depth, depthWriteEnabled: false, depthCompare: "always" as const } }),
+      multisample: { count },
+    });
+    made.set(key, p);
+    return p;
+  };
 }
 
-/** One timed pass. `kind` says which list its delta goes to. */
-type Stage = { readonly label: string; readonly kind: "pose" | "draw" | "stage" | "overhead" | "bracket"; readonly index: number };
+/** One timed pass. `kind` says which list its delta goes to; `draw` is a planned draw's index. */
+type Stage = { readonly label: string; readonly kind: "pose" | "draw" | "stage" | "overhead" | "bracket"; readonly index: number; readonly draw?: number };
 
 export type ProfileInput = {
   readonly device: GPUDevice;
-  readonly scene: Scene;
-  readonly schedule: Schedule;
+  readonly objects: Objects;
   readonly size: { readonly width: number; readonly height: number };
   /** Pose a frame (its own submit, waiting for its level-of-detail bounds) and return its plan and CPU milliseconds. */
   readonly upload: () => Promise<{ readonly plan: Plan; readonly poseMs: number }>;
@@ -79,32 +92,25 @@ export type ProfileInput = {
 };
 
 export async function profileFrames(p: ProfileInput): Promise<Profile> {
-  const { device, scene, schedule, size } = p;
+  const { device, objects: o, size } = p;
+  const m = o.manifest;
   if (!device.features.has("timestamp-query")) throw new Error("profile: the device was created without the \"timestamp-query\" feature");
-  const n = noops(device);
-  const tex = (label: string, format: GPUTextureFormat, sampleCount: number, usage: number) => device.createTexture({ label, size, format, sampleCount, usage });
-  const RA = GPUTextureUsage.RENDER_ATTACHMENT, TB = GPUTextureUsage.TEXTURE_BINDING;
-  const colour = tex("profile colour x4", COLOR_FORMAT, SAMPLES, RA);
-  const depth = tex("profile depth x4", DEPTH_FORMAT, SAMPLES, RA | TB);
-  const sceneDepth = tex("profile scene depth", SCENE_DEPTH_FORMAT, 1, RA | TB);
-  const out = tex("profile output", COLOR_FORMAT, 1, RA | GPUTextureUsage.COPY_SRC);
+  const noop = noops(device);
+  const s = o.sized(size);
+  const RA = GPUTextureUsage.RENDER_ATTACHMENT;
+  const out = device.createTexture({ label: "profile output", size, format: COLOR_FORMAT, usage: RA | GPUTextureUsage.COPY_SRC });
+  const outView = out.createView();
   const tiny = device.createTexture({ label: "profile bracket", size: { width: 1, height: 1 }, format: COLOR_FORMAT, usage: RA });
   const bytesPerRow = Math.ceil((size.width * 4) / 256) * 256;
   const readback = device.createBuffer({ label: "profile readback", size: bytesPerRow * size.height, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  const posts = schedule.kind === "split" ? schedule.post.length : 0;
-  const intermediates = Array.from({ length: Math.min(posts, 2) }, (_, i) => tex(`profile post ${i}`, COLOR_FORMAT, 1, RA | TB));
-  const views = { colour: colour.createView(), depth: depth.createView(), sceneDepth: sceneDepth.createView(), out: out.createView(), tiny: tiny.createView() };
-  const groups = schedule.kind === "split" ? {
-    resolve: device.createBindGroup({ layout: schedule.resolveLayout, entries: [{ binding: 0, resource: views.depth }] }),
-    depth: device.createBindGroup({ layout: schedule.depthLayout, entries: [{ binding: 0, resource: views.sceneDepth }] }),
-    post: intermediates.map((t) => device.createBindGroup({
-      layout: schedule.postLayout,
-      entries: [{ binding: 0, resource: views.sceneDepth }, { binding: 1, resource: t.createView() }, { binding: 2, resource: schedule.sampler }],
-    })),
-  } : undefined;
-  const outputOf = (k: number): GPUTextureView => (k === posts ? views.out : intermediates[k % 2]!.createView());
+  /** A pass's colour format and samples, and its depth format: what a noop draw in it must match. */
+  const shapeOf = (q: RenderPassDesc) => {
+    const t = q.color.view;
+    const tex = t.kind === "texture" ? m.textures[t.texture]! : { format: COLOR_FORMAT, sampleCount: 1 };
+    return { format: tex.format, samples: tex.sampleCount, depth: q.depth === undefined ? undefined : m.textures[q.depth.view]!.format };
+  };
 
-  const maxStages = 9 + scene.pose.length + scene.opaque.length + scene.transparent.length + posts;
+  const maxStages = 6 + 2 * m.frame.pose.length + m.frame.passes.reduce((n, q) => n + 3 + q.commands.length, 0);
   const querySet = device.createQuerySet({ type: "timestamp", count: 2 * maxStages });
   const resolveBuf = device.createBuffer({ size: 16 * maxStages, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
   const readTs = device.createBuffer({ size: 16 * maxStages, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -118,70 +124,71 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     bestPose = Math.min(bestPose, poseMs);
     const stages: Stage[] = [];
     const encoder = device.createCommandEncoder({ label: "loft profile" });
-    const timed = (label: string, kind: Stage["kind"]): GPURenderPassTimestampWrites => {
+    const timed = (label: string, kind: Stage["kind"], draw?: number): GPURenderPassTimestampWrites => {
       const index = stages.length;
-      stages.push({ label, kind, index });
+      stages.push({ label, kind, index, ...(draw === undefined ? {} : { draw }) });
       return { querySet, beginningOfPassWriteIndex: 2 * index, endOfPassWriteIndex: 2 * index + 1 };
     };
-    const x4 = (label: string, kind: Stage["kind"], load: GPULoadOp): GPURenderPassEncoder => encoder.beginRenderPass({
-      label, timestampWrites: timed(label, kind),
-      colorAttachments: [{ view: views.colour, loadOp: load, storeOp: "store", clearValue: scene.clear }],
-      depthStencilAttachment: { view: views.depth, depthClearValue: 1, depthLoadOp: load, depthStoreOp: "store" },
-    });
-    const noop = (pass: GPURenderPassEncoder, pipeline: GPURenderPipeline) => { pass.setPipeline(pipeline); pass.draw(3); pass.end(); };
+    const end = (pass: GPURenderPassEncoder, pipeline: GPURenderPipeline) => { pass.setPipeline(pipeline); pass.draw(3); pass.end(); };
 
     // The pose stages again (the upload ran them untimed to read the bounds; the same inputs give the same tables):
-    // once as a frame runs them, every stage in one pass, then once more a pass per stage for the breakdown. A compute
-    // pass may overlap the render passes after it, so a pose pass's time is its own duration, not a completion delta.
-    if (scene.pose.length > 0) {
-      recordPose(encoder, scene, (label) => timed(label, "pose"));
-      recordPose(encoder, scene, undefined, timed(POSE_ONE_PASS, "pose"));
+    // a pass per stage for the breakdown, then every stage in one pass, as a frame runs them. A compute pass may
+    // overlap the render passes after it, so a pose pass's time is its own duration, not a completion delta.
+    if (m.frame.pose.length > 0) {
+      for (const d of m.frame.pose) {
+        const pass = encoder.beginComputePass({ label: d.label, timestampWrites: timed(d.label, "pose") });
+        dispatchAll(pass, o, [d]);
+        pass.end();
+      }
+      const pass = encoder.beginComputePass({ label: POSE_ONE_PASS, timestampWrites: timed(POSE_ONE_PASS, "pose") });
+      dispatchAll(pass, o, m.frame.pose);
+      pass.end();
     }
 
-    noop(x4("clear", "stage", "clear"), n.x4Depth);
-    noop(x4("pass overhead", "overhead", "load"), n.x4Depth);
-    for (const d of scene.opaque) {
-      const pass = x4(d.draw.label, "draw", "load");
-      pass.setBindGroup(0, scene.group0); pass.setBindGroup(1, scene.group1);
-      drawOne(pass, d, plan);
-      // A plan may issue nothing for a draw; the pass still needs a draw to be timed.
-      pass.setPipeline(n.x4Depth); pass.draw(3);
-      pass.end();
-    }
-    if (groups !== undefined && schedule.kind === "split") {
-      const resolve = encoder.beginRenderPass({
-        label: "depth resolve", timestampWrites: timed("depth resolve", "stage"),
-        colorAttachments: [{ view: views.sceneDepth, loadOp: "clear", storeOp: "store", clearValue: { r: 1, g: 0, b: 0, a: 1 } }],
+    let overhead = false;
+    for (const q of m.frame.passes) {
+      const d = passDescriptor(q, s, outView);
+      const groups = (pass: GPURenderPassEncoder) => q.bindGroups.forEach((g, i) => pass.setBindGroup(i, s.groups[g]!));
+      if (!q.commands.some((c) => c.kind === "planned")) {
+        const pass = encoder.beginRenderPass({ ...d, timestampWrites: timed(q.label, "stage") });
+        groups(pass);
+        for (const c of q.commands) command(pass, o, c, plan);
+        pass.end();
+        continue;
+      }
+      const sh = shapeOf(q), x = noop(sh.format, sh.samples, sh.depth);
+      const colour = (d.colorAttachments as GPURenderPassColorAttachment[])[0]!;
+      /** The pass's attachments with every load as given and every store kept, no resolve. */
+      const kept = (load: boolean): GPURenderPassDescriptor => ({
+        colorAttachments: [{ view: colour.view, loadOp: load ? "load" : colour.loadOp, storeOp: "store", ...(colour.clearValue === undefined ? {} : { clearValue: colour.clearValue }) }],
+        ...(d.depthStencilAttachment === undefined ? {} : {
+          depthStencilAttachment: { ...d.depthStencilAttachment, depthLoadOp: load ? "load" : d.depthStencilAttachment.depthLoadOp, depthStoreOp: "store" },
+        }),
       });
-      resolve.setPipeline(schedule.resolve); resolve.setBindGroup(0, groups.resolve); resolve.draw(3); resolve.end();
+      end(encoder.beginRenderPass({ ...kept(false), label: `${q.label}: start`, timestampWrites: timed(`${q.label}: start`, "stage") }), x);
+      if (!overhead) {
+        // A pass of its own costs loading and storing the attachments: measured once, on the first scene pass.
+        end(encoder.beginRenderPass({ ...kept(true), label: "pass overhead", timestampWrites: timed("pass overhead", "overhead") }), x);
+        overhead = true;
+      }
+      for (const c of q.commands) {
+        const label = c.kind === "planned" ? m.plan[c.draw]!.label : q.label;
+        const pass = encoder.beginRenderPass({ ...kept(true), label, timestampWrites: c.kind === "planned" ? timed(label, "draw", c.draw) : timed(label, "stage") });
+        groups(pass);
+        command(pass, o, c, plan);
+        // A plan may issue nothing for a draw; the pass still needs a draw to be timed.
+        end(pass, x);
+      }
+      if (colour.resolveTarget !== undefined) {
+        end(encoder.beginRenderPass({
+          label: `${q.label}: resolve`, timestampWrites: timed(`${q.label}: multisample resolve`, "stage"),
+          colorAttachments: [{ view: colour.view, resolveTarget: colour.resolveTarget, loadOp: "load", storeOp: colour.storeOp }],
+        }), noop(sh.format, sh.samples, undefined));
+      }
     }
-    for (const d of scene.transparent) {
-      const pass = x4(d.draw.label, "draw", "load");
-      pass.setBindGroup(0, scene.group0); pass.setBindGroup(1, scene.group1);
-      if (groups !== undefined) pass.setBindGroup(2, groups.depth);
-      drawOne(pass, d, plan);
-      pass.setPipeline(n.x4Depth); pass.draw(3);
-      pass.end();
-    }
-    noop(encoder.beginRenderPass({
-      label: "msaa resolve", timestampWrites: timed("multisample resolve", "stage"),
-      colorAttachments: [{ view: views.colour, resolveTarget: outputOf(0), loadOp: "load", storeOp: "discard" }],
-    }), n.x4);
-    if (groups !== undefined && schedule.kind === "split") {
-      schedule.post.forEach((pipeline, i) => {
-        const k = i + 1;
-        const pass = encoder.beginRenderPass({
-          label: `post ${i}`, timestampWrites: timed(`post ${i}`, "stage"),
-          colorAttachments: [{ view: outputOf(k), loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
-        });
-        pass.setPipeline(pipeline);
-        pass.setBindGroup(0, scene.group0); pass.setBindGroup(1, scene.group1); pass.setBindGroup(2, groups.post[(k - 1) % 2]!);
-        pass.draw(3); pass.end();
-      });
-    }
-    const bracket = (label: string, kind: Stage["kind"]) => noop(encoder.beginRenderPass({
-      label, timestampWrites: timed(label, kind), colorAttachments: [{ view: views.tiny, loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
-    }), n.x1);
+    const bracket = (label: string, kind: Stage["kind"]) => end(encoder.beginRenderPass({
+      label, timestampWrites: timed(label, kind), colorAttachments: [{ view: tiny.createView(), loadOp: "clear", storeOp: "store", clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+    }), noop(COLOR_FORMAT, 1, undefined));
     bracket("readback start", "bracket");
     encoder.copyTextureToBuffer({ texture: out }, { buffer: readback, bytesPerRow, rowsPerImage: size.height }, size);
     bracket("readback copy", "stage");
@@ -194,11 +201,14 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     await readback.mapAsync(GPUMapMode.READ); readback.unmap();
     const ms = (a: bigint, b: bigint) => Number(b - a) / 1e6;
     let total = 0;
-    stages.forEach((s, k) => {
-      const delta = k === 0 || s.kind === "pose" ? ms(ts[2 * k]!, ts[2 * k + 1]!) : ms(ts[2 * k - 1]!, ts[2 * k + 1]!);
+    let previous = -1;
+    stages.forEach((st, k) => {
+      // A render pass's time is its completion delta from the render pass before it; a pose pass's its own duration.
+      const delta = st.kind === "pose" || previous < 0 ? ms(ts[2 * k]!, ts[2 * k + 1]!) : ms(ts[2 * previous + 1]!, ts[2 * k + 1]!);
+      if (st.kind !== "pose") previous = k;
       total += delta;
       // Labels can repeat (two draws of one shader); keyed by position, which is the same every frame.
-      const key = `${k}|${s.label}`;
+      const key = `${k}|${st.label}`;
       sums.set(key, (sums.get(key) ?? 0) + delta);
     });
     sumTotal += total;
@@ -209,22 +219,21 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     }
     shape = { stages, plan };
   }
-  for (const t of [colour, depth, sceneDepth, out, tiny, ...intermediates]) t.destroy();
+  for (const t of [...s.textures, out, tiny]) t.destroy();
   for (const b of [readback, resolveBuf, readTs]) b.destroy();
   querySet.destroy();
 
-  const s = shape!;
+  const sh = shape!;
   const at = (st: Stage) => best.get(`${st.index}|${st.label}`)!;
-  const overhead = at(s.stages.find((st) => st.kind === "overhead")!);
-  const drawStages = s.stages.filter((st) => st.kind === "draw");
-  const all = [...scene.opaque, ...scene.transparent];
-  const draws = drawStages.map((st, i): ProfileDraw => {
-    const runs = s.plan[all[i]!.index]!;
+  const over = sh.stages.find((st) => st.kind === "overhead");
+  const overhead = over === undefined ? 0 : at(over);
+  const draws = sh.stages.filter((st) => st.kind === "draw").map((st): ProfileDraw => {
+    const runs = sh.plan[st.draw!]!;
     const triangles = runs.reduce((t, r) => t + (r.vertices / 3) * r.instances, 0);
     const instances = runs.reduce((t, r) => t + r.instances, 0);
     return { label: st.label, ms: at(st), net: Math.max(0, at(st) - overhead), triangles: Math.round(triangles), instances, calls: runs.length };
   });
-  const stages = s.stages.filter((st) => st.kind === "stage").map((st) => ({ label: st.label, ms: at(st) }));
-  const poseStages = s.stages.filter((st) => st.kind === "pose").map((st) => ({ label: st.label, ms: at(st) }));
+  const stages = sh.stages.filter((st) => st.kind === "stage").map((st) => ({ label: st.label, ms: at(st) }));
+  const poseStages = sh.stages.filter((st) => st.kind === "pose").map((st) => ({ label: st.label, ms: at(st) }));
   return { draws, stages, poseStages, passOverhead: overhead, pose: bestPose, total: bestTotal, frames: p.frames };
 }
