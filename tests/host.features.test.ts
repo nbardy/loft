@@ -1,7 +1,7 @@
 // Scene depth (Draw.sceneDepth), post passes (Artefact.post), resizing and overlapping frames.
 // What each test would catch is said at the test.
 import { beforeAll, expect, test } from "bun:test";
-import type { Artefact, Camera, View } from "../src/artefact.ts";
+import { handPose, type Artefact, type Camera, type View } from "../src/artefact.ts";
 import { cameraMatrices, type CameraMatrices, type Vec3 } from "../src/host/camera.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { COLOR_FORMAT, createHost, fixture, type GpuHost } from "../src/host/index.ts";
@@ -51,7 +51,7 @@ const probe: Artefact = {
     { label: "ground", shader: "ground", vertices: 6, instances: 1, pass: "opaque", cull: "none", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" } },
     { label: "probe", shader: "probe", vertices: 3, instances: 1, pass: "transparent", cull: "none", depthWrite: false, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" }, sceneDepth: true },
   ],
-  pose: () => ({}),
+  ...handPose([], () => ({}), "none"),
   cameras: {},
   stats: { maxTriangles: 3, draws: 2, curveRows: 0, stations: 0 },
 };

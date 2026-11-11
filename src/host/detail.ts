@@ -18,6 +18,17 @@ export type Plan = readonly (readonly Run[])[];
 /** The level each instance of each grid slot drew last frame (-1: not drawn, or never). */
 export type Memory = Map<number, Int16Array>;
 
+/**
+ * Where each grid's instances are this frame: (anchor xyz, scale) per instance, as the pose stages wrote them to the
+ * grid's bound table and the host read them back (`Detail.bound`). The pose is on the GPU (docs/gpu_native.md), so a
+ * host that cannot wait for it (an interactive frame) plans with the last bounds it read, or with none yet.
+ */
+export type Bounds =
+  /** `at(slot)`: the vec4s of the grid with that slot, one per instance. */
+  | { readonly kind: "read"; readonly at: (slot: number) => Float32Array }
+  /** Nothing read yet (the first interactive frame): every grid is drawn at its finest level. */
+  | { readonly kind: "none" };
+
 /** Below this many pixels across, an instance is not drawn. */
 const MIN_PIXELS = 1;
 
@@ -46,12 +57,25 @@ export function chooseLevel(levels: number, cellPx: (k: number) => number, pxAcr
   return prev;
 }
 
-function gridRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, c: Camera, tables: Readonly<Record<string, Float32Array>>, target: number, memory: Memory, out: Float32Array): Run[] {
-  const t = tables[d.bound.buffer]!;
+/** Every instance at the finest level: the plan when no bounds have been read (Bounds "none"). */
+function finestRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, out: Float32Array): Run[] {
+  const cells = d.levels[0]!.cells;
+  for (let i = 0; i < draw.instances; i++) out.set([cells[0], cells[1], 0, 0], (d.slot + i) * 4);
+  return [{ vertices: d.levels[0]!.vertices, instances: draw.instances, first: 0 }];
+}
+
+function gridRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, c: Camera, bounds: Bounds, target: number, memory: Memory, out: Float32Array): Run[] {
+  switch (bounds.kind) {
+    case "none": return finestRuns(d, draw, out);
+    case "read": return chosenRuns(d, draw, c, bounds.at(d.slot), target, memory, out);
+  }
+}
+
+function chosenRuns(d: Extract<Detail, { kind: "grid" }>, draw: Draw, c: Camera, t: Float32Array, target: number, memory: Memory, out: Float32Array): Run[] {
   const seen = memory.get(d.slot) ?? new Int16Array(draw.instances).fill(-1);
   const chosen = new Int16Array(draw.instances);
   for (let i = 0; i < draw.instances; i++) {
-    const b = (d.bound.offset + i) * 4;
+    const b = i * 4;
     const { w, perspective } = clipW(c, t[b]!, t[b + 1]!, t[b + 2]!);
     const scale = Math.abs(t[b + 3]!), r = scale * d.radius;
     const behind = w + r * perspective <= c.m.near;
@@ -137,7 +161,7 @@ function projectedRuns(d: Extract<Detail, { kind: "projected" }>, c: Camera, tar
 }
 
 /** The frame's plan and `loft_detail` contents. `memory` carries each grid's levels from frame to frame. */
-export function planFrame(a: Artefact, view: View, tables: Readonly<Record<string, Float32Array>>, memory: Memory, out: Float32Array): Plan {
+export function planFrame(a: Artefact, view: View, bounds: Bounds, memory: Memory, out: Float32Array): Plan {
   const m = cameraMatrices(view.camera, view.width / view.height);
   const c: Camera = { m, width: view.width, height: view.height, fy: Math.hypot(m.viewProj[1]!, m.viewProj[5]!, m.viewProj[9]!) };
   const target = view.cellPixels ?? CELL_PIXELS;
@@ -150,7 +174,7 @@ export function planFrame(a: Artefact, view: View, tables: Readonly<Record<strin
       case "grid": {
         const known = chosen.get(detail.slot);
         if (known) return known;
-        const runs = gridRuns(detail, d, c, tables, target, memory, out);
+        const runs = gridRuns(detail, d, c, bounds, target, memory, out);
         chosen.set(detail.slot, runs);
         return runs;
       }
@@ -169,4 +193,23 @@ export function slotsUsed(a: Artefact): number {
       case "projected": return Math.max(n, d.detail.slot + 2);
     }
   }, 0);
+}
+
+/** The grids of an artefact: each grid slot once, with where its bounds live and how many instances it has. */
+export function gridBounds(a: Artefact): { readonly slot: number; readonly buffer: string; readonly offset: number; readonly instances: number }[] {
+  const seen = new Map<number, { slot: number; buffer: string; offset: number; instances: number }>();
+  for (const d of a.draws) {
+    const detail = d.detail;
+    switch (detail.kind) {
+      case "fixed": case "projected": break;
+      case "grid": seen.set(detail.slot, { slot: detail.slot, buffer: detail.bound.buffer, offset: detail.bound.offset, instances: d.instances }); break;
+    }
+  }
+  return [...seen.values()];
+}
+
+/** Bounds read from whole dynamic buffers (the CPU reading, `Artefact.pose`): for tools and tests. */
+export function boundsFrom(a: Artefact, tables: Readonly<Record<string, Float32Array>>): Bounds {
+  const at = new Map(gridBounds(a).map((g) => [g.slot, tables[g.buffer]!.subarray(g.offset * 4, (g.offset + g.instances) * 4)]));
+  return { kind: "read", at: (slot) => at.get(slot)! };
 }

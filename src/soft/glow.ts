@@ -10,7 +10,7 @@
 // segment nearest its ray among a window of neighbours, and only by that one, so the joints of a polyline are not
 // counted twice (the same rule the cast shadows use for their capsules).
 
-import { lift, variable, vec4, type Expr, type In, type TableSource } from "../expr.ts";
+import { div, floor, lift, mapOf, mul, sub, variable, vec4, type Expr, type In, type TableSource } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import type { F, P3, Skeleton } from "../map/types.ts";
@@ -63,15 +63,13 @@ function strokeTable(s: Strokes): TableSource {
   let t = tables.get(s);
   if (t) return t;
   const S = s.segments;
-  const roots: Expr<"vec4">[] = [];
-  for (let i = 0; i < s.count; i++) for (let k = 0; k <= S; k++) roots.push(vec4(s.point(lift<"f32">(k / S), lift<"f32">(i)), s.taper(lift<"f32">(k / S), lift<"f32">(i))));
-  t = {
-    name: `${s.name}_strokes`, lanes: 1, entries: s.count * (S + 1), role: "data",
-    prepare: (p) => {
-      const run = p.compile(roots);
-      return (frame, out) => run(frame).forEach((v, k) => out.set(v as number[], k * 4));
-    },
+  // A map over every sample: entry e is stroke i = floor(e / (S + 1)) at u = k / S, k = e - i (S + 1) (exact in f32:
+  // the division of a whole number by S + 1 is correctly rounded, so it is exactly i where it divides).
+  const sample = (e: F): Expr<"vec4">[] => {
+    const i = floor(div(e, S + 1)), u = div(sub(e, mul(i, S + 1)), S);
+    return [vec4(s.point(u, i), s.taper(u, i))];
   };
+  t = { name: `${s.name}_strokes`, lanes: 1, entries: s.count * (S + 1), role: "data", program: mapOf(s.count * (S + 1), sample) };
   tables.set(s, t);
   return t;
 }

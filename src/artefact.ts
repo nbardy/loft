@@ -137,6 +137,33 @@ export type DynamicBuffer = { readonly name: string; readonly binding: number; r
  */
 export type StaticBuffer = { readonly name: string; readonly binding: number; readonly data: Float32Array };
 
+/** Invocations per workgroup of every pose stage's `pose_main`. */
+export const POSE_WORKGROUP = 64;
+
+/**
+ * One compute dispatch of the pose pass (docs/gpu_native.md, phase 1): the tables of one level, each filled by its
+ * program. The module (`wgsl`, compiled after PRELUDE_WGSL) declares bind group 1 itself, with the dynamic buffers as
+ * `var<storage, read_write>` and the static ones as `var<storage, read>`, at the same bindings as `sceneWgsl`; its
+ * entry point is `@compute @workgroup_size(POSE_WORKGROUP) fn pose_main(@builtin(global_invocation_id) g: vec3<u32>)`.
+ * The host dispatches `ceil(invocations / POSE_WORKGROUP)` workgroups (x only). Stages run in list order, after the
+ * frame's inputs, params, curves and `cpu` tables are written, before any draw; a stage reads what earlier ones wrote.
+ * Bind group 0 is the prelude's, also visible to the compute stage.
+ */
+export type PoseStage = { readonly label: string; readonly wgsl: string; readonly invocations: number };
+
+/** How a per-frame table is filled: on the GPU by a map or a scan (at `level`, an index into `stages`), or on the CPU. */
+export type TableFillKind =
+  | { readonly kind: "map"; readonly level: number }
+  | { readonly kind: "scan"; readonly level: number }
+  /** `why`: the table's own reason (a hand-written fill), or the GPU table that reads it ("read by ..."). */
+  | { readonly kind: "cpu"; readonly why: string };
+
+/** Where a per-frame table lives in the dynamic buffers (offset and size in vec4s, `lanes` vec4s per entry), and how it is filled. */
+export type TableInfo = { readonly name: string; readonly buffer: string; readonly offset: number; readonly vec4s: number; readonly lanes: number; readonly fill: TableFillKind };
+
+/** A `cpu` table's contents for one frame: written at `offset` vec4s into dynamic buffer `buffer`. */
+export type CpuUpload = { readonly buffer: string; readonly offset: number; readonly data: Float32Array };
+
 /**
  * How a draw's size is chosen each frame. The host writes a vec4 per slot into `loft_detail` before the frame and
  * issues the vertex count that goes with it.
@@ -233,10 +260,19 @@ export type Artefact = {
   readonly draws: readonly Draw[];
   /** Full-screen passes after the scene. Absent means none. */
   readonly post?: readonly PostPass[];
+  /** The pose pass: compute dispatches that fill every map and scan table, in order (docs/gpu_native.md). */
+  readonly stages: readonly PoseStage[];
+  /** Every per-frame table: where it lives and how it is filled. */
+  readonly tables: readonly TableInfo[];
   /**
-   * Evaluate everything that is computed once per frame on the CPU: spine stations, waterlines, shadows.
-   * Returns one Float32Array per dynamic buffer, keyed by name, of length `vec4s * 4`. Pure: same state, same output.
-   * (v0 carries this as a JavaScript function. A serialisable pose program is planned so a non-JS host can run it.)
+   * The `cpu` tables for a frame, which the host uploads before the pose stages run. An empty list when every table
+   * is a map or a scan: the only JavaScript a host still runs per frame.
+   */
+  cpuPose(state: FrameState): readonly CpuUpload[];
+  /**
+   * The CPU reading of every per-frame table, derived from the same programs as the stages (and the `cpu` fills): for
+   * checks, baking and tests, never needed to draw. One Float32Array per dynamic buffer, keyed by name, of length
+   * `vec4s * 4`. Pure: same state, same output.
    */
   pose(state: FrameState): Readonly<Record<string, Float32Array>>;
   /** Views the scene suggests, by name. */
@@ -284,4 +320,17 @@ export interface Loaded {
   /** Replace table-backed curve data without rebuilding pipelines. */
   setCurves(curves: Float32Array): void;
   destroy(): void;
+}
+
+/**
+ * The pose members of an artefact written by hand (a fixture, a test), whose dynamic buffers one JavaScript function
+ * fills: each buffer is one `cpu` table, with `why`.
+ */
+export function handPose(dynamic: readonly DynamicBuffer[], pose: (state: FrameState) => Readonly<Record<string, Float32Array>>, why: string): Pick<Artefact, "stages" | "tables" | "cpuPose" | "pose"> {
+  return {
+    stages: [],
+    tables: dynamic.map((d) => ({ name: d.name, buffer: d.name, offset: 0, vec4s: d.vec4s, lanes: 1, fill: { kind: "cpu", why } })),
+    cpuPose: (state) => { const t = pose(state); return dynamic.map((d) => ({ buffer: d.name, offset: 0, data: t[d.name]! })); },
+    pose,
+  };
 }

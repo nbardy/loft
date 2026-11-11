@@ -1,8 +1,8 @@
 // Loft L0: symbolic maths.
 //
 // An `Expr` is a node in a hash-consed DAG. Authoring code never computes numbers; it builds expressions, and two
-// backends turn the same DAG into code: JavaScript (CPU: the pose pass, checks, baking) and WGSL (GPU: vertex and
-// fragment stages). Everything above this layer (curves, charts, shapes, styles) is written in terms of `Expr`, which
+// backends turn the same DAG into code: JavaScript (CPU: checks, baking, the CPU reading of per-frame tables) and WGSL
+// (GPU: vertex and fragment stages, and the pose stages that fill per-frame tables). Everything above this layer (curves, charts, shapes, styles) is written in terms of `Expr`, which
 // is what lets one description be evaluated wherever the schedule says.
 //
 // Rules: expressions are pure. A leaf is a constant, a free variable (bound by the consumer: u, v, a world point), a
@@ -58,11 +58,17 @@ export type LibFn = {
 // ---- per-frame tables -----------------------------------------------------------------------------------------------
 
 /**
- * A table of vec4s that a compiler fills once per frame on the CPU and binds for every shader: `entries` entries of
- * `lanes` vec4s each. `fetch(table, index, lane)` reads one. A compiler discovers the tables an expression uses by
- * walking it (as it discovers params and curve rows) and calls `prepare` once to get the fill.
+ * A table of vec4s, filled once per frame (or once at build) and bound for every shader: `entries` entries of `lanes`
+ * vec4s each. `fetch(table, index, lane)` reads one. A compiler discovers the tables an expression uses by walking it
+ * (as it discovers params and curve rows).
+ *
+ * How a table is filled is its `program` (docs/gpu_native.md, phase 1): a `map` or a `scan` written in expressions,
+ * from which the compiler derives both the GPU compute stage that fills it each frame and the CPU fill tools use; or
+ * `cpu`, a hand-written fill, which is the named, counted state of a table not yet ported. A table written before
+ * programs existed (`prepare` alone, as in examples/bosses/tithe/kit.ts) is read as `cpu` at the compiler's boundary.
  */
-export interface TableSource {
+export type TableSource = ProgramTable | FilledTable;
+type TableShape = {
   /** An identifier, unique in a compiled scene. */
   readonly name: string;
   readonly lanes: number;
@@ -73,9 +79,45 @@ export interface TableSource {
    * none), and uploaded once by the host (`Artefact.statics`): a keyed curve, a sculpt layer, a distance brick.
    */
   readonly role: "stations" | "data" | "static";
-  /** Called once per compilation; returns the per-frame fill. `p.compile` gives CPU functions over a frame. */
-  prepare(p: TablePrep): TableFill;
-}
+};
+export type ProgramTable = TableShape & { readonly program: TableProgram };
+/** A hand-written fill. `prepare` is called once per compilation; `p.compile` gives CPU functions over a frame. */
+export type FilledTable = TableShape & { prepare(p: TablePrep): TableFill };
+
+/**
+ * Entries `count` long, each a closed form in its index `i` within the run (0 .. count - 1, an f32 holding a whole
+ * number): `lanes(i)` gives the entry's `lanes` vec4s. A table's runs are laid end to end.
+ */
+export type MapRun = { readonly count: number; readonly lanes: (i: Expr<"f32">) => readonly Expr<"vec4">[] };
+/** What one step of a scan gives: the state after it, and the entry it writes. */
+export type ScanStep = { readonly next: readonly Expr<NumTy>[]; readonly lanes: readonly Expr<"vec4">[] };
+
+/**
+ * How a per-frame table is filled.
+ *
+ * map   entry by entry, each independent of the others: a function of its index, the frame and OTHER tables. Its runs
+ *       let a table be a closed form over some entries and a list of unrelated expressions over others (each rope's
+ *       ends, each listed pose: a run of one). On the GPU one invocation per entry runs only its own run's code.
+ * scan  entries `first .. first + steps - 1` in order, carrying a small state from one to the next (frames transported
+ *       along a spine, an arc length). `step(state, i)` is called once, with fresh variables, as `iterate`'s is. On the
+ *       GPU one invocation loops. Entries outside the range are never written (they stay zero).
+ * cpu   a hand-written fill, with the reason it is not (yet) a map or a scan. Filled on the CPU and uploaded.
+ */
+export type TableProgram =
+  | { readonly kind: "map"; readonly runs: readonly MapRun[] }
+  | {
+    readonly kind: "scan";
+    readonly first: number;
+    readonly steps: number;
+    readonly init: readonly Expr<NumTy>[];
+    readonly step: (state: readonly Expr<NumTy>[], i: Expr<"f32">) => ScanStep;
+  }
+  | { readonly kind: "cpu"; readonly why: string; prepare(p: TablePrep): TableFill };
+
+/** A map whose every entry is the same closed form in the entry index. */
+export const mapOf = (entries: number, lanes: MapRun["lanes"]): TableProgram => ({ kind: "map", runs: [{ count: entries, lanes }] });
+/** A map whose entries share no closed form: entry k is `entries[k]` (one run each). */
+export const listOf = (entries: readonly (readonly Expr<"vec4">[])[]): TableProgram => ({ kind: "map", runs: entries.map((e) => ({ count: 1, lanes: () => e })) });
 /** Fill `out` (`entries * lanes * 4` floats, zeroed) for this frame. Pure: the same frame, the same numbers. */
 export type TableFill = (frame: TableFrame, out: Float32Array) => void;
 /** What a fill sees: this frame's environment, and other tables (filled on first read; a cycle is an error). */
@@ -460,7 +502,8 @@ export const TAU = Math.PI * 2;
 
 // ---- walking the graph --------------------------------------------------------------------------------------------
 
-function children(e: Expr): readonly Expr[] {
+/** The nodes a node reads (a loop's results read its count, its start and what its body reads from outside). */
+export function children(e: Expr): readonly Expr[] {
   const n = e.node;
   switch (n.op) {
     case "const": case "var": case "input": case "param": return [];
@@ -501,6 +544,25 @@ export function topo(roots: readonly Expr[]): Expr[] {
   };
   for (const r of roots) visit(r);
   return out;
+}
+
+/**
+ * Split the nodes reachable from `roots` by whether they depend on any of `vars` (free variables): `inner` do, in
+ * dependency order; `outer` are the nodes that do not but are read by an inner node or are roots themselves (what a
+ * loop computes once, before it starts).
+ */
+export function splitOn(roots: readonly Expr[], vars: readonly Expr[]): { inner: Expr[]; outer: Expr[] } {
+  const own = new Set(vars.map((v) => v.id));
+  const dependent = new Set<number>();
+  const inner: Expr[] = [];
+  for (const e of topo(roots)) {
+    if (own.has(e.id)) continue;
+    if (children(e).some((c) => own.has(c.id) || dependent.has(c.id))) { dependent.add(e.id); inner.push(e); }
+  }
+  const outer = new Map<number, Expr>();
+  for (const e of inner) for (const c of children(e)) if (!own.has(c.id) && !dependent.has(c.id)) outer.set(c.id, c);
+  for (const e of roots) if (!own.has(e.id) && !dependent.has(e.id)) outer.set(e.id, e);
+  return { inner, outer: [...outer.values()] };
 }
 
 /** The leaves a set of expressions depends on: what a compiler must bind before emitting them. */
@@ -554,7 +616,7 @@ export type Bind = {
 };
 
 const lit = (n: number): string => (Number.isInteger(n) ? n.toFixed(1) : String(n));
-const WGSL_TY: Record<Ty, string> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3<f32>", vec4: "vec4<f32>", bool: "bool" };
+export const WGSL_TY: Readonly<Record<Ty, string>> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3<f32>", vec4: "vec4<f32>", bool: "bool" };
 
 /** Fns whose WGSL form needs every argument to have the result's type (a scalar is splatted to a vector). */
 // `mix` and `select` are here because one branch may be a scalar and the other a vector: WGSL wants both the result's
@@ -598,8 +660,9 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
  * `iterate`. Returns the statements, for each root the name (or inline source) that holds its value, and the library
  * functions the statements call.
  */
-export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { lines: string[]; out: string[]; libs: LibFn[] } {
-  const names = new Map<number, string>();
+export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: ReadonlyMap<number, string> = new Map()): { lines: string[]; out: string[]; libs: LibFn[]; names: ReadonlyMap<number, string> } {
+  // `pre`: nodes already computed by earlier statements (a scan hoists its loop-invariant work), by name.
+  const names = new Map<number, string>(pre);
   const ref = (x: Expr): string => names.get(x.id)!;
   const emit = (list: readonly Expr[], lines: string[]): void => {
     for (const e of list) {
@@ -634,7 +697,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e"): { li
   const lines: string[] = [];
   emit(topo(roots), lines);
   // `libs`: definitions the caller must place at module scope (once per module) for the statements to compile.
-  return { lines, out: roots.map(ref), libs: libsOf(roots) };
+  return { lines, out: roots.map(ref), libs: libsOf(roots), names };
 }
 
 // ---- rewriting ----------------------------------------------------------------------------------------------------
@@ -661,10 +724,20 @@ function rebuild(e: Expr, kids: readonly Expr[]): Expr {
  */
 export function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[] {
   if (from.ty !== to.ty) throw new Error(`substitute: cannot replace a ${from.ty} with a ${to.ty}`);
+  return replace(roots, new Map([[from.id, to]]));
+}
+
+/** The same expressions with each node whose id is a key of `by` replaced by its value (of the same type). */
+export function replace(roots: readonly Expr[], by: ReadonlyMap<number, Expr>): Expr[] {
   const done = new Map<number, Expr>();
   const loops = new Map<number, readonly Expr[]>();
   for (const e of topo(roots)) {
-    if (e === from) { done.set(e.id, to); continue; }
+    const to = by.get(e.id);
+    if (to !== undefined) {
+      if (to.ty !== e.ty) throw new Error(`replace: cannot replace a ${e.ty} with a ${to.ty}`);
+      done.set(e.id, to);
+      continue;
+    }
     const n = e.node;
     if (n.op === "iterate") {
       // A loop whose outside changed is a new loop: the step runs again with fresh variables (sharing the old body's
@@ -674,7 +747,7 @@ export function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[]
       let made = loops.get(n.loop.id);
       if (!made) {
         const l = n.loop;
-        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => substitute(l.step(s, i), from, to) as Expr<NumTy>[]);
+        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => replace(l.step(s, i), by) as Expr<NumTy>[]);
         loops.set(n.loop.id, made);
       }
       done.set(e.id, made[n.k]);

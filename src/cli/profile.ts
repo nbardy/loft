@@ -3,7 +3,7 @@
 // how a stage's time is measured.
 import { resolve } from "node:path";
 import { compileScene } from "../compile/index.ts";
-import { createHost } from "../host/host.ts";
+import { createHost, POSE_ONE_PASS } from "../host/host.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { viewState } from "../host/host.ts";
 import type { Scene } from "../scene.ts";
@@ -52,9 +52,18 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
   }
   out.push("", "fixed stage                      ms");
   for (const s of p.stages) out.push(`${s.label.padEnd(28)}${f2(s.ms)}`);
+  const whole = p.poseStages.find((s) => s.label === POSE_ONE_PASS), levels = p.poseStages.filter((s) => s !== whole);
+  out.push("", `pose stages (GPU): ${whole === undefined ? "none" : `${whole.ms.toFixed(3)} ms in one pass`}; each level in a pass of its own (under 0.065 ms is unresolved):`);
+  for (const s of levels) out.push(`  ${f2(s.ms)}  ${s.label.length > 100 ? `${s.label.slice(0, 100)}...` : s.label}`);
+  const kinds = { map: 0, scan: 0, cpu: 0 };
+  for (const t of a.tables) kinds[t.fill.kind]++;
+  out.push(`tables: ${kinds.map} map, ${kinds.scan} scan, ${kinds.cpu} cpu`);
   const poseSum = [...tables.values()].reduce((x, y) => x + y, 0);
-  out.push(`${"CPU pose and upload".padEnd(28)}${f2(p.pose)}`, "", `CPU pose per table (sum of bests ${poseSum.toFixed(3)} ms; top 12)`);
-  for (const [name, ms] of [...tables].sort((x, y) => y[1] - x[1]).slice(0, 12)) out.push(`  ${name.padEnd(26)}${f2(ms)}`);
+  out.push(`${"CPU pose and upload".padEnd(28)}${f2(p.pose)}`, "", `cpu tables (filled on the CPU every frame; sum of bests ${poseSum.toFixed(3)} ms)`);
+  for (const t of a.tables) {
+    if (t.fill.kind !== "cpu") continue;
+    out.push(`  ${t.name.padEnd(26)}${f2(tables.get(t.name) ?? 0)}  ${t.fill.why}`);
+  }
   const triangles = p.draws.reduce((n, d) => n + d.triangles, 0), calls = p.draws.reduce((n, d) => n + d.calls, 0);
   out.push("", `drawn: ${triangles} triangles in ${calls} draw calls (declared maximum ${a.stats.maxTriangles})`);
   console.log(out.join("\n"));

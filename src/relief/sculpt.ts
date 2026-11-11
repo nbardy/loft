@@ -9,7 +9,7 @@
 // interpolant passes through every sample, is C1 (relief normals do not facet at the cell walls, as bilinear would),
 // and costs four fetches.
 
-import { add, fetch, floor, fract, max, min, mul, sub, type Expr, type TableFill, type TableSource } from "../expr.ts";
+import { add, fetch, floor, fract, max, min, mul, sub, type Expr, type FilledTable, type TableFill } from "../expr.ts";
 import type { F } from "../map/types.ts";
 import type { Height, Wrap } from "./height.ts";
 
@@ -24,7 +24,7 @@ const wrapIndex = (a: Axis, k: number): number => (a.closed ? ((k % a.n) + a.n) 
 const coordOf = (a: Axis, k: number): number => (a.closed ? k / a.n : k / (a.n - 1));
 
 /** The table: one vec4 per sample, entry i + nu * j. */
-export class SculptTable implements TableSource {
+export class SculptTable implements FilledTable {
   readonly lanes = 1;
   readonly role = "static";
   readonly entries: number;

@@ -1,6 +1,7 @@
-// Frames transported along a spine, on the CPU, once per frame: the part of a sweep that cannot be computed locally
-// (DESIGN.md 7.3). The result is a per-frame table that the sweep's expressions read with `fetch` (src/map/sweep.ts),
-// so the GPU and the CPU read it through the same expressions.
+// Frames transported along a spine, once per frame: the part of a sweep that cannot be computed locally (DESIGN.md
+// 7.3). It is a scan (docs/gpu_native.md): one pass along the stations carrying the frame, written in expressions, so
+// the pose stage fills it on the GPU and tools read the same program on the CPU. Its input is the body's samples table
+// (one map entry per station: the spine placed and local, the rest spine, twist and section), src/map/sweep.ts.
 //
 // Layout, 3 vec4 per station:
 //   p = (position xyz, arc fraction of the stations posted)       q = frame quaternion (x, y, z, w)       r = (half-width, half-height, stretch, rest arc length)
@@ -11,6 +12,12 @@
 // the drawn spine is C1 and passes through every station), frames by normalised lerp of quaternions, stretch linearly.
 // Tangents at stations are central differences, which is exactly the Catmull-Rom derivative at a knot, so frames and
 // the drawn curve agree.
+
+import {
+  add, and, atan2, clamp, cos, cross, div, dot, exp, f, fetch, gt, iterate, length, lift, lt, max, mul, neg, normalize, select, sin, sqrt, sub,
+  vec4, type Expr, type In, type TableProgram, type TableSource,
+} from "../expr.ts";
+import type { F, P3 } from "./types.ts";
 
 export const STATION_VEC4S = 3;
 
@@ -50,108 +57,138 @@ export function qrot(q: Q4 | readonly number[], v: V3): V3 {
   return v3.add(v, v3.scale(v3.cross(u, t), 2));
 }
 
-/** One strand's samples for one frame, before they are packed into the table. */
-export type StrandSamples = {
-  /** Spine positions at m_k = k / (count - 1). */
-  readonly pos: readonly V3[];
-  /** The spine in its own coordinates, before placement: stretch is measured on it. */
-  readonly local: readonly V3[];
-  /** The local spine at rest (stretch is measured against it). */
-  readonly rest: readonly V3[];
-  /** Rest arc length before the first station (0 for a whole spine; a part of a body starts further along). */
-  readonly restStart: number;
-  /** Twist (radians about the tangent) at each station. */
-  readonly twist: readonly number[];
-  /** Half-width before stretch, including tip closure, at each station. */
-  readonly halfWidth: readonly number[];
-  /** Height over width at each station. */
-  readonly aspect: readonly number[];
-  /** World direction the frame starts from at m = 0 (projected off the tangent). */
-  readonly up: V3;
-  /** Per world unit: how fast accumulated roll bleeds back toward `up`. 0 is the pure rotation-minimising frame. */
-  readonly level: number;
-  /** The least stretch volume preservation honours (Section.leastStretch): radii grow by at most 1 / sqrt of it. */
+/** The samples a station scan reads, one entry per posted station (a map, src/map/sweep.ts). */
+export const SAMPLE_VEC4S = 3;
+/** Lanes of a samples entry: (world position, twist), (local position, half-width), (rest local position, aspect). */
+export const SAMPLE = { world: 0, local: 1, rest: 2 } as const;
+
+/** What the station scan of one body needs besides its samples. */
+export type StationScan = {
+  /** The posted stations' samples, `steps` entries (SAMPLE lanes). */
+  readonly samples: TableSource;
+  /** The station table's first posted entry and how many are posted. */
+  readonly first: number;
+  readonly steps: number;
+  /** World direction the frame starts from at the first posted station (projected off the tangent there). */
+  readonly up: P3;
+  /** World direction levelling pulls toward (the body's `up`, through its chart). */
+  readonly level: { readonly up: P3; readonly rate: number };
+  /** Rest arc length before the first posted station (0 for a whole spine). */
+  readonly restStart: F;
+  /** The least stretch volume preservation honours (Section.leastStretch). */
   readonly leastStretch: number;
 };
 
-/** Central difference over the stations (one-sided at the ends): the Catmull-Rom derivative at each knot, per index. */
-function knotDerivative(p: readonly V3[], k: number): V3 {
-  const n = p.length;
-  if (k === 0) return v3.sub(p[1], p[0]);
-  if (k === n - 1) return v3.sub(p[n - 1], p[n - 2]);
-  return v3.scale(v3.sub(p[k + 1], p[k - 1]), 0.5);
+const Z = lift<"vec3">([0, 0, 1]);
+const proj = (v: P3, t: P3): P3 => sub(v, mul(t, dot(v, t)));
+/** Reflect v across the plane with normal n (|n|^2 = c, c > 0): v - (2 / c) (n . v) n. */
+const reflect = (v: P3, n: P3, c: F): P3 => sub(v, mul(n, mul(div(2, c), dot(n, v))));
+
+/** Quaternion (x, y, z, w) of the rotation whose matrix has columns a, b, c (orthonormal, right-handed): the branch
+ * on the largest diagonal term, every branch evaluated and one selected (each is finite where it is selected). */
+export function quatOf(a: P3, b: P3, c: P3): Expr<"vec4"> {
+  const tr = add(add(a.x, b.y), c.z);
+  const s1 = mul(sqrt(max(add(tr, 1), 0)), 2);
+  const q1 = vec4(div(sub(b.z, c.y), s1), div(sub(c.x, a.z), s1), div(sub(a.y, b.x), s1), mul(s1, 0.25));
+  const s2 = mul(sqrt(max(sub(sub(add(a.x, 1), b.y), c.z), 0)), 2);
+  const q2 = vec4(mul(s2, 0.25), div(add(b.x, a.y), s2), div(add(c.x, a.z), s2), div(sub(b.z, c.y), s2));
+  const s3 = mul(sqrt(max(sub(sub(add(b.y, 1), a.x), c.z), 0)), 2);
+  const q3 = vec4(div(add(b.x, a.y), s3), mul(s3, 0.25), div(add(c.y, b.z), s3), div(sub(c.x, a.z), s3));
+  const s4 = mul(sqrt(max(sub(sub(add(c.z, 1), a.x), b.y), 0)), 2);
+  const q4 = vec4(div(add(c.x, a.z), s4), div(add(c.y, b.z), s4), mul(s4, 0.25), div(sub(a.y, b.x), s4));
+  return select(gt(tr, 0), q1, select(and(gt(a.x, b.y), gt(a.x, c.z)), q2, select(gt(b.y, c.z), q3, q4)));
 }
 
 /**
- * Station k's half-width and half-height after volume preservation (radii scale by 1 / sqrt(stretch), stretch measured
- * on the local spine against its rest), and the stretch. Shared by the full pose and the skeleton-only slice, so the two
- * agree exactly.
+ * The station table's program: rotation-minimising frames by double reflection (Wang, Juettler, Zheng and Liu 2008)
+ * seeded from `up`, with `strand_kit::Spine::new`'s levelling, then twist; arc fractions; and radii with volume
+ * preservation (radii scale by 1 / sqrt(stretch), stretch measured on the local spine against its rest).
+ *
+ * Tangents are central differences over the posted stations (one-sided at their ends), which is exactly the
+ * Catmull-Rom derivative at a knot, so frames and the drawn curve agree. State: the untwisted dorsal direction, the
+ * previous quaternion (neighbours kept in one hemisphere so the vertex stage's nlerp takes the short way), the previous
+ * tangent, the arc and rest arc so far, and the total arc (computed once, in the scan's start).
  */
-export function stationRadii(s: Pick<StrandSamples, "local" | "rest" | "halfWidth" | "aspect" | "leastStretch">, k: number): [number, number, number] {
-  const stretch = v3.len(knotDerivative(s.local, k)) / Math.max(v3.len(knotDerivative(s.rest, k)), 1e-9);
-  const keep = 1 / Math.sqrt(Math.max(stretch, s.leastStretch));
-  return [s.halfWidth[k]! * keep, s.halfWidth[k]! * s.aspect[k]! * keep, stretch];
+/** Entry k (clamped into the table) of a samples table, lane `lane`. */
+const sampleAt = (S: TableSource, k: In<"f32">, lane: number): Expr<"vec4"> => fetch(S, clamp(lift<"f32">(k), 0, S.entries - 1), lane);
+
+/** Central difference of a samples lane's xyz at entry k, one-sided at the ends: the Catmull-Rom knot derivative. */
+function knot(S: TableSource, lane: number, k: F): P3 {
+  const n = S.entries;
+  const v = (j: In<"f32">): P3 => sampleAt(S, j, lane).xyz;
+  const mid = mul(sub(v(add(k, 1)), v(sub(k, 1))), 0.5);
+  return select(lt(k, 0.5), sub(v(1), v(0)), select(gt(k, n - 1.5), sub(v(n - 1), v(n - 2)), mid));
 }
 
 /**
- * Pose one strand into `out` starting at float offset `at`: rotation-minimising frames by double reflection (Wang,
- * Juettler, Zheng and Liu 2008) seeded from `up`, with `strand_kit::Spine::new`'s levelling, then twist; arc
- * fractions; and radii with volume preservation (radii scale by 1 / sqrt(stretch)).
+ * Entry k's half-width and half-height after volume preservation (radii scale by 1 / sqrt(stretch), stretch measured on
+ * the local spine against its rest), and the stretch. Shared by the station scan and the skeleton-only slice, so the
+ * two agree exactly.
  */
-export function poseStrand(s: StrandSamples, out: Float32Array, at: number): void {
-  const n = s.pos.length;
-  const tan = s.pos.map((_, k) => v3.unit(knotDerivative(s.pos, k)));
-  let arc = 0;
-  const arcs = [0];
-  for (let k = 1; k < n; k++) arcs.push((arc += v3.len(v3.sub(s.pos[k], s.pos[k - 1]))));
-  const total = Math.max(arc, 1e-9);
-  // Arc length along the rest spine, in its own units: lane r.w, which a body's anchor (its skin straightened at rest,
-  // DESIGN.md 2.6) reads so patterns ride the body. It changes only with what the rest pose reads (params, inputs).
-  const restArcs = [s.restStart];
-  for (let k = 1; k < n; k++) restArcs.push(restArcs[k - 1]! + v3.len(v3.sub(s.rest[k]!, s.rest[k - 1]!)));
+export function stationRadii(S: TableSource, k: F, leastStretch: number): { readonly a: F; readonly b: F; readonly stretch: F } {
+  const stretch = div(length(knot(S, SAMPLE.local, k)), max(length(knot(S, SAMPLE.rest, k)), 1e-9));
+  const keep = div(1, sqrt(max(stretch, leastStretch)));
+  const hw = sampleAt(S, k, SAMPLE.local).w, aspect = sampleAt(S, k, SAMPLE.rest).w;
+  return { a: mul(hw, keep), b: mul(mul(hw, aspect), keep), stretch };
+}
 
-  const seed = v3.axpy(-v3.dot(s.up, tan[0]), tan[0], s.up);
-  // A tangent parallel to `up` leaves no seed direction: fall back to a fixed perpendicular (a decision, not an error).
-  let dorsal = v3.len(seed) > 1e-4 ? v3.unit(seed) : v3.unit(v3.cross(tan[0], [0, 0, 1]));
-  let prevQ: Q4 = [0, 0, 0, 1];
-  for (let k = 0; k < n; k++) {
-    const t = tan[k];
-    if (k > 0) {
-      const step = v3.sub(s.pos[k], s.pos[k - 1]);
-      const c1 = v3.dot(step, step);
+export function stationScan(s: StationScan): TableProgram {
+  const n = s.steps, S = s.samples;
+  if (S.entries !== n) throw new Error(`station scan: samples table "${S.name}" has ${S.entries} entries for ${n} stations`);
+  const at = (k: F, lane: number): Expr<"vec4"> => sampleAt(S, k, lane);
+  const P = (k: F): P3 => at(k, SAMPLE.world).xyz;
+  const tan0 = normalize(knot(S, SAMPLE.world, f(0)));
+  // A tangent parallel to `up` leaves no seed direction: a fixed perpendicular instead (a decision, not an error).
+  const seed = proj(s.up, tan0);
+  const dorsal0 = select(gt(length(seed), 1e-4), normalize(seed), normalize(cross(tan0, Z)));
+  const [total] = iterate(n - 1, [f(0)] as const, ([a], j) => [add(a, length(sub(P(add(j, 1)), P(j))))] as const);
+  const init = [dorsal0, lift<"vec4">([0, 0, 0, 1]), tan0, f(0), lift<"f32">(s.restStart), max(total, 1e-9)] as const;
+  return {
+    kind: "scan", first: s.first, steps: n, init,
+    step: (state, i) => {
+      const [dorsal, prevQ, prevTan, arc, restArc, totalArc] = state as unknown as [P3, Expr<"vec4">, P3, F, F, F];
+      const t = normalize(knot(S, SAMPLE.world, i));
+      const first = lt(i, 0.5);
+      const chord = sub(P(i), P(sub(i, 1)));
+      const c1 = dot(chord, chord);
       // Double reflection: across the chord's bisecting plane, then across the plane taking the reflected tangent onto
       // the new tangent. A zero-length chord (a collapsed spine) leaves the frame as it was.
-      if (c1 > 1e-12) {
-        const rL = v3.axpy((-2 / c1) * v3.dot(step, dorsal), step, dorsal);
-        const tL = v3.axpy((-2 / c1) * v3.dot(step, tan[k - 1]), step, tan[k - 1]);
-        const v2 = v3.sub(t, tL), c2 = v3.dot(v2, v2);
-        dorsal = c2 > 1e-12 ? v3.axpy((-2 / c2) * v3.dot(v2, rL), v2, rL) : rL;
+      const rL = reflect(dorsal, chord, c1), tL = reflect(prevTan, chord, c1);
+      const v2 = sub(t, tL), c2 = dot(v2, v2);
+      const carried = select(gt(c1, 1e-12), select(gt(c2, 1e-12), reflect(rL, v2, c2), rL), dorsal);
+      let d: P3 = normalize(proj(carried, t));
+      if (s.level.rate > 0) {
+        // Levelling (strand_kit): the weight falls to 0 as the dorsal vector nears a quarter turn from "up in the
+        // normal plane", so a neck leaning back past vertical keeps its own back instead of flipping.
+        const target = proj(s.level.up, t), horizontal = length(target);
+        const tg = div(target, max(horizontal, 1e-3));
+        const agree = max(dot(d, tg), 0);
+        const angle = atan2(dot(cross(d, tg), t), dot(d, tg));
+        const gain = sub(1, exp(mul(mul(mul(mul(sqrt(c1), horizontal), horizontal), mul(agree, agree)), -s.level.rate)));
+        d = select(gt(horizontal, 1e-3), rotateAbout(d, t, mul(angle, gain)), d);
       }
-      dorsal = v3.unit(v3.axpy(-v3.dot(dorsal, t), t, dorsal));
-      // Levelling (strand_kit): the weight falls to 0 as the dorsal vector nears a quarter turn from "up in the normal
-      // plane", so a neck leaning back past vertical keeps its own back instead of flipping.
-      const target = v3.axpy(-v3.dot(s.up, t), t, s.up);
-      const horizontal = v3.len(target);
-      if (s.level > 0 && horizontal > 1e-3) {
-        const tg = v3.scale(target, 1 / horizontal);
-        const agree = Math.max(v3.dot(dorsal, tg), 0);
-        const angle = Math.atan2(v3.dot(v3.cross(dorsal, tg), t), v3.dot(dorsal, tg));
-        const gain = 1 - Math.exp(-s.level * Math.sqrt(c1) * horizontal * horizontal * agree * agree);
-        dorsal = v3.rotate(dorsal, t, angle * gain);
-      }
-    }
-    // Twist is applied to a copy: it must not feed back into the propagation.
-    const d = s.twist[k] === 0 ? dorsal : v3.rotate(dorsal, t, s.twist[k]);
-    const side = v3.unit(v3.cross(t, d));
-    let q = quatFromColumns(t, d, side);
-    // Keep neighbours in one hemisphere so the vertex stage's nlerp takes the short way round.
-    if (q[0] * prevQ[0] + q[1] * prevQ[1] + q[2] * prevQ[2] + q[3] * prevQ[3] < 0) q = [-q[0], -q[1], -q[2], -q[3]];
-    prevQ = q;
+      const dorsalNow = select(first, dorsal, d);
+      // Twist is applied to a copy: it must not feed back into the propagation.
+      const sample0 = at(i, SAMPLE.world);
+      const dt = rotateAbout(dorsalNow, t, sample0.w);
+      const side = normalize(cross(t, dt));
+      const q0 = quatOf(t, dt, side);
+      const q = select(lt(dot(q0, prevQ), 0), neg(q0), q0);
+      const r = stationRadii(S, i, s.leastStretch);
+      const arcNow = select(first, arc, add(arc, sqrt(c1)));
+      const restStep = length(sub(at(i, SAMPLE.rest).xyz, at(sub(i, 1), SAMPLE.rest).xyz));
+      const restNow = select(first, restArc, add(restArc, restStep));
+      return {
+        next: [dorsalNow, q, t, arcNow, restNow, totalArc],
+        lanes: [vec4(P(i), div(arcNow, totalArc)), q, vec4(r.a, r.b, r.stretch, restNow)],
+      };
+    },
+  };
+}
 
-    const [ra, rb, stretch] = stationRadii(s, k);
-    const o = at + k * STATION_VEC4S * 4;
-    out[o] = s.pos[k][0]; out[o + 1] = s.pos[k][1]; out[o + 2] = s.pos[k][2]; out[o + 3] = arcs[k] / total;
-    out[o + 4] = q[0]; out[o + 5] = q[1]; out[o + 6] = q[2]; out[o + 7] = q[3];
-    out[o + 8] = ra; out[o + 9] = rb; out[o + 10] = stretch; out[o + 11] = restArcs[k]!;
-  }
+/** Rotate v about the unit axis by angle (Rodrigues), as an expression. */
+export function rotateAbout(v: In<"vec3">, axis: In<"vec3">, angle: In<"f32">): P3 {
+  const ve = lift<"vec3">(v), a = lift<"vec3">(axis);
+  const c = cos(angle), sn = sin(angle);
+  return add(add(mul(ve, c), mul(cross(a, ve), sn)), mul(a, mul(sub(1, c), dot(a, ve))));
 }

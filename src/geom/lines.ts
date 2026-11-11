@@ -1,12 +1,13 @@
 // Many straight ropes as one stroke: standing rigging, ratlines, stays. Each rope is a pair of end points (expressions;
-// they may move) and a sag; the end points are evaluated once per frame on the CPU into a per-frame table, and one
+// they may move) and a sag; the end points are evaluated once per frame into a per-frame table (a list: each rope its
+// own expressions, filled by a pose stage), and one
 // `draw.curve` stroke runs through every rope in turn, so a ship's rigging is one draw call however many ropes it has.
 //
 // The jumps between ropes are hidden in the stroke's own grid: each rope gets `segments` cells plus three more, a
 // zero-width vertex before its first point and after its last, so the cells that join one rope to the next have zero
 // width at both ends (zero area: nothing is drawn there).
 
-import { add, clamp, f, fetch, floor, lift, max, mix, mul, step, sub, vec3, type Expr, type In, type TableSource } from "../expr.ts";
+import { add, clamp, f, fetch, floor, lift, listOf, max, mix, mul, step, sub, vec3, vec4, type Expr, type In, type TableSource } from "../expr.ts";
 import { draw } from "../draw/index.ts";
 import type { Drawable } from "../compile/context.ts";
 import { pixelWorld } from "../lib/wgsl.ts";
@@ -29,16 +30,7 @@ export function lines(name: string, ropes: readonly Rope[], spec: LinesSpec): Dr
   const S = spec.segments ?? 6;
   if (!(Number.isInteger(S) && S >= 1)) throw new Error(`lines "${name}": segments must be a positive integer, got ${S}`);
   const N = ropes.length, per = S + 3, cells = N * per;
-  const table: TableSource = {
-    name: `ropes_${name}`, lanes: 2, entries: N, role: "data",
-    prepare: (p) => {
-      const run = p.compile(ropes.flatMap((r) => [r.a, r.b]));
-      return (frame, out) => {
-        const v = run(frame) as number[][];
-        ropes.forEach((r, k) => out.set([...v[2 * k], r.sag, ...v[2 * k + 1], 0], k * 8));
-      };
-    },
-  };
+  const table: TableSource = { name: `ropes_${name}`, lanes: 2, entries: N, role: "data", program: listOf(ropes.map((r) => [vec4(r.a, r.sag), vec4(r.b, 0)])) };
   // Position along the stroke in cells, the rope it falls in, and the position within that rope's cells.
   const where = (u: F): { k: F; local: F } => {
     const x = mul(u, cells);

@@ -1,8 +1,14 @@
 // The WebGPU host: draws an Artefact (src/artefact.ts) headless (read back to RGBA8) or into a canvas texture.
 //
-// Both entry points share one path: `upload` fills the frame state, runs the pose function and uploads every table;
-// `record` records the passes that end in a caller-given texture view. `frame` renders into its own texture and reads
-// it back; `draw` renders into the caller's texture (a canvas's current texture).
+// Both entry points share one path: `pose` writes the frame state and the `cpu` tables and submits the pose stages
+// (compute dispatches that fill every other table on the GPU, docs/gpu_native.md), copying the level-of-detail bounds
+// they wrote to a readback buffer; `record` records the passes that end in a caller-given texture view. `frame` waits
+// for this frame's bounds and renders into its own texture and reads it back; `draw` renders into the caller's texture
+// (a canvas's current texture) with the last bounds read, never waiting on the GPU.
+//
+// Queue order: every `writeBuffer` of a frame is issued before the submit of the pose stages that read it, and the
+// level-of-detail slots are written before the submit of the draws (writes are ordered with submits, not with passes
+// inside one encoder: a write between two passes of one encoder would land before both).
 //
 // The passes depend on the artefact, decided once at load (`Schedule`):
 //   plain   no draw reads scene depth and there is no post: ONE multisampled pass, opaque then transparent, resolved
@@ -23,10 +29,13 @@
 //
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts) stays clean.
 
-import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type FrameStats, type PostPass, type Host, type Loaded, type View } from "../artefact.ts";
+import {
+  DETAIL_SLOTS, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw, type FrameState, type FrameStats, type PoseStage,
+  type PostPass, type Host, type Loaded, type View,
+} from "../artefact.ts";
 import { CURVE_N, type NumTy } from "../expr.ts";
 import { cameraMatrices } from "./camera.ts";
-import { planFrame, slotsUsed, type Memory, type Plan } from "./detail.ts";
+import { gridBounds, planFrame, slotsUsed, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 
@@ -36,7 +45,7 @@ export const DEPTH_FORMAT: GPUTextureFormat = "depth32float";
 export const SAMPLES = 4;
 
 export type FrameTimings = {
-  /** CPU: input layout and `artefact.pose`. */
+  /** CPU: input layout, the `cpu` tables (`artefact.cpuPose`), their uploads and the pose stages' submit. */
   readonly pose: number;
   /** CPU: buffer uploads, command encoding and submit. */
   readonly encode: number;
@@ -57,6 +66,13 @@ export interface GpuLoaded extends Loaded {
    * Needs a device created with the "timestamp-query" feature; throws without it.
    */
   profile(view: View, frames: number): Promise<Profile>;
+  /**
+   * GPU milliseconds of the pose stages alone for this view: `repeats` runs of every stage in one timed compute pass,
+   * divided by `repeats` (so the timestamp quantum and the pass's own cost divide out), the least of `rounds` rounds.
+   */
+  poseTime(view: View, repeats: number, rounds: number): Promise<{ readonly total: number; readonly stages: readonly number[] }>;
+  /** Every dynamic buffer as the pose stages (and `cpu` uploads) left it for this view: for checks against `pose`. */
+  readTables(view: View): Promise<Readonly<Record<string, Float32Array>>>;
 }
 export interface GpuHost extends Host {
   load(artefact: Artefact): Promise<GpuLoaded>;
@@ -69,6 +85,7 @@ const FRAME_FLOATS = 16 + 16 + 4 * 4;
 const MIN_BUFFER_BYTES = 16;
 const VISIBILITY = 0x1 | 0x2; // GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT (literal: the globals are absent before bun-webgpu's setupGlobals)
 const FRAGMENT = 0x2;
+const COMPUTE = 0x4;
 
 // ---- load-time canonicalisation -------------------------------------------------------------------------------
 
@@ -130,6 +147,13 @@ function checkArtefact(a: Artefact): { paramFloats: number } {
     }
   }
   for (const p of a.post ?? []) if (!(p.shader in a.shaders)) fail(`post pass "${p.label}" names unknown shader "${p.shader}"`);
+  for (const st of a.stages) if (!(Number.isInteger(st.invocations) && st.invocations >= 1)) fail(`pose stage "${st.label}" has ${st.invocations} invocations`);
+  const sizes = new Map(a.dynamic.map((d) => [d.name, d.vec4s]));
+  for (const t of a.tables) {
+    const size = sizes.get(t.buffer);
+    if (size === undefined) fail(`table "${t.name}" lives in "${t.buffer}", which is not a dynamic buffer`);
+    if (t.offset < 0 || t.offset + t.vec4s > size!) fail(`table "${t.name}" overruns "${t.buffer}"`);
+  }
   return { paramFloats };
 }
 
@@ -166,6 +190,24 @@ async function compileShader(device: GPUDevice, what: string, code: string): Pro
   if (error) throw new Error(`${what} failed to compile:\n${error.message}`);
   return module;
 }
+
+/** A pose stage's compute pipeline, inside a validation scope. */
+async function createPosePipeline(device: GPUDevice, stage: PoseStage, layout: GPUPipelineLayout): Promise<GPUComputePipeline> {
+  const module = await compileShader(device, `pose stage "${stage.label}"`, PRELUDE_WGSL + stage.wgsl);
+  device.pushErrorScope("validation");
+  const result = await device.createComputePipelineAsync({ label: stage.label, layout, compute: { module, entryPoint: "pose_main" } })
+    .then((p) => ({ ok: true as const, p }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
+  const error = await device.popErrorScope();
+  const message = result.ok ? error?.message : result.message;
+  if (message !== undefined || !result.ok) throw new Error(`pose stage "${stage.label}": pipeline creation failed:\n${message}`);
+  return result.p;
+}
+
+/** The profile's label for every pose stage run in one pass. */
+export const POSE_ONE_PASS = "pose stages, one pass";
+
+/** A pose stage ready to dispatch. */
+export type PoseRun = { readonly label: string; readonly pipeline: GPUComputePipeline; readonly workgroups: number };
 
 /** Creates a pipeline inside a validation scope; `what` names it in the error. */
 async function createPipeline(device: GPUDevice, what: string, descriptor: GPURenderPipelineDescriptor): Promise<GPURenderPipeline> {
@@ -314,7 +356,36 @@ export type Scene = {
   readonly transparent: readonly Drawn[];
   readonly group0: GPUBindGroup;
   readonly group1: GPUBindGroup;
+  /** The pose stages and their bind group 1 (the dynamic buffers writable). */
+  readonly pose: readonly PoseRun[];
+  readonly poseGroup1: GPUBindGroup;
 };
+
+/**
+ * The pose stages into `encoder`: one compute pass (timed by `whole` when given), or one pass per stage when `timed`
+ * gives each its timestamps.
+ * Dispatches within a pass see the writes of earlier ones (each is its own usage scope).
+ */
+export function recordPose(encoder: GPUCommandEncoder, scene: Scene, timed?: (label: string) => GPUComputePassTimestampWrites, whole?: GPUComputePassTimestampWrites): void {
+  const dispatch = (pass: GPUComputePassEncoder, r: PoseRun): void => {
+    pass.setPipeline(r.pipeline);
+    pass.setBindGroup(0, scene.group0);
+    pass.setBindGroup(1, scene.poseGroup1);
+    pass.dispatchWorkgroups(r.workgroups);
+  };
+  if (timed === undefined) {
+    if (scene.pose.length === 0) return;
+    const pass = encoder.beginComputePass({ label: "loft pose", ...(whole === undefined ? {} : { timestampWrites: whole }) });
+    for (const r of scene.pose) dispatch(pass, r);
+    pass.end();
+    return;
+  }
+  for (const r of scene.pose) {
+    const pass = encoder.beginComputePass({ label: r.label, timestampWrites: timed(r.label) });
+    dispatch(pass, r);
+    pass.end();
+  }
+}
 
 export function drawOne(pass: GPURenderPassEncoder, d: Drawn, plan: Plan): void {
   const runs = plan[d.index]!;
@@ -478,7 +549,8 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
   // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames.
   const memory: Memory = new Map();
   if (a.curves.length > 0) device.queue.writeBuffer(curveBuf, 0, a.curves as Float32Array<ArrayBuffer>); // Dawn warns on empty writes
-  const dynamic = a.dynamic.map((d) => ({ ...d, gpu: buffer(d.name, d.vec4s * 16, STORAGE) }));
+  // Dynamic buffers are also copied from: the level-of-detail bounds and `readTables` read them back.
+  const dynamic = a.dynamic.map((d) => ({ ...d, gpu: buffer(d.name, d.vec4s * 16, STORAGE | GPUBufferUsage.COPY_SRC) }));
   // Static tables: written once, here (absent means none).
   const statics = (a.statics ?? []).map((d) => ({ binding: d.binding, gpu: buffer(d.name, d.data.byteLength, STORAGE) }));
   (a.statics ?? []).forEach((d, k) => device.queue.writeBuffer(statics[k]!.gpu, 0, d.data as Float32Array<ArrayBuffer>));
@@ -486,12 +558,23 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
 
   // Explicit layouts, every binding visible to both stages (artefact.ts header): a shader may use any subset, and
   // `layout: "auto"` would drop the bindings a particular shader never reads.
-  const storageEntry = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: VISIBILITY, buffer: { type: "read-only-storage" } });
+  const storageEntry = (binding: number, visibility = VISIBILITY): GPUBindGroupLayoutEntry => ({ binding, visibility, buffer: { type: "read-only-storage" } });
+  // Group 0 is also bound to the pose stages.
+  const all = VISIBILITY | COMPUTE;
   const layout0 = device.createBindGroupLayout({
     label: "loft prelude",
-    entries: [{ binding: 0, visibility: VISIBILITY, buffer: { type: "uniform" } }, storageEntry(1), storageEntry(2), storageEntry(3), { binding: 4, visibility: VISIBILITY, buffer: { type: "uniform" } }],
+    entries: [{ binding: 0, visibility: all, buffer: { type: "uniform" } }, storageEntry(1, all), storageEntry(2, all), storageEntry(3, all), { binding: 4, visibility: all, buffer: { type: "uniform" } }],
   });
   const layout1 = device.createBindGroupLayout({ label: "loft scene tables", entries: group1Buffers.map((d) => storageEntry(d.binding)) });
+  // The pose stages' group 1: the dynamic buffers writable, the static ones read-only (PoseStage).
+  const poseLayout1 = device.createBindGroupLayout({
+    label: "loft pose tables",
+    entries: [...dynamic.map((d): GPUBindGroupLayoutEntry => ({ binding: d.binding, visibility: COMPUTE, buffer: { type: "storage" } })), ...statics.map((d) => storageEntry(d.binding, COMPUTE))],
+  });
+  const poseGroup1 = device.createBindGroup({ label: "loft pose tables", layout: poseLayout1, entries: group1Buffers.map((d) => ({ binding: d.binding, resource: { buffer: d.gpu } })) });
+  const poseLayout = device.createPipelineLayout({ bindGroupLayouts: [layout0, poseLayout1] });
+  const poseRuns: PoseRun[] = [];
+  for (const st of a.stages) poseRuns.push({ label: st.label, pipeline: await createPosePipeline(device, st, poseLayout), workgroups: Math.ceil(st.invocations / POSE_WORKGROUP) });
   const group0 = device.createBindGroup({
     layout: layout0,
     entries: [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf].map((b, binding) => ({ binding, resource: { buffer: b } })),
@@ -532,14 +615,16 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     if (!pipelines.has(key)) pipelines.set(key, await createPipeline(device, `shader "${d.shader}" (draw "${d.label}")`, drawPipeline(layouts[v], modules.get(moduleKey(d.shader, v))!, d)));
   }
   const drawn = (pass: Draw["pass"]): Drawn[] => a.draws.flatMap((d, index) => (d.pass === pass ? [{ draw: d, pipeline: pipelines.get(pipelineKey(d))!, index }] : []));
-  const scene: Scene = { clear: { r: a.clear[0], g: a.clear[1], b: a.clear[2], a: 1 }, opaque: drawn("opaque"), transparent: drawn("transparent"), group0, group1 };
+  const scene: Scene = { clear: { r: a.clear[0], g: a.clear[1], b: a.clear[2], a: 1 }, opaque: drawn("opaque"), transparent: drawn("transparent"), group0, group1, pose: poseRuns, poseGroup1 };
 
   const split = post.length > 0 || a.draws.some((d) => d.sceneDepth === true);
   const postModules = post.map((p) => ({ pass: p, module: modules.get(moduleKey(p.shader, "post"))! }));
   const schedule: Schedule = split
     ? { kind: "split", depthLayout, postLayout, ...await splitPipelines(device, layouts.post, postModules) }
     : { kind: "plain" };
-  const declared = new Set(a.dynamic.map((d) => d.name));
+  const gpuOf = new Map(dynamic.map((d) => [d.name, d.gpu]));
+  // The `cpu` tables, by place: each frame's uploads must be exactly these, each its table's size.
+  const cpuTables = new Map(a.tables.filter((t) => t.fill.kind === "cpu").map((t) => [`${t.buffer}@${t.offset}`, t]));
 
   let targets: Targets | undefined;
   let readback: Readback | undefined;
@@ -564,28 +649,67 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     return readback;
   };
 
-  /**
-   * Pose and upload, and the frame's plan: the draw calls to issue. Every `writeBuffer` precedes the one submit that
-   * reads it, so queue ordering is not a concern.
-   */
-  // The curve data the GPU holds, so the pose pass reads the same curves (FrameState.curves).
+  // Level-of-detail bounds: each grid's instances (anchor, scale), written by the pose stages, copied here each pose
+  // and read back. Packed grid after grid; `at(slot)` is a view of one grid's.
+  const grids = gridBounds(a);
+  const boundsAt = new Map<number, number>();
+  const boundVec4s = grids.reduce((n, g) => { boundsAt.set(g.slot, n); return n + g.instances; }, 0);
+  const boundsBuf = device.createBuffer({ label: "loft bounds", size: Math.max(MIN_BUFFER_BYTES, boundVec4s * 16), usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  /** The read of `boundsBuf` in flight (interactive frames do not wait for it). */
+  let boundsPending: Promise<Bounds> | undefined;
+  /** What interactive frames plan with: the last bounds read. */
+  let lastBounds: Bounds = { kind: "none" };
+  const readBounds = async (): Promise<Bounds> => {
+    await boundsBuf.mapAsync(GPUMapMode.READ);
+    const data = new Float32Array(boundsBuf.getMappedRange().slice(0));
+    boundsBuf.unmap();
+    return { kind: "read", at: (slot) => { const o = boundsAt.get(slot)!; return data.subarray(o * 4); } };
+  };
+
+  // The curve data the GPU holds, so the CPU fills read the same curves (FrameState.curves).
   let curves = a.curves;
-  const upload = (view: View): Plan => {
+  /**
+   * Write the frame's state and `cpu` tables, then submit the pose stages (and, when `copyBounds`, the copy of the
+   * grids' bounds). Returns the CPU milliseconds spent.
+   */
+  const pose = (view: View, copyBounds: boolean): number => {
+    const t0 = performance.now();
     const state = frameState(a, slots, paramFloats, curves, view);
-    const tables = a.pose(state);
-    for (const name of Object.keys(tables)) if (!declared.has(name)) throw new Error(`pose returned "${name}", which is not a declared dynamic buffer`);
-    for (const d of dynamic) {
-      const t = tables[d.name];
-      if (!t) throw new Error(`pose did not return dynamic buffer "${d.name}"`);
-      if (t.length !== d.vec4s * 4) throw new Error(`pose returned dynamic buffer "${d.name}" with ${t.length} floats; expected ${d.vec4s * 4} (${d.vec4s} vec4s)`);
-      device.queue.writeBuffer(d.gpu, 0, t as Float32Array<ArrayBuffer>);
+    const uploads = a.cpuPose(state);
+    for (const u of uploads) {
+      const t = cpuTables.get(`${u.buffer}@${u.offset}`);
+      if (t === undefined) throw new Error(`cpuPose returned data for "${u.buffer}" at vec4 ${u.offset}, where no cpu table lives`);
+      if (u.data.length !== t.vec4s * 4) throw new Error(`cpuPose returned table "${t.name}" with ${u.data.length} floats; expected ${t.vec4s * 4} (${t.vec4s} vec4s)`);
+      device.queue.writeBuffer(gpuOf.get(u.buffer)!, u.offset * 16, u.data as Float32Array<ArrayBuffer>);
+    }
+    if (uploads.length !== cpuTables.size) {
+      const given = new Set(uploads.map((u) => `${u.buffer}@${u.offset}`));
+      throw new Error(`cpuPose did not return cpu table${[...cpuTables].filter(([k]) => !given.has(k)).map(([, t]) => ` "${t.name}"`).join(",")}`);
     }
     device.queue.writeBuffer(frameBuf, 0, frameUniform(view));
     if (state.inputs.length > 0) device.queue.writeBuffer(inputBuf, 0, state.inputs as Float32Array<ArrayBuffer>);
     if (state.params.length > 0) device.queue.writeBuffer(paramBuf, 0, state.params as Float32Array<ArrayBuffer>);
-    const plan = planFrame(a, view, tables, memory, detail);
+    const encoder = device.createCommandEncoder({ label: "loft pose" });
+    recordPose(encoder, scene);
+    if (copyBounds) for (const g of grids) encoder.copyBufferToBuffer(gpuOf.get(g.buffer)!, g.offset * 16, boundsBuf, boundsAt.get(g.slot)! * 16, g.instances * 16);
+    device.queue.submit([encoder.finish()]);
+    return performance.now() - t0;
+  };
+  /** This frame's plan from these bounds, its level-of-detail slots written (before the draws' submit). */
+  const plan = (view: View, bounds: Bounds): Plan => {
+    const p = planFrame(a, view, bounds, memory, detail);
     device.queue.writeBuffer(detailBuf, 0, detail, 0, detailFloats);
-    return plan;
+    return p;
+  };
+  /** A frame that waits for its own bounds (headless frames, profiling): pose, read the bounds, plan. */
+  const posedPlan = async (view: View): Promise<{ readonly plan: Plan; readonly poseMs: number }> => {
+    if (boundsPending) await boundsPending;
+    const copy = grids.length > 0;
+    const poseMs = await validated("pose", () => pose(view, copy));
+    const bounds = copy ? await readBounds() : lastBounds;
+    const t0 = performance.now();
+    const p = plan(view, bounds);
+    return { plan: p, poseMs: poseMs + performance.now() - t0 };
   };
 
   /** The shared drawing code, for `frame` and `draw` alike: every pass of the schedule, ending in `out`. */
@@ -616,15 +740,12 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
     checkView(view);
     reading = true;
     try {
-      const t0 = performance.now();
-      let t1 = t0;
-      let plan: Plan = [];
+      const posed = await posedPlan(view);
+      const t1 = performance.now();
       const rb = await validated("frame", () => {
-        plan = upload(view);
-        t1 = performance.now();
         const rb = readbackFor(view);
         const encoder = device.createCommandEncoder({ label: "loft frame" });
-        record(encoder, view, rb.texture.createView(), plan);
+        record(encoder, view, rb.texture.createView(), posed.plan);
         encoder.copyTextureToBuffer({ texture: rb.texture }, { buffer: rb.buffer, bytesPerRow: rb.bytesPerRow, rowsPerImage: view.height }, { width: view.width, height: view.height });
         device.queue.submit([encoder.finish()]);
         return rb;
@@ -637,7 +758,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       for (let y = 0; y < view.height; y++) pixels.set(mapped.subarray(y * rb.bytesPerRow, y * rb.bytesPerRow + row), y * row);
       rb.buffer.unmap();
       const t3 = performance.now();
-      return { pixels, ms: { pose: t1 - t0, encode: t2 - t1, readback: t3 - t2 }, drawn: statsOf(plan) };
+      return { pixels, ms: { pose: posed.poseMs, encode: t2 - t1, readback: t3 - t2 }, drawn: statsOf(posed.plan) };
     } finally {
       reading = false;
     }
@@ -652,21 +773,79 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       if (target.width !== view.width || target.height !== view.height) {
         throw new Error(`draw: target is ${target.width} x ${target.height} but the view is ${view.width} x ${view.height}`);
       }
-      return validated("draw", () => {
-        const plan = upload(view);
+      // Never waits on the GPU: plans with the last bounds read, and starts reading this frame's when none is in flight.
+      const copy = grids.length > 0 && boundsPending === undefined;
+      const stats = await validated("draw", () => {
+        pose(view, copy);
+        const p = plan(view, lastBounds);
         const encoder = device.createCommandEncoder({ label: "loft draw" });
-        record(encoder, view, target.createView(), plan);
+        record(encoder, view, target.createView(), p);
         device.queue.submit([encoder.finish()]);
-        return statsOf(plan);
+        return statsOf(p);
       });
+      if (copy) boundsPending = readBounds().then((b) => { lastBounds = b; boundsPending = undefined; return b; });
+      return stats;
     },
     profile: async (view, frames) => {
       checkView(view);
       if (!(Number.isInteger(frames) && frames >= 1)) throw new Error(`profile: frames must be a positive integer, got ${frames}`);
-      return validated("profile", () => profileFrames({
-        device, scene, schedule, size: { width: view.width, height: view.height }, frames,
-        upload: () => { const t0 = performance.now(); const plan = upload(view); return { plan, poseMs: performance.now() - t0 }; },
-      }));
+      return profileFrames({ device, scene, schedule, size: { width: view.width, height: view.height }, frames, upload: () => posedPlan(view) });
+    },
+    poseTime: async (view, repeats, rounds) => {
+      checkView(view);
+      if (!device.features.has("timestamp-query")) throw new Error("poseTime: the device was created without the \"timestamp-query\" feature");
+      await posedPlan(view);
+      const query = device.createQuerySet({ type: "timestamp", count: 2 });
+      const resolve = device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      const read = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      /** Least over the rounds of the per-repeat time of these runs, dispatched in order `repeats` times in one pass. */
+      const time = async (runs: readonly PoseRun[]): Promise<number> => {
+        let best = Infinity;
+        for (let r = 0; r < rounds; r++) {
+          const encoder = device.createCommandEncoder({ label: "loft pose time" });
+          const pass = encoder.beginComputePass({ label: "pose x repeats", timestampWrites: { querySet: query, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } });
+          for (let k = 0; k < repeats; k++) {
+            for (const run of runs) {
+              pass.setPipeline(run.pipeline);
+              pass.setBindGroup(0, scene.group0);
+              pass.setBindGroup(1, scene.poseGroup1);
+              pass.dispatchWorkgroups(run.workgroups);
+            }
+          }
+          pass.end();
+          encoder.resolveQuerySet(query, 0, 2, resolve, 0);
+          encoder.copyBufferToBuffer(resolve, 0, read, 0, 16);
+          device.queue.submit([encoder.finish()]);
+          await read.mapAsync(GPUMapMode.READ);
+          const ts = new BigUint64Array(read.getMappedRange().slice(0));
+          read.unmap();
+          best = Math.min(best, Number(ts[1]! - ts[0]!) / 1e6 / repeats);
+        }
+        return best;
+      };
+      // Warm up: an idle Apple GPU runs a short burst at a low clock (the same scene read 0.10 to 0.27 ms cold).
+      for (let w = 0; w < 4; w++) await time(scene.pose);
+      const total = await time(scene.pose);
+      const stages: number[] = [];
+      for (const run of scene.pose) stages.push(await time([run]));
+      query.destroy(); resolve.destroy(); read.destroy();
+      return { total, stages };
+    },
+    readTables: async (view) => {
+      checkView(view);
+      if (boundsPending) await boundsPending;
+      await validated("readTables", () => pose(view, false));
+      const staging = dynamic.map((d) => device.createBuffer({ label: `read ${d.name}`, size: d.vec4s * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }));
+      const encoder = device.createCommandEncoder({ label: "loft read tables" });
+      dynamic.forEach((d, k) => encoder.copyBufferToBuffer(d.gpu, 0, staging[k]!, 0, d.vec4s * 16));
+      device.queue.submit([encoder.finish()]);
+      const out: Record<string, Float32Array> = {};
+      for (const [k, d] of dynamic.entries()) {
+        await staging[k]!.mapAsync(GPUMapMode.READ);
+        out[d.name] = new Float32Array(staging[k]!.getMappedRange().slice(0));
+        staging[k]!.destroy();
+      }
+      return out;
     },
     setCurves: (next) => {
       if (next.length !== a.curves.length) throw new Error(`setCurves: got ${next.length} floats; the artefact has ${a.curves.length}`);
@@ -675,7 +854,7 @@ async function load(device: GPUDevice, a: Artefact): Promise<GpuLoaded> {
       curves = next.slice();
     },
     destroy: () => {
-      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf, ...group1Buffers.map((d) => d.gpu)]) b.destroy();
+      for (const b of [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf, boundsBuf, ...group1Buffers.map((d) => d.gpu)]) b.destroy();
       for (const t of targets?.textures ?? []) t.destroy();
       readback?.texture.destroy(); readback?.buffer.destroy();
       targets = undefined; readback = undefined;

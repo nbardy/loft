@@ -2,7 +2,7 @@
 // Placement acts on what a thing is built from (a body's spine, an instance's frame), not on every vertex of its skin:
 // mapping every skin vertex through a chart that bends or twists shears a body into slivers.
 
-import { abs, add, cos, cross, dot, fetch, lift, max, mul, sin, sub, vec3, type In, type TableSource } from "../expr.ts";
+import { abs, add, cos, cross, dot, fetch, lift, listOf, max, mul, sin, sub, vec3, vec4, type In, type TableSource } from "../expr.ts";
 import type { Chart, F, Frame, P3, Placeable, Placed, Points, Posed, Poses, Size } from "./types.ts";
 
 const X = lift<"vec3">([1, 0, 0]), Y = lift<"vec3">([0, 1, 0]), Z = lift<"vec3">([0, 0, 1]);
@@ -124,7 +124,7 @@ export function posed(count: number, spec: (i: F) => PoseSpec): PoseSet {
 
 /**
  * Copies whose poses are separate expressions (each spar of a fleet between its own two points, each puff on its own
- * clock), listed: every pose is evaluated once per frame on the CPU into one table (`poses_<name>`), and the vertex
+ * clock), listed: every pose is evaluated once per frame by a pose stage into one table (`poses_<name>`), and the vertex
  * stage fetches its copy's. Cheaper than a closed form in the index when the poses share nothing, and the only way to
  * write them when they do not. In the world's coordinates (not placeable). Every copy's size is of one kind.
  */
@@ -134,17 +134,8 @@ export function posedList(name: string, specs: readonly PoseSpec[]): Poses {
   const kind = specs[0]!.size.kind;
   specs.forEach((sp, k) => { if (sp.size.kind !== kind) throw new Error(`posedList "${name}": copy ${k}'s size is ${sp.size.kind} and copy 0's is ${kind}; give every copy one kind`); });
   const lengths = (z: Size): P3 => { switch (z.kind) { case "even": return vec3(z.k, z.k, z.k); case "axes": return z.k; } };
-  const roots = specs.flatMap((sp) => { const a = turned(sp.turn); return [lift<"vec3">(sp.at), a.x, a.y, a.z, lengths(sp.size)]; });
-  const table: TableSource = {
-    name: `poses_${name}`, lanes: 5, entries: specs.length, role: "data",
-    prepare: (prep) => {
-      const run = prep.compile(roots);
-      return (frame, out) => {
-        const v = run(frame) as number[][];
-        for (let j = 0; j < specs.length; j++) for (let l = 0; l < 5; l++) out.set(v[5 * j + l]!, 20 * j + 4 * l);
-      };
-    },
-  };
+  const entries = specs.map((sp) => { const a = turned(sp.turn); return [lift<"vec3">(sp.at), a.x, a.y, a.z, lengths(sp.size)].map((v) => vec4(v, 0)); });
+  const table: TableSource = { name: `poses_${name}`, lanes: 5, entries: specs.length, role: "data", program: listOf(entries) };
   const sizeAt = (i: F): Size => {
     const k = fetch(table, i, 4);
     switch (kind) {

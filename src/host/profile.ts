@@ -17,7 +17,7 @@
 // A pass of its own costs loading and storing the 4x attachments; that cost is measured as its own stage ("pass
 // overhead": a loaded and stored pass with the empty draw) and `net` subtracts it from each draw.
 
-import { COLOR_FORMAT, DEPTH_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT, drawOne, type Plan, type Scene, type Schedule } from "./host.ts";
+import { COLOR_FORMAT, DEPTH_FORMAT, POSE_ONE_PASS, SAMPLES, SCENE_DEPTH_FORMAT, drawOne, recordPose, type Plan, type Scene, type Schedule } from "./host.ts";
 
 export type ProfileDraw = {
   readonly label: string;
@@ -35,9 +35,11 @@ export type Profile = {
   readonly draws: readonly ProfileDraw[];
   /** clear, depth resolve, multisample resolve, each post pass, readback copy. */
   readonly stages: readonly ProfileStage[];
+  /** The pose stages: each in a pass of its own, in order, then all of them in one pass (as a frame runs them, labelled POSE_ONE_PASS). */
+  readonly poseStages: readonly ProfileStage[];
   /** A pass that loads and stores the 4x attachments and draws nothing visible. */
   readonly passOverhead: number;
-  /** CPU: the pose pass (`artefact.pose`), best frame. */
+  /** CPU: frame state, `cpu` tables, uploads and the pose stages' submit, and the level-of-detail plan; best frame. */
   readonly pose: number;
   /** Sum of every stage's delta, best block. */
   readonly total: number;
@@ -64,15 +66,15 @@ function noops(device: GPUDevice): Noops {
 }
 
 /** One timed pass. `kind` says which list its delta goes to. */
-type Stage = { readonly label: string; readonly kind: "draw" | "stage" | "overhead" | "bracket"; readonly index: number };
+type Stage = { readonly label: string; readonly kind: "pose" | "draw" | "stage" | "overhead" | "bracket"; readonly index: number };
 
 export type ProfileInput = {
   readonly device: GPUDevice;
   readonly scene: Scene;
   readonly schedule: Schedule;
   readonly size: { readonly width: number; readonly height: number };
-  /** Upload a frame (pose included) and return its plan and the pose's CPU milliseconds. */
-  readonly upload: () => { readonly plan: Plan; readonly poseMs: number };
+  /** Pose a frame (its own submit, waiting for its level-of-detail bounds) and return its plan and CPU milliseconds. */
+  readonly upload: () => Promise<{ readonly plan: Plan; readonly poseMs: number }>;
   readonly frames: number;
 };
 
@@ -102,7 +104,7 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
   } : undefined;
   const outputOf = (k: number): GPUTextureView => (k === posts ? views.out : intermediates[k % 2]!.createView());
 
-  const maxStages = 8 + scene.opaque.length + scene.transparent.length + posts;
+  const maxStages = 9 + scene.pose.length + scene.opaque.length + scene.transparent.length + posts;
   const querySet = device.createQuerySet({ type: "timestamp", count: 2 * maxStages });
   const resolveBuf = device.createBuffer({ size: 16 * maxStages, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
   const readTs = device.createBuffer({ size: 16 * maxStages, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -112,7 +114,7 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
   let bestPose = Infinity, bestTotal = Infinity, sumTotal = 0;
   let shape: { readonly stages: readonly Stage[]; readonly plan: Plan } | undefined;
   for (let f = 0; f < p.frames; f++) {
-    const { plan, poseMs } = p.upload();
+    const { plan, poseMs } = await p.upload();
     bestPose = Math.min(bestPose, poseMs);
     const stages: Stage[] = [];
     const encoder = device.createCommandEncoder({ label: "loft profile" });
@@ -127,6 +129,14 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
       depthStencilAttachment: { view: views.depth, depthClearValue: 1, depthLoadOp: load, depthStoreOp: "store" },
     });
     const noop = (pass: GPURenderPassEncoder, pipeline: GPURenderPipeline) => { pass.setPipeline(pipeline); pass.draw(3); pass.end(); };
+
+    // The pose stages again (the upload ran them untimed to read the bounds; the same inputs give the same tables):
+    // once as a frame runs them, every stage in one pass, then once more a pass per stage for the breakdown. A compute
+    // pass may overlap the render passes after it, so a pose pass's time is its own duration, not a completion delta.
+    if (scene.pose.length > 0) {
+      recordPose(encoder, scene, (label) => timed(label, "pose"));
+      recordPose(encoder, scene, undefined, timed(POSE_ONE_PASS, "pose"));
+    }
 
     noop(x4("clear", "stage", "clear"), n.x4Depth);
     noop(x4("pass overhead", "overhead", "load"), n.x4Depth);
@@ -185,7 +195,7 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     const ms = (a: bigint, b: bigint) => Number(b - a) / 1e6;
     let total = 0;
     stages.forEach((s, k) => {
-      const delta = k === 0 ? ms(ts[0]!, ts[1]!) : ms(ts[2 * k - 1]!, ts[2 * k + 1]!);
+      const delta = k === 0 || s.kind === "pose" ? ms(ts[2 * k]!, ts[2 * k + 1]!) : ms(ts[2 * k - 1]!, ts[2 * k + 1]!);
       total += delta;
       // Labels can repeat (two draws of one shader); keyed by position, which is the same every frame.
       const key = `${k}|${s.label}`;
@@ -215,5 +225,6 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     return { label: st.label, ms: at(st), net: Math.max(0, at(st) - overhead), triangles: Math.round(triangles), instances, calls: runs.length };
   });
   const stages = s.stages.filter((st) => st.kind === "stage").map((st) => ({ label: st.label, ms: at(st) }));
-  return { draws, stages, passOverhead: overhead, pose: bestPose, total: bestTotal, frames: p.frames };
+  const poseStages = s.stages.filter((st) => st.kind === "pose").map((st) => ({ label: st.label, ms: at(st) }));
+  return { draws, stages, poseStages, passOverhead: overhead, pose: bestPose, total: bestTotal, frames: p.frames };
 }

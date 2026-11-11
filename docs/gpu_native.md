@@ -27,14 +27,21 @@ Three consequences.
 
 ## Phase 1: pose on the GPU
 
-**The table contract.** `TableSource` gains a program, a sum type:
+**The table contract.** `TableSource` gains a program, a sum type (as built, `src/expr.ts`):
 
 ```ts
 type TableProgram =
-  | { kind: "map"; lanes: (i: F) => readonly Expr<"vec4">[] }     // entry i depends only on i, the frame and other tables
-  | { kind: "scan"; init: State; step: (s: State, i: F) => { next: State; lanes: readonly Expr<"vec4">[] } }
-  | { kind: "cpu"; fill: TableFill; why: string }                // not ported yet: named, counted, visible
+  | { kind: "map"; runs: readonly { count: number; lanes: (i: F) => readonly Expr<"vec4">[] }[] }  // entry i: i, the frame, other tables
+  | { kind: "scan"; first: number; steps: number; init: State; step: (s: State, i: F) => { next: State; lanes: readonly Expr<"vec4">[] } }
+  | { kind: "cpu"; why: string; prepare(p: TablePrep): TableFill }                                // not ported yet: named, counted, visible
 ```
+
+A map is a list of runs laid end to end, each a closed form in its own index (`mapOf(n, lanes)` is one run;
+`listOf(entries)` is runs of one). Changed from the first draft because about half the tables the code fills are
+lists of unrelated expressions (each rope's two ends, each listed pose, each shadow joint), which a single closed form
+in i could only write as a chain of selects that evaluates every entry in every invocation. A table with no program
+(`prepare` alone, as in `examples/bosses/tithe/kit.ts`) is read as `cpu` at the compiler's boundary. Static tables
+(filled once at build) keep `prepare`.
 
 - `map` and `scan` are written in Loft's own expressions (which already have loops and table reads and already
   compile to both JavaScript and WGSL). Their CPU fill is derived, not hand-written.
@@ -42,7 +49,20 @@ type TableProgram =
   chosen silently.
 
 **Scheduling.** Tables are sorted by what they read into levels. A level is one compute dispatch: a map table gets
-one invocation per entry, a scan table one invocation that loops. Later levels read what earlier ones wrote.
+one invocation per entry, a scan table one invocation that loops. Later levels read what earlier ones wrote. A `cpu`
+table cannot wait for the GPU, so a map or scan that a `cpu` table reads is filled on the CPU too, and is listed as
+`cpu` with why "read by ...".
+
+Two things the first draft did not foresee, both from measuring the crab scene (`src/compile/tables.ts`):
+
+- *Divergence.* Invocations of one SIMD group (32 on Apple GPUs) that take different branches run one after another.
+  Tables of a level, and runs of a list, are different branches; laid side by side, a group ran up to 32 scans or list
+  entries in turn. Each table, and each run of a table of several runs, now starts a SIMD group of its own.
+- *Shared work.* On the CPU one compiled function shared subexpressions across a table's entries; on the GPU each run
+  is a branch, so every rope end recomputed the ship's sea-following frame (2 MB of WGSL for the crab scene). Nodes
+  that two or more runs read are hoisted into a table of their own (`<name>_common`, one invocation, a lane per value,
+  one level earlier). And a list of joints no longer evaluates the sea under each joint in its own branch: the joints
+  are a list, the sea under them a map.
 
 **The host.** Per frame: write inputs, params and curves (as now); fill any `cpu` tables and upload them; run the
 pose stages; draw. The dynamic buffers are bound writable to the pose stages and read-only to draws.
@@ -50,6 +70,15 @@ pose stages; draw. The dynamic buffers are bound writable to the pose stages and
 **What the client knows without reading pose.** Where a thing is in the world is a game input. How far it can reach
 from there is a number fixed at build (its envelope). Level of detail and culling need only those two, so they do
 not need pose on the CPU.
+
+*Not met in phase 1.* The level of detail as built (`Detail` "grid", `src/host/detail.ts`) reads one vec4 per grid
+instance each frame, `bound_<name>`: the surface's anchor (the grid's centre on the posed surface, or a copy's origin)
+and the copy's scale. Those anchors ride the pose (a jaw's teeth on a head on a neck), and Loft has no notion of a
+thing's input-driven root to measure an envelope from, so the rule cannot be applied without one. Phase 1 makes the
+bound tables ordinary maps filled by the pose stages and reads them back: `frame` (headless) waits for this frame's
+bounds after the pose submit; `draw` (interactive) never waits and plans with the last bounds read (one or two frames
+old; the first frame draws every grid at its finest). No CPU pose is involved, but it is a GPU-to-CPU read per
+frame. Phase 4 (level of detail written as indirect draw arguments by a compute stage) removes it.
 
 **Tools keep a CPU reading.** `Artefact.pose(state)` still returns every table, derived from the same programs. It
 is for checks, baking and tests. A client never calls it once no `cpu` table is left.
