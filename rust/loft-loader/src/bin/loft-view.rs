@@ -90,7 +90,7 @@ fn main() {
         ..Default::default()
     }))
     .unwrap_or_else(|e| fail(format!("no device: {e}")));
-    eprintln!("adapter {} ({:?}); timestamp queries {}", adapter.get_info().name, adapter.get_info().backend, if timing { "granted" } else { "not granted" });
+    eprintln!("adapter {} ({:?}); timestamp queries {}; inside encoders {}", adapter.get_info().name, adapter.get_info().backend, if timing { "granted" } else { "not granted" }, adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS));
 
     let t = Instant::now();
     let artefact = read_dir(&a.dir).unwrap_or_else(|e| fail(e.to_string()));
@@ -157,7 +157,7 @@ fn main() {
     }
 
     if a.frames > 0 {
-        frames(&a, &device, &queue, &mut loft, &target, timing);
+        frames(&a, &device, &queue, &mut loft, &target, (&output, &readback, row), timing);
     }
     if a.pose_time {
         pose_time(&device, &queue, &loft, timing);
@@ -193,10 +193,14 @@ impl Clock {
     }
 }
 
-fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft, target: &wgpu::TextureView, timing: bool) {
+/// `copy`: the output texture, readback buffer and row pitch. A waiting frame copies its picture out, as Dawn's `frame`
+/// (whose GPU time profile reports) does.
+#[allow(clippy::type_complexity)]
+fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft, target: &wgpu::TextureView, copy: (&wgpu::Texture, &wgpu::Buffer, u32), timing: bool) {
+    let n = 2 + 2 * loft.pass_labels().count() as u32;
     let clock = timing.then(|| {
-        loft.set_timestamps(Some(Timestamps { set: device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("loft frame"), ty: wgpu::QueryType::Timestamp, count: 4 }) }));
-        Clock::new(device, queue, 4)
+        loft.set_timestamps(Some(Timestamps { set: device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("loft frame"), ty: wgpu::QueryType::Timestamp, count: n }) }));
+        Clock::new(device, queue, n as u64)
     });
     let bounds = if a.wait { Bounds::Latest } else { Bounds::Last };
     let (mut cpu, mut gpu, mut pose, mut passes) = (vec![], vec![], vec![], vec![]);
@@ -204,20 +208,32 @@ fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft,
         let t = Instant::now();
         let mut encoder = device.create_command_encoder(&Default::default());
         let s = loft.encode_frame(device, queue, &mut encoder, target, a.size.0, a.size.1, bounds).unwrap_or_else(|e| fail(e.to_string()));
+        if a.wait {
+            let (output, readback, row) = copy;
+            encoder.copy_texture_to_buffer(
+                output.as_image_copy(),
+                wgpu::TexelCopyBufferInfo { buffer: readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(a.size.1) } },
+                output.size(),
+            );
+        }
         let cmd = encoder.finish();
         queue.submit([cmd]);
         cpu.push((t.elapsed() - s.gpu_wait).as_secs_f64() * 1e3);
         // Outside the timed window: resolve the timestamps and wait for the frame.
         match (&clock, loft.timestamps()) {
             (Some(c), Some(ts)) => {
+                // The frame first, then the resolve: resolving in the next submit without waiting read the last two
+                // passes' end-of-fragment samples before Metal had written them (the previous frame's values came back).
+                device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
                 let mut e = device.create_command_encoder(&Default::default());
-                c.encode(&mut e, &ts.set, 4);
+                c.encode(&mut e, &ts.set, n);
                 queue.submit([e.finish()]);
                 let t = c.ticks(device);
                 let ms = |a: u64, b: u64| b.wrapping_sub(a) as f64 * c.period_ns / 1e6;
                 pose.push(ms(t[0], t[1]));
-                passes.push(ms(t[2], t[3]));
-                gpu.push(ms(t[0], t[1]) + ms(t[2], t[3]));
+                let last = n as usize - 1;
+                passes.push(ms(t[2], t[last]));
+                gpu.push(ms(t[0], t[1]) + ms(t[2], t[last]));
             }
             _ => {
                 device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");

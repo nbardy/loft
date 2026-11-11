@@ -45,8 +45,8 @@ pub struct FrameStats {
     pub gpu_wait: Duration,
 }
 
-/// Measuring only: four timestamps the frame writes when the device has `TIMESTAMP_QUERY`: pose pass begin and end,
-/// first render pass begin, last render pass end (an index is left unwritten when there is no such pass).
+/// Measuring only: timestamps the frame writes when the device has `TIMESTAMP_QUERY`, `2 + 2 * passes` of them: the
+/// pose pass's begin and end at 0 and 1 (unwritten when there is no pose pass), render pass k's at `2 + 2k`, `3 + 2k`.
 pub struct Timestamps {
     pub set: wgpu::QuerySet,
 }
@@ -447,6 +447,10 @@ impl Loft {
     pub fn set_timestamps(&mut self, t: Option<Timestamps>) {
         self.timestamps = t;
     }
+    /// The render passes' labels, in frame order (for reading `Timestamps`).
+    pub fn pass_labels(&self) -> impl Iterator<Item = &str> {
+        self.m.frame.passes.iter().map(|p| p.label.as_str())
+    }
     pub fn timestamps(&self) -> Option<&Timestamps> {
         self.timestamps.as_ref()
     }
@@ -574,12 +578,11 @@ impl Loft {
             Target::Texture { texture } => &sized.views[texture],
             Target::Output => target,
         };
-        let last = self.m.frame.passes.len().saturating_sub(1);
         for (k, (p, ops)) in self.m.frame.passes.iter().zip(&self.ops).enumerate() {
             let timestamp_writes = self.timestamps.as_ref().map(|t| wgpu::RenderPassTimestampWrites {
                 query_set: &t.set,
-                beginning_of_pass_write_index: (k == 0).then_some(2),
-                end_of_pass_write_index: (k == last).then_some(3),
+                beginning_of_pass_write_index: Some(2 + 2 * k as u32),
+                end_of_pass_write_index: Some(3 + 2 * k as u32),
             });
             let color = wgpu::RenderPassColorAttachment {
                 view: view(p.color.view),
@@ -595,7 +598,7 @@ impl Loft {
                     depth_ops: ops.depth,
                     stencil_ops: None,
                 }),
-                timestamp_writes: timestamp_writes.filter(|t| t.beginning_of_pass_write_index.is_some() || t.end_of_pass_write_index.is_some()),
+                timestamp_writes,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });

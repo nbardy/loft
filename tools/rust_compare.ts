@@ -14,10 +14,10 @@
 // whole frame (a colour shift). A side-by-side sheet (Dawn, Rust, differences x8) is written as WebP for every frame
 // with a difference; the lossless PNGs are deleted unless --keep.
 //
-// --time: rounds alternating the hosts, per scene, least per round. Dawn: `frameTimed` x 30 on one load, CPU = pose +
+// --time: rounds alternating the hosts, per scene, least per round. Dawn: `frameTimed` x 30 and `frameGpu` x 120 on one load, CPU = pose +
 // encode (its encode includes awaiting an error scope); GPU = `frameGpu` (profile's "normal frame"). Rust: `loft-view
-// --frames 60 --wait` (the same headless frame: CPU in the loader less GPU waits, GPU by the same two spans), and
-// `--frames 60` without waiting (a game's frame) for CPU. Pose stages alone: `poseTime(view, 40, 8)` and `--pose-time`.
+// --frames 120 --wait` (the same headless frame: CPU in the loader less GPU waits, GPU by the same two spans), and
+// `--frames 120` without waiting (a game's frame) for CPU. Pose stages alone: `poseTime(view, 40, 8)` and `--pose-time`.
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { resolveCamera } from "../src/cli/cameras.ts";
 import { encodePng, writeWebp, type Frame } from "../src/cli/image.ts";
@@ -135,7 +135,20 @@ async function pictures(): Promise<void> {
   }
 }
 
+/** Dawn's load, retried once on the intermittent module failure AGENTS.md records ("null character found" seen here). */
+async function loadDawn(bundle: ReturnType<typeof readBundle>) {
+  try {
+    return await loadBundle(device, bundle, { kind: "none" });
+  } catch (e) {
+    console.log(`  (Dawn load failed, retried once: ${String(e).split("\n").slice(0, 3).join(" ")})`);
+    return await loadBundle(device, bundle, { kind: "none" });
+  }
+}
+
 const range = (xs: readonly number[]) => `${Math.min(...xs).toFixed(3)}-${Math.max(...xs).toFixed(3)}`;
+
+/** Frames per timing run: long enough that the GPU's clock usually leaves its slow state. */
+const FRAMES = 120;
 
 async function times(): Promise<void> {
   const rounds = Number(flag("--rounds") ?? 3);
@@ -143,24 +156,26 @@ async function times(): Promise<void> {
     const dir = dirOf(name);
     const bundle = readBundle(dir);
     const camera = resolveCamera(bundle.manifest, proof.view);
-    const dawn = { cpu: [] as number[], gpu: [] as number[], pose: [] as number[] }, rust = { cpu: [] as number[], game: [] as number[], gpu: [] as number[], pose: [] as number[] };
+    const dawn = { cpu: [] as number[], gpu: [] as number[], inFrame: [] as number[], pose: [] as number[] };
+    const rust = { cpu: [] as number[], game: [] as number[], gpu: [] as number[], inFrame: [] as number[], pose: [] as number[] };
     for (let r = 0; r < rounds; r++) {
-      const loaded = await loadBundle(device, bundle, { kind: "none" });
+      const loaded = await loadDawn(bundle);
       const view = { camera, width, height, time: 1 };
       let cpu = Infinity;
       for (let i = 0; i < 30; i++) {
         const t = await loaded.frameTimed(view);
         cpu = Math.min(cpu, t.ms.pose + t.ms.encode);
       }
-      dawn.cpu.push(cpu); dawn.gpu.push((await loaded.frameGpu(view, 30)).ms); dawn.pose.push((await loaded.poseTime(view, 40, 8)).total);
+      const g = await loaded.frameGpu(view, FRAMES);
+      dawn.cpu.push(cpu); dawn.gpu.push(g.ms); dawn.inFrame.push(g.pose); dawn.pose.push((await loaded.poseTime(view, 40, 8)).total);
       loaded.destroy();
-      const flags = [BIN, dir, "--view", proof.view, "--size", `${width}x${height}`, "--time", "1", "--frames", "60"];
+      const flags = [BIN, dir, "--view", proof.view, "--size", `${width}x${height}`, "--time", "1", "--frames", String(FRAMES)];
       const least = (out: string, label: string) => Number(new RegExp(`${label}\\s+least ([0-9.]+)`).exec(out)?.[1]);
       const waited = run([...flags, "--wait", "--pose-time"]), game = run(flags);
-      rust.pose.push(Number(/pose stages ([0-9.]+) ms/.exec(waited)?.[1]));
+      rust.pose.push(Number(/pose stages ([0-9.]+) ms/.exec(waited)?.[1])); rust.inFrame.push(least(waited, "gpu  pose pass"));
       rust.cpu.push(least(waited, "cpu  frames 10\\+")); rust.gpu.push(least(waited, "gpu  per frame")); rust.game.push(least(game, "cpu  frames 10\\+"));
     }
-    console.log(`${name.padEnd(16)} CPU Dawn ${range(dawn.cpu)}  Rust ${range(rust.cpu)} (game frame ${range(rust.game)})  | GPU frame Dawn ${range(dawn.gpu)}  Rust ${range(rust.gpu)}  | pose stages Dawn ${range(dawn.pose)}  Rust ${range(rust.pose)} ms   (least per round, ${rounds} rounds)`);
+    console.log(`${name.padEnd(16)} CPU Dawn ${range(dawn.cpu)}  Rust ${range(rust.cpu)} (game frame ${range(rust.game)})  | GPU frame Dawn ${range(dawn.gpu)}  Rust ${range(rust.gpu)} (its pose pass Dawn ${range(dawn.inFrame)}  Rust ${range(rust.inFrame)}: the clock state) | pose stages Dawn ${range(dawn.pose)}  Rust ${range(rust.pose)} ms   (least per round, ${rounds} rounds)`);
   }
 }
 

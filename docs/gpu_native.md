@@ -365,6 +365,111 @@ Format defects visible before building (to be confirmed by writing the loader):
 - The output is `rgba8unorm` and every pass clears or overwrites it (the scene clear colour, the sky, the post pass):
   the format assumes Loft owns the whole frame.
 
+### Measured (2026-11-11; built at c0959b4, then merged with main 12a36e2 and measured again)
+
+Pictures: `bun tools/rust_compare.ts` (each frame from a fresh load on both hosts, one render at a time; sheets in
+`out/rust/compare/`). Times: `bun tools/rust_compare.ts --time --rounds 3` (hosts alternated per round). All on the
+folders main builds (12a36e2), 1280 x 800, the scenes' `files_cases.ts` views and cases, plus the crab's stilt variant.
+
+**1. Lines: missed.** Library 1,943 lines (`wc -l`; 1,854 without blank and comment lines), against 1,050 to 1,250;
+`loft-view` 283 (250 to 350, hit). By part: manifest types and conversion 741 (predicted 260-300); objects, frame,
+reference checks and the parallel pipeline helper in `lib.rs` 761 (objects and frame predicted 380-460, and the
+140-line check that every id resolves and every pass's operations are complete was not in the prediction); camera 128
+(130-150, hit); plan 208 (170-200, just over); reading and errors 105 (80-100). The reasoning that failed: I priced
+the WebGPU enums as "small matches". Owning them costs each variant twice (the serde enum and its match to wgpu), about
+20 enums and 42 texture formats: 400 lines that wgpu-types' serde would delete, at the price of tying the file's
+spelling to wgpu's serialization.
+
+**2. Features and limits: hit.** No feature requested; `Limits::default()` held every scene (the 64 KiB
+`loft_detail` sits at the limit). `TIMESTAMP_QUERY` granted on the M4; `TIMESTAMP_QUERY_INSIDE_ENCODERS` not.
+
+**3. Naga against Tint: missed at c0959b4, hit at main.** At c0959b4 Naga rejected 64 of 294 modules, every one for
+one construct: `smoothstep` or `mix` called with only abstract float literals inside a function
+(`smoothstep(0.7, 1.0, 0.0)`, `mix(13.4, 2.0, 0.51)`). Naga 30's constant evaluator lists `Mix` and `SmoothStep`
+as unimplemented (`proc/constant_evaluator.rs`), so the call stays abstract-typed and validation fails ("Abstract types
+may only appear in constant expressions"); Tint evaluates them. My "likeliest miss" named abstract numbers in builtin
+calls but not this. The loader refused each with its module's label; for the proof I typed those literals `f32` in a
+copy of each folder (a tool, since deleted) and both hosts drew it. Main's rate lifting (4b4dd17, constants folded
+in f32) removed the construct: 0 of 407 modules rejected, the same text through both compilers. The two Naga
+differences I checked in the source (its `discard` uniformity rule, its recursion limit) were not triggered.
+
+**4. Pixels: hit.** Pixels whose largest channel differs by more than 8/255, per frame of 1,024,000:
+
+| Scene | t = 1 | t = 2.5 | t = 2.5, input or param | at an edge | largest cluster | > 1/255 |
+|---|---|---|---|---|---|---|
+| maelstrom_wyrm | 14 | 12 | 21 | 46 of 47 | 2 px | 267-383 |
+| reefback_titan | 26 | 38 | 25 | 87 of 89 | 2 px | 201-235 |
+| reefback (stilt) | 8 | 2 | 2 | all | 2 px | 64-74 |
+| thundermaw | 12 | 6 | 18 | all | 2 px | 70-90 |
+| tithe_fleet | 20 | 14 | 14 | all | 1 px | 144-186 |
+| wreckers_lamp | 98 | 76 | 74 | 247 of 248 | 4 px | 229-279 |
+| grab | 7 | 7 | 6 | all | 1 px | 6-12 |
+
+At most 0.0096% of a frame; no cluster larger than 4 pixels; mean signed difference per channel under 0.001/255 in
+every frame (no colour shift); no whole-region difference, so no level of detail chosen differently. What they are:
+steps of a quarter of the local contrast at silhouettes and thin lines (one of four samples covered by one host and
+not the other: a vertex an ulp apart), and single pixels of ink (19, 18, 23) present in one host and absent in the
+other along ink lines, the largest differences (up to 224/255). The prediction of 1 to 2/255 differences over shaded
+surfaces "if the fast-math settings differ" missed: at most 383 pixels differ by more than 1/255, so either both
+compilers run Metal in the same math mode or its fast forms change nothing visible here.
+
+**5. Frame time: GPU hit (within 25%), CPU half-hit.** Least per round, 3 rounds, ranges over rounds:
+
+| Scene | CPU, Dawn `pose + encode` | CPU, Rust headless (game frame) | GPU frame, Dawn | GPU frame, Rust | pose stages, Dawn | pose stages, Rust |
+|---|---|---|---|---|---|---|
+| maelstrom_wyrm | 0.56-0.84 | 0.44-0.58 (0.26-0.56) | 4.39-4.46 | 4.75-4.90 | 0.21 | 0.20-0.25 |
+| reefback_titan | 0.52-1.00 | 0.52-0.87 (0.32-0.66) | 4.33-4.39 | 4.73-4.74 | 0.16-0.26 | 0.08-0.16 |
+| reefback (stilt) | 0.79-1.07 | 0.30-0.53 (0.48-0.68) | 2.03-5.31 | 1.44-5.78 | 0.18 | 0.15 |
+| thundermaw | 0.52-0.71 | 0.39-0.60 (0.32-0.67) | 4.06 | 2.44-4.36 | 0.16-0.19 | 0.16-0.27 |
+| tithe_fleet | 0.66-0.90 | 0.49-0.72 (0.46-0.61) | 4.46-4.52 | 4.80-4.84 | 0.15-0.16 | 0.06-0.16 |
+| wreckers_lamp | 0.57-0.89 | 0.49-0.68 (0.36-0.56) | 4.00-4.06 | 4.41-4.44 | 0.17 | 0.12-0.19 |
+| grab | 0.57-0.76 | 0.47-0.67 (0.48-0.62) | 3.41 | 3.89 | 0.08-0.21 | 0.03-0.14 |
+
+How measured. GPU frame: `loft profile`'s "normal frame" on both sides (Dawn's `frameGpu`, 120 frames; Rust
+`loft-view --frames 120 --wait`): the pose pass from its start to its end plus the render passes from the first's
+start to the last's end, the gap between the two submits not counted, a headless frame that waits for its bounds and
+copies its picture out. Dawn's timestamps are quantised to 65.5 us, wgpu's are not. CPU: Dawn's `frameTimed` pose
+plus encode (its encode includes awaiting an error scope); Rust, the time inside the loader from the first write to
+the caller's submit less the time it waited for the GPU (the bounds), headless and, in brackets, the game's frame
+(`Bounds::Last`, never waiting). Pose stages: 40 repeats in one timed pass, least of 8 rounds, on both.
+
+The clock: the GPU here has two states about 3x apart. The pose pass inside the frame shows which: 0.46 to 0.68 ms
+for the bosses in the slow state, 0.16 to 0.2 in the fast one. Every pair of numbers compared above is from the slow
+state except the stilt crab's and thundermaw's low Rust readings (1.44, 2.44 ms: one round in the fast state each),
+which are not comparable with Dawn's rounds. In the slow state, resolved: Rust's frame is 8 to 14% longer than
+Dawn's in all five scenes measured in it on both sides (0.35 to 0.48 ms, five to seven timestamp quanta, the same in
+every round), inside the 25% predicted but one-sided. Its cause is not measured: the per-pass split is not available
+from Dawn's host; candidates are Naga's MSL against Tint's for the same surface shaders, and wgpu's Metal pass setup.
+Pose stages alone: not resolvable (the two ranges overlap in every scene).
+
+CPU: the prediction for Rust (0.15 to 0.5 ms) holds for the game frame's least readings (0.26 to 0.48) but not the
+headless frame (up to 0.87). The prediction for the TypeScript host (1 to 4 ms, so Rust 3 to 10 times less) missed:
+bun's FFI and Dawn cost 0.52 to 1.07 ms, and Rust's headless frame is 1.0 to 2.6 times cheaper, not 3 to 10. The
+reasoning that failed: I priced per-call FFI at several microseconds; at about 60 draws a frame it is not the cost.
+Both are under a tenth of the GPU frame, so neither host is CPU-bound.
+
+Load (not predicted to a number): with Metal's shader cache warm, 0.35 to 0.55 s per scene; cold, under load
+averages of 70 to 140, 10 to 25 s for grab. Pipelines compile in parallel threads, as Dawn's async pipelines do.
+
+**What merging main asked of the loader.** Rate lifting (more pose levels, one-invocation stages) and the sea's three
+clearance passes (part of a target drawn, a second texture in the scene-depth group, a `nearest` sampler) needed
+nothing: they are entries in lists the loader already executes. One thing needed a change: the sea's textures are
+`r8unorm`, and the loader had enumerated only the three formats version-1 files had used, so it refused the folder
+("unknown variant `r8unorm`") before creating anything. The manifest carried the format by its WebGPU name; what it did
+not carry, and the format document does not say, is which formats a loader must accept. The loader now reads every
+core uncompressed format. Its view dimension (`2d`) and topology (`triangle-list`) are still the closed lists of what
+files use, by the same reasoning, and the document should say whether they may widen without a version bump.
+
+**Timing on Metal, a trap.** Resolving a frame's timestamps in the next submit without waiting for the frame returned
+the previous frame's values for the last passes' end-of-fragment samples, about half the time. Waiting for the frame
+before resolving fixed it; `loft-view` does.
+
+Format changes proposed (rust/loft-loader/README.md says each with its reason): `loft build` validates every module
+with Naga as well as Tint; the document names the formats, view dimensions and topologies a file may use; the `time`
+input by slot; whether a bind group is made at load or per size, said rather than inferred; `Detail.bound.buffer` (a
+name, the one non-index reference) out of the file; and a frame that does not own the frame (matrices in, the caller's
+colour and depth attachments, no clears of the output, surroundings optional), which is also what a game needs next.
+
 ## Rates (2026-11-11)
 
 A compiled scene was about 4 MB of WGSL and took 2 to 3 s to load. This section says why, from the graph, and what

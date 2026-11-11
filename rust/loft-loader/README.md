@@ -36,7 +36,7 @@ queue.submit([encoder.finish()]);                            // the caller submi
   `Bounds::Latest` waits for this frame's (pictures, tests). `FrameStats.gpu_wait` says how long a call waited.
 - Inputs, params, time, camera, `set_cell_pixels`, `set_construction` hold until set again. `set_curves` replaces
   the curve rows. `cameras()` lists the artefact's named cameras.
-- Measuring hooks: `set_timestamps` (four pass-boundary timestamps per frame) and `encode_pose` (the pose dispatches
+- Measuring hooks: `set_timestamps` (pass-boundary timestamps per frame: pose pass at 0 and 1, render pass k at `2 + 2k` and `3 + 2k`; resolve them only after the frame has completed: on Metal a resolve in the next submit read the last passes' end samples before they were written) and `encode_pose` (the pose dispatches
   into a caller's compute pass).
 
 ## What the game needs next to show a monster
