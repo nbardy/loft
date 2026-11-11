@@ -11,18 +11,16 @@ export const BEAT = 60 / BPM, BAR = 4 * BEAT, BARS = 12, PERIOD = BARS * BAR;
 /** Beat b (0 is the loop's first downbeat), in seconds. */
 export const beat = (b: number): number => b * BEAT;
 
-// ---- the formation: a chevron. The middle pair (the fiddler and the samurai, the low crabs) 8 forward and 11 apart, the
-// outer pair 8 back and 16 out (12 in the strip hid them wholly behind the middle pair, whose bodies are wider than
-// the stand-in's boxes), so that the camera can come close enough for the middle pair's bodies to be a third of
-// the frame and the outer pair still stands in it, smaller and further, faces clear (docs/lineup.md, "Second staging").
-/** The middle pair's spacing (world z), the outer pair's offset from the middle, and how far forward / back each pair stands. */
-export const MIDDLE = 11, OUTER = 16, ADVANCE = 8;
-/** Where the faces look: the main framing's eye. */
-export const AUDIENCE = [44, 2.5, 0] as const;
+// ---- the formation: an open row, 20 apart (16 left the fiddler's great claw within reach of the islander's face), nearly facing the camera, so that each crab can be framed alone, large, with
+// no neighbour across its face (docs/lineup.md, "Third staging": the edit gives each crab its moment; the chevron of the
+// second staging hid the outer pair behind the middle pair's claws and stalks).
+/** Lateral spacing (world z). */
+export const SPACING = 20;
+/** Where the faces look: far in front of the row's middle, at face height (each single's camera is nearly in that line). */
+export const AUDIENCE = [100, 3, 0] as const;
 /** Crab k (0 .. 3, left to right as the camera sees it; the camera's left is +z): its place and heading (radians from +x toward +z). */
 export function standing(k: number): { readonly at: readonly [number, number]; readonly heading: number } {
-  const middle = k === 1 || k === 2;
-  const at = [middle ? ADVANCE : -ADVANCE, middle ? (1.5 - k) * MIDDLE : (k === 0 ? OUTER : -OUTER)] as const;
+  const at = [0, (1.5 - k) * SPACING] as const;
   return { at, heading: Math.atan2(AUDIENCE[2] - at[1], AUDIENCE[0] - at[0]) };
 }
 
@@ -41,43 +39,68 @@ export function hostInputs(names: readonly string[], land: (k: number) => readon
 
 // ---- the shots ----
 type V3 = readonly [number, number, number];
-/** A camera: low (just above the water, below the faces), level, perspective. */
+/** A camera: low (just above the water), level, perspective. */
 export type Lens = { readonly eye: V3; readonly target: V3; readonly fovY: number };
+/** What a shot frames: one crab large, a neighbouring pair, or all four. What `lineup_framing` counts screen time by. */
+export type Subject = { readonly kind: "single"; readonly k: number } | { readonly kind: "pair"; readonly k: number } | { readonly kind: "wide"; readonly distance: number };
 /** A shot holds one camera, or moves from one to another between two instants (seconds of the loop), eased in and out. */
 export type Shot =
-  | { readonly kind: "still"; readonly name: string; readonly lens: Lens }
-  | { readonly kind: "move"; readonly name: string; readonly from: Lens; readonly to: Lens; readonly start: number; readonly end: number };
-/** A format: its frame, and its shots, each from `at` seconds to the next one's (the last to the period). Every `at` is a downbeat. */
+  | { readonly kind: "still"; readonly name: string; readonly subject: Subject; readonly lens: Lens }
+  | { readonly kind: "move"; readonly name: string; readonly subject: Subject; readonly from: Lens; readonly to: Lens; readonly start: number; readonly end: number };
+/** A format: its frame, and its shots, each from `at` seconds to the next one's (the last to the period). Every `at` is on a beat. */
 export type Format = { readonly name: string; readonly width: number; readonly height: number; readonly cuts: readonly { readonly at: number; readonly shot: Shot }[] };
 
 const lens = (eye: V3, target: V3, fovY: number): Lens => ({ eye, target, fovY });
+/** fovY 0.4 rad, about 59 mm on a full frame, for every shot. */
+const FOV = 0.4;
+/**
+ * The camera of a subject. A single stands straight in front of its crab, the eye 3 above the water (2 showed the
+ * foam collar at the feet as a line), close enough that the body (shell top to waterline, measured on the strips:
+ * 3.4 to 4.5 for the low crabs) is at least 35% of the height: 26 to 32 away; the spider crab, whose body stands 6.8 up
+ * on its stilts, from 40, aimed higher. A pair from 82, between its two (from 58 the spider crab, tall on its stilts, was large in every pair and had twice the others' large time). The wides from in front of the middle.
+ */
+function framing(s: Subject): Lens {
+  switch (s.kind) {
+    case "single": {
+      const z = standing(s.k).at[1], d = SINGLE[s.k]!;
+      return lens([d.distance, 3, z], [0, d.aim, z], FOV);
+    }
+    case "pair": { const z = (standing(s.k).at[1] + standing(s.k + 1).at[1]) / 2; return lens([82, 3, z], [0, 6, z], FOV); }
+    case "wide": return lens([s.distance, 4, 0], [0, 6.5, 0], FOV);
+  }
+}
+/** Per crab (left to right: islander, fiddler, samurai, spider crab), a single's distance and aim (target height). */
+const SINGLE = [{ distance: 30, aim: 4.4 }, { distance: 26, aim: 4.2 }, { distance: 31, aim: 4.4 }, { distance: 40, aim: 7 }] as const;
 
+type Cue = readonly [number, Subject];
+const one = (k: number): Subject => ({ kind: "single", k }), two = (k: number): Subject => ({ kind: "pair", k });
+const wide = (distance: number): Subject => ({ kind: "wide", distance });
 /**
- * 16:9. fovY 0.4 rad (about 59 mm on a full frame): closer and wider than the first staging's 85 mm, which could not
- * make the bodies large (a long lens from in front cannot shorten a row of four). The eye 2 above the water, below the
- * faces. Three shots cut on downbeats: the slam wide (all four, the boats riding out across the foreground), the throw
- * in the main framing (the middle pair's bodies a third of the height, the outer pair in frame behind; the thrown boats
- * go over the camera), the taunt pushing in from the main framing to the middle pair's two faces. The cut at 6.0 hides the
- * thrown boats going home (the grab's cycle turns there), the seam the shoved ones (the crushes' cycles turn at 0).
+ * The edit, in beats (0 is the loop's first downbeat; 48 in the loop). Slam: all four for a bar (the cascade's wind-ups),
+ * each crab alone on its own slam's beat, then the pairs as the rings carry the boats out. Throw: the pairs as the claws
+ * rise, each alone for a beat as the grips close and squeeze, all four for the whip, the release and the flight, each
+ * alone watching, all four for the four splashes. Taunt: each alone on its own accents (call and answer: islander,
+ * fiddler, samurai, spider crab, twice), the cascade as four singles a beat each, all four for the unison's bar. The
+ * last bar's wide is tighter than the first's, so the seam is a cut (the shoved boats go home there, unseen).
  */
-export const WIDE: Format = {
-  name: "wide", width: 1920, height: 1080, cuts: [
-    { at: 0, shot: { kind: "still", name: "slam", lens: lens([58, 3, 0], [0, 6.5, 0], 0.4) } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([44, 2, 0], [0, 4.8, 0], 0.4) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([44, 2, 0], [0, 4.8, 0], 0.4), to: lens([31, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
-  ],
-};
-/**
- * Square. Four across a square cannot be large, so: the slam wide (all four, small), the throw on the middle pair (the
- * outer pair at the edges), the taunt pushing in to the middle pair's faces. fovY 0.4 as the 16:9.
- */
-export const SQUARE: Format = {
-  name: "square", width: 1080, height: 1080, cuts: [
-    { at: 0, shot: { kind: "still", name: "slam", lens: lens([62, 3, 0], [0, 6.5, 0], 0.4) } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([48, 2, 0], [0, 5, 0], 0.4) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([48, 2, 0], [0, 5, 0], 0.4), to: lens([33, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
-  ],
-};
+const EDIT: readonly Cue[] = [
+  [0, wide(114)], [4, one(0)], [5, one(1)], [6, one(2)], [7, one(3)], [8, two(0)], [10, two(2)],
+  [12, two(0)], [15, two(2)], [18, one(0)], [19, one(1)], [20, one(2)], [21, one(3)], [22, wide(114)],
+  [26, one(0)], [27, one(1)], [28, one(2)], [29, one(3)], [30, wide(114)],
+  [32, one(0)], [33, one(1)], [34, one(2)], [35, one(3)], [36, one(0)], [37, one(1)], [38, one(2)], [39, one(3)],
+  [40, one(0)], [41, one(1)], [42, one(2)], [43, one(3)], [44, wide(100)],
+];
+/** The square: the same edit with its middle wides as pairs (four across a square is small): the whip and release on the left pair then the right, the splashes on the middle. */
+const SQUARE_EDIT: readonly Cue[] = EDIT.flatMap(([b, s]): Cue[] => {
+  switch (s.kind) {
+    case "single": case "pair": return [[b, s]];
+    case "wide": return b === 22 ? [[22, two(0)], [24, two(2)]] : b === 30 ? [[30, two(1)]] : [[b, s]];
+  }
+});
+const SECTION = (b: number): string => (b < 12 ? "slam" : b < 32 ? "throw" : "taunt");
+const cutsOf = (edit: readonly Cue[]) => edit.map(([b, subject]) => ({ at: beat(b), shot: { kind: "still" as const, name: `${SECTION(b)}_${b}`, subject, lens: framing(subject) } }));
+export const WIDE: Format = { name: "wide", width: 1920, height: 1080, cuts: cutsOf(EDIT) };
+export const SQUARE: Format = { name: "square", width: 1080, height: 1080, cuts: cutsOf(SQUARE_EDIT) };
 export const FORMATS = { wide: WIDE, square: SQUARE } as const;
 export type FormatName = keyof typeof FORMATS;
 

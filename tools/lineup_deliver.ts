@@ -5,6 +5,7 @@
 //                               [--formats wide,square] [--fps 30,60] [--pick t,t,...] [--strip-width 960]
 //
 //   strip   per format: a frame per bar and one per accent of the score (two sheets), at --strip-width (default 960)
+//   shots   per format: the first frame of every shot (a tenth of a beat in), to check the framing of the edit
 //   all     the strips, the seam proof, the frame time, a clip of exactly one period per format and frame rate,
 //           a 3 x 3 sheet of the --pick instants (the first is the thumbnail), and README.txt
 //
@@ -32,7 +33,7 @@ const rates = flag("--fps", "30,60").split(",").map(Number);
 const pick = flag("--pick", "").split(",").filter((x) => x !== "").map(Number);
 const stripWidth = Number(flag("--strip-width", "960"));
 const [dir, what] = argv as [string | undefined, string | undefined];
-if (dir === undefined || (what !== "strip" && what !== "all")) throw new Error("usage: bun tools/lineup_deliver.ts <out dir> strip|all [--line a,b,c,d] [--look name] [--formats wide,square] [--fps 30,60] [--pick t,...] [--strip-width 960]");
+if (dir === undefined || (what !== "strip" && what !== "all" && what !== "shots")) throw new Error("usage: bun tools/lineup_deliver.ts <out dir> strip|shots|all [--line a,b,c,d] [--look name] [--formats wide,square] [--fps 30,60] [--pick t,...] [--strip-width 960]");
 const formats: Format[] = formatNames.map((n) => { if (!(n in FORMATS)) throw new Error(`no format "${n}": [${Object.keys(FORMATS).join(", ")}]`); return FORMATS[n as FormatName]; });
 for (const r of rates) if (!(r > 0 && Number.isInteger(r))) throw new Error(`--fps: whole frame rates, got ${r}`);
 mkdirSync(dir, { recursive: true });
@@ -60,6 +61,12 @@ const sheet = async (name: string, f: Format, times: readonly number[], width: n
   console.log(`wrote ${dir}/${name}  ${s.width}x${s.height}  times [${times.map((t) => +t.toFixed(3)).join(", ")}]`);
 };
 const suffix = (f: Format) => (f.name === "wide" ? "" : `_${f.name}`);
+
+if (what === "shots") {
+  for (const f of formats) await sheet(`shots${suffix(f)}.webp`, f, f.cuts.map((c) => c.at + 0.1 * BEAT), f.width === f.height ? Math.round(stripWidth * 0.5625) : stripWidth);
+  loaded.destroy();
+  process.exit(0);
+}
 
 // One frame per bar, a beat into it (so each bar's first accent shows landed); and the score's accents themselves.
 const bars = Array.from({ length: BARS }, (_, b) => b * BAR + BEAT);

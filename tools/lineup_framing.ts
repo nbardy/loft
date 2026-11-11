@@ -2,7 +2,7 @@
 // moment, its body from shell top to waterline without claws or buildings, its face, its feet), projected through each
 // shot's camera on the CPU, with the props' places. A second to run: `bun tools/lineup_framing.ts`. The boxes are read off
 // the strips (16 px a unit at 120 away, 960 x 540); the first staging's stand-in read about 10% large on heights.
-import { FORMATS, shotAt, standing } from "../examples/bosses/lineup_shots.ts";
+import { BEAT, FORMATS, PERIOD, shotAt, standing } from "../examples/bosses/lineup_shots.ts";
 type V3 = readonly [number, number, number];
 type Box = { x: readonly [number, number]; y: readonly [number, number]; z: readonly [number, number] };
 // Crab axes. `body`: shell top to waterline, no claws, no buildings (measured on the strips: 16 px a unit at 120 away).
@@ -10,7 +10,7 @@ const C: Record<string, { all: Box; body: Box; face: Box; feet: Box }> = {
   islander: { all: { x: [-3, 7], y: [-0.3, 11.5], z: [-10, 15.5] }, body: { x: [-1.6, 5], y: [-0.3, 4.5], z: [-4.1, 4.1] }, face: { x: [4, 6], y: [1.8, 5.2], z: [-2.5, 2.5] }, feet: { x: [-2.6, 6.8], y: [-0.4, -0.4], z: [-9.9, 9.9] } },
   fiddler: { all: { x: [-3, 7], y: [-0.3, 12.5], z: [-10, 15] }, body: { x: [-1.6, 5], y: [-0.3, 3.4], z: [-4.1, 4.1] }, face: { x: [4, 6], y: [1.8, 5.5], z: [-2.5, 2.5] }, feet: { x: [-2.6, 6.8], y: [-0.4, -0.4], z: [-9.9, 9.9] } },
   mask: { all: { x: [-3, 7], y: [-0.3, 10.5], z: [-9.6, 10] }, body: { x: [-1.6, 5], y: [-0.3, 4.4], z: [-4.1, 4.1] }, face: { x: [4.5, 5.5], y: [0.6, 3.6], z: [-3.5, 3.5] }, feet: { x: [-2.6, 6.8], y: [-0.4, -0.4], z: [-9.9, 9.9] } },
-  stilt: { all: { x: [-9.5, 6], y: [-0.3, 15.5], z: [-11.3, 11.8] }, body: { x: [-2.5, 3], y: [5, 9], z: [-3.5, 3.5] }, face: { x: [2, 3.5], y: [5.6, 8.2], z: [-2.2, 2.2] }, feet: { x: [-9.3, 5.8], y: [-0.4, -0.4], z: [-11, 11] } },
+  stilt: { all: { x: [-9.5, 6], y: [-0.3, 15.5], z: [-11.3, 11.8] }, body: { x: [-2.5, 3], y: [-0.3, 9], z: [-3.5, 3.5] }, face: { x: [2, 3.5], y: [5.6, 8.2], z: [-2.2, 2.2] }, feet: { x: [-9.3, 5.8], y: [-0.4, -0.4], z: [-11, 11] } },
 };
 const L = ["islander", "fiddler", "mask", "stilt"];
 const PROPS: Record<string, V3> = { disc: [10, 0, 1.5], boat1: [12.6, 1.5, -4.6], land: [38, 1.5, -4], apex: [24, 8, -5] };
@@ -29,11 +29,25 @@ function evaluate(eye: V3, target: V3, fovY: number, W: number, H: number) {
   return { per, horizon, props };
 }
 const pc = (x: number) => (100 * x).toFixed(0);
-for (const f of Object.values(FORMATS)) for (const c of f.cuts) for (const t of c.shot.kind === "move" ? [c.shot.start, c.shot.end - 1e-3] : [c.at]) {
-  const cam = shotAt(f, t).camera;
-  if (cam.kind !== "perspective") throw new Error("lineup_framing: perspective cameras only");
-  const r = evaluate(cam.eye, cam.target, cam.fovY, f.width, f.height);
-  console.log(`${f.name} ${c.shot.name} t ${t.toFixed(2)}: horizon ${pc(r.horizon)}%`);
-  r.per.forEach((p, k) => console.log(`  ${L[k]!.padEnd(9)} all x ${pc(p.all.x0)}..${pc(p.all.x1)} y ${pc(p.all.y0)}..${pc(p.all.y1)}  body ${pc(p.body.y1 - p.body.y0)}% at x ${pc(p.body.x0)}..${pc(p.body.x1)}  face ${((p.face.y1 - p.face.y0) * f.height).toFixed(0)} px at x ${pc((p.face.x0 + p.face.x1) / 2)}  feet to ${pc(p.feet.y1)}%`));
-  if (process.env.PROPS) for (const [p, v] of Object.entries(r.props)) console.log(`  ${p.padEnd(6)} ${v.join(" ")}`);
+// The strips read bodies about 14% larger than these boxes (the second staging: the fiddler 40% where 35 was predicted),
+// so a body counts as large (at least 35% in the picture) from 31% here.
+const LARGE = 0.31;
+for (const f of Object.values(FORMATS)) {
+  const large = [0, 0, 0, 0];
+  console.log(`${f.name} ${f.width}x${f.height}`);
+  f.cuts.forEach((c, i) => {
+    const end = i + 1 < f.cuts.length ? f.cuts[i + 1]!.at : PERIOD, beats = (end - c.at) / BEAT;
+    const cam = shotAt(f, c.at).camera;
+    if (cam.kind !== "perspective") throw new Error("lineup_framing: perspective cameras only");
+    const r = evaluate(cam.eye, cam.target, cam.fovY, f.width, f.height);
+    const bodies = r.per.map((p) => p.body.y1 - p.body.y0), inFrame = r.per.map((p) => p.face.x1 > 0 && p.face.x0 < 1);
+    // A neighbour across a single's face: its largest box (claws up) overlapping the subject's face.
+    const crossing = (k: number) => r.per.some((p, j) => j !== k && p.all.x1 > r.per[k]!.face.x0 && p.all.x0 < r.per[k]!.face.x1 && Math.abs(j - k) === 1 && p.all.y0 < r.per[k]!.face.y1);
+    bodies.forEach((b, k) => { if (b >= LARGE && inFrame[k]) large[k]! += beats; });
+    const sub = c.shot.subject, who = sub.kind === "wide" ? "all four" : sub.kind === "pair" ? `${L[sub.k]} + ${L[sub.k + 1]}` : L[sub.k];
+    const detail = sub.kind === "single" ? `body ${pc(bodies[sub.k]!)}%, face ${((r.per[sub.k]!.face.y1 - r.per[sub.k]!.face.y0) * f.height).toFixed(0)} px, feet to ${pc(r.per[sub.k]!.feet.y1)}%, a neighbour's box near the face: ${crossing(sub.k) ? "yes" : "no"}`
+      : `bodies ${bodies.map((b, k) => (inFrame[k] ? pc(b) : "-")).join("/")}%`;
+    console.log(`  beat ${String(c.at / BEAT).padStart(2)} +${beats}  ${c.shot.name.padEnd(9)} ${who!.padEnd(18)} ${detail}  horizon ${pc(r.horizon)}%`);
+  });
+  console.log(`  large (body >= 35% in the picture, ${LARGE * 100}% here), beats: ${L.map((n, k) => `${n} ${large[k]}`).join(", ")}`);
 }
