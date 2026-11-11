@@ -12,7 +12,7 @@
 // cells c across a wave of length L and amplitude A (0.003 for the serpent's swell at 1-unit cells).
 
 import {
-  add, cross, distance, lift, max, mul, normalize, or, select, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
+  add, cross, distance, gt, lift, max, mul, normalize, or, select, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
 import { CELL_PIXELS } from "../artefact.ts";
@@ -54,9 +54,11 @@ export interface SeaDeform {
   calm(xz: Expr<"vec2">): F;
   /**
    * Its marks on the water at sea-plane point xz, for a pixel footprint `fp` (world units): foam 0..1, and a shade
-   * added to the swell's crest value (-1 trough .. 1 crest). Both 0 outside the reach. GPU or CPU.
+   * added to the swell's crest value (-1 trough .. 1 crest). Both 0 outside the reach. GPU or CPU. `lean`, if it has
+   * one: the direction on the sea plane its foam leans (a ring wave's crest breaks outward); a style that prints the
+   * foam as curled heads curls them that way.
    */
-  look(xz: Expr<"vec2">, t: In<"f32">, fp: F): { readonly foam: F; readonly shade: F };
+  look(xz: Expr<"vec2">, t: In<"f32">, fp: F): { readonly foam: F; readonly shade: F; readonly lean?: Expr<"vec2"> };
   /**
    * Whether sea-plane point xz is in its reach. Where this is false the deformation must be exactly nothing: `toLocal`
    * returns xz, `dip` 0, `calm` 1, `look` 0 and 0, bit for bit, so the sea may skip evaluating it there.
@@ -158,12 +160,15 @@ fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
  *  - the quad's one gap is then tilted across its four pixels toward that hit (a pixel nearer the body by one pixel is
  *    nearer by one pixel's world size), so the level changes from pixel to pixel as a distance does and an edge cut
  *    from it is antialiased like any other, not stepped in twos.
- * Every tap is within the band's reach of the pixel, so wherever the sea's `clear` case holds this is below 0 too. It
+ * It returns the level in x and, in y and z, the unit direction across the water (world x, z) from this water to the
+ * body point that was nearest: the way the level rises, for a style that needs the level a little way off (level there
+ * = level here + offset . direction / width, to first order) or a side to lean to. Zero where there is none.
+ * Every tap is within the band's reach of the pixel, so wherever the sea's `clear` case holds the level is below 0 too. It
  * takes derivatives of values all four pixels of the quad computed: only in a draw whose case is constant on each quad
  * (the sea's), and only with `sceneDepth`.
  */
-const contactLevel = wgslFn<"f32">({
-  name: "loft_contact_level", ret: "f32", wgsl: /* wgsl */ `
+const contactLevel = wgslFn<"vec3">({
+  name: "loft_contact_level", ret: "vec3", wgsl: /* wgsl */ `
 const LOFT_LEVEL_RING = array<vec2<f32>, 16>(${RING.map(([x, y]) => `vec2<f32>(${fl(+x.toFixed(6))}, ${fl(+y.toFixed(6))})`).join(", ")});
 /// How far the water at p is from the body point q, for the level: across the water in full; up and down, nothing for
 /// the first quarter of the width and double beyond it. A tap that lands a little way up a leg or a cliff (or down
@@ -175,7 +180,7 @@ fn loft_level_gap(q: vec3<f32>, p: vec3<f32>, width: f32) -> f32 {
   return sqrt(dot(d.xz, d.xz) + up * up);
 }
 @diagnostic(off, derivative_uniformity)
-fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
+fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> vec3<f32> {
   let r = clamp(width / pixel_world(p), 1.0, 40.0);
   // Which pixel of its quad this is: 0 or 1 each way, 0..3 together.
   let cell = floor(px) - 2.0 * floor(floor(px) * 0.5);
@@ -183,12 +188,16 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   let turn = m * (6.2831853 / 32.0);
   let rot = mat2x2<f32>(cos(turn), sin(turn), -sin(turn), cos(turn));
   // Capped, so the differences below are exact enough where a tap reads the far plane.
-  var gap = min(loft_level_gap(scene_position(px), p, width), 4.0 * width);
+  let under = scene_position(px);
+  var gap = min(loft_level_gap(under, p, width), 4.0 * width);
   var toward = vec2<f32>(0.0);
+  // Where the nearest body point found lies from this water, across the water (world x, z).
+  var reach = (under - p).xz;
   for (var k = 0u; k < 8u; k++) {
     let v = rot * LOFT_LEVEL_RING[k] * r;
-    let g = loft_level_gap(scene_position(px + v), p, width);
-    if (g < gap) { gap = g; toward = v; }
+    let q = scene_position(px + v);
+    let g = loft_level_gap(q, p, width);
+    if (g < gap) { gap = g; toward = v; reach = (q - p).xz; }
   }
   // The inner ring is read only where it can see something: where the scene's clearance (a lower bound on the distance
   // to any opaque pixel) is within its reach. Elsewhere every one of its taps reads the far plane, so skipping it
@@ -197,8 +206,9 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   if (scene_clearance(px) <= 0.55 * r + 1.0) {
     for (var k = 8u; k < 16u; k++) {
       let v = rot * LOFT_LEVEL_RING[k] * r;
-      let g = loft_level_gap(scene_position(px + v), p, width);
-      if (g < gap) { gap = g; toward = v; }
+      let q = scene_position(px + v);
+      let g = loft_level_gap(q, p, width);
+      if (g < gap) { gap = g; toward = v; reach = (q - p).xz; }
     }
   }
   // Along the nearest hit, if a ring had one (with none there is no direction to look in).
@@ -206,8 +216,9 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
     let ray = toward;
     for (var k = 0u; k < 4u; k++) {
       let v = ray * ((f32(k) + (m + 0.5) * 0.25) * 0.25);
-      let g = loft_level_gap(scene_position(px + v), p, width);
-      if (g < gap) { gap = g; toward = v; }
+      let q = scene_position(px + v);
+      let g = loft_level_gap(q, p, width);
+      if (g < gap) { gap = g; toward = v; reach = (q - p).xz; }
     }
   }
   // The least gap of the quad, and the offset of the tap that found it. A fine derivative is (the right pixel) - (the
@@ -219,17 +230,24 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   let sx = select(-1.0, 1.0, (dpdxFine(cell.x) > 0.0) == (cell.x < 0.5));
   let gx = gap + sx * dpdxFine(gap);
   let hx = hit + sx * dpdxFine(hit);
+  let rx = reach + sx * dpdxFine(reach);
   let pair_gap = min(gap, gx);
   let pair_hit = select(hit, hx, gx < gap);
+  let pair_reach = select(reach, rx, gx < gap);
   let sy = select(-1.0, 1.0, (dpdyFine(cell.y) > 0.0) == (cell.y < 0.5));
   let gy = pair_gap + sy * dpdyFine(pair_gap);
   let hy = pair_hit + sy * dpdyFine(pair_hit);
+  let ry = pair_reach + sy * dpdyFine(pair_reach);
   let quad_gap = min(pair_gap, gy);
   let quad_hit = select(pair_hit, hy, gy < pair_gap);
+  let quad_reach = select(pair_reach, ry, gy < pair_gap);
   // Tilted toward the hit: this pixel's place in the quad, along the unit direction from the quad's middle to the hit.
   let d = length(quad_hit);
   let tilt = select(0.0, dot(from_mid, quad_hit) / max(d, 1e-6), d > 0.75);
-  return 1.0 - (quad_gap - tilt * pixel_world(p)) / width;
+  // The unit direction to that body point across the water; none (zero) where it is right under this water or far.
+  let far = length(quad_reach);
+  let dir = select(vec2<f32>(0.0), quad_reach / max(far, 1e-6), far > 0.02 * width && quad_gap < 3.9 * width);
+  return vec3<f32>(1.0 - (quad_gap - tilt * pixel_world(p)) / width, dir);
 }`,
 });
 
@@ -387,6 +405,12 @@ export class Sea implements Chart, Drawable {
     return w === undefined ? lift<"f32">(0) : mul(this.phaseOf(w, xz, time), 1 / (2 * Math.PI));
   }
 
+  /** The direction the largest swell travels (zero for a sea without swell). */
+  private dominantDirection(): Expr<"vec2"> {
+    const w = this.waves.reduce<Wave | undefined>((best, v) => (best === undefined || v.amp > best.amp ? v : best), undefined);
+    return w === undefined ? vec2(0, 0) : vec2(w.dir[0], w.dir[1]);
+  }
+
   /**
    * Which case a quad of water is drawn in (index into the cases built in the constructor): near if any pixel of the
    * quad may see a body, deformed if any is in a deformation's reach. The same on all four pixels (quadMax), so every
@@ -431,6 +455,9 @@ export class Sea implements Chart, Drawable {
       foam: marks.reduce<F>((f, m) => max(f, m.foam), this.contactFoamOf(fr, contact, fp)),
       contact,
       marks: marks.reduce<F>((f, m) => max(f, m.foam), lift<"f32">(0)),
+      // The lean of a deformation that has one, where it marks the water (the last such, should two overlap).
+      marksLean: marks.reduce<Expr<"vec2">>((l, m) => (m.lean === undefined ? l : select(gt(m.foam, 0), m.lean, l)), vec2(0, 0)),
+      swell: this.dominantDirection(),
       phase: this.dominantPhase(xz),
     });
   }
@@ -438,7 +465,10 @@ export class Sea implements Chart, Drawable {
   private contactAt(fr: Fragment, c: ContactCase): Contact {
     switch (c) {
       case "clear": return { kind: "clear" };
-      case "near": return { kind: "near", band: contactBand(fr.world, fr.px, this.foam), level: contactLevel(fr.world, fr.px, this.foam) };
+      case "near": {
+        const level = contactLevel(fr.world, fr.px, this.foam);
+        return { kind: "near", band: contactBand(fr.world, fr.px, this.foam), level: level.x, toward: vec2(level.y, level.z), width: this.foam };
+      }
     }
   }
 

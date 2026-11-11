@@ -162,13 +162,14 @@ export class RingWave implements SeaDeform {
    * Foam along the crest's front face, broken into dashes round the ring and thinning as the wave weakens; the crest
    * shaded lighter and the trough darker (in the swell's crest units).
    */
-  look(xz: V2, t: In<"f32">): { readonly foam: F; readonly shade: F } {
+  look(xz: V2, t: In<"f32">): { readonly foam: F; readonly shade: F; readonly lean: V2 } {
     const w = this.at(xz, t), d = sub(xz, this.centre), strength = this.spread(w.r);
     const band = mul(smoothstep(0.03, 0.1, w.xi), sub(1, smoothstep(0.2, 0.3, w.xi)));
     const angle = atan2(d.y, d.x);
     const dash = add(0.5, mul(0.5, sin(add(mul(angle, 23), mul(3, sin(add(mul(angle, 5), mul(w.xi, 9))))))));
     const foam = mul(mul(band, add(0.4, mul(dash, 0.6))), sqrt(strength));
-    return { foam: select(w.on, foam, 0), shade: select(w.on, mul(mul(this.shape(w.xi), strength), 1.6), 0) };
+    // `lean`: the crest breaks outward (an added readout for a style that prints the foam as curled heads).
+    return { foam: select(w.on, foam, 0), shade: select(w.on, mul(mul(this.shape(w.xi), strength), 1.6), 0), lean: div(d, max(w.r, 1e-4)) };
   }
 
   /** On the pulse: after the slam, between the front and the end of the trough, inside `reach`. Off it every part is exactly nothing. */

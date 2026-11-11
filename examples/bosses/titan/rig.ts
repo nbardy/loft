@@ -14,7 +14,7 @@ import {
   type Pose, type Ring, type RingWave, type Sea, type SeaDeform, type SeaSpec, type Target, type Thrown,
 } from "../../../src/index.ts";
 import { rotate } from "../../../src/map/chart.ts";
-import { impactFoam } from "../lib/impact.ts";
+import { impactFoam, type ImpactPaint } from "../lib/impact.ts";
 import { scaleShip, scaleShipNamed } from "../lib/scale_ship.ts";
 import { PRINT_WARNING } from "../lib/warning.ts";
 import { perFrame, sides, type V3 } from "./ink.ts";
@@ -193,8 +193,8 @@ function audienceOf(a: Audience, place: (p: V3) => P3): P3 {
 const OWN_AUDIENCE: V3 = [23, 27, 21];
 
 /** The crab on its own, at home: its attacks, then its own sea with its ring on it, then the rest. */
-export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
-  const s = stage(n, offer, boats, AT_HOME);
+export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption, burst: (reach: number) => ImpactPaint): Rig {
+  const s = stage(n, offer, boats, AT_HOME, burst);
   return s.finish(sea({ ...s.sea, deform: s.deforms }));
 }
 
@@ -203,7 +203,7 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
  * made with every ring that will run on it (its own, and any other boss's in the scene), everything else. `how` is where
  * the boss stands, how its show ends and whether it taunts.
  */
-export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: Staging): StagedRig {
+export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: Staging, burst: (reach: number) => ImpactPaint): StagedRig {
   const I = n.ink;
 
   // ==== the boss's pose: where it stands and which way it faces, inputs whose defaults are `how.at`, `how.heading` ====
@@ -453,7 +453,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       const splash = impactFoam("splash", water, {
         area: hit.disc({ centre: IN.throwLand, radius: n.splash.reach * 0.5 }), pad: n.splash.reach * 0.5 + 1,
         splashes: [{ at: IN.throwLand, since: flight.landed }],
-        reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black,
+        reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black, paint: burst(n.splash.reach),
       });
       return { frame: blendFrames(socket, floating, afloatAgain), give, splash: [splash] as readonly Drawable[] };
     },
@@ -493,7 +493,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       const spray = impactFoam("spray", water, {
         area: hit.disc({ centre: at, radius: 4 }), pad: 4,
         splashes: [{ at: now, since: taken }],
-        reach: 3.2, seconds: 1.3, foam: I.cream, line: I.black,
+        reach: 3.2, seconds: 1.3, foam: I.cream, line: I.black, paint: burst(3.2),
       });
       return { at, frame, spray: [spray] as readonly Drawable[] };
     },
@@ -508,7 +508,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   const crash = impactFoam("crash", water, {
     area: crushDisc, pad: crashOuter - n.crushRadius + 1,
     splashes: [{ at: IN.crushCentre, since: sub(time, crush.arm) }],
-    reach: crashOuter, seconds: n.crashSeconds, foam: I.cream, line: I.black,
+    reach: crashOuter, seconds: n.crashSeconds, foam: I.cream, line: I.black, paint: burst(crashOuter),
   });
   /** What a game that runs its own boats reads (docs/throw_and_shove.md, "The contract"); the stand-ins above read the same. */
   const handoff: Handoff = {

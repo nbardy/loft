@@ -7,8 +7,8 @@
 //   bun src/cli/main.ts clip examples/bosses/crab_lineup.ts --view lineup --seconds 24 --size 1920x1080 --out out/lineup/lineup_1080p.mp4
 
 import type { Camera } from "../../src/artefact.ts";
-import { foam, lineup, scene } from "../../src/index.ts";
-import { design, styleFor, SUN } from "./reefback_titan.ts";
+import { lineup, scene } from "../../src/index.ts";
+import { design, styleFor, SUN, WATER } from "./reefback_titan.ts";
 import { S } from "./titan/numbers.ts";
 import type { Staging } from "./titan/rig.ts";
 
@@ -86,7 +86,7 @@ const line = lineup({
   loop: { kind: "every", seconds: PERIOD },
 });
 
-export default scene({ sea: line.sea, things: line.things, style: styleFor(S, foam.ridge()), sun: SUN, cameras, period: PERIOD });
+export default scene({ sea: line.sea, things: line.things, style: styleFor(S, WATER.base), sun: SUN, cameras, period: PERIOD });
 export const checks = line.checks;
 /** Each crab's product, in line order: what a game reads of it (`holds`, `waves`, `handoff`, `rig.dance`). */
 export const members = line.members;
