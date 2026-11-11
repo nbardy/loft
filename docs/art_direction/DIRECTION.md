@@ -49,3 +49,9 @@ environment). Chosen to build as 3D variants of the Reefback Titan:
 
 Not chosen: fortress (reads as a wall, not a crab; grey), garden (no silhouette from far away), aqueduct (the
 amphitheatre reads before the crab; the arched legs are worth stealing).
+
+All three are built as variants of the crab (`examples/bosses/reefback_titan.ts`, options under
+`examples/bosses/titan/`): `crab_round2/variants_sheet.webp` shows base, mask, stilt and fiddler at five cameras
+(`bun src/cli/main.ts variants examples/bosses/reefback_titan.ts --only base,mask,stilt,fiddler --views game,far,face,legs,back`).
+Every variant passes the crab's checks. Open: the fiddler asks for a crush disc of 4.4 (base 3.4); `fiddlerBaseDisc`
+is the largest claw that fits the base disc.

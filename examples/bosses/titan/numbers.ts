@@ -18,6 +18,10 @@ export const S = {
     // The mask direction's dark lacquer (armour, helmet): lighter than the line black so ink lines still read on it.
     // The base reads none of it.
     lacquer: [0.14, 0.1, 0.12],
+    // The stilt direction's inks (read only by its options; the base never paints with them): bone-and-straw legs, a
+    // dark olive thorny body, and shrine vermilion as its one accent.
+    straw: [0.86, 0.79, 0.58], strawDark: [0.52, 0.43, 0.27], thorn: [0.34, 0.31, 0.2], thornDark: [0.15, 0.13, 0.09],
+    shrine: [0.8, 0.16, 0.1], shrineDark: [0.42, 0.07, 0.06], paper: [0.97, 0.86, 0.6],
   } satisfies Record<string, V3>,
   /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
   shadowIndigo: 0.42,

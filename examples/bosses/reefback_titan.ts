@@ -20,14 +20,18 @@ import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } 
 import { base as backBase } from "./titan/back/base.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
+import { shrine } from "./titan/back/shrine.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
 import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
+import { thorny } from "./titan/carapace/thorny.ts";
 import { base as clawsBase } from "./titan/claws/base.ts";
 import { fiddler } from "./titan/claws/fiddler.ts";
 import { gauntlet } from "./titan/claws/gauntlet.ts";
+import { tongs } from "./titan/claws/tongs.ts";
 import { base as faceBase } from "./titan/face/base.ts";
 import { mask } from "./titan/face/mask.ts";
+import { patient } from "./titan/face/patient.ts";
 import { periscope } from "./titan/face/periscope.ts";
 import { base as legsBase } from "./titan/legs/base.ts";
 import { armoured } from "./titan/legs/armoured.ts";
@@ -37,35 +41,50 @@ import { S, type Numbers } from "./titan/numbers.ts";
 import { rig } from "./titan/rig.ts";
 import type { BackOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
 
-const CAMERAS: Readonly<Record<string, Camera>> = {
-  game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 },
-  three: { kind: "perspective", eye: [27, 12, 9], target: [1.5, 2, 5.5], fovY: 0.6 },
-  // The face, from the front and above (the claws, folded at rest, cover the mouth from lower down), the fort behind.
-  close: { kind: "perspective", eye: [15.5, 9, 3], target: [4.2, 1.4, 0.2], fovY: 0.55 },
-  top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
-  // The Grab from low and to the side: the claw closing across the beam, the lift and the squeeze.
-  grab: { kind: "perspective", eye: [21, 5.5, -3], target: [8.5, 2.2, -6.5], fovY: 0.6 },
-  // For comparing variants (`loft variants`): a far step back (the whole silhouette, the ship and the crush disc), the
-  // face head on, the legs from the right side at water level, the back from above and behind.
-  far: { kind: "perspective", eye: [33, 21, 21], target: [3, 1.5, -1], fovY: 0.6 },
-  // `close`'s eye with a longer lens: from lower or nearer, the resting claws cover the mouth.
-  face: { kind: "perspective", eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 },
-  legs: { kind: "perspective", eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 },
-  back: { kind: "perspective", eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 },
+// The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
+// comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
+// mount (the carapace's front, and the ride height) all the way; `legs`, `back` and `far` rise by a share of the ride,
+// so a tall crab stays in frame. For the base every shift is exactly 0 and the cameras are the numbers they always were.
+const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
+  const rise = n.ride - S.ride, front = n.carapace.to - S.carapace.to;
+  const at = (c: { eye: readonly [number, number, number]; target: readonly [number, number, number]; fovY: number }, dx: number, dy: number): Camera =>
+    ({ kind: "perspective", eye: [c.eye[0] + dx, c.eye[1] + dy, c.eye[2]], target: [c.target[0] + dx, c.target[1] + dy, c.target[2]], fovY: c.fovY });
+  return {
+    game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 },
+    three: { kind: "perspective", eye: [27, 12, 9], target: [1.5, 2, 5.5], fovY: 0.6 },
+    // The face, from the front and above (the claws, folded at rest, cover the mouth from lower down), the fort behind.
+    close: { kind: "perspective", eye: [15.5, 9, 3], target: [4.2, 1.4, 0.2], fovY: 0.55 },
+    top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
+    // The Grab from low and to the side: the claw closing across the beam, the lift and the squeeze.
+    grab: { kind: "perspective", eye: [21, 5.5, -3], target: [8.5, 2.2, -6.5], fovY: 0.6 },
+    // For comparing variants (`loft variants`): a far step back (the whole silhouette, the ship and the crush disc), the
+    // face head on, the legs from the right side at water level, the back from above and behind.
+    far: at({ eye: [33, 21, 21], target: [3, 1.5, -1], fovY: 0.6 }, 0, rise * 0.35),
+    // `close`'s eye with a longer lens: from lower or nearer, the resting claws cover the mouth.
+    face: at({ eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 }, front, rise),
+    legs: at({ eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 }, 0, rise * 0.85),
+    back: at({ eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 }, 0, rise * 0.5),
+  };
 };
 
 export const design = makeDesign({
   name: "reefback_titan",
   numbers: S as Numbers,
   slots: {
-    carapace: { base: carapaceBase, pebble, kabuto } satisfies Record<string, CarapaceOption>,
+    carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
-    claws: { base: clawsBase, fiddler, gauntlet } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase, mask, periscope } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep } satisfies Record<string, BackOption>,
+    claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
+    face: { base: faceBase, mask, periscope, patient } satisfies Record<string, FaceOption>,
+    back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
   },
   variants: {
-    stilt: { about: "the base crab up on stilt legs", pick: { legs: "stilt" } },
+    // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
+    // patient sad face, a red shrine on its back. The ship is taken further round to the front (-0.55, not -0.75): at
+    // -0.75 it lay 2.8 from the front-left foot's foam.
+    stilt: {
+      about: "a colossal spider crab: thorny body on bamboo stilts, tongs, a shrine",
+      pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "patient", back: "shrine" }, numbers: { grabBearing: -0.55 },
+    },
     // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
     // little cutter, periscope eyes, a dark pebble shell, a ruined lighthouse. Its inks: the body darkens to oxblood and
     // near-black; the great claw is the one accent, vermilion-brick to cream. Its claws ask for a crush disc of 4.4 (the
@@ -84,10 +103,11 @@ export const design = makeDesign({
     },
     // The heikegani: the carapace's front a scowling samurai war mask, armour on every limb, a keep and two pines on top.
     mask: { about: "a samurai crab: war-mask face, lacquer armour, a keep and two pines", pick: { carapace: "kabuto", face: "mask", legs: "armoured", claws: "gauntlet", back: "keep" } },
-    // Stilt legs put the cutter's shoulder 2.5 above the water; the fiddler's 0.8 cutter spans 4.46, short of a wrist
-    // 4.2 out and 2.25 down (4.76): the pair alone fails the grip check (middle 0.19 off). Closing 3.6 out (4.25) it grips
-    // as the fiddler does on base legs (0.058 off). Neither option is wrong; the variant settles their meeting.
-    stiltFiddler: { about: "a fiddler on stilts, taking the ship nearer", pick: { legs: "stilt", claws: "fiddler" }, numbers: { grabWristReach: 3.6 } },
+    // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
+    // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
+    // Arms long enough for its 0.8 cutter (5.15 + 4.95: grip 0.058 off, measured) make its 2.4 crusher span 16.5 to reach
+    // 6.8; folded that far its 7-long palm lies along a forearm aimed away from the disc (38.5% outside, measured). One
+    // armLengths scales both claws by size; this pair needs an arm length per claw, a field the claws' numbers lack.
   },
   compare: ["far", "face", "legs", "back"],
   build: (o, n) => {
@@ -105,7 +125,7 @@ export const design = makeDesign({
         things: [...carapace.things, ...back, ...face, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.boat],
         style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) }),
         sun: [0.15, 0.8, 0.6],
-        cameras: CAMERAS,
+        cameras: camerasFor(n),
       }),
       strikes: { crush: claws.crush },
       holds: { grab: r.grab },
