@@ -4,10 +4,9 @@
 // one render at a time.
 //   bun tools/rust_compare.ts [--size 1280x800] [--only grab,thundermaw] [--keep]
 //   bun tools/rust_compare.ts --time [--rounds 3] [--only ...]
-// Folders: out/rust/files/<scene> (`bun src/cli/main.ts build <scene> --out out/rust/files/<scene>`), and its copy
-// out/rust/compat/<scene> made by tools/naga_compat.ts (the one construct Naga rejects); both hosts draw the copy, and
-// Dawn also draws the original, to show the rewrite changes nothing Dawn draws. The binary is
-// rust/loft-loader/target/release/loft-view (`cargo build --release` there).
+// Folders: out/rust/files/<scene> (`bun src/cli/main.ts build <scene> --out out/rust/files/<scene>`; the stilt crab with
+// `--variant stilt --out out/rust/files/reefback_stilt`). The binary is rust/loft-loader/target/release/loft-view
+// (`cargo build --release` there).
 //
 // Pictures: per frame, the pixels whose largest channel differs by more than 8/255, and what they are: how many sit
 // at an edge of the Dawn picture (an 8-neighbour differs by more than 24/255 there), the largest 8-connected cluster of
@@ -15,15 +14,17 @@
 // whole frame (a colour shift). A side-by-side sheet (Dawn, Rust, differences x8) is written as WebP for every frame
 // with a difference; the lossless PNGs are deleted unless --keep.
 //
-// --time: rounds alternating the hosts, per scene. Dawn: `frameTimed` x 30 on one load; CPU = pose + encode (its encode
-// includes awaiting an error scope). Rust: `loft-view --frames 60` (CPU in the loader less GPU waits; GPU by timestamps).
+// --time: rounds alternating the hosts, per scene, least per round. Dawn: `frameTimed` x 30 on one load, CPU = pose +
+// encode (its encode includes awaiting an error scope); GPU = `frameGpu` (profile's "normal frame"). Rust: `loft-view
+// --frames 60 --wait` (the same headless frame: CPU in the loader less GPU waits, GPU by the same two spans), and
+// `--frames 60` without waiting (a game's frame) for CPU. Pose stages alone: `poseTime(view, 40, 8)` and `--pose-time`.
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { resolveCamera } from "../src/cli/cameras.ts";
 import { encodePng, writeWebp, type Frame } from "../src/cli/image.ts";
 import { readBundle } from "../src/host/files.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { loadBundle } from "../src/host/host.ts";
-import { PROOFS, type Case } from "./files_cases.ts";
+import { PROOFS, type Case, type Proof } from "./files_cases.ts";
 import { readPng } from "./picdiff.ts";
 
 const args = process.argv.slice(2);
@@ -37,10 +38,12 @@ mkdirSync(OUT, { recursive: true });
 if (!existsSync(BIN)) throw new Error(`${BIN} missing: cargo build --release in rust/loft-loader`);
 
 const device = await headlessDevice();
-const scenes = Object.entries(PROOFS).filter(([name]) => only === undefined || only.includes(name));
-const dirOf = (name: string, root = "out/rust/compat") => {
-  const dir = `${root}/${name}`;
-  if (!existsSync(`${dir}/manifest.json`)) throw new Error(`${dir} missing: bun src/cli/main.ts build ${PROOFS[name]!.path} --out ${dir}`);
+// The proofs' scenes, and the crab's tallest variant (most draws), drawn like the crab.
+const CASES: Readonly<Record<string, Proof>> = { ...PROOFS, reefback_stilt: PROOFS.reefback_titan! };
+const scenes = Object.entries(CASES).filter(([name]) => only === undefined || only.includes(name));
+const dirOf = (name: string) => {
+  const dir = `out/rust/files/${name}`;
+  if (!existsSync(`${dir}/manifest.json`)) throw new Error(`${dir} missing: bun src/cli/main.ts build ${CASES[name]!.path} --out ${dir}`);
   return dir;
 };
 
@@ -111,24 +114,21 @@ function compare(a: Frame, b: Frame): { readonly diff: Diff; readonly sheet: Fra
 }
 
 async function pictures(): Promise<void> {
-  console.log(`size ${width}x${height}; columns: >8/255 (share), of them at an edge, largest cluster, >1/255, max, mean signed shift r g b (Rust - Dawn); then, Dawn against itself, what the rewrite changes (original folder against rewritten)`);
+  console.log(`size ${width}x${height}; columns: >8/255 (share), of them at an edge, largest cluster, >1/255, max, mean signed shift r g b (Rust - Dawn)`);
   for (const [name, proof] of scenes) {
     const dir = dirOf(name);
-    const bundle = readBundle(dir), original = readBundle(dirOf(name, "out/rust/files"));
+    const bundle = readBundle(dir);
     const camera = resolveCamera(bundle.manifest, proof.view);
     for (const [k, c] of proof.cases.entries()) {
       const dawnPng = `${OUT}/${name}_${k}_dawn.png`, rustPng = `${OUT}/${name}_${k}_rust.png`;
       const loaded = await loadBundle(device, bundle, { kind: "none" });
       const rgba = await loaded.frame({ camera, width, height, ...c });
       loaded.destroy();
-      const before = await loadBundle(device, original, { kind: "none" });
-      const { diff: r } = compare({ width, height, rgba: await before.frame({ camera, width, height, ...c }) }, { width, height, rgba });
-      before.destroy();
       await Bun.write(dawnPng, encodePng({ width, height, rgba }));
       run([BIN, dir, "--view", proof.view, "--size", `${width}x${height}`, "--out", rustPng, ...caseFlags(c)]);
       const { diff: d, sheet } = compare(readPng(dawnPng), readPng(rustPng));
       const label = `${name} ${JSON.stringify(c)}`;
-      console.log(`${label.padEnd(72)} ${String(d.over8).padStart(6)} (${(100 * d.over8 / (width * height)).toFixed(4)}%)  edge ${d.edge}  cluster ${d.cluster} (${d.bbox})  >1 ${d.over1}  max ${d.max}  shift ${d.shift.map((s) => s.toFixed(3)).join(" ")}  | rewrite in Dawn: >8 ${r.over8}, >1 ${r.over1}, max ${r.max}`);
+      console.log(`${label.padEnd(72)} ${String(d.over8).padStart(6)} (${(100 * d.over8 / (width * height)).toFixed(4)}%)  edge ${d.edge}  cluster ${d.cluster} (${d.bbox})  >1 ${d.over1}  max ${d.max}  shift ${d.shift.map((s) => s.toFixed(3)).join(" ")}`);
       if (d.over1 > 0) writeWebp(`${OUT}/${name}_${k}.webp`, sheet);
       if (!keep) { rmSync(dawnPng); rmSync(rustPng); }
     }
@@ -143,23 +143,24 @@ async function times(): Promise<void> {
     const dir = dirOf(name);
     const bundle = readBundle(dir);
     const camera = resolveCamera(bundle.manifest, proof.view);
-    const dawn = { cpu: [] as number[], wall: [] as number[] }, rust = { cpu: [] as number[], gpu: [] as number[] };
+    const dawn = { cpu: [] as number[], gpu: [] as number[], pose: [] as number[] }, rust = { cpu: [] as number[], game: [] as number[], gpu: [] as number[], pose: [] as number[] };
     for (let r = 0; r < rounds; r++) {
       const loaded = await loadBundle(device, bundle, { kind: "none" });
       const view = { camera, width, height, time: 1 };
-      let cpu = Infinity, wall = Infinity;
+      let cpu = Infinity;
       for (let i = 0; i < 30; i++) {
-        const t = await loaded.frameTimed({ ...view, time: 1 + i / 60 });
+        const t = await loaded.frameTimed(view);
         cpu = Math.min(cpu, t.ms.pose + t.ms.encode);
-        wall = Math.min(wall, t.ms.pose + t.ms.encode + t.ms.readback);
       }
+      dawn.cpu.push(cpu); dawn.gpu.push((await loaded.frameGpu(view, 30)).ms); dawn.pose.push((await loaded.poseTime(view, 40, 8)).total);
       loaded.destroy();
-      dawn.cpu.push(cpu); dawn.wall.push(wall);
-      const out = run([BIN, dir, "--view", proof.view, "--size", `${width}x${height}`, "--time", "1", "--frames", "60"]);
-      const least = (label: string) => Number(new RegExp(`${label}\\s+least ([0-9.]+)`).exec(out)?.[1]);
-      rust.cpu.push(least("cpu  frames 10\\+")); rust.gpu.push(least("gpu  per frame"));
+      const flags = [BIN, dir, "--view", proof.view, "--size", `${width}x${height}`, "--time", "1", "--frames", "60"];
+      const least = (out: string, label: string) => Number(new RegExp(`${label}\\s+least ([0-9.]+)`).exec(out)?.[1]);
+      const waited = run([...flags, "--wait", "--pose-time"]), game = run(flags);
+      rust.pose.push(Number(/pose stages ([0-9.]+) ms/.exec(waited)?.[1]));
+      rust.cpu.push(least(waited, "cpu  frames 10\\+")); rust.gpu.push(least(waited, "gpu  per frame")); rust.game.push(least(game, "cpu  frames 10\\+"));
     }
-    console.log(`${name.padEnd(16)} Dawn cpu ${range(dawn.cpu)} ms, headless frame ${range(dawn.wall)} ms | Rust cpu ${range(rust.cpu)} ms, gpu ${range(rust.gpu)} ms   (least per round, ${rounds} rounds)`);
+    console.log(`${name.padEnd(16)} CPU Dawn ${range(dawn.cpu)}  Rust ${range(rust.cpu)} (game frame ${range(rust.game)})  | GPU frame Dawn ${range(dawn.gpu)}  Rust ${range(rust.gpu)}  | pose stages Dawn ${range(dawn.pose)}  Rust ${range(rust.pose)} ms   (least per round, ${rounds} rounds)`);
   }
 }
 

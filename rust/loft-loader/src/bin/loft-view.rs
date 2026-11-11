@@ -4,10 +4,11 @@
 //!             [--frames N [--wait]] [--pose-time]
 //!
 //! One frame waits for its own level-of-detail bounds (as `loft render` does) and is written as PNG. `--frames N` then
-//! draws N consecutive frames (time advancing 1/60 s) as a game would (planning with the last bounds read, never
+//! draws N consecutive frames of the same view as a game would (planning with the last bounds read, never
 //! waiting; `--wait` makes each frame wait for its own, as a headless frame does) and prints, per frame, the CPU time
 //! inside the loader (from the first write to the caller's submit, less any wait for the GPU inside the call) and, when
-//! the adapter grants timestamp queries, the GPU time from the pose pass's start to the last render pass's end.
+//! the adapter grants timestamp queries, the GPU time as `loft profile`'s "normal frame" defines it: the pose pass
+//! (start to end) plus the render passes (first start to last end), the gap between the two submits not counted.
 //! `--pose-time`: the pose stages alone, as tools/pose_time.ts measures them (40 repeats in one timed pass, least of 8).
 
 use loft_loader::{read_dir, Bounds, Loft, Timestamps, OUTPUT_FORMAT};
@@ -198,9 +199,8 @@ fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft,
         Clock::new(device, queue, 4)
     });
     let bounds = if a.wait { Bounds::Latest } else { Bounds::Last };
-    let (mut cpu, mut gpu, mut pose) = (vec![], vec![], vec![]);
-    for k in 0..a.frames {
-        loft.set_time(a.time + k as f64 / 60.0);
+    let (mut cpu, mut gpu, mut pose, mut passes) = (vec![], vec![], vec![], vec![]);
+    for _ in 0..a.frames {
         let t = Instant::now();
         let mut encoder = device.create_command_encoder(&Default::default());
         let s = loft.encode_frame(device, queue, &mut encoder, target, a.size.0, a.size.1, bounds).unwrap_or_else(|e| fail(e.to_string()));
@@ -214,8 +214,10 @@ fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft,
                 c.encode(&mut e, &ts.set, 4);
                 queue.submit([e.finish()]);
                 let t = c.ticks(device);
-                gpu.push((t[3].wrapping_sub(t[0])) as f64 * c.period_ns / 1e6);
-                pose.push((t[1].wrapping_sub(t[0])) as f64 * c.period_ns / 1e6);
+                let ms = |a: u64, b: u64| b.wrapping_sub(a) as f64 * c.period_ns / 1e6;
+                pose.push(ms(t[0], t[1]));
+                passes.push(ms(t[2], t[3]));
+                gpu.push(ms(t[0], t[1]) + ms(t[2], t[3]));
             }
             _ => {
                 device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
@@ -227,8 +229,9 @@ fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft,
     println!("cpu  per frame  {}", stats(&mut cpu.clone()));
     println!("cpu  frames 10+ {}", stats(&mut cpu[10.min(cpu.len() - 1)..].to_vec()));
     if !gpu.is_empty() {
-        println!("gpu  per frame  {}  (pose pass start to last pass end)", stats(&mut gpu));
+        println!("gpu  per frame  {}  (pose pass + render passes, as profile's normal frame)", stats(&mut gpu));
         println!("gpu  pose pass  {}", stats(&mut pose));
+        println!("gpu  passes     {}", stats(&mut passes));
     }
 }
 

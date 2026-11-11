@@ -65,14 +65,20 @@ The format assumes Loft owns the whole frame. Concretely, in version 1:
 
 See `docs/gpu_native.md`, "Rust loader", for the measurements behind these.
 
-1. **Chunks Naga can compile.** The compiler emits `smoothstep(0.7, 1.0, 0.0)` and `mix(13.4, 2.0, 0.51)` with only
-   abstract literals inside functions. Tint folds them; Naga 30 does not implement either in its constant evaluator and
-   rejects the module (64 of 294 modules over the six scenes). Fold constant calls in the compiler (or emit `0.7f`),
-   and have `loft build` validate every module with Naga as well as Tint, refusing what either rejects.
-2. **The time input by slot.** `{ kind: "inputs", buffer, timeSlot }` instead of "an input named `time`".
-3. **Bind groups made at load or per size, said.** A `sized: true` (or two lists) instead of inferring it by scanning
+1. **Chunks Naga can compile, checked at build.** At c0959b4 the compiler emitted `smoothstep(0.7, 1.0, 0.0)` and
+   `mix(13.4, 2.0, 0.51)` with only abstract literals inside functions. Tint folds them; Naga 30's constant evaluator
+   implements neither, so 64 of 294 modules were rejected. Main's rate lifting (4b4dd17, constants folded in f32)
+   removed the construct by the way: 0 of 407 modules rejected now. Nothing stops it coming back: `loft build` should
+   validate every module with Naga (`naga` CLI or the crate) as well as Tint and refuse what either rejects.
+2. **Which formats a file may use.** The format says strings are WebGPU IDL values but not which ones a loader must
+   accept. The sea's `r8unorm` (main, no version bump) failed this loader, which had enumerated the three formats
+   version-1 files then used; it now reads every core uncompressed format. The format should say "any core format
+   without features" (what this loader reads) or list them, and the same for view dimensions and topologies, which the
+   loader still reads as `2d` and `triangle-list` only (phase 3 widens them, with a version bump).
+3. **The time input by slot.** `{ kind: "inputs", buffer, timeSlot }` instead of "an input named `time`".
+4. **Bind groups made at load or per size, said.** A `sized: true` (or two lists) instead of inferring it by scanning
    entries for a texture.
-4. **One kind of reference.** `plan[k].detail.bound.buffer` is a buffer name, the only reference that is not an index;
+5. **One kind of reference.** `plan[k].detail.bound.buffer` is a buffer name, the only reference that is not an index;
    no loader needs it (`frame.bounds.grids` carries the copies). Drop it from the file's `Detail`.
-5. **A frame that does not own the frame** (above): matrices in, the caller's colour and depth attachments, no clears of
+6. **A frame that does not own the frame** (above): matrices in, the caller's colour and depth attachments, no clears of
    the output, surroundings optional.
