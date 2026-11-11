@@ -7,12 +7,13 @@
 
 import type { Artefact, Camera, FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
-import { Expr, lift, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
+import { Expr, lift, time, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
 import { cameraMatrices, project } from "./host/camera.ts";
 import type { Body } from "./map/sweep.ts";
 import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
-import type { Arming, Attack, Effect, Hold, Motion, Part, Strike, Target } from "./spacetime/attack.ts";
+import type { Arming, Attack, Effect, Hold, Motion, Part, Ring, Strike, Target } from "./spacetime/attack.ts";
+import type { Thrown } from "./geom/grab.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { hullBoxDistance, hullDistance, type HullDistance } from "./geom/hull_distance.ts";
 
@@ -403,6 +404,179 @@ function covered(probe: Probe, e: Effect, a: Attack): { readonly inside: boolean
       return { inside: d <= 0, measured: `the thing's footprint ${fmt(-d)} inside the shape's edge`, limit: "footprint inside" };
     }
   }
+}
+
+// ---- throws -------------------------------------------------------------------------------------------------------
+
+const lenV = (a: V3): number => Math.hypot(a[0], a[1], a[2]);
+const asV3 = (a: number[]): V3 => [a[0]!, a[1]!, a[2]!];
+
+/** One-sided second-order velocities at t from five samples h apart: exact for the two quadratics that meet at a release. */
+function velocitiesAt(at: (t: number) => V3, t: number, h: number): { readonly here: V3; readonly before: V3; readonly after: V3 } {
+  const p0 = at(t), b1 = at(t - h), b2 = at(t - 2 * h), a1 = at(t + h), a2 = at(t + 2 * h);
+  return {
+    here: p0,
+    before: [0, 1, 2].map((k) => (3 * p0[k]! - 4 * b1[k]! + b2[k]!) / (2 * h)) as unknown as V3,
+    after: [0, 1, 2].map((k) => (-3 * p0[k]! + 4 * a1[k]! - a2[k]!) / (2 * h)) as unknown as V3,
+  };
+}
+
+/**
+ * The hand-off a throw promises a game (docs/throw_and_shove.md, "The contract"): at the stated release instant the
+ * thing is at the stated release point, and the gripper has brought it to the stated release velocity. Measured on the
+ * attack's own `thing` before the release (the thing is in the grip, so this is the gripper's motion) from three
+ * samples a 120th of a second apart, carried to the release instant, which is exact for a uniform acceleration. `speed` is how far the velocity
+ * may be off (a share is of the release speed), `place` how far the point (a share of the stroke's length). It holds
+ * whoever places the thing afterwards.
+ */
+export function releasesAt(attack: Attack<Motion, Hold<Thrown>>, o: { readonly speed: Tolerance; readonly place: Tolerance }): Check {
+  const e = attack.effect, toss = attack.toss();
+  const thing = [attack.thing()], stated = [toss.velocity, toss.release, toss.windback];
+  return {
+    name: `${attack.name}: the grip lets go where, when and as fast as it says`,
+    run(probe) {
+      const T = probe.scalar(attack.first), released = T + e.seconds;
+      const [v0, release, windback] = (probe.eval(stated, T) as number[][]).map(asV3) as [V3, V3, V3];
+      // Only instants before the release are sampled (at it the thing is already its placer's): the quadratic through
+      // three of them, a 120th of a second apart, gives the place and the velocity at the release itself.
+      const h = 1 / 120, [p1, p2, p3] = [1, 2, 3].map((k) => asV3(probe.eval(thing, released - k * h)[0] as number[])) as [V3, V3, V3];
+      const here = [0, 1, 2].map((k) => 3 * p1[k]! - 3 * p2[k]! + p3[k]!) as unknown as V3;
+      const before = [0, 1, 2].map((k) => (5 * p1[k]! - 8 * p2[k]! + 3 * p3[k]!) / (2 * h)) as unknown as V3;
+      const speed = lenV(v0), off = lenV(subV(before, v0)), miss = lenV(subV(here, release));
+      const okSpeed = allowance(o.speed, speed), okPlace = allowance(o.place, lenV(subV(release, windback)));
+      return {
+        name: this.name, pass: off <= okSpeed && miss <= okPlace, value: off,
+        measured: `t=${fmt(released, 2)}: at (${release.map((x) => fmt(x, 2)).join(", ")}), ${fmt(miss)} off; velocity (${v0.map((x) => fmt(x, 2)).join(", ")}), ${fmt(speed, 2)}/s, the grip's ${fmt(off)} off`,
+        limit: `velocity within ${describe(o.speed, okSpeed, "release speed")}; point within ${describe(o.place, okPlace, "stroke")}`,
+      };
+    },
+  };
+}
+
+/**
+ * The stand-in's flight is the throw the release promises, and it lands: measured on the attack's own `thing` over its
+ * first arming (a hold whose thrown thing the stand-in places):
+ * - the flight starts at the release point with the release velocity: just after the release its velocity (three
+ *   samples a 120th of a second apart, exact for a ballistic flight) is within `speed` of the stated one (a share is
+ *   of the release speed);
+ * - through the flight it stays above the height it lands at, until it lands;
+ * - at the stated landing time it is within `place` of the stated landing place (a share is of the distance flown);
+ * - it lands at least `least` from where it was taken, measured along the water.
+ */
+export function throwLands(attack: Attack<Motion, Hold<Thrown>>, o: { readonly least: number; readonly speed: Tolerance; readonly place: Tolerance; readonly rate?: number }): Check {
+  const rate = o.rate ?? 60, e = attack.effect, toss = attack.toss();
+  const thing = [attack.thing()], stated = [toss.velocity, toss.release, toss.land, e.at, e.end.up];
+  return {
+    name: `${attack.name}: the thing flies from the release as released, and lands where and when stated`,
+    run(probe) {
+      const T = probe.scalar(attack.first), released = T + e.seconds, lands = released + e.end.flight;
+      const at = (t: number): V3 => asV3(probe.eval(thing, t)[0] as number[]);
+      const [v0, release, land, taken, up] = (probe.eval(stated, T) as number[][]).map(asV3) as [V3, V3, V3, V3, V3];
+      const v = velocitiesAt(at, released, 1 / 120);
+      const speed = lenV(v0), jump = Math.max(lenV(subV(v.after, v0)), lenV(subV(v.after, v.before)));
+      const okSpeed = allowance(o.speed, speed);
+      // Above the landing height from the release until the last sample before touchdown.
+      let least = Infinity, when = released;
+      for (const t of times(released, lands - 0.5 / rate, rate)) { const c = dotV(subV(at(t), land), up); if (c < least) { least = c; when = t; } }
+      const flown = lenV(subV(land, release)), miss = Math.max(lenV(subV(at(lands), land)), lenV(subV(v.here, release))), okPlace = allowance(o.place, flown);
+      const d = subV(land, taken), rise = dotV(d, up), far = Math.sqrt(Math.max(dotV(d, d) - rise * rise, 0));
+      return {
+        name: this.name, pass: jump <= okSpeed && least > 0 && miss <= okPlace && far >= o.least, value: far,
+        measured: `leaves at ${fmt(speed, 2)}/s, ${fmt(jump)} off the release; least ${fmt(least, 2)} above landing height (t=${fmt(when, 2)}); lands ${fmt(miss)} off at t=${fmt(lands, 2)}, ${fmt(far, 2)} from where taken`,
+        limit: `velocity within ${describe(o.speed, okSpeed, "release speed")}; above until it lands; within ${describe(o.place, okPlace, "distance flown")}; >= ${fmt(o.least, 2)} away`,
+      };
+    },
+  };
+}
+
+/**
+ * A thrown thing, as a ball of radius `size` round its middle, keeps at least `margin` clear of every target (the
+ * thrower's own body, its shell) from its release to its touchdown. Measured over the first arming.
+ */
+export function fliesClear(attack: Attack<Motion, Hold<Thrown>>, targets: readonly Target[], o: { readonly size: number; readonly margin?: number; readonly rate?: number }): Check {
+  const rate = o.rate ?? 60, margin = o.margin ?? 0, e = attack.effect, thing = [attack.thing()];
+  if (targets.length < 1) throw new Error(`fliesClear "${attack.name}": no targets`);
+  return {
+    name: `${attack.name}: the thrown thing flies clear of ${targets.length} target${targets.length === 1 ? "" : "s"}`,
+    run(probe) {
+      const released = probe.scalar(attack.first) + e.seconds;
+      let least = Infinity, when = released, which = 0;
+      for (const t of times(released, released + e.end.flight, rate)) {
+        const p = asV3(probe.eval(thing, t)[0] as number[]);
+        // A ball as a capsule of no length: the gap measures are written for chains.
+        const ball: Joint[] = [{ p, r: o.size }, { p: [p[0], p[1] + 1e-4, p[2]], r: o.size }];
+        targets.forEach((target, k) => { const g = gap(probe, ball, target, t); if (g < least) { least = g; when = t; which = k; } });
+      }
+      return { name: this.name, pass: least >= margin, value: least, measured: `${fmt(least, 2)} from target ${which} (${targets[which]!.kind}) at t=${fmt(when, 2)}`, limit: `>= ${fmt(margin, 2)}` };
+    },
+  };
+}
+
+// ---- the aftermath on the water -----------------------------------------------------------------------------------
+
+/**
+ * The stand-in's shove is the wave's own impulse, and it is enough. Measured over the first arming for a thing afloat
+ * at `place` (x, z):
+ * - just after the front arrives, the stand-in's drift (`pushed`) moves at the impulse the wave states there
+ *   (`wave.impulse(place)`, units per second), within `impulse` (a share is of that impulse): the stand-in is one
+ *   consumer of the field a game samples, not a second formula;
+ * - six drag times later it has come to `wave.shoved(place)` (to 0.5%), which is at least `least`.
+ */
+export function shoves(attack: Attack<Motion, Effect, Ring>, place: In<"vec2">, o: { readonly least: number; readonly impulse: Tolerance }): Check {
+  const wave = attack.wave(), at = lift<"vec2">(place);
+  const stated = [wave.shoved(at), wave.arrival(at), wave.impulse(at), at], pushed = [attack.pushed(at)];
+  return {
+    name: `${attack.name}: its ring shoves what floats at the place given, by its own impulse`,
+    run(probe) {
+      const T = probe.scalar(attack.first);
+      const [end, arrival, kick, p] = probe.eval(stated, T) as [number[], number, number[], number[]];
+      const drag = attack.aftermath.drag, front = T + arrival;
+      const at2 = (t: number): V3 => { const v = probe.eval(pushed, t)[0] as number[]; return [v[0]!, 0, v[1]!]; };
+      // The drift's velocity a thousandth of a drag time after the front, by a second-order one-sided difference.
+      const h = drag / 400, t0 = front + h, v = velocitiesAt(at2, t0, h).after;
+      const given = Math.hypot(kick[0]!, kick[1]!), decayed = Math.exp(-h / drag);
+      const off = Math.hypot(v[0] - kick[0]! * decayed, v[2] - kick[1]! * decayed), okKick = allowance(o.impulse, given);
+      const late = at2(front + 6 * drag), final = Math.hypot(end[0]!, end[1]!), short = Math.hypot(late[0] - end[0]!, late[2] - end[1]!);
+      return {
+        name: this.name, pass: final >= o.least && off <= okKick && short <= 0.005 * final, value: final,
+        measured: `at (${fmt(p[0]!, 2)}, ${fmt(p[1]!, 2)}): front at t=${fmt(front, 2)} gives ${fmt(given, 2)}/s, the drift's start ${fmt(off)} off it; shoved ${fmt(final, 2)} (${fmt(Math.hypot(late[0], late[2]), 2)} by t=${fmt(front + 6 * drag, 2)})`,
+        limit: `>= ${fmt(o.least, 2)}; impulse within ${describe(o.impulse, okKick, "impulse")}`,
+      };
+    },
+  };
+}
+
+/**
+ * Nothing moves before the front arrives: at each place, from a second before the arming time until the ring's front
+ * reaches it, the shove and the wave's lift are exactly 0; and one drag time after it arrives the thing there has moved
+ * (so the check is not passed by a wave that never comes). Measured over the first arming.
+ */
+export function frontFirst(attack: Attack<Motion, Effect, Ring>, places: readonly In<"vec2">[], o: { readonly rate?: number } = {}): Check {
+  const rate = o.rate ?? 60, wave = attack.wave();
+  if (places.length < 1) throw new Error(`frontFirst "${attack.name}": no places`);
+  const roots = places.map((place) => { const at = lift<"vec2">(place); return { arrival: [wave.arrival(at)], moved: [attack.pushed(at), wave.lifts(at, time)] }; });
+  return {
+    name: `${attack.name}: nothing moves before its ring's front arrives`,
+    run(probe) {
+      const T = probe.scalar(attack.first);
+      let early = 0, when = T, later = Infinity;
+      for (const r of roots) {
+        const arrival = probe.eval(r.arrival, T)[0] as number;
+        for (const t of times(T - 1, T + arrival, rate)) {
+          const [push, rise] = probe.eval(r.moved, t) as [number[], number];
+          const m = Math.max(Math.abs(push[0]!), Math.abs(push[1]!), Math.abs(rise));
+          if (m > early) { early = m; when = t; }
+        }
+        const [push] = probe.eval(r.moved, T + arrival + attack.aftermath.drag) as [number[], number];
+        later = Math.min(later, Math.hypot(push[0]!, push[1]!));
+      }
+      return {
+        name: this.name, pass: early === 0 && later > 0, value: early,
+        measured: `most before the front ${early === 0 ? "0 (exactly)" : `${early.toExponential(2)} at t=${fmt(when, 2)}`}; a drag time after it, moved at least ${fmt(later, 2)}`,
+        limit: "exactly 0 before; moving after",
+      };
+    },
+  };
 }
 
 /** The compiled scene draws at most `triangles` triangles. */

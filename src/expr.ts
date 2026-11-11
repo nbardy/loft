@@ -191,7 +191,6 @@ export type Num = Expr<NumTy> | number | readonly number[];
 
 const interned = new Map<string, Expr>();
 const params = new Map<string, ParamSpec>();
-const inputs = new Map<string, InputSpec>();
 
 export class Expr<T extends Ty = Ty> {
   private constructor(readonly id: number, readonly node: Node) {}
@@ -263,10 +262,12 @@ export function variable<T extends Ty>(name: string, ty: T): Expr<T> {
 export function input<T extends NumTy>(name: string, ty: T, def: readonly number[]): Expr<T> {
   if (def.length !== SIZE[ty]) throw new Error(`input "${name}": default has ${def.length} components, ${ty} needs ${SIZE[ty]}`);
   const spec: InputSpec = { name, ty, def };
-  const seen = inputs.get(name);
-  if (seen && (seen.ty !== ty || seen.def.join() !== def.join())) throw new Error(`input "${name}" declared twice with different types or defaults`);
-  inputs.set(name, spec);
-  return Expr.make({ op: "input", ty, spec }, `i:${name}`);
+  // An input's declaration belongs to the scene that reads it, not to the process: the variants of one design are
+  // several scenes built in one process, and each may give an input its own default (where its ship floats). So the
+  // node is interned by name, type and default, and "declared twice, differently" is refused where one scene's inputs
+  // are bound (src/compile/bind.ts). Until 2026-11-11 it was refused here, process-wide, with the node interned by name
+  // alone, so a second variant could not have declared a different default (and would have silently got the first's).
+  return Expr.make({ op: "input", ty, spec }, `i:${name}:${ty}:${def.join()}`);
 }
 
 /** Seconds since the scene started. */

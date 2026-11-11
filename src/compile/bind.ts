@@ -41,7 +41,11 @@ export class Slots {
 
   input(spec: InputSpec): InputSlot {
     const seen = this.inputMap.get(spec.name);
-    if (seen) return seen;
+    if (seen) {
+      // One scene, one declaration per name (the process-wide check that was in `input`, src/expr.ts).
+      if (seen.ty !== spec.ty || seen.def.join() !== spec.def.join()) throw new Error(`input "${spec.name}" declared twice in one scene with different types or defaults (${seen.ty} [${seen.def.join(", ")}], ${spec.ty} [${spec.def.join(", ")}])`);
+      return seen;
+    }
     this.fresh(`input "${spec.name}"`);
     const made: InputSlot = { name: spec.name, ty: spec.ty, slot: this.inputFloats, def: spec.def };
     this.inputFloats += FLOATS[spec.ty];
