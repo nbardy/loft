@@ -5,13 +5,15 @@
 //
 // The body is one strand whose spine is written in world coordinates in closed form: a spiral from the head at the
 // rim inward to the tail diving into the throat, its height a sum of four arches over a line below the water. At rest
-// the arches heave in sequence, the whole coil slithers along its own path, the head sways and breathes and the gills
-// flare with the breath. Every rest motion repeats in LOOP seconds.
+// the arches heave in sequence, the whole coil slithers along its own path, the neck sways while the head holds on
+// the ship (eyes on it), the jaw breathes and works, the whiskers drift and the gills flare with the breath. Every rest
+// motion repeats in LOOP seconds. The head is an East Asian dragon's on a crocodile's planes (see "the head" below).
 //
 // The signature attack, Coil Lash: one arch rears into a tall loop, leaning back, then topples outward and slams down
 // flat across a capsule on the water (src/spacetime/rear.ts). It is an `attack` like any other: the warning is the
 // capsule drawn on the water (`telegraph`), the pose is derived from the attack's envelopes, and after the slam that
-// arch's pearl gland swells open (the game's exposure window). Here the attack loops on time (it arms LASH.at seconds
+// arch's pearl gland swells open (the game's exposure window); the head rears, turns to the lane, roars and flares its
+// gills through it. Here the attack loops on time (it arms LASH.at seconds
 // into every loop); a game sets `lash.at` and `lash.warn` instead.
 //
 // The style is woodblock with its body inks retuned for this monster (DIRECTION.md: slate and olive coils, vermilion
@@ -19,9 +21,9 @@
 // lit. The sea, the key line and the paper are woodblock's own.
 
 import {
-  abs, add, clamp, cos, crest, distance, div, dot, draw, floor, fract, horn, input, keys, lift, lt, max, min, mix, mod, mul,
-  on, place, points, pow, rotateAbout as rotate, scene, sea, select, ship, sin, smoothstep, step, strand, sub, TAU, through, time, vec2, vec3,
-  vec4, whirlpool, length, woodblock, type Expr, type F, type In, type P3, type ShadeCtx, type Style,
+  abs, add, clamp, cos, crest, cross, distance, div, dot, draw, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, min, mix,
+  mod, mul, normalize, on, place, points, pow, scene, sea, select, ship, sin, smoothstep, spacing, step, strand, sub, TAU, through, time,
+  vec2, vec3, vec4, whirlpool, length, woodblock, type Chart, type Expr, type F, type Frame, type In, type P3, type ShadeCtx, type Style,
 } from "../../src/index.ts";
 import { animate, attack, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { landsInside } from "../../src/check.ts";
@@ -52,8 +54,8 @@ const BODY = {
   start: -1.5,         // bearing of the neck from the centre, radians from +x toward +z
   dip: 1.7,            // how far below the water the body runs between arches
   neckEnd: 0.16,       // the neck rises out of the water from this m up to the head at m = 0
-  headHeight: 6.2,     // height of the head above the water
-  headIn: 2.6,         // how far the head leans in over the pool from the spiral
+  headHeight: 7.0,     // height of the head above the water
+  headIn: 5.4,         // how far the head leans in over the pool from the spiral
   slither: 0.05,       // radians the coil slides along its own path over the loop
   heave: 0.14,         // share each arch rises and falls, in sequence round the coil
   sway: 0.5,           // world units the head sways
@@ -68,14 +70,18 @@ const ARCHES = [
 ] as const;
 
 const HEAD = {
-  length: 4.6,         // skull length
-  width: 1.35,         // skull half-width at its widest
-  pitch: 0.08,         // nose-down tilt, radians
-  gape: 0.22,          // jaw opening at rest, radians; it breathes by `breath`
-  breath: 0.1,
-  horn: 2.6,           // horn length
-  hornCurl: 1.5,
-  gill: 2.6,           // gill frill height
+  size: 1,             // every head measure below is multiplied by this
+  length: 5.6,         // back of the skull to the nose tip
+  gape: 0.16,          // jaw opening at rest, radians; it breathes by `breath` and works by `chew`
+  breath: 0.06,
+  chew: 0.025,
+  roar: 0.55,          // extra opening at the height of the Coil Lash
+  yaw: 0.9,            // radians the head may turn from the neck, sideways and up or down, to hold on its prey
+  pitch: 0.35,
+  rearTilt: 0.35,      // the snout lifts as the head rears during the lash...
+  rear: 1.6,           // ...and the neck rises this far
+  horn: 0.85,          // antler length, as a share of the drawn one
+  gill: 3.0,           // longest gill ray
 };
 
 /** Coil Lash: which arch, where it falls, and its timing. */
@@ -179,6 +185,8 @@ function heightAt(m: F): F {
   // A swan's neck: it leaves the water steeply and levels out under the head.
   const neck = pow(sub(1, smoothstep(0, B.neckEnd, m)), 0.5);
   y = add(y, mul(neck, B.headHeight + B.dip));
+  // The head rears during the lash (`lash` is declared below; this runs when the body is posed, after it).
+  y = add(y, mul(neck, mul(lash.envelope(time).p, HEAD.rear)));
   for (const [k, a] of ARCHES.entries()) {
     const u = clamp(div(sub(m, a.at - a.half), 2 * a.half), 0, 1);
     const heave = add(1, mul(sin(sub(mul(time, W), k * 1.6)), B.heave));
@@ -277,82 +285,7 @@ const restAnimated = animate(restSpine, [lash], (spine) => {
 });
 const body = restAnimated.parts.coil!.body;
 
-// ---- the head: skull, jaw, horns, eyes, teeth; placed on the body at m = 0, facing toward -m ----------------------
-const X: In<"vec3"> = [1, 0, 0], Y: In<"vec3"> = [0, 1, 0], Z: In<"vec3"> = [0, 0, 1];
-const forward = rotate(mul(lift<"vec3">(X), -1), Z, HEAD.pitch);
-const crown = rotate(Y, Z, HEAD.pitch);
-const hl = HEAD.length, hw = HEAD.width, hh = HEAD.width * 0.72;
-const skullPoints = [0, 0.35, 0.7, 1].map((u) => add(mul(lift<"vec3">(X), 0.1 * hl), sub(mul(forward, hl * u), mul(crown, 0.07 * hl * u * u))));
-const skullW = keys([[0, hw * 0.85], [0.3, hw], [0.65, hw * 0.72], [1, hw * 0.4]]);
-const skullA = keys([[0, 0.85], [0.3, 0.72], [0.65, 0.62], [1, 0.55]]);
-/** Skull paint: slate crown with brow scales, olive cheeks, a cream lip line along the mouth. */
-const headPaint = (m: F, v: F): P3 => {
-  const mouth = smoothstep(0.84, 0.85, mul(sin(mul(v, TAU)), -1));
-  // Brow and snout plates across the crown; slate above, olive under the cheeks (as the body).
-  const brow = mul(sub(1, step(0.1, abs(sub(fract(mul(m, 6)), 0.5)))), sub(1, step(0.24, abs(sub(v, 0.25)))));
-  const skin = select(lt(abs(sub(v, 0.75)), 0.22), rgb(K("olive")), rgb(K("slate")));
-  return select(lt(0.5, mouth), select(lt(0.5, step(0.3, m)), rgb(K("vermilion")), skin), select(lt(0.5, brow), rgb(K("black")), skin));
-};
-const head = place(strand({
-  name: "wyrmHead", spine: (m) => through(m, skullPoints), stations: 12,
-  girth: (m) => skullW(m).x, section: { aspect: (m) => skullA(m).x, squareness: 2.8 },
-  tips: [{ round: 0.25 }, { round: 0.12 }], up: crown, paint: headPaint, detail: { along: 40, around: 24 },
-}), on(body, [0, 0.25, 0]));
-
-const gape = add(HEAD.gape, mul(sin(mul(time, W * 2)), HEAD.breath));
-const jawDir = vec3(cos(gape), sin(gape), 0);
-const hinge = vec3(0, hh * 0.8, 0);
-const jl = hl * 0.66;
-const jawW = keys([[0, hw * 0.72], [0.5, hw * 0.66], [1, hw * 0.36]]);
-const jaw = place(strand({
-  name: "wyrmJaw",
-  spine: (m) => through(m, [sub(hinge, mul(jawDir, 0.12 * jl)), add(hinge, mul(jawDir, 0.5 * jl)), add(hinge, mul(jawDir, jl))]),
-  stations: 8, girth: (m) => jawW(m).x, section: { aspect: 0.4, squareness: 2.6 },
-  tips: [{ round: 0.15 }, { round: 0.12 }], up: vec3(sin(gape), mul(cos(gape), -1), 0),
-  paint: (_m, v) => select(lt(0.5, smoothstep(0.7, 0.71, sin(mul(v, TAU)))), rgb(K("vermilion")), rgb(K("cream"))),
-  detail: { along: 24, around: 20 },
-}), on(head, [0.22, 0.75, 0]));
-
-const hornR = horn({
-  name: "wyrmHornR", length: HEAD.horn, curl: HEAD.hornCurl, taper: 0.16, girth: 0.34,
-  out: [-1, 0.55, 0.4], toward: [0.2, -1, 0.1], paint: K("cream"),
-});
-const hornL = horn({
-  name: "wyrmHornL", length: HEAD.horn, curl: HEAD.hornCurl, taper: 0.16, girth: 0.34,
-  out: [-1, 0.55, -0.4], toward: [0.2, -1, -0.1], paint: K("cream"),
-});
-const horns = [place(hornR, on(head, [0.12, 0.25 - 0.08, 0.85])), place(hornL, on(head, [0.12, 0.25 + 0.08, 0.85]))];
-
-const eye = (name: string, v: number) => place(strand({
-  name, spine: (m) => through(m, [[0, -0.2, 0], [0, 0.2, 0]]), stations: 4, girth: 0.3,
-  tips: [{ round: 0.5 }, { round: 0.5 }], up: [0, 0, -Math.sign(Math.cos(TAU * v))],
-  // A vermilion iris with a black slit, sunk under the brow (a white eye read as a cartoon's).
-  paint: (m, vv) => select(lt(0.5, mul(step(0.7, m), sub(1, step(0.35, abs(cos(mul(vv, TAU))))))), rgb(K("black")), rgb(K("vermilion"))),
-  detail: { along: 12, around: 12 },
-}), on(head, [0.34, v, 0.97]));
-const eyes = [eye("wyrmEyeR", 0.25 - 0.13), eye("wyrmEyeL", 0.25 + 0.13)];
-
-const tooth = strand({
-  name: "wyrmTooth", spine: (m) => through(m, [[0, -0.05, 0], [0.04, 0.2, 0], [0.1, 0.42, 0]]), stations: 4,
-  girth: 0.1, tips: ["open", { point: 0.85 }], up: [1, 0, 0], paint: K("cream"), detail: { along: 6, around: 8 },
-});
-const TEETH = 5;
-const teeth = draw.points("wyrmTeeth", place(points(2 * TEETH, (i) => {
-  const j = mod(i, TEETH), side = select(lt(i, TEETH), -1, 1);
-  return { at: vec3(add(0.42, mul(j, 0.5 / TEETH)), add(0.75, mul(side, 0.11)), 0.9), scale: add(1.3, mul(j, -0.12)) };
-}), head), tooth);
-
-// ---- gills: vermilion frills on both sides of the neck, flaring with the breath -------------------------------------
-const gillProfile = keys([[0, 0.2], [0.25, 1], [0.6, 0.8], [1, 0]]);
 const ridgeProfile = keys([[0, 0], [0.05, 0.55], [0.9, 0.4], [1, 0]]);
-const flare = add(1, mul(sin(mul(time, W * 2)), 0.18));
-// One frill a side (a second, lower pair cost 0.08 ms of GPU from the game camera for little that reads there).
-const gills = [0.03, 0.47].map((v, k) => crest({
-  on: body, from: 0.004, to: 0.065, v, name: `wyrmGill${k}`,
-  height: (x: In<"f32">) => mul(mul(gillProfile(x).x, HEAD.gill), flare),
-  paint: K("vermilion"), rays: 6, sag: 0.35, rake: 0.55,
-  flutter: (m) => mul(sin(sub(mul(m, 60), mul(time, W * 3))), 0.15), rows: 24,
-}));
 
 /** A low dark fin down the back, along the arches. */
 const ridge = crest({
@@ -389,6 +322,214 @@ const scaleShip = ship(sloop("skiff", SHIP.length, {
   cloth: K("sail"), rope: K("black"), team: K("cream"),
 })).afloat(vortex, { at: shipAt, heading: shipBearing + Math.PI / 2, wind: WIND });
 
+// ==== the head ======================================================================================================
+// Reference: the East Asian dragon as the woodblock printers cut it (Hokusai's and Kuniyoshi's sea dragons), built on
+// a crocodile's planes. A broad cheek and a heavy brow ridge shading the eye; a step down in front of the eyes to a
+// long flat-topped snout that ends in a nostril bulb; a jaw hinged far back under the eye, so the mouth runs the
+// length of the head. The silhouette is the dragon's: antlers swept back off the crown, whiskers trailing from the lip,
+// a fan of vermilion gills behind each cheek.
+//
+// Head coordinates (the `skull` chart): x back toward the neck, y up, z to the side; the snout points along -x. The
+// chart is the neck's end frame turned toward what the wyrm watches (the ship at rest, the lash's lane while it
+// lashes), within limits, so the head holds on its prey while the neck sways under it, as a snake's does.
+
+/** 0 at rest .. 1: the lash's posture (wind-up through recovery). The head rears, turns to the lane and roars. */
+const lashPose = lash.envelope(time).p;
+const Y: In<"vec3"> = [0, 1, 0];
+const shipTarget = vec3(shipAt[0], 1.2, shipAt[1]);
+const laneTarget = vec3((laneA[0] + laneB[0]) / 2, 0, (laneA[1] + laneB[1]) / 2);
+const gaze = mix(shipTarget, laneTarget, lashPose);
+const UP = lift<"vec3">(Y);
+const S = HEAD.size, HL = HEAD.length * HEAD.size;
+
+/** The neck's end frame (body m = 0) turned to face `gaze`, as a rigid chart in head coordinates. */
+function skullChart(host: Chart): Chart {
+  const c = lift<"vec3">([0, 0.25, 0]);
+  const g = host.frame(c);
+  const look = lookAt({ from: { o: g.o, x: mul(g.x, -1), y: g.y, z: mul(g.z, -1) }, target: gaze, yaw: HEAD.yaw, pitch: HEAD.pitch });
+  const ahead = normalize(add(look.dir, mul(UP, mul(lashPose, HEAD.rearTilt))));
+  const x = mul(ahead, -1);
+  const y = normalize(sub(UP, mul(ahead, dot(UP, ahead))));
+  const f: Frame = { o: g.o, x, y, z: cross(x, y) };
+  return { frame: (l) => ({ ...f, o: add(g.o, inFrame(f, l)) }), at: (t) => skullChart(host.atNear(t, c)), atNear: (t) => skullChart(host.atNear(t, c)) };
+}
+const skull = skullChart(body);
+
+/** x in head coordinates of the skull's station u (0 the back of the skull .. 1 the nose tip). */
+const xAt = (u: number) => (0.12 - u) * HL;
+/** The skull's profile at six stations (u, top, bottom, half-width), in head units (times HEAD.size). */
+const PROFILE = [
+  [0, 0.95, -0.85, 1.25],   // occiput, over the neck
+  [0.2, 1.02, -0.78, 1.55], // forehead and cheek: the widest (the brows stand above it)
+  [0.4, 0.82, -0.62, 1.08], // the stop in front of the eyes
+  [0.6, 0.66, -0.56, 0.82], // the snout's flat top
+  [0.8, 0.62, -0.52, 0.85],
+  [1, 0.5, -0.45, 0.72],    // the nose tip, behind the nostril bulb
+] as const;
+/** Half-width and aspect along the skull, with the nostril bulb between the last two stations. */
+const withBulb = <T,>(rows: (readonly [number, T])[], bulb: T) => [...rows.slice(0, -1), [0.9, bulb] as const, rows[rows.length - 1]!];
+const skullW = keys(withBulb(PROFILE.map(([u, , , w]) => [u, w * S] as const), 0.95 * S));
+const skullA = keys(withBulb(PROFILE.map(([u, t, b, w]) => [u, (t - b) / 2 / w] as const), 0.61));
+
+/** Skull paint: slate crown and snout top, olive flanks, scutes cut across the snout's top plane, a black mouth. */
+function skullPaint(m: F, v: F): P3 {
+  const dorsal = abs(sub(v, 0.25)), ventral = abs(sub(v, 0.75));
+  const skin = select(lt(dorsal, 0.2), rgb(K("slate")), rgb(K("olive")));
+  const scute = mul(mul(step(0.45, m), sub(1, step(0.88, m))), mul(sub(1, step(0.055, abs(sub(fract(mul(m, 7.5)), 0.5)))), sub(1, step(0.13, dorsal))));
+  // The cut line round the flank where slate meets olive (a woodblock's line between two inks).
+  const seam = mul(step(0.2, dorsal), sub(1, step(0.225, dorsal)));
+  const mouth = mul(step(0.16, m), sub(1, step(0.2, ventral)));
+  return select(lt(0.5, max(max(scute, seam), mouth)), rgb(K("black")), skin);
+}
+const head = place(strand({
+  name: "wyrmHead", spine: (m) => through(m, PROFILE.map(([u, t, b]) => [xAt(u), ((t + b) / 2) * S, 0] as const)), stations: 16,
+  girth: (m) => skullW(m).x, section: { aspect: (m) => skullA(m).x, squareness: 3 },
+  tips: [{ round: 0.2 }, { round: 0.1 }], up: Y, paint: skullPaint, detail: { along: 40, around: 24 },
+}), skull);
+
+// ---- the jaw: hinged under the eye, it breathes, works and roars --------------------------------------------------
+const gape = add(add(HEAD.gape, mul(sin(mul(time, W * 2)), HEAD.breath)),
+  add(mul(lashPose, HEAD.roar), mul(mul(sin(mul(time, W * 7)), HEAD.chew), sub(1, lashPose))));
+const jawDir = vec3(mul(cos(gape), -1), mul(sin(gape), -1), 0);   // along the jaw, toward the chin
+const jawUp = vec3(mul(sin(gape), -1), cos(gape), 0);               // the jaw's inner side
+const hinge = vec3(xAt(0.14), -0.4 * S, 0);
+const JL = 0.84 * HL;
+const jawW = keys([[0, 0.95 * S], [0.25, 1.0 * S], [0.6, 0.72 * S], [1, 0.62 * S]]);
+const jawA = keys([[0, 0.53], [0.25, 0.42], [0.6, 0.42], [1, 0.45]]);
+/** Jaw paint: inside, a black floor with a vermilion tongue; outside, olive flanks and a cream throat with plates. */
+function jawPaint(m: F, v: F): P3 {
+  const inside = abs(sub(v, 0.25)), throat = abs(sub(v, 0.75));
+  const tongue = mul(mul(step(0.12, m), sub(1, step(0.8, m))), sub(1, step(0.07, inside)));
+  const plates = sub(1, step(0.1, fract(mul(m, 9))));
+  const outside = select(lt(throat, 0.16), select(lt(0.5, plates), rgb(K("black")), rgb(K("cream"))), rgb(K("olive")));
+  const seam = mul(step(0.16, throat), sub(1, step(0.185, throat)));
+  const lined = select(lt(0.5, seam), rgb(K("black")), outside);
+  return select(lt(inside, 0.2), select(lt(0.5, tongue), rgb(K("vermilion")), rgb(K("black"))), lined);
+}
+const jaw = place(strand({
+  name: "wyrmJaw",
+  spine: (m) => through(m, [-0.1, 0.27, 0.63, 1].map((s) => add(add(hinge, mul(jawDir, s * JL)), mul(jawUp, -0.3 * S)))),
+  stations: 8, girth: (m) => jawW(m).x, section: { aspect: (m) => jawA(m).x, squareness: 2.6 },
+  tips: [{ round: 0.15 }, { round: 0.12 }], up: jawUp, paint: jawPaint, detail: { along: 28, around: 24 },
+}), skull);
+
+// ---- teeth: one curved cone, a row along each lip; the fourth from the front is a fang ------------------------------
+const tooth = strand({
+  name: "wyrmTooth", spine: (m) => through(m, [[0, -0.05, 0], [-0.03, 0.2, 0], [-0.09, 0.42, 0]]), stations: 4,
+  girth: 0.1, tips: ["open", { point: 0.85 }], up: [1, 0, 0], paint: K("cream"), detail: { along: 6, around: 8 },
+});
+const TEETH = 5;
+/** A row of teeth on both lips of a strand (body coordinates: v = `edge` +- `spread`, standing out of the skin). */
+const teethOn = (name: string, host: Chart, from: number, to: number, edge: number, spread: number, size: number) =>
+  draw.points(name, place(points(2 * TEETH, (i) => {
+    const j = mod(i, TEETH), side = select(lt(i, TEETH), -1, 1);
+    const fang = select(is(j, TEETH - 2), 2.2, 1);
+    return { at: vec3(add(from, mul(j, (to - from) / (TEETH - 1))), add(edge, mul(side, spread)), 0.9), scale: mul(mul(add(0.9, mul(j, 0.08)), fang), size) };
+  }), host), tooth);
+const teeth = [teethOn("wyrmTeethUp", head, 0.32, 0.9, 0.75, 0.115, 1.05 * S), teethOn("wyrmTeethDown", jaw, 0.32, 0.92, 0.25, 0.13, 0.85 * S)];
+
+// ---- the eyes: under the brow, a vermilion iris with a black slit and a light catch; both watch `gaze` ------------
+const EYE = { u: 0.25, y: 0.62, z: 1.22, r: 0.4 };
+/** Where the eyes look, in head coordinates: toward the target, drawn a little toward straight ahead. */
+const eyeLook = (() => {
+  const f = skull.frame(vec3(0, 0, 0));
+  const d = normalize(sub(gaze, f.o));
+  return normalize(add(vec3(dot(d, f.x), dot(d, f.y), dot(d, f.z)), vec3(-0.6, 0, 0)));
+})();
+/** Eye paint: on the front cap, a polar position (lateral, vertical) from the pupil's centre. */
+function eyePaint(m: F, v: F): P3 {
+  const a = mul(sub(1, m), 2.2);
+  const lateral = mul(a, cos(mul(v, TAU))), vertical = mul(a, sin(mul(v, TAU)));
+  const q = div(vertical, 0.8);
+  const slit = lt(abs(lateral), mul(0.085, max(sub(1, mul(q, q)), 0)));
+  const catchLight = lt(length(vec2(sub(lateral, 0.2), sub(vertical, 0.3))), 0.13);
+  const iris = select(lt(a, 0.9), rgb(K("vermilion")), rgb(K("black")));
+  return select(catchLight, rgb(K("pearl")), select(slit, rgb(K("black")), iris));
+}
+/** One eye a side: its pupil faces out of the head, turned toward the gaze (a reptile looks along its pupil). */
+const eyeAt = (side: number) => {
+  const axis = normalize(add(mul(eyeLook, 0.9), vec3(0, 0.1, side)));
+  return place(strand({
+    name: side < 0 ? "wyrmEyeL" : "wyrmEyeR", spine: (m) => through(m, [mul(axis, -0.6 * EYE.r * S), mul(axis, 0.6 * EYE.r * S)]), stations: 4,
+    girth: EYE.r * S, tips: [{ round: 0.5 }, { round: 0.5 }], up: Y, paint: eyePaint, detail: { along: 16, around: 16 },
+  }), on(skull, [xAt(EYE.u), EYE.y * S, side * EYE.z * S]));
+};
+const eyes = [eyeAt(-1), eyeAt(1)];
+
+// ---- the brows: one strand from brow to brow, its crossing buried in the skull, so two ridges show (the scowl) ----
+const browSide = (s: number) => [
+  [xAt(0.13), 1.12 * S, s * 1.05 * S], [xAt(0.25), 1.22 * S, s * 1.3 * S], [xAt(0.37), 1.02 * S, s * 0.95 * S],
+] as const;
+const browGirth = keys([[0, 0.12 * S], [0.33, 0.26 * S], [0.5, 0.13 * S], [0.67, 0.26 * S], [1, 0.12 * S]]);
+const brow = place(strand({
+  name: "wyrmBrow", spine: (m) => through(m, [...browSide(-1), [xAt(0.42), 0.45 * S, 0], ...browSide(1).slice().reverse()]),
+  stations: 14, girth: (m) => browGirth(m).x, section: { aspect: 0.75 }, tips: [{ round: 0.1 }, { round: 0.1 }], up: Y,
+  paint: K("slate"), detail: { along: 40, around: 12 },
+}), skull);
+
+// ---- nostrils: a raised boss each side of the nose tip, open forward ---------------------------------------------
+const nostril = strand({
+  name: "wyrmNostril", spine: (m) => through(m, [[0.35, -0.08, 0], [0, 0, 0], [-0.22, 0.02, 0]]), stations: 4,
+  girth: 0.2, section: { aspect: 0.6 }, tips: [{ round: 0.3 }, { round: 0.2 }], up: Y,
+  // The opening: a crescent on the top of the front, so it reads as a nostril from above and from the side.
+  paint: (m, v) => select(lt(0.5, mul(step(0.72, m), sub(1, step(0.22, abs(sub(v, 0.25)))))), rgb(K("black")), rgb(K("slate"))),
+  detail: { along: 10, around: 12 },
+});
+const nostrils = draw.points("wyrmNostrils", place(points(2, (i) => ({
+  at: vec3(xAt(0.9), 0.52 * S, mul(select(lt(i, 0.5), -1, 1), 0.42 * S)), scale: S,
+})), skull), nostril);
+
+// ---- antlers: one strand from tip to tip through the crown (its middle hidden in the skull), ringed near the root --
+const antlerSide = (s: number) => ([[0.35, 0.85, 0.6], [1.2, 1.75, 0.95], [2.4, 2.3, 1.3], [3.6, 2.4, 1.5], [4.5, 2.95, 1.55]] as const)
+  .map(([x, y, z]) => [x * S * HEAD.horn, y * S * HEAD.horn, s * z * S * HEAD.horn] as const);
+const antlerGirth = keys([[0, 0.06], [0.2, 0.2], [0.4, 0.34], [0.5, 0.3], [0.6, 0.34], [0.8, 0.2], [1, 0.06]].map(([m, g]) => [m, g * S] as const));
+const antlers = place(strand({
+  name: "wyrmAntlers", spine: (m) => through(m, [...antlerSide(-1).reverse(), [0.4 * S, 0.5 * S, 0], ...antlerSide(1)]),
+  stations: 22, girth: (m) => antlerGirth(m).x, tips: [{ point: 0.05 }, { point: 0.05 }], up: Y,
+  paint: (m) => {
+    const r = abs(sub(m, 0.5));
+    const ring = mul(mul(step(0.1, r), sub(1, step(0.3, r))), sub(1, step(0.16, fract(mul(r, 30)))));
+    return select(lt(0.5, ring), rgb(K("black")), rgb(K("cream")));
+  },
+  detail: { along: 64, around: 10 },
+}), skull);
+
+// ---- whiskers: one strand from tip to tip through the snout, trailing back from the lip and drifting -------------
+const whiskerSide = (s: number) => [1, 2, 3, 4, 5].map((k) => {
+  const drift = mul(sin(sub(mul(time, W * 2), k * 0.9)), 0.08 * k * S);
+  const droop = [0, 0.55, 1.15, 1.5, 1.45, 1.05][k]!;
+  return vec3(xAt(0.84) + 0.95 * k * S, add(-droop * S, drift), add(s * (0.85 + 0.42 * k) * S, mul(drift, s)));
+});
+const whiskerGirth = keys([[0, 0.03], [0.3, 0.08], [0.42, 0.11], [0.58, 0.11], [0.7, 0.08], [1, 0.03]].map(([m, g]) => [m, g * S] as const));
+const whiskers = place(strand({
+  name: "wyrmWhiskers",
+  spine: (m) => through(m, [...whiskerSide(-1).reverse(), vec3(xAt(0.84), 0, 0), ...whiskerSide(1)]),
+  stations: 26, girth: (m) => whiskerGirth(m).x, tips: [{ round: 0.02 }, { round: 0.02 }], up: Y, paint: K("cream"),
+  detail: { along: 72, around: 8 },
+}), skull);
+
+// ---- gills: a fan of five rays behind each cheek, flaring with the breath and wide open in the lash ---------------
+const flare = add(add(1, mul(sin(mul(time, W * 2)), 0.15)), mul(lashPose, 0.4));
+const GILL_ANGLES = [1.0, 0.5, 0, -0.5, -0.95], GILL_REACH = [0.7, 0.9, 1, 0.88, 0.62];
+const gillRays = (s: number) => GILL_ANGLES.map((a, k) => (r: F | number) => {
+  const rr = lift<"f32">(r);
+  const root = vec3(0.4 * S, (0.75 - 0.35 * k) * S, s * 1.1 * S);
+  const dir = normalize(vec3(0.65, Math.sin(a), s * Math.cos(a)));
+  const len = mul(flare, HEAD.gill * S * GILL_REACH[k]);
+  // Swept back toward the tips, and rippling.
+  const sweep = vec3(mul(mul(rr, rr), mul(len, 0.35)), mul(sin(sub(mul(time, W * 3), k * 1.1)), mul(rr, 0.12 * S)), 0);
+  return skull.frame(add(add(root, mul(dir, mul(rr, len))), sweep)).o;
+});
+/** Gill paint: vermilion membrane, black rays, fine filament lines between them. */
+const gillPaint = (u: F, v: F): P3 => {
+  const ray = sub(1, step(0.07, abs(sub(fract(add(mul(u, 4), 0.5)), 0.5))));
+  const filament = mul(sub(1, step(0.06, abs(sub(fract(mul(u, 16)), 0.5)))), step(0.3, v));
+  return select(lt(0.5, max(ray, filament)), rgb(K("black")), rgb(K("vermilion")));
+};
+const gills = [-1, 1].map((s) => draw.surface(s < 0 ? "wyrmGillL" : "wyrmGillR", fan({ rays: gillRays(s), sag: 0.1, scallop: 0.4, slack: 2.5 }), {
+  paint: gillPaint, grid: { u: spacing.even(24), v: spacing.even(5) }, sides: "two", outline: "border",
+}));
+
 // ==== the scene =====================================================================================================
 
 export const strikes = restAnimated.strikes;
@@ -396,16 +537,19 @@ export const strikes = restAnimated.strikes;
 export default scene({
   sea: water,
   things: [
-    ...restAnimated.things, head, jaw, ...horns, ...eyes, teeth, ...gills, ridge, pearls,
+    ...restAnimated.things, head, jaw, ...teeth, ...eyes, brow, nostrils, antlers, whiskers, ...gills, ridge, pearls,
     telegraph(lash, { style: { fill: INKS.vermilion.lit, bone: INKS.cream.lit, ink: INKS.black.lit, flash: [1, 0.97, 0.9], fillFrom: 0.4, fillTo: 0.92, spacing: 1.1, edge: 0.2 } }),
     ...scaleShip,
   ],
   style: wyrmPrint(),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
-    game: { kind: "perspective", eye: [5, 31, 29], target: [0.5, 0, 0.5], fovY: 0.62 },
+    // Pulled back and aimed past the pool so the head, held high at the far side, clears the top of the frame.
+    game: { kind: "perspective", eye: [5, 35, 33], target: [0.5, 0.5, -2.5], fovY: 0.62 },
     three: { kind: "perspective", eye: [-24, 15, 19], target: [-4.5, 1.5, -3], fovY: 0.7 },
-    close: { kind: "perspective", eye: [-7, 9, 2], target: [0, 5.2, -9.5], fovY: 0.5 },
+    close: { kind: "perspective", eye: [-9.4, 9.6, -0.8], target: [-0.6, 6.9, -8.4], fovY: 0.7 },
+    // The face in profile, from the ship's side.
+    face: { kind: "perspective", eye: [-4, 8, 3.6], target: [-1.2, 6.9, -8.5], fovY: 0.66 },
     top: { kind: "orthographic", eye: [0, 50, 0.001], target: [0, 0, 0], height: 38 },
   },
 });

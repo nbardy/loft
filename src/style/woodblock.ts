@@ -1,11 +1,12 @@
-// Woodblock: a Japanese colour print. Bodies are flat areas from a fixed palette of five inks (indigo, a paler blue,
-// cream, one vermilion accent, black), each chosen by the lit value of the paint in bands, so nothing on a body is a
-// gradient. Black key lines are cut from the opaque scene's depth and normal edges by a post pass, with a weight that
-// wanders like a carved line; the colour block is printed slightly out of register with the key block; then paper.
-// The sea is flat blues with printed lines along the swell's contours and clawed foam where it meets a body.
+// Woodblock: a colour print. Bodies are flat areas from a fixed palette of five inks (indigo, a paler blue, cream,
+// one vermilion accent, black), each chosen by the lit value of the paint in bands, so nothing on a body is a
+// gradient. The black key line is the outline hull: geometry, thick and of even weight, antialiased by the frame's
+// own multisampling. (It was a post pass that cut lines from depth and normal edges, one decision per pixel: the lines
+// came out ragged and broken beside the hull outlines of the other styles, and it cost 0.37 ms a frame. 2026-11-11.)
+// Then paper. The sea is flat blues with printed lines along the swell's contours and clawed foam where it meets a body.
 
-import { abs, add, dot, fract, length, max, min, mix, mul, param, saturate, smoothstep, sub, vec4, type Expr } from "../expr.ts";
-import { noise2, noise3, hash22, luminance } from "../lib/index.ts";
+import { abs, add, dot, f, fract, length, max, min, mix, mul, param, saturate, smoothstep, sub, vec4, type Expr } from "../expr.ts";
+import { noise2, hash22, luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Rgb, Style } from "../style.ts";
@@ -32,66 +33,6 @@ const P = WOODBLOCK_PALETTE;
 const BAND = { black: 0.08, indigo: 0.34, pale: 0.6, warm: 0.28 } as const;
 
 /**
- * The key-line pass. A pixel is inked when, within the line's half-width, the opaque scene steps away from it (a
- * silhouette: only the NEAR side is inked, so an edge gets one line, not one on each surface) or turns sharply (a
- * crease). The half-width wanders with low-frequency noise over the body's anchor (the style's mark), so the line swells and thins like a cut
- * one, and it is thinner far away. The colour block is read slightly out of register; the key line is not.
- *
- * A step is measured against the plane through the pixel, not against the pixel's own depth: a plane's inverse view
- * depth (its view depth, for an orthographic camera) is affine in screen space, so its second difference across the
- * pixel is zero, however steeply it recedes. (A step relative to the depth, as the fixture's ink pass has, inked a
- * grazing plate solid black toward the horizon, where neighbouring pixels are metres apart in depth.)
- */
-const KEYLINE = /* wgsl */ `${POST_COMMON}
-const WB_INK: vec3<f32> = ${wgslRgb(P.black)};
-/// Opposite directions are adjacent: k and k ^ 1.
-const WB_DIRS = array<vec2<f32>, 8>(vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
-  vec2(0.7071, 0.7071), vec2(-0.7071, -0.7071), vec2(0.7071, -0.7071), vec2(-0.7071, 0.7071));
-/// Nearness at px, affine in screen space over a plane: 1 / depth (perspective) or -depth (orthographic).
-fn wb_near(px: vec2<f32>) -> f32 {
-  let z = sty_view_depth(px);
-  return select(-z, 1.0 / max(z, 1e-6), frame.eye.w > 0.5);
-}
-
-@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
-  let px = in.px.xy;
-  // Pixel sizes are relative to an 800-pixel-high frame, so a smaller render keeps the same picture.
-  let scale = max(frame.viewport.y / 800.0, 0.375);
-  let colour = post_color((px + vec2<f32>(1.4, -1.0) * scale) * frame.viewport.zw).rgb;
-  if (!sty_solid(px) || sty_submerged(px)) { return vec4<f32>(colour, 1.0); }
-  let p = scene_position(px);
-  let z = sty_view_depth(px);
-  let g0 = wb_near(px);
-  // A step beyond the plane, as a share of the nearness (perspective: about the relative jump in depth) or in world
-  // units (orthographic).
-  let unit = select(1.0, g0, frame.eye.w > 0.5);
-  // Half-width in pixels: 1.5 to 4.7 at the reference size, wandering along the line. The wander is the style's mark
-  // (noise over the body's anchor, written to alpha by \`mark\`), so the line's swellings ride a moving body; in world
-  // space they slid along it.
-  let wobble = post_color(px * frame.viewport.zw).a;
-  let w = max(scale * (1.5 + 3.2 * wobble * wobble) * clamp(18.0 / z, 0.6, 1.4), 1.0);
-  // Offsets of at least a whole pixel: textureLoad floors, so a smaller offset could read the pixel itself.
-  let s = max(round(1.5 * scale), 1.0);
-  let n = sty_normal(px, s);
-  var ink = 0.0;
-  for (var k = 0u; k < 8u; k++) {
-    let o = WB_DIRS[k] * w;
-    let far = wb_near(px + o);
-    let back = wb_near(px - o);
-    // How much less near the neighbour is than the plane through this pixel and its opposite neighbour predicts.
-    let beyond = (2.0 * g0 - back - far) / unit;
-    let d = sty_view_depth(px + o) - z;
-    let silhouette = min(smoothstep(0.04, 0.08, beyond), smoothstep(0.1, 0.25, d));
-    // A crease: the surface turns by more than about 55 degrees within the line's width, with no step.
-    let nq = sty_normal(px + WB_DIRS[k] * max(w * 0.7, 1.0), s);
-    let crease = (1.0 - smoothstep(0.45, 0.6, dot(n, nq))) * (1.0 - smoothstep(0.02, 0.05, abs(beyond)));
-    ink = max(ink, max(silhouette, crease));
-  }
-  return vec4<f32>(mix(colour, WB_INK, ink), 1.0);
-}
-`;
-
-/**
  * Paper: fibres (screen-fixed value noise stretched along x, the direction the paper was laid) and a fine tooth that
  * shows most in the pale inks, where a print's paper shows through.
  */
@@ -108,9 +49,8 @@ const PAPER = /* wgsl */ `${POST_COMMON}
 }
 `;
 
-/** The woodblock's two post passes, by name (the tests run the key line alone on a flat region). */
+/** The woodblock's post pass. */
 export const WOODBLOCK_POST = {
-  keyline: { label: "woodblock key line", wgsl: KEYLINE },
   paper: { label: "woodblock paper", wgsl: PAPER },
 } as const satisfies Record<string, PostSpec>;
 
@@ -128,23 +68,22 @@ function inked(base: Expr<"vec3">, value: Expr<"f32">): Expr<"vec3"> {
 }
 
 export function woodblock(): Style {
-  const outline = param("woodblock.outline", 0.0, { min: 0, max: 0.1 });
+  const outline = param("woodblock.outline", 0.05, { min: 0, max: 0.2 });
   return {
     name: "woodblock",
-    // The hull is only the key block's minimum (1.5 px); the key-line pass draws the weight.
+    // The key line: the hull, this wide in world units and never under 1.5 px.
     outline,
     clear: P.cream,
-    post: [WOODBLOCK_POST.keyline, WOODBLOCK_POST.paper],
+    post: [WOODBLOCK_POST.paper],
     shade: (ctx) => {
       // Two tones of light (lit, shadow), then the value bands: each paint region prints in at most two inks.
       const lit = edgeOf(dot(ctx.normal, ctx.sun), 0.0, 1e-5);
       const value = mul(luminance(ctx.base), mix(0.66, 1.06, lit));
       return inked(ctx.base, value);
     },
-    // The key block's black: the hull merges with the key line drawn over it.
     ink: () => rgb(P.black),
-    // The key line's weight here, 0..1: noise over the anchor, so it rides the body (read back by the key-line pass).
-    mark: (ctx) => saturate(add(0.5, mul(noise3(add(mul(ctx.anchor, 1.3), mul(ctx.id, 17))), 0.75))),
+    // No post pass reads a mark.
+    mark: () => f(1),
     water: (ctx) => {
       const xz = ctx.world.xz;
       // Two flat blues, trough and crest, split along the swell's own contour (a little wobble, no blobs: the lines
@@ -159,7 +98,12 @@ export function woodblock(): Style {
       const fw = max(fwidth(phase), 1e-4);
       const d = abs(sub(fract(add(phase, 0.5)), 0.5)); // 0 on a line, 0.5 halfway between two
       const width = mix(0.025, 0.075, saturate(add(mul(ctx.crest, 0.6), 0.5)));
-      const line = mul(mul(sub(1, smoothstep(sub(width, fw), add(width, fw), d)), sub(1, smoothstep(0.15, 0.35, fw))), smoothstep(-0.6, -0.1, h));
+      // Where the lines crowd (toward the horizon, or seen along the swell) each is replaced by the share of the period
+      // it covers: the same tone with no stripes. It used to keep drawing them until three pixels apart, which printed
+      // the far sea as a comb.
+      const crowd = smoothstep(0.03, 0.1, fw);
+      const drawn = sub(1, smoothstep(sub(width, fw), add(width, fw), d));
+      const line = mul(mix(drawn, mul(width, 2), crowd), smoothstep(-0.6, -0.1, h));
       c = mix(c, rgb(SEA.line), mul(line, 0.9));
       // Clawed foam, from how close a body is: a collar at the body, and fingers that taper outward along the zero
       // lines of a noise field (thin where |noise| is small, narrower the farther out), with an indigo line round the

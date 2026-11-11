@@ -9,7 +9,7 @@ import type { Camera, View } from "../src/artefact.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost, type GpuHost } from "../src/host/index.ts";
 import { compile, draw, scene, spacing, surface, vec3, vec4, type Scene, type Style } from "../src/index.ts";
-import { STYLE_NAMES, styleNamed, withStyle, WOODBLOCK_PALETTE, WOODBLOCK_POST, woodblock } from "../src/style/index.ts";
+import { STYLE_NAMES, styleNamed, withStyle, WOODBLOCK_PALETTE, woodblock } from "../src/style/index.ts";
 import { SHEET_CAMERA } from "../src/style/sheet.ts";
 import { TOON_REFERENCE } from "./fixtures/make_toon_reference.ts";
 
@@ -52,42 +52,6 @@ test("toon renders exactly as before the style interface grew", async () => {
 }, 120000);
 
 /** A flat plate 40 units square at height 2, seen at a grazing angle (the hard case for normals from depth). */
-const plate = draw.surface("plate", surface((u, v) => vec3(u.mul(40).add(-20), 2, v.mul(40).add(-20)), { u: ["free", "free"], v: "free" }), {
-  paint: () => vec3(0.5, 0.6, 0.7), grid: { u: spacing.even(8), v: spacing.even(8) }, sides: "two", outline: "none",
-});
-const grazing: Camera = { kind: "perspective", eye: [0, 3.2, 21], target: [0, 2, 0], fovY: 0.7 };
-const plateScene = (style: Style): Scene => scene({ sea: serpent.sea, things: [plate], style, sun: [-0.3, 0.8, 0.4] });
-
-// Catches: key lines inside a flat area. Regression guard: the first key line measured a step relative to the
-// pixel's depth (as the fixture's ink pass does), and inked this grazing plate solid black toward the horizon, where
-// neighbouring pixels are metres apart (11729 changed pixels here); it now measures the step against the plane through
-// the pixel. Also guards crease detection from depth noise. Wherever the picture before the pass is one flat colour
-// over a 7x7 neighbourhood, the key-line pass (with its misregistration) must leave it as it was.
-test("the woodblock key line leaves a flat-colour region unchanged", async () => {
-  const base = woodblock();
-  const view = { camera: grazing, width: 320, height: 200 };
-  const before = await frameOf(plateScene({ ...base, post: [] }), view);
-  const after = await frameOf(plateScene({ ...base, post: [WOODBLOCK_POST.keyline] }), view);
-  const at = (f: Uint8Array, x: number, y: number) => (y * view.width + x) * 4;
-  let flat = 0, changed = 0;
-  for (let y = 3; y < view.height - 3; y++) {
-    for (let x = 3; x < view.width - 3; x++) {
-      const c = at(before, x, y);
-      let uniform = true;
-      for (let dy = -3; dy <= 3 && uniform; dy++) for (let dx = -3; dx <= 3 && uniform; dx++) {
-        const o = at(before, x + dx, y + dy);
-        for (let k = 0; k < 3; k++) if (before[o + k] !== before[c + k]) uniform = false;
-      }
-      if (!uniform) continue;
-      flat++;
-      for (let k = 0; k < 3; k++) if (Math.abs(after[c + k]! - before[c + k]!) > 1) { changed++; break; }
-    }
-  }
-  // The plate covers most of the frame, so most of it must have been tested.
-  expect(flat).toBeGreaterThan(view.width * view.height * 0.2);
-  expect(changed).toBe(0);
-}, 120000);
-
 // Catches: a woodblock body showing a colour that is not one of its five inks (a gradient leaking through the value
 // bands, a lighting term added after the palette, a blend at the waterline). The sea and sky are replaced by flat
 // cream, and post passes removed, so every pixel must be an ink, except antialiased edges: an off-palette pixel must
