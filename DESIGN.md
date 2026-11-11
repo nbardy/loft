@@ -15,7 +15,8 @@ contract for building it.
 ```
 
 Nobody compiles TypeScript to anything. TypeScript runs normally and *builds a graph of expressions*; the compiler
-turns that graph into WGSL (for the GPU) and JavaScript (for the once-per-frame CPU pose pass). The game would load
+turns that graph into WGSL (for the GPU, including the once-per-frame pose stages) and JavaScript (the CPU reading of
+the same programs, for checks, baking and tests). The game would load
 an Artefact; it never runs authoring code.
 
 Five ideas, in the order the code depends on them:
@@ -227,16 +228,26 @@ under it. Bloom is one pass with no downsampled mips (40 taps out to 30 px at 80
 
 Read that file; it is the host contract. In short: a fixed prelude (bind group 0: frame, inputs, params, curves), an
 artefact-declared bind group 1 of per-frame tables, complete shader modules, a list of buffer-less draws, optional
-post passes, and `pose(state)` which fills the per-frame tables on the CPU. `FrameState.curves` is the curve table the
-host holds now, so a `setCurves` edit moves the CPU pose exactly as it moves the GPU.
+post passes, and the pose pass (since 2026-11-11, docs/gpu_native.md phase 1): `stages`, compute modules that fill the
+per-frame tables on the GPU, one per level, run in order before the draws (each declares group 1 itself with the
+dynamic buffers `read_write`; entry `pose_main`, `POSE_WORKGROUP` invocations per workgroup); `tables`, where each
+table lives and how it is filled (`map` or `scan` at a level, or `cpu` with why); `cpuPose(state)`, the `cpu` tables
+the host uploads before the stages (empty when every table is a program: then a host runs no JavaScript per frame);
+and `pose(state)`, the CPU reading of every table, derived from the same programs, for tools and tests only.
+`FrameState.curves` is the curve table the host holds now, so a `setCurves` edit moves the CPU fills exactly as it
+moves the GPU.
 
-Per-frame tables are `TableSource`s (`src/expr.ts`): `entries` entries of `lanes` vec4s, a `role`, and `prepare(p)`,
-which the compiler calls once (with `p.compile(roots)` for CPU expressions) to get the fill. The compiler finds them by
-walking the expressions it emits (`fetch`), or a raw-WGSL drawable declares one with `ctx.table`. They are packed, in
-declaration order, into as few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8
-storage buffers and group 0 uses 3; `fetch(t, i, lane)` reads `t_<name>(u32(i) * lanes + lane)`. More than 5 buffers'
-worth fails at compile time with `TableBudgetError`. A fill may read other tables (they fill on first read; a cycle
-throws). A table whose `role` is `"static"` (a static `tabulate`, a sculpt layer, a field's distance brick or mesh) is
+Per-frame tables are `TableSource`s (`src/expr.ts`): `entries` entries of `lanes` vec4s, a `role`, and a `program`:
+a `map` (runs of entries, each a closed form in its index; `mapOf`, `listOf`), a `scan` (entries in order carrying a
+state; `step` called once with fresh variables, as `iterate`'s), or `cpu` (`prepare` and why). A table with `prepare`
+and no program is read as `cpu`; static tables keep `prepare`. The compiler finds tables by walking the expressions it
+emits (`fetch`), or a raw-WGSL drawable declares one with `ctx.table`. They are packed, in declaration order, into as
+few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8 storage buffers and group 0
+uses 3; `fetch(t, i, lane)` reads `t_<name>(u32(i) * lanes + lane)`. More than 5 buffers' worth fails at compile time
+with `TableBudgetError`. A program may read other tables; it is scheduled a level after the deepest it reads (a cycle
+throws). A `cpu` table pulls the maps and scans it reads onto the CPU too, listed as `cpu` "read by ...". Work that two
+runs of a map share is hoisted into a one-invocation table `<name>_common`; each table, and each run of a table of
+several, starts a SIMD group of its own (docs/gpu_native.md says why). A table whose `role` is `"static"` (a static `tabulate`, a sculpt layer, a field's distance brick or mesh) is
 filled once when the artefact is compiled and packed into buffers of its own, `Artefact.statics` (bindings after the
 per-frame ones, the same budget of 5), which the host uploads once at load; the pose function never returns them, so a
 brick of megabytes costs nothing per frame (added 2026-11-11, optional in the contract: absent means none). The tables
@@ -244,9 +255,10 @@ the library declares:
 
 | Table | Declared by | Per entry | Contents |
 |---|---|---|---|
-| `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, 0) |
-| `shadows` | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | header + 3 vec4 | capsules projected along the sun onto the sea: ends, radii, strength, softness, chain links |
-| any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f (static: uploaded once) |
+| `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | scan: `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, rest arc length) |
+| `body_<name>_spine` | the same | 3 vec4 | map: the spine placed (and twist), local (and half-width), at rest (and aspect), per posted station |
+| `shadows` (with `shadows_at`, `shadows_joints`) | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | 3 vec4 | maps: one capsule per segment projected along the sun onto the sea: ends, radii, strength, softness, chain links, valid (a segment under the water keeps its slot, all zero) |
+| any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f (frame: a map; static: uploaded once) |
 | `<field>_brick` | `draw.field` with schedule `brick` or `auto` (static) | coarse cells, then bricks | `src/map/brick.ts`: per coarse cell (slot or -1, lower bound, union mask), then 9^3 samples per brick |
 | `<field>_mesh`, `<field>_tris` | `draw.field` with schedule `mesh` or `auto` | 2 vec4 / 1 vec4 | vertices (position, normal); triangle corners, 4 indices per vec4 |
 
@@ -371,7 +383,7 @@ interchangeable, and where the table is filled decides the schedule:
 | Filled | Is today called |
 |---|---|
 | once, when the scene is built | a keyed curve, a baked mesh, a texture, a sculpt layer, a distance-field brick |
-| once per frame on the CPU | the stations of a body (frames cannot be computed locally: they are transported along the spine) |
+| once per frame by the pose stages (a map or a scan) | the stations of a body (frames cannot be computed locally: they are transported along the spine, a scan) |
 | never (the function is evaluated where it is used) | everything analytic |
 
 So "bake or analytic" is one line of code per function, and a hand-edited table (a sculpt layer, a painted map) is the
@@ -934,7 +946,7 @@ draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.
   vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D), `flash` (a point light
   whose power is an expression of time). Every number may follow time. `Medium.density(p)` is the same sum as an
   expression (the 7.1 `Density` signature).
-- Per frame on the CPU (the pose pass): blobs are evaluated, sorted on a Morton curve and grouped 8 to a bounding
+- Per frame on the CPU (the one library table still `cpu` after phase 1 of docs/gpu_native.md): blobs are evaluated, sorted on a Morton curve and grouped 8 to a bounding
   sphere (`<name>_clusters`); the light pass computes each blob's optical depth through the *other* blobs toward the sun
   and the zenith, one radius behind and in front of its centre, and the flash light reaching it through the medium.
   O(N^2), culled by cluster spheres and closest approach.
@@ -1039,7 +1051,8 @@ drawn triangles per view, best-case ms, lossless shots), `tools/picdiff.ts` (pic
 - The compiler measures each surface once at rest (time 0, inputs and params at their defaults, as a static
   `tabulate`): 5 x 5 grid points give the longest grid line per axis (a level's `cell` is those over its counts) and
   the surface's reach from its anchor (the grid's centre; a copy's origin). Per frame the pose posts only where each
-  copy is (table `bound_<name>`: anchor point and scale, one vec4 per copy), a few microseconds per drawable.
+  copy is (table `bound_<name>`: anchor point and scale, one vec4 per copy), a map the pose stages fill; the host reads
+  the bounds back after the pose submit (`frame` waits for them; `draw` plans with the last ones read).
   Measuring every frame (16 points per drawable) took the fleet's pose from 0.45 to 3.9 ms. Given up: a surface that
   grows far beyond its rest shape on an input is sized by its rest shape.
 - The host takes the coarsest level whose cells are at most `cellPixels` across at the sphere's nearest point, keeps
@@ -1095,7 +1108,10 @@ timestamps to 65.5 us and bun-webgpu cannot turn that off, so a draw's figure is
 best of six blocks: good to about 10 us, and still noisy on a loaded machine (a second run can differ by 2x for a
 small draw). `loft profile <scene> [--view] [--frames] [--outline hull|screen]` prints draws by cost, totals per thing
 (the label up to its first `_` or space: a ship's parts group, the serpent's separately placed parts do not), the
-fixed stages, and the CPU pose per table (`Compiled.poseProfile`, each table without the tables it read).
+fixed stages, the pose stages (all in one pass, then each level alone; their own durations, since a compute pass
+overlaps the render passes after it), the count of map, scan and cpu tables, and every `cpu` table with its CPU cost
+and why (`Compiled.poseProfile`). `bun tools/pose_time.ts` times the pose stages alone, 40 repetitions in one timed
+pass after a warm-up (an idle GPU runs a short burst at a low clock).
 
 ### 12.5 A ship is about 40 draws (measured, not changed)
 
