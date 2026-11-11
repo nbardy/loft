@@ -131,3 +131,54 @@ crab stands.
 
 Wrong if: a foot lifts in a brace or a dance outside an accent; a leg snaps straight; the slam's palm or the grip
 check moves outside its tolerance (then the brace is too large, not the tolerance too small).
+
+## Scored (2026-11-12)
+
+Built as designed, on main 5ca6cfc (the spiral shell, the new faces and the curled white water merged in). Measured on
+the CPU from the scene's own expressions (the islander unless named; `out/legs/tools/measure.ts`), pictures from the
+`legs` and `game` cameras.
+
+| | Predicted | Measured |
+|---|---|---|
+| any foot off the water, idle stretch 14 to 22 s | 28% (3 re-plants) | **36.7%**: 4 re-plants, at 15.73, 17.53, 19.33, 21.13 (feet L0, R3, L0, R3) |
+| the same over the whole 22 s loop | 14% | **13.3%** (today 100%: two or three feet always up) |
+| body over its feet in idle, `game` | about 20 x 12 px | **31 x 12 px** |
+| slam wind-up | sinks 0.35 (9 px), coils 0.45 back (10 px) | sinks 0.44, coils 0.26 toward the disc's opposite: 12.9 px from rest |
+| slam strike | 1.05 toward the disc from the coil (23 px), drops 0.75 from the drive's top (19 px) | **1.05** (0.26 back to 0.79 on), drops **0.68** (-0.11 at the strike's middle to -0.79 at contact); 37 px from rest at contact |
+| knee of the loaded leg (front right) | 111 to 88 degrees: 23 | **110.8 to 92.5: 18.3 degrees** |
+| limbsReach, every variant | passes; worst about 0.94 | passes; worst **0.960** (fiddler, its doubled idle at t = 21.3), mask 0.957 (the throw), stilt 0.762; knees at least 2.37 outboard |
+| named checks | 10/13/15 + 1 | all pass: base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 11, islander 14, bruiser 16 (main's new faces added checks; each includes `limbsReach`) |
+| rear legs to the spiral shell (`tools/spiral_clear.ts`) | (not predicted) | R3 **0.32**, L3 0.47 (main's walk: 0.29, 0.47) |
+| seam, body and feet at 0 and 22 | identical | **0 difference** (CPU) |
+| frame time, base `game` 1280x800, alternated with main | unchanged | fast state 2.03 both (mine 1.97 to 2.10), slow 5.31 to 5.37 both; machine load average 9.5 (other workers) |
+
+Where I was wrong:
+
+1. **Re-plants are packed, not spread.** A step may start only where the crab is idle from its anticipation to its
+   settle (1.8 s), which shrinks every idle window by that much: the loop's 10.8 s of idle hold 7.2 s of starts, 0.4 s
+   of them in the short window between the throw and the slam. Four steps then sit at the minimum spacing (1.8 s) in
+   the long window; I predicted three. The rate (`every` 1.8) is the number to change if it looks fidgety.
+2. **The coil reads half its size** measured from the idle pose: the idle's own shift (0.35 to the side) is faded out
+   by the posture over the same wind-up, so part of the coil cancels part of where the body was. The drive's 1.05 is
+   exact because both ends are in the brace.
+3. **The knee changes 18 degrees, not 23**: the slam's sink at contact is 0.79 (the old lean's -0.25 and the thud's
+   -0.45 plus the idle's remainder), and the drive is along the disc's bearing from the ground origin, not along the
+   front-right leg.
+
+The lineup, loaded once: **44 of 44** checks (its 40 and a reach check per crab), and the frames at t = 0 and t = 24
+the same picture (`e23ad2a3bea62948` both). Its loop leaves no idle time long enough for a re-plant, so in the lineup
+the feet leave the water only on the taunt's stamps. The single crab at t = 0 and t = 22: body and feet identical,
+picture not (`04ac520c5ad3d611`, `374a23ba357cc3f4`), because its sea's swells (14.4 s, 8.6 s) and the parts that call
+`alive` without a period were never periodic in 22 s; that is not the stance's to change.
+
+New base `game` hashes at 1280x800 (main 5ca6cfc, before: `00623051d0eb03ef 9ca615e4fe5b5b4c 322b7f7a5d7aa8c0`):
+t = 1.0, 3.6, 11.3 are **`0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9`**.
+
+What is weak or unfinished:
+
+- The four idle re-plants sit at the minimum spacing in the second half of the idle stretch; a slower `every` gives two.
+- Stamps and the hips' sway in the dance are hard to see from the lineup camera (each crab is a sixth of the frame);
+  the bow and the crouch read, the stamps were not judged from a picture.
+- The walk is built and paced by `legs.travelled` but no scene walks the crab, so it is unseen; a game that blends
+  `legs.walking` in while a foot is mid-swing slides that foot.
+- The brace never steps a foot wider at its start (the brief allowed either); the feet stay planted.
