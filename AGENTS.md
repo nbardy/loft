@@ -21,6 +21,8 @@
      save PNGs in the current directory under exact file names; touch nothing else; stop and say so if the tool is
      unavailable. Then the character description and the style clause (both repeated in every prompt, so a set stays
      on model), then the numbered list of pictures, then what the final message should list.
+     The tool takes at most five reference images per call: put no more than three or four in `in/`, and tell it to
+     report a failed picture and go on, not stop (a thirteen-picture job stopped at the seventh on this).
   4. Ask for sheets a modeller can use: a turnaround (front, three-quarter, side, from above at the game camera's
      angle), an expression sheet, key poses of an action, a storyboard with single frames, close-ups of a surface, and
      paint-overs of our own renders at the same camera. Keep names, project details and anything personal out of the
