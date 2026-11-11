@@ -1,17 +1,5 @@
 # Loft: agent guide
 
-## How to work
-
-1. **Theory first, to the number.** Work the problem out completely before building: the discrete version, the cost,
-   the instrument that will measure it. A theory is finished when it says in advance what a run will show. Then run
-   once, to score the theory. If the run misses, the theory is wrong: fix the theory, do not patch the code.
-
-2. **Be bold.** Start from what is special about the problem, not from what has been published. Do not keep an idea
-   because the best people use it. Understand why it won, replace it if you can do better, and say plainly which ideas
-   are inherited and which are yours.
-
-## Facts about this repository
-
 - `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
 - Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
   not there.
