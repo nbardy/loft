@@ -54,7 +54,7 @@ export const BROW = {
 } as const;
 /** The mouth: its line's height, its half-width, how far the jaw drops, the lips' thickness, how far the lips part to
  * bare the teeth, the corners' drop per unit of `grim`, and what `skew` does (sideways, and to the corner it pulls). */
-export const MOUTH = { b: -1.1, half: 1.9, drop: 0.62, lip: 0.17, part: [0, 0.25] as const, grim: 0.7, skew: [0.3, 0.3] as const } as const;
+export const MOUTH = { b: -1.0, half: 1.9, drop: 0.62, lip: 0.22, part: [0, 0.25] as const, grim: 1.0, skew: [0.45, 0.45] as const } as const;
 /** How far a pupil slides, as a share of the eye's radius: crossed to the nose, and toward what it looks at. */
 const CROSS = 0.45, SLIDE = 0.5;
 /** Half-height (units of b) of the band between the teeth rows that stretches into the gape when the jaw drops. */
@@ -86,8 +86,9 @@ export const CAST = cast<Channel, "wanting" | "straining" | "triumphant" | "furi
     // The squeeze: eyes screwed to slits under brows crushed down, every tooth bared, chin tucked.
     straining: { brow: -0.28, vee: 0.3, lidU: 0.85, lidL: 0.8, pupil: 0.22, jaw: 0.06, bare: 1, grim: 0.85, nod: -0.09, turn: 0.03 },
     // Let go (a mie): the face snaps round to the audience, chin up, brows high and still angled, eyes wide, the lips
-    // sealed in a proud bow. (Brows flung apart over pin pupils read as fright, not pride.)
-    triumphant: { brow: 0.45, vee: 0.15, cock: 0.2, lidU: 0.15, lidL: 0.3, pupil: 0.27, bare: 0, grim: 1, nod: 0.16, turn: 0.25 },
+    // sealed in a proud bow, the lids level: it looks down at you. (Brows flung apart over pin pupils in round whites read
+    // as fright, not pride.)
+    triumphant: { brow: 0.45, vee: 0.15, cock: 0.2, lidU: 0.3, lidL: 0.35, pupil: 0.28, bare: 0, grim: 0.9, nod: 0.16, turn: 0.25 },
     // Before the slam (a mie, with the nirami): brows in a deep V, eyes wide and crossed, the jaw dropped in a roar.
     furious: { brow: -0.05, vee: 0.9, lidU: 0.05, lidL: 0, pupil: 0.22, cross: 1, jaw: 1, bare: 1, grim: 0.7, nod: -0.07, turn: 0.25 },
     // The impact: the near eye shut and its brow jammed down, the mouth dragged to that side, the head jolted back.
@@ -109,7 +110,7 @@ function mouthAt<T>(o: Arith<T>, c: Readonly<Record<Channel, T>>, s: T, taper: T
   const pulled = o.mul(o.mul(c.skew, MOUTH.skew[1]), o.clamp(s, 0, 1));
   return {
     line: o.add(o.sub(MOUTH.b, o.mul(o.mul(c.grim, MOUTH.grim), o.mul(s, s))), pulled),
-    open: o.mul(o.mul(o.add(MOUTH.part[0], o.mul(c.bare, MOUTH.part[1])), taper), o.add(1, o.mul(o.mul(c.skew, 0.5), s))),
+    open: o.mul(o.mul(o.add(MOUTH.part[0], o.mul(c.bare, MOUTH.part[1])), taper), o.add(1, o.mul(o.mul(c.skew, 0.8), s))),
   };
 }
 
@@ -143,6 +144,8 @@ export const featuresIn = (c: Expression<Channel>) => featuresOf(JS, c);
 
 /** Seconds from a cue to its pose: four frames at 30 a second. A flinch is faster. */
 export const SNAP = 0.13, FLINCH = 0.08;
+/** Seconds before the slam that the glare is struck: when the rising crusher has cleared the face from the game camera. */
+export const GLARE = 1.0;
 
 export function scoreOf(rig: Rig): { readonly score: Score<Channel, Mood>; readonly poses: Readonly<Record<Mood, Struck>> } {
   const { n, crush, grab } = rig;
@@ -157,8 +160,10 @@ export function scoreOf(rig: Rig): { readonly score: Score<Channel, Mood>; reado
       straining: struck(g, { from: -0.1, snap: 0.1, hold: hold + 0.2, release: 0.3 }),
       // The mie at the let-go: held while the ship is in the air, then let go slowly.
       triumphant: struck(g, { from: hold, snap: SNAP, hold: 1.8, release: 0.6 }),
-      // The mie through Claw Crush's wind-up: struck a tenth of a second after its warning, held until the claw lands.
-      furious: struck(c, { from: -n.crushWarn + 0.1, snap: SNAP, hold: n.crushWarn - 0.1 - SNAP - 0.03, release: 0.2 }),
+      // The mie at the top of Claw Crush's wind-up, held until the claw lands. Not from the warning: on its way up the
+      // crusher crosses the face from the game camera until about a second before the slam, and a mie struck behind
+      // it was half over before it was seen. So the claw rises first, then the face strikes: one thing at a time.
+      furious: struck(c, { from: -GLARE, snap: SNAP, hold: GLARE - SNAP - 0.03, release: 0.2 }),
       // The slam.
       wincing: struck(c, { from: -0.03, snap: FLINCH, hold: 0.55, release: 0.7 }),
     };
