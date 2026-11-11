@@ -55,13 +55,14 @@ export const WIDE: Format = {
  * Square. Four across a square frame cannot be large (each crab a quarter of the width is a quarter of the height), so
  * the square trucks along the line two crabs at a time for the slam (following the cascade) and the taunt (following
  * the call and answer and the cascade), and holds a wider frame on the middle pair for the throw in unison. fovY 0.4
- * (about 59 mm): from 75 away a frame 27 units wide, two crabs and parts of their neighbours.
+ * (about 59 mm): from 60 away a frame 25 units wide, a crab and a half to two. The first strip's 72 to 100 left a third
+ * of the square sky and a fifth empty sea.
  */
 export const SQUARE: Format = {
   name: "square", width: 1080, height: 1080, cuts: [
-    { at: 0, shot: { kind: "move", name: "slam", from: along(75, 3.5, 8.5, SPACING, 0.4), to: along(75, 3.5, 8.5, -SPACING, 0.4), start: 1.75, end: 3.75 } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(100, 3.5, 9, 0, 0.4) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: along(72, 3.5, 8.5, SPACING, 0.4), to: along(72, 3.5, 8.5, -SPACING, 0.4), start: beat(33), end: beat(47) } },
+    { at: 0, shot: { kind: "move", name: "slam", from: along(62, 3.5, 7, SPACING, 0.4), to: along(62, 3.5, 7, -SPACING, 0.4), start: 1.75, end: 3.75 } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(85, 3.5, 7.5, 0, 0.4) } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: along(60, 3.5, 7, SPACING, 0.4), to: along(60, 3.5, 7, -SPACING, 0.4), start: beat(33), end: beat(47) } },
   ],
 };
 export const FORMATS = { wide: WIDE, square: SQUARE } as const;

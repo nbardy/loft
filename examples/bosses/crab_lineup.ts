@@ -90,7 +90,8 @@ const SUNSET = {
   grade: { kind: "stops", stops: [{ at: 0, ink: [0.97, 0.74, 0.36] }, { at: 0.03, ink: [0.95, 0.52, 0.22] }, { at: 0.07, ink: [0.82, 0.28, 0.2] }, { at: 0.12, ink: [0.42, 0.24, 0.42] }, { at: 0.2, ink: [0.13, 0.15, 0.33] }] },
   sun: { kind: "disc", toward: [-1, 0.012, 0], radius: 0.075, ink: [0.84, 0.2, 0.13] },
   clouds: { kind: "bands", ink: [0.93, 0.87, 0.74], line: 0.0012, bands: [
-    { at: 0.115, thick: 0.03, from: 2.85, to: 3.22, lumps: 4 }, { at: 0.15, thick: 0.024, from: 3.12, to: 3.46, lumps: 3 }, { at: 0.088, thick: 0.018, from: 3.24, to: 3.5, lumps: 3 },
+    // Thin and short: the first strip's (0.018 to 0.03 thick, 0.26 to 0.37 long) were slabs across the frame.
+    { at: 0.112, thick: 0.013, from: 2.88, to: 3.1, lumps: 4 }, { at: 0.145, thick: 0.011, from: 3.2, to: 3.38, lumps: 3 }, { at: 0.085, thick: 0.009, from: 3.3, to: 3.45, lumps: 3 },
   ] },
   below: [0.93, 0.6, 0.3],
 } as const;
