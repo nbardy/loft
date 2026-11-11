@@ -49,7 +49,7 @@ import { AUDIENCE } from "./dandy.ts";
  * its mid-height. `tilt` is how far the face is turned up from facing straight ahead, radians. Every length of the
  * face below is in face units: world units on the base carapace (half-width 4.1), scaled with any other.
  */
-export const HEAD = { across: 0.61, up: 1.68, down: 1.68, out: 1.2, back: 0.56, rise: 0.36, tilt: 0.7, power: 3, jawDrop: 0.4 } as const;
+export const HEAD = { across: 0.68, up: 1.6, down: 1.72, out: 1.2, back: 0.56, rise: 0.36, tilt: 0.7, power: 3, jawDrop: 0.4 } as const;
 const BASE_WIDTH = 4.1, BASE_HEIGHT = 1.25;
 /** The head's half-sizes in face units. */
 export const RADII = { across: HEAD.across * BASE_WIDTH, up: HEAD.up * BASE_HEIGHT, down: HEAD.down * BASE_HEIGHT, out: HEAD.out * BASE_HEIGHT } as const;
@@ -75,20 +75,20 @@ export type Channel = "upper" | "lower" | "brow" | "slant" | "cock" | "pupil" | 
 
 export const CAST = cast<Channel, "greedy" | "straining" | "gleeful" | "furious" | "wincing" | "gloating">(
   // Posing: smug. One brow up, lids half down and uneven, a closed smirk, looking straight at you.
-  { upper: 0.62, lower: 0.25, brow: 0.42, slant: 0.12, cock: 1, pupil: 0.3, pop: 0, cheek: 0.25, jaw: 0.04, grit: 0, skew: 0, whisk: 0.1, perk: 0, ship: 0, disc: 0, boat: 0, shake: 0 },
+  { upper: 1.0, lower: 0.25, brow: 0.42, slant: 0.12, cock: 1, pupil: 0.3, pop: 0, cheek: 0.25, jaw: 0.04, grit: 0, skew: 0, whisk: 0.05, perk: 0, ship: 0, disc: 0, boat: 0, shake: 0 },
   {
     // It wants the ship: brows flung up, eyes wide and starting out of its head on small pupils, the mouth fallen open.
-    greedy: { upper: 0.02, lower: 0.05, brow: 0.05, slant: -0.12, cock: 0.2, pupil: 0.2, pop: 1, cheek: 0, jaw: 0.4, whisk: 0.25, perk: 1, ship: 1 },
+    greedy: { upper: 0.02, lower: 0.05, brow: 0.05, slant: -0.12, cock: 0.2, pupil: 0.2, pop: 1, cheek: 0, jaw: 0.4, whisk: 0.2, perk: 1, ship: 1 },
     // The squeeze: brows clamped down, eyes slits between lid and bunched cheek, mandibles clenched, trembling.
-    straining: { upper: 0.78, lower: 0.82, brow: 0.9, slant: 0.6, cock: 0.3, pupil: 0.22, cheek: 1, jaw: 0, grit: 1, whisk: -0.15, perk: -0.4, ship: 1, shake: 0.05 },
+    straining: { upper: 0.9, lower: 0.9, brow: 0.9, slant: 0.6, cock: 0.3, pupil: 0.22, cheek: 1, jaw: 0, grit: 1, whisk: -0.15, perk: -0.4, ship: 1, shake: 0.05 },
     // It threw it: brows high and apart, the cheeks push the eyes into arches, the mouth gapes in a laugh; it watches it fly.
-    gleeful: { upper: 0.3, lower: 0.9, brow: 0.1, slant: -0.35, cock: 0.5, pupil: 0.34, pop: 0.4, cheek: 1, jaw: 1, whisk: 0.55, perk: 0.7, ship: 1 },
+    gleeful: { upper: 0.3, lower: 0.9, brow: 0.1, slant: -0.35, cock: 0.5, pupil: 0.34, pop: 0.4, cheek: 1, jaw: 1, whisk: 0.45, perk: 0.7, ship: 1 },
     // Before the slam: the brows in a deep V over pinpoint pupils, a roar, antennae laid flat.
-    furious: { upper: 0.55, lower: 0.3, brow: 0.8, slant: 0.9, cock: 0, pupil: 0.15, pop: 0.3, cheek: 0.5, jaw: 0.92, whisk: 0.3, perk: -1, disc: 1 },
+    furious: { upper: 0.55, lower: 0.3, brow: 0.8, slant: 0.9, cock: 0, pupil: 0.15, pop: 0.3, cheek: 0.5, jaw: 0.92, whisk: 0.15, perk: -1, disc: 1 },
     // The impact: eyes screwed shut on the middle line, the brows' inner ends thrown up, the mouth dragged sideways.
-    wincing: { upper: 1.0, lower: 1.05, brow: 0.6, slant: -0.8, cock: -0.6, pupil: 0.24, cheek: 1, jaw: 0.3, skew: 1, whisk: -0.6, perk: -0.7, disc: 1 },
+    wincing: { upper: 1.0, lower: 1.05, brow: 0.3, slant: -0.8, cock: -0.6, pupil: 0.24, cheek: 1, jaw: 0.3, skew: 1, whisk: -0.6, perk: -0.7, disc: 1 },
     // It looks at what its wave did to the other boat: side-long under one high brow, cheeks up, a chuckle.
-    gloating: { upper: 0.7, lower: 0.6, brow: 0.35, slant: 0.2, cock: 1.4, pupil: 0.3, cheek: 0.9, jaw: 0.25, whisk: 0.45, perk: 0.4, boat: 1 },
+    gloating: { upper: 0.95, lower: 0.7, brow: 0.35, slant: 0.2, cock: 1.4, pupil: 0.3, cheek: 0.9, jaw: 0.25, whisk: 0.35, perk: 0.4, boat: 1 },
   },
 );
 export type Mood = keyof typeof CAST.named;
@@ -107,11 +107,11 @@ export type EyeSpec = {
 };
 // Not twins: the great claw's side is larger, sits higher, wears its brow and lid higher, and leads.
 export const EYES: readonly EyeSpec[] = [
-  { tag: "R", side: 1, at: [1.12, 0.78], radius: 0.85, cockBrow: 0.3, cockLid: 0.2, lag: 0 },
-  { tag: "L", side: -1, at: [1.08, 0.64], radius: 0.72, cockBrow: -0.12, cockLid: -0.08, lag: 0.14 },
+  { tag: "R", side: 1, at: [1.2, 0.95], radius: 0.85, cockBrow: 0.3, cockLid: 0.15, lag: 0 },
+  { tag: "L", side: -1, at: [1.15, 0.82], radius: 0.72, cockBrow: -0.12, cockLid: -0.08, lag: 0.14 },
 ];
 /** How deep an eye's middle sits under the head's surface, and how far `pop` brings it out, as shares of its radius. */
-export const SINK = 0.3, POP = 0.22;
+export const SINK = 0.38, POP = 0.22;
 /** Which way a stalk carries an eye, in the face's coordinates (up the face and out of it), per unit of `stalk` and of the eye's radius. */
 export const STALK_WAY = [0, 0.55, 0.95] as const;
 /** The eyes face a little to the crab's right of the face's own normal: the game, face and far cameras all stand there. */
@@ -123,7 +123,7 @@ const LID_MIN = 0.25, LID_SLANT = 0.6;
 /** The brow's place over the eye, radians forward from above it: raised clear, and clamped down. */
 export const BROW_UP = 0.15, BROW_DOWN = 1.2;
 /** The brow: how far round the eye its ends are (the thick end by the nose first), its half-widths there and its depth. */
-export const BROW = { span: [-0.8, 0.9] as const, girth: [0.34, 0.2] as const, depth: 0.62 } as const;
+export const BROW = { span: [-0.9, 1.0] as const, girth: [0.34, 0.2] as const, depth: 0.62 } as const;
 /** Lid radii as shares of the eye's (the cheek lid under the brow lid). */
 const LID_OVER = [1.07, 1.12] as const;
 
@@ -140,13 +140,13 @@ function eyeFrom<T>(o: Arith<T>, c: Readonly<Record<"upper" | "lower" | "brow" |
     upper: o.clamp(o.mul(o.add(c.upper, o.mul(c.cock, -e.cockLid)), Math.PI / 2), LID_MIN, Math.PI),
     lower: o.clamp(o.mul(c.lower, Math.PI / 2), LID_MIN, Math.PI),
     slant: o.mul(c.slant, e.side * LID_SLANT),
-    brow: [o.clamp(o.add(over, o.mul(c.slant, 0.5)), 0, 1.5), o.clamp(o.add(over, -0.08), 0, 1.5), o.clamp(o.add(o.add(over, o.mul(c.slant, -0.3)), 0.12), 0, 1.5)] as const,
+    brow: [o.clamp(o.add(over, o.mul(c.slant, 0.65)), 0, 1.7), o.clamp(o.add(over, -0.08), 0, 1.5), o.clamp(o.add(o.add(over, o.mul(c.slant, -0.3)), 0.12), 0, 1.5)] as const,
     out: o.mul(c.pop, POP),
   };
 }
 
 /** Where the mouth's top edge is, face units up from the head's middle; and the muzzle the moustache rides, above it. */
-export const MOUTH_TOP = -0.8, MUZZLE = -0.48;
+export const MOUTH_TOP = -0.95, MUZZLE = -0.55;
 /** The mouth from the channels, in face coordinates (X to the viewer's right): its middle, half-width and half-height,
  * and each mandible's hinge and tip (`s` 1 the viewer's right) with how far its tip stands off the face. */
 function mouthFrom<T>(o: Arith<T>, c: Readonly<Record<"jaw" | "grit" | "skew", T>>) {
@@ -155,13 +155,13 @@ function mouthFrom<T>(o: Arith<T>, c: Readonly<Record<"jaw" | "grit" | "skew", T
   const plate = (s: 1 | -1) => {
     const hingeY = o.add(MOUTH_TOP + 0.1, o.mul(c.grit, 0.06));
     return {
-      hinge: [o.add(x0, o.mul(o.add(o.add(0.34, o.mul(c.jaw, 0.6)), o.mul(c.grit, -0.05)), s)), hingeY] as const,
-      tip: [o.add(o.add(x0, o.mul(o.add(o.add(0.3, o.mul(c.jaw, 0.6)), o.mul(c.grit, -0.08)), s)), o.mul(c.skew, -0.25)), o.add(o.add(hingeY, -1.05), o.mul(c.grit, 0.08))] as const,
+      hinge: [o.add(x0, o.mul(o.add(o.add(0.34, o.mul(c.jaw, 0.8)), o.mul(c.grit, -0.05)), s)), hingeY] as const,
+      tip: [o.add(o.add(x0, o.mul(o.add(o.add(0.3, o.mul(c.jaw, 0.75)), o.mul(c.grit, -0.08)), s)), o.mul(c.skew, -0.25)), o.add(o.add(hingeY, -1.05), o.mul(c.grit, 0.08))] as const,
       proud: o.add(0.2, o.mul(c.jaw, 0.25)),
     };
   };
   return {
-    x0, wide: o.add(o.add(0.5, o.mul(c.jaw, 0.6)), o.mul(c.skew, 0.15)), tall: o.add(0.05, o.mul(c.jaw, 0.55)),
+    x0, wide: o.add(o.add(0.5, o.mul(c.jaw, 0.85)), o.mul(c.skew, 0.15)), tall: o.add(0.05, o.mul(c.jaw, 0.62)),
     plates: [plate(-1), plate(1)] as const,
   };
 }
@@ -194,7 +194,7 @@ export function scoreOf(rig: Rig): Score<Channel, Mood> {
     const gloating = during(ctau, { from: 0.9, rise: 0.5, to: 3.9, fall: 1.0 });
     // A slow, superior blink five times a loop (so the performance loops with the fight), seen only while it poses.
     const every = n.crushPeriod / 5;
-    const sinceBlink = abs(sub(mul(fract(div(t, every)), every), 1.9));
+    const sinceBlink = abs(sub(mul(fract(div(t, every)), every), 3.3));
     const blink = mul(mul(sub(1, smoothstep(0.05, 0.2, sinceBlink)), sub(1, attending)), sub(1, max(max(furious, wincing), gloating)));
     // It laughs: the jaw chatters five times a second; the gloat is the same laugh, slower and smaller.
     const laugh = sin(mul(t, TAU * 5)), chuckle = sin(mul(t, TAU * 3));
@@ -242,7 +242,7 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
       const frame: Frame = { o: tabV("o", local(H.at)), x: mul(body.z, -1), y: upFace, z: out };
 
       // ---- the head ----
-      const muzzleY = add(MUZZLE, mul(face.whisk, 0.1)), cheekY = add(-0.5, mul(face.cheek, 0.3));
+      const muzzleY = add(MUZZLE, mul(face.whisk, 0.1)), cheekY = add(-0.6, mul(face.cheek, 0.3));
       /** The mouth's edge at a face coordinate: below 0 inside it. Tipped by the grimace. */
       const mouthEdge = (X: F, Y: F): F => {
         const y = add(Y, mul(mul(face.skew, 0.25), sub(X, mouth.x0)));
@@ -255,10 +255,10 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
         relief: (X, Y) => {
           const ax = abs(X);
           // A dish under each eye, a shelf across the crown that the brows stand on, the muzzle, the cheeks, the mouth.
-          const sockets = EYES.reduce((acc: F, e) => add(acc, mul(bump(ell(X, Y, -e.side * e.at[0], e.at[1], e.radius * 1.3, e.radius * 1.3)), -0.3)), lift<"f32">(0));
-          const shelf = mul(mul(bump(div(abs(sub(Y, 1.5)), 0.55)), sub(1, smoothstep(1.5, 2.3, ax))), 0.2);
+          const sockets = EYES.reduce((acc: F, e) => add(acc, mul(bump(ell(X, Y, -e.side * e.at[0], e.at[1], e.radius * 1.3, e.radius * 1.3)), -0.18)), lift<"f32">(0));
+          const shelf = mul(mul(bump(div(abs(sub(Y, 1.45)), 0.55)), sub(1, smoothstep(1.5, 2.3, ax))), 0.2);
           const muzzle = mul(bump(ell(X, Y, 0, muzzleY, 1.3, 0.62)), 0.42);
-          const cheeks = mul(bump(ell(ax, Y, 1.6, cheekY, 0.8, 0.62)), add(0.1, mul(face.cheek, 0.3)));
+          const cheeks = mul(bump(ell(ax, Y, 1.75, cheekY, 0.8, 0.62)), add(0.1, mul(face.cheek, 0.3)));
           const cavity = mul(smoothstep(0.06, -0.15, mouthEdge(X, Y)), add(0.12, mul(face.jaw, 0.5)));
           return sub(add(add(add(sockets, shelf), muzzle), cheeks), cavity);
         },
@@ -269,10 +269,10 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
           const blots = mul(mottle(add(mul(X, 0.23), 0.37), add(mul(Y, 0.11), 0.21)), max(smoothstep(0.75, 1.0, ell(X, Y, 0, 0, 2.3, 2.0)), sub(1, front)));
           // Each eye in a dark socket, so its white has a dark surround on the brick head.
           const socket = EYES.reduce((acc: F, e) => max(acc, inked(sub(ell(X, Y, -e.side * e.at[0], e.at[1], e.radius * 1.22, e.radius * 1.22), 1))), lift<"f32">(0));
-          // Creases: two furrows between the brows that come with a scowl, a fold over each cheek that comes as it bunches.
+          // Creases: two furrows between the brows that come with a scowl, a fold over each cheek that thickens as it bunches.
           const furrow = mul(mul(inkLine(sub(ax, add(0.1, mul(sub(Y, 0.9), 0.12))), 0.03), mul(smoothstep(0.9, 1.0, Y), sub(1, smoothstep(1.45, 1.6, Y)))), smoothstep(0.2, 0.6, face.slant));
-          const fold = mul(mul(mul(inkLine(sub(ell(ax, Y, 1.6, cheekY, 0.84, 0.66), 1), 0.07), crisp(Y, add(cheekY, 0.15))), sub(1, crisp(ax, 2.25))), smoothstep(0.35, 0.75, face.cheek));
-          const nostril = inked(sub(ell(ax, Y, 0.17, add(muzzleY, 0.42), 0.085, 0.05), 1));
+          const fold = mul(mul(inkLine(sub(ell(ax, Y, 1.75, cheekY, 0.84, 0.66), 1), add(0.04, mul(face.cheek, 0.05))), crisp(Y, add(cheekY, 0.1))), sub(1, crisp(ax, 2.45)));
+          const nostril = inked(sub(ell(ax, Y, 0.17, add(muzzleY, 0.5), 0.085, 0.05), 1));
           // The mouth: dark maroon inside its edge, a tongue on its floor, a lip line round it.
           const edge = mouthEdge(X, Y), inMouth = inked(edge);
           const tongue = inked(sub(ell(X, Y, mouth.x0, sub(MOUTH_TOP, mul(mouth.tall, 1.5)), mul(mouth.wide, 0.62), mul(mouth.tall, 0.62)), 1));
@@ -364,7 +364,7 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
           plate: tusk({
             name: `mandible${s < 0 ? "L" : "R"}`, hinge, tip, flat: 0.4, face: out, bow: mul(gape, 0.12 * k),
             // A blunt plate at rest, a pointed tusk agape.
-            girth: (m) => mul(mix(0.36, mix(0.3, 0.15, gape), m), k),
+            girth: (m) => mul(mix(0.36, mix(0.3, 0.17, gape), m), k),
             // Cream, with a black line where it leaves the gum.
             paint: (m) => mix(vec3(...I.cream), vec3(...I.black), sub(1, crisp(m, 0.07))),
           }),
@@ -372,12 +372,13 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
       };
       // The viewer's left is the crab's right: `plateR` is the plate on the great claw's side.
       const plateR = mandible(-1), plateL = mandible(1);
-      const mouthTop = tabV("mouth_top", world(skin(mouth.x0, MOUTH_TOP + 0.1, 0.1)));
+      // Read only by the checks, so not tabulated: a per-frame table nothing draws from is not in the artefact.
+      const mouthTop = world(skin(mouth.x0, MOUTH_TOP + 0.1, 0.1));
 
       // ---- the moustache, on the muzzle ----
       const moustache = (s: 1 | -1) => handlebar({
         name: `moustache${s < 0 ? "L" : "R"}`, side: s, frame: { x: out, y: upFace, z: body.z },
-        root: world(skin(-s * 0.28, add(muzzleY, 0.08), 0.1)), length: 2.2 * k, girth: 0.17 * k, ink: I.black,
+        root: world(skin(-s * 0.2, sub(muzzleY, 0.12), 0.12)), length: 1.75 * k, girth: 0.24 * k, droop: 0.5, ink: I.black,
         // Lopsided with the rest of the face (the great claw's side rides higher: a smirk), never quite still.
         lift: add(add(add(face.whisk, mul(face.cock, 0.12 * s)), alive(time, 0.05, 61 + s)), mul(sin(mul(time, TAU * 9 + s)), mul(face.shake, 1.5))),
       });
@@ -404,7 +405,7 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
           return add(root, mul(add(add(mul(body.x, mul(back, -1)), mul(body.y, rise)), mul(body.z, out_)), k));
         };
         return strand({
-          name: `antenna${s < 0 ? "L" : "R"}`, spine, stations: 14, girth: (m) => mul(mix(0.17, 0.045, m), k), tips: ["open", { point: 0.1 }], up: body.z,
+          name: `antenna${s < 0 ? "L" : "R"}`, spine, stations: 14, girth: (m) => mul(mix(0.22, 0.05, m), k), tips: ["open", { point: 0.1 }], up: body.z,
           paint: (m) => mix(vec3(...I.brick), vec3(...I.brickDark), crisp(sin(mul(m, 38)), 0.55)), detail: { along: 28, around: 8 }, bulge: 1.2,
         });
       };

@@ -36,7 +36,7 @@ import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
 import { thorny } from "./titan/carapace/thorny.ts";
 import { base as clawsBase } from "./titan/claws/base.ts";
-import { fiddler } from "./titan/claws/fiddler.ts";
+import { fiddler, fiddlerAside } from "./titan/claws/fiddler.ts";
 import { gauntlet } from "./titan/claws/gauntlet.ts";
 import { tongs } from "./titan/claws/tongs.ts";
 import { base as faceBase } from "./titan/face/base.ts";
@@ -92,7 +92,7 @@ export const design = makeDesign({
   slots: {
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
-    claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
+    claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
@@ -134,7 +134,9 @@ export const design = makeDesign({
     // face/brow.ts in place of the dandy. `--variant bruiser,face=browStalk` is the same with its eyes on short stalks.
     bruiser: {
       about: "the islander with a head: heavy brows over big eyes sunk in it, a mandible mouth that gapes, long antennae",
-      pick: { claws: "fiddler", face: "brow" },
+      // The great claw is the fiddler's, carried out to the side: beside the face, as the islander carries it, it stood
+      // over the right eye from the game camera while the crab turned to the Grab (claws/fiddler.ts, `fiddlerAside`).
+      pick: { claws: "fiddlerAside", face: "brow" },
     },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
     // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).

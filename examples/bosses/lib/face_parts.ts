@@ -232,11 +232,13 @@ export function tusk(o: {
 export function handlebar(o: {
   readonly name: string; readonly root: P3; readonly frame: { readonly x: P3; readonly y: P3; readonly z: P3 }; readonly side: 1 | -1;
   readonly lift: F; readonly length: number; readonly girth: number; readonly ink: Ink;
+  /** How far it sags as it leaves the root, as a share of its way out (the dandy's is 0.1; 0.4 hangs under a pair of eyes). */
+  readonly droop: number;
 }): Strand {
   // About the frame's x, a positive turn takes +z toward -y: each side lifts by turning the other way.
   const y = rotateAbout(o.frame.y, o.frame.x, mul(o.lift, -o.side)), z = rotateAbout(o.frame.z, o.frame.x, mul(o.lift, -o.side));
   return place(horn({
-    name: o.name, length: o.length, curl: 1.9, taper: 0.3, girth: o.girth, out: [0.25, -0.1, o.side], toward: [0, 1, 0],
+    name: o.name, length: o.length, curl: 1.9, taper: 0.3, girth: o.girth, out: [0.25, -o.droop, o.side], toward: [0, 1, 0],
     paint: () => vec3(...o.ink), detail: { along: 16, around: 6 },
   }), rigid({ o: o.root, x: o.frame.x, y, z }));
 }
