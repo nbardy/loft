@@ -7,7 +7,7 @@ export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Out
 export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb } from "./geom/strand.ts";
 export { crest, type CrestSpec } from "./geom/crest.ts";
 export { sea, Sea, type SeaSpec, type SwellSpec } from "./geom/sea.ts";
-export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type LayerCtx, type SkyCtx, type ToonSpec } from "./style.ts";
+export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type ToonSpec } from "./style.ts";
 export { scene, DEFAULT_OUTLINE, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { design, Design, DesignError, parseVariantAsk, BASE_ASK, type Built, type Choice, type DesignSpec, type Option, type Overrides, type Picked, type Resolved, type SlotTable, type VariantAsk, type VariantSpec, type Widen } from "./design.ts";
 export { compile, compileScene, type Compiled, type CpuFn } from "./compile/index.ts";

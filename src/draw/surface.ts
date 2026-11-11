@@ -3,7 +3,7 @@
 // of a set of `Points`; the fragment stage evaluates the look per pixel. The surface coordinates (u, v) reach the
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
-import { add, cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "../expr.ts";
+import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type LibFn } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
@@ -12,6 +12,7 @@ import { framedPose } from "../map/surface.ts";
 import type { Chart, F, P3, Paint, Points, Posed, Poses, Skeleton, Surface } from "../map/types.ts";
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
+import { fwidth } from "../lib/wgsl.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -46,7 +47,17 @@ export type Look =
   /** `paint` as the final colour, unlit, opaque: strokes and ink lines. */
   | { readonly kind: "flat"; readonly paint: Paint }
   /** Its own colour and alpha, blended over what is behind it (the sea): no depth write. */
-  | { readonly kind: "glazed"; readonly colour: (f: Fragment) => Expr<"vec4">; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail: GlazedDetail };
+  | { readonly kind: "glazed"; readonly colour: GlazedColour; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail: GlazedDetail };
+
+/**
+ * A glazed surface's colour: one program, or one of several chosen per pixel. `choose` gives the index of the case
+ * (0 .. cases.length - 1) and must be the same on all four pixels of each 2 x 2 quad (`quadMax` makes a value so): then
+ * every pixel a derivative inside a case reads ran that case too, and the derivative is what the case alone would give.
+ * Only the chosen case runs, so a case may skip work the others need (the sea: src/geom/sea.ts).
+ */
+export type GlazedColour =
+  | { readonly kind: "one"; readonly colour: (f: Fragment) => Expr<"vec4"> }
+  | { readonly kind: "cases"; readonly choose: (f: Fragment) => Expr<"f32">; readonly cases: readonly ((f: Fragment) => Expr<"vec4">)[] };
 
 /** A glazed surface's grid: as authored, or laid over the screen by the host (the sea). */
 export type GlazedDetail = { readonly kind: "fixed" } | Extract<DetailSpec, { kind: "projected" }>;
@@ -319,16 +330,71 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
       draws: (b) => [drawSpec({ ...b, cull: "none" })],
     };
     case "glazed": {
-      const W = variable("f_world", "vec3"), PX = variable("f_px", "vec2");
-      const colour = look.colour({ world: W, px: PX, u: U, v: V, style: ctx.style, sun: ctx.sun });
+      const draws = (b: Base): DrawSpec[] => [drawSpec({ ...b, phase: look.phase, cull: "none", depthWrite: false, blend: "alpha", sceneDepth: look.sceneDepth })];
+      return { overrides: "", push: "s.pos", ...glazedColour(ctx, d.name, look.colour), draws };
+    }
+  }
+}
+
+const GLAZED_ARGS = [["f_world", "vec3"], ["f_px", "vec2"], ["u", "f32"], ["v", "f32"]] as const;
+const GLAZED_CALL = "(in.world, in.clip.xy, in.uv.x, in.uv.y)";
+
+/** The fragment stage of a glazed surface: its colour function(s), and `fs`. */
+function glazedColour(ctx: CompileContext, name: string, colour: GlazedColour): Pick<Frag, "fns" | "main"> {
+  const W = variable("f_world", "vec3"), PX = variable("f_px", "vec2");
+  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: ctx.sun };
+  const fn = (fname: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name: fname, args: GLAZED_ARGS, out: root.ty === "f32" ? "f32" : "vec4<f32>", roots: [root], ret: (o) => o[0]! });
+  switch (colour.kind) {
+    case "one": return {
+      fns: fn(`colour_${name}`, colour.colour(fr)),
+      main: `@fragment fn fs(in: VOut) -> @location(0) vec4<f32> { return colour_${name}${GLAZED_CALL}; }`,
+    };
+    case "cases": {
+      const n = colour.cases.length;
+      if (n < 2) throw new Error(`draw.surface "${name}": a glazed colour in cases needs at least two, got ${n}`);
+      const choose = fn(`choose_${name}`, colour.choose(fr));
+      const cases = colour.cases.map((c, k) => quadDerivatives(`colour_${name}_${k}`, fn(`colour_${name}_${k}`, quadSafe(c(fr)))));
+      const libs = [...new Set([...choose.libs, ...cases.flatMap((c) => c.libs)])];
+      const arms = cases.map((_, k) => `    ${k === n - 1 ? `case ${k}u, default` : `case ${k}u`}: { return colour_${name}_${k}${GLAZED_CALL}; }`);
       return {
-        overrides: "", push: "s.pos",
-        fns: emitShaderFn(ctx.slots, { name: `colour_${d.name}`, args: [["f_world", "vec3"], ["f_px", "vec2"], ["u", "f32"], ["v", "f32"]], out: "vec4<f32>", roots: [colour], ret: (o) => o[0] }),
-        main: `@fragment fn fs(in: VOut) -> @location(0) vec4<f32> { return colour_${d.name}(in.world, in.clip.xy, in.uv.x, in.uv.y); }`,
-        draws: (b) => [drawSpec({ ...b, phase: look.phase, cull: "none", depthWrite: false, blend: "alpha", sceneDepth: look.sceneDepth })],
+        fns: { code: [choose.code, ...cases.map((c) => c.code)].join("\n"), libs },
+        // The case is the same on each 2 x 2 quad (GlazedColour), so the branch is uniform where derivatives are taken.
+        main: `@fragment fn fs(in: VOut) -> @location(0) vec4<f32> {
+  switch u32(choose_${name}${GLAZED_CALL}) {
+${arms.join("\n")}
+  }
+}`,
       };
     }
   }
+}
+
+/** The same colour reading a changed fragment (a mirrored surface reads u flipped). */
+export function withFragment(c: GlazedColour, g: (f: Fragment) => Fragment): GlazedColour {
+  switch (c.kind) {
+    case "one": return { kind: "one", colour: (f) => c.colour(g(f)) };
+    case "cases": return { kind: "cases", choose: (f) => c.choose(g(f)), cases: c.cases.map((k) => (f: Fragment) => k(g(f))) };
+  }
+}
+
+/** `fwidth` for a case of a glazed colour: the same, with WGSL's uniformity diagnostic off (GlazedColour says why). */
+const FWIDTH = (fwidth(variable("x", "f32")).node as Extract<Expr["node"], { op: "lib" }>).fn;
+const FWIDTH_QUAD: LibFn = { name: "loft_fwidth_quad", ret: "f32", wgsl: "@diagnostic(off, derivative_uniformity) fn loft_fwidth_quad(x: f32) -> f32 { return fwidth(x); }", js: "gpu-only" };
+const DERIVATIVE = /\b(fwidth|dpdx|dpdy)(Fine|Coarse)?\s*\(/;
+
+/** A case's colour with every `fwidth` replaced by FWIDTH_QUAD. */
+function quadSafe(root: Expr<"vec4">): Expr<"vec4"> {
+  const by = new Map<number, Expr>();
+  for (const e of topo([root])) if (e.node.op === "lib" && e.node.fn === FWIDTH) by.set(e.id, lib<"f32">(FWIDTH_QUAD, ...e.node.args));
+  return replace([root], by)[0] as Expr<"vec4">;
+}
+
+/** A case's function as emitted, refused if it still reaches a derivative WGSL would reject in a branch. */
+function quadDerivatives(name: string, s: Shader): Shader {
+  const reaches = (l: LibFn): boolean => l !== FWIDTH_QUAD && (DERIVATIVE.test(l.wgsl) || (l.deps ?? []).some(reaches));
+  const bad = s.libs.filter(reaches).map((l) => l.name);
+  if (bad.length > 0 || /\bloft_fwidth\(/.test(s.code)) throw new Error(`draw.surface: case function "${name}" takes a derivative quadSafe does not cover (${bad.join(", ") || "loft_fwidth in a loop"}); give it a quad-safe twin`);
+  return s;
 }
 
 /** A closed surface's ink: a second draw pushed out along the normal (hull), or a flag for the screen pass. */
@@ -367,8 +433,9 @@ export function drawSurface(name: string, surface: Surface, o: SurfaceOptions): 
 }
 
 /** A surface with its own colour and alpha over what is behind it (the sea; a decal surface). */
-export function drawGlazed(name: string, surface: Surface, o: { readonly colour: (f: Fragment) => Expr<"vec4">; readonly grid: Grid; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail?: GlazedDetail }): SurfaceDrawable {
-  return new SurfaceDrawable(name, surface, o.grid, { kind: "glazed", colour: o.colour, phase: o.phase, sceneDepth: o.sceneDepth, detail: o.detail ?? { kind: "fixed" } }, { kind: "one" });
+export function drawGlazed(name: string, surface: Surface, o: { readonly colour: ((f: Fragment) => Expr<"vec4">) | GlazedColour; readonly grid: Grid; readonly phase: Extract<Phase, "water" | "on-water" | "transparent">; readonly sceneDepth: boolean; readonly detail?: GlazedDetail }): SurfaceDrawable {
+  const colour: GlazedColour = typeof o.colour === "function" ? { kind: "one", colour: o.colour } : o.colour;
+  return new SurfaceDrawable(name, surface, o.grid, { kind: "glazed", colour, phase: o.phase, sceneDepth: o.sceneDepth, detail: o.detail ?? { kind: "fixed" } }, { kind: "one" });
 }
 
 /** A surface whose paint is its final colour (a stroke, an ink line). */

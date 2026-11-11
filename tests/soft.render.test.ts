@@ -3,7 +3,7 @@
 import { beforeAll, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Camera } from "../src/artefact.ts";
+import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Camera } from "../src/artefact.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost, type GpuHost } from "../src/host/index.ts";
 import {
@@ -105,10 +105,10 @@ test("every example's shaders build pipelines under the contract's layouts", asy
     if (!mod.default) continue;
     const a = compile(mod.default);
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
-    const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });
+    const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
     for (const d of a.draws) {
       dev.pushErrorScope("validation");
-      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
+      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
       const blend = d.blend === "none" ? undefined : { color: { srcFactor: "src-alpha", dstFactor: d.blend === "add" ? "one" : "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const;
       try {
         await dev.createRenderPipelineAsync({

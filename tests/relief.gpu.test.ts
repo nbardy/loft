@@ -1,7 +1,7 @@
 // The relief examples on a real GPU device: every shader module builds and every draw makes a pipeline under the
 // contract's layouts (Dawn / bun-webgpu), including the relief's fragment-stage depth and its march loops.
 import { expect, test } from "bun:test";
-import { PRELUDE_WGSL, SCENE_DEPTH_WGSL } from "../src/artefact.ts";
+import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL } from "../src/artefact.ts";
 import { compileScene } from "../src/index.ts";
 import serpentRelief from "../examples/serpent_relief.ts";
 import shellRelief from "../examples/shell_relief.ts";
@@ -15,10 +15,10 @@ test("the relief examples' shaders compile and every draw makes a pipeline", asy
   const errors: string[] = [];
   for (const a of [compileScene(serpentRelief).artefact, compileScene(shellRelief).artefact]) {
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
-    const depth = dev.createBindGroupLayout({ entries: [{ binding: 0, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" } }] });
+    const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
     for (const d of a.draws) {
       dev.pushErrorScope("validation");
-      const extra = d.sceneDepth === true ? SCENE_DEPTH_WGSL : "";
+      const extra = d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "";
       const module = dev.createShaderModule({ code: PRELUDE_WGSL + extra + a.sceneWgsl + a.shaders[d.shader] });
       const layout = dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth] : [g0, g1] });
       const blend = d.blend === "alpha" ? { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const : undefined;
