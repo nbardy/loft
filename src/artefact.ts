@@ -89,6 +89,39 @@ fn scene_position(px: vec2<f32>) -> vec3<f32> {
 }
 `;
 
+/** Side of the clearance map's tiles, pixels (SCENE_CLEARANCE_WGSL). */
+export const CLEARANCE_TILE = 8;
+/** The clearance map's largest value: what it reports where no opaque tile lies within 7 tiles (8 * 8 - 7 = 57 > 49). */
+export const CLEARANCE_MAX = 49;
+/** The clearance map stores clearance / CLEARANCE_SCALE in r8unorm: steps of 0.25 pixel, rounded to the nearest. */
+export const CLEARANCE_SCALE = 64;
+
+/**
+ * Prepended by the host to the shader of a draw with `sceneDepth` set, after SCENE_DEPTH_WGSL (not to post passes).
+ *
+ * Binding layout (a second host must match it exactly):
+ *   @group(2) @binding(1)  texture_2d<f32>, format r8unorm, sample type unfilterable-float, single-sampled, view
+ *                          size, visible to vertex and fragment stages; only its top-left ceil(w / 8) x ceil(h / 8)
+ *                          texels are meaningful.
+ * Contents: texel (i, j) is the clearance of the 8 x 8 tile of pixels it stands for: a lower bound on the distance, in
+ * pixels, from the centre of any pixel of the tile to the centre of any pixel where scene_depth < 1, exact on the tile
+ * grid (min over such tiles of sqrt(gx^2 + gy^2), gx = max(0, 8 |di| - 7) the gap between the two tiles' nearest pixel
+ * centres), capped at CLEARANCE_MAX, stored as clearance / CLEARANCE_SCALE. `scene_clearance` takes off the half step
+ * the 8-bit store may have rounded up. Written from the resolved depth by two passes after the depth resolve
+ * (src/host/lower.ts). A reader that looks at scene depth only within distance d of px may skip the looking where
+ * scene_clearance(px) > d: nothing opaque is there (the sea's contact band, src/geom/sea.ts).
+ */
+export const SCENE_CLEARANCE_WGSL = /* wgsl */ `
+@group(2) @binding(1) var loft_scene_clearance: texture_2d<f32>;
+
+/// Lower bound on the distance in pixels from pixel px to any opaque pixel (at most ${CLEARANCE_MAX}.0).
+fn scene_clearance(px: vec2<f32>) -> f32 {
+  let size = vec2<i32>(textureDimensions(loft_scene_depth));
+  let c = textureLoad(loft_scene_clearance, clamp(vec2<i32>(floor(px)), vec2<i32>(0), size - 1) / ${CLEARANCE_TILE}, 0).x;
+  return c * ${CLEARANCE_SCALE}.0 - ${(0.5 / 255) * CLEARANCE_SCALE + 0.005};
+}
+`;
+
 /**
  * Prepended by the host to the shader of every post pass, right after PRELUDE_WGSL and before `Artefact.sceneWgsl`.
  * It includes SCENE_DEPTH_WGSL (same group 2 binding 0, same contents), so a post shader has `scene_depth` and

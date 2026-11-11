@@ -1,7 +1,7 @@
 // The sea's projected grid, read back from the GPU: the sea draw's own vertex function run in a compute pass, at the
 // cell counts and rows the host chooses for a real camera.
 import { expect, test } from "bun:test";
-import { DETAIL_SLOTS, PRELUDE_WGSL, SCENE_DEPTH_WGSL, type Camera } from "../src/artefact.ts";
+import { DETAIL_SLOTS, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Camera } from "../src/artefact.ts";
 import { compileScene, scene, sea, toon, variable, vec2 } from "../src/index.ts";
 import { boundsFrom, planFrame } from "../src/host/detail.ts";
 import { frameUniform, viewState } from "../src/host/host.ts";
@@ -24,7 +24,7 @@ async function seaVertices(device: GPUDevice, camera: Camera, time: number): Pro
   const vertices = runs[0]!.vertices;
   const slot = seaDraw.detail.kind === "projected" ? seaDraw.detail.slot : -1;
   // The vertex entry point becomes a plain function the probe calls: the code under test is the draw's own.
-  const code = PRELUDE_WGSL + SCENE_DEPTH_WGSL + a.sceneWgsl + a.shaders[seaDraw.shader]!.replace("@vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32)", "fn vs(vi: u32, ii: u32)") + `
+  const code = PRELUDE_WGSL + SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL + a.sceneWgsl + a.shaders[seaDraw.shader]!.replace("@vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32)", "fn vs(vi: u32, ii: u32)") + `
 @group(3) @binding(0) var<storage, read_write> probe_out: array<vec4<f32>>;
 @compute @workgroup_size(64) fn probe(@builtin(global_invocation_id) g: vec3<u32>) {
   if (g.x >= arrayLength(&probe_out)) { return; }
@@ -34,7 +34,7 @@ async function seaVertices(device: GPUDevice, camera: Camera, time: number): Pro
   const storage = (binding: number): GPUBindGroupLayoutEntry => ({ binding, visibility: V, buffer: { type: "read-only-storage" } });
   const l0 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: V, buffer: { type: "uniform" } }, storage(1), storage(2), storage(3), { binding: 4, visibility: V, buffer: { type: "uniform" } }] });
   const l1 = device.createBindGroupLayout({ entries: a.dynamic.map((d) => storage(d.binding)) });
-  const l2 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: V, texture: { sampleType: "unfilterable-float" } }] });
+  const l2 = device.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: V, texture: { sampleType: "unfilterable-float" as const } })) });
   const l3 = device.createBindGroupLayout({ entries: [{ binding: 0, visibility: 0x4, buffer: { type: "storage" } }] });
   device.pushErrorScope("validation");
   const pipeline = device.createComputePipeline({
@@ -49,7 +49,8 @@ async function seaVertices(device: GPUDevice, camera: Camera, time: number): Pro
   ].map((b, binding) => ({ binding, resource: { buffer: b } })) });
   const g1 = device.createBindGroup({ layout: l1, entries: a.dynamic.map((d) => ({ binding: d.binding, resource: { buffer: buf(tables[d.name]!, GPUBufferUsage.STORAGE) } })) });
   const tex = device.createTexture({ size: [1, 1], format: "r32float", usage: GPUTextureUsage.TEXTURE_BINDING });
-  const g2 = device.createBindGroup({ layout: l2, entries: [{ binding: 0, resource: tex.createView() }] });
+  const clearance = device.createTexture({ size: [1, 1], format: "r8unorm", usage: GPUTextureUsage.TEXTURE_BINDING });
+  const g2 = device.createBindGroup({ layout: l2, entries: [{ binding: 0, resource: tex.createView() }, { binding: 1, resource: clearance.createView() }] });
   const out = device.createBuffer({ size: vertices * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
   const read = device.createBuffer({ size: vertices * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const g3 = device.createBindGroup({ layout: l3, entries: [{ binding: 0, resource: { buffer: out } }] });
