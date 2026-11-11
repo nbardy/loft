@@ -15,6 +15,9 @@ export const S = {
     // The one accent a variant may give a single part when it repaints the body (DIRECTION.md: one accent per monster):
     // the fiddler's great claw. No base option reads it; it is the base brick, so that claw on the base crab stays brick.
     accent: [0.66, 0.22, 0.13],
+    // The mask direction's dark lacquer (armour, helmet): lighter than the line black so ink lines still read on it.
+    // The base reads none of it.
+    lacquer: [0.14, 0.1, 0.12],
   } satisfies Record<string, V3>,
   /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
   shadowIndigo: 0.42,

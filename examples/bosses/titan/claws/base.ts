@@ -14,7 +14,18 @@ import type { ClawsOffer, ClawsOption, Gripper } from "../slots.ts";
 
 type Ink = Numbers["ink"];
 /** What a claw option may change of the drawing without touching the mechanism: the palm's paint over its (m, v). */
-export type ClawLook = { readonly about: string; readonly numbers?: ClawsOption["numbers"]; readonly palm: (I: Ink, m: F, v: F) => P3 };
+export type ClawLook = {
+  readonly about: string; readonly numbers?: ClawsOption["numbers"]; readonly palm: (I: Ink, m: F, v: F) => P3;
+  // Optional, added for the mask direction (2026-11-11); each absent field builds exactly the base claw's expression.
+  /** The arm's paint over its (m, v), given the elbow's m. */
+  readonly arm?: (I: Ink, m: F, v: F, elbow: F) => P3;
+  /** A factor on the arm's girth over its m (armour lames). */
+  readonly armProfile?: (m: F) => F;
+  /** The fingers' paint over their m (0 at the hinge, 1 at the tip). */
+  readonly finger?: (I: Ink, m: F) => P3;
+  /** The rest pose: where a wrist rests (crab coordinates) and how far the palms fold in toward the face (base 0.55). */
+  readonly rest?: { readonly wrist: (n: Numbers, side: 1 | -1, size: number) => readonly [number, number, number]; readonly fold: number };
+};
 
 /** Size of a claw: palm length, palm half-width, arm segment lengths. */
 const clawDims = (n: Numbers, size: number) => ({ len: n.clawPalm * size, fat: n.clawFat * size, arm: n.armLengths.map((l) => l * (0.55 + 0.45 * size)) as unknown as readonly [number, number] });
@@ -76,11 +87,12 @@ function pincerClaw(rig: Rig, look: ClawLook, name: string, side: 1 | -1, size: 
   const arm = limb({ root: local(shoulder(side)), target: wrist, lengths: d.arm, bend: add(mul(body.z, side), mul(body.y, 0.5)) });
   const [, elbow, w] = arm.joints;
   // The palm continues the forearm, folded in toward the face at rest as a crab carries it.
-  const free = unit(add(unit(sub(w, elbow)), mul(body.z, mul(fold, -side * 0.55))));
+  const free = unit(add(unit(sub(w, elbow)), mul(body.z, mul(fold, -side * (look.rest?.fold ?? 0.55)))));
   const along = unit(mix(free, grip.along, grip.on));
   const armStrand = strand({
-    name: `${name}Arm`, spine: arm.spine, stations: 16, girth: (m) => mul(d.fat, sub(0.42, mul(m, 0.1))), tips: ["round", "round"], up: body.y,
-    paint: (m, v) => {
+    name: `${name}Arm`, spine: arm.spine, stations: 16, tips: ["round", "round"], up: body.y,
+    girth: look.armProfile === undefined ? (m) => mul(d.fat, sub(0.42, mul(m, 0.1))) : (m) => mul(mul(d.fat, sub(0.42, mul(m, 0.1))), look.armProfile!(m)),
+    paint: look.arm !== undefined ? (m, v) => look.arm!(I, m, v, arm.knots[1]!) : (m, v) => {
       const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
       const ring = sub(1, cut(abs(sub(m, arm.knots[1]!)), 0.022));
       return mix(mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.25)), vec3(...I.black), ring);
@@ -102,14 +114,15 @@ function pincerClaw(rig: Rig, look: ClawLook, name: string, side: 1 | -1, size: 
     const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
     return place(horn({
       name: fname, length: d.len * 0.95, curl: 0.8, taper: 0.16, girth: mul(d.fat, 0.44), out: [1, -0.15, 0], toward: [0, -1, 0],
-      paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
+      paint: look.finger !== undefined ? (m) => look.finger!(I, m) : (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
     }), rigid(hinged));
   };
   const fingers = [finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)] as const;
   return { things: [armStrand, palm, ...fingers], palm, fingers };
 }
 
-const wristRest = (n: Numbers, side: 1 | -1, size: number): readonly [number, number, number] => [n.carapace.to + 1.0 * size, 0.4, side * (n.carapace.width * 0.55 + 0.6 * size)];
+const wristRest = (look: ClawLook, n: Numbers, side: 1 | -1, size: number): readonly [number, number, number] =>
+  look.rest !== undefined ? look.rest.wrist(n, side, size) : [n.carapace.to + 1.0 * size, 0.4, side * (n.carapace.width * 0.55 + 0.6 * size)];
 
 /**
  * The cutter (left) posed by the Grab: the attack's grip turned into this pincer's pose. Exported so another claws
@@ -134,7 +147,7 @@ export function cutterOf(rig: Rig, look: ClawLook): { readonly things: readonly 
   const grabWrist = sub(gripPalm, mul(keelV, gripDepth));
   /** The cutter idles on its own seeds, held quieter while the crusher works. */
   const quiet = sub(1, mul(env.p, 0.8));
-  const cutterIdle = local(add(vec3(...wristRest(n, -1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet)));
+  const cutterIdle = local(add(vec3(...wristRest(look, n, -1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet)));
   /** Once home (the attack's span is over), the arm swings once. */
   const homeSwing = swing(sub(grabEnv.tau, grab.span.after), 0.4, 1.1, 0.3);
   // The grab's closed forms are long (arcs, selects, two finger angles); written inline they were re-evaluated by every
@@ -160,7 +173,7 @@ export function clawsOf(look: ClawLook): ClawsOption {
       // The crusher's wrist is the m = 0 end of a spine from the wrist at rest back to the shoulder, posed by the crush; the
       // palm is the part that lands (its m = 1 end leads). In the attack the palm unfolds to drive straight on along its forearm.
       const crusherDrift = perFrame("titan_crusher_drift", mul(crusherIdle, sub(1, mul(grabOn, 0.8))));
-      const crusher = animate((m) => mix(local(add(vec3(...wristRest(n, 1, n.crusher)), crusherDrift)), local(shoulder(1)), m), [crush], (spine) => {
+      const crusher = animate((m) => mix(local(add(vec3(...wristRest(look, n, 1, n.crusher)), crusherDrift)), local(shoulder(1)), m), [crush], (spine) => {
         const c = pincerClaw(rig, look, "crusher", 1, n.crusher, spine(lift<"f32">(0)), crushGape, sub(1, env.p));
         return { things: c.things, parts: { crusherPalm: part("crusherPalm", c.palm, { tip: 1 }) } };
       });
