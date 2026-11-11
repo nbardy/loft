@@ -12,12 +12,13 @@ export const BEAT = 60 / BPM, BAR = 4 * BEAT, BARS = 12, PERIOD = BARS * BAR;
 export const beat = (b: number): number => b * BEAT;
 
 // ---- the formation: a chevron. The middle pair (the fiddler and the samurai, the low crabs) 8 forward and 11 apart, the
-// outer pair 8 back and 12 out, so that the camera can come close enough for the middle pair's bodies to be a third of
+// outer pair 8 back and 16 out (12 in the strip hid them wholly behind the middle pair, whose bodies are wider than
+// the stand-in's boxes), so that the camera can come close enough for the middle pair's bodies to be a third of
 // the frame and the outer pair still stands in it, smaller and further, faces clear (docs/lineup.md, "Second staging").
 /** The middle pair's spacing (world z), the outer pair's offset from the middle, and how far forward / back each pair stands. */
-export const MIDDLE = 11, OUTER = 12, ADVANCE = 8;
+export const MIDDLE = 11, OUTER = 16, ADVANCE = 8;
 /** Where the faces look: the main framing's eye. */
-export const AUDIENCE = [40, 2.5, 0] as const;
+export const AUDIENCE = [44, 2.5, 0] as const;
 /** Crab k (0 .. 3, left to right as the camera sees it; the camera's left is +z): its place and heading (radians from +x toward +z). */
 export function standing(k: number): { readonly at: readonly [number, number]; readonly heading: number } {
   const middle = k === 1 || k === 2;
@@ -62,8 +63,8 @@ const lens = (eye: V3, target: V3, fovY: number): Lens => ({ eye, target, fovY }
 export const WIDE: Format = {
   name: "wide", width: 1920, height: 1080, cuts: [
     { at: 0, shot: { kind: "still", name: "slam", lens: lens([58, 3, 0], [0, 6.5, 0], 0.4) } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([40, 2, 0], [0, 4.8, 0], 0.4) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([40, 2, 0], [0, 4.8, 0], 0.4), to: lens([30, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([44, 2, 0], [0, 4.8, 0], 0.4) } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([44, 2, 0], [0, 4.8, 0], 0.4), to: lens([31, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
   ],
 };
 /**
@@ -73,8 +74,8 @@ export const WIDE: Format = {
 export const SQUARE: Format = {
   name: "square", width: 1080, height: 1080, cuts: [
     { at: 0, shot: { kind: "still", name: "slam", lens: lens([62, 3, 0], [0, 6.5, 0], 0.4) } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([44, 2, 0], [0, 5, 0], 0.4) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([44, 2, 0], [0, 5, 0], 0.4), to: lens([33, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([48, 2, 0], [0, 5, 0], 0.4) } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([48, 2, 0], [0, 5, 0], 0.4), to: lens([33, 2, 0], [0, 4.5, 0], 0.4), start: beat(32), end: PERIOD } },
   ],
 };
 export const FORMATS = { wide: WIDE, square: SQUARE } as const;
