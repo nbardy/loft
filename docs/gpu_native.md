@@ -211,6 +211,80 @@ same text and the descriptors the same values, so any difference is a bug in the
 Wrong if: any frame's hash differs; a file loader's import closure reaches `src/compile` or `src/expr.ts`; files
 load more than 100 ms slower than the GPU load from a compile.
 
+### Measured (2026-11-11, as built; machine shared and heavily loaded)
+
+`bun tools/files_proof.ts` (pixels, bytes) and `bun tools/files_proof.ts --time 3` (load times: files and scene paths
+alternated, each a fresh process, three rounds; least and most).
+
+Pictures: **identical**, as predicted. All 18 frames (six scenes, three frames each, 640x400) have the same SHA-256
+of RGBA through the phase-1 host, the new host from a compile, and `files_frames` from files, in a process that
+loaded no compiler module (Bun's module registry, checked at the end of the run).
+
+| Scene | WGSL, MB (predicted) | blobs, B | manifest, KB (predicted) | saved against whole modules | read, ms | GPU load from files, s | compile, s | GPU load from a compile, s |
+|---|---|---|---|---|---|---|---|---|
+| maelstrom_wyrm | 4.11 (4.11) | 9,216 | 78 (60-100) | 1.01 MB, 19.7% | 18-26 | 4.6-10.5 | 7.7-13.3 | 6.2-20.0 |
+| reefback_titan | 4.01 (4.01) | 9,936 | 120 (80-130) | 1.07 MB, 21.0% | 4-58 | 3.0-21.9 | 2.3-13.1 | 4.4-59.4 |
+| thundermaw | 3.67 (3.68) | 7,168 | 78 (60-100) | 0.69 MB, 15.8% | 4-15 | 2.7-3.1 | 3.0-4.5 | 3.0-4.9 |
+| tithe_fleet | 4.11 (4.11) | 0 | 71 (60-100) | 0.67 MB, 14.0% | 3-46 | 2.3-2.7 | 4.5-5.7 | 2.0-3.1 |
+| wreckers_lamp | 3.00 (3.00) | 15,744 | 69 (60-100) | 0.59 MB, 16.4% | 6-11 | 1.8-2.2 | 1.5-1.6 | 1.6-2.4 |
+| grab | 2.58 (2.58) | 0 | 54 (40-70) | 0.35 MB, 12.0% | 2-9 | 0.94-1.48 | 0.92-1.30 | 1.03-1.59 |
+
+Against the predictions:
+
+- Bytes: hit, every scene, to the hundredth of a MB (the prediction was a sum of the compiled texts, and the files are
+  those texts). The savings of chunking came in at 12-21%, against 15-25% predicted: grab and the fleet, with fewer
+  and larger modules, fall below the band. Measured before building, deduplicating repeated text inside the compiler's
+  output would save 1.4%; the expectation from phase 1 that repeated accessors and table code dominate stage WGSL does
+  not hold for these scenes. The volume is single large functions (phase 1's code generation).
+- Reading the files: under 50 ms predicted; 2-26 ms in all rounds but two (46 and 58 ms, both in rounds where the
+  same machine took 13 s to compile). Hit, with those two readings at the edge.
+- GPU load from files against from a compile: predicted equal within 100 ms. Not resolvable on this machine today:
+  one scene's load swung 4.4 to 59 s across rounds. The least readings, which load only adds to, differ by -1.6 to
+  +0.3 s, files faster in the two largest scenes; no sign of a systematic cost on either side, which is what identical
+  modules and descriptors imply. The prediction stands as reasoning, not as a measurement.
+- What files save is the compile, 0.9 to 13 s here (1 to 5 s on a quieter machine, phase 1's figures), and nothing
+  else, as predicted. Loading faster than that needs less WGSL or cached pipelines (below).
+
+Failed once, not reproduced: a scene-path load of reefback (timing round, not the proof) failed in Dawn with "The stage
+(Fragment) of the entry point "fs" isn't the expected one (Vertex)" for `surface.cutterDactyl`; the same load passed
+in the proof run and in three rounds of the rerun. It matches the intermittent shader-module failure AGENTS.md records
+for the phase-1 host; it was not investigated.
+
+The no-compiler property is enforced three ways: `tools/check_loader_closure.ts` follows every runtime import from
+the loader's entries (`src/cli/run_files.ts`, `src/host/files.ts`, `tools/files_frames.ts`: 14 files, packages
+`bun-webgpu` and `node:*`) and fails on `src/compile/**`, `src/expr.ts`, `src/grad.ts`, `src/index.ts`, `examples/**`
+or a dynamic import whose path is not a literal; `tests/files.test.ts` runs it, and runs it on `tools/pose_time.ts`
+to show it can fail; and `loft render --artefact` checks Bun's module registry after drawing.
+
+### What phases 3 and 4 need from this format
+
+Phase 3 (textures and layers): `TextureDesc` gains a fixed size, mip levels and dimension (beside "view-sized"), and
+an `init` per mip from blobs or from a compute stage run once at load; `LayoutEntry` gains storage textures and the
+other view dimensions; a texture is bound by a view descriptor rather than its default view. A layer a style asks for is
+then a texture, a bind-group entry and a chunk of WGSL: no new kind of thing for the loader. The version moves to 2.
+
+Phase 4 (fewer draws, level of detail on the GPU): a `DrawCommand` variant `indirect` (buffer and offset: wgpu's
+`draw_indirect`, or one `multi_draw_indirect` per pipeline), buffers with `INDIRECT` usage, and a second compute pass
+after the pose that writes the arguments. Then `BoundsRead` is always `none`, the `grid` plan and the readback leave the
+format, and the loader's one algorithm with them; `cellPixels` becomes a frame write. Shaders shared across scenes
+fall out of content-addressed chunks: a shared directory of `wgsl/` whose names are hashes.
+
+### The Rust loader (not written: a cargo build would cost gigabytes of a nearly full disk)
+
+PREDICTED size: 900 to 1,100 lines of Rust on wgpu, by part, against the TypeScript that does the same:
+
+| Part | TypeScript today | Rust, lines |
+|---|---|---|
+| manifest types (serde) | `manifest.ts` 171 | 220-260 (wgpu-types' serde names are WebGPU's, so most enums deserialize directly; the rest are small `match`es) |
+| reading the directory | `files.ts` reading, 25 | 40 |
+| creating the objects, view-sized textures and groups | `host.ts` `createObjects`, about 90 | 200-250 (descriptors spelled out, lifetimes of views) |
+| a frame: writes, pose pass, bounds copy and map, passes | `host.ts` frame path, about 150 | 180-220 (async map through a callback and `poll`) |
+| frame state and the frame uniform, camera matrices | `host.ts` 40 + `camera.ts` 110 | 130-150 |
+| level-of-detail plan | `detail.ts` 216 | 170-200 |
+
+No part interprets the scene: every number a pipeline needs is in the file. The plan (about a fifth of it) is the one
+algorithm; phase 4 deletes it.
+
 ## Phase 3: textures and layers
 
 A texture is a table with two or three indices and mip levels. It is written as a function and baked by the

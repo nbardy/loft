@@ -70,7 +70,8 @@ export class NotDataError extends Error {
 }
 
 export function createHost(device: GPUDevice): GpuHost {
-  return { load: (artefact) => loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) }) };
+  // async: an artefact that fails lower's checks rejects the returned promise, as every load error does, never throws.
+  return { load: async (artefact) => loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) }) };
 }
 
 // ---- per-frame state -------------------------------------------------------------------------------------------
