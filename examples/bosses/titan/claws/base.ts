@@ -132,7 +132,7 @@ export function cutterOf(rig: Rig, look: ClawLook): { readonly things: readonly 
   const { n, crush, grab, grabOn, grabEnv, keel, gripRest, body, local } = rig;
   const env = crush.envelope(time);
   const p = pincer(n);
-  const keelV = vec3(keel[0], 0, keel[1]);
+  const keelV = keel;
   const take = grab.grip(gripRest);
   // Both fingers' contact stations, of chord `p.chord`, hinged `p.hinges` apart, stand the gap plus their two radii
   // apart: the library's fingerAngle is for straight fingers, so the curl's chord angle (phi) is taken off. (pincerAngle,

@@ -4,7 +4,7 @@
 // legs raise the body), and a `draw` from the rig. The claws also *offer* the rig two measurements before the rig is
 // built (the Grab places the ship by them), because the attacks' geometry depends on the claws' shape.
 
-import type { Check, Drawable, Measured, Strand, Strike } from "../../../src/index.ts";
+import type { Check, Drawable, Measured, Placer, Strand, Strike } from "../../../src/index.ts";
 import type { Option } from "../../../src/design.ts";
 import type { Numbers } from "./numbers.ts";
 import type { Rig } from "./rig.ts";
@@ -43,3 +43,10 @@ export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace) =
 
 /** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. */
 export type BackOption = Opt & { readonly draw: (rig: Rig) => readonly Drawable[] };
+
+/**
+ * Who places the two boats when the crab does not hold them (docs/throw_and_shove.md, "The contract"): Loft's stand-ins
+ * (base: the scene plays on its own), or the host. `placer` is asked once per boat, with the boat's name (`boat1`,
+ * `boat2`: the prefix of its inputs) and where the show starts it.
+ */
+export type BoatsOption = Opt & { readonly placer: (boat: string, start: { readonly at: readonly [number, number]; readonly heading: number }) => Placer };

@@ -11,12 +11,22 @@
 // - slots.ts: what an option of each slot receives and returns;
 // - carapace/, legs/, claws/, face/, back/: one file per option. `base` is the crab as first drawn.
 //
-// What the game reads: `strikes` (Claw Crush on the crusher's palm) and `holds.grab` (`held()`, `thing()`,
-// `squeezed()`), exported below for the base variant and returned by every variant's build.
+// - boats/: who places the two boats when the crab does not hold them: `base`, Loft's stand-ins (the scene plays on its
+//   own), or `host` (a game passes each boat's pose; `--variant boats=host`).
+//
+// What a game sets and reads (docs/throw_and_shove.md, "The contract"). Sets: the host inputs `grab.arm`, `crush.arm`,
+// `crush.centre`, `boat1.at`, `boat1.heading`, `boat1.beam`, `throw.land`, `boat2.at`, `boat2.heading` (and with
+// `boats=host` each boat's `pose`). Reads: `strikes` (Claw Crush on the crusher's palm), `holds.grab` (`held()`,
+// `thing()`, `squeezed()`, and of its throw `flight()` and `toss()`), `waves.crush` (`arrives(place)`, `pushed(place)`,
+// `wave()`) and `handoff` (the socket while held, the release, the wave as a field), exported below for the base
+// variant and returned by every variant's build.
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
+import { fliesClear, frontFirst, gripReaches, landsInside, lift, placedBy, print, releasesAt, scene, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check } from "../../src/index.ts";
+import { base as boatsBase } from "./titan/boats/base.ts";
+import { host as boatsHost } from "./titan/boats/host.ts";
+import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
 import { base as backBase } from "./titan/back/base.ts";
 import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
@@ -41,7 +51,7 @@ import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { rig } from "./titan/rig.ts";
-import type { BackOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
+import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
 // comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
@@ -66,6 +76,13 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     face: at({ eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 }, front, rise),
     legs: at({ eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 }, 0, rise * 0.85),
     back: at({ eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 }, 0, rise * 0.5),
+    // The throw in profile, from ahead of the crab looking back at it: the claw cocks on the left of
+    // the frame and the ship flies the whole arc to the right, against open water. Fixed in the world, as the game's.
+    throw: { kind: "perspective", eye: [58, 12, -16], target: [4, 3, -16], fovY: 0.6 },
+    // The whole arena: the game camera's direction, pulled back and aimed between the crab and where the thrown ship
+    // lands, so one frame holds the crab, both boats, the slam and its ring, and the landing. The game camera itself
+    // cannot: its frame ends 23.5 from the crab's middle, and the ship comes down 37 away.
+    arena: { kind: "perspective", eye: [39.8, 49.7, 21.4], target: [2, 0, -11], fovY: 0.6 },
   };
 };
 
@@ -78,6 +95,7 @@ export const design = makeDesign({
     claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
+    boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
   },
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
@@ -122,7 +140,7 @@ export const design = makeDesign({
   build: (o, n) => {
     // Numbers, then what the claws offer the rig, then the rig, then each slot drawn on it, then the scene.
     const offer = o.claws.offer(n);
-    const r = rig(n, offer);
+    const r = rig(n, offer, o.boats);
     const carapace = o.carapace.draw(r);
     const legs = o.legs.draw(r);
     const claws = o.claws.draw(r, offer);
@@ -131,17 +149,48 @@ export const design = makeDesign({
     return {
       scene: scene({
         sea: r.world.sea,
-        things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.boat],
+        things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
         style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) }),
         sun: [0.15, 0.8, 0.6],
         cameras: camerasFor(n),
       }),
       strikes: { crush: claws.crush },
       holds: { grab: r.grab },
+      waves: { crush: r.crush },
+      handoff: r.handoff,
+      inputs: r.inputs,
       checks: [
         landsInside(claws.crush), warned(r.crush), warned(r.grab),
         // The fingers are curled horns a fifth of the beam thick near their tips: a tenth of the beam either way is a close grip.
+        // The hold ends in the whip, so this also says the drawn claw keeps the ship through the stroke (its arm reaches).
         gripReaches(r.grab, claws.cutterFingers, { middle: tolerance.share(0.1), gap: tolerance.share(0.1) }),
+        // The hand-off, whoever places the ship afterwards: let go at the stated instant, point and velocity (2% of the
+        // release speed, 2% of the stroke).
+        releasesAt(r.grab, { speed: tolerance.share(0.02), place: tolerance.share(0.02) }),
+        // The slam's ring is a field a game samples: neither a boat at the second boat's place nor the water under it
+        // moves before the front arrives there.
+        frontFirst(r.crush, [r.boatTwoAt]),
+        // What only a stand-in can be held to: its flight and its drift.
+        ...placedBy<readonly Check[]>(r.placer.boat1, {
+          standIn: () => [
+            // The flight starts as released (2% of the release speed), comes down where and when the attack says (1% of
+            // the distance flown), and far: at least 25 from where the ship was taken, six and a half of its lengths.
+            throwLands(r.grab, { least: 25, speed: tolerance.share(0.02), place: tolerance.share(0.01) }),
+            // In the air the ship (a ball of half its length) passes through neither the carapace nor the atoll (a
+            // cylinder of its larger radius: the ship may not fly over the island at any height).
+            fliesClear(r.grab, [
+              { kind: "body", body: carapace.hull },
+              { kind: "disc", centre: vec2(...n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
+            ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
+          ],
+          host: () => [],
+        }),
+        ...placedBy<readonly Check[]>(r.placer.boat2, {
+          // The second boat's drift starts at the ring's own impulse (2% of it) and ends at least 6 outward, a length
+          // and a half.
+          standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 6, impulse: tolerance.share(0.02) })],
+          host: () => [],
+        }),
         // What the chosen face asks of itself (slots.ts, `Face`): none for a face that asks nothing.
         ...face.checks,
       ],
@@ -152,6 +201,12 @@ export const design = makeDesign({
 const base = design.build(design.resolve(BASE_ASK));
 export default base.scene;
 export const strikes = base.strikes;
-/** What the game reads of the Grab: `held()`, `thing()`, `squeezed()`, functions of the clock. */
+/** What the game reads of the Grab: `held()`, `thing()`, `squeezed()`, and of its throw `flight()` and `toss()`; functions of the clock. */
 export const holds = base.holds;
+/** What the game reads of Claw Crush's ring wave: `arrives(place)`, `pushed(place)`, and the field `wave()`. */
+export const waves = base.waves;
+/** The hand-off to a game that runs its own boats: the socket while held, the release, the landing predicted, the wave. */
+export const handoff = base.handoff;
+/** The host inputs a game sets (their expressions; their names are in docs/throw_and_shove.md). */
+export const inputs = base.inputs;
 export const checks = base.checks;

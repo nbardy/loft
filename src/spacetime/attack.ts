@@ -15,13 +15,21 @@
 // owns nothing after), or a hold, which acts over [T, T + seconds] and owns the place and size of the thing it holds
 // (a grab, a swallow, a beam that pins, a whirlpool that drags). A hold's readouts (`held`, `thing`, `squeezed`) are
 // closed forms of the clock, so the game and the art read the same numbers. A `grip` motion poses a gripper that
-// reaches for the held thing, follows it and lets it go, on the attack's own timing.
+// reaches for the held thing, follows it and lets it go, on the attack's own timing. A hold ends set down or thrown
+// (`Ending`, src/geom/grab.ts): a thrown thing's flight and landing are part of `thing`, and `toss` and `flight` say
+// where and when it lands.
+//
+// What the attack leaves on the water is its aftermath (docs/throw_and_shove.md), a second sum type beside the effect
+// (any effect may have one): still, or a ring wave that runs out from the hit disc at the arming time, which the sea
+// takes as a deformation (`deforms`) and which shoves what floats (`pushed`).
 
 import {
   Expr, add, clamp, compileJs, div, f, floor, length, lt, max, lift, mix, mul, normalize, select, smoothstep, sub, time, variable, vec2, vec3, type In,
 } from "../expr.ts";
 import { response } from "../curve.ts";
-import { gripper, heldThing, type AxesSize, type Grab, type GrabBeats, type GripperSpec, type Held } from "../geom/grab.ts";
+import { gripper, heldThing, SET_DOWN, throwOf, type AxesSize, type Ending, type Grab, type GrabBeats, type GripperSpec, type Held, type SetDown, type Throw, type Thrown } from "../geom/grab.ts";
+import { RingWave } from "../geom/ring.ts";
+import type { SeaDeform } from "../geom/sea.ts";
 import { arc, slowInOut, type Beat } from "../geom/lively.ts";
 import type { Drawable } from "../compile/context.ts";
 import type { Body } from "../map/sweep.ts";
@@ -159,8 +167,11 @@ function carryOf(c: CarrySpec): Carry {
 
 /** Acts at the arming instant and owns nothing after it: a hit. */
 export type Instant = { readonly kind: "instant" };
-/** Acts for `seconds` from the arming time and owns its thing's place and size meanwhile. */
-export type Hold = {
+/**
+ * Acts for `seconds` from the arming time and owns its thing's place and size meanwhile, and after it as its ending
+ * says: set down, the thing stays where the carry ended; thrown, it flies and lands (the carry ends at the wind-back).
+ */
+export type Hold<N extends Ending = Ending> = {
   readonly kind: "hold";
   readonly seconds: number;
   /** The thing's middle where it is taken, and its half width across the grip. */
@@ -170,14 +181,22 @@ export type Hold = {
   /** The fraction of its width crushed at the peak of each squeeze (0 holds without squeezing), and how many squeezes. */
   readonly squeeze: number;
   readonly pulses: number;
+  /** How it ends. */
+  readonly end: N;
 };
 export type Effect = Instant | Hold;
 
 export const INSTANT: Instant = { kind: "instant" };
-/** A hold of `seconds` on a thing of half width `radius` taken at `at`. */
-export function hold(o: { readonly seconds: number; readonly at: In<"vec3">; readonly radius: In<"f32">; readonly carry: CarrySpec; readonly squeeze?: number; readonly pulses?: number }): Hold {
+type HoldSpec = { readonly seconds: number; readonly at: In<"vec3">; readonly radius: In<"f32">; readonly carry: CarrySpec; readonly squeeze?: number; readonly pulses?: number };
+/**
+ * A hold of `seconds` on a thing of half width `radius` taken at `at`. `end` is how it ends: `thrown({...})`
+ * (src/geom/grab.ts), or set down where the carry ends (`SET_DOWN`, the ending when none is given).
+ */
+export function hold<N extends Ending>(o: HoldSpec & { readonly end: N }): Hold<N>;
+export function hold(o: HoldSpec): Hold<SetDown>;
+export function hold(o: HoldSpec & { readonly end?: Ending }): Hold {
   if (!(o.seconds > 0 && Number.isFinite(o.seconds))) throw new Error(`hold: seconds must be a positive, finite number; got ${o.seconds}`);
-  return { kind: "hold", seconds: o.seconds, at: lift<"vec3">(o.at), radius: lift<"f32">(o.radius), carry: carryOf(o.carry), squeeze: o.squeeze ?? 0, pulses: o.pulses ?? 1 };
+  return { kind: "hold", seconds: o.seconds, at: lift<"vec3">(o.at), radius: lift<"f32">(o.radius), carry: carryOf(o.carry), squeeze: o.squeeze ?? 0, pulses: o.pulses ?? 1, end: o.end ?? SET_DOWN };
 }
 
 /** The carry as a place at u of the hold. */
@@ -197,6 +216,78 @@ function effectSeconds(e: Effect): number {
   }
 }
 
+/** Seconds after a hold that its thing is in the air: none set down; thrown, the stand-in's flight. */
+function endingAir(e: Ending): number {
+  switch (e.kind) {
+    case "setDown": return 0;
+    case "thrown": return e.flight;
+  }
+}
+/** Seconds after a hold that its thing is still in motion: none set down; thrown, its flight and its settling on the water (to 1%). */
+function endingTail(e: Ending): number {
+  switch (e.kind) {
+    case "setDown": return 0;
+    case "thrown": return e.flight + 4.6 * Math.max(e.drag, 1 / (2 * Math.PI * e.heave.hz * e.heave.damping));
+  }
+}
+/** Seconds after the effect that what it acted on is in the air. */
+function effectAir(e: Effect): number {
+  switch (e.kind) {
+    case "instant": return 0;
+    case "hold": return endingAir(e.end);
+  }
+}
+/** Seconds after the effect that what it acted on is still in motion. */
+function effectTail(e: Effect): number {
+  switch (e.kind) {
+    case "instant": return 0;
+    case "hold": return endingTail(e.end);
+  }
+}
+
+// ---- the aftermath: what the attack leaves on the water ----------------------------------------------------------
+
+/** The water is left as it was. */
+export type Still = { readonly kind: "still" };
+/**
+ * A ring wave leaves the edge of the hit disc at the arming time (src/geom/ring.ts): a crest `height` high there,
+ * `length` long with its trough, running out at `speed` and gone at `reach` from the centre; a thing afloat at the
+ * disc's edge is given `shove / drag` units per second outward when the front arrives, which under the stand-in's
+ * linear drag (`drag` seconds) carries it `shove`. Height and impulse fall as 1 / sqrt(r).
+ */
+export type Ring = { readonly kind: "ring"; readonly speed: number; readonly height: number; readonly length: number; readonly reach: number; readonly shove: number; readonly drag: number };
+export type Aftermath = Still | Ring;
+
+export const STILL: Still = { kind: "still" };
+export const ring = (o: Omit<Ring, "kind">): Ring => ({ kind: "ring", ...o });
+
+/** An aftermath bound to its attack: the ring's wave is made once, from the attack's hit shape and clock. */
+type Water = { readonly kind: "still" } | { readonly kind: "ring"; readonly wave: RingWave };
+
+/** The disc a ring leaves. Only a disc has one edge at one distance from one centre; other shapes' waves are not built. */
+function ringDisc(name: string, h: Hit): Disc {
+  switch (h.kind) {
+    case "disc": return h;
+    case "capsule": case "arc": throw new Error(`attack "${name}": a ring aftermath needs a disc hit shape (the wave leaves its edge); this one is a ${h.kind}`);
+  }
+}
+function waterOf(a: Attack, w: Aftermath): Water {
+  switch (w.kind) {
+    case "still": return w;
+    case "ring": {
+      const d = ringDisc(a.name, a.hit);
+      return { kind: "ring", wave: new RingWave({ centre: d.centre, radius: d.radius, since: (t) => sub(t, a.armAt(t)), speed: w.speed, height: w.height, length: w.length, reach: w.reach, shove: w.shove, drag: w.drag }) };
+    }
+  }
+}
+/** Seconds after the arming time that the aftermath is still running (an upper bound: the disc's radius is not known here). */
+function aftermathTail(w: Aftermath): number {
+  switch (w.kind) {
+    case "still": return 0;
+    case "ring": return (w.reach + w.length) / w.speed + 4.6 * w.drag;
+  }
+}
+
 /** Seconds the motion spends letting go of what it held, after the effect (only a gripper lets go). */
 function releaseSeconds(m: Motion): number {
   switch (m.kind) {
@@ -207,10 +298,11 @@ function releaseSeconds(m: Motion): number {
 
 /**
  * The beats of an attack on its own clock: `anticipate` over the wind-up, `act` over the strike, `hold` over the
- * effect, `release` over the motion's let-go, `settle` after it; `after` is seconds since the release ended (since the
- * arming time, for a hit).
+ * effect, `release` over the motion's let-go, `flight` over a thrown thing's time in the air (a step at the hold's end
+ * otherwise), `settle` once the action is over: the part has let go and what it threw has landed. `after` is seconds
+ * since then (since the arming time, for a hit).
  */
-export type AttackBeat = Beat & { readonly hold: F; readonly release: F };
+export type AttackBeat = Beat & { readonly hold: F; readonly release: F; readonly flight: F };
 
 /**
  * When an attack arms: once at a time, or every `period` seconds from `first`. A value, so the pose, the telegraph and
@@ -233,7 +325,9 @@ export function every(period: number, first: In<"f32">): Arming {
   return { kind: "every", period, first: lift<"f32">(first) };
 }
 
-type Common = {
+type Common<W extends Aftermath = Aftermath> = {
+  /** What the attack leaves on the water. Default: still (`STILL`). */
+  readonly aftermath?: W;
   readonly name: string;
   /** When the hit arms: the striking part lands then. A time (seconds) is `once(time)`. */
   readonly arm: In<"f32"> | Arming;
@@ -243,15 +337,15 @@ type Common = {
   readonly timing?: Partial<Timing>;
 };
 /** An attack by a body part: the creature's part named `part` moves by `motion` (`animate` binds it). */
-export type BodyAttackSpec = Common & {
+export type BodyAttackSpec<W extends Aftermath = Aftermath> = Common<W> & {
   /** The name of the creature's part that strikes. */
   readonly part: string;
   readonly motion: BodyMotion;
 };
 /** An attack that moves no body part: only its hit shape and timing, and its effect (an instant if none is given). */
-export type RemoteAttackSpec<E extends Effect = Effect> = Common & { readonly motion: RemoteSpec; readonly effect?: E };
+export type RemoteAttackSpec<E extends Effect = Effect, W extends Aftermath = Aftermath> = Common<W> & { readonly motion: RemoteSpec; readonly effect?: E };
 /** A gripper's attack: it holds what it takes. */
-export type GripAttackSpec = Common & { readonly motion: GripSpec; readonly effect: Hold };
+export type GripAttackSpec<H extends Hold = Hold, W extends Aftermath = Aftermath> = Common<W> & { readonly motion: GripSpec; readonly effect: H };
 export type AttackSpec = BodyAttackSpec | RemoteAttackSpec | GripAttackSpec;
 
 /** The attack's two envelopes at a clock: posture p (0 rest .. 1) and strike progress q (exactly 1 at arming). */
@@ -279,9 +373,10 @@ function armingOf(arm: In<"f32"> | Arming): Arming {
 /**
  * An attack of any kind: its hit shape, schedule, warning, timing and effect. A `BodyAttack` also poses a body part; a
  * grip attack poses a gripper (`grip`); a hold's readouts (`held`, `thing`, `crush`, `squeezed`) exist only on attacks
- * whose effect is a hold (their `this` says so, so asking an instant is a type error, not a run-time one).
+ * whose effect is a hold (their `this` says so, so asking an instant is a type error, not a run-time one); a throw's
+ * (`toss`, `flight`) only on holds that end thrown; a ring's (`wave`, `pushed`, `arrives`) only on a ring aftermath.
  */
-export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
+export class Attack<M extends Motion = Motion, E extends Effect = Effect, W extends Aftermath = Aftermath> {
   readonly name: string;
   readonly hit: Hit;
   readonly arming: Arming;
@@ -289,6 +384,8 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
   readonly target: Target;
   readonly motion: M;
   readonly effect: E;
+  readonly aftermath: W;
+  private readonly water: Water;
   readonly timing: Timing;
   /** Strike response frequency (Hz) and its value at the first peak, chosen so the peak comes `timing.strike` after the start. */
   private readonly f: number;
@@ -313,6 +410,9 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
     this.f = unit.at / this.timing.strike;
     this.peak = unit.value;
     gripFits(this.name, this.motion, this.timing);
+    // Classified once: an attack given no aftermath leaves the water still.
+    this.aftermath = (spec.aftermath ?? STILL) as W;
+    this.water = waterOf(this, this.aftermath);
     fitsPeriod(this, spec.warn);
   }
 
@@ -386,7 +486,12 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
   beats(t: In<"f32">, settle: number): AttackBeat {
     if (!(settle >= 0 && Number.isFinite(settle))) throw new Error(`attack "${this.name}": settle must be a finite number of seconds, at least 0; got ${settle}`);
     const T = this.timing, tau = sub(t, this.armAt(t));
-    const hold = effectSeconds(this.effect), release = releaseSeconds(this.motion);
+    const hold = effectSeconds(this.effect), release = releaseSeconds(this.motion), air = effectAir(this.effect);
+    // The action is over when the part has let go and what it threw is down, whichever is later. A thrown thing flies on
+    // after the gripper is home (the crab's sloop for 2.6 s, its claw's release 1.3): until 2026-11-11 `settle` and
+    // `after` began with the end of the release, so a face that looked away "after the grab" turned from the ship in
+    // the air, before it landed.
+    const over = hold + Math.max(release, air);
     // A beat of no length is a step at its start: 0 before, 1 from then on.
     const span = (from: number, len: number): F => (len > 0 ? clamp(div(sub(tau, from), len), 0, 1) : select(lt(tau, from), 0, 1));
     return {
@@ -394,8 +499,9 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
       act: span(-T.strike, T.strike),
       hold: span(0, hold),
       release: span(hold, release),
-      settle: span(hold + release, settle),
-      after: sub(tau, hold + release),
+      flight: span(hold, air),
+      settle: span(over, settle),
+      after: sub(tau, over),
     };
   }
 
@@ -404,11 +510,14 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
   /** The thing a hold owns, at clock t. */
   private held_(this: Attack<Motion, Hold>, t: In<"f32">): Held {
     const h = this.effect;
-    return heldThing(sub(t, this.armAt(t)), h.seconds, h.at, carried(h), h.squeeze, h.pulses);
+    return heldThing(sub(t, this.armAt(t)), h.seconds, h.at, carried(h), h.squeeze, h.pulses, h.end);
   }
   /** 1 while the thing is held (from the arming time for the hold's seconds), else 0: the game's "this is held". */
   held(this: Attack<Motion, Hold>, t: In<"f32"> = time): F { return this.held_(t).held; }
-  /** The held thing's middle: where it was taken until then, carried during the hold, where it was let go after. */
+  /**
+   * The held thing's middle: where it was taken until then, carried during the hold, and after it where its ending
+   * puts it (set down: where it was let go; thrown: along its flight, then where it landed, skidding and heaving to rest).
+   */
   thing(this: Attack<Motion, Hold>, t: In<"f32"> = time): P3 { return this.held_(t).thing; }
   /** Its width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak of each squeeze. */
   crush(this: Attack<Motion, Hold>, t: In<"f32"> = time): F { return this.held_(t).crush; }
@@ -416,6 +525,51 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect> {
   squeezed(this: Attack<Motion, Hold>, base: In<"f32"> = 1, across: "x" | "y" | "z" = "x", t: In<"f32"> = time): AxesSize {
     return this.held_(t).squeezed(base, across);
   }
+
+  // ---- a throw's readouts: only on a hold that ends thrown ----
+
+  /**
+   * The throw: where the thing is drawn back to, where and how fast it is let go, where it touches down and where it
+   * comes to rest, with the times of the last two in the cycle clock t is in (`time` for now). A game reads `landsAt`
+   * and `land` (or `rest`) the moment the grab is warned.
+   */
+  toss(this: Attack<Motion, Hold<Thrown>>, t: In<"f32"> = time): Throw & { readonly releasedAt: F; readonly landsAt: F } {
+    const h = this.effect, released = add(this.armAt(t), h.seconds);
+    return { ...throwOf(carried(h)(lift<"f32">(1)), h.end), releasedAt: released, landsAt: add(released, h.end.flight) };
+  }
+  /**
+   * The thrown thing's flight at clock t: `flying` 1 in the air (else 0), `u` the share of the flight gone (0 before
+   * the release, 1 from touchdown: what `tumbled` turns by), `landed` seconds since touchdown (negative before: what a
+   * splash and a squash read).
+   */
+  flight(this: Attack<Motion, Hold<Thrown>>, t: In<"f32"> = time): { readonly flying: F; readonly u: F; readonly landed: F } {
+    const h = this.effect, since = sub(sub(t, this.armAt(t)), h.seconds);
+    return { flying: this.held_(t).flying, u: clamp(div(since, h.end.flight), 0, 1), landed: sub(since, h.end.flight) };
+  }
+
+  // ---- the aftermath's readouts ----
+
+  /** What the sea takes as deformations (`sea({ deform: attack.deforms() })`): nothing for still water, the ring's wave for a ring. */
+  deforms(): readonly SeaDeform[] {
+    const w = this.water;
+    switch (w.kind) {
+      case "still": return [];
+      case "ring": return [w.wave];
+    }
+  }
+  /** The ring's wave as a field a game samples: `arrival(place)`, `lifts(place, t)`, `impulse(place)`; and the stand-in's `shoved(place)`. */
+  wave(this: Attack<Motion, Effect, Ring>): RingWave {
+    const w = this.water;
+    switch (w.kind) {
+      case "ring": return w.wave;
+      // The type forbids this call; reached only through a cast.
+      case "still": throw new Error(`attack "${this.name}": it leaves the water still; it has no wave`);
+    }
+  }
+  /** The stand-in's shove: how far a thing afloat whose own place is `place` (x, z), given the ring's impulse, has drifted at clock t. Exactly 0 until the front arrives. */
+  pushed(this: Attack<Motion, Effect, Ring>, place: In<"vec2">, t: In<"f32"> = time): V2 { return this.wave().pushed(place, t); }
+  /** The time the ring's front reaches `place`, in the cycle clock t is in. */
+  arrives(this: Attack<Motion, Effect, Ring>, place: In<"vec2">, t: In<"f32"> = time): F { return add(this.armAt(t), this.wave().arrival(place)); }
 
   /** The gripper of a grip attack, waiting at `rest`: its palm (the grip's middle) and gap, at clock t. */
   grip(this: Attack<GripSpec, Hold>, rest: In<"vec3">, t: In<"f32"> = time): Grab {
@@ -437,7 +591,11 @@ function gripFits(name: string, m: Motion, T: Timing): void {
   }
 }
 
-/** A repeating attack must fit in its period: its lead (warning or wind-up) and its recovery, or a cycle cuts the last one short. */
+/**
+ * A repeating attack must fit in its period: its lead (warning or wind-up), then its recovery, the motion of what its
+ * effect acted on (a thrown thing's flight and settling) and its aftermath, or a cycle cuts the last one short (the
+ * thrown thing would jump home in the air).
+ */
 function fitsPeriod(a: Attack, warn: In<"f32">): void {
   const s = a.arming;
   switch (s.kind) {
@@ -445,19 +603,20 @@ function fitsPeriod(a: Attack, warn: In<"f32">): void {
     case "every": {
       // A warning given as an input is known only at run time; its default is not a promise, so only a number is checked.
       const lead = Math.max(a.span.before, typeof warn === "number" ? warn : 0);
-      if (!(lead + a.span.after < s.period)) {
-        throw new Error(`attack "${a.name}": it does not fit its period of ${s.period} s (${lead.toFixed(2)} s of warning or wind-up before arming, ${a.span.after.toFixed(2)} s of recovery after)`);
+      const after = Math.max(a.span.after, effectSeconds(a.effect) + effectTail(a.effect), aftermathTail(a.aftermath));
+      if (!(lead + after < s.period)) {
+        throw new Error(`attack "${a.name}": it does not fit its period of ${s.period} s (${lead.toFixed(2)} s of warning or wind-up before arming, ${after.toFixed(2)} s of recovery, flight or wave after)`);
       }
     }
   }
 }
 
 /** An attack whose motion poses a body part: `animate` binds it to the part it names. */
-export class BodyAttack extends Attack<BodyMotion, Instant> {
+export class BodyAttack<W extends Aftermath = Aftermath> extends Attack<BodyMotion, Instant, W> {
   declare readonly motion: BodyMotion;
   readonly part: string;
 
-  constructor(spec: BodyAttackSpec) {
+  constructor(spec: BodyAttackSpec<W>) {
     super(spec);
     this.part = spec.part;
   }
@@ -487,9 +646,9 @@ export class BodyAttack extends Attack<BodyMotion, Instant> {
  * An attack, defined once: by a body part (`part` and a lunge, sweep or rear), by a gripper (`grip`, holding what it
  * takes), or remote (a hit shape, timing and effect only).
  */
-export function attack(spec: BodyAttackSpec): BodyAttack;
-export function attack(spec: GripAttackSpec): Attack<GripSpec, Hold>;
-export function attack<E extends Effect = Instant>(spec: RemoteAttackSpec<E>): Attack<RemoteSpec, E>;
+export function attack<W extends Aftermath = Still>(spec: BodyAttackSpec<W>): BodyAttack<W>;
+export function attack<H extends Hold = Hold, W extends Aftermath = Still>(spec: GripAttackSpec<H, W>): Attack<GripSpec, H, W>;
+export function attack<E extends Effect = Instant, W extends Aftermath = Still>(spec: RemoteAttackSpec<E, W>): Attack<RemoteSpec, E, W>;
 export function attack(spec: AttackSpec): Attack {
   switch (spec.motion.kind) {
     case "lunge": case "sweep": case "rear": return new BodyAttack(spec as BodyAttackSpec);

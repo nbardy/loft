@@ -43,8 +43,10 @@ export type SwellSpec = {
 export interface SeaDeform {
   /** Where the water at sea-plane point xz (world x, z) at time t sits in the deformation's own plane coordinates. */
   toLocal(xz: Expr<"vec2">, t: In<"f32">): Expr<"vec2">;
-  /** How far the surface is pushed down at sea-plane point xz (0 outside the reach). */
-  dip(xz: Expr<"vec2">): F;
+  /** How far the surface is pushed down at sea-plane point xz at time t (0 outside the reach; below 0 raises it: a wave). */
+  dip(xz: Expr<"vec2">, t: In<"f32">): F;
+  /** The most it raises the surface above where it would be, world units (0 for one that only dips): the sea's grid keeps a margin for it. */
+  readonly rise: number;
   /**
    * How much of the swell survives at sea-plane point xz, 0..1 (1 outside the reach). A whirlpool smooths the swell
    * toward its throat, where the swell wound into it would otherwise crowd below a pixel.
@@ -204,7 +206,7 @@ export class Sea implements Chart, Drawable {
     // Transparent: what shows through the water is the submerged body (tinted by its own shader) or, where nothing
     // is below, the sky shader's under-horizon colour. The host sizes the grid to the screen each frame; the counts
     // here are only its declared size (`stats.maxTriangles`): what it draws at 1280 x 800 with water to every edge.
-    const lift = waves.reduce((a, w) => a + w.amp, 0);
+    const lift = waves.reduce((a, w) => a + w.amp, 0) + deforms.reduce((a, d) => a + d.rise, 0);
     const declared = (pixels: number) => Math.ceil((pixels * 1.1) / (SEA_CELL * CELL_PIXELS));
     // Case index: contact (clear 0, near 1) + 2 x reach (open 0, deformed 1); a sea with no deformation is always open.
     const reaches: readonly ReachCase[] = deforms.length > 0 ? ["open", "deformed"] : ["open"];
@@ -238,7 +240,7 @@ export class Sea implements Chart, Drawable {
   }
 
   private heightIn(deforms: readonly SeaDeform[], xz: Expr<"vec2">, t: In<"f32">): F {
-    return deforms.reduce<F>((h, d) => sub(h, d.dip(xz)), this.calmed(deforms, xz, t));
+    return deforms.reduce<F>((h, d) => sub(h, d.dip(xz, t)), this.calmed(deforms, xz, t));
   }
 
   /** Surface height at a point of the xz plane: the swell where that water came from, less every deformation's dip. */

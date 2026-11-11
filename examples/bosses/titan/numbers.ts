@@ -62,8 +62,10 @@ export const S = {
   stalk: 2.4, eye: 0.3,
 
   // ---- Claw Crush: the hit disc on the water (world xz), its warning, its loop ----
-  // The show loops every 16 s: Claw Crush arms at 3.4, the Grab closes at 11.2, so one idea reads at a time.
-  crushCentre: [9.6, 5.6] as const, crushRadius: 3.4, crushWarn: 1.5, crushFirst: 3.4, crushPeriod: 16,
+  // The show loops every 22 s: the Grab closes at 3.0 and throws its ship (down at 9.3), Claw Crush arms at 12.0 and
+  // its ring shoves the second boat, which coasts for the rest of the loop, so one idea reads at a time. Both boats are
+  // back at their places at the loop's seam.
+  crushCentre: [9.6, 5.6] as const, crushRadius: 3.4, crushWarn: 1.5, crushFirst: 12.0, crushPeriod: 22,
   // Pushed 1.2x and 1.5x from 6.5 and 2.0 (exaggeration): the claw climbs higher and pulls further back the wrong way.
   // At 8.5 (1.3x) the raised claw left the top of the game camera's frame.
   crushRise: 7.8, crushCoil: 3.0,
@@ -72,23 +74,56 @@ export const S = {
   /** The foam crash after the slam: how far the ring runs out (times the disc's radius), and for how long. */
   crashReach: 1.6, crashSeconds: 1.4,
 
-  // ---- the Grab: the cutter takes the scale ship (lib/scale_ship.ts), lifts it, squeezes it twice, sets it down ----
-  /** Seconds into the loop the grip closes (the grab's arming), and the warning before it. */
-  grabClose: 11.2, grabWarn: 3.0,
+  // ---- the Grab: the cutter takes the scale ship (lib/scale_ship.ts), lifts it, squeezes it twice, throws it ----
+  /** Seconds into the loop the grip closes (the grab's arming), and the warning before it. They are equal, so the grab's
+   * cycle (and with it the thrown ship's return to its place) turns over exactly at the loop's seam. */
+  grabClose: 3.0, grabWarn: 3.0,
   /**
    * The grab's seconds, each stated once: the claw rises into posture (windup), reaches and closes (the attack's strike
    * is reach + close), holds, lets go. `drawBack` is how far the reach first leaves the wrong way (grab's `windup`).
    */
-  grabSeconds: { windup: 0.9, reach: 1.3, close: 0.22, hold: 3.2, release: 1.3 }, grabDrawBack: 1.7,
+  grabSeconds: { windup: 0.9, reach: 1.3, close: 0.22, hold: 3.1, release: 1.3 }, grabDrawBack: 1.7,
   /** The ship's keel bearing, radians from +x toward +z: ahead-left of the crab, on the cutter's side, and from the game
    * camera clear of the resting crusher (at -0.44 the crusher covered it). */
   grabBearing: -0.75,
   /** Horizontal distance from the cutter's shoulder to its wrist when the grip closes: the arm spans 4.9, so the elbow stays bent. */
   grabWristReach: 4.2,
-  // A 2.2 lift barely read from the high game camera; 3.5 does (wrist still 4.3 from the shoulder at the top).
-  grabLift: 3.5, grabSqueeze: 0.5,
-  /** Seconds after the release for the ship to slip back to where it was taken (it was set down nearer the crab). */
-  grabFlee: 2.5,
+  // The carry's arch over the straight way from where the ship is taken to the wind-back place (2.15 up): with 2.0 the
+  // ship tops out 3.5 above the water two thirds of the way, as the old lift did, then sinks back as the claw cocks.
+  grabLift: 2.0, grabSqueeze: 0.5,
+
+  // ---- the throw and the wave (docs/throw_and_shove.md) ----
+  /** The world's gravity, units/s^2: the thrown ship's flight and (with the sea's depth) the ring wave's speed. */
+  gravity: 5,
+  /** The sea's depth here: the base crab stands on the bottom (`-floor`). The world's, not a variant's: the stilt crab's
+   * feet plant higher (floor -1.0), and a wave taken from that ran at 2.24, slower than the shove it was asked to give. */
+  seaDepth: 1.7,
+  /**
+   * The throw that ends the Grab. The carry draws the ship back to the wind-back place, given in the ship's own axes
+   * from where it is taken (`back` along the keel toward the crab, `side` to starboard, `up`), so every variant's claw
+   * cocks relative to its own ship. `stroke` seconds accelerate it, it flies `flight` seconds to `land` (world x, z:
+   * the default of the `throw.land` input; the farthest open water the game camera shows whole, its far right corner:
+   * at (5.7, -21.0) the bowsprit and the sail's peak were cut by the frame), skids on under `drag` and heaves; the claw
+   * follows through for `follow`. `turns` whole turns in the air, about the level axis across the throw.
+   * Since the owner's second note the landing is far (29 flown, 37 from the crab's middle): the game camera loses the
+   * ship through its top right corner and the `arena` and `throw` cameras show it land. The landing the game camera
+   * can show whole is (4.3, -19.6), with flight 2.6, stroke 0.5, follow 0.3 and one turn: 13.3 flown.
+   */
+  throw: { back: 2.7, side: 0.9, up: 2.15, stroke: 0.4, follow: 0.25, flight: 3.2, land: [-1.0, -35.0] as const, drag: 0.2, heave: { hz: 0.9, damping: 0.45 }, turns: 2 },
+  /** The splash where the thrown ship lands: how far its foam runs, for how long, and the squash of the hull at touchdown. */
+  splash: { reach: 3.6, seconds: 1.5, squash: 0.3 },
+  /** Claw Crush's ring wave: crest height at the disc's edge (the depth is 1.7; a crest breaks near 1.3), pulse length,
+   * where it is gone, and how far a thing afloat at the edge ends up shoved under the stand-in's drag (`drag` s: a heavy
+   * boat coasts). The front gives it shove / drag = 2.9 units/s there, the most the ring allows (the wave's own speed is
+   * 2.92). The first version (0.8 high, 4.6 over 1.6 s, then 5.6 over 2.0 s) moved the second boat one of its lengths:
+   * a nudge. */
+  wave: { height: 1.0, length: 6, reach: 12, shove: 8.7, drag: 3.0 },
+  /** The second boat's default place: `beyond` the crush disc's edge (whatever the disc's radius) along `bearing` from
+   * its centre, lying at `heading` (quartering the ring, and side-on to the game camera; bow-on it read as a sail with no
+   * hull). On bearing -1.35 the game frame has 10 units of open water for it to be shoved across, where the first boat
+   * floated before it was thrown (at -0.88 and -1.1 it reached the frame's right edge after 4). Its stand-in keeps its
+   * shove for `keep` s after the slam, then the boat is back at its place: 10 is the loop's seam (crushPeriod - crushFirst). */
+  boatTwo: { bearing: -1.35, beyond: 2.0, heading: -0.5, keep: 10.0, sail: [0.86, 0.79, 0.58] as const },
 } as const;
 
 /** The numbers as a build reads them: the same shape with every literal widened, so overrides may change them. */
