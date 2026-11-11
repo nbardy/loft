@@ -29,7 +29,7 @@
 import {
   abs, add, clamp, cos, div, every, exp, floor, fract, lift, mapNormal, max, mix, mul, pick, posedList, saturate, sin, size,
   smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, spacing,
-  woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE,
+  woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE, beats, dragged, impact, slowInOut, swing,
   type Drawable, type Expr, type F, type Frame, type Hull, type HullSpec, type P3, type Paint, type PoseSpec, type Poses,
   type Rope, type Sea, type Surface,
 } from "../../src/index.ts";
@@ -137,7 +137,8 @@ export const BROADSIDE = {
   radius: 4.5, // capsule radius
   guns: 7, // per side
   arc: 2.6, // shells' height at mid-flight
-  jolt: 0.22, // the hull drops this far as it fires
+  jolt: 0.35, // the hull drops this far as it fires (pushed from 0.22, which did not read)
+  rise: 0.12, // and rises this far before, drawing breath (the wrong way first)
   splash: 3.4, // splash column height
 };
 
@@ -183,12 +184,24 @@ const broadsides = [broadside(1, "broadside_starboard"), broadside(-1, "broadsid
 const clock = sub(time, broadsides[0].arm);
 /** 0 before the warning, rising to 1 at arming, gone shortly after the guns fire. */
 const tell = mul(saturate(div(add(clock, B.warn), B.warn)), sub(1, smoothstep(0.1, 0.8, clock)));
-/** A kick that rises in a tenth of a second and dies away (x e^(1 - x)), from when the guns fire. */
-const kick = (a: F, tau: number): F => mul(step(0, a), mul(div(a, tau), exp(sub(1, div(max(a, 0), tau)))));
+/** Seconds since the first gun fired (negative before). */
+const fireAfter = add(clock, B.flight);
+/**
+ * The broadside in three beats from the start of the warning: the flagship draws breath (rises slowly) until the guns
+ * fire, drops at the guns (a heavy impact) and bobs back past level once, slowly: it is dead and stately, not lively.
+ */
+const fireBeat = beats(add(clock, B.warn), { anticipate: B.warn - B.flight, act: 0.12, settle: 2.5 });
+/**
+ * The heave alone did not read from the strategy camera (a 0.35 drop of a hull seen from 60 units above is a few
+ * pixels); rotation of tall things does: the rotten hull shudders in roll at the guns (0.045 rad, 1 Hz, dying), which
+ * swings the 16-high mastheads about 0.7.
+ */
+const shudder = swing(fireBeat.after, 0.045, 1.0, 0.2);
+const heave = add(mul(mul(slowInOut(fireBeat.anticipate), sub(1, fireBeat.act)), -B.rise), mul(sub(1, impact(fireBeat.after, 1, 1.2, 0.3)), B.jolt));
 
 const frames: Frame[] = RIDING.map((r, k) => ridingFrame(water, {
   ...r, length: hulls[k].lines.length, beam: hulls[k].lines.beam,
-  ...(k === 0 ? { jolt: mul(kick(add(clock, B.flight), 0.12), B.jolt) } : {}),
+  ...(k === 0 ? { jolt: heave, shudder } : {}),
 }, WIND));
 /** Every ghost's frame, once per frame on the CPU; everything on a ship reads its frame from here. */
 const ships = posedList("ships", frames.map(framePose));
@@ -339,7 +352,9 @@ function rig(k: number): Built {
       if (y.rag > 0) {
         const below = j > 0 ? at(kept[j - 1].at)[1] + girth : L.deck(m.u) + 0.9;
         const drop = Math.max((c[1] - below) * y.rag, 1.2);
-        out.rags.push(ragPose(g, c, along, span * 0.92, drop, wl, k === 0 ? tell : lift<"f32">(0), k + i * 1.7 + j * 2.3));
+        // The flagship's rags billow in the tell, gust out with the guns and swing on, each yard a little later.
+        const gust = swing(dragged(fireAfter, i + j, 0.08), 0.9, 0.8, 0.25);
+        out.rags.push(ragPose(g, c, along, span * 0.92, drop, wl, k === 0 ? add(tell, gust) : lift<"f32">(0), k + i * 1.7 + j * 2.3));
       }
     });
     // A stay forward: to the mast before it, or from the foremast to the bowsprit's end.
@@ -417,7 +432,9 @@ function pennant(): Drawable {
   const wl = windIn(RIDING[0].heading), side: V3 = [wl[2], 0, -wl[0]];
   const length = 9, width = 0.75;
   const point = (u: F, v: F): P3 => {
-    const wave = add(sin(mul(sub(mul(u, 2.2), mul(time, 1.7)), Math.PI * 2)), mul(sin(mul(sub(mul(u, 4.3), mul(time, 2.9)), Math.PI * 2)), 0.3));
+    // It streams, and the guns' shock whips it: the whip runs out to the fly end, arriving there 0.35 s late.
+    const whip = swing(dragged(fireAfter, u, 0.35), 3.2, 0.9, 0.25);
+    const wave = add(add(sin(mul(sub(mul(u, 2.2), mul(time, 1.7)), Math.PI * 2)), mul(sin(mul(sub(mul(u, 4.3), mul(time, 2.9)), Math.PI * 2)), 0.3)), whip);
     const w = mul(width, sub(1, mul(u, 0.8)));
     // The fly end is torn into two tails.
     const across = mul(sub(v, 0.5), w);
