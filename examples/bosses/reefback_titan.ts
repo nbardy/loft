@@ -18,7 +18,7 @@
 // Crab coordinates: x forward, y up, z to its right; the body frame rides `S.ride` above the still water.
 
 import {
-  abs, add, attack, course, cos, draw, dot, floor, framed, fract, gait, hit, horn, keys, length, lift, limb, lookAt, max, min, mix, mul,
+  abs, add, attack, course, cos, cross, div, draw, dot, floor, framed, fract, gait, hit, horn, keys, length, lift, limb, lookAt, max, min, mix, mul,
   place, points, rigid, rotateAbout, scene, sea, ship, sin, smoothstep, spacing, sqrt, step, strand, sub, surface, tabulate, telegraph, through, time,
   unit, vec2, vec3, vec4, woodblock, type F, type Frame, type P3, type Style,
 } from "../../src/index.ts";
@@ -72,6 +72,10 @@ export const S = {
 } as const;
 
 const I = S.ink;
+
+/** A crisp ink edge: 1 where x is above `at`, about one pixel wide (from the screen-space derivative). A wide
+ * smoothstep is a soft airbrushed fade, which the woodblock's flat inks never have. */
+const cut = (x: F, at: number | F): F => edgeOf(x, at, 1e-5);
 
 // ==== the style: the woodblock's key line, paper and sea, with this monster's inks ===================================
 
@@ -132,29 +136,19 @@ const local = (p: V3 | P3): P3 => add(body.o, rotate(body, lift<"vec3">(p)));
 const C = S.carapace;
 const mottle = (m: F, v: F): F => {
   const a = sin(add(mul(m, 23), mul(sin(mul(v, 31)), 1.7))), b = sin(add(mul(v, 41), mul(sin(mul(m, 17)), 1.3)));
-  return smoothstep(0.55, 0.6, mul(a, b));
+  return cut(mul(a, b), 0.575);
 };
 const carapace = place(strand({
   name: "titan", spine: (m) => through(m, [[C.from, -0.1, 0], [(C.from + C.to) / 2, 0.15, 0], [C.to, 0, 0]]), stations: 8,
   girth: C.width, section: { aspect: C.height / C.width, squareness: 2.3 }, tips: [{ round: 0.45 }, { round: 0.4 }],
   paint: (m, v) => {
-    const rim = smoothstep(0.05, 0.02, abs(sub(sin(mul(v, Math.PI * 2)), -0.15)));
+    const rim = sub(1, cut(abs(sub(sin(mul(v, Math.PI * 2)), -0.15)), 0.035));
     const back = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(m, v));
     const belly = vec3(...I.cream);
-    return mix(mix(belly, back, smoothstep(-0.25, -0.15, sin(mul(v, Math.PI * 2)))), vec3(...I.black), rim);
+    return mix(mix(belly, back, cut(sin(mul(v, Math.PI * 2)), -0.2)), vec3(...I.black), rim);
   },
   detail: { along: 40, around: 40 }, up: [0, 1, 0],
 }), rigid(body));
-
-// The mouthparts: a row of cream-tipped fangs hanging under the front of the carapace.
-const fang = horn({
-  name: "fang", length: 1.35, curl: 0.5, taper: 0.22, girth: 0.2, out: [0.2, -1, 0], toward: [1, 0, 0],
-  paint: (m) => mix(vec3(...I.brick), vec3(...I.cream), smoothstep(0.45, 0.6, m)),
-});
-const FANGS = 11;
-const fangs = draw.points("fangs", place(points(FANGS, (i) => ({
-  at: vec3(0.96, add(0.55, mul(i, 0.4 / (FANGS - 1))), 0.95), scale: add(0.75, mul(sin(mul(i, 2.3)), 0.25)),
-})), carapace), fang);
 
 // ==== legs: three segments by inverse kinematics, banded at the joints, cream dactyls ================================
 
@@ -170,12 +164,12 @@ const legs = sides.flatMap((s, si) => S.legRoots.map((x, i) => {
     section: { aspect: 0.8 }, up: body.y,
     paint: (m, v) => {
       const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.7), v));
-      const shell = mix(vec3(...I.cream), top, smoothstep(-0.3, -0.1, sin(mul(v, Math.PI * 2))));
+      const shell = mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.2));
       // A cream band before each joint and a black ring at it; the dactyl cream to a dark point.
-      const band = smoothstep(0.035, 0.022, nearKnot(m));
-      const ring = smoothstep(0.016, 0.008, nearKnot(m));
-      const tip = smoothstep(0.82, 0.86, m);
-      return mix(mix(mix(shell, vec3(...I.cream), max(band, tip)), vec3(...I.black), ring), vec3(...I.black), smoothstep(0.97, 0.99, m));
+      const band = sub(1, cut(nearKnot(m), 0.028));
+      const ring = sub(1, cut(nearKnot(m), 0.012));
+      const tip = cut(m, 0.84);
+      return mix(mix(mix(shell, vec3(...I.cream), max(band, tip)), vec3(...I.black), ring), vec3(...I.black), cut(m, 0.98));
     },
     detail: { along: 64, around: 12 },
   });
@@ -212,15 +206,15 @@ function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold
     name: `${name}Arm`, spine: arm.spine, stations: 16, girth: (m) => mul(d.fat, sub(0.42, mul(m, 0.1))), tips: ["round", "round"], up: body.y,
     paint: (m, v) => {
       const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
-      const ring = smoothstep(0.03, 0.015, abs(sub(m, arm.knots[1]!)));
-      return mix(mix(vec3(...I.cream), top, smoothstep(-0.35, -0.15, sin(mul(v, Math.PI * 2)))), vec3(...I.black), ring);
+      const ring = sub(1, cut(abs(sub(m, arm.knots[1]!)), 0.022));
+      return mix(mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.25)), vec3(...I.black), ring);
     },
     detail: { along: 40, around: 14 },
   });
   const palm = strand({
     name: `${name}Palm`, spine: (m) => add(w, mul(along, mul(d.len, m))), stations: 6, girth: (m) => mul(d.fat, add(0.55, mul(sin(mul(m, Math.PI)), 0.3))),
     section: { aspect: 0.62 }, tips: [{ round: 0.3 }, { round: 0.3 }], up: body.y,
-    paint: (m, v) => mix(mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.8), mul(v, 1.3))), vec3(...I.cream), smoothstep(-0.55, -0.4, mul(sin(mul(v, Math.PI * 2)), -1))),
+    paint: (m, v) => mix(mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.8), mul(v, 1.3))), vec3(...I.cream), cut(mul(sin(mul(v, Math.PI * 2)), -1), -0.475)),
     detail: { along: 24, around: 20 },
   });
   // The pincer opens sideways, in the palm's flat plane, so it reads as a V from above.
@@ -230,7 +224,7 @@ function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold
     const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
     return place(horn({
       name: fname, length: d.len * 0.95, curl: 0.8, taper: 0.16, girth: mul(d.fat, 0.44), out: [1, -0.15, 0], toward: [0, -1, 0],
-      paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), smoothstep(0.5, 0.62, m)), vec3(...I.black), smoothstep(0.95, 0.98, m)),
+      paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
     }), rigid(hinged));
   };
   return [armStrand, palm, finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)];
@@ -244,25 +238,206 @@ const claws = [
   ...claw("cutter", -1, S.cutter, cutterWrist, add(0.3, mul(max(sin(mul(time, 1.3)), 0), 0.35)), lift<"f32">(1)),
 ];
 
-// ==== eyes on stalks, looking about; both turn to the target in the wind-up ==========================================
+// ==== the face: a grudging old giant ==================================================================================
+//
+// Temperament: grudging. It is older than the fort on its back, half asleep, chewing; it has outlived whatever took its
+// left eye and does not care about you until you come into its water. Every feature serves that:
+// - a heavy brow (the carapace's front edge) in a shallow V, low over the eyes: a scowl it wears even asleep;
+// - eyes under heavy lids that sit across the top of a horizontal goat's pupil; the lids slant down toward the middle;
+// - the left eye is the old injury: a short, healed stalk, a clouded eye with a scar through it, a lid that droops,
+//   barnacles round its socket and more weed on that side. The two eyes never move together;
+// - the mouth is layered plates (the third maxillipeds) that close like doors and work slowly, with a beard of weed;
+// - in Claw Crush the good eye snaps wide with a pinpoint pupil, the stalks stand up toward the target, the plates
+//   flare open on the black mouth; at the slam it screws the eye shut and clamps its mouth; then it stares, and
+//   settles back into the heavy-lidded chew.
 
-const eyes = sides.flatMap((s) => {
-  const base = local([C.to - 0.5, C.height * 0.55, s * 0.75]);
-  const wander = local(vec3(14, 0, mul(sin(add(mul(time, 0.37), s)), 10)));
-  const target = mix(wander, vec3(S.crushCentre[0], 0, S.crushCentre[1]), env.p);
-  const look = lookAt({ from: { o: base, x: body.x, y: body.y, z: body.z }, target, yaw: 1.1, pitch: 0.6 });
-  const tip = add(base, add(add(mul(body.y, S.stalk), mul(body.x, S.stalk * 0.3)), mul(look.dir, S.stalk * 0.3)));
-  const tag = s < 0 ? "L" : "R";
+/** Seconds from this cycle's slam (crushArm), and the face's two attack envelopes, both 0 before and after a cycle. */
+const tA = sub(time, crushArm);
+/** Roused: from the start of the wind-up, through the stare after the slam, settling back by 2.4 s. */
+const rouse = mul(smoothstep(-1.3, -0.95, tA), sub(1, smoothstep(0.9, 2.4, tA)));
+/** Braced: the eye screwed shut and the mouth clamped, at the slam. */
+const brace = mul(smoothstep(-0.14, 0, tA), sub(1, smoothstep(0.25, 0.8, tA)));
+/** A blink every `period` seconds: shut for an instant, opening over 0.13 s. None while roused. */
+const blink = (period: number, offset: number): F => {
+  const k = abs(sub(mul(fract(mul(add(time, offset), 1 / period)), period), 0.3));
+  return mul(sub(1, smoothstep(0.03, 0.16, k)), sub(1, rouse));
+};
+
+const tabF = (name: string, e: F): F => tabulate(`titan_face_${name}`, () => e, 2, "frame")(0);
+/** An offset in the crab's frame. */
+const inBody = (x: F | number, y: F | number, z: F | number): P3 => add(add(mul(body.x, x), mul(body.y, y)), mul(body.z, z));
+const TAU = 2 * Math.PI;
+
+// ---- the brow: one heavy ridge across the front of the carapace, a shallow V low over the eyes ----
+
+/** The brow's line in crab coordinates, outer left to outer right; the middle is the V's low point. */
+const BROW: readonly V3[] = [[3.2, 0.98, -3.05], [4.1, 1.06, -1.9], [4.6, 0.86, -0.85], [4.93, 0.5, 0], [4.6, 0.86, 0.85], [4.1, 1.06, 1.9], [3.2, 0.98, 3.05]];
+const brow = place(strand({
+  name: "brow", spine: (m) => through(m, BROW), stations: 12,
+  // Heaviest over the eyes, thinner at the V and at the ends.
+  girth: (m) => mul(0.5, add(0.6, mul(abs(sin(mul(m, 2 * TAU))), 0.4))), section: { aspect: 0.5, squareness: 2.6 },
+  tips: [{ round: 0.08 }, { round: 0.08 }], up: [0.7, 1, 0],
+  paint: (m, v) => {
+    // Plain dark brick (mottle made it texture, not a shape) with a cream underside: the line the face hangs from.
+    return mix(vec3(...I.brickDark), vec3(...I.cream), cut(mul(sin(mul(v, TAU)), -1), 0.35));
+  },
+  detail: { along: 48, around: 12 },
+}), rigid(body));
+
+// ---- the eyes ----
+
+type Eye = {
+  readonly tag: "L" | "R";
+  /** The stalk's root and its tip, world. */
+  readonly base: P3; readonly tip: P3;
+  /** The eye's facing, a unit vector, world. */
+  readonly look: P3;
+  readonly radius: number;
+  /** Where the upper lid's edge is, radians from straight up over the front (pi / 2 halves the eye; pi shuts it). */
+  readonly lid: F;
+  /** The lid edge's slant, radians: positive drops it toward the middle (a scowl), negative toward the outside (a droop). */
+  readonly slant: F;
+  /** The eyeball's paint over its front cap: x across, y up, both in [-1, 1]; and its back (m below 0.5). */
+  readonly iris: (x: F, y: F) => P3;
+  readonly stalkPaint: (m: F) => P3;
+  readonly lidPaint: (edge: F) => P3;
+};
+
+/** The ball, its stalk and its lid (a spherical lune hinged on the eye's side axis, swinging over the front). */
+function eyeParts(e: Eye) {
+  const tip = tab(`eye_${e.tag}_tip`, e.tip), F0 = tab(`eye_${e.tag}_look`, e.look);
+  const lid = tabF(`eye_${e.tag}_lid`, e.lid), slant = tabF(`eye_${e.tag}_slant`, e.slant);
+  const side0 = unit(cross(F0, body.y)), up0 = cross(side0, F0);
+  // The hinge axis tipped by the slant (outer pole raised for a scowl). `side` points right of the gaze, so the right
+  // eye's outer pole is +side and the left eye's -side: the caller signs the slant.
+  const side = add(mul(side0, cos(slant)), mul(up0, sin(slant))), up = sub(mul(up0, cos(slant)), mul(side0, sin(slant)));
+  const mid = add(e.base, mul(sub(tip, e.base), 0.55));
   const stalk = strand({
-    name: `stalk${tag}`, spine: (m) => mix(mix(base, add(base, mul(body.y, S.stalk * 0.6)), m), mix(add(base, mul(body.y, S.stalk * 0.6)), tip, m), m), stations: 6, girth: 0.17,
-    tips: ["open", "round"], paint: (m) => mix(vec3(...I.brick), vec3(...I.black), smoothstep(0.47, 0.5, abs(sub(fract(mul(m, 4)), 0.5)))), detail: { along: 16, around: 10 },
+    name: `stalk${e.tag}`, spine: (m) => mix(mix(e.base, add(mid, mul(body.y, 0.4)), m), mix(add(mid, mul(body.y, 0.4)), tip, m), m), stations: 6,
+    girth: (m) => mix(0.24, 0.17, m), tips: ["open", "round"], paint: (m) => e.stalkPaint(m), detail: { along: 16, around: 10 },
   });
   const ball = strand({
-    name: `eye${tag}`, spine: (m) => add(tip, mul(look.dir, mul(sub(m, 0.5), S.eye * 2))), stations: 4, girth: S.eye, tips: [{ round: 0.5 }, { round: 0.5 }], up: body.y,
-    paint: (m) => mix(vec3(...I.cream), vec3(...I.black), smoothstep(0.93, 0.95, m)), detail: { along: 14, around: 14 },
+    name: `eye${e.tag}`, spine: (m) => add(tip, mul(F0, mul(sub(m, 0.5), e.radius * 2))), stations: 4, girth: e.radius,
+    tips: [{ round: 0.5 }, { round: 0.5 }], up: body.y,
+    paint: (m, v) => {
+      // The front cap's own coordinates: r from the axis, then across and up.
+      const z = sub(mul(m, 2), 1), r = sqrt(max(sub(1, mul(z, z)), 0));
+      // All cream, the pupil on the front. (A brick back made the eyes read as dark balls from every side but the front.)
+      return mix(vec3(...I.cream), e.iris(mul(r, cos(mul(v, TAU))), mul(r, sin(mul(v, TAU)))), cut(m, 0.5));
+    },
+    detail: { along: 14, around: 18 },
   });
-  return [stalk, ball];
+  // The lid hoods only the top front: from the high strategy camera a lid over the whole top hid the eye.
+  const R = e.radius * 1.1, BACK = -0.4;
+  const lidShape = surface((u, v) => {
+    const a = mix(BACK, lid, u), b = mix(0.1, Math.PI - 0.1, v);
+    const ring = add(mul(up, cos(a)), mul(F0, sin(a)));
+    return add(tip, mul(add(mul(side, cos(b)), mul(ring, sin(b))), R));
+  }, { u: ["free", "free"], v: "free" });
+  const lidDraw = draw.surface(`lid${e.tag}`, lidShape, {
+    // `edge` is radians back from the lid's edge.
+    paint: (u) => e.lidPaint(mul(sub(1, u), sub(lid, BACK))),
+    grid: { u: spacing.even(10), v: spacing.even(14) }, sides: "two", outline: "border",
+  });
+  return [stalk, ball, lidDraw];
+}
+
+/** The lid's paint: dark brick with a heavy black rim at its edge and one age crease behind it. (Barnacle specks on the
+ * dead eye's lid made it read as a toadstool; more creases made a knitted cap.) */
+const lidInk = (edge: F): P3 => {
+  const rim = sub(1, cut(edge, 0.2));
+  const crease = sub(1, cut(abs(sub(edge, 0.55)), 0.035));
+  const base = vec3(...I.brickDark);
+  return mix(mix(base, vec3(...I.black), crease), vec3(...I.black), rim);
+};
+
+// The good right eye: wanders slowly; when roused it fixes on the target.
+const baseR = local([4.05, 0.98, 0.95]);
+// It gazes a little upward, over the horizon: from the high cameras that turns the pupil toward the viewer.
+const wander = local(vec3(14, add(mul(sin(mul(time, 0.29)), 2), 5), add(mul(sin(add(mul(time, 0.37), 1)), 8), 1)));
+const lookR = lookAt({ from: { o: baseR, x: body.x, y: body.y, z: body.z }, target: mix(wander, vec3(S.crushCentre[0], 0, S.crushCentre[1]), rouse), yaw: 1.2, pitch: 0.7 }).dir;
+const goodEye: Eye = {
+  tag: "R", base: baseR,
+  // At rest the stalk leans out and forward, a little tired; roused it stands up and leans toward the target.
+  tip: add(baseR, add(mix(inBody(0.75, 1.75, 0.65), inBody(0.5, 2.35, 0.2), rouse), mul(lookR, 0.35))),
+  look: lookR, radius: 0.64,
+  lid: add(mix(mix(mix(1.45, 3.0, blink(5.3, 3.9)), 0.5, rouse), 2.55, brace), mul(sin(mul(time, 0.6)), 0.1)),
+  slant: mix(0.38, 0.55, max(rouse, brace)),
+  // A goat's bar pupil, wide and sleepy at rest; a pinpoint when roused.
+  iris: (x, y) => {
+    const w = mix(0.62, 0.16, rouse), h = mix(0.24, 0.16, rouse);
+    const qx = div(x, w), qy = div(y, h);
+    return mix(vec3(...I.cream), vec3(...I.black), cut(sub(1, add(mul(mul(qx, qx), mul(qx, qx)), mul(mul(qy, qy), mul(qy, qy)))), 0));
+  },
+  stalkPaint: (m) => mix(vec3(...I.brick), vec3(...I.black), cut(abs(sub(fract(mul(m, 4)), 0.5)), 0.47)),
+  lidPaint: lidInk,
+};
+
+// The dead left eye: a short healed stalk splayed out, gazing at nothing; it only flinches.
+const baseL = local([4.05, 0.98, -0.95]);
+// It sags down and forward, so the clouded iris and the scar face the front cameras.
+const lookL = unit(inBody(0.85, add(-0.4, mul(sin(mul(time, 0.21)), 0.08)), add(-0.3, mul(sin(mul(time, 0.17)), 0.1))));
+const deadEye: Eye = {
+  tag: "L", base: baseL,
+  tip: add(baseL, add(inBody(0.55, 1.15, -0.75), mul(inBody(0, 0.2, 0), rouse))),
+  look: lookL, radius: 0.5,
+  lid: add(mix(1.75, 2.6, brace), mul(sin(mul(time, 0.45)), 0.06)),
+  // Drooping toward the outside: the left eye's outer pole is -side, so a positive slant drops it there.
+  slant: lift<"f32">(0.32),
+  // Clouded: an indigo blot for a pupil, and the black line of the scar across it.
+  iris: (x, y) => {
+    const blot = cut(sub(0.32, length(vec2(x, mul(y, 1.3)))), 0);
+    const scar = sub(1, cut(abs(sub(y, mul(x, 0.8))), 0.06));
+    return mix(mix(vec3(...I.cream), mix(vec3(...I.cream), vec3(...I.indigo), 0.55), blot), vec3(...I.black), scar);
+  },
+  // Barnacle specks on the old stalk.
+  stalkPaint: (m) => mix(vec3(...I.brick), vec3(...I.cream), cut(mul(sin(mul(m, 31)), sin(add(mul(m, 13), 2))), 0.6)),
+  lidPaint: lidInk,
+};
+
+// ---- the mouth: two plates that close like doors, working slowly; flared in the wind-up, clamped at the slam ----
+
+function plate(s: 1 | -1) {
+  const chew = add(0.06, mul(max(sin(add(mul(time, 2.1), s * 1.3)), 0), 0.2));
+  const open = tabF(`mouth_${s < 0 ? "L" : "R"}`, mul(mix(chew, 1, rouse), sub(1, brace)));
+  const hinge = local([4.75, -0.3, s * 0.48]);
+  const tipNow = local(add(vec3(5.3, -1.15, s * 0.22), vec3(mul(open, 0.25), mul(open, 0.2), mul(open, s * 0.85))));
+  return strand({
+    name: `maxilliped${s < 0 ? "L" : "R"}`, spine: (m) => mix(hinge, tipNow, m), stations: 4,
+    girth: (m) => mul(0.4, sub(1, mul(m, 0.3))), section: { aspect: 0.32, squareness: 3 }, up: body.x,
+    tips: [{ round: 0.1 }, { round: 0.15 }],
+    paint: (m, v) => {
+      // Cream plates, brick at the hinge, a black joint line, a row of black bristles down the inner edge.
+      const segs = mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.3));
+      const joint = sub(1, cut(abs(sub(m, 0.33)), 0.025));
+      const bristle = mul(cut(mul(cos(mul(v, TAU)), -s), 0.8), cut(sin(mul(m, 40)), 0.3));
+      return mix(segs, vec3(...I.black), max(joint, bristle));
+    },
+    detail: { along: 10, around: 14 },
+  });
+}
+// The black of the mouth behind the plates: seen only when they open.
+const gullet = place(strand({
+  name: "gullet", spine: (m) => mix(vec3(4.7, -0.2, 0), vec3(4.85, -1.05, 0), m), stations: 4, girth: 0.6,
+  section: { aspect: 0.35 }, up: [1, 0, 0], tips: [{ round: 0.2 }, { round: 0.3 }], paint: () => vec3(...I.black), detail: { along: 6, around: 10 },
+}), rigid(body));
+
+// ---- the weed beard: hanging under the face on both sides of the mouth, heavier on the dead eye's side ----
+
+const weed = horn({
+  name: "weed", length: 1.6, curl: 1.4, taper: 0.6, girth: 0.11, out: [0.4, 1, 0], toward: [1, 0, 0],
+  paint: (m) => mix(vec3(...I.mossDeep), vec3(...I.moss), cut(sin(add(mul(m, 7), 1)), 0.6)),
 });
+const BEARD: readonly (readonly [number, number, number])[] = [
+  [0.9, 0.53, 0.9], [0.93, 0.57, 1.2], [0.95, 0.61, 1.0], [0.91, 0.65, 0.8], [0.96, 0.66, 1.3], // left (v toward 0.5)
+  [0.94, 0.88, 0.9], [0.92, 0.93, 0.7], // right
+];
+const beard = draw.points("beard", place(points(BEARD.length, (i) => {
+  const pick = (k: 0 | 1 | 2) => BEARD.reduce((acc: F, t, j) => add(acc, mul(t[k], sub(1, min(abs(sub(i, j)), 1)))), lift<"f32">(0));
+  return { at: vec3(pick(0), pick(1), 0.92), scale: add(pick(2), mul(sin(add(mul(time, 0.8), i)), 0.05)) };
+}), carapace), weed);
+
+const face = [brow, ...eyeParts(goodEye), ...eyeParts(deadEye), plate(1), plate(-1), gullet, beard];
 
 // ==== the atoll: a lumpy mesa carried on the crab ====================================================================
 
@@ -299,14 +474,14 @@ const atollPaint = (u: F, v: F): P3 => {
   const spill = add(0.56, add(mul(sin(mul(turn, 7)), 0.03), mul(sin(add(mul(turn, 17), 1)), 0.02)));
   const qx = mul(mul(u, cos(turn)), 7), qz = mul(mul(u, sin(turn)), 7);
   const contour = add(sin(add(qx, mul(sin(mul(qz, 0.8)), 1.7))), sin(add(mul(qz, 1.2), mul(sin(mul(qx, 0.7)), 1.3))));
-  const tuft = smoothstep(0.14, 0.07, abs(contour));
+  const tuft = sub(1, cut(abs(contour), 0.105));
   const moss = mix(vec3(...I.moss), vec3(...I.mossDeep), tuft);
   // Stone cliffs cut by vertical strokes of varying weight; a dark band where the cliff meets its foot.
   const strokeAt = abs(sub(fract(add(mul(v, 70), mul(sin(add(mul(turn, 5), mul(u, 7))), 0.3))), 0.5));
-  const stroke = mul(smoothstep(0.1, 0.05, strokeAt), smoothstep(0.56, 0.6, u));
+  const stroke = mul(sub(1, cut(strokeAt, 0.075)), cut(u, 0.58));
   const cliff = mix(vec3(...I.stone), vec3(...I.bark), stroke);
-  const foot = mix(cliff, vec3(...I.bark), smoothstep(0.76, 0.78, add(u, mul(sin(add(mul(turn, 11), 0.5)), 0.025))));
-  return mix(moss, foot, smoothstep(sub(spill, 0.005), add(spill, 0.005), u));
+  const foot = mix(cliff, vec3(...I.bark), cut(add(u, mul(sin(add(mul(turn, 11), 0.5)), 0.025)), 0.77));
+  return mix(moss, foot, cut(u, spill));
 };
 const atoll = draw.surface("atoll", framed(surface(atollPoint, { u: ["cap", "cap"], v: "periodic" }), { frame: body, scale: lift<"f32">(1) }), {
   paint: atollPaint, grid: { u: spacing.even(48), v: spacing.even(96) }, sides: "one", outline: "hull",
@@ -394,11 +569,11 @@ const reefList = draw.copies("reef", {
   // with courses. p is in the crab's coordinates, so the lines ride it.
   paint: ({ p, level, id }) => {
     const specks = mul(mul(sin(mul(p.x, 9)), sin(add(mul(p.y, 9), 1))), sin(add(mul(p.z, 9), 2)));
-    const coral = mix(vec3(...I.coral), vec3(...I.cream), smoothstep(0.3, 0.36, specks));
+    const coral = mix(vec3(...I.coral), vec3(...I.cream), cut(specks, 0.33));
     const swirl = add(sin(add(mul(p.x, 2.5), mul(sin(mul(p.y, 3)), 1.5))), sin(add(mul(p.z, 2.5), mul(sin(mul(p.x, 2.2)), 1.5))));
-    const curl = smoothstep(0.16, 0.08, abs(sin(mul(swirl, 2.2))));
+    const curl = sub(1, cut(abs(sin(mul(swirl, 2.2))), 0.12));
     const crownLined = mix(vec3(...I.mossDeep), vec3(...I.black), mul(curl, step(0.5, hash3(id))));
-    const course = smoothstep(0.06, 0.03, abs(sub(fract(mul(p.y, 3.2)), 0.5)));
+    const course = sub(1, cut(abs(sub(fract(mul(p.y, 3.2)), 0.5)), 0.045));
     const stone = mix(vec3(...I.cream), vec3(...I.bark), course);
     const k = id.x;
     return mix(mix(mix(coral, vec3(...I.bark), step(0.5, k)), crownLined, step(1.5, k)), stone, step(2.5, k));
@@ -411,9 +586,9 @@ const tower = place(strand({
   name: "fortTower", spine: (m) => mix(vec3(fortFoot[0], fortFoot[1] - 0.4, fortFoot[2]), vec3(...fortTop), m), stations: 4,
   girth: (m) => mix(F0.girth, F0.girth * 0.85, m), section: { squareness: 4 }, tips: [{ round: 0.05 }, "open"], up: [1, 0, 0],
   paint: (m, v) => {
-    const course = smoothstep(0.07, 0.035, abs(sub(fract(mul(m, 9)), 0.5)));
-    const joint = mul(smoothstep(0.06, 0.03, abs(sub(fract(add(mul(v, 12), mul(floor(mul(m, 9)), 0.5))), 0.5))), 0.8);
-    const slit = mul(smoothstep(0.02, 0.01, abs(sub(fract(mul(v, 4)), 0.125))), mul(smoothstep(0.55, 0.6, m), smoothstep(0.82, 0.77, m)));
+    const course = sub(1, cut(abs(sub(fract(mul(m, 9)), 0.5)), 0.05));
+    const joint = mul(sub(1, cut(abs(sub(fract(add(mul(v, 12), mul(floor(mul(m, 9)), 0.5))), 0.5)), 0.045)), 0.8);
+    const slit = mul(sub(1, cut(abs(sub(fract(mul(v, 4)), 0.125)), 0.015)), mul(cut(m, 0.575), sub(1, cut(m, 0.795))));
     return mix(mix(vec3(...I.cream), vec3(...I.stone), max(course, joint)), vec3(...I.black), slit);
   },
   detail: { along: 12, around: 24 },
@@ -458,13 +633,14 @@ const crash = draw.glazed("crash", surface((u: F, v: F) => {
 
 export default scene({
   sea: water,
-  things: [carapace, atoll, reefList, tower, fangs, ...legs, ...claws, ...eyes, warning, crash, ...boat],
+  things: [carapace, atoll, reefList, tower, ...face, ...legs, ...claws, warning, crash, ...boat],
   style: titanWoodblock(),
   sun: [0.15, 0.8, 0.6],
   cameras: {
     game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 },
     three: { kind: "perspective", eye: [27, 12, 9], target: [1.5, 2, 5.5], fovY: 0.6 },
-    close: { kind: "perspective", eye: [7.5, 9.5, 7.5], target: [-2.2, 4.4, -0.6], fovY: 0.55 },
+    // The face, from the front and above (the claws, folded at rest, cover the mouth from lower down), the fort behind.
+    close: { kind: "perspective", eye: [15.5, 9, 3], target: [4.2, 1.4, 0.2], fovY: 0.55 },
     top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
   },
 });
