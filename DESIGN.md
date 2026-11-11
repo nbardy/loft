@@ -91,7 +91,9 @@ tests and the baker. A scene module's default export is a `Scene`. Working examp
   (`place(s, chart)`) or slicing it (`s.at(t)`) keeps its look; `draw.points(name, pts, s)` instances it.
   Body coordinates: m in [0, 1] along the spine, v in [0, 1] round it (0.25 the dorsal line, 0.75 the belly), rho out
   as a fraction of the thickness (skin at 1). Frames are rotation-minimising (Wang et al. 2008) with optional levelling;
-  radii scale by 1 / sqrt(stretch) (volume preservation).
+  radii scale by 1 / sqrt(stretch) (volume preservation), growing by at most `bulge` (default about 4.47, a stretch
+  floor of 0.05). Stretch is per unit of m, so a pose whose stations bunch (a curve laid out by angle, a Bezier with a
+  short arm) swells there; a body posed by such laws states `bulge: 1.3` or so (see 9, "Not done").
 - `crest(spec) -> SurfaceDrawable`: a `sheet` standing on the line of constant v of a body, rising along its section's
   outward direction, raked and fluttering; drawn two-sided with ink on its free edge.
 - `sea(spec) -> Sea`: the root chart (x, z, height above the water), and the water as a glazed surface in that chart:
@@ -176,13 +178,20 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
 **The styles.**
 
 - `toon` (`src/style.ts`): banded sun, rim, gloss, an ink hull, a translucent stylised sea.
-- `woodblock`: bodies print in five inks (`WOODBLOCK_PALETTE`: black, indigo, a pale blue, cream, one vermilion), chosen
+- `woodblock(spec?)`: bodies print in five inks (`WOODBLOCK_PALETTE`: black, indigo, a pale blue, cream, one vermilion), chosen
   by the paint's luminance times a two-tone light in value bands; a paint whose red stands above its green and blue
   prints vermilion. Every edge is antialiased by a pixel and no more. Post: a key line (silhouettes on their near side,
   measured against the plane through the pixel; creases from reconstructed normals; half-width 1.5 to 4.7 px wandering
   with world-space noise) over a colour block read 1.4 px out of register; then paper fibre and tooth. Sea: opaque, two
   flat blues, five printed lines per wavelength along `phase`, foam with fingers along the zero lines of a noise field
-  and spray specks, both from `contact`.
+  and spray specks, both from `contact`; the foam the sea's deformations give (`WaterCtx.marks`, a whirlpool's arms) is
+  printed cream over the water. Options (2026-11-11, from the five boss scenes, each of which wrapped the style):
+  `inks` (the key block's black, indigo, pale, cream), `print` (which paints print in which inks: `print.bands({ accent })`,
+  the rule above with an accent of hue `red` or `yellow` and its inks by luminance; `print.keys({ slate: { key, shadow,
+  lit }, ... })`, each paint in its nearest key's two inks; `print.overprint({ ink, amount, value, black })`, every paint
+  already an ink, its shadow side overprinted), `sky` (`haze` and `band` ranges of the view's height, the colour
+  `below` the horizon) and `water.eye` (the key black where a deformation darkens the water below a crest value).
+  `woodblock()` is unchanged pixel for pixel.
 - `biolume`: night sky and water; skin near black; a paint's light is `glowOf(base)`: as strong as it is bright and
   vivid, magenta for purples and reds, cyan for the rest, brightest facing the eye; cyan fresnel rim and hull; the water
   is translucent (submerged light shows), with faint ripple lines, twinkling plankton, and a cyan halo and foam from
@@ -380,6 +389,7 @@ One generic drawable per signature, each assembled from expressions:
 draw.surface(name, surface, { paint, grid, sides, outline })  // grid in the vertex stage; normals from the map itself
 draw.curve(name, curve, { width, paint, segments })          // stroke
 draw.points(name, points, thing)                             // instances of any instanceable drawable
+draw.posed(name, poses, thing)                               // instances turned and scaled along each axis (below)
 draw.field(name, field, { bounds, paint, steps, lipschitz })  // sphere-traced (specified, not built)
 draw.relief(name, surface, { height, hMax, fold, paint, steps }) // shell-traced on a surface (specified)
 draw.density(name, density, { bounds, colour, steps })       // integrated (specified)
@@ -389,11 +399,25 @@ draw.density(name, density, { bounds, colour, steps })       // integrated (spec
 that build maps and hand them to these. A baked mesh is `tabulate` of a `Surface` on a grid, so baking any surface is
 generic.
 
+**Posed copies** (2026-11-11). `posed(count, (i) => ({ at, turn, size }))` is `points` with a turn (`turn.none`,
+`turn.about(axis, angle)`, `turn.axes(x, y)`) and a size (`size.even(k)`, `size.axes([a, b, c])`); every field is an
+expression of the index and may read time, evaluated where the copy is drawn. `posedList(name, specs)` lists poses that
+share nothing (a fleet's spars) and fills them once per frame on the CPU into one table. `Points` are poses with an even
+size, drawn exactly as before (`framedPose` dispatches on the size: even is `framed`). Under a per-axis size the normal
+turns by the cofactor of the scale (what d/du x d/dv turns by), so a stretched copy is lit as its shape
+(`tests/map.posed.test.ts`); its shadow joints scale per axis with the largest axis as radius, its level of detail
+by the largest axis. Paint takes a third argument, `PaintAt { world, normal, copy }`: the world point and normal (after
+the copy's turn and scale) and the copy's index (0 for a surface drawn once), so copies can differ and face the light.
+
+**Lathe** faces out whichever way the profile runs: one running bottom to top turns clockwise round y instead (decided
+by the sign of the integral of r dh at rest; u keeps its meaning, a pattern in v is mirrored); a profile enclosing no
+area with the axis is refused by name. Before, a rising profile was drawn inside out.
+
 ### 7.5 What changed in the code (as built)
 
 | Layer | Now |
 |---|---|
-| `src/expr.ts` | `fetch(table, index, lane)` (a leaf over a `TableSource`), `iterate(count, init, step)` (a real loop in both backends; `count` may be an expression); `leaves` reports tables; `substitute` rebuilds loops |
+| `src/expr.ts` | `fetch(table, index, lane)` (a leaf over a `TableSource`), `iterate(count, init, step)` (a real loop in both backends; `count` may be an expression); `leaves` reports tables; `substitute` rebuilds loops; `eq`, `ne` (exact; both backends agree on whole numbers, `tests/expr.eq.gpu.test.ts`) and `pick(i, values)` (2026-11-11) |
 | `src/map/` | the signatures (`types.ts`), `warp` and `tile`, `place`/`on`/`compose`/`points`, the products (`sweep`, `sheet`, `lathe`, `loft`, `extrude`, `thicken`, `surface`), `tabulate`, frame transport |
 | `src/draw/` | `draw.surface`, `draw.glazed`, `draw.curve`, `draw.points` (implemented); `draw.field`, `draw.relief`, `draw.density` (specified: options types, throw `NotImplementedError`); the sky and shadows |
 | `src/geom/` | `strand`, `crest`, `sea` as library functions; `scatter`, `attach`, the chart WGSL and its CPU twin, the station reader in WGSL and its JS mirror, and every per-kind shader template are gone |
@@ -570,7 +594,8 @@ tree({ part, step }) // branching recursion: .at(p, count) asked, .branches(leve
 copy, its oriented box with front faces culled, and one exact ray intersection per covered pixel (the closed forms of
 `impostors`). Depth is written per copy, so the nearest hit over the copies is the hit of their union. `paint` is given
 the copy's level and id, so it does not evaluate the field again. A copy under `minPixels` across is not drawn. The
-copies cast one blob shadow, fitted as a traced field's is (`fitBlob`).
+copies cast one blob shadow, fitted as a traced field's is (`fitBlob`), in the `carry` frame's coordinates and carried by
+it every frame.
 
 The two readings are the same solid where every copy stays on its own side of its mirrors
 (`tests/similar.test.ts`: to 1e-4, branch for branch). A copy that crosses a mirror is cut when asked and whole when
@@ -707,6 +732,15 @@ things: [...serpent.things, telegraph(bite), smear(serpent.strikes.bite, { over:
 export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strikes.bite, target), staysClear(part, target, { until: bite.arm }), minScreenSize(eye, "three", 4), budget({ triangles })];
 ```
 
+- **Remote attacks and arming** (2026-11-11). `Motion` has a fourth kind, `{ kind: "remote", hit }`: a hit shape and
+  timing with no body part (a broadside, a bolt, a beam); `attack()` returns an `Attack` for it and a `BodyAttack`
+  (with `part`, `pose`, `landing`) for a lunge, sweep or rear, and `animate` takes only those. `arm` is a time or an
+  `Arming`: `once(t)` or `every(period, first)`. `attack.armAt(t)` is the arming time of the cycle clock t is in (a
+  cycle runs from its warning or wind-up, whichever is earlier, to the next one's), `attack.arm` is that now,
+  `attack.cycle(t)` its number (a bolt's seed), `attack.first` the first arming. A repeating attack must fit its period
+  (lead plus recovery; a remote one has no motion span). Checks measure at the first arming: `landsInside` and `stopsAt`
+  read `first`, and `staysClear({ until })`, `minScreenSize({ at })` take an `Arming` as a time (`CheckTime`). Before,
+  `floor(time / LOOP) * LOOP + at` evaluated at time 0 was a cycle that had passed or not begun.
 - **Hit shapes** (`Hit = Capsule | Disc | Arc`, every field an expression). One handler per kind for each question:
   `hitSdf` (signed distance in the xz plane: the one expression the telegraph draws and the checks evaluate),
   `hitPatch` (the patch it is drawn on: an oriented rectangle, a square, a polar sector), `hitContour` (distance, position
@@ -777,6 +811,18 @@ Where the plan met the code:
   `ship` (the fleet's sloop, smaller): contact at arming reads 0.044 (bite) and 0.093 (lash) with `contact: 0.1`, where
   the stand-in read 0.46 against a 0.6 allowance. A sample point inside a raked bow was called outside by the first
   sign test (point in the section nearest along the length); the parity ray replaced it.
+- **Not done: volume preservation depends on how a pose spaces its stations** (2026-11-11). Where: `stationRadii`
+  (`src/map/transport.ts`, the skeleton's radii) and `Body.ring` (`src/map/sweep.ts`, the skin) both scale radii by
+  1 / sqrt(max(stretch, leastStretch)) with stretch = |d local / dm| / |d rest / dm| at each station (lane r.z,
+  interpolated linearly). m is treated as the material coordinate, so a posed spine whose stations bunch (an ellipse
+  laid out by angle, a Bezier whose control arm is short, a mix of two spines with different speeds) reads as
+  compressed there and swells, up to 4.47 times: the Maelstrom Wyrm's reared coil became a ball three times its girth
+  until `rear.ts` laid the loop out by arc length. Now bounded by name (`bulge` on a strand). The fix that removes the
+  dependence: measure stretch over a window of rest arc length about a girth wide (the mean of |d local| / |d rest|
+  over the stations within it), so bunching finer than the body's own thickness cannot swell it, while a real
+  lengthening of the body (a neck drawn out by a lunge) still thins it. Not done here because it changes the radii of
+  every posed body, including those of the reference pictures, and wants its own before/after.
+
 ## 10. Ships, afloat, and the whirlpool (as built)
 
 Library functions on the map algebra; examples `examples/brig.ts`, `examples/fleet.ts`, `examples/maelstrom.ts`.
@@ -924,7 +970,8 @@ the rain shaft into the fog (now: fixed fog bins).
   hidden behind opaque bodies; `veil: { kind: "medium", medium }` attenuates by the medium's closed-form depth up to the
   curve, so a bolt inside a cloud shows through it. The veil is evaluated once per segment, at its middle, in the vertex
   stage: per pixel it was a full pass over the medium for every pixel of a halo, more than the cloud itself cost.
-- `bolt({ from, to, wander, roughness, levels, branches, schedule, segments })`: midpoint displacement in closed form
+- `bolt({ from, to, wander, roughness, levels, branches, schedule, segments })` (`from`, `to` expressions, read where the
+  strokes are filled: a moving jaw, a mark an input sets): midpoint displacement in closed form
   (a sum over levels of hat functions times hashed offsets), deterministic in (seed, strike index); branches leave the
   channel at hashed points. `strikeAt(schedule)` is a pure function of time; `flicker(since)` (four return strokes),
   `afterglow(since, s)`, `boltFlash` (a medium flash at the bolt's top), `sheetFlash` (in-cloud lightning at hashed
