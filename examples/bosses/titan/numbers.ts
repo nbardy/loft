@@ -64,7 +64,7 @@ export const S = {
   spiral: {
     /** Raup's numbers. `whorls`: turns of the tube from its tip to the mouth. `growth` (W): how much every length grows
      * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
-    whorls: 3.25, growth: 2.0,
+    whorls: 3.75, growth: 1.75,
     /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
      * touches the axis (Raup's D = 0): a shell with no navel. */
     mouth: { radial: 2.2, axial: 3.2 },
@@ -84,7 +84,7 @@ export const S = {
     /** The printed bands: cream for `cream` of each ring (the rest is brick); `at` is where the cream band's middle lies
      * across a ring (0: on the suture, so the cream straddles the line where two turns meet; 0.5: midway between
      * sutures); `proud` is how far a cream band stands out of the tube, as a share of its section. */
-    band: { cream: 0.3, at: 0.0, proud: 0.05 },
+    band: { cream: 0.35, at: 0.0, proud: 0.05 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
     lip: { flare: 0.12, thick: 0.2, throat: 0.22 },
@@ -92,7 +92,7 @@ export const S = {
      * outer side toward the spiral's face, radians), its height and girth, its size against the fiddler's, its gulls.
      * `pose` is what it could later be animated by, with the defaults it is drawn in: `lean` (the tangent of its angle,
      * out and back), `rise` (how far a segmented neck lifts it, units; 0: no neck), `shutters` (0 shut, 1 open). */
-    light: { back: 0.3, round: 0.6, height: 1.9, girth: [0.55, 0.4] as const, size: 0.45, gulls: 0, pose: { lean: 0.25, rise: 0, shutters: 0 } },
+    light: { back: 0.3, round: 0.6, height: 2.3, girth: [0.55, 0.4] as const, size: 0.45, gulls: 0, pose: { lean: 0.25, rise: 0, shutters: 0 } },
     /** Two groves, each [turns back from the mouth, round the section (radians, as the light), trees, the turf's radius]:
      * one on the crown beside the light, one lower on the forward shoulder behind the eyestalks. */
     groves: [[0.18, 0.9, 4, 1.2], [0.05, 1.0, 3, 0.9]] as const,

@@ -85,6 +85,9 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     // lands, so one frame holds the crab, both boats, the slam and its ring, and the landing. The game camera itself
     // cannot: its frame ends 23.5 from the crab's middle, and the ship comes down 37 away.
     arena: { kind: "perspective", eye: [39.8, 49.7, 21.4], target: [2, 0, -11], fovY: 0.6 },
+    // The camera of the spiral shell's picked picture (crab_round5/back_spiral_pick.webp): from behind, above and to the
+    // right, looking at the shell's face (DIRECTION.md, Round 5). Fixed in the world, as the game's.
+    pick: { kind: "perspective", eye: [-12, 17, 19], target: [-1.5, 2, 0], fovY: 0.6 },
   };
 };
 

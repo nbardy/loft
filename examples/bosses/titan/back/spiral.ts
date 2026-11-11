@@ -111,9 +111,10 @@ export const spiral: BackOption = {
     const paint = (u: F, v: F): P3 => {
       const phi = m.phiOf(v), back = backOf(u);
       const { ring, across } = bandAt(p, SP.band, phi);
-      // Brick with a few growth lines across the tube, unevenly spaced (a shell grows in fits).
-      const growth = abs1(sub(fract(add(mul(back, 23), mul(sin(mul(back, 7.3)), 0.8))), 0.5));
-      const brick = mix(ink(I.brick), ink(I.brickDark), mul(sub(1, cut(growth, 0.035)), 0.8));
+      // Brick with a few growth lines across the tube, unevenly spaced (a shell grows in fits): about three a turn. The
+      // first build had 23 a turn and the face read as a ribbed barrel, not as bands.
+      const growth = abs1(sub(fract(add(mul(back, 3.1), mul(sin(mul(back, 4.3)), 0.35))), 0.5));
+      const brick = mix(ink(I.brick), ink(I.brickDark), mul(sub(1, cut(growth, 0.012)), 0.9));
       const inBand = mul(sub(1, cut(across, 1)), cut(ring, -1.5));
       const key = mul(max(sub(1, cut(abs1(across), 0.07)), sub(1, cut(abs1(sub(across, 1)), 0.07))), cut(ring, -1.5));
       let shellInk: P3 = mix(mix(brick, ink(I.cream), inBand), ink(I.black), key);
@@ -122,10 +123,11 @@ export const spiral: BackOption = {
         const g = cut(t, 0), rim = mul(cut(t, -0.35), sub(1, g)), line = mul(sub(1, cut(abs1(add(t, 0.35)), 0.04)), 1);
         shellInk = mix(mix(mix(shellInk, ink(I.cream), rim), ink(I.moss), g), ink(I.black), line);
       }
-      // The lip: thick cream with a black key line where it turns from the outside; the throat dark inside.
+      // The lip: thick cream with a black key line where it turns from the outside; the throat dark brick inside (near
+      // black, it read from behind as a hole cut in the shell beside the eyestalks).
       const lipLine = sub(1, cut(abs1(sub(u, U.lip - 0.004)), 0.004));
       const onLip = cut(u, U.lip - 0.002), throat = cut(u, U.throat + 0.01);
-      return mix(mix(mix(shellInk, ink(I.cream), onLip), ink(I.black), lipLine), mix(ink(I.brickDark), ink(I.black), 0.55), throat);
+      return mix(mix(mix(shellInk, ink(I.cream), onLip), ink(I.black), lipLine), mix(ink(I.brickDark), ink(I.black), 0.2), throat);
     };
     const grid = gridU(n);
     const shellDrawn = draw.surface("spiral", framed(surface(m.point, { u: ["cap", "cap"], v: "periodic" }), { frame: shell, scale: lift<"f32">(1) }), {
@@ -142,24 +144,27 @@ export const spiral: BackOption = {
     edges.slice(0, 3).forEach(([a, b], k) => {
       const phi = (a + b) / 2;
       let back = 0.04 + 0.1 * hash(k + 3), salt = 500 + 100 * k;
-      while (back < 1.9) {
-        const run = 3 + Math.floor(4 * hash(salt));
-        for (let j = 0; j < run && back < 1.9; j++, salt++) {
-          const s = site(back, phi + 0.08 * (hash(salt + 7) - 0.5));
+      // Runs of two to five, bunched (a barnacle now and then beside the ridge, not on it), then a rest of an eighth to a
+      // third of a turn: the first build's runs of three to six with short rests read as an even row of teeth.
+      while (back < 2.2) {
+        const run = 2 + Math.floor(4 * hash(salt));
+        for (let j = 0; j < run && back < 2.2; j++, salt++) {
+          const off = (hash(salt + 7) - 0.5) * (j % 2 === 1 ? 0.35 : 0.1);
+          const s = site(back, phi + off);
           if (s.at[1] < water + 0.05) { back += 0.03; continue; }
           const low = 1 - Math.min(1, Math.max(0, (s.at[1] - water) / 6));
           const size = p.r * p.W ** -back * (0.09 + 0.07 * low) * (0.75 + 0.5 * hash(salt + 11));
           strings.push(barnacle(s, size, salt));
-          back += (size * 2.1) / (TAU * (p.c + p.r * Math.cos(phi)) * p.W ** -back);
+          back += (size * (j % 2 === 1 ? 1.2 : 2.0)) / (TAU * (p.c + p.r * Math.cos(phi)) * p.W ** -back);
         }
-        back += 0.06 + 0.16 * hash(salt + 31);
+        back += 0.12 + 0.22 * hash(salt + 31);
       }
     });
     // The groves: trees on the turf, the tallest near the middle.
     const groves = SP.groves.flatMap(([b0, p0, trees, radius], g) => Array.from({ length: trees }, (_, k) => {
       const ang = k * 2.4 + g, r = k === 0 ? 0 : radius * (0.45 + 0.25 * hash(g * 10 + k)), size = p.W ** -b0;
       const back = b0 + (r * Math.cos(ang)) / (TAU * (p.c + p.r * Math.cos(p0)) * size), phi = p0 + (r * Math.sin(ang)) / (p.r * size);
-      return tree(twin.at(back, phi), (k === 0 ? 1.5 : 1.15 + 0.25 * hash(g * 10 + k + 5)) * (g === 0 ? 1 : 0.85), 40 + g * 10 + k);
+      return tree(twin.at(back, phi), (k === 0 ? 1.05 : 0.8 + 0.2 * hash(g * 10 + k + 5)) * (g === 0 ? 1 : 0.85), 40 + g * 10 + k);
     }).flat());
     // The light's base: a cream plinth grown out of the shell, a ring of barnacles round its foot.
     const LP = lightPlan(n, twin), G = LP.L.girth[0];
