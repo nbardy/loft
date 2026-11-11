@@ -148,5 +148,7 @@ library already exports a `carry` (src/map/chart.ts).
 - A gripper other than two-sided: `gripReaches` measures two fingers; a coil (`wrap`) or a swallowing mouth needs its
   own check.
 - After the hold the game owns the thing again; the crab's ship slipping back to where it was taken is scene art.
+  (Since 2026-11-11 a hold may end thrown, and the crab's does: `docs/throw_and_shove.md`. `thing(t)` then covers the
+  flight and the landing, or the host's own boat from the release; the slip back is gone.)
 - The telegraph flashes at the arming time and fades, as for a hit; nothing marks the thing as held on the water.
 

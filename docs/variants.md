@@ -17,7 +17,8 @@ So a **design** (one subject, here the crab) has four parts:
 - a **rig**: everything the game reads and the checks measure: the walk, the body and shell frames, each attack's
   clock and target, the held ship, the warnings, the crash, and the *mounts* where slots attach (leg roots, claw
   shoulders, the shell frame);
-- **slots**: legs, claws, face, back, carapace. Each slot has named **options**; an option is a function from the
+- **slots**: legs, claws, face, back, carapace, and boats (who places the two boats when the crab does not hold them:
+  Loft's stand-ins, or the host; `docs/throw_and_shove.md`, "The contract"). Each slot has named **options**; an option is a function from the
   rig (and the numbers) to drawables, plus whatever parts the checks need from it;
 - **checks**: the contract. They are built from the rig's attacks and from parts the slots return (the crusher's palm
   that strikes, the cutter's two fingers that grip).
