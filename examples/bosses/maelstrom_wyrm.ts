@@ -544,7 +544,8 @@ export default scene({
   style: wyrmPrint(),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
-    game: { kind: "perspective", eye: [5, 31, 29], target: [0.5, 0, 0.5], fovY: 0.62 },
+    // Pulled back and aimed past the pool so the head, held high at the far side, clears the top of the frame.
+    game: { kind: "perspective", eye: [5, 35, 33], target: [0.5, 0.5, -2.5], fovY: 0.62 },
     three: { kind: "perspective", eye: [-24, 15, 19], target: [-4.5, 1.5, -3], fovY: 0.7 },
     close: { kind: "perspective", eye: [-9.4, 9.6, -0.8], target: [-0.6, 6.9, -8.4], fovY: 0.7 },
     // The face in profile, from the ship's side.
