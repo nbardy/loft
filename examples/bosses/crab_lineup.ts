@@ -25,7 +25,7 @@ export const LINE = ["islander", "fiddler", "mask", "stilt"] as const;
 /** The camera: in front of the line, low enough to feel their size, high enough to see the water. 16:9. */
 const EYE = [106, 16, 0] as const;
 export const cameras: Readonly<Record<string, Camera>> = {
-  lineup: { kind: "perspective", eye: EYE, target: [0, 2.5, 0], fovY: 0.6 },
+  lineup: { kind: "perspective", eye: EYE, target: [0, 8, 0], fovY: 0.6 },
 };
 
 /** The crabs stand 22 apart along z (the camera's left is +z), facing the camera (+x), the outer ones toed in a little. */
