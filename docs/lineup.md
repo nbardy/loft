@@ -252,3 +252,49 @@ the horizon behind the gap between the middle pair, so it shows between and abov
 | every named check of every crab with the new places | passes (40 of 40); the grab check on the new bearing is the one at risk |
 | frame at t = 0 and at t = 24 | the same hash |
 | the seam | it is a cut now (the taunt's push to the slam's frame), so the old proof (the seam's change like an ordinary frame's) no longer applies; what must hold is that within each shot nothing jumps: the change across the seam measured as before is a cut's, and the change across 23.967 to 23.933 an ordinary frame's |
+
+### Scored (2026-11-12)
+
+Three low-resolution strips (960x540 and 540x540, one load each) and one load for the deliverables. Measured on the
+strips' 960x540 tiles, doubled for 1080p; faces measured as the eyes and mouth together.
+
+| Format, shot | | Line | Tallest | Faces (islander, fiddler, samurai, spider crab) | Horizon |
+|---|---|---|---|---|---|
+| 16:9 slam (main) | predicted | 100% | 45% | 104, 115, 94, 78 | 72% |
+| | measured | **98%** | **45%** (the spider crab, 490 px) | about 200, 240, 130, 120 | 74% |
+| 16:9 throw (widest) | predicted | 86% | 39% | 89, 99, 80, 68 | 71% |
+| | measured | **85%** | 40% | about 170, 200, 130, 100 | 74% |
+| 16:9 taunt, near its end (tightest) | predicted | 122% (as first planned); 108% (as built, at 112) | 49% | 112 to 140 | 71% |
+| | measured | just over 100% (the islander's claw tip at the edge) | 42% | about 200, 240, 180, 120 | 74% |
+| square trucks | measured | over 100% (two crabs, parts of two) | about 60% | over 150 | about 70% |
+
+Where the reasoning was wrong or loose:
+
+1. **The faces were boxes I guessed, and too small.** The stand-in gave the faces 78 to 115 px at the slam; the
+   picture gives 120 to 240. The fiddler's and islander's eyes stand on stalks well above the box I drew, and the
+   samurai's face is the whole front of its shell. The target (90 px) holds with a wide margin everywhere; the
+   prediction was conservative for the wrong reason.
+2. **The spider crab is not tallest in the taunt.** Its taunt is a bow: it drops 2.2 on every accent, so its largest
+   moment is the slam's wind-up, not the taunt. The stand-in, which knows only the largest box, said 49% for the taunt's
+   end; 42% is what a bowing crab gives.
+3. **The square was planned wrong twice** (see the shots): a wide lens from close puts the thrown boats' sails into the
+   foreground. The long lens from further away is what the references meant by "longer lens" for the square too.
+4. **The throw as first staged failed two checks.** Landing 26 forward carried 15 (a throw must carry 25); landing 38
+   forward, the hand's turn for two tumbles (60 degrees) passed the release velocity, which a forward throw leaves only
+   about 48 degrees off the keel, and the hull left the fingers (0.35 to 0.62 off). One tumble: 40 of 40 pass.
+5. **The spider crab's tongs did not rise at lift 2.6**: the claw folds its palm 0.55 rad toward the face from the
+   forearm, so a wrist only 4 above the body put the tongs across the face. At 3.6 the forearm stands steep and the
+   tongs make a V over the shrine (the reference).
+
+What the strips say:
+
+- The slam reads as a cascade from left to right, a claw up while the one before is down, a splash at each landing,
+  the boats on the ring's face carried forward and left, side on.
+- The throw: four boats in the air at once, flat and tumbling against the sunset, then four splashes in the foreground.
+  Through a long lens a throw toward the camera is mostly up and down; it reads, but less than a throw across would.
+- The taunt: four manners. The islander's claw swings broad and wide; the fiddler's great claw lifts small and quick
+  and ticks on the eighths (its tick cannot be seen in a strip: it is in the clip); the samurai's gauntlet snaps up and
+  stays dead still for 0.6 s; the spider crab bows forward deepest with both tongs up in a V.
+- Weak: about eight boats stand along the waterline in front of the crabs through the slam (each crab's two, in lanes
+  only 12.5 wide), a fence across their legs; the faces clear the sails, the legs do not. The islander's raised claw
+  touches the left edge at its widest.
