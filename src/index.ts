@@ -36,6 +36,8 @@ export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from ".
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, releasesAt, throwLands, fliesClear, shoves, frontFirst, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
 export { expressionsRead, type Mark } from "./check.ts";
+export { drawnLength } from "./check.ts";
+export { struck, holdsStill, StruckError, type Struck, type StruckSpec } from "./geom/struck.ts";
 export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";

@@ -340,3 +340,90 @@ Weak or unfinished:
 - `shellTop` (the cliff's foot under the bow) copies the base hull's section by hand; another carapace would not be
   followed. The legs come out through the brick tier, as they came out through the stone.
 - The light rocks after the slam about the fiddler's axes, not along the point.
+
+## Round 4: the samurai's face (2026-11-11)
+
+The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a
+face that changes through the fight; the samurai (`mask`) had a first pass, a scowling human face painted on a disc
+whose eye slits are 6 px tall from the `game` camera. All four crabs will stand side by side in one video, so each
+needs a temperament of its own. This is the samurai's. Gestures of the body are another worker's.
+
+**Temperament: a stern, proud warrior. Its expressions are kabuki: few, large, held.** A mie is a pose struck and
+frozen at a peak of emotion, often with the nirami, the cross-eyed glare. Where the other crabs flow, this one snaps
+and holds; beside their motion its stillness is its character.
+
+References: `crab_round4/others/mask_expressions.webp` (six expressions), `mask_turnaround.webp`, `mask_taunt.webp`.
+The face is reworked in place (`examples/bosses/titan/face/mask.ts`); the first pass is in git at 9b3deee.
+
+### The face
+
+What is special about this problem is the camera and the temperament, and both point the same way. The `game` camera
+is 44 degrees above the horizon and 43 degrees to the crab's right: a ball eye's pupil goes round its far side (round
+3 found this and turned the islander's sockets to the audience). A mask does not have that problem if its eyes are
+**flat**: a pupil in the middle of a flat white looks at whoever is looking, from every camera, and a pupil slid to the
+nose is seen to be crossed from every camera. So the eyes are big, nearly flat discs with small black pupils and no
+iris, and a mie faces the audience without the face knowing where the audience is.
+
+| part | what it is | what it does |
+|---|---|---|
+| face | the red sphere patch in front of the helmet, relief and flat inks | nods and turns on its sphere as a whole (chin up, chin down, toward the ship) |
+| eyes | two flattened cream balls, black-rimmed, 1.6 across, lids painted on them in the face's red | lids close to slits or shut one eye; pupils slide to the ship, or cross |
+| brow plates | two black lacquer bars standing 0.42 proud of the face | tip into a deep V, lift apart, cock one up |
+| mouth | thick lips in a downturned bow on the face's surface, cream teeth, upper fangs in the gape | the jaw drops everything under the mouth's line; lips part to bare the teeth; a corner drags aside |
+| tusks | two cream fangs on the lower jaw | drop with it |
+
+| expression | when (the rig's clocks) | what is drawn |
+|---|---|---|
+| rest | otherwise | brows low in a shallow V, lids a third down, pupils square on you, teeth just showing |
+| wanting | 0.2 s after the Grab's warning, until the claw has the ship | the face turns to the ship, eyes slide all the way to it (`rig.shipNow`), the near brow cocks, the jaw loosens |
+| straining | the hold | eyes screwed to slits under crushed brows, every tooth bared, chin tucked; it trembles with each squeeze |
+| triumphant (a mie) | the let-go, held 1.8 s | chin up, brows flung high and apart, eyes wide round small pupils, lips sealed in a proud bow |
+| furious (a mie, the nirami) | Claw Crush's warning, held until the claw lands | brows in a deep V, eyes wide and crossed, the jaw dropped in a roar |
+| wincing | the slam, 0.55 s | the near eye shut under its jammed brow, the mouth dragged to that side, the head jolted back |
+
+**Timing is one library piece** (`src/geom/struck.ts`). `struck(clock, { from, snap, hold, release })` is one weight
+for a score's `show` layer: from the cue it first goes the wrong way (the brows lift before they slam down), arrives at
+speed and stops in one frame; through the hold it is exactly 1; the release eases. Stillness needs no switch: a `show`
+at weight exactly 1 replaces every channel with the expression's own number, so what flows (a blink, the strain's
+tremble) is laid first and a held pose covers it. `holdsStill` checks that: through each hold every channel is the
+cast's own number. The whole face reads the score on one clock (no eye lags): in a mie every part lands on one beat.
+
+Inherited: the sphere patch, its rim, the lacquer guards and brim, the jaw that drops everything under the mouth's
+line (this face's first pass); the cast, the score and the marks a check compares (round 3); anticipation as a dip
+before a drive (`anticipated`, the twelve principles); the mie and the nirami (kabuki). Mine: the flat eye as the answer
+to a high camera; a struck pose as one weight whose plateau is exact, with stillness by the order of layers and a check
+that holds it; anticipation of a pose as a negative weight (the face leaves the pose it is about to strike, in every
+channel at once, for nothing); the nod and turn of the whole face as channels.
+
+### Predictions (written before the first render of this face)
+
+From `tools/mask_theory.ts`: plain arithmetic on the face's own numbers, the body at rest, each expression at full
+weight, the `game` camera at 1280 x 800.
+
+1. **Size.** The face's middle is turned 48 degrees from the camera. The right eye (the camera's side) is a disc 54 px
+   across by 51 tall, the left 36 by 49. `minScreenSize` measures a ball of the eye's radius, not the turned disc: 56
+   and 54 px, held at 48. Pupils 15 and 10 px at rest, 11 and 7.5 in the glare.
+2. **The glare crosses.** The pupils are 71 px apart at rest and 49 crossed: each moves about its own width (13 and
+   10 px) toward the nose. I expect it to be seen at true size on the right eye and to be marginal on the left.
+3. **Light against dark.** In the `game` picture at rest, the mean luminance of the cream pixels inside the right eye
+   over the mean of the ring from 1.0 to 1.3 radii round it (black liner, lacquer brow, red face) is at least 4 to 1.
+4. **The brow V and the roar.** A brow plate is 87 px long (right) and 62 (left), about 20 px thick; its inner end
+   drops 22 px from rest to the glare and rises 40 px in triumph. The roar is 30 px from lip to lip (6.5 at rest) and
+   about 110 px wide. Held by `drawnLength` at 55 px and 16 px.
+5. **Expressions.** All six and the rest reach at least 0.9 of the face in a cycle. The closest pairs are rest and
+   straining (18 px), straining and furious (20), rest and wanting (21.5); the farthest triumphant and furious (62).
+   Measured on the moving crab (`expressionsRead`, a quarter of the right eye's width: 13.6 px), the closest pair will
+   be between 14 and 22 px. By eye, from true-size stills, all six are told apart; the pair most likely confused is
+   rest and straining if the slits do not read.
+6. **Nothing hides it.** The brim is paint on the face's own top, so nothing overhangs. A brow plate 0.42 proud hides
+   about 7 px of the eye under it from this camera. At rest and through every hold neither gauntlet crosses the face
+   from `game`.
+7. **Timing.** A snap is 0.13 s, four frames at 30 a second: weights -0.06, -0.09, 0.18, 1, so one frame carries 82%
+   of the change. Held: wanting 2.57 s, triumphant 1.8, furious 1.24, wincing 0.55. Through those holds every channel
+   is exactly its pose's number (`holdsStill`: 0 off).
+8. **Checks.** `mask` passes 15 of 15 (its nine, and six of the face's: two eyes, the brow, the roar, the expressions,
+   the holds). Every other variant as before. The base and islander `game` pictures do not change.
+9. **Cost** (`mask`, `game`, t = 1; before: 129 draws, 149,621 triangles). After: 135 draws (two eyes, two brows, two
+   tusks), about 152,500 to 155,500 triangles, about 45 more per-frame tables. GPU frame: at most two timer ticks more
+   (0.13 ms) in either clock state; the face's paint covers under 2% of the picture.
+

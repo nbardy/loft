@@ -378,6 +378,29 @@ export function expressionsRead<K extends string, N extends string>(score: Score
   };
 }
 
+/**
+ * A drawn length (a mark: an open mouth from lip to lip, a brow from end to end) is at least `pixels` long on screen
+ * from a named camera at time `at`. `minScreenSize` is for a thing with a skeleton; this is for a shape that is paint
+ * or a gap between parts, stated as the two points a viewer sees it between.
+ */
+export function drawnLength(label: string, mark: Mark, camera: string, pixels: number, o: { readonly at?: CheckTime; readonly size?: readonly [number, number] } = {}): Check {
+  const [w, h] = o.size ?? [1280, 800];
+  const roots = [lift<"vec3">(mark.from), lift<"vec3">(mark.to)];
+  return {
+    name: `${label} from "${camera}" is at least ${pixels} px long`,
+    run(probe) {
+      const cam: Camera | undefined = probe.artefact.cameras[camera];
+      if (cam === undefined) throw new Error(`drawnLength: the scene has no camera "${camera}" (cameras: ${Object.keys(probe.artefact.cameras).join(", ")})`);
+      const t = o.at === undefined ? 0 : timeOf(probe, o.at);
+      const m = cameraMatrices(cam, w / h);
+      const pts = probe.eval(roots, t) as number[][];
+      const a = project(m, pts[0] as unknown as V3, w, h), b = project(m, pts[1] as unknown as V3, w, h);
+      const long = Math.hypot(b.x - a.x, b.y - a.y);
+      return { name: this.name, pass: long >= pixels, value: long, measured: `${fmt(long, 1)} px at t=${fmt(t, 2)}`, limit: `>= ${pixels} px` };
+    },
+  };
+}
+
 // ---- holds --------------------------------------------------------------------------------------------------------
 
 /**
