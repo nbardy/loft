@@ -10,9 +10,10 @@ import { abs, add, and, atan2, distance, dot, f, floor, fract, gt, length, lt, m
 import { noise2, hash22, luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
-import type { Contact, Rgb, ShadeCtx, Style } from "../style.ts";
+import type { Contact, Rgb, ShadeCtx, Style, WaterCtx } from "../style.ts";
 import { blockInk, castOf, lit, LIGHT, markOf, overlapOf, printedBlock, pullOf, type BlockInk, type LightRecipe } from "./light.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
+import { along, curledHeads, rollingFoam, rollOf, type White } from "./whitewater.ts";
 
 /** The five inks. Everything a body shows is one of these (antialiased edges aside), unless a scene states its own. */
 export const WOODBLOCK_PALETTE = {
@@ -107,6 +108,8 @@ export const print = {
  *  - `breakers`: a narrow collar, and a blade of foam along each of the sea's printed swell lines where it meets the body.
  *  - `curls`: a low collar of round lobes `lobe` apart lying over each other, the larger with a curled head, and a
  *    ripple arc beyond: the round 4 pictures' rolling foam.
+ *  - `roll`: white water as the round 4 and 5 pictures draw it (src/style/whitewater.ts): a rolling mass, a few large
+ *    hooked heads of unequal size curling with the swell, droplets beyond, a ripple arc outside.
  * `ridge` reads the sea's contact band; the others its contact level (`Contact`), which costs four more depth reads.
  */
 export type ContactFoam =
@@ -115,7 +118,18 @@ export type ContactFoam =
   | { readonly kind: "apron"; readonly lobe: number }
   | { readonly kind: "stipple"; readonly dot: number }
   | { readonly kind: "breakers"; readonly reach: number }
-  | { readonly kind: "curls"; readonly lobe: number };
+  | { readonly kind: "curls"; readonly lobe: number }
+  | { readonly kind: "roll"; readonly head: HeadSize };
+
+/** How large a roll's largest curled head is: a share of the sea's foam width (so it follows the scene's sea), or a world radius. */
+export type HeadSize = { readonly kind: "ofWidth"; readonly share: number } | { readonly kind: "world"; readonly radius: number };
+
+/**
+ * How the foam the sea's deformations mark on the water (a ring wave's crest, a whirlpool's arms) is printed: `flat`,
+ * cream where the mark is over 0.45, the print as it was; `heads`, a line of curled heads of world radius `head` along
+ * it, leaning the way the deformation says (`WaterCtx.marksLean`), over a thin flat core.
+ */
+export type MarksPrint = { readonly kind: "flat" } | { readonly kind: "heads"; readonly head: number };
 
 const positive = (what: string, x: number): number => {
   if (!(x > 0)) throw new Error(`woodblock foam: ${what} must be positive, got ${x}`);
@@ -137,6 +151,20 @@ export const foam = {
   breakers(o: { readonly reach?: number } = {}): ContactFoam { return { kind: "breakers", reach: positive("breakers reach", o.reach ?? 0.72) }; },
   /** Rolling lobes with curled heads. `lobe`: the spacing of the lobes, default 0.5. */
   curls(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "curls", lobe: positive("curls lobe", o.lobe ?? 0.5) }; },
+  /**
+   * The rolling mass with curled heads. `head`: the world radius of the largest head; left out, it is half the
+   * sea's foam width (0.42 on the crab's sea of 0.85, 0.15 on a sea of 0.3).
+   */
+  roll(o: { readonly head?: number } = {}): ContactFoam {
+    return { kind: "roll", head: o.head === undefined ? { kind: "ofWidth", share: 0.5 } : { kind: "world", radius: positive("roll head", o.head) } };
+  },
+};
+
+export const marksAs = {
+  /** Cream where the mark is over 0.45: the print as it was. */
+  flat(): MarksPrint { return { kind: "flat" }; },
+  /** A line of curled heads. `head`: the world radius of the largest, default 0.35. */
+  heads(o: { readonly head?: number } = {}): MarksPrint { return { kind: "heads", head: positive("crest head", o.head ?? 0.35) }; },
 };
 
 // ---- the sky and the water --------------------------------------------------------------------------------------------
@@ -163,6 +191,8 @@ export type WoodblockSpec = {
   readonly water?: { readonly eye?: WoodblockEye };
   /** The pattern of the foam where a body meets the water. Default `foam.ridge()`, the print as it was. */
   readonly foam?: ContactFoam;
+  /** How the foam the sea's deformations mark is printed. Default `marksAs.flat()`, the print as it was. */
+  readonly marks?: MarksPrint;
   /**
    * How the bodies are lit: a recipe of shading treatments (src/style/light.ts; `LIGHT` has the named ones). Absent:
    * the print as it was, the rule's own two tones split at N.L = 0. Under a recipe the rule prints its lit inks and the
@@ -311,6 +341,7 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   const sky: WoodblockSky = { ...SKY, ...spec.sky };
   const eye: WoodblockEye = spec.water?.eye ?? { kind: "none" };
   const pattern: ContactFoam = spec.foam ?? foam.ridge();
+  const crestPrint: MarksPrint = spec.marks ?? marksAs.flat();
   const outline = param("woodblock.outline", 0.05, { min: 0, max: 0.2 });
   const bodies: Bodies = spec.light === undefined ? asPrinted(inks, rule) : underRecipe(inks, rule, spec.light);
   return {
@@ -349,7 +380,7 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       // derivative, and a foam's edge takes the derivative of whatever shapes it (a derivative of a derivative, which
       // the sea's cases refuse); where lines crowd the band is a pixel or two wide and has no room for a blade anyway.
       const lines: SwellLines = { off: d, live: smoothstep(-0.6, -0.1, h) };
-      c = foamed(pattern, ctx.contact, { under: c, inks, xz, swell: h, lines });
+      c = foamed(pattern, ctx.contact, { under: c, inks, xz, swell: h, lines, drift: ctx.swell });
       // The far sea fades toward the haze at the horizon as a bokashi (a graded wiping of the block, as the sky's): two
       // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
       // maelstrom's view (examples/maelstrom.ts --style woodblock).
@@ -357,7 +388,7 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       c = mix(c, rgb(SEA.haze), far);
       // The foam the sea's deformations give (a whirlpool's arms), printed cream over everything: it was left out, and
       // examples/bosses/maelstrom_wyrm.ts printed it back in by hand (2026-11-11). Zero without a deformation.
-      c = mix(c, rgb(inks.cream), edgeOf(ctx.marks, 0.45, 0.02));
+      c = crested(crestPrint, c, inks, ctx);
       // Opaque: a print shows nothing under its water.
       return vec4(eyed(eye, inks, c, ctx.crest), 1);
     },
@@ -374,15 +405,19 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
 /** The swell's printed lines here: `off` 0 on a line to 0.5 half way between two; `live` 0..1, how much of a line prints. */
 type SwellLines = { readonly off: Expr<"f32">; readonly live: Expr<"f32"> };
 /** What a foam pattern is printed on: the water's colour so far, where, and the swell there (-1 trough .. 1 crest). */
-type FoamOn = { readonly under: Expr<"vec3">; readonly inks: WoodblockInks; readonly xz: Expr<"vec2">; readonly swell: Expr<"f32">; readonly lines: SwellLines };
-/** The same, where a body is near: `band` and `level` as `Contact` gives them (1 at the body, 0 at the sea's foam width). */
-type FoamNear = FoamOn & { readonly band: Expr<"f32">; readonly level: Expr<"f32"> };
+type FoamOn = {
+  readonly under: Expr<"vec3">; readonly inks: WoodblockInks; readonly xz: Expr<"vec2">; readonly swell: Expr<"f32">; readonly lines: SwellLines;
+  /** The direction the swell travels (`WaterCtx.swell`). */
+  readonly drift: Expr<"vec2">;
+};
+/** The same, where a body is near: `band`, `level` and `width` as `Contact` gives them (1 at the body, 0 at the sea's foam width). */
+type FoamNear = FoamOn & { readonly band: Expr<"f32">; readonly level: Expr<"f32">; readonly toward: Expr<"vec2">; readonly width: number };
 
 /** The contact foam: nothing where the sea found no body near, the pattern where one may be. */
 function foamed(p: ContactFoam, contact: Contact, on: FoamOn): Expr<"vec3"> {
   switch (contact.kind) {
     case "clear": return on.under;
-    case "near": return patterned(p, { ...on, band: contact.band, level: contact.level });
+    case "near": return patterned(p, { ...on, band: contact.band, level: contact.level, toward: contact.toward, width: contact.width });
   }
 }
 
@@ -395,6 +430,45 @@ function patterned(p: ContactFoam, on: FoamNear): Expr<"vec3"> {
     case "stipple": return stipple(p, on);
     case "breakers": return breakers(p, on);
     case "curls": return curls(p, on);
+    case "roll": return rolled(p, on);
+  }
+}
+
+/** White water printed over the water's colour: its key line, then its cream. */
+function printedWhite(under: Expr<"vec3">, inks: WoodblockInks, w: White): Expr<"vec3"> {
+  return mix(mix(under, rgb(inks.black), mul(w.key, KEY)), rgb(inks.cream), w.cream);
+}
+
+/** A head's world radius on a sea whose foam is `width` wide. */
+function headOf(h: HeadSize, width: number): number {
+  switch (h.kind) {
+    case "ofWidth": return h.share * width;
+    case "world": return h.radius;
+  }
+}
+
+/**
+ * The collar as white water: the painter's rolling mass and curled heads, sized by the contact level and curling the
+ * way the swell travels, over a ripple arc or two on the level's own lines.
+ */
+function rolled(p: Extract<ContactFoam, { kind: "roll" }>, on: FoamNear): Expr<"vec3"> {
+  // The level rises toward the body by 1 / width a world unit: its slope, so lobes and heads are sized whole.
+  const white = rollingFoam({ xz: on.xz, mass: on.level, slope: mul(on.toward, 1 / on.width), lean: { kind: "toward", dir: on.drift } }, rollOf(headOf(p.head, on.width)));
+  const ripple = arcs(on, { count: 5, drift: 0, from: 0.02, to: 0.34, weight: 0.24 });
+  return printedWhite(mix(on.under, rgb(on.inks.cream), ripple), on.inks, white);
+}
+
+/** The deformations' foam printed over the water. One handler per print. */
+function crested(p: MarksPrint, c: Expr<"vec3">, inks: WoodblockInks, ctx: WaterCtx): Expr<"vec3"> {
+  switch (p.kind) {
+    case "flat": return mix(c, rgb(inks.cream), edgeOf(ctx.marks, 0.45, 0.02));
+    case "heads": {
+      // The mark is over 0.45 where the flat print is cream: the heads are sized from a little under that, so they
+      // stand along the flat print's edge and outlast it as the wave weakens; the flat core is its upper part only.
+      const white = curledHeads({ xz: ctx.world.xz, mass: smoothstep(0.2, 0.7, ctx.marks), slope: vec2(0, 0), lean: { kind: "toward", dir: ctx.marksLean } }, rollOf(p.head));
+      const core = edgeOf(ctx.marks, 0.62, 0.02);
+      return printedWhite(mix(c, rgb(inks.cream), core), inks, white);
+    }
   }
 }
 
@@ -414,12 +488,6 @@ function ridge(on: FoamNear): Expr<"vec3"> {
   const speck = mul(specks(mul(on.xz, 8)), mul(smoothstep(-0.4, -0.1, near), sub(1, smoothstep(0.1, 0.3, near))));
   return mix(mix(on.under, rgb(on.inks.indigo), rim), rgb(on.inks.cream), max(foam, speck));
 }
-
-/** xz along the unit direction at `degrees` from +x, in periods of `period`. */
-const along = (xz: Expr<"vec2">, degrees: number, period: number): Expr<"f32"> => {
-  const a = (degrees * Math.PI) / 180;
-  return dot(xz, vec2(Math.cos(a) / period, Math.sin(a) / period));
-};
 
 /** How much of the key black a foam's key line prints: a little of the water shows through, as the crash foam's does. */
 const KEY = 0.9;

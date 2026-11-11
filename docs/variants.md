@@ -153,6 +153,11 @@ bun src/cli/main.ts dev examples/bosses/reefback_titan.ts --variant mask
 bun test tests/variants.check.test.ts                                           # every named variant passes
 ```
 
+A slot may be a **look**: its options change only how the subject is painted (the crab's `foam`: which white water the
+print uses), never what it is, so no check can tell them apart. The design lists such slots under `looks`
+(`src/design.ts`); they are picked like any other (`--variant islander,foam=apron`) and `--combinations` leaves each at
+its base option instead of multiplying by it.
+
 `--variant` works on `render`, `clip`, `frames`, `check`, `profile`, `build` and `dev`.
 
 **What the checks require** (four for this crab, and whatever the chosen face adds):

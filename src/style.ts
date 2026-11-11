@@ -56,6 +56,13 @@ export type WaterCtx = {
    */
   readonly marks: Expr<"f32">;
   /**
+   * Which way the marks' foam leans, on the sea plane (x, z): outward for a ring wave. Zero where no deformation that
+   * has a lean marks the water (a whirlpool has none).
+   */
+  readonly marksLean: Expr<"vec2">;
+  /** The direction the largest swell travels, a unit vector on the sea plane (x, z); zero on a sea without swell. */
+  readonly swell: Expr<"vec2">;
+  /**
    * Where on the swell this is: the phase of the largest swell component, in cycles (one per wavelength, increasing
    * along its direction of travel; a crest at fract = 0.25). Lines of constant phase run along the crests, so a style
    * can print lines that follow the swell; 0 everywhere on a sea without swell.
@@ -79,9 +86,13 @@ export type Contact =
    * (as far as the search sees). It is grainy from pixel to pixel and sits on two plateaus (src/geom/sea.ts,
    * `loft_contact_band`): good for a soft edge or for specks, not for a clean shape. `level`: the same closeness without
    * the grain or the plateaus, one value per 2 x 2 pixels (`loft_contact_level`), for a style that cuts flat shapes
-   * from it. Each is computed only if the style reads it.
+   * from it. Each is computed only if the style reads it. `toward`: the unit direction across the water (x, z) to the nearest
+   * body point, zero where there is none: the way `level` rises, by 1 / `width` a world unit, so the level a short way
+   * off is known to first order (a shape can be sized by the level at its own centre and stay whole). It comes with
+   * `level`. `width`: the sea's foam width, world units (the distance over which both fall from 1 to 0), so a
+   * pattern can size itself to the scene's sea.
    */
-  | { readonly kind: "near"; readonly band: Expr<"f32">; readonly level: Expr<"f32"> };
+  | { readonly kind: "near"; readonly band: Expr<"f32">; readonly level: Expr<"f32">; readonly toward: Expr<"vec2">; readonly width: number };
 
 /** A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. */
 export type LayerCtx = {

@@ -4,8 +4,9 @@
 // legs raise the body), and a `draw` from the rig. The claws also *offer* the rig two measurements before the rig is
 // built (the Grab places the ship by them), because the attacks' geometry depends on the claws' shape.
 
-import type { Check, ContactFoam, Drawable, Measured, Placer, Strand, Strike, Target } from "../../../src/index.ts";
+import type { Check, ContactFoam, Drawable, MarksPrint, Measured, Placer, Strand, Strike, Target } from "../../../src/index.ts";
 import type { Option } from "../../../src/design.ts";
+import type { ImpactPaint } from "../lib/impact.ts";
 import type { Numbers } from "./numbers.ts";
 import type { Rig } from "./rig.ts";
 
@@ -55,7 +56,11 @@ export type BackOption = Opt & { readonly draw: (rig: Rig) => readonly Drawable[
  */
 export type BoatsOption = Opt & { readonly placer: (boat: string, start: { readonly at: readonly [number, number]; readonly heading: number }) => Placer };
 
-/** The foam printed where the crab, its island and the ship meet the water: a pattern of the woodblock's (`foam`). It
- * draws nothing of its own and asks no numbers; it is a slot so two patterns can be compared from the command line
- * (`--variant islander,foam=apron`). */
-export type FoamOption = Opt & { readonly pattern: ContactFoam };
+/**
+ * How white water is printed in the crab's scene (docs/art_direction/DIRECTION.md, "White water"): the collar where
+ * anything stands in the sea (a pattern of the woodblock's `foam`), the ring wave's crest (`marksAs`), and the slam's
+ * and the landing's burst (`impactPaint`, given the burst's reach). It draws nothing of its own and no check reads it:
+ * the design lists the slot under `looks`, so it is picked from the command line (`--variant islander,foam=apron`)
+ * without multiplying the combinations.
+ */
+export type WaterOption = Opt & { readonly collar: ContactFoam; readonly marks: MarksPrint; readonly burst: (reach: number) => ImpactPaint };

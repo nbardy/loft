@@ -57,6 +57,12 @@ export type DesignSpec<N, T extends SlotTable<N>, B extends Built = Built, H = n
   readonly variants: Readonly<Record<string, VariantSpec<N, T>>>;
   /** The cameras `loft variants` compares by default, in column order. */
   readonly compare: readonly string[];
+  /**
+   * Slots whose options change only how the subject is painted (a style's choice), never what it is: no check can tell
+   * them apart, so `combinations` leaves each at its base option instead of multiplying by it. Picked like any slot
+   * (`--variant islander,foam=apron`). Default none.
+   */
+  readonly looks?: readonly (keyof T & string)[];
   readonly build: (picked: Picked<T>, numbers: N) => B;
   /** The same subject as a member of a larger scene, in two stages. A design without it cannot be lined up. */
   readonly stage?: (picked: Picked<T>, numbers: N, how: H) => Staged<M>;
@@ -200,9 +206,10 @@ export class Design<N, T extends SlotTable<N>, B extends Built = Built, H = neve
     return this.spec.stage(picked, r.numbers, how);
   }
 
-  /** Every combination of options, over the design's own numbers plus whatever the options ask (for checking seams). */
+  /** Every combination of options, over the design's own numbers plus whatever the options ask (for checking seams); `looks` slots stay at base. */
   combinations(): VariantAsk[] {
-    return this.slots.reduce<VariantAsk[]>(
+    const looks: readonly string[] = this.spec.looks ?? [];
+    return this.slots.filter((slot) => !looks.includes(slot)).reduce<VariantAsk[]>(
       (asks, slot) => asks.flatMap((a) => this.options(slot).map((o) => ({ variant: "base", picks: o === "base" ? a.picks : [...a.picks, [slot, o] as const] }))),
       [BASE_ASK],
     );
