@@ -29,7 +29,9 @@ export const periscope: FaceOption = {
     const rearLag = mul(env.p, sub(1, smoothstep(0, 0.6, env.q)));
 
     const eye = (tag: "L" | "R", s: 1 | -1, height: number, whip: readonly [number, number]): Eye => {
-      const base = local([4.0, 1.35, s * 0.72]);
+      // Rooted low on the front rim, where a fiddler's eyes fold into their grooves: the stalks stand 1.7 times the dome's
+      // height and the eyes stay inside the fixed `face` camera (from 1.35 up, a stalk over 2.7 left its frame).
+      const base = local([4.35, 0.95, s * 0.7]);
       const look = lookAt({ from: { o: base, x: body.x, y: body.y, z: body.z }, target, yaw: 1.4, pitch: 0.9 }).dir;
       return {
         tag, base, look, radius: 0.46,
@@ -50,6 +52,6 @@ export const periscope: FaceOption = {
       };
     };
     // Not twins: the left stalk a little shorter, whipping slower and further.
-    return [...k.eyeParts(eye("R", 1, 4.4, [0.6, 1.5])), ...k.eyeParts(eye("L", -1, 4.0, [0.75, 1.2])), k.plate(1), k.plate(-1), k.gullet()];
+    return [...k.eyeParts(eye("R", 1, 2.95, [0.6, 1.5])), ...k.eyeParts(eye("L", -1, 2.65, [0.75, 1.2])), k.plate(1), k.plate(-1), k.gullet()];
   },
 };

@@ -73,11 +73,12 @@ export const design = makeDesign({
       pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
       numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] } },
     },
-    // The same crab if the crush disc must stay the base's 3.4: the largest great claw that lands inside it.
+    // The same crab if the crush disc must stay the base's 3.4: the largest great claw that lands inside it. Measured: 1.85
+    // is 1.5% outside, 1.9 is at the 2% limit (theory.ts predicted 3.4 holds about g = 1.9 with the contact squash).
     fiddlerBaseDisc: {
       about: "the fiddler with the base crush disc (3.4): its great claw at the largest that fits",
       pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
-      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, crusher: 1.8, crushRadius: 3.4 },
+      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, crusher: 1.85, crushRadius: 3.4 },
     },
     ironclad: { about: "plated shell, stone spires, a masked stare", pick: { carapace: "plated", back: "spires", face: "mask" } },
     // Stilt legs put the cutter's shoulder 2.5 above the water; the fiddler's 0.8 cutter spans 4.46, short of a wrist

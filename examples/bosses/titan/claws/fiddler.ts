@@ -37,7 +37,7 @@ import type { ClawsOffer, ClawsOption } from "../slots.ts";
 import { cutterGripper, cutterOf } from "./base.ts";
 
 /** The hand's length and widest half-width per unit of `crusher`. */
-const LEN = 3.6, FAT = 0.8;
+const LEN = 3.6, FAT = 0.95;
 /** Half-width along the hand (times FAT g): a fat oval palm, then the pollex narrowing to its point. */
 const GIRTH: readonly (readonly [number, number])[] = [[0, 0.55], [0.12, 0.85], [0.3, 1.0], [0.45, 0.95], [0.56, 0.7], [0.66, 0.42], [0.85, 0.28], [1, 0.1]];
 /** Where the spine sits across the hand (times FAT g, toward the dactyl's side): the pollex is the hand's lower edge,
@@ -75,7 +75,9 @@ function offer(n: Numbers): ClawsOffer {
 export const fiddler: ClawsOption = {
   about: "a fiddler: one great claw as long as the body, waved as a banner and slapped flat; a tiny cutter",
   // The disc is the game's hit shape: a bigger hand needs a bigger disc (the DERIVATION). A gameplay change, stated.
-  numbers: { crusher: 2.4, crushRadius: 4.4, cutter: 0.75, clawFat: 0.6 },
+  // The lunge's rise is cut from 7.8 to 0.4: the hand itself stands 8.6 above the wrist when cocked (theory.ts: the tip at
+  // y ~30 px of 800 in the game camera; at 7.8 it left the frame).
+  numbers: { crusher: 2.4, crushRadius: 4.4, cutter: 0.75, clawFat: 0.6, crushRise: 0.4 },
   offer,
   draw: (rig) => {
     const { n, body, local, shoulder, crush, crushAfter, grabOn } = rig;
@@ -89,9 +91,9 @@ export const fiddler: ClawsOption = {
     // ---- display: the banner waved twice a loop (at about 6.7 s and 14.7 s), never while the cutter works ----
     const wave = tabS("wave", mul(mul(max(sin(mul(sub(time, 4.7), TAU / 8)), 0), max(sin(mul(sub(time, 4.7), TAU / 8)), 0)), sub(1, grabOn)));
     const C = n.carapace;
-    const wristHome = vec3(C.to + 0.8, 1.2, C.width * 0.55 + 2.2);
+    const wristHome = vec3(C.to + 0.6, 1.2, C.width * 0.55 + 2.7);
     const drift = vec3(alive(time, 0.25, 41, 0.17), alive(time, 0.3, 42, 0.21), alive(time, 0.2, 43, 0.19));
-    const restWrist = (m: F): P3 => mix(local(add(add(wristHome, mul(vec3(0.3, 1.1, 0.6), wave)), drift)), local(shoulder(1)), m);
+    const restWrist = (m: F): P3 => mix(local(add(add(wristHome, mul(vec3(0, 1.1, 0.8), wave)), drift)), local(shoulder(1)), m);
 
     // The wrist is the m = 0 end of the spine Claw Crush poses (as the base crusher's): the lunge throws it back and up in
     // the wind-up and lands it `crushLead` short of the disc's centre.
@@ -100,8 +102,9 @@ export const fiddler: ClawsOption = {
       // The lane: from the wrist toward the disc's centre, level. At contact it is the lunge's own lane.
       const toward = tabV("toward", normalize(vec3(sub(n.crushCentre[0], w.x), 0, sub(n.crushCentre[1], w.z))));
       const p = env.p, q = env.q;
-      // Display: up, leaning back and a little in; on the wave it swings forward and out and back. Face: out and forward.
-      const restA = unit(add(inBody(-0.3, 0.92, -0.05), inBody(mul(wave, 0.55), mul(wave, -0.15), mul(wave, 0.5))));
+      // Display: up, leaning back; on the wave (the wrist lifted 1.1) it swings up and out to the side and back, as a
+      // fiddler waves. (Swung forward, it lay down across the face and read as a lowered claw.) Face: out and forward.
+      const restA = unit(add(inBody(-0.3, 0.92, 0.15), inBody(mul(wave, 0.1), mul(wave, 0.35), mul(wave, 0.75))));
       const restN = inBody(0.7, 0, 0.7);
       // Cocked: thrown back over its shoulder, its face turned up toward the target. Landed: along the lane, face down.
       const backA = unit(sub(mul(up, 0.8), mul(toward, 0.6))), backN = unit(add(mul(up, 0.6), mul(toward, 0.8)));
