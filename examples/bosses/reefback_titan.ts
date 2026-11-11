@@ -18,14 +18,18 @@ import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
 import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
 import { base as backBase } from "./titan/back/base.ts";
+import { lighthouse } from "./titan/back/lighthouse.ts";
 import { spires } from "./titan/back/spires.ts";
 import { base as carapaceBase } from "./titan/carapace/base.ts";
+import { pebble } from "./titan/carapace/pebble.ts";
 import { plated } from "./titan/carapace/plated.ts";
 import { base as clawsBase } from "./titan/claws/base.ts";
 import { fiddler } from "./titan/claws/fiddler.ts";
 import { base as faceBase } from "./titan/face/base.ts";
 import { mask } from "./titan/face/mask.ts";
+import { periscope } from "./titan/face/periscope.ts";
 import { base as legsBase } from "./titan/legs/base.ts";
+import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { rig } from "./titan/rig.ts";
@@ -52,15 +56,30 @@ export const design = makeDesign({
   name: "reefback_titan",
   numbers: S as Numbers,
   slots: {
-    carapace: { base: carapaceBase, plated } satisfies Record<string, CarapaceOption>,
-    legs: { base: legsBase, stilt } satisfies Record<string, LegsOption>,
+    carapace: { base: carapaceBase, plated, pebble } satisfies Record<string, CarapaceOption>,
+    legs: { base: legsBase, stilt, slim } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase, mask } satisfies Record<string, FaceOption>,
-    back: { base: backBase, spires } satisfies Record<string, BackOption>,
+    face: { base: faceBase, mask, periscope } satisfies Record<string, FaceOption>,
+    back: { base: backBase, spires, lighthouse } satisfies Record<string, BackOption>,
   },
   variants: {
     stilt: { about: "the base crab up on stilt legs", pick: { legs: "stilt" } },
-    fiddler: { about: "one huge crusher, one small cutter", pick: { claws: "fiddler" } },
+    // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
+    // little cutter, periscope eyes, a dark pebble shell, a ruined lighthouse. Its inks: the body darkens to oxblood and
+    // near-black; the great claw is the one accent, vermilion-brick to cream. Its claws ask for a crush disc of 4.4 (the
+    // base's is 3.4): a bigger hand lands on a bigger area (claws/fiddler.ts), a gameplay change the owner decides.
+    fiddler: {
+      about: "a colossal fiddler: one great claw, periscope eyes, a dark pebble, a ruined lighthouse",
+      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
+      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] } },
+    },
+    // The same crab if the crush disc must stay the base's 3.4: the largest great claw that lands inside it. Measured: 1.85
+    // is 1.5% outside, 1.9 is at the 2% limit (theory.ts predicted 3.4 holds about g = 1.9 with the contact squash).
+    fiddlerBaseDisc: {
+      about: "the fiddler with the base crush disc (3.4): its great claw at the largest that fits",
+      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
+      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, crusher: 1.85, crushRadius: 3.4 },
+    },
     ironclad: { about: "plated shell, stone spires, a masked stare", pick: { carapace: "plated", back: "spires", face: "mask" } },
     // Stilt legs put the cutter's shoulder 2.5 above the water; the fiddler's 0.8 cutter spans 4.46, short of a wrist
     // 4.2 out and 2.25 down (4.76): the pair alone fails the grip check (middle 0.19 off). Closing 3.6 out (4.25) it grips
