@@ -34,8 +34,35 @@ export const S = {
   ride: 1.35, floor: -1.7,
   carapace: { from: -1.6, to: 5.0, width: 4.1, height: 1.25 },
   legRoots: [3.2, 2.0, 0.8, -0.4], legFeet: [[6.8, 8.2], [4.0, 9.6], [0.8, 9.9], [-2.6, 9.0]] as const, legLengths: [4.0, 3.8, 1.6] as const,
-  // ---- the walk in place ----
+  // ---- the walk (a game that moves the crab sets `legs.walking`; docs/stance.md) and the breath: a cycle's seconds (the
+  // idle breathes at this rate, made whole breaths of the loop), share of it a foot stands, a step's height (a re-plant's
+  // too); the body's bob, sway, roll and turn on the walk's step ----
   period: 3.2, duty: 0.66, lift: 1.5, sway: 0.25, bob: 0.08, roll: 0.03, yaw: 0.035,
+  // ---- the stance (docs/stance.md): how the body carries its weight over planted feet. Distances in units, angles in
+  // radians. ----
+  stance: {
+    /** Standing: the weight shifts side to side and fore and aft (`alive`, at about `hz`), the loaded side sinking `roll` a
+     * unit of shift and the nose `pitch` a unit forward; a small turn. */
+    idle: { side: 0.35, fore: 0.2, hz: 0.1, roll: 0.06, pitch: 0.05, turn: 0.025 },
+    /** Re-plants: about one per `every` seconds of idle a step can start in; the body leaves the foot `lead` s before it
+     * lifts (by `unload`), the foot is up `seconds` (at `lift`), placed `reach` away, the body back `settle` s after and
+     * dipping `dip` as it plants. Idle is the attacks' postures and the taunt below `idleBelow`. */
+    replant: { every: 1.8, lead: 0.45, seconds: 0.75, settle: 0.6, reach: 0.5, unload: 0.3, dip: 0.06, idleBelow: 0.02 },
+    /** Claw Crush: the wind-up sinks and coils back from the disc, the strike drives toward it (the legs straightening
+     * `lift` at its middle) and lands `settle` low for the thud; `roll` leans it toward the disc a unit of the lean. */
+    slam: { sink: 0.35, coil: 0.45, reach: 0.6, settle: 0.25, lift: 0.3, roll: 0.14 },
+    /** The Grab: the wind-up sinks and draws back from the ship, the reach leans toward it (sinking `settle`); over the
+     * first `early` s of the hold it sits back (`sitBack` of the reach behind its rest) and down (`sit`), more at each squeeze. */
+    grab: { sink: 0.2, coil: 0.25, reach: 0.5, settle: 0.15, sitBack: 0.4, sit: 0.3, squeeze: 0.12, early: 0.6, pitch: 0.06, roll: 0.08 },
+    /** The throw: over the carry it coils away from where the ship is thrown, through the whip it drives toward it, rising
+     * as the far legs push, and comes home over the release. */
+    throw: { sink: 0.1, coil: 0.3, reach: 0.7, lift: 0.2, pitch: 0.05, roll: 0.08 },
+    /** The taunt on planted feet: the sway onto each side stepped to (0.9 of the old sidestep overstretched the far legs:
+     * docs/stance.md), its roll, the crouch while in the taunt, a stamp's height as a share of `lift`. */
+    dance: { sway: 0.5, roll: 0.07, crouch: 0.15, stamp: 0.6 },
+    /** The walk's stride (distance per cycle) when a game walks the crab. */
+    walk: { stride: 3.0 },
+  },
 
   // ---- the atoll ----
   atoll: { centre: [-2.0, 0] as const, rx: 4.3, rz: 4.5, top: 2.9, base: -1.75, hills: 0.35, lumps: 0.08 },

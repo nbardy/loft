@@ -18,6 +18,7 @@ import { hitPatch } from "../../../../src/spacetime/index.ts";
 import type { Expr } from "../../../../src/expr.ts";
 import { edgeOf, rgb } from "../../../../src/style/shared.ts";
 import { NO_SKELETON, type Surface } from "../../../../src/map/types.ts";
+import type { Reaching } from "../../../../src/check.ts";
 import { cut, sides } from "../ink.ts";
 import type { Numbers } from "../numbers.ts";
 import type { Rig } from "../rig.ts";
@@ -26,10 +27,10 @@ import type { LegsOption } from "../slots.ts";
 /** The legs' own proportions (not numbers the rig reads): the root's radius as a share of the body's half-width, its height. */
 const ROOT_OUT = 0.8, ROOT_Y = -0.4, SPLAY = 0.25;
 
-/** Seconds since foot k last planted, and seconds since it lifted (both from the walk's own clock). */
-export function stepClock(n: Numbers, phase: number): { readonly sincePlant: F; readonly sinceLift: F } {
-  const c = add(mul(time, 1 / n.period), phase), s = sub(c, floor(c));
-  return { sincePlant: mul(s, n.period), sinceLift: mul(sub(s, n.duty), n.period) };
+/** Seconds since foot k last planted, and since it lifted (negative while planted): the stance's step clock
+ * (docs/stance.md). A foot steps only to re-plant, stamp or walk, so a ring at a plant now means a real step. */
+export function stepClock(rig: Rig, k: number): { readonly sincePlant: F; readonly sinceLift: F } {
+  return rig.walk.since(k);
 }
 
 /** One foot's foam on the water: a clawed cream cloud while it stands, a ring running out at each plant. */
@@ -77,19 +78,24 @@ export const stilt: LegsOption = {
     legFeet: [[5.83, 9.33], [0.38, 10.99], [-5.16, 9.71], [-9.33, 5.83]], legLengths: [5.5, 6.95, 4.5],
     // Slow and high-stepping: it picks its way. The body sways wider on the long legs.
     period: 4.2, duty: 0.72, lift: 2.6, sway: 0.42, bob: 0.12, roll: 0.045, yaw: 0.04,
+    // The weight shifts wider on the long legs.
+    stance: { idle: { side: 0.5, fore: 0.3 } },
   },
   draw: (rig: Rig) => {
-    const { n, walk, body, local, footPhase, world } = rig;
+    const { n, walk, body, local, world } = rig;
     const I = n.ink;
     const total = n.legLengths[0] + n.legLengths[1] + n.legLengths[2];
-    return sides.flatMap((s, si) => n.legFeet.map(([fx, fz], i) => {
+    const limbs: Reaching[] = [];
+    const things = sides.flatMap((s, si) => n.legFeet.map(([fx, fz], i) => {
       const k = si * 4 + i;
       const angle = Math.atan2(fz, fx);
       const rootR = n.carapace.width * ROOT_OUT;
       const root = local([rootR * Math.cos(angle), ROOT_Y, s * rootR * Math.sin(angle)]);
       // The foot pole leans out along the leg's own bearing (world, horizontal).
       const out = vec3(Math.cos(angle), 0, s * Math.sin(angle));
-      const leg = limb({ root, target: walk.foot(k), lengths: n.legLengths, bend: body.y, foot: unit(add(vec3(0, -1, 0), mul(out, SPLAY))) });
+      const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: body.y, foot: unit(add(vec3(0, -1, 0), mul(out, SPLAY))) };
+      const leg = limb(spec);
+      limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: out });
       const knee1 = leg.knots[1]!, knee2 = leg.knots[2]!;
       const nearKnot = (m: F): F => min(abs(sub(m, knee1)), abs(sub(m, knee2)));
       // Bamboo nodes every 1.25 along the leg (world length), offset per leg so no two legs ring in step.
@@ -112,8 +118,10 @@ export const stilt: LegsOption = {
           },
           detail: { along: 120, around: 10 },
         }),
-        footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, rig.place2([fx, s * fz]), stepClock(n, footPhase[k]!), n),
+        // The foam stands round the foot where it is (a re-plant moves it), not round its home.
+        footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, vec2(walk.foot(k).x, walk.foot(k).z), stepClock(rig, k), n),
       ];
     }).flat());
+    return { things, limbs };
   },
 };

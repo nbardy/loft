@@ -2,7 +2,8 @@
 // pose after walking a distance s, any closed-form function); each foot is planted, for the `duty` share of its
 // cycle, where the body's frame put its home at the middle of that stance, and swings to the next such place on an
 // arc. So a planted foot is fixed in the world while the body moves over it, with no state: the plant is a function
-// of which cycle it is, `floor(t / period + phase)`.
+// of which cycle it is, `floor(cycles + phase)`. The cycles are counted by the clock (`pace` time: t / period) or by
+// the distance walked (`pace` distance: travelled / stride, for a host that moves the creature and says how far).
 
 import { add, cos, floor, lift, mix, mul, sin, smoothstep, step, sub, saturate, div, vec3, time, type In } from "../expr.ts";
 import { rotate } from "../map/chart.ts";
@@ -19,15 +20,22 @@ export type GaitSpec = {
   readonly course: Course;
   /** Distance the body travels in one full cycle. */
   readonly stride: In<"f32">;
-  /** Seconds per cycle. */
-  readonly period: In<"f32">;
+  /** What counts the cycles: the clock, or the distance walked. */
+  readonly pace: Pace;
   /** Share of the cycle each foot is planted (above 0.5 keeps more feet down than up). */
   readonly duty: In<"f32">;
   /** Peak height of a swinging foot above the line between its plants. */
   readonly lift: In<"f32">;
-  /** The clock. Default `time`. */
-  readonly t?: In<"f32">;
 };
+
+/**
+ * What counts a gait's cycles. `time`: `period` seconds a cycle on the clock `t` (default `time`); the body travels
+ * `stride` a cycle, so it walks away along its course. `distance`: one cycle per `stride` of `travelled`, a distance
+ * a host sets (it moves the creature itself and says how far it has walked); the stride must not be 0.
+ */
+export type Pace =
+  | { readonly kind: "time"; readonly period: In<"f32">; readonly t?: In<"f32"> }
+  | { readonly kind: "distance"; readonly travelled: In<"f32"> };
 
 export type Gait = {
   /** Distance travelled. */
@@ -38,6 +46,10 @@ export type Gait = {
   foot(i: number): P3;
   /** 1 while foot i is planted, 0 while it swings. */
   planted(i: number): F;
+  /** Cycles counted so far (the pace's clock): what a body's bob and sway on the step read. */
+  readonly cycles: F;
+  /** Foot i's step, in shares of a cycle: since it last planted, and since it lifted (negative while planted). */
+  since(i: number): { readonly sincePlant: F; readonly sinceLift: F };
 };
 
 /** A point given in a frame's coordinates, in the world. */
@@ -45,24 +57,38 @@ const inFrame = (g: Frame, p: In<"vec3">): P3 => add(g.o, rotate(g, lift<"vec3">
 
 export function gait(spec: GaitSpec): Gait {
   if (spec.phase.length !== spec.feet.length) throw new Error(`gait: ${spec.feet.length} feet need as many phases, got ${spec.phase.length}`);
-  const t = lift<"f32">(spec.t ?? time), period = lift<"f32">(spec.period), duty = lift<"f32">(spec.duty);
-  const speed = div(spec.stride, period);
-  const cycle = (i: number) => add(div(t, period), spec.phase[i]);
+  const duty = lift<"f32">(spec.duty), stride = lift<"f32">(spec.stride);
+  const cycles = cyclesOf(spec.pace, spec.stride);
+  const cycle = (i: number) => add(cycles, spec.phase[i]);
+  // The distance at a count of cycles: a stride each, whatever counts them.
+  const at = (u: F): F => mul(stride, u);
   return {
-    travelled: mul(speed, t),
-    body: spec.course(mul(speed, t)),
+    travelled: at(cycles),
+    body: spec.course(at(cycles)),
+    cycles,
     planted: (i) => sub(1, step(duty, sub(cycle(i), floor(cycle(i))))),
+    since: (i) => { const s = sub(cycle(i), floor(cycle(i))); return { sincePlant: s, sinceLift: sub(s, duty) }; },
     foot: (i) => {
       const c = cycle(i), k = floor(c), s = sub(c, k);
-      // The middle of this cycle's stance, and the next one's: where the body's frame puts the home then.
-      const tMid = mul(period, sub(add(k, mul(duty, 0.5)), spec.phase[i]));
-      const here = spec.course(mul(speed, tMid)), next = spec.course(mul(speed, add(tMid, period)));
+      // The middle of this cycle's stance, and the next one's (in cycles): where the body's frame puts the home then.
+      const uMid = sub(add(k, mul(duty, 0.5)), spec.phase[i]);
+      const here = spec.course(at(uMid)), next = spec.course(at(add(uMid, 1)));
       const swing = saturate(div(sub(s, duty), sub(1, duty)));
       // In stance swing is 0, so this is the plant itself: no branch between stance and swing.
       const arc = mul(here.y, mul(spec.lift, sin(mul(swing, Math.PI))));
       return add(mix(inFrame(here, spec.feet[i]), inFrame(next, spec.feet[i]), smoothstep(0, 1, swing)), arc);
     },
   };
+}
+
+/** Cycles counted by a pace. Classified once, here. */
+function cyclesOf(p: Pace, stride: In<"f32">): F {
+  switch (p.kind) {
+    case "time": return div(lift<"f32">(p.t ?? time), p.period);
+    case "distance":
+      if (stride === 0) throw new Error("gait: a gait paced by distance needs a stride that is not 0 (a creature that walks in place is paced by time)");
+      return div(lift<"f32">(p.travelled), stride);
+  }
 }
 
 /** Courses: a straight line, and an arc of constant turning. Ground at y = origin.y; `facing` turns the body (radians, about up) from its direction of travel (a crab walking sideways faces a quarter turn off it). */

@@ -37,7 +37,7 @@ const feetHome = sides.flatMap((s) => S.legFeet.map(([x, z]) => [x, S.floor, mul
 const phase = sides.flatMap((s) => S.legFeet.map((_, i) => ((i % 2 === 0) === (s < 0) ? 0 : 0.5) + 0.07 * i));
 const walk = gait({
   feet: feetHome.map(([x, y, z]) => vec3(x, y, z)), phase, course: course.arc([0, 0, 0], -Math.PI / 2, S.turning, Math.PI / 2),
-  stride: S.stride, period: S.period, duty: S.duty, lift: S.lift,
+  stride: S.stride, pace: { kind: "time", period: S.period }, duty: S.duty, lift: S.lift,
 });
 // The body dips twice a cycle, as each tetrapod takes the weight, and rolls a little toward the leading side.
 const bob = mul(cos(mul(time, (4 * Math.PI) / S.period)), 0.09);
