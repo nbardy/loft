@@ -33,9 +33,12 @@ const inside = (d: F): F => sub(1, cut(d, 0));
 const ell = (x: F, y: F, cx: number, cy: number, rx: number, ry: number): F => length(vec2(mul(sub(x, cx), 1 / rx), mul(sub(y, cy), 1 / ry)));
 
 /** The mask's sphere: radius, and how far it stands in front of the carapace's front end; tilted up toward the high cameras. */
-const R = 3.25, PROUD = 0.75, TILT = 0.15;
+// A flatter sphere than the carapace's (R 4.2 over a narrower angle) turns more of the face to the front: at 3.25 and
+// 1 rad the cheeks wrapped round and turned away, and from the 45-58 degree far and game cameras the face read as a red
+// patch. The tilt (0.3) turns it up toward those high cameras.
+const R = 4.2, PROUD = 0.75, TILT = 0.3, CY = 0.1;
 /** Half-angles the mask spans: across (wider at the cheeks than the chin) and up/down. */
-const ACROSS = 1.0, CHIN = 0.8, UP = 0.55, DOWN = 0.62;
+const ACROSS = 0.8, CHIN = 0.65, UP = 0.42, DOWN = 0.55;
 /** How far the jaw drops when fully open (world). */
 const JAW = 0.42;
 /** Half-height (in Y) of the band between the teeth rows that stretches when the jaw opens. */
@@ -132,7 +135,7 @@ export const mask: FaceOption = {
       // The direction, then the tilt up about z.
       const dx = mul(cos(ph), cos(th)), dy = sin(ph), dz = mul(cos(ph), sin(th));
       const x = sub(mul(dx, Math.cos(TILT)), mul(dy, Math.sin(TILT))), y = add(mul(dx, Math.sin(TILT)), mul(dy, Math.cos(TILT)));
-      return vec3(add(C.to + PROUD - R, mul(x, r)), sub(add(0.4, mul(y, r)), drop), mul(dz, r));
+      return vec3(add(C.to + PROUD - R, mul(x, r)), sub(add(CY, mul(y, r)), drop), mul(dz, r));
     };
 
     const paint = (p: F, q: F): P3 => {

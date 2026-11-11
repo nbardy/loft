@@ -36,8 +36,8 @@ export const armoured: LegsOption = {
       return strand({
         name: `leg${s < 0 ? "L" : "R"}${i}`, spine: leg.spine, stations: 40, tips: ["round", { point: 0.12 }],
         section: { aspect: 0.85 }, up: body.y,
-        // A tooth per lame (girth grows down each lame by 30%), pinched under the cords.
-        girth: (m) => mul(mul(segs(m).x, 0.5), add(add(0.9, mul(mul(phase(m), 0.3), armoured(m))), mul(cordG(m), -0.12))),
+        // A tooth per lame (girth grows down each lame by 26%; the legs a fifth thinner than the base's so the face leads), pinched under the cords.
+        girth: (m) => mul(mul(segs(m).x, 0.4), add(add(0.9, mul(mul(phase(m), 0.26), armoured(m))), mul(cordG(m), -0.12))),
         paint: (m, v) => {
           const p = phase(m);
           // Lacquer, a red band at each lame's flared lower edge, a black line where the next lame starts over it.

@@ -28,16 +28,16 @@ export const kabuto: CarapaceOption = {
       name: "titan", spine: (m) => through(m, [[C.from, -0.1, 0], [(C.from + C.to) / 2, 0.25, 0], [C.to, 0.1, 0]]), stations: 10,
       girth: C.width, section: { aspect: C.height / C.width, squareness: 2.1 }, tips: [{ round: 0.5 }, { round: 0.45 }],
       paint: (m, v) => {
-        // v from the top: the band sits low on each flank (v about 0.33 and 0.67); the belly below it is dark brick.
-        const side = abs(sub(v, 0.5)); // 0.5 on top, 0 underneath
+        // Height round the section: sin(2 pi v) is 1 on top and -1 underneath (the base carapace's convention; v = 0 is
+        // a flank, not the top). The bowl is everything above the band; the band sits just below the equator.
+        const up = sin(mul(v, TAU));
         const ribs = sub(1, cut(abs(sin(mul(v, TAU * 11))), 0.06));
-        const bowl = mix(vec3(...I.lacquer), vec3(...I.brickDark), mul(ribs, cut(side, 0.2)));
+        const bowl = mix(vec3(...I.lacquer), vec3(...I.brickDark), ribs);
         // The band's lacing: cream crosses along m.
         const lace = sub(1, cut(abs(sin(add(mul(m, 70), mul(v, TAU * 6)))), 0.18));
         const band = mix(vec3(...I.brick), vec3(...I.cream), mul(lace, 0.85));
-        const edge = sub(1, cut(abs(sub(side, 0.2)), 0.008)); // the line under the bowl
-        const belly = vec3(...I.brickDark);
-        return mix(mix(mix(belly, band, cut(side, 0.13)), bowl, cut(side, 0.2)), vec3(...I.black), max(edge, sub(1, cut(abs(sub(side, 0.13)), 0.006))));
+        const lines = max(sub(1, cut(abs(sub(up, -0.15)), 0.012)), sub(1, cut(abs(sub(up, -0.5)), 0.012)));
+        return mix(mix(mix(vec3(...I.brickDark), band, cut(up, -0.5)), bowl, cut(up, -0.15)), vec3(...I.black), lines);
       },
       detail: { along: 48, around: 64 }, up: [0, 1, 0],
     }), rigid(body));
@@ -66,7 +66,7 @@ export const kabuto: CarapaceOption = {
           // where a lace crosses a row's top.
           const scales = mix(vec3(...I.lacquer), vec3(...I.black), max(sub(1, cut(row, 0.08)), sub(1, cut(abs(sub(scale, 0.5)), 0.03))));
           const laceAt = abs(sub(fract(mul(a, LACES)), 0.5));
-          const lace = sub(1, cut(laceAt, 0.035));
+          const lace = sub(1, cut(laceAt, 0.05));
           const knot = mul(sub(1, cut(laceAt, 0.11)), sub(1, cut(abs(sub(row, 0.16)), 0.06)));
           const laced = mix(mix(scales, vec3(...I.brick), lace), vec3(...I.cream), knot);
           // The top row is a solid red-lacquer bar (the kanmuri-ita) with a cream edge.

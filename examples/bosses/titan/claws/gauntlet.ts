@@ -15,15 +15,14 @@ const LAMES = 9;
 const cord = (m: F, at: F | number, w: number): F => sub(1, cut(abs(sub(m, at)), w));
 
 export const gauntlet = clawsOf({
-  about: "lacquer gauntlets: laced plate palms, laminated arms, cord-bound, held low and wide",
+  about: "lacquer gauntlets: plated palms, laminated arms, cord-bound, held low and wide",
   palm: (I, m, v) => {
-    // Black lacquer plate, a red laced band across the middle, a cream cord at the wrist end, the underside red.
-    const band = mul(cut(m, 0.42), sub(1, cut(m, 0.62)));
-    const lace = sub(1, cut(abs(sin(add(mul(m, 40), mul(v, TAU * 5)))), 0.3));
-    const plate = mix(mix(vec3(...I.lacquer), mix(vec3(...I.brick), vec3(...I.cream), mul(lace, 0.7)), band), vec3(...I.black), cord(m, 0.42, 0.01));
-    const wrist = cord(m, 0.1, 0.05);
-    const under = cut(mul(sin(mul(v, TAU)), -1), 0.55);
-    return mix(mix(plate, vec3(...I.brick), under), vec3(...I.cream), wrist);
+    // Black lacquer plates across the palm, each with a thin red lower edge, a cream cord at the wrist end.
+    const p = fract(mul(m, 4));
+    const plate = mix(mix(vec3(...I.lacquer), vec3(...I.brick), cut(p, 0.88)), vec3(...I.black), sub(1, cut(p, 0.05)));
+    const twist = sub(1, cut(abs(sin(add(mul(m, 120), mul(v, TAU * 2)))), 0.35));
+    const rope = mix(vec3(...I.cream), vec3(...I.bark), mul(twist, 0.8));
+    return mix(plate, rope, cord(m, 0.12, 0.06));
   },
   arm: (I, m, v, elbow) => {
     const p = fract(mul(m, LAMES));
