@@ -5,6 +5,7 @@
 //   bun tools/rates_census.ts <scene.ts> [--programs N] [--copy]
 //
 // --programs N   list the N programs that evaluate the most nodes.
+// --json f      write every program's row (name, rate, node counts) to f.
 // --copy         also count per-copy nodes, reading these shader arguments as per copy (an estimate: functions do not
 //                state their arguments' rates): i (a surface's vertex function, a glow), p_copy, copy_id, copy_level,
 //                cell_id.
@@ -18,6 +19,7 @@ const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => { const k = args.indexOf(name); return k < 0 ? undefined : args.splice(k, 2)[1]; };
 const top = Number(flag("--programs") ?? 0);
 const copyMode = args.includes("--copy");
+const jsonOut = flag("--json");
 const path = args.filter((a) => !a.startsWith("--"))[0]!;
 const scene = ((await import(resolve(path))) as { default: Scene }).default;
 const compiled = compileScene(scene);
@@ -166,6 +168,11 @@ if (top > 0) {
   console.log(`  pose programs by phase-1 level, nodes before -> after: ${[...byLevel].sort((a, b) => a[0] - b[0]).map(([l, b]) => `${l}: ${fmt(b.before)} -> ${fmt(b.after)}`).join(", ")}`);
 }
 
+if (jsonOut !== undefined) {
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(jsonOut, JSON.stringify(rows));
+}
+
 if (copyMode) {
   // Per-copy work inside per-item shader programs: nodes whose slowest clock is the copy.
   const COPY = new Set(["i", "p_copy", "copy_id", "copy_level", "cell_id"]);
@@ -182,6 +189,22 @@ if (copyMode) {
     per.push(`${prog.name} ${c}/${all.length}`);
   }
   console.log(`  per-copy nodes in shader functions with a copy argument: ${fmt(copyNodes)} of ${fmt(itemNodes)} (${per.length} functions)`);
+  // Fragment functions (paint_, colour_): nodes that read only what a vertex could hand down (u, v, the copy), not the
+  // pixel's own world point, normal or screen position. Moving them to the vertex stage interpolates a non-linear
+  // function, so it is an approximation; this is the upper bound of what it could save.
+  const VERTEX = new Set(["u", "v", ...COPY]);
+  let vNodes = 0, fNodes = 0;
+  const fr: string[] = [];
+  for (const g of groups) for (const prog of g) {
+    if (!/^(paint|colour)_/.test(prog.name)) continue;
+    const vars = new Map<string, Rate>([...prog.vars].map(([k, v]) => [k, VERTEX.has(k) ? "copy" : v]));
+    const r = rates(prog.roots, vars);
+    const all = everything(prog.roots).filter(emitted);
+    const c = all.filter((e) => r.get(e.id) === "copy").length;
+    vNodes += c; fNodes += all.length;
+    if (c > 0) fr.push(`${prog.name} ${c}/${all.length}`);
+  }
+  console.log(`  fragment nodes that read only u, v and the copy: ${fmt(vNodes)} of ${fmt(fNodes)}${fr.length ? `: ${fr.slice(0, 30).join(", ")}` : ""}`);
   if (top > 0) console.log(`    ${per.slice(0, 40).join(", ")}`);
 }
 process.exit(0);

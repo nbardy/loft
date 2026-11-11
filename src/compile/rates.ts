@@ -55,8 +55,9 @@ export function rates(roots: readonly Expr[], vars: ReadonlyMap<string, Rate>, m
       // known to the folder, so a fetch is never "build".
       case "row": r = kids([n.x], "frame"); break;
       case "fetch": r = kids([n.index], "frame"); break;
-      // A GPU-only library function has no CPU twin to fold it with.
-      case "lib": r = kids(n.args, n.fn.js === "gpu-only" ? "frame" : "build"); break;
+      // A GPU-only library function has no CPU twin, so it can be neither folded nor computed in frame values (whose CPU
+      // reading tools use), and it may read what only a draw binds (the camera, scene depth): it stays in its program.
+      case "lib": r = kids(n.args, n.fn.js === "gpu-only" ? "item" : "build"); break;
       case "call": case "vec": r = kids(n.args, "build"); break;
       case "get": r = kids([n.a], "build"); break;
       // Loops are not folded; a loop is as fast as its count, start and what its body reads from outside.
@@ -119,9 +120,8 @@ export type Plan = { readonly lifted: readonly (readonly Expr<NumTy>[])[]; reado
 export function plan(group: readonly Program[], memo: Map<number, Rate> = new Map()): Plan {
   const vars = new Map<string, Rate>();
   for (const p of group) for (const [k, v] of p.vars) vars.set(k, v);
-  const rate = new Map<number, Rate>(memo);
+  const rate = memo;
   for (const p of group) rates(p.roots, vars, rate);
-  for (const [k, v] of rate) memo.set(k, v);
   const perFrame = (e: Expr): boolean => rate.get(e.id) === "frame";
   // How many programs of the group reach each per-frame node.
   const readers = new Map<number, number>();

@@ -95,7 +95,8 @@ export class Slots {
       },
       param: (spec) => `params[${this.param(spec).slot}]`,
       row: (r, x) => `curve(${this.row(r)}u, ${x})`,
-      table: (t, i, lane) => `${this.table(t).wgsl}(u32(${i}) * ${t.lanes}u + ${lane}u)`,
+      // An entry at a whole-number literal (a station at a fixed index, a frame value) is read at its offset.
+      table: (t, i, lane) => (/^\d+\.0$/.test(i) ? `${this.table(t).wgsl}(${Number(i) * t.lanes + lane}u)` : `${this.table(t).wgsl}(u32(${i}) * ${t.lanes}u + ${lane}u)`),
     };
   }
 

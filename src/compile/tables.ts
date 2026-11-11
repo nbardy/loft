@@ -26,11 +26,11 @@
 
 import { POSE_WORKGROUP, type CpuUpload, type DynamicBuffer, type FrameState, type PoseStage, type StaticBuffer, type TableFillKind, type TableInfo } from "../artefact.ts";
 import {
-  children, emitWgsl, fetch, leaves, listOf, replace, splitOn, topo, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type LibFn, type NumTy,
-  type TableFill, type TableFrame, type TablePrep, type TableSource, type V,
+  children, emitWgsl, fetch, fold, leaves, listOf, replace, splitOn, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type LibFn, type NumTy,
+  type ProgramTable, type TableFill, type TableFrame, type TablePrep, type TableProgram, type TableSource, type V,
 } from "../expr.ts";
 import type { TableRef } from "./context.ts";
-import type { Program } from "./rates.ts";
+import { plan, type Program, type Rate } from "./rates.ts";
 
 /** WebGPU's default limits, which every adapter supports. */
 export const STORAGE_BUFFERS_PER_STAGE = 8;
@@ -56,18 +56,50 @@ export type TableCompiler = {
 
 /** A map run expanded: entries `start .. start + count - 1`, each `lanes` at the run index `i`. */
 type Run = { readonly start: number; readonly count: number; readonly i: Expr<"f32">; readonly lanes: readonly Expr<"vec4">[] };
-/** A table's program, expanded once (see the header). `reads`: the tables its expressions fetch. */
+/**
+ * A table's program, expanded once (see the header). `reads`: the tables its expressions fetch, as lowered (what the
+ * schedule orders by); `authored`: as written, before lowering moved work into frame values (what a frame value's
+ * depth is measured on, src/compile/rates.ts).
+ */
 type Canon =
-  | { readonly kind: "map"; readonly runs: readonly Run[]; readonly reads: readonly TableSource[] }
+  | { readonly kind: "map"; readonly runs: readonly Run[]; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] }
   | {
     readonly kind: "scan"; readonly first: number; readonly steps: number; readonly init: readonly Expr<NumTy>[];
     readonly state: readonly Expr<NumTy>[]; readonly i: Expr<"f32">; readonly next: readonly Expr<NumTy>[]; readonly lanes: readonly Expr<"vec4">[];
-    readonly reads: readonly TableSource[];
+    readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[];
   }
   /** `reads`: the tables its fill compiles expressions over (a fill may also read others through `frame.table`). */
-  | { readonly kind: "cpu"; readonly why: string; readonly fill: TableFill; readonly reads: readonly TableSource[] };
+  | { readonly kind: "cpu"; readonly why: string; readonly fill: TableFill; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] };
 
-type Declared = { readonly table: TableSource; canon: Canon | undefined };
+/**
+ * A declared table: one the scene (or a drawable) declared, classified when declared; or a frame-values table the
+ * lowering made, whose program is complete only when the layout begins (`Tables.layout`).
+ */
+type Declared =
+  | { readonly kind: "declared"; readonly table: TableSource; canon: Canon | undefined }
+  | { readonly kind: "frame"; readonly table: FrameValues; canon: Canon | undefined };
+
+/**
+ * Per-frame values lifted out of faster programs (src/compile/rates.ts): one entry, a lane per value, filled by one
+ * invocation that shares work between the values (a map of one entry, as phase 1's `<name>_common` was). Values that
+ * read tables of depth below `depth` only (depth 0: none) are here; a lane is fetched at a constant index, so its offset
+ * does not depend on how many lanes follow it.
+ */
+class FrameValues implements ProgramTable {
+  readonly role = "data";
+  readonly entries = 1;
+  readonly values: Expr<"vec4">[] = [];
+  private readonly lane = new Map<number, number>();
+  constructor(readonly name: string, readonly depth: number) {}
+  get lanes(): number { return this.values.length; }
+  get program(): TableProgram { return listOf([this.values]); }
+  /** The value's lane, added on first sight. */
+  add(x: Expr<NumTy>): number {
+    let k = this.lane.get(x.id);
+    if (k === undefined) { k = this.values.push(padded(x)) - 1; this.lane.set(x.id, k); }
+    return k;
+  }
+}
 /** Where a table lives, its program, and how it is filled after scheduling. */
 type Placed = {
   readonly table: TableSource;
@@ -128,12 +160,12 @@ const STATIC: TableFillKind = { kind: "cpu", why: "filled once, at build" };
  * Classify a declared table into its canonical form, once (the boundary: nothing after this asks what a table is).
  * `prep` is the compiler's, for hand-written fills; `c` registers a program's expressions.
  */
-function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (group: readonly Program[]) => (readonly Expr[])[]): Canon {
+function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: Program) => readonly Expr[], record: (g: readonly Program[]) => void): Canon {
   if (!("program" in t)) {
     const reads: TableSource[] = [];
     const fill = t.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
     const why = t.role === "static" ? "filled once, at build" : "a hand-written fill with no program";
-    return { kind: "cpu", why, fill, reads };
+    return { kind: "cpu", why, fill, reads, authored: reads };
   }
   const p = t.program;
   const id = nextProgram++;
@@ -154,11 +186,17 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (gro
         return run;
       });
       if (start !== t.entries) throw new Error(`table "${t.name}": its runs cover ${start} entries; the table has ${t.entries}`);
-      lower(runs.map((r, k) => ({ name: `${t.name}_${k}`, roots: r.lanes, vars: new Map([[(r.i.node as { name: string }).name, "item" as const]]), runs: r.count > 1 ? "item" as const : "frame" as const })));
-      const shared = hoistShared(t.name, runs);
-      const roots = shared.runs.flatMap((r) => r.lanes);
+      const authored = runs.flatMap((r) => r.lanes);
+      // Declares (and classifies) the tables this one reads before any of its values is placed by depth.
+      c.register(authored);
+      const programs = runs.map((r, k) => runProgram(`${t.name}_${k}`, r));
+      record(programs);
+      // A run of several entries is lowered now; a run of one entry runs once per frame and is lowered with every
+      // other such program, scene-wide, when the layout begins (only folded here).
+      const lowered = runs.map((r, k): Run => ({ ...r, lanes: (r.count > 1 ? lower(programs[k]!) : fold(r.lanes)) as Expr<"vec4">[] }));
+      const roots = lowered.flatMap((r) => r.lanes);
       c.register(roots);
-      return { kind: "map", runs: shared.runs, reads: leaves(roots).tables };
+      return { kind: "map", runs: lowered, reads: leaves(roots).tables, authored: leaves(authored).tables };
     }
     case "scan": {
       if (!(Number.isInteger(p.first) && Number.isInteger(p.steps) && p.first >= 0 && p.steps >= 1 && p.first + p.steps <= t.entries)) {
@@ -170,21 +208,34 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (gro
       if (next.length !== p.init.length) throw new Error(`table "${t.name}": the scan's step returned ${next.length} state components; it has ${p.init.length}`);
       next.forEach((e, j) => { if (e.ty !== p.init[j]!.ty) throw new Error(`table "${t.name}": state component ${j} is ${p.init[j]!.ty} but the step returned ${e.ty}`); });
       checkLanes(lanes, "the scan's step");
-      const roots = [...p.init, ...next, ...lanes];
-      lower([{ name: t.name, roots, vars: new Map([...state, i].map((v) => [(v.node as { name: string }).name, "item" as const])), runs: "frame" }]);
-      c.register(roots);
-      return { kind: "scan", first: p.first, steps: p.steps, init: p.init, state, i, next, lanes, reads: leaves(roots).tables };
+      const authored = [...p.init, ...next, ...lanes];
+      c.register(authored);
+      const canon = { kind: "scan" as const, first: p.first, steps: p.steps, init: p.init, state, i, next, lanes, reads: [], authored: leaves(authored).tables };
+      record([scanProgram(t.name, canon)]);
+      // Once per frame: folded here, lowered scene-wide when the layout begins.
+      return withScanRoots(canon, fold(authored));
     }
     case "cpu": {
       const reads: TableSource[] = [];
       const fill = p.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
-      return { kind: "cpu", why: p.why, fill, reads };
+      return { kind: "cpu", why: p.why, fill, reads, authored: reads };
     }
   }
 }
 
-/** Fewer shared nodes than this stay where they are: a level of its own costs more than recomputing them. */
-const HOIST_MIN = 8;
+/** A map run as a program to lower: its index varies per entry; it runs once per frame when it has one entry. */
+const runProgram = (name: string, r: Run): Program => ({ name, roots: r.lanes, vars: new Map([[varName(r.i), "item"]]), runs: r.count > 1 ? "item" : "frame" });
+/** A scan as a program to lower: its state and index vary per step; its invariant work runs once per frame. */
+const scanProgram = (name: string, s: Extract<Canon, { kind: "scan" }>): Program => ({
+  name, roots: [...s.init, ...s.next, ...s.lanes], vars: new Map([...s.state, s.i].map((v) => [varName(v), "item"])), runs: "frame",
+});
+/** The scan with new roots (init, next, lanes, in `scanProgram`'s order). */
+function withScanRoots(s: Extract<Canon, { kind: "scan" }>, roots: readonly Expr[]): Extract<Canon, { kind: "scan" }> {
+  const a = s.init.length, b = a + s.next.length;
+  return { ...s, init: roots.slice(0, a) as Expr<NumTy>[], next: roots.slice(a, b) as Expr<NumTy>[], lanes: roots.slice(b) as Expr<"vec4">[], reads: leaves(roots).tables };
+}
+const varName = (v: Expr): string => (v.node as { name: string }).name;
+
 const padded = (e: Expr<NumTy>): Expr<"vec4"> => {
   switch (e.ty) {
     case "f32": return vec4(e, 0, 0, 0);
@@ -201,45 +252,6 @@ const unpadded = (ty: NumTy, e: Expr<"vec4">): Expr => {
     case "vec4": return e;
   }
 };
-
-/**
- * Work that two or more runs of a map share, computed once. On the GPU each run is a branch, and the invocations of one
- * SIMD group that take different branches run one after another: a list of ropes whose ends all ride one ship
- * recomputed the ship's sea-following frame in every branch, serially (2 MB of WGSL and about a millisecond for the
- * crab scene's rigging and shadows, 2026-11-11). The CPU fill had shared it within one compiled function. So the nodes
- * that more than one run reads (and that do not depend on a run's index) are evaluated by a table of their own, one
- * invocation with one lane per value, a level earlier, and the runs read them from it.
- */
-function hoistShared(name: string, runs: readonly Run[]): { runs: readonly Run[] } {
-  if (runs.length < 2) return { runs };
-  const trivial = (e: Expr): boolean => {
-    const op = e.node.op;
-    return op === "const" || op === "var" || op === "input" || op === "param" || e.ty === "bool";
-  };
-  const seen = new Map<number, number>(), node = new Map<number, Expr>();
-  const lists = runs.map((r) => {
-    const inner = new Set(splitOn(r.lanes, [r.i]).inner.map((e) => e.id));
-    const list = topo(r.lanes);
-    for (const e of list) {
-      if (inner.has(e.id) || e === r.i || trivial(e)) continue;
-      seen.set(e.id, (seen.get(e.id) ?? 0) + 1);
-      node.set(e.id, e);
-    }
-    return list;
-  });
-  const shared = new Set([...seen].filter(([, n]) => n >= 2).map(([id]) => id));
-  if (shared.size < HOIST_MIN) return { runs };
-  // The frontier: shared values read by something that is not shared, or that are lanes themselves.
-  const frontier = new Map<number, Expr<NumTy>>();
-  lists.forEach((list, k) => {
-    for (const e of list) if (!shared.has(e.id)) for (const c of children(e)) if (shared.has(c.id)) frontier.set(c.id, c as Expr<NumTy>);
-    for (const l of runs[k]!.lanes) if (shared.has(l.id)) frontier.set(l.id, l);
-  });
-  const values = [...frontier.values()];
-  const common: TableSource = { name: `${name}_common`, lanes: values.length, entries: 1, role: "data", program: listOf([values.map(padded)]) };
-  const by = new Map(values.map((v, j) => [v.id, unpadded(v.ty as NumTy, fetch(common, 0, j))]));
-  return { runs: runs.map((r) => ({ ...r, lanes: replace(r.lanes, by) as Expr<"vec4">[] })) };
-}
 
 /** The CPU fill a program gives (compiled on first use: most compilations never read a table on the CPU). */
 function cpuFill(t: TableSource, canon: Canon, c: TableCompiler): TableFill {
@@ -302,24 +314,134 @@ export class Tables {
     }
     // Registered before it is classified: classifying declares the tables this one reads (a host's), and those come
     // after it in the layout, which is harmless; levels and first reads decide fill order, not declaration order.
-    const d: Declared = { table: t, canon: undefined };
+    const d: Declared = { kind: "declared", table: t, canon: undefined };
     this.declared.set(t, d);
     this.names.set(t.name, t);
-    d.canon = classify(t, prep, this.c, (g) => this.lowerGroup(g));
+    d.canon = classify(t, prep, this.c, (p) => this.lowerItem(p), (g) => { this.programs.push(g); });
     return ref;
   }
 
-  /** Every program lowered, by group (for tools: tools/rates_census.ts). */
+  /** Every program as authored, by group (for tools: tools/rates_census.ts). */
   readonly programs: (readonly Program[])[] = [];
-  lower(p: Program): readonly Expr[] { return this.lowerGroup([p])[0]!; }
-  private lowerGroup(group: readonly Program[]): (readonly Expr[])[] {
-    this.programs.push(group);
-    return group.map((p) => p.roots);
+  /** Rates of nodes, shared by every program (a variable has one rate wherever it is bound). */
+  private readonly rateMemo = new Map<number, Rate>();
+  private readonly frames = new Map<number, FrameValues>();
+  private readonly depths = new Map<TableSource, number>();
+
+  /** Lower a function of the shaders (src/compile/bind.ts): fold, and lift its per-frame frontier. */
+  lower(p: Program): readonly Expr[] {
+    this.c.register(p.roots);
+    this.programs.push([p]);
+    return this.lowerItem(p);
+  }
+
+  /** A program that runs faster than a frame: folded, its per-frame frontier lifted (src/compile/rates.ts). */
+  private lowerItem(p: Program): readonly Expr[] {
+    const roots = fold(p.roots);
+    return this.lift(roots, plan([{ ...p, roots }], this.rateMemo).lifted[0]!);
+  }
+
+  private lift(roots: readonly Expr[], lifted: readonly Expr<NumTy>[]): readonly Expr[] {
+    if (lifted.length === 0) return roots;
+    if (this.sealed) throw new Error("internal: a value was lifted after the artefact was laid out");
+    return replace(roots, new Map(lifted.map((x) => [x.id, this.frameValue(x)])));
+  }
+
+  /** A fetch of `x` from the frame-values table of its depth (made on first use). */
+  private frameValue(x: Expr<NumTy>): Expr {
+    const d = this.valueDepth(x);
+    let f = this.frames.get(d);
+    if (f === undefined) {
+      f = new FrameValues(`loft_frame_${d}`, d);
+      if (this.names.has(f.name)) throw new Error(`a scene table is named "${f.name}", which the compiler uses for frame values`);
+      this.frames.set(d, f);
+      this.declared.set(f, { kind: "frame", table: f, canon: undefined });
+      this.names.set(f.name, f);
+    }
+    return unpadded(x.ty, fetch(f, 0, f.add(x)));
+  }
+
+  /** 1 + the depth of the deepest per-frame table a node reads (loop bodies included), 0 if none. */
+  private readonly nodeDepths = new Map<number, number>();
+  private valueDepth(e: Expr): number {
+    const known = this.nodeDepths.get(e.id);
+    if (known !== undefined) return known;
+    const n = e.node;
+    let d = n.op === "fetch" && n.table.role !== "static" ? this.depth(n.table) + 1 : 0;
+    for (const c of children(e)) d = Math.max(d, this.valueDepth(c));
+    if (n.op === "iterate") for (const c of n.loop.inner) d = Math.max(d, this.valueDepth(c));
+    this.nodeDepths.set(e.id, d);
+    return d;
+  }
+
+  /**
+   * A table's depth on its authored reads (0: reads no per-frame table). With a frame-values table of depth d holding
+   * values that read tables of depth below d, and a table that reads one of them of depth d or more, reads always go
+   * to a lower depth: no cycle (docs/gpu_native.md, "Rates").
+   */
+  private depth(t: TableSource): number {
+    const known = this.depths.get(t);
+    if (known !== undefined) return known;
+    const d = this.declared.get(t);
+    if (d === undefined) throw new Error(`internal: table "${t.name}" read before it was declared`);
+    let depth: number;
+    switch (d.kind) {
+      case "frame": depth = d.table.depth; break;
+      case "declared": {
+        if (d.canon === undefined) throw new Error(`pose: table "${t.name}" reads itself through the tables it reads`);
+        depth = d.canon.authored.reduce((m, r) => (r.role === "static" ? m : Math.max(m, this.depth(r) + 1)), 0);
+        break;
+      }
+    }
+    this.depths.set(t, depth);
+    return depth;
+  }
+
+  /**
+   * The programs that run once per frame (runs of one entry, scans), lowered together: a per-frame node two or more of
+   * them read is lifted into frame values (src/compile/rates.ts). Then the frame-values tables are complete.
+   */
+  private lowerOnce(): void {
+    type Site = { readonly d: Extract<Declared, { kind: "declared" }>; readonly program: Program; readonly run: number };
+    const sites: Site[] = [];
+    for (const d of this.declared.values()) {
+      if (d.kind !== "declared") continue;
+      const c = d.canon!;
+      switch (c.kind) {
+        case "map": c.runs.forEach((r, k) => { if (r.count === 1) sites.push({ d, program: runProgram(`${d.table.name}_${k}`, r), run: k }); }); break;
+        case "scan": sites.push({ d, program: scanProgram(d.table.name, c), run: -1 }); break;
+        case "cpu": break;
+      }
+    }
+    const lifted = plan(sites.map((s) => s.program), this.rateMemo).lifted;
+    sites.forEach((s, k) => {
+      const roots = this.lift(s.program.roots, lifted[k]!);
+      if (roots === s.program.roots) return;
+      this.c.register(roots);
+      const c = s.d.canon!;
+      switch (c.kind) {
+        case "map": {
+          const runs = c.runs.map((r, j) => (j === s.run ? { ...r, lanes: roots as Expr<"vec4">[] } : r));
+          s.d.canon = { ...c, runs, reads: leaves(runs.flatMap((r) => r.lanes)).tables };
+          break;
+        }
+        case "scan": s.d.canon = withScanRoots(c, roots); break;
+        case "cpu": throw new Error("internal: a cpu table has no program to lower");
+      }
+    });
+    for (const d of this.declared.values()) {
+      if (d.kind !== "frame") continue;
+      const lanes = fold(d.table.values) as Expr<"vec4">[];
+      this.c.register(lanes);
+      const reads = leaves(lanes).tables;
+      d.canon = { kind: "map", runs: [{ start: 0, count: 1, i: variable(`_F${d.table.depth}`, "f32"), lanes }], reads, authored: reads };
+    }
   }
 
   layout(): TableLayout {
+    this.lowerOnce();
     this.sealed = true;
-    const all = [...this.declared.values()].map((d) => ({ table: d.table, canon: d.canon! }));
+    const all = [...this.declared.values()].map((d) => ({ table: d.table as TableSource, canon: d.canon! }));
     const perFrame = pack(all.filter((d) => d.table.role !== "static").map((d) => d.table));
     const once = pack(all.filter((d) => d.table.role === "static").map((d) => d.table));
     // A table-less scene still declares one (tiny) per-frame buffer, so bind group 1 is never empty.
