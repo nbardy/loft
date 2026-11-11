@@ -2,7 +2,7 @@
 export * from "./expr.ts";
 export { keys, ramp, through, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";
 export * from "./map/index.ts";
-export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type ReliefOptions } from "./draw/index.ts";
+export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type Poseable, type ReliefOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb } from "./geom/strand.ts";
 export { crest, type CrestSpec } from "./geom/crest.ts";

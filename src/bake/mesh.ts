@@ -8,7 +8,7 @@
 
 import { compileScene, type CpuFn } from "../compile/index.ts";
 import type { MeshBakeable, SurfaceBakeable } from "../compile/context.ts";
-import { variable, type Expr } from "../expr.ts";
+import { f, variable, type Expr } from "../expr.ts";
 import type { End, Topology } from "../map/types.ts";
 import type { Scene } from "../scene.ts";
 
@@ -74,7 +74,8 @@ const U = variable("u", "f32"), W = variable("v", "f32");
 
 /** One surface: a (rows + 1) x (cols + 1) grid of samples, its pole rows collapsed and its cap ends closed. */
 function bakeSurface(s: SurfaceBakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh {
-  const run = cpu([s.surface.point(U, W), s.surface.normal(U, W), s.paint(U, W)]);
+  const p = s.surface.point(U, W), n = s.surface.normal(U, W);
+  const run = cpu([p, n, s.paint(U, W, { world: p, normal: n, copy: f(s.copy) })]);
   const uAt = cpu([s.grid.u.at(U)]), vAt = cpu([s.grid.v.at(W)]);
   const rows = d.along, cols = d.around;
   const us = Array.from({ length: rows + 1 }, (_, i) => uAt(frame, { u: i / rows })[0] as number);

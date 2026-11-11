@@ -9,7 +9,7 @@ import type { Curve, F, Field, P3, Paint, Placed, Points, Surface, Warp } from "
 
 export const warp = {
   /** The paint at the folded coordinate: the motif repeats wherever the fold sends points onto it. */
-  paint: (paint: Paint, w: Warp<"vec2">): Paint => (u, v) => { const x = w(vec2(u, v)).x; return paint(x.x, x.y); },
+  paint: (paint: Paint, w: Warp<"vec2">): Paint => (u, v, at) => { const x = w(vec2(u, v)).x; return paint(x.x, x.y, at); },
   /** A distance field through a fold: evaluated at the folded point and turned back into a distance by the fold. */
   field: (field: Field, w: Warp<"vec3">): Field => (p) => { const q = w(p); return q.toWorld(field(q.x)); },
   /** A surface reparametrised: the same shape, its (u, v) moved by the map (its topology is the caller's to keep). */

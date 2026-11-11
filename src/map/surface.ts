@@ -1,10 +1,10 @@
 // Surfaces written as maps, and the products that build them from curves (DESIGN.md 7.2, "multiply"). `sweep` lives in
 // sweep.ts (it needs frames transported on the CPU); everything here is closed form.
 
-import { add, clamp, compileJs, cos, cross, div, f, length, lift, max, mix, mul, sin, sub, substitute, TAU, time, variable, vec3, type In } from "../expr.ts";
+import { add, clamp, compileJs, cos, cross, div, f, length, lift, max, mix, mul, normalize, sin, sub, substitute, TAU, time, variable, vec3, type In } from "../expr.ts";
 import { through } from "../curve.ts";
 import { rotate } from "./chart.ts";
-import { NO_SKELETON, type Curve, type End, type F, type P3, type Placed, type Surface, type Topology } from "./types.ts";
+import { NO_SKELETON, type Curve, type End, type F, type Frame, type P3, type Placed, type Posed, type Surface, type Topology } from "./types.ts";
 
 /** Parameter step of the finite differences that give a map's normal. Small against [0, 1], large against f32 noise. */
 const FD = 1e-3;
@@ -43,6 +43,34 @@ export function framed(s: Surface, at: Placed): Surface {
     normal: (u, v) => rotate(at.frame, s.normal(u, v)),
     // A copy's pattern is its own: the placement moves it, the anchor stays in the copy's coordinates (scaled with it).
     anchor: (u, v) => mul(s.anchor(u, v), at.scale),
+    topology: s.topology,
+    skeleton: NO_SKELETON,
+  };
+}
+
+/** A surface carried by a posed copy: evenly scaled (as `framed`), or scaled along each axis of its frame. */
+export function framedPose(s: Surface, at: Posed): Surface {
+  const z = at.size;
+  switch (z.kind) {
+    case "even": return framed(s, { frame: at.frame, scale: z.k });
+    case "axes": return stretched(s, at.frame, z.k);
+  }
+}
+
+/**
+ * A surface scaled by k along its own axes, then carried by an orthonormal frame. Points and anchors scale by k; the
+ * normal turns by the cofactor of diag(k), diag(ky kz, kz kx, kx ky), which is what d/du x d/dv turns by under the
+ * scale (cross(K a, K b) = cof(K) cross(a, b)), so it stays the front's normal: the inverse transpose up to a positive
+ * factor, without the division that a copy shrunk to nothing (size 0, hidden) would make infinite. Scaling the normal
+ * by k instead, as a frame stretched by hand does, leans it toward the long axis (examples/bosses/tithe/kit.ts had to
+ * fix that by hand). Tested against the stretched map's own normal: tests/map.posed.test.ts.
+ */
+function stretched(s: Surface, g: Frame, k: P3): Surface {
+  const cof = vec3(mul(k.y, k.z), mul(k.z, k.x), mul(k.x, k.y));
+  return {
+    point: (u, v) => add(g.o, rotate(g, mul(s.point(u, v), k))),
+    normal: (u, v) => normalize(rotate(g, mul(s.normal(u, v), cof))),
+    anchor: (u, v) => mul(s.anchor(u, v), k),
     topology: s.topology,
     skeleton: NO_SKELETON,
   };

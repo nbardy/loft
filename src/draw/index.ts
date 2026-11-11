@@ -5,7 +5,7 @@
 import { add, clamp, cross, div, length, lift, max, mul, sub, type In } from "../expr.ts";
 import { viewDir } from "../lib/wgsl.ts";
 import type { Drawable } from "../compile/context.ts";
-import { NO_SKELETON, type Curve, type F, type P3, type Paint, type Points, type Surface } from "../map/types.ts";
+import { NO_SKELETON, type Curve, type F, type P3, type Paint, type Points, type Poses, type Surface } from "../map/types.ts";
 import { atRest } from "../map/surface.ts";
 import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface.ts";
 import { drawField } from "./field.ts";
@@ -18,6 +18,11 @@ export type { DensityOptions };
 /** A drawable that can be drawn once per point of a `Points`. */
 export interface Instanceable {
   instanced(name: string, points: Points): Drawable;
+}
+
+/** A drawable that can be drawn once per pose of a `Poses`: turned and scaled along each axis. */
+export interface Poseable {
+  posed(name: string, poses: Poses): Drawable;
 }
 
 /** An axis-aligned box: the proxy a tracer starts and ends its march in. */
@@ -63,6 +68,13 @@ export const draw = {
   /** One copy of `thing` per point, each in its point's frame and scale. */
   points(name: string, points: Points, thing: Instanceable): Drawable {
     return thing.instanced(name, points);
+  },
+  /**
+   * One copy of `thing` per pose (`posed`, `posedList`): each turned by its own frame and scaled along each of its axes,
+   * normals turned with it; paint is told the copy's index and its world normal (`PaintAt`). One draw for all of them.
+   */
+  posed(name: string, poses: Poses, thing: Poseable): Drawable {
+    return thing.posed(name, poses);
   },
   /** A distance field, sphere-traced inside its bounds (folded and recursive solids). */
   field: drawField,

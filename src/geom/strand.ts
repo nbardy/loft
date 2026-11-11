@@ -6,7 +6,7 @@ import { lift, vec3, type Expr, type In } from "../expr.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
 import { Body, sweepArgs, type Posted, type Section, type Slices, type Tip } from "../map/sweep.ts";
-import type { Chart, F, P3, Paint, Points, Skeleton } from "../map/types.ts";
+import type { Chart, F, P3, Paint, Points, Poses, Skeleton } from "../map/types.ts";
 
 export type Rgb = readonly [number, number, number];
 type Fn1 = (m: F) => F;
@@ -79,6 +79,8 @@ export class Strand extends Body implements Drawable {
   draws(ctx: CompileContext): Emitted { return this.drawn.draws(ctx); }
   /** Copies of this strand, one per point, in each point's frame (teeth, spikes). Drawn by `draw.points`. */
   instanced(name: string, points: Points): Drawable { return this.drawn.instanced(name, points); }
+  /** Copies of this strand, one per pose, each turned and sized (a row of bells, each on its own swing). Drawn by `draw.posed`. */
+  posed(name: string, poses: Poses): Drawable { return this.drawn.posed(name, poses); }
 
   override at(t: F): Strand { return super.at(t) as Strand; }
   override placed(chart: Chart): Strand { return super.placed(chart) as Strand; }

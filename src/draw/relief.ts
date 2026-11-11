@@ -93,7 +93,7 @@ export class ReliefDrawable implements Drawable {
     this.skeletons = [surface.skeleton];
     // The baker gets the relief as displacement of the surface: the same height, sampled on the grid.
     const heightOf = this.heightOf;
-    this.surfaces = [{ name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one" }];
+    this.surfaces = [{ name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
   }
 
   draws(ctx: CompileContext): Emitted {
