@@ -7,14 +7,14 @@
 // Crab coordinates: x forward, y up, z to its right; the body frame rides `ride` above the still water.
 
 import {
-  add, alive, atan2, attack, blendFrames, clamp, course, cos, cross, div, dragged, emote, every, exp, gait, ge, gt, handTurn, hit, hold, hosted, impact, input, lift,
+  add, alive, atan2, attack, carriage, footing, headingIn, namespaceSeed, replants, towardIn, type Footing, blendFrames, clamp, course, cos, cross, div, dragged, emote, every, exp, gait, ge, gt, handTurn, hit, hold, hosted, impact, input, lift,
   lt, max, mix, mul, slowOut,
   normalize, placedBy, poseFrame, rigid, ring, rotateAbout, sea, select, sin, size, slowIn, slowInOut, smoothstep, sqrt, STAND_IN, sub, swing, telegraph, thrown,
   time, tumbled, tumbleRate, turnedAbout, vec2, vec3, type Attack, type BodyAttack, type Drawable, type Expr, type F, type Frame, type Gait, type GripSpec, type Hold, type P3, type Placer,
   type Pose, type Ring, type RingWave, type Sea, type SeaDeform, type SeaSpec, type Target, type Thrown,
 } from "../../../src/index.ts";
 import { rotate } from "../../../src/map/chart.ts";
-import { impactFoam } from "../lib/impact.ts";
+import { impactFoam, type ImpactPaint } from "../lib/impact.ts";
 import { scaleShip, scaleShipNamed } from "../lib/scale_ship.ts";
 import { PRINT_WARNING } from "../lib/warning.ts";
 import { perFrame, sides, type V3 } from "./ink.ts";
@@ -25,10 +25,13 @@ type V2 = Expr<"vec2">;
 
 export type Rig = {
   readonly n: Numbers;
-  readonly walk: Gait;
-  /** Each foot's phase in the walk (a share of the cycle, as given to `gait`): foot k plants when
-   * `time / n.period + footPhase[k]` crosses a whole number. Options that react to a step (foam, a swinging lantern) read it. */
-  readonly footPhase: readonly number[];
+  /**
+   * Where each foot stands (`foot(k)`, world), whether it bears weight (`planted(k)`), and its step clock (`since(k)`:
+   * seconds since it last planted, and since it lifted, negative while planted). Feet are planted; they step only to
+   * re-plant in the idle, to stamp on a taunt's accent, or when a game walks the crab (docs/stance.md). Options that react
+   * to a step (foam, a swinging lantern) read `since`.
+   */
+  readonly walk: Footing;
   /** Claw Crush. Its aftermath is a ring wave: `crush.pushed(place)` is how far a thing afloat there has been shoved. */
   readonly crush: BodyAttack<Ring>;
   /** Seconds since this cycle's slam (0 before it): the body's thud, the shell's follow-through, the eyes' whip. */
@@ -144,6 +147,10 @@ export type Dance = {
   readonly on: F; readonly wave: F; readonly swing: F; readonly step: F;
   /** The same move half a beat late: what the small claw answers with. */
   readonly answer: F;
+  /** How far the body is in the taunt at any clock (what the stance's idle time is measured from). */
+  readonly onAt: (t: F) => F;
+  /** Seconds since each accent of the cycle in progress (negative before it): a stamp lands on each. */
+  readonly accents: readonly F[];
   /** What a great claw that has a display of its own should show: its own when there is no taunt, the dance's move when there is. */
   readonly display: (own: F) => F;
   /** x with k times one of the readouts above added: x itself for a boss that does not taunt. */
@@ -158,7 +165,7 @@ export type Dance = {
 function tauntOf(t: Taunt, period: number, T: Numbers["temper"]): Dance {
   const zero = lift<"f32">(0);
   switch (t.kind) {
-    case "none": return { on: zero, wave: zero, swing: zero, step: zero, answer: zero, display: (own) => own, plus: (x) => x, raised: (_side, wrist) => wrist };
+    case "none": return { on: zero, wave: zero, swing: zero, step: zero, answer: zero, onAt: () => zero, accents: [], display: (own) => own, plus: (x) => x, raised: (_side, wrist) => wrist };
     case "dance": {
       // The accents are the scene's (on its beats); how the crab arrives on them is its temperament: how long before the
       // accent it starts (so a slow mover still lands on the beat), how sharply, how long it holds the pose, how long it
@@ -177,7 +184,11 @@ function tauntOf(t: Taunt, period: number, T: Numbers["temper"]): Dance {
         small: perFrame("titan_taunt_small", vec3(mul(answer, 0.2 * R), add(mul(answer, (1.7 + 0.7 * T.together) * R), mul(on, 0.5)), sub(mul(answer, -0.8 * R), mul(twitch, 0.4)))),
       };
       const raised = (side: 1 | -1, wrist: P3): P3 => { switch (side) { case 1: return add(wrist, lifts.great); case -1: return add(wrist, lifts.small); } };
-      return { on, wave, swing, step: tab("step", add(b.step, mul(twitch, 0.5))), answer, display: () => wave, plus: (x, k, of) => add(x, mul(of, k)), raised };
+      const tau = tab("tau", sub(time, e.armAt(time)));
+      return {
+        on, wave, swing, step: tab("step", add(b.step, mul(twitch, 0.5))), answer, onAt: (at) => e.beats(at).on, accents: t.accents.map((a) => sub(tau, a)),
+        display: () => wave, plus: (x, k, of) => add(x, mul(of, k)), raised,
+      };
     }
   }
 }
@@ -193,8 +204,8 @@ function audienceOf(a: Audience, place: (p: V3) => P3): P3 {
 const OWN_AUDIENCE: V3 = [23, 27, 21];
 
 /** The crab on its own, at home: its attacks, then its own sea with its ring on it, then the rest. */
-export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
-  const s = stage(n, offer, boats, AT_HOME);
+export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption, burst: (reach: number) => ImpactPaint): Rig {
+  const s = stage(n, offer, boats, AT_HOME, burst);
   return s.finish(sea({ ...s.sea, deform: s.deforms }));
 }
 
@@ -203,7 +214,7 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
  * made with every ring that will run on it (its own, and any other boss's in the scene), everything else. `how` is where
  * the boss stands, how its show ends and whether it taunts.
  */
-export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: Staging): StagedRig {
+export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: Staging, burst: (reach: number) => ImpactPaint): StagedRig {
   const I = n.ink;
 
   // ==== the boss's pose: where it stands and which way it faces, inputs whose defaults are `how.at`, `how.heading` ====
@@ -218,17 +229,20 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   const place = (p: V3 | P3): P3 => { const q = turn3(lift<"vec3">(p)); return vec3(add(q.x, bossAt.x), q.y, add(q.z, bossAt.y)); };
   const placeFrame = (g: Frame): Frame => ({ o: place(g.o), x: turn3(g.x), y: turn3(g.y), z: turn3(g.z) });
 
-  // ==== the walk: in place, the body swaying over feet that tread ====
-  const feetHome = sides.flatMap((s) => n.legFeet.map(([x, z]) => vec3(x, n.floor, s * z)));
-  // Alternating tetrapods, each side a small wave toward the front.
-  const phase = sides.flatMap((s) => n.legFeet.map((_, i) => ((i % 2 === 0) === (s < 0) ? 0 : 0.5) + 0.06 * i));
-  // The walk's own clock: the scene's, ahead by a share of a cycle (`how.walkAhead`: each crab of a line treads on its
-  // own beat). At home it is `time` itself.
-  const walkClock = how.walkAhead === 0 ? time : add(time, how.walkAhead * n.period);
-  const home = gait({ feet: feetHome, phase, course: course.line([0, 0, 0], 0), stride: 0, period: n.period, duty: n.duty, lift: n.lift, t: walkClock });
-  const walk: Gait = { travelled: home.travelled, body: placeFrame(home.body), foot: (i) => place(home.foot(i)), planted: (i) => home.planted(i) };
-  const w = (2 * Math.PI) / n.period;
-  const g = walk.body;
+  // ==== the stance (docs/stance.md): feet planted at their homes, the body carried over them ====
+  // The feet's homes on the ground, in the boss's axes; the ground frame is the boss's pose.
+  const feetHome = sides.flatMap((s) => n.legFeet.map(([x, z]) => [x, n.floor, s * z] as const));
+  const ground = placeFrame({ o: vec3(0, 0, 0), x: vec3(1, 0, 0), y: vec3(0, 1, 0), z: vec3(0, 0, 1) });
+  const g = ground;
+  // The walk, for a crab a game moves: alternating tetrapods, each side a small wave toward the front, phased by the
+  // distance the game says the crab has walked along its own z (sideways), the game moving `boss.at` by the same.
+  // Its weight `legs.walking` (0 stands, 1 walks) is the game's; the default stands. `walkAhead` staggers a line's crabs.
+  const phase = sides.flatMap((s) => n.legFeet.map((_, i) => ((i % 2 === 0) === (s < 0) ? 0 : 0.5) + 0.06 * i + how.walkAhead));
+  const walking = input("legs.walking", "f32", [0]), travelled = input("legs.travelled", "f32", [0]);
+  const strode = gait({
+    feet: feetHome.map((f) => vec3(...f)), phase, course: course.line([0, 0, 0], -Math.PI / 2, Math.PI / 2),
+    stride: n.stance.walk.stride, pace: { kind: "distance", travelled }, duty: n.duty, lift: n.lift,
+  });
 
   // ---- what a game sets: host inputs, whose defaults are this show (docs/throw_and_shove.md, "The contract") ----
   //
@@ -346,6 +360,33 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   const grabOn = tabS("grabOn", grabEnv.p);
   const grabBeat = grab.beats(time, 1.5);
 
+  // ---- the footing (docs/stance.md): planted feet; re-plants in the fight's idle time, stamps on the taunt's accents ----
+  const ST = n.stance;
+  /** How busy the crab is at a clock: the attacks' postures, the taunt, the walk. Idle below `idleBelow`. */
+  const busyAt = (at: F): F => max(max(crush.envelope(at).p, grab.envelope(at).p), max(taunt.onAt(at), walking));
+  const stepT = { lead: ST.replant.lead, seconds: ST.replant.seconds, settle: ST.replant.settle };
+  const schedule = replants({
+    homes: feetHome.map(([x, , z]) => [x, z] as const), loop: n.crushPeriod, busy: busyAt, idleBelow: ST.replant.idleBelow,
+    every: ST.replant.every, step: stepT, reach: ST.replant.reach, seed: namespaceSeed() + 3,
+  });
+  // A stamp on each accent: a foot on the side the body is about to move onto (the taunt's side is +1 after the first
+  // accent and alternates), the legs taken in turn, lifted over the move's rise and down on the beat.
+  const STAMP_LEGS = [1, 0, 2] as const;
+  const stamps = taunt.accents.map((since, i) => ({
+    foot: (i % 2 === 0 ? 4 : 0) + STAMP_LEGS[i % STAMP_LEGS.length]!, since, lead: Math.max(n.temper.arrive, 0.15), height: n.lift * ST.dance.stamp,
+  }));
+  const footed = footing({
+    ground, homes: feetHome, stamps,
+    replant: { schedule, loop: n.crushPeriod, step: stepT, height: n.lift, busy: busyAt, idleBelow: ST.replant.idleBelow, unload: ST.replant.unload, dip: ST.replant.dip },
+    walk: { gait: strode, on: walking, secondsPerCycle: n.period },
+  });
+  // Each foot once per frame (every leg, foam and lantern reads the same table).
+  const feetNow = feetHome.map((_, k) => ({
+    foot: perFrame(`titan_foot_${k}`, footed.foot(k)), planted: tabS(`planted_${k}`, footed.planted(k)),
+    since: { sincePlant: tabS(`sincePlant_${k}`, footed.since(k).sincePlant), sinceLift: tabS(`sinceLift_${k}`, footed.since(k).sinceLift) },
+  }));
+  const walk: Footing = { foot: (k) => feetNow[k]!.foot, planted: (k) => feetNow[k]!.planted, since: (k) => feetNow[k]!.since, unload: footed.unload };
+
   // ---- the body: Claw Crush in three beats ----
   //
   // Wind-up (1.15 s): the whole crab rears back and up, away from the target (anticipation). Act (0.3 s): it drives
@@ -364,19 +405,54 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   const thud = mul(sub(impact(crushAfter, 1, 2.0, 0.3), 1), 0.45);
   // The taunt, if there is one (each term is 0 without): the body rises on its legs with each wave of the claw (a little
   // crouched between), sidesteps on the off-beat and rolls into the step.
-  const danced = taunt.plus;
   /** The idle's size: doubled for a crab that is all twitch. */
   const idle = 1 + n.temper.jitter;
-  const bob = danced(danced(add(add(add(mul(cos(mul(walkClock, 2 * w)), n.bob), alive(time, 0.06 * idle, 11)), mul(lean, -0.25)), thud), n.temper.rise, taunt.wave), -0.15, taunt.on);
-  const roll = danced(add(add(mul(sin(mul(walkClock, w)), n.roll), alive(time, 0.015 * idle, 12)), mul(lean, 0.07)), 0.07, taunt.step);
-  // The crab turns toward whichever claw is working: right into the slam, left (positive yaw) toward the grab.
-  const yaw = danced(add(add(add(mul(sin(mul(walkClock, w * 0.5)), n.yaw), mul(lean, -0.1)), mul(grabOn, 0.14)), alive(time, 0.02 * idle, 13)), 0.06, taunt.swing);
-  const sway = danced(mul(sin(mul(walkClock, w)), n.sway), 0.9, taunt.step);
+  // The body's carriage over its feet (docs/stance.md): the idle fills what the attacks, the taunt and the walk leave.
+  // The slam's lean and thud are its brace; the Grab's turn toward the working claw is its brace's; the taunt's moves
+  // are the dance's. The slam's pitch stays `pitchOf(lean)` below (the shell reads it late), so its brace adds none.
+  const cb = crushBeat(time), whip = grab.flight().whip;
+  const early = slowInOut(clamp(div(grabEnv.tau, ST.grab.early), 0, 1));
+  /** Sitting back under the ship: from the hold's start until it has let go. */
+  const sitting = mul(early, sub(1, slowInOut(grabBeat.release)));
+  const toShip = sub(mul(slowInOut(grabBeat.act), sub(1, early)), mul(sitting, ST.grab.sitBack));
+  /** The carry draws the ship back toward the wind-back place until the whip: the body coils away from the throw. */
+  const carry = slowInOut(clamp(div(grabEnv.tau, GS.hold - TH.stroke), 0, 1));
+  const throwLoad = mul(carry, sub(1, slowIn(whip))), throwDrive = mul(slowIn(whip), sub(1, slowInOut(grabBeat.release)));
+  const C = carriage([
+    {
+      kind: "idle", loop: n.crushPeriod, seed: 11, breath: { rise: n.bob * idle, period: n.period },
+      shift: { side: ST.idle.side * idle, fore: ST.idle.fore * idle, hz: ST.idle.hz }, tilt: { roll: ST.idle.roll, pitch: ST.idle.pitch }, turn: ST.idle.turn * idle,
+      unload: footed.unload,
+    },
+    {
+      kind: "brace", on: crush.envelope(time).p, toward: towardIn(ground, vec3(IN.crushCentre.x, 0, IN.crushCentre.y)),
+      load: mul(slowInOut(cb.anticipate, n.temper.snap), sub(1, slowIn(cb.act))), drive: mul(slowIn(cb.act), sub(1, slowInOut(cb.settle))),
+      spring: sin(mul(cb.act, Math.PI)), absorb: thud, lean, turn: mul(lean, -0.1), size: { ...ST.slam, pitch: 0 },
+    },
+    {
+      kind: "brace", on: grabOn, toward: towardIn(ground, taken),
+      load: mul(slowInOut(grabBeat.anticipate), sub(1, slowInOut(grabBeat.act))), drive: toShip, spring: lift<"f32">(0),
+      absorb: sub(mul(sitting, -ST.grab.sit), mul(sub(1, grab.crush()), ST.grab.squeeze / n.grabSqueeze)), lean: toShip, turn: mul(grabOn, 0.14),
+      size: { sink: ST.grab.sink, coil: ST.grab.coil, reach: ST.grab.reach, settle: ST.grab.settle, lift: 0, pitch: ST.grab.pitch, roll: ST.grab.roll },
+    },
+    {
+      kind: "brace", on: grabOn, toward: headingIn(ground, grab.toss().velocity),
+      load: throwLoad, drive: throwDrive, spring: throwDrive, absorb: lift<"f32">(0), lean: sub(throwDrive, mul(throwLoad, 0.5)), turn: lift<"f32">(0),
+      size: { sink: ST.throw.sink, coil: ST.throw.coil, reach: ST.throw.reach, settle: 0, lift: ST.throw.lift, pitch: ST.throw.pitch, roll: ST.throw.roll },
+    },
+    {
+      kind: "dance", on: taunt.on, lift: sub(mul(taunt.wave, n.temper.rise), mul(taunt.on, ST.dance.crouch)), side: taunt.step, turn: mul(taunt.swing, 0.06),
+      size: { sway: ST.dance.sway, roll: ST.dance.roll },
+    },
+    { kind: "walk", on: walking, gait: strode, size: { bob: n.bob, sway: n.sway, roll: n.roll, yaw: n.yaw } },
+  ]);
+  const bob = tabS("rise", C.rise), roll = tabS("roll", C.roll), yaw = tabS("yaw", C.yaw), sway = tabS("sway", C.sway), surge = tabS("surge", C.surge), tilt = tabS("tilt", C.pitch);
   const yx = rotateAbout(g.x, g.y, yaw), yz = rotateAbout(g.z, g.y, yaw);
   // Roll about the body's x, then pitch (the lean) about the rolled z: an orthonormal frame, as draw.copies' carry needs.
   const ry = rotateAbout(g.y, yx, roll), rz = rotateAbout(yz, yx, roll);
-  const pitchOf = (l: F): F => mul(l, -0.12);
-  const origin = add(add(g.o, mul(g.y, add(n.ride, bob))), mul(g.z, sway));
+  // The slam's lean pitches the body (and, read late, the shell); every other stance's pitch is the carriage's `tilt`.
+  const pitchOf = (l: F): F => add(mul(l, -0.12), tilt);
+  const origin = add(add(add(g.o, mul(g.y, add(n.ride, bob))), mul(g.z, sway)), mul(g.x, surge));
   const pitched = (p: F): Frame => ({ o: origin, x: rotateAbout(yx, rz, p), y: rotateAbout(ry, rz, p), z: rz });
   const bodyNow: Frame = pitched(pitchOf(lean));
   // The atoll: the lean read a quarter second late, then a pitch that keeps going forward after the slam and swings back.
@@ -453,7 +529,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       const splash = impactFoam("splash", water, {
         area: hit.disc({ centre: IN.throwLand, radius: n.splash.reach * 0.5 }), pad: n.splash.reach * 0.5 + 1,
         splashes: [{ at: IN.throwLand, since: flight.landed }],
-        reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black,
+        reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black, paint: burst(n.splash.reach),
       });
       return { frame: blendFrames(socket, floating, afloatAgain), give, splash: [splash] as readonly Drawable[] };
     },
@@ -493,7 +569,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       const spray = impactFoam("spray", water, {
         area: hit.disc({ centre: at, radius: 4 }), pad: 4,
         splashes: [{ at: now, since: taken }],
-        reach: 3.2, seconds: 1.3, foam: I.cream, line: I.black,
+        reach: 3.2, seconds: 1.3, foam: I.cream, line: I.black, paint: burst(3.2),
       });
       return { at, frame, spray: [spray] as readonly Drawable[] };
     },
@@ -508,7 +584,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   const crash = impactFoam("crash", water, {
     area: crushDisc, pad: crashOuter - n.crushRadius + 1,
     splashes: [{ at: IN.crushCentre, since: sub(time, crush.arm) }],
-    reach: crashOuter, seconds: n.crashSeconds, foam: I.cream, line: I.black,
+    reach: crashOuter, seconds: n.crashSeconds, foam: I.cream, line: I.black, paint: burst(crashOuter),
   });
   /** What a game that runs its own boats reads (docs/throw_and_shove.md, "The contract"); the stand-ins above read the same. */
   const handoff: Handoff = {
@@ -519,7 +595,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   };
 
   return {
-    n, walk, footPhase: phase, crush, crushAfter, grab, grabOn, grabEnv, grabBeat, keel: gripAxis, gripUp, gripRest, shipNow, body, shell, local, shoulder,
+    n, walk, crush, crushAfter, grab, grabOn, grabEnv, grabBeat, keel: gripAxis, gripUp, gripRest, shipNow, body, shell, local, shoulder,
     inputs: IN, placer, handoff, boatTwoAt: free2.at, crushCentre: IN.crushCentre, shipTarget: scaleShip.target(rigid(shipFrame)),
     place, place2, audience: audienceOf(how.audience, place), dance: taunt,
     world: { sea: water, warnings: [telegraph(crush, { style: warnStyle }), telegraph(grab, { style: warnStyle })], crash, splash: free1.splash, boat },

@@ -37,8 +37,35 @@ export const S = {
   ride: 1.35, floor: -1.7,
   carapace: { from: -1.6, to: 5.0, width: 4.1, height: 1.25 },
   legRoots: [3.2, 2.0, 0.8, -0.4], legFeet: [[6.8, 8.2], [4.0, 9.6], [0.8, 9.9], [-2.6, 9.0]] as const, legLengths: [4.0, 3.8, 1.6] as const,
-  // ---- the walk in place ----
+  // ---- the walk (a game that moves the crab sets `legs.walking`; docs/stance.md) and the breath: a cycle's seconds (the
+  // idle breathes at this rate, made whole breaths of the loop), share of it a foot stands, a step's height (a re-plant's
+  // too); the body's bob, sway, roll and turn on the walk's step ----
   period: 3.2, duty: 0.66, lift: 1.5, sway: 0.25, bob: 0.08, roll: 0.03, yaw: 0.035,
+  // ---- the stance (docs/stance.md): how the body carries its weight over planted feet. Distances in units, angles in
+  // radians. ----
+  stance: {
+    /** Standing: the weight shifts side to side and fore and aft (`alive`, at about `hz`), the loaded side sinking `roll` a
+     * unit of shift and the nose `pitch` a unit forward; a small turn. */
+    idle: { side: 0.35, fore: 0.2, hz: 0.1, roll: 0.06, pitch: 0.05, turn: 0.025 },
+    /** Re-plants: about one per `every` seconds of idle a step can start in; the body leaves the foot `lead` s before it
+     * lifts (by `unload`), the foot is up `seconds` (at `lift`), placed `reach` away, the body back `settle` s after and
+     * dipping `dip` as it plants. Idle is the attacks' postures and the taunt below `idleBelow`. */
+    replant: { every: 1.8, lead: 0.45, seconds: 0.75, settle: 0.6, reach: 0.5, unload: 0.3, dip: 0.06, idleBelow: 0.02 },
+    /** Claw Crush: the wind-up sinks and coils back from the disc, the strike drives toward it (the legs straightening
+     * `lift` at its middle) and lands `settle` low for the thud; `roll` leans it toward the disc a unit of the lean. */
+    slam: { sink: 0.35, coil: 0.45, reach: 0.6, settle: 0.25, lift: 0.3, roll: 0.14 },
+    /** The Grab: the wind-up sinks and draws back from the ship, the reach leans toward it (sinking `settle`); over the
+     * first `early` s of the hold it sits back (`sitBack` of the reach behind its rest) and down (`sit`), more at each squeeze. */
+    grab: { sink: 0.2, coil: 0.25, reach: 0.5, settle: 0.15, sitBack: 0.4, sit: 0.3, squeeze: 0.12, early: 0.6, pitch: 0.06, roll: 0.08 },
+    /** The throw: over the carry it coils away from where the ship is thrown, through the whip it drives toward it, rising
+     * as the far legs push, and comes home over the release. */
+    throw: { sink: 0.1, coil: 0.3, reach: 0.7, lift: 0.2, pitch: 0.05, roll: 0.08 },
+    /** The taunt on planted feet: the sway onto each side stepped to (0.9 of the old sidestep overstretched the far legs:
+     * docs/stance.md), its roll, the crouch while in the taunt, a stamp's height as a share of `lift`. */
+    dance: { sway: 0.5, roll: 0.07, crouch: 0.15, stamp: 0.6 },
+    /** The walk's stride (distance per cycle) when a game walks the crab. */
+    walk: { stride: 3.0 },
+  },
 
   // ---- the atoll ----
   atoll: { centre: [-2.0, 0] as const, rx: 4.3, rz: 4.5, top: 2.9, base: -1.75, hills: 0.35, lumps: 0.08 },
@@ -104,12 +131,55 @@ export const S = {
      */
     light: { at: 7.0, height: 3.2, girth: [0.66, 0.45] as const, crust: 0.32, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
   },
+  // ---- the spiral shell (back/spiral.ts): a hermit's shell, one tube coiled by Raup's law; read only by it ----
+  // (docs/art_direction/DIRECTION.md, Round 5.) The coil turns counterclockwise going back from the mouth, seen from its
+  // face: the picked picture's hand (crab_round5/back_spiral_pick.webp). Its mouth is at the front, facing down over
+  // the carapace's back half, the tube coming down into it.
+  spiral: {
+    /** Raup's numbers. `whorls`: turns of the tube from its tip to the mouth. `growth` (W): how much every length grows
+     * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
+    whorls: 3.75, growth: 1.75,
+    /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
+     * touches the axis (Raup's D = 0): a shell with no navel. */
+    mouth: { radial: 2.2, axial: 3.2 },
+    /** Raup's T as a slope: how far each turn's crown steps down from the tip's plane per unit of its distance from the
+     * axis. 0 is a flat spiral face; 0.15 a low cone, so the curl stands a little proud. */
+    spire: 0.15,
+    /** The axis (it points out of the spiral's face, toward the tip): raised by `tilt` above level, toward the crab's
+     * right flank (the side the game and back cameras see), and swung back by `rake` (radians). */
+    tilt: 0.3, rake: 0.0,
+    /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane: 0 is straight ahead
+     * of the axis, so the mouth faces down; 0.15 lifts its front lip, so it faces down and a little forward. */
+    mouthAt: 0.15,
+    /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
+     * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
+     * centre, is 2 radial - lip behind it). */
+    seat: { in: 1.07, up: 1.26, side: 0.3, lip: 1.9 },
+    /** The printed bands: cream for `cream` of each ring (the rest is brick); `at` is where the cream band's middle lies
+     * across a ring (0: on the suture, so the cream straddles the line where two turns meet; 0.5: midway between
+     * sutures); `proud` is how far a cream band stands out of the tube, as a share of its section. */
+    band: { cream: 0.35, at: 0.0, proud: 0.05 },
+    /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
+     * the dark throat runs inside (turns). */
+    lip: { flare: 0.12, thick: 0.2, throat: 0.22 },
+    /** The light: where it stands on the last turn (turns back from the mouth, and round the section from the tube's
+     * outer side toward the spiral's face, radians), its height and girth, its size against the fiddler's, its gulls.
+     * `pose` is what it could later be animated by, with the defaults it is drawn in: `lean` (the tangent of its angle,
+     * out and back), `rise` (how far a segmented neck lifts it, units; 0: no neck), `shutters` (0 shut, 1 open). */
+    light: { back: 0.3, round: 0.6, height: 2.3, girth: [0.55, 0.4] as const, size: 0.45, gulls: 0, pose: { lean: 0.25, rise: 0, shutters: 0 } },
+    /** Two groves, each [turns back from the mouth, round the section (radians, as the light), trees, the turf's radius]:
+     * one on the crown beside the light, one lower on the forward shoulder behind the eyestalks. */
+    groves: [[0.18, 0.9, 4, 1.2], [0.05, 1.0, 3, 0.9]] as const,
+  },
 
   // ---- claws: the right (crusher) 1.4 times the left ----
   crusher: 1.4, cutter: 1.0, clawPalm: 2.9, clawFat: 1.1, armLengths: [2.5, 2.4] as const,
 
   // ---- eyes ----
   stalk: 2.4, eye: 0.3,
+  /** How much higher than the head mount's own the `face` camera stands and aims (reefback_titan.ts, `camerasFor`): a
+   * face on very tall stalks asks for more, one whose eyes hang below the body for less. The base asks for none. */
+  faceRise: 0,
 
   // ---- Claw Crush: the hit disc on the water (world xz), its warning, its loop ----
   // The show loops every 22 s: the Grab closes at 3.0 and throws its ship (down at 9.3), Claw Crush arms at 12.0 and
