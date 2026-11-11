@@ -331,3 +331,49 @@ Still wrong or unfinished:
 - The stand-in's second boat is back at its place 6.5 s after the slam whatever the schedule (`boatTwo.keep`): right
   for the 18 s show, arbitrary for a game that uses the stand-in.
 - Both boats jump back to their places at the loop's seam.
+
+## Further (the owner's second note, 2026-11-11): predicted before running
+
+After the first pictures the owner asked for the boat tossed further, clearly out of the crab's neighbourhood, and
+the second boat forced back by the slam, not nudged. Both stay inputs; these are the new defaults. The formulas are
+unchanged; these are their numbers, written before the scene was run with them.
+
+**The throw is no longer held to the `game` camera's frame.** That frame ends 23.5 from the crab's middle at its far
+right corner (a landing whole in frame: 16.7 flown at most; the first version flew 13.3). The default landing is now
+(-1.0, -35.0), along the same line (so the ship leaves the game frame through the corner it used to land in, as late
+as it can), 3.2 s in the air, two turns. A new camera, `arena` (the game camera's direction, pulled back and aimed
+between the crab and the landing), holds the crab, both boats, the slam and the landing; `throw` shows the flight in
+profile. The whip is shorter and harder: stroke 0.4 s (was 0.5), follow-through 0.25 s.
+
+| Quantity (base) | Predicted |
+|---|---|
+| release velocity | (-2.98, 6.90, -8.56), speed 11.39, 37.3 degrees up |
+| release point | (8.53, 3.78, -7.60) at t = 6.10; stroke 2.28 (acceleration 28.5), follow-through 1.42 |
+| touchdown | t = 9.30, at 9.10 down and 9.07 along |
+| apex | y = 8.54 (8.29 above its floating height), 1.38 s after the release |
+| distance flown | 29.0 (7.6 ship lengths) |
+| plunge, skid | 0.92 below floating height at 0.22 s; skid 1.81 |
+| ends | at (-1.60, -36.71): 36.9 from the crab's middle (5.6 carapace lengths), 30.8 from where it was taken |
+| from the `game` camera | in frame for 0.5 to 0.9 s after the release, then out through the top right; the landing is not in frame |
+| the claw | the grip's middle within 4.5 of its arm's centre through the follow-through (span 4.9); `gripReaches` passes in all six variants |
+
+**The shove is as large as the ring allows.** The impulse at the disc's edge is 2.9 units/s, the wave's own 2.92
+being the limit, and the stand-in's drag is 3.0 s (a heavy boat coasts), so a boat at the edge ends 8.7 out. The
+crest is 1.0 high at the edge (was 0.8; the depth is 1.7, and a crest breaks near 1.3), and the wave is gone at 12.
+The second boat's default place is 2.0 beyond the disc's edge whatever the disc's radius (it was a fixed 7.0 from the
+centre), on bearing -1.35: the first boat is long gone from that side by then, and the game frame has 10 units of
+open water along it. The loop is 22 s (the slam at 12.0), so the coasting boat has time.
+
+| Quantity | Predicted (base; islander) |
+|---|---|
+| front reaches boat two | 0.69 s after the slam (t = 12.69) |
+| crest height there | 0.79; 0.83 |
+| impulse there | 2.30 units/s; 2.40 |
+| after 2 s | 3.36; 3.51 |
+| final offset | 6.90 (1.8 boat lengths); 7.21 |
+| by the loop's seam, 10 s after the slam | 6.59; 6.89 |
+| on screen (game, 1280 x 800) | about 210 px, twice the boat's own length on screen |
+
+The boat moves at 2.3 falling to 1.2 over its first two seconds while the front runs at 2.92, so the crest takes
+about three seconds to pass under it: it should be seen to ride up, heel, and be left behind. GPU frame time: no
+change at t = 1 (the same draws); a live ring as before.
