@@ -2,8 +2,9 @@
 // and its beam lures ships onto a ring of six rocks. The bells of the wrecks she has taken hang from bone hooks at the
 // spire's foot, swinging just above the water.
 //
-// The look is DIRECTION.md's woodblock print with one change: lantern yellow is the only warm ink. The spire and the
-// siren are ink black and indigo with cream bone lines; the lens, the beam and the lit water are yellow, printed flat.
+// The look is DIRECTION.md's woodblock print with one change: lantern yellow is the only warm ink (`print.bands` with
+// a yellow accent). The spire and the siren are ink black and indigo with cream bone lines; the lens, the beam and the
+// lit water are yellow, printed flat. The rocks and bells cut their key line into their paint (`keyLine`).
 //
 // The signature attack, the Lure Beam, is defined once as a space-time object: the beam's angle is a closed-form
 // function of the cycle clock, and the simulation's capsule (DESIGN.md 9, `hit.capsule`) is that angle's capsule.
@@ -17,17 +18,15 @@
 // the ship, as DIRECTION.md asks.
 
 import {
-  abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul, normalize, points,
-  lt, pow, scene, sea, select, ship, sign, sin, smoothstep, spacing, step, strand, sub, TAU, through, time, vec2, vec3, vec4, woodblock,
-  type Drawable, type Expr, type F, type In, type P3, type Style,
+  abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul, neg, normalize, pick, points,
+  lt, posed, pow, print, scene, sea, select, sign, sin, size, smoothstep, spacing, step, strand, sub, TAU, through, time, turn, vec2, vec3,
+  vec4, woodblock, type Drawable, type Expr, type F, type In, type P3, type PaintAt,
 } from "../../src/index.ts";
-import { hash3, luminance, viewDir, fwidth, type Branch, type Frame as ListFrame, tree, gen } from "../../src/lib/index.ts";
+import { hash3, viewDir, fwidth, type Branch, type Frame as ListFrame, tree, gen } from "../../src/lib/index.ts";
 import { hit, hitContour, hitInradius, hitPatch, type Capsule } from "../../src/spacetime/index.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../../src/lib/sdf2.ts";
-import { edgeOf, rgb } from "../../src/style/shared.ts";
 import { NO_SKELETON, type Surface } from "../../src/map/types.ts";
-import { scaled } from "../scenes/lib/fleet.ts";
-import { sloopSpec } from "../fleet.ts";
+import { sailInked, scaleShip } from "./lib/scale_ship.ts";
 
 // ==== the numbers an art director would change ====================================================================
 
@@ -59,7 +58,11 @@ const SPIRE = {
   ribTurns: 2.2,
 };
 const BASE = { radius: 4.6, crags: 7 };  // the spire's foot: a ring of crags; bells hang just outside `radius`
-const RING = { radius: 13, rocks: 6, crag: 4.6 };  // the sim's rock ring (r 260) and each rock's height
+const RING = { radius: 13, rocks: 6, crag: 3.4 };  // the sim's rock ring (r 260) and each rock's height
+/** A crag's girth at the water, how much it narrows to its top (a stack of ledges, not a spike), and its lean. */
+const CRAG = { girth: 2.0, top: 0.45, lean: 0.6, ledges: 13, ledge: 0.12 };
+/** Key lines cut into the rocks' and bells' paint, in pixels (see `keyLine`). */
+const KEY_LINE = { rock: 2.5, bell: 2 };
 const CORAL = { trees: 7, levels: 5, length: 1.35, radius: 0.3, ratio: 0.74, tilt: 0.55, turn: 2.4 };
 const SIREN = {
   from: 0.5, to: 0.93,  // the coil wraps this stretch of the spire's height
@@ -98,8 +101,8 @@ const LURE = {
   coneEnd: 0.85,                // the cone is drawn this far from the lens toward the water
 };
 
-/** The ship for scale: the game's sloop, blue sails, no warm colour anywhere on it. */
-const SHIP = { length: 4.5, radius: 19, angleInSweep: 0.63, heading: 2.2 };
+/** The ship for scale (lib/scale_ship.ts): where on the sweep it sails. */
+const SHIP = { radius: 17.5, angleInSweep: 0.63, heading: 2.2 };
 const WIND = [0.6, 0.8] as const;
 
 // ==== the clock ===================================================================================================
@@ -202,6 +205,18 @@ const spiralAt = (s: number): V3 => {
   return [at[0] + Math.cos(a) * (r + 0.18), y, at[2] + Math.sin(a) * (r + 0.18)];
 };
 
+/**
+ * The key line, cut into a paint: black within about `px` pixels of where the surface turns edge-on to the eye (the
+ * width is in pixels because it is measured by the screen rate of n.v). The style's own key line is the hull outline,
+ * 0.05 world wide and never under 1.5 px, which a dark rim against the indigo sea swallows from the game camera: the
+ * rocks and bells lost their lines when the edge-detection pass that drew them went (2026-11-11).
+ */
+function keyLine(at: PaintAt, px: number): F {
+  const ndv = abs(dot(at.normal, viewDir(at.world)));
+  const w = mul(max(fwidth(ndv), 1e-4), px);
+  return sub(1, smoothstep(mul(w, 0.6), w, ndv));
+}
+
 /** Rock paint: flat rock ink with black strata lines that wander a little. */
 function strata(m: F, v: F, count: number, ink: readonly [number, number, number] = INK.rock): P3 {
   const w = add(mul(m, count), mul(sin(add(mul(v, TAU * 3), mul(m, 7))), 0.18));
@@ -266,8 +281,8 @@ const growth = draw.copies("growth", {
     const coral = mix(vec3(...INK.coral), vec3(...INK.bone), mul(step(CORAL.levels - 1.5, level), step(0.5, hash3(id))));
     return mix(coral, vec3(...INK.bone), step(BONE_LEVEL - 0.5, level));
   },
-  // The woodblock's key-line pass inks the copies' silhouettes from depth; the copies' own ink would be a second line.
-  outline: "none",
+  // The copies' own ink: the woodblock's key-line pass that used to ink them from depth is gone (2026-11-11).
+  outline: "silhouette",
   minPixels: 2,
   keepLevels: 2,
   inkBack: 6,
@@ -414,34 +429,50 @@ const hair = HAIR.map((sd, k) => draw.curve(`hair_${k}`, (u) => {
 
 // ==== the bells ===================================================================================================
 
+/** One bell a unit long hanging down from its crown at the origin; each copy is hung, swung and sized by `bells`. */
 const bellGirth = keys([[0, 0.12], [0.12, 0.3], [0.55, 0.38], [0.85, 0.58], [1, 0.7]]);
-const bells = BELLS.map((b, k) => {
-  const hang = hangAt(b), radial = [Math.cos(b.angle), 0, Math.sin(b.angle)] as const;
-  const swing = mul(sin(add(mul(time, W * (k % 2 === 0 ? 2 : 3)), b.phase)), b.swing);
-  const down = add(mul(vec3(...radial), sin(swing)), vec3(0, mul(cos(swing), -1), 0));
-  return strand({
-    name: `bell_${k}`,
-    spine: (m) => add(vec3(...hang), mul(down, mul(m, b.length))),
-    stations: 4,
-    girth: (m) => mul(bellGirth(m).x, b.length),
-    tips: [{ round: 0.1 }, "open"],
-    paint: (m) => mix(vec3(...INK.bell), vec3(...INK.strata), max(step(0.86, m), mul(step(0.45, m), sub(1, step(0.5, m))))),
-    detail: { along: 14, around: 14 },
-  });
+const bell = strand({
+  name: "bell",
+  spine: (m) => vec3(0, mul(m, -1), 0),
+  stations: 4,
+  girth: (m) => bellGirth(m).x,
+  tips: [{ round: 0.1 }, "open"],
+  paint: (m, _v, at) => {
+    const lip = max(step(0.86, m), mul(step(0.45, m), sub(1, step(0.5, m))));
+    return mix(mix(vec3(...INK.bell), vec3(...INK.strata), lip), vec3(...INK.strata), keyLine(at, KEY_LINE.bell));
+  },
+  detail: { along: 14, around: 14 },
 });
+/** Bell i's bearing, and where it hangs (the tip of its hook: `hangAt`). */
+const bellAngle = (i: F): F => pick(i, BELLS.map((b) => b.angle));
+const hang = (i: F): P3 => {
+  const a = bellAngle(i), r = BASE.radius + 0.4;
+  return vec3(mul(cos(a), r), add(pick(i, BELLS.map((b) => b.height)), 1.6), mul(sin(a), r));
+};
+/** Each bell swings out from the spire and back on its own clock: its own rate and phase. */
+const swing = (i: F): F =>
+  mul(sin(add(mul(time, mul(pick(i, BELLS.map((_, k) => (k % 2 === 0 ? 2 : 3))), W)), pick(i, BELLS.map((b) => b.phase)))), pick(i, BELLS.map((b) => b.swing)));
+const bells = draw.posed("bells", posed(BELLS.length, (i) => {
+  const a = bellAngle(i);
+  return { at: hang(i), turn: turn.about(vec3(neg(sin(a)), 0, cos(a)), swing(i)), size: size.even(pick(i, BELLS.map((b) => b.length))) };
+}), bell);
 
 // ==== the ring of rocks ===================================================================================================
 
-/** A crag: a faceted, leaning spike of rock (six sides, creased). Drawn at points, so a ring of them is one draw. */
+/**
+ * A crag: a leaning stack of rock, broad at the water and narrowing in ledges to a rounded top, faceted (seven sides)
+ * and cut with strata and a key line. Drawn at points, so a ring of them is one draw. (It was a spike tapering to a
+ * point, which read as a fin.)
+ */
 const crag = (name: string, height: number, girth: number, lean: number) => strand({
   name,
-  spine: (m) => through(m, [[0, -1.8, 0], [lean * 0.1, height * 0.3, -lean * 0.3], [lean * 0.6, height * 0.65, lean * 0.1], [lean, height, lean * 0.5]]),
-  stations: 5,
-  girth: (m) => mix(girth, girth * 0.06, pow(m, 1.25)),
-  section: { aspect: 0.75, squareness: 1.25 },
-  tips: ["open", { point: 0.2 }],
-  paint: (m, v) => strata(m, v, 4),
-  detail: { along: 10, around: 6 },
+  spine: (m) => through(m, [[0, -1.8, 0], [lean * 0.1, height * 0.35, -lean * 0.1], [lean * 0.25, height * 0.75, lean * 0.1], [lean * 0.3, height, lean * 0.15]]),
+  stations: 8,
+  girth: (m) => mul(mix(girth, girth * CRAG.top, pow(m, 1.5)), add(1, mul(max(sin(mul(m, CRAG.ledges)), 0), CRAG.ledge))),
+  section: { aspect: 0.8, squareness: 1.6 },
+  tips: ["open", { round: 0.3 }],
+  paint: (m, v, at) => mix(strata(m, v, 5), vec3(...INK.strata), keyLine(at, KEY_LINE.rock)),
+  detail: { along: 16, around: 7 },
 });
 const ringAngle = (i: F, offset: number): F => add(mul(i, TAU / RING.rocks), offset);
 const ringAt = (i: F, r: number | F, offset: number, y: number): P3 => vec3(mul(cos(ringAngle(i, offset)), r), y, mul(sin(ringAngle(i, offset)), r));
@@ -457,7 +488,7 @@ const crags = draw.points("crags", points(RING.rocks * 2 + BASE.crags, (i) => {
   const at = add(add(mul(ringAt(i, RING.radius, 0.3, 0), big), mul(ringAt(i, RING.radius + 1.4, 0.48, 0), beside)), mul(footAt, foot));
   const small = add(0.45, mul(fract(mul(i, 0.381)), 0.25)), large = add(0.85, mul(fract(mul(i, 0.618)), 0.4));
   return { at, scale: add(add(mul(large, big), mul(small, beside)), mul(add(0.6, mul(fract(mul(i, 0.29)), 0.35)), foot)) };
-}), crag("crag", RING.crag, 1.6, 1.1));
+}), crag("crag", RING.crag, CRAG.girth, CRAG.lean));
 
 /** Wreck timber: planks and spars caught on the rocks. */
 const plank = strand({
@@ -574,10 +605,10 @@ function litWater(): Drawable {
  * and a black line round it over cream hatching. It shows through the tell and the sweep, its teeth growing until
  * arming; it goes when the beam reaches the end of its sweep.
  *
- * Why not `attack()` + `telegraph()` (src/spacetime): an `Attack` is a strike by a body part (its motion poses a
- * spine: lunge or sweep), and the telegraph's life is "warn, flash once at arming, fade". The Lure Beam strikes with
- * no body part and stays dangerous for its whole 2 s sweep, with the marker leading it; so the hit shape is the
- * library's (`hit.capsule`, `hitContour`, `hitPatch`) and the marker is drawn here in the telegraph's manner.
+ * Why not `attack()` + `telegraph()` (src/spacetime): a remote attack (no body part) is now possible, but the
+ * telegraph's life is "warn, flash once at arming, fade" on a fixed hit shape. The Lure Beam stays dangerous for its
+ * whole 2 s sweep, with the marker leading it round; so the hit shape is the library's (`hit.capsule`, `hitContour`,
+ * `hitPatch`) and the marker is drawn here in the telegraph's manner.
  */
 function warning(): Drawable {
   const h = markerHit;
@@ -617,30 +648,7 @@ function warning(): Drawable {
 
 const shipAngle = LURE.from + LURE.sweep * SHIP.angleInSweep;
 const shipAt: [number, number] = [Math.cos(shipAngle) * SHIP.radius, Math.sin(shipAngle) * SHIP.radius];
-const victim = ship(scaled(sloopSpec, SHIP.length, "ship", {
-  hull: [0.3, 0.22, 0.16], cloth: [0.2, 0.36, 0.72], team: INK.bone, trim: INK.bone,
-  deck: [0.55, 0.5, 0.45], spar: [0.3, 0.25, 0.2],
-})).afloat(water, { at: shipAt, heading: SHIP.heading, wind: WIND });
-
-// ==== the look ===================================================================================================
-
-/**
- * Woodblock with lantern yellow as its one warm ink (in place of the print's vermilion): a paint whose red and green
- * both stand above its blue prints yellow, flat and unlit (the lamp is the light), pale yellow where the paint is
- * bright. Every other paint prints as woodblock prints it.
- */
-function lampWoodblock(): Style {
-  const wb = woodblock();
-  return {
-    ...wb,
-    shade: (ctx) => {
-      // Lantern paints have red and green both 0.3 above blue; cream (0.13), the ship's deck and spars stay below 0.2.
-      const yellow = edgeOf(sub(min(ctx.base.x, ctx.base.y), ctx.base.z), 0.25, 1e-5);
-      const lantern = mix(rgb(INK.lantern), rgb(INK.lanternPale), edgeOf(luminance(ctx.base), 0.82, 1e-5));
-      return mix(wb.shade(ctx), lantern, yellow);
-    },
-  };
-}
+const victim = scaleShip.afloat(water, { at: shipAt, heading: SHIP.heading, wind: WIND });
 
 // ==== the scene ===================================================================================================
 
@@ -658,11 +666,12 @@ export default scene({
   things: [
     spire, growth,
     body, head, lens, shutters, arms, ...hair,
-    ...bells, crags, timber,
+    bells, crags, timber,
     beamCone(), litWater(), warning(),
     ...victim,
   ],
-  style: lampWoodblock(),
+  // Lantern paints have red and green both 0.3 above blue; cream (0.13) and the ship's wood (0.14) stay below 0.25.
+  style: sailInked(woodblock({ print: print.bands({ accent: { hue: "yellow", margin: 0.25, inks: [{ ink: INK.lantern, from: 0 }, { ink: INK.lanternPale, from: 0.82 }] } }) })),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     game: { kind: "perspective", eye: around(34, faceYaw - 1.3, 31, middle), target: [middle[0], 5.5, middle[2]], fovY: 0.62 },
