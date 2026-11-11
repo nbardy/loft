@@ -144,6 +144,96 @@ fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
 });
 
 /**
+ * The same closeness as `loft_contact_band` (1 at a body, 0 at `width`, below 0 beyond), measured so that a style can
+ * cut clean shapes from it. The band's ring turns by a hashed angle at every pixel and has two radii, so it is grainy
+ * (a pixel whose ring misses a thin leg reads "nothing near" beside one whose ring hits it) and it sits on two
+ * plateaus (a hit on the inner ring, a hit on the outer). Here, with four more reads near a body than the band's 17:
+ *  - the four pixels of a 2 x 2 quad turn the ring by four fixed quarter steps and share what they find (the least gap
+ *    of the four, taken with two fine derivatives): 32 directions a radius, no hash, so no grain and no holes round a
+ *    body four pixels wide or more. The value is one per quad;
+ *  - four more taps along the direction of the nearest hit, at radii that also differ by the pixel of the quad (16
+ *    radii a quad), find the body's nearest edge that way, so the gap falls smoothly as the body nears instead of
+ *    stepping from one ring to the other (the inner ring is read only where the scene's clearance says it can see
+ *    something, these only after a hit: 9 reads far from a body, 21 near one);
+ *  - the quad's one gap is then tilted across its four pixels toward that hit (a pixel nearer the body by one pixel is
+ *    nearer by one pixel's world size), so the level changes from pixel to pixel as a distance does and an edge cut
+ *    from it is antialiased like any other, not stepped in twos.
+ * Every tap is within the band's reach of the pixel, so wherever the sea's `clear` case holds this is below 0 too. It
+ * takes derivatives of values all four pixels of the quad computed: only in a draw whose case is constant on each quad
+ * (the sea's), and only with `sceneDepth`.
+ */
+const contactLevel = wgslFn<"f32">({
+  name: "loft_contact_level", ret: "f32", wgsl: /* wgsl */ `
+const LOFT_LEVEL_RING = array<vec2<f32>, 16>(${RING.map(([x, y]) => `vec2<f32>(${fl(+x.toFixed(6))}, ${fl(+y.toFixed(6))})`).join(", ")});
+/// How far the water at p is from the body point q, for the level: across the water in full; up and down, nothing for
+/// the first quarter of the width and double beyond it. A tap that lands a little way up a leg or a cliff (or down
+/// its sunk part) then reads the distance to where that body stands in the water, whichever height it landed at, so
+/// the level does not step with the taps' spacing; and a body well above the water (a belly, a raised claw) is far.
+fn loft_level_gap(q: vec3<f32>, p: vec3<f32>, width: f32) -> f32 {
+  let d = q - p;
+  let up = 2.0 * max(abs(d.y) - 0.25 * width, 0.0);
+  return sqrt(dot(d.xz, d.xz) + up * up);
+}
+@diagnostic(off, derivative_uniformity)
+fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
+  let r = clamp(width / pixel_world(p), 1.0, 40.0);
+  // Which pixel of its quad this is: 0 or 1 each way, 0..3 together.
+  let cell = floor(px) - 2.0 * floor(floor(px) * 0.5);
+  let m = cell.x + 2.0 * cell.y;
+  let turn = m * (6.2831853 / 32.0);
+  let rot = mat2x2<f32>(cos(turn), sin(turn), -sin(turn), cos(turn));
+  // Capped, so the differences below are exact enough where a tap reads the far plane.
+  var gap = min(loft_level_gap(scene_position(px), p, width), 4.0 * width);
+  var toward = vec2<f32>(0.0);
+  for (var k = 0u; k < 8u; k++) {
+    let v = rot * LOFT_LEVEL_RING[k] * r;
+    let g = loft_level_gap(scene_position(px + v), p, width);
+    if (g < gap) { gap = g; toward = v; }
+  }
+  // The inner ring is read only where it can see something: where the scene's clearance (a lower bound on the distance
+  // to any opaque pixel) is within its reach. Elsewhere every one of its taps reads the far plane, so skipping it
+  // changes nothing; most of the pixels this runs on are such, and their cost is their reads. (Skipping it as the band
+  // does, when the outer ring found nothing near, was tried: a pointed foot inside the outer ring lost its foam.)
+  if (scene_clearance(px) <= 0.55 * r + 1.0) {
+    for (var k = 8u; k < 16u; k++) {
+      let v = rot * LOFT_LEVEL_RING[k] * r;
+      let g = loft_level_gap(scene_position(px + v), p, width);
+      if (g < gap) { gap = g; toward = v; }
+    }
+  }
+  // Along the nearest hit, if a ring had one (with none there is no direction to look in).
+  if (dot(toward, toward) > 0.0) {
+    let ray = toward;
+    for (var k = 0u; k < 4u; k++) {
+      let v = ray * ((f32(k) + (m + 0.5) * 0.25) * 0.25);
+      let g = loft_level_gap(scene_position(px + v), p, width);
+      if (g < gap) { gap = g; toward = v; }
+    }
+  }
+  // The least gap of the quad, and the offset of the tap that found it. A fine derivative is (the right pixel) - (the
+  // left) for both pixels of a pair, so the other pixel's value is this one's plus or minus it: plus on the left
+  // pixel. Which pixel is the left one is read from the derivative of the parity itself, so nothing is assumed about
+  // where quads start. The offset is from its own pixel: re-based to the quad's middle here.
+  let from_mid = cell - vec2<f32>(0.5);
+  let hit = toward + from_mid;
+  let sx = select(-1.0, 1.0, (dpdxFine(cell.x) > 0.0) == (cell.x < 0.5));
+  let gx = gap + sx * dpdxFine(gap);
+  let hx = hit + sx * dpdxFine(hit);
+  let pair_gap = min(gap, gx);
+  let pair_hit = select(hit, hx, gx < gap);
+  let sy = select(-1.0, 1.0, (dpdyFine(cell.y) > 0.0) == (cell.y < 0.5));
+  let gy = pair_gap + sy * dpdyFine(pair_gap);
+  let hy = pair_hit + sy * dpdyFine(pair_hit);
+  let quad_gap = min(pair_gap, gy);
+  let quad_hit = select(pair_hit, hy, gy < pair_gap);
+  // Tilted toward the hit: this pixel's place in the quad, along the unit direction from the quad's middle to the hit.
+  let d = length(quad_hit);
+  let tilt = select(0.0, dot(from_mid, quad_hit) / max(d, 1e-6), d > 0.75);
+  return 1.0 - (quad_gap - tilt * pixel_world(p)) / width;
+}`,
+});
+
+/**
  * Foam from the contact band, 0..1, antialiased by the pixel footprint fp: full at the body, gone at the foam width;
  * the threshold wobbles slowly so the edge reads as lapping foam.
  */
@@ -348,7 +438,7 @@ export class Sea implements Chart, Drawable {
   private contactAt(fr: Fragment, c: ContactCase): Contact {
     switch (c) {
       case "clear": return { kind: "clear" };
-      case "near": return { kind: "near", band: contactBand(fr.world, fr.px, this.foam) };
+      case "near": return { kind: "near", band: contactBand(fr.world, fr.px, this.foam), level: contactLevel(fr.world, fr.px, this.foam) };
     }
   }
 
