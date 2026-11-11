@@ -285,6 +285,86 @@ PREDICTED size: 900 to 1,100 lines of Rust on wgpu, by part, against the TypeScr
 No part interprets the scene: every number a pipeline needs is in the file. The plan (about a fifth of it) is the one
 algorithm; phase 4 deletes it.
 
+## Rust loader
+
+`rust/loft-loader` (library) and its binary `loft-view`, on wgpu 30.0.1: the version the game (Keel) pins, so the
+loader can be handed the game's own `wgpu::Device`. Artefacts of commit c0959b4.
+
+### Predictions (written before any Rust, 2026-11-11)
+
+Facts read from the six built manifests before predicting: 6-11 dispatches of at most 252 workgroups; at most 5
+storage buffers in any stage (3 in the prelude's group, at most 2 in group 1); a 65,536-byte uniform (`loft_detail`);
+at most 3 bind groups; at most 8 inter-stage locations; formats `rgba8unorm` (1x and 4x), `depth32float` 4x bound as
+`texture_depth_multisampled_2d`, `r32float` bound unfilterable; overrides `INK`, `INK_BACK`, `LOFT_DETAIL_SLOT`,
+`NU`, `NV` (all with defaults). The WGSL is written as one `let` per subexpression: bracket nesting is at most 5 and
+brace nesting at most 12. It uses `fwidth` (269 times), `discard` (9), `@builtin(frag_depth)` and
+`@builtin(sample_mask)` outputs, `@interpolate(flat)`, `@diagnostic(off, derivative_uniformity)` on two entry points,
+`bitcast`, `pow` (9,854 times), runtime-indexed `const` arrays, and overrides used in runtime expressions only.
+
+1. **Lines of Rust** (`wc -l`, comments included). Library 1,050 to 1,250, against the 900 to 1,100 predicted above:
+   I classify every WebGPU enum into a loader enum of my own (`serde` names spelled out) instead of deserializing
+   wgpu-types' serde forms, because those are wgpu's serialization, not WebGPU's, and change between wgpu versions.
+
+   | Part | Lines |
+   |---|---|
+   | manifest types, serde, conversion to wgpu | 260-300 |
+   | reading the directory, refusals, the error type | 80-100 |
+   | objects at load; view-sized textures and groups | 200-240 |
+   | a frame: writes, pose pass, bounds copy and map, passes into the caller's encoder | 180-220 |
+   | inputs and params by name, frame uniform, camera matrices | 130-150 |
+   | level-of-detail plan | 170-200 |
+
+   `loft-view` (headless device, arguments, readback, PNG, timing): 250 to 350 more.
+2. **Features and limits.** None required: every number above is inside WebGPU's defaults, which are wgpu's
+   `Limits::default()` (8 storage buffers per stage, 64 KiB uniform binding: `loft_detail` sits exactly at the limit,
+   4 bind groups, 16 inter-stage variables, 65,535 workgroups per dimension). `timestamp-query` (for measuring only)
+   granted on Metal on this Apple GPU; `TIMESTAMP_QUERY_INSIDE_PASSES` not (Apple GPUs sample at stage boundaries
+   only), so GPU time is per pass, as Dawn's.
+3. **Naga against Tint.** Every module accepted unchanged (my confidence 70%). Constructs checked in naga 30.0.1's
+   source rather than from memory:
+   - Naga treats a `discard` under non-uniform control flow as making the rest of the entry point non-uniform
+     (`UniformityDisruptor::Discard`), which WGSL stopped doing when `discard` became demote-to-helper; Tint follows
+     the spec. A derivative after such a `discard` would be rejected by Naga only. None of the nine `discard`s is
+     followed by a derivative, so not triggered.
+   - Naga's WGSL parser stops at recursion depth 200; nesting here is at most 5. Not triggered.
+   - Override keys are looked up against the whole module before Naga drops what the entry point does not reach, so
+     passing the fragment's `INK` to the vertex stage too is accepted (as WebGPU requires).
+   - `@diagnostic(off, derivative_uniformity)` on a function: parsed by Naga 30.
+   - The likeliest miss, if any: abstract-number conversions in builtin calls (`pow(x, 2)` style) or an identifier
+     Naga reserves that Tint does not.
+   Differences in what is accepted are not the only differences. wgpu compiles the MSL with Metal's default options
+   (`MTLCompileOptions::new()`, so fast math on) and each pipeline stage separately (Naga clones and compacts the
+   module per stage to apply overrides); Dawn calls `setFastMathEnabled:`, I expect with NO. Bounds checks: Naga
+   `Restrict` (clamp), Tint's robustness also clamps; same values for in-range reads.
+4. **Pixels.** Same Metal device, same rasteriser and 4x sample pattern; only the shader compilers differ. Per frame
+   at 1280x800 (1,024,000 pixels), pixels whose largest channel differs by more than 8/255: 0 to 500 (under 0.05%),
+   at silhouettes and ink edges (a vertex moved by an ulp flips one of four samples) and as isolated pixels where a
+   hash of `floor(p)` lands on a lattice boundary; no whole region and no colour shift. Differences of 1 to 2/255
+   spread over shaded surfaces if the fast-math settings differ (`pow`, `atan2`, `fract` in fast and precise forms):
+   a few percent of pixels. A level of detail chosen differently (bounds an ulp apart at a threshold) would show as a
+   whole instance redrawn at another density; I expect none, and any is a bug to find.
+5. **Frame time.** GPU: the same Metal work through different MSL, so the Rust frame's GPU time within 25% of
+   Dawn's, either side; pose stages alone (the `pose_time` method: 40 repeats in one timed pass, least of 8 rounds)
+   likewise within 25%. Whole frame at 1280x800 on the game view: 2 to 5 ms per boss, 1 to 3 ms for grab, with the
+   load swinging it 2x. CPU per frame in the loader (writes, encoding, submits, the plan; not the GPU wait): 0.15 to
+   0.5 ms, against 1 to 4 ms for the TypeScript host's `pose + encode` (every call crosses bun's FFI, and its error
+   scopes round-trip), so 3 to 10 times less. Load (Naga, then Metal compiling each stage): 1 to 3 times Dawn's.
+
+Wrong if: Naga rejects a module or a pipeline; any frame has a whole-region difference that is not traced to a cause;
+more than 0.05% of pixels differ by over 8/255; the library falls outside 1,050 to 1,250 lines; CPU per frame over
+0.5 ms on a quiet round.
+
+Format defects visible before building (to be confirmed by writing the loader):
+- `time` is filled into whichever input is *named* `time`: a rule keyed on a string. The `inputs` write should carry
+  the slot (`{ kind: "inputs", buffer, timeSlot? }`).
+- `Detail.grid.bound.buffer` is a buffer *name*, the one reference in the manifest that is not an index (the loader
+  never needs it: `frame.bounds.grids` carries the copies). It should be an `Id`, or leave the plan's data.
+- Whether a bind group is created at load or per view size is inferred by scanning its entries for a texture.
+- The frame uniform is computed from Loft's camera model with near and far fixed at distance / 100 and x 100: a game
+  with its own camera, near and far, and depth buffer cannot hand its matrices in.
+- The output is `rgba8unorm` and every pass clears or overwrites it (the scene clear colour, the sky, the post pass):
+  the format assumes Loft owns the whole frame.
+
 ## Phase 3: textures and layers
 
 A texture is a table with two or three indices and mip levels. It is written as a function and baked by the
