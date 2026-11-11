@@ -19,7 +19,7 @@ const f2 = (x: number) => x.toFixed(3).padStart(8);
 
 export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promise<void> {
   const { scene } = await chosenAt(cmd.path, cmd.variant);
-  const styledScene = (await styled(scene, cmd.style)) as Scene;
+  const styledScene = (await styled(scene, cmd.style, cmd.light)) as Scene;
   const compiled = compileScene(cmd.outline === "scene" ? styledScene : { ...styledScene, outline: cmd.outline });
   const a = compiled.artefact;
   const view = { camera: resolveCamera(a, cmd.view), ...cmd.size, time: cmd.time };

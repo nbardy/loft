@@ -1427,3 +1427,177 @@ Weak or unfinished:
   own; the two should be unified.
 - The taunt's mie (the triumph with the eyes crossed, on `rig.dance.wave`) was looked at in the lineup's stills only.
 
+
+
+## Lighting and shading (2026-11-12)
+
+The owner, of the bruiser: "I like the cel shaded style, but it feels like it still might need some lighting and
+shading; things seem a little too flat. I'm not sure. Perhaps make toggleable and explore all that." Then, of the nine
+painted references (`shading/overview.webp`): "all those lighting options are amazing, let's leave those as a library."
+So this round builds shading treatments that switch on and off and combine, and a library of named recipes over them.
+No scene's default picture changes.
+
+### Where today's picture is flat, and why (from `out/shade/now.webp`, written before any reference was opened)
+
+The one number that explains it: from the `game` camera the sun (0.148, 0.791, 0.593) is 23.3 degrees off the view
+axis. The camera looks down the light. With the terminator at N.L = 0, the shadow side of a ball covers 4% of its
+disc, of a level limb 0 to 5%, of an upright one 8% (`.scratch/theory.ts`: the share of the visible section in
+shadow). From `three` (60 degrees off) the same rule gives 25%, from `face` 18%, from `back` 15%. So the print has
+two tones in the side views and one in the game.
+
+- `game`: the great claw, its cream fingers and the head are three flat shapes with one key line; nothing lies under
+  the claw, so it reads as a cut-out laid on the body. Head, carapace and claw arm are one brick area. The legs are
+  sticks: none shades another, none sits in the water except by its foam. The cliff meets the shell with no shadow,
+  so the island floats. The island's top is one green.
+- `three`: the shadow side exists (the claw's lower edge, the legs' undersides) and is the best of today's shading.
+  Parts still do not shade each other: the arm on the head, the head on the mouth.
+- `face`: the brows do not shade the eyes; the head is one red with painted marks.
+- `back`: the claw is wholly dark (it faces away), the trees stand on the grass with no shadow, the shell's rim is flat.
+
+### What a printer does to turn a form, and what is ours
+
+Inherited from the print: a second block overprinted for the shadow tone (one ink over every colour, so each ink has
+its own shadow colour for free); bokashi, a graded wipe of that block, always along one direction of the picture (the
+foot of a hill, the top of the sky); line (the engraver's cross-contour line that swells as the form turns from the
+light); paper left unprinted for a light, and the uninked groove beside a line (the white-line cut). Inherited from
+cel animation: two and three tones with hard edges, the terminator placed for the form and not for the physics, a
+drop shadow under whatever overlaps.
+
+Ours:
+
+1. **The shadow block is a channel.** Under a recipe a body prints its lit inks, and the picture's alpha (the
+   style's `mark`, which no woodblock pass reads today) carries the tone: 1 unprinted, falling to the shadow's depth
+   where the block prints. Core shadow, contact band, bokashi and hatching each lower it in the body's own shader;
+   cast shadows lower it afterwards by blending with `min` (a union: two shadows over each other are one shadow, as on
+   one block); then one full-screen draw pulls the block through fixed-function blending
+   (`dst * dstAlpha + ink * (1 - dstAlpha)`), per sample of the multisampled picture, before the water is drawn.
+   Nothing darkens twice and no pass reads the picture back.
+2. **A terminator measured round the section.** A bare threshold N.L < t makes a limb's shadow depend on how the limb
+   points: at t = 0.35 a far leg coming down to the water (it points 8 degrees off the sun's own line, |L perp| = 0.15)
+   is 100% dark while the near legs are 15%, and the share pulses as the legs walk. The painter's shadows follow each
+   form's long axis whatever its direction. Rule: shadow where N.L < t |L perp|, where L perp is the sun's part across
+   the surface's long direction (dP/dm, from the screen derivatives of the world point and the body coordinate). On a
+   shaft this is "the same share of every section is in shadow", on an end cap it is still N.L. Predicted at t = 0.4:
+   every leg 8 to 17% in the game, the far leg no longer black.
+3. **Cast shadows from the capsules the water shadows already use**, drawn as boxes over the bodies (below).
+
+### Cast shadows: the three ways, and the choice
+
+| Way | What it shadows | Cost predicted | Stable | Host and format |
+|---|---|---|---|---|
+| A shadow map from the sun | everything, from every camera | the opaque pass again (0.3 to 0.5 ms: its cost is vertex work) and as many pipelines again | texel stairs of 0.7 px in the game, 2.6 px in `face`, moving with every moving caster | a pass, a texture, a second frame uniform: a format version and a loader change |
+| Screen space, marching the depth | what the camera sees in front | one post pass, 16 taps a body pixel | one decision per pixel from a single-sample depth: the ragged edge the key line pass was removed for (2026-11-11) | none |
+| Analytic capsules, one box per segment | every thing with a skeleton (legs, claws, carapace, reef, brows, eyes, antennae, the ships' spars): 518 segments on the bruiser | the water shadows' cost again, 0.13 ms measured for them, plus a full-screen pull: 0.15 to 0.25 ms | exact: a closed form per pixel, antialiased by the pixel's own size; no texels | one more blend state (`min`); the loader already reads every blend operation: no format change |
+
+Chosen: capsules. A print's shadow is a simple shape; a capsule's is one, and it cannot crawl. What it gives up: the
+head, the island's own outline (the reef's capsule stands in for it), the trees and the sails cast nothing.
+
+From the game camera a cast shadow is a drop shadow: a receiver t behind its caster along the sun shows the shadow
+0.40 t to the lower right on screen (32 degrees below level). The claw 2 above the shell: 27 px. A leg 0.5 over
+another: 7 px. A brow 0.15 over an eye: 2 px in the game, 10 px in `face`.
+
+### Predictions (written before the first render of any treatment)
+
+Sizes are at 1280x800 from `game`, where a pixel at the crab is 0.029 units.
+
+1. **Core, terminator at 0.4 of the section.** Shadow share of the visible form in the game: the shell and claw palm
+   about 22% (a crescent on the lower right, away from the sun on the upper left), a level leg 8 to 17%, the far legs
+   the same as the near ones. In `three` about half of each form, in `face` 40%. Failure to look for: half-dark
+   forms in `three` reading as night. A plain sun threshold at the same number will show the far legs all dark.
+2. **Highlight** (N.H above 0.974, a hard shape in a lighter ink): 5% of a ball's disc; a blob about 60 px across on
+   the shell if the island leaves it room, 35 px on the claw palm, a 5 px stripe along each leg. It sits just up and
+   left of each form's middle (H is 11.6 degrees off the view). Failure to look for: plastic. If the leg stripes are
+   busy at game size the size threshold has to scale with the form.
+3. **Cast.** The claw's shadow on the head and shell is the largest single change in the game picture: a shape 20 to
+   30 px wide to the claw's lower right. Legs on legs 5 to 8 px. The carapace's capsule puts the upper legs in shadow
+   where they leave the body. In `face` the brows put a band about 10 px deep on the top of each eye. Holds still by
+   construction; in the sun swing the shadows move only as the sun does. Unknown: whether the capsules' radii match
+   the drawn sections well enough at the claw (a palm is wider than it is thick).
+4. **Contact.** A band where a body stands in the water, 0.2 units high: 4 to 5 px on a leg in the game. Predicted
+   weak alone at that width; the cast shadows do the work of "parts sit on each other" because the game camera looks
+   down the sun.
+5. **Bokashi.** A wash graded by height over the water (full at the waterline, gone 2.2 up): the feet of the legs,
+   the shell's rim and the cliff darken toward the water; the raised claw is untouched. Along one direction of the
+   picture, so it cannot band or mottle a form.
+6. **Hatching.** Lines across each limb (constant arc length along the spine, 0.22 apart: 7.5 px in the game), their
+   weight swelling from nothing at the terminator to solid in the deep shadow. At 7.5 px a period it is drawable in the
+   game; under about 4 px a period the lines are replaced by their share of tone, as the sea's lines are.
+7. **Rim.** A cream edge where the surface turns from the eye on the sunward side. Its width follows curvature, so
+   flat grazing faces will take a wide band: predicted the weakest, and only readable over a body printed darker.
+
+Cost, in a normal frame of 2.4 ms as measured today under load (1.2 in the fast clock state): each of core, highlight,
+contact, bokashi, hatching and rim under one tick of the timer (0.065 ms), unresolved; cast 0.15 to 0.25 ms. Budget
+for the recommended mix: 0.3 ms.
+
+### Taken over (2026-11-12, second engineer): predictions for the video's look, the palette and the sunset
+
+Written before the first render of any of them. The earlier stills of `hatched` (black lines 0.2 apart, swelling from
+0.5 of N.K above the terminator) showed what to change: black lines over cream read as a zebra; the hatched zone
+reached most of every form; from close the lines were few and fat (the octaves only merged lines, never split them).
+
+**B. `hatched`, rebuilt.** Lines in each colour's own shade (a block of 55% near-black brown at 60% value: brick lines
+(0.26, 0.08, 0.06), cream lines a warm grey (0.29, 0.25, 0.22)); the zone from 0.14 of N.K above a section terminator at
+0.2 (offLens 45) to full weight 0.55 below; weight 0.62 of a period at most; octaves both ways so the period on screen
+is always 3.4 to 6.8 px (the reference's lines are about 4 px apart); each line's end moved by a hash of its index
+(ragged 0.1 of N.K). Predicted, from `game` at 1280x800 (0.029 units a pixel, so level -1.02: about 3.5 px a
+period): the hatching covers about a quarter of each form's disc on its lower right, the lines one to two pixels wide,
+reading at true size as a darker textured tone more than as lines; the cream claw tips keep their lit cream with grey
+hatching only along their lower edge. Close (the lineup, the `face` view) the same 3.4 to 6.8 px period: an engraving,
+not stripes. Failure to look for: crawling where a level crossfades (lines are a subset of the finer level's, so none
+should move, only fade), and the ragged ends reading as noise at game size.
+
+**C. The reference palette** (`referencePalette`; with `hatched` it is `engraving`). The crab's lit brick (0.66, 0.22,
+0.13) becomes (0.84, 0.26, 0.13) (the references sample 0.81 to 0.87, 0.23 to 0.28, 0.12 to 0.15); blotches at 0.74 of
+that, (0.62, 0.19, 0.10) against the reference's (0.58, 0.18, 0.11), over about a quarter of the red, 0.3 to 0.6
+units across (10 to 20 px from `game`, several times that in the lineup); the key line 0.07 wide (from 0.05) and up to
+0.05 more inside the hull on the shadow side; the sea one deep ink (0.08, 0.17, 0.30), troughs (0.055, 0.12, 0.24),
+against the reference's (0.07 to 0.11, 0.17 to 0.22, 0.28 to 0.32), lines cream and a third of today's width. Unknown:
+the noise's spread, so the share mottled could be 10% or 40%; the darker dark brick and coral are left as painted.
+
+**D. `sunset`.** The sun low behind the crabs (`--input sun=-0.95,0.3,0.05` on the lineup, whose camera looks down -x).
+The forms are turned by a light fixed 35 degrees left of and 30 above the lens (hatched as in B), so every face keeps
+its lit ink and only its lower right is hatched; the block is violet and lifted (50% of (0.3, 0.12, 0.32) at 0.72: brick
+lines (0.41, 0.14, 0.16), never black); a gold rim (1, 0.7, 0.32) 0.09 wide on the silhouette toward the sun, which from
+the lineup is the crabs' tops and far sides. Failure to look for: the rim lost where the sun is straight behind (it
+lights only edges that face it by 0.12 of N.L), and the fronts reading as noon because nothing darkens them.
+
+Cost (the single crab from `game`): `hatched`, `referencePalette` and `engraving` add one noise3 pair and a few
+derivatives a body fragment: under a tick (0.065 ms), unresolved. On the four crabs at 1280x800 with about four times
+the body pixels: `engraving` 0.1 to 0.2 ms.
+
+### Scored (the same day, on main d9e2ed6 merged in)
+
+Pictures: `out/shade/sheet_looks.webp` (every look on the bruiser from `game`, true size and doubled, and `face`, each
+beside its reference), `sheet_lineup.webp` (the lineup at t = 2.5 and 18 in the print as it is, `hatched`, `engraving`,
+`engravingSunset`), `sheet_video_look.webp` (`engraving` beside `lineup_wide` and `stalk_hybrid`).
+
+**B, `hatched`.** Missed on the first render, in the direction of too little: with the section terminator at 0.2 and the
+lines starting 0.14 above it, the hatched zone was a thin crescent (about a tenth of a form, not a quarter) and from
+`game` the crab looked unlit. My quarter came from the earlier core prediction at 0.4, which I carried to a lower
+threshold without recomputing. Fixed by the terminator at 0.3 and a key 60 degrees off the lens: from `game` the claw's
+lower half is now engraved as in `shade_hatched`. Second miss: the octave level was taken from the world size of a pixel,
+and on the head in `face`, whose length runs toward the camera, the rings crowded to two pixels apart; the level is now
+measured on the lines' own screen rate. Third: rings seen end on (an eyelid) printed a bullseye; they are now left out
+within about 20 degrees. The ink in each colour's own shade held: no zebra on the cream. At the lineup's present
+camera (distant) the hatching is a darker tone with texture, as predicted for small forms. Not measured: crawl in
+motion beyond looking at the 22 s clip (`clips/crab_hatched_22s.mp4`); I saw no swimming lines.
+
+**C, the palette.** The colours land where they were set (they are set from the samples). Mottling missed: size 0.55
+and cut 0.18 covered about 40% of the red in large merged clouds; at 0.42 and 0.3 it is sparse, irregular blotches,
+closer to `stalk_hybrid`'s, though theirs are rounder and denser in small clusters. The param `woodblock.outline` could
+not take a second default in one process (two styles built by `--light` collided), so the heavier line is a factor on
+the param. The deep sea reads as the reference's, with thin cream lines; its far haze was first a pale grey band and is
+now a dark blue. What the references still have that ours does not: a hand-cut key line that varies along each stroke
+(ours swells only by light), blotches with small satellites, heavier brows and pupils, a coarser paper.
+
+**D, `sunset`.** The fronts stay at their lit ink and the gold rim reads on the sunward edges, as predicted. The failure
+I named came true: the first render looked like noon with a gold outline. The undersides are now washed into the violet
+block (a bokashi from the form's middle down), which gives the backlit read without blacking a face.
+
+**Where the terminator should sit.** Not at N.L = 0 of the sun. From the game camera the sun is 23 degrees off the
+view, so a sun terminator leaves a ball 4% in shadow, and from above a level limb's terminator runs along its top or
+bottom edge depending on how it points, not along its length. The painter's shadows run along each form's long axis on
+the side away from a light kept well off the lens. So: the light the forms are turned by is the sun swung 45 to 60
+degrees off the lens (`offLens`), and the terminator is measured round the section (`section`), N.K < at |K across the
+form|, so every limb shows the same share in shadow, at 0.3 to 0.4 of the section. Cast shadows still fall along the
+true sun.

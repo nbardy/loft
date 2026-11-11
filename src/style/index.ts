@@ -2,7 +2,7 @@
 // touches the scene: the things, the sea and the cameras stay as written, only the program that lights and paints
 // them changes.
 
-import type { Scene } from "../scene.ts";
+import { restyled, type Scene } from "../scene.ts";
 import { toon, type Style } from "../style.ts";
 import { biolume } from "./biolume.ts";
 import { papercraft } from "./papercraft.ts";
@@ -30,9 +30,19 @@ export function styleNamed(name: string): Style {
 
 /** The same scene drawn in another style. */
 export function withStyle(scene: Scene, style: Style): Scene {
-  return { ...scene, style };
+  return restyled(scene, style);
 }
 
-export { woodblock, print, foam, marksAs, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
+/** The same scene, its style in one of that style's named lightings (`Style.lights`); an unknown name throws, listing them. */
+export function withLight(scene: Scene, name: string): Scene {
+  const lights = scene.style.lights;
+  if (lights === undefined) throw new Error(`the style "${scene.style.name}" has one lighting (no named ones to choose "${name}" from)`);
+  const made = lights[name];
+  if (made === undefined) throw new Error(`the style "${scene.style.name}" has no lighting "${name}" (lightings: ${Object.keys(lights).join(", ")})`);
+  return restyled(scene, made());
+}
+
+export { light, LIGHT, type Block, type Bokashi, type Cast, type Core, type Hatch, type Highlight, type Key, type LightName, type LightRecipe, type Overlap, type Rim, type Terminator, type Waterline } from "./light.ts";
+export { woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";
 export { papercraft } from "./papercraft.ts";

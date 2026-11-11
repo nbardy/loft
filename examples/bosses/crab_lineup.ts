@@ -9,8 +9,8 @@
 // which the deliverables read: `bun tools/lineup_deliver.ts`). The scene's cameras are those shots' first frames.
 
 import type { Camera } from "../../src/artefact.ts";
-import { lineup, scene } from "../../src/index.ts";
-import { design, styleFor, SUN, WATER } from "./reefback_titan.ts";
+import { lineup, movable, scene } from "../../src/index.ts";
+import { design, LOOK, styleFor, SUN, WATER } from "./reefback_titan.ts";
 import { AUDIENCE, BAR, BEAT, beat, FORMATS, PERIOD, shotAt, standing } from "./lineup_shots.ts";
 import { S } from "./titan/numbers.ts";
 import type { Staging } from "./titan/rig.ts";
@@ -109,7 +109,7 @@ const SUNSET = {
  * (a hatched light, a reference palette, a sunset recipe) arrive as named options of the style; each becomes a case
  * here, and an unknown name is refused (not drawn as the default).
  */
-export const LOOKS = ["default"] as const;
+export const LOOKS = ["default", "hatched", "cel", "engraving", "engravingSunset"] as const;
 export type Look = (typeof LOOKS)[number];
 function lookOf(name: string): Look {
   const l = LOOKS.find((x) => x === name);
@@ -119,6 +119,17 @@ function lookOf(name: string): Look {
 function styleOf(look: Look) {
   switch (look) {
     case "default": return styleFor(S, WATER.base, SUNSET);
+    case "hatched": return styleFor(S, WATER.base, SUNSET, LOOK.hatched);
+    case "cel": return styleFor(S, WATER.base, SUNSET, LOOK.cel);
+    case "engraving": return styleFor(S, WATER.base, SUNSET, LOOK.engraving);
+    case "engravingSunset": return styleFor(S, WATER.base, SUNSET, LOOK.engravingSunset);
+  }
+}
+/** The sun of a look: the sunset recipe is lit from low behind the line (docs/lighting.md); the others by the crab's own sun. */
+function sunOf(look: Look) {
+  switch (look) {
+    case "default": case "hatched": case "cel": case "engraving": return SUN;
+    case "engravingSunset": return movable([-0.95, 0.3, 0.05]);
   }
 }
 
@@ -137,7 +148,7 @@ export function lineupScene(o: { readonly line: readonly string[]; readonly look
     water: { swell: [{ direction: [1, 0.3], length: 13, height: 0.2, speed: 13 / 12 }, { direction: [-0.3, 1], length: 6, height: 0.07, speed: 6 / 8, phase: 1.3 }], foam: 0.85 },
     loop: { kind: "every", seconds: PERIOD },
   });
-  return { scene: scene({ sea: line.sea, things: line.things, style: styleOf(lookOf(o.look)), sun: SUN, cameras, period: PERIOD }), checks: line.checks, members: line.members };
+  return { scene: scene({ sea: line.sea, things: line.things, style: styleOf(lookOf(o.look)), sun: sunOf(lookOf(o.look)), cameras, period: PERIOD }), checks: line.checks, members: line.members };
 }
 
 const built = lineupScene({ line: LINE, look: "default" });

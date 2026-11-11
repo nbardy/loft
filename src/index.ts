@@ -42,7 +42,8 @@ export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from ".
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, releasesAt, throwLands, fliesClear, letsGoClean, shoves, frontFirst, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
 export { expressionsRead, spansOnScreen, staysInView, limbsReach, type Mark, type Reaching } from "./check.ts";
-export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, foam, marksAs, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
+export { movable, type Sun } from "./sun.ts";
+export { STYLES, STYLE_NAMES, styleNamed, withStyle, withLight, light, LIGHT, type LightName, type LightRecipe, woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { struck, holdsStill, StruckError, type Struck, type StruckSpec } from "./geom/struck.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";

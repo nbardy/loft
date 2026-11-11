@@ -15,6 +15,7 @@ import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
 import type { OutlineMethod } from "../scene.ts";
+import type { Sun } from "../sun.ts";
 import type { Slots } from "./bind.ts";
 
 /** What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). */
@@ -22,13 +23,14 @@ export type TableRef = { readonly name: string; readonly wgsl: string };
 
 /**
  * When a draw runs. Opaque phases run first, then transparent ones; within a phase, in the order drawables emit.
- * background: behind everything, no depth (the sky). opaque: solid geometry. water: the sea surface. on-water: layers
+ * background: behind everything, no depth (the sky). opaque: solid geometry. on-bodies: what is laid on the opaque
+ * scene before the water covers it (a style's shadow block, src/draw/light.ts). water: the sea surface. on-water: layers
  * laid on the water after it (shadows, markers, wakes). transparent: soft things over everything (clouds, glows).
  */
-export type Phase = "background" | "opaque" | "water" | "on-water" | "transparent";
-export const PHASES: readonly Phase[] = ["background", "opaque", "water", "on-water", "transparent"];
+export type Phase = "background" | "opaque" | "on-bodies" | "water" | "on-water" | "transparent";
+export const PHASES: readonly Phase[] = ["background", "opaque", "on-bodies", "water", "on-water", "transparent"];
 export const PASS_OF: Readonly<Record<Phase, Draw["pass"]>> = {
-  background: "opaque", opaque: "opaque", water: "transparent", "on-water": "transparent", transparent: "transparent",
+  background: "opaque", opaque: "opaque", "on-bodies": "transparent", water: "transparent", "on-water": "transparent", transparent: "transparent",
 };
 
 /**
@@ -69,8 +71,10 @@ export interface CompileContext {
   readonly slots: Slots;
   readonly style: Style;
   readonly sea: Sea;
-  /** Unit direction toward the sun. */
+  /** Unit direction toward the sun as the scene states it (a movable sun's default). */
   readonly sun: V3;
+  /** The sun as shaders read it: that literal, or a host input (src/sun.ts). */
+  readonly sunAt: Sun;
   /** Every thing in the scene (for drawables derived from others, such as shadows). */
   readonly things: readonly Drawable[];
   /** Declare a per-frame table that raw WGSL reads (tables that expressions `fetch` are found without this). */

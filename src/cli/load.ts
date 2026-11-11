@@ -2,7 +2,7 @@
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
 import type { Artefact } from "../artefact.ts";
 import type { GpuHost } from "../host/host.ts";
-import type { SceneSource, StyleChoice } from "./args.ts";
+import type { LightChoice, SceneSource, StyleChoice } from "./args.ts";
 
 async function importFrom<T>(rel: string): Promise<T> {
   return (await import(new URL(rel, import.meta.url).href)) as T;
@@ -25,19 +25,36 @@ export async function loadArtefact(source: SceneSource): Promise<Artefact> {
       const { chosenAt } = await import("./variant.ts");
       const { scene } = await chosenAt(source.path, source.variant);
       const index = await importFrom<Record<string, unknown>>("../index.ts");
-      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style));
+      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style, source.light));
     }
   }
 }
 
-/** The scene in the chosen style (`--style`): its own, or the named one swapped in without touching the scene. */
-export async function styled(scene: unknown, style: StyleChoice): Promise<unknown> {
+/**
+ * The scene in the chosen style (`--style`: its own, or the named one swapped in without touching the scene), lit as
+ * chosen (`--light`: as that style is, or one of its named lightings).
+ */
+export async function styled(scene: unknown, style: StyleChoice, light: LightChoice): Promise<unknown> {
+  return relit(await restyle(scene, style), light);
+}
+
+async function restyle(scene: unknown, style: StyleChoice): Promise<unknown> {
   switch (style.kind) {
     case "scene": return scene;
     case "named": {
       const styles = await importFrom<Record<string, unknown>>("../style/index.ts");
       const named = need<(n: string) => unknown>(styles, "styleNamed", "src/style/index.ts")(style.name);
       return need<(s: unknown, st: unknown) => unknown>(styles, "withStyle", "src/style/index.ts")(scene, named);
+    }
+  }
+}
+
+async function relit(scene: unknown, light: LightChoice): Promise<unknown> {
+  switch (light.kind) {
+    case "scene": return scene;
+    case "named": {
+      const styles = await importFrom<Record<string, unknown>>("../style/index.ts");
+      return need<(s: unknown, n: string) => unknown>(styles, "withLight", "src/style/index.ts")(scene, light.name);
     }
   }
 }

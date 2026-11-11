@@ -4,15 +4,19 @@
 import { lift, variable } from "../expr.ts";
 import type { Sea } from "../geom/sea.ts";
 import { shadeVariables, type Style } from "../style.ts";
+import { sunDir, type Sun } from "../sun.ts";
 import { emitFn, type Slots } from "./bind.ts";
 
 export const lit = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 export const vec3Lit = (v: readonly number[]): string => `vec3<f32>(${v.map(lit).join(", ")})`;
 
 /** The style's and the sea's functions. Emitted once, before the drawables' shared code is collected. */
-export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [number, number, number]): string {
+export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [number, number, number], at: Sun): string {
   const c = <T extends "f32" | "vec3">(name: string, ty: T) => variable(`c_${name}`, ty);
-  const shadeCtx = shadeVariables(sun);
+  const shadeCtx = shadeVariables(sunDir(at));
+  // A style that prints its shadow as a block afterwards (`Style.block`) gives the bodies its colour before the block;
+  // `style.shade` stays the whole colour for whatever shades a fragment on its own (a smear).
+  const body = style.block === undefined ? style.shade(shadeCtx) : style.block.body(shadeCtx);
   const shadeArgs = [["c_base", "vec3"], ["c_normal", "vec3"], ["c_view", "vec3"], ["c_world", "vec3"], ["c_depth", "f32"], ["c_uv", "vec2"], ["c_anchor", "vec3"], ["c_id", "f32"]] as const;
   const layerCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), amount: c("amount", "f32") };
   const layerArgs = [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_amount", "f32"]] as const;
@@ -21,11 +25,11 @@ export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [n
     `const SUN: vec3<f32> = ${vec3Lit(sun)};`,
     emitFn(slots, "sea_height", [["xz", "vec2"]], "f32", [sea.height(xz)], (v) => v[0]),
     emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [sea.gradient(xz)], (v) => v[0]),
-    emitFn(slots, "shade", shadeArgs, "vec3<f32>", [style.shade(shadeCtx)], (v) => v[0]),
+    emitFn(slots, "shade", shadeArgs, "vec3<f32>", [body], (v) => v[0]),
     emitFn(slots, "ink", shadeArgs, "vec3<f32>", [style.ink(shadeCtx)], (v) => v[0]),
     emitFn(slots, "mark", shadeArgs, "f32", [style.mark(shadeCtx)], (v) => v[0]),
     emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0]),
-    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sun) })], (v) => v[0]),
+    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)) })], (v) => v[0]),
     emitFn(slots, "outline_world", [], "f32", [style.outline], (v) => v[0]),
   ].join("\n");
 }

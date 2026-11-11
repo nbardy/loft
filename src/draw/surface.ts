@@ -3,7 +3,7 @@
 // of a set of `Points`; the fragment stage evaluates the look per pixel. The surface coordinates (u, v) reach the
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
-import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type LibFn , scopedName } from "../expr.ts";
+import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
@@ -13,6 +13,7 @@ import type { Chart, F, P3, Paint, Points, Posed, Poses, Skeleton, Surface } fro
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { fwidth } from "../lib/wgsl.ts";
+import { sunDir } from "../sun.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -35,7 +36,8 @@ export type Fragment = {
   readonly u: F;
   readonly v: F;
   readonly style: Style;
-  readonly sun: V3;
+  /** Unit direction toward the sun: a literal, or an expression when the scene's sun is a host input. */
+  readonly sun: In<"vec3">;
 };
 
 /** Ink: the surface pushed out along its normal and drawn back faces only (`hull`), ink along its v = 1 edge (`border`, for sheets), or none. */
@@ -343,7 +345,7 @@ const GLAZED_CALL = "(in.world, in.clip.xy, in.uv.x, in.uv.y)";
 /** The fragment stage of a glazed surface: its colour function(s), and `fs`. */
 function glazedColour(ctx: CompileContext, name: string, colour: GlazedColour): Pick<Frag, "fns" | "main"> {
   const W = variable("f_world", "vec3"), PX = variable("f_px", "vec2");
-  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: ctx.sun };
+  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt) };
   const fn = (fname: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name: fname, args: GLAZED_ARGS, out: root.ty === "f32" ? "f32" : "vec4<f32>", roots: [root], ret: (o) => o[0]! });
   switch (colour.kind) {
     case "one": return {
