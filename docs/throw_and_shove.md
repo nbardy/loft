@@ -420,3 +420,75 @@ With these defaults the base crab's proof frames (`tools/files_proof.ts --scene 
 Added to what is wrong or unfinished: the thrown ship's landing is outside the `game` frame; the follow-through's
 reach is not measured by any check (`gripReaches` ends at the release), and with the harder whip the grip's middle
 goes to about 4.5 of the arm's 4.9; the second boat's mast now shows in the bottom right corner of the `face` camera.
+
+## The ride (2026-11-11, third pass): predicted before the code
+
+The owner's words again: "the water slam to make another boat get forced back." 1.8 boat lengths of drift is a nudge.
+The rule that limited it (a thing cannot be pushed faster than the wave that pushes it) is kept and used: a boat
+caught by a steep front is carried with the front, at the wave's speed, for as long as the front is steep enough to
+hold it; then it is dropped and coasts.
+
+**The model.** The crest height falls as `a(r) = H sqrt(R / r)` (as before). The front holds a floating thing while
+its crest is at least a holding height `a_h`, so the ride ends at
+
+```
+r_drop = min( R (H / a_h)^2 ,  0.75 reach )
+```
+
+(the second term: the wave begins to die there, and what is dying holds nothing). The front is a bore, not a ripple:
+a front of height a on depth d runs at `sqrt(g (d + a))` to first order (inherited), faster the taller it is. The
+model keeps one speed, and takes the slowest the front has while it carries anything, the speed at the holding
+height:
+
+```
+c = sqrt(g (d + a_h))
+```
+
+so a carried thing is never moved faster than the real front at any radius of its ride (nearer the slam the true
+front is faster, up to sqrt(g (d + H)) at the disc's edge, and the model does not say so: arrival times near the disc
+are a little late). The thing is not taken by the front's leading edge, where the water has not yet risen, but by its
+face: a fixed lag `face W / c` after the edge arrives (face = 0.06 of the pulse: the boat's middle sits 0.36 behind
+the edge, its inward end near the crest). Then:
+
+```
+before the face arrives          at rest (it rises as the edge passes under it: the sea's height, not this)
+riding                           r(tau) = r0 + c (tau - tau_face)          while r < r_drop
+dropped                          r = r_drop + c tau_d (1 - exp(-(tau - tau_drop) / tau_d))
+```
+
+A thing beyond `r_drop` is not carried: it is given `c a(r) / a_h` (less than c) and coasts, so the shove is
+continuous in the place.
+
+**The contract a game integrates.** It reads `arrival(place)` (the edge), `speed` (c), `lag` (seconds from the edge to
+the face), `holds(place)` (the crest there is at least the holding height) and `lifts(place, t)`. Its rule: when the
+face reaches its boat and `holds` is true there, the boat is the front's: it moves outward at `speed`; when `holds`
+turns false at the boat's own place, it is let go with that velocity and the game's own drag has it. Because a
+carried boat moves exactly with the front, sampling the field at the boat's moving place and at its starting place
+give the same motion: the stand-in (`pushed`) is that rule solved in closed form with a linear drag. `shoves` checks
+the stand-in against the readouts (it moves at `speed`, it stays on the face, it is dropped where `holds` ends) and
+`frontFirst` that nothing moves before the edge and nothing is carried before the face.
+
+**Defaults and predictions** (g = 5, depth 1.7; H = 1.0, a_h = 0.46, W = 6, reach 22, coast drag 1.6 s; the boat
+2.0 beyond the disc's edge on bearing -1.5, bow toward the slam so that it is driven back stern first):
+
+| Quantity | Base (R = 3.4) | Islander (R = 4.4) |
+|---|---|---|
+| front speed c | 3.29 | 3.29 |
+| boat's start | r0 = 5.4, at (9.98, 0.21) | r0 = 6.4 |
+| edge arrives; face takes it | 0.61 s; 0.72 s after the slam (t = 12.72) | 0.61; 0.72 |
+| ride ends at | r_drop = 16.07 (3.25 s of ride, t = 15.97) | 16.5, the wave's dying (3.07 s) |
+| ride distance | 10.67 | 10.10 |
+| coast | 5.26 | 5.26 |
+| final offset | 15.93: 4.2 boat lengths (15.8 by the loop's seam) | 15.36: 4.0 |
+| in the `game` frame (1280 x 800) | from (872, 503) to about (1207, 277): 404 px, in frame | to about (1215, 272) |
+| crest under it | 0.79 at the start of the ride, 0.46 at the drop | 0.83, 0.52 |
+| attitude | bow up about 15 degrees on the face from the sea alone, more in the first second (a pitch kick the stand-in adds); it slews about 50 degrees as it coasts | |
+
+**The grip turns into the throw.** The palm did not turn, so the ship left 71 degrees off the claw's axis and the tumble
+began at full rate from nothing. Angular velocity is now continuous too: over the stroke the hand turns the ship
+about one axis (keel x release velocity) with uniform angular acceleration, to exactly the rate of the tumble, which
+then carries on unchanged through the flight (a free body). For N whole turns in a flight of T after a stroke of
+sigma the hand's turn is `pi N sigma / T`: with N = 2, sigma = 0.4, T = 3.2 that is 45 degrees of the 71, and the
+release spin is 3.93 rad/s. A full 71 needs N = 3.2 or a wrist 6.2 from the shoulder (the arm spans 4.9). Predicted:
+the wrist at the release is 4.3 from the shoulder; `gripReaches` passes on the base; the hull still meets the port
+finger after the release, by less than before (0.1 to 0.3 deep for under 0.2 s), which a new check measures.
