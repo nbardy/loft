@@ -4,7 +4,7 @@
 // legs raise the body), and a `draw` from the rig. The claws also *offer* the rig two measurements before the rig is
 // built (the Grab places the ship by them), because the attacks' geometry depends on the claws' shape.
 
-import type { Check, Drawable, Measured, Placer, Strand, Strike } from "../../../src/index.ts";
+import type { Check, Drawable, Measured, Placer, Strand, Strike, Target } from "../../../src/index.ts";
 import type { Option } from "../../../src/design.ts";
 import type { Numbers } from "./numbers.ts";
 import type { Rig } from "./rig.ts";
@@ -42,8 +42,11 @@ export type ClawsOption = Opt & { readonly offer: (n: Numbers) => ClawsOffer; re
 export type Face = { readonly things: readonly Drawable[]; readonly checks: readonly Check[] };
 export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace, claws: Claws) => Face };
 
-/** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. */
-export type BackOption = Opt & { readonly draw: (rig: Rig) => readonly Drawable[] };
+/** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. `keepClear` is what a
+ * thrown ship must fly clear of besides the atoll's own cylinder, which the design states for every back
+ * (reefback_titan.ts, `fliesClear`): a back that builds beyond that cylinder (back/headland.ts: its capes, its light)
+ * says where; a back that stays inside it has nothing to add and leaves the field out. */
+export type BackOption = Opt & { readonly draw: (rig: Rig) => readonly Drawable[]; readonly keepClear?: (rig: Rig) => readonly Target[] };
 
 /**
  * Who places the two boats when the crab does not hold them (docs/throw_and_shove.md, "The contract"): Loft's stand-ins
