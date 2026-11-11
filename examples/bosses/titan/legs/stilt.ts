@@ -15,6 +15,7 @@ import {
 } from "../../../../src/index.ts";
 import { noise2 } from "../../../../src/lib/index.ts";
 import { hitPatch } from "../../../../src/spacetime/index.ts";
+import type { Expr } from "../../../../src/expr.ts";
 import { edgeOf, rgb } from "../../../../src/style/shared.ts";
 import { NO_SKELETON, type Surface } from "../../../../src/map/types.ts";
 import { cut, sides } from "../ink.ts";
@@ -32,7 +33,7 @@ export function stepClock(n: Numbers, phase: number): { readonly sincePlant: F; 
 }
 
 /** One foot's foam on the water: a clawed cream cloud while it stands, a ring running out at each plant. */
-function footFoam(name: string, water: Sea, at: readonly [number, number], since: { readonly sincePlant: F; readonly sinceLift: F }, n: Numbers): Drawable {
+function footFoam(name: string, water: Sea, at: Expr<"vec2">, since: { readonly sincePlant: F; readonly sinceLift: F }, n: Numbers): Drawable {
   const I = n.ink;
   const reach = 3.8, cloud = 2.3, pad = 0.6;
   const area = hit.disc({ centre: at, radius: reach });
@@ -50,7 +51,7 @@ function footFoam(name: string, water: Sea, at: readonly [number, number], since
     colour: (fr) => {
       const p = vec2(fr.world.x, fr.world.z);
       // Lumpy, not a disc: the distance swells and shrinks with a slow noise, so the cloud has puffs.
-      const d = mul(length(sub(p, vec2(...at))), add(1, mul(noise2(mul(p, 0.55)), 0.28)));
+      const d = mul(length(sub(p, at)), add(1, mul(noise2(mul(p, 0.55)), 0.28)));
       // The cloud shrinks as it comes and goes rather than fading: a faint falloff cut by the noise printed black
       // scribbles over the water while a lifted foot's cloud thinned (first version, 2026-11-11).
       const r = mul(cloud, max(standing, 0.02));
@@ -111,7 +112,7 @@ export const stilt: LegsOption = {
           },
           detail: { along: 120, around: 10 },
         }),
-        footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, [fx, s * fz], stepClock(n, footPhase[k]!), n),
+        footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, rig.place2([fx, s * fz]), stepClock(n, footPhase[k]!), n),
       ];
     }).flat());
   },

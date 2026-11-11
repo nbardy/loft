@@ -313,6 +313,8 @@ export type Artefact = {
   pose(state: FrameState): Readonly<Record<string, Float32Array>>;
   /** Views the scene suggests, by name. */
   readonly cameras: Readonly<Record<string, Camera>>;
+  /** Whether the scene's clock comes round (`OPEN` when absent). A host that draws it may wrap its clock by `loopTime`. */
+  readonly loop?: Loop;
   /**
    * `maxTriangles`: what the draw list declares (every draw's vertices / 3 x instances, scene layer), the most a frame
    * can draw; a host drawing at a coarser level of detail draws fewer (`FrameStats`). `draws`: draws declared.
@@ -369,4 +371,19 @@ export function handPose(dynamic: readonly DynamicBuffer[], pose: (state: FrameS
     cpuPose: (state) => { const t = pose(state); return dynamic.map((d) => ({ buffer: d.name, offset: 0, data: t[d.name]! })); },
     pose,
   };
+}
+
+/**
+ * Whether a scene's clock runs on, or comes round: a scene that loops every `seconds` is the same at t and at
+ * t + seconds by its author's construction (every motion in it takes whole turns in the period), and says so, so that
+ * a host may wrap its clock and t = seconds is t = 0 exactly, not to within a rounding of sin(2 pi k).
+ */
+export type Loop = { readonly kind: "open" } | { readonly kind: "every"; readonly seconds: number };
+export const OPEN: Loop = { kind: "open" };
+/** The clock a host should draw a scene at for time t. */
+export function loopTime(l: Loop, t: number): number {
+  switch (l.kind) {
+    case "open": return t;
+    case "every": return t - Math.floor(t / l.seconds) * l.seconds;
+  }
 }

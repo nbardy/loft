@@ -2,18 +2,21 @@
 // the edge of a disc at an instant and run outward at a fixed speed; ahead of the front the water is exactly as it
 // was. It is a deformation of the sea (`sea({ deform: [ring] })`), so everything that reads the sea's height rides it:
 // a ship placed with `afloat` rises over the crest and heels on its faces with no animation of its own. Things afloat
-// are also shoved outward. What the wave gives a thing is an impulse when its front arrives (`impulse`: a change of
-// velocity, units per second, outward); `pushed` is Loft's stand-in for a game's boat taking that impulse under a
-// linear drag, a closed form of the clock and the thing's own place.
+// are also forced outward: a thing caught by the front's face is carried with it, at the wave's speed, for as long as
+// the crest is tall enough to hold it, then dropped to coast (docs/throw_and_shove.md, "The ride"). A game reads the
+// rule's parts (`arrival`, `speed`, `lag`, `holds`, `lifts`) and integrates its own boat; `pushed` is Loft's stand-in,
+// the same rule solved in closed form with a linear drag for a thing that starts at rest at its own place.
 //
 // Three facts the formulas are built on:
 //   1. A ring's energy is spread round a growing circle, so its height falls as 1 / sqrt(r).
 //   2. In water shallower than the pulse is long the wave does not disperse and runs at sqrt(g depth): the pulse keeps
 //      its width, and the front that left radius R at the slam is at R + c t. Nothing moves before it arrives.
-//   3. A floating thing cannot be pushed faster than the wave that pushes it: the impulse at the disc's edge is at
-//      most the wave's speed (checked when the ring is made).
+//   3. A floating thing cannot be pushed faster than the wave that pushes it. So a carried thing moves at the wave's
+//      speed and no faster, and what the front cannot hold is given less.
+//   4. A finite-height front is a bore: it runs at sqrt(g (depth + a)), faster the taller it is. The model keeps one
+//      speed, and the scene should give the slowest the front has while it carries anything (at the holding height).
 
-import { add, and, atan2, clamp, div, exp, gt, length, lift, lt, max, mul, select, sin, smoothstep, sqrt, sub, time, type Expr, type In } from "../expr.ts";
+import { add, and, atan2, clamp, div, exp, gt, length, lift, lt, max, min, mul, select, sin, smoothstep, sqrt, sub, time, type Expr, type In } from "../expr.ts";
 import type { SeaDeform } from "./sea.ts";
 
 type F = Expr<"f32">;
@@ -25,7 +28,7 @@ export type RingSpec = {
   readonly radius: In<"f32">;
   /** Seconds since the slam at clock t (negative before it). */
   readonly since: (t: In<"f32">) => F;
-  /** Speed of the front, world units per second (shallow water: sqrt(g depth)). */
+  /** Speed of the front, world units per second (a bore of height a on depth d: sqrt(g (d + a)); give it at the holding height). */
   readonly speed: number;
   /** Height of the crest at the disc's edge; it falls as 1 / sqrt(r) beyond. */
   readonly height: number;
@@ -33,17 +36,35 @@ export type RingSpec = {
   readonly length: number;
   /** Distance from the centre at which the wave is gone (it fades over the last quarter of the way). */
   readonly reach: number;
-  /** How far a thing afloat at the disc's edge ends up shoved outward; it falls as 1 / sqrt(r) too. */
-  readonly shove: number;
   /**
-   * Seconds for the water to take off the speed the front gave (1 / e): the stand-in's linear drag. The impulse at the
-   * disc's edge is `shove / drag` units per second.
+   * The holding height: the front carries a floating thing with it while its crest is at least this tall, so a ride
+   * ends at `radius (height / hold)^2` from the centre (or at three quarters of `reach`, where the wave starts to die,
+   * if that is nearer). At most `height`.
    */
+  readonly hold: number;
+  /** Seconds for the water to take off a dropped thing's speed (1 / e): the stand-in's linear drag. It coasts `speed drag`. */
   readonly drag: number;
+};
+
+/** A thing's ride on the ring from its own place: what the stand-in is made of, and what a check measures it against. */
+export type Ride = {
+  /** Seconds after the slam that the front's face takes the thing (the edge's arrival plus the lag). */
+  readonly taken: F;
+  /** Seconds it is carried, how far, and its speed when it is let go (the wave's, or less for a thing the front could not hold). */
+  readonly seconds: F; readonly distance: F; readonly letGo: F;
+  /** Outward unit on the sea plane (x, z). */
+  readonly out: V2;
 };
 
 /** The crest's share of the pulse's length, and the trough's depth as a share of the crest's height. */
 const CREST = 0.5, TROUGH = 0.3;
+/**
+ * Where on the pulse a carried thing sits, as a share of its length behind the leading edge: on the face, ahead of the
+ * crest (at 0.25), so a boat a few units long has its inward end near the crest and its outward end at the edge.
+ */
+const FACE = 0.06;
+/** The share of `reach` at which the wave starts to die (it is gone at `reach`). */
+const DYING = 0.75;
 
 export class RingWave implements SeaDeform {
   readonly rise: number;
@@ -51,14 +72,9 @@ export class RingWave implements SeaDeform {
   private readonly radius: F;
 
   constructor(readonly spec: RingSpec) {
-    const { speed, height, length: len, reach, shove, drag } = spec;
-    for (const [k, v] of Object.entries({ speed, height, length: len, reach, drag })) if (!(v > 0 && Number.isFinite(v))) throw new Error(`ringWave: ${k} must be a positive, finite number; got ${v}`);
-    if (!(shove >= 0 && Number.isFinite(shove))) throw new Error(`ringWave: shove must be a finite distance, at least 0; got ${shove}`);
-    // Fact 3. The impulse is greatest at the disc's edge (it falls with distance as the offset does).
-    const fastest = shove / drag;
-    if (!(fastest <= speed)) {
-      throw new Error(`ringWave: a thing at the disc's edge would be given ${fastest.toFixed(2)} units/s, faster than the wave (${speed.toFixed(2)}): shove at most ${(speed * drag).toFixed(2)}, or drag at least ${(shove / speed).toFixed(2)} s`);
-    }
+    const { speed, height, length: len, reach, hold, drag } = spec;
+    for (const [k, v] of Object.entries({ speed, height, length: len, reach, hold, drag })) if (!(v > 0 && Number.isFinite(v))) throw new Error(`ringWave: ${k} must be a positive, finite number; got ${v}`);
+    if (!(hold <= height)) throw new Error(`ringWave: the holding height (${hold}) is above the crest at the disc's edge (${height}): the front would carry nothing`);
     this.rise = height;
     this.centre = lift<"vec2">(spec.centre);
     this.radius = lift<"f32">(spec.radius);
@@ -71,10 +87,24 @@ export class RingWave implements SeaDeform {
     return { r, xi, on: and(and(gt(tau, 0), lt(r, this.spec.reach)), and(gt(xi, 0), lt(xi, 1))) };
   }
 
-  /** The share of the edge's height (and shove) left at distance r: 1 / sqrt(r) from the disc's edge, to nothing at `reach`. */
+  /** The share of the edge's height left at distance r: 1 / sqrt(r) from the disc's edge, to nothing at `reach`. */
   private spread(r: F): F {
-    const fade = sub(1, smoothstep(0.75 * this.spec.reach, this.spec.reach, r));
+    const fade = sub(1, smoothstep(DYING * this.spec.reach, this.spec.reach, r));
     return mul(sqrt(div(this.radius, max(r, this.radius))), fade);
+  }
+
+  /** The front's speed, world units per second: what a carried thing moves at. */
+  get speed(): number { return this.spec.speed; }
+  /** Seconds from the leading edge's arrival at a place to the face's: a thing there rises for this long before it is taken. */
+  get lag(): number { return (FACE * this.spec.length) / this.spec.speed; }
+  /** The radius at which the front lets go of what it carries: where its crest falls to the holding height, or where it starts to die. */
+  get dropRadius(): F {
+    const k = this.spec.height / this.spec.hold;
+    return min(mul(this.radius, k * k), DYING * this.spec.reach);
+  }
+  /** 1 where the front is tall enough to carry a floating thing (inside the drop radius), else 0. */
+  holds(place: In<"vec2">): F {
+    return select(lt(length(sub(lift<"vec2">(place), this.centre)), this.dropRadius), 1, 0);
   }
 
   /** The pulse's shape at xi in (0, 1) behind the front: a crest of height 1, then a shallower trough; flat at both ends and between. */
@@ -96,27 +126,31 @@ export class RingWave implements SeaDeform {
   }
 
   /**
-   * What the front gives a thing afloat at `place` when it arrives there: a change of velocity on the sea plane (x, z),
-   * world units per second, outward. `shove / drag` at the disc's edge, falling as 1 / sqrt(r), nothing past `reach`.
-   * A game adds it to its boat's velocity at `arrival(place)` after the slam and lets its own drag do the rest.
+   * The ride of a thing that floats at rest at `place` when the front comes. Inside the drop radius the face takes it
+   * `lag` after the edge arrives and carries it at the wave's speed to the drop radius. Beyond, it is not carried: the
+   * front gives it the wave's speed times the crest's height there over the holding height (less than the wave's), so
+   * the shove is continuous across the drop radius and nothing past `reach` moves.
    */
-  impulse(place: In<"vec2">): V2 {
-    const p = lift<"vec2">(place), d = sub(p, this.centre), r = length(d);
-    return mul(div(d, max(r, 1e-4)), mul(this.spread(r), this.spec.shove / this.spec.drag));
+  ride(place: In<"vec2">): Ride {
+    const p = lift<"vec2">(place), d = sub(p, this.centre), r = length(d), c = this.spec.speed;
+    const distance = max(sub(this.dropRadius, r), 0);
+    const share = min(div(mul(this.spread(r), this.spec.height), this.spec.hold), 1);
+    return { taken: add(this.arrival(p), this.lag), seconds: div(distance, c), distance, letGo: mul(share, c), out: div(d, max(r, 1e-4)) };
   }
 
   /**
-   * Loft's stand-in for a boat that takes the impulse: how far a thing afloat whose own place is `place` has been
-   * shoved at time t, on the sea plane (x, z). It is the integral of `impulse(place) exp(-s / drag)` from the front's
-   * arrival: `impulse drag (1 - exp(-s / drag))`, s seconds after it. Exactly 0 until then.
+   * Loft's stand-in for a boat on the ride: how far a thing afloat whose own place is `place` has been forced outward at
+   * time t, on the sea plane (x, z). Exactly 0 until the face takes it; then `speed` times the seconds carried; then the
+   * ride's distance plus a coast under a linear drag, `letGo drag (1 - exp(-q / drag))`, q seconds after it is dropped.
    */
   pushed(place: In<"vec2">, t: In<"f32">): V2 {
-    const s = max(sub(this.spec.since(t), this.arrival(place)), 0);
-    return mul(this.impulse(place), mul(sub(1, exp(mul(s, -1 / this.spec.drag))), this.spec.drag));
+    const k = this.ride(place), s = sub(this.spec.since(t), k.taken), q = max(sub(s, k.seconds), 0);
+    const coast = mul(k.letGo, mul(sub(1, exp(mul(q, -1 / this.spec.drag))), this.spec.drag));
+    return mul(k.out, select(lt(s, 0), 0, select(lt(s, k.seconds), mul(s, this.spec.speed), add(k.distance, coast))));
   }
 
-  /** Where the stand-in ends: `impulse(place) drag`. */
-  shoved(place: In<"vec2">): V2 { return mul(this.impulse(place), this.spec.drag); }
+  /** Where the stand-in ends: the ride's distance and the whole coast, outward. */
+  shoved(place: In<"vec2">): V2 { const k = this.ride(place); return mul(k.out, add(k.distance, mul(k.letGo, this.spec.drag))); }
 
   // ---- as a deformation of the sea: it moves no water sideways and calms nothing; it lifts the surface and marks it ----
 
