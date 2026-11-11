@@ -3,7 +3,7 @@
 import { resolve } from "node:path";
 import type { Artefact } from "../artefact.ts";
 import type { GpuHost } from "../host/host.ts";
-import type { Source, StyleChoice } from "./args.ts";
+import type { SceneSource, StyleChoice } from "./args.ts";
 
 async function importFrom<T>(rel: string): Promise<T> {
   return (await import(new URL(rel, import.meta.url).href)) as T;
@@ -15,7 +15,7 @@ function need<T>(mod: Record<string, unknown>, name: string, from: string): T {
   return v as T;
 }
 
-export async function loadArtefact(source: Source): Promise<Artefact> {
+export async function loadArtefact(source: SceneSource): Promise<Artefact> {
   switch (source.kind) {
     case "fixture": {
       const mod = await importFrom<Record<string, unknown>>("../host/fixture.ts");

@@ -60,7 +60,7 @@ export function viewInputs(fixed: InputValues, sweep: Sweep, k: number, n: numbe
 }
 
 /** Every named input exists in the artefact, with its number of components; `time` is the `--time` flags' business. */
-export function checkInputs(a: Artefact, fixed: InputValues, sweep: Sweep): void {
+export function checkInputs(a: Pick<Artefact, "inputs">, fixed: InputValues, sweep: Sweep): void {
   const given: [string, number][] = Object.entries(fixed).map(([n, v]) => [n, v.length]);
   if (sweep.kind === "linear") {
     if (sweep.name in fixed) throw new UsageError(`--sweep ${sweep.name}: also given as --input`);
