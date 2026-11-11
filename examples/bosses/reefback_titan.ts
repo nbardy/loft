@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type Sea } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type WoodblockLook, type WoodblockSpec } from "../../src/index.ts";
 import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
@@ -109,12 +109,19 @@ export const WATER = {
 } satisfies Record<string, WaterOption>;
 
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
-export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">) =>
-  woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks });
+export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">, look: WoodblockLook = LOOK.base) =>
+  woodblock(look.on({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks }));
+
+/**
+ * How the print is lit and inked (docs/lighting.md): `base` is the print as it is; the others are the woodblock style's
+ * named looks (`LOOKS`). A look, not a part (`looks` below): `--variant bruiser,light=engraving`. On any scene in the
+ * woodblock style, `--light engraving` chooses the same look without a slot.
+ */
+export const LOOK = { base: { about: "the print as it is: the overprinted shadow side at N.L = 0", on: (s: WoodblockSpec) => s }, ...LOOKS } satisfies Record<string, WoodblockLook & { readonly about: string }>;
 /** The sun: the host input `sun`, this direction unless a game or a clip moves it (`--input sun=x,y,z`, `--sweep sun=a..b`). */
 export const SUN = movable([0.15, 0.8, 0.6]);
 
-type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: WaterOption };
+type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: WaterOption; readonly light: WoodblockLook };
 
 /** Numbers, then what the claws offer the rig, then the rig's first stage; on the sea given, the rig and each slot drawn on it. */
 function assemble(o: Slots, n: Numbers, how: Staging) {
@@ -201,8 +208,9 @@ export const design = makeDesign({
     // curled heads for the collar, the wave's crest and the bursts; the others are the style's other collars, with the
     // crest and the bursts as they were before. A look, not a part: see `looks` below.
     foam: WATER,
+    light: LOOK,
   },
-  looks: ["foam"],
+  looks: ["foam", "light"],
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
     // mourner's face on hanging eyes (face/mourner.ts; its first face, `patient`, is still an option), a red shrine on its
@@ -272,7 +280,7 @@ export const design = makeDesign({
   build: (o, n) => {
     const a = assemble(o, n, AT_HOME), water = sea({ ...a.sea, deform: a.deforms }), m = a.finish(water);
     return {
-      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam), sun: SUN, cameras: camerasFor(n) }),
+      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam, o.light), sun: SUN, cameras: camerasFor(n) }),
       strikes: m.strikes, holds: m.holds, waves: m.waves, handoff: m.handoff, inputs: m.inputs, checks: [...m.checks, ...m.sceneChecks],
     };
   },

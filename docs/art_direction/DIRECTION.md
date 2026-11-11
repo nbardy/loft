@@ -1175,3 +1175,39 @@ Sizes are at 1280x800 from `game`, where a pixel at the crab is 0.029 units.
 Cost, in a normal frame of 2.4 ms as measured today under load (1.2 in the fast clock state): each of core, highlight,
 contact, bokashi, hatching and rim under one tick of the timer (0.065 ms), unresolved; cast 0.15 to 0.25 ms. Budget
 for the recommended mix: 0.3 ms.
+
+### Taken over (2026-11-12, second engineer): predictions for the video's look, the palette and the sunset
+
+Written before the first render of any of them. The earlier stills of `hatched` (black lines 0.2 apart, swelling from
+0.5 of N.K above the terminator) showed what to change: black lines over cream read as a zebra; the hatched zone
+reached most of every form; from close the lines were few and fat (the octaves only merged lines, never split them).
+
+**B. `hatched`, rebuilt.** Lines in each colour's own shade (a block of 55% near-black brown at 60% value: brick lines
+(0.26, 0.08, 0.06), cream lines a warm grey (0.29, 0.25, 0.22)); the zone from 0.14 of N.K above a section terminator at
+0.2 (offLens 45) to full weight 0.55 below; weight 0.62 of a period at most; octaves both ways so the period on screen
+is always 3.4 to 6.8 px (the reference's lines are about 4 px apart); each line's end moved by a hash of its index
+(ragged 0.1 of N.K). Predicted, from `game` at 1280x800 (0.029 units a pixel, so level -1.02: about 3.5 px a
+period): the hatching covers about a quarter of each form's disc on its lower right, the lines one to two pixels wide,
+reading at true size as a darker textured tone more than as lines; the cream claw tips keep their lit cream with grey
+hatching only along their lower edge. Close (the lineup, the `face` view) the same 3.4 to 6.8 px period: an engraving,
+not stripes. Failure to look for: crawling where a level crossfades (lines are a subset of the finer level's, so none
+should move, only fade), and the ragged ends reading as noise at game size.
+
+**C. The reference palette** (`referencePalette`; with `hatched` it is `engraving`). The crab's lit brick (0.66, 0.22,
+0.13) becomes (0.84, 0.26, 0.13) (the references sample 0.81 to 0.87, 0.23 to 0.28, 0.12 to 0.15); blotches at 0.74 of
+that, (0.62, 0.19, 0.10) against the reference's (0.58, 0.18, 0.11), over about a quarter of the red, 0.3 to 0.6
+units across (10 to 20 px from `game`, several times that in the lineup); the key line 0.07 wide (from 0.05) and up to
+0.05 more inside the hull on the shadow side; the sea one deep ink (0.08, 0.17, 0.30), troughs (0.055, 0.12, 0.24),
+against the reference's (0.07 to 0.11, 0.17 to 0.22, 0.28 to 0.32), lines cream and a third of today's width. Unknown:
+the noise's spread, so the share mottled could be 10% or 40%; the darker dark brick and coral are left as painted.
+
+**D. `sunset`.** The sun low behind the crabs (`--input sun=-0.95,0.3,0.05` on the lineup, whose camera looks down -x).
+The forms are turned by a light fixed 35 degrees left of and 30 above the lens (hatched as in B), so every face keeps
+its lit ink and only its lower right is hatched; the block is violet and lifted (50% of (0.3, 0.12, 0.32) at 0.72: brick
+lines (0.41, 0.14, 0.16), never black); a gold rim (1, 0.7, 0.32) 0.09 wide on the silhouette toward the sun, which from
+the lineup is the crabs' tops and far sides. Failure to look for: the rim lost where the sun is straight behind (it
+lights only edges that face it by 0.12 of N.L), and the fronts reading as noon because nothing darkens them.
+
+Cost (the single crab from `game`): `hatched`, `referencePalette` and `engraving` add one noise3 pair and a few
+derivatives a body fragment: under a tick (0.065 ms), unresolved. On the four crabs at 1280x800 with about four times
+the body pixels: `engraving` 0.1 to 0.2 ms.

@@ -6,12 +6,13 @@
 // Then paper. The sea is flat blues with printed lines along the swell's contours and foam where it meets a body, in one
 // of several patterns (`ContactFoam`).
 
-import { abs, add, and, atan2, distance, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, param, saturate, select, sin, smoothstep, step, sub, time, vec2, vec4, type Expr } from "../expr.ts";
+import { abs, add, and, atan2, distance, div, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, param, saturate, select, sin, smoothstep, step, sub, time, vec2, vec3, vec4, type Expr } from "../expr.ts";
 import { noise2, hash22, luminance } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { noise3 } from "../lib/noise.ts";
+import { fwidth, pixelWorld } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Contact, Rgb, ShadeCtx, Style, WaterCtx } from "../style.ts";
-import { blockInk, castOf, lit, LIGHT, markOf, overlapOf, printedBlock, pullOf, type BlockInk, type LightRecipe } from "./light.ts";
+import { blockInk, castOf, keyOf, light, lit, LIGHT, markOf, overlapOf, printedBlock, pullOf, type BlockInk, type Key, type LightRecipe } from "./light.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
 import { along, curledHeads, rollingFoam, rollOf, type White } from "./whitewater.ts";
 
@@ -182,13 +183,58 @@ const SKY: WoodblockSky = { haze: [0, 0.12], band: [0.18, 0.5], below: SEA.deep 
  */
 export type WoodblockEye = { readonly kind: "none" } | { readonly kind: "ink"; readonly below: number; readonly amount: number };
 
+// ---- the reference palette: paint treatments, each off by default ----------------------------------------------------
+
+/**
+ * The warm paints hotter: a paint whose red stands above its green and blue by `margin` is multiplied by `gain`. The
+ * reference prints (crab_round4, lineup) have the crab at about (0.84, 0.26, 0.13) where ours paints brick (0.66, 0.22,
+ * 0.13): gain (1.27, 1.18, 1). `margin` 0.33 takes the brick (0.44) and leaves the dark brick and coral (0.30) alone.
+ */
+export type Warm = { readonly kind: "asPainted" } | { readonly kind: "hotter"; readonly margin: number; readonly gain: Rgb };
+/**
+ * Darker blotches on the warm paints, in the surface's own coordinates (its anchor, the skin at rest), so they ride the
+ * body and never swim: two octaves of noise, the larger `size` world units across, cut hard where they pass `cut`
+ * (higher: sparser), printed at `value` of the paint (the reference's blotches are 0.72 of the shell's red).
+ */
+export type Mottle = { readonly kind: "off" } | { readonly kind: "blotches"; readonly size: number; readonly cut: number; readonly value: number; readonly margin: number };
+/**
+ * The key line's weight. `even`: the hull alone. `swelling`: the line drawn heavier on the side away from `key`, inside
+ * the hull, up to `width` world units more (never under a pixel): an inker's line, thin in the light and thick in shadow.
+ */
+export type LineWeight = { readonly kind: "even" } | { readonly kind: "swelling"; readonly width: number; readonly key: Key };
+/**
+ * The sea's inks. `swell`: the print's own (two blues split at the crest, pale lines). `deep`: one flat deep ink with
+ * thin cream lines, as the reference prints (sea about (0.09, 0.2, 0.3), lines (0.78, 0.65, 0.5)); `trough` the darker
+ * ink the troughs take, `width` the lines' half width as a share of their spacing, at trough and crest.
+ */
+export type SeaPalette =
+  | { readonly kind: "swell" }
+  | { readonly kind: "deep"; readonly sea: Rgb; readonly trough: Rgb; readonly line: Rgb; readonly width: readonly [number, number]; readonly haze: Rgb };
+
+export const paint = {
+  hotter: (o: { readonly margin?: number; readonly gain?: Rgb } = {}): Warm => ({ kind: "hotter", margin: o.margin ?? 0.33, gain: o.gain ?? [1.27, 1.18, 1] }),
+  mottle: (o: { readonly size?: number; readonly cut?: number; readonly value?: number; readonly margin?: number } = {}): Mottle =>
+    ({ kind: "blotches", size: positive("mottle size", o.size ?? 0.55), cut: o.cut ?? 0.18, value: o.value ?? 0.74, margin: o.margin ?? 0.3 }),
+  swelling: (o: { readonly width?: number; readonly key?: Key } = {}): LineWeight => ({ kind: "swelling", width: positive("line swelling", o.width ?? 0.05), key: o.key ?? light.key.offLens(45) }),
+};
+export const seaPalette = {
+  swell: (): SeaPalette => ({ kind: "swell" }),
+  deep: (o: Partial<Omit<Extract<SeaPalette, { kind: "deep" }>, "kind">> = {}): SeaPalette => ({
+    kind: "deep", sea: o.sea ?? [0.08, 0.17, 0.3], trough: o.trough ?? [0.055, 0.12, 0.24], line: o.line ?? [0.8, 0.68, 0.52], width: o.width ?? [0.012, 0.04], haze: o.haze ?? [0.42, 0.45, 0.55],
+  }),
+};
+
 export type WoodblockSpec = {
   /** The key block's inks. Default `WOODBLOCK_PALETTE`'s. */
   readonly inks?: Partial<WoodblockInks>;
   /** Which paints print in which inks. Default `print.bands()`. */
   readonly print?: Print;
   readonly sky?: Partial<WoodblockSky>;
-  readonly water?: { readonly eye?: WoodblockEye };
+  readonly water?: { readonly eye?: WoodblockEye; /** The sea's inks. Default `seaPalette.swell()`, the print as it was. */ readonly palette?: SeaPalette };
+  /** The key line's width in world units (the param `woodblock.outline`). Default 0.05. */
+  readonly outline?: number;
+  /** How paints are inked before the print rule: hotter warm paints, mottling, the line's weight. Each off by default. */
+  readonly paint?: { readonly warm?: Warm; readonly mottle?: Mottle; readonly line?: LineWeight };
   /** The pattern of the foam where a body meets the water. Default `foam.ridge()`, the print as it was. */
   readonly foam?: ContactFoam;
   /** How the foam the sea's deformations mark is printed. Default `marksAs.flat()`, the print as it was. */
@@ -301,12 +347,71 @@ function ownBlock(inks: WoodblockInks, p: Print): BlockInk {
   }
 }
 
+/** The warm paints, as painted or hotter. One handler per kind. */
+function warmed(w: Warm, c: Expr<"vec3">): Expr<"vec3"> {
+  switch (w.kind) {
+    case "asPainted": return c;
+    case "hotter": return mix(c, saturate(mul(c, rgb(w.gain))), edgeOf(standing("red", c), w.margin, 1e-5));
+  }
+}
+
+/** Blotches on the warm paints, in the surface's own coordinates. */
+function mottled(m: Mottle, c: Expr<"vec3">, ctx: ShadeCtx): Expr<"vec3"> {
+  switch (m.kind) {
+    case "off": return c;
+    case "blotches": {
+      const a = mul(ctx.anchor, 1 / m.size);
+      const n = add(noise3(a), mul(noise3(add(mul(a, 2.3), vec3(7.1, 3.3, 1.9))), 0.45));
+      const blot = mul(edgeOf(n, m.cut, 1e-5), edgeOf(standing("red", c), m.margin, 1e-5));
+      return mix(c, mul(c, m.value), blot);
+    }
+  }
+}
+
+/** The key line swelled inside the hull on the shadow side, or the hull alone. */
+function weighted(l: LineWeight, c: Expr<"vec3">, black: Rgb, ctx: ShadeCtx): Expr<"vec3"> {
+  switch (l.kind) {
+    case "even": return c;
+    case "swelling": {
+      // Pixels in from the silhouette, to first order (as the rim measures it); the line's extra width in pixels grows
+      // from nothing where the surface faces the key to `width` where it faces away.
+      const facing = dot(ctx.normal, ctx.view);
+      const away = div(facing, max(fwidth(facing), 1e-5));
+      const turned = saturate(mul(sub(0.35, dot(ctx.normal, keyOf(l.key, ctx))), 1 / 0.9));
+      const wide = mul(div(l.width, pixelWorld(ctx.world)), turned);
+      const inside = mul(sub(1, smoothstep(sub(wide, 0.75), add(wide, 0.75), away)), saturate(sub(wide, 0.25)));
+      return mix(c, rgb(black), inside);
+    }
+  }
+}
+
+/** The paints as a spec's paint options ink them: the shade context with its base repainted, and the line over a colour. */
+type Painting = { readonly base: (ctx: ShadeCtx) => ShadeCtx; readonly line: (c: Expr<"vec3">, ctx: ShadeCtx) => Expr<"vec3"> };
+function paintingOf(p: NonNullable<WoodblockSpec["paint"]>, inks: WoodblockInks): Painting {
+  const warm = p.warm ?? { kind: "asPainted" }, mottle = p.mottle ?? { kind: "off" }, line = p.line ?? { kind: "even" };
+  return {
+    base: (ctx) => ({ ...ctx, base: mottled(mottle, warmed(warm, ctx.base), ctx) }),
+    line: (c, ctx) => weighted(line, c, inks.black, ctx),
+  };
+}
+/** No paint options: the context and the colour untouched (the print as it was, the same shader to the byte). */
+const AS_PAINTED: Painting = { base: (ctx) => ctx, line: (c) => c };
+
+/** The sea's inks: trough, crest, line, the lines' half widths (trough, crest) and the far haze. One handler per palette. */
+type SeaInks = { readonly deep: Rgb; readonly mid: Rgb; readonly line: Rgb; readonly width: readonly [number, number]; readonly haze: Rgb };
+function seaInks(p: SeaPalette): SeaInks {
+  switch (p.kind) {
+    case "swell": return { deep: SEA.deep, mid: SEA.mid, line: SEA.line, width: [0.025, 0.075], haze: SEA.haze };
+    case "deep": return { deep: p.trough, mid: p.sea, line: p.line, width: p.width, haze: p.haze };
+  }
+}
+
 /** What a body's fragments are, for a style: its colour, its mark, and the shadow block if one is printed afterwards. */
 type Bodies = Pick<Style, "shade" | "mark" | "block">;
 
 /** The print as it was: the rule's two tones, split at N.L = 0. No post pass reads a mark. */
-function asPrinted(inks: WoodblockInks, rule: Print): Bodies {
-  return { shade: (ctx) => printed(inks, rule, ctx, () => litSide(ctx)), mark: () => f(1) };
+function asPrinted(inks: WoodblockInks, rule: Print, pt: Painting): Bodies {
+  return { shade: (raw) => { const ctx = pt.base(raw); return pt.line(printed(inks, rule, ctx, () => litSide(ctx)), ctx); }, mark: () => f(1) };
 }
 
 /**
@@ -314,9 +419,10 @@ function asPrinted(inks: WoodblockInks, rule: Print): Bodies {
  * another the block is printed in the fragment; otherwise the tone goes in the mark and the block is printed after the
  * bodies (`Style.block`), `shade` staying the whole colour for a fragment shaded alone.
  */
-function underRecipe(inks: WoodblockInks, rule: Print, recipe: LightRecipe): Bodies {
+function underRecipe(inks: WoodblockInks, rule: Print, recipe: LightRecipe, pt: Painting): Bodies {
   const pull = pullOf(blockInk(recipe.block, ownBlock(inks, rule)));
-  const both = (ctx: ShadeCtx) => lit(recipe, printed(inks, rule, ctx, () => f(1)), ctx);
+  // The line goes on the colour before the block: the block over black is black.
+  const both = (raw: ShadeCtx) => { const ctx = pt.base(raw); const b = lit(recipe, printed(inks, rule, ctx, () => f(1)), ctx); return { colour: pt.line(b.colour, ctx), tone: b.tone }; };
   const whole: Bodies["shade"] = (ctx) => { const b = both(ctx); return printedBlock(pull, b.colour, b.tone); };
   const cast = castOf(recipe.cast), overlap = overlapOf(recipe.overlap);
   if (cast.kind === "none" && overlap.kind === "none") return { shade: whole, mark: () => f(1) };
@@ -342,13 +448,15 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   const eye: WoodblockEye = spec.water?.eye ?? { kind: "none" };
   const pattern: ContactFoam = spec.foam ?? foam.ridge();
   const crestPrint: MarksPrint = spec.marks ?? marksAs.flat();
-  const outline = param("woodblock.outline", 0.05, { min: 0, max: 0.2 });
-  const bodies: Bodies = spec.light === undefined ? asPrinted(inks, rule) : underRecipe(inks, rule, spec.light);
+  const outline = param("woodblock.outline", spec.outline ?? 0.05, { min: 0, max: 0.2 });
+  const pt: Painting = spec.paint === undefined ? AS_PAINTED : paintingOf(spec.paint, inks);
+  const bodies: Bodies = spec.light === undefined ? asPrinted(inks, rule, pt) : underRecipe(inks, rule, spec.light, pt);
+  const sea = seaInks(spec.water?.palette ?? seaPalette.swell());
   return {
     name: "woodblock",
     ...bodies,
     // The named recipes on this same print: what `--light name` chooses.
-    lights: Object.fromEntries(Object.entries(LIGHT).map(([name, recipe]) => [name, () => woodblock({ ...spec, light: recipe })])),
+    lights: Object.fromEntries(Object.entries(LOOKS).map(([name, look]) => [name, () => woodblock(look.on(spec))])),
     // The key line: the hull, this wide in world units and never under 1.5 px.
     outline,
     clear: inks.cream,
@@ -360,21 +468,21 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       // must follow the swell, not a noise field).
       const wobble = mul(noise2(mul(xz, 0.6)), 0.08);
       const h = add(ctx.crest, wobble);
-      let c: Expr<"vec3"> = mix(rgb(SEA.deep), rgb(SEA.mid), edgeOf(h, 0.2, 0.01));
+      let c: Expr<"vec3"> = mix(rgb(sea.deep), rgb(sea.mid), edgeOf(h, 0.2, 0.01));
       // Printed lines along the swell: four per wavelength of the largest swell, bent by the whole height field (so
       // the smaller swells ripple them), heavier toward the crests and absent in the troughs, fading out where they
       // would alias.
       const phase = add(mul(ctx.phase, 5), mul(h, 0.7));
       const fw = max(fwidth(phase), 1e-4);
       const d = abs(sub(fract(add(phase, 0.5)), 0.5)); // 0 on a line, 0.5 halfway between two
-      const width = mix(0.025, 0.075, saturate(add(mul(ctx.crest, 0.6), 0.5)));
+      const width = mix(sea.width[0], sea.width[1], saturate(add(mul(ctx.crest, 0.6), 0.5)));
       // Where the lines crowd (toward the horizon, or seen along the swell) each is replaced by the share of the period
       // it covers: the same tone with no stripes. It used to keep drawing them until three pixels apart, which printed
       // the far sea as a comb.
       const crowd = smoothstep(0.03, 0.1, fw);
       const drawn = sub(1, smoothstep(sub(width, fw), add(width, fw), d));
       const line = mul(mix(drawn, mul(width, 2), crowd), smoothstep(-0.6, -0.1, h));
-      c = mix(c, rgb(SEA.line), mul(line, 0.9));
+      c = mix(c, rgb(sea.line), mul(line, 0.9));
       // What the swell's lines offer a foam that rides them: how far this is from the nearest line (0 on it, in line
       // spacings) and how much of a line is printed here (none in the troughs). Not their crowding: that is a screen
       // derivative, and a foam's edge takes the derivative of whatever shapes it (a derivative of a derivative, which
@@ -385,7 +493,7 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
       // maelstrom's view (examples/maelstrom.ts --style woodblock).
       const far = mul(smoothstep(50, 220, ctx.distance), 0.85);
-      c = mix(c, rgb(SEA.haze), far);
+      c = mix(c, rgb(sea.haze), far);
       // The foam the sea's deformations give (a whirlpool's arms), printed cream over everything: it was left out, and
       // examples/bosses/maelstrom_wyrm.ts printed it back in by hand (2026-11-11). Zero without a deformation.
       c = crested(crestPrint, c, inks, ctx);
@@ -638,3 +746,29 @@ function specks(p: Expr<"vec2">): Expr<"f32"> {
   const fw = max(fwidth(r), 1e-4);
   return sub(1, smoothstep(sub(radius, fw), add(radius, fw), r));
 }
+
+// ---- looks: the named ways to print a scene, chosen by name (`--light`, a design's `light` look) ------------------------
+
+/** The reference pictures' paint (crab_round4, lineup): hotter warm paints, mottled, the line swelling in shadow. */
+export const REFERENCE_PAINT: NonNullable<WoodblockSpec["paint"]> = { warm: paint.hotter(), mottle: paint.mottle(), line: paint.swelling() };
+
+/** A look: what it is for, and the spec it makes of a scene's own (the scene's inks, rule and foam kept). */
+export type WoodblockLook = { readonly about: string; readonly on: (s: WoodblockSpec) => WoodblockSpec };
+const lightOnly = (about: string, r: LightRecipe): WoodblockLook => ({ about, on: (s) => ({ ...s, light: r }) });
+/** The reference palette over a spec: paint, a heavier key line (0.07), the deep sea. */
+const referenced = (s: WoodblockSpec): WoodblockSpec => ({ ...s, paint: REFERENCE_PAINT, outline: 0.07, water: { ...s.water, palette: seaPalette.deep() } });
+
+/**
+ * Every named look of the woodblock print: each recipe of `LIGHT` alone, the reference palette alone, and the two the
+ * four-crab video uses. docs/lighting.md has a line each.
+ */
+export const LOOKS = {
+  ...(Object.fromEntries(Object.entries(LIGHT).map(([name, r]) => [name, lightOnly(`the ${name} lighting recipe`, r)])) as Record<keyof typeof LIGHT, WoodblockLook>),
+  /** The reference palette (hotter red, mottling, swelling lines, the deep sea with cream lines) with the print's own shading. */
+  referencePalette: { about: "the reference palette with the print's own two tones", on: referenced },
+  /** The video's look: the engraving (`hatched`) in the reference palette. */
+  engraving: { about: "hatched, in the reference palette: the four-crab video", on: (s) => referenced({ ...s, light: LIGHT.hatched }) },
+  /** The video's look with the sun low behind: `sunset` in the reference palette. */
+  engravingSunset: { about: "the sunset recipe, in the reference palette: the video at sunset", on: (s) => referenced({ ...s, light: LIGHT.sunset }) },
+} satisfies Record<string, WoodblockLook>;
+export type LookName = keyof typeof LOOKS;

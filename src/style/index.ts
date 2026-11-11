@@ -43,6 +43,6 @@ export function withLight(scene: Scene, name: string): Scene {
 }
 
 export { light, LIGHT, type Block, type Bokashi, type Cast, type Core, type Hatch, type Highlight, type Key, type LightName, type LightRecipe, type Overlap, type Rim, type Terminator, type Waterline } from "./light.ts";
-export { woodblock, print, foam, marksAs, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
+export { woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";
 export { papercraft } from "./papercraft.ts";

@@ -13,8 +13,9 @@
 // animation). Ours: the terminator measured round a form's section, the block carried in the picture's alpha, hatching
 // whose line count follows the screen.
 
-import { abs, add, div, dot, exp, f, floor, fract, gt, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec3, type Expr } from "../expr.ts";
+import { abs, add, cross, div, dot, exp, f, floor, fract, gt, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec2, vec3, type Expr } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
+import { hash2 } from "../lib/noise.ts";
 import { fwidth, pixelWorld, wgslFn } from "../lib/wgsl.ts";
 import type { BlockCast, BlockOverlap, Rgb, ShadeCtx } from "../style.ts";
 import { edgeOf, rgb } from "./shared.ts";
@@ -31,8 +32,11 @@ type V = Expr<"vec3">;
  *    game camera is 23 degrees off it, and a ball then shows 4% of itself in shadow) the form light is the sun swung
  *    away from the view axis, in the plane of the two, until it is `least` off. A camera already further off than
  *    that sees the sun itself. One direction for the whole picture; it turns with the camera, not with the things.
+ *  - `camera`: a light fixed to the camera, `side` degrees right of the lens (negative: left) and `up` above it: the
+ *    form light of a picture lit from behind (a sunset), where the sun leaves every face the camera sees in shadow and
+ *    a printer still turns the forms toward the viewer. Cast shadows and rims still follow the sun.
  */
-export type Key = { readonly kind: "sun" } | { readonly kind: "offLens"; readonly least: number };
+export type Key = { readonly kind: "sun" } | { readonly kind: "offLens"; readonly least: number } | { readonly kind: "camera"; readonly side: number; readonly up: number };
 
 /**
  * Where the shadow side begins, as a signed measure that is positive in the light.
@@ -80,9 +84,13 @@ export type Bokashi = { readonly kind: "off" } | { readonly kind: "wash"; readon
  * solid). A line's weight swells from nothing `over` above `edge` (in N.K) to `cap` of the spacing `deep` below it.
  * `spacing`: world units between lines. `least`: the fewest pixels a period may take: nearer than that the lines keep
  * their spacing, further away every other line is dropped (cross-faded) and the rest thicken, so the tone holds and
- * nothing is drawn finer than the screen.
+ * nothing is drawn finer than the screen. Nearer, the lines split the same way (every period gains a line between), so
+ * a close camera sees an engraving of about `least` to 2 `least` pixels a period, never a few fat stripes. Lines sit on
+ * whole phases of the surface's own length, so a change of level adds or drops lines and never moves one.
+ * `ragged`: each line's own terminator is moved by up to this much of N.K (a hash of the line's index), so the lines end
+ * at different lengths, as an engraver's do, and the shadow's edge is a comb, not a ruled curve. 0: all end together.
  */
-export type Hatch = { readonly kind: "off" } | { readonly kind: "cross"; readonly edge: Terminator; readonly over: number; readonly deep: number; readonly cap: number; readonly spacing: number; readonly least: number };
+export type Hatch = { readonly kind: "off" } | { readonly kind: "cross"; readonly edge: Terminator; readonly over: number; readonly deep: number; readonly cap: number; readonly spacing: number; readonly least: number; readonly ragged: number };
 
 /**
  * A light edge inside the key line where the surface turns from the eye on the key's side: `width` world units (never
@@ -132,6 +140,7 @@ export const light = {
   key: {
     sun: (): Key => ({ kind: "sun" }),
     offLens: (least = 45): Key => ({ kind: "offLens", least: within("offLens degrees", least, 0, 89) }),
+    camera: (side = -35, up = 30): Key => ({ kind: "camera", side: within("camera key side (degrees)", side, -89, 89), up: within("camera key up (degrees)", up, -89, 89) }),
   },
   edge: {
     section,
@@ -150,9 +159,10 @@ export const light = {
     if (!(under[1] > under[0])) throw new Error(`light: bokashi under must rise, got [${under.join(", ")}]`);
     return { kind: "wash", foot: positive("bokashi foot", o.foot ?? 2.2), under, amount: within("bokashi amount", o.amount ?? 1, 0, 1) };
   },
-  hatch: (o: { readonly edge?: Terminator; readonly over?: number; readonly deep?: number; readonly cap?: number; readonly spacing?: number; readonly least?: number } = {}): Hatch => ({
-    kind: "cross", edge: o.edge ?? section({ at: 0.25 }), over: positive("hatch over", o.over ?? 0.5), deep: positive("hatch deep", o.deep ?? 0.5),
-    cap: within("hatch cap", o.cap ?? 0.8, 0, 1), spacing: positive("hatch spacing", o.spacing ?? 0.2), least: positive("hatch least pixels", o.least ?? 5.5),
+  hatch: (o: { readonly edge?: Terminator; readonly over?: number; readonly deep?: number; readonly cap?: number; readonly spacing?: number; readonly least?: number; readonly ragged?: number } = {}): Hatch => ({
+    kind: "cross", edge: o.edge ?? section({ at: 0.2 }), over: positive("hatch over", o.over ?? 0.14), deep: positive("hatch deep", o.deep ?? 0.55),
+    cap: within("hatch cap", o.cap ?? 0.62, 0, 1), spacing: positive("hatch spacing", o.spacing ?? 0.2), least: positive("hatch least pixels", o.least ?? 3.4),
+    ragged: within("hatch ragged", o.ragged ?? 0.1, 0, 0.5),
   }),
   rim: (o: { readonly width?: number; readonly ink?: Rgb; readonly amount?: number; readonly key?: Key } = {}): Rim =>
     ({ kind: "edge", width: positive("rim width", o.width ?? 0.1), ink: o.ink ?? CREAM, amount: within("rim amount", o.amount ?? 0.9, 0, 1), key: o.key ?? { kind: "sun" } }),
@@ -163,6 +173,13 @@ export const light = {
 };
 
 // ---- the library ----------------------------------------------------------------------------------------------------
+
+/**
+ * The engraver's ink: each colour's own shade, not black (black lines over cream read as a zebra, 2026-11-12): a full
+ * line is 55% of a near-black brown over the colour, at 60% value. Brick (0.66, 0.22, 0.13) lines in (0.26, 0.08, 0.06),
+ * cream in a warm grey (0.29, 0.25, 0.22).
+ */
+const ENGRAVED: Block = light.block({ ink: [0.12, 0.04, 0.06], amount: 0.55, value: 0.6 });
 
 /** A deeper, warmer block than the crab's indigo: a shadow of about 60% of the ink's value that keeps its hue. */
 const WARM: Block = light.block({ ink: [0.2, 0.1, 0.12], amount: 0.3, value: 0.9 });
@@ -181,7 +198,7 @@ export const LIGHT = {
   /** Flat inks with a graded wash under every form and up from the water. The one soft recipe. */
   bokashi: light.recipe({ bokashi: light.bokashi() }),
   /** The shadow side drawn in lines across the form that swell as it turns away; no flat shadow. */
-  hatched: light.recipe({ hatch: light.hatch(), block: light.block({ ink: [0.075, 0.07, 0.09], amount: 0.8, value: 1 }) }),
+  hatched: light.recipe({ hatch: light.hatch(), block: ENGRAVED }),
   /** Flat inks, and a dark band wherever a part lies on another or stands in the water. */
   contact: light.recipe({ waterline: light.waterline(), overlap: light.overlap({ width: 0.22 }), cast: light.cast({ reach: 1.2 }), block: WARM }),
   /** Night, a storm, a lamp behind: the body mostly in a deep indigo block, a cream edge toward the light. */
@@ -192,6 +209,15 @@ export const LIGHT = {
   /** The cel set: two tones, cast shadows, contact bands and sparse highlights. The nearest honest match to the painted `shade_best`. */
   cel: light.recipe({
     core: light.core(), cast: light.cast(), highlight: light.highlight(), waterline: light.waterline({ height: 0.14 }), overlap: light.overlap({ width: 0.1, gap: 1.2 }), block: WARM,
+  }),
+  /**
+   * The sun low behind the subject: the forms turned by a light fixed up and left of the camera (hatched, as the
+   * engraving), the shadow block lifted and violet so no face goes black, and a warm gold rim on the sunward edge.
+   */
+  sunset: light.recipe({
+    hatch: light.hatch({ edge: light.edge.section({ at: 0.2, key: light.key.camera(-35, 30) }) }),
+    rim: light.rim({ width: 0.09, ink: [1.0, 0.7, 0.32], amount: 0.95 }),
+    block: light.block({ ink: [0.3, 0.12, 0.32], amount: 0.5, value: 0.72 }),
   }),
 } as const satisfies Record<string, LightRecipe>;
 export type LightName = keyof typeof LIGHT;
@@ -224,11 +250,22 @@ const longDir = wgslFn<"vec3">({
 });
 
 /** The key light's direction. One handler per kind. */
-function keyOf(k: Key, ctx: ShadeCtx): V {
+export function keyOf(k: Key, ctx: ShadeCtx): V {
   switch (k.kind) {
     case "sun": return ctx.sun;
     case "offLens": return offLens(ctx.sun, k.least);
+    case "camera": return cameraKey(k.side, k.up);
   }
+}
+
+/** A direction fixed to the camera: toward the eye turned `side` degrees right and `up` degrees up. */
+function cameraKey(side: number, up: number): V {
+  const s = (side * Math.PI) / 180, u = (up * Math.PI) / 180;
+  const eye = towardEye();
+  // The camera's right and up from its forward and the world's up, as the host's lookAt makes them.
+  const right = normalize(cross(mul(eye, -1), vec3(0, 1, 0)));
+  const upward = cross(right, mul(eye, -1));
+  return normalize(add(add(mul(eye, Math.cos(s) * Math.cos(u)), mul(right, Math.sin(s) * Math.cos(u))), mul(upward, Math.sin(u))));
 }
 
 /** The sun swung away from the eye, in the plane of the two, until it is `least` degrees off the view axis. */
@@ -282,25 +319,34 @@ function hatched(h: Hatch, ctx: ShadeCtx): F {
 /** The lines' coverage, 0..1. */
 function crossLines(h: Extract<Hatch, { kind: "cross" }>, ctx: ShadeCtx): F {
   // The share of a period a line takes: nothing `over` above the terminator, `cap` at `deep` below it.
-  const duty = mul(saturate(div(sub(h.over, turn(h.edge, ctx)), h.over + h.deep)), h.cap);
+  const measure = turn(h.edge, ctx);
+  const duty = (p: F, k: F): F => {
+    // Each line ends at its own place: its terminator moved by a hash of its index on the finest level (p's phases are
+    // line centres; dividing by k, p's lines per phase, names a line the same at every level, so a level change does
+    // not change a line's length).
+    const jag = mul(sub(hash2(vec2(div(floor(add(p, 0.5)), k), 0.37)), 0.5), 2 * h.ragged);
+    return mul(saturate(div(sub(h.over, add(measure, jag)), h.over + h.deep)), h.cap);
+  };
   // Along the form: a body's anchor is its skin straightened at rest (x the length along the spine); a traced solid's
   // is its world point, where lines at level heights are the engraver's for a cliff or a crown.
   const along = select(gt(dot(ctx.uv, ctx.uv), 0), ctx.anchor.x, ctx.anchor.y);
   const phase = div(along, h.spacing);
   // Octaves by screen size: a period is never under `least` pixels. Level k keeps every 2^k-th line (lines sit on
   // whole phases, so a coarser level's are among a finer one's); between two levels the dropped lines fade.
-  const level = max(div(log(div(mul(pixelWorld(ctx.world), h.least), h.spacing)), Math.LN2), 0);
+  // Negative near the camera (lines split), positive far (lines merge to tone); four splits at most.
+  const level = max(div(log(div(mul(pixelWorld(ctx.world), h.least), h.spacing)), Math.LN2), -4);
   const whole = floor(level), part = sub(level, whole);
   const scale = exp(mul(whole, -Math.LN2));
   const fw = max(mul(fwidth(phase), scale), 1e-5);
-  const line = (p: F, w: F): F => {
+  const line = (p: F, w: F, k: F): F => {
     const off = abs(sub(fract(add(p, 0.5)), 0.5));
-    const half = mul(duty, 0.5);
+    const d = duty(p, k);
+    const half = mul(d, 0.5);
     // A line thinner than about a pixel prints as its share of that pixel.
-    return mul(sub(1, smoothstep(sub(half, mul(w, 0.75)), add(half, mul(w, 0.75)), off)), saturate(div(duty, mul(w, 1.5))));
+    return mul(sub(1, smoothstep(sub(half, mul(w, 0.75)), add(half, mul(w, 0.75)), off)), saturate(div(d, mul(w, 1.5))));
   };
   const fine = mul(phase, scale);
-  return mix(line(fine, fw), line(mul(fine, 0.5), mul(fw, 0.5)), smoothstep(0.15, 0.85, part));
+  return mix(line(fine, fw, scale), line(mul(fine, 0.5), mul(fw, 0.5), mul(scale, 0.5)), smoothstep(0.15, 0.85, part));
 }
 
 function waterlined(w: Waterline, ctx: ShadeCtx): F {
