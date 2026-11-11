@@ -79,16 +79,19 @@ const stations = (u: F, us: readonly number[], vs: readonly F[]): F =>
 
 export const headland: BackOption = {
   about: "an island grown on the shell: a moss dome, scalloped cliffs, a cove, a light leaning off a point",
-  // What a thrown ship must fly clear of (the design's `fliesClear`), beyond the atoll's own cylinder: a cylinder over
-  // each cape from the rim to its skerries, and one over the light, leaning as it leans. They ride the shell frame.
+  // What a thrown ship must fly clear of (the design's `fliesClear`), beyond the atoll's own cylinder: the shell tier's
+  // rim (it stands a little outside the atoll's radii), a cylinder over each cape from the rim to its skerries, and one
+  // over the light, leaning as it leans. They ride the shell frame.
   keepClear: ({ n, shell }) => {
-    const { R, point, horns, polar, lightRho } = planOf(n), L = n.headland.light;
+    const { R, point, horns, polar, lightRho } = planOf(n), L = n.headland.light, A = n.atoll;
     const disc = ([x, z]: readonly [number, number], radius: number): Target => {
       const c = add(shell.o, inFrame(shell, vec3(x, 0, z)));
       return { kind: "disc", centre: vec2(c.x, c.z), radius: lift<"f32">(radius) };
     };
     const lean = (L.lean * L.height) / 2, foot = polar(lightRho, point.bearing);
     return [
+      // The rim's outline is at most (1 + 0.525 lumps) of OUT.rim: the lumps' three sines sum to 2.1 at most, a quarter of them reach the rim.
+      disc(A.centre, OUT.rim * (1 + 0.525 * A.lumps) * Math.max(A.rx, A.rz)),
       ...[point, ...horns].map((k) => disc(polar((OUT.rim + k.long + 0.4) / 2, k.bearing), Math.max(((k.long + 0.4 - OUT.rim) / 2) * R, k.half * R) + 0.3)),
       disc([foot[0] + Math.cos(point.bearing) * lean, foot[1] + Math.sin(point.bearing) * lean], L.girth[0] + lean + 0.3),
     ];
