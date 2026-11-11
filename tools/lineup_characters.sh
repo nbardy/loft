@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Each crab's best large frame (from the 1080p clip) beside its expression reference, one row a crab.
-# usage: bun-free, zsh tools/lineup_characters.sh <clip> <out.webp> <t islander> <t fiddler> <t mask> <t stilt>
+# usage: zsh tools/lineup_characters.sh <clip> <out.webp> <t islander> <t fiddler> <t mask> <t stilt>
 set -e
 clip=$1 out=$2; shift 2
 R=~/git/loft/docs/art_direction/crab_round4
