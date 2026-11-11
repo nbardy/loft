@@ -1,0 +1,156 @@
+// The claws: the crusher (right) posed by Claw Crush, the cutter (left) posed by the Grab. Each is an arm reaching its
+// wrist by inverse kinematics, a palm continuing the forearm, and two curled horn fingers hinged near the palm's tip
+// that open sideways in the palm's flat plane (a V from above). `clawsOf(look)` makes an option from a look, so another
+// claw that keeps this mechanism is a look and some numbers (claws/fiddler.ts).
+
+import {
+  abs, add, alive, animate, cos, fingerAngle, horn, lift, limb, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
+  time, unit, vec3, type F, type Frame, type P3,
+} from "../../../../src/index.ts";
+import { cut, mottle, perFrame } from "../ink.ts";
+import type { Numbers } from "../numbers.ts";
+import type { ClawsOffer, ClawsOption } from "../slots.ts";
+
+type Ink = Numbers["ink"];
+/** What a claw option may change of the drawing without touching the mechanism: the palm's paint over its (m, v). */
+export type ClawLook = { readonly about: string; readonly numbers?: ClawsOption["numbers"]; readonly palm: (I: Ink, m: F, v: F) => P3 };
+
+/** Size of a claw: palm length, palm half-width, arm segment lengths. */
+const clawDims = (n: Numbers, size: number) => ({ len: n.clawPalm * size, fat: n.clawFat * size, arm: n.armLengths.map((l) => l * (0.55 + 0.45 * size)) as unknown as readonly [number, number] });
+
+/**
+ * The cutter as a gripper (DERIVATION; the grab check measures it at the closing instant):
+ * - the grip's middle lies `closedDepth` beyond the wrist along the palm: the fingers hinge 0.88 of the palm (2.9) out,
+ *   and each finger touches the hull at its contact station, m = 0.85 of the horn (the tip runs on 0.37 past it), whose
+ *   chord in the horn's own frame is 2.315 long at -0.366 rad and whose radius is 0.138. The stations' axes stand the
+ *   grip's gap plus two radii apart (the gap is between surfaces), and the hull's middle is between them. Closed on the
+ *   beam (1.19) that is 2.552 + 2.315 cos(asin((1.19 + 0.276 - 0.407) / 4.63)) = 4.81.
+ *   (Until 2026-11-11 the tips' axes were put a beam apart with the hull 0.35 inside them: the library's gripReaches
+ *   measured the surfaces there 1.02 apart, the fingers 0.085 into the hull on each side.)
+ * - the two hinges' distance apart: each sits 0.35 of the palm's half-width out from its axis (palm.frame(0.88, v, 0.35)),
+ *   and at m = 0.88 the palm's rounded tip (round 0.3) has narrowed the section by sqrt(1 - (0.18 / 0.3)^2) = 0.8. Without
+ *   that factor (until 2026-11-11) this was 0.509 against 0.407 drawn, and the grip closed 0.1 tighter than asked.
+ */
+function pincer(n: Numbers) {
+  const len = n.clawPalm * n.cutter, fat = n.clawFat * n.cutter;
+  /** The finger's contact station (m = 0.85 of the horn): its chord from the hinge, the chord's angle, and its radius. */
+  const chord = (2.315 / 2.755) * len * 0.95, phi = -0.366, contactR = 0.138 * n.cutter;
+  const hinges = 2 * 0.35 * fat * (0.55 + 0.3 * Math.sin(0.88 * Math.PI)) * Math.sqrt(1 - ((0.88 - 0.7) / 0.3) ** 2);
+  return { len, chord, phi, contactR, hinges };
+}
+
+function offer(n: Numbers): ClawsOffer {
+  const p = pincer(n);
+  return {
+    crushLead: clawDims(n, n.crusher).len * 0.5,
+    cutter: {
+      closedDepth: (width) => 0.88 * p.len + p.chord * Math.cos(Math.asin((width + 2 * p.contactR - p.hinges) / (2 * p.chord))),
+      /** The gap whose finger angle is the claw's own rest (0.3): the fingers cross at rest, so it is below zero. */
+      restGap: p.hinges + 2 * p.chord * Math.sin(0.3 + p.phi) - 2 * p.contactR,
+    },
+  };
+}
+
+/**
+ * A claw's grip when something drives it: `on` how far (0 leaves the claw to its own gape and fold), `angle` the angle
+ * both fingers stand at, `along` the palm's direction.
+ */
+type Grip = { readonly on: F; readonly angle: F; readonly along: P3 };
+
+export function clawsOf(look: ClawLook): ClawsOption {
+  return {
+    about: look.about, ...(look.numbers === undefined ? {} : { numbers: look.numbers }), offer,
+    draw: ({ n, body, local, shoulder, crush, grab, grabOn, grabEnv, keel, gripRest }) => {
+      const I = n.ink;
+      const FREE: Grip = { on: lift<"f32">(0), angle: lift<"f32">(0), along: vec3(1, 0, 0) };
+
+      function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold: F, grip: Grip = FREE) {
+        const d = clawDims(n, size);
+        const arm = limb({ root: local(shoulder(side)), target: wrist, lengths: d.arm, bend: add(mul(body.z, side), mul(body.y, 0.5)) });
+        const [, elbow, w] = arm.joints;
+        // The palm continues the forearm, folded in toward the face at rest as a crab carries it.
+        const free = unit(add(unit(sub(w, elbow)), mul(body.z, mul(fold, -side * 0.55))));
+        const along = unit(mix(free, grip.along, grip.on));
+        const armStrand = strand({
+          name: `${name}Arm`, spine: arm.spine, stations: 16, girth: (m) => mul(d.fat, sub(0.42, mul(m, 0.1))), tips: ["round", "round"], up: body.y,
+          paint: (m, v) => {
+            const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
+            const ring = sub(1, cut(abs(sub(m, arm.knots[1]!)), 0.022));
+            return mix(mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.25)), vec3(...I.black), ring);
+          },
+          detail: { along: 40, around: 14 },
+        });
+        const palm = strand({
+          name: `${name}Palm`, spine: (m) => add(w, mul(along, mul(d.len, m))), stations: 6, girth: (m) => mul(d.fat, add(0.55, mul(sin(mul(m, Math.PI)), 0.3))),
+          section: { aspect: 0.62 }, tips: [{ round: 0.3 }, { round: 0.3 }], up: body.y,
+          paint: (m, v) => look.palm(I, m, v),
+          detail: { along: 24, around: 20 },
+        });
+        // The pincer opens sideways, in the palm's flat plane, so it reads as a V from above.
+        const finger = (fname: string, v: number, opens: number) => {
+          const f = palm.frame(vec3(0.88, v, 0.35));
+          // Free, the dactyl opens by the gape and the fixed finger by a third of it; gripping, both stand at the grip's angle
+          // (symmetric, so the grip's middle is on the palm's axis).
+          const a = mix(mul(gape, opens), grip.angle, grip.on);
+          const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
+          return place(horn({
+            name: fname, length: d.len * 0.95, curl: 0.8, taper: 0.16, girth: mul(d.fat, 0.44), out: [1, -0.15, 0], toward: [0, -1, 0],
+            paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
+          }), rigid(hinged));
+        };
+        const fingers = [finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)] as const;
+        return { things: [armStrand, palm, ...fingers], palm, fingers };
+      }
+      const wristRest = (side: 1 | -1, size: number): readonly [number, number, number] => [n.carapace.to + 1.0 * size, 0.4, side * (n.carapace.width * 0.55 + 0.6 * size)];
+      const env = crush.envelope(time);
+
+      // The crusher gapes wide in the wind-up and shuts on the hit; the cutter works slowly at rest.
+      const crushGape = add(0.28, mul(mul(env.p, sub(1, smoothstep(0.55, 1, env.q))), 0.85));
+      // The crusher at rest is never still (a moving hold, its own seeds); while the cutter works, it keeps quieter.
+      const crusherIdle = vec3(alive(time, 0.3, 31, 0.17), alive(time, 0.25, 32, 0.23), alive(time, 0.25, 33, 0.2));
+      // The crusher's wrist is the m = 0 end of a spine from the wrist at rest back to the shoulder, posed by the crush; the
+      // palm is the part that lands (its m = 1 end leads). In the attack the palm unfolds to drive straight on along its forearm.
+      const crusherDrift = perFrame("titan_crusher_drift", mul(crusherIdle, sub(1, mul(grabOn, 0.8))));
+      const crusher = animate((m) => mix(local(add(vec3(...wristRest(1, n.crusher)), crusherDrift)), local(shoulder(1)), m), [crush], (spine) => {
+        const c = claw("crusher", 1, n.crusher, spine(lift<"f32">(0)), crushGape, sub(1, env.p));
+        return { things: c.things, parts: { crusherPalm: part("crusherPalm", c.palm, { tip: 1 }) } };
+      });
+
+      // ---- the Grab, on the cutter: the attack's grip, turned into the claw's pose ----
+      const p = pincer(n);
+      const keelV = vec3(keel[0], 0, keel[1]);
+      const take = grab.grip(gripRest);
+      // Both fingers' contact stations, of chord `p.chord`, hinged `p.hinges` apart, stand the gap plus their two radii
+      // apart: the library's fingerAngle is for straight fingers, so the curl's chord angle (phi) is taken off. (pincerAngle,
+      // one hinge and one fixed finger, does not fit this claw: its two horns hinge 0.41 apart and close symmetrically,
+      // keeping the grip's middle on the palm's axis.)
+      const tabV = (name: string, e: P3) => perFrame(`titan_grab_${name}`, e);
+      const tabS = (name: string, e: F) => perFrame(`titan_s_${name}`, e);
+      const gripGap = tabS("gap", take.gap), gripPalm = tabV("palm", take.palm);
+      const chordAngle = fingerAngle(add(gripGap, 2 * p.contactR), p.chord, p.hinges);
+      const gripAngle = sub(chordAngle, p.phi);
+      const gripDepth = add(0.88 * p.len, mul(cos(chordAngle), p.chord));
+      const grabWrist = sub(gripPalm, mul(keelV, gripDepth));
+      /** The cutter idles on its own seeds, held quieter while the crusher works. */
+      const quiet = sub(1, mul(env.p, 0.8));
+      const cutterIdle = local(add(vec3(...wristRest(-1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet)));
+      /** Once home (the attack's span is over), the arm swings once. */
+      const homeSwing = swing(sub(grabEnv.tau, grab.span.after), 0.4, 1.1, 0.3);
+      // The grab's closed forms are long (arcs, selects, two finger angles); written inline they were re-evaluated by every
+      // station of the arm, palm and fingers, and the crab's GPU-table test went from 11 s to over 60 s (2026-11-11). They
+      // are evaluated once per frame into small tables, as the body frame is.
+      const cutterWrist = tabV("wrist", add(mix(cutterIdle, grabWrist, grabOn), mul(body.y, homeSwing)));
+      const cutterGape = add(0.3, mul(mul(max(alive(time, 1, 24, 0.3), 0), 0.35), quiet));
+      const cutter = claw("cutter", -1, n.cutter, cutterWrist, cutterGape, lift<"f32">(1), { on: grabOn, angle: tabS("angle", gripAngle), along: keelV });
+
+      const strike = crusher.strikes.crush;
+      if (strike === undefined) throw new Error("claws: the crusher is not bound to Claw Crush (animate returned no strike \"crush\")");
+      return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers };
+    },
+  };
+}
+
+export const base = clawsOf({
+  about: "crusher 1.4 times the cutter, mottled brick palms",
+  palm: (I, m, v) => mix(mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.8), mul(v, 1.3))), vec3(...I.cream), cut(mul(sin(mul(v, Math.PI * 2)), -1), -0.475)),
+});

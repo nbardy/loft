@@ -1,6 +1,5 @@
 // The only place the CLI touches the other agents' modules. They are imported dynamically, by URL, so this file
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
-import { resolve } from "node:path";
 import type { Artefact } from "../artefact.ts";
 import type { GpuHost } from "../host/host.ts";
 import type { SceneSource, StyleChoice } from "./args.ts";
@@ -22,8 +21,9 @@ export async function loadArtefact(source: SceneSource): Promise<Artefact> {
       return need<Artefact>(mod, "fixture", "src/host/fixture.ts");
     }
     case "file": {
-      const scene = ((await import(resolve(source.path))) as { default?: unknown }).default;
-      if (scene === undefined) throw new Error(`${source.path} has no default export (it must export a scene)`);
+      // A design draws the chosen variant (its base when none is given); a plain scene draws its default export.
+      const { chosenAt } = await import("./variant.ts");
+      const { scene } = await chosenAt(source.path, source.variant);
       const index = await importFrom<Record<string, unknown>>("../index.ts");
       return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style));
     }

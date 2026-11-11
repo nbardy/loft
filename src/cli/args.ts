@@ -2,6 +2,7 @@
 // looks at argv. Bad input throws `UsageError` naming the offending flag.
 import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
 
+import { DesignError, parseVariantAsk, type VariantAsk } from "../design.ts";
 import type { OutlineMethod } from "../scene.ts";
 import { parseInputs, parseSweep, type InputValues, type Sweep } from "./inputs.ts";
 
@@ -9,8 +10,11 @@ export class UsageError extends Error {}
 
 /** The style a scene is drawn in: its own, or one of `src/style/index.ts`'s by name (`--style`). */
 export type StyleChoice = { readonly kind: "scene" } | { readonly kind: "named"; readonly name: string };
+/** The variant of a design to draw (`--variant`, docs/variants.md): none given (the base; `check` checks every named
+ * variant), or a choice parsed here and resolved against the design when the module is loaded (src/cli/variant.ts). */
+export type VariantArg = { readonly kind: "default" } | { readonly kind: "ask"; readonly ask: VariantAsk; readonly text: string };
 export type Source =
-  | { readonly kind: "file"; readonly path: string; readonly style: StyleChoice }
+  | { readonly kind: "file"; readonly path: string; readonly style: StyleChoice; readonly variant: VariantArg }
   | { readonly kind: "fixture" }
   /** A directory `loft build` wrote: drawn from files alone, without the compiler (docs/artefact_format.md). */
   | { readonly kind: "artefact"; readonly dir: string };
@@ -27,9 +31,16 @@ export type Command =
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName; readonly sweep: Sweep })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
   | { readonly kind: "dev"; readonly source: SceneSource; readonly port: number }
-  | { readonly kind: "check"; readonly path: string }
+  /** `combinations`: every combination of every slot's options, instead of the named variants. */
+  | { readonly kind: "check"; readonly path: string; readonly variant: VariantArg; readonly combinations: boolean }
+  | {
+    readonly kind: "variants"; readonly path: string; readonly style: StyleChoice; readonly out: string; readonly size: Size; readonly time: number;
+    /** Columns: the design's `compare` cameras, or the ones given. Rows: every named variant, or the ones given. */
+    readonly views: { readonly kind: "design" } | { readonly kind: "given"; readonly names: readonly ViewName[] };
+    readonly only: { readonly kind: "all" } | { readonly kind: "given"; readonly names: readonly string[] };
+  }
   | { readonly kind: "build"; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
-  | { readonly kind: "profile"; readonly path: string; readonly style: StyleChoice; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
+  | { readonly kind: "profile"; readonly path: string; readonly style: StyleChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } };
 
 export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact dir> [flags]
@@ -39,7 +50,12 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
   dev    <scene> [--port 5173]
   profile <scene> [--view game] [--size 1280x800] [--frames 30] [--time 1.0] [--style name] [--outline hull|screen]   (GPU ms per draw, best of frames)
-  check  <scene>   (runs the scene module's exported \`checks\` on the CPU; exits 1 if any fails)
+  check  <scene> [--variant v | --combinations]   (runs the checks on the CPU; exits 1 if any fails. A design: every
+                    named variant, or the one given, or every combination of slot options)
+  variants <design> [--views far,face] [--only base,stilt] [--time 1.0] [--size 640x400] [--out out/variants/<name>]
+                    (every named variant through the design's comparison cameras: one picture each, and a labelled sheet)
+  --variant v         (render, clip, frames, dev, profile, build, check) a design's variant: a name, slot=option picks over
+                      base, or a name then picks: stilt | legs=stilt,face=mask | stilt,face=mask
   --artefact dir      (render, clip, frames) draws a built directory, without the scene or the compiler
   --style toon|woodblock|biolume|papercraft  (render, clip, frames, dev, build) draws the scene in that style instead of its own
   gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
@@ -51,16 +67,19 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
   "--fixture": { value: false, commands: ["render", "clip", "frames", "dev"] },
   "--artefact": { value: true, commands: ["render", "clip", "frames"] },
-  "--out": { value: true, commands: ["render", "clip", "frames", "bake", "build"] },
-  "--size": { value: true, commands: ["render", "clip", "frames", "profile"] },
+  "--out": { value: true, commands: ["render", "clip", "frames", "bake", "build", "variants"] },
+  "--size": { value: true, commands: ["render", "clip", "frames", "profile", "variants"] },
   "--frames": { value: true, commands: ["profile"] },
   "--outline": { value: true, commands: ["profile"] },
   "--param": { value: true, commands: ["render", "clip", "frames"] },
   "--input": { value: true, commands: ["render", "clip", "frames"] },
   "--sweep": { value: true, commands: ["clip", "frames"] },
   "--count": { value: true, commands: ["frames"] },
-  "--views": { value: true, commands: ["render"] },
-  "--time": { value: true, commands: ["render", "bake", "profile"] },
+  "--views": { value: true, commands: ["render", "variants"] },
+  "--time": { value: true, commands: ["render", "bake", "profile", "variants"] },
+  "--variant": { value: true, commands: ["render", "clip", "frames", "dev", "profile", "build", "check"] },
+  "--combinations": { value: false, commands: ["check"] },
+  "--only": { value: true, commands: ["variants"] },
   "--density": { value: true, commands: ["bake"] },
   "--construction": { value: false, commands: ["render"] },
   "--seconds": { value: true, commands: ["clip"] },
@@ -68,7 +87,7 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--view": { value: true, commands: ["clip", "frames", "profile"] },
   "--times": { value: true, commands: ["frames"] },
   "--port": { value: true, commands: ["dev"] },
-  "--style": { value: true, commands: ["render", "clip", "frames", "dev", "profile", "build"] },
+  "--style": { value: true, commands: ["render", "clip", "frames", "dev", "profile", "build", "variants"] },
 };
 
 function num(flag: string, text: string): number {
@@ -95,6 +114,18 @@ function parseParam(text: string): [string, number] {
   return [text.slice(0, i), num(`--param ${text.slice(0, i)}`, text.slice(i + 1))];
 }
 
+function variantOf(text: string | undefined): VariantArg {
+  if (text === undefined) return { kind: "default" };
+  try {
+    return { kind: "ask", ask: parseVariantAsk(text), text };
+  } catch (e) {
+    if (e instanceof DesignError) throw new UsageError(`--variant: ${e.message}`);
+    throw e;
+  }
+}
+
+const names = (text: string): string[] => text.split(",").map((s) => s.trim()).filter((s) => s !== "");
+
 function outlineOf(text: string | undefined): "scene" | OutlineMethod {
   switch (text) {
     case undefined: return "scene";
@@ -106,7 +137,7 @@ function outlineOf(text: string | undefined): "scene" | OutlineMethod {
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
-  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build", "variants"].includes(name)) throw new UsageError(`unknown command "${name}"`);
   if (name === "gallery") return parseGalleryArgs(rest);
 
   const flags = new Map<string, string[]>();
@@ -134,20 +165,34 @@ export function parseArgs(argv: readonly string[]): Command {
   if (!fixture && built === undefined && positional.length === 0) throw new UsageError(`${name}: needs a scene file (or --fixture, or --artefact)`);
   const styleName = one("--style");
   if ((fixture || built !== undefined) && styleName !== undefined) throw new UsageError("--style: a fixture or a built artefact is compiled already; it has no style to change");
+  if ((fixture || built !== undefined) && flags.has("--variant")) throw new UsageError("--variant: a fixture or a built artefact is compiled already; it has no variants to choose");
   const source: Source = fixture ? { kind: "fixture" }
     : built !== undefined ? { kind: "artefact", dir: built }
-    : { kind: "file", path: positional[0]!, style: styleName === undefined ? { kind: "scene" } : { kind: "named", name: styleName } };
+    : { kind: "file", path: positional[0]!, style: styleName === undefined ? { kind: "scene" } : { kind: "named", name: styleName }, variant: variantOf(one("--variant")) };
 
   if (name === "check") {
     if (source.kind !== "file") throw new UsageError("check: needs a scene file (a fixture has no checks)");
-    return { kind: "check", path: source.path };
+    const combinations = flags.has("--combinations");
+    if (combinations && source.variant.kind === "ask") throw new UsageError("check: give --variant or --combinations, not both");
+    return { kind: "check", path: source.path, variant: source.variant, combinations };
+  }
+  if (name === "variants") {
+    if (source.kind !== "file") throw new UsageError("variants: needs a scene file that exports a design");
+    const views = one("--views"), only = one("--only");
+    const stem = /([^/]+?)(\.ts)?$/.exec(source.path)![1]!;
+    return {
+      kind: "variants", path: source.path, style: source.style, out: one("--out") ?? `out/variants/${stem}`,
+      size: parseSize(one("--size") ?? "640x400"), time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
+      views: views === undefined ? { kind: "design" } : { kind: "given", names: names(views) },
+      only: only === undefined ? { kind: "all" } : { kind: "given", names: names(only) },
+    };
   }
   if (name === "profile") {
     if (source.kind !== "file") throw new UsageError("profile: needs a scene file");
     const frames = one("--frames") === undefined ? 30 : positive("--frames", one("--frames")!);
     if (!Number.isInteger(frames)) throw new UsageError(`--frames: ${frames} is not a whole number`);
     return {
-      kind: "profile", path: source.path, style: source.style, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
+      kind: "profile", path: source.path, style: source.style, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
       time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
       outline: outlineOf(one("--outline")),
     };

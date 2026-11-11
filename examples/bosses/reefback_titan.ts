@@ -3,773 +3,102 @@
 // crab, a moss-green atoll with stone cliffs, a cream ruin; indigo sea, cream foam; one small blue-sailed sloop for
 // scale.
 //
-// What it is made of:
-// - the crab: a carapace (a short fat strand), eight three-segment legs on a gait (it treads in place: the game moves
-//   the boss, the art only has to look alive), two unequal claws whose arms reach their wrists by inverse kinematics
-//   and whose pincer fingers are horns, stalked eyes that look about, a row of mouthpart fangs (`draw.points`);
-// - the atoll: one closed-form surface (a lumpy mesa: moss plateau, a lip, stone cliffs with vertical strokes, a foot
-//   tucked under into the water), carried by the crab's frame;
-// - coral heads round the cliff top, trees on the plateau and the fort's rubble and merlons: one `draw.copies` list of
-//   rounded cones riding the crab's frame (the `carry` option of draw.copies), plus the roofless tower as a strand;
-// - Claw Crush, the signature attack: a space-time `attack` on a disc ahead-right of the crab. Its lunge law poses the
-//   great claw's wrist target (wind up high and open, slam down onto the disc exactly at the arming time); its
-//   `telegraph` is the warning on the water and clawed foam bursts where it lands. It arms every `S.crushPeriod`
-//   seconds (`every`), so its check measures the first arming;
-// - the Grab: the cutter takes the scale ship eight seconds after each crush: it winds up, reaches, opens to the ship's
-//   beam, closes, lifts it on an arc, squeezes it twice (hull, sails and rigging as one) and sets it down. It is a `grip`
-//   attack whose effect is a `hold` (docs/attacks_that_hold.md): the attack owns the timing, the ship's place and size
-//   while held (what the game reads: `holds.grab.held()`, `.thing()`, `.squeezed()`), the warning marker, and the claw's
-//   grip; the library checks that the drawn fingers close on the beam and keep it.
+// This file is the crab's design (docs/variants.md): its slots and their options, its named variants, its cameras, and
+// how a choice is assembled into a scene with its checks. The parts are under titan/:
+// - numbers.ts: every number an art director changes (`S`);
+// - rig.ts: the walk in place, Claw Crush (a space-time `attack` on a disc ahead-right), the Grab (a `grip` attack whose
+//   effect is a `hold`: docs/attacks_that_hold.md), the body and shell frames, the ship, the warnings, the crash;
+// - slots.ts: what an option of each slot receives and returns;
+// - carapace/, legs/, claws/, face/, back/: one file per option. `base` is the crab as first drawn.
 //
-// Crab coordinates: x forward, y up, z to its right; the body frame rides `S.ride` above the still water.
+// What the game reads: `strikes` (Claw Crush on the crusher's palm) and `holds.grab` (`held()`, `thing()`,
+// `squeezed()`), exported below for the base variant and returned by every variant's build.
 
-import {
-  abs, add, alive, animate, attack, course, cos, cross, div, dragged, draw, every, fingerAngle, floor, framed, fract, gait, gripReaches, hit, hold, horn,
-  impact, keys, landsInside, length, lift, limb, lookAt, max, min, mix, mul, part, place, points, print, rigid, rotateAbout, scene, sea, shifted, sin,
-  size, slowIn, slowInOut, smoothstep, spacing, sqrt, step, strand, sub, surface, swing, tabulate, telegraph, through, time, tolerance, unit, vec2, vec3,
-  warned, woodblock, type F, type Frame, type P3,
-} from "../../src/index.ts";
-import { rotate } from "../../src/map/chart.ts";
-import { hash3, type Branch } from "../../src/lib/index.ts";
-import { edgeOf } from "../../src/style/shared.ts";
-import { scaleShip } from "./lib/scale_ship.ts";
-import { impactFoam } from "./lib/impact.ts";
-import { PRINT_WARNING } from "./lib/warning.ts";
+import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
+import type { Camera } from "../../src/artefact.ts";
+import { gripReaches, landsInside, print, scene, tolerance, warned, woodblock } from "../../src/index.ts";
+import { base as backBase } from "./titan/back/base.ts";
+import { spires } from "./titan/back/spires.ts";
+import { base as carapaceBase } from "./titan/carapace/base.ts";
+import { plated } from "./titan/carapace/plated.ts";
+import { base as clawsBase } from "./titan/claws/base.ts";
+import { fiddler } from "./titan/claws/fiddler.ts";
+import { base as faceBase } from "./titan/face/base.ts";
+import { mask } from "./titan/face/mask.ts";
+import { base as legsBase } from "./titan/legs/base.ts";
+import { stilt } from "./titan/legs/stilt.ts";
+import { S, type Numbers } from "./titan/numbers.ts";
+import { rig } from "./titan/rig.ts";
+import type { BackOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
 
-type V3 = readonly [number, number, number];
+const CAMERAS: Readonly<Record<string, Camera>> = {
+  game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 },
+  three: { kind: "perspective", eye: [27, 12, 9], target: [1.5, 2, 5.5], fovY: 0.6 },
+  // The face, from the front and above (the claws, folded at rest, cover the mouth from lower down), the fort behind.
+  close: { kind: "perspective", eye: [15.5, 9, 3], target: [4.2, 1.4, 0.2], fovY: 0.55 },
+  top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
+  // The Grab from low and to the side: the claw closing across the beam, the lift and the squeeze.
+  grab: { kind: "perspective", eye: [21, 5.5, -3], target: [8.5, 2.2, -6.5], fovY: 0.6 },
+  // For comparing variants (`loft variants`): a far step back (the whole silhouette, the ship and the crush disc), the
+  // face head on, the legs from the right side at water level, the back from above and behind.
+  far: { kind: "perspective", eye: [33, 21, 21], target: [3, 1.5, -1], fovY: 0.6 },
+  // `close`'s eye with a longer lens: from lower or nearer, the resting claws cover the mouth.
+  face: { kind: "perspective", eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 },
+  legs: { kind: "perspective", eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 },
+  back: { kind: "perspective", eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 },
+};
 
-// ==== the numbers an art director changes ============================================================================
-
-export const S = {
-  // ---- inks (woodblock): few, flat; shadow is the same ink overprinted with indigo ----
-  ink: {
-    black: [0.075, 0.07, 0.09], indigo: [0.13, 0.2, 0.37], cream: [0.93, 0.88, 0.75],
-    brick: [0.66, 0.22, 0.13], brickDark: [0.42, 0.12, 0.09], moss: [0.47, 0.56, 0.24], mossDeep: [0.2, 0.32, 0.17],
-    stone: [0.7, 0.63, 0.5], bark: [0.3, 0.2, 0.14], coral: [0.86, 0.56, 0.46],
-  } satisfies Record<string, V3>,
-  /** How much indigo the shadow side of every ink takes (0 none, 1 indigo). */
-  shadowIndigo: 0.42,
-  /** Shadow side brightness after the indigo. */
-  shadowValue: 0.78,
-
-  // ---- size and stance ----
-  ride: 1.35, floor: -1.7,
-  carapace: { from: -1.6, to: 5.0, width: 4.1, height: 1.25 },
-  legRoots: [3.2, 2.0, 0.8, -0.4], legFeet: [[6.8, 8.2], [4.0, 9.6], [0.8, 9.9], [-2.6, 9.0]] as const, legLengths: [4.0, 3.8, 1.6] as const,
-  // ---- the walk in place ----
-  period: 3.2, duty: 0.66, lift: 1.5, sway: 0.25, bob: 0.08, roll: 0.03, yaw: 0.035,
-
-  // ---- the atoll ----
-  atoll: { centre: [-2.0, 0] as const, rx: 4.3, rz: 4.5, top: 2.9, base: -1.75, hills: 0.35, lumps: 0.08 },
-  coralHeads: 18, trees: 6,
-  fort: { at: [-2.6, -1.1] as const, height: 2.4, girth: 0.85, lean: 0.12 },
-
-  // ---- claws: the right (crusher) 1.4 times the left ----
-  crusher: 1.4, cutter: 1.0, clawPalm: 2.9, clawFat: 1.1, armLengths: [2.5, 2.4] as const,
-
-  // ---- eyes ----
-  stalk: 2.4, eye: 0.3,
-
-  // ---- Claw Crush: the hit disc on the water (world xz), its warning, its loop ----
-  // The show loops every 16 s: Claw Crush arms at 3.4, the Grab closes at 11.2, so one idea reads at a time.
-  crushCentre: [9.6, 5.6] as const, crushRadius: 3.4, crushWarn: 1.5, crushFirst: 3.4, crushPeriod: 16,
-  // Pushed 1.2x and 1.5x from 6.5 and 2.0 (exaggeration): the claw climbs higher and pulls further back the wrong way.
-  // At 8.5 (1.3x) the raised claw left the top of the game camera's frame.
-  crushRise: 7.8, crushCoil: 3.0,
-  /** Seconds the body takes to settle after Claw Crush lands: its wind-up and strike are the attack's own. */
-  crushSettle: 1.8,
-  /** The foam crash after the slam: how far the ring runs out (times the disc's radius), and for how long. */
-  crashReach: 1.6, crashSeconds: 1.4,
-
-  // ---- the Grab: the cutter takes the scale ship (lib/scale_ship.ts), lifts it, squeezes it twice, sets it down ----
-  /** Seconds into the loop the grip closes (the grab's arming), and the warning before it. */
-  grabClose: 11.2, grabWarn: 3.0,
-  /**
-   * The grab's seconds, each stated once: the claw rises into posture (windup), reaches and closes (the attack's strike
-   * is reach + close), holds, lets go. `drawBack` is how far the reach first leaves the wrong way (grab's `windup`).
-   */
-  grabSeconds: { windup: 0.9, reach: 1.3, close: 0.22, hold: 3.2, release: 1.3 }, grabDrawBack: 1.7,
-  /** The ship's keel bearing, radians from +x toward +z: ahead-left of the crab, on the cutter's side, and from the game
-   * camera clear of the resting crusher (at -0.44 the crusher covered it). */
-  grabBearing: -0.75,
-  /** Horizontal distance from the cutter's shoulder to its wrist when the grip closes: the arm spans 4.9, so the elbow stays bent. */
-  grabWristReach: 4.2,
-  // A 2.2 lift barely read from the high game camera; 3.5 does (wrist still 4.3 from the shoulder at the top).
-  grabLift: 3.5, grabSqueeze: 0.5,
-  /** Seconds after the release for the ship to slip back to where it was taken (it was set down nearer the crab). */
-  grabFlee: 2.5,
-} as const;
-
-const I = S.ink;
-
-/** A crisp ink edge: 1 where x is above `at`, about one pixel wide (from the screen-space derivative). A wide
- * smoothstep is a soft airbrushed fade, which the woodblock's flat inks never have. */
-const cut = (x: F, at: number | F): F => edgeOf(x, at, 1e-5);
-
-// ==== the walk: in place, the body swaying over feet that tread ======================================================
-
-const sides = [-1, 1] as const;
-const feetHome = sides.flatMap((s) => S.legFeet.map(([x, z]) => vec3(x, S.floor, s * z)));
-// Alternating tetrapods, each side a small wave toward the front.
-const phase = sides.flatMap((s) => S.legFeet.map((_, i) => ((i % 2 === 0) === (s < 0) ? 0 : 0.5) + 0.06 * i));
-const walk = gait({ feet: feetHome, phase, course: course.line([0, 0, 0], 0), stride: 0, period: S.period, duty: S.duty, lift: S.lift });
-const w = (2 * Math.PI) / S.period;
-const g = walk.body;
-
-// ---- Claw Crush: the attack, defined once (here, since the body's lean reads its arming time) ----
-
-/** Size of a claw: palm length, palm half-width, arm segment lengths. */
-const clawDims = (size: number) => ({ len: S.clawPalm * size, fat: S.clawFat * size, arm: S.armLengths.map((l) => l * (0.55 + 0.45 * size)) as unknown as readonly [number, number] });
-const bigDims = clawDims(S.crusher);
-
-// The lunge law poses a two-point spine from the wrist (m = 0) back to the shoulder: its m = 0 end is the wrist's
-// target. During the wind-up it pulls back by `coil` and rises by `rise` (the claw lifts high), then lands `lead` short
-// of the disc's centre exactly at the arming time (so the palm, reaching on, covers the centre), and recovers.
-const crush = attack({
-  name: "crush", arm: every(S.crushPeriod, S.crushFirst), warn: S.crushWarn,
-  target: { kind: "disc", centre: vec2(...S.crushCentre), radius: lift<"f32">(S.crushRadius) },
-  part: "crusherPalm",
-  motion: { kind: "lunge", hit: hit.disc({ centre: S.crushCentre, radius: S.crushRadius }), reach: 1, lead: bigDims.len * 0.5, height: 0.7, coil: S.crushCoil, rise: S.crushRise, approach: 0.3, neck: 1 },
-  timing: { windup: 1.15, strike: 0.3, zeta: 0.55, hold: 0.45, recover: 0.5, travel: 50 },
-});
-
-// ---- the sea and the ship (the Grab's prize), here because the Grab's warning and the body's turn read them ----
-
-const water = sea({
-  swell: [{ direction: [1, 0.3], length: 13, height: 0.2, speed: 0.9 }, { direction: [-0.3, 1], length: 6, height: 0.07, speed: 0.7, phase: 1.3 }],
-  foam: 0.85,
-});
-const WIND: readonly [number, number] = [0.35, 1.0];
-
-// ---- the Grab: where the ship must sit for the cutter to reach it ----
-//
-// The reach, worked from the segment lengths (DERIVATION; the grab check measures it at the closing instant):
-//  - the cutter's shoulder is at crab (3.9, -0.1, -2.26), 1.25 above the still water; its arm segments are 2.5 and 2.4,
-//    so the wrist reaches 4.9 at most. At 4.2 out and 1.0 down it is 4.32 away: in reach, the elbow still bent.
-//  - the grip's middle lies `gripDepth` beyond the wrist along the palm: the fingers hinge 0.88 of the palm (2.9) out,
-//    and each finger touches the hull at its contact station, m = 0.85 of the horn (the tip runs on 0.37 past it), whose
-//    chord in the horn's own frame is 2.315 long at -0.366 rad and whose radius is 0.138. The stations' axes stand the
-//    grip's gap plus two radii apart (the gap is between surfaces), and the hull's middle is between them. Closed on the
-//    beam (1.19) that is 2.552 + 2.315 cos(asin((1.19 + 0.276 - 0.407) / 4.63)) = 4.81.
-//    (Until 2026-11-11 the tips' axes were put a beam apart with the hull 0.35 inside them: the library's gripReaches
-//    measured the surfaces there 1.02 apart, the fingers 0.085 into the hull on each side.)
-//  So the ship sits 4.2 + 4.81 = 9.01 from the shoulder along its keel bearing, and the claw arrives along the keel
-//  with a finger down each side of the hull.
-const CUTTER_LEN = S.clawPalm * S.cutter, CUTTER_FAT = S.clawFat * S.cutter;
-/** The finger's contact station (m = 0.85 of the horn): its chord from the hinge, the chord's angle, and its radius. */
-const CHORD = (2.315 / 2.755) * CUTTER_LEN * 0.95, PHI = -0.366, CONTACT_R = 0.138 * S.cutter;
-/**
- * The two hinges' distance apart: each sits 0.35 of the palm's half-width out from its axis (palm.frame(0.88, v, 0.35)),
- * and at m = 0.88 the palm's rounded tip (round 0.3) has narrowed the section by sqrt(1 - (0.18 / 0.3)^2) = 0.8. Without
- * that factor (until 2026-11-11) this was 0.509 against 0.407 drawn, and the grip closed 0.1 tighter than asked.
- */
-const HINGES = 2 * 0.35 * CUTTER_FAT * (0.55 + 0.3 * Math.sin(0.88 * Math.PI)) * Math.sqrt(1 - ((0.88 - 0.7) / 0.3) ** 2);
-const beam = scaleShip.hull.lines.beam;
-const keel: readonly [number, number] = [Math.cos(S.grabBearing), Math.sin(S.grabBearing)];
-const gripDepthClosed = 0.88 * CUTTER_LEN + CHORD * Math.cos(Math.asin((beam + 2 * CONTACT_R - HINGES) / (2 * CHORD)));
-const shoulderL: V3 = [S.carapace.to - 1.1, -0.1, -S.carapace.width * 0.55];
-const shipFar = S.grabWristReach + gripDepthClosed;
-const SHIP_AT: readonly [number, number] = [shoulderL[0] + keel[0] * shipFar, shoulderL[2] + keel[1] * shipFar];
-/** Where the grip takes the hull: its middle, a little above the waterline. And where it sets it down: nearer the face. */
-const GRIP_FROM: V3 = [SHIP_AT[0], 0.25, SHIP_AT[1]];
-const GRIP_TO: V3 = [SHIP_AT[0] - keel[0] * 1.4, 0.25, SHIP_AT[1] - keel[1] * 1.4];
-const shipChart = scaleShip.afloatChart(water, { at: SHIP_AT, heading: S.grabBearing, wind: WIND });
-
-/** The gap whose finger angle is the claw's own rest (0.3): the fingers cross at rest, so it is below zero. */
-const REST_GAP = HINGES + 2 * CHORD * Math.sin(0.3 + PHI) - 2 * CONTACT_R;
-
-// The Grab as an attack that holds. Its arming is the instant the grip closes; the warning is the same print-palette
-// marker as Claw Crush's, on the water where the ship is taken. Beats (seconds): wind-up 0.9 (the claw rises 3.3 over
-// its shoulder: the posture), reach 1.3 (it first draws back, the wrong way, then down and out on an arc, opening to 1.5
-// beams by two thirds of the way), close 0.22 (fast: it lands), hold 3.2 (lifted 3.5 clear on an arc toward the face,
-// squeezed twice to half the beam, set down 1.4 nearer), release 1.3 (opens where it is, then withdraws); then the
-// posture lets go and the arm swings once. The ship then slips back to where it was taken.
-const GS = S.grabSeconds;
-const grabAttack = attack({
-  name: "grab", arm: every(S.crushPeriod, S.grabClose), warn: S.grabWarn, target: scaleShip.target(shipChart),
-  motion: {
-    kind: "grip", hit: hit.disc({ centre: SHIP_AT, radius: scaleShip.hull.lines.length * 0.85 }),
-    reachLift: 1.2, restGap: REST_GAP, windup: S.grabDrawBack, close: GS.close, release: GS.release,
+export const design = makeDesign({
+  name: "reefback_titan",
+  numbers: S as Numbers,
+  slots: {
+    carapace: { base: carapaceBase, plated } satisfies Record<string, CarapaceOption>,
+    legs: { base: legsBase, stilt } satisfies Record<string, LegsOption>,
+    claws: { base: clawsBase, fiddler } satisfies Record<string, ClawsOption>,
+    face: { base: faceBase, mask } satisfies Record<string, FaceOption>,
+    back: { base: backBase, spires } satisfies Record<string, BackOption>,
   },
-  effect: hold({ seconds: GS.hold, at: GRIP_FROM, radius: beam / 2, carry: { kind: "arc", to: GRIP_TO, lift: S.grabLift }, squeeze: S.grabSqueeze, pulses: 2 }),
-  // The posture lets go at once after the release, over about a second (99% by 1.17 s).
-  timing: { windup: GS.windup, strike: GS.reach + GS.close, hold: 0, recover: 0.9 },
-});
-// Scalars read by many tables (the body and shell frames, the claws) are themselves evaluated once per frame: inline,
-// every frame table re-evaluated the grab's and the crush's clocks.
-const tabS = (name: string, e: F): F => tabulate(`titan_s_${name}`, () => e, 2, "frame")(0);
-const grabEnv = grabAttack.envelope(time);
-/** How far the cutter is given over to the grab: the attack's posture, 0 idle, 1 from the end of its wind-up until it lets go. */
-const grabOn = tabS("grabOn", grabEnv.p);
-/** The grab's beats; `settle` is the eye's 1.5 s to look away, `after` counts from the end of the release. */
-const grabBeat = grabAttack.beats(time, 1.5);
-
-// ---- the body: Claw Crush in three beats ----
-//
-// Wind-up (1.15 s): the whole crab rears back and up, away from the target (anticipation). Act (0.3 s): it drives
-// down and forward into the slam. Contact: it drops 0.45 and springs back once and a half (impact, a heavy 2 Hz).
-// Settle (1.8 s): it eases back to the walk. The atoll is a separate frame on the same clock read 0.25 s late (drag),
-// and pitches on after the body stops (follow-through), swinging twice.
-const crushBeat = (t: F) => crush.beats(t, S.crushSettle);
-/** The lean: -0.6 reared back at the end of the wind-up, 1 driven into the slam, 0 at rest. */
-const leanAt = (t: F): F => {
-  const b = crushBeat(t);
-  return mul(mix(mix(0, -0.6, slowInOut(b.anticipate)), 1, slowIn(b.act)), sub(1, slowInOut(b.settle)));
-};
-const lean = tabS("lean", leanAt(time)), crushAfter = tabS("crushAfter", crushBeat(time).after);
-/** The drop at contact: 0 before, -0.45 at the slam, springing back past 0. (0.3 did not read from the game camera.) */
-const thud = mul(sub(impact(crushAfter, 1, 2.0, 0.3), 1), 0.45);
-const bob = add(add(add(mul(cos(mul(time, 2 * w)), S.bob), alive(time, 0.06, 11)), mul(lean, -0.25)), thud);
-const roll = add(add(mul(sin(mul(time, w)), S.roll), alive(time, 0.015, 12)), mul(lean, 0.07));
-// The crab turns toward whichever claw is working: right into the slam, left (positive yaw) toward the grab.
-const yaw = add(add(add(mul(sin(mul(time, w * 0.5)), S.yaw), mul(lean, -0.1)), mul(grabOn, 0.14)), alive(time, 0.02, 13));
-const sway = mul(sin(mul(time, w)), S.sway);
-const yx = rotateAbout(g.x, g.y, yaw), yz = rotateAbout(g.z, g.y, yaw);
-// Roll about the body's x, then pitch (the lean) about the rolled z: an orthonormal frame, as draw.copies' carry needs.
-const ry = rotateAbout(g.y, yx, roll), rz = rotateAbout(yz, yx, roll);
-const pitchOf = (l: F): F => mul(l, -0.12);
-const origin = add(add(g.o, mul(g.y, add(S.ride, bob))), mul(g.z, sway));
-const pitched = (p: F): Frame => ({ o: origin, x: rotateAbout(yx, rz, p), y: rotateAbout(ry, rz, p), z: rz });
-const bodyNow: Frame = pitched(pitchOf(lean));
-// The atoll: the lean read a quarter second late, then a pitch that keeps going forward after the slam and swings back.
-const shellNow: Frame = pitched(tabS("shellPitch", add(pitchOf(leanAt(dragged(time, 1, 0.25))), swing(sub(crushAfter, 0.2), -0.09, 1.0, 0.25))));
-const tab = (name: string, e: P3) => tabulate(`titan_frame_${name}`, () => e, 2, "frame")(0);
-const body: Frame = { o: tab("o", bodyNow.o), x: tab("x", bodyNow.x), y: tab("y", bodyNow.y), z: tab("z", bodyNow.z) };
-const shellFrame: Frame = { o: tab("shell_o", shellNow.o), x: tab("shell_x", shellNow.x), y: tab("shell_y", shellNow.y), z: tab("shell_z", shellNow.z) };
-const local = (p: V3 | P3): P3 => add(body.o, rotate(body, lift<"vec3">(p)));
-
-// ==== the carapace: brick with dark mottling, a pale rim line ========================================================
-
-const C = S.carapace;
-const mottle = (m: F, v: F): F => {
-  const a = sin(add(mul(m, 23), mul(sin(mul(v, 31)), 1.7))), b = sin(add(mul(v, 41), mul(sin(mul(m, 17)), 1.3)));
-  return cut(mul(a, b), 0.575);
-};
-const carapace = place(strand({
-  name: "titan", spine: (m) => through(m, [[C.from, -0.1, 0], [(C.from + C.to) / 2, 0.15, 0], [C.to, 0, 0]]), stations: 8,
-  girth: C.width, section: { aspect: C.height / C.width, squareness: 2.3 }, tips: [{ round: 0.45 }, { round: 0.4 }],
-  paint: (m, v) => {
-    const rim = sub(1, cut(abs(sub(sin(mul(v, Math.PI * 2)), -0.15)), 0.035));
-    const back = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(m, v));
-    const belly = vec3(...I.cream);
-    return mix(mix(belly, back, cut(sin(mul(v, Math.PI * 2)), -0.2)), vec3(...I.black), rim);
+  variants: {
+    stilt: { about: "the base crab up on stilt legs", pick: { legs: "stilt" } },
+    fiddler: { about: "one huge crusher, one small cutter", pick: { claws: "fiddler" } },
+    ironclad: { about: "plated shell, stone spires, a masked stare", pick: { carapace: "plated", back: "spires", face: "mask" } },
+    // Stilt legs put the cutter's shoulder 2.5 above the water; the fiddler's 0.8 cutter spans 4.46, short of a wrist
+    // 4.2 out and 2.25 down (4.76): the pair alone fails the grip check (middle 0.19 off). Closing 3.6 out (4.25) it grips
+    // as the fiddler does on base legs (0.058 off). Neither option is wrong; the variant settles their meeting.
+    stiltFiddler: { about: "a fiddler on stilts, taking the ship nearer", pick: { legs: "stilt", claws: "fiddler" }, numbers: { grabWristReach: 3.6 } },
   },
-  detail: { along: 40, around: 40 }, up: [0, 1, 0],
-}), rigid(body));
-
-// ==== legs: three segments by inverse kinematics, banded at the joints, cream dactyls ================================
-
-const segs = keys([[0, 1], [0.4, 0.85], [0.8, 0.5], [1, 0.18]]);
-const legs = sides.flatMap((s, si) => S.legRoots.map((x, i) => {
-  const k = si * 4 + i;
-  const root = local([x, -0.1, s * C.width * 0.85]);
-  const leg = limb({ root, target: walk.foot(k), lengths: S.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) });
-  const nearKnot = (m: F): F => leg.knots.slice(1, 3).reduce((d: F, kn) => min(d, abs(sub(m, kn))), lift<"f32">(1));
-  const pinch = (m: F) => sub(1, mul(smoothstep(0.05, 0, nearKnot(m)), 0.3));
-  return strand({
-    name: `leg${s < 0 ? "L" : "R"}${i}`, spine: leg.spine, stations: 24, girth: (m) => mul(mul(segs(m).x, 0.5), pinch(m)), tips: ["round", { point: 0.1 }],
-    section: { aspect: 0.8 }, up: body.y,
-    paint: (m, v) => {
-      const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.7), v));
-      const shell = mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.2));
-      // A cream band before each joint and a black ring at it; the dactyl cream to a dark point.
-      const band = sub(1, cut(nearKnot(m), 0.028));
-      const ring = sub(1, cut(nearKnot(m), 0.012));
-      const tip = cut(m, 0.84);
-      return mix(mix(mix(shell, vec3(...I.cream), max(band, tip)), vec3(...I.black), ring), vec3(...I.black), cut(m, 0.98));
-    },
-    detail: { along: 64, around: 12 },
-  });
-}));
-
-// ==== the claws: the crusher posed by Claw Crush ======================================================================
-
-const shoulder = (side: 1 | -1): V3 => [C.to - 1.1, -0.1, side * C.width * 0.55];
-const wristRest = (side: 1 | -1, size: number): V3 => [C.to + 1.0 * size, 0.4, side * (C.width * 0.55 + 0.6 * size)];
-
-const env = crush.envelope(time);
-
-/**
- * A claw's grip when something drives it: `on` how far (0 leaves the claw to its own gape and fold), `angle` the angle
- * both fingers stand at, `along` the palm's direction.
- */
-type Grip = { readonly on: F; readonly angle: F; readonly along: P3 };
-const FREE: Grip = { on: lift<"f32">(0), angle: lift<"f32">(0), along: vec3(1, 0, 0) };
-
-function claw(name: string, side: 1 | -1, size: number, wrist: P3, gape: F, fold: F, grip: Grip = FREE) {
-  const d = clawDims(size);
-  const arm = limb({ root: local(shoulder(side)), target: wrist, lengths: d.arm, bend: add(mul(body.z, side), mul(body.y, 0.5)) });
-  const [, elbow, w] = arm.joints;
-  // The palm continues the forearm, folded in toward the face at rest as a crab carries it.
-  const free = unit(add(unit(sub(w, elbow)), mul(body.z, mul(fold, -side * 0.55))));
-  const along = unit(mix(free, grip.along, grip.on));
-  const armStrand = strand({
-    name: `${name}Arm`, spine: arm.spine, stations: 16, girth: (m) => mul(d.fat, sub(0.42, mul(m, 0.1))), tips: ["round", "round"], up: body.y,
-    paint: (m, v) => {
-      const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
-      const ring = sub(1, cut(abs(sub(m, arm.knots[1]!)), 0.022));
-      return mix(mix(vec3(...I.cream), top, cut(sin(mul(v, Math.PI * 2)), -0.25)), vec3(...I.black), ring);
-    },
-    detail: { along: 40, around: 14 },
-  });
-  const palm = strand({
-    name: `${name}Palm`, spine: (m) => add(w, mul(along, mul(d.len, m))), stations: 6, girth: (m) => mul(d.fat, add(0.55, mul(sin(mul(m, Math.PI)), 0.3))),
-    section: { aspect: 0.62 }, tips: [{ round: 0.3 }, { round: 0.3 }], up: body.y,
-    paint: (m, v) => mix(mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.8), mul(v, 1.3))), vec3(...I.cream), cut(mul(sin(mul(v, Math.PI * 2)), -1), -0.475)),
-    detail: { along: 24, around: 20 },
-  });
-  // The pincer opens sideways, in the palm's flat plane, so it reads as a V from above.
-  const finger = (fname: string, v: number, opens: number) => {
-    const f = palm.frame(vec3(0.88, v, 0.35));
-    // Free, the dactyl opens by the gape and the fixed finger by a third of it; gripping, both stand at the grip's angle
-    // (symmetric, so the grip's middle is on the palm's axis).
-    const a = mix(mul(gape, opens), grip.angle, grip.on);
-    const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
-    return place(horn({
-      name: fname, length: d.len * 0.95, curl: 0.8, taper: 0.16, girth: mul(d.fat, 0.44), out: [1, -0.15, 0], toward: [0, -1, 0],
-      paint: (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
-    }), rigid(hinged));
-  };
-  const fingers = [finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)] as const;
-  return { things: [armStrand, palm, ...fingers], palm, fingers };
-}
-// The crusher gapes wide in the wind-up and shuts on the hit; the cutter works slowly at rest.
-const crushGape = add(0.28, mul(mul(env.p, sub(1, smoothstep(0.55, 1, env.q))), 0.85));
-// The crusher at rest is never still (a moving hold, its own seeds); while the cutter works, it keeps quieter.
-const crusherIdle = vec3(alive(time, 0.3, 31, 0.17), alive(time, 0.25, 32, 0.23), alive(time, 0.25, 33, 0.2));
-// The crusher's wrist is the m = 0 end of a spine from the wrist at rest back to the shoulder, posed by the crush; the
-// palm is the part that lands (its m = 1 end leads). In the attack the palm unfolds to drive straight on along its forearm.
-const crusherDrift = tabulate("titan_crusher_drift", () => mul(crusherIdle, sub(1, mul(grabOn, 0.8))), 2, "frame")(0);
-const crusher = animate((m) => mix(local(add(vec3(...wristRest(1, S.crusher)), crusherDrift)), local(shoulder(1)), m), [crush], (spine) => {
-  const c = claw("crusher", 1, S.crusher, spine(lift<"f32">(0)), crushGape, sub(1, env.p));
-  return { things: c.things, parts: { crusherPalm: part("crusherPalm", c.palm, { tip: 1 }) } };
-});
-
-// ---- the Grab, on the cutter: the attack's grip, turned into the claw's pose ----
-const keelV = vec3(keel[0], 0, keel[1]);
-const gripRest = local([shoulderL[0] + keel[0] * 4.5, shoulderL[1] + 3.3, shoulderL[2] + keel[1] * 4.5]);
-const take = grabAttack.grip(gripRest);
-// Both fingers' contact stations, of chord CHORD, hinged HINGES apart, stand the gap plus their two radii apart: the
-// library's fingerAngle is for straight fingers, so the curl's chord angle (PHI) is taken off. (pincerAngle, one hinge and one fixed finger, does not fit this claw: its two horns
-// hinge 0.41 apart and close symmetrically, keeping the grip's middle on the palm's axis.)
-const tabV = (name: string, e: P3) => tabulate(`titan_grab_${name}`, () => e, 2, "frame")(0);
-const gripGap = tabS("gap", take.gap), gripPalm = tabV("palm", take.palm);
-const chordAngle = fingerAngle(add(gripGap, 2 * CONTACT_R), CHORD, HINGES);
-const gripAngle = sub(chordAngle, PHI);
-const gripDepth = add(0.88 * CUTTER_LEN, mul(cos(chordAngle), CHORD));
-const grabWrist = sub(gripPalm, mul(keelV, gripDepth));
-/** The cutter idles on its own seeds, held quieter while the crusher works. */
-const quiet = sub(1, mul(env.p, 0.8));
-const cutterIdle = local(add(vec3(...wristRest(-1, S.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet)));
-/** Once home (the attack's span is over), the arm swings once. */
-const homeSwing = swing(sub(grabEnv.tau, grabAttack.span.after), 0.4, 1.1, 0.3);
-// The grab's closed forms are long (arcs, selects, two finger angles); written inline they were re-evaluated by every
-// station of the arm, palm and fingers, and the crab's GPU-table test went from 11 s to over 60 s (2026-11-11). They
-// are evaluated once per frame into small tables, as the body frame is.
-const cutterWrist = tabV("wrist", add(mix(cutterIdle, grabWrist, grabOn), mul(body.y, homeSwing)));
-const cutterGape = add(0.3, mul(mul(max(alive(time, 1, 24, 0.3), 0), 0.35), quiet));
-const cutter = claw("cutter", -1, S.cutter, cutterWrist, cutterGape, lift<"f32">(1), { on: grabOn, angle: tabS("angle", gripAngle), along: keelV });
-const claws = [...crusher.things, ...cutter.things];
-
-/** The ship where the hold has it (what the game reads too); after the release it slips back to where it was taken. */
-const shipNow = tabV("ship", add(grabAttack.thing(), mul(sub(vec3(...GRIP_FROM), vec3(...GRIP_TO)), slowInOut(div(grabBeat.after, S.grabFlee)))));
-const boat = scaleShip.placed(shifted(shipChart, sub(shipNow, vec3(...GRIP_FROM))), WIND, size.axes(tabV("squeeze", grabAttack.squeezed(1, "z").k)));
-
-// ==== the face: a grudging old giant ==================================================================================
-//
-// Temperament: grudging. It is older than the fort on its back, half asleep, chewing; it has outlived whatever took its
-// left eye and does not care about you until you come into its water. Every feature serves that:
-// - a heavy brow (the carapace's front edge) in a shallow V, low over the eyes: a scowl it wears even asleep;
-// - eyes under heavy lids that sit across the top of a horizontal goat's pupil; the lids slant down toward the middle;
-// - the left eye is the old injury: a short, healed stalk, a clouded eye with a scar through it, a lid that droops,
-//   barnacles round its socket and more weed on that side. The two eyes never move together;
-// - the mouth is layered plates (the third maxillipeds) that close like doors and work slowly, with a beard of weed;
-// - in Claw Crush the good eye snaps wide with a pinpoint pupil, the stalks stand up toward the target, the plates
-//   flare open on the black mouth; at the slam it screws the eye shut and clamps its mouth; then it stares, and
-//   settles back into the heavy-lidded chew.
-
-/** Seconds from this cycle's slam (crush.arm), and the face's two attack envelopes, both 0 before and after a cycle. */
-const tA = sub(time, crush.arm);
-/** Roused: from the start of the wind-up, through the stare after the slam, settling back by 2.4 s. */
-const rouse = mul(smoothstep(-1.3, -0.95, tA), sub(1, smoothstep(0.9, 2.4, tA)));
-/** Braced: the eye screwed shut and the mouth clamped, at the slam. */
-const brace = mul(smoothstep(-0.14, 0, tA), sub(1, smoothstep(0.25, 0.8, tA)));
-/** A blink every `period` seconds: shut for an instant, opening over 0.13 s. None while roused. */
-const blink = (period: number, offset: number): F => {
-  const k = abs(sub(mul(fract(mul(add(time, offset), 1 / period)), period), 0.3));
-  return mul(sub(1, smoothstep(0.03, 0.16, k)), sub(1, rouse));
-};
-
-const tabF = (name: string, e: F): F => tabulate(`titan_face_${name}`, () => e, 2, "frame")(0);
-/** An offset in the crab's frame. */
-const inBody = (x: F | number, y: F | number, z: F | number): P3 => add(add(mul(body.x, x), mul(body.y, y)), mul(body.z, z));
-const TAU = 2 * Math.PI;
-
-// ---- the brow: one heavy ridge across the front of the carapace, a shallow V low over the eyes ----
-
-/** The brow's line in crab coordinates, outer left to outer right; the middle is the V's low point. */
-const BROW: readonly V3[] = [[3.2, 0.98, -3.05], [4.1, 1.06, -1.9], [4.6, 0.86, -0.85], [4.93, 0.5, 0], [4.6, 0.86, 0.85], [4.1, 1.06, 1.9], [3.2, 0.98, 3.05]];
-const brow = place(strand({
-  name: "brow", spine: (m) => through(m, BROW), stations: 12,
-  // Heaviest over the eyes, thinner at the V and at the ends.
-  girth: (m) => mul(0.5, add(0.6, mul(abs(sin(mul(m, 2 * TAU))), 0.4))), section: { aspect: 0.5, squareness: 2.6 },
-  tips: [{ round: 0.08 }, { round: 0.08 }], up: [0.7, 1, 0],
-  paint: (m, v) => {
-    // Plain dark brick (mottle made it texture, not a shape) with a cream underside: the line the face hangs from.
-    return mix(vec3(...I.brickDark), vec3(...I.cream), cut(mul(sin(mul(v, TAU)), -1), 0.35));
-  },
-  detail: { along: 48, around: 12 },
-}), rigid(body));
-
-// ---- the eyes ----
-
-type Eye = {
-  readonly tag: "L" | "R";
-  /** The stalk's root and its tip, world. */
-  readonly base: P3; readonly tip: P3;
-  /** The eye's facing, a unit vector, world. */
-  readonly look: P3;
-  readonly radius: number;
-  /** Where the upper lid's edge is, radians from straight up over the front (pi / 2 halves the eye; pi shuts it). */
-  readonly lid: F;
-  /** The lid edge's slant, radians: positive drops it toward the middle (a scowl), negative toward the outside (a droop). */
-  readonly slant: F;
-  /** The eyeball's paint over its front cap: x across, y up, both in [-1, 1]; and its back (m below 0.5). */
-  readonly iris: (x: F, y: F) => P3;
-  readonly stalkPaint: (m: F) => P3;
-  readonly lidPaint: (edge: F) => P3;
-};
-
-/** The ball, its stalk and its lid (a spherical lune hinged on the eye's side axis, swinging over the front). */
-function eyeParts(e: Eye) {
-  const tip = tab(`eye_${e.tag}_tip`, e.tip), F0 = tab(`eye_${e.tag}_look`, e.look);
-  const lid = tabF(`eye_${e.tag}_lid`, e.lid), slant = tabF(`eye_${e.tag}_slant`, e.slant);
-  const side0 = unit(cross(F0, body.y)), up0 = cross(side0, F0);
-  // The hinge axis tipped by the slant (outer pole raised for a scowl). `side` points right of the gaze, so the right
-  // eye's outer pole is +side and the left eye's -side: the caller signs the slant.
-  const side = add(mul(side0, cos(slant)), mul(up0, sin(slant))), up = sub(mul(up0, cos(slant)), mul(side0, sin(slant)));
-  const mid = add(e.base, mul(sub(tip, e.base), 0.55));
-  const stalk = strand({
-    name: `stalk${e.tag}`, spine: (m) => mix(mix(e.base, add(mid, mul(body.y, 0.4)), m), mix(add(mid, mul(body.y, 0.4)), tip, m), m), stations: 6,
-    girth: (m) => mix(0.24, 0.17, m), tips: ["open", "round"], paint: (m) => e.stalkPaint(m), detail: { along: 16, around: 10 },
-  });
-  const ball = strand({
-    name: `eye${e.tag}`, spine: (m) => add(tip, mul(F0, mul(sub(m, 0.5), e.radius * 2))), stations: 4, girth: e.radius,
-    tips: [{ round: 0.5 }, { round: 0.5 }], up: body.y,
-    paint: (m, v) => {
-      // The front cap's own coordinates: r from the axis, then across and up.
-      const z = sub(mul(m, 2), 1), r = sqrt(max(sub(1, mul(z, z)), 0));
-      // All cream, the pupil on the front. (A brick back made the eyes read as dark balls from every side but the front.)
-      return mix(vec3(...I.cream), e.iris(mul(r, cos(mul(v, TAU))), mul(r, sin(mul(v, TAU)))), cut(m, 0.5));
-    },
-    detail: { along: 14, around: 18 },
-  });
-  // The lid hoods only the top front: from the high strategy camera a lid over the whole top hid the eye.
-  const R = e.radius * 1.1, BACK = -0.4;
-  const lidShape = surface((u, v) => {
-    const a = mix(BACK, lid, u), b = mix(0.1, Math.PI - 0.1, v);
-    const ring = add(mul(up, cos(a)), mul(F0, sin(a)));
-    return add(tip, mul(add(mul(side, cos(b)), mul(ring, sin(b))), R));
-  }, { u: ["free", "free"], v: "free" });
-  const lidDraw = draw.surface(`lid${e.tag}`, lidShape, {
-    // `edge` is radians back from the lid's edge.
-    paint: (u) => e.lidPaint(mul(sub(1, u), sub(lid, BACK))),
-    grid: { u: spacing.even(10), v: spacing.even(14) }, sides: "two", outline: "border",
-  });
-  return [stalk, ball, lidDraw];
-}
-
-/** The lid's paint: dark brick with a heavy black rim at its edge and one age crease behind it. (Barnacle specks on the
- * dead eye's lid made it read as a toadstool; more creases made a knitted cap.) */
-const lidInk = (edge: F): P3 => {
-  const rim = sub(1, cut(edge, 0.2));
-  const crease = sub(1, cut(abs(sub(edge, 0.55)), 0.035));
-  const base = vec3(...I.brickDark);
-  return mix(mix(base, vec3(...I.black), crease), vec3(...I.black), rim);
-};
-
-// The good right eye: wanders slowly; when roused it fixes on the target.
-const baseR = local([4.05, 0.98, 0.95]);
-// It gazes a little upward, over the horizon: from the high cameras that turns the pupil toward the viewer.
-const wander = local(vec3(14, add(mul(sin(mul(time, 0.29)), 2), 5), add(mul(sin(add(mul(time, 0.37), 1)), 8), 1)));
-// It also fixes on the ship through the grab, from the warning on.
-const grabEye = mul(smoothstep(0, 0.5, add(grabEnv.tau, grabAttack.warn)), sub(1, smoothstep(0, 1, grabBeat.settle)));
-const lookR = lookAt({ from: { o: baseR, x: body.x, y: body.y, z: body.z }, target: mix(mix(wander, shipNow, grabEye), vec3(S.crushCentre[0], 0, S.crushCentre[1]), rouse), yaw: 1.2, pitch: 0.7 }).dir;
-/** The stalks whip at the slam and swing on (follow-through), each at its own rate. */
-const stalkWhip = (amount: number, hz: number) => inBody(mul(swing(crushAfter, amount, hz, 0.28), 0.6), mul(swing(crushAfter, amount, hz, 0.28), -1), 0);
-const goodEye: Eye = {
-  tag: "R", base: baseR,
-  // At rest the stalk leans out and forward, a little tired; roused it stands up and leans toward the target.
-  tip: add(add(baseR, add(mix(inBody(0.75, 1.75, 0.65), inBody(0.5, 2.35, 0.2), max(rouse, mul(grabEye, 0.6))), mul(lookR, 0.35))), stalkWhip(0.45, 1.9)),
-  look: lookR, radius: 0.64,
-  lid: add(mix(mix(mix(1.15, 3.0, blink(5.3, 3.9)), 0.5, rouse), 2.55, brace), mul(sin(mul(time, 0.6)), 0.1)),
-  slant: mix(0.38, 0.55, max(rouse, brace)),
-  // A goat's bar pupil, wide and sleepy at rest; a pinpoint when roused.
-  iris: (x, y) => {
-    const w = mix(0.62, 0.16, rouse), h = mix(0.24, 0.16, rouse);
-    const qx = div(x, w), qy = div(y, h);
-    return mix(vec3(...I.cream), vec3(...I.black), cut(sub(1, add(mul(mul(qx, qx), mul(qx, qx)), mul(mul(qy, qy), mul(qy, qy)))), 0));
-  },
-  stalkPaint: (m) => mix(vec3(...I.brick), vec3(...I.black), cut(abs(sub(fract(mul(m, 4)), 0.5)), 0.47)),
-  lidPaint: lidInk,
-};
-
-// The dead left eye: a short healed stalk splayed out, gazing at nothing; it only flinches.
-const baseL = local([4.05, 0.98, -0.95]);
-// It sags down and forward, so the clouded iris and the scar face the front cameras.
-const lookL = unit(inBody(0.85, add(-0.4, mul(sin(mul(time, 0.21)), 0.08)), add(-0.3, mul(sin(mul(time, 0.17)), 0.1))));
-const deadEye: Eye = {
-  tag: "L", base: baseL,
-  tip: add(add(baseL, add(inBody(0.55, 1.15, -0.75), mul(inBody(0, 0.2, 0), rouse))), stalkWhip(0.3, 2.4)),
-  look: lookL, radius: 0.5,
-  lid: add(mix(1.75, 2.6, brace), mul(sin(mul(time, 0.45)), 0.06)),
-  // Drooping toward the outside: the left eye's outer pole is -side, so a positive slant drops it there.
-  slant: lift<"f32">(0.32),
-  // Clouded: an indigo blot for a pupil, and the black line of the scar across it.
-  iris: (x, y) => {
-    const blot = cut(sub(0.32, length(vec2(x, mul(y, 1.3)))), 0);
-    const scar = sub(1, cut(abs(sub(y, mul(x, 0.8))), 0.06));
-    return mix(mix(vec3(...I.cream), mix(vec3(...I.cream), vec3(...I.indigo), 0.55), blot), vec3(...I.black), scar);
-  },
-  // Barnacle specks on the old stalk.
-  stalkPaint: (m) => mix(vec3(...I.brick), vec3(...I.cream), cut(mul(sin(mul(m, 31)), sin(add(mul(m, 13), 2))), 0.6)),
-  lidPaint: lidInk,
-};
-
-// ---- the mouth: two plates that close like doors, working slowly; flared in the wind-up, clamped at the slam ----
-
-function plate(s: 1 | -1) {
-  const chew = add(0.06, mul(max(sin(add(mul(time, 2.1), s * 1.3)), 0), 0.2));
-  const open = tabF(`mouth_${s < 0 ? "L" : "R"}`, mul(mix(chew, 1, rouse), sub(1, brace)));
-  const hinge = local([4.75, -0.3, s * 0.48]);
-  const tipNow = local(add(vec3(5.3, -1.15, s * 0.22), vec3(mul(open, 0.25), mul(open, 0.2), mul(open, s * 0.85))));
-  return strand({
-    name: `maxilliped${s < 0 ? "L" : "R"}`, spine: (m) => mix(hinge, tipNow, m), stations: 4,
-    girth: (m) => mul(0.4, sub(1, mul(m, 0.3))), section: { aspect: 0.32, squareness: 3 }, up: body.x,
-    tips: [{ round: 0.1 }, { round: 0.15 }],
-    paint: (m, v) => {
-      // Cream plates, brick at the hinge, a black joint line, a row of black bristles down the inner edge.
-      const segs = mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.3));
-      const joint = sub(1, cut(abs(sub(m, 0.33)), 0.025));
-      const bristle = mul(cut(mul(cos(mul(v, TAU)), -s), 0.8), cut(sin(mul(m, 40)), 0.3));
-      return mix(segs, vec3(...I.black), max(joint, bristle));
-    },
-    detail: { along: 10, around: 14 },
-  });
-}
-// The black of the mouth behind the plates: seen only when they open.
-const gullet = place(strand({
-  name: "gullet", spine: (m) => mix(vec3(4.7, -0.2, 0), vec3(4.85, -1.05, 0), m), stations: 4, girth: 0.6,
-  section: { aspect: 0.35 }, up: [1, 0, 0], tips: [{ round: 0.2 }, { round: 0.3 }], paint: () => vec3(...I.black), detail: { along: 6, around: 10 },
-}), rigid(body));
-
-// ---- the weed beard: hanging under the face on both sides of the mouth, heavier on the dead eye's side ----
-
-const weed = horn({
-  name: "weed", length: 1.6, curl: 1.4, taper: 0.6, girth: 0.11, out: [0.4, 1, 0], toward: [1, 0, 0],
-  paint: (m) => mix(vec3(...I.mossDeep), vec3(...I.moss), cut(sin(add(mul(m, 7), 1)), 0.6)),
-});
-const BEARD: readonly (readonly [number, number, number])[] = [
-  [0.9, 0.53, 0.9], [0.93, 0.57, 1.2], [0.95, 0.61, 1.0], [0.91, 0.65, 0.8], [0.96, 0.66, 1.3], // left (v toward 0.5)
-  [0.94, 0.88, 0.9], [0.92, 0.93, 0.7], // right
-];
-const beard = draw.points("beard", place(points(BEARD.length, (i) => {
-  const pick = (k: 0 | 1 | 2) => BEARD.reduce((acc: F, t, j) => add(acc, mul(t[k], sub(1, min(abs(sub(i, j)), 1)))), lift<"f32">(0));
-  return { at: vec3(pick(0), pick(1), 0.92), scale: add(pick(2), mul(sin(add(mul(time, 0.8), i)), 0.05)) };
-}), carapace), weed);
-
-const face = [brow, ...eyeParts(goodEye), ...eyeParts(deadEye), plate(1), plate(-1), gullet, beard];
-
-// ==== the atoll: a lumpy mesa carried on the crab ====================================================================
-
-const A = S.atoll;
-/** Radius scale of the atoll's outline at angle a (radians): an ellipse with lumps. JavaScript twin below. */
-const lumpsOf = (a: F): F => add(1, mul(add(add(sin(add(mul(a, 3), 1.1)), mul(sin(add(mul(a, 5), 2.3)), 0.7)), mul(sin(add(mul(a, 9), 0.4)), 0.4)), A.lumps));
-const lumpsJs = (a: number) => 1 + (Math.sin(3 * a + 1.1) + 0.7 * Math.sin(5 * a + 2.3) + 0.4 * Math.sin(9 * a + 0.4)) * A.lumps;
-/** Plateau height above `top` at local (x, z): low hills, highest at the fort's knoll. JavaScript twin below. */
-const hillsOf = (x: F, z: F): F => {
-  const k = sub(1, smoothstep(0, 2.6, add(abs(sub(x, S.fort.at[0])), abs(sub(z, S.fort.at[1])))));
-  return add(mul(add(mul(sin(add(mul(x, 0.9), 0.3)), sin(mul(z, 0.8))), 0.5), A.hills), mul(k, 0.6));
-};
-const hillsJs = (x: number, z: number) => {
-  const d = Math.abs(x - S.fort.at[0]) + Math.abs(z - S.fort.at[1]);
-  const t = Math.min(Math.max(d / 2.6, 0), 1), k = 1 - t * t * (3 - 2 * t);
-  return (Math.sin(0.9 * x + 0.3) * Math.sin(0.8 * z)) * 0.5 * A.hills + 0.6 * k;
-};
-// Profile from the crown (u = 0) out over the plateau, over the lip, down the cliff and tucked under (u = 1).
-// The cliff (u 0.56 to 0.88) is even in u, so paint over u is even down its face.
-const rhoOf = keys([[0, 0], [0.45, 0.82], [0.52, 0.93], [0.56, 0.97], [0.88, 1.03], [1, 0.0]]);
-const dropOf = keys([[0, 0], [0.45, 0], [0.52, 0.05], [0.56, 0.14], [0.88, 1.0], [1, 1.05]]); // share of top - base
-const atollPoint = (u: F, v: F): P3 => {
-  const a = mul(v, -2 * Math.PI);
-  const r = mul(rhoOf(u).x, lumpsOf(a));
-  const x = add(A.centre[0], mul(mul(cos(a), r), A.rx)), z = add(A.centre[1], mul(mul(sin(a), r), A.rz));
-  // Hills only on the plateau: they fade out over the lip so the cliff top stays a clean line.
-  const y = add(sub(A.top, mul(dropOf(u).x, A.top - A.base)), mul(hillsOf(x, z), sub(1, smoothstep(0.4, 0.55, u))));
-  return vec3(x, y, z);
-};
-const atollPaint = (u: F, v: F): P3 => {
-  // Moss on the plateau with deep-moss tufts (lines of a noise field); it spills unevenly over the lip.
-  // (Patterns here and on the copies are sums of sines, not noise: noise per pixel was most of these draws' cost.)
-  const turn = mul(v, 2 * Math.PI);
-  const spill = add(0.56, add(mul(sin(mul(turn, 7)), 0.03), mul(sin(add(mul(turn, 17), 1)), 0.02)));
-  const qx = mul(mul(u, cos(turn)), 7), qz = mul(mul(u, sin(turn)), 7);
-  const contour = add(sin(add(qx, mul(sin(mul(qz, 0.8)), 1.7))), sin(add(mul(qz, 1.2), mul(sin(mul(qx, 0.7)), 1.3))));
-  const tuft = sub(1, cut(abs(contour), 0.105));
-  const moss = mix(vec3(...I.moss), vec3(...I.mossDeep), tuft);
-  // Stone cliffs cut by vertical strokes of varying weight; a dark band where the cliff meets its foot.
-  const strokeAt = abs(sub(fract(add(mul(v, 70), mul(sin(add(mul(turn, 5), mul(u, 7))), 0.3))), 0.5));
-  const stroke = mul(sub(1, cut(strokeAt, 0.075)), cut(u, 0.58));
-  const cliff = mix(vec3(...I.stone), vec3(...I.bark), stroke);
-  const foot = mix(cliff, vec3(...I.bark), cut(add(u, mul(sin(add(mul(turn, 11), 0.5)), 0.025)), 0.77));
-  return mix(moss, foot, cut(u, spill));
-};
-const atoll = draw.surface("atoll", framed(surface(atollPoint, { u: ["cap", "cap"], v: "periodic" }), { frame: shellFrame, scale: lift<"f32">(1) }), {
-  paint: atollPaint, grid: { u: spacing.even(48), v: spacing.even(96) }, sides: "one", outline: "hull",
-});
-
-/** A point on the atoll's rim at angle a (radians), just inside the cliff top: where coral grows. */
-const rimAt = (a: number, inset: number): V3 => {
-  const r = 0.93 * lumpsJs(a) * inset;
-  return [A.centre[0] + Math.cos(a) * r * A.rx, A.top - 0.12 * (A.top - A.base) + 0.05, A.centre[1] + Math.sin(a) * r * A.rz];
-};
-/** A point at the cliff's foot at angle a, a little above the waterline. */
-const footAt = (a: number): V3 => {
-  const r = 1.0 * lumpsJs(a);
-  return [A.centre[0] + Math.cos(a) * r * A.rx, A.base + 0.18 * (A.top - A.base), A.centre[1] + Math.sin(a) * r * A.rz];
-};
-/** A point of the plateau at local (x, z). */
-const plateauAt = (x: number, z: number): V3 => [x, A.top + hillsJs(x, z), z];
-
-// ==== coral, trees and the fort's rubble: one list of rounded cones on the crab's frame ==============================
-
-type Kind = 0 | 1 | 2 | 3; // coral, trunk, crown, stone: the id's first lane, read by the paint
-const hash = (n: number) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, salt: number): Branch =>
-  ({ a, b, ra, rb, level, id: [kind, salt, 0] });
-
-/** A coral head: a clump of short thick fingers leaning out from one point, pink with cream tips. */
-function coralHead(at: V3, size: number, turn: number, salt: number): Branch[] {
-  const n = 5 + Math.floor(3 * hash(salt + 11));
-  return Array.from({ length: n }, (_, j) => {
-    const a = turn + (j / n) * 2 * Math.PI, tilt = j === 0 ? 0 : 0.5 + 0.35 * hash(salt * 13 + j);
-    const len = size * (0.45 + 0.35 * hash(salt * 7 + j)) * (j === 0 ? 1.25 : 1);
-    const dir: V3 = [Math.sin(tilt) * Math.cos(a), Math.cos(tilt), Math.sin(tilt) * Math.sin(a)];
-    const b: V3 = [at[0] + dir[0] * len, at[1] + dir[1] * len, at[2] + dir[2] * len];
-    return cone(0, at, b, 0.2 * size, 0.13 * size, 1, salt);
-  });
-}
-// Half the heads on the lip of the cliff, half clinging at its foot by the water.
-const corals = Array.from({ length: S.coralHeads }, (_, k) => {
-  const a = (k / S.coralHeads) * 2 * Math.PI + 0.3 * hash(k);
-  const atFoot = k % 2 === 1;
-  const at = atFoot ? footAt(a) : rimAt(a, 0.97);
-  return coralHead(at, (atFoot ? 0.9 : 0.6) + 0.4 * hash(k + 7), 6 * hash(k + 3), k);
-}).flat();
-
-/** A broadleaf tree: a leaning trunk and three overlapping crown blobs. */
-function tree(x: number, z: number, h: number, salt: number): Branch[] {
-  const foot = plateauAt(x, z), lean = [0.25 * (hash(salt) - 0.5), 0, 0.25 * (hash(salt + 1) - 0.5)];
-  const top: V3 = [foot[0] + lean[0]! * h, foot[1] + h, foot[2] + lean[2]! * h];
-  const blob = (dx: number, dy: number, dz: number, r: number, j: number) => cone(2, [top[0] + dx, top[1] + dy, top[2] + dz], [top[0] + dx, top[1] + dy + 0.01, top[2] + dz], r, r, 0, salt * 3 + j);
-  return [
-    cone(1, [foot[0], foot[1] - 0.3, foot[2]], top, 0.16, 0.1, 0, salt),
-    blob(0, 0.35, 0, 0.75 * h * 0.45, 0), blob(0.45, 0.05, 0.3, 0.55 * h * 0.45, 1), blob(-0.4, 0.1, -0.35, 0.6 * h * 0.45, 2),
-  ];
-}
-const TREES: readonly (readonly [number, number, number])[] = [[0.6, 2.2, 1.9], [1.4, -1.6, 1.6], [-0.4, 3.6, 1.5], [-3.6, 2.4, 2.0], [-4.3, -2.6, 1.7], [-0.6, -3.4, 1.8]];
-const trees = TREES.slice(0, S.trees).flatMap(([x, z, h], k) => tree(x, z, h, 40 + k));
-
-// The fort: rubble round the tower's foot, a broken curtain wall to one side, merlons of unequal height on the tower.
-const F0 = S.fort, fortFoot = plateauAt(F0.at[0], F0.at[1]);
-const fortTop: V3 = [fortFoot[0] + F0.lean * F0.height, fortFoot[1] + F0.height, fortFoot[2] - F0.lean * 0.5 * F0.height];
-const stones: Branch[] = [
-  ...Array.from({ length: 5 }, (_, k) => {
-    const a = (k / 5) * 2 * Math.PI + 0.4, r = F0.girth * 0.82, hgt = 0.25 + 0.5 * hash(k + 90);
-    const p: V3 = [fortTop[0] + Math.cos(a) * r, fortTop[1] - 0.15, fortTop[2] + Math.sin(a) * r];
-    return k === 3 ? null : cone(3, p, [p[0], p[1] + hgt, p[2]], 0.2, 0.18, 0, 90 + k);
-  }).filter((b): b is Branch => b !== null),
-  // The curtain wall, broken off: two low courses running out to a corner stub.
-  cone(3, [fortFoot[0] + 0.6, fortFoot[1] + 0.3, fortFoot[2] + 0.4], [fortFoot[0] + 2.1, plateauAt(fortFoot[0] + 2.1, fortFoot[2] + 1.0)[1] + 0.35, fortFoot[2] + 1.0], 0.22, 0.2, 0, 100),
-  cone(3, [fortFoot[0] + 2.1, plateauAt(fortFoot[0] + 2.1, fortFoot[2] + 1.0)[1], fortFoot[2] + 1.0], [fortFoot[0] + 2.15, plateauAt(fortFoot[0] + 2.1, fortFoot[2] + 1.0)[1] + 0.9, fortFoot[2] + 1.0], 0.3, 0.26, 0, 101),
-  cone(3, [fortFoot[0] - 0.4, fortFoot[1] + 0.3, fortFoot[2] + 0.75], [fortFoot[0] - 1.6, plateauAt(fortFoot[0] - 1.6, fortFoot[2] + 1.4)[1] + 0.25, fortFoot[2] + 1.4], 0.2, 0.18, 0, 102),
-  // Rubble.
-  ...Array.from({ length: 7 }, (_, k) => {
-    const a = 2 * Math.PI * hash(k + 110), r = F0.girth + 0.3 + 0.8 * hash(k + 120);
-    const x = fortFoot[0] + Math.cos(a) * r, z = fortFoot[2] + Math.sin(a) * r, y = plateauAt(x, z)[1] + 0.05;
-    const s = 0.14 + 0.12 * hash(k + 130);
-    return cone(3, [x, y, z], [x + s, y + 0.05, z], s, s * 0.8, 0, 110 + k);
-  }),
-];
-
-const reefList = draw.copies("reef", {
-  kind: "cone",
-  copies: [...corals, ...trees, ...stones],
-  carry: shellFrame,
-  // Flat inks with pattern lines: coral cream with brick tips; bark; crowns deep moss with curling lines; stone cream
-  // with courses. p is in the crab's coordinates, so the lines ride it.
-  paint: ({ p, level, id }) => {
-    const specks = mul(mul(sin(mul(p.x, 9)), sin(add(mul(p.y, 9), 1))), sin(add(mul(p.z, 9), 2)));
-    const coral = mix(vec3(...I.coral), vec3(...I.cream), cut(specks, 0.33));
-    const swirl = add(sin(add(mul(p.x, 2.5), mul(sin(mul(p.y, 3)), 1.5))), sin(add(mul(p.z, 2.5), mul(sin(mul(p.x, 2.2)), 1.5))));
-    const curl = sub(1, cut(abs(sin(mul(swirl, 2.2))), 0.12));
-    const crownLined = mix(vec3(...I.mossDeep), vec3(...I.black), mul(curl, step(0.5, hash3(id))));
-    const course = sub(1, cut(abs(sub(fract(mul(p.y, 3.2)), 0.5)), 0.045));
-    const stone = mix(vec3(...I.cream), vec3(...I.bark), course);
-    const k = id.x;
-    return mix(mix(mix(coral, vec3(...I.bark), step(0.5, k)), crownLined, step(1.5, k)), stone, step(2.5, k));
-  },
-  outline: "silhouette", minPixels: 1, keepLevels: 2, inkBack: 6,
-});
-
-// The tower: a squarish, leaning, roofless stump (an open top shows its dark inside), stone courses.
-const tower = place(strand({
-  name: "fortTower", spine: (m) => mix(vec3(fortFoot[0], fortFoot[1] - 0.4, fortFoot[2]), vec3(...fortTop), m), stations: 4,
-  girth: (m) => mix(F0.girth, F0.girth * 0.85, m), section: { squareness: 4 }, tips: [{ round: 0.05 }, "open"], up: [1, 0, 0],
-  paint: (m, v) => {
-    const course = sub(1, cut(abs(sub(fract(mul(m, 9)), 0.5)), 0.05));
-    const joint = mul(sub(1, cut(abs(sub(fract(add(mul(v, 12), mul(floor(mul(m, 9)), 0.5))), 0.5)), 0.045)), 0.8);
-    const slit = mul(sub(1, cut(abs(sub(fract(mul(v, 4)), 0.125)), 0.015)), mul(cut(m, 0.575), sub(1, cut(m, 0.795))));
-    return mix(mix(vec3(...I.cream), vec3(...I.stone), max(course, joint)), vec3(...I.black), slit);
-  },
-  detail: { along: 12, around: 24 },
-}), rigid(shellFrame));
-
-// ==== the sea, the ship, the warning =================================================================================
-
-const warnStyle = { ...PRINT_WARNING, spacing: 1.2, edge: 0.22, line: 0.09 };
-const warning = telegraph(crush, { style: warnStyle });
-const grabWarning = telegraph(grabAttack, { style: warnStyle });
-
-/** The crash: clawed cream foam bursting from the disc's centre at the slam and running out past its edge (lib/impact.ts). */
-const crashOuter = S.crushRadius * S.crashReach;
-const crash = impactFoam("crash", water, {
-  area: hit.disc({ centre: S.crushCentre, radius: S.crushRadius }), pad: crashOuter - S.crushRadius + 1,
-  splashes: [{ at: S.crushCentre, since: sub(time, crush.arm) }],
-  reach: crashOuter, seconds: S.crashSeconds, foam: I.cream, line: I.black,
-});
-
-export default scene({
-  sea: water,
-  things: [carapace, atoll, reefList, tower, ...face, ...legs, ...claws, warning, grabWarning, crash, ...boat],
-  style: woodblock({ print: print.overprint({ ink: I.indigo, amount: S.shadowIndigo, value: S.shadowValue, black: 0.1 }) }),
-  sun: [0.15, 0.8, 0.6],
-  cameras: {
-    game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 },
-    three: { kind: "perspective", eye: [27, 12, 9], target: [1.5, 2, 5.5], fovY: 0.6 },
-    // The face, from the front and above (the claws, folded at rest, cover the mouth from lower down), the fort behind.
-    close: { kind: "perspective", eye: [15.5, 9, 3], target: [4.2, 1.4, 0.2], fovY: 0.55 },
-    top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
-    // The Grab from low and to the side: the claw closing across the beam, the lift and the squeeze.
-    grab: { kind: "perspective", eye: [21, 5.5, -3], target: [8.5, 2.2, -6.5], fovY: 0.6 },
+  compare: ["far", "face", "legs", "back"],
+  build: (o, n) => {
+    // Numbers, then what the claws offer the rig, then the rig, then each slot drawn on it, then the scene.
+    const offer = o.claws.offer(n);
+    const r = rig(n, offer);
+    const carapace = o.carapace.draw(r);
+    const legs = o.legs.draw(r);
+    const claws = o.claws.draw(r, offer);
+    const face = o.face.draw(r, carapace);
+    const back = o.back.draw(r);
+    return {
+      scene: scene({
+        sea: r.world.sea,
+        things: [...carapace.things, ...back, ...face, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.boat],
+        style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) }),
+        sun: [0.15, 0.8, 0.6],
+        cameras: CAMERAS,
+      }),
+      strikes: { crush: claws.crush },
+      holds: { grab: r.grab },
+      checks: [
+        landsInside(claws.crush), warned(r.crush), warned(r.grab),
+        // The fingers are curled horns a fifth of the beam thick near their tips: a tenth of the beam either way is a close grip.
+        gripReaches(r.grab, claws.cutterFingers, { middle: tolerance.share(0.1), gap: tolerance.share(0.1) }),
+      ],
+    };
   },
 });
 
-export const strikes = crusher.strikes;
+const base = design.build(design.resolve(BASE_ASK));
+export default base.scene;
+export const strikes = base.strikes;
 /** What the game reads of the Grab: `held()`, `thing()`, `squeezed()`, functions of the clock. */
-export const holds = { grab: grabAttack };
-export const checks = [
-  landsInside(crusher.strikes.crush!), warned(crush), warned(grabAttack),
-  // The fingers are curled horns a fifth of the beam thick near their tips: a tenth of the beam either way is a close grip.
-  gripReaches(grabAttack, cutter.fingers, { middle: tolerance.share(0.1), gap: tolerance.share(0.1) }),
-];
+export const holds = base.holds;
+export const checks = base.checks;

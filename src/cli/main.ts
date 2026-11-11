@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import type { Artefact } from "../artefact.ts";
 import type { GpuLoaded } from "../host/host.ts";
+import { DesignError } from "../design.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { contactSheet, writeWebp, type Frame } from "./image.ts";
@@ -138,6 +139,7 @@ async function main(argv: readonly string[]) {
     case "check": return (await import("./check.ts")).check(cmd);
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
     case "profile": return (await import("./profile.ts")).profile(cmd);
+    case "variants": return (await import("./variants.ts")).variants(cmd);
   }
 }
 
@@ -146,6 +148,11 @@ try {
 } catch (e) {
   if (e instanceof UsageError) {
     console.error(`loft: ${e.message}\n${USAGE}`);
+    process.exit(2);
+  }
+  // A variant, slot or option that the design does not have: the message lists the valid names; no stack.
+  if (e instanceof DesignError) {
+    console.error(`loft: ${e.message}`);
     process.exit(2);
   }
   console.error(`loft: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
