@@ -22,8 +22,9 @@
 //
 // Everything is placed from the build's numbers: the island's centre and radii (`n.atoll`), the carapace's size
 // (`n.carapace`: the rim's height, the shoulder's, the dome under the front), the ride height (the waterline), and
-// `n.headland`. The reef list (coral, trees, the ruin's footings, skerries, barnacles) and the light stand on the
+// `n.headland`. The reef list (coral, trees, the fort's rubble, skerries, barnacles) and the light stand on the
 // surface's own closed forms, evaluated on the CPU from the same expressions (`twin`), so they follow any of those.
+// Nothing here is a world coordinate: the surface, the list and the light ride `rig.shell`.
 
 import {
   abs, add, compileJs, cos, div, draw, fract, framed, inFrame, lift, max, min, mix, mul, pick, pow, saturate, sin, smoothstep, sqrt, step, sub, surface,
@@ -64,9 +65,10 @@ const KINDS = ["coral", "trunk", "crown", "masonry", "rock", "barnacle"] as cons
 type Kind = (typeof KINDS)[number];
 
 const hash = (k: number) => { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
-/** A rounded cone of the reef list. `ground` (its foot's height) rides in the id's third lane for paints that read height above it. */
-const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, salt: number, ground = 0): Branch =>
-  ({ a, b, ra, rb, level, id: [KINDS.indexOf(kind), salt, ground] });
+/** A rounded cone of the reef list. `mark` rides in the id's third lane: a height the kind's paint measures from (a
+ * rock's waterline, a barnacle's top). The other kinds' paints read no height and leave it 0. */
+const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, salt: number, mark = 0): Branch =>
+  ({ a, b, ra, rb, level, id: [KINDS.indexOf(kind), salt, mark] });
 
 const sq = (x: F): F => mul(x, x);
 /** The smooth maximum of radii (an 8-norm): the larger wins, and where two are equal the corner is filleted by 9%. */

@@ -114,7 +114,7 @@ What a slot receives and must return (`titan/slots.ts` is the contract; the type
 | legs | the rig | drawables; leg k goes from a root on the body to `rig.walk.foot(k)` (k = 0..3 left, 4..7 right) |
 | claws | the rig and its own offer | `{ things, crush, cutterFingers }`: the crusher bound to `rig.crush` by `animate` (part "crusherPalm"), the cutter's two fingers |
 | face | the rig and the carapace | `{ things, checks }`: the drawables, and what this face asks of itself (none, or as `face/dandy.ts`: its eyes' size from the game camera, its expressions told apart) |
-| back | the rig | drawables riding `rig.shell` (the shell frame: the body's, read late, pitching on after the slam) |
+| back | the rig | drawables riding `rig.shell` (the shell frame: the body's, read late, pitching on after the slam). A back that builds beyond the atoll's cylinder also gives `keepClear(rig)`: what a thrown ship must fly clear of besides that cylinder (`back/headland.ts`: its capes and its light); the design adds them to `fliesClear` |
 
 The rig (`titan/rig.ts`, type `Rig`) gives every option: `n` (the numbers of this build: read inks and sizes from it,
 never import `S`), `body` and `shell` frames, `local(p)` (crab coordinates to world), `shoulder(side)`, the walk, both
