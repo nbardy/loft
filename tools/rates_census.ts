@@ -173,6 +173,50 @@ if (jsonOut !== undefined) {
   writeFileSync(jsonOut, JSON.stringify(rows));
 }
 
+// The sea's fragment program (`colour_sea`), by what it could be evaluated at: (a) per frame; (b) a smooth function of
+// the water's point (the swell, its gradient: only sums, products, quotients, sines, square roots, normalisation),
+// which a vertex could evaluate and the rasteriser interpolate within h^2 max|f''| / 8; (c) per pixel: anything that
+// reads the pixel's screen position or a GPU-only function (the depth taps of the contact band, the footprint), or
+// passes through a threshold (step, smoothstep, floor, fract, min, max, abs, select, clamp): an edge interpolation
+// would blur or move.
+if (args.includes("--sea")) {
+  const SMOOTH = new Set(["add", "sub", "mul", "div", "neg", "sin", "cos", "exp", "sqrt", "normalize", "length", "dot", "cross", "distance", "mix"]);
+  for (const g of groups) for (const prog of g) {
+    if (!/^(colour_sea|surf_sea|sea_height|sea_gradient)$/.test(prog.name)) continue;
+    const r = rates(prog.roots, new Map([...prog.vars].map(([k]) => [k, "item" as Rate])));
+    const smooth = new Map<number, boolean>();
+    const isSmooth = (e: Expr): boolean => {
+      const known = smooth.get(e.id);
+      if (known !== undefined) return known;
+      const n = e.node;
+      let ok: boolean;
+      switch (n.op) {
+        case "const": case "input": case "param": ok = true; break;
+        case "var": ok = n.name !== "f_px"; break;
+        case "row": case "fetch": ok = r.get(e.id) !== "item"; break;
+        case "lib": ok = false; break;
+        case "iterate": ok = false; break;
+        case "vec": case "get": ok = children(e).every(isSmooth); break;
+        case "call": ok = (r.get(e.id) !== "item" || SMOOTH.has(n.fn)) && children(e).every(isSmooth); break;
+      }
+      smooth.set(e.id, ok);
+      return ok;
+    };
+    const all = everything(prog.roots).filter(emitted);
+    const by = { build: 0, frame: 0, smooth: 0, pixel: 0 };
+    const libs = new Map<string, number>();
+    for (const e of all) {
+      const rate = r.get(e.id);
+      if (rate === "build") by.build++;
+      else if (rate === "frame") by.frame++;
+      else if (isSmooth(e)) by.smooth++;
+      else by.pixel++;
+      if (e.node.op === "lib") libs.set(e.node.fn.name, (libs.get(e.node.fn.name) ?? 0) + 1);
+    }
+    console.log(`  sea ${prog.name}: ${all.length} nodes: (build ${by.build}) (a) frame ${by.frame}, (b) smooth in the water's point ${by.smooth}, (c) per pixel ${by.pixel}; library calls ${[...libs].map(([k, v]) => `${k} x${v}`).join(", ")}`);
+  }
+}
+
 if (copyMode) {
   // Per-copy work inside per-item shader programs: nodes whose slowest clock is the copy.
   const COPY = new Set(["i", "p_copy", "copy_id", "copy_level", "cell_id"]);

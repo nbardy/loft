@@ -51,9 +51,20 @@ export interface GpuLoaded extends Loaded {
    * divided by `repeats` (so the timestamp quantum and the pass's own cost divide out), the least of `rounds` rounds.
    */
   poseTime(view: View, repeats: number, rounds: number): Promise<{ readonly total: number; readonly stages: readonly number[] }>;
+  /**
+   * GPU milliseconds of a normal frame (the one `frame` runs, unmodified), least of `frames`: its two submits, the pose
+   * pass (timestamps at its start and end) and the render passes (at the start of the first, the end of the last), the
+   * two spans summed. The gap between the
+   * submits (the CPU waiting for the level-of-detail bounds and planning) is not GPU time and is not counted. `tick`:
+   * the greatest common divisor of the timestamp differences seen: the timer's resolution as observed.
+   */
+  frameGpu(view: View, frames: number): Promise<{ readonly ms: number; readonly pose: number; readonly draws: number; readonly tick: number }>;
   /** Every dynamic buffer as the pose stages (and `cpu` uploads) left it for this view, by name: for checks against `pose`. */
   readTables(view: View): Promise<Readonly<Record<string, Float32Array>>>;
 }
+/** Timestamp indices a timed frame writes at the start and end of a submit's passes (frame timing). */
+type Stamps = { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number };
+
 export interface GpuHost extends Host {
   load(artefact: Artefact): Promise<GpuLoaded>;
 }
@@ -293,9 +304,19 @@ export function passDescriptor(p: RenderPassDesc, s: Sized, out: GPUTextureView)
   };
 }
 
-function recordPasses(encoder: GPUCommandEncoder, o: Objects, s: Sized, out: GPUTextureView, plan: Plan): void {
-  for (const p of o.manifest.frame.passes) {
-    const pass = encoder.beginRenderPass(passDescriptor(p, s, out));
+/**
+ * The frame's render passes. `stamps` (frame timing): timestamp `begin` at the start of the first pass and `end` at the
+ * end of the last (on the real passes: Dawn on Metal writes no timestamps for an empty pass).
+ */
+function recordPasses(encoder: GPUCommandEncoder, o: Objects, s: Sized, out: GPUTextureView, plan: Plan, stamps?: { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number }): void {
+  const passes = o.manifest.frame.passes;
+  for (const [k, p] of passes.entries()) {
+    const writes = stamps === undefined ? undefined : {
+      querySet: stamps.querySet,
+      ...(k === 0 ? { beginningOfPassWriteIndex: stamps.begin } : {}),
+      ...(k === passes.length - 1 ? { endOfPassWriteIndex: stamps.end } : {}),
+    };
+    const pass = encoder.beginRenderPass({ ...passDescriptor(p, s, out), ...(writes !== undefined && (k === 0 || k === passes.length - 1) ? { timestampWrites: writes } : {}) });
     p.bindGroups.forEach((g, i) => pass.setBindGroup(i, s.groups[g]!));
     for (const c of p.commands) command(pass, o, c, plan);
     pass.end();
@@ -381,7 +402,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
   const bufferNamed = new Map(m.dynamic.map((k) => [m.buffers[k]!.label, o.buffers[k]!]));
 
   /** Write the frame's state and `cpu` tables, then submit the pose pass (and, when `copyBounds`, the copy of the bounds). */
-  const pose = (view: View, copyBounds: boolean): number => {
+  const pose = (view: View, copyBounds: boolean, stamps?: Stamps): number => {
     const t0 = performance.now();
     const state = frameState(m, curves, view);
     const uploads = cpuUploads(state);
@@ -401,7 +422,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     }
     const encoder = device.createCommandEncoder({ label: "loft pose" });
     if (m.frame.pose.length > 0) {
-      const pass = encoder.beginComputePass({ label: "loft pose" });
+      const pass = encoder.beginComputePass({ label: "loft pose", ...(stamps === undefined ? {} : { timestampWrites: { querySet: stamps.querySet, beginningOfPassWriteIndex: stamps.begin, endOfPassWriteIndex: stamps.end } }) });
       dispatchAll(pass, o, m.frame.pose);
       pass.end();
     }
@@ -418,10 +439,10 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     return p;
   };
   /** A frame that waits for its own bounds (headless frames, profiling): pose, read the bounds, plan. */
-  const posedPlan = async (view: View): Promise<{ readonly plan: Plan; readonly poseMs: number }> => {
+  const posedPlan = async (view: View, stamps?: Stamps): Promise<{ readonly plan: Plan; readonly poseMs: number }> => {
     if (boundsPending) await boundsPending;
     const copy = bounds.kind === "read";
-    const poseMs = await validated("pose", () => pose(view, copy));
+    const poseMs = await validated("pose", () => pose(view, copy, stamps));
     const read = copy ? await readBounds() : lastBounds;
     const t0 = performance.now();
     const p = plan(view, read);
@@ -534,6 +555,34 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       for (const d of m.frame.pose) stages.push(await time([d]));
       query.destroy(); resolve.destroy(); read.destroy();
       return { total, stages };
+    },
+    frameGpu: async (view, frames) => {
+      checkView(view);
+      if (!device.features.has("timestamp-query")) throw new Error("frameGpu: the device was created without the \"timestamp-query\" feature");
+      const query = device.createQuerySet({ type: "timestamp", count: 4 });
+      const resolve = device.createBuffer({ size: 32, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+      const read = device.createBuffer({ size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      // Timestamps come in whole ticks (0.065536 ms on the Apple GPUs measured): their differences' common divisor.
+      const gcd = (a: number, b: number): number => (a === 0 ? b : gcd(b % a, a));
+      let best = { ms: Infinity, pose: 0, draws: 0 }, tick = 0;
+      for (let f = 0; f < frames + 2; f++) {
+        const posed = await posedPlan(view, { querySet: query, begin: 0, end: 1 });
+        const rb = readbackFor(view);
+        const encoder = device.createCommandEncoder({ label: "loft frame (timed)" });
+        recordPasses(encoder, o, sizedFor(view), rb.texture.createView(), posed.plan, { querySet: query, begin: 2, end: 3 });
+        encoder.resolveQuerySet(query, 0, 4, resolve, 0);
+        encoder.copyBufferToBuffer(resolve, 0, read, 0, 32);
+        device.queue.submit([encoder.finish()]);
+        await read.mapAsync(GPUMapMode.READ);
+        const ts = [...new BigUint64Array(read.getMappedRange().slice(0))].map(Number);
+        read.unmap();
+        for (const d of [ts[1]! - ts[0]!, ts[3]! - ts[2]!, ts[2]! - ts[1]!]) if (d > 0) tick = gcd(tick, d);
+        const p = (ts[1]! - ts[0]!) / 1e6, dr = (ts[3]! - ts[2]!) / 1e6;
+        // The first two frames warm the clocks (an idle Apple GPU starts a burst at a low clock).
+        if (f >= 2 && p + dr < best.ms) best = { ms: p + dr, pose: p, draws: dr };
+      }
+      query.destroy(); resolve.destroy(); read.destroy();
+      return { ...best, tick: tick / 1e6 };
     },
     readTables: async (view) => {
       checkView(view);

@@ -400,7 +400,100 @@ hold (up to constants / up to constants, tables and curve rows): maelstrom 11,58
 22,795, thundermaw 11,637 / 15,793, tithe 19,186 / 21,202, wreckers 8,997 / 10,758, grab 6,554 / 9,325: a further 25
 to 50% of what remains. The largest single source is lists of isomorphic entries (`shadows_at`: 404 runs of 7 nodes
 in reefback, each starting a SIMD group of its own: 16,096 invocations at its level). Turning such a list into one map
-run over a table of constants removes the code and the idle invocations both. It should come next.
+run over a table of constants removes the code and the idle invocations both. It should come next for the pose stages'
+code, but not for frame time (below): the pose stages are 4 to 12% of a frame.
+
+### Runtime per frame: the prediction (added before the after-numbers, 2026-11-11)
+
+The owner re-aimed the work at per-frame cost while it was being built. The census weighted by invocations: the
+per-frame nodes lifted out of draws are 106 to 133 per vertex in the ship's parts and sails (a few thousand vertices
+each) and at most 41 per pixel (`colour_telegraph_*`, `colour_crash`, the fleet's wakes: small areas). Weighted
+(`tools/rates_weigh.py`): 1.2 to 8.3 M operations per frame in vertices; in pixels at most 130 to 330 M if each such
+draw covered the whole view, which they do not (a few percent of it). At the sea's measured rate (about 250 M
+operations per ms, below) that is about 0.03 ms of vertex work and, at a few percent coverage, under 0.05 ms of pixel
+work: under one tick of the GPU timer (0.0655 ms). (Correction, same day: the first draft of this paragraph gave the
+per-pixel bound as 80 M, from one scene; the bound over all six is the one above.) Build constants
+were already free at run time. So: **no measurable change** in draw time, pose time (within the band above) or CPU time.
+The rate rule is worth its bytes, not its milliseconds, in these scenes.
+
+### Measured (2026-11-11, merged with main c0959b4; before: main, after: this branch, both from built files)
+
+Bytes and modules (`tools/wgsl_bytes.ts`), KB = 1024 bytes:
+
+| Scene | WGSL before | after (predicted) | largest module after (predicted) | frame-values nodes (predicted) | pose levels |
+|---|---|---|---|---|---|
+| maelstrom_wyrm | 4,053 | 2,065 (1,930-2,210) hit | 262 (210-310) hit | 4,360 (4,719) | 8 -> 10 |
+| reefback_titan | 4,076 | 2,524 (2,260-2,570) hit | 330 (245-430) hit | 3,961 (3,709) | 11 -> 17 |
+| thundermaw | 3,607 | 1,967 (1,870-2,140) hit | 240 (200-305) hit | 4,776 (5,573) | 10 -> 13 |
+| tithe_fleet | 4,019 | 2,136 (2,030-2,320) hit | 461 (360-520) hit | 2,360 (1,583) | 6 -> 6 |
+| wreckers_lamp | 2,983 | 1,506 (1,410-1,610) hit | 244 (280-410) below | 1,290 (1,104) | 6 -> 6 |
+| grab | 2,564 | 1,157 (1,080-1,250) hit | 181 (225-310) below | 1,185 (1,130) | 6 -> 6 |
+
+Bytes: six of six. Largest module: four of six; in wreckers and grab no level after lowering holds as much as the
+largest level of phase 1 did, because the frame-values depths split the levels the low end assumed whole. Frame-values
+nodes: within 15% in five scenes, tithe 49% over: the census placed values by phase 1's levels (with `_common`), not
+by the authored depth the compiler uses, and tithe's values split into two tables whose work overlaps. Extra levels:
+0 to 6 (predicted 2 to 6; three scenes added none). Compile time fell too (reefback 3.0 to 1.4 s) once folding was
+memoized per node; unmemoized it was 63 s, from refolding shared sub-graphs and rebuilding loops per program.
+
+Per frame, 1280 x 800, game view, t = 1 (`tools/rates_bench.ts --profile`, three rounds alternating before and
+after). "Normal frame" is the new `GpuLoaded.frameGpu`: timestamps at the start and end of the unmodified frame's pose
+pass, and at the start of its first render pass and the end of its last, the two spans summed (the CPU's wait for the
+level-of-detail bounds between the two submits is not counted). Timestamps on empty passes read garbage on this
+adapter (Dawn on Metal), so they are written on the real passes. The timer's tick is 0.0655 ms. This GPU runs in two
+clock states: in about one run in six every reading drops 2 to 2.5x together (reefback before, round 3: a 2.36 ms
+frame and a 1.0 ms sea), so a least-of-rounds compares clock states, not code. The figures are the common state.
+
+| Scene | normal frame before -> after, ms | its pose stages | CPU pose (least) | CPU encode (least) |
+|---|---|---|---|---|
+| maelstrom_wyrm | 6.23 -> 6.16 | 0.655-0.721 -> 0.655 | 0.34 -> 0.27 | 0.48 -> 0.46 |
+| reefback_titan | 5.31 -> 5.37 (4.92 once) | 0.393 -> 0.459 | 0.29 -> 0.41 | 0.48 -> 0.57 |
+| thundermaw | 5.31-5.37 -> 5.37 | 0.459 -> 0.524 | 0.22 -> 0.27 | 0.33 -> 0.37 |
+| tithe_fleet | 5.83 -> 5.83-5.90 | 0.197 -> 0.197 | 0.38 -> 0.37 | 0.48 -> 0.42 |
+| wreckers_lamp | 4.92-4.98 -> 4.98-5.05 | 0.197 -> 0.197 | 0.37 -> 0.43 | 0.49 -> 0.61 |
+| grab | 3.87 -> 3.80-3.87 | 0.262 -> 0.197 | 0.45 -> 0.37 | 0.44 -> 0.50 |
+
+The CPU readings (least of 30 frames per run; reefback and thundermaw lost one "before" run to a failed process) move
+by up to 0.12 ms both ways with no sign common to the scenes; rounds of one scene spread by 0.1 to 0.4 ms. Lowering
+adds no CPU work to a frame (frame values are pose stages; uploads and the plan are unchanged), so this is read as noise.
+
+As predicted: no change beyond one tick anywhere. The pose stages move by one tick either way (reefback and
+thundermaw one tick slower, with 6 and 3 more levels; grab one tick faster), inside the 0.75-1.35x band. Pictures:
+the worst frame has 0.0063% of pixels over 8/255 (bar 0.1%; 18 frames: six scenes, the proof cases t = 1, t = 2.5 and t = 2.5 with an input or param changed); they are isolated pixels on paint bands and ink edges
+(a fort's brick lines, coral tips) where an f32-folded threshold moved by a pixel. `tests/pose.gpu.test.ts` passes.
+
+### What a frame is made of, and the sea
+
+The normal frame is 3.8 to 6.2 ms GPU. Its pose stages are 0.2 to 0.7 ms (4 to 12%); the rest is the render passes.
+Attribution from the per-stage profiling frame (which costs about 1.5x a normal frame, one pass per stage): the sea is
+the largest draw in every scene, 1.86 to 3.95 ms; fixed stages (clears, depth and multisample resolves, the post pass)
+about 1.0 ms; the sky 0.33 to 0.43; no creature draw reaches 1 ms.
+
+The sea's fragment program, by rate (`tools/rates_census.ts --sea`; its `colour_sea` and the functions it calls):
+
+| Scene | (a) per frame | (b) smooth in the water's point | (c) per pixel | library calls |
+|---|---|---|---|---|
+| maelstrom_wyrm (whirlpool) | 4 | 19 | 280 | contact band, footprint, noise x2, hash, fwidth x7 |
+| the four others with swell | 3 | 27 | 108 | the same, fwidth x6 |
+| grab | 2 | 19 | 46 | contact band, contact foam, footprint |
+
+Priced by removing parts of the built WGSL (`tools/sea_variants.py`; reefback / maelstrom, least of three): as built
+2.75 / 3.93 ms; contact band removed 1.44 / 2.43; its inner ring alone 0.07 / 0.20; a constant fragment (rasterising,
+blending, multisampling: the floor) 0.46 / 0.48. So the depth taps of the contact band cost 1.31 / 1.50 ms, the style's
+water and the swell 0.98 / 1.95, the floor about 0.47.
+
+(a) is 3 or 4 nodes (time times each wave's frequency): nothing to lift. (b) is 19 to 27 nodes of 140 to 300, at most
+about 0.13 ms, and it fails its certificate where it would pay: interpolated over the sea's cells (2.25 x 7 pixels),
+the slope's error is h^2 A k^3 / 8, which, where the footprint fade begins (h about 0.6 of the shortest wavelength), is
+about twice the slope itself. So the sea's cost is **(c), per pixel**, and lifting cannot cut it. What would:
+
+1. The contact band (half the sea): 9 to 17 reads of the scene's depth, each unprojected with a 4x4 matrix, at every
+   sea pixel, though almost all sea pixels are far from any body. A lower-rate pass: per 8 x 8 tile, whether any opaque
+   surface lies within the band of the tile (one pass over the depth at 1/64 of the pixels), and the sea skipping the
+   taps where none does. Expected: the band's 1.3 to 1.5 ms down to its share of the screen near bodies, plus about
+   0.02 ms for the tile pass; about 1 ms per frame.
+2. The style's water (0.98 to 1.95 ms): two value-noise evaluations and six or seven `fwidth`s per pixel, and
+   maelstrom's whirlpool marks (280 per-pixel nodes). A texture of the noise (phase 3) would replace the noise.
 
 ## Phase 3: textures and layers
 

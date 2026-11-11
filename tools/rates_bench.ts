@@ -28,6 +28,7 @@ if (args.includes("--profile")) {
   const view = { camera: resolveCamera(bundle.manifest, proof.view), width: 1280, height: 800, time: 1 };
   await loaded.frame(view);
   const p = await loaded.profile(view, 20);
+  const normal = await loaded.frameGpu(view, 20);
   let pose = Infinity, encode = Infinity;
   for (let i = 0; i < 30; i++) { const t = (await loaded.frameTimed(view)).ms; pose = Math.min(pose, t.pose); encode = Math.min(encode, t.encode); }
   loaded.destroy();
@@ -35,7 +36,7 @@ if (args.includes("--profile")) {
   for (const d of p.draws) draws[d.label] = { net: d.net, triangles: d.triangles };
   const stages: Record<string, number> = {};
   for (const s of [...p.stages, ...p.poseStages]) stages[s.label] = s.ms;
-  console.log(JSON.stringify({ total: p.total, passOverhead: p.passOverhead, cpuPose: pose, cpuEncode: encode, draws, stages }));
+  console.log(JSON.stringify({ normal, total: p.total, passOverhead: p.passOverhead, cpuPose: pose, cpuEncode: encode, draws, stages }));
   process.exit(0);
 }
 const bundle = readBundle(dir);
