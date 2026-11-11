@@ -156,7 +156,10 @@ function cost(): void {
   for (let k = 0; k < rounds; k++) {
     for (const r of pick(Object.keys(LOOKS))) {
       // Alternated, the print as it is beside each look, so a pair shares the GPU's clock state as nearly as it can.
-      const base = frameMs(scene, extra, view, size), lit = frameMs(scene, [...extra, "--light", r], view, size);
+      // A shader module fails to build now and then ("null character found", AGENTS.md): skip the pair, say so, go on.
+      let base: number, lit: number;
+      try { base = frameMs(scene, extra, view, size); lit = frameMs(scene, [...extra, "--light", r], view, size); }
+      catch (e) { console.log(`round ${k}  ${r.padEnd(16)} failed: ${String(e).split("\n").find((l) => /rror/.test(l)) ?? "?"}`); continue; }
       (seen[r] ??= { base: [], with: [] }).base.push(base);
       seen[r]!.with.push(lit);
       console.log(`round ${k}  ${r.padEnd(16)} as printed ${base.toFixed(2)}  with ${lit.toFixed(2)}  difference ${(lit - base).toFixed(2)} ms`);

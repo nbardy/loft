@@ -1211,3 +1211,40 @@ lights only edges that face it by 0.12 of N.L), and the fronts reading as noon b
 Cost (the single crab from `game`): `hatched`, `referencePalette` and `engraving` add one noise3 pair and a few
 derivatives a body fragment: under a tick (0.065 ms), unresolved. On the four crabs at 1280x800 with about four times
 the body pixels: `engraving` 0.1 to 0.2 ms.
+
+### Scored (the same day, on main d9e2ed6 merged in)
+
+Pictures: `out/shade/sheet_looks.webp` (every look on the bruiser from `game`, true size and doubled, and `face`, each
+beside its reference), `sheet_lineup.webp` (the lineup at t = 2.5 and 18 in the print as it is, `hatched`, `engraving`,
+`engravingSunset`), `sheet_video_look.webp` (`engraving` beside `lineup_wide` and `stalk_hybrid`).
+
+**B, `hatched`.** Missed on the first render, in the direction of too little: with the section terminator at 0.2 and the
+lines starting 0.14 above it, the hatched zone was a thin crescent (about a tenth of a form, not a quarter) and from
+`game` the crab looked unlit. My quarter came from the earlier core prediction at 0.4, which I carried to a lower
+threshold without recomputing. Fixed by the terminator at 0.3 and a key 60 degrees off the lens: from `game` the claw's
+lower half is now engraved as in `shade_hatched`. Second miss: the octave level was taken from the world size of a pixel,
+and on the head in `face`, whose length runs toward the camera, the rings crowded to two pixels apart; the level is now
+measured on the lines' own screen rate. Third: rings seen end on (an eyelid) printed a bullseye; they are now left out
+within about 20 degrees. The ink in each colour's own shade held: no zebra on the cream. At the lineup's present
+camera (distant) the hatching is a darker tone with texture, as predicted for small forms. Not measured: crawl in
+motion beyond looking at the 22 s clip (`clips/crab_hatched_22s.mp4`); I saw no swimming lines.
+
+**C, the palette.** The colours land where they were set (they are set from the samples). Mottling missed: size 0.55
+and cut 0.18 covered about 40% of the red in large merged clouds; at 0.42 and 0.3 it is sparse, irregular blotches,
+closer to `stalk_hybrid`'s, though theirs are rounder and denser in small clusters. The param `woodblock.outline` could
+not take a second default in one process (two styles built by `--light` collided), so the heavier line is a factor on
+the param. The deep sea reads as the reference's, with thin cream lines; its far haze was first a pale grey band and is
+now a dark blue. What the references still have that ours does not: a hand-cut key line that varies along each stroke
+(ours swells only by light), blotches with small satellites, heavier brows and pupils, a coarser paper.
+
+**D, `sunset`.** The fronts stay at their lit ink and the gold rim reads on the sunward edges, as predicted. The failure
+I named came true: the first render looked like noon with a gold outline. The undersides are now washed into the violet
+block (a bokashi from the form's middle down), which gives the backlit read without blacking a face.
+
+**Where the terminator should sit.** Not at N.L = 0 of the sun. From the game camera the sun is 23 degrees off the
+view, so a sun terminator leaves a ball 4% in shadow, and from above a level limb's terminator runs along its top or
+bottom edge depending on how it points, not along its length. The painter's shadows run along each form's long axis on
+the side away from a light kept well off the lens. So: the light the forms are turned by is the sun swung 45 to 60
+degrees off the lens (`offLens`), and the terminator is measured round the section (`section`), N.K < at |K across the
+form|, so every limb shows the same share in shadow, at 0.3 to 0.4 of the section. Cast shadows still fall along the
+true sun.
