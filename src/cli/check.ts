@@ -1,17 +1,64 @@
-// `loft check <scene.ts>`: the scene module's exported `checks` (src/check.ts), run on the CPU against its default
-// export, printed as a table. Exits 1 when any check fails, so it can gate a build.
-import { resolve } from "node:path";
+// `loft check <scene.ts>`: a scene's checks (src/check.ts), run on the CPU against the scene they were built with,
+// printed as a table. A plain module: its exported `checks` against its default export. A design (docs/variants.md):
+// the variant given, or else every named variant, or with `--combinations` every combination of slot options; one
+// table per variant. Exits 1 when any check fails or any variant fails to build, so it can gate a build.
 import type { Command } from "./args.ts";
+import { choose, subjectAt, type Chosen } from "./variant.ts";
+import type { VariantAsk } from "../design.ts";
+
+type Outcome = { readonly label: string; readonly about: string; readonly result: { readonly kind: "built"; readonly failed: number; readonly total: number } | { readonly kind: "unbuilt"; readonly error: string } };
 
 export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<void> {
-  const mod = (await import(resolve(cmd.path))) as { default?: unknown; checks?: unknown };
-  if (mod.default === undefined) throw new Error(`${cmd.path} has no default export (it must export a scene)`);
-  if (!Array.isArray(mod.checks)) throw new Error(`${cmd.path} exports no \`checks\` array`);
+  const subject = await subjectAt(cmd.path);
   const { runChecks, formatChecks } = await import("../check.ts");
-  const t = performance.now();
-  const verdicts = runChecks(mod.default as Parameters<typeof runChecks>[0], mod.checks);
-  console.log(formatChecks(verdicts));
-  const failed = verdicts.filter((v) => !v.pass).length;
-  console.log(`\n${verdicts.length - failed} passed, ${failed} failed  (${(performance.now() - t).toFixed(0)} ms, including compile)`);
-  if (failed > 0) process.exitCode = 1;
+
+  /** One variant's table; a variant that throws while it is built or compiled is a failure with its reason, and the rest go on. */
+  const run = (label: string, about: string, pick: () => Chosen): Outcome => {
+    const t = performance.now();
+    try {
+      const c = pick();
+      if (c.checks.kind === "absent") throw new Error(`${cmd.path} exports no \`checks\` array`);
+      const verdicts = runChecks(c.scene, c.checks.list);
+      const failed = verdicts.filter((v) => !v.pass).length;
+      console.log(`${formatChecks(verdicts)}\n\n${verdicts.length - failed} passed, ${failed} failed  (${(performance.now() - t).toFixed(0)} ms, including compile)`);
+      return { label: c.label, about, result: { kind: "built", failed, total: verdicts.length } };
+    } catch (e) {
+      const error = e instanceof Error ? e.message : String(e);
+      console.log(`NOT CHECKED: ${error}`);
+      return { label, about, result: { kind: "unbuilt", error } };
+    }
+  };
+
+  const outcomes: Outcome[] = [];
+  const each = (asks: readonly { readonly label: string; readonly about: string; readonly ask: VariantAsk }[]) => {
+    for (const a of asks) {
+      console.log(`\n== variant ${a.label}: ${a.about}`);
+      outcomes.push(run(a.label, a.about, () => choose(subject, cmd.path, { kind: "ask", ask: a.ask, text: a.label })));
+    }
+  };
+  switch (subject.kind) {
+    case "scene":
+      if (cmd.combinations) throw new Error(`${cmd.path} exports a scene, not a design: it has no slot options to combine`);
+      outcomes.push(run("scene", "", () => choose(subject, cmd.path, cmd.variant)));
+      break;
+    case "design": {
+      const d = subject.design;
+      // Labelled from the picks, not resolved here: a combination whose options disagree on a number fails in its own row.
+      if (cmd.combinations) each(d.combinations().map((ask) => ({ label: ask.picks.length === 0 ? "base" : ask.picks.map(([s, o]) => `${s}=${o}`).join(","), about: "combination", ask })));
+      else if (cmd.variant.kind === "ask") each([{ label: cmd.variant.text, about: "as asked", ask: cmd.variant.ask }]);
+      else each(d.variants.map((v) => ({ label: v, about: d.about(v), ask: { variant: v, picks: [] } })));
+      break;
+    }
+  }
+
+  const bad = outcomes.filter((o) => o.result.kind === "unbuilt" || o.result.failed > 0);
+  if (outcomes.length > 1) {
+    console.log(`\nvariant${" ".repeat(34)}checks`);
+    for (const o of outcomes) {
+      const r = o.result;
+      console.log(`${o.label.padEnd(40)} ${r.kind === "built" ? `${r.total - r.failed}/${r.total} pass` : `not checked: ${r.error.split("\n")[0]}`}`);
+    }
+    console.log(`\n${outcomes.length - bad.length} of ${outcomes.length} variants pass`);
+  }
+  if (bad.length > 0) process.exitCode = 1;
 }
