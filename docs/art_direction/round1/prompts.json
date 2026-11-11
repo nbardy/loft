@@ -1,0 +1,146 @@
+[
+ {
+  "name": "01_A_woodblock_whirlpool",
+  "style": "A_woodblock",
+  "subject": "whirlpool",
+  "prompt": "a colossal ancient sea creature that owns and spins a giant whirlpool, parts of its body breaking the surface around the vortex, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. Japanese ukiyo-e woodblock print style, flat colour areas, confident black outlines, clawed foam wave crests, indigo and cream palette with one vermilion accent."
+ },
+ {
+  "name": "02_B_toon_whirlpool",
+  "style": "B_toon",
+  "subject": "whirlpool",
+  "prompt": "a colossal ancient sea creature that owns and spins a giant whirlpool, parts of its body breaking the surface around the vortex, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bright cel-shaded cartoon style, chunky simplified shapes, saturated tropical daylight colours, two-tone shading with crisp shadow edges, turquoise sea with white foam rings."
+ },
+ {
+  "name": "03_C_inkbook_whirlpool",
+  "style": "C_inkbook",
+  "subject": "whirlpool",
+  "prompt": "a colossal ancient sea creature that owns and spins a giant whirlpool, parts of its body breaking the surface around the vortex, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. dark storybook illustration in gouache and ink, heavy black shadow shapes, limited muted palette with a single glowing accent colour, dramatic graphic composition."
+ },
+ {
+  "name": "04_D_biolume_whirlpool",
+  "style": "D_biolume",
+  "subject": "whirlpool",
+  "prompt": "a colossal ancient sea creature that owns and spins a giant whirlpool, parts of its body breaking the surface around the vortex, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bioluminescent deep-sea style, near-black night ocean, the creature glows from within with cyan and magenta light patterns, luminous rim light, glowing reflections on the water."
+ },
+ {
+  "name": "05_E_papercraft_whirlpool",
+  "style": "E_papercraft",
+  "subject": "whirlpool",
+  "prompt": "a colossal ancient sea creature that owns and spins a giant whirlpool, parts of its body breaking the surface around the vortex, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. low-poly papercraft origami diorama style, everything built from folded paper facets, layered cut-paper waves, soft studio light, crisp faceted planes with gentle gradients."
+ },
+ {
+  "name": "06_F_miniature_whirlpool",
+  "style": "F_miniature",
+  "subject": "whirlpool",
+  "prompt": "a colossal ancient sea creature that owns and spins a giant whirlpool, parts of its body breaking the surface around the vortex, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. hand-painted tabletop miniature and claymation style, chunky sculpted forms, thick painted highlights, resin water with sculpted foam, tilt-shift toy-like depth."
+ },
+ {
+  "name": "07_A_woodblock_storm",
+  "style": "A_woodblock",
+  "subject": "storm",
+  "prompt": "a colossal living storm creature hovering low over the sea, made of thundercloud and lightning, raining on the water beneath it, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. Japanese ukiyo-e woodblock print style, flat colour areas, confident black outlines, clawed foam wave crests, indigo and cream palette with one vermilion accent."
+ },
+ {
+  "name": "08_B_toon_storm",
+  "style": "B_toon",
+  "subject": "storm",
+  "prompt": "a colossal living storm creature hovering low over the sea, made of thundercloud and lightning, raining on the water beneath it, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bright cel-shaded cartoon style, chunky simplified shapes, saturated tropical daylight colours, two-tone shading with crisp shadow edges, turquoise sea with white foam rings."
+ },
+ {
+  "name": "09_C_inkbook_storm",
+  "style": "C_inkbook",
+  "subject": "storm",
+  "prompt": "a colossal living storm creature hovering low over the sea, made of thundercloud and lightning, raining on the water beneath it, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. dark storybook illustration in gouache and ink, heavy black shadow shapes, limited muted palette with a single glowing accent colour, dramatic graphic composition."
+ },
+ {
+  "name": "10_D_biolume_storm",
+  "style": "D_biolume",
+  "subject": "storm",
+  "prompt": "a colossal living storm creature hovering low over the sea, made of thundercloud and lightning, raining on the water beneath it, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bioluminescent deep-sea style, near-black night ocean, the creature glows from within with cyan and magenta light patterns, luminous rim light, glowing reflections on the water."
+ },
+ {
+  "name": "11_E_papercraft_storm",
+  "style": "E_papercraft",
+  "subject": "storm",
+  "prompt": "a colossal living storm creature hovering low over the sea, made of thundercloud and lightning, raining on the water beneath it, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. low-poly papercraft origami diorama style, everything built from folded paper facets, layered cut-paper waves, soft studio light, crisp faceted planes with gentle gradients."
+ },
+ {
+  "name": "12_F_miniature_storm",
+  "style": "F_miniature",
+  "subject": "storm",
+  "prompt": "a colossal living storm creature hovering low over the sea, made of thundercloud and lightning, raining on the water beneath it, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. hand-painted tabletop miniature and claymation style, chunky sculpted forms, thick painted highlights, resin water with sculpted foam, tilt-shift toy-like depth."
+ },
+ {
+  "name": "13_A_woodblock_ghostfleet",
+  "style": "A_woodblock",
+  "subject": "ghostfleet",
+  "prompt": "a cursed drowned ghost armada, one enormous wrecked flagship surrounded by smaller spectral escort ships, rising from the deep, clearly not ordinary ships, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. Japanese ukiyo-e woodblock print style, flat colour areas, confident black outlines, clawed foam wave crests, indigo and cream palette with one vermilion accent."
+ },
+ {
+  "name": "14_B_toon_ghostfleet",
+  "style": "B_toon",
+  "subject": "ghostfleet",
+  "prompt": "a cursed drowned ghost armada, one enormous wrecked flagship surrounded by smaller spectral escort ships, rising from the deep, clearly not ordinary ships, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bright cel-shaded cartoon style, chunky simplified shapes, saturated tropical daylight colours, two-tone shading with crisp shadow edges, turquoise sea with white foam rings."
+ },
+ {
+  "name": "15_C_inkbook_ghostfleet",
+  "style": "C_inkbook",
+  "subject": "ghostfleet",
+  "prompt": "a cursed drowned ghost armada, one enormous wrecked flagship surrounded by smaller spectral escort ships, rising from the deep, clearly not ordinary ships, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. dark storybook illustration in gouache and ink, heavy black shadow shapes, limited muted palette with a single glowing accent colour, dramatic graphic composition."
+ },
+ {
+  "name": "16_D_biolume_ghostfleet",
+  "style": "D_biolume",
+  "subject": "ghostfleet",
+  "prompt": "a cursed drowned ghost armada, one enormous wrecked flagship surrounded by smaller spectral escort ships, rising from the deep, clearly not ordinary ships, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bioluminescent deep-sea style, near-black night ocean, the creature glows from within with cyan and magenta light patterns, luminous rim light, glowing reflections on the water."
+ },
+ {
+  "name": "17_E_papercraft_ghostfleet",
+  "style": "E_papercraft",
+  "subject": "ghostfleet",
+  "prompt": "a cursed drowned ghost armada, one enormous wrecked flagship surrounded by smaller spectral escort ships, rising from the deep, clearly not ordinary ships, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. low-poly papercraft origami diorama style, everything built from folded paper facets, layered cut-paper waves, soft studio light, crisp faceted planes with gentle gradients."
+ },
+ {
+  "name": "18_F_miniature_ghostfleet",
+  "style": "F_miniature",
+  "subject": "ghostfleet",
+  "prompt": "a cursed drowned ghost armada, one enormous wrecked flagship surrounded by smaller spectral escort ships, rising from the deep, clearly not ordinary ships, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. hand-painted tabletop miniature and claymation style, chunky sculpted forms, thick painted highlights, resin water with sculpted foam, tilt-shift toy-like depth."
+ },
+ {
+  "name": "19_B_toon_island",
+  "style": "B_toon",
+  "subject": "island",
+  "prompt": "a colossal crab-like creature carrying an entire overgrown ruined island on its back, wading through shallows, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bright cel-shaded cartoon style, chunky simplified shapes, saturated tropical daylight colours, two-tone shading with crisp shadow edges, turquoise sea with white foam rings."
+ },
+ {
+  "name": "20_E_papercraft_island",
+  "style": "E_papercraft",
+  "subject": "island",
+  "prompt": "a colossal crab-like creature carrying an entire overgrown ruined island on its back, wading through shallows, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. low-poly papercraft origami diorama style, everything built from folded paper facets, layered cut-paper waves, soft studio light, crisp faceted planes with gentle gradients."
+ },
+ {
+  "name": "21_C_inkbook_lure",
+  "style": "C_inkbook",
+  "subject": "lure",
+  "prompt": "a sinister siren creature perched on a crooked sea stack among rocks, luring ships with a beam of light from a lantern, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. dark storybook illustration in gouache and ink, heavy black shadow shapes, limited muted palette with a single glowing accent colour, dramatic graphic composition."
+ },
+ {
+  "name": "22_D_biolume_lure",
+  "style": "D_biolume",
+  "subject": "lure",
+  "prompt": "a sinister siren creature perched on a crooked sea stack among rocks, luring ships with a beam of light from a lantern, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. bioluminescent deep-sea style, near-black night ocean, the creature glows from within with cyan and magenta light patterns, luminous rim light, glowing reflections on the water."
+ },
+ {
+  "name": "23_A_woodblock_island",
+  "style": "A_woodblock",
+  "subject": "island",
+  "prompt": "a colossal crab-like creature carrying an entire overgrown ruined island on its back, wading through shallows, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. Japanese ukiyo-e woodblock print style, flat colour areas, confident black outlines, clawed foam wave crests, indigo and cream palette with one vermilion accent."
+ },
+ {
+  "name": "24_F_miniature_lure",
+  "style": "F_miniature",
+  "subject": "lure",
+  "prompt": "a sinister siren creature perched on a crooked sea stack among rocks, luring ships with a beam of light from a lantern, seen from a high three-quarter top-down strategy game camera, one small wooden sailing ship with bright blue sails for scale, the creature is many times larger than the ship, strong readable silhouette, clear value contrast against the water, game concept art key frame, no text, no UI. hand-painted tabletop miniature and claymation style, chunky sculpted forms, thick painted highlights, resin water with sculpted foam, tilt-shift toy-like depth."
+ }
+]
