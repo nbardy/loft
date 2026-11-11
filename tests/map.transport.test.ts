@@ -18,7 +18,7 @@ const N = 64;
 function posed(pos: V3[], extra: Partial<Spec> = {}): Float32Array {
   const out = new Float32Array(pos.length * STATION_VEC4S * 4);
   poseStrand({
-    pos, local: pos, rest: pos, restStart: 0, twist: pos.map(() => 0), halfWidth: pos.map(() => 0.5), aspect: pos.map(() => 1), up: [0, 1, 0], level: 0,
+    pos, local: pos, rest: pos, restStart: 0, twist: pos.map(() => 0), halfWidth: pos.map(() => 0.5), aspect: pos.map(() => 1), up: [0, 1, 0], level: 0, leastStretch: 0.05,
     ...extra,
   }, out, 0);
   return out;

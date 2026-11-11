@@ -28,7 +28,7 @@ export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Verdict, type Measured } from "./check.ts";
-export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, biolume, papercraft, WOODBLOCK_PALETTE, type StyleName } from "./style/index.ts";
+export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
 export { afloat, afloatFrame, type AfloatSpec, type Waters } from "./geom/afloat.ts";

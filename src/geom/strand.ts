@@ -36,6 +36,13 @@ export type StrandSpec = {
   readonly up?: In<"vec3">;
   /** Per world unit: how fast accumulated roll bleeds back toward `up`. Default 0 (pure rotation-minimising). */
   readonly level?: number;
+  /**
+   * The most volume preservation may thicken the body, as a factor of its girth (at least 1). Radii scale by
+   * 1 / sqrt(stretch), and stretch is measured per unit of m, so a pose whose stations bunch (a curve parametrised by
+   * angle, a Bezier with a short arm) reads as compression there and swells it. Default about 4.47 (a stretch floor of
+   * 0.05, as always); a body posed by laws that do not space their stations by arc length wants 1.2 to 1.5.
+   */
+  readonly bulge?: number;
 };
 
 const DEFAULT_TIP = { round: 0.05, point: 0.12 } as const;
@@ -52,6 +59,14 @@ function positive(x: number, what: string): number {
   if (!(x > 0) || !Number.isFinite(x)) throw new Error(`${what} must be a positive number, got ${x}`);
   return x;
 }
+
+/** The stretch floor a bulge bound gives (radii grow by at most `bulge`); unbounded, the floor of old, 0.05. */
+function leastStretchOf(bulge: number | undefined, name: string): number {
+  if (bulge === undefined) return LEAST_STRETCH;
+  if (!(bulge >= 1 && Number.isFinite(bulge))) throw new Error(`${name}: bulge must be a finite number >= 1 (radii never grow less than not at all), got ${bulge}`);
+  return 1 / (bulge * bulge);
+}
+const LEAST_STRETCH = 0.05;
 
 const fn1 = (x: Fn1 | number): Fn1 => (typeof x === "number" ? () => lift<"f32">(x) : x);
 
@@ -100,6 +115,7 @@ export function strand(spec: StrandSpec): Strand {
   const section: Section = {
     girth: fn1(spec.girth), aspect: fn1(spec.section?.aspect ?? 1), squareness: spec.section?.squareness ?? 2,
     tips: [canonicalTip(tips[0], name), canonicalTip(tips[1], name)],
+    leastStretch: leastStretchOf(spec.bulge, name),
   };
   const paint = spec.paint;
   const paintFn: Paint = typeof paint === "function" ? paint : () => vec3(...(paint as Rgb));

@@ -252,11 +252,17 @@ export class Attack {
     return { p: mul(coil, release), q, tau };
   }
 
-  /** Seconds from the first movement to the end of the recovery (to within 1%): the attack's span around T. */
+  /**
+   * Seconds from the first movement to the end of the recovery (to within 1%): the attack's span around T. A remote
+   * attack moves nothing, so its span is the instant it arms (its warning is its own, `warn`).
+   */
   get span(): { readonly before: number; readonly after: number } {
     const T = this.timing;
-    // A critically damped step reaches 99% after about 6.6 / (2 pi f) seconds.
-    return { before: T.strike + T.windup + 1 / T.travel, after: T.hold + 6.6 / (2 * Math.PI * T.recover) + 1 / T.travel };
+    switch (this.motion.kind) {
+      // A critically damped step reaches 99% after about 6.6 / (2 pi f) seconds.
+      case "lunge": case "sweep": case "rear": return { before: T.strike + T.windup + 1 / T.travel, after: T.hold + 6.6 / (2 * Math.PI * T.recover) + 1 / T.travel };
+      case "remote": return { before: 0, after: 0 };
+    }
   }
 }
 
