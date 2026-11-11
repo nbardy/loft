@@ -690,3 +690,99 @@ Weak or unfinished:
 - The headland's barnacles on the nape end where the head's back begins (about x = 2.6 at the middle); none is under it.
 - The blink is not checked, and where the iris sits is not checked.
 
+
+## Round 5: the terraced back (2026-11-12)
+
+The owner, on the headland: "The back looks ugly though. Check those renderings, pass renderings to gpt image and ask
+it to make more interesting and seamless ones." The renders went to the image model; its paint-overs of our own
+cameras are the design (`crab_round5/back_paintover_*.webp`, `back_model_sheet.webp`; the growth and the light's base
+in `crab_round4/growth/`). The owner then chose the spiral shell for the stalk-eyed islander (another worker), so this
+back, `terraces` (`examples/bosses/titan/back/terraces.ts`), is the **bruiser's**: the head-and-brows face, the great
+claw carried aside. The headland, the base atoll and the fiddler's light are as they were.
+
+What is ugly in the headland, checked against its renders (`out/headland/turnaround.webp`, and the bruiser through
+far, back, game, face): it is five rings stacked on one axis (green cap, grey cliff, red tier, cream belly, water),
+each closed by a level edge, so every boundary can be drawn as a ring; its cliff strokes are vertical and its tier's
+blots have no direction, so no line leads anywhere; the coral and barnacles sit one every 20 degrees; the light is the
+smallest thing on it. Nothing is large.
+
+### The form: one screw
+
+What the three paint-overs share, though they disagree on where anything is: from every side, red blades rise from
+lower left to upper right and end in terraces. Only one solid looks like that from every side: a screw. So the island
+is one closed-form surface whose second coordinate is not the bearing but the **thread**: grid columns are the screw's
+lines, and every edge of the form (a plate's lip, the foot of a cliff, a terrace's rim) is a column. Ribs, strata and
+turf lines are lines of the same coordinate, so they run on through shell, stone and turf because they cannot do
+anything else.
+
+- Hull: a mound, not a mesa (`G` from the crown, 0, to the rim, 1): radius `sin^0.8`, height `cos^1.25` of a quarter
+  turn; the crown 1.2 over the atoll's `top` (4.1 in crab y; the headland's cap: 3.35), the rim at the carapace's own
+  rim line (-0.19), egg-shaped in plan (0.90 of the atoll's radii at the bow, 1.06 at the tail). Taller because the
+  front half of the island stands on the carapace: of a 3.4 flank only what is above y = 1.1 shows toward the game
+  camera.
+- The screw: thread phase `psi(G) = 1.9 (1 - (1 - G)^2.25)` groups from crown to rim, three groups round. Its lines
+  leave the rim straight up and lean over as they climb (about 45 degrees at mid flank), then run half a turn round
+  the cap. A group is three plates of unequal width (0.18, 0.20 and 0.36 of the group, each followed by a recessed pale
+  band 0.06, 0.06, 0.14): two minor blades and one **broad plate**. So: three broad plates, six blades between them.
+- Low on the flank every plate is a shingle: a convex red lobe swelling to a lip (cream edge, key line) that overhangs
+  a recessed pale band. Above G = 0.6 the minor blades die into the hull; the broad plate's lip goes on as the rim of a
+  **terrace** (level tread, pale riser: the same band, now a cliff), winding in to the crown, where the three meet in
+  a pinwheel. Level treads are exact: a tread's height is the hull's at the start of its cell (DERIVATION in the file).
+- Red tapers to a point along each lip (to G = 0.42); turf hangs over the blades' upper edges in tongues on the rib
+  lines.
+
+Inherited: the paint-overs (blades, bands, terraces, the coast's parts, growth at low seams, barnacle beads at blade
+tips); from the headland's code, the profile-with-shores idea, `cape`, `join`, `stations`, the trees, the reef list's
+paint dispatch, `keepClear`, the CPU twin for placing things; the fiddler's gallery and gulls. Mine: the screw
+coordinate as the surface's own (form and ink from one phase, creases on columns); unequal plates in groups, the broad
+one becoming the terrace; the mound hull; where the coast goes and why (below); the growth kit; the light's structure.
+
+### The coast, and where it must go
+
+The point is on the left of the centre line at the tail: bearing 200 degrees (20 degrees left of dead astern), tip 8.4
+from the island's centre (3.6 beyond the rim; the headland's: 2.3), top 0.8 above the water at the light. Not at the
+headland's 240 degrees: from `game` that is behind the crown's right shoulder and beside the bruiser's antennae; at
+200 the light stands against open sea at the island's upper left with 9 units to the nearest foot and 15 to the thrown
+ship. Not on the right, where the pictures' game view (which turned the island) puts it: the light stays off the great
+claw's side. Round from it toward the right flank: a crescent beach under the arch of the plates (152 to 192 degrees,
+sand to 1.2 beyond the rim), then a reef shelf with three stacks (2.3, 1.5 and 0.9 tall at 126, 121 and 117 degrees,
+shrinking outward). Two groves: one left of the crown, one forward-right, both behind x = -0.5; open turf between,
+and nothing on the sight line from the light to the game camera (it crosses the cap 2.5 from the centre at bearing 130).
+
+The light: tower 3.4 (the headland's 3.0), girth 0.78 to 0.5 (0.5 to 0.34), an intact lantern room and roof 0.9, on
+a mound 0.8 over the water; lean 0.34 (19 degrees) out along the point. Its lower 0.36 is crust. Structure for a later
+attack, numbers with defaults: `lean` 0.34, `rise` 0 (a segmented neck out of the mound, not drawn at 0), `shutters` 0.
+
+### Predictions (written before the first render; `bun tools/terraces_theory.ts`, bruiser at rest, 1280 x 800)
+
+1. **The light, `game`.** Finial at about (500, 70), mound top at (521, 192): 120 px from mound to finial (the
+   headland's whole light: 109), 41 px across at the foot (25); from the water 138 px. Wholly visible, the tallest
+   thing but the trees; at the slam the tail pitches up by 1.5 to 1.9 (it is 9 behind the body's origin) and the finial
+   stays 15 px or more inside the frame. `far`: 110 px, its lower third behind the aside claw's finger. `back`:
+   170 px, in frame; the point's tip 25 px from the bottom edge.
+2. **That it stands on a point, `game`.** The point's outer 2 units and the water on both sides of it show beyond the
+   island; its root (inside 6.5) is behind the tail's flank. I expect "a lighthouse on a rock off the island's far
+   corner" at a glance, the join to the island inferred.
+3. **Plates, `game`.** Toward the camera the flank shows from the carapace (y = 1.1) to the shoulder: red blades
+   about 50 px tall, 45 to 110 px wide; two broad plates wholly visible, the third in part; above them three terrace
+   rims on the cap, each 120 px or more long with a riser 12 to 35 px tall. From `back`: three broad plates, 150 px or
+   more along the lip each. Nobody can draw a level ring on the island from any camera: every edge climbs.
+4. **The beach.** `game` at rest: mostly behind the aside claw; the point end shows as a pale sliver 40 px long over
+   the claw's finger. This is a miss of the brief that I can state before building: the bruiser's claw covers the only
+   water the game camera sees beside the tail. It shows whole (82 px by about 20) while the claw is raised for Claw
+   Crush. `back`: 206 px, at the frame's bottom edge (the stacks' feet are below it: the `back` camera was framed for
+   the atoll). `far`: 76 px.
+5. **Growth.** Five clusters and rests, 230 to 280 cones in the reef list, largest at the light's foot; three barnacle
+   beads at each broad plate's tip. From `game` a cluster reads as one pale-and-pink patch 25 to 40 px across.
+6. **Clear.** The front rim on the centre line at x = 2.15 or less (the headland's 2.36; the head's back is at 2.6);
+   no tree forward of x = -0.5. Thrown ship: nearest of my targets 15 away (the point and the light). Last right foot
+   to the nearest stack 3.6 at rest; about 1.5 at the Grab's full yaw. Checks 14 of 14 on the bruiser.
+7. **Cost against the headland** (`game`, t = 1, on the bruiser): the same 15 draws (island 2, list 1, tower, gallery,
+   lantern and shutters 8, two gulls 4; the headland's: island 2, list 1, light 6, three gulls 6); triangles drawn
+   within 1,500 of the headland's (grid 46 x 144 against 52 x 144; 120 more copies at 12 each); GPU frame within one
+   timer tick of the headland's either way in the slow clock state. Where it goes: the island's paint reads the thread
+   and `G` directly (one static table for the shore), about 0.3 ms against the headland's 0.51; the list about 0.55
+   against 0.41 (nearly twice the copies, but small ones).
+8. **Unchanged.** Base `game` hashes `ec8c704f392bb4dd`, `d5a61b284211db4b`, `5d759b54f56d14dc` (confirmed on this
+   branch before starting); fiddler `0cdc48fb9d08d13c` (t = 1), `f306729c859bd6c3` (t = 12.4); the headland itself
+   (`bruiser,back=headland`, to be recorded before the refactor that shares its helpers).
