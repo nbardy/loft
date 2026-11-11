@@ -193,7 +193,7 @@ spider crab 139 px where the picture shows about 125, and the line 85% where it 
 | slam disc centre | (9.6, 5.6) | **(10, 1.5)**: in the crab's lane, clear of its neighbour's boat by 1.4 |
 | boat taken (grab bearing) | -0.75 (stilt -0.55) | **-0.26** for all four: the boat at (12.6, -4.6), keel nearly toward the camera |
 | shoved boat | bearing -0.9 (toward the camera), heading 1.9 | **bearing 0.6, heading -2.2**: it rides forward and to the camera's left, side on (its keel 54 degrees off the camera axis), stern first: across the frame, ending 14 left of its crab |
-| throw lands | (-24, -15), behind the line, out of sight | **(26, -8)** (the spider crab (26, -5)): thrown forward and to the camera's right, it arcs up in front of the line and lands in the foreground sea, in frame |
+| throw lands | (-24, -15), behind the line, out of sight | **(38, 6), (38, 0), (38, -4), (38, -8)**, left to right: thrown forward, it arcs up in front of the line and lands in the foreground sea, in frame, the four fanned (with the toe-in about 18 either side of the middle). First staged at (26, -8): `throwLands` wants a throw of 25 at least, and that carried 15 |
 | how the boats get home | thrown boats sink, new ones sail in; shoved boats sail back | **on cuts** (`Show` `cut`): the crush's cycle turns at the loop's seam (each crab's warning starts at 0: 2.0 + 0.5 k s before its slam) and the grab's at 6.0 (a warning of seven beats); both are cuts. The shoved boats stay where the ride left them until the seam (`keep` the period) |
 
 The throw thrown ahead also clears the fingers sooner (0.12 to 0.18 s, against 0.32 to 0.37 back over the shoulder:
