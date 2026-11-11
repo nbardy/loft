@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type ContactFoam, type Sea } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type ContactFoam, type Sea } from "../../src/index.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
@@ -89,7 +89,8 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
 
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
 export const styleFor = (n: Numbers, pattern: ContactFoam) => woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: pattern });
-export const SUN = [0.15, 0.8, 0.6] as const;
+/** The sun: the host input `sun`, this direction unless a game or a clip moves it (`--input sun=x,y,z`, `--sweep sun=a..b`). */
+export const SUN = movable([0.15, 0.8, 0.6]);
 
 type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: FoamOption };
 

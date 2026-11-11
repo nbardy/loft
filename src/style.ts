@@ -115,8 +115,8 @@ export type ShadowBlock = {
 };
 export type BlockCast =
   | { readonly kind: "none" }
-  /** From the capsules of every thing's skeleton, as the shadows on the water are, onto bodies up to `reach` behind. */
-  | { readonly kind: "capsules"; readonly reach: number };
+  /** From the capsules of every thing's skeleton, as the shadows on the water are, onto bodies up to `reach` behind; none from a capsule thinner than `thin`. */
+  | { readonly kind: "capsules"; readonly reach: number; readonly thin: number };
 export type BlockOverlap =
   | { readonly kind: "none" }
   /** `width` wide (world units) round a part that stands less than `gap` in front; `amount` of the block (0..1). */

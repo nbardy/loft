@@ -14,6 +14,7 @@
 // whose line count follows the screen.
 
 import { abs, add, div, dot, exp, f, floor, fract, gt, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec3, type Expr } from "../expr.ts";
+import { luminance } from "../lib/index.ts";
 import { fwidth, pixelWorld, wgslFn } from "../lib/wgsl.ts";
 import type { BlockCast, BlockOverlap, Rgb, ShadeCtx } from "../style.ts";
 import { edgeOf, rgb } from "./shared.ts";
@@ -50,13 +51,16 @@ export type Core = { readonly kind: "off" } | { readonly kind: "flat"; readonly 
 
 /**
  * A third, lighter tone: `amount` of `ink` over the lit ink, hard-edged, where the surface faces half way between the
- * key and the eye within `size` degrees (of the section, as the `section` terminator: every limb takes a stripe, a
- * ball a patch of sin^2(size) of its disc). Never under the block.
+ * key and the eye within `size` degrees: a patch of sin^2(size) of a ball's disc, a stripe along a limb that lies
+ * across that direction. Never under the block, nor on the key block's black.
  */
 export type Highlight = { readonly kind: "off" } | { readonly kind: "shoulder"; readonly size: number; readonly ink: Rgb; readonly amount: number; readonly key: Key };
 
-/** Shadows one thing casts on another: from the capsules of every skeleton, onto bodies up to `reach` behind along the sun. */
-export type Cast = { readonly kind: "off" } | { readonly kind: "capsules"; readonly reach: number };
+/**
+ * Shadows one thing casts on another: from the capsules of every skeleton, onto bodies up to `reach` behind along the
+ * sun. A capsule thinner than `thin` casts nothing (an antenna, a whisker, a ship's rigging: a print leaves those out).
+ */
+export type Cast = { readonly kind: "off" } | { readonly kind: "capsules"; readonly reach: number; readonly thin: number };
 
 /** A flat band where a body stands in the water: `amount` of the block from the waterline up to `height`. */
 export type Waterline = { readonly kind: "off" } | { readonly kind: "band"; readonly height: number; readonly amount: number };
@@ -136,7 +140,7 @@ export const light = {
   core: (edge: Terminator = section()): Core => ({ kind: "flat", edge }),
   highlight: (o: { readonly size?: number; readonly ink?: Rgb; readonly amount?: number; readonly key?: Key } = {}): Highlight =>
     ({ kind: "shoulder", size: within("highlight size (degrees)", o.size ?? 13, 1, 60), ink: o.ink ?? CREAM, amount: within("highlight amount", o.amount ?? 0.32, 0, 1), key: o.key ?? OFF_LENS }),
-  cast: (o: { readonly reach?: number } = {}): Cast => ({ kind: "capsules", reach: positive("cast reach", o.reach ?? 9) }),
+  cast: (o: { readonly reach?: number; readonly thin?: number } = {}): Cast => ({ kind: "capsules", reach: positive("cast reach", o.reach ?? 9), thin: o.thin ?? 0.13 }),
   waterline: (o: { readonly height?: number; readonly amount?: number } = {}): Waterline =>
     ({ kind: "band", height: positive("waterline height", o.height ?? 0.22), amount: within("waterline amount", o.amount ?? 1, 0, 1) }),
   overlap: (o: { readonly width?: number; readonly gap?: number; readonly amount?: number } = {}): Overlap =>
@@ -161,7 +165,7 @@ export const light = {
 // ---- the library ----------------------------------------------------------------------------------------------------
 
 /** A deeper, warmer block than the crab's indigo: a shadow of about 60% of the ink's value that keeps its hue. */
-const WARM: Block = light.block({ ink: [0.16, 0.07, 0.16], amount: 0.36, value: 0.92 });
+const WARM: Block = light.block({ ink: [0.2, 0.1, 0.12], amount: 0.3, value: 0.9 });
 
 /**
  * The named recipes (docs/lighting.md has a line each, with what it costs). `woodblock({ light: LIGHT.threeTone })`, or
@@ -198,21 +202,24 @@ export type LightName = keyof typeof LIGHT;
 const towardEye = wgslFn<"vec3">({ name: "loft_toward_eye", ret: "vec3", wgsl: "fn loft_toward_eye() -> vec3<f32> { return -frame.forward.xyz; }" });
 
 /**
- * A surface's long direction at a fragment: the unit dP/dm, from the screen derivatives of the world point and of the
- * surface's own coordinates (m along, v round; v wraps, so its derivative is taken the short way round). The zero
- * vector where the coordinates do not vary (a traced solid: `ShadeCtx.uv` is (0, 0) there). Fragment stage only.
+ * A surface's long direction at a fragment, as a vector no longer than 1: the direction of the gradient over the
+ * surface of the length along it (a body's anchor is its skin straightened at rest, x the arc length of its spine), at
+ * full length on a shaft, where that gradient is about 1, and fading to nothing on an end cap, where the length
+ * barely changes. From the screen derivatives of the world point and of that length. Fragment stage only.
+ * (First tried as dP/dm from the derivatives of the body coordinates: on an end cap that is radial, not the spine, and
+ * it stepped from triangle to triangle; the face printed sawteeth. 2026-11-12.)
  */
 const longDir = wgslFn<"vec3">({
   name: "loft_long_dir", ret: "vec3",
-  wgsl: /* wgsl */ `fn loft_long_dir(p: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
-  let ux = dpdx(uv);
-  let uy = dpdy(uv);
-  let vx = fract(ux.y + 0.5) - 0.5;
-  let vy = fract(uy.y + 0.5) - 0.5;
-  // dP/dm times the determinant of d(m, v)/d(screen): its direction is what is wanted, either way round.
-  let t = dpdx(p) * vy - dpdy(p) * vx;
-  let l2 = dot(t, t);
-  return select(vec3<f32>(0.0), t * inverseSqrt(max(l2, 1e-30)), l2 > 1e-24);
+  wgsl: /* wgsl */ `fn loft_long_dir(p: vec3<f32>, n: vec3<f32>, s: f32) -> vec3<f32> {
+  let px = dpdx(p);
+  let py = dpdy(p);
+  let det = dot(n, cross(px, py));
+  let g = (cross(py, n) * dpdx(s) + cross(n, px) * dpdy(s)) / select(1.0, det, abs(det) > 1e-12);
+  let l = length(g);
+  // Its direction, weighted by how much of a shaft this is: the gradient's size wanders with every bulge of the skin
+  // (and from one triangle to the next), and a threshold scaled by it stepped along the grid.
+  return select(vec3<f32>(0.0), g / max(l, 1e-6) * smoothstep(0.25, 0.6, l), abs(det) > 1e-12 && l < 4.0);
 }`,
 });
 
@@ -235,10 +242,13 @@ function offLens(sun: V, least: number): V {
   return select(gt(along, Math.cos(a)), swung, sun);
 }
 
-/** How much of a direction lies across the form's long direction, 0..1 (1 on a surface with no coordinates). */
+/**
+ * How much of a direction lies across the form's long direction, 0..1. 1 on an end cap, and on a surface with no
+ * coordinates of its own (a traced solid, whose `uv` is (0, 0) and whose anchor is only its world point).
+ */
 function across(dir: V, ctx: ShadeCtx): F {
-  const d = dot(dir, longDir(ctx.world, ctx.uv));
-  return sqrt(max(sub(1, mul(d, d)), 0));
+  const d = dot(dir, longDir(ctx.world, ctx.normal, ctx.anchor.x));
+  return select(gt(dot(ctx.uv, ctx.uv), 0), sqrt(max(sub(1, mul(d, d)), 0)), 1);
 }
 
 /** The terminator's measure: positive in the light. One handler per rule. */
@@ -332,8 +342,13 @@ function highlit(h: Highlight, c: V, tone: F, ctx: ShadeCtx): V {
     case "off": return c;
     case "shoulder": {
       const half = normalize(add(keyOf(h.key, ctx), towardEye()));
-      const shape = edgeOf(sub(dot(ctx.normal, half), mul(across(half, ctx), Math.cos((h.size * Math.PI) / 180))), 0, 1e-5);
-      return mix(c, rgb(h.ink), mul(mul(shape, tone), h.amount));
+      // A plain cone about the half vector, not measured round the section as the terminator is: where a face is
+      // nearly flat the surface faces the half vector almost evenly, and the small steps of a section's measure from
+      // one triangle to the next moved this edge by many pixels (a palm's highlight came out in stairs).
+      const shape = edgeOf(dot(ctx.normal, half), Math.cos((h.size * Math.PI) / 180), 1e-5);
+      // Not on the key block's black (a painted line, a pupil): a light on black is grey.
+      const inked = edgeOf(luminance(c), 0.12, 1e-5);
+      return mix(c, rgb(h.ink), mul(mul(mul(shape, tone), inked), h.amount));
     }
   }
 }
@@ -384,7 +399,7 @@ export function printedBlock(p: Pull, colour: V, tone: F): V {
 export function castOf(c: Cast): BlockCast {
   switch (c.kind) {
     case "off": return { kind: "none" };
-    case "capsules": return { kind: "capsules", reach: c.reach };
+    case "capsules": return { kind: "capsules", reach: c.reach, thin: c.thin };
   }
 }
 export function overlapOf(o: Overlap): BlockOverlap {

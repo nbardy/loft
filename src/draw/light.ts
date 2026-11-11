@@ -20,7 +20,7 @@
 // round chain of its skeleton. A ray counts only if it nears the capsule's axis after leaving the surface (`T0`): a
 // point on a limb's own lit side moves away from that limb's axis and is never shadowed by it.
 
-import { add, fetch, lift, listOf, type MapRun, type TableSource } from "../expr.ts";
+import { add, fetch, gt, lift, listOf, lt, select, vec4, type Expr, type MapRun, type TableSource } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Shader } from "../compile/context.ts";
 import type { BlockCast, BlockOverlap, ShadowBlock } from "../style.ts";
@@ -29,6 +29,8 @@ import { lit, vec3Lit } from "../compile/scene_wgsl.ts";
 import { casters } from "./shadows.ts";
 
 const NAME = "shadow_block";
+/** vec4s per capsule. */
+const LANES = 3;
 
 /** A full-screen triangle in front of everything (the depth test passes everywhere; nothing here writes depth). */
 const FULL_VS = /* wgsl */ `
@@ -39,7 +41,10 @@ const FULL_VS = /* wgsl */ `
 type Part = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] };
 const NOTHING: Part = { shaders: {}, draws: [] };
 
-/** The capsules as a table: one entry per segment, (end a, radius a), (end b, radius b), chain after chain. */
+/**
+ * The capsules as a table: one entry per segment, chain after chain: (end a, radius a), (end b, radius b), and whether
+ * the segments two before, one before, one after and two after it are of its own chain.
+ */
 function capsules(ctx: CompileContext): { readonly table: TableSource; readonly count: number } {
   const { chains, at } = casters(ctx.things);
   const runs: MapRun[] = [];
@@ -48,10 +53,18 @@ function capsules(ctx: CompileContext): { readonly table: TableSource; readonly 
     const first = base;
     base += c.length;
     count += c.length - 1;
-    runs.push({ count: c.length - 1, lanes: (k) => [fetch(at, add(k, first), 0), fetch(at, add(k, first + 1), 0)] });
+    const segments = c.length - 1;
+    const has = (yes: Expr<"bool">): Expr<"f32"> => select(yes, 1, 0);
+    runs.push({
+      count: segments,
+      lanes: (k) => [
+        fetch(at, add(k, first), 0), fetch(at, add(k, first + 1), 0),
+        vec4(has(gt(k, 1.5)), has(gt(k, 0.5)), has(lt(k, segments - 1.5)), has(lt(k, segments - 2.5))),
+      ],
+    });
   }
   const none = lift<"vec4">([0, 0, 0, 0]);
-  return { table: { name: `${NAME}_capsules`, lanes: 2, entries: Math.max(count, 1), role: "data", program: runs.length > 0 ? { kind: "map", runs } : listOf([[none, none]]) }, count };
+  return { table: { name: `${NAME}_capsules`, lanes: LANES, entries: Math.max(count, 1), role: "data", program: runs.length > 0 ? { kind: "map", runs } : listOf([[none, none, none]]) }, count };
 }
 
 function cast(c: BlockCast, b: ShadowBlock, ctx: CompileContext): Part {
@@ -70,6 +83,7 @@ function castCapsules(c: Extract<BlockCast, { kind: "capsules" }>, b: ShadowBloc
 ${sun.code}
 const REACH: f32 = ${lit(c.reach)};
 const FLOOR: f32 = ${lit(b.floor)};
+const THIN: f32 = ${lit(Math.max(c.thin, 1e-3))};
 /// The ray must near the axis at least this far from where it starts: nearer, it is the surface the point is on.
 const T0: f32 = 0.05;
 /// Corners of a box (bit 2 x, bit 1 y, bit 0 z), twelve triangles, counter-clockwise from outside.
@@ -78,14 +92,22 @@ struct VOut {
   @builtin(position) clip: vec4<f32>,
   @location(0) @interpolate(flat) id: u32,
 };
+/// Whether p is on capsule i: within its radius and a third, the drawn limb being wider than its skeleton here and there.
+fn block_on(p: vec3<f32>, i: u32) -> bool {
+  let a = ${t}(${LANES}u * i);
+  let b = ${t}(${LANES}u * i + 1u);
+  let ab = b.xyz - a.xyz;
+  let u = clamp(dot(p - a.xyz, ab) / max(dot(ab, ab), 1e-10), 0.0, 1.0);
+  return length(p - a.xyz - ab * u) < mix(a.w, b.w, u) * 1.35 + 0.04;
+}
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var out: VOut;
   out.id = ii;
-  let a = ${t}(2u * ii);
-  let b = ${t}(2u * ii + 1u);
+  let a = ${t}(${LANES}u * ii);
+  let b = ${t}(${LANES}u * ii + 1u);
   let r = max(a.w, b.w);
-  if (r < 1e-3) {
-    // A segment with no thickness casts nothing: a degenerate triangle outside the clip volume.
+  if (r < THIN) {
+    // A segment too thin to cast: a degenerate triangle outside the clip volume.
     out.clip = vec4<f32>(0.0, 0.0, 2.0, 1.0);
     return out;
   }
@@ -111,8 +133,8 @@ struct VOut {
   let px = in.clip.xy;
   if (scene_depth(px) >= 1.0) { discard; }
   let p = scene_position(px);
-  let a = ${t}(2u * in.id);
-  let b = ${t}(2u * in.id + 1u);
+  let a = ${t}(${LANES}u * in.id);
+  let b = ${t}(${LANES}u * in.id + 1u);
   let sun = block_sun();
   // The nearest approach of the ray p + s sun (s >= 0) to the segment a + u (b - a), u in [0, 1].
   let ab = b.xyz - a.xyz;
@@ -132,6 +154,12 @@ struct VOut {
   let radius = mix(a.w, b.w, u) * (1.0 - smoothstep(0.75 * REACH, REACH, s));
   let cover = (1.0 - smoothstep(-w, w, gap - radius + w)) * smoothstep(T0 + w, T0 + 3.0 * w, s);
   if (cover <= 0.0) { discard; }
+  // A limb does not shadow itself here: a point on this capsule or on its two neighbours either way along the chain is
+  // the caster's own skin, and a chain of capsules round a curved limb would print each one's shadow on the next as a
+  // ladder. (What a limb's far side owes its near side is the core shadow.) The same test leaves a thing lying on
+  // another (a moustache on a head) a shadow that starts a third of its radius out, under its key line.
+  let own = ${t}(${LANES}u * in.id + 2u);
+  if (block_on(p, in.id) || (own.x > 0.5 && block_on(p, in.id - 2u)) || (own.y > 0.5 && block_on(p, in.id - 1u)) || (own.z > 0.5 && block_on(p, in.id + 1u)) || (own.w > 0.5 && block_on(p, in.id + 2u))) { discard; }
   // Under the water the sea is drawn over it, with the water's own shadows.
   if (p.y < sea_height(p.xz) - 0.02) { discard; }
   return vec4<f32>(0.0, 0.0, 0.0, mix(1.0, FLOOR, cover));
