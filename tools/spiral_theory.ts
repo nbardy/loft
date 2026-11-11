@@ -10,7 +10,7 @@
 // The measured side is `loft check`, `loft profile` and tools/spiral_clear.ts.
 
 import { cameraMatrices, project } from "../src/host/camera.ts";
-import { GRID, U, shellTwin, vmath } from "../examples/bosses/titan/back/spiral_shell.ts";
+import { GRID, U, bandEdges, shellTwin, vmath } from "../examples/bosses/titan/back/spiral_shell.ts";
 import { S, type Numbers } from "../examples/bosses/titan/numbers.ts";
 
 type V = readonly [number, number, number];
@@ -53,8 +53,10 @@ console.log(`Raup: W = ${SP.growth}, D = 0, T = ${fmt(P.t / P.c)} (translation p
 console.log(`axis ${fv(P.axis)}  coil plane: fore ${fv(P.fore)} rise ${fv(P.rise)}  tip (the curl's centre) ${fv(P.tip)}`);
 console.log(`suture at ${fmt(P.sutureX, 3)} r from the axis; an inner turn shows from phi ${fmt((P.shows[0] * 180) / Math.PI, 1)} to ${fmt((P.shows[1] * 180) / Math.PI, 1)} degrees`);
 const m = SP.growth ** SP.band.cream;
-const bandPhi = (x: number) => (x >= 2 ? 0 : (Math.acos(x - 1) * 180) / Math.PI);
-console.log(`cream bands (degrees round the section from its outer side): ring 0 ${fmt(bandPhi(P.sutureX * m), 1)}..${fmt(bandPhi(P.sutureX), 1)}, ring 1 ${fmt(bandPhi(P.sutureX * m * SP.growth), 1)}..${fmt(bandPhi(P.sutureX * SP.growth), 1)}, and their mirror images on the far flank`);
+const deg = (x: number) => fmt((x * 180) / Math.PI, 1);
+const EDGES = bandEdges(P, SP.band);
+console.log(`cream bands on the last turn (degrees round the section from its outer side, and mirrored on the far flank): ${EDGES.map(([a, b]) => `${deg(a)}..${deg(b)}`).join(", ")}; brick between and over the crown (${deg(EDGES[0]![0] * 2)} degrees wide)`);
+console.log(`seen along the axis the cream spiral's rings stand ${SP.growth} apart and each is ${fmt((1 - 1 / m) * 100, 0)}% of its own radius wide`);
 
 // ---- 2. orientation and extents --------------------------------------------------------------------------------------
 {
@@ -78,6 +80,13 @@ console.log(`x ${fmt(ex[0])}..${fmt(ex[1])} (${fmt(ex[1] - ex[0])} long)   y ${f
 const highest = cloud.reduce((b, c) => (c.p[1] > b.p[1] ? c : b));
 console.log(`highest point ${fv(highest.p)} at ${fmt(highest.back)} turns back, phi ${fmt(highest.phi)}`);
 console.log(`the island it replaces: x -6.5..2.5, 4.7 above the water at its crown, z -4.7..4.7`);
+
+/** Least distance from a point to the shell's outside (the sampled cloud), negative inside the coil. */
+const gapTo = (q: V): number => {
+  let best = Infinity;
+  for (const c of cloud) best = Math.min(best, len(sub(q, c.p)));
+  return twin.inside(q) ? -best : best;
+};
 
 // ---- 3. the body in the mouth ----------------------------------------------------------------------------------------
 console.log("\n== the body in the mouth");
@@ -107,16 +116,17 @@ console.log(`lip above the water: ${fmt((above.length / lips.length) * 100, 0)}%
     inner = Math.min(inner, Math.hypot(dot(dp, out0) / (P.r / SP.growth), dot(dp, P.axis) / (P.a / SP.growth)) - 1);
   }
   console.log(`carapace section at the mouth's plane (x = ${fmt(xPlane)}): ${fmt(h.half * 2)} wide, ${fmt(h.tall * 2)} tall; inside the outer lip by at least ${fmt(worst * 100, 0)}% of the section, outside the turn before by ${fmt(inner * 100, 0)}% of its section (both must be above 0)`);
+  let over = Infinity, where: V = [0, 0, 0];
+  for (let i = 0; i <= 60; i++) for (let j = 0; j <= 24; j++) {
+    const x = xPlane + 0.5 + ((C.to - xPlane - 0.5) * i) / 60, hh = hullAt(x), a = (j / 24) * Math.PI, e = 2 / 2.3;
+    const q: V = [x, hh.spine + Math.sin(a) ** e * hh.tall, Math.sign(Math.cos(a)) * Math.abs(Math.cos(a)) ** e * hh.half];
+    const d = gapTo(q); if (d < over) { over = d; where = q; }
+  }
+  console.log(`the carapace's top, more than 0.5 ahead of the mouth's plane, is ${fmt(over)} from the shell that hangs over it (at ${fv(where)}; below 0 it comes through the shell's wall, not its mouth)`);
   console.log(`the crescent the body has: ${fmt(2 * P.r * (1 - 1 / SP.growth))} deep across the coil, ${fmt(2 * P.a)} along the axis`);
 }
 
 // ---- 4. the crab's limbs at rest -------------------------------------------------------------------------------------
-/** Least distance from a point to the shell's outside (the sampled cloud), signed by the nearest sample's normal. */
-const gapTo = (q: V): number => {
-  let best = Infinity, at = cloud[0]!;
-  for (const c of cloud) { const d = len(sub(q, c.p)); if (d < best) { best = d; at = c; } }
-  return dot(sub(q, at.p), twin.normal(at.back, at.phi)) < 0 ? -best : best;
-};
 const capsuleGap = (a: V, b: V, r: number): number => Math.min(...Array.from({ length: 13 }, (_, i) => gapTo(add(a, mul(sub(b, a), i / 12))) - r));
 console.log("\n== limbs at rest against the shell (surface to surface; below 0 is inside it)");
 const legs: { name: string; root: V; knee: V; ankle: V; foot: V }[] = [];
@@ -147,7 +157,7 @@ for (const cam of ["game", "back", "far", "pick"] as const) {
   const face = dot(P.axis, unit(sub(CAMERAS[cam].eye as V, world(P.tip))));
   const t = px(cam, P.tip);
   // The printed spiral: ring k's cream band's middle, at each quarter turn back, in pixels from the curl's centre.
-  const mid = P.sutureX * Math.sqrt(m);
+  const mid = P.sutureX * SP.growth ** SP.band.at;
   const rings = [1, 0, -1, -2].map((k) => {
     // Ring k shows on the turn `1 - k` turns in from the last (ring 1 and ring 0 on the last turn itself).
     const x = mid * (k >= 0 ? SP.growth ** k : 1), phi = Math.acos(Math.min(1, x - 1)), turnsIn = k >= 0 ? 0 : -k;
@@ -161,7 +171,7 @@ for (const cam of ["game", "back", "far", "pick"] as const) {
 {
   // The band's width on screen from `game`, on the last turn's upper side and one turn in.
   const widths = [1, 0].map((k) => {
-    const x0 = P.sutureX * SP.growth ** k, x1 = x0 * m, back = 0.35;
+    const x0 = P.sutureX * SP.growth ** (k + SP.band.at - SP.band.cream / 2), x1 = x0 * m, back = 0.35;
     const a = px("game", twin.at(back, Math.acos(Math.min(1, x0 - 1)))), b = px("game", twin.at(back, Math.acos(Math.min(1, x1 - 1))));
     return Math.hypot(a[0] - b[0], a[1] - b[1]);
   });
@@ -201,29 +211,32 @@ SP.groves.forEach(([back, round, trees, radius], i) => { const g = twin.at(back,
 // ---- the sketch ------------------------------------------------------------------------------------------------------
 const sketch = flag("--sketch");
 if (sketch !== undefined) {
-  const names = ["game", "back", "far", "pick"] as const;
+  // Four half-size panes, or with --pane <camera> that camera alone at the picture's size.
+  const pane1 = flag("--pane");
+  const names: readonly string[] = pane1 === undefined ? ["game", "back", "far", "pick"] : [pane1, pane1, pane1, pane1];
+  const DIV = pane1 === undefined ? 2 : 1;
   const SW = W / 2, SH = H / 2, buf = new Uint8Array(SW * 2 * SH * 2 * 3).fill(0), zb = new Float32Array(SW * 2 * SH * 2).fill(Infinity);
   const sea = [33, 51, 94], cream = [237, 224, 191], brick = [168, 56, 33], dark = [40, 24, 22], moss = [120, 143, 61], coral = [219, 143, 117], bone = [240, 235, 215];
   for (let i = 0; i < buf.length; i += 3) buf.set(sea, i);
   const plot = (pane: number, cam: string, p: V, rgb: readonly number[], size = 1) => {
-    const q = px(cam, p), ox = (pane % 2) * SW, oy = Math.floor(pane / 2) * SH;
-    const x = Math.round(q[0] / 2), y = Math.round(q[1] / 2);
+    const q = px(cam, p), ox = DIV === 1 ? 0 : (pane % 2) * SW, oy = DIV === 1 ? 0 : Math.floor(pane / 2) * SH;
+    const x = Math.round(q[0] / DIV), y = Math.round(q[1] / DIV);
     for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) {
       const xx = x + dx, yy = y + dy;
-      if (xx < 0 || xx >= SW || yy < 0 || yy >= SH) continue;
+      if (xx < 0 || xx >= (2 * SW) / DIV || yy < 0 || yy >= (2 * SH) / DIV) continue;
       const k = (oy + yy) * SW * 2 + ox + xx;
       if (q[2] < zb[k]!) { zb[k] = q[2]; buf.set(rgb, k * 3); }
     }
   };
   const things: { p: V; rgb: readonly number[]; nrm?: V }[] = [];
   // The shell as drawn: paint by the ring of the printed spiral.
-  const NUs = 1500, NVs = 220, lnW = Math.log(SP.growth);
+  const NUs = 1500, NVs = 220;
   for (let i = 0; i <= NUs; i++) for (let j = 0; j < NVs; j++) {
     const u = i / NUs, v = j / NVs, p = twin.drawn(u, v);
     if (p[1] < WATER) continue;
-    const phi = TAU * v, g = Math.log(Math.max((1 + Math.cos(phi)) / P.sutureX, 1e-4)) / lnW, across = g - Math.floor(g);
-    const edge = Math.min(across, Math.abs(across - SP.band.cream), 1 - across) < 0.035;
-    const rgb = u > U.throat ? dark : u > U.lip - 0.004 ? cream : edge ? [20, 18, 23] : across < SP.band.cream ? cream : brick;
+    const phi = TAU * v, fold = Math.acos(Math.cos(phi));
+    const edge = EDGES.some(([a, b]) => Math.abs(fold - a) < 0.03 || Math.abs(fold - b) < 0.03), inBand = EDGES.some(([a, b]) => fold > a && fold < b);
+    const rgb = u > U.throat ? dark : u > U.lip - 0.004 ? cream : edge ? [20, 18, 23] : inBand ? cream : brick;
     things.push({ p, rgb });
   }
   // Stand-ins: the carapace, the legs, the eyes on their stalks, the great claw at rest.
@@ -251,7 +264,7 @@ if (sketch !== undefined) {
     things.push({ p: add(q, mul(up, 0.08)), rgb: moss });
     if (i % 60 === 0) tube(add(q, mul(up, 0.1)), add(q, [0, 1.5, 0]), 0.5, [51, 82, 43]);
   }
-  names.forEach((cam, pane) => { for (const t of things) plot(pane, cam, t.p, t.rgb, 2); });
+  (DIV === 1 ? names.slice(0, 1) : names).forEach((cam, pane) => { for (const t of things) plot(pane, cam, t.p, t.rgb, DIV === 1 ? 3 : 2); });
   const head = new TextEncoder().encode(`P6\n${SW * 2} ${SH * 2}\n255\n`);
   const outBytes = new Uint8Array(head.length + buf.length); outBytes.set(head); outBytes.set(buf, head.length);
   await Bun.write(sketch, outBytes);

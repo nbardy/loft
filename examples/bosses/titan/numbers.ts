@@ -77,9 +77,10 @@ export const S = {
     /** Where the body sits in the mouth: the mouth's plane cuts the carapace's centre line `in` ahead of its tail end,
      * `up` above the body's origin and `side` to the right; the mouth's outer lip passes `lip` below that point. */
     seat: { in: 0.6, up: 0.0, side: 0.0, lip: 2.0 },
-    /** The printed bands: cream for this share of each ring (the rest is brick), and how far a cream band stands proud
-     * of the tube, as a share of its section. */
-    band: { cream: 0.44, proud: 0.05 },
+    /** The printed bands: cream for `cream` of each ring (the rest is brick); `at` is where the cream band's middle lies
+     * across a ring (0: on the suture, so the cream straddles the line where two turns meet; 0.5: midway between
+     * sutures); `proud` is how far a cream band stands out of the tube, as a share of its section. */
+    band: { cream: 0.4, at: 0.0, proud: 0.05 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
     lip: { flare: 0.1, thick: 0.14, throat: 0.22 },

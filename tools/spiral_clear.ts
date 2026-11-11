@@ -10,7 +10,7 @@
 
 import { compileScene } from "../src/compile/index.ts";
 import { Probe } from "../src/check.ts";
-import { scene, sea, variable, type Expr } from "../src/index.ts";
+import { foam, scene, sea, variable, type Expr } from "../src/index.ts";
 import { design, styleFor, SUN } from "../examples/bosses/reefback_titan.ts";
 import { shellTwin, vmath } from "../examples/bosses/titan/back/spiral_shell.ts";
 import { AT_HOME, type Staging } from "../examples/bosses/titan/rig.ts";
@@ -31,7 +31,7 @@ const n = { ...n0, spiral: set === undefined ? n0.spiral : merge(n0.spiral, JSON
 // The lineup's taunt for its first crab (examples/bosses/crab_lineup.ts), on this crab's own 22 s cycle: armed at 14.5 s.
 const how: Staging = args.includes("--taunt") ? { ...AT_HOME, taunt: { kind: "dance", first: 14.5, accents: [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.0] } } : AT_HOME;
 const staged = design.stage(resolved, how), water = sea({ ...staged.sea, deform: staged.deforms }), m = staged.finish(water);
-const built = scene({ sea: water, things: m.things, style: styleFor(n0, design.picked(resolved).foam.pattern), sun: SUN, cameras: { game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 } } });
+const built = scene({ sea: water, things: m.things, style: styleFor(n0, foam.ridge()), sun: SUN, cameras: { game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 } } });
 const probe = new Probe(compileScene(built), {});
 
 // ---- the shell's outside as a cloud in crab coordinates, in a grid of cells for nearest-point queries ----
@@ -46,13 +46,13 @@ for (let i = 0; i <= 420; i++) for (let j = 0; j < 96; j++) {
 const REACH = 4;
 /** Distance from a crab-coordinate point to the shell's outside, negative inside it; `REACH` cells away or more reads as far. */
 const gapTo = (q: V): number => {
-  let best = Infinity, at: Sample | undefined;
+  let best = Infinity;
   const [cx, cy, cz] = [Math.floor(q[0] / CELL), Math.floor(q[1] / CELL), Math.floor(q[2] / CELL)];
   for (let dx = -REACH; dx <= REACH; dx++) for (let dy = -REACH; dy <= REACH; dy++) for (let dz = -REACH; dz <= REACH; dz++) {
-    for (const s of cells.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) { const d = Math.hypot(q[0] - s.p[0], q[1] - s.p[1], q[2] - s.p[2]); if (d < best) { best = d; at = s; } }
+    for (const s of cells.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) { const d = Math.hypot(q[0] - s.p[0], q[1] - s.p[1], q[2] - s.p[2]); if (d < best) best = d; }
   }
-  if (at === undefined) return REACH * CELL;
-  return dot(sub(q, at.p), twin.normal(at.back, at.phi)) < 0 ? -best : best;
+  if (best === Infinity) return twin.inside(q) ? -REACH * CELL : REACH * CELL;
+  return twin.inside(q) ? -best : best;
 };
 
 // ---- the limbs: every drawn surface of the crab but its back and its carapace ----
@@ -60,8 +60,9 @@ const UU = variable("clear_u", "f32"), VV = variable("clear_v", "f32");
 type Surf = { readonly name: string; readonly point: (u: Expr<"f32">, v: Expr<"f32">) => Expr<"vec3"> };
 const isSurf = (t: unknown): t is Surf => typeof t === "object" && t !== null && "name" in t && "point" in t && typeof (t as Surf).point === "function";
 const LIMB = /^(leg|crusher|cutter|stalk|eye|lid|cheek)/;
-const limbs = m.things.filter(isSurf).filter((t) => LIMB.test(t.name)).map((t) => ({ name: t.name, roots: [t.point(UU, VV)] }));
-const hull = m.things.filter(isSurf).find((t) => t.name === "titan");
+const surfaces = (m.things as readonly unknown[]).filter(isSurf);
+const limbs = surfaces.filter((t) => LIMB.test(t.name)).map((t) => ({ name: t.name, roots: [t.point(UU, VV)] }));
+const hull = surfaces.find((t) => t.name === "titan");
 const shellRoots = [m.rig.shell.o, m.rig.shell.x, m.rig.shell.y, m.rig.shell.z];
 console.log(`${variant}${how.taunt.kind === "dance" ? " with the taunt" : ""}: ${limbs.length} limb surfaces (${limbs.map((l) => l.name).join(", ")}); ${n.crushPeriod} s at ${rate} a second`);
 

@@ -81,14 +81,27 @@ export function planOf(n: Numbers) {
 export type Plan = ReturnType<typeof planOf>;
 
 /**
- * Which ring of the printed spiral a point of the section is in, and how far across it (0 at the ring's inner edge,
- * the suture's side; 1 at the next ring): rings are counted outward from the suture's own (0), so ring k lies
- * W^k times as far from the axis. Inside the suture (covered by the turn before) the ring is below 0.
+ * Where a point of the section lies in the printed spiral: `ring` counts rings outward from the suture's own (0), so
+ * ring k lies W^k times as far from the axis (below 0: inside the suture, covered by the turn before); `across` is how
+ * far through the cream band it is (0 its inner edge, 1 its outer; above 1 it is brick).
  */
-export function ringAt(p: Plan, phi: F): { readonly ring: F; readonly across: F } {
-  const g = mul(log(max(mul(add(1, cos(phi)), 1 / p.sutureX), 1e-4)), 1 / p.lnW);
+export function bandAt(p: Plan, band: { readonly cream: number; readonly at: number }, phi: F): { readonly ring: F; readonly across: F } {
+  const g = add(mul(log(max(mul(add(1, cos(phi)), 1 / p.sutureX), 1e-4)), 1 / p.lnW), band.cream / 2 - band.at);
   const ring = floor(g);
-  return { ring, across: sub(g, ring) };
+  return { ring, across: mul(sub(g, ring), 1 / band.cream) };
+}
+
+/** The cream bands the last turn shows, as [from, to] round its section (radians from its outer side toward the face;
+ * their mirror images lie on the far flank): the paint's key lines run along these. Outermost first. */
+export function bandEdges(p: Plan, band: { readonly cream: number; readonly at: number }): (readonly [number, number])[] {
+  const phiOf = (x: number): number => Math.acos(Math.min(1, Math.max(-1, x - 1)));
+  const out: (readonly [number, number])[] = [];
+  for (let k = 2; k >= -1; k--) {
+    const inner = p.sutureX * p.W ** (k + band.at - band.cream / 2), outer = inner * p.W ** band.cream;
+    if (inner >= 2) continue;
+    out.push([phiOf(outer), phiOf(inner)] as const);
+  }
+  return out;
 }
 
 /** The lip's roll and the throat, as the build's numbers give them: the section's size at the mouth outside and inside. */
@@ -110,9 +123,9 @@ export function shellMap(n: Numbers) {
   };
   /** How proud of the tube a cream band stands at phi: a rounded hump across the band, none inside the suture. */
   const proud = (phi: F): F => {
-    const { ring, across } = ringAt(p, phi), w = S.band.cream;
-    const hump = mul(smoothstep(0, 0.3 * w, across), sub(1, smoothstep(0.7 * w, w, across)));
-    return mul(mul(hump, S.band.proud), smoothstep(-1.5, -0.5, ring));
+    const { ring, across } = bandAt(p, S.band, phi);
+    const hump = mul(smoothstep(0, 0.3, across), sub(1, smoothstep(0.7, 1, across)));
+    return mul(mul(hump, S.band.proud), smoothstep(-2.5, -1.5, ring));
   };
   /** The flare toward the mouth: the section grows by `lip.flare` over the last `flareOver` of a turn. */
   const flared = (back: F): F => add(1, mul(sub(1, smoothstep(0, L.flareOver, back)), S.lip.flare));
@@ -152,7 +165,21 @@ export function shellTwin(n: Numbers) {
   const U2 = variable("spiral_u", "f32"), V2 = variable("spiral_v", "f32");
   const g = compileJs([m.point(U2, V2)]);
   const drawn = (u: number, v: number): V3 => g({ vars: { spiral_u: u, spiral_v: v }, inputs: {}, params: {} })[0] as unknown as V3;
-  return { plan: m.plan, at, normal, drawn, dot: dotV };
+  /**
+   * Whether a crab-coordinate point is inside the bare coil (bands and flare aside): in the coil's own cylinder
+   * coordinates, inside the section of any turn that passes its bearing. Ahead of the mouth's plane there is no turn
+   * `back` < 0, so a point in front of the open mouth is outside.
+   */
+  const inside = (q: V3): boolean => {
+    const p = m.plan, d = addV(q, mulV(p.tip, -1)), h = dotV(d, p.axis), x = dotV(d, p.fore), y = dotV(d, p.rise);
+    const rho = Math.hypot(x, y), turn = (n.spiral.mouthAt - Math.atan2(y, x)) / TAU, first = turn - Math.floor(turn);
+    for (let back = first; back <= p.whorls; back += 1) {
+      const s = p.W ** -back;
+      if (((rho / s - p.c) / p.r) ** 2 + ((h / s + p.t) / p.a) ** 2 < 1) return true;
+    }
+    return false;
+  };
+  return { plan: m.plan, at, normal, drawn, inside };
 }
 
 /** The plain vector arithmetic the plan is written in, for what is placed from it. */
