@@ -62,8 +62,10 @@ const onTheBeat = (k: number) => ({
   grabBearing: -0.26,
   // Thrown forward, toward the camera, landing in the foreground sea in frame, the four fanned out (with the toe-in,
   // about 18 either side of the middle in the world). 38 forward: a throw must carry 25 from where the boat was taken
-  // (`throwLands`; 26 forward carried 15). Drawn straight back before the whip (`side` 0).
-  throw: { ...S.throw, side: 0, stroke: BEAT, follow: 0.25, flight: 6 * BEAT, land: FAN[k]!, turns: 2 },
+  // (`throwLands`; 26 forward carried 15). Drawn straight back before the whip (`side` 0). One turn in the air, not two:
+  // thrown forward, the release velocity lies only about 48 degrees off the keel, and the hand's turn over the stroke
+  // for two turns (pi 2 0.5 / 3.0, 60 degrees) carried the hull past it and out of the fingers (middle 0.35 to 0.62 off).
+  throw: { ...S.throw, side: 0, stroke: BEAT, follow: 0.25, flight: 6 * BEAT, land: FAN[k]!, turns: 1 },
   // The shoved boat starts at the front-left of the disc (the camera's left), side on, stern toward the slam, and
   // rides forward and to the left; it stays where the ride leaves it until its cycle turns at the seam.
   boatTwo: { ...S.boatTwo, bearing: 0.6, heading: -2.2, keep: PERIOD },
