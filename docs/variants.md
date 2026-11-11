@@ -102,13 +102,14 @@ the same expressions, built in the same order, drawn in the same order. Checks: 
 
 An option is one file in the slot's folder under `examples/bosses/titan/`, plus two lines in
 `examples/bosses/reefback_titan.ts` (the import, and the entry in that slot's table). Copy the nearest option and
-change it; `legs/stilt.ts` (21 lines) and `face/mask.ts` (27) are the short examples.
+change it; `legs/stilt.ts` (21 lines) is the short example. A whole direction (all five slots and a named variant) is
+`mask` (the heikegani; see "The mask direction" below).
 
 What a slot receives and must return (`titan/slots.ts` is the contract; the type checker holds you to it):
 
 | slot | `draw` receives | returns |
 |---|---|---|
-| carapace | the rig | `{ hull, things }`: `hull` is the strand the face's beard rides, m from tail (0) to front (1), v round from the top |
+| carapace | the rig | `{ hull, things }`: `hull` is the strand the face's beard rides, m from tail (0) to front (1), v round the section with `sin(2 pi v)` its height (1 on top at v = 0.25, -1 underneath; v = 0 is a flank) |
 | legs | the rig | drawables; leg k goes from a root on the body to `rig.walk.foot(k)` (k = 0..3 left, 4..7 right) |
 | claws | the rig and its own offer | `{ things, crush, cutterFingers }`: the crusher bound to `rig.crush` by `animate` (part "crusherPalm"), the cutter's two fingers |
 | face | the rig and the carapace | drawables |
@@ -164,10 +165,9 @@ bun test tests/variants.check.test.ts                                           
 
 ## Limits today (what an option cannot change)
 
-- **The face is drawn in crab coordinates for the base carapace's front** (the brow's V at x = 4.93, eyes at 4.05). A
-  carapace option that moves the front (another `carapace.to`) leaves the face where it was. The rig would have to
-  publish face mounts computed from the carapace numbers; the base's literal coordinates were kept for bit-identical
-  pictures.
+- **The base face is drawn in crab coordinates for the base carapace's front** (the brow's V at x = 4.93, eyes at 4.05).
+  A carapace option that moves the front (another `carapace.to`) leaves it where it was. A face may instead place itself
+  from the carapace numbers (`n.carapace`), as `face/mask.ts` does; the carapace option then sets them (`kabuto`).
 - **The beard rides the carapace's surface coordinates**, so a carapace option keeps the strand's (m, v) convention.
 - **Checks are the design's**, not an option's: an option cannot add a check (a fortress crab cannot ask that its claws
   cover the face). It would need a `checks` field on the option's return.
@@ -222,3 +222,18 @@ Not predicted, found by the checks:
   `stiltFiddler` settles it with that number. This is the case the variant's own `numbers` exist for.
 - Combinations that differ only in carapace, face or back always score the same as each other: those slots do not
   reach the checks. The checks see only the numbers and the claws.
+
+## The mask direction (2026-11-11)
+
+`--variant mask`: carapace `kabuto` (a ribbed lacquer helmet strand, two lamellar sode panels, two cord tassels),
+face `mask` (one closed-form surface: a sphere patch on the carapace front, square mapped to disc, pushed out by a
+height field of brows, sockets, nose, cheeks, lips and rim; flat inks in the same coordinates), legs `armoured`
+(sawtooth girth = overlapping lames whose phase follows the knee's bend), claws `gauntlet` (`clawsOf` with arm paint,
+arm profile, finger paint and a rest pose), back `keep` (mound, three-tier keep, two pines).
+
+Seams it needed: one ink (`lacquer`); `ClawLook` gained optional `arm`, `armProfile`, `finger` and `rest`, each absent
+field building the base claw's exact expression (base frames byte-identical). Lessons:
+
+- `cut` (src/style/shared.ts `edgeOf`) is a screen-derivative edge: it exists only in paint. In geometry (girth, a
+  surface's point) the CPU twin fails with "loft_fwidth is GPU-only"; use `smoothstep` there.
+- A copies `cone` has round caps, so a flat disc cannot be one: pine pads are flattened strands.

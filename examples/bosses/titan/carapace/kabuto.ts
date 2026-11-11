@@ -2,16 +2,17 @@
 // ribs as lighter lines), a red band low round it laced with cream, and on each flank a sode: a big lamellar shoulder
 // guard hanging over the leg roots, rows of black scales stepped outward and laced with red cord.
 //
-// The strand keeps the carapace contract (m tail to front, v round from the top), so the base face's beard still rides
+// The strand keeps the carapace contract (m tail to front; v round the section, sin(2 pi v) its height), so the base face's beard still rides
 // it. The bowl is taller than the base's (`numbers`): the mask's front needs the height, and it ends a little shorter
 // so the mask (face/mask.ts) stands in front of it.
 //
 // Motion: the sode hang from their top edges and swing out late after Claw Crush's slam (follow-through), sway with
-// the walk read 0.3 s late (drag), and keep a small moving hold of their own (uneven sides).
+// the walk read 0.3 s late (drag), and keep a small moving hold of their own (uneven sides). Two cord tassels hang from
+// the helmet's back and swing later and longer still.
 
 import {
   abs, add, cos, draw, dragged, fract, framed, lift, max, mix, mul, place, rigid, sin, spacing, strand, sub, surface, swing, through, time, vec3,
-  alive, type F,
+  alive, smoothstep, type F,
 } from "../../../../src/index.ts";
 import { cut, perFrame, sides, TAU } from "../ink.ts";
 import type { CarapaceOption } from "../slots.ts";
@@ -76,7 +77,29 @@ export const kabuto: CarapaceOption = {
         grid: { u: spacing.even(18), v: spacing.even(ROWS * 6) }, sides: "two", outline: "border",
       });
     };
-    return { hull, things: [hull, ...sides.map((s) => sode(s))] };
+    /**
+     * An agemaki tassel on side s: a red cord from the helmet's back, a cream knot, a red tassel flaring at its end.
+     * It hangs late: the walk's sway read 0.45 s behind the body, a fling backward after the slam that swings on longer
+     * than the sode (lighter: a faster, less damped swing).
+     */
+    const tassel = (s: 1 | -1) => {
+      const attach = vec3(C.from + 0.25, 1.35, s * 0.75);
+      const sway = perFrame(`titan_tassel_sway_${s < 0 ? "L" : "R"}`, add(mul(sin(mul(dragged(time, 1, 0.45), (2 * Math.PI) / n.period)), 0.35), alive(time, 0.08, 60 + s, 0.5)));
+      const fling = perFrame(`titan_tassel_fling_${s < 0 ? "L" : "R"}`, swing(sub(crushAfter, 0.15), -0.9, 1.6, 0.12));
+      const spine = (m: F) => add(attach, vec3(add(mul(m, -0.55), mul(mul(m, m), fling)), mul(m, -2.1), add(mul(m, s * 0.3), mul(mul(m, m), sway))));
+      return place(strand({
+        name: `tassel${s < 0 ? "L" : "R"}`, spine, stations: 10, tips: ["round", "round"], up: [1, 0, 0],
+        // The cord, a knot at 0.3, the tassel flaring from 0.6.
+        girth: (m) => add(add(0.09, mul(sub(1, smoothstep(0, 0.07, abs(sub(m, 0.3)))), 0.16)), mul(smoothstep(0.55, 1, m), 0.2)),
+        paint: (m, v) => {
+          const knot = sub(1, cut(abs(sub(m, 0.3)), 0.06));
+          const threads = mul(sub(1, cut(abs(sin(mul(v, TAU * 10))), 0.25)), cut(m, 0.62));
+          return mix(mix(vec3(...I.brick), vec3(...I.cream), knot), vec3(...I.brickDark), threads);
+        },
+        detail: { along: 24, around: 10 },
+      }), rigid(body));
+    };
+    return { hull, things: [hull, ...sides.map((s) => sode(s)), ...sides.map((s) => tassel(s))] };
   },
 };
 

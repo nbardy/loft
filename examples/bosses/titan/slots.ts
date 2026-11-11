@@ -11,7 +11,8 @@ import type { Rig } from "./rig.ts";
 
 type Opt = Option<Numbers>;
 
-/** The body shell. `hull` is the strand the face's beard rides in its own (m, v): m from tail (0) to front (1). */
+/** The body shell. `hull` is the strand the face's beard rides in its own (m, v): m from tail (0) to front (1), v round
+ * the section with sin(2 pi v) its height (v = 0.25 on top; v = 0 is a flank). */
 export type Carapace = { readonly hull: Strand; readonly things: readonly Drawable[] };
 export type CarapaceOption = Opt & { readonly draw: (rig: Rig) => Carapace };
 
@@ -33,7 +34,8 @@ export type ClawsOffer = { readonly crushLead: number; readonly cutter: Gripper 
 export type Claws = { readonly things: readonly Drawable[]; readonly crush: Strike; readonly cutterFingers: readonly [Measured, Measured] };
 export type ClawsOption = Opt & { readonly offer: (n: Numbers) => ClawsOffer; readonly draw: (rig: Rig, offer: ClawsOffer) => Claws };
 
-/** The face on the front of the carapace (crab coordinates: the brow's V at x = 4.93 for the base carapace). */
+/** The face on the front of the carapace (crab coordinates: the base face's brow V at x = 4.93 for the base carapace; a
+ * face may place itself from `n.carapace` instead, as face/mask.ts does). */
 export type FaceOption = Opt & { readonly draw: (rig: Rig, carapace: Carapace) => readonly Drawable[] };
 
 /** What rides the shell frame (`rig.shell`): the base is the atoll, its reef and the ruined fort. */
