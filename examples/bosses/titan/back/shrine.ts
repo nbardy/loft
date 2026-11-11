@@ -22,7 +22,7 @@ const X0 = -0.45, DECK = 1.9, HALF = 1.05, POST_TOP = 4.65;
 export const shrine: BackOption = {
   about: "a red shrine pavilion with a black upswept roof and swinging lanterns",
   draw: (rig) => {
-    const { n, shell, footPhase, crushAfter } = rig;
+    const { n, shell, crushAfter } = rig;
     const I = n.ink;
     const on = (thing: Strand): Strand => place(thing, rigid(shell));
     const inShell = (p: V3 | P3): P3 => add(shell.o, rotate(shell, lift<"vec3">(p)));
@@ -91,7 +91,7 @@ export const shrine: BackOption = {
     // Each plant kicks the lanterns away from that foot (its bearing on the body), ringing down over a second or two.
     const kicks = sides.flatMap((s, si) => n.legFeet.map(([fx, fz], i) => {
       const a = Math.atan2(s * fz, fx);
-      const ring = swing(stepClock(n, footPhase[si * 4 + i]!).sincePlant, 0.075, 0.9, 0.12);
+      const ring = swing(stepClock(rig, si * 4 + i).sincePlant, 0.075, 0.9, 0.12);
       return [mul(ring, -Math.cos(a)), mul(ring, -Math.sin(a))] as const;
     }));
     const sumOf = (j: 0 | 1): F => kicks.reduce<F>((acc, kk) => add(acc, kk[j]), lift<"f32">(0));

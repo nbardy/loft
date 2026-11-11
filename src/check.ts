@@ -15,6 +15,7 @@ import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
 import type { Arming, Attack, Effect, Hold, Motion, Part, Ring, Strike, Target } from "./spacetime/attack.ts";
 import type { Thrown } from "./geom/grab.ts";
+import type { LimbSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { hullBoxDistance, hullDistance, type HullDistance } from "./geom/hull_distance.ts";
 
@@ -497,6 +498,57 @@ function nearestSurface(chain: readonly Joint[], p: V3): { readonly at: V3; read
     if (len - r < best.d) best = { at: len > 1e-9 ? [q[0] + (to[0] / len) * r, q[1] + (to[1] / len) * r, q[2] + (to[2] / len) * r] : q, d: len - r };
   }
   return best;
+}
+
+/** A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of
+ * (outboard of the root: a knee that crosses inward has folded under the body). */
+export type Reaching = { readonly name: string; readonly limb: LimbSpec; readonly outward: In<"vec3"> };
+
+/**
+ * Every limb stays inside its reach over [0, `period`): the distance from the root to the middle segments' target (the
+ * ankle target of a three-segment limb) is at most the span less `slack` (beyond it the solve lays the chain straight:
+ * a snapped line) and at least the folded length plus `fold` (shares are of the span `a + b`), and the knee stays on the
+ * `outward` side of its root. Evaluated on the CPU by the solve's own law (docs/stance.md).
+ */
+export function limbsReach(limbs: readonly Reaching[], o: { readonly period: number; readonly slack: Tolerance; readonly fold: Tolerance; readonly rate?: number }): Check {
+  const rate = o.rate ?? 20;
+  const roots = limbs.flatMap((l) => {
+    const ls = l.limb.lengths.map((x) => lift<"f32">(x));
+    return [lift<"vec3">(l.limb.root), lift<"vec3">(l.limb.target), lift<"vec3">(l.limb.bend), lift<"vec3">(l.limb.foot ?? [0, -1, 0]), lift<"vec3">(l.outward), vec4(ls[0]!, ls[1]!, ls[2] ?? 0, ls.length)];
+  });
+  return {
+    name: `${limbs.length} limbs stay inside their reach over the loop`,
+    run(probe) {
+      let stretch = { share: 0, name: "", t: 0 }, folded = { share: Infinity, name: "", t: 0 }, inward = { by: Infinity, name: "", t: 0 };
+      let fail = false;
+      for (const t of times(0, o.period, rate)) {
+        const v = probe.eval(roots, t) as number[][];
+        limbs.forEach((l, i) => {
+          const [root, target, bend, foot, out, len] = v.slice(i * 6, i * 6 + 6) as [V3, V3, V3, V3, V3, number[]];
+          const [a, b, c, count] = len as [number, number, number, number];
+          const fl = Math.hypot(...foot), ankle: V3 = count === 3 ? [target[0] - (foot[0] / fl) * c, target[1] - (foot[1] / fl) * c, target[2] - (foot[2] / fl) * c] : target;
+          const toward = subV(ankle, root), d = Math.hypot(...toward), span = a + b;
+          if (d / span > stretch.share) stretch = { share: d / span, name: l.name, t };
+          const f = (d - Math.abs(a - b)) / span;
+          if (f < folded.share) folded = { share: f, name: l.name, t };
+          if (d > span - allowance(o.slack, span) || d < Math.abs(a - b) + allowance(o.fold, span)) fail = true;
+          // The knee by the solve's law of cosines, on the bend side of the root-to-ankle line.
+          const e: V3 = [toward[0] / d, toward[1] / d, toward[2] / d], dc = Math.min(Math.max(d, Math.abs(a - b)), span);
+          const cosA = Math.min(1, Math.max(-1, (a * a + dc * dc - b * b) / (2 * a * dc))), sinA = Math.sqrt(1 - cosA * cosA);
+          const nb = subV(bend, [e[0] * dotV(bend, e), e[1] * dotV(bend, e), e[2] * dotV(bend, e)]), nl = Math.hypot(...nb) || 1;
+          const knee: V3 = [0, 1, 2].map((j) => (e[j]! * cosA + (nb[j]! / nl) * sinA) * a) as unknown as V3;
+          const by = dotV(knee, out) / (Math.hypot(...out) || 1);
+          if (by < inward.by) inward = { by, name: l.name, t };
+          if (by < 0) fail = true;
+        });
+      }
+      return {
+        name: this.name, pass: !fail, value: stretch.share,
+        measured: `most stretched ${stretch.share.toFixed(3)} of the span (${stretch.name}, t=${fmt(stretch.t, 2)}); least ${folded.share.toFixed(3)} from folded (${folded.name}, t=${fmt(folded.t, 2)}); knee ${fmt(inward.by, 2)} outboard at least (${inward.name}, t=${fmt(inward.t, 2)})`,
+        limit: `stretched <= span less ${describe(o.slack, allowance(o.slack, 1), "span")}, folded by at least ${describe(o.fold, allowance(o.fold, 1), "span")}, knees outboard`,
+      };
+    },
+  };
 }
 
 /**
