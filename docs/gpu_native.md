@@ -502,6 +502,120 @@ about twice the slope itself. So the sea's cost is **(c), per pixel**, and lifti
 2. The style's water (0.98 to 1.95 ms): two value-noise evaluations and six or seven `fwidth`s per pixel, and
    maelstrom's whirlpool marks (280 per-pixel nodes). A texture of the noise (phase 3) would replace the noise.
 
+## The sea (2026-11-11)
+
+The sea is one draw that shades every water pixel, and the frame is mostly the sea. This section is the design,
+written before building; measured results are appended below it.
+
+### The instrument
+
+`bun tools/sea_bench.ts <scene> <rounds> <dir> [dir ...]` loads several built artefacts on one device and takes, each
+round, the least of 10 normal frames (`frameGpu`) of each in turn: before and after see the same clock state and the
+same load. Parts were priced by editing the sea's built WGSL (`tools/sea_variants.py`, plus ad hoc edits that set
+one result to the value it has where no body is near, so the Metal compiler drops what fed it) and timing at
+2560 x 1600, four times the pixels, so per-pixel work rises above the 0.0655 ms tick; costs below are those divided
+by 4. On this day the GPU sat in its fast clock state almost throughout: normal frames of 1.25 to 1.9 ms, not the
+3.9 to 6.2 ms of "Rates" (which were the slow state, or a busier machine; rounds in the slow state read 2.5 to 4 times
+higher throughout and are set aside, not mixed).
+
+### What the sea's fragment computes, and for which pixels it matters
+
+Medians, ms per 1280 x 800 frame, fast state:
+
+| Part | titan | wyrm | thundermaw | grab (toon) |
+|---|---|---|---|---|
+| contact band: 9 depth taps (17 near a body), each unprojected | 0.33 | 0.37 | 0.38 | 0.21 |
+| the style's contact foam (woodblock: ridge noise, specks hash, 3 fwidths, 10 smoothsteps) | 0.16 | 0.20 | (0.16) | (0.03) |
+| the whirlpool (`look`, `toLocal`, `calm`, `dip`: atan2, tan, 2 hashes of fold cells, exp, log) | - | 0.20 to 0.28 | - | - |
+| the rest of the water (swell, wobble noise, the printed lines, haze) | 0.08 | 0.10 | (0.09) | 0.085 |
+| the floor (rasterising, blending, 4x resolve share) | 0.04 | 0.00 | 0.03 | 0.03 |
+
+(Bracketed: the foam's share of thundermaw's and grab's style cost is taken from titan's and toon's structure, not
+priced separately.)
+
+Pricing the taps further (titan): skipping the unprojection where a tap reads no surface saves nothing measurable,
+reading the 9 depths without any arithmetic costs nearly all of it, a fixed ring (no per-pixel turn) saves one tick.
+**The band's cost is its texture reads, not its arithmetic.** Gating the arithmetic does not pay; only not reading does.
+
+For which pixels each answer matters:
+
+1. **The band and the foam.** Every style reads `contact` only through thresholds: woodblock's foam needs band > 0.02,
+   its rim > 0.05, its specks > -0.4; toon's and papercraft's foam > -0.12 - aa; biolume `saturate(band)`. A pixel
+   whose taps (the centre, 8 outer, 8 inner) all read no opaque surface has band = 1 - (distance to the far plane) /
+   width, below -800 in every camera here (far = 100 x the camera's distance, reach at most 400), while the widest
+   antialiasing any style applies to it is under 70; there every one of those terms is exactly 0 (smoothstep below its lower edge returns 0; mixing
+   with weight 0 returns the colour unchanged). So the band, and everything a style builds from it, matters only where
+   some opaque pixel lies within the ring's reach: |tap - px| <= r + 0.71 with r = clamp(width / pixel_world, 1, 40).
+   Measured (a debug build marking such pixels, tile-quantised as below): **3.9% (thundermaw) to 19% (grab) of the
+   sea's pixels** (titan 17.4, wyrm 17.3, tithe 9.3, wreckers 17.4).
+2. **The whirlpool.** Outside its radius the whirlpool is exactly the identity: `toLocal` returns xz, `dip` is 0
+   (`max(1 - s^2, 0)` cubed), `calm` is 1, `look` returns 0 and 0. It matters on **28.8%** of wyrm's sea.
+3. **The rest** (swell, the printed lines, haze) matters everywhere; it is 0.08 to 0.10 ms.
+
+### The design
+
+**A clearance map, three passes at 1/64 of the pixels.** After the depth resolve: (a) per 8 x 8 tile, whether any of
+its 64 depths is an opaque surface (one fragment per tile, 64 reads: 1 read per pixel, coherent, against 9 to 17
+scattered ones per sea pixel now); (b) per tile, along its row, the gap in pixels to the nearest opaque tile within 7
+tiles; (c) down the column, the Euclidean distance from that: clearance = min over opaque tiles of
+sqrt(gx^2 + gy^2), gx = max(0, 8|dx| - 7) the gap between the nearest pixel centres of the two tiles. The Euclidean
+distance transform is separable (the minimum over a column of row minima), so (b) and (c) read 15 texels each instead
+of 225. `scene_clearance(px)` is then a lower bound on the distance from px to any opaque pixel centre, exact on the
+tile grid, read with one coherent load.
+
+**The sea in cases, chosen per 2 x 2 quad.** The sea's fragment first decides, per pixel, whether some tap could see
+a surface (clearance <= r + 1) and whether xz is inside any deformation's reach, takes the maximum of each over its
+2 x 2 quad (two fine derivatives of a 0/1 value in uniform control flow), and branches to one of up to four colour
+programs: {clear, near} x {open, deformed}. The near program is today's code; the clear program is the style's water
+with `contact` the variant `clear` (each style prints no contact foam there: a switch on the variant, not a large
+negative number fed through the foam); the open program evaluates the swell in sea coordinates with no deformation.
+Because the case is constant on each quad, every derivative inside a case reads four pixels that ran the same program,
+so it equals today's; WGSL's analysis cannot see that, so the derivative library functions of a case are emitted with
+`@diagnostic(off, derivative_uniformity)`, and a case that reaches any other derivative throws at compile time.
+
+Exactness: on each pixel the program that runs computes either today's expression (near, deformed) or one whose value
+equals it exactly where it runs (clear: terms that are exactly 0 are not computed; open: the identity is not
+evaluated). Differences can come only from the Metal compiler contracting a different expression graph into different
+fused multiply-adds: low bits, under 1/255 almost everywhere, possibly a pixel moving across a line's antialiased edge.
+
+Format: three new view-sized textures (r8unorm, r16float, r16float, using only their top-left 1/64), three passes with
+one `fixed` draw each, and a fourth binding in the scene-depth bind group. All of them are ordinary entries of the
+manifest's lists, executed by the loader procedure of `docs/artefact_format.md` as written: **no new kind of resource,
+no format version change**, and nothing a generic loader must add.
+
+What is inherited: tiled light and decal culling (a coarse screen-space classification pass that a full-screen pass
+reads to skip work per tile), the separable Euclidean distance transform (Felzenszwalb and Huttenlocher), uber-shader
+branching on a coherent condition. What is mine: that the band's answer is exactly known (not approximated) wherever
+no tap can see a surface, so a conservative distance bound gives an exact skip; the clearance as a lower bound sized
+to the tap ring (r + 0.71) instead of a fixed dilation; the quad-uniform case choice that keeps every derivative
+defined; the deformation's reach as a typed property of `SeaDeform`; `contact` as a sum type the styles dispatch on.
+
+Considered and not built: (1) answering the band from the bodies' skeletons (the shadows' table): incomplete, the
+atoll, decks, sails, wings and every field have no skeleton, so their foam would vanish; (2) gating only the taps'
+unprojection: measured to save nothing; (3) the band's smooth inputs at the vertices: the band is not smooth, it is a
+minimum over taps; (4) a noise texture for the wobble and ridge noise: the ridge noise leaves with the foam on 81 to 96%
+of the sea, and what remains of the style is 0.08 to 0.10 ms per frame, the next thing to price after this.
+
+### Predictions (fast clock state, 1280 x 800, t = 1)
+
+Sea after = floor + rest + (share near) x (band + foam) + (share in the whirlpool) x whirlpool + overhead, the
+overhead (three small passes, one clearance read and two derivatives per sea pixel) 0.04 +- 0.02 ms. Tithe and wreckers
+were not priced by parts: their sea is the measured frame less a frame without the sea (0.92 and 0.66), split as
+titan's (54% band, 26% foam, 20% rest and floor).
+
+| Scene | sea before | sea after (range) | saving | normal frame before (least) | after (predicted) |
+|---|---|---|---|---|---|
+| maelstrom_wyrm | 0.88 | 0.31 (0.25-0.40) | 0.57 | 1.57 | 1.00 |
+| reefback_titan | 0.61 | 0.24 (0.20-0.30) | 0.37 | 1.25-1.44 | 0.88-1.07 |
+| thundermaw | 0.66 | 0.18 (0.14-0.25) | 0.48 | 1.38 | 0.90 |
+| tithe_fleet | 0.92 | 0.29 (0.22-0.38) | 0.63 | 1.90 | 1.27 |
+| wreckers_lamp | 0.66 | 0.26 (0.20-0.33) | 0.40 | 1.44 | 1.04 |
+| grab (three) | 0.36 | 0.20 (0.15-0.26) | 0.16 | 1.25 | 1.09 |
+
+In the slow clock state every term scales by about 2.5, the savings with them. Pictures: under 0.01% of pixels over
+8/255 in every frame. Wrong if: a saving misses its prediction by more than 0.1 ms in like clock states; any frame
+shows a change an eye can find; the clearance passes cost more than 0.06 ms.
+
 ## Phase 3: textures and layers
 
 A texture is a table with two or three indices and mip levels. It is written as a function and baked by the

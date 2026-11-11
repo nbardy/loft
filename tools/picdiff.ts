@@ -25,8 +25,8 @@ export function readPng(path: string): Frame {
   return { width, height, rgba };
 }
 
-export function difference(a: Frame, b: Frame): { readonly mean: number; readonly over16: number; readonly p999: number } {
-  let sum = 0, over = 0;
+export function difference(a: Frame, b: Frame): { readonly mean: number; readonly over8: number; readonly over16: number; readonly p999: number } {
+  let sum = 0, over = 0, over8 = 0;
   const hist = new Uint32Array(256);
   const n = a.width * a.height;
   for (let i = 0; i < n; i++) {
@@ -34,10 +34,11 @@ export function difference(a: Frame, b: Frame): { readonly mean: number; readonl
     for (let c = 0; c < 3; c++) { const d = Math.abs(a.rgba[4 * i + c]! - b.rgba[4 * i + c]!); sum += d; m = Math.max(m, d); }
     hist[m]!++;
     if (m > 16) over++;
+    if (m > 8) over8++;
   }
   let acc = 0, p = 0;
   for (; p < 256; p++) { acc += hist[p]!; if (acc >= 0.999 * n) break; }
-  return { mean: sum / (3 * n), over16: over / n, p999: p };
+  return { mean: sum / (3 * n), over8: over8 / n, over16: over / n, p999: p };
 }
 
 if (import.meta.main) {
@@ -49,16 +50,25 @@ if (import.meta.main) {
   for (const f of readdirSync(db).filter((x) => x.endsWith(".png")).sort()) {
     const a = readPng(`${da}/${f}`), b = readPng(`${db}/${f}`);
     const d = difference(a, b);
-    console.log(`${f.padEnd(28)} mean ${d.mean.toFixed(3)}  >16: ${(100 * d.over16).toFixed(3)}%  p99.9 ${d.p999}`);
+    console.log(`${f.padEnd(28)} mean ${d.mean.toFixed(3)}  >8: ${(100 * d.over8).toFixed(4)}%  >16: ${(100 * d.over16).toFixed(4)}%  p99.9 ${d.p999}`);
     if (sheet) writeWebp(`${sheet}/${f.replace(".png", ".webp")}`, sideBySide(a, b));
   }
 }
 
+/** Before, after, and where they differ by more than 8/255 (red over a dimmed before). */
 function sideBySide(a: Frame, b: Frame): Frame {
-  const rgba = new Uint8Array(a.width * 2 * a.height * 4);
+  const W = a.width * 3;
+  const rgba = new Uint8Array(W * a.height * 4);
   for (let y = 0; y < a.height; y++) {
-    rgba.set(a.rgba.subarray(y * a.width * 4, (y + 1) * a.width * 4), y * a.width * 8);
-    rgba.set(b.rgba.subarray(y * a.width * 4, (y + 1) * a.width * 4), y * a.width * 8 + a.width * 4);
+    rgba.set(a.rgba.subarray(y * a.width * 4, (y + 1) * a.width * 4), y * W * 4);
+    rgba.set(b.rgba.subarray(y * a.width * 4, (y + 1) * a.width * 4), y * W * 4 + a.width * 4);
+    for (let x = 0; x < a.width; x++) {
+      const i = (y * a.width + x) * 4, o = y * W * 4 + 2 * a.width * 4 + x * 4;
+      let m = 0;
+      for (let c = 0; c < 3; c++) m = Math.max(m, Math.abs(a.rgba[i + c]! - b.rgba[i + c]!));
+      const g = (a.rgba[i]! + a.rgba[i + 1]! + a.rgba[i + 2]!) / 9;
+      rgba[o] = m > 8 ? 255 : g; rgba[o + 1] = m > 8 ? 0 : g; rgba[o + 2] = m > 8 ? 0 : g; rgba[o + 3] = 255;
+    }
   }
-  return { width: a.width * 2, height: a.height, rgba };
+  return { width: W, height: a.height, rgba };
 }
