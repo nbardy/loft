@@ -71,10 +71,12 @@ const onTheBeat = (k: number) => ({
   // thrown forward, the release velocity lies only about 48 degrees off the keel, and the hand's turn over the stroke
   // for two turns (pi 2 0.5 / 3.0, 60 degrees) carried the hull past it and out of the fingers (middle 0.35 to 0.62 off).
   throw: { ...S.throw, side: 0, stroke: BEAT, follow: 0.25, flight: 6 * BEAT, land: FAN[k]!, turns: 1 },
-  // The shoved boat starts at the disc's front edge on the side away from the middle, side on, stern toward the slam,
-  // and rides forward and outward (the left pair to the camera's left, the right pair to its right) out of the frame;
-  // it is home again on the cut at the seam.
-  boatTwo: { ...S.boatTwo, bearing: k < 2 ? 0.6 : -0.6, heading: k < 2 ? -2.2 : 2.2, keep: PERIOD },
+  // The shoved boat waits beside the disc, out to the side (between the crabs, outside a single's frame: at the disc's
+  // front edge it stood 11 to 15 from the singles' cameras and its sails filled them), side on, stern toward the slam,
+  // and rides sideways and outward (the left pair to the camera's left, the right pair to its right), seen in the
+  // pairs that follow the slams. A host parks it from the cut at 6.0 (its ride ends in front of the neighbour) and it is
+  // home on the cut at the seam.
+  boatTwo: { ...S.boatTwo, bearing: k < 2 ? 1.4 : -1.4, heading: k < 2 ? -1.7 : 1.7, keep: PERIOD },
 });
 
 const how = (k: number): Staging => ({

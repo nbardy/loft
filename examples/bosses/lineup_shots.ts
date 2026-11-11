@@ -26,15 +26,18 @@ export function standing(k: number): { readonly at: readonly [number, number]; r
 
 // ---- the boats a host moves: the thrown boat, once landed, is parked out of every frame at the cut into the taunt ----
 /**
- * Each crab's `throw.land` (in its own axes) at loop time t: where its thrown boat comes down from the throw until the
+ * The host's inputs at loop time t. Each crab's `throw.land` (in its own axes): where its thrown boat comes down from the throw until the
  * cut into the taunt (16.0), and from there to the Grab's next cycle (6.0, another cut) a place far behind the row, out
  * of every frame. The boat lies wherever `throw.land` says once it has landed, so moving the input moves it; both moves
  * fall on cuts, and the throw itself (12.0 to 15.0) reads the true landing. Checks read the defaults (the true landing).
  */
 export const PARKED = [-70, 0] as const;
 export function hostInputs(names: readonly string[], land: (k: number) => readonly [number, number], t: number): Record<string, readonly number[]> {
-  const u = ((t % PERIOD) + PERIOD) % PERIOD, parked = u >= beat(32) || u < beat(12);
-  return Object.fromEntries(names.map((n, k) => [`${n}.throw.land`, parked ? PARKED : land(k)]));
+  const u = ((t % PERIOD) + PERIOD) % PERIOD, thrownParked = u >= beat(32) || u < beat(12);
+  // The shoved boat, once its ride has been seen (the pairs, beats 8 to 12), is parked from the cut at 6.0 to the seam;
+  // `boat2.at` is where it starts, and its ride is relative to that, so moving the input moves the boat.
+  const shovedParked = u >= beat(12);
+  return Object.fromEntries(names.flatMap((n, k) => [[`${n}.throw.land`, thrownParked ? PARKED : land(k)], ...(shovedParked ? [[`${n}.boat2.at`, PARKED] as const] : [])]));
 }
 
 // ---- the shots ----
@@ -70,7 +73,8 @@ function framing(s: Subject): Lens {
   }
 }
 /** Per crab (left to right: islander, fiddler, samurai, spider crab), a single's distance and aim (target height). */
-const SINGLE = [{ distance: 30, aim: 4.4 }, { distance: 26, aim: 4.2 }, { distance: 31, aim: 4.4 }, { distance: 40, aim: 7 }] as const;
+// Aimed low enough that the near feet and their foam are in the frame (aimed at 4.2 to 4.4 they fell below its edge).
+const SINGLE = [{ distance: 30, aim: 3.4 }, { distance: 26, aim: 3.2 }, { distance: 31, aim: 3.4 }, { distance: 40, aim: 5.8 }] as const;
 
 type Cue = readonly [number, Subject];
 const one = (k: number): Subject => ({ kind: "single", k }), two = (k: number): Subject => ({ kind: "pair", k });
