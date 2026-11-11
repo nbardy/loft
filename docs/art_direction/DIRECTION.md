@@ -1007,6 +1007,74 @@ claws on the water; the roll with no inner lines; a burst holding fewer heads th
 flat; the crab's `foam` slot kept as a look (the other collars one pick away) instead of removed.
 
 
+## Round 5: the spiral shell (2026-11-12)
+
+The owner, at `crab_round5/back_spiral_pick.webp`: "This feels like the best back design for when it's a stick-eye crab,
+as that is a hermit crab. Make it happen." A new back, `spiral` (`examples/bosses/titan/back/spiral.ts`, its closed
+form in `spiral_shell.ts`), and the `islander` picks it. `bruiser` keeps its own explicit `back: "headland"` (another
+worker is giving it a terraced back); every other variant is as it was.
+
+### What the picked picture settles, read off it
+
+- **Hand.** Tracing the cream ridge outward from the curl it runs clockwise on screen, so going back from the mouth
+  the tube turns counterclockwise seen from the face. The first draft of the closed form (169a52e) turned the other way;
+  it is mirrored (the coil's angle is `mouthAt + 2 pi back`, and the surface's v runs against phi to keep it facing out).
+- **Where the mouth is.** The outermost ridge reaches the lip at the front, under the forward grove, running *down*:
+  the tube comes down into the mouth, so the mouth is at the front of the coil facing down, a hood over the carapace's
+  back half (`mouthAt` 0.15: its front lip lifted a little, so it faces down and slightly forward). The first draft
+  had the mouth below the axis facing forward at the tail: the body barely entered it and the lip was a ring behind
+  the crab. In this pose the curl sits low and behind the body, the last whorl's crown over the back, as in the picture.
+- **Which flank.** The brief said the face looks to the crab's *left*. In crab coordinates (z right) the `game` camera
+  (23, 27, 21) and the `back` camera (-15, 19, 9) both look at the *right* flank (Round 4: "from the `game` camera the left
+  flank is the far side"), and in the picked picture the crab heads up and right with its right legs toward us: the
+  viewer is behind and to its right. So the face looks right (+z), raised 0.3 rad: the picture and both cameras agree.
+  The throw leaves from the left flank, which is the shell's base side, not the curl's.
+
+### The shell's numbers, and what each does to the silhouette (inherited: Raup 1966; the rest is ours)
+
+Raup's coil `tip + W^-back ((c + r cos phi) out(back) + (-t + a sin phi) axis)`:
+
+| number | value | what it does |
+|---|---|---|
+| `growth` W | 2.0 | each turn twice the last: the face's rings stand 2 apart (126, 57, 31, 15 px across from `game`); the last whorl is half the face's radius, so it is most of the mass |
+| `whorls` | 3.25 | turns from the curl to the mouth: three rings and the curl show on the face |
+| `mouth` | 2.2 across the coil, 3.2 along the axis | the section: 1.45 : 1 along the axis, a fat globose tube; the shell is 7.8 long, 7.2 wide, 6.2 above the water |
+| D (off the axis) | 0 | the tube touches the axis: no navel, the curl closes tight |
+| `spire` | 0.15 | each turn's crown steps 0.15 of its radius toward the face: a low cone, the curl stands a little proud |
+| `tilt`, `rake` | 0.3, 0 | the face looks right and up: `game` sees it at cos 0.60, `back` 0.48, the picked camera 0.84 |
+| `mouthAt` | 0.15 | the mouth ahead of the axis: a hood facing down and a little forward |
+| `seat` | in 1.07, up 1.26, side 0.3, lip 1.9 | the hood's plane 1.26 above the body's origin 1.07 ahead of the tail; outer lip at x = 1.61 (the carapace's middle is 1.7); the curl's centre 2.5 behind that, at x = -3.0, y = 0.9 |
+| `band` | cream 0.3 on the suture | cream ridges straddle the line where turns meet; brick is 70% of each ring; ridges proud by 5% |
+| `lip` | flare 0.12, thick 0.2 | a thick cream roll, the join with the body |
+
+### Predictions (written before the first render)
+
+Crab at rest unless said; `game` at 1280 x 800; from `tools/spiral_theory.ts` (projections of the closed form) and
+`tools/spiral_clear.ts` (the islander's own limbs through one 22 s cycle, measured against the shell's twin).
+
+1. **From `game`.** The shell 275 x 205 px (x 435..710, y 117..322), curl centre (472, 250): the face's three outer
+   rings 126 x 160, 57 x 78, 31 x 39 px and the curl 15 x 19 px, so two full turns of band and the curl read. Cream ridge
+   on the last turn's crown about 21 px wide. The light 76 px tall, foot (493, 135), top 62 px below the frame's top
+   (the slam lifts the tail about 30 px), against open sea: a spike at the silhouette's back. Eyes untouched: the check
+   still reads about 58 and 43 px (>= 50, 38). Groves at (538, 161) on the crown and (570, 243) on the forward shoulder.
+2. **The body in the shell.** The carapace ahead of the outer lip is 0.34 from the shell at its nearest (the head and
+   face clear); under the hood about 16% of the carapace's top is inside the shell (the tail in the inner turn, hidden),
+   and the lip rests on the back.
+3. **Clear of the crab** (measured before building, on the twin): through the cycle the nearest limbs are legR3 0.45,
+   legL3 0.47, the great claw 0.69 (at the slam's wind-up), legL2 0.87; the eyes more than 2.4. With the taunt: the
+   great claw waved overhead, predicted no nearer than 0.6.
+4. **The throw.** The ship's flight passes no nearer than 9.3 to the shell or the light (the limit is 2.4); both lie
+   inside the atoll's cylinder that `fliesClear` already states, and the back's `keepClear` adds a disc over each.
+5. **Checks.** islander 13/13, bruiser 15/15, the others 10/10; the lineup 40/40.
+6. **Pictures unchanged.** base, bruiser, fiddler `game` hashes (t = 1.0, 3.6, 11.3) as before.
+7. **Cost** (`game`, t = 1, against the headland). Draws: shell, growth list, tower, gallery, lantern: 5 drawables,
+   7 draws with the shell's hull outline and the list's silhouette pass; the headland's 10, so 3 fewer. Triangles: the
+   shell's grid 74 x 32 (spaced by the tube's size, not 144 x 36) = 4,736, twice with its hull = 9,472; the light about
+   5,600 with outlines (the headland's light and gulls were 7,650, and there are no gulls); about 90 copies at about 12
+   each, 1,100: the back about 16,200 against the headland's island, reef and light, so roughly 3,000 fewer triangles
+   drawn in total. GPU: the shell's paint is a log, a floor and two turf patches per pixel (the headland's island took
+   0.51 ms in the slow state): the islander's frame 0.15 to 0.25 ms under the headland's in the slow clock state.
+
 
 ## Lighting and shading (2026-11-12)
 
