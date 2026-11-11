@@ -67,9 +67,9 @@ export function cutterGripper(n: Numbers): Gripper {
  * A claw's grip when something drives it: `on` how far (0 leaves the claw to its own gape and fold), `angle` the angle
  * both fingers stand at, `along` the palm's direction.
  */
-type Grip = { readonly on: F; readonly angle: F; readonly along: P3 };
+type Grip = { readonly on: F; readonly angle: F; readonly along: P3; /** The palm's up while gripping: the held thing's own up, so the fingers stay either side of it as the hand turns it. */ readonly up: P3 };
 /** No grip: the claw keeps its own gape and fold. A function, so nothing is built at import. */
-const free = (): Grip => ({ on: lift<"f32">(0), angle: lift<"f32">(0), along: vec3(1, 0, 0) });
+const free = (): Grip => ({ on: lift<"f32">(0), angle: lift<"f32">(0), along: vec3(1, 0, 0), up: vec3(0, 1, 0) });
 
 /** The pincer's offer to the rig: the crusher lands half its palm short of the disc's centre; the cutter grips by `cutterGripper`. */
 function offer(n: Numbers): ClawsOffer {
@@ -101,7 +101,9 @@ function pincerClaw(rig: Rig, look: ClawLook, name: string, side: 1 | -1, size: 
   });
   const palm = strand({
     name: `${name}Palm`, spine: (m) => add(w, mul(along, mul(d.len, m))), stations: 6, girth: (m) => mul(d.fat, add(0.55, mul(sin(mul(m, Math.PI)), 0.3))),
-    section: { aspect: 0.62 }, tips: [{ round: 0.3 }, { round: 0.3 }], up: body.y,
+    // Free, the palm lies flat on the body's up; gripping, on the held thing's (rig.gripUp): through the throw's stroke
+    // the hand turns the ship about a tilted axis, and a palm left level had a finger 0.46 into the rolled hull.
+    section: { aspect: 0.62 }, tips: [{ round: 0.3 }, { round: 0.3 }], up: unit(mix(body.y, grip.up, grip.on)),
     paint: (m, v) => look.palm(I, m, v),
     detail: { along: 24, around: 20 },
   });
@@ -155,7 +157,7 @@ export function cutterOf(rig: Rig, look: ClawLook): { readonly things: readonly 
   // are evaluated once per frame into small tables, as the body frame is.
   const cutterWrist = tabV("wrist", add(mix(cutterIdle, grabWrist, grabOn), mul(body.y, homeSwing)));
   const cutterGape = add(0.3, mul(mul(max(alive(time, 1, 24, 0.3), 0), 0.35), quiet));
-  const cutter = pincerClaw(rig, look, "cutter", -1, n.cutter, cutterWrist, cutterGape, lift<"f32">(1), { on: grabOn, angle: tabS("angle", gripAngle), along: keelV });
+  const cutter = pincerClaw(rig, look, "cutter", -1, n.cutter, cutterWrist, cutterGape, lift<"f32">(1), { on: grabOn, angle: tabS("angle", gripAngle), up: rig.gripUp, along: keelV });
   return { things: cutter.things, fingers: cutter.fingers };
 }
 

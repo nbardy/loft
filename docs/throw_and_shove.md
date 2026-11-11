@@ -199,27 +199,28 @@ CPU each frame, as the checks do).
 | Readout | Is | Units |
 |---|---|---|
 | `handoff.held` | 1 while the crab has the first boat | - |
-| `handoff.socket` | the boat's frame while held: origin (its waterline amidships), bow x, mast y, starboard z. Level, at the heading it was taken at: the palm does not turn | world |
+| `handoff.socket` | the boat's frame while held: origin (its waterline amidships), bow x, mast y, starboard z. Level, at the heading it was taken at, until the throw's stroke; over the stroke the hand turns it toward the release velocity (see "The ride", the grip) | world |
 | `handoff.squeeze` | its size along its own x, y, z while held (narrowed across the beam, volume kept) | factors |
 | `handoff.release.time`, `.at`, `.velocity` | the instant the grip lets go, and the boat's place and velocity then. A game's physics takes the boat from exactly here | s; world; units/s |
-| `handoff.release.spin` | the tumble Loft's stand-in gives it (a vector: radians per second about its direction). The claw gives none; a game may use it or not | rad/s |
+| `handoff.release.spin` | the boat's angular velocity at the release (a vector: radians per second about its direction): the hand's own, which the stand-in's tumble carries on unchanged | rad/s |
 | `handoff.landing.time`, `.at`, `.rest` | where and when the stand-in's flight lands and stops: a prediction under g = 5 and a flight of 3.2 s for a host that flies its own | s; world |
 | `holds.grab.thing()`, `.flight()`, `.toss()` | the boat's middle wherever it is (the host's pose after the release, with `boats=host`); the stand-in's flight share and seconds since touchdown; the throw's places | world; s |
 | `handoff.wave.arrival(place)` | seconds after `crush.arm` that the ring's front reaches a place (x, z); `waves.crush.arrives(place)` is the time itself | s |
 | `handoff.wave.lifts(place, t)` | how far the wave lifts the water at a place and time (below 0 in its trough; exactly 0 off the pulse) | world |
-| `handoff.wave.impulse(place)` | **an impulse per unit mass: a change of velocity, outward on the water (x, z), delivered at the arrival** | units/s |
-| `waves.crush.pushed(place)` | the stand-in's drift from that impulse under its drag of 3.0 s: `impulse x 3.0 x (1 - exp(-s / 3.0))` | world |
+| `handoff.wave.speed`, `.lag`, `.holds(place)` | **the ride: the front's speed; seconds from the edge's arrival to the face's; 1 where the crest is tall enough to carry a floating thing.** A boat the face reaches where `holds` is 1 moves outward at `speed` until `holds` is 0 at its own place, then is let go with that velocity | units/s; s; 0 or 1 |
+| `waves.crush.pushed(place)` | the stand-in: that rule solved for a boat at rest at `place`, with a coast of drag 1.6 s after it is let go (`wave.ride(place)` gives its parts) | world |
 
 **The stand-ins are consumers of the same contract**, and checks say so: `releasesAt` (at the stated instant the boat
 is at the stated point and the grip has it at the stated velocity; it runs in both variants), `throwLands` (the
 stand-in's flight starts at the release point with the release velocity, and lands where and when stated), `shoves`
-(the stand-in's drift starts at the wave's own impulse and ends at impulse times drag) and `frontFirst` (before the
-arrival the field is exactly 0).
+(the stand-in moves at the wave's `speed`, stays on its face, and is let go where `holds` ends), `letsGoClean` (the
+fingers come out of the hull they threw) and `frontFirst` (before the edge arrives the field is exactly 0, and nothing
+is carried before the face).
 
 **What a host must do** to keep the picture continuous: hold `boat1.at` and `boat1.heading` fixed from the warning;
 while `held`, put its boat at `socket`; at `release.time` start its own flight from `release.at` with
-`release.velocity`; for the wave, add `impulse(place)` to its boat's velocity at the arrival, and float it on
-`lifts`.
+`release.velocity`; for the wave, float its boat on `lifts`, and when the face reaches it where `holds` is 1 move it
+outward at `speed` until `holds` is 0 there, then let its own drag have it.
 
 ## What is inherited and what is mine
 
@@ -492,3 +493,36 @@ sigma the hand's turn is `pi N sigma / T`: with N = 2, sigma = 0.4, T = 3.2 that
 release spin is 3.93 rad/s. A full 71 needs N = 3.2 or a wrist 6.2 from the shoulder (the arm spans 4.9). Predicted:
 the wrist at the release is 4.3 from the shoulder; `gripReaches` passes on the base; the hull still meets the port
 finger after the release, by less than before (0.1 to 0.3 deep for under 0.2 s), which a new check measures.
+
+### Scored
+
+| Quantity | Predicted | Measured |
+|---|---|---|
+| front speed | 3.29 | 3.29 |
+| face takes the boat (base) | 0.72 s after the slam, t = 12.72 | t = 12.72 |
+| ride (base) | 10.67 at the wave's speed, to r = 16.07, ending t = 15.97 | 10.67 at 3.29/s, 0.000 off the face, let go t = 15.96 where `holds` ends |
+| final offset (base) | 15.93, 4.2 boat lengths | 15.93 |
+| islander | ride 10.10, final 15.36 (4.0 lengths) | 10.10, let go t = 15.79; 15.36 |
+| in the `game` frame | 404 px, in frame | 396 px, (866, 498) to (1185, 264), in frame |
+| before the front | exactly 0 | exactly 0; lifted but not moved between the edge and the face |
+| hand's turn, spin | 45 degrees; 3.93 rad/s | as built (`handTurn`, `tumbleRate`) |
+| `gripReaches` through the stroke | passes on the base | passes in all six variants |
+| fingers and hull after the release | 0.1 to 0.3 deep for under 0.2 s | at most 0.056 deeper than the grip's own overlap (base; 0.012 stilt, 0.000 fiddler claws), clear from 0.14 s (0.12 to 0.18) |
+
+Where I was wrong:
+
+1. **The first staging read as a spar.** Bow toward the slam on bearing -1.5 pointed the boat at the game camera. The
+   heading is now 2.0: 20 degrees off bow-on to the front and 19 off side-on to the camera. The bearing moved to
+   -1.54 so the coasted, slewed boat is whole in the frame.
+2. **The fingers were never the problem I thought.** By the capsule measure a curled finger overlaps the hull by 0.41
+   all through the hold (its capsules are fatter than its skin and wrap the hull): my first form of `letsGoClean`
+   failed on that, not on the release. Measured against the grip's own overlap, the hull leaves 0.056 deeper for
+   three hundredths of a second and is clear of both fingers in 0.14 s. The larger fault it exposed was mine from this
+   pass: with the hand turning the ship about a tilted axis, a palm left level had the hull rolling in its grip. The
+   gripping palm now lies flat on the held ship's own up (`rig.gripUp`).
+3. A bow-up of 15 degrees from the sea alone was an overestimate of what reads; the stand-in's pitch kick (0.5 rad,
+   ringing down) is what throws the bow up in the pictures.
+
+All six variants pass: ten checks each, the islander thirteen. The base crab's proof frames after this pass are
+`625dcf706bbc944c 4b25ec069f162af8 044800b6ce69f7ff`. Not re-measured: the frame time (one more collapsed foam draw,
+and a live ring that reaches 22 instead of 12).

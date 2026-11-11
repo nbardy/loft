@@ -7,10 +7,10 @@
 // Crab coordinates: x forward, y up, z to its right; the body frame rides `ride` above the still water.
 
 import {
-  add, alive, attack, blendFrames, course, cos, cross, div, dragged, every, gait, hit, hold, hosted, impact, input, lift, lt, mix, mul, normalize, placedBy,
-  poseFrame, rigid, ring, rotateAbout, sea, select, sin, size, slowIn, slowInOut, smoothstep, sqrt, STAND_IN, sub, swing, telegraph, thrown, time, tumbled,
-  vec2, vec3, type Attack, type BodyAttack, type Drawable, type Expr, type F, type Frame, type Gait, type GripSpec, type Hold, type P3, type Placer,
-  type Pose, type Ring, type RingWave, type Sea, type Thrown,
+  add, alive, atan2, attack, blendFrames, course, cos, cross, div, dragged, every, exp, gait, handTurn, hit, hold, hosted, impact, input, lift, lt, max, mix, mul,
+  normalize, placedBy, poseFrame, rigid, ring, rotateAbout, sea, select, sin, size, slowIn, slowInOut, smoothstep, sqrt, STAND_IN, sub, swing, telegraph, thrown,
+  time, tumbled, tumbleRate, turnedAbout, vec2, vec3, type Attack, type BodyAttack, type Drawable, type Expr, type F, type Frame, type Gait, type GripSpec, type Hold, type P3, type Placer,
+  type Pose, type Ring, type RingWave, type Sea, type Target, type Thrown,
 } from "../../../src/index.ts";
 import { rotate } from "../../../src/map/chart.ts";
 import { impactFoam } from "../lib/impact.ts";
@@ -39,8 +39,10 @@ export type Rig = {
   readonly grabEnv: ReturnType<Attack["envelope"]>;
   /** The grab's beats; `settle` is the eye's 1.5 s to look away, `after` counts from the end of the release. */
   readonly grabBeat: ReturnType<Attack["beats"]>;
-  /** The first ship's keel when it is taken (unit, level, world; from the `boat1.heading` input): the cutter reaches along it. */
+  /** The cutter's own axis in the Grab (unit, world): the first ship's keel as the socket has it, level along the `boat1.heading` input until the throw's stroke, then turning with the hand. */
   readonly keel: P3;
+  /** The held ship's own up as the socket has it (world up until the throw's stroke, then turning with the hand): the gripping palm lies flat on it. */
+  readonly gripUp: P3;
   /** Where the cutter is raised to, in the grab's posture (world). */
   readonly gripRest: P3;
   /** The first ship's middle (world), wherever the Grab has put it: afloat, held, in the air, or where it landed. */
@@ -49,6 +51,10 @@ export type Rig = {
   readonly inputs: Inputs;
   /** Where the second boat is before the ring reaches it (x, z): the stand-in's `boat2.at` input, or the host's pose. */
   readonly boatTwoAt: V2;
+  /** The centre of Claw Crush's disc on the water (world x, z): the `crush.centre` input. What a face looks at when it eyes the slam. */
+  readonly crushCentre: V2;
+  /** The first ship's hull as it is drawn (afloat, in the socket, in the air), as a target: what the claw's fingers must stay out of once they let go. */
+  readonly shipTarget: Target;
   /** Who places each boat when the crab does not hold it (the `boats` slot's choice). */
   readonly placer: { readonly boat1: Placer; readonly boat2: Placer };
   /** What a game that runs its own boats reads. */
@@ -141,7 +147,9 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
     timing: { windup: 1.15, strike: 0.3, zeta: 0.55, hold: 0.45, recover: 0.5, travel: 50 },
     // The slam raises a ring wave from the disc's edge. Its speed is not chosen: the crab stands on the bottom, so this
     // is shallow water and the wave runs at sqrt(g depth) under the same gravity as the thrown ship.
-    aftermath: ring({ speed: Math.sqrt(n.gravity * n.seaDepth), ...n.wave }),
+    // The front is a bore, faster the taller it is: one speed is kept, the slowest it has while it carries anything,
+    // sqrt(g (depth + holding height)).
+    aftermath: ring({ speed: Math.sqrt(n.gravity * (n.seaDepth + n.wave.hold)), ...n.wave }),
   });
 
   // ---- the sea, here because the ships float on it and the Grab's warning and the body's turn read them ----
@@ -241,21 +249,31 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
   const shipNow = tabV("ship", grab.thing());
   const flight = grab.flight(), toss = grab.toss(), grabTau = grabEnv.tau;
 
-  // The socket: the first ship's frame while the claw has it. The palm does not turn, so the ship keeps the heading it
-  // was taken at, level, its middle at the grip's (`grab.thing()`). This is what a game attaches its boat to.
-  const socket: Frame = { o: sub(shipNow, mul(UP, GRIP_Y)), x: keel, y: UP, z: stbd };
-  /** The tumble the stand-in gives the thrown ship: whole turns about the level axis across the throw, top first. */
-  const spinAxis = normalize(cross(UP, toss.along));
+  // The socket: the first ship's frame while the claw has it, and what a game attaches its boat to. The ship keeps the
+  // heading it was taken at, level, until the stroke; over the stroke the hand turns it toward the release velocity,
+  // about one axis (keel x release velocity) with uniform angular acceleration, up to exactly the rate of the tumble
+  // that carries on through the flight: angular velocity is continuous at the release, as velocity is. For `turns`
+  // whole turns in the air that turn is pi turns stroke / flight (45 degrees of the 71 between keel and velocity for
+  // two turns: all of it would put the wrist 6.2 from a shoulder whose arm spans 4.9). It turns about its middle (the
+  // point that flies), not about its origin a quarter unit below it.
+  const spinAxis = normalize(cross(keel, toss.velocity));
+  const turned = tumbled({ o: shipNow, x: keel, y: UP, z: stbd }, spinAxis, TH, TH.turns, flight);
+  const socket: Frame = { o: sub(shipNow, mul(turned.y, GRIP_Y)), x: turned.x, y: turned.y, z: turned.z };
+  /** The claw's own axis: along the ship's keel as the socket has it (the taken heading until the stroke, then turning with the hand). */
+  const inHand = tumbled({ o: shipNow, x: keel, y: UP, z: stbd }, spinAxis, TH, TH.turns, { whip: flight.whip, u: 0 });
+  const gripAxis = tabV("axis", inHand.x), gripUp = tabV("up", inHand.y);
+  /** Where the ship points when it comes down: as it left the hand (whole turns later), laid level. */
+  const landedHeading = (() => { const x = turnedAbout({ o: shipNow, x: keel, y: UP, z: stbd }, spinAxis, handTurn(TH, TH.turns)).x; return atan2(x.z, x.x); })();
 
   // The first ship when the crab does not hold it, by who places it. One record per handler: its frame, how much its
   // hull gives on touchdown, and the splash.
   const free1 = placedBy(placer.boat1, {
     // The stand-in. Afloat, it rides the water under its middle (so it floats again where it lands, and plunges through
     // the surface on touchdown), lifted by its middle's height above where that floats. In the air it is the socket's
-    // level frame carried along the flight and tumbled, so it leaves the grip exactly as it was held and comes down the
-    // way up it left; over 0.4 s from touchdown it is given back to the water.
+    // frame carried along the flight, still turning at the rate the hand gave it, so it leaves the grip exactly as it
+    // was held and comes down as it left; over 0.4 s from touchdown it is given back to the water, on that heading.
     standIn: () => {
-      const under = scaleShip.afloatChart(water, { at: vec2(shipNow.x, shipNow.z), heading: IN.boat1Heading, wind: WIND }).frame(vec3(0, 0, 0));
+      const under = scaleShip.afloatChart(water, { at: vec2(shipNow.x, shipNow.z), heading: select(lt(grabTau, GS.hold), IN.boat1Heading, landedHeading), wind: WIND }).frame(vec3(0, 0, 0));
       const floating: Frame = { o: add(under.o, mul(UP, sub(shipNow.y, GRIP_Y))), x: under.x, y: under.y, z: under.z };
       const afloatAgain = select(lt(grabTau, GS.hold), 1, smoothstep(0, 0.4, flight.landed));
       // The hull squashes on touchdown: a swing from 1, so it gives as it goes under and springs back; volume kept.
@@ -266,10 +284,7 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
         splashes: [{ at: IN.throwLand, since: flight.landed }],
         reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black,
       });
-      // It turns about its middle (the point that flies), not about its origin a quarter unit below it.
-      const turned = tumbled(socket, spinAxis, TH.turns, flight.u);
-      const flying: Frame = { o: sub(shipNow, mul(turned.y, GRIP_Y)), x: turned.x, y: turned.y, z: turned.z };
-      return { frame: blendFrames(flying, floating, afloatAgain), give, splash: [splash] as readonly Drawable[] };
+      return { frame: blendFrames(socket, floating, afloatAgain), give, splash: [splash] as readonly Drawable[] };
     },
     // The host: drawn where the game says, as it is.
     host: (p) => ({ frame: poseFrame(p), give: lift<"f32">(1), splash: [] as readonly Drawable[] }),
@@ -283,23 +298,38 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
   const squeeze = grab.squeezed(1, "z").k;
   const boatOne = scaleShip.placed(rigid(shipFrame), WIND, size.axes(tabV("squeeze", mul(squeeze, vec3(wide, free1.give, wide)))));
 
-  // The second boat floats outside the crush disc. Its stand-in takes the ring's impulse under a linear drag
-  // (`crush.pushed`: built from the same field a game samples) and floats on the sea at its shoved place, so its rise
-  // over the crest and its heel on the wave's faces come from the sea's own height, ring included; nothing animates
-  // them. The stand-in keeps the boat where the ring left it for `keep` seconds after the slam, then it is back at its
-  // place (in this show that is the loop's seam, while the Grab plays).
+  // The second boat floats outside the crush disc, its bow toward the slam. Its stand-in is the ring's own ride
+  // (`crush.pushed`: the rule a game integrates, solved): lifted as the front's edge passes under it, taken by the face,
+  // carried stern first at the wave's speed until the crest can no longer hold it, then dropped to coast. It floats on
+  // the sea at its forced place, so its rise and its lie on the wave's face come from the sea's own height, ring
+  // included. What the stand-in adds as art: the hull's own answer to being hit (a pitch that throws the bow up and
+  // rings down, `kick`), a slew as it coasts to a stop (`slew`), and a burst of spray where the face takes it. It keeps
+  // the boat where it ended for `keep` seconds after the slam, then the boat is back at its place (in this show that is
+  // the loop's seam, while the Grab plays).
   const free2 = placedBy(placer.boat2, {
     // The stand-in's own inputs: where the second boat floats when Claw Crush arms (x, z), and its heading.
     standIn: () => {
       const at = input("boat2.at", "vec2", [...start.boat2.at]), heading = input("boat2.heading", "f32", [start.boat2.heading]);
-      const shoved = crush.pushed(at), kept = select(lt(sub(time, crush.arm), B2.keep), 1, 0);
-      const shove = tabV("boat2_shove", mul(vec3(shoved.x, 0, shoved.y), kept));
-      return { at, frame: scaleShipTwo.afloatChart(water, { at: vec2(add(at.x, shove.x), add(at.y, shove.z)), heading, wind: WIND }).frame(vec3(0, 0, 0)) };
+      const tau = sub(time, crush.arm), kept = select(lt(tau, B2.keep), 1, 0), ride = crush.wave().ride(at);
+      const forced = crush.pushed(at), shove = tabV("boat2_shove", mul(vec3(forced.x, 0, forced.y), kept));
+      const now = vec2(add(at.x, shove.x), add(at.y, shove.z));
+      /** Seconds since the face took it, and since it was dropped (each negative before). */
+      const taken = perFrame("titan_s_boat2_taken", select(lt(tau, B2.keep), sub(tau, ride.taken), -1)), dropped = sub(taken, ride.seconds);
+      const slewed = add(heading, mul(B2.slew, sub(1, exp(mul(max(dropped, 0), -1 / n.wave.drag)))));
+      const afloat2 = scaleShipTwo.afloatChart(water, { at: now, heading: slewed, wind: WIND }).frame(vec3(0, 0, 0));
+      // Bow up about the ship's own beam (z = bow x mast), by a swing from 0 that rings down.
+      const frame = turnedAbout(afloat2, afloat2.z, swing(taken, B2.kick, 0.8, 0.3));
+      const spray = impactFoam("spray", water, {
+        area: hit.disc({ centre: at, radius: 4 }), pad: 4,
+        splashes: [{ at: now, since: taken }],
+        reach: 3.2, seconds: 1.3, foam: I.cream, line: I.black,
+      });
+      return { at, frame, spray: [spray] as readonly Drawable[] };
     },
-    host: (p) => ({ at: vec2(p.at.x, p.at.z), frame: poseFrame(p) }),
+    host: (p) => ({ at: vec2(p.at.x, p.at.z), frame: poseFrame(p), spray: [] as readonly Drawable[] }),
   });
   const boatTwo = scaleShipTwo.placed(rigid(tabFrame("boat2", free2.frame)), WIND);
-  const boat = [...boatOne, ...boatTwo];
+  const boat = [...boatOne, ...boatTwo, ...free2.spray];
 
   const warnStyle = { ...PRINT_WARNING, spacing: 1.2, edge: 0.22, line: 0.09 };
   /** The crash: clawed cream foam bursting from the disc's centre at the slam and running out past its edge (lib/impact.ts). */
@@ -312,14 +342,14 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
   /** What a game that runs its own boats reads (docs/throw_and_shove.md, "The contract"); the stand-ins above read the same. */
   const handoff: Handoff = {
     socket, held: grab.held(), squeeze,
-    release: { time: toss.releasedAt, at: sub(toss.release, mul(UP, GRIP_Y)), velocity: toss.velocity, spin: mul(spinAxis, (TH.turns * 2 * Math.PI) / TH.flight) },
+    release: { time: toss.releasedAt, at: sub(toss.release, mul(UP, GRIP_Y)), velocity: toss.velocity, spin: mul(spinAxis, tumbleRate(TH, TH.turns)) },
     landing: { time: toss.landsAt, at: sub(toss.land, mul(UP, GRIP_Y)), rest: sub(toss.rest, mul(UP, GRIP_Y)) },
     wave: crush.wave(),
   };
 
   return {
-    n, walk, footPhase: phase, crush, crushAfter, grab, grabOn, grabEnv, grabBeat, keel, gripRest, shipNow, body, shell, local, shoulder,
-    inputs: IN, placer, handoff, boatTwoAt: free2.at,
+    n, walk, footPhase: phase, crush, crushAfter, grab, grabOn, grabEnv, grabBeat, keel: gripAxis, gripUp, gripRest, shipNow, body, shell, local, shoulder,
+    inputs: IN, placer, handoff, boatTwoAt: free2.at, crushCentre: IN.crushCentre, shipTarget: scaleShip.target(rigid(shipFrame)),
     world: { sea: water, warnings: [telegraph(crush, { style: warnStyle }), telegraph(grab, { style: warnStyle })], crash, splash: free1.splash, boat },
   };
 }

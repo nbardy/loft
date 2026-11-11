@@ -97,18 +97,20 @@ export const S = {
   throw: { back: 2.7, side: 0.9, up: 2.15, stroke: 0.4, follow: 0.25, flight: 3.2, land: [-1.0, -35.0] as const, drag: 0.2, heave: { hz: 0.9, damping: 0.45 }, turns: 2 },
   /** The splash where the thrown ship lands: how far its foam runs, for how long, and the squash of the hull at touchdown. */
   splash: { reach: 3.6, seconds: 1.5, squash: 0.3 },
-  /** Claw Crush's ring wave: crest height at the disc's edge (the depth is 1.7; a crest breaks near 1.3), pulse length,
-   * where it is gone, and how far a thing afloat at the edge ends up shoved under the stand-in's drag (`drag` s: a heavy
-   * boat coasts). The front gives it shove / drag = 2.9 units/s there, the most the ring allows (the wave's own speed is
-   * 2.92). The first version (0.8 high, 4.6 over 1.6 s, then 5.6 over 2.0 s) moved the second boat one of its lengths:
-   * a nudge. */
-  wave: { height: 1.0, length: 6, reach: 12, shove: 8.7, drag: 3.0 },
+  /** Claw Crush's ring wave (docs/throw_and_shove.md, "The ride"): crest height at the disc's edge (the depth is 1.7; a
+   * crest breaks near 1.3), pulse length, where it is gone, the holding height (the front carries what floats while its
+   * crest is at least this tall: to 16 from the centre for a disc of 3.4, since the crest falls as 1 / sqrt(r)), and the
+   * stand-in's coasting drag once dropped. Earlier versions gave the boat a nudge (1 boat length), then an impulse and a
+   * 3 s drag (1.8 lengths, a drift); the owner asked for the boat forced back. */
+  wave: { height: 1.0, length: 6, reach: 22, hold: 0.46, drag: 1.6 },
   /** The second boat's default place: `beyond` the crush disc's edge (whatever the disc's radius) along `bearing` from
-   * its centre, lying at `heading` (quartering the ring, and side-on to the game camera; bow-on it read as a sail with no
-   * hull). On bearing -1.35 the game frame has 10 units of open water for it to be shoved across, where the first boat
-   * floated before it was thrown (at -0.88 and -1.1 it reached the frame's right edge after 4). Its stand-in keeps its
-   * shove for `keep` s after the slam, then the boat is back at its place: 10 is the loop's seam (crushPeriod - crushFirst). */
-  boatTwo: { bearing: -1.35, beyond: 2.0, heading: -0.5, keep: 10.0, sail: [0.86, 0.79, 0.58] as const },
+   * its centre, with its bow toward the slam (`heading` 2.0 is 20 degrees off bow-on to the front and 19 off side-on
+   * to the game camera: at 1.19 it pointed at the camera and read as a spar): the front throws the bow up and drives it
+   * back stern first. On bearing -1.54 the game frame holds the whole ride and coast (22 from the disc's centre) with
+   * the slewed boat whole; at -1.5 its sail met the frame's right edge, and at -1.35 it left the frame after 13. `kick` is the bow's first pitch when the face takes it (radians,
+   * ringing down) and `slew` how far it turns as it coasts to a stop. Its stand-in keeps where it ended for `keep` s
+   * after the slam, then the boat is back at its place: 10 is the loop's seam (crushPeriod - crushFirst). */
+  boatTwo: { bearing: -1.54, beyond: 2.0, heading: 2.0, kick: 0.5, slew: 0.9, keep: 10.0, sail: [0.86, 0.79, 0.58] as const },
 } as const;
 
 /** The numbers as a build reads them: the same shape with every literal widened, so overrides may change them. */

@@ -7,7 +7,7 @@
 
 import type { Artefact, Camera, FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
-import { Expr, lift, time, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
+import { add, Expr, lift, time, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
 import type { Score } from "./geom/expression.ts";
 import { cameraMatrices, project } from "./host/camera.ts";
 import type { Body } from "./map/sweep.ts";
@@ -594,44 +594,90 @@ export function fliesClear(attack: Attack<Motion, Hold<Thrown>>, targets: readon
   };
 }
 
+/**
+ * A gripper lets go cleanly: from the release its drawn fingers come out of the thing they threw and stay out. `hull`
+ * is the thing as it is drawn (a ship's hull in its own frame: `Ship.target` of the chart it is placed in), so this
+ * measures the fingers' capsules against the hull's own shape as it leaves. While they hold it the fingers overlap it
+ * by this measure (a curled finger's capsules are fatter than its skin and wrap the hull), so the grip's own overlap
+ * at the release is the reference: afterwards no finger may be more than `depth` deeper than that (a share is of the
+ * thing's width), and all must be clear of the hull within `seconds` and stay clear to twice that. It catches a throw
+ * that leaves across the gripper's own axis, through a finger.
+ */
+export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: readonly Measured[], hull: Target, o: { readonly seconds: number; readonly depth: Tolerance; readonly rate?: number }): Check {
+  const rate = o.rate ?? 120, e = attack.effect, chains = fingers.map(chainOf), width = [e.radius];
+  if (chains.length < 1) throw new Error(`letsGoClean "${attack.name}": no fingers`);
+  return {
+    name: `${attack.name}: the fingers let the thrown thing go without passing through it`,
+    run(probe) {
+      const released = probe.scalar(attack.first) + e.seconds;
+      const ok = allowance(o.depth, 2 * (probe.eval(width, released)[0] as number));
+      const least = (t: number) => chains.reduce((m, c) => { const g = gap(probe, probe.joints(c.skeleton, c.range, t), hull, t); return g < m.g ? { g, name: c.name } : m; }, { g: Infinity, name: chains[0]!.name });
+      // The grip's own overlap, a frame before the release (at the instant itself the thing is already its placer's).
+      const grip = least(released - 1 / rate).g;
+      let worst = { g: Infinity, name: chains[0]!.name }, when = released, clearAt = released;
+      for (const t of times(released, released + 2 * o.seconds, rate)) {
+        const m = least(t);
+        if (m.g < worst.g) { worst = m; when = t; }
+        if (m.g < 0) clearAt = t + 1 / rate;
+      }
+      const deeper = Math.max(grip - worst.g, 0), cleared = clearAt - released;
+      return {
+        name: this.name, pass: deeper <= ok && cleared <= o.seconds, value: deeper,
+        measured: `holding, ${fmt(-grip)} of overlap; after the release at most ${fmt(deeper)} deeper (${worst.name}, ${fmt(when - released, 2)} s after); clear of the hull from ${fmt(cleared, 2)} s`,
+        limit: `no more than ${describe(o.depth, ok, "width")} deeper; clear within ${fmt(o.seconds, 2)} s`,
+      };
+    },
+  };
+}
+
 // ---- the aftermath on the water -----------------------------------------------------------------------------------
 
 /**
- * The stand-in's shove is the wave's own impulse, and it is enough. Measured over the first arming for a thing afloat
- * at `place` (x, z):
- * - just after the front arrives, the stand-in's drift (`pushed`) moves at the impulse the wave states there
- *   (`wave.impulse(place)`, units per second), within `impulse` (a share is of that impulse): the stand-in is one
- *   consumer of the field a game samples, not a second formula;
- * - six drag times later it has come to `wave.shoved(place)` (to 0.5%), which is at least `least`.
+ * The stand-in's shove is the ring's own ride, and it is enough (docs/throw_and_shove.md, "The ride"). Measured over
+ * the first arming for a thing afloat at `place` (x, z), on the attack's `pushed` against the readouts a game uses:
+ * - half way through its ride it moves outward at the wave's `speed` (a central difference a 60th of a second wide),
+ *   within `speed` (a share is of the wave's speed);
+ * - there it is on the front's face: the edge reached the place it is at now exactly `lag` ago, within `place` as a
+ *   distance (a share is of the ride's length);
+ * - it is let go where the front stops holding: `holds` is 1 where it is just before the ride ends and 0 just after;
+ * - six drag times after that it has come to `wave.shoved(place)` (to 0.5%), which is at least `least`.
+ * A thing the front cannot hold where it floats (no ride) is measured on the last alone.
  */
-export function shoves(attack: Attack<Motion, Effect, Ring>, place: In<"vec2">, o: { readonly least: number; readonly impulse: Tolerance }): Check {
-  const wave = attack.wave(), at = lift<"vec2">(place);
-  const stated = [wave.shoved(at), wave.arrival(at), wave.impulse(at), at], pushed = [attack.pushed(at)];
+export function shoves(attack: Attack<Motion, Effect, Ring>, place: In<"vec2">, o: { readonly least: number; readonly speed: Tolerance; readonly place: Tolerance }): Check {
+  const wave = attack.wave(), at = lift<"vec2">(place), k = wave.ride(at), now = add(at, attack.pushed(at));
+  const stated = [wave.shoved(at), k.taken, k.seconds, k.distance, k.out, at], moving = [attack.pushed(at), wave.arrival(now), wave.holds(now)];
   return {
-    name: `${attack.name}: its ring shoves what floats at the place given, by its own impulse`,
+    name: `${attack.name}: its ring carries what floats at the place given, as its own readouts say`,
     run(probe) {
-      const T = probe.scalar(attack.first);
-      const [end, arrival, kick, p] = probe.eval(stated, T) as [number[], number, number[], number[]];
-      const drag = attack.aftermath.drag, front = T + arrival;
-      const at2 = (t: number): V3 => { const v = probe.eval(pushed, t)[0] as number[]; return [v[0]!, 0, v[1]!]; };
-      // The drift's velocity a thousandth of a drag time after the front, by a second-order one-sided difference.
-      const h = drag / 400, t0 = front + h, v = velocitiesAt(at2, t0, h).after;
-      const given = Math.hypot(kick[0]!, kick[1]!), decayed = Math.exp(-h / drag);
-      const off = Math.hypot(v[0] - kick[0]! * decayed, v[2] - kick[1]! * decayed), okKick = allowance(o.impulse, given);
-      const late = at2(front + 6 * drag), final = Math.hypot(end[0]!, end[1]!), short = Math.hypot(late[0] - end[0]!, late[2] - end[1]!);
+      const T = probe.scalar(attack.first), c = wave.speed, drag = attack.aftermath.drag;
+      const [end, taken, seconds, distance, out, p] = probe.eval(stated, T) as [number[], number, number, number, number[], number[]];
+      const sample = (t: number) => { const [push, edge, holds] = probe.eval(moving, t) as [number[], number, number]; return { along: push[0]! * out[0]! + push[1]! * out[1]!, edge, holds }; };
+      const final = Math.hypot(end[0]!, end[1]!), dropped = T + taken + seconds;
+      const late = sample(dropped + 6 * drag).along;
+      const settled = Math.abs(late - final) <= 0.005 * final;
+      // The ride itself, where there is one (a quarter of a second or more: shorter cannot be sampled either side).
+      const rides = seconds >= 0.25;
+      const h = 1 / 120, mid = T + taken + seconds / 2;
+      const v = rides ? (sample(mid + h).along - sample(mid - h).along) / (2 * h) : c;
+      // The edge reached where the thing is now `lag` ago: as a distance, the wave's speed times the error in seconds.
+      const off = rides ? Math.abs(mid - T - sample(mid).edge - wave.lag) * c : 0;
+      const held = rides ? sample(dropped - 0.05).holds === 1 && sample(dropped + 0.05).holds === 0 : true;
+      const okSpeed = allowance(o.speed, c), okPlace = allowance(o.place, Math.max(distance, 1e-6));
       return {
-        name: this.name, pass: final >= o.least && off <= okKick && short <= 0.005 * final, value: final,
-        measured: `at (${fmt(p[0]!, 2)}, ${fmt(p[1]!, 2)}): front at t=${fmt(front, 2)} gives ${fmt(given, 2)}/s, the drift's start ${fmt(off)} off it; shoved ${fmt(final, 2)} (${fmt(Math.hypot(late[0], late[2]), 2)} by t=${fmt(front + 6 * drag, 2)})`,
-        limit: `>= ${fmt(o.least, 2)}; impulse within ${describe(o.impulse, okKick, "impulse")}`,
+        name: this.name, pass: final >= o.least && settled && Math.abs(v - c) <= okSpeed && off <= okPlace && held, value: final,
+        measured: `at (${fmt(p[0]!, 2)}, ${fmt(p[1]!, 2)}): taken t=${fmt(T + taken, 2)}, carried ${fmt(distance, 2)} at ${fmt(v, 2)}/s (wave ${fmt(c, 2)}), ${fmt(off)} off its face, let go t=${fmt(dropped, 2)}${held ? " where holding ends" : " NOT where holding ends"}; forced ${fmt(final, 2)} (${fmt(late, 2)} by t=${fmt(dropped + 6 * drag, 2)})`,
+        limit: `>= ${fmt(o.least, 2)}; speed within ${describe(o.speed, okSpeed, "wave speed")}; on the face within ${describe(o.place, okPlace, "ride")}`,
       };
     },
   };
 }
 
 /**
- * Nothing moves before the front arrives: at each place, from a second before the arming time until the ring's front
- * reaches it, the shove and the wave's lift are exactly 0; and one drag time after it arrives the thing there has moved
- * (so the check is not passed by a wave that never comes). Measured over the first arming.
+ * Nothing moves before the front arrives, and nothing is carried before its face does: at each place, from a second
+ * before the arming time until the ring's leading edge reaches it, the shove and the wave's lift are exactly 0; from
+ * then until the face takes the thing (`lag` later) the shove is still exactly 0 (the water lifts it and that is all);
+ * and one drag time after that the thing has moved (so the check is not passed by a wave that never comes). Measured
+ * over the first arming.
  */
 export function frontFirst(attack: Attack<Motion, Effect, Ring>, places: readonly In<"vec2">[], o: { readonly rate?: number } = {}): Check {
   const rate = o.rate ?? 60, wave = attack.wave();
@@ -644,17 +690,18 @@ export function frontFirst(attack: Attack<Motion, Effect, Ring>, places: readonl
       let early = 0, when = T, later = Infinity;
       for (const r of roots) {
         const arrival = probe.eval(r.arrival, T)[0] as number;
-        for (const t of times(T - 1, T + arrival, rate)) {
+        for (const t of times(T - 1, T + arrival + wave.lag, rate)) {
           const [push, rise] = probe.eval(r.moved, t) as [number[], number];
-          const m = Math.max(Math.abs(push[0]!), Math.abs(push[1]!), Math.abs(rise));
+          // Before the edge: nothing at all. Between the edge and the face: lifted, not moved.
+          const m = Math.max(Math.abs(push[0]!), Math.abs(push[1]!), t < T + arrival ? Math.abs(rise) : 0);
           if (m > early) { early = m; when = t; }
         }
-        const [push] = probe.eval(r.moved, T + arrival + attack.aftermath.drag) as [number[], number];
+        const [push] = probe.eval(r.moved, T + arrival + wave.lag + attack.aftermath.drag) as [number[], number];
         later = Math.min(later, Math.hypot(push[0]!, push[1]!));
       }
       return {
         name: this.name, pass: early === 0 && later > 0, value: early,
-        measured: `most before the front ${early === 0 ? "0 (exactly)" : `${early.toExponential(2)} at t=${fmt(when, 2)}`}; a drag time after it, moved at least ${fmt(later, 2)}`,
+        measured: `most before the front ${early === 0 ? "0 (exactly)" : `${early.toExponential(2)} at t=${fmt(when, 2)}`}; a drag time after its face, moved at least ${fmt(later, 2)}`,
         limit: "exactly 0 before; moving after",
       };
     },

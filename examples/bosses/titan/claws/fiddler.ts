@@ -100,7 +100,7 @@ export const fiddler: ClawsOption = {
     const crusher = animate(restWrist, [crush], (spine) => {
       const w = tabV("wrist", spine(lift<"f32">(0)));
       // The lane: from the wrist toward the disc's centre, level. At contact it is the lunge's own lane.
-      const toward = tabV("toward", normalize(vec3(sub(n.crushCentre[0], w.x), 0, sub(n.crushCentre[1], w.z))));
+      const toward = tabV("toward", normalize(vec3(sub(rig.crushCentre.x, w.x), 0, sub(rig.crushCentre.y, w.z))));
       const p = env.p, q = env.q;
       // Display: up, leaning back; on the wave (the wrist lifted 1.1) it swings up and out to the side and back, as a
       // fiddler waves. (Swung forward, it lay down across the face and read as a lowered claw.) Face: out and forward.

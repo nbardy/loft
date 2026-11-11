@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, frontFirst, gripReaches, landsInside, lift, placedBy, print, releasesAt, scene, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check } from "../../src/index.ts";
+import { fliesClear, frontFirst, letsGoClean, gripReaches, landsInside, lift, placedBy, print, releasesAt, scene, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check } from "../../src/index.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
@@ -181,13 +181,16 @@ export const design = makeDesign({
               { kind: "body", body: carapace.hull },
               { kind: "disc", centre: vec2(...n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
             ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
+            // The claw's own fingers let it go: the hand has turned toward the throw, so the hull leaves between them, no
+            // more than a tenth of its beam deeper into either than the grip itself, and clear of both in 0.3 s.
+            letsGoClean(r.grab, claws.cutterFingers, r.shipTarget, { seconds: 0.3, depth: tolerance.share(0.1) }),
           ],
           host: () => [],
         }),
         ...placedBy<readonly Check[]>(r.placer.boat2, {
-          // The second boat's drift starts at the ring's own impulse (2% of it) and ends at least 6 outward, a length
-          // and a half.
-          standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 6, impulse: tolerance.share(0.02) })],
+          // The second boat's stand-in is the ring's own ride: carried at the wave's speed (2% of it), on the front's
+          // face (2% of the ride), dropped where the front stops holding, and forced at least four of its lengths.
+          standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 4 * SCALE_SHIP_LENGTH, speed: tolerance.share(0.02), place: tolerance.share(0.02) })],
           host: () => [],
         }),
         // What the chosen face asks of itself (slots.ts, `Face`): none for a face that asks nothing.

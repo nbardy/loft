@@ -176,7 +176,7 @@ export const dandy: FaceOption = {
       return Object.fromEntries(CAST.channels.map((ch) => [ch, tabF(`${tag}_${ch}`, c[ch])])) as Posed<Channel>;
     };
     const w = TAU / n.period;
-    const audience = vec3(...AUDIENCE), disc = vec3(n.crushCentre[0], 0, n.crushCentre[1]);
+    const audience = vec3(...AUDIENCE), disc = vec3(rig.crushCentre.x, 0, rig.crushCentre.y);
 
     const eye = (e: EyeSpec, i: number) => {
       const c = posed(e.tag, e.lag), q = eyeFrom(GPU, c, e), R = e.radius;
