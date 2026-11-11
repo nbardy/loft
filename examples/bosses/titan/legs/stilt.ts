@@ -26,10 +26,10 @@ import type { LegsOption } from "../slots.ts";
 /** The legs' own proportions (not numbers the rig reads): the root's radius as a share of the body's half-width, its height. */
 const ROOT_OUT = 0.8, ROOT_Y = -0.4, SPLAY = 0.25;
 
-/** Seconds since foot k last planted, and seconds since it lifted (both from the walk's own clock). */
-export function stepClock(n: Numbers, phase: number): { readonly sincePlant: F; readonly sinceLift: F } {
-  const c = add(mul(time, 1 / n.period), phase), s = sub(c, floor(c));
-  return { sincePlant: mul(s, n.period), sinceLift: mul(sub(s, n.duty), n.period) };
+/** Seconds since foot k last planted, and since it lifted (negative while planted): the stance's step clock
+ * (docs/stance.md). A foot steps only to re-plant, stamp or walk, so a ring at a plant now means a real step. */
+export function stepClock(rig: Rig, k: number): { readonly sincePlant: F; readonly sinceLift: F } {
+  return rig.walk.since(k);
 }
 
 /** One foot's foam on the water: a clawed cream cloud while it stands, a ring running out at each plant. */
@@ -77,9 +77,11 @@ export const stilt: LegsOption = {
     legFeet: [[5.83, 9.33], [0.38, 10.99], [-5.16, 9.71], [-9.33, 5.83]], legLengths: [5.5, 6.95, 4.5],
     // Slow and high-stepping: it picks its way. The body sways wider on the long legs.
     period: 4.2, duty: 0.72, lift: 2.6, sway: 0.42, bob: 0.12, roll: 0.045, yaw: 0.04,
+    // The weight shifts wider on the long legs.
+    stance: { idle: { side: 0.5, fore: 0.3 } },
   },
   draw: (rig: Rig) => {
-    const { n, walk, body, local, footPhase, world } = rig;
+    const { n, walk, body, local, world } = rig;
     const I = n.ink;
     const total = n.legLengths[0] + n.legLengths[1] + n.legLengths[2];
     return sides.flatMap((s, si) => n.legFeet.map(([fx, fz], i) => {
@@ -112,7 +114,8 @@ export const stilt: LegsOption = {
           },
           detail: { along: 120, around: 10 },
         }),
-        footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, rig.place2([fx, s * fz]), stepClock(n, footPhase[k]!), n),
+        // The foam stands round the foot where it is (a re-plant moves it), not round its home.
+        footFoam(`foam${s < 0 ? "L" : "R"}${i}`, world.sea, vec2(walk.foot(k).x, walk.foot(k).z), stepClock(rig, k), n),
       ];
     }).flat());
   },

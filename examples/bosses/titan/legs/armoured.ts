@@ -16,6 +16,8 @@ const LAMES = 13, SLIDE = 0.9;
 
 export const armoured: LegsOption = {
   about: "lacquered lames edged in red, cord-bound joints, red dactyls",
+  // The samurai holds its taunt's poses low, its knees locked (docs/stance.md).
+  numbers: { stance: { dance: { crouch: 0.45 } } },
   draw: ({ n, walk, body, local }) => {
     const I = n.ink;
     const segs = keys([[0, 1], [0.4, 0.85], [0.8, 0.55], [1, 0.2]]);

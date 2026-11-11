@@ -22,7 +22,8 @@ export { checkField, FieldDrawable, fieldPixel, FieldSafetyError, LIPSCHITZ_LIMI
 export { impostors, Impostors, type Cell, type ImpostorHit, type ImpostorOptions, type ImpostorShape } from "./draw/impostors.ts";
 export { Copies, drawCopies, type CopiesHit, type CopiesOptions } from "./draw/copies.ts";
 export { limb, polyline, unit, type Limb, type LimbSpec } from "./geom/limb.ts";
-export { gait, course, type Course, type Gait, type GaitSpec } from "./geom/gait.ts";
+export { gait, course, type Course, type Gait, type GaitSpec, type Pace } from "./geom/gait.ts";
+export { carriage, footing, headingIn, replants, towardIn, type Carriage, type Footing, type FootingSpec, type Replant, type ReplantSpec, type Stamp, type Stance, type StepTiming, type Toward } from "./geom/stance.ts";
 export { fan, rayOf, catenary, type FanSpec } from "./geom/fan.ts";
 export { shell, horn, whorl, ridgePhase, type ShellSpec, type HornSpec } from "./geom/spiral.ts";
 export { mirror, array, reflect } from "./geom/symmetry.ts";
