@@ -189,7 +189,7 @@ export const mask: FaceOption = {
     };
 
     const shape = framed(surface(point, { u: ["free", "free"], v: "free" }), { frame: body, scale: lift<"f32">(1) });
-    return [draw.surface("mask", shape, { paint, grid: { u: spacing.even(96), v: spacing.even(96) }, sides: "one", outline: "border" })];
+    return { things: [draw.surface("mask", shape, { paint, grid: { u: spacing.even(96), v: spacing.even(96) }, sides: "one", outline: "border" })], checks: [] };
   },
 };
 

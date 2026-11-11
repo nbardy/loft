@@ -55,3 +55,73 @@ All three are built as variants of the crab (`examples/bosses/reefback_titan.ts`
 (`bun src/cli/main.ts variants examples/bosses/reefback_titan.ts --only base,mask,stilt,fiddler --views game,far,face,legs,back`).
 Every variant passes the crab's checks. Open: the fiddler asks for a crush disc of 4.4 (base 3.4); `fiddlerBaseDisc`
 is the largest claw that fits the base disc.
+
+## Round 3: a face for the island crab (2026-11-11)
+
+The owner, after seeing base, mask, stilt and fiddler side by side: the stilt crab is not the direction; "I like the
+lower to the water non stilt version and the island back, just wanted more face identity"; "like fiddler, fiddler has
+great identity and nice face expressions". So: the base crab (carapace, legs, atoll) with the fiddler's one great claw
+and a face on tall eyestalks that has character and visibly changes expression. The variant is `islander`
+(`examples/bosses/reefback_titan.ts`); its face is `examples/bosses/titan/face/dandy.ts`.
+
+What was wrong with the periscope face on this crab, measured on `claws=fiddler,face=periscope`:
+
+- its eyes are 34 px across from the `game` camera at 1280 x 800 (radius 0.46);
+- it has one lid, raised out of sight, so nothing about the eyes changes but shut or open;
+- when it looks at the ship or the disc the pupil is on the far side of the eye from the game camera. The camera is
+  40 degrees above the horizon, in front and to the right; the ship is 112 degrees round from it as the eye sees them
+  and the disc 78. So in every beat of either attack the camera sees a cream ball and no pupil.
+
+### The face
+
+Temperament: vain, a show-off, a bully (kept from the periscope). What is new is that the temperament does the
+staging: **the eyes face the audience and never quite leave it**. The socket turns three tenths of the way to what it
+looks at and the iris slides the rest across the white, so it watches the ship from the side of its eye, and the game
+camera always sees white, iris and pupil. Two lids an eye (a dark brow above, a brick cheek below), a moss-green iris
+(the island's own ink), everything bigger on the great claw's side (the right eye is larger, higher, wears its lid
+higher and leads by 0.14 s), and a handlebar moustache of two curled antennae.
+
+Kept from before: the eyeball on a stalk, the lid as a spherical lune and its ink, the stalks' whip after the slam,
+the door-plate mouth (all `faceKit`); watching the audience at rest and the stalks trailing the walk (the periscope).
+New: the audience-facing socket with a sliding iris, the lower lid, the iris, the size and the lopsidedness, the
+moustache, and expressions as values (`src/geom/expression.ts`): six named expressions over one rest, laid over the
+fight by its own clocks.
+
+| expression | when (the rig's clocks) | what is drawn |
+|---|---|---|
+| rest (posing) | otherwise | lids half down and uneven, the right eye cocked higher, looking at you |
+| covet | from the Grab's warning until it looks away | eyes flung wide, pupils swollen, stalks craned up together toward the ship |
+| strain | the hold; bites with each squeeze | slits under a scowl, stalks drawn down and trembling, mouth clamped |
+| glee | from the let-go, 1.5 s on | cheeks push the eyes into arches, stalks flung apart and back, laughing |
+| glare | Claw Crush's wind-up | brows hard down to the middle, pinpoint pupils, stalks low and thrust at the disc |
+| wince | the slam, 0.5 s | shut tight, stalks jolted down and apart, the lopsidedness thrown over |
+
+Expression references were to be generated first (`tools/crab_faces.py`: six moods, each close and at game distance).
+A process from `~/git/flux-klein-fast` was running when this started, so the script was written and not run, and the
+shapes come from the round 2 fiddler pictures.
+
+### Predictions (written before the first render of this face)
+
+From `tools/face_theory.ts`: plain arithmetic on the face's own numbers, the body at rest, each expression at full
+weight, the `game` camera at 1280 x 800.
+
+1. **Size.** The right eye is 60 px across and the left 45 (the periscope's: 34). At rest the iris is 30 and 22 px
+   across and the pupil 18 and 13. `minScreenSize` will measure each eyeball within 4 px of that.
+2. **Contrast.** The white (cream) is drawn inside its own dark surround (dark lids, a dark back to the eyeball, the
+   ink outline), on the brick body: by the inks, 4.9 to 1 against brick and about 9 to 1 against the lid. In the
+   `game` picture at rest, the mean luminance of the cream pixels inside the right eye over the mean of the ring from
+   1.0 to 1.3 radii round it will be at least 3.5 to 1 (lower than the inks alone: the ring takes in the stalk and the
+   shadow print).
+3. **Expressions.** All seven (rest and six) reach at least 0.9 of the face in a cycle. For every pair, some drawn
+   vector (stalk root to eye, eye to a lid's middle, eye to pupil, eye to its corner) differs by at least a quarter
+   of the right eye's width (15 px). The closest pair is rest and glee at 33 px (the right stalk), then strain and
+   glare at 33 px (the lower lid) and rest and strain at 34; the farthest is covet and wince at 101. Measured on the
+   moving crab (`expressionsRead`), the closest pair will be between 23 and 43 px. By eye, from stills at the game
+   camera, at least six of the seven are told apart at a glance; the pair most likely to be confused is strain and
+   glare (both scowl with low stalks).
+4. **Where it looks.** Looking at the ship the pupils sit 22 px right and 9 px down of the eyes' middles (right eye);
+   at the disc, 20 px straight down; at rest, centred. Each is inside the white, so all three read.
+5. **Cost.** On `claws=fiddler,face=periscope` the `game` frame is 2.62 ms of GPU time (the fast clock state; pose
+   stages 0.39), 84 draws, 102,371 triangles drawn, 122 map tables. The islander: at most 2.75 ms (expected one timer
+   tick more, 0.07), 90 draws, about 105,300 triangles, about 156 map tables.
+

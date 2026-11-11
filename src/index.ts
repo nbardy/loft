@@ -26,11 +26,13 @@ export { shell, horn, whorl, ridgePhase, type ShellSpec, type HornSpec } from ".
 export { mirror, array, reflect } from "./geom/symmetry.ts";
 export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type BeatSpec, type StrikeSpec } from "./geom/motion.ts";
 export { alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, overshot, slowIn, slowInOut, slowOut, squash, stretchOf, swing, uneven, type Beat, type Beats } from "./geom/lively.ts";
+export { cast, score, show, only, added, during, ExpressionError, type Cast, type Expression, type Layer, type Posed, type Score } from "./geom/expression.ts";
 export { grab, gripper, heldThing, fingerAngle, pincerAngle, wrap, type AxesSize, type Grab, type GrabBeats, type GrabSpec, type GripperSpec, type Held, type WrapSpec } from "./geom/grab.ts";
 export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
+export { expressionsRead, type Mark } from "./check.ts";
 export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
