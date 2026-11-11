@@ -89,7 +89,8 @@ export const fiddler: ClawsOption = {
     const up = vec3(0, 1, 0);
 
     // ---- display: the banner waved twice a loop (at about 6.7 s and 14.7 s), never while the cutter works ----
-    const wave = tabS("wave", mul(mul(max(sin(mul(sub(time, 4.7), TAU / 8)), 0), max(sin(mul(sub(time, 4.7), TAU / 8)), 0)), sub(1, grabOn)));
+    // In a taunt the banner waves on the dance's accents instead (rig.dance.display: its own display when there is none).
+    const wave = tabS("wave", rig.dance.display(mul(mul(max(sin(mul(sub(time, 4.7), TAU / 8)), 0), max(sin(mul(sub(time, 4.7), TAU / 8)), 0)), sub(1, grabOn))));
     const C = n.carapace;
     const wristHome = vec3(C.to + 0.6, 1.2, C.width * 0.55 + 2.7);
     const drift = vec3(alive(time, 0.25, 41, 0.17), alive(time, 0.3, 42, 0.21), alive(time, 0.2, 43, 0.19));

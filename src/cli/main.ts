@@ -1,5 +1,6 @@
 // loft CLI. Dispatch only: each command is one function below.
 import { createHash } from "node:crypto";
+import { loopTime, OPEN, type Loop } from "../artefact.ts";
 import type { Artefact } from "../artefact.ts";
 import type { GpuLoaded } from "../host/host.ts";
 import { DesignError } from "../design.ts";
@@ -39,6 +40,12 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
   }
 }
 
+/** The loop a drawn thing declares: a compiled scene's own; a built directory's manifest carries none yet, so its clock runs on. */
+function loopOf(info: object): Loop {
+  const l = (info as { readonly loop?: Loop }).loop;
+  return l === undefined ? OPEN : l;
+}
+
 /** "n map, n scan, n cpu (not data)": how the per-frame tables are filled. */
 function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "scan" | "cpu" } }[]): string {
   const n = { map: 0, scan: 0, cpu: 0 };
@@ -68,7 +75,7 @@ async function render(cmd: Extract<Command, { kind: "render" }>) {
   const frames: Frame[] = [];
   for (const name of cmd.views) {
     const camera = resolveCamera(artefact, name);
-    const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: cmd.time, params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
+    const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
     frames.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -85,7 +92,7 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
     const label = cmd.sweep.kind === "linear" ? `t=${time} ${cmd.sweep.name}=${inputs[cmd.sweep.name]!.map((x) => +x.toFixed(4)).join(",")}` : `t=${time}`;
-    const rgba = await timed(label, () => loaded.frameTimed({ camera, ...cmd.size, time, params: cmd.params, inputs }));
+    const rgba = await timed(label, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }));
     out.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -102,7 +109,7 @@ async function clip(cmd: Extract<Command, { kind: "clip" }>) {
   const video = openVideo(cmd.out, cmd.size.width, cmd.size.height, cmd.fps);
   const t0 = performance.now();
   for (let i = 0; i < count; i++) {
-    const rgba = await loaded.frame({ camera, ...cmd.size, time: i / cmd.fps, params: cmd.params, inputs: viewInputs(cmd.inputs, cmd.sweep, i, count) });
+    const rgba = await loaded.frame({ camera, ...cmd.size, time: loopTime(loopOf(artefact), i / cmd.fps), params: cmd.params, inputs: viewInputs(cmd.inputs, cmd.sweep, i, count) });
     await video.write(rgba);
   }
   await video.finish();

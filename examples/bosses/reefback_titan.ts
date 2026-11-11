@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, frontFirst, letsGoClean, gripReaches, landsInside, lift, placedBy, print, releasesAt, scene, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check } from "../../src/index.ts";
+import { fliesClear, frontFirst, letsGoClean, gripReaches, landsInside, lift, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check, type Sea } from "../../src/index.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
@@ -49,7 +49,7 @@ import { armoured } from "./titan/legs/armoured.ts";
 import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
-import { rig } from "./titan/rig.ts";
+import { AT_HOME, stage, type Staging } from "./titan/rig.ts";
 import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
@@ -85,79 +85,33 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
   };
 };
 
-export const design = makeDesign({
-  name: "reefback_titan",
-  numbers: S as Numbers,
-  slots: {
-    carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
-    legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
-    claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
-    boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
-  },
-  variants: {
-    // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
-    // patient sad face, a red shrine on its back. The ship is taken further round to the front (-0.55, not -0.75): at
-    // -0.75 it lay 2.8 from the front-left foot's foam.
-    stilt: {
-      about: "a colossal spider crab: thorny body on bamboo stilts, tongs, a shrine",
-      pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "patient", back: "shrine" }, numbers: { grabBearing: -0.55 },
-    },
-    // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
-    // little cutter, periscope eyes, a dark pebble shell, a ruined lighthouse. Its inks: the body darkens to oxblood and
-    // near-black; the great claw is the one accent, vermilion-brick to cream. Its claws ask for a crush disc of 4.4 (the
-    // base's is 3.4): a bigger hand lands on a bigger area (claws/fiddler.ts), a gameplay change the owner decides.
-    fiddler: {
-      about: "a colossal fiddler: one great claw, periscope eyes, a dark pebble, a ruined lighthouse",
-      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
-      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] } },
-    },
-    // The same crab if the crush disc must stay the base's 3.4: the largest great claw that lands inside it. Measured: 1.85
-    // is 1.5% outside, 1.9 is at the 2% limit (theory.ts predicted 3.4 holds about g = 1.9 with the contact squash).
-    fiddlerBaseDisc: {
-      about: "the fiddler with the base crush disc (3.4): its great claw at the largest that fits",
-      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
-      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, crusher: 1.85, crushRadius: 3.4 },
-    },
-    // The heikegani: the carapace's front a scowling samurai war mask, armour on every limb, a keep and two pines on top.
-    mask: { about: "a samurai crab: war-mask face, lacquer armour, a keep and two pines", pick: { carapace: "kabuto", face: "mask", legs: "armoured", claws: "gauntlet", back: "keep" } },
-    // The island crab with the fiddler's identity (docs/art_direction/DIRECTION.md, Round 3): the base crab, low in the
-    // water with the atoll on its back, one great claw, and the dandy's face (face/dandy.ts). The fiddler claws ask for a
-    // crush disc of 4.4, as on the fiddler.
-    islander: {
-      about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
-      pick: { claws: "fiddler", face: "dandy" },
-    },
-    // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
-    // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
-    // Arms long enough for its 0.8 cutter (5.15 + 4.95: grip 0.058 off, measured) make its 2.4 crusher span 16.5 to reach
-    // 6.8; folded that far its 7-long palm lies along a forearm aimed away from the disc (38.5% outside, measured). One
-    // armLengths scales both claws by size; this pair needs an arm length per claw, a field the claws' numbers lack.
-  },
-  compare: ["far", "face", "legs", "back"],
-  build: (o, n) => {
-    // Numbers, then what the claws offer the rig, then the rig, then each slot drawn on it, then the scene.
-    const offer = o.claws.offer(n);
-    const r = rig(n, offer, o.boats);
-    const carapace = o.carapace.draw(r);
-    const legs = o.legs.draw(r);
-    const claws = o.claws.draw(r, offer);
-    const face = o.face.draw(r, carapace);
-    const back = o.back.draw(r);
-    return {
-      scene: scene({
-        sea: r.world.sea,
+/** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
+export const styleFor = (n: Numbers) => woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) });
+export const SUN = [0.15, 0.8, 0.6] as const;
+
+type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption };
+
+/** Numbers, then what the claws offer the rig, then the rig's first stage; on the sea given, the rig and each slot drawn on it. */
+function assemble(o: Slots, n: Numbers, how: Staging) {
+  const offer = o.claws.offer(n);
+  const staged = stage(n, offer, o.boats, how);
+  return {
+    deforms: staged.deforms, sea: staged.sea,
+    finish: (water: Sea) => {
+      const r = staged.finish(water);
+      const carapace = o.carapace.draw(r);
+      const legs = o.legs.draw(r);
+      const claws = o.claws.draw(r, offer);
+      const face = o.face.draw(r, carapace);
+      const back = o.back.draw(r);
+      return {
         things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
-        style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }) }),
-        sun: [0.15, 0.8, 0.6],
-        cameras: camerasFor(n),
-      }),
-      strikes: { crush: claws.crush },
-      holds: { grab: r.grab },
-      waves: { crush: r.crush },
-      handoff: r.handoff,
-      inputs: r.inputs,
+        strikes: { crush: claws.crush },
+        holds: { grab: r.grab },
+        waves: { crush: r.crush },
+        handoff: r.handoff,
+        inputs: r.inputs,
+        rig: r,
       checks: [
         landsInside(claws.crush), warned(r.crush), warned(r.grab),
         // The fingers are curled horns a fifth of the beam thick near their tips: a tenth of the beam either way is a close grip.
@@ -179,11 +133,12 @@ export const design = makeDesign({
             // cylinder of its larger radius: the ship may not fly over the island at any height).
             fliesClear(r.grab, [
               { kind: "body", body: carapace.hull },
-              { kind: "disc", centre: vec2(...n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
+              { kind: "disc", centre: r.place2(n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
             ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
             // The claw's own fingers let it go: the hand has turned toward the throw, so the hull leaves between them, no
-            // more than a tenth of its beam deeper into either than the grip itself, and clear of both in 0.3 s.
-            letsGoClean(r.grab, claws.cutterFingers, r.shipTarget, { seconds: 0.3, depth: tolerance.share(0.1) }),
+            // more than a tenth of its beam deeper into either than the grip itself, and clear of both in 0.45 s (a crab
+            // alone, throwing ahead, is clear in 0.12 to 0.18 s; thrown back over the shoulder in the lineup, 0.32 to 0.37).
+            letsGoClean(r.grab, claws.cutterFingers, r.shipTarget, { seconds: 0.45, depth: tolerance.share(0.1) }),
           ],
           host: () => [],
         }),
@@ -193,9 +148,84 @@ export const design = makeDesign({
           standIn: () => [shoves(r.crush, r.boatTwoAt, { least: 4 * SCALE_SHIP_LENGTH, speed: tolerance.share(0.02), place: tolerance.share(0.02) })],
           host: () => [],
         }),
-        // What the chosen face asks of itself (slots.ts, `Face`): none for a face that asks nothing.
-        ...face.checks,
       ],
+        // What the chosen face asks of itself (slots.ts, `Face`): none for a face that asks nothing. Kept apart: they are
+        // measured from the crab's own cameras, which a scene that stages several crabs does not have.
+        sceneChecks: face.checks,
+      };
+    },
+  };
+}
+
+export const design = makeDesign({
+  name: "reefback_titan",
+  numbers: S as Numbers,
+  slots: {
+    carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
+    legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
+    claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
+    face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
+    back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
+    boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
+  },
+  variants: {
+    // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
+    // patient sad face, a red shrine on its back. The ship is taken further round to the front (-0.55, not -0.75): at
+    // -0.75 it lay 2.8 from the front-left foot's foam.
+    stilt: {
+      about: "a colossal spider crab: thorny body on bamboo stilts, tongs, a shrine",
+      // Patient, melancholy, eerie: everything late and slow, a long follow-through; in a taunt both tongs go up and it bows.
+      pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "patient", back: "shrine" },
+      numbers: { grabBearing: -0.55, temper: { snap: 1.5, arrive: 0.7, hold: 0.15, leave: 0.7, jitter: 0, lag: 0.6, rise: -1.6, reach: 1.1, together: 1 } },
+    },
+    // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
+    // little cutter, periscope eyes, a dark pebble shell, a ruined lighthouse. Its inks: the body darkens to oxblood and
+    // near-black; the great claw is the one accent, vermilion-brick to cream. Its claws ask for a crush disc of 4.4 (the
+    // base's is 3.4): a bigger hand lands on a bigger area (claws/fiddler.ts), a gameplay change the owner decides.
+    fiddler: {
+      about: "a colossal fiddler: one great claw, periscope eyes, a dark pebble, a ruined lighthouse",
+      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
+      // Manic, twitchy: fast and small, never still; it lands on the beat and shakes on the half-beats.
+      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, temper: { snap: 4, arrive: 0.15, hold: 0, leave: 0.12, jitter: 1, lag: 0.12, rise: 0.3, reach: 0.85, together: 0 } },
+    },
+    // The same crab if the crush disc must stay the base's 3.4: the largest great claw that lands inside it. Measured: 1.85
+    // is 1.5% outside, 1.9 is at the 2% limit (theory.ts predicted 3.4 holds about g = 1.9 with the contact squash).
+    fiddlerBaseDisc: {
+      about: "the fiddler with the base crush disc (3.4): its great claw at the largest that fits",
+      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
+      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, crusher: 1.85, crushRadius: 3.4 },
+    },
+    // The heikegani: the carapace's front a scowling samurai war mask, armour on every limb, a keep and two pines on top.
+    // Stern and proud: few moves, large, snapped into and held dead still (a kabuki mie), then let go.
+    mask: {
+      about: "a samurai crab: war-mask face, lacquer armour, a keep and two pines", pick: { carapace: "kabuto", face: "mask", legs: "armoured", claws: "gauntlet", back: "keep" },
+      numbers: { temper: { snap: 8, arrive: 0.18, hold: 0.6, leave: 0.3, jitter: 0, lag: 0.1, rise: 0.12, reach: 1.25, together: 0 } },
+    },
+    // The island crab with the fiddler's identity (docs/art_direction/DIRECTION.md, Round 3): the base crab, low in the
+    // water with the atoll on its back, one great claw, and the dandy's face (face/dandy.ts). The fiddler claws ask for a
+    // crush disc of 4.4, as on the fiddler.
+    islander: {
+      about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
+      pick: { claws: "fiddler", face: "dandy" },
+      // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
+      numbers: { temper: { snap: 3, arrive: 0.25, hold: 0.12, leave: 0.25, jitter: 0, lag: 0.25, rise: 0.7, reach: 1.3, together: 0 } },
+    },
+    // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
+    // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
+    // Arms long enough for its 0.8 cutter (5.15 + 4.95: grip 0.058 off, measured) make its 2.4 crusher span 16.5 to reach
+    // 6.8; folded that far its 7-long palm lies along a forearm aimed away from the disc (38.5% outside, measured). One
+    // armLengths scales both claws by size; this pair needs an arm length per claw, a field the claws' numbers lack.
+  },
+  compare: ["far", "face", "legs", "back"],
+  // A crab is assembled in two stages (docs/lineup.md): its rig's first (the attacks, and with them its ring wave),
+  // then, on the sea it is given, the rig's second and each slot drawn on it. `build` is the crab alone at home on its
+  // own sea; `stage` is the crab as one of several in a scene (examples/bosses/crab_lineup.ts).
+  stage: (o, n, how: Staging) => assemble(o, n, how),
+  build: (o, n) => {
+    const a = assemble(o, n, AT_HOME), water = sea({ ...a.sea, deform: a.deforms }), m = a.finish(water);
+    return {
+      scene: scene({ sea: water, things: m.things, style: styleFor(n), sun: SUN, cameras: camerasFor(n) }),
+      strikes: m.strikes, holds: m.holds, waves: m.waves, handoff: m.handoff, inputs: m.inputs, checks: [...m.checks, ...m.sceneChecks],
     };
   },
 });

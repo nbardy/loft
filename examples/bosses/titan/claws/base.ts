@@ -149,7 +149,8 @@ export function cutterOf(rig: Rig, look: ClawLook): { readonly things: readonly 
   const grabWrist = sub(gripPalm, mul(keelV, gripDepth));
   /** The cutter idles on its own seeds, held quieter while the crusher works. */
   const quiet = sub(1, mul(env.p, 0.8));
-  const cutterIdle = local(add(vec3(...wristRest(look, n, -1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet)));
+  // In a taunt the small claw answers the great one's wave (rig.dance.raised; the wrist as it is without a taunt).
+  const cutterIdle = local(rig.dance.raised(-1, add(vec3(...wristRest(look, n, -1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet))));
   /** Once home (the attack's span is over), the arm swings once. */
   const homeSwing = swing(sub(grabEnv.tau, grab.span.after), 0.4, 1.1, 0.3);
   // The grab's closed forms are long (arcs, selects, two finger angles); written inline they were re-evaluated by every
@@ -175,7 +176,8 @@ export function clawsOf(look: ClawLook): ClawsOption {
       // The crusher's wrist is the m = 0 end of a spine from the wrist at rest back to the shoulder, posed by the crush; the
       // palm is the part that lands (its m = 1 end leads). In the attack the palm unfolds to drive straight on along its forearm.
       const crusherDrift = perFrame("titan_crusher_drift", mul(crusherIdle, sub(1, mul(grabOn, 0.8))));
-      const crusher = animate((m) => mix(local(add(vec3(...wristRest(look, n, 1, n.crusher)), crusherDrift)), local(shoulder(1)), m), [crush], (spine) => {
+      // In a taunt the great claw waves: its rest wrist is lifted up and out on each move (rig.dance.raised).
+      const crusher = animate((m) => mix(local(rig.dance.raised(1, add(vec3(...wristRest(look, n, 1, n.crusher)), crusherDrift))), local(shoulder(1)), m), [crush], (spine) => {
         const c = pincerClaw(rig, look, "crusher", 1, n.crusher, spine(lift<"f32">(0)), crushGape, sub(1, env.p));
         return { things: c.things, parts: { crusherPalm: part("crusherPalm", c.palm, { tip: 1 }) } };
       });

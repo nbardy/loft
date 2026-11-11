@@ -3,7 +3,7 @@
 // of a set of `Points`; the fragment stage evaluates the look per pixel. The surface coordinates (u, v) reach the
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
-import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type LibFn } from "../expr.ts";
+import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type LibFn , scopedName } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
@@ -82,6 +82,7 @@ export class SurfaceDrawable implements Drawable {
     readonly copies: Copies,
   ) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.surface "${name}": names must be identifiers (they name shaders)`);
+    this.name = scopedName(name);
     for (const [axis, s] of [["u", grid.u], ["v", grid.v]] as const) {
       if (!(Number.isInteger(s.count) && s.count >= 1)) throw new Error(`draw.surface "${name}": grid.${axis}.count must be a positive integer, got ${s.count}`);
     }

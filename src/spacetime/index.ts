@@ -7,3 +7,4 @@ export { telegraph, DANGER, type TelegraphStyle } from "./telegraph.ts";
 export { smear, type SmearSpec } from "./smear.ts";
 export { wake, type WakeSpec } from "./wake.ts";
 export { type RearSpec } from "./rear.ts";
+export { emote, Emote, type EmoteSpec, type EmoteBeat } from "./emote.ts";

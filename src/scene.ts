@@ -1,6 +1,6 @@
 // A scene says what things are; `compile` decides where each part is evaluated.
 
-import type { Camera } from "./artefact.ts";
+import { OPEN, type Camera, type Loop } from "./artefact.ts";
 import type { Drawable, V3 } from "./compile/context.ts";
 import { shadows } from "./draw/shadows.ts";
 import { sky } from "./draw/sky.ts";
@@ -17,6 +17,8 @@ export type SceneSpec = {
   readonly cameras?: Readonly<Record<string, Camera>>;
   /** How ink outlines are drawn (`OutlineMethod`). Default `DEFAULT_OUTLINE`. */
   readonly outline?: OutlineMethod;
+  /** The scene comes round every this many seconds (its author has made every motion periodic in it). Default: it does not loop (`OPEN`). */
+  readonly period?: number;
 };
 
 /**
@@ -34,6 +36,7 @@ export type Scene = {
   readonly sun: V3;
   readonly cameras: Readonly<Record<string, Camera>>;
   readonly outline: OutlineMethod;
+  readonly loop: Loop;
 };
 
 export function scene(spec: SceneSpec): Scene {
@@ -45,5 +48,7 @@ export function scene(spec: SceneSpec): Scene {
     if (names.has(t.name)) throw new Error(`scene: two things are named "${t.name}" (names key shaders)`);
     names.add(t.name);
   }
-  return { sea: spec.sea, things, style: spec.style, sun: [spec.sun[0] / l, spec.sun[1] / l, spec.sun[2] / l], cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE };
+  if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);
+  const loop: Loop = spec.period === undefined ? OPEN : { kind: "every", seconds: spec.period };
+  return { sea: spec.sea, things, style: spec.style, sun: [spec.sun[0] / l, spec.sun[1] / l, spec.sun[2] / l], cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
 }

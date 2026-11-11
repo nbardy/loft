@@ -54,6 +54,8 @@ export const S = {
   // Pushed 1.2x and 1.5x from 6.5 and 2.0 (exaggeration): the claw climbs higher and pulls further back the wrong way.
   // At 8.5 (1.3x) the raised claw left the top of the game camera's frame.
   crushRise: 7.8, crushCoil: 3.0,
+  /** Claw Crush's own seconds: the claw rises and coils (windup), then drives down (strike) and lands. */
+  crushSeconds: { windup: 1.15, strike: 0.3 },
   /** Seconds the body takes to settle after Claw Crush lands: its wind-up and strike are the attack's own. */
   crushSettle: 1.8,
   /** The foam crash after the slam: how far the ring runs out (times the disc's radius), and for how long. */
@@ -76,6 +78,26 @@ export const S = {
   // The carry's arch over the straight way from where the ship is taken to the wind-back place (2.15 up): with 2.0 the
   // ship tops out 3.5 above the water two thirds of the way, as the old lift did, then sinks back as the claw cocks.
   grabLift: 2.0, grabSqueeze: 0.5,
+
+  // ---- temperament: the manner one rig moves in (docs/lineup.md). The beats are the attacks' and the taunt's; this is
+  // how this crab arrives on them. A variant overrides it; these are the crab as first drawn. ----
+  temper: {
+    /** How sharply it moves into a pose: the power of its ease (2 gentle, 8 snapped). */
+    snap: 2,
+    /** Seconds a taunt's move takes to arrive on its accent (a slow mover starts early so that it lands on the beat), seconds it
+     * is held there (a pose struck and frozen), and seconds to leave it. */
+    arrive: 0.25, hold: 0, leave: 0.25,
+    /** How much it twitches: 0 not at all; 1 doubles its idle and shakes it on the half-beats of a taunt. */
+    jitter: 0,
+    /** Seconds its loose parts follow late: the shell after the body, the small claw after the great one. */
+    lag: 0.25,
+    /** What its body does with a taunt's move: rises on its legs by this much (units), or, below 0, drops into a bow. */
+    rise: 0.55,
+    /** The size of its taunt's moves, times the rig's. */
+    reach: 1,
+    /** How its claws share a taunt's move: 0 the small claw answers the great one late; 1 both go up together. */
+    together: 0,
+  },
 
   // ---- the throw and the wave (docs/throw_and_shove.md) ----
   /** The world's gravity, units/s^2: the thrown ship's flight and (with the sea's depth) the ring wave's speed. */

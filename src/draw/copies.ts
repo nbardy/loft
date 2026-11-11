@@ -23,6 +23,7 @@
 import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { add, lift, variable, type Expr, type TableSource } from "../expr.ts";
+import { scopedName } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Branch, Part } from "../lib/similar.ts";
@@ -109,6 +110,7 @@ export class Copies implements Drawable {
 
   constructor(readonly name: string, readonly o: CopiesOptions) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.copies "${name}": names must be identifiers (they name shaders)`);
+    this.name = scopedName(name);
     if (o.copies.length === 0) throw new Error(`draw.copies "${name}": no copies`);
     if (!(o.minPixels >= 0 && Number.isFinite(o.minPixels))) throw new Error(`draw.copies "${name}": minPixels must be finite and not negative, got ${o.minPixels}`);
     if (!(Number.isInteger(o.keepLevels) && o.keepLevels >= 0)) throw new Error(`draw.copies "${name}": keepLevels must be a non-negative integer, got ${o.keepLevels}`);

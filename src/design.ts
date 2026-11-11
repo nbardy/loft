@@ -6,6 +6,8 @@
 // asks its options for what they offer the rig, builds the rig, draws each slot and assembles the scene.
 
 import type { Check } from "./check.ts";
+import type { Drawable } from "./compile/context.ts";
+import type { Sea, SeaDeform, SeaSpec } from "./geom/sea.ts";
 import type { Scene } from "./scene.ts";
 import type { Attack, Effect, Motion, Ring, Strike } from "./spacetime/attack.ts";
 
@@ -35,8 +37,19 @@ export type Built = {
   readonly waves: Readonly<Record<string, Attack<Motion, Effect, Ring>>>;
 };
 
-/** `B` is what this subject's build gives: `Built`, and whatever more its game reads (a hand-off record), kept typed through `Design.build`. */
-export type DesignSpec<N, T extends SlotTable<N>, B extends Built = Built> = {
+/** One of several subjects in a scene (src/lineup.ts): what it draws (the sea is the scene's) and its checks, and whatever more its game reads. */
+export type Member = { readonly things: readonly Drawable[]; readonly checks: readonly Check[] };
+/**
+ * A subject built in two stages, so that several can share one sea: first what it does to the sea (its attacks' ring
+ * waves) and the sea it would have alone; then, on the sea the scene made with every subject's deformations, the rest.
+ */
+export type Staged<M extends Member = Member> = { readonly deforms: readonly SeaDeform[]; readonly sea: SeaSpec; readonly finish: (water: Sea) => M };
+
+/**
+ * `B` is what this subject's build gives: `Built`, and whatever more its game reads (a hand-off record), kept typed
+ * through `Design.build`. `H` is how a staged build is told to stand (a place, a show), and `M` what it gives.
+ */
+export type DesignSpec<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member> = {
   readonly name: string;
   readonly numbers: N;
   readonly slots: T;
@@ -45,6 +58,8 @@ export type DesignSpec<N, T extends SlotTable<N>, B extends Built = Built> = {
   /** The cameras `loft variants` compares by default, in column order. */
   readonly compare: readonly string[];
   readonly build: (picked: Picked<T>, numbers: N) => B;
+  /** The same subject as a member of a larger scene, in two stages. A design without it cannot be lined up. */
+  readonly stage?: (picked: Picked<T>, numbers: N, how: H) => Staged<M>;
 };
 
 /** A choice as asked for: a named variant (`base` when only slots are given) and slot picks over it. */
@@ -103,10 +118,10 @@ function leaves(over: unknown, path: string, out: Map<string, unknown>): void {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export class Design<N, T extends SlotTable<N>, B extends Built = Built> {
+export class Design<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member> {
   readonly kind = "design";
   private readonly built = new Map<string, B>();
-  constructor(readonly spec: DesignSpec<N, T, B>) {
+  constructor(readonly spec: DesignSpec<N, T, B, H, M>) {
     if ("base" in spec.variants) throw new DesignError("conflict", `design "${spec.name}": "base" is implicit (every slot's base option); do not declare it`);
     // Every named variant must resolve (its slots, options and numbers exist) when the design is made, not when drawn.
     for (const name of Object.keys(spec.variants)) this.resolve({ variant: name, picks: [] });
@@ -135,8 +150,11 @@ export class Design<N, T extends SlotTable<N>, B extends Built = Built> {
     return o;
   }
 
-  /** A choice made concrete: an option for every slot, and the numbers (base, then the options', then the variant's). */
-  resolve(ask: VariantAsk): Resolved<N> {
+  /**
+   * A choice made concrete: an option for every slot, and the numbers (base, then the options', then the variant's,
+   * then `also`: what a scene that stages this subject changes of it, its seconds on a beat).
+   */
+  resolve(ask: VariantAsk, also: Overrides<N> = {} as Overrides<N>): Resolved<N> {
     const v: VariantSpec<N, T> = ask.variant === "base" ? { about: "" } : this.variantOf(ask.variant);
     const choice: Record<string, string> = Object.fromEntries(this.slots.map((s) => [s, "base"]));
     for (const [slot, option] of Object.entries(v.pick ?? {})) { this.optionOf(slot, option as string); choice[slot] = option as string; }
@@ -158,6 +176,7 @@ export class Design<N, T extends SlotTable<N>, B extends Built = Built> {
       numbers = overlay(numbers, o.numbers ?? {}, by);
     }
     numbers = overlay(numbers, v.numbers ?? {}, `variant ${ask.variant}`);
+    numbers = overlay(numbers, also, "the staging's numbers");
 
     const extra = this.slots.filter((s) => choice[s] !== named[s]).map((s) => `${s}=${choice[s]}`);
     const label = ask.variant === "base" && extra.length > 0 ? extra.join(",") : [ask.variant, ...extra].join(",");
@@ -174,6 +193,13 @@ export class Design<N, T extends SlotTable<N>, B extends Built = Built> {
     return b;
   }
 
+  /** The first stage of the subject as a member of a larger scene (not kept: each call builds anew, in the caller's namespace). */
+  stage(r: Resolved<N>, how: H): Staged<M> {
+    if (this.spec.stage === undefined) throw new DesignError("conflict", `design "${this.name}" has no staged build: it cannot be one of several in a scene`);
+    const picked = Object.fromEntries(this.slots.map((s) => [s, this.optionOf(s, r.choice[s]!)])) as Picked<T>;
+    return this.spec.stage(picked, r.numbers, how);
+  }
+
   /** Every combination of options, over the design's own numbers plus whatever the options ask (for checking seams). */
   combinations(): VariantAsk[] {
     return this.slots.reduce<VariantAsk[]>(
@@ -183,7 +209,7 @@ export class Design<N, T extends SlotTable<N>, B extends Built = Built> {
   }
 }
 
-export function design<N, T extends SlotTable<N>, B extends Built = Built>(spec: DesignSpec<N, T, B>): Design<N, T, B> {
+export function design<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member>(spec: DesignSpec<N, T, B, H, M>): Design<N, T, B, H, M> {
   return new Design(spec);
 }
 
