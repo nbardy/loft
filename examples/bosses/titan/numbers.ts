@@ -114,10 +114,10 @@ export const S = {
     ribs: 7, flute: 0.12, tongue: 0.07,
     /** The point: its bearing, how far its tip is from the island's centre, its half-width, its rock's height at the
      * light and at the tip. */
-    point: { bearing: 206, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
+    point: { bearing: 192, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
     /** The beach under the plates' arch: its middle bearing, half its span, how far the sand runs beyond the rim, how
      * high the rim lifts over it. */
-    beach: { bearing: 176, span: 22, sand: 1.4, arch: 0.7, cove: 0.11 },
+    beach: { bearing: 164, span: 15, sand: 1.4, arch: 0.7, cove: 0.11 },
     /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
      * stack [distance from the island's centre, bearing, height, girth]. */
     shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
