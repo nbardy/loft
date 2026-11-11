@@ -102,6 +102,55 @@ parts are in `examples/bosses/lib/face_parts.ts` for any creature):
 - A face is hidden by what stands in front of it. `staysInView(points, blockers, { camera, period, hidden })` says for
   how long; the islander's banner claw stood over this face's right eye for 2 s of the Grab from the game camera.
 
+What its third and fourth found (Round 4: `face/jitter.ts`, the fiddler's, and `face/mourner.ts`, the spider crab's;
+their eye is `examples/bosses/lib/stalk_eyes.ts`):
+
+- The marks must be the expression's pose alone. A stalk that swings or an eye that wanders moves its marks by more
+  than an expression does, and the check would then tell two expressions apart by where the swing happened to be. Give
+  `stalkEye` the posed stalk, look and lids (`posed`) beside the drawn ones.
+- A shut eye's lids must meet at its middle line. Met lower, the lash line is under the ball and a shut eye is a plain
+  ball from above (the islander found it; both of these faces repeated it on the eye that flinches).
+- A kink fore and aft does not show from in front. A stalk's recoil is sideways: bowed out, the tip curled back in.
+- Two eyes on stalks need more room than their roots suggest: from a camera 40 degrees up they overlapped at 1.5
+  apart with 0.7 radii. Measure the pair, not each eye.
+
+## Stalks and hanging things
+
+**A stalk that bends by a pose**: `bent({ root, along, a, b, length, lean, bow, crook, sharp })` (`src/geom/bend.ts`).
+A stalk posed by where its tip is can only reach, and stretches as it leans. Here the pose is the bending: three turns,
+each two angles (toward `a`, toward `b`): `lean` tips the whole stalk at its root, `bow` bends it near the root, `crook`
+near the tip (`sharp` gathers the crook toward the tip: 2 by default, 4 a hook). The stalk keeps its length and its
+stations stay evenly spaced, so a strand on it neither stretches nor swells; `tip` and `tipHeading` say where it ends
+and which way it points there. Bow one way and crook the other for an S; read `crook` a tenth of a second behind `bow`
+for a whip. `bentTip` is the same in plain numbers, for a theory. A strand's thickness answers a change of `length` by
+itself (its volume is kept against the spine at time 0): a stalk drawn in short is thicker.
+
+**A hanging thing's swing**: `pendulum({ length, gravity, damping })` (`src/geom/pendulum.ts`) gives `period` and
+`answer(t, drives)`, the angle from plumb as the sum of its answers to what moves its pivot:
+
+- `sway(amplitude, period)`: the pivot sways for ever (a walk). The answer is the driven oscillator's steady state: near
+  the pendulum's own period the swing is wide and a quarter turn late. `gain(period)` gives the numbers in plain form.
+- `jolt(after, speed)`: the pivot's velocity changed at an instant (a slam, a snatch). The bob is left behind and
+  swings on, dying away by the damping.
+
+Nothing is keyed: how fast it swings follows from its length and the world's gravity, how far from how hard its pivot
+was moved. It needs the instants of the jolts and the phase of the sway as closed forms; where a rig gives neither (a
+taunt's accents, a walk started ahead of the scene's clock), say so and add the slow tilt by hand.
+
+## Temperament
+
+A temperament is how a creature moves between and into its actions, and most of it is three numbers per part: how late
+it reads the score (`score.at(sub(time, lag))`), how long a weight takes to rise (`during(clock, { rise })`), and what
+it does when nothing is happening.
+
+- A nervous creature is still, then somewhere else: `dart(t, { every, snap, period, seed })` (`src/geom/restless.ts`)
+  says which hold it is in, which it came from and how far the jump has gone (it overshoots), at uneven intervals that
+  still loop in `period`. `chosen(hold, seed)` picks what a hold means (one of a list of places to look). Give each part
+  its own seed and they move separately. `tremor(t, hz, seed)` is the shake to lay over it; gate it in bursts.
+- A slow creature reads the score late (0.2 to 0.5 s), lets a mood come on over a second or more, and lets what hangs
+  from it do the moving (`pendulum`).
+- Make stiffness a channel. Rage that holds a hanging thing rigid, and grief that lets it swing, are one number.
+
 ## Grabs
 
 `src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release. In a

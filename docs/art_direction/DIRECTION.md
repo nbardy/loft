@@ -690,6 +690,169 @@ Weak or unfinished:
 - The headland's barnacles on the nape end where the head's back begins (about x = 2.6 at the middle); none is under it.
 - The blink is not checked, and where the iris sits is not checked.
 
+
+## Round 4: the fiddler's and the spider crab's faces (2026-11-12)
+
+The owner, after the islander: "did we refine other crabs' gestures and faces?" We had not. The islander's face is a
+score of six expressions; the fiddler and the spider crab still wore first-pass faces (`face/periscope.ts`,
+`face/patient.ts`) with two states each (roused, braced). All four crabs will stand side by side in one video, so each
+needs a face and a temperament of its own. This round is those two faces. Their bodies' gestures (how each slams,
+throws and taunts) are another worker's.
+
+References, made for this (`crab_round4/others/`): `fiddler_expressions.webp`, `fiddler_turnaround.webp`,
+`fiddler_taunt.webp`, `stilt_expressions.webp`, `stilt_turnaround.webp`, `stilt_taunt.webp`. Six expressions each: at
+rest, wanting, straining, triumphant, furious, wincing. What I take from them: the fiddler's sheet has no brow and
+almost no lid; everything is the stalks (bent together, straight, spread in a V, one recoiled) and the pupils, and a
+mouth of two plates. The spider crab's sheet is lids and brows; its turnaround hangs the eyes from drooping stalks
+like bells, and that is the picture one remembers.
+
+What was wrong with the two first faces, on the pictures (`game`, 1280 x 800, main 9b3deee):
+
+- the fiddler's eyes are 34 px across and its stalks are dark on a dark shell; nothing about the face changes from
+  far away but the lid;
+- the spider crab's eyes are about 35 px, stand on stalks like everyone's, and sit 100 px from the frame's top; its
+  brows and mouth are 3 px strokes;
+- neither has more than two states, and both move on the base face's clocks: the same blink, the same whip.
+
+### What is built, and why
+
+Both faces are new options beside the old ones, and the variants pick them: `fiddler` and `fiddlerBaseDisc` pick
+`face=jitter` (`titan/face/jitter.ts`), `stilt` picks `face=mourner` (`titan/face/mourner.ts`). `periscope` and
+`patient` stay as options, untouched (parked; they are also the "before" in the cost comparison, in the same build).
+
+**The fiddler: the jitter.** Manic, twitchy, bug-eyed; a show-off who cannot keep still.
+
+- Bone-white eyes, big black pupils, a glint; no iris. Bigger than the periscope's (radius 0.72 and 0.66, were 0.46)
+  on stalks 3.3 and 2.95 tall, 1.3 times the islander's, thin (0.2 to 0.13), vermilion ringed black: the great claw's
+  ink, light against the oxblood shell and the sea. Lids are vermilion too and all but absent at rest.
+- **The stalks act.** A stalk is a bent spine (`src/geom/bend.ts`, new): its pose is three bends (a lean at the root, a
+  bow near the root, a crook near the tip), each two angles, and it keeps its length whatever they are. So an
+  expression says "bowed over toward the ship, tips craned" or "one thrown back in an S" in numbers, and the pose of
+  the stalks is the expression before a lid moves.
+- **The eyes swivel separately.** Each has its own restless clock (`src/geom/restless.ts`, new: `dart`): about every
+  0.85 s (right) and 1.15 s (left), at uneven intervals, it jumps to something else (the audience, its own great claw,
+  the other boat, the ship, nothing), in about a tenth of a second, and overshoots; its stalk flicks after it; it
+  blinks on four jumps in ten, one eye at a time. How much it wanders is a channel (`roam`): all the way at rest,
+  hardly at all when it wants the ship.
+- It trembles in bursts (two fast sines per bend, each stalk at its own rate), harder as `shake` rises; the stalks
+  whip after the slam and pop at the throw.
+- Two cream teeth high on the pebble's front (the sheet's two-plate mouth): they part, chatter, splay at the top (a
+  grin) or at the bottom (a sneer).
+- A flinch is not the same on both sides: the eye nearer the slam shuts and its stalk is thrown back; the other ducks
+  and peeks at the damage, half-lidded.
+
+**The spider crab: the mourner.** Patient, melancholy, eerie and slow.
+
+- **The eyes hang.** Each stalk leaves a socket on the bare front of the ball going forward and a little up, and
+  droops in a crook (the same bent spine: a crook of 2.0 rad hangs plumb); the eye hangs from its end, 0.85 of its
+  radius below the tip, like one more of the shrine's lanterns. From the `game` camera they hang clear of the body
+  against the sea, lower in the frame than the old eyes.
+- **They swing, and nothing is keyed.** Each eye is a pendulum (`src/geom/pendulum.ts`, new) whose period follows from
+  its own length and the world's gravity (the number the thrown ship and the ring wave already use, 5): arms of 1.98
+  and 2.17 give 3.95 and 4.14 s. The walk sways the body 0.42 each way every 4.2 s, so the pendulums are driven near
+  resonance, and the driven oscillator's steady state is the animation: a swing of 25 degrees each way, 0.87 and
+  1.00 s late. Each action jolts the sockets and the eyes swing on after it (the oscillator's impulse response): the
+  snatch, the throw, the slam. The left stalk is longer, so the two are never quite in step.
+- **Heavy lids.** The upper lid lies at the eye's middle and droops outward; the pupil is small and on the water. Lids
+  are straw-brown (between the cream and the sea behind) with a black lash line, so a shut eye is a closed bell.
+- **Late and slow.** The eyes read the score 0.2 and 0.45 s behind the fight; a mood comes on over a second or more;
+  a blink takes most of a second; the wince begins 0.12 s after the blow and lasts 1.3 s.
+- `stiff` is a channel: wrath lifts the stalks and holds the eyes out at the disc on stiff arms (they stop swinging);
+  grief lets them hang. Brows and a small mouth on the ball (inherited from `patient`), bolder, driven by the score.
+
+| | the fiddler (`jitter`) | the spider crab (`mourner`) |
+|---|---|---|
+| at rest | eyes wide, each wandering on its own; stalks a little apart, twitching | lids half down, pupils on the water, the eyes hanging plumb and swinging with the walk |
+| wanting (from the Grab's warning) | both stalks bowed hard over toward the ship and craned, pupils swollen; at once | the eyes drawn out toward the ship on lifted stalks, lids raised; 0.6 s late, over 1.5 s |
+| straining (the hold) | screwed shut, stalks ramrod straight, short and thick, shaking; teeth clenched; bites with each squeeze | shut tight, lids knotted to the middle, stalks drawn in and curled under; a slow shudder; it endures |
+| triumphant (from the let-go) | stalks shot up and apart, eyes popped 1.3 times, a grin; it cackles | it raises its eyes to watch the ship fly; the smallest smile, the grief still in the lids |
+| furious (Claw Crush's wind-up) | stalks short, spread in a V and thrust at the disc; lids hard down over pinpoints | the stalks rise and stiffen and hold the eyes at the disc; lids hard down to the middle; gathers through the whole warning |
+| wincing (the slam) | the near eye shut on a stalk thrown back, the far one ducked, peeking | a moment after: one eye shut, the other left half open; the stalks let go and the eyes swing far forward |
+
+Inherited: the eyeball with a sliding pupil in an audience-facing socket, the lid as a spherical lune, expressions as a
+cast and a score over the fight's clocks, the two checks (all the islander's, Round 3); the driven damped oscillator;
+the brows, mouth and horns of `patient`; the references. Mine: a stalk whose bending is the pose; eyes on separate
+restless clocks that pick real things to look at; the hanging eye as a pendulum derived from the rig's own sway and
+the world's gravity, with stiffness as a channel; a flinch that differs by side; measuring an expression's marks on
+the pose alone, so a swing or a wander cannot make two expressions look different to the check.
+
+### Which camera is honest for the spider crab
+
+The crab is 13.5 tall and the `game` camera cuts its shrine and its knees. Its eyes are not cut: they hang at about
+6.1 above the water, a third of the way down the frame (predicted at (696, 252) and (794, 205)), and the highest any
+eye's top comes in any expression is y = 115 of 800 at rest, about 90 with the swing. The check that an eye is big
+enough to read asks what a player sees, and the player has the `game` camera, so the sizes are held there. `far` is
+the camera that holds the whole crab, and the four-crab video will be nearer to it than to `game`; from it the eyes
+are a tenth smaller (41.7 px against 46.7), and the right eye is held there as well. The `face` camera is a portrait
+camera, not the game's: it follows a new number, `faceRise` (0 for the base), because very tall stalks leave its top
+and hanging eyes its bottom.
+
+### Amended by the theory, before the first render
+
+`tools/faces_fs_theory.ts` is plain arithmetic on the faces' own numbers (the body at rest, each expression at full
+weight, no swing, no wandering). Running it changed four things I had planned:
+
+- the fiddler's stalks stood 1.5 apart and its two eyes touched from the `game` camera (52 px between middles, 51 px
+  of radii). Now 1.9 apart and leaning apart: 69 px;
+- its "wanting" crossed the tips by 0.3 rad and the eyes overlapped. 0.1;
+- both faces put the pupil on the eye's rim when they looked far from the audience (the islander's lesson, not
+  applied). The fiddler's socket turn and slide went from 0.3 and 0.45 to 0.2 and 0.32, and its triumph looks half at
+  the ship and half at the audience; the spider crab's from 0.25 and 0.5 to 0.15 and 0.3, its sockets face 10 degrees
+  below the camera (not 25), and the water it watches is further ahead;
+- the fiddler's tremble was 0.055 rad a bend: 2 px at the tip at rest. Now 0.12: about 5 px at rest, 10 straining.
+
+### Predictions (written before the first render of either face)
+
+`game`, 1280 x 800; pixel figures from `tools/faces_fs_theory.ts` unless said.
+
+**The fiddler**
+
+1. **Size.** The right eye is 54 px across and the left 48 (the periscope's: 34). `minScreenSize` will measure each
+   within 4 px. Held: 48 and 40.
+2. **Light shapes with dark pupils.** In the `game` picture at rest the mean luminance of the right eye's cream
+   pixels over the mean of the ring from 1.0 to 1.3 radii round it is at least 3 to 1 (cream on sea, far legs and
+   shell; the islander measured 3.56). The pupil at rest is 23 px across.
+3. **Expressions.** All six (rest and five) reach at least 0.9 of the face in a cycle. The closest pair by the theory
+   is strain and wince at 27.6 px (0.51 of the right eye's width; the limit is 0.25), then rest and strain at 32.9.
+   On the moving crab `expressionsRead` will find its closest pair between 18 and 40 px. By eye, from stills at the
+   game camera, at least five of the six are told apart at a glance; the pair most likely confused is strain and
+   wince (each has a shut red eye).
+4. **Where it looks.** At rest (not wandering) the pupils are centred (2 px off); wanting, 20 px toward the ship, at
+   the eye's edge, as on the sheet; furious, 15 px straight down. Inside the white in each.
+5. **It never rests.** In a 22 s loop the right eye jumps 26 times and the left 19; a jump takes about 0.1 s and
+   overshoots by an eighth. At rest the right eye's middle is flicked at least 10 px by a jump and trembles by
+   about 5.
+6. **Cost.** `fiddler`, `game`: now 123 draws and 105,245 triangles. After: 123 draws (two teeth for two plates, two
+   cheeks for the gullet's two), about 107,700 triangles (taller stalks, finer balls, two more lids), about 30 more
+   per-frame tables, and one timer tick more GPU time (0.07 ms), at most two (0.13), compared back to back with
+   `face=periscope` in one clock state.
+
+**The spider crab**
+
+1. **Size.** The right eye is 47 px across and the left 42 from `game` (the old: about 35); from `far`, 42 and 37.
+   Held: 42 and 37 from `game`, 36 (right) from `far`. No eye's top comes above y = 90 in a cycle.
+2. **Light shapes with dark pupils.** As for the fiddler, at least 3 to 1 against the ring (cream on sea). The pupil
+   at rest is 13 px across and sits 14 px below and right of the eye's middle, inside the white.
+3. **Expressions.** All six reach at least 0.9. The closest pair by the theory is rest and wince at 25.1 px (0.54 of
+   the right eye's width), then rest and triumph at about 30. Measured on the moving crab, the closest pair will be
+   between 16 and 36 px. By eye at least five of six at a glance; the pair most likely confused is rest and triumph
+   (its triumph is the smallest smile).
+4. **The swing.** Pendulum periods 3.95 s (right) and 4.14 s (left). Walking, each eye swings 25 degrees each way,
+   0.87 and 1.00 s behind the body's sway: about 0.9 units, 29 px each way on screen (57 px from end to end, more
+   than an eye's width), once every 4.2 s. The slam throws them forward 0.4 rad on the first swing and half that on
+   the next. Wrath (stiff 0.85) cuts the swing to 15%.
+5. **Cost.** `stilt`, `game`: now 343 draws and 160,933 triangles. After: 345 draws (two cheeks), about 164,200
+   triangles, about 25 more per-frame tables, one timer tick more GPU time (0.07 ms), at most two, back to back with
+   `face=patient`.
+
+**Both**
+
+- Checks: `fiddler` and `fiddlerBaseDisc` pass 12 (9 and the face's 3); `stilt` passes 13 (9 and the face's 4); the
+  rest as they were.
+- The base, islander and mask pictures do not change. `game` hashes at t = 1.0, 3.6, 11.3, taken on this worktree
+  before any change: base `ec8c704f392bb4dd`, `d5a61b284211db4b`, `5d759b54f56d14dc`; islander `59ef0e317ccf25f4`,
+  `2d914b1e89233885`, `1c2f407adf50a56b`; mask `67124c3c355495a1`, `c53b63b41302c2ea`, `9acc5e0e00877f96`.
+
 ## White water (2026-11-12)
 
 The owner, on the contact-foam sheet: "this is sick, this style for the white water interaction", of the round 4

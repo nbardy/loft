@@ -31,6 +31,9 @@ export { looping, alive, anticipated, arc, beats, dragged, echo, exaggerated, im
 export { ringWave, RingWave, type RingSpec, type Ride } from "./geom/ring.ts";
 export { pose, poseFrame, placedBy, blendFrames, turnedAbout, hosted, STAND_IN, type Pose, type Placer, type StandIn, type Hosted } from "./geom/placing.ts";
 export { thrown, throwOf, tumbled, handTurn, tumbleRate, SET_DOWN, type Ending, type SetDown, type Thrown, type ThrownSpec, type Throw } from "./geom/grab.ts";
+export { bent, bentTip, BendError, type Bend, type Bent, type BentSpec } from "./geom/bend.ts";
+export { pendulum, sway, jolt, PendulumError, type Drive, type Pendulum, type PendulumSpec } from "./geom/pendulum.ts";
+export { dart, chosen, tremor, RestlessError, type Dart, type DartSpec } from "./geom/restless.ts";
 export { cast, score, show, only, added, during, ExpressionError, type Cast, type Expression, type Layer, type Posed, type Score } from "./geom/expression.ts";
 export { grab, gripper, heldThing, fingerAngle, pincerAngle, wrap, type AxesSize, type Grab, type GrabBeats, type GrabSpec, type GripperSpec, type Held, type WrapSpec } from "./geom/grab.ts";
 export * from "./relief/index.ts";
