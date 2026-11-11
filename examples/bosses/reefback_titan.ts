@@ -211,7 +211,7 @@ export const design = makeDesign({
       about: "a colossal spider crab: thorny body on bamboo stilts, tongs, a shrine",
       // Patient, melancholy, eerie: everything late and slow, a long follow-through; in a taunt both tongs go up and it bows.
       pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "mourner", back: "shrine" },
-      numbers: { grabBearing: -0.55, temper: { snap: 1.5, arrive: 0.7, hold: 0.15, leave: 0.7, jitter: 0, lag: 0.6, rise: -2.2, reach: 1.1, together: 1, lift: 2.6 } },
+      numbers: { grabBearing: -0.55, temper: { snap: 1.5, arrive: 0.7, hold: 0.15, leave: 0.7, jitter: 0, lag: 0.6, rise: -2.2, reach: 1.1, together: 1, lift: 3.6 } },
     },
     // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
     // little cutter, a manic face on very tall stalks (face/jitter.ts; its first face, `periscope`, is still an option), a

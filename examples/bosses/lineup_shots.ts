@@ -48,21 +48,21 @@ export const WIDE: Format = {
   name: "wide", width: 1920, height: 1080, cuts: [
     { at: 0, shot: { kind: "still", name: "slam", lens: lens([120, 3, 0], [0, 10.5, 0], 0.28) } },
     { at: beat(12), shot: { kind: "still", name: "throw", lens: lens([138, 3, 0], [0, 11, 0], 0.28) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([108, 3.5, 0], [0, 9.5, 0], 0.28), to: lens([100, 4, 0], [0, 9, 0], 0.28), start: beat(32), end: PERIOD } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: lens([122, 3, 0], [0, 10.5, 0], 0.28), to: lens([112, 3.5, 0], [0, 10, 0], 0.28), start: beat(32), end: PERIOD } },
   ],
 };
 /**
  * Square. Four across a square frame cannot be large (each crab a quarter of the width is a quarter of the height), so
- * the square trucks along the line two crabs at a time for the slam (following the cascade) and the taunt (following
- * the call and answer and the cascade), and holds a wider frame on the middle pair for the throw in unison. fovY 0.4
- * (about 59 mm): from 60 away a frame 25 units wide, a crab and a half to two. The first strip's 72 to 100 left a third
- * of the square sky and a fifth empty sea.
+ * the square trucks along the row two crabs at a time for the slam (following the cascade) and the taunt (following
+ * the call and answer and the cascade), and holds a wider frame on the middle pair for the throw in unison. fovY 0.25
+ * (about 96 mm) from 96 to 135 away: a frame 24 to 34 units wide at the row. From 60 with fovY 0.4 (the second strip)
+ * the boats thrown 38 forward landed 22 from the lens and their sails filled the square's foreground.
  */
 export const SQUARE: Format = {
   name: "square", width: 1080, height: 1080, cuts: [
-    { at: 0, shot: { kind: "move", name: "slam", from: along(62, 3.5, 7, SPACING, 0.4), to: along(62, 3.5, 7, -SPACING, 0.4), start: 1.75, end: 3.75 } },
-    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(85, 3.5, 7.5, 0, 0.4) } },
-    { at: beat(32), shot: { kind: "move", name: "taunt", from: along(60, 3.5, 7, SPACING, 0.4), to: along(60, 3.5, 7, -SPACING, 0.4), start: beat(33), end: beat(47) } },
+    { at: 0, shot: { kind: "move", name: "slam", from: along(100, 3.5, 8, SPACING, 0.25), to: along(100, 3.5, 8, -SPACING, 0.25), start: 1.75, end: 3.75 } },
+    { at: beat(12), shot: { kind: "still", name: "throw", lens: along(135, 3.5, 8.5, 0, 0.25) } },
+    { at: beat(32), shot: { kind: "move", name: "taunt", from: along(96, 3.5, 8, SPACING, 0.25), to: along(96, 3.5, 8, -SPACING, 0.25), start: beat(33), end: beat(47) } },
   ],
 };
 export const FORMATS = { wide: WIDE, square: SQUARE } as const;
