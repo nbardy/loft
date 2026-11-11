@@ -1,11 +1,13 @@
 // Grabs, by the size of the thing grabbed (src/geom/grab.ts). Three claws take boats of three sizes: each opens to
 // its own boat's width before it arrives, closes on it, lifts it, squeezes it twice and sets it down. A tentacle does
 // the same to a fourth boat with a coil: the coil's radius is the same `gap`, and its number of turns follows from the
-// tentacle's length, so it takes up another half turn each time it tightens.
+// tentacle's length, so it takes up another half turn each time it tightens. The largest claw takes a whole ship (hull,
+// mast, sails, rigging): the ship is placed with the grab's squeezed size across its beam.
 import {
-  add, draw, fingerAngle, floor, grab, lt, mix, mod, mul, pick, posed, scene, sea, select, sin, size, strand, sub, through, time, toon, turn, vec3, wrap, cos,
+  add, draw, fingerAngle, floor, grab, lt, mix, mod, mul, pick, posed, scene, sea, select, shifted, ship, sin, size, strand, sub, through, time, toon, turn, vec3, wrap, cos,
   type Expr, type Grab,
 } from "../src/index.ts";
+import { sloop } from "./scenes/lib/fleet.ts";
 
 type F = Expr<"f32">;
 const PERIOD = 7, BEATS = { reach: 1.1, close: 0.18, hold: 2.6, release: 1.2 };
@@ -13,7 +15,10 @@ const PERIOD = 7, BEATS = { reach: 1.1, close: 0.18, hold: 2.6, release: 1.2 };
 const since = (k: number): F => sub(mod(sub(time, k * 0.35), PERIOD), 0.8);
 
 // ---- three claws ---------------------------------------------------------------------------------------------------
-const BOATS = [{ r: 0.35, x: -6 }, { r: 0.7, x: -2.6 }, { r: 1.15, x: 1.6 }] as const;
+const water = sea({ swell: [{ direction: [1, 0.3], length: 11, height: 0.08, speed: 0.7 }] });
+const prize = ship(sloop("prize", 4.4));
+// The third thing is the ship: its half beam is the radius the claw opens and closes to.
+const BOATS = [{ r: 0.35, x: -6 }, { r: 0.7, x: -2.6 }, { r: prize.hull.lines.beam / 2, x: 1.6 }] as const;
 const FINGER = 2.6;
 const afloat = (r: number, x: number): [number, number, number] => [x, 0.3 * r, 0];
 const claws: Grab[] = BOATS.map((b, k) =>
@@ -62,17 +67,22 @@ const hull = strand({
   paint: (m, v) => mix(vec3(0.5, 0.31, 0.16), vec3(0.93, 0.87, 0.72), select(lt(mod(add(v, 0.5), 1), 0.5), 0, 1)),
   detail: { along: 28, around: 18 },
 });
-const GRABS = [...claws, coilGrab], SIZES = [...BOATS.map((b) => b.r), PREY.r];
-const boats = draw.posed("boats", posed(4, (i) => ({
+const GRABS = [claws[0]!, claws[1]!, coilGrab], SIZES = [BOATS[0].r, BOATS[1].r, PREY.r];
+// The ship floats bow toward +z, so the claw (closing along x) takes it across the beam, the ship's own z.
+const SHIP = BOATS[2], shipGrab = claws[2]!;
+const prizeHeld = prize.placed(
+  shifted(prize.afloatChart(water, { at: [SHIP.x, 0], heading: Math.PI / 2, wind: [1, 0.3] }), sub(shipGrab.thing, afloat(SHIP.r, SHIP.x))),
+  [1, 0.3], shipGrab.squeezed(1, "z"));
+const boats = draw.posed("boats", posed(3, (i) => ({
   at: pick(i, GRABS.map((g) => g.thing)),
   turn: turn.none,
   size: { kind: "axes" as const, k: pick(i, GRABS.map((g, k) => { const z = g.squeezed(SIZES[k]!); if (z.kind !== "axes") throw new Error("unreachable"); return z.k; })) },
 })), hull);
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.3], length: 11, height: 0.08, speed: 0.7 }] }),
-  things: [...arms, fingers, tentacle, boats],
-  style: toon({ bands: 3, outline: 0.05 }),
+  sea: water,
+  things: [...arms, fingers, tentacle, boats, ...prizeHeld],
+  style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.4, 0.8, 0.5],
   cameras: {
     three: { kind: "perspective", eye: [1.5, 7, 17], target: [1, 1.6, 0], fovY: 0.62 },

@@ -56,8 +56,11 @@ export type Grab = {
   readonly gap: F;
   /** The thing's place: where it was until taken, with the palm while held, where it was let go after. */
   readonly thing: P3;
-  /** The thing's size, `base` times: narrowed along its x (the grip's axis) while squeezed, grown along y and z, volume kept. */
-  squeezed(base?: In<"f32">): Size;
+  /**
+   * The thing's size, `base` times: narrowed along `across` (the axis of the thing the grip closes on; default x)
+   * while squeezed, grown along the other two, volume kept.
+   */
+  squeezed(base?: In<"f32">, across?: "x" | "y" | "z"): Size;
   /** The thing's width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak. */
   readonly crush: F;
   /** 1 while the thing is in the grip, else 0. The game's rule for "this ship is held" reads the same number. */
@@ -95,7 +98,7 @@ export function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab {
   return {
     palm, gap, crush,
     thing: select(lt(t, tClosed), from, select(lt(t, tLetGo), carry, to)),
-    squeezed: (base = 1) => size.axes(mul(vec3(crush, across, across), base)),
+    squeezed: (base = 1, axis = "x") => size.axes(mul(vec3(axis === "x" ? crush : across, axis === "y" ? crush : across, axis === "z" ? crush : across), base)),
     held: select(lt(t, tClosed), 0, select(lt(t, tLetGo), 1, 0)),
   };
 }

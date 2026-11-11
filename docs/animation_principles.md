@@ -66,10 +66,10 @@ Work through this in order. Each step is one or two lines in a scene.
   jaw. `wrap({ centre, axis, radius: gap / 2 + body, length, pitch })` is a coil whose number of turns follows from
   the body's length, so it goes round a small ship more times than a large one and gains turns as it tightens.
 
-Limits today: the held thing must be drawn as a posed copy (`draw.posed`) to take the squeezed size; a full `ship()`
-is placed by a rigid chart and cannot be squeezed yet. Nothing checks that the gripper reaches the thing.
+A whole ship takes the same size: `ship.placed(chart, wind, grab.squeezed(1, "z"))` squeezes hull, sails and rigging
+across the beam as one, and `shifted(chart, offset)` lifts it off the water it floats on (`sized` and `shifted` in
+`src/map/chart.ts`). Spars keep their thickness. Nothing checks that the gripper reaches the thing.
 
 ## What is not here yet
 
-- A size on charts, so a whole ship (hull, masts, sails) can be squeezed as one.
 - Checks for these principles (for example, that an action's wind-up is longer than its action).

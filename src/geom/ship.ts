@@ -17,9 +17,9 @@ import { abs, add, atan2, clamp, cos, cross, dot, evaluate, fract, lift, max, mi
 import { through } from "../curve.ts";
 import type { Drawable } from "../compile/context.ts";
 import { drawSurface, spacing } from "../draw/surface.ts";
-import { place } from "../map/chart.ts";
-import { atRest, framed, mapNormal, sheet, thicken } from "../map/surface.ts";
-import type { Chart, F, Frame, P3, Paint, Skeleton, Surface } from "../map/types.ts";
+import { place, rotate, size as sizes, sized, sizeLengths } from "../map/chart.ts";
+import { atRest, framedPose, mapNormal, sheet, thicken } from "../map/surface.ts";
+import type { Chart, F, Frame, P3, Paint, Size, Skeleton, Surface } from "../map/types.ts";
 import { afloat, type Waters } from "./afloat.ts";
 import { Hull, type HullSpec, type Rgb } from "./hull.ts";
 import type { Target } from "../spacetime/attack.ts";
@@ -116,8 +116,8 @@ export class Ship {
   }
 
   /** Float the ship on the water (the sea, or a whirlpool in it) and assemble it there. */
-  afloat(water: Waters, p: Placement): Drawable[] {
-    return this.placed(this.afloatChart(water, p), p.wind);
+  afloat(water: Waters, p: Placement, size: Size = sizes.even(1)): Drawable[] {
+    return this.placed(this.afloatChart(water, p), p.wind, size);
   }
 
   /** The rigid chart `afloat` puts the ship in (for `target`, or to place more things on the ship). */
@@ -133,8 +133,13 @@ export class Ship {
     return { kind: "hull", hull: this.hull, frame: chart.frame(lift<"vec3">([0, 0, 0])) };
   }
 
-  /** The ship in a rigid chart (its frame at the origin is the ship's), with the wind blowing toward `wind`. */
-  placed(chart: Chart, wind: readonly [number, number]): Drawable[] {
+  /**
+   * The ship in a rigid chart (its frame at the origin is the ship's), with the wind blowing toward `wind`. `size`
+   * scales the whole ship along its own axes (x along the keel, y up, z across the beam): a ship squeezed in a grip.
+   * Surfaces and rigging scale exactly; spars keep their thickness.
+   */
+  placed(rigid: Chart, wind: readonly [number, number], size: Size = sizes.even(1)): Drawable[] {
+    const k = sizeLengths(size), chart = sized(rigid, k);
     const S = this.spec, H = this.hull, L = H.lines, C = S.colours, n = S.name;
     const G = chart.frame(lift<"vec3">([0, 0, 0]));
     const l = Math.hypot(wind[0], wind[1]);
@@ -142,8 +147,8 @@ export class Ship {
     const W = vec3(wind[0] / l, 0, wind[1] / l);
     // The wind in the ship's frame, laid flat on its deck plane.
     const wl = normalize(vec3(dot(W, G.x), 0, dot(W, G.z)));
-    const toWorld = (p: P3): P3 => add(G.o, add(add(mul(G.x, p.x), mul(G.y, p.y)), mul(G.z, p.z)));
-    const surf = (s: Surface): Surface => framed(s, { frame: G, scale: lift<"f32">(1) });
+    const toWorld = (p: P3): P3 => add(G.o, rotate(G, mul(p, k)));
+    const surf = (s: Surface): Surface => framedPose(s, { frame: G, size });
     const lit = (name: string, s: Surface, paint: Paint, nu: number, nv: number, sides: "one" | "two") =>
       drawSurface(name, surf(s), { paint, grid: { u: spacing.even(nu), v: spacing.even(nv) }, sides, outline: sides === "one" ? "hull" : "border" });
     const out: Drawable[] = [];
@@ -194,8 +199,8 @@ export class Ship {
           ropes.push({ a: mix(shrouds[0][1], shrouds[0][0], t), b: mix(shrouds[3][1], shrouds[3][0], t), sag: 0.01 });
         }
       }
-      if (m.square) this.squareRig(n, i, m, at, h, wl, chart, out, ropes);
-      if (m.gaff) this.gaffRig(n, i, m, at, h, wl, chart, out, ropes, i === this.plan.length - 1);
+      if (m.square) this.squareRig(n, i, m, at, h, wl, chart, k, out, ropes);
+      if (m.gaff) this.gaffRig(n, i, m, at, h, wl, chart, k, out, ropes, i === this.plan.length - 1);
     });
 
     // ---- bowsprit, jibs, stays --------------------------------------------------------------------------------
@@ -210,7 +215,7 @@ export class Ship {
       const tack = mix(spritRoot, spritTip, 1 - 0.28 * j);
       const head = foreAt(0.8 - 0.14 * j);
       ropes.push({ a: head, b: tack, sag: 0.01 });
-      out.push(this.jib(`${n}_jib${j}`, tack, head, wl, G, C));
+      out.push(this.jib(`${n}_jib${j}`, tack, head, wl, G, k, C));
     }
     // Stays between masts, backstays to the quarters, the forestay to the stem.
     ropes.push({ a: foreAt(0.62), b: lift<"vec3">([stemX - 0.02, evalNum(H.sheerAt(lift<"f32">(1))), 0]), sag: 0.01 });
@@ -232,7 +237,7 @@ export class Ship {
   }
 
   /** Yards and square sails up mast i, braced to the wind. */
-  private squareRig(n: string, i: number, m: Mast, at: (f: number) => P3, h: number, wl: P3, chart: Chart, out: Drawable[], ropes: Rope[]): void {
+  private squareRig(n: string, i: number, m: Mast, at: (f: number) => P3, h: number, wl: P3, chart: Chart, k3: P3, out: Drawable[], ropes: Rope[]): void {
     const S = this.spec, C = S.colours;
     // Braced: the yard turns about the mast so the sail's forward face looks downwind, as far as the braces allow.
     // abs(): with the wind from ahead the yards stay braced the same way rather than flipping (the sails are aback).
@@ -267,7 +272,7 @@ export class Ship {
         const rise = mul(mul(abs(depth), mul(belly, v)), 0.25);
         return add(add(flat(u, v), mul(face, add(mul(belly, depth), flutter))), vec3(0, rise, 0));
       };
-      out.push(drawSurface(`${n}_sail${i}_${k}`, framedChart(point, chart), {
+      out.push(drawSurface(`${n}_sail${i}_${k}`, framedChart(point, chart, k3), {
         paint: clothPaint(C, "square", k), grid: { u: spacing.even(22), v: spacing.even(14) }, sides: "two", outline: "border",
       }));
       if (k === 0) {
@@ -278,7 +283,7 @@ export class Ship {
   }
 
   /** A gaff sail on mast i: boom and gaff swung to leeward, the sail between them bellied downwind. */
-  private gaffRig(n: string, i: number, m: Mast, at: (f: number) => P3, h: number, wl: P3, chart: Chart, out: Drawable[], ropes: Rope[], aftermost: boolean): void {
+  private gaffRig(n: string, i: number, m: Mast, at: (f: number) => P3, h: number, wl: P3, chart: Chart, k3: P3, out: Drawable[], ropes: Rope[], aftermost: boolean): void {
     const S = this.spec, C = S.colours, Lh = this.hull.lines;
     const fore = !m.square;
     // The boom swings to leeward: toward where the wind blows across the ship, eased fully out before the wind.
@@ -301,14 +306,14 @@ export class Ship {
       const flutter = mul(mul(fluttering(u, v, i * 3.1), mul(S.flutter, add(0.35, mul(sub(1, abs(fill)), 0.9)))), mul(u, powz(sin(mul(v, Math.PI)), 0.5)));
       return add(flat, mul(side, add(mul(belly, mul(fill, S.billow * boomLen)), flutter)));
     };
-    out.push(drawSurface(`${n}_gaffsail${i}`, framedChart(point, chart), {
+    out.push(drawSurface(`${n}_gaffsail${i}`, framedChart(point, chart, k3), {
       paint: clothPaint(C, "gaff", i), grid: { u: spacing.even(22), v: spacing.even(16) }, sides: "two", outline: "border",
     }));
     ropes.push({ a: at(1), b: add(boom0, mul(aft, boomLen)), sag: 0.03 }, { a: at(0.97), b: add(throat, mul(gaffDir, gaffLen)), sag: 0.02 });
   }
 
   /** A jib from the tack on the bowsprit to its head on the stay, its clew sheeted aft to leeward. */
-  private jib(name: string, tack: P3, head: P3, wl: P3, G: Frame, C: ShipColours): Drawable {
+  private jib(name: string, tack: P3, head: P3, wl: P3, G: Frame, k3: P3, C: ShipColours): Drawable {
     const S = this.spec;
     const luff = sub(head, tack);
     const swing = clamp(mul(wl.z, 2), -1, 1);
@@ -322,7 +327,7 @@ export class Ship {
       const flutter = mul(fluttering(u, v, 0.7), mul(S.flutter, mul(v, sub(1, v))));
       return add(flat, mul(n0, add(mul(mul(belly, fill), mul(width, S.billow * 1.6)), flutter)));
     };
-    return drawSurface(name, framedFrame(point, G), { paint: clothPaint(C, "jib", 0), grid: { u: spacing.even(20), v: spacing.even(10) }, sides: "two", outline: "border" });
+    return drawSurface(name, framedFrame(point, G, k3), { paint: clothPaint(C, "jib", 0), grid: { u: spacing.even(20), v: spacing.even(10) }, sides: "two", outline: "border" });
   }
 
   /** The rudder: a thickened sheet hung on the sternpost, from the keel up to near the deck. */
@@ -349,12 +354,12 @@ function spar(name: string, ends: readonly [P3, P3], girth: number, taper: numbe
   });
 }
 
-/** A ship-local surface written as a point function, carried by the rigid chart's frame at the origin. */
-function framedChart(point: (u: F, v: F) => P3, chart: Chart): Surface {
-  return framedFrame(point, chart.frame(lift<"vec3">([0, 0, 0])));
+/** A ship-local surface written as a point function, scaled by `k` and carried by the rigid chart's frame at the origin. */
+function framedChart(point: (u: F, v: F) => P3, chart: Chart, k: P3): Surface {
+  return framedFrame(point, chart.frame(lift<"vec3">([0, 0, 0])), k);
 }
-function framedFrame(point: (u: F, v: F) => P3, G: Frame): Surface {
-  return framed({ point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, scale: lift<"f32">(1) });
+function framedFrame(point: (u: F, v: F) => P3, G: Frame, k: P3): Surface {
+  return framedPose({ point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, size: sizes.axes(k) });
 }
 
 /** A wave travelling across the cloth, -1..1: two crossing trains so it never looks like a single ripple. */

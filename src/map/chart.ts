@@ -34,6 +34,31 @@ export function compose(outer: Chart, inner: Chart): Chart {
   return { frame: (c) => carry(outer, inner.frame(c)), at: (t) => compose(outer.at(t), inner.at(t)), atNear: (t, c) => compose(outer.at(t), inner.atNear(t, c)) };
 }
 
+/**
+ * `chart` with its local coordinates scaled by `k` along their axes before they are placed, so everything built in it
+ * is squeezed or stretched as one (a ship in a grip). Positions scale; directions keep the chart's. A body placed in it
+ * has its spine scaled and keeps its own girth. `at(t)` moves the chart to time t and keeps this frame's `k`.
+ */
+export function sized(chart: Chart, k: In<"vec3">): Chart {
+  const ke = lift<"vec3">(k);
+  return { frame: (c) => chart.frame(mul(c, ke)), at: (t) => sized(chart.at(t), ke), atNear: (t, c) => sized(chart.atNear(t, mul(c, ke)), ke) };
+}
+
+/** `chart` moved by the world vector `by` (a ship lifted off the water it floats on). */
+export function shifted(chart: Chart, by: In<"vec3">): Chart {
+  const b = lift<"vec3">(by);
+  const move = (g: Frame): Frame => ({ o: add(g.o, b), x: g.x, y: g.y, z: g.z });
+  return { frame: (c) => move(chart.frame(c)), at: (t) => shifted(chart.at(t), b), atNear: (t, c) => shifted(chart.atNear(t, c), b) };
+}
+
+/** A size as lengths along x, y and z. One handler per kind. */
+export function sizeLengths(z: Size): P3 {
+  switch (z.kind) {
+    case "even": return vec3(z.k, z.k, z.k);
+    case "axes": return z.k;
+  }
+}
+
 /** Put a shape in a coordinate system. */
 export function place<T>(shape: Placeable<T>, chart: Chart): T {
   return shape.placed(chart);
