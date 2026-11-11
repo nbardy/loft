@@ -183,7 +183,7 @@ export const base: FaceOption = {
     const wander = local(vec3(14, add(mul(sin(mul(time, 0.29)), 2), 5), add(mul(sin(add(mul(time, 0.37), 1)), 8), 1)));
     // It also fixes on the ship through the grab, from the warning on.
     const grabEye = mul(smoothstep(0, 0.5, add(grabEnv.tau, grab.warn)), sub(1, smoothstep(0, 1, grabBeat.settle)));
-    const lookR = lookAt({ from: { o: baseR, x: body.x, y: body.y, z: body.z }, target: mix(mix(wander, shipNow, grabEye), vec3(n.crushCentre[0], 0, n.crushCentre[1]), k.rouse), yaw: 1.2, pitch: 0.7 }).dir;
+    const lookR = lookAt({ from: { o: baseR, x: body.x, y: body.y, z: body.z }, target: mix(mix(wander, shipNow, grabEye), vec3(rig.crushCentre.x, 0, rig.crushCentre.y), k.rouse), yaw: 1.2, pitch: 0.7 }).dir;
     const goodEye: Eye = {
       tag: "R", base: baseR,
       // At rest the stalk leans out and forward, a little tired; roused it stands up and leans toward the target.
