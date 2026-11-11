@@ -42,25 +42,28 @@ The sun is the host input `sun` on the crab and the lineup: `--input sun=-0.95,0
 ## The looks (`LOOKS`)
 
 Cost is what the look adds to a normal frame of the bruiser from `game` at 1280x800, beside the print as it is in
-alternating timing rounds (COST_NOTE).
+alternating timing rounds (`bun tools/light_gallery.ts cost`: the print as it is and the look profiled in turn, the median difference of n pairs; the print as it is read 1.8 to 3.6 ms, other workers sharing the GPU, so a difference under about 0.3 ms is unresolved).
 
 | Name | What it is | For | Cost |
 |---|---|---|---|
-| `flat` | No shading: every surface in its lit ink, and the key line. | A diagram, a far camera, a base to build on. | COST_flat |
-| `twoTone` | The shadow side of every form in a warm block, and the shadows the parts cast on each other. | The cel look; reads at game size. | COST_twoTone |
-| `threeTone` | `twoTone` and a hard cream shape on each form's lit shoulder. | A wet shell; close cameras. | COST_threeTone |
-| `bokashi` | Flat inks, each form's lower half and its foot washed into indigo. | The quiet print; a still. The one soft look. | COST_bokashi |
-| `hatched` | The shadow side engraved: lines round the form in each ink's own shade, 5 to 10 px apart at any distance, ragged ends. | The video; close and middle cameras. | COST_hatched |
-| `contact` | Flat inks, a dark band where a part lies on another or stands in the water. | Separating parts without lighting them. | COST_contact |
-| `rim` | The body mostly under a deep indigo block, a cream edge toward the sun. | Night, a storm, a lamp behind. | COST_rim |
-| `cel` | Two tones, cast shadows, contact bands, sparse highlights (the painted `shade_best` mix). | The richest game-camera look. | COST_cel |
-| `sunset` | Hatched toward a light fixed up-left of the camera, undersides washed violet, a gold rim toward the sun. | The sun low behind the subject: fronts stay readable. | COST_sunset |
-| `referencePalette` | The print's own two tones in the reference palette (below). | The reference pictures' colour without changing the light. | COST_referencePalette |
-| `engraving` | `hatched` in the reference palette. **The four-crab video's look.** | The video, a poster. | COST_engraving |
-| `engravingSunset` | `sunset` in the reference palette. | The video with the sun behind the line. | COST_engravingSunset |
+| `flat` | No shading: every surface in its lit ink, and the key line. | A diagram, a far camera, a base to build on. | none measurable (median -0.07 ms, n=3) |
+| `twoTone` | The shadow side of every form in a warm block, and the shadows the parts cast on each other. | The cel look; reads at game size. | +0.2 ms (n=3; spread -0.1 to +0.6: unresolved) |
+| `threeTone` | `twoTone` and a hard cream shape on each form's lit shoulder. | A wet shell; close cameras. | +0.1 ms (n=3; unresolved) |
+| `bokashi` | Flat inks, each form's lower half and its foot washed into indigo. | The quiet print; a still. The one soft look. | none measurable (n=3) |
+| `hatched` | The shadow side engraved: lines round the form in each ink's own shade, 5 to 10 px apart at any distance, ragged ends. | The video; close and middle cameras. | none measurable (median 0.00 ms, n=5) |
+| `contact` | Flat inks, a dark band where a part lies on another or stands in the water. | Separating parts without lighting them. | +1.0 ms (n=5, +0.6 to +1.5) |
+| `rim` | The body mostly under a deep indigo block, a cream edge toward the sun. | Night, a storm, a lamp behind. | +0.5 ms (n=5, +0.4 to +0.9) |
+| `cel` | Two tones, cast shadows, contact bands, sparse highlights (the painted `shade_best` mix). | The richest game-camera look. | +1.2 ms (n=4, +0.9 to +1.8) |
+| `sunset` | Hatched toward a light fixed up-left of the camera, undersides washed violet, a gold rim toward the sun. | The sun low behind the subject: fronts stay readable. | +0.5 ms (n=3, 0 to +1.0: unresolved) |
+| `referencePalette` | The print's own two tones in the reference palette (below). | The reference pictures' colour without changing the light. | +0.7 ms (n=4, +0.5 to +0.8) |
+| `engraving` | `hatched` in the reference palette. **The four-crab video's look.** | The video, a poster. | +0.7 ms (n=4, +0.3 to +0.9); the four crabs: +0.2 and +0.7 ms (n=2, unresolved) on a 3.0 to 3.3 ms frame |
+| `engravingSunset` | `sunset` in the reference palette. | The video with the sun behind the line. | +1.3 ms (n=4, +1.0 to +2.2) |
 
 A look that casts shadows or bands overlaps (`twoTone`, `threeTone`, `contact`, `rim`, `cel`) pays for drawing them
-after the bodies (a phase `on-bodies`); the others shade in the bodies' own fragments and add no draw.
+after the bodies (a phase `on-bodies`); the others shade in the bodies' own fragments and add no draw. The reference
+palette costs about 0.7 ms on the crab, more than its two noise octaves and a few derivatives per fragment should; where
+it goes was not measured (overdraw on the bodies is the first suspect). For the cheapest picture close to the video's,
+`hatched` alone costs nothing measurable.
 
 ## The reference palette (options of the style, each off by default)
 
