@@ -181,6 +181,8 @@ export const design = makeDesign({
             fliesClear(r.grab, [
               { kind: "body", body: carapace.hull },
               { kind: "disc", centre: vec2(...n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
+              // And whatever the chosen back builds beyond that cylinder (slots.ts, `BackOption.keepClear`).
+              ...(o.back.keepClear?.(r) ?? []),
             ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
           ],
           host: () => [],
