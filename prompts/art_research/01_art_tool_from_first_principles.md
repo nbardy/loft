@@ -98,6 +98,19 @@ and keep, change or replace any part. Nothing depends on it and no compatibility
 
 If you think the goals above are wrongly posed, say so and pose them better.
 
+## How this relates to the other prompt
+
+This prompt covers what an agent writes and uses: the API, the data format, the methods, the tooling. The companion
+prompt, `02_render_math_and_algorithms.md`, covers how things are drawn: implementations for the tools that exist,
+and new algorithms.
+
+Neither binds the other. A new algorithm may need a description the current tool cannot give, and then the tool's
+design should change. A better design may make an algorithm unnecessary, or demand one that does not exist yet. If a
+decision made under the other prompt limits you, override it. Write down what you overrode, why, and what the other
+side now has to provide or redo.
+
+Only the owner's constraints below hold for both.
+
 ## Hard constraints
 
 - The author is an agent writing text.
@@ -112,7 +125,8 @@ If you think the goals above are wrongly posed, say so and pose them better.
    pictures that you looked at.
 3. Numbers: loop time, description size, and GPU and CPU time per object.
 4. The same scenes in the previous attempt, with the same measures, side by side.
-5. What you do not know, and what result would change your mind.
+5. What your design needs from the drawing side that does not exist yet, and any of its decisions you overrode.
+6. What you do not know, and what result would change your mind.
 
 ## How to work
 

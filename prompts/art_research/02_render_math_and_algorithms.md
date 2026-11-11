@@ -29,6 +29,19 @@ We think the problem is not a better engine of one kind. It is making them inter
 
 If you think this is the wrong problem, say what the right one is and why.
 
+## How this relates to the other prompt
+
+The companion prompt covers what an agent writes and uses: the API, the data format, the methods, the tooling. This
+one covers how things are drawn. Work here can take two forms: a better implementation inside the tool that exists,
+or a new algorithm or representation that the existing tool cannot express.
+
+Neither prompt binds the other. Do not shape an algorithm to fit the current description language if it would be
+better without it. Say what the tool would have to provide, and treat that as a request to redesign the tool. Equally,
+if a design decision made under the other prompt limits what can be drawn or how fast, override it. Write down what
+you overrode, why, and what the tool side now has to change.
+
+Only the owner's budgets below hold for both.
+
 ## What we want
 
 1. **A map.** For each thing an artist wants to say and each way of drawing it: the exact reading with its
@@ -131,7 +144,9 @@ as a survey.
 
 1. Results ranked by status: proved, measured, conjectured, refuted. Each with the test that put it there.
 2. The tests and figures as runnable code.
-3. A recommendation: what to build first, what it should cost, and what would show it was the wrong choice.
+3. For each result, what it needs from the tool: nothing, a change to the existing one, or a different design.
+4. Any decision of the tool's that you overrode, and why.
+5. A recommendation: what to build first, what it should cost, and what would show it was the wrong choice.
 
 ## Pointers
 
