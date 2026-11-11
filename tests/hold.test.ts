@@ -1,7 +1,10 @@
 // An attack that holds (docs/attacks_that_hold.md): `gripReaches` is the check scenes rely on to say a drawn gripper
 // really takes the thing its hold owns.
 import { expect, test } from "bun:test";
-import { add, attack, compileScene, gripReaches, hit, hold, lift, mul, Probe, scene, sea, strand, tolerance, toon, vec2, vec3, type F } from "../src/index.ts";
+import {
+  add, attack, compileJs, compileScene, gripReaches, hit, hold, hosted, input, lift, mul, pose, Probe, releasesAt, scene, sea, STAND_IN, strand, throwLands,
+  thrown, tolerance, toon, vec2, vec3, type F, type Placer,
+} from "../src/index.ts";
 
 const R = 0.12; // the fingers' radius
 
@@ -33,4 +36,43 @@ test("gripReaches passes surfaces a width apart and fails axes a width apart or 
   expect(axes.pass).toBe(false);
   expect(axes.measured).toContain("0.76 apart"); // the 1.0 width less two radii, at closing
   expect(off.pass).toBe(false);
+});
+
+/** A remote hold that ends in a throw, its thing placed after the release by `placer`; the two throw checks' verdicts. */
+function throwOf(placer: Placer) {
+  const toss = attack({
+    name: "toss", arm: 1, warn: 1, target: { kind: "disc", centre: vec2(0, 0), radius: lift<"f32">(0.5) },
+    motion: { kind: "remote", hit: hit.disc({ centre: [0, 0], radius: 1.5 }) },
+    effect: hold({
+      seconds: 1.5, at: [0, 0.5, 0], radius: 0.5, carry: { kind: "arc", to: [-1, 2, 0.5], lift: 1 },
+      end: thrown({ land: [9, 0.5, -3], flight: 2, gravity: 5, stroke: 0.4, follow: 0.2, drag: 0.3, heave: { hz: 1, damping: 0.4 }, placer }),
+    }),
+  });
+  const mark = strand({ name: "mark", stations: 4, girth: 0.2, paint: [0.8, 0.2, 0.1], spine: (m: F) => add(toss.thing(), vec3(0, m, 0)) });
+  const s = scene({ sea: sea({ swell: [] }), things: [mark], style: toon({}), sun: [0.3, 0.8, 0.5], cameras: { c: { kind: "perspective", eye: [0, 2, 9], target: [0, 1, 0], fovY: 0.6 } } });
+  const probe = new Probe(compileScene(s), {});
+  const tol = { speed: tolerance.share(0.02), place: tolerance.share(0.02) };
+  return { hand: releasesAt(toss, tol).run(probe), flown: throwLands(toss, { least: 8, ...tol }).run(probe) };
+}
+
+// Catches: a throw check that compares the attack's stated numbers with each other instead of measuring where the thing
+// is. The stand-in's flight must pass both checks. A thing its host leaves lying at one pose after the release is still
+// handed off correctly (the grip brought it to the release point at the release velocity), and must fail `throwLands`:
+// it does not fly. It also catches a stroke that no longer ends at the release velocity (both verdicts fail).
+test("a throw's hand-off holds whoever places the thing; only a flight that starts as released passes throwLands", () => {
+  const ours = throwOf(STAND_IN), theirs = throwOf(hosted(pose({ at: input("hold.test.pose", "vec3", [3, 0.5, 3]), heading: 0, pitch: 0, heel: 0 })));
+  expect(ours.hand.pass).toBe(true);
+  expect(ours.flown.pass).toBe(true);
+  expect(ours.flown.value).toBeGreaterThan(9); // (9, -3) from (0, 0): 9.49 along the water
+  expect(theirs.hand.pass).toBe(true);
+  expect(theirs.flown.pass).toBe(false);
+});
+
+// Catches: an input interned by its name alone. A design's variants are several scenes built in one process, and each
+// may give `boat1.at` its own default; by name alone the second variant silently read the first's default.
+test("one input name may carry a different default in a different scene", () => {
+  const a = input("hold.test.at", "f32", [1]), b = input("hold.test.at", "f32", [2]);
+  expect(compileJs([a])({ vars: {}, inputs: {}, params: {} })[0]).toBe(1);
+  expect(compileJs([b])({ vars: {}, inputs: {}, params: {} })[0]).toBe(2);
+  expect(compileJs([b])({ vars: {}, inputs: { "hold.test.at": 5 }, params: {} })[0]).toBe(5);
 });

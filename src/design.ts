@@ -7,7 +7,7 @@
 
 import type { Check } from "./check.ts";
 import type { Scene } from "./scene.ts";
-import type { Attack, Strike } from "./spacetime/attack.ts";
+import type { Attack, Effect, Motion, Ring, Strike } from "./spacetime/attack.ts";
 
 /** Overrides on a numbers record: any field, nested records merged, arrays and numbers replaced whole. */
 export type Overrides<N> = { readonly [K in keyof N]?: N[K] extends readonly unknown[] ? N[K] : N[K] extends object ? Overrides<N[K]> : N[K] };
@@ -31,9 +31,12 @@ export type Built = {
   readonly checks: readonly Check[];
   readonly strikes: Readonly<Record<string, Strike>>;
   readonly holds: Readonly<Record<string, Attack>>;
+  /** The attacks whose aftermath is a ring wave: a game reads `pushed(place)` and `arrives(place)` of each. */
+  readonly waves: Readonly<Record<string, Attack<Motion, Effect, Ring>>>;
 };
 
-export type DesignSpec<N, T extends SlotTable<N>> = {
+/** `B` is what this subject's build gives: `Built`, and whatever more its game reads (a hand-off record), kept typed through `Design.build`. */
+export type DesignSpec<N, T extends SlotTable<N>, B extends Built = Built> = {
   readonly name: string;
   readonly numbers: N;
   readonly slots: T;
@@ -41,7 +44,7 @@ export type DesignSpec<N, T extends SlotTable<N>> = {
   readonly variants: Readonly<Record<string, VariantSpec<N, T>>>;
   /** The cameras `loft variants` compares by default, in column order. */
   readonly compare: readonly string[];
-  readonly build: (picked: Picked<T>, numbers: N) => Built;
+  readonly build: (picked: Picked<T>, numbers: N) => B;
 };
 
 /** A choice as asked for: a named variant (`base` when only slots are given) and slot picks over it. */
@@ -100,10 +103,10 @@ function leaves(over: unknown, path: string, out: Map<string, unknown>): void {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-export class Design<N, T extends SlotTable<N>> {
+export class Design<N, T extends SlotTable<N>, B extends Built = Built> {
   readonly kind = "design";
-  private readonly built = new Map<string, Built>();
-  constructor(readonly spec: DesignSpec<N, T>) {
+  private readonly built = new Map<string, B>();
+  constructor(readonly spec: DesignSpec<N, T, B>) {
     if ("base" in spec.variants) throw new DesignError("conflict", `design "${spec.name}": "base" is implicit (every slot's base option); do not declare it`);
     // Every named variant must resolve (its slots, options and numbers exist) when the design is made, not when drawn.
     for (const name of Object.keys(spec.variants)) this.resolve({ variant: name, picks: [] });
@@ -162,7 +165,7 @@ export class Design<N, T extends SlotTable<N>> {
   }
 
   /** The scene for a resolved choice, built once per label. */
-  build(r: Resolved<N>): Built {
+  build(r: Resolved<N>): B {
     const hit = this.built.get(r.label);
     if (hit !== undefined) return hit;
     const picked = Object.fromEntries(this.slots.map((s) => [s, this.optionOf(s, r.choice[s]!)])) as Picked<T>;
@@ -180,7 +183,7 @@ export class Design<N, T extends SlotTable<N>> {
   }
 }
 
-export function design<N, T extends SlotTable<N>>(spec: DesignSpec<N, T>): Design<N, T> {
+export function design<N, T extends SlotTable<N>, B extends Built = Built>(spec: DesignSpec<N, T, B>): Design<N, T, B> {
   return new Design(spec);
 }
 

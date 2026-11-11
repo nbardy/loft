@@ -25,3 +25,6 @@ export const SCALE_SHIP_COLOURS: ShipColours = {
 };
 
 export const scaleShip = ship(sloop("scaleShip", SCALE_SHIP_LENGTH, SCALE_SHIP_COLOURS));
+
+/** A second ship of the same build under other cloth, for a scene that needs two (a function: most scenes need none). */
+export const scaleShipNamed = (name: string, cloth: Rgb) => ship(sloop(name, SCALE_SHIP_LENGTH, { ...SCALE_SHIP_COLOURS, cloth }));

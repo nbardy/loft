@@ -69,6 +69,8 @@ const S_MIN = 1e-4, S_MAX = 1 - 1e-6;
 export class Whirlpool implements SeaDeform {
   /** The inward clock: dL/dt = -c. */
   readonly c: number;
+  /** A whirlpool only dips. */
+  readonly rise = 0;
   readonly throat: number;
   readonly arms: number;
   private readonly centre: V2;
