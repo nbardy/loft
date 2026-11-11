@@ -91,6 +91,8 @@ export type Riding = {
   readonly phase: number;
   /** Extra sink as an expression (a recoil). */
   readonly jolt?: F;
+  /** Extra roll as an expression, radians (a shudder). */
+  readonly shudder?: F;
 };
 
 /**
@@ -100,7 +102,7 @@ export type Riding = {
 export function ridingFrame(water: Waters, r: Riding, wind: readonly [number, number]): Frame {
   const g = afloatFrame(water, { at: r.at, heading: r.heading, length: r.length * 0.8, beam: r.beam, wind: { direction: wind, heel: 0.04 } });
   const uneasy = add(sin(add(mul(time, 0.41), r.phase)), mul(sin(add(mul(time, 0.97), r.phase * 2.3)), 0.45));
-  const phi = add(r.list, mul(uneasy, r.roll));
+  const phi = add(add(r.list, mul(uneasy, r.roll)), r.shudder ?? 0);
   const theta = add(r.trim, mul(sin(add(mul(time, 0.33), r.phase * 1.7)), r.roll * 0.4));
   const y1 = add(mul(g.y, cos(phi)), mul(g.z, sin(phi))), z1 = sub(mul(g.z, cos(phi)), mul(g.y, sin(phi)));
   const x2 = sub(mul(g.x, cos(theta)), mul(y1, sin(theta))), y2 = add(mul(y1, cos(theta)), mul(g.x, sin(theta)));

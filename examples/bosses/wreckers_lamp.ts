@@ -20,7 +20,7 @@
 import {
   abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul, neg, normalize, pick, points,
   lt, posed, pow, print, scene, sea, select, sign, sin, size, smoothstep, spacing, step, strand, sub, TAU, through, time, turn, vec2, vec3,
-  vec4, woodblock, type Drawable, type Expr, type F, type In, type P3, type PaintAt,
+  vec4, woodblock, anticipated, dragged, swing as follow, type Drawable, type Expr, type F, type In, type P3, type PaintAt,
 } from "../../src/index.ts";
 import { hash3, viewDir, fwidth, type Branch, type Frame as ListFrame, tree, gen } from "../../src/lib/index.ts";
 import { hit, hitContour, hitInradius, hitPatch, type Capsule } from "../../src/spacetime/index.ts";
@@ -114,7 +114,9 @@ const W = TAU / LOOP;
 /** The beam's angle during the attack, at cycle clock c: held at `from` until arming, then linear over the sweep (the sim's). */
 const sweepAngle = (c: F): F => add(LURE.from, mul(clamp(div(sub(c, LURE.arm), LURE.sweepSeconds), 0, 1), LURE.sweep));
 /** How far the lamp is given over to the attack: turns to the start angle through the tell, back to scanning after. */
-const engaged = (c: F): F => mul(smoothstep(LURE.arm - LURE.warn * 1.2, LURE.arm - 0.15, c), sub(1, smoothstep(LURE.arm + LURE.sweepSeconds + 0.4, LURE.arm + LURE.sweepSeconds + 1.6, c)));
+// The turn into the attack goes the wrong way first (anticipated, back 3: about a fifth of the turn), coy, then swings
+// to the start angle; it is complete 0.15 s before arming, so the beam is the sim's capsule from arming on.
+const engaged = (c: F): F => mul(anticipated(smoothstep(LURE.arm - LURE.warn * 1.2, LURE.arm - 0.15, c), 3), sub(1, smoothstep(LURE.arm + LURE.sweepSeconds + 0.4, LURE.arm + LURE.sweepSeconds + 1.6, c)));
 /** The lamp's yaw at time t: a slow scan, or the attack. */
 const beamAngle = (t: F): F => {
   const c = cycle(t);
@@ -309,7 +311,8 @@ const coilPts: P3[] = Array.from({ length: COIL_N }, (_, i) => {
   const y = SPIRE.foot + (SPIRE.height - SPIRE.foot) * mix01(SIREN.from, SIREN.to, s);
   const { at, r } = spireAt(y);
   const a0 = yawRest + Math.PI - SIREN.turns * TAU * (1 - s);
-  const a = add(a0, mul(sub(yaw, yawRest), SIREN.follow * s * s));
+  // The coil turns after the head: each turn further down reads the head's yaw later (overlap), up to 0.35 s.
+  const a = add(a0, mul(sub(beamAngle(dragged(time, 1 - s, 0.35)), yawRest), SIREN.follow * s * s));
   const rad = add(r + SIREN.stand + SIREN.girth * 0.7 * Math.sin(Math.PI * Math.min(1, s * 1.3)), mul(breath, SIREN.breathe * s));
   return vec3(add(at[0], mul(cos(a), rad)), y + 0.15 * Math.sin(i * 1.3), add(at[2], mul(sin(a), rad)));
 });
@@ -335,7 +338,17 @@ const body = strand({
 
 // ---- the head: hood, skull and lens, all in the head's frame (forward along the yaw, looking down by `pitch`) ---------
 
-const look = add(mul(fwd(yaw), Math.cos(SIREN.pitch)), vec3(0, -Math.sin(SIREN.pitch), 0));
+/**
+ * The head's pitch: it leans down over the water through the tell (luring), and when the shutters open it recoils
+ * upward from the heat and swings back (follow-through).
+ */
+const lureLean = (() => {
+  const c = cycle(time), end = LURE.arm + LURE.sweepSeconds;
+  const tell = mul(smoothstep(LURE.arm - LURE.warn, LURE.arm, c), sub(1, smoothstep(end, end + 0.6, c)));
+  return add(add(mul(tell, 0.18), mul(heat(time), -0.3)), follow(sub(c, end + 0.05), 0.12, 1.3, 0.3));
+})();
+const pitch = add(SIREN.pitch, lureLean);
+const look = add(mul(fwd(yaw), cos(pitch)), vec3(0, mul(sin(pitch), -1), 0));
 const headSide = normalize(cross(look, UP));
 const headUp = cross(headSide, look);
 const H = SIREN.headSize;
@@ -419,7 +432,8 @@ const arms = strand({
 /** Hair: black strokes trailing from the back of the hood down the spire, swaying. */
 const HAIR = [-0.5, 0, 0.5];
 const hair = HAIR.map((sd, k) => draw.curve(`hair_${k}`, (u) => {
-  const sway = mul(sin(add(mul(time, W * 2), k * 1.7 + 0)), 0.5);
+  // It drifts, and trails the head's turn: the yaw a third of a second ago less the yaw now.
+  const sway = add(mul(sin(add(mul(time, W * 2), k * 1.7 + 0)), 0.5), mul(sub(beamAngle(dragged(time, 1, 0.3 + 0.05 * k)), yaw), 2.5));
   const p0 = headPt(-0.6, 0.3, sd * 0.8);
   const back = fwd(add(yaw, Math.PI + sd * 0.6));
   const drop = add(mul(back, add(1.1, mul(u, 1.2))), vec3(0, mul(u, -5.5), 0));

@@ -24,7 +24,7 @@
 import {
   abs, add, clamp, cos, crest, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, mix,
   mod, mul, normalize, on, pick, place, points, pow, print, scene, sea, select, sin, smoothstep, spacing, step, strand, sub, TAU, through,
-  time, vec2, vec3, whirlpool, length, woodblock, type Chart, type F, type Frame, type In, type P3,
+  time, vec2, vec3, whirlpool, length, woodblock, beats, dragged, slowInOut, swing, uneven, type Chart, type F, type Frame, type In, type P3,
 } from "../../src/index.ts";
 import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { landsInside } from "../../src/check.ts";
@@ -59,7 +59,7 @@ const BODY = {
   headHeight: 7.0,     // height of the head above the water
   headIn: 5.4,         // how far the head leans in over the pool from the spiral
   slither: 0.05,       // radians the coil slides along its own path over the loop
-  heave: 0.14,         // share each arch rises and falls, in sequence round the coil
+  heave: 0.22,         // share each arch rises and falls, in sequence round the coil (pushed from 0.14: it did not read)
   sway: 0.5,           // world units the head sways
 };
 
@@ -81,7 +81,7 @@ const HEAD = {
   yaw: 0.9,            // radians the head may turn from the neck, sideways and up or down, to hold on its prey
   pitch: 0.35,
   rearTilt: 0.35,      // the snout lifts as the head rears during the lash...
-  rear: 1.6,           // ...and the neck rises this far
+  rear: 2.2,           // ...and the neck rises this far (pushed from 1.6)
   horn: 0.85,          // antler length, as a share of the drawn one
   gill: 3.0,           // longest gill ray
 };
@@ -94,9 +94,12 @@ const LASH = {
   bearing: 0.2,        // radians the lane turns from straight out of the pool
   length: 7.8,         // capsule length (a to b)
   radius: 4.0,         // capsule radius (the loop's half-width is this less the body's radius: keep it open)
-  lean: 0.45,          // radians the reared loop leans back before it falls
+  lean: 0.65,          // radians the reared loop leans back before it falls (the wrong way first; pushed from 0.45)
   height: 0.45,        // height above the water it lands at
   spread: 0.1,         // body m on each side of the arch's centre that rears
+  // The rest of the coil answers the lash: the other arches sink as the lashed one draws the slack (wind-up), then the
+  // slam's jolt runs out along the body, reaching each arch `ripple` seconds later per arch away, and swings on.
+  sink: 0.5, jolt: 0.9, ripple: 0.15,
 };
 
 /** Inks: each paint key prints in two inks (in shadow, lit). Paints elsewhere in the file are exactly these keys. */
@@ -155,11 +158,26 @@ function heightAt(m: F): F {
   y = add(y, mul(neck, mul(lash.envelope(time).p, HEAD.rear)));
   for (const [k, a] of ARCHES.entries()) {
     const u = clamp(div(sub(m, a.at - a.half), 2 * a.half), 0, 1);
-    const heave = add(1, mul(sin(sub(mul(time, W), k * 1.6)), B.heave));
+    // Each arch heaves by its own share (no two alike), in sequence round the coil.
+    const heave = add(1, mul(mul(sin(sub(mul(time, W), k * 1.6)), B.heave), uneven(k, 0.3)));
+    // The other arches answer the lash (`lashAnswer`; zero for the lashed arch itself).
+    y = add(y, mul(lashAnswer(k), sub(1, smoothstep(0, 1, abs(sub(mul(clamp(div(sub(m, a.at - a.half), 2 * a.half), 0, 1), 2), 1))))));
     // sin^0.6: the arch leaves the water steeply, like a half-torus, and is round on top.
     y = add(y, mul(mul(heave, a.height + B.dip), pow(max(sin(mul(u, Math.PI)), 0), 0.6)));
   }
   return y;
+}
+
+/**
+ * How far arch k is lifted (negative: sunk) by the lash at the moment: it sinks through the wind-up as the lashed arch
+ * draws the slack, then the slam's jolt reaches it `ripple` seconds per arch away from the lashed one, and it swings.
+ */
+function lashAnswer(k: number): F {
+  const away = Math.abs(k - LASH.arch);
+  if (away === 0) return lift<"f32">(0);
+  const b = lashBeat(time);
+  const sunk = mul(mul(slowInOut(b.anticipate), sub(1, slowInOut(b.settle))), -LASH.sink);
+  return add(sunk, swing(dragged(b.after, away, LASH.ripple), LASH.jolt, 1.1, 0.3));
 }
 
 /** The spine at rest (attacks apply on top). Head at m = 0. */
@@ -192,8 +210,13 @@ const lash = attack({
     kind: "rear", hit: hit.capsule({ a: laneA, b: laneB, radius: LASH.radius }),
     from: lashArch.at - LASH.spread, to: lashArch.at + LASH.spread, height: LASH.height, inset: B.radius * 1.25, lean: LASH.lean,
   },
-  timing: { windup: 1.1, strike: 0.38, zeta: 0.55, hold: 0.45, recover: 0.62, travel: 1.6 },
+  // Wind-up 1.3 s before a 0.3 s strike (4.3 times as long; it was 1.1 before 0.38).
+  timing: { windup: 1.3, strike: 0.3, zeta: 0.55, hold: 0.45, recover: 0.62, travel: 1.6 },
 });
+/** The lash in three beats on clock t: the wind-up and the strike are the attack's own, then 1.6 s of settle. */
+const lashBeat = (t: F) => beats(add(sub(t, lash.armAt(t)), 1.6), { anticipate: 1.3, act: 0.3, settle: 1.6 });
+/** Seconds since the slam (negative before). */
+const lashAfter = lashBeat(time).after;
 /** 0..1: the lashed arch's gland stands open from the slam for a while (the game's exposure window). */
 const open = (() => {
   const e = lash.envelope(time);
@@ -325,7 +348,8 @@ function skullChart(host: Chart): Chart {
   const c = lift<"vec3">([0, 0.25, 0]);
   const g = host.frame(c);
   const look = lookAt({ from: { o: g.o, x: mul(g.x, -1), y: g.y, z: mul(g.z, -1) }, target: gaze, yaw: HEAD.yaw, pitch: HEAD.pitch });
-  const ahead = normalize(add(look.dir, mul(UP, mul(lashPose, HEAD.rearTilt))));
+  // The snout lifts as it rears, then nods down into the slam and swings back up (follow-through of the whole neck).
+  const ahead = normalize(add(look.dir, mul(UP, add(mul(lashPose, HEAD.rearTilt), swing(lashAfter, -0.5, 1.5, 0.3)))));
   const x = mul(ahead, -1);
   const y = normalize(sub(UP, mul(ahead, dot(UP, ahead))));
   const f: Frame = { o: g.o, x, y, z: cross(x, y) };
@@ -474,7 +498,8 @@ const antlers = place(strand({
 
 // ---- whiskers: one strand from tip to tip through the snout, trailing back from the lip and drifting -------------
 const whiskerSide = (s: number) => [1, 2, 3, 4, 5].map((k) => {
-  const drift = mul(sin(sub(mul(time, W * 2), k * 0.9)), 0.08 * k * S);
+  // They drift, and after the slam they whip: each point further out reads the nod later and swings further.
+  const drift = add(mul(sin(sub(mul(time, W * 2), k * 0.9)), 0.08 * k * S), swing(dragged(lashAfter, k, 0.05), 0.22 * k * S, 1.8, 0.25));
   const droop = [0, 0.55, 1.15, 1.5, 1.45, 1.05][k]!;
   return vec3(xAt(0.84) + 0.95 * k * S, add(-droop * S, drift), add(s * (0.85 + 0.42 * k) * S, mul(drift, s)));
 });
@@ -487,7 +512,8 @@ const whiskers = place(strand({
 }), skull);
 
 // ---- gills: a fan of five rays behind each cheek, flaring with the breath and wide open in the lash ---------------
-const flare = add(add(1, mul(sin(mul(time, W * 2)), 0.15)), mul(lashPose, 0.4));
+// The gills flare with the breath, open in the lash, and snap wider at the slam and shiver shut.
+const flare = add(add(add(1, mul(sin(mul(time, W * 2)), 0.15)), mul(lashPose, 0.4)), swing(lashAfter, 0.3, 2.2, 0.35));
 const GILL_ANGLES = [1.0, 0.5, 0, -0.5, -0.95], GILL_REACH = [0.7, 0.9, 1, 0.88, 0.62];
 const gillRays = (s: number) => GILL_ANGLES.map((a, k) => (r: F | number) => {
   const rr = lift<"f32">(r);
