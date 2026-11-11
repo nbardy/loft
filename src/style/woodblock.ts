@@ -54,14 +54,15 @@ export type Accent = { readonly hue: AccentHue; readonly margin: number; readonl
 /**
  * Which paints print in which inks (the rule a scene states):
  *  - `bands`: by value. The paint's luminance times a two-tone light, in bands of the key block's inks; an accent
- *    paint prints the accent. The print's own rule.
+ *    paint prints the accent. The print's own rule. A paint within `reach` (rgb distance) of a `named` key prints in
+ *    that key's two inks instead: the one blue sail in a print that is otherwise black, indigo, cream and one warm ink.
  *  - `keys`: by name. Each key is a paint colour that prints in two inks of its own (in shadow, lit); a paint prints as
  *    the nearest key. A palette per monster (slate and olive coils); a key whose two inks are one is flat.
  *  - `overprint`: as painted. Every paint is already an ink: the lit side prints it, the shadow side prints it
  *    overprinted by `ink` (`amount` of it, then times `value`); a paint darker than `black` prints the key black.
  */
 export type Print =
-  | { readonly kind: "bands"; readonly accent: Accent }
+  | { readonly kind: "bands"; readonly accent: Accent; readonly named: readonly InkKey[]; readonly reach: number }
   | { readonly kind: "keys"; readonly keys: readonly InkKey[] }
   | { readonly kind: "overprint"; readonly ink: Rgb; readonly amount: number; readonly value: number; readonly black: number };
 /** A key of the `keys` rule: the paint colour that names it, and the inks it prints in. */
@@ -71,11 +72,13 @@ const VERMILION: Accent = { hue: "red", margin: BAND.warm, inks: [{ ink: WOODBLO
 
 export const print = {
   /** By value in bands, with the accent (vermilion for red paints by default). */
-  bands(o: { readonly accent?: Accent } = {}): Print {
+  bands(o: { readonly accent?: Accent; readonly named?: Readonly<Record<string, InkKey>>; readonly reach?: number } = {}): Print {
     const accent = o.accent ?? VERMILION;
     if (accent.inks.length === 0 || accent.inks[0]!.from !== 0) throw new Error("woodblock accent: give at least one ink, the first from 0");
     accent.inks.forEach((k, i) => { if (i > 0 && !(k.from > accent.inks[i - 1]!.from)) throw new Error(`woodblock accent: ink ${i} must start above ink ${i - 1} (from ${k.from})`); });
-    return { kind: "bands", accent };
+    const reach = o.reach ?? 0.2;
+    if (!(reach > 0)) throw new Error(`woodblock bands: reach must be positive, got ${reach}`);
+    return { kind: "bands", accent, named: Object.values(o.named ?? {}), reach };
   },
   /** By name: each paint prints in the inks of the nearest key. */
   keys(keys: Readonly<Record<string, InkKey>>): Print {
@@ -155,14 +158,17 @@ const litSide = (ctx: ShadeCtx): Expr<"f32"> => edgeOf(dot(ctx.normal, ctx.sun),
 // changing value (n.l across a grazing flank, a soft paint gradient) into a visible gradient between two inks, which
 // the palette test caught on the shell.
 /** By value: black, indigo, pale blue or cream by the lit value in bands; the accent's ink for an accent paint. */
-function bands(inks: WoodblockInks, accent: Accent, ctx: ShadeCtx): Expr<"vec3"> {
+function bands(inks: WoodblockInks, p: Extract<Print, { kind: "bands" }>, ctx: ShadeCtx): Expr<"vec3"> {
+  const accent = p.accent;
   const base = ctx.base;
   const value = mul(luminance(base), mix(LIGHT.shadow, LIGHT.lit, litSide(ctx)));
   let c: Expr<"vec3"> = rgb(inks.black);
   c = mix(c, rgb(inks.indigo), edgeOf(value, BAND.black, 1e-5));
   c = mix(c, rgb(inks.pale), edgeOf(value, BAND.indigo, 1e-5));
   c = mix(c, rgb(inks.cream), edgeOf(value, BAND.pale, 1e-5));
-  return mix(c, accentInk(accent, base), edgeOf(standing(accent.hue, base), accent.margin, 1e-5));
+  const byValue = mix(c, accentInk(accent, base), edgeOf(standing(accent.hue, base), accent.margin, 1e-5));
+  return p.named.reduce<Expr<"vec3">>((out, k) =>
+    mix(out, mix(rgb(k.shadow), rgb(k.lit), litSide(ctx)), edgeOf(sub(p.reach, distance(base, rgb(k.key))), 0, 1e-5)), byValue);
 }
 
 /** By name: the nearest key's ink, in shadow or lit. */
@@ -188,7 +194,7 @@ function overprinted(inks: WoodblockInks, o: Extract<Print, { kind: "overprint" 
 /** The rule's shading. One handler per rule. */
 function printed(inks: WoodblockInks, p: Print, ctx: ShadeCtx): Expr<"vec3"> {
   switch (p.kind) {
-    case "bands": return bands(inks, p.accent, ctx);
+    case "bands": return bands(inks, p, ctx);
     case "keys": return keyed(p.keys, ctx);
     case "overprint": return overprinted(inks, p, ctx);
   }

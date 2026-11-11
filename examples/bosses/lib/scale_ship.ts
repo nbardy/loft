@@ -6,13 +6,10 @@
 // The blue has to print blue in every rule a boss prints by (src/style/woodblock.ts, `Print`):
 //  - `keys` (the Maelstrom Wyrm): the scene lists `SAIL` among its keys, so the cloth prints in SAIL's two inks;
 //  - `overprint` (the Reefback Titan): the cloth prints as painted, its shadow side overprinted;
-//  - `bands` (the Lamp, Thundermaw, the Tithe Fleet): a paint prints by value in black, indigo, pale blue and cream,
-//    and the one accent is red or yellow, so the sails came out pale blue-grey. `sailInked` prints the cloth in
-//    SAIL's inks instead. It is the one work-round left for a library gap: `print.bands` has no second accent and no
-//    blue hue. A blue `AccentHue` (or a list of accents) in src/style/woodblock.ts would delete it.
+//  - `bands` (the Lamp, Thundermaw, the Tithe Fleet): the scene names SAIL to the rule (`print.bands({ named: { sail: SAIL } })`),
+//    so the cloth prints in SAIL's inks and every other paint by value.
 
-import { distance, dot, mix, ship, sub, type Rgb, type ShipColours, type Style } from "../../../src/index.ts";
-import { edgeOf, rgb } from "../../../src/style/shared.ts";
+import { ship, type Rgb, type ShipColours } from "../../../src/index.ts";
 import { sloop } from "../../scenes/lib/fleet.ts";
 
 /** Hull length, world units: small beside every monster, and still a ship from the strategy camera. */
@@ -28,25 +25,3 @@ export const SCALE_SHIP_COLOURS: ShipColours = {
 };
 
 export const scaleShip = ship(sloop("scaleShip", SCALE_SHIP_LENGTH, SCALE_SHIP_COLOURS));
-
-/**
- * How near a paint must be to the sail's (rgb distance) to print in its inks: the cloth's seams and tabling are 0.86
- * and 0.82 of it (0.18 away), and print as the cloth, as they do under `keys`.
- */
-const SAIL_REACH = 0.2;
-
-/**
- * A `bands` print with the sailcloth printed in SAIL's inks (shadow and lit by the same hard terminator as the print's
- * own light). Every other paint prints as the style prints it. See the header: a work-round for `print.bands`.
- */
-export function sailInked(style: Style): Style {
-  return {
-    ...style,
-    shade: (ctx) => {
-      const lit = edgeOf(dot(ctx.normal, ctx.sun), 0, 1e-5);
-      const sail = mix(rgb(SAIL.shadow), rgb(SAIL.lit), lit);
-      const isSail = edgeOf(sub(SAIL_REACH, distance(ctx.base, rgb(SAIL.key))), 0, 1e-5);
-      return mix(style.shade(ctx), sail, isSail);
-    },
-  };
-}

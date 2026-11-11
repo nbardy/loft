@@ -29,7 +29,7 @@
 import {
   abs, add, clamp, cos, div, every, exp, floor, fract, lift, mapNormal, max, mix, mul, pick, posedList, saturate, sin, size,
   smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, spacing,
-  woodblock, NO_SKELETON, WOODBLOCK_PALETTE,
+  woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE,
   type Drawable, type Expr, type F, type Frame, type Hull, type HullSpec, type P3, type Paint, type PoseSpec, type Poses,
   type Rope, type Sea, type Surface,
 } from "../../src/index.ts";
@@ -41,7 +41,7 @@ import {
   ballPoint, bulwarkLoop, dirWorld, frameOf, framePose, linesOf, ragPoint, ridingFrame, slice, sparPose, toWorld,
   tubePoint, unitPart, v3, type Riding, type V3,
 } from "./tithe/kit.ts";
-import { sailInked, scaleShip } from "./lib/scale_ship.ts";
+import { SAIL, scaleShip } from "./lib/scale_ship.ts";
 import { impactFoam, type Splash } from "./lib/impact.ts";
 import { PRINT_WARNING } from "./lib/warning.ts";
 
@@ -565,7 +565,7 @@ export default scene({
     ...telegraphs, shots.balls, shots.trails, ...shots.foam,
     ...living.placed(livingChart, WIND),
   ],
-  style: sailInked(woodblock()),
+  style: woodblock({ print: print.bands({ named: { sail: SAIL } }) }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     game: { kind: "perspective", eye: [-38, 46, 36], target: [-4, 0, -2], fovY: 0.62 },

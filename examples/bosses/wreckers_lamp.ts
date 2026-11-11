@@ -26,7 +26,7 @@ import { hash3, viewDir, fwidth, type Branch, type Frame as ListFrame, tree, gen
 import { hit, hitContour, hitInradius, hitPatch, type Capsule } from "../../src/spacetime/index.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../../src/lib/sdf2.ts";
 import { NO_SKELETON, type Surface } from "../../src/map/types.ts";
-import { sailInked, scaleShip } from "./lib/scale_ship.ts";
+import { SAIL, scaleShip } from "./lib/scale_ship.ts";
 
 // ==== the numbers an art director would change ====================================================================
 
@@ -671,7 +671,7 @@ export default scene({
     ...victim,
   ],
   // Lantern paints have red and green both 0.3 above blue; cream (0.13) and the ship's wood (0.14) stay below 0.25.
-  style: sailInked(woodblock({ print: print.bands({ accent: { hue: "yellow", margin: 0.25, inks: [{ ink: INK.lantern, from: 0 }, { ink: INK.lanternPale, from: 0.82 }] } }) })),
+  style: woodblock({ print: print.bands({ accent: { hue: "yellow", margin: 0.25, inks: [{ ink: INK.lantern, from: 0 }, { ink: INK.lanternPale, from: 0.82 }] }, named: { sail: SAIL } }) }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     game: { kind: "perspective", eye: around(34, faceYaw - 1.3, 31, middle), target: [middle[0], 5.5, middle[2]], fovY: 0.62 },
