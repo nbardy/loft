@@ -42,7 +42,7 @@ import {
   tubePoint, unitPart, v3, type Riding, type V3,
 } from "./tithe/kit.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
-import { impactFoam, type Splash } from "./lib/impact.ts";
+import { impactFoam, impactPaint, type Splash } from "./lib/impact.ts";
 import { PRINT_WARNING } from "./lib/warning.ts";
 
 // =====================================================================================================================
@@ -559,7 +559,7 @@ function volley(): { readonly balls: Drawable; readonly trails: Drawable; readon
     trails: lines("tithe_trails", trails, { width: 0.2, colour: WOODBLOCK_PALETTE.cream }),
     foam: ([1, -1] as const).map((side) => impactFoam(`tithe_splash_${side > 0 ? "starboard" : "port"}`, water, {
       area: lane(side), pad: 1.5, splashes: splashes[side]!, reach: 2.2, seconds: 1.2,
-      foam: WOODBLOCK_PALETTE.cream, line: WOODBLOCK_PALETTE.black,
+      foam: WOODBLOCK_PALETTE.cream, line: WOODBLOCK_PALETTE.black, paint: impactPaint.ridge(),
     })),
   };
 }

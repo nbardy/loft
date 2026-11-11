@@ -4,11 +4,15 @@
 // draw for any number of splashes inside one area (the attack's own hit shape, so the patch is the area the game
 // already knows).
 //
-// The fingers are the woodblock sea's own claws (src/style/woodblock.ts: foam along the zero lines of a noise field).
+// How it is painted is a choice (`ImpactPaint`): `ridge`, the fingers of the woodblock sea's first foam (along the zero
+// lines of a noise field), as every boss had it; or `roll`, white water as the print's other events draw it
+// (src/style/whitewater.ts): a crown of pointed fingers thrown outward at the impact, falling into a ring of rolling
+// foam with curled heads that lean outward, thinning to droplets as it runs out.
 // The Reefback Titan's "crash" was the first of these; this is that crash for every boss.
 
-import { abs, length, lift, max, mix, mul, saturate, smoothstep, sqrt, step, sub, vec2, vec3, vec4, draw, spacing, type Drawable, type F, type In, type Rgb, type Sea } from "../../../src/index.ts";
+import { abs, add, gt, length, lift, max, mix, mul, saturate, select, smoothstep, sqrt, step, sub, vec2, vec3, vec4, draw, spacing, type Drawable, type Expr, type F, type In, type Rgb, type Sea } from "../../../src/index.ts";
 import { noise2 } from "../../../src/lib/index.ts";
+import { behind, crown, joined, rollingFoam, rollOf, slopeOf, type White } from "../../../src/style/whitewater.ts";
 import { hitPatch, type Hit } from "../../../src/spacetime/index.ts";
 import { edgeOf, rgb } from "../../../src/style/shared.ts";
 import { NO_SKELETON, type Surface } from "../../../src/map/types.ts";
@@ -28,6 +32,15 @@ export type ImpactSpec = {
   readonly seconds: number;
   readonly foam: Rgb;
   readonly line: Rgb;
+  readonly paint: ImpactPaint;
+};
+
+/** How a splash's foam is drawn: as it was, or as white water with curled heads of world radius `head`. */
+export type ImpactPaint = { readonly kind: "ridge" } | { readonly kind: "roll"; readonly head: number };
+export const impactPaint = {
+  ridge(): ImpactPaint { return { kind: "ridge" }; },
+  /** `head`: the largest curled head's radius; left out, an eighth of the splash's reach. */
+  roll(o: { readonly head?: number } = {}): (reach: number) => ImpactPaint { return (reach) => ({ kind: "roll", head: o.head ?? reach * 0.125 }); },
 };
 
 /** The foam of a set of splashes, drawn on the water over `area`. */
@@ -46,18 +59,52 @@ export function impactFoam(name: string, water: Sea, o: ImpactSpec): Drawable {
   return draw.glazed(name, surface, {
     colour: (fr) => {
       const p = vec2(fr.world.x, fr.world.z);
-      // The union of every splash's shape (0..1), then one cut into ink and cream. The claws live in the upper half of
-      // the shape's falloff only: cut lower, the zero lines of the noise printed as black scribbles wherever the falloff
-      // was faintly positive, far outside the foam (first version, 2026-11-11).
-      const shape = o.splashes.reduce<F>((acc, s) => max(acc, splashShape(o, p, s)), lift<"f32">(0));
-      const fingers = abs(noise2(mul(p, 1.3)));
-      const cut = sub(sub(shape, 0.5), mul(fingers, 0.6));
-      const foam = edgeOf(cut, 0, 0.004);
-      const line = mul(edgeOf(cut, -0.07, 0.004), sub(1, foam));
-      return vec4(mix(rgb(o.line), rgb(o.foam), foam), max(foam, mul(line, 0.9)));
+      const white = painted(o, p);
+      return vec4(mix(rgb(o.line), rgb(o.foam), white.cream), max(white.cream, mul(white.key, 0.9)));
     },
     grid: { u: spacing.even(24), v: spacing.even(24) }, phase: "on-water", sceneDepth: false,
   });
+}
+
+/** The splashes' foam at p. One handler per paint. */
+function painted(o: ImpactSpec, p: Expr<"vec2">): White {
+  // The union of every splash's shape (0..1).
+  const shape = o.splashes.reduce<F>((acc, s) => max(acc, splashShape(o, p, s)), lift<"f32">(0));
+  switch (o.paint.kind) {
+    case "ridge": {
+      // One cut into ink and cream. The claws live in the upper half of the shape's falloff only: cut lower, the zero
+      // lines of the noise printed as black scribbles wherever the falloff was faintly positive, far outside the foam
+      // (first version, 2026-11-11).
+      const cut = sub(sub(shape, 0.5), mul(abs(noise2(mul(p, 1.3))), 0.6));
+      const foam = edgeOf(cut, 0, 0.004);
+      return { cream: foam, key: mul(edgeOf(cut, -0.07, 0.004), sub(1, foam)) };
+    }
+    case "roll": {
+      const r = rollOf(o.paint.head);
+      // The heads lean outward from the splash that makes the most foam here.
+      const out = o.splashes.reduce<{ readonly most: F; readonly dir: Expr<"vec2"> }>((acc, s) => {
+        const mine = splashShape(o, p, s);
+        return { most: max(acc.most, mine), dir: select(gt(mine, acc.most), sub(p, lift<"vec2">(s.at)), acc.dir) };
+      }, { most: lift<"f32">(0), dir: vec2(0, 0) });
+      const ring = rollingFoam({ xz: p, mass: shape, slope: slopeOf(shape, p), lean: { kind: "toward", dir: out.dir } }, r);
+      // The crowns behind the ring: the ring's curls and key lines show over them, and the fingers stand out past it.
+      const crowns = o.splashes.map((s) => crownOf(o, p, s, r)).reduce(joined);
+      return behind(crowns, ring);
+    }
+  }
+}
+
+/**
+ * A splash's crown: fingers thrown outward from its foam's edge for the first third of its life, longest (0.38 of the
+ * reach) an eighth of the way in, then falling back into the ring.
+ */
+function crownOf(o: ImpactSpec, p: Expr<"vec2">, s: Splash, r: ReturnType<typeof rollOf>): White {
+  const k = saturate(mul(s.since, 1 / o.seconds));
+  const up = mul(mul(smoothstep(0, 0.1, k), sub(1, smoothstep(0.14, 0.34, k))), step(0, s.since));
+  // The fingers stand on the outer edge of the splash's foam: its front, and half the band's width beyond (as
+  // splashShape has them). Standing on the front itself they were hidden under the foam.
+  const rim = mul(add(mix(0.2, 1, sqrt(k)), mul(mix(0.45, 0.12, k), 0.5)), o.reach);
+  return crown(sub(p, lift<"vec2">(s.at)), rim, mul(up, o.reach * 0.38), 13, r);
 }
 
 /**

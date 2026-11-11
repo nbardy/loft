@@ -13,7 +13,7 @@ import {
   type Pose, type Ring, type RingWave, type Sea, type Thrown,
 } from "../../../src/index.ts";
 import { rotate } from "../../../src/map/chart.ts";
-import { impactFoam } from "../lib/impact.ts";
+import { impactFoam, type ImpactPaint } from "../lib/impact.ts";
 import { scaleShip, scaleShipNamed } from "../lib/scale_ship.ts";
 import { PRINT_WARNING } from "../lib/warning.ts";
 import { perFrame, sides, type V3 } from "./ink.ts";
@@ -85,7 +85,7 @@ export type Handoff = {
   readonly wave: RingWave;
 };
 
-export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
+export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption, burst: (reach: number) => ImpactPaint): Rig {
   const I = n.ink;
 
   // ==== the walk: in place, the body swaying over feet that tread ====
@@ -264,7 +264,7 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
       const splash = impactFoam("splash", water, {
         area: hit.disc({ centre: IN.throwLand, radius: n.splash.reach * 0.5 }), pad: n.splash.reach * 0.5 + 1,
         splashes: [{ at: IN.throwLand, since: flight.landed }],
-        reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black,
+        reach: n.splash.reach, seconds: n.splash.seconds, foam: I.cream, line: I.black, paint: burst(n.splash.reach),
       });
       // It turns about its middle (the point that flies), not about its origin a quarter unit below it.
       const turned = tumbled(socket, spinAxis, TH.turns, flight.u);
@@ -307,7 +307,7 @@ export function rig(n: Numbers, offer: ClawsOffer, boats: BoatsOption): Rig {
   const crash = impactFoam("crash", water, {
     area: crushDisc, pad: crashOuter - n.crushRadius + 1,
     splashes: [{ at: IN.crushCentre, since: sub(time, crush.arm) }],
-    reach: crashOuter, seconds: n.crashSeconds, foam: I.cream, line: I.black,
+    reach: crashOuter, seconds: n.crashSeconds, foam: I.cream, line: I.black, paint: burst(crashOuter),
   });
   /** What a game that runs its own boats reads (docs/throw_and_shove.md, "The contract"); the stand-ins above read the same. */
   const handoff: Handoff = {

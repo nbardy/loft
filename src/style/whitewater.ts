@@ -10,7 +10,7 @@
 
 import { abs, add, and, atan2, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, saturate, select, smoothstep, step, sub, vec2, type Expr } from "../expr.ts";
 import { hash22 } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth, wgslFn } from "../lib/wgsl.ts";
 
 type F = Expr<"f32">;
 type V2 = Expr<"vec2">;
@@ -25,6 +25,23 @@ export type Lean = { readonly kind: "none" } | { readonly kind: "toward"; readon
  * whatever the mass does across it; with none it is sized by the mass at each pixel and is squeezed where that falls.
  */
 export type WhiteOn = { readonly xz: V2; readonly mass: F; readonly slope: V2; readonly lean: Lean };
+
+/**
+ * How a value on the water changes across it, per world unit (x, z), from its screen derivatives and the position's:
+ * the slope of a mass that is a smooth formula (a splash's shape, a wave's mark). Not for the sea's contact level (one
+ * value a quad: the sea gives that one's direction itself). It turns its diagnostic off for itself: in the sea's cases
+ * every pixel of a quad computes the same formula.
+ */
+export const slopeOf = wgslFn<"vec2">({
+  name: "loft_slope_on_water", ret: "vec2", wgsl: /* wgsl */ `
+@diagnostic(off, derivative_uniformity)
+fn loft_slope_on_water(m: f32, xz: vec2<f32>) -> vec2<f32> {
+  let a = dpdx(xz); let b = dpdy(xz);
+  let det = a.x * b.y - a.y * b.x;
+  let dm = vec2<f32>(dpdx(m), dpdy(m));
+  return select(vec2<f32>(0.0), vec2<f32>(dm.x * b.y - dm.y * a.y, dm.y * a.x - dm.x * b.x) / det, abs(det) > 1e-12);
+}`,
+});
 
 /** The mass a lattice offset away: `off` the offset in cells of a lattice at `degrees` with cells `cell` across. */
 function massAt(on: WhiteOn, degrees: number, cell: number, off: V2): F {
@@ -204,7 +221,10 @@ export function curledHeads(on: WhiteOn, r: Roll): White {
  */
 export function crown(d: V2, rim: F, reach: F, count: number, r: Roll): White {
   const pixel = pixelOn(d);
-  const turn = mul(add(mul(atan2(d.y, d.x), 1 / (2 * Math.PI)), 0.5), count); // fingers round, 0..count
+  // Fingers round, 0..count; turned by up to 0.7 of a finger's spacing along their length, so they curve one way
+  // (claws, where straight ones were the points of a star).
+  const out = saturate(sub(length(d), rim).div(max(reach, 1e-4)));
+  const turn = add(mul(add(mul(atan2(d.y, d.x), 1 / (2 * Math.PI)), 0.5), count), mul(mul(out, out), 0.7));
   const k = floor(turn), across = abs(sub(fract(turn), 0.5)); // 0 on a finger's middle line, 0.5 between two
   const tall = mix(0.45, 1, hash22(vec2(k, count)).x);
   // A finger's length at this bearing: full on its middle line, falling to nothing between two (squared: concave sides).
@@ -215,6 +235,11 @@ export function crown(d: V2, rim: F, reach: F, count: number, r: Roll): White {
   const cream = over(s, 0, pixel);
   const live = step(1e-4, reach);
   return { cream: mul(cream, live), key: mul(mul(over(s, mul(line, -1), pixel), sub(1, cream)), live) };
+}
+
+/** One print behind another: the front one wherever it prints anything (its cream or its key line), the back one elsewhere. */
+export function behind(back: White, front: White): White {
+  return overPrint(back, { ...front, covers: saturate(add(front.cream, front.key)) });
 }
 
 /** Two prints as one: where either is cream it is cream; the key line only where neither is. */

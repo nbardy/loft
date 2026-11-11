@@ -24,6 +24,7 @@
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
 import { fliesClear, foam, frontFirst, gripReaches, landsInside, lift, marksAs, placedBy, print, releasesAt, scene, shoves, throwLands, tolerance, vec2, warned, woodblock, type Check } from "../../src/index.ts";
+import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
@@ -51,7 +52,7 @@ import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { rig } from "./titan/rig.ts";
-import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption } from "./titan/slots.ts";
+import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption, WaterOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
 // comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
@@ -96,7 +97,20 @@ export const design = makeDesign({
     face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
+    // How white water is printed (docs/art_direction/DIRECTION.md, "White water"). `base` is the rolling foam with
+    // curled heads for the collar, the wave's crest and the bursts; the others are the style's other collars, with the
+    // crest and the bursts as they were before. A look, not a part: see `looks` below.
+    foam: {
+      base: { about: "roll: a rolling mass with curled heads, for the collar, the crest and the bursts", collar: foam.roll(), marks: marksAs.heads(), burst: impactPaint.roll() },
+      curls: { about: "round lobes lying over each other, some with a curl cut in", collar: foam.curls(), marks: marksAs.flat(), burst: impactPaint.ridge },
+      apron: { about: "one flat scalloped shape with a key line", collar: foam.apron(), marks: marksAs.flat(), burst: impactPaint.ridge },
+      rings: { about: "thin broken ripple arcs moving outward, no fill", collar: foam.rings(), marks: marksAs.flat(), burst: impactPaint.ridge },
+      stipple: { about: "printed dots, dense at the body", collar: foam.stipple(), marks: marksAs.flat(), burst: impactPaint.ridge },
+      breakers: { about: "a low collar and blades along the swell's printed lines", collar: foam.breakers(), marks: marksAs.flat(), burst: impactPaint.ridge },
+      ridge: { about: "filaments along the zero lines of a noise (the first foam)", collar: foam.ridge(), marks: marksAs.flat(), burst: impactPaint.ridge },
+    } satisfies Record<string, WaterOption>,
   },
+  looks: ["foam"],
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
     // patient sad face, a red shrine on its back. The ship is taken further round to the front (-0.55, not -0.75): at
@@ -140,7 +154,7 @@ export const design = makeDesign({
   build: (o, n) => {
     // Numbers, then what the claws offer the rig, then the rig, then each slot drawn on it, then the scene.
     const offer = o.claws.offer(n);
-    const r = rig(n, offer, o.boats);
+    const r = rig(n, offer, o.boats, o.foam.burst);
     const carapace = o.carapace.draw(r);
     const legs = o.legs.draw(r);
     const claws = o.claws.draw(r, offer);
@@ -150,7 +164,7 @@ export const design = makeDesign({
       scene: scene({
         sea: r.world.sea,
         things: [...carapace.things, ...back, ...face.things, ...legs, ...claws.things, ...r.world.warnings, r.world.crash, ...r.world.splash, ...r.world.boat],
-        style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: foam.roll(), marks: marksAs.heads() }),
+        style: woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: o.foam.collar, marks: o.foam.marks }),
         sun: [0.15, 0.8, 0.6],
         cameras: camerasFor(n),
       }),

@@ -29,7 +29,7 @@ import {
 import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { landsInside } from "../../src/check.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
-import { impactFoam } from "./lib/impact.ts";
+import { impactFoam, impactPaint } from "./lib/impact.ts";
 import { PRINT_WARNING } from "./lib/warning.ts";
 
 type Rgb = readonly [number, number, number];
@@ -320,7 +320,7 @@ const slam = impactFoam("wyrmSlam", water, {
     { at: onLane(0.55 * (loopReach - loopHalf), loopHalf), since: sub(slamSince, 0.12) },
     { at: onLane(0.55 * (loopReach - loopHalf), -loopHalf), since: sub(slamSince, 0.12) },
   ],
-  reach: 2.8, seconds: 1.5, foam: INKS.cream.lit, line: INKS.black.lit,
+  reach: 2.8, seconds: 1.5, foam: INKS.cream.lit, line: INKS.black.lit, paint: impactPaint.ridge(),
 });
 
 // ==== the head ======================================================================================================
