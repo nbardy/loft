@@ -15,11 +15,14 @@ test("every named variant of the Reefback Titan passes its checks", () => {
   // second boat.
   for (const name of ["base", "mask"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+10/10 pass$`, "m"));
   // The islander's face asks three more of itself (titan/face/dandy.ts): each eye's size from the game camera, and that
-  // its expressions show and differ on screen. So does the fiddler's (titan/face/jitter.ts), on both fiddlers.
-  for (const name of ["islander", "fiddler", "fiddlerBaseDisc"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+13/13 pass$`, "m"));
-  // The spider crab's asks four (titan/face/mourner.ts): those three, and the right eye's size from the `far` camera,
+  // its expressions show and differ on screen.
+  expect(rows![1]).toMatch(/^islander\s+13\/13 pass$/m);
+  // The fiddler's face asks four (titan/face/jitter.ts), on both fiddlers: those three, and that neither eye is behind a
+  // claw from the game camera for more than half a second.
+  for (const name of ["fiddler", "fiddlerBaseDisc"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+14/14 pass$`, "m"));
+  // The spider crab's asks five (titan/face/mourner.ts): those four, and the right eye's size from the `far` camera,
   // the one that holds the whole crab (the game camera cuts its shrine).
-  expect(rows![1]).toMatch(/^stilt\s+14\/14 pass$/m);
+  expect(rows![1]).toMatch(/^stilt\s+15\/15 pass$/m);
   // The bruiser's face asks five (titan/face/brow.ts): each eye's size, its expressions told apart, the width of its roar,
   // and that the claws keep off the eyes and the mouth from the game camera.
   expect(rows![1]).toMatch(/^bruiser\s+15\/15 pass$/m);

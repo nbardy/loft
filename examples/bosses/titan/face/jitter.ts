@@ -82,7 +82,9 @@ export const CAST = cast<Channel, "want" | "strain" | "triumph" | "fury" | "winc
     strain: { upper: 1, lower: 1, slant: 0.5, pupil: 0.3, swell: 0.95, tall: 0.76, lean: 0, spread: 0.04, crane: 0, jaw: 0, sneer: 0.4, ship: 1, roam: 0, shake: 1, flush: 0.3 },
     // Let go: the stalks shoot up and apart, the eyes pop, the teeth part in a grin; it looks half after the ship and
     // half at you (looking all the way after it put the pupils on the far edge of the eye: tools/faces_fs_theory.ts).
-    triumph: { upper: 0, pupil: 0.3, swell: 1.3, tall: 1.15, lean: -0.2, spread: 0.3, crane: -0.15, jaw: 1, sneer: -1, ship: 0.5, roam: 0.25, shake: 0.2 },
+    // Both lean a little away from the great claw: spread evenly, the popped right eye stood behind the claw's raised
+    // finger from the game camera for 0.75 s (staysInView).
+    triumph: { upper: 0, pupil: 0.3, swell: 1.3, tall: 1.15, lean: -0.05, aside: -0.22, spread: 0.2, crane: -0.15, jaw: 1, sneer: -1, ship: 0.5, roam: 0.25, shake: 0.2 },
     // Before the slam: stalks short and spread in a V, thrust at the disc; lids hard down to the middle over pinpoints.
     fury: { upper: 0.85, lower: 0.2, slant: 0.75, pupil: 0.18, tall: 0.62, lean: 0.3, aside: 0.25, spread: 0.5, crane: 0.1, jaw: 0.3, sneer: 1, disc: 1, roam: 0, shake: 0.6, flush: 1 },
     // The blow: the near eye shut on a stalk kinked into an S, the far one ducked and half-lidded, peeking at the damage.
