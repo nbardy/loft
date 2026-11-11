@@ -21,7 +21,7 @@
 // lit (`print.keys`). The sea, the key line and the paper are woodblock's own; the whirlpool's foam arms are printed
 // by the style from the whirlpool's own foam, and its eye in the key black (`water.eye`).
 
-import { foam, marksAs,
+import { foam,
   abs, add, clamp, cos, crest, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, mix,
   mod, mul, normalize, on, pick, place, points, pow, print, scene, sea, select, sin, smoothstep, spacing, step, strand, sub, TAU, through,
   time, vec2, vec3, whirlpool, length, woodblock, beats, dragged, slowInOut, swing, uneven, type Chart, type F, type Frame, type In, type P3,
@@ -320,7 +320,7 @@ const slam = impactFoam("wyrmSlam", water, {
     { at: onLane(0.55 * (loopReach - loopHalf), loopHalf), since: sub(slamSince, 0.12) },
     { at: onLane(0.55 * (loopReach - loopHalf), -loopHalf), since: sub(slamSince, 0.12) },
   ],
-  reach: 2.8, seconds: 1.5, foam: INKS.cream.lit, line: INKS.black.lit, paint: impactPaint.roll()(2.8),
+  reach: 2.8, seconds: 1.5, foam: INKS.cream.lit, line: INKS.black.lit, paint: impactPaint.ridge(),
 });
 
 // ==== the head ======================================================================================================
@@ -545,7 +545,7 @@ export default scene({
     telegraph(lash, { style: { ...PRINT_WARNING, spacing: 1.1, edge: 0.2 } }),
     slam, ...skiff,
   ],
-  style: woodblock({ print: print.keys(INKS), water: { eye: { kind: "ink", below: -SEA_EYE, amount: 0.85 } }, foam: foam.roll(), marks: marksAs.heads() }),
+  style: woodblock({ print: print.keys(INKS), water: { eye: { kind: "ink", below: -SEA_EYE, amount: 0.85 } }, foam: foam.roll() }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     // Pulled back and aimed past the pool so the head, held high at the far side, clears the top of the frame.
