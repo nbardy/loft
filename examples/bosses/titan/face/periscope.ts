@@ -22,7 +22,7 @@ export const periscope: FaceOption = {
     const env = crush.envelope(time);
     // Fixed on the ship from the grab's warning until it has looked away; on the disc while roused.
     const onShip = mul(smoothstep(0, 0.5, add(grabEnv.tau, grab.warn)), sub(1, smoothstep(0, 1, grabBeat.settle)));
-    const target = mix(mix(vec3(...AUDIENCE), shipNow, onShip), vec3(n.crushCentre[0], 0, n.crushCentre[1]), k.rouse);
+    const target = mix(mix(rig.audience, shipNow, onShip), vec3(rig.crushCentre.x, 0, rig.crushCentre.y), k.rouse);
     const w = TAU / n.period;
     // The stalks lag: forward while the body rears back (the wind-up), and the walk's sway a beat late.
     const lag = (s: 1 | -1): F => mul(cos(sub(mul(time, w), 1.1 + 0.3 * s)), 0.3);

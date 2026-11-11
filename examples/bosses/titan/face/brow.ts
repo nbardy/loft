@@ -289,7 +289,7 @@ export function browFace(o: { readonly stalk: number }): FaceOption {
       const front = tabV("front", unit(add(out, mul(body.z, FACE_RIGHT))));
       const side = tabV("side", unit(cross(front, upFace))), up = cross(side, front);
       const axes: EyeAxes = { front, side, up };
-      const audience = vec3(...AUDIENCE);
+      const audience = rig.audience;
       const disc = vec3(rig.inputs.crushCentre.x, 0, rig.inputs.crushCentre.y);
       // The second boat where the ring has pushed it: the rig's place for it and the attack's own readout of the shove.
       const shoved = crush.pushed(rig.boatTwoAt);

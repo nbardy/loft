@@ -8,6 +8,7 @@
 // width at both ends (zero area: nothing is drawn there).
 
 import { add, clamp, f, fetch, floor, lift, listOf, max, mix, mul, step, sub, vec3, vec4, type Expr, type In, type TableSource } from "../expr.ts";
+import { scopedName } from "../expr.ts";
 import { draw } from "../draw/index.ts";
 import type { Drawable } from "../compile/context.ts";
 import { pixelWorld } from "../lib/wgsl.ts";
@@ -25,7 +26,8 @@ export type LinesSpec = {
 };
 
 /** All of `ropes` as one stroke. */
-export function lines(name: string, ropes: readonly Rope[], spec: LinesSpec): Drawable {
+export function lines(given: string, ropes: readonly Rope[], spec: LinesSpec): Drawable {
+  const name = scopedName(given);
   if (ropes.length < 1) throw new Error(`lines "${name}": need at least one rope`);
   const S = spec.segments ?? 6;
   if (!(Number.isInteger(S) && S >= 1)) throw new Error(`lines "${name}": segments must be a positive integer, got ${S}`);

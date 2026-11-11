@@ -135,6 +135,7 @@ export function compileScene(scene: Scene): Compiled {
     cpuPose: cpuPoseFunction(layout, envOf),
     pose: poseFunction(layout, envOf),
     cameras: scene.cameras,
+    loop: scene.loop,
     stats: { maxTriangles: triangles, draws: draws.length, curveRows: leaves.rows, stations: layout.stations },
   };
   const byName = new Map([...layout.placed.keys()].map((t) => [t.name, t]));

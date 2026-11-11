@@ -10,6 +10,7 @@
 import {
   add, cos, div, fract, input, lift, max, min, mix, mul, pow, saturate, step, sub, TAU, time, vec2, vec3, vec4, type Expr,
 } from "../expr.ts";
+import { scopedName } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment } from "../draw/surface.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../lib/sdf2.ts";
@@ -123,5 +124,5 @@ class Telegraph implements Drawable {
 
 /** The attack's hit shape on the water, as a danger marker that sharpens until the arming time. */
 export function telegraph(attack: Attack, o: { readonly style?: Partial<TelegraphStyle>; readonly name?: string } = {}): Drawable {
-  return new Telegraph(o.name ?? `telegraph_${attack.name}`, attack, { ...DANGER, ...o.style });
+  return new Telegraph(scopedName(o.name ?? `telegraph_${attack.name}`), attack, { ...DANGER, ...o.style });
 }

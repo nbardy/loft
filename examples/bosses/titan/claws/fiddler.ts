@@ -105,8 +105,9 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
     const up = vec3(0, 1, 0);
 
     // ---- display: the banner waved twice a loop (at about 6.7 s and 14.7 s), never while the cutter works ----
+    // In a taunt the banner waves on the dance's accents instead (rig.dance.display: its own display when there is none).
     const turn = TAU / banner.wave.every(n), sinceWave = sub(time, banner.wave.from);
-    const wave = tabS("wave", mul(mul(max(sin(mul(sinceWave, turn)), 0), max(sin(mul(sinceWave, turn)), 0)), sub(1, grabOn)));
+    const wave = tabS("wave", rig.dance.display(mul(mul(max(sin(mul(sinceWave, turn)), 0), max(sin(mul(sinceWave, turn)), 0)), sub(1, grabOn))));
     const C = n.carapace;
     const wristHome = vec3(C.to + banner.wrist.ahead, banner.wrist.up, C.width * 0.55 + banner.wrist.out);
     const drift = vec3(alive(time, 0.25, 41, 0.17), alive(time, 0.3, 42, 0.21), alive(time, 0.2, 43, 0.19));
@@ -117,7 +118,7 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
     const crusher = animate(restWrist, [crush], (spine) => {
       const w = tabV("wrist", spine(lift<"f32">(0)));
       // The lane: from the wrist toward the disc's centre, level. At contact it is the lunge's own lane.
-      const toward = tabV("toward", normalize(vec3(sub(n.crushCentre[0], w.x), 0, sub(n.crushCentre[1], w.z))));
+      const toward = tabV("toward", normalize(vec3(sub(rig.crushCentre.x, w.x), 0, sub(rig.crushCentre.y, w.z))));
       const p = env.p, q = env.q;
       // Display: up, leaning back; on the wave (the wrist lifted 1.1) it swings up and out to the side and back, as a
       // fiddler waves. (Swung forward, it lay down across the face and read as a lowered claw.) Face: out and forward.

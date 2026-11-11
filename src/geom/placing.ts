@@ -6,7 +6,7 @@
 // sum type, `Placer`, classified once where the scene is assembled, and `placedBy` is its one dispatcher: every use
 // gives one handler per variant and never asks the kind.
 
-import { add, cos, cross, lift, mix, mul, normalize, sin, sub, vec3, type Expr, type In } from "../expr.ts";
+import { add, cos, cross, dot, lift, mix, mul, normalize, sin, sub, vec3, type Expr, type In } from "../expr.ts";
 import type { Frame } from "../map/types.ts";
 
 type F = Expr<"f32">;
@@ -60,4 +60,11 @@ export function placedBy<T>(p: Placer, by: { readonly standIn: () => T; readonly
 export function blendFrames(a: Frame, b: Frame, w: In<"f32">): Frame {
   const x = normalize(mix(a.x, b.x, w)), z = normalize(cross(x, mix(a.y, b.y, w)));
   return { o: mix(a.o, b.o, w), x, y: cross(z, x), z };
+}
+
+/** Frame g with its axes turned by `angle` (radians) about `axis` (unit, through g's origin, which stays): Rodrigues' rotation. */
+export function turnedAbout(g: Frame, axis: In<"vec3">, angle: In<"f32">): Frame {
+  const a = lift<"vec3">(axis), c = cos(angle), s = sin(angle);
+  const turn = (v: P3): P3 => add(add(mul(v, c), mul(cross(a, v), s)), mul(a, mul(sub(1, c), dot(a, v))));
+  return { o: g.o, x: turn(g.x), y: turn(g.y), z: turn(g.z) };
 }
