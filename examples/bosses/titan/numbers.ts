@@ -91,9 +91,10 @@ export const S = {
     /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
      * stack [distance from the island's centre, bearing, height, girth]. */
     shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
-    /** Two groves, each [G, bearing, trees], both on the left of the crown with open turf between and to the right: the
-     * sight lines from the light to the game and far cameras cross the cap's right half. */
-    groves: [[0.24, -55, 5], [0.36, -125, 4]] as const,
+    /** Two groves, each [G, bearing, trees]: one left of the crown, one forward-right, open turf and the crown between.
+     * Neither stands on the sight lines from the light to the game and far cameras, which cross the cap's right half
+     * toward the tail (2.1 and 1.25 from the centre), and both are behind x = -0.5 (the head and its antennae). */
+    groves: [[0.26, -60, 5], [0.3, 40, 4]] as const,
     /**
      * The light on the point (back/beacon.ts): how far from the island's centre its foot stands, the tower's height, its
      * girth at foot and top, the share of the tower that is crust, the lantern room's size, its gulls. Then its structure,
