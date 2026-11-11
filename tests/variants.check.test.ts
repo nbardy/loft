@@ -12,10 +12,13 @@ test("every named variant of the Reefback Titan passes its checks", () => {
   expect(rows, `no summary in:\n${out}\n${r.stderr.toString()}`).not.toBeNull();
   // Nine checks each: Claw Crush lands and is warned, the Grab is warned, grips and lets go as it says, its ship flies
   // as released, lands and keeps clear, the slam's ring waits for its front and shoves the second boat.
-  for (const name of ["base", "stilt", "fiddler", "fiddlerBaseDisc", "mask"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+9/9 pass$`, "m"));
+  for (const name of ["base", "stilt", "fiddler", "fiddlerBaseDisc"]) expect(rows![1]).toMatch(new RegExp(`^${name}\\s+9/9 pass$`, "m"));
   // The islander's face asks three more of itself (titan/face/dandy.ts): each eye's size from the game camera, and that
   // its expressions show and differ on screen.
   expect(rows![1]).toMatch(/^islander\s+12\/12 pass$/m);
+  // The samurai's face asks six (titan/face/mask.ts): each eye's size from the game camera, a brow plate's length, the
+  // roar's gape, that its expressions show and differ on screen, and that its struck poses hold dead still.
+  expect(rows![1]).toMatch(/^mask\s+15\/15 pass$/m);
   expect(rows![2]).toBe(rows![3]);
   expect(r.exitCode).toBe(0);
 }, 600_000);

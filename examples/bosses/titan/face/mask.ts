@@ -40,25 +40,25 @@ import type { FaceOption } from "../slots.ts";
 
 /** The mask's sphere: its radius, how far it stands in front of the carapace's front end, its tilt up toward the high
  * cameras (radians), its centre's height. */
-export const R = 4.2, PROUD = 0.75, TILT = 0.3, CY = 0.1;
+export const R = 4.2, PROUD = 0.75, TILT = 0.4, CY = 0.1;
 /** Half-angles the mask spans: across (wider at the cheeks than the chin) and up/down. */
 const ACROSS = 0.8, CHIN = 0.65, UP = 0.42, DOWN = 0.55;
 /** An eye: where its middle is (a for the right eye; the left is mirrored), its radius, its half-depth (it is a
  * flattened ball) and how far its middle stands off the sphere. */
-export const EYE = { a: 1.25, b: 0.15, r: 0.8, depth: 0.24, out: -0.02 } as const;
+export const EYE = { a: 1.1, b: 0.15, r: 0.8, depth: 0.24, out: -0.02 } as const;
 /** A brow plate at rest: its inner end, middle and outer end (a, b), how far it stands off the sphere, its half-height
  * at the inner and outer ends, and what the channels do to it (units of b per unit of channel). */
 export const BROW = {
-  line: [[0.3, 0.62], [1.4, 1.14], [2.65, 1.0]] as const, out: 0.42, girth: [0.34, 0.24] as const,
-  vee: [-0.5, 0.05, 0.35] as const, cock: [0.34, -0.14] as const,
+  line: [[0.22, 0.5], [1.25, 1.0], [2.4, 0.86]] as const, out: 0.3, girth: [0.42, 0.3] as const,
+  vee: [-0.42, 0.05, 0.35] as const, cock: [0.34, -0.14] as const,
 } as const;
 /** The mouth: its line's height, its half-width, how far the jaw drops, the lips' thickness, how far the lips part to
  * bare the teeth, the corners' drop per unit of `grim`, and what `skew` does (sideways, and to the corner it pulls). */
-export const MOUTH = { b: -1.3, half: 1.9, drop: 0.62, lip: 0.17, part: [0.05, 0.2] as const, grim: 0.5, skew: [0.3, 0.3] as const } as const;
+export const MOUTH = { b: -1.1, half: 1.9, drop: 0.62, lip: 0.17, part: [0, 0.25] as const, grim: 0.7, skew: [0.3, 0.3] as const } as const;
 /** How far a pupil slides, as a share of the eye's radius: crossed to the nose, and toward what it looks at. */
-const CROSS = 0.5, SLIDE = 0.5;
+const CROSS = 0.45, SLIDE = 0.5;
 /** Half-height (units of b) of the band between the teeth rows that stretches into the gape when the jaw drops. */
-const GAP = 0.05;
+const GAP = 0.1;
 
 // ---- the channels, and the cast ----
 
@@ -72,24 +72,26 @@ const GAP = 0.05;
  *   look has gone from the audience to the ship.
  * - jaw: 0 shut to 1 dropped; bare: how far the lips part over the teeth; grim: how far the corners turn down; skew:
  *   1 the mouth pulled to the crab's right.
- * - nod: radians the face tips up (chin up); turn: radians it turns to the crab's right.
+ * - nod: radians the whole mask tips up (chin up); turn: radians the face turns to the crab's right inside the helmet:
+ *   its features slide across the sphere while the rim, the brim and the cheek guards stay.
  */
 export type Channel = "brow" | "vee" | "cock" | "lidU" | "lidL" | "wink" | "pupil" | "cross" | "ship" | "jaw" | "bare" | "grim" | "skew" | "nod" | "turn";
 
 export const CAST = cast<Channel, "wanting" | "straining" | "triumphant" | "furious" | "wincing">(
   // Stern: brows low in a shallow V, lids a third down, the pupils square on you, the teeth just showing in a grimace.
-  { brow: 0, vee: 0, cock: 0, lidU: 0.3, lidL: 0.1, wink: 0, pupil: 0.28, cross: 0, ship: 0, jaw: 0, bare: 0.35, grim: 0.5, skew: 0, nod: 0, turn: 0 },
+  { brow: 0, vee: 0, cock: 0, lidU: 0.5, lidL: 0.2, wink: 0, pupil: 0.3, cross: 0, ship: 0, jaw: 0, bare: 0.35, grim: 0.5, skew: 0, nod: 0, turn: 0.1 },
   {
     // It wants the ship: the face turns a little to it, the eyes slide all the way, the near brow cocks, the jaw loosens.
-    wanting: { cock: 1.3, vee: -0.2, lidU: 0.08, lidL: 0, pupil: 0.32, ship: 1, jaw: 0.25, bare: 0.7, grim: 0.2, nod: -0.03, turn: -0.13 },
+    wanting: { cock: 1.3, vee: -0.2, lidU: 0.08, lidL: 0, pupil: 0.32, ship: 1, jaw: 0.25, bare: 0.7, grim: 0.2, nod: -0.03, turn: -0.06 },
     // The squeeze: eyes screwed to slits under brows crushed down, every tooth bared, chin tucked.
-    straining: { brow: -0.28, vee: 0.3, lidU: 0.85, lidL: 0.8, pupil: 0.22, jaw: 0.06, bare: 1, grim: 0.85, nod: -0.09, turn: -0.05 },
-    // Let go (a mie): chin up, brows flung high and apart, eyes wide round small pupils, the lips sealed in a proud bow.
-    triumphant: { brow: 0.5, vee: -0.55, cock: 0.3, lidU: 0, lidL: 0, pupil: 0.2, bare: 0, grim: 1, nod: 0.18 },
+    straining: { brow: -0.28, vee: 0.3, lidU: 0.85, lidL: 0.8, pupil: 0.22, jaw: 0.06, bare: 1, grim: 0.85, nod: -0.09, turn: 0.03 },
+    // Let go (a mie): the face snaps round to the audience, chin up, brows high and still angled, eyes wide, the lips
+    // sealed in a proud bow. (Brows flung apart over pin pupils read as fright, not pride.)
+    triumphant: { brow: 0.45, vee: 0.15, cock: 0.2, lidU: 0.15, lidL: 0.3, pupil: 0.27, bare: 0, grim: 1, nod: 0.16, turn: 0.25 },
     // Before the slam (a mie, with the nirami): brows in a deep V, eyes wide and crossed, the jaw dropped in a roar.
-    furious: { brow: -0.12, vee: 1, lidU: 0.05, lidL: 0, pupil: 0.2, cross: 1, jaw: 1, bare: 1, grim: 0.7, nod: -0.07 },
+    furious: { brow: -0.05, vee: 0.9, lidU: 0.05, lidL: 0, pupil: 0.22, cross: 1, jaw: 1, bare: 1, grim: 0.7, nod: -0.07, turn: 0.25 },
     // The impact: the near eye shut and its brow jammed down, the mouth dragged to that side, the head jolted back.
-    wincing: { brow: -0.1, vee: 0.25, cock: -1.3, lidU: 0.55, lidL: 0.5, wink: 1, pupil: 0.24, jaw: 0.1, bare: 0.9, grim: 0.3, skew: 1, nod: 0.07, turn: -0.06 },
+    wincing: { brow: -0.1, vee: 0.25, cock: -1.3, lidU: 0.55, lidL: 0.5, wink: 1, pupil: 0.24, jaw: 0.1, bare: 0.9, grim: 0.3, skew: 1, nod: 0.07, turn: 0 },
   },
 );
 export type Mood = keyof typeof CAST.named;
@@ -122,13 +124,15 @@ export function featuresOf<T>(o: Arith<T>, c: Readonly<Record<Channel, T>>) {
       /** The plate's inner end, middle and outer end, (a, b). */
       brow: BROW.line.map(([a, b], i) => [o.mul(o.sub(a, o.mul(c.vee, i === 0 ? 0.1 : 0)), side), o.add(o.add(b, lift_), o.mul(c.vee, BROW.vee[i]!))] as const),
       /** The lids' edges at the eye's middle, as shares of its radius up from its centre; and their tip toward the nose. */
-      upper: o.sub(1, cU), lower: o.sub(cL, 1), slant: o.mul(o.add(0.22, o.mul(c.vee, 0.3)), side),
+      upper: o.sub(1, cU), lower: o.sub(cL, 1), slant: o.mul(o.add(0.3, o.mul(c.vee, 0.3)), side),
       /** The pupil's middle before it looks at anything, shares of the eye's radius (across to the crab's right, up). */
-      pupil: [o.mul(o.mul(c.cross, CROSS), -side), o.sub(0.06, o.mul(c.cross, 0.1))] as const,
+      // Crossed, they go to the nose and down: the brows' V covers the upper inner quarter of each eye, where pupils
+      // crossed level were hidden.
+      pupil: [o.mul(o.mul(c.cross, CROSS), -side), o.sub(0.1, o.mul(c.cross, 0.5))] as const,
     };
   };
   return {
-    pitch: o.add(TILT, c.nod), turn: c.turn, right: one(1), left: one(-1), pupil: c.pupil, ship: c.ship,
+    pitch: o.add(TILT, c.nod), shift: o.mul(c.turn, R), right: one(1), left: one(-1), pupil: c.pupil, ship: c.ship,
     mouth: { centre: o.mul(c.skew, MOUTH.skew[0]), drop: o.mul(o.clamp(c.jaw, 0, 1.2), MOUTH.drop), at: (s: T, taper: T) => mouthAt(o, c, s, taper) },
   };
 }
@@ -203,10 +207,10 @@ export const mask: FaceOption = {
 
     // ---- the face's frame: its sphere's centre, and its own out, up and right after the tilt, the nod and the turn ----
     const O = local([C.to + PROUD - R, CY, 0]);
-    const cp = cos(f.pitch), sp = sin(f.pitch), ct = cos(f.turn), st = sin(f.turn);
-    const inBody = (x: F | number, y: F | number, z: F | number): P3 => add(add(mul(body.x, x), mul(body.y, y)), mul(body.z, z));
-    const N = tabV("out", inBody(mul(cp, ct), mul(sp, ct), st)), U = tabV("up", inBody(mul(sp, -1), cp, 0));
-    const Z = tabV("right", inBody(mul(mul(cp, st), -1), mul(mul(sp, st), -1), ct));
+    const cp = cos(f.pitch), sp = sin(f.pitch);
+    const N = tabV("out", add(mul(body.x, cp), mul(body.y, sp))), U = tabV("up", sub(mul(body.y, cp), mul(body.x, sp))), Z = body.z;
+    /** How far the features have slid to the crab's right: the turn, in units along the face. */
+    const slid = tabF("slid", f.shift);
     /** The unit direction from the sphere's centre to the face at angles (th across, ph up). */
     const dirAt = (th_: F | number, ph_: F | number): P3 => {
       const th = lift<"f32">(th_), ph = lift<"f32">(ph_);
@@ -221,7 +225,8 @@ export const mask: FaceOption = {
       const u = sub(mul(q, 2), 1), v = sub(mul(p, 2), 1);
       const X = mul(u, sqrt(sub(1, mul(mul(v, v), 0.5)))), Y = mul(v, sqrt(sub(1, mul(mul(u, u), 0.5))));
       const th = mul(X, mix(CHIN, ACROSS, smoothstep(-0.9, 0.0, Y))), ph = mul(Y, mix(DOWN, UP, smoothstep(-0.1, 0.1, Y)));
-      return { X, Y, th, ph, a: mul(th, R), b: mul(ph, R) };
+      // (a, b) are the features' own coordinates: they slide with the turn. (X, Y) are the mask's: its rim and lacquer stay.
+      return { X, Y, th, ph, a: sub(mul(th, R), slid), b: mul(ph, R) };
     };
     /** The mouth at a point of the face: s along it, its line's height below the point, the lips' gap there. */
     const mouth = (a: F, b: F) => {
@@ -236,18 +241,20 @@ export const mask: FaceOption = {
       const { a, b, X, Y } = w, ax = abs(a), rho = length(vec2(X, Y)), m = mouth(a, b);
       const rim = sub(mul(smoothstep(0.84, 0.94, rho), 0.16), mul(smoothstep(0.95, 1.0, rho), 0.4));
       const socket = mul(bump(ell(ax, b, EYE.a, EYE.b, EYE.r * 1.5, EYE.r * 1.45)), 0.3);
-      const nose = add(mul(bump(ell(a, b, 0, -0.42, 0.5, 0.62)), 0.5), mul(bump(ell(ax, b, 0.4, -0.66, 0.36, 0.3)), 0.24));
+      const nose = add(mul(bump(ell(a, b, 0, -0.42, 0.5, 0.62)), 0.36), mul(bump(ell(ax, b, 0.4, -0.66, 0.36, 0.3)), 0.24));
       const cheek = mul(bump(ell(ax, b, 2.25, -0.75, 0.95, 0.8)), 0.3);
       const muzzle = mul(bump(ell(a, b, 0, MOUTH.b, 2.7, 1.05)), 0.24);
       const lips = mul(bump(div(abs(m.dy), add(m.open, MOUTH.lip * 1.4))), mul(m.taper, 0.16));
       const gape = mul(smoothstep(0.04, -0.04, sub(abs(m.dy), m.open)), 0.2);
-      const guard = mul(mul(smoothstep(0.72, 0.86, abs(X)), smoothstep(0.25, -0.15, Y)), 0.18);
+      const guard = mul(mul(smoothstep(0.8, 0.92, abs(X)), smoothstep(0.25, -0.15, Y)), 0.18);
       return sub(add(add(add(add(add(rim, nose), cheek), muzzle), lips), guard), add(socket, gape));
     };
     const point = (p: F, q: F): P3 => {
       const w = where(p, q), m = mouth(w.a, w.b);
       // The jaw: everything below the mouth's line drops, the band between the teeth rows stretching into the gape.
-      const down = mul(mul(drop, smoothstep(GAP, -GAP, m.dy)), sub(1, smoothstep(0.9, 1.3, abs(m.s))));
+      // A straight ramp across the band, not a smooth step: the grid draws a ramp exactly, and with a curved one the
+      // teeth's edges in the gape followed the grid's rows in a sawtooth.
+      const down = mul(mul(drop, clamp(div(sub(GAP, m.dy), 2 * GAP), 0, 1)), sub(1, smoothstep(0.9, 1.3, abs(m.s))));
       return sub(add(O, mul(dirAt(w.th, w.ph), add(R, relief(w)))), mul(U, down));
     };
 
@@ -256,7 +263,7 @@ export const mask: FaceOption = {
       const w = where(p, q), { a, b, X, Y } = w, ax = abs(a), rho = length(vec2(X, Y)), m = mouth(a, b);
       // Under each eye a black surround (the eye's liner), and kumadori: dark strokes swept up and out from the eyes'
       // outer corners and down the cheeks, two furrows over the nose.
-      const liner = inside(sub(ell(ax, b, EYE.a, EYE.b, EYE.r * 1.16, EYE.r * 1.16), 1));
+      const liner = inside(sub(ell(ax, b, EYE.a, EYE.b, EYE.r * 1.12, EYE.r * 1.12), 1));
       const sweep = mul(line(sub(b, add(0.3, mul(sub(ax, 2.0), 0.75))), 0.07), mul(smoothstep(2.05, 2.2, ax), smoothstep(3.0, 2.7, ax)));
       const cheekLine = mul(line(sub(ell(ax, b, 2.25, -0.85, 1.0, 0.8), 1), 0.05), mul(cut(b, -0.75), smoothstep(2.9, 2.5, ax)));
       const furrow = mul(line(sub(ax, add(0.13, mul(sub(b, 0.5), 0.2))), 0.035), mul(smoothstep(0.75, 0.9, b), smoothstep(1.4, 1.25, b)));
@@ -275,16 +282,17 @@ export const mask: FaceOption = {
       const within = smoothstep(0.99, 0.93, abs(m.s));
       const tooth = line(sub(fract(add(mul(m.s, 5.5), 0.5)), 0.5), 0.045);
       const g = div(m.dy, GAP); // 1 at the gape's top, -1 at its bottom
-      const fang = bump(div(sub(abs(m.s), 0.6), 0.14));
-      const share = div(2 * 0.15, add(drop, 0.05)); // a tooth's length as a share of the gape
+      const fang = bump(div(abs(sub(abs(m.s), 0.6)), 0.14));
+      const share = div(2 * 0.17, add(drop, 2 * GAP * 0.55)); // a tooth's length as a share of the gape; shut, the rows meet
       const upperRow = cut(g, sub(1, mul(share, add(1, mul(fang, 1.8))))), lowerRow = sub(1, cut(g, add(-1, share)));
       const inGape = mix(BLACK, mix(CREAM, BLACK, tooth), max(upperRow, lowerRow));
       const mouthInk = mix(mix(CREAM, BLACK, tooth), inGape, band);
-      const lipEdge = max(line(sub(abs(m.dy), m.open), 0.03), mul(line(sub(abs(m.dy), add(m.open, MOUTH.lip)), 0.025), cut(m.taper, 0.02)));
+      // Sealed lips are one heavy bowed line; parted, an outline round the teeth.
+      const lipEdge = max(line(sub(abs(m.dy), m.open), mix(0.065, 0.03, clamp(mul(c.bare, 4), 0, 1))), mul(line(sub(abs(m.dy), add(m.open, MOUTH.lip)), 0.025), cut(m.taper, 0.02)));
       const chinLine = mul(line(sub(m.dy, -0.62), 0.03), smoothstep(0.75, 0.5, abs(m.s)));
 
       // Lacquer: the cheek guards below and outside the cheeks, and the brim above; a cream edge line on each.
-      const guardD = sub(0.8, add(abs(X), mul(min(Y, 0), -0.15)));
+      const guardD = sub(0.87, add(abs(X), mul(min(Y, 0), -0.15)));
       const guard = mul(inside(guardD), smoothstep(0.35, 0.25, Y));
       const brimD = sub(0.86, add(Y, mul(mul(X, X), -0.25)));
       const lacquer = max(guard, inside(brimD));
@@ -304,7 +312,7 @@ export const mask: FaceOption = {
     // ---- the eyes: flattened balls in the sockets, the lids and the pupil painted on them ----
     const eye = (side: 1 | -1) => {
       const tag = side > 0 ? "R" : "L", e = side > 0 ? f.right : f.left;
-      const front = tabV(`eye${tag}_front`, dirAt((side * EYE.a) / R, EYE.b / R));
+      const front = tabV(`eye${tag}_front`, dirAt(div(add(slid, side * EYE.a), R), EYE.b / R));
       const centre = tabV(`eye${tag}_at`, add(O, mul(front, R + EYE.out)));
       // The eye's own across (to the crab's right) and up.
       const across = unit(cross(front, U)), up = cross(across, front);
@@ -350,12 +358,12 @@ export const mask: FaceOption = {
     // ---- the brow plates: lacquer bars standing proud of the face, from by the nose out to the temple ----
     const brow = (side: 1 | -1) => {
       const tag = side > 0 ? "R" : "L", e = side > 0 ? f.right : f.left;
-      const [inner, mid, outer] = e.brow.map(([a, b], i) => tabV(`brow${tag}_${i}`, at(a, b, BROW.out))) as [P3, P3, P3];
+      const [inner, mid, outer] = e.brow.map(([a, b], i) => tabV(`brow${tag}_${i}`, at(add(a, slid), b, BROW.out))) as [P3, P3, P3];
       const plate = strand({
         name: `brow${tag}`, spine: (m) => through(m, [inner, mid, outer]), stations: 8, girth: (m) => mix(BROW.girth[0], BROW.girth[1], m),
         section: { aspect: 0.75, squareness: 3 }, tips: [{ round: 0.1 }, { point: 0.28 }], up: N, detail: { along: 22, around: 12 },
-        // Black lacquer, a red edge along its top (the helmet's own trim): from above it is a dark bar with a lit rim.
-        paint: (_m, v) => mix(LAC, RED, mul(cut(sin(mul(v, TAU)), 0.82), 0.9)),
+        // Black lacquer with red edges above and below (the helmet's own trim): on the red face, a dark bar.
+        paint: (_m, v) => mix(LAC, RED, cut(abs(cos(mul(v, TAU))), 0.8)),
       });
       const eyeAt = side > 0 ? right.centre : left.centre;
       return { plate, ends: { from: inner, to: outer }, marks: { [`browIn${tag}`]: { from: eyeAt, to: inner }, [`browOut${tag}`]: { from: eyeAt, to: outer } } };
@@ -365,8 +373,10 @@ export const mask: FaceOption = {
     // ---- the tusks: two cream fangs on the lower jaw, at the mouth's corners; they drop with it ----
     const tusk = (side: 1 | -1) => {
       const tag = side > 0 ? "R" : "L";
-      const foot = tabV(`tusk${tag}_foot`, sub(at(add(f.mouth.centre, side * 1.42), MOUTH.b - 0.3, 0.3), mul(U, drop)));
-      const tipAt = tabV(`tusk${tag}_tip`, sub(at(add(f.mouth.centre, side * 1.62), MOUTH.b + 0.5, 0.62), mul(U, drop)));
+      // It stands on the lower lip three quarters of the way to the corner, wherever the mouth's line is there.
+      const lineThere = f.mouth.at(lift<"f32">(side * 0.76), lift<"f32">(0.67)).line;
+      const foot = tabV(`tusk${tag}_foot`, sub(at(add(add(f.mouth.centre, slid), side * 1.42), sub(lineThere, 0.3), 0.3), mul(U, drop)));
+      const tipAt = tabV(`tusk${tag}_tip`, sub(at(add(add(f.mouth.centre, slid), side * 1.6), add(lineThere, 0.52), 0.62), mul(U, drop)));
       return strand({
         name: `tusk${tag}`, spine: (m) => mix(foot, tipAt, m), stations: 4, girth: (m) => mix(0.2, 0.12, m), tips: [{ round: 0.1 }, { point: 0.5 }],
         up: N, detail: { along: 8, around: 8 }, paint: () => CREAM,
@@ -376,15 +386,16 @@ export const mask: FaceOption = {
     // The mouth's marks: from the upper lip's middle to the lower lip's (the gape), and to each corner.
     const zero = lift<"f32">(0), one = lift<"f32">(1);
     const mid = f.mouth.at(zero, one), cornerR = f.mouth.at(one, zero), cornerL = f.mouth.at(lift<"f32">(-1), zero);
-    const lipTop = tabV("lip_top", at(f.mouth.centre, add(mid.line, mid.open), 0.3));
-    const lipBottom = tabV("lip_bottom", sub(at(f.mouth.centre, sub(mid.line, mid.open), 0.3), mul(U, drop)));
-    const cornerAt = (s: 1 | -1, m: typeof mid) => tabV(`corner_${s}`, at(add(f.mouth.centre, s * MOUTH.half), m.line, 0.2));
+    // Plain expressions, not per-frame tables: only the checks read them, and a table nothing draws from is not laid out.
+    const lipTop = at(add(f.mouth.centre, slid), add(mid.line, mid.open), 0.3);
+    const lipBottom = sub(at(add(f.mouth.centre, slid), sub(mid.line, mid.open), 0.3), mul(U, drop));
+    const cornerAt = (s: 1 | -1, m: typeof mid) => at(add(add(f.mouth.centre, slid), s * MOUTH.half), m.line, 0.2);
     const gape = { from: lipTop, to: lipBottom };
     const marks = {
       ...right.marks, ...left.marks, ...browR.marks, ...browL.marks,
       gape, cornerR: { from: lipTop, to: cornerAt(1, cornerR) }, cornerL: { from: lipTop, to: cornerAt(-1, cornerL) },
-      // The whole face's nod and turn: from its sphere's centre to its middle.
-      face: { from: O, to: add(O, mul(N, R)) },
+      // The whole face's nod and turn: from its sphere's centre to the bridge of its nose.
+      face: { from: O, to: at(slid, 0, 0) },
     };
 
     return {

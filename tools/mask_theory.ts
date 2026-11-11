@@ -34,9 +34,10 @@ const SHIP: V = [C.to! - 1.1 + Math.cos(S.grabBearing) * 9.0, 0.25, -C.width! * 
 
 function drawn(c: (typeof CAST)["rest"]) {
   const f = featuresIn(c);
-  const cp = Math.cos(f.pitch), sp = Math.sin(f.pitch), ct = Math.cos(f.turn), st = Math.sin(f.turn);
-  const N: V = [cp * ct, sp * ct, st], U: V = [-sp, cp, 0], Z: V = [-cp * st, -sp * st, ct];
-  const dir = (a: number, b: number): V => { const th = a / R, ph = b / R; return add(add(mul(N, Math.cos(ph) * Math.cos(th)), mul(U, Math.sin(ph))), mul(Z, Math.cos(ph) * Math.sin(th))); };
+  const cp = Math.cos(f.pitch), sp = Math.sin(f.pitch);
+  const N: V = [cp, sp, 0], U: V = [-sp, cp, 0], Z: V = [0, 0, 1];
+  // The turn slides every feature across the sphere (the mask's rim stays).
+  const dir = (a: number, b: number): V => { const th = (a + f.shift) / R, ph = b / R; return add(add(mul(N, Math.cos(ph) * Math.cos(th)), mul(U, Math.sin(ph))), mul(Z, Math.cos(ph) * Math.sin(th))); };
   const at = (a: number, b: number, out: number): V => add(O, mul(dir(a, b), R + out));
   const eye = (side: 1 | -1) => {
     const e = side > 0 ? f.right : f.left;
@@ -61,10 +62,10 @@ function drawn(c: (typeof CAST)["rest"]) {
   const lipTop = at(f.mouth.centre, mid.line + mid.open, 0.3), lipBottom = sub(at(f.mouth.centre, mid.line - mid.open, 0.3), mul(U, f.mouth.drop));
   const marks: Record<string, readonly [number, number]> = {
     gape: seen(lipTop, lipBottom), cornerR: seen(lipTop, at(f.mouth.centre + MOUTH.half, cR.line, 0.2)), cornerL: seen(lipTop, at(f.mouth.centre - MOUTH.half, cL.line, 0.2)),
-    face: seen(O, add(O, mul(N, R))),
+    face: seen(O, at(0, 0, 0)),
   };
   for (const [tag, e] of [["R", right], ["L", left]] as const) for (const [k, v] of Object.entries(e.marks)) marks[`${k}${tag}`] = v;
-  return { right, left, marks, facing: dot(N, unit(sub(EYE_AT, add(O, mul(N, R))))), pupilsApart: long(seen(add(right.centre, [0, 0, 0]), left.centre)) };
+  return { right, left, marks, facing: dot(dir(0, 0), unit(sub(EYE_AT, at(0, 0, 0)))), pupilsApart: long(seen(add(right.centre, [0, 0, 0]), left.centre)) };
 }
 
 const names = ["rest", ...Object.keys(CAST.named)] as const;
