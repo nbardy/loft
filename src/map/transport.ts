@@ -70,6 +70,8 @@ export type StrandSamples = {
   readonly up: V3;
   /** Per world unit: how fast accumulated roll bleeds back toward `up`. 0 is the pure rotation-minimising frame. */
   readonly level: number;
+  /** The least stretch volume preservation honours (Section.leastStretch): radii grow by at most 1 / sqrt of it. */
+  readonly leastStretch: number;
 };
 
 /** Central difference over the stations (one-sided at the ends): the Catmull-Rom derivative at each knot, per index. */
@@ -85,9 +87,9 @@ function knotDerivative(p: readonly V3[], k: number): V3 {
  * on the local spine against its rest), and the stretch. Shared by the full pose and the skeleton-only slice, so the two
  * agree exactly.
  */
-export function stationRadii(s: Pick<StrandSamples, "local" | "rest" | "halfWidth" | "aspect">, k: number): [number, number, number] {
+export function stationRadii(s: Pick<StrandSamples, "local" | "rest" | "halfWidth" | "aspect" | "leastStretch">, k: number): [number, number, number] {
   const stretch = v3.len(knotDerivative(s.local, k)) / Math.max(v3.len(knotDerivative(s.rest, k)), 1e-9);
-  const keep = 1 / Math.sqrt(Math.max(stretch, 0.05));
+  const keep = 1 / Math.sqrt(Math.max(stretch, s.leastStretch));
   return [s.halfWidth[k]! * keep, s.halfWidth[k]! * s.aspect[k]! * keep, stretch];
 }
 

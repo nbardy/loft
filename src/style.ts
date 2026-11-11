@@ -50,6 +50,12 @@ export type WaterCtx = {
    */
   readonly contact: Expr<"f32">;
   /**
+   * The foam the sea's deformations mark on the water here (a whirlpool's arms), 0..1, antialiased; 0 on a sea without
+   * deformations. `foam` already holds it (the larger of this and the contact foam); a style that shapes its own
+   * contact foam from `contact` prints this beside it.
+   */
+  readonly marks: Expr<"f32">;
+  /**
    * Where on the swell this is: the phase of the largest swell component, in cycles (one per wavelength, increasing
    * along its direction of travel; a crest at fract = 0.25). Lines of constant phase run along the crests, so a style
    * can print lines that follow the swell; 0 everywhere on a sea without swell.

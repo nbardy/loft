@@ -87,7 +87,8 @@ export interface CompileContext {
 }
 
 /** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */
-export type SurfaceBakeable = { readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two" };
+/** `copy` is the copy's index (0 for a surface drawn once): what paint is told it is (`PaintAt.copy`). */
+export type SurfaceBakeable = { readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number };
 /** A closed triangle mesh a drawable draws (a field's, src/map/nets.ts), with the paint of a point and its normal. */
 export type MeshBakeable = { readonly name: string; readonly mesh: TriangleMesh; readonly paint: (hit: { readonly p: P3; readonly normal: P3 }) => P3 };
 /**

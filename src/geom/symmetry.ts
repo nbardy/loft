@@ -18,7 +18,7 @@ function mirrorStrand(s: Strand, name: string): Strand {
   const t = s.transport;
   const transport = { ...t, twist: (m: Parameters<typeof t.twist>[0]) => neg(t.twist(m)), up: reflect(t.up) };
   const paint = s.look.paint;
-  return new Strand([name, (m) => reflect(s.spine(m)), s.section, transport, s.chart, time, newSlices(), `body_${name}`, { kind: "all" }], { ...s.look, paint: (m, v) => paint(m, sub(0.5, v)) });
+  return new Strand([name, (m) => reflect(s.spine(m)), s.section, transport, s.chart, time, newSlices(), `body_${name}`, { kind: "all" }], { ...s.look, paint: (m, v, at) => paint(m, sub(0.5, v), at) });
 }
 
 const swapEnds = (u: Topology["u"]): Topology["u"] => (u === "periodic" ? u : [u[1], u[0]] as readonly [End, End]);
@@ -36,8 +36,8 @@ function mirrorSurface(s: Surface): Surface {
 
 function mirrorLook(look: Look): Look {
   switch (look.kind) {
-    case "lit": { const p = look.paint; return { ...look, paint: (u, v) => p(sub(1, u), v) }; }
-    case "flat": { const p = look.paint; return { ...look, paint: (u, v) => p(sub(1, u), v) }; }
+    case "lit": { const p = look.paint; return { ...look, paint: (u, v, at) => p(sub(1, u), v, at) }; }
+    case "flat": { const p = look.paint; return { ...look, paint: (u, v, at) => p(sub(1, u), v, at) }; }
     case "glazed": { const c = look.colour; return { ...look, colour: (f) => c({ ...f, u: sub(1, f.u) }) }; }
   }
 }

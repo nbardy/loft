@@ -20,6 +20,25 @@ export interface Points {
   at(i: F): Placed;
 }
 
+/**
+ * How a copy is scaled: evenly, or by its own length along each axis of its frame (a spar's length and girth, a rag's
+ * width, drop and belly). Along each axis the size is positive; a negative one would mirror the copy and turn it inside
+ * out.
+ */
+export type Size = { readonly kind: "even"; readonly k: F } | { readonly kind: "axes"; readonly k: P3 };
+
+/** Where one copy goes: a frame (turned as the copy is) and a size. */
+export type Posed = { readonly frame: Frame; readonly size: Size };
+
+/**
+ * index -> posed copy: `Points` whose copies may also be scaled along each axis. Drawn by `draw.posed`. `i` is
+ * 0 .. count - 1, as an f32. `Points` are poses with an even size (`posesOf`).
+ */
+export interface Poses {
+  readonly count: number;
+  at(i: F): Posed;
+}
+
 /** (u) -> point, u in [0, 1]. Drawn as a stroke (`draw.curve`). The same type as a keyed or closed-form curve. */
 export type Curve = CurveOf<"vec3">;
 
@@ -84,8 +103,17 @@ export interface Chart {
 export type Field = (p: P3) => F;
 /** point -> density. Drawn by integration along the view ray (`draw.density`). */
 export type Density = (p: P3) => F;
+/**
+ * What paint knows of where it is besides the surface's own coordinates (u, v): the world point, the unit normal in the
+ * world (toward the side drawn: flipped on the back of a two-sided sheet), and which copy this is (its index, 0 .. count
+ * - 1, as an f32; 0 for a surface drawn once). For copies, the normal is the copy's own after its placement turned and
+ * scaled it, so a pattern can face the light or the viewer; the index lets each copy differ (a curl in a different place
+ * on every cloud lobe).
+ */
+export type PaintAt = { readonly world: P3; readonly normal: P3; readonly copy: F };
+
 /** Surface coordinates -> base colour (display-referred rgb), lit by the scene's style in the fragment stage. */
-export type Paint = (u: F, v: F) => P3;
+export type Paint = (u: F, v: F, at: PaintAt) => P3;
 
 /**
  * A domain map: the mapped coordinate, the cell it came from and the local change of length (`src/lib/fold.ts`, whose

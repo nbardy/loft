@@ -50,9 +50,13 @@ export function afterglow(since: F, seconds: number): F {
 export type BoltSpec = {
   /** Identifier (names the strokes' table). */
   readonly name: string;
-  /** Where the channel starts (in the cloud) and ends (at the sea), before each strike's own offset. */
-  readonly from: readonly [number, number, number];
-  readonly to: readonly [number, number, number];
+  /**
+   * Where the channel starts (in the cloud) and ends (at the sea), before each strike's own offset. Expressions, so a
+   * bolt can leave a moving jaw or land on a mark an input sets; they are read every frame where the strokes' table is
+   * filled (on the CPU), so they must be CPU-evaluable.
+   */
+  readonly from: In<"vec3">;
+  readonly to: In<"vec3">;
   /** How far each strike's ends wander from `from` and `to` in x and z. */
   readonly wander: number;
   /** Displacement of the first level as a share of the channel's length; each level is 0.55 of the one before. */
@@ -109,8 +113,8 @@ export function bolt(spec: BoltSpec): Bolt {
   const { index, since } = strikeAt(spec.schedule);
   const key = (j: In<"f32">, c: number): F => add(mul(index, 131), add(mul(j, 17), spec.schedule.seed * 1009 + c));
   const jitter = (c: number): Expr<"vec3"> => { const h = hash33(vec3(index, spec.schedule.seed, c)); return vec3(mul(sub(h.x, 0.5), 2 * spec.wander), 0, mul(sub(h.y, 0.5), 2 * spec.wander)); };
-  const top = add(vec3(...spec.from), jitter(1));
-  const ground = add(vec3(...spec.to), jitter(2));
+  const top = add(lift<"vec3">(spec.from), jitter(1));
+  const ground = add(lift<"vec3">(spec.to), jitter(2));
   const main = (u: F): P3 => displaced(u, top, ground, spec.levels, spec.roughness, key(0, 0));
   const axis = normalize(sub(ground, top));
   const e1 = normalize(cross(axis, vec3(0.31, 0.12, 0.94)));

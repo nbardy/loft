@@ -39,7 +39,7 @@ export type Fn =
   | "add" | "sub" | "mul" | "div" | "neg" | "min" | "max" | "pow" | "mod" | "atan2" | "step"
   | "abs" | "sign" | "floor" | "fract" | "sqrt" | "exp" | "log" | "sin" | "cos" | "tan" | "saturate" | "normalize"
   | "mix" | "clamp" | "smoothstep" | "length" | "distance" | "dot" | "cross"
-  | "lt" | "gt" | "le" | "ge" | "and" | "or" | "not" | "select";
+  | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "and" | "or" | "not" | "select";
 
 /**
  * A named function written once in each backend's language: the way to add vocabulary (noise, a custom falloff) that
@@ -415,6 +415,13 @@ export const cross = (a: In<"vec3">, b: In<"vec3">): Expr<"vec3"> => call("cross
 
 const compare = (fn: Fn) => (a: In<"f32">, b: In<"f32">): Expr<"bool"> => call(fn, "bool", [a, b]) as Expr<"bool">;
 export const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = compare("ge");
+/**
+ * Exact equality and inequality of two f32 values. Both backends compare the values they computed, so they agree
+ * whenever the operands are exact in f32 on both (whole numbers below 2^24: copy indices, cycle numbers, hashed cell
+ * ids); a value the CPU computes in f64 and the GPU in f32 (0.1 + 0.2) may compare differently. Compare indices, not
+ * measurements.
+ */
+export const eq = compare("eq"), ne = compare("ne");
 export const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> => call("and", "bool", [a, b]) as Expr<"bool">;
 export const or = (a: In<"bool">, b: In<"bool">): Expr<"bool"> => call("or", "bool", [a, b]) as Expr<"bool">;
 export const not = (a: In<"bool">): Expr<"bool"> => call("not", "bool", [a]) as Expr<"bool">;
@@ -428,6 +435,20 @@ export function select<B extends NumTy>(cond: In<"bool">, yes: Lit, no: Expr<B>)
 export function select<A extends NumTy = "f32", B extends NumTy = "f32">(cond: In<"bool">, yes: Expr<A> | number | Lit, no: Expr<B> | number | Lit): Expr<Wider<A, B>>;
 export function select(cond: In<"bool">, yes: In<NumTy>, no: In<NumTy>): Expr {
   return call("select", wider(lift(yes).ty, lift(no).ty), [cond, yes, no]);
+}
+
+/**
+ * `values[i]` for a whole-number index expression `i` in [0, values.length): one `select` on `i == k` per value after
+ * the first. Outside that range the index is an error the GPU cannot report: it reads the first value (as `fetch`
+ * leaves an out-of-range index undefined, callers keep it in range). For a per-copy constant (an arch's height, a
+ * bell's length) chosen by the copy's index.
+ */
+export function pick<T extends NumTy>(i: In<"f32">, values: readonly Expr<T>[]): Expr<T>;
+export function pick(i: In<"f32">, values: readonly number[]): Expr<"f32">;
+export function pick(i: In<"f32">, values: readonly (Expr<NumTy> | number)[]): Expr {
+  if (values.length === 0) throw new Error("pick: no values to pick from");
+  const xs = values.map((v) => lift(v as In<NumTy>));
+  return xs.slice(1).reduce<Expr>((acc, v, k) => select(eq(i, k + 1), v as Expr<NumTy>, acc as Expr<NumTy>), xs[0]!);
 }
 
 /** Round to the nearest integer, halves upward. Defined as floor(x + 0.5) so both backends agree at ties (WGSL's own `round` goes to even). */
@@ -539,7 +560,7 @@ const WGSL_TY: Record<Ty, string> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3
 // `mix` and `select` are here because one branch may be a scalar and the other a vector: WGSL wants both the result's
 // type, and without the splat the emitted call does not compile (found by the differentiation module).
 const SPLAT: ReadonlySet<Fn> = new Set<Fn>(["min", "max", "pow", "atan2", "step", "clamp", "smoothstep", "mix", "select"]);
-const INFIX: Partial<Record<Fn, string>> = { add: "+", sub: "-", mul: "*", div: "/", lt: "<", gt: ">", le: "<=", ge: ">=", and: "&&", or: "||" };
+const INFIX: Partial<Record<Fn, string>> = { add: "+", sub: "-", mul: "*", div: "/", lt: "<", gt: ">", le: "<=", ge: ">=", eq: "==", ne: "!=", and: "&&", or: "||" };
 
 function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
   const n = e.node;
@@ -717,6 +738,7 @@ const EACH: Partial<Record<Fn, Op>> = {
   smoothstep: op((lo, hi, x) => `H.ss(${lo}, ${hi}, ${x})`, smooth),
   lt: op((a, b) => `(${a} < ${b})`, (a: number, b: number) => a < b), gt: op((a, b) => `(${a} > ${b})`, (a: number, b: number) => a > b),
   le: op((a, b) => `(${a} <= ${b})`, (a: number, b: number) => a <= b), ge: op((a, b) => `(${a} >= ${b})`, (a: number, b: number) => a >= b),
+  eq: op((a, b) => `(${a} === ${b})`, (a: number, b: number) => a === b), ne: op((a, b) => `(${a} !== ${b})`, (a: number, b: number) => a !== b),
   and: op((a, b) => `(${a} && ${b})`, (a: boolean, b: boolean) => a && b), or: op((a, b) => `(${a} || ${b})`, (a: boolean, b: boolean) => a || b),
   not: op((a) => `(!${a})`, (a: boolean) => !a),
 };

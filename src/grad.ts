@@ -275,7 +275,7 @@ const CALL: Record<Fn, CallRule> = {
     if (isZero(yes) && isZero(no)) return zero(e.ty);
     return SELECT(a[0] as unknown as Expr<"bool">, widen(yes, e.ty), widen(no, e.ty));
   },
-  lt: boolean, gt: boolean, le: boolean, ge: boolean, and: boolean, or: boolean, not: boolean,
+  lt: boolean, gt: boolean, le: boolean, ge: boolean, eq: boolean, ne: boolean, and: boolean, or: boolean, not: boolean,
 };
 
 /**

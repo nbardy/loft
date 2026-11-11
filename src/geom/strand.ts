@@ -6,7 +6,7 @@ import { lift, vec3, type Expr, type In } from "../expr.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
 import { Body, sweepArgs, type Posted, type Section, type Slices, type Tip } from "../map/sweep.ts";
-import type { Chart, F, P3, Paint, Points, Skeleton } from "../map/types.ts";
+import type { Chart, F, P3, Paint, Points, Poses, Skeleton } from "../map/types.ts";
 
 export type Rgb = readonly [number, number, number];
 type Fn1 = (m: F) => F;
@@ -36,6 +36,13 @@ export type StrandSpec = {
   readonly up?: In<"vec3">;
   /** Per world unit: how fast accumulated roll bleeds back toward `up`. Default 0 (pure rotation-minimising). */
   readonly level?: number;
+  /**
+   * The most volume preservation may thicken the body, as a factor of its girth (at least 1). Radii scale by
+   * 1 / sqrt(stretch), and stretch is measured per unit of m, so a pose whose stations bunch (a curve parametrised by
+   * angle, a Bezier with a short arm) reads as compression there and swells it. Default about 4.47 (a stretch floor of
+   * 0.05, as always); a body posed by laws that do not space their stations by arc length wants 1.2 to 1.5.
+   */
+  readonly bulge?: number;
 };
 
 const DEFAULT_TIP = { round: 0.05, point: 0.12 } as const;
@@ -52,6 +59,14 @@ function positive(x: number, what: string): number {
   if (!(x > 0) || !Number.isFinite(x)) throw new Error(`${what} must be a positive number, got ${x}`);
   return x;
 }
+
+/** The stretch floor a bulge bound gives (radii grow by at most `bulge`); unbounded, the floor of old, 0.05. */
+function leastStretchOf(bulge: number | undefined, name: string): number {
+  if (bulge === undefined) return LEAST_STRETCH;
+  if (!(bulge >= 1 && Number.isFinite(bulge))) throw new Error(`${name}: bulge must be a finite number >= 1 (radii never grow less than not at all), got ${bulge}`);
+  return 1 / (bulge * bulge);
+}
+const LEAST_STRETCH = 0.05;
 
 const fn1 = (x: Fn1 | number): Fn1 => (typeof x === "number" ? () => lift<"f32">(x) : x);
 
@@ -79,6 +94,8 @@ export class Strand extends Body implements Drawable {
   draws(ctx: CompileContext): Emitted { return this.drawn.draws(ctx); }
   /** Copies of this strand, one per point, in each point's frame (teeth, spikes). Drawn by `draw.points`. */
   instanced(name: string, points: Points): Drawable { return this.drawn.instanced(name, points); }
+  /** Copies of this strand, one per pose, each turned and sized (a row of bells, each on its own swing). Drawn by `draw.posed`. */
+  posed(name: string, poses: Poses): Drawable { return this.drawn.posed(name, poses); }
 
   override at(t: F): Strand { return super.at(t) as Strand; }
   override placed(chart: Chart): Strand { return super.placed(chart) as Strand; }
@@ -98,6 +115,7 @@ export function strand(spec: StrandSpec): Strand {
   const section: Section = {
     girth: fn1(spec.girth), aspect: fn1(spec.section?.aspect ?? 1), squareness: spec.section?.squareness ?? 2,
     tips: [canonicalTip(tips[0], name), canonicalTip(tips[1], name)],
+    leastStretch: leastStretchOf(spec.bulge, name),
   };
   const paint = spec.paint;
   const paintFn: Paint = typeof paint === "function" ? paint : () => vec3(...(paint as Rgb));

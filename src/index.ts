@@ -2,7 +2,7 @@
 export * from "./expr.ts";
 export { keys, ramp, through, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";
 export * from "./map/index.ts";
-export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type ReliefOptions } from "./draw/index.ts";
+export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type Poseable, type ReliefOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb } from "./geom/strand.ts";
 export { crest, type CrestSpec } from "./geom/crest.ts";
@@ -27,8 +27,8 @@ export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type Bea
 export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export * from "./spacetime/index.ts";
-export { landsInside, staysClear, stopsAt, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type Verdict, type Measured } from "./check.ts";
-export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, biolume, papercraft, WOODBLOCK_PALETTE, type StyleName } from "./style/index.ts";
+export { landsInside, staysClear, stopsAt, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Verdict, type Measured } from "./check.ts";
+export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
 export { afloat, afloatFrame, type AfloatSpec, type Waters } from "./geom/afloat.ts";

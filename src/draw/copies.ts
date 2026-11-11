@@ -15,15 +15,18 @@
 // walking crab's shell). The list stays static, given in the carrying frame's coordinates; the frame is a closed-form
 // expression evaluated per vertex (a rigid motion: unit axes, so radii are unchanged), and the copies are moved into
 // the world before the box is built. `paint` then sees the hit in the frame's coordinates, so patterns ride the
-// copies. Not carried, the frame is the identity and the copies are where the list says. The shadow blob is still
-// fitted once to the list as given (it does not follow the frame): right only while the frame stays near the world's.
+// copies. Not carried, the frame is the identity and the copies are where the list says. The shadow blob is fitted once
+// to the list as given, in the frame's coordinates, and its joints are carried by the frame every frame, so it follows
+// the crab (it was fitted once in the world and stayed behind, 2026-11-11). Only what stands above the list's own
+// y = 0 casts, which is the water's level only for a frame that rides at it.
 
 import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
-import { lift, variable, type Expr, type TableSource } from "../expr.ts";
+import { add, lift, variable, type Expr, type TableSource } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Branch, Part } from "../lib/similar.ts";
+import { rotate } from "../map/chart.ts";
 import type { F, Frame, P3, Skeleton } from "../map/types.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
 import { CLOSEST_WGSL, shapeWgsl } from "./impostors.ts";
@@ -56,6 +59,18 @@ export type CopiesOptions = {
 };
 
 const WORLD_FRAME: Frame = { o: lift<"vec3">([0, 0, 0]), x: lift<"vec3">([1, 0, 0]), y: lift<"vec3">([0, 1, 0]), z: lift<"vec3">([0, 0, 1]) };
+
+/** What the copies ride, classified once from `carry`: the world (as listed), or a moving frame. */
+type Ride = { readonly kind: "world" } | { readonly kind: "frame"; readonly frame: Frame };
+const rideOf = (carry: Frame | undefined): Ride => (carry === undefined ? { kind: "world" } : { kind: "frame", frame: carry });
+
+/** The shadow's chain, carried as the copies are. */
+function rideShadow(s: Skeleton, r: Ride): Skeleton {
+  switch (r.kind) {
+    case "world": return s;
+    case "frame": return { joints: s.joints, joint: (k) => { const j = s.joint(k); return { p: add(r.frame.o, rotate(r.frame, j.p)), r: j.r }; } };
+  }
+}
 
 const P = variable("p", "vec3"), N = variable("n", "vec3"), ID = variable("copy_id", "vec3"), LEVEL = variable("copy_level", "f32");
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
@@ -100,7 +115,7 @@ export class Copies implements Drawable {
     for (const c of o.copies) {
       if (![...c.a, ...c.b, c.ra, c.rb].every(Number.isFinite) || Math.max(c.ra, c.rb) <= 0) throw new Error(`draw.copies "${name}": a copy has a non-finite number or no radius`);
     }
-    this.skeletons = [copiesShadow(o.copies)];
+    this.skeletons = [rideShadow(copiesShadow(o.copies), rideOf(o.carry))];
   }
 
   draws(ctx: CompileContext): Emitted {

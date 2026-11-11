@@ -15,7 +15,8 @@
 
 import { f, lift, vec4, type Expr, type TableSource } from "../expr.ts";
 import type { DetailSpec } from "../compile/context.ts";
-import type { F, P3, Points, Surface, Topology } from "../map/types.ts";
+import { sizeBound } from "../map/chart.ts";
+import type { F, P3, Poses, Surface, Topology } from "../map/types.ts";
 
 const SAMPLES = 5;
 const FLOOR = { closed: 8, open: 2 } as const;
@@ -35,7 +36,7 @@ export function gridLevels(nu: number, nv: number, topology: Topology): readonly
 }
 
 /** One copy, or one per point (as the drawable draws it). */
-export type BoundCopies = { readonly kind: "one" } | { readonly kind: "points"; readonly points: Points };
+export type BoundCopies = { readonly kind: "one" } | { readonly kind: "poses"; readonly poses: Poses };
 
 /** Where the grid's (u, v) in [0, 1] goes in the surface's coordinates, as the drawable samples it. */
 export type GridAt = { readonly u: (s: F) => F; readonly v: (s: F) => F };
@@ -44,17 +45,18 @@ export type GridAt = { readonly u: (s: F) => F; readonly v: (s: F) => F };
 function anchorOf(surface: Surface, at: GridAt, copies: BoundCopies): P3 {
   switch (copies.kind) {
     case "one": return surface.point(at.u(f(0.5)), at.v(f(0.5)));
-    case "points": return lift<"vec3">([0, 0, 0]);
+    case "poses": return lift<"vec3">([0, 0, 0]);
   }
 }
 
 /** Per frame, per copy: (anchor point, scale). */
 export function boundTable(name: string, surface: Surface, at: GridAt, copies: BoundCopies): TableSource {
-  const entries = copies.kind === "one" ? 1 : copies.points.count;
+  const entries = copies.kind === "one" ? 1 : copies.poses.count;
   const roots = (): Expr[] => {
     switch (copies.kind) {
       case "one": return [vec4(anchorOf(surface, at, copies), 1)];
-      case "points": return Array.from({ length: copies.points.count }, (_, i) => { const p = copies.points.at(f(i)); return vec4(p.frame.o, p.scale); });
+      // A copy scaled along each axis is sized by its longest one.
+      case "poses": return Array.from({ length: copies.poses.count }, (_, i) => { const p = copies.poses.at(f(i)); return vec4(p.frame.o, sizeBound(p.size)); });
     }
   };
   return {

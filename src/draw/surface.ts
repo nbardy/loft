@@ -7,9 +7,9 @@ import { add, cos, f, mix, mul, variable, vec2, vec3, vec4, type Expr } from "..
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
-import { carry, rotate } from "../map/chart.ts";
-import { framed } from "../map/surface.ts";
-import type { Chart, F, P3, Paint, Points, Skeleton, Surface } from "../map/types.ts";
+import { carry, posesOf, rotate, sizeBound } from "../map/chart.ts";
+import { framedPose } from "../map/surface.ts";
+import type { Chart, F, P3, Paint, Points, Posed, Poses, Skeleton, Surface } from "../map/types.ts";
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 
@@ -51,11 +51,13 @@ export type Look =
 /** A glazed surface's grid: as authored, or laid over the screen by the host (the sea). */
 export type GlazedDetail = { readonly kind: "fixed" } | Extract<DetailSpec, { kind: "projected" }>;
 
-/** One copy, or one per point. */
-type Copies = { readonly kind: "one" } | { readonly kind: "points"; readonly points: Points };
+/** One copy, or one per pose (points are poses with an even size). */
+type Copies = { readonly kind: "one" } | { readonly kind: "poses"; readonly poses: Poses };
 
 const S = variable("s", "f32"), T = variable("t", "f32"), I = variable("i", "f32");
 const U = variable("u", "f32"), V = variable("v", "f32");
+/** What paint is told besides (u, v), as the fragment stage binds it (`PaintAt`). */
+const AT = { world: variable("p_world", "vec3"), normal: variable("p_normal", "vec3"), copy: variable("p_copy", "f32") };
 
 export class SurfaceDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
@@ -79,7 +81,12 @@ export class SurfaceDrawable implements Drawable {
 
   /** The same surface and look, one copy per point. */
   instanced(name: string, points: Points): SurfaceDrawable {
-    return new SurfaceDrawable(name, this.surface, this.grid, this.look, { kind: "points", points });
+    return new SurfaceDrawable(name, this.surface, this.grid, this.look, { kind: "poses", poses: posesOf(points) });
+  }
+
+  /** The same surface and look, one copy per pose: turned, and scaled along each axis (normals included). */
+  posed(name: string, poses: Poses): SurfaceDrawable {
+    return new SurfaceDrawable(name, this.surface, this.grid, this.look, { kind: "poses", poses });
   }
 
   /**
@@ -113,6 +120,7 @@ struct VOut {
   @location(2) uv: vec2<f32>,
   @location(3) anchor: vec3<f32>,
   @location(4) @interpolate(flat) id: f32,
+  @location(5) @interpolate(flat) copy: f32,
 };
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   let n = grid_cells(ii);
@@ -126,6 +134,7 @@ struct VOut {
   out.uv = s.uv;
   out.anchor = s.anchor;
   out.id = copy_id(ID, ii);
+  out.copy = f32(ii);
   return out;
 }
 ${frag.main}`,
@@ -174,7 +183,7 @@ function constantsOf(d: SurfaceDetail, nu: number, nv: number): Readonly<Record<
 const countOf = (c: Copies): number => {
   switch (c.kind) {
     case "one": return 1;
-    case "points": return c.points.count;
+    case "poses": return c.poses.count;
   }
 };
 
@@ -187,15 +196,15 @@ function carriedSurface(s: Surface, c: Copies, chart: Chart): Surface {
       topology: s.topology,
       skeleton: { joints: s.skeleton.joints, joint: (k) => { const j = s.skeleton.joint(k); return { p: chart.frame(j.p).o, r: j.r }; } },
     };
-    case "points": return s; // the copies' frames are carried instead
+    case "poses": return s; // the copies' frames are carried instead
   }
 }
 function carriedCopies(c: Copies, chart: Chart): Copies {
   switch (c.kind) {
     case "one": return c;
-    case "points": {
-      const pts = c.points;
-      return { kind: "points", points: { count: pts.count, at: (i) => { const a = pts.at(i); return { frame: carry(chart, a.frame), scale: a.scale }; } } };
+    case "poses": {
+      const ps = c.poses;
+      return { kind: "poses", poses: { count: ps.count, at: (i) => { const a = ps.at(i); return { frame: carry(chart, a.frame), size: a.size }; } } };
     }
   }
 }
@@ -205,10 +214,19 @@ function skeletonsOf(s: Surface, c: Copies): readonly Skeleton[] {
     case "one": return [s.skeleton];
     // Each copy casts with the surface's own chain carried by its placement (copies used not to cast at all, so a
     // fleet of instanced ships or a ring of spikes left no shadow on the water).
-    case "points": return s.skeleton.joints < 2 ? [] : Array.from({ length: c.points.count }, (_, i) => {
-      const at = c.points.at(f(i));
-      return { joints: s.skeleton.joints, joint: (k: number) => { const j = s.skeleton.joint(k); return { p: add(at.frame.o, mul(rotate(at.frame, j.p), at.scale)), r: mul(j.r, at.scale) }; } };
+    case "poses": return s.skeleton.joints < 2 ? [] : Array.from({ length: c.poses.count }, (_, i) => {
+      const at = c.poses.at(f(i));
+      return { joints: s.skeleton.joints, joint: (k: number) => posedJoint(s.skeleton.joint(k), at) };
     });
+  }
+}
+
+/** A joint of a copy's chain carried by its pose. A radius under a per-axis size takes the largest axis (conservative). */
+function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly p: P3; readonly r: F } {
+  const z = at.size;
+  switch (z.kind) {
+    case "even": return { p: add(at.frame.o, mul(rotate(at.frame, j.p), z.k)), r: mul(j.r, z.k) };
+    case "axes": return { p: add(at.frame.o, rotate(at.frame, mul(j.p, z.k))), r: mul(j.r, sizeBound(z)) };
   }
 }
 
@@ -222,8 +240,8 @@ function bakeablesOf(d: SurfaceDrawable, c: Copies): readonly Bakeable[] {
 }
 function copiesOf(d: SurfaceDrawable, c: Copies, paint: Paint, sides: "one" | "two"): readonly Bakeable[] {
   switch (c.kind) {
-    case "one": return [{ name: d.name, surface: d.surface, paint, grid: d.grid, sides }];
-    case "points": return Array.from({ length: c.points.count }, (_, i) => ({ name: `${d.name}_${i}`, surface: framed(d.surface, c.points.at(f(i))), paint, grid: d.grid, sides }));
+    case "one": return [{ name: d.name, surface: d.surface, paint, grid: d.grid, sides, copy: 0 }];
+    case "poses": return Array.from({ length: c.poses.count }, (_, i) => ({ name: `${d.name}_${i}`, surface: framedPose(d.surface, c.poses.at(f(i))), paint, grid: d.grid, sides, copy: i }));
   }
 }
 
@@ -251,7 +269,7 @@ function vertexNormal(look: Look, s: Surface, u: F, v: F): P3 {
 function placedSurface(s: Surface, c: Copies): Surface {
   switch (c.kind) {
     case "one": return s;
-    case "points": return framed(s, c.points.at(I));
+    case "poses": return framedPose(s, c.poses.at(I));
   }
 }
 
@@ -264,13 +282,15 @@ const LIT_PRE = /* wgsl */ `
 
 function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   const look = d.look;
-  const paintFn = (paint: Paint): Shader => emitShaderFn(ctx.slots, { name: `paint_${d.name}`, args: [["u", "f32"], ["v", "f32"]], out: "vec3<f32>", roots: [paint(U, V)], ret: (o) => o[0] });
+  const paintFn = (paint: Paint): Shader => emitShaderFn(ctx.slots, {
+    name: `paint_${d.name}`, args: [["u", "f32"], ["v", "f32"], ["p_world", "vec3"], ["p_normal", "vec3"], ["p_copy", "f32"]], out: "vec3<f32>", roots: [paint(U, V, AT)], ret: (o) => o[0],
+  });
   switch (look.kind) {
     case "lit": {
       const face = look.sides === "one" ? "1.0" : "select(-1.0, 1.0, front)";
       const head = `@fragment fn fs(in: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
   let n = ${face} * normalize(in.normal);${LIT_PRE}
-  let base = paint_${d.name}(in.uv.x, in.uv.y);`;
+  let base = paint_${d.name}(in.uv.x, in.uv.y, in.world, n, in.copy);`;
       const cull = look.sides === "one" ? "back" : "none";
       switch (look.outline) {
         case "hull": return hullOutline(ctx, head, paintFn(look.paint), cull);
@@ -295,7 +315,7 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
     }
     case "flat": return {
       overrides: "", fns: paintFn(look.paint), push: "s.pos",
-      main: `@fragment fn fs(in: VOut) -> @location(0) vec4<f32> { return vec4<f32>(paint_${d.name}(in.uv.x, in.uv.y), 1.0); }`,
+      main: `@fragment fn fs(in: VOut) -> @location(0) vec4<f32> { return vec4<f32>(paint_${d.name}(in.uv.x, in.uv.y, in.world, normalize(in.normal), in.copy), 1.0); }`,
       draws: (b) => [drawSpec({ ...b, cull: "none" })],
     };
     case "glazed": {

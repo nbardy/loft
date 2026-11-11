@@ -262,6 +262,7 @@ export class Sea implements Chart, Drawable {
       distance: distance(fr.world, eyePosition()),
       foam: marks.reduce<F>((f, m) => max(f, m.foam), contactFoam(fr.world, band, fp, this.foam)),
       contact: band,
+      marks: marks.reduce<F>((f, m) => max(f, m.foam), lift<"f32">(0)),
       phase: this.dominantPhase(xz),
     });
   }

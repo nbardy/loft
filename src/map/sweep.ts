@@ -33,6 +33,13 @@ export type Section = {
   /** Superellipse exponent: 2 an ellipse, higher boxier. At least 1.2 (the normal needs |x|^(n-1)). */
   readonly squareness: number;
   readonly tips: readonly [Tip, Tip];
+  /**
+   * The least stretch volume preservation honours: radii scale by 1 / sqrt(max(stretch, leastStretch)), so they grow by
+   * at most 1 / sqrt(leastStretch). Stretch is measured per unit of m, so where a posed spine's stations bunch it reads
+   * as compression and the body swells (a reared coil swelled into a ball three times its girth, 2026-11-11; see
+   * `bulge` in StrandSpec). 0.05 (at most 4.47 times) unless the author bounds it.
+   */
+  readonly leastStretch: number;
 };
 
 /** How frames are carried along the spine. */
@@ -203,7 +210,7 @@ export class Body implements Surface, Chart, Placeable<Body> {
   private ring(m: F, v: F): Ring {
     const st = stationSample(this.table, m);
     const aspect = this.section.aspect;
-    const keep = div(1, sqrt(max(st.stretch, 0.05)));
+    const keep = div(1, sqrt(max(st.stretch, this.section.leastStretch)));
     const a = (x: F) => mul(this.halfWidth(x), keep);
     const b = (x: F) => mul(a(x), aspect(x));
     const m0 = clamp(sub(m, SLOPE_H), 0, 1), m1 = clamp(add(m, SLOPE_H), 0, 1);
@@ -374,7 +381,7 @@ export class StationTable implements TableSource {
       }
       const rest = restAll(frame);
       const up = seed(frame, v[n * PER] as V3, pos, twist[0]!);
-      poseStrand({ pos, local: here, rest: rest.slice(first, first + n), restStart: restArcTo(rest, first), twist, halfWidth, aspect, up, level: b.transport.level }, out, first * STATION_VEC4S * 4);
+      poseStrand({ pos, local: here, rest: rest.slice(first, first + n), restStart: restArcTo(rest, first), twist, halfWidth, aspect, up, level: b.transport.level, leastStretch: b.section.leastStretch }, out, first * STATION_VEC4S * 4);
     };
   }
 }
@@ -428,7 +435,7 @@ export class SkeletonTable implements TableSource {
     const restOf = restPose(p, local);
     return (frame, out) => {
       const v = run(frame);
-      const s = { local: [] as V3[], rest: restOf(frame), halfWidth: [] as number[], aspect: [] as number[] };
+      const s = { local: [] as V3[], rest: restOf(frame), halfWidth: [] as number[], aspect: [] as number[], leastStretch: b.section.leastStretch };
       for (let k = 0; k < n; k++) { s.halfWidth.push(v[4 * k + 1] as number); s.aspect.push(v[4 * k + 2] as number); s.local.push(v[4 * k + 3] as V3); }
       for (let k = 0; k < n; k++) {
         // Stretch between kept neighbours (exact positions; within 15% of the whole slice's radius at the serpent's
