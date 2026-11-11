@@ -28,16 +28,17 @@ export const patient: FaceOption = {
     const crushAt = vec3(n.crushCentre[0], 0, n.crushCentre[1]);
     const eye = (tag: "L" | "R", s: 1 | -1): Eye => {
       const base = local(at(-0.55, 0.36, s * 0.62));
-      // At rest it looks ahead and down at the water in front of it, wandering slowly; then at the ship, or the target.
-      const wander = local(vec3(add(10, mul(sin(add(mul(time, 0.21), s)), 2)), -6.5, add(mul(sin(add(mul(time, 0.27), 2 * s)), 3), s * 0.8)));
+      // At rest it looks ahead and a little up, over the horizon, wandering slowly (from the high cameras that turns the pupils
+      // toward the viewer); then at the ship, or the target.
+      const wander = local(vec3(add(10, mul(sin(add(mul(time, 0.21), s)), 2)), 2.5, add(mul(sin(add(mul(time, 0.27), 2 * s)), 3), s * 0.8)));
       const look = lookAt({ from: { o: base, x: body.x, y: body.y, z: body.z }, target: mix(mix(wander, shipNow, grabEye), crushAt, k.rouse), yaw: 1.0, pitch: 1.0 }).dir;
       return {
         tag, base,
         // Long stalks leaning out and forward; roused, they stand straight up.
         tip: add(add(base, mix(k.inBody(0.55, 1.25, s * 0.45), k.inBody(0.3, 1.6, s * 0.2), max(k.rouse, mul(grabEye, 0.5)))), k.stalkWhip(0.35, 1.6)),
-        look, radius: 0.42,
+        look, radius: 0.5,
         // Heavy lids, half down; a slow blink each, out of step; wide when roused, shut at the slam.
-        lid: add(mix(mix(mix(1.3, 3.0, k.blink(s > 0 ? 6.1 : 6.4, s > 0 ? 1.1 : 3.7)), 0.55, k.rouse), 2.6, k.brace), mul(sin(add(mul(time, 0.4), s)), 0.08)),
+        lid: add(mix(mix(mix(1.0, 3.0, k.blink(s > 0 ? 6.1 : 6.4, s > 0 ? 1.1 : 3.7)), 0.55, k.rouse), 2.6, k.brace), mul(sin(add(mul(time, 0.4), s)), 0.08)),
         // Drooping toward the outside on both eyes: negative on the right, positive on the left (eyeParts' sign).
         slant: lift<"f32">(-s * 0.42),
         iris: (x, y) => mix(vec3(...I.cream), vec3(...I.black), cut(sub(0.5, length(vec2(x, y))), 0)),

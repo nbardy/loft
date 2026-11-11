@@ -8,7 +8,7 @@
 // swing on after Claw Crush's slam.
 
 import {
-  add, cross, draw, fract, lift, mix, mul, pick, place, posed, rigid, sin, smoothstep, strand, sub, swing, through, time, turn, unit, vec3, alive, size,
+  abs, add, cross, draw, fract, lift, max, mix, mul, pick, place, posed, rigid, sin, smoothstep, strand, sub, swing, through, time, turn, unit, vec3, alive, size,
   type F, type P3, type Strand,
 } from "../../../../src/index.ts";
 import { rotate } from "../../../../src/map/chart.ts";
@@ -35,25 +35,26 @@ export const shrine: BackOption = {
       detail: { along: 16, around: 24 },
     }));
     const post = (k: number, x: number, z: number) => on(strand({
-      name: `shrinePost${k}`, spine: (m) => vec3(X0 + x, mix(DECK - 0.1, POST_TOP, m), z), stations: 3, girth: 0.12,
+      name: `shrinePost${k}`, spine: (m) => vec3(X0 + x, mix(DECK - 0.1, POST_TOP, m), z), stations: 4, girth: 0.12,
       section: { squareness: 4 }, tips: [{ round: 0.05 }, { round: 0.05 }], up: [1, 0, 0],
       paint: (m) => mix(red, black, cut(m, 0.96)), detail: { along: 6, around: 8 },
     }));
     const posts = [post(0, -HALF, -HALF), post(1, -HALF, HALF), post(2, HALF, -HALF), post(3, HALF, HALF)];
     // Paper walls lit from inside, behind a red lattice (three panes a side, a cross bar).
     const walls = on(strand({
-      name: "shrineWalls", spine: (m) => vec3(X0, mix(DECK + 0.15, POST_TOP - 0.6, m), 0), stations: 3, girth: 0.93,
+      name: "shrineWalls", spine: (m) => vec3(X0, mix(DECK + 0.15, POST_TOP - 0.6, m), 0), stations: 4, girth: 0.93,
       section: { aspect: 1, squareness: 10 }, tips: [{ round: 0.02 }, { round: 0.02 }], up: [1, 0, 0],
       paint: (m, v) => {
-        const mull = sub(1, cut(sub(0.5, mul(sub(fract(mul(v, 12)), 0.5), sub(fract(mul(v, 12)), 0.5))), 0.48));
-        const bar = sub(1, cut(mul(sub(fract(mul(m, 2)), 0.5), sub(fract(mul(m, 2)), 0.5)), 0.012));
-        return mix(vec3(...I.paper), red, cut(add(mull, bar), 0.5));
+        // Thin red lines where the pane coordinates wrap: twelve panes round, two high.
+        const mull = cut(abs(sub(fract(mul(v, 12)), 0.5)), 0.43);
+        const bar = cut(abs(sub(fract(mul(m, 2)), 0.5)), 0.45);
+        return mix(vec3(...I.paper), red, max(mull, bar));
       },
       detail: { along: 12, around: 48 },
     }));
     // The tie beams (red) and the lintels (black, ends swept up), front and back.
     const beam = (k: number, x: number) => on(strand({
-      name: `shrineTie${k}`, spine: (m) => vec3(X0 + x, POST_TOP - 0.5, mix(-1.35, 1.35, m)), stations: 3, girth: 0.08,
+      name: `shrineTie${k}`, spine: (m) => vec3(X0 + x, POST_TOP - 0.5, mix(-1.35, 1.35, m)), stations: 4, girth: 0.08,
       section: { aspect: 1.4, squareness: 4 }, tips: [{ round: 0.03 }, { round: 0.03 }], up: [0, 1, 0], paint: () => red, detail: { along: 6, around: 8 },
     }));
     const lintel = (k: number, x: number) => on(strand({
@@ -72,7 +73,7 @@ export const shrine: BackOption = {
       detail: { along: 20, around: 32 },
     }));
     const finial = on(strand({
-      name: "shrineFinial", spine: (m) => vec3(X0, mix(POST_TOP + 1.6, POST_TOP + 2.5, m), 0), stations: 3,
+      name: "shrineFinial", spine: (m) => vec3(X0, mix(POST_TOP + 1.6, POST_TOP + 2.5, m), 0), stations: 4,
       girth: (m) => add(0.05, mul(smoothstep(0.7, 0.85, m), mul(smoothstep(1, 0.85, m), 0.12))), tips: ["round", "round"],
       paint: (m) => mix(black, red, cut(m, 0.7)), detail: { along: 10, around: 8 },
     }));
@@ -106,8 +107,8 @@ export const shrine: BackOption = {
     };
     // One lantern shape: a cord, then a round paper body with black caps and ribs, hanging down from its hook.
     const lantern = (name: string, body: P3) => strand({
-      name, spine: (m) => vec3(0, mul(m, -1.15), 0), stations: 8,
-      girth: (m) => add(0.025, mul(smoothstep(0.3, 0.36, m), mul(sin(mul(sub(m, 0.3), Math.PI / 0.7)), 0.3))),
+      name, spine: (m) => vec3(0, mul(m, -1.5), 0), stations: 8,
+      girth: (m) => add(0.025, mul(smoothstep(0.3, 0.36, m), mul(sin(mul(sub(m, 0.3), Math.PI / 0.7)), 0.42))),
       tips: ["round", { round: 0.05 }], up: [1, 0, 0],
       paint: (m, v) => {
         const caps = add(sub(1, cut(m, 0.4)), cut(m, 0.93));

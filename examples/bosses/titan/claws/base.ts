@@ -19,8 +19,13 @@ export type ClawLook = {
   readonly arm?: (I: Ink, m: F, v: F, elbow: F) => P3;
   /** The fingers' paint along the horn (m root to tip). Absent: the base's brick to cream to a black point (`BASE_FINGER`). */
   readonly finger?: (I: Ink, m: F) => P3;
+  /** The wrist's rest (crab coordinates) for a side and a claw size: the claw's own rest pose, which Claw Crush's lunge
+   * starts from and the cutter idles about. Absent: folded in beside the face (`BASE_WRIST_REST`). */
+  readonly wristRest?: (n: Numbers, side: 1 | -1, size: number) => readonly [number, number, number];
 };
 
+/** Where a claw's wrist rests (crab coordinates): the base folds it in beside the face. */
+export const BASE_WRIST_REST = (n: Numbers, side: 1 | -1, size: number): readonly [number, number, number] => [n.carapace.to + 1.0 * size, 0.4, side * (n.carapace.width * 0.55 + 0.6 * size)];
 export const BASE_ARM = (I: Ink, m: F, v: F, elbow: F): P3 => {
   const top = mix(vec3(...I.brick), vec3(...I.brickDark), mottle(mul(m, 0.6), v));
   const ring = sub(1, cut(abs(sub(m, elbow)), 0.022));
@@ -114,7 +119,7 @@ export function clawsOf(look: ClawLook): ClawsOption {
         const fingers = [finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)] as const;
         return { things: [armStrand, palm, ...fingers], palm, fingers };
       }
-      const wristRest = (side: 1 | -1, size: number): readonly [number, number, number] => [n.carapace.to + 1.0 * size, 0.4, side * (n.carapace.width * 0.55 + 0.6 * size)];
+      const wristRest = (side: 1 | -1, size: number): readonly [number, number, number] => (look.wristRest ?? BASE_WRIST_REST)(n, side, size);
       const env = crush.envelope(time);
 
       // The crusher gapes wide in the wind-up and shuts on the hit; the cutter works slowly at rest.

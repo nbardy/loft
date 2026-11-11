@@ -34,7 +34,7 @@ export function stepClock(n: Numbers, phase: number): { readonly sincePlant: F; 
 /** One foot's foam on the water: a clawed cream cloud while it stands, a ring running out at each plant. */
 function footFoam(name: string, water: Sea, at: readonly [number, number], since: { readonly sincePlant: F; readonly sinceLift: F }, n: Numbers): Drawable {
   const I = n.ink;
-  const reach = 3.4, cloud = 1.5, pad = 0.6;
+  const reach = 3.8, cloud = 2.3, pad = 0.6;
   const area = hit.disc({ centre: at, radius: reach });
   const surface: Surface = {
     point: (u, v) => { const xz = hitPatch(area, u, v, lift<"f32">(pad)); return vec3(xz.x, water.height(xz), xz.y); },
@@ -49,12 +49,16 @@ function footFoam(name: string, water: Sea, at: readonly [number, number], since
   return draw.glazed(name, surface, {
     colour: (fr) => {
       const p = vec2(fr.world.x, fr.world.z);
-      const d = length(sub(p, vec2(...at)));
-      const body = mul(sub(1, smoothstep(cloud * 0.6, cloud * 1.25, d)), standing);
+      // Lumpy, not a disc: the distance swells and shrinks with a slow noise, so the cloud has puffs.
+      const d = mul(length(sub(p, vec2(...at))), add(1, mul(noise2(mul(p, 0.55)), 0.28)));
+      // The cloud shrinks as it comes and goes rather than fading: a faint falloff cut by the noise printed black
+      // scribbles over the water while a lifted foot's cloud thinned (first version, 2026-11-11).
+      const r = mul(cloud, max(standing, 0.02));
+      const body = mul(sub(1, smoothstep(mul(r, 0.6), mul(r, 1.25), d)), smoothstep(0.02, 0.08, standing));
       const ring = mul(sub(1, smoothstep(0, mul(mix(0.5, 0.15, k), 1.4), abs(sub(d, front)))), mul(sub(1, smoothstep(0.55, 1, k)), step01(since.sincePlant)));
       const shape = max(body, ring);
-      const fingers = abs(noise2(mul(p, 1.6)));
-      const c = sub(sub(shape, 0.5), mul(fingers, 0.55));
+      const fingers = abs(noise2(mul(p, 1.1)));
+      const c = sub(sub(shape, 0.5), mul(fingers, 0.4));
       const foam = edgeOf(c, 0, 0.004);
       const line = mul(edgeOf(c, -0.07, 0.004), sub(1, foam));
       return vec4(mix(rgb(I.black), rgb(I.cream), foam), max(foam, mul(line, 0.9)));

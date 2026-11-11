@@ -5,11 +5,14 @@
 //
 // It keeps the carapace contract: `hull` runs m from tail (0) to front (1).
 
-import { add, draw, fract, horn, mix, mul, pick, place, points, rigid, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
+import { add, draw, fract, horn, mix, mul, pick, place, points, rigid, sin, smoothstep, strand, sub, vec3, type Drawable, type F } from "../../../../src/index.ts";
 import { cut } from "../ink.ts";
 import type { CarapaceOption } from "../slots.ts";
 
 const THORNS = 190, GOLDEN = 0.6180339887;
+
+/** A drawable that casts no shadow (`skeletons` empty is the Drawable contract's "none"). */
+const castsNone = (d: Drawable): Drawable => ({ name: d.name, draws: (ctx) => d.draws(ctx), skeletons: [], surfaces: d.surfaces });
 
 export const thorny: CarapaceOption = {
   about: "a small round body, dark olive, bristling with thorns",
@@ -37,13 +40,15 @@ export const thorny: CarapaceOption = {
       detail: { along: 6, around: 6 },
     });
     // Spread evenly over the body (m uniform along a sphere's axis is uniform in area), not on the front cap.
-    const thorns = draw.points("thorns", place(points(THORNS, (i: F) => {
+    // They cast no shadow: from 7 above the water 190 thorn shadows are noise inside the body's own, and they were half the
+    // frame's shadow capsules (2706 in all against the base's 460; profile, far camera, 2026-11-11).
+    const thorns = castsNone(draw.points("thorns", place(points(THORNS, (i: F) => {
       const m = mix(0.03, 0.84, mul(add(i, 0.5), 1 / THORNS));
       const v = fract(mul(i, GOLDEN));
       // Bigger on the back and shoulders, smaller toward the face; each its own size.
       const big = mix(0.7, 1.35, fract(mul(i, 0.7548776662)));
       return { at: vec3(m, v, 0.92), scale: mul(big, sub(1, mul(smoothstep(0.62, 0.84, m), 0.45))) };
-    }), hull), thorn);
+    }), hull), thorn));
 
     // Long spines: six standing up off the shoulders and the back (the far silhouette's spikes).
     const spine = horn({

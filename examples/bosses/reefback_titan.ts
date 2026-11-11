@@ -56,7 +56,7 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     far: at({ eye: [33, 21, 21], target: [3, 1.5, -1], fovY: 0.6 }, 0, rise * 0.35),
     // `close`'s eye with a longer lens: from lower or nearer, the resting claws cover the mouth.
     face: at({ eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 }, front, rise),
-    legs: at({ eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 }, 0, rise * 0.6),
+    legs: at({ eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 }, 0, rise * 0.85),
     back: at({ eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 }, 0, rise * 0.5),
   };
 };
@@ -81,10 +81,11 @@ export const design = makeDesign({
     },
     fiddler: { about: "one huge crusher, one small cutter", pick: { claws: "fiddler" } },
     ironclad: { about: "plated shell, stone spires, a masked stare", pick: { carapace: "plated", back: "spires", face: "mask" } },
-    // Stilt legs put the cutter's shoulder 2.5 above the water; the fiddler's 0.8 cutter spans 4.46, short of a wrist
-    // 4.2 out and 2.25 down (4.76): the pair alone fails the grip check (middle 0.19 off). Closing 3.6 out (4.25) it grips
-    // as the fiddler does on base legs (0.058 off). Neither option is wrong; the variant settles their meeting.
-    stiltFiddler: { about: "a fiddler on stilts, taking the ship nearer", pick: { legs: "stilt", claws: "fiddler" }, numbers: { grabWristReach: 3.6 } },
+    // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
+    // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
+    // Arms long enough for its 0.8 cutter (5.15 + 4.95: grip 0.058 off, measured) make its 2.4 crusher span 16.5 to reach
+    // 6.8; folded that far its 7-long palm lies along a forearm aimed away from the disc (38.5% outside, measured). One
+    // armLengths scales both claws by size; this pair needs an arm length per claw, a field the claws' numbers lack.
   },
   compare: ["far", "face", "legs", "back"],
   build: (o, n) => {
