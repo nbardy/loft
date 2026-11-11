@@ -1,7 +1,7 @@
 // Surfaces written as maps, and the products that build them from curves (DESIGN.md 7.2, "multiply"). `sweep` lives in
 // sweep.ts (it needs frames transported on the CPU); everything here is closed form.
 
-import { add, clamp, cos, cross, div, f, length, lift, max, mix, mul, sin, sub, substitute, TAU, time, vec3, type In } from "../expr.ts";
+import { add, clamp, compileJs, cos, cross, div, f, length, lift, max, mix, mul, sin, sub, substitute, TAU, time, variable, vec3, type In } from "../expr.ts";
 import { through } from "../curve.ts";
 import { rotate } from "./chart.ts";
 import { NO_SKELETON, type Curve, type End, type F, type P3, type Placed, type Surface, type Topology } from "./types.ts";
@@ -68,16 +68,56 @@ export function sheet(root: Curve, edge: Curve): Surface {
   };
 }
 
+/** Profile samples the lathe takes at rest to decide which way its surface faces. */
+const LATHE_SAMPLES = 64;
+
 /**
- * A surface of revolution about the y axis: `profile(u)` is (radius, height); v runs once round, counter-clockwise
- * seen from +y. Ends where the radius is zero are poles; the caller says which (`ends`).
+ * A surface of revolution about the y axis: `profile(u)` is (radius, height); v runs once round. Ends where the radius
+ * is zero are poles; the caller says which (`ends`).
+ *
+ * The front (d/du x d/dv, what one-sided drawing keeps and the normal points out of) faces away from the axis whichever
+ * way the profile runs. Turning counter-clockwise seen from +y, d/du x d/dv . radial = -dh/du: a profile running top to
+ * bottom faced out and one running bottom to top faced the axis, so a ball whose profile rose was drawn inside out
+ * (examples/bosses/thundermaw.ts reversed its profile to get round it; examples/bosses/tithe/kit.ts's tube and ball rose
+ * and were drawn inside out, 2026-11-11). Rather than refuse the rising profile, the lathe turns the other way round for
+ * it (clockwise seen from +y), which flips d/du x d/dv and keeps u as the author wrote it: paint over u reads the same,
+ * and v runs the other way round (a pattern in v is mirrored, which a surface of revolution rarely shows). Which way
+ * the profile runs is the sign of the integral of r dh, sampled once at rest (time 0, inputs and params at their
+ * defaults: the same rest the level of detail measures). A profile enclosing no area with the axis (a flat disc, or
+ * one that rises as much as it falls) has no outside to decide, and is refused by name.
  */
 export function lathe(profile: (u: F) => In<"vec2">, ends: readonly [End, End]): Surface {
+  const turn = latheTurn(profile);
   const point = (u: F, v: F): P3 => {
-    const rh = lift<"vec2">(profile(u)), a = mul(v, -TAU);
+    const rh = lift<"vec2">(profile(u)), a = mul(v, turn * TAU);
     return vec3(mul(rh.x, cos(a)), rh.y, mul(rh.x, sin(a)));
   };
   return surface(point, { u: ends, v: "periodic" });
+}
+
+/** -1 (counter-clockwise from +y, as before) for a profile that runs down, +1 for one that runs up. */
+function latheTurn(profile: (u: F) => In<"vec2">): -1 | 1 {
+  const x = variable("loft_lathe_u", "f32");
+  const at = substitute([lift<"vec2">(profile(x))], time, f(0))[0]!;
+  // Trapezoids of r dh, and the profile's size, to judge the integral against.
+  let area = 0, size = 0;
+  try {
+    const js = compileJs([at]);
+    const run = (u: number) => js({ vars: { loft_lathe_u: u }, inputs: {}, params: {} })[0] as number[];
+    let prev = run(0);
+    for (let k = 1; k <= LATHE_SAMPLES; k++) {
+      const q = run(k / LATHE_SAMPLES);
+      area += 0.5 * (q[0]! + prev[0]!) * (q[1]! - prev[1]!);
+      size = Math.max(size, Math.abs(q[0]!), Math.abs(q[1]!));
+      prev = q;
+    }
+  } catch (e) {
+    throw new Error(`lathe: the profile cannot be evaluated on the CPU at rest, so which way it faces cannot be decided (${(e as Error).message})`);
+  }
+  if (!(Math.abs(area) > 1e-6 * size * size)) {
+    throw new Error(`lathe: the profile encloses no area with the axis (integral of r dh is ${area}), so it has no outside to face; draw a flat or self-cancelling profile as a \`surface\` with the orientation you mean`);
+  }
+  return area > 0 ? 1 : -1;
 }
 
 /** Through a row of curves: v = 0 is the first, v = 1 the last, interpolated by a Catmull-Rom spline in between. */

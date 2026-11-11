@@ -7,12 +7,12 @@
 
 import type { Artefact, Camera, FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
-import { lift, variable, vec2, vec4, type Expr, type In, type TableFrame } from "./expr.ts";
+import { Expr, lift, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
 import { cameraMatrices, project } from "./host/camera.ts";
 import type { Body } from "./map/sweep.ts";
 import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
-import type { Part, Strike, Target } from "./spacetime/attack.ts";
+import type { Arming, Part, Strike, Target } from "./spacetime/attack.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { hullBoxDistance, hullDistance, type HullDistance } from "./geom/hull_distance.ts";
 
@@ -199,14 +199,31 @@ export function footprintShare(chain: readonly Joint[], outside: (x: number, z: 
 
 // ---- the checks ---------------------------------------------------------------------------------------------------
 
-/** The striking part's footprint at the arming time lies within the hit shape: at most `tolerance` of it outside. */
+/**
+ * A time a check is given: seconds, or an attack's arming (`attack.arming`), which a check measures at its first
+ * arming time. An attack that repeats arms at `attack.arm`, an expression of `time`; evaluated at time 0 that was a
+ * cycle that had already passed or not yet begun, so checks read the arming's first time instead.
+ */
+export type CheckTime = In<"f32"> | Arming;
+function timeOf(probe: Probe, t: CheckTime): number {
+  if (typeof t === "number" || t instanceof Expr) return probe.scalar(t);
+  switch (t.kind) {
+    case "once": return probe.scalar(t.at);
+    case "every": return probe.scalar(t.first);
+  }
+}
+
+/**
+ * The striking part's footprint at the arming time lies within the hit shape: at most `tolerance` of it outside. An
+ * attack that repeats is measured at its first arming.
+ */
 export function landsInside(strike: Strike, o: { readonly tolerance?: number; readonly step?: number } = {}): Check {
   const tol = o.tolerance ?? 0.02, step = o.step ?? 0.03;
   const a = strike.attack, c = chainOf(strike.part);
   return {
     name: `${a.name}: ${c.name} lands inside the hit shape`,
     run(probe) {
-      const T = probe.scalar(a.arm);
+      const T = probe.scalar(a.first);
       const chain = probe.joints(c.skeleton, c.range, T);
       const sdf = probe.planar((p) => hitSdf(a.hit, p), T);
       const { share } = footprintShare(chain, (x, z) => sdf(x, z) > 0, step);
@@ -216,12 +233,12 @@ export function landsInside(strike: Strike, o: { readonly tolerance?: number; re
 }
 
 /** The least distance between `body` and `target` from `from` until (not including) `until` is at least `margin`. */
-export function staysClear(body: Measured, target: Target, o: { readonly until: In<"f32">; readonly from?: In<"f32">; readonly margin?: number; readonly rate?: number; readonly label?: string }): Check {
+export function staysClear(body: Measured, target: Target, o: { readonly until: CheckTime; readonly from?: CheckTime; readonly margin?: number; readonly rate?: number; readonly label?: string }): Check {
   const c = chainOf(body), margin = o.margin ?? 0, rate = o.rate ?? 60;
   return {
     name: o.label ?? `${c.name} stays clear of the target`,
     run(probe) {
-      const t1 = probe.scalar(o.until), t0 = o.from === undefined ? 0 : probe.scalar(o.from);
+      const t1 = timeOf(probe, o.until), t0 = o.from === undefined ? 0 : timeOf(probe, o.from);
       let least = Infinity, when = t0;
       for (const t of times(t0, t1, rate)) {
         const g = gap(probe, probe.joints(c.skeleton, c.range, t), target, t);
@@ -234,14 +251,15 @@ export function staysClear(body: Measured, target: Target, o: { readonly until: 
 
 /**
  * The striking part reaches the target at the arming time (within `contact`) and never enters it over the whole
- * attack (it stops at the hull: the least distance is at least `-tolerance`).
+ * attack (it stops at the hull: the least distance is at least `-tolerance`). An attack that repeats is measured over its
+ * first arming.
  */
 export function stopsAt(strike: Strike, target: Target, o: { readonly contact?: number; readonly tolerance?: number; readonly rate?: number } = {}): Check {
   const a = strike.attack, c = chainOf(strike.part), contact = o.contact ?? 0.6, tol = o.tolerance ?? 0.05, rate = o.rate ?? 60;
   return {
     name: `${a.name}: ${c.name} stops at the target`,
     run(probe) {
-      const T = probe.scalar(a.arm);
+      const T = probe.scalar(a.first);
       const at = gap(probe, probe.joints(c.skeleton, c.range, T), target, T);
       let least = Infinity;
       for (const t of times(T - a.span.before, T + a.span.after, rate)) least = Math.min(least, gap(probe, probe.joints(c.skeleton, c.range, t), target, t));
@@ -254,14 +272,14 @@ export function stopsAt(strike: Strike, target: Target, o: { readonly contact?: 
 }
 
 /** A feature (an eye) is at least `pixels` across, in its narrower direction, from a named camera at time `at`. */
-export function minScreenSize(feature: Measured, camera: string, pixels: number, o: { readonly at?: In<"f32">; readonly size?: readonly [number, number] } = {}): Check {
+export function minScreenSize(feature: Measured, camera: string, pixels: number, o: { readonly at?: CheckTime; readonly size?: readonly [number, number] } = {}): Check {
   const c = chainOf(feature), [w, h] = o.size ?? [1280, 800];
   return {
     name: `${c.name} from "${camera}" is at least ${pixels} px`,
     run(probe) {
       const cam: Camera | undefined = probe.artefact.cameras[camera];
       if (cam === undefined) throw new Error(`minScreenSize: the scene has no camera "${camera}" (cameras: ${Object.keys(probe.artefact.cameras).join(", ")})`);
-      const t = o.at === undefined ? 0 : probe.scalar(o.at);
+      const t = o.at === undefined ? 0 : timeOf(probe, o.at);
       const m = cameraMatrices(cam, w / h);
       const f = m.forward, right = norm([-f[2], 0, f[0]]), up = cross(right, f);
       let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;

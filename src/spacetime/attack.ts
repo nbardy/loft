@@ -12,7 +12,7 @@
 // lands where the hit shape says at that instant and never travels past it (it stops at the target's hull).
 
 import {
-  add, clamp, compileJs, div, length, max, lift, mix, mul, normalize, smoothstep, sub, time, variable, vec2, vec3, type Expr, type In,
+  Expr, add, clamp, compileJs, div, f, floor, length, max, lift, mix, mul, normalize, smoothstep, sub, time, variable, vec2, vec3, type In,
 } from "../expr.ts";
 import { response } from "../curve.ts";
 import type { Drawable } from "../compile/context.ts";
@@ -101,21 +101,56 @@ export type SweepSpec = {
   readonly inset: number;
 };
 
-/** How an attack moves its part: the m = 0 end lunges, the m = 1 end sweeps, or a middle stretch rears and slams. */
-export type Motion = LungeSpec | SweepSpec | RearSpec;
+/**
+ * A remote attack: a hit shape and its timing, and no body part that strikes (a broadside, a lightning bolt, a beam).
+ * Nothing is posed; the telegraph, the checks of the shape and the schedule read it as any attack's.
+ */
+export type RemoteSpec = { readonly kind: "remote"; readonly hit: Hit };
 
-export type AttackSpec = {
+/** How an attack moves its part (the m = 0 end lunges, the m = 1 end sweeps, a middle stretch rears and slams), or not at all. */
+export type Motion = LungeSpec | SweepSpec | RearSpec | RemoteSpec;
+/** The motions that move a body part. */
+export type BodyMotion = LungeSpec | SweepSpec | RearSpec;
+
+/**
+ * When an attack arms: once at a time, or every `period` seconds from `first`. A value, so the pose, the telegraph and
+ * the checks all read the same arming times (the scenes wrote `floor(time / LOOP) * LOOP + at` by hand, and checks
+ * that evaluated that at time 0 measured the wrong cycle, or one that had not happened).
+ */
+export type Arming =
+  | { readonly kind: "once"; readonly at: F }
+  | { readonly kind: "every"; readonly period: number; readonly first: F };
+
+/** Arm once, at time `at` (seconds; an input for a game that sets it). */
+export const once = (at: In<"f32">): Arming => ({ kind: "once", at: lift<"f32">(at) });
+/**
+ * Arm every `period` seconds, first at `first` (which may be an input but must not read time). A cycle runs from the
+ * start of its warning (or of its wind-up, if that is longer) to the start of the next one's, so the arming time steps
+ * to the next cycle only when this one's warning is due; the attack must fit in its period (checked when it is made).
+ */
+export function every(period: number, first: In<"f32">): Arming {
+  if (!(period > 0 && Number.isFinite(period))) throw new Error(`every: the period must be a positive number of seconds, got ${period}`);
+  return { kind: "every", period, first: lift<"f32">(first) };
+}
+
+type Common = {
   readonly name: string;
-  /** Absolute time (seconds) at which the hit arms: the striking part lands then. */
-  readonly arm: In<"f32">;
+  /** When the hit arms: the striking part lands then. A time (seconds) is `once(time)`. */
+  readonly arm: In<"f32"> | Arming;
   /** Seconds of warning before the arming time. */
   readonly warn: In<"f32">;
   readonly target: Target;
-  /** The name of the creature's part that strikes. */
-  readonly part: string;
-  readonly motion: Motion;
   readonly timing?: Partial<Timing>;
 };
+/** An attack by a body part: the creature's part named `part` moves by `motion` (`animate` binds it). */
+export type BodyAttackSpec = Common & {
+  /** The name of the creature's part that strikes. */
+  readonly part: string;
+  readonly motion: BodyMotion;
+};
+/** An attack that moves no body part: only its hit shape and timing. */
+export type RemoteAttackSpec = Common & { readonly motion: RemoteSpec };
+export type AttackSpec = BodyAttackSpec | RemoteAttackSpec;
 
 /** The attack's two envelopes at a clock: posture p (0 rest .. 1) and strike progress q (exactly 1 at arming). */
 export type Envelope = { readonly p: F; readonly q: F; readonly tau: F };
@@ -134,13 +169,18 @@ function firstPeak(zeta: number, r: number): { readonly at: number; readonly val
   return best;
 }
 
+/** The arming time an `arm` field states: a schedule as given, a time as `once`. Classified once, here. */
+function armingOf(arm: In<"f32"> | Arming): Arming {
+  return typeof arm === "number" || arm instanceof Expr ? once(arm) : arm;
+}
+
+/** An attack of any kind: its hit shape, schedule, warning and timing. A `BodyAttack` also poses a body part. */
 export class Attack {
   readonly name: string;
   readonly hit: Hit;
-  readonly arm: F;
+  readonly arming: Arming;
   readonly warn: F;
   readonly target: Target;
-  readonly part: string;
   readonly motion: Motion;
   readonly timing: Timing;
   /** Strike response frequency (Hz) and its value at the first peak, chosen so the peak comes `timing.strike` after the start. */
@@ -151,10 +191,9 @@ export class Attack {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(spec.name)) throw new Error(`attack "${spec.name}": names must be identifiers`);
     this.name = spec.name;
     this.hit = spec.motion.hit;
-    this.arm = lift<"f32">(spec.arm);
+    this.arming = armingOf(spec.arm);
     this.warn = lift<"f32">(spec.warn);
     this.target = spec.target;
-    this.part = spec.part;
     this.motion = spec.motion;
     this.timing = { ...DEFAULT_TIMING, ...spec.timing };
     for (const [k, v] of Object.entries(this.timing)) if (!Number.isFinite(v)) throw new Error(`attack "${spec.name}": timing.${k} is ${v}`);
@@ -164,12 +203,49 @@ export class Attack {
     const unit = firstPeak(this.timing.zeta, this.timing.anticipation);
     this.f = unit.at / this.timing.strike;
     this.peak = unit.value;
+    fitsPeriod(this, spec.warn);
   }
+
+  /**
+   * The arming time of the cycle that clock t is in (`time` for now). Once: the time given. Every: the arming time whose
+   * cycle (from its warning or wind-up, whichever starts first, to the next one's) holds t.
+   */
+  armAt(t: In<"f32">): F {
+    const s = this.arming;
+    switch (s.kind) {
+      case "once": return s.at;
+      case "every": return add(s.first, mul(this.cycle(t), s.period));
+    }
+  }
+
+  /** Which cycle clock t is in: 0 for a single arming; for a repeating one 0 for the first, -1 before it, and so on. */
+  cycle(t: In<"f32">): F {
+    const s = this.arming;
+    switch (s.kind) {
+      case "once": return f(0);
+      case "every": return floor(div(add(sub(t, s.first), this.lead), s.period));
+    }
+  }
+
+  /** The arming time of the cycle in progress now: what the telegraph and the scene's own clocks read. */
+  get arm(): F { return this.armAt(time); }
+
+  /** The first arming time (time-independent): what checks measure at. */
+  get first(): F {
+    const s = this.arming;
+    switch (s.kind) {
+      case "once": return s.at;
+      case "every": return s.first;
+    }
+  }
+
+  /** Seconds before arming that a cycle starts: the warning, or the motion's span before, whichever is longer. */
+  private get lead(): F { return max(this.warn, this.span.before); }
 
   /** The envelopes at clock t (the striking end's clock; `time` for now). */
   envelope(t: In<"f32">): Envelope {
     const T = this.timing;
-    const tau = sub(t, this.arm);
+    const tau = sub(t, this.armAt(t));
     const coil = smoothstep(-(T.strike + T.windup), -T.strike, tau);
     const release = sub(1, response(sub(tau, T.hold), { f: T.recover, zeta: 1 }));
     const q = mul(response(add(tau, T.strike), { f: this.f, zeta: T.zeta, r: T.anticipation }), 1 / this.peak);
@@ -181,6 +257,32 @@ export class Attack {
     const T = this.timing;
     // A critically damped step reaches 99% after about 6.6 / (2 pi f) seconds.
     return { before: T.strike + T.windup + 1 / T.travel, after: T.hold + 6.6 / (2 * Math.PI * T.recover) + 1 / T.travel };
+  }
+}
+
+/** A repeating attack must fit in its period: its lead (warning or wind-up) and its recovery, or a cycle cuts the last one short. */
+function fitsPeriod(a: Attack, warn: In<"f32">): void {
+  const s = a.arming;
+  switch (s.kind) {
+    case "once": return;
+    case "every": {
+      // A warning given as an input is known only at run time; its default is not a promise, so only a number is checked.
+      const lead = Math.max(a.span.before, typeof warn === "number" ? warn : 0);
+      if (!(lead + a.span.after < s.period)) {
+        throw new Error(`attack "${a.name}": it does not fit its period of ${s.period} s (${lead.toFixed(2)} s of warning or wind-up before arming, ${a.span.after.toFixed(2)} s of recovery after)`);
+      }
+    }
+  }
+}
+
+/** An attack whose motion poses a body part: `animate` binds it to the part it names. */
+export class BodyAttack extends Attack {
+  declare readonly motion: BodyMotion;
+  readonly part: string;
+
+  constructor(spec: BodyAttackSpec) {
+    super(spec);
+    this.part = spec.part;
   }
 
   /** The rest spine with this attack applied. Exact at the arming time at the striking end. */
@@ -204,7 +306,15 @@ export class Attack {
   }
 }
 
-export const attack = (spec: AttackSpec): Attack => new Attack(spec);
+/** An attack, defined once: by a body part (`part` and a lunge, sweep or rear), or remote (a hit shape and timing only). */
+export function attack(spec: BodyAttackSpec): BodyAttack;
+export function attack(spec: RemoteAttackSpec): Attack;
+export function attack(spec: AttackSpec): Attack {
+  switch (spec.motion.kind) {
+    case "lunge": case "sweep": case "rear": return new BodyAttack(spec as BodyAttackSpec);
+    case "remote": return new Attack(spec);
+  }
+}
 
 // ---- lunge --------------------------------------------------------------------------------------------------------
 
@@ -277,7 +387,7 @@ function sweepSpine(a: Attack, m: SweepSpec, rest: Spine): Spine {
 export type Creature = { readonly things: readonly Drawable[]; readonly parts: Readonly<Record<string, Part>> };
 
 /** An attack bound to the part of the posed creature that strikes with it; `before` is the spine the attack was applied to. */
-export type Strike = { readonly attack: Attack; readonly part: Part; readonly before: Spine };
+export type Strike = { readonly attack: BodyAttack; readonly part: Part; readonly before: Spine };
 
 export type Animated = Creature & {
   /** The spine with every attack applied, in order. */
@@ -289,7 +399,7 @@ export type Animated = Creature & {
  * Build a creature on its rest spine with attacks applied (each to its own stretch of the spine), and bind each
  * attack to the part it names. An attack naming a part the creature does not have is an error.
  */
-export function animate(rest: Spine, attacks: readonly Attack[], build: (spine: Spine) => Creature): Animated {
+export function animate(rest: Spine, attacks: readonly BodyAttack[], build: (spine: Spine) => Creature): Animated {
   const before: Spine[] = [];
   const spine = attacks.reduce<Spine>((s, a) => { before.push(s); return a.pose(s); }, rest);
   const c = build(spine);
