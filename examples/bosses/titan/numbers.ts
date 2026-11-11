@@ -185,6 +185,8 @@ export const S = {
     reach: 1,
     /** How its claws share a taunt's move: 0 the small claw answers the great one late; 1 both go up together. */
     together: 0,
+    /** How high its claws go in a taunt, times the move's own height (`reach` sizes the whole move). */
+    lift: 1,
   },
 
   // ---- the throw and the wave (docs/throw_and_shove.md) ----

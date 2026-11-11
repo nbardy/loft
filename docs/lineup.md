@@ -145,3 +145,326 @@ What is weak or unfinished:
   rope lines, telegraphs, inputs). Fields, reliefs, impostors, glows, media and rain are not yet scoped.
 - The faces of the fiddler, the samurai and the spider crab do not yet read the taunt (`rig.dance.on`); the dandy's
   does.
+
+## Staging (2026-11-12): predicted before the first render
+
+The first cut was right in its machinery and wrong in its staging: four crabs a fifth of the frame's height under an
+empty sky, the shoved boats coming at the camera end on, the thrown boats lost behind the line. The owner's notes on
+it: a longer lens (less background, more face), a lower camera, closer in, a sunset at the horizon. The references are
+`docs/art_direction/lineup/` (a low, close, long-lens row at sunset; the camera just above the water, below the faces;
+the horizon 70 to 75% down; the row filling 90 to 95% of the width). Staging only: the attacks, the rig and the
+library are as they were, except where named below.
+
+Numbers stated once in `examples/bosses/lineup_shots.ts` (tempo, formation, shots); checked on paper by
+`bun tools/lineup_framing.ts`, which projects each crab as boxes (its largest moment, its body, its face) through each
+shot's camera on the CPU. The boxes are calibrated on the first cut's frame at 22.0 s: there the stand-in gives the
+spider crab 139 px where the picture shows about 125, and the line 85% where it shows 80%. **The stand-in reads about
+10% large, so a prediction below is its number times 0.9.**
+
+### Why this formation and lens
+
+- **A long lens from in front cannot shorten a straight line of four.** The line's width on screen is its width in the
+  world over the frame's width at its distance; the lens sets only the distance at which that ratio is reached.
+  Width and height go together: four crabs about 63 units across (centres 37.5 apart, plus the islander's claw and
+  the spider crab's legs) fill 92% of a 16:9 frame that is 38 units tall at their distance, so the tallest (15.5 to the
+  spider crab's lantern) is 40 to 45% of the height whatever the lens. The only ways to more are overlap (closer
+  spacing) or depth (some crabs nearer). Overlap: centres 12.5 apart, legs interleaved (the references' density).
+  Depth: the middle pair 3 forward (a shallow chevron, as `lineup_wide_alt` has it, but slight).
+- **Why not more depth.** Each crab's slam disc, its boat and its shoved boat's ride are on the water in front of it. In
+  a chevron deeper than about 3, or a two-row zig-zag (which the stand-in liked best for size: 56% tall), the back
+  crabs' boats and discs fall under the front crabs' legs. Their places are moved instead (below), into a lane in front
+  of each crab, and the lanes need the row.
+- **Why 0.28 rad (about 85 mm).** With the eye 3 above the water the horizon lands 70 to 72% down and runs behind the
+  legs; at 0.24 (99 mm) the faces gain 3% and the camera goes 135 away; at 0.38 (64 mm) the middle pair, 3 nearer,
+  grows 2% more than the outer pair. 0.28 is the reference notes' long end and the faces pass 90 px except the spider
+  crab's (below).
+- **The square** cannot hold four across large: each crab a quarter of the width is a quarter of the height. An oblique
+  view (the reference square) shortens the line only with a wide lens from close, and then the far crab hides behind
+  the near ones (its face 51 to 100% covered in the stand-in). So the square trucks along the row two crabs at a time
+  (fovY 0.4, about 59 mm, from 72 to 75 away) for the slam and the taunt, and holds a wider frame on the middle pair
+  for the throw.
+
+### The formation and the props (crab axes: x forward, z the crab's right, the camera's left)
+
+| | First cut | Now |
+|---|---|---|
+| places | a row, 22 apart, at x = 0 | a row, **12.5 apart**; the middle pair at x = 3 |
+| heading | toed in 0.08 per place | each faces the audience point (104, 3.5, 0) |
+| slam disc centre | (9.6, 5.6) | **(10, 1.5)**: in the crab's lane, clear of its neighbour's boat by 1.4 |
+| boat taken (grab bearing) | -0.75 (stilt -0.55) | **-0.26** for all four: the boat at (12.6, -4.6), keel nearly toward the camera |
+| shoved boat | bearing -0.9 (toward the camera), heading 1.9 | **bearing 0.6, heading -2.2**: it rides forward and to the camera's left, side on (its keel 54 degrees off the camera axis), stern first: across the frame, ending 14 left of its crab |
+| throw lands | (-24, -15), behind the line, out of sight | **(38, 6), (38, 0), (38, -4), (38, -8)**, left to right: thrown forward, it arcs up in front of the line and lands in the foreground sea, in frame, the four fanned (with the toe-in about 18 either side of the middle). First staged at (26, -8): `throwLands` wants a throw of 25 at least, and that carried 15 |
+| how the boats get home | thrown boats sink, new ones sail in; shoved boats sail back | **on cuts** (`Show` `cut`): the crush's cycle turns at the loop's seam (each crab's warning starts at 0: 2.0 + 0.5 k s before its slam) and the grab's at 6.0 (a warning of seven beats); both are cuts. The shoved boats stay where the ride left them until the seam (`keep` the period) |
+
+The throw thrown ahead also clears the fingers sooner (0.12 to 0.18 s, against 0.32 to 0.37 back over the shoulder:
+docs/throw_and_shove.md). The slam lands more in front of the face than before (the disc moved 4 toward the middle):
+the claw crosses the face for the slam's half second.
+
+### The shots (cuts on downbeats; the camera at t = 24 is the camera at t = 0, so the loop closes)
+
+| Format | From | Shot | Camera: eye, target, fovY |
+|---|---|---|---|
+| 16:9 1920x1080 | 0.0 | slam (the main framing) | (120, 3, 0), (0, 10.5, 0), 0.28 |
+| | 6.0 (bar 4) | throw: pulled back so the landings are in frame | (138, 3, 0), (0, 11, 0), 0.28 |
+| | 16.0 (bar 9) | taunt: a push in over the eight seconds, eased | (122, 3, 0) to (112, 3.5, 0), target (0, 10.5, 0) to (0, 10, 0), 0.28 (first (108, 3.5) to (100, 4): the islander was cut in half) |
+| square 1080x1080 | 0.0 | slam: a truck along the row following the cascade, 1.75 to 3.75 s | (100, 3.5, z), (0, 8, z), 0.25; z from 12.5 (islander and fiddler) to -12.5 (samurai and spider crab) |
+| | 6.0 | throw: the middle pair and half of each neighbour | (135, 3.5, 0), (0, 11, 0), 0.25 |
+| | 16.0 | taunt: a truck along the row, 16.5 to 23.5 s | (96, 3.5, z), (0, 8, z), 0.25; z from 12.5 to -12.5 |
+
+The square was first planned at fovY 0.4 from 72 to 100 (about 59 mm): the strip left a third of it sky; closer, at 60, the
+boats thrown 38 forward landed 22 from the lens and filled its foreground. A longer lens from further gives the same
+framing with that foreground three times further off.
+
+### Framing, predicted (stand-in times 0.9; at each crab's largest moment; left to right islander, fiddler, samurai, spider crab)
+
+| Format, shot | Line's width | Crab heights (px) | Tallest | Faces (px) | Horizon |
+|---|---|---|---|---|---|
+| 16:9 slam | 100% (the islander's raised claw at the left edge) | 369, 405, 341, 485 | **45%** | 104, 115, 94, **78** | 72% |
+| 16:9 throw (widest) | **86%** | 318, 347, 293, 419 | 39% | 89, 99, 80, 68 | 71% |
+| 16:9 taunt, start | 112% | 414, 455, 383, 544 | 50% | 116, 130, 104, 87 | 70% |
+| 16:9 taunt, end (tightest) | 122% | 451, 496, 417, 591 | **55%** | **126, 140, 114, 95** | 68% |
+| square slam / taunt (two crabs) | over 200% (two in frame, two out) | 433 to 589 | 52 to 55% | 94 to 142 | 66 to 67% |
+| square throw | 150% | 313, 345, 290, 410 | 38% | 87, 98, 79, 66 | 64% |
+
+Targets: line at least 85% of the width, tallest at least 45% of the height, faces at least 90 px at the taunt's main
+framing. Met by the 16:9 slam (100%, 45%) and the taunt (faces 95 to 140 at its end; 87 for the spider crab at its
+start); the 16:9 throw is the widest moment and gives up height (39%) so that the four boats land in frame. The
+square meets them in its two-crab shots and not in its throw (38%). Where I am least sure: the spider crab's face box
+(a guess, 2.6 tall, 5.6 to 8.2 up); its eyes now hang on drooping stalks (main 941a2fe), so the face may read larger.
+
+Every prop of the 16:9 slam and throw is in frame (the stand-in's screen places: discs 16 to 78% across at 82% down;
+landings 37 to 97% across) except the islander's shoved boat, which rides out of the left edge (ends at -11%), and the
+spider crab's landing at 97% in the slam shot (90% in the throw shot, where it lands).
+
+### The sky
+
+A sunset by the style's own sky, set from the scene: `WoodblockSky` gains, additively, a grade of more than two stops
+and a sun disc (defaults that print exactly the old sky: the single crab's base `game` hashes at 1280x800 must stay
+`4d1bff1565296878`, `b6bceaf3bf6754fa`, `c1fe2acaa48c6e88` at t = 1.0, 3.6, 11.3). The hard dark stripe at the
+horizon is the sky's `below` ink (`SEA.deep`) seen between the far edge of the sea and the horizon: printed in
+orange-gold it becomes the strip of light on the far sea. The sun: vermilion, about 0.07 rad in radius, its centre on
+the horizon behind the gap between the middle pair, so it shows between and above the bodies, half set.
+
+### Checks, predicted
+
+| Check | Predicted |
+|---|---|
+| every named check of every crab with the new places | passes (40 of 40); the grab check on the new bearing is the one at risk |
+| frame at t = 0 and at t = 24 | the same hash |
+| the seam | it is a cut now (the taunt's push to the slam's frame), so the old proof (the seam's change like an ordinary frame's) no longer applies; what must hold is that within each shot nothing jumps: the change across the seam measured as before is a cut's, and the change across 23.967 to 23.933 an ordinary frame's |
+
+### Scored (2026-11-12)
+
+Three low-resolution strips (960x540 and 540x540, one load each) and one load for the deliverables. Measured on the
+strips' 960x540 tiles, doubled for 1080p; faces measured as the eyes and mouth together.
+
+| Format, shot | | Line | Tallest | Faces (islander, fiddler, samurai, spider crab) | Horizon |
+|---|---|---|---|---|---|
+| 16:9 slam (main) | predicted | 100% | 45% | 104, 115, 94, 78 | 72% |
+| | measured | **98%** | **45%** (the spider crab, 490 px) | about 200, 240, 130, 120 | 74% |
+| 16:9 throw (widest) | predicted | 86% | 39% | 89, 99, 80, 68 | 71% |
+| | measured | **85%** | 40% | about 170, 200, 130, 100 | 74% |
+| 16:9 taunt, near its end (tightest) | predicted | 122% (as first planned); 108% (as built, at 112) | 49% | 112 to 140 | 71% |
+| | measured | just over 100% (the islander's claw tip at the edge) | 42% | about 200, 240, 180, 120 | 74% |
+| square trucks | measured | over 100% (two crabs, parts of two) | about 60% | over 150 | about 70% |
+
+Where the reasoning was wrong or loose:
+
+1. **The faces were boxes I guessed, and too small.** The stand-in gave the faces 78 to 115 px at the slam; the
+   picture gives 120 to 240. The fiddler's and islander's eyes stand on stalks well above the box I drew, and the
+   samurai's face is the whole front of its shell. The target (90 px) holds with a wide margin everywhere; the
+   prediction was conservative for the wrong reason.
+2. **The spider crab is not tallest in the taunt.** Its taunt is a bow: it drops 2.2 on every accent, so its largest
+   moment is the slam's wind-up, not the taunt. The stand-in, which knows only the largest box, said 49% for the taunt's
+   end; 42% is what a bowing crab gives.
+3. **The square was planned wrong twice** (see the shots): a wide lens from close puts the thrown boats' sails into the
+   foreground. The long lens from further away is what the references meant by "longer lens" for the square too.
+4. **The throw as first staged failed two checks.** Landing 26 forward carried 15 (a throw must carry 25); landing 38
+   forward, the hand's turn for two tumbles (60 degrees) passed the release velocity, which a forward throw leaves only
+   about 48 degrees off the keel, and the hull left the fingers (0.35 to 0.62 off). One tumble: 40 of 40 pass.
+5. **The spider crab's tongs did not rise at lift 2.6**: the claw folds its palm 0.55 rad toward the face from the
+   forearm, so a wrist only 4 above the body put the tongs across the face. At 3.6 the forearm stands steep and the
+   tongs make a V over the shrine (the reference).
+
+What the strips say:
+
+- The slam reads as a cascade from left to right, a claw up while the one before is down, a splash at each landing,
+  the boats on the ring's face carried forward and left, side on.
+- The throw: four boats in the air at once, flat and tumbling against the sunset, then four splashes in the foreground.
+  Through a long lens a throw toward the camera is mostly up and down; it reads, but less than a throw across would.
+- The taunt: four manners. The islander's claw swings broad and wide; the fiddler's great claw lifts small and quick
+  and ticks on the eighths (its tick cannot be seen in a strip: it is in the clip); the samurai's gauntlet snaps up and
+  stays dead still for 0.6 s; the spider crab bows forward deepest with both tongs up in a V.
+- Weak: about eight boats stand along the waterline in front of the crabs through the slam (each crab's two, in lanes
+  only 12.5 wide), a fence across their legs; the faces clear the sails, the legs do not. The islander's raised claw
+  touches the left edge at its widest.
+
+The deliverables (`~/git/loft/out/lineup/`, after merging main d9e2ed6 with the planted feet): the four clips, H.264
+yuv420p, exactly 24.000 s (720 and 1440 frames). The seam: t = 0 and t = 24 the same frame (`9a5f8e3be9119fa3` wide,
+`bebf51d371a75567` square); the seam itself is a cut, as every shot change is, and the shot running into it has no jump
+of its own: its last two frames change 0.91 times (wide) and 1.32 times (square) the median of ordinary consecutive
+frames. So the sails' flutter and the contact foam's wobble, which are still not periodic, step only on a cut. Frame time
+5.24 ms at 1920 x 1080 and 4.06 at 1080 x 1080 (GPU, least of 8 rounds). Checks: the lineup 44 of 44; the seven
+single-crab variants all pass (base 16, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 11, islander 14, bruiser 16);
+the single crab's base `game` frames are byte-identical to main's (`00623051d0eb03ef`, `9ca615e4fe5b5b4c`,
+`322b7f7a5d7aa8c0` at t = 1.0, 3.6, 11.3, main's own files swapped in as the control).
+
+Re-render, one load, every deliverable:
+
+    cd ~/git/_wt/loft-stage && bun tools/lineup_deliver.ts ~/git/loft/out/lineup all --line islander,fiddler,mask,stilt --look default --formats wide,square --fps 30,60 --pick 16.5,22,13.5,2,3.5,12.3,15.15,21.5,9.5
+
+`--line islander,fiddler,mask,bruiser` puts the bruiser in the fourth slot; `--look` takes a name from `LOOKS` in the
+scene (today only `default`; an unknown one is refused, so a look that has not landed fails loudly instead of rendering
+the default).
+
+## Second staging (2026-11-12, after the owner's look at the first): predicted before the render
+
+Two faults in the first staging's own sheet. **A fence of boats**: eight boats along the waterline in front of the crabs
+for most of the clip, sails over legs, claws and faces; the target picture has one small boat. **A band of crabs**: the
+row's bodies a quarter of the height under 40% sky. The targets now: the low crabs' bodies (shell top to waterline, no
+claws, no buildings) at least 35% of the height in the main framing; raised claws and buildings may reach the top 10%;
+the horizon 60 to 70% down; the nearest feet and their foam within the bottom 15%; the taunt's push in ends on two or
+three faces.
+
+**Why a chevron and a closer, wider lens.** Our crabs' bodies are small beside their legs: the low crabs' bodies
+stand 3.4 (fiddler) to 4.4 (samurai) above the water, measured on the strips, on a 20-unit leg span. A body 35% of the
+height wants a frame at most 3.4 / 0.35 = 9.7 units tall at that crab, 17 wide in 16:9: two crabs, not four. So the
+main framing is the middle pair (the fiddler and the samurai, the low crabs), brought 8 forward and 11 apart, with the
+outer pair 8 back and 12 out, where perspective makes them smaller and puts them inside the frame behind the middle
+pair's outer legs, faces clear. A lens of fovY 0.4 (about 59 mm) from 32 in front of the middle pair, the eye 2 above
+the water (below every face): the 85 mm of the first staging would have to stand 46 away for the same size and then
+flattens the depth that the chevron is for. The slam, which must show four claws and four rides, stays wide.
+
+**The boats, each on screen only around its beat.**
+
+| Boat | Before its beat | Its beat | After |
+|---|---|---|---|
+| shoved (one a crab) | at its disc's front edge, the side away from the middle, from the seam (0.0) to its slam (2.0 to 3.5): the slam shot's lead-in | the ring carries it forward and outward (left pair to the left, right pair to the right), side on, out of frame | its ride ends out of every later frame; it is home on the cut at the seam |
+| thrown (one a crab) | parked out of every frame (below) until the cut at 6.0, then at its place at the crab's front-left | taken 9.5, thrown 12.0 forward, over the camera: it leaves the picture by its top and lands out of it, behind the lens (the outer pair throw 50 forward, the middle pair 38) | landed out of frame; at the cut into the taunt (16.0) moved by the host to a place far behind the row (`hostInputs`, `throw.land` = (-70, 0) in its axes) and home on the cut at 6.0 |
+
+So outside the two events no boat is in the picture: the taunt has none, and the throw shot shows only the boats the
+claws are about to take (two of them in frame: the islander's and the fiddler's; the samurai's and the spider crab's
+wait beyond the right edge). The parking is a host input, not the scene: the scene alone (a viewer of `crab_lineup.ts`)
+shows the landed boats where they land, behind the main camera. The checks read the defaults, the true landings.
+
+**Shots** (`examples/bosses/lineup_shots.ts`; fovY 0.4 throughout):
+
+| Format | From | Shot | Eye, target |
+|---|---|---|---|
+| 16:9 | 0.0 | slam, wide: all four | (58, 3, 0), (0, 6.5, 0) |
+| | 6.0 | throw: the main framing | (40, 2, 0), (0, 4.8, 0) |
+| | 16.0 | taunt: from the main framing, pushing in to the middle pair's faces by 24.0 | (40, 2, 0) to (30, 2, 0), target 4.8 to 4.5 up |
+| square | 0.0 | slam, wide | (62, 3, 0), (0, 6.5, 0) |
+| | 6.0 | throw: the middle pair, the outer pair at the edges | (44, 2, 0), (0, 5, 0) |
+| | 16.0 | taunt: pushing in to the middle pair's faces | (44, 2, 0) to (33, 2, 0), target 5 to 4.5 up |
+
+**Predicted** (`bun tools/lineup_framing.ts`; bodies and faces from boxes read off the strips; left to right islander,
+fiddler, samurai, spider crab):
+
+| Shot | Bodies (share of height) | Faces (px) | Horizon | Feet reach | Line |
+|---|---|---|---|---|---|
+| 16:9 slam (wide) | 20, 21, 26, 17% | 152, 226, 183, 115 | 65% | 85% | all four in, claws to the edges |
+| 16:9 throw (main) | 28, **35, 44**, 24% | 218, 383, 309, 167 | 67% | **93%** | outer pair inside the frame, claws and buildings past the top |
+| 16:9 taunt end | 37, 56, 71, 32% | 287, **623, 503**, 219 | 71% | 115% | two faces fill it; the outer pair at the edges |
+| square slam | 19, 19, 24, 16% | 143, 207, 167, 108 | 64% | 82% | all four, small |
+| square throw | 26, 30, 38, 22% | 199, 331, 268, 153 | 67% | 88% | the middle pair; the outer pair's faces at the edges |
+| square taunt end | 34, 48, 60, 29% | 262, 524, 423, 201 | 69% | 105% | two faces |
+
+Targets: the main framing's low bodies at least 35%: the fiddler 35, the samurai 44 (the islander, outer and further,
+28). The horizon 60 to 70%: 65 to 71 (the taunt's end 71, just over). Feet in the bottom 15%: 93% in the main framing,
+85% in the slam. Boats outside the events: none in frame. The 16:9 slam misses the body target (17 to 26%) by design:
+it is the one shot that has to hold four slams and four rides. Checks: 44 of 44 with the new places and throws.
+
+### Scored (second staging)
+
+One strip (960x540), one fix (the outer pair from 12 to 16 out, the main framing from 40 to 44 away), one full render.
+
+- **Boats: done.** No boat in frame outside the two events. The slam shows the four shoved boats at their discs and
+  then riding outward out of frame; the throw shows the boats being taken and then tumbling out over the top of the
+  frame; from 15.15 to the seam there are none. Checks 44 of 44.
+- **The middle pair: big.** Measured on the strip's main framing (from 40 away), the fiddler's shell top to waterline
+  is about 40% of the height and the samurai's about 50% (predicted 35 and 44); the horizon about 63% (predicted 67);
+  the white water at the feet at the bottom of the frame; the sun half hidden behind them; the taunt's push ends on
+  two faces, each more than a third of the height.
+- **The outer pair: lost in the main framing.** Wrong in the reasoning: the stand-in's bodies (8.2 wide) were narrower
+  than the drawn ones (about 10), and it had no great claw or eyestalks in its boxes, so it said the outer faces stood
+  clear past the middle pair's edges. In the picture the fiddler's great claw and eyestalk stand exactly where the
+  islander's face would show, and the samurai's armoured legs and gauntlet where the spider crab's would; moving them
+  out to 16 and the camera back to 44 did not uncover them. The islander is not seen in the throw or the taunt.
+- **The underlying conflict.** Our crabs' bodies are small on a 20-unit leg span (3.4 to 4.4 high). A body at 35% of
+  the height leaves a frame two crabs wide, so the main framing can have big bodies or four characters, not both. The
+  target picture has both because its crabs are drawn with bodies three to four times larger against their legs.
+
+## Third staging (2026-11-12): the edit gives each crab its moment, predicted before the render
+
+The second staging's conflict (bodies of 3.4 to 4.4 on 20-unit legs leave a frame two crabs wide when a body is a
+third of its height) is answered in the edit, not the art: each crab is framed alone and large on its own beats, and
+the frame holds all four only where the ensemble is the point. Formation: an open row, 20 apart (16 left the fiddler's
+great claw within reach of the islander's face), nearly facing the camera; the props keep their lanes and their
+staging (shoved boats riding outward out of frame, throws forward over the singles' cameras, landed boats parked by the
+host between the cuts at 16.0 and 6.0). Cameras: fovY 0.4; a single straight in front of its crab, eye 3 above the
+water (2 grazed the feet's foam collar into a line), 26 to 31 away for the low crabs, 40 for the spider crab aimed at
+7 up; a pair from 82; the wides from 114 (first bar, the release, the splashes) and 100 (the last bar, so the seam is a
+cut that hides the shoved boats going home).
+
+**The edit** (beats from the loop's first downbeat; 48 in the loop; every cut on a beat; bodies by the stand-in times
+1.14, the second staging's measured ratio):
+
+| Beats | Shot | Body of its subject |
+|---|---|---|
+| 0 to 4 | wide, all four: the cascade's wind-ups | 10 to 13% (the spider crab 24%) |
+| 4, 5, 6, 7 | islander, fiddler, samurai, spider crab alone, each on its own slam | 57, 51, 52, 73% |
+| 8 to 10, 10 to 12 | the left pair, the right pair: the rings carry the boats out | 13 to 17%, 17 and 33% |
+| 12 to 15, 15 to 18 | the left pair, the right pair: claws rise to the boats | as above |
+| 18, 19, 20, 21 | each alone as the grips close (19) and squeeze (20) | 57, 51, 52, 73% |
+| 22 to 26 | wide: the whip (23), the release of all four (24, 12.0), the flight | 10 to 24% |
+| 26, 27, 28, 29 | each alone, watching its boat go over the camera | as the singles |
+| 30 to 32 | wide: the four splashes in the foreground (30, 15.0) | 10 to 24% |
+| 32 to 39 | call and answer, each alone on its accent: islander 32, fiddler 33, samurai 34, spider crab 35, again 36 to 39 | as the singles |
+| 40, 41, 42, 43 | the cascade, a single a beat | as the singles |
+| 44 to 48 | wide (tighter): the unison bar; the loop closes on all four | 11 to 27% |
+
+Large (body at least 35% of the height): **6 beats, 3.0 s, for each crab**; equal by construction (from 58 the spider
+crab, tall on its stilts, was large in its pair too and had 11). The spider crab's body is shell top to waterline,
+9 units on its stilts: it is large from much further than the low crabs, so its single stands at 40.
+
+Square: the same edit with the middle wides as pairs (the whip and release on the left pair then the right, the
+splashes on the middle pair); the wide only for the first and last bars. Singles give the same bodies as in 16:9 (the
+height sets them).
+
+Checks predicted: 44 of 44 (the crabs' places changed, nothing relative to each crab did). The foam at standing feet:
+the style's collar is there by default; whether it reads from 3 above the water is the strip's question (item 5 of the
+owner's notes): if not, the singles' eye goes up until it does.
+
+### Scored (third staging)
+
+One sheet of every shot's first frame (one load), two fixes, one full render.
+
+The fixes after the sheet: (1) in the slam singles each shoved boat, waiting at its disc's front edge, stood 11 to 15
+from the camera and its sails filled the frame: it now waits beside the disc, out to the side between the crabs
+(bearing 1.4 outward), and rides sideways, seen in the pairs that follow; (2) its ride ended in front of the neighbour
+(20 apart), so a sail stood before the spider crab through its throw and taunt singles: the host now parks the shoved
+boats too, from the cut at 6.0 to the seam (`boat2.at`, as the thrown boats' `throw.land`). And the singles were aimed
+lower: their near feet were below the frame's edge, so the foam at standing feet could not be judged.
+
+| | Predicted | Measured (the singles, shell top to waterline) |
+|---|---|---|
+| islander | 57% | about 44% |
+| fiddler | 51% | about 35% |
+| samurai | 52% | about 54% |
+| spider crab | 73% | about 54% |
+| large time each | 6 beats (3.0 s) | 6 beats each: the singles are the only frames over 35% (pairs 12 to 29%, wides 9 to 24%) |
+| neighbour across a single's face | none | none |
+| boats outside the events | none | none (the slam singles show each crab's own boat beside its disc; the grip singles the boat about to be taken; the wides the release and the four splashes) |
+| foam at standing feet | the style's collar, if it reads from 3 above the water | it is there and reads as small cream patches at each foot in every single; from 2 above the water it was a line |
+| horizon | | about 53% in the singles (aimed nearly level so the feet stay in), 55 to 60% in the pairs and wides |
+
+Wrong in the reasoning: the stand-in's bodies are boxes, and the low crabs' singles aimed lower lose a little height
+to perspective (the fiddler's 51% predicted at the first aim; 35% measured at the lower aim, which also puts its great
+claw across the frame's top-left). The four are within 20% of each other in large time by construction (equal beats);
+in body share they range from 35% (fiddler) to 54%.
+
+Character sheet: `tools/lineup_characters.sh` (each crab's best large frame cut from the 1080p clip beside its
+expression reference): the fiddler, the samurai and the spider crab read as their sheets; the islander's face is the
+weakest: small eyes on stalks, turned a little away, without the reference's brows and moustache (its face is the
+dandy; the reference sheet is the bruiser-like head).

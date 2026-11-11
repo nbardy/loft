@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type Sea } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type Sea, type WoodblockSky } from "../../src/index.ts";
 import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
@@ -109,8 +109,8 @@ export const WATER = {
 } satisfies Record<string, WaterOption>;
 
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
-export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">) =>
-  woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks });
+export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">, sky?: Partial<WoodblockSky>) =>
+  woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks, sky });
 export const SUN = [0.15, 0.8, 0.6] as const;
 
 type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: WaterOption };
@@ -187,7 +187,7 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
 }
 
 /** The islander's temperament (and the bruiser's, the same crab with another face): broad, confident, posed for the camera. */
-const SHOW_OFF = { snap: 3, arrive: 0.25, hold: 0.12, leave: 0.25, jitter: 0, lag: 0.25, rise: 0.7, reach: 1.3, together: 0 };
+const SHOW_OFF = { snap: 3, arrive: 0.25, hold: 0.12, leave: 0.25, jitter: 0, lag: 0.25, rise: 0.7, reach: 1.3, together: 0, lift: 1 };
 
 export const design = makeDesign({
   name: "reefback_titan",
@@ -214,7 +214,7 @@ export const design = makeDesign({
       about: "a colossal spider crab: thorny body on bamboo stilts, tongs, a shrine",
       // Patient, melancholy, eerie: everything late and slow, a long follow-through; in a taunt both tongs go up and it bows.
       pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "mourner", back: "shrine" },
-      numbers: { grabBearing: -0.55, temper: { snap: 1.5, arrive: 0.7, hold: 0.15, leave: 0.7, jitter: 0, lag: 0.6, rise: -1.6, reach: 1.1, together: 1 } },
+      numbers: { grabBearing: -0.55, temper: { snap: 1.5, arrive: 0.7, hold: 0.15, leave: 0.7, jitter: 0, lag: 0.6, rise: -2.2, reach: 1.1, together: 1, lift: 3.6 } },
     },
     // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
     // little cutter, a manic face on very tall stalks (face/jitter.ts; its first face, `periscope`, is still an option), a
@@ -225,7 +225,7 @@ export const design = makeDesign({
       about: "a colossal fiddler: one great claw, bug eyes on very tall stalks, a dark pebble, a ruined lighthouse",
       pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "jitter", back: "lighthouse" },
       // Manic, twitchy: fast and small, never still; it lands on the beat and shakes on the half-beats.
-      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, temper: { snap: 4, arrive: 0.15, hold: 0, leave: 0.12, jitter: 1, lag: 0.12, rise: 0.3, reach: 0.85, together: 0 } },
+      numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, temper: { snap: 4, arrive: 0.15, hold: 0, leave: 0.12, jitter: 1, lag: 0.12, rise: 0.3, reach: 0.85, together: 0, lift: 1.2 } },
     },
     // The same crab if the crush disc must stay the base's 3.4: the largest great claw that lands inside it. Measured: 1.85
     // is 1.5% outside, 1.9 is at the 2% limit (theory.ts predicted 3.4 holds about g = 1.9 with the contact squash).
@@ -238,7 +238,7 @@ export const design = makeDesign({
     // Stern and proud: few moves, large, snapped into and held dead still (a kabuki mie), then let go.
     mask: {
       about: "a samurai crab: war-mask face, lacquer armour, a keep and two pines", pick: { carapace: "kabuto", face: "mask", legs: "armoured", claws: "gauntlet", back: "keep" },
-      numbers: { temper: { snap: 8, arrive: 0.18, hold: 0.6, leave: 0.3, jitter: 0, lag: 0.1, rise: 0.12, reach: 1.25, together: 0 } },
+      numbers: { temper: { snap: 8, arrive: 0.18, hold: 0.6, leave: 0.3, jitter: 0, lag: 0.1, rise: 0.12, reach: 1.25, together: 0, lift: 1 } },
     },
     // The island crab with the fiddler's identity (docs/art_direction/DIRECTION.md, Round 3): the base crab, low in the
     // water with the atoll on its back, one great claw, and the dandy's face (face/dandy.ts). The fiddler claws ask for a

@@ -172,8 +172,86 @@ export const marksAs = {
  * The sky's bokashi, in the view direction's height y: cream at the horizon graded to the haze over `haze`, the
  * indigo band printed in over `band`; below the horizon `below`.
  */
-export type WoodblockSky = { readonly haze: readonly [number, number]; readonly band: readonly [number, number]; readonly below: Rgb };
-const SKY: WoodblockSky = { haze: [0, 0.12], band: [0.18, 0.5], below: SEA.deep };
+export type WoodblockSky = {
+  readonly haze: readonly [number, number]; readonly band: readonly [number, number]; readonly below: Rgb;
+  /** How the sky above the horizon is graded. Default `bokashi`, the print's own (`haze`, `band`). */
+  readonly grade: SkyGrade;
+  /** A sun printed flat in the sky. Default none. */
+  readonly sun: SkySun;
+  /** Cloud bands printed flat over the grade and the sun. Default none. */
+  readonly clouds: SkyClouds;
+};
+/**
+ * The grade above the horizon: the print's bokashi (cream at the horizon to the haze over `haze`, indigo printed in
+ * over `band`), or stops: an ink at each view height (ascending, the first at or below 0), graded smoothly between
+ * neighbours (a sunset: orange-gold at the horizon through vermilion and violet to indigo).
+ */
+export type SkyGrade = { readonly kind: "bokashi" } | { readonly kind: "stops"; readonly stops: readonly { readonly at: number; readonly ink: Rgb }[] };
+/**
+ * A sun disc: none, or one in the direction `toward` (world; normalised here), `radius` radians across its half, in
+ * `ink`, flat. Below the horizon the sky prints `below`, so a disc whose centre is near the horizon is half set.
+ */
+export type SkySun = { readonly kind: "none" } | { readonly kind: "disc"; readonly toward: readonly [number, number, number]; readonly radius: number; readonly ink: Rgb };
+/**
+ * Cloud bands: none, or flat bands with a key line, each lying on a view height `at` (its flat underside) between two
+ * bearings (radians about up, from +x toward +z), its top scalloped in `lumps` across that span and `thick` at most.
+ * `line` is the key line's width in view height.
+ */
+export type SkyClouds =
+  | { readonly kind: "none" }
+  | { readonly kind: "bands"; readonly ink: Rgb; readonly line: number; readonly bands: readonly { readonly at: number; readonly thick: number; readonly from: number; readonly to: number; readonly lumps: number }[] };
+const SKY: WoodblockSky = { haze: [0, 0.12], band: [0.18, 0.5], below: SEA.deep, grade: { kind: "bokashi" }, sun: { kind: "none" }, clouds: { kind: "none" } };
+
+/** The sky's grade at view height `up`. One handler per grade. */
+function graded(sky: WoodblockSky, inks: WoodblockInks, up: Expr<"f32">): Expr<"vec3"> {
+  const g = sky.grade;
+  switch (g.kind) {
+    // Bokashi: cream at the horizon graded to the haze, with a band of indigo printed across the top.
+    case "bokashi": return mix(mix(rgb(inks.cream), rgb(SEA.haze), smoothstep(sky.haze[0], sky.haze[1], up)), rgb(inks.indigo), smoothstep(sky.band[0], sky.band[1], up));
+    case "stops": {
+      if (g.stops.length < 2) throw new Error("woodblock sky: a graded sky needs at least two stops");
+      g.stops.forEach((s, i) => { if (i > 0 && !(s.at > g.stops[i - 1]!.at)) throw new Error(`woodblock sky: stops must ascend; got [${g.stops.map((x) => x.at).join(", ")}]`); });
+      return g.stops.slice(1).reduce<Expr<"vec3">>((c, s, i) => mix(c, rgb(s.ink), smoothstep(g.stops[i]!.at, s.at, up)), rgb(g.stops[0]!.ink));
+    }
+  }
+}
+/** A sun printed over the sky, its edge a pixel or so soft. */
+function sunned(s: SkySun, c: Expr<"vec3">, dir: Expr<"vec3">): Expr<"vec3"> {
+  switch (s.kind) {
+    case "none": return c;
+    case "disc": {
+      const l = Math.hypot(...s.toward);
+      if (!(l > 0) || !(s.radius > 0)) throw new Error("woodblock sky: a sun needs a direction and a positive radius");
+      const toward = s.toward.map((x) => x / l) as [number, number, number];
+      // The angle from the sun's centre, small-angle: 1 - cos a is about a^2 / 2, so a = sqrt(2 (1 - cos a)).
+      const off = mul(max(sub(1, dot(dir, rgb(toward))), 0), 2);
+      return mix(c, rgb(s.ink), sub(1, smoothstep(s.radius * s.radius * 0.985, s.radius * s.radius, off)));
+    }
+  }
+}
+/** Cloud bands over the sky: a flat underside on its height, a scalloped top tapering to nothing at both ends, a key line. */
+function clouded(k: SkyClouds, inks: WoodblockInks, c: Expr<"vec3">, dir: Expr<"vec3">): Expr<"vec3"> {
+  switch (k.kind) {
+    case "none": return c;
+    case "bands": {
+      const bearing = atan2(dir.z, dir.x), up = dir.y;
+      return k.bands.reduce<Expr<"vec3">>((out, b) => {
+        if (!(b.to > b.from) || !(b.thick > 0)) throw new Error("woodblock sky: a cloud band needs from < to and a positive thickness");
+        // The bearing unwrapped past `from`: atan2 jumps from pi to -pi straight behind +x, which is where a camera
+        // looking along -x sees the sky, so a band may run past pi (from 2.85 to 3.22 is the middle of such a view).
+        const unwrapped = select(lt(bearing, b.from), add(bearing, 2 * Math.PI), bearing);
+        const u = saturate(mul(sub(unwrapped, b.from), 1 / (b.to - b.from)));
+        // Its height across the span: tapered by a half sine, scalloped by |sin| (round tops meeting in notches).
+        const top = mul(mul(sin(mul(u, Math.PI)), b.thick), add(0.6, mul(abs(sin(mul(u, Math.PI * b.lumps))), 0.4)));
+        const h = sub(up, b.at);
+        // Inside: above the underside and below the top (both with the key line's width as the edge).
+        const inside = mul(smoothstep(0, k.line * 0.3, h), sub(1, smoothstep(sub(top, k.line * 0.3), top, h)));
+        const core = mul(smoothstep(k.line, k.line * 1.3, h), sub(1, smoothstep(sub(top, k.line * 1.3), sub(top, k.line), h)));
+        return mix(mix(out, rgb(inks.black), inside), rgb(k.ink), core);
+      }, c);
+    }
+  }
+}
 
 /**
  * The eye of a whirlpool: where a deformation's shading darkens the water below `below` (in the crest's units,
@@ -348,9 +426,10 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
     },
     shadow: (ctx) => vec4(rgb(inks.indigo), mul(edgeOf(ctx.amount, 0.3, 0.01), 0.5)),
     sky: (ctx) => {
-      // Bokashi: cream at the horizon graded to the haze, with a band of indigo printed across the top.
+      // The grade, then the sun and the clouds printed over it; below the horizon `below`. With the defaults each step
+      // returns what it was given, so the sky is the print's as it was, expression for expression.
       const up = ctx.dir.y;
-      const above = mix(mix(rgb(inks.cream), rgb(SEA.haze), smoothstep(sky.haze[0], sky.haze[1], up)), rgb(inks.indigo), smoothstep(sky.band[0], sky.band[1], up));
+      const above = clouded(sky.clouds, inks, sunned(sky.sun, graded(sky, inks, up), ctx.dir), ctx.dir);
       return mix(above, rgb(sky.below), sub(1, smoothstep(-0.002, 0.0, up)));
     },
   };

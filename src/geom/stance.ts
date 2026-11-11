@@ -64,8 +64,8 @@ export type Stance =
     readonly load: F; readonly drive: F; readonly spring: F; readonly absorb: F; readonly lean: F; readonly turn: F;
     readonly size: { readonly sink: number; readonly coil: number; readonly reach: number; readonly settle: number; readonly lift: number; readonly pitch: number; readonly roll: number };
   }
-  /** Dancing on planted feet, with the hips: `lift` a rise (or a bow, below 0), `side` the weight's side (-1..1) swayed `sway` and rolled `roll` onto, `turn` a yaw. */
-  | { readonly kind: "dance"; readonly on: F; readonly lift: F; readonly side: F; readonly turn: F; readonly size: { readonly sway: number; readonly roll: number } }
+  /** Dancing on planted feet, with the hips: `lift` a rise (or a bow, below 0), `pitch` the body's nose down (below 0) into a bow, `side` the weight's side (-1..1) swayed `sway` and rolled `roll` onto, `turn` a yaw. */
+  | { readonly kind: "dance"; readonly on: F; readonly lift: F; readonly pitch: F; readonly side: F; readonly turn: F; readonly size: { readonly sway: number; readonly roll: number } }
   /** Walking: the gait's own bob (twice a cycle), sway, roll and turn on its cycles, by `on`. */
   | { readonly kind: "walk"; readonly on: F; readonly gait: Gait; readonly size: { readonly bob: number; readonly sway: number; readonly roll: number; readonly yaw: number } };
 
@@ -111,7 +111,7 @@ function braceOf(s: Extract<Stance, { kind: "brace" }>): Carriage {
   };
 }
 function danceOf(s: Extract<Stance, { kind: "dance" }>): Carriage {
-  return { surge: lift<"f32">(0), rise: s.lift, sway: mul(s.side, s.size.sway), roll: mul(s.side, s.size.roll), pitch: lift<"f32">(0), yaw: s.turn };
+  return { surge: lift<"f32">(0), rise: s.lift, sway: mul(s.side, s.size.sway), roll: mul(s.side, s.size.roll), pitch: s.pitch, yaw: s.turn };
 }
 function walkOf(s: Extract<Stance, { kind: "walk" }>): Carriage {
   const u = mul(s.gait.cycles, TAU), z = s.size;

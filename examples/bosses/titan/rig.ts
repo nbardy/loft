@@ -8,7 +8,7 @@
 
 import {
   add, alive, atan2, attack, carriage, footing, headingIn, namespaceSeed, replants, towardIn, type Footing, blendFrames, clamp, course, cos, cross, div, dragged, emote, every, exp, gait, ge, gt, handTurn, hit, hold, hosted, impact, input, lift,
-  lt, max, mix, mul, slowOut,
+  floor, lt, max, mix, mul, overshot, slowOut,
   normalize, placedBy, poseFrame, rigid, ring, rotateAbout, sea, select, sin, size, slowIn, slowInOut, smoothstep, sqrt, STAND_IN, sub, swing, telegraph, thrown,
   time, tumbled, tumbleRate, turnedAbout, vec2, vec3, type Attack, type BodyAttack, type Drawable, type Expr, type F, type Frame, type Gait, type GripSpec, type Hold, type P3, type Placer,
   type Pose, type Ring, type RingWave, type Sea, type SeaDeform, type SeaSpec, type Target, type Thrown,
@@ -123,7 +123,10 @@ export type Show =
   };
 
 /** Whether the boss taunts: not at all, or a dance whose moves land `accents` seconds after `first` (every `crushPeriod`). */
-export type Taunt = { readonly kind: "none" } | { readonly kind: "dance"; readonly first: number; readonly accents: readonly number[] };
+export type Taunt =
+  | { readonly kind: "none" }
+  /** `pulse`: the seconds of the scene's subdivision, which a twitchy crab ticks on (absent: 0.25, the eighths at 120 a minute). */
+  | { readonly kind: "dance"; readonly first: number; readonly accents: readonly number[]; readonly pulse?: number };
 
 /** Where the boss's audience is (what a face that plays to it looks at): its own, a point in its axes that moves with it; or a place in the world (a camera's eye). */
 export type Audience = { readonly kind: "own" } | { readonly kind: "at"; readonly eye: V3 };
@@ -176,12 +179,19 @@ function tauntOf(t: Taunt, period: number, T: Numbers["temper"]): Dance {
       const wave = tab("wave", b.wave), on = tab("on", b.on), swing = tab("swing", mul(sin(mul(b.turn, Math.PI)), b.wave));
       // The small claw: late after the great one, or (together = 1) up with it.
       const answer = tab("answer", mix(late.wave, b.wave, T.together));
-      // A twitch on the half-beats of a move (8 a second), for a crab that has any.
-      const twitch = mul(mul(sin(mul(time, 2 * Math.PI * 8)), T.jitter), add(mul(wave, 0.6), mul(on, 0.25)));
-      const R = T.reach;
+      // A twitch for a crab that has any: on each subdivision of the beat it snaps to the other side, overshoots and
+      // settles (a tick, then stillness till the next), not a shake. The side alternates (-1)^n, so the position is
+      // continuous: s_n (2 overshot(u) - 1) starts each tick where the last one settled. An even number of ticks in
+      // the loop (96 in 24 s at 0.25) keeps it periodic. (It was a sine at 8 a second, which read as a shake.)
+      const pulse = t.pulse ?? 0.25, ticks = div(time, pulse), n = floor(ticks), sign = sub(1, mul(sub(div(n, 2), floor(div(n, 2))), 4));
+      const tick = mul(sign, sub(mul(overshot(clamp(div(mul(sub(ticks, n), pulse), 0.14), 0, 1), 3), 2), 1));
+      const twitch = mul(mul(tick, T.jitter), add(mul(wave, 0.6), mul(on, 0.25)));
+      // How far the claws go: `reach` for the whole move, `lift` again for its height (both tongs high over the spider
+      // crab's body, which stands 6.8 up: its rest wrists are near the water).
+      const R = T.reach, L = T.lift;
       const lifts = {
-        great: perFrame("titan_taunt_great", vec3(mul(wave, 0.3 * R), add(mul(wave, 2.4 * R), mul(on, 0.8)), add(add(mul(wave, 1.0 * R), mul(swing, 0.9 * R)), mul(twitch, 0.6)))),
-        small: perFrame("titan_taunt_small", vec3(mul(answer, 0.2 * R), add(mul(answer, (1.7 + 0.7 * T.together) * R), mul(on, 0.5)), sub(mul(answer, -0.8 * R), mul(twitch, 0.4)))),
+        great: perFrame("titan_taunt_great", vec3(mul(wave, 0.3 * R), add(mul(wave, 2.4 * R * L), mul(on, 0.8)), add(add(mul(wave, 1.0 * R), mul(swing, 0.9 * R)), mul(twitch, 0.6)))),
+        small: perFrame("titan_taunt_small", vec3(mul(answer, 0.2 * R), add(mul(answer, (1.7 + 0.7 * T.together) * R * L), mul(on, 0.5)), sub(mul(answer, -0.8 * R), mul(twitch, 0.4)))),
       };
       const raised = (side: 1 | -1, wrist: P3): P3 => { switch (side) { case 1: return add(wrist, lifts.great); case -1: return add(wrist, lifts.small); } };
       const tau = tab("tau", sub(time, e.armAt(time)));
@@ -441,7 +451,9 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       size: { sink: ST.throw.sink, coil: ST.throw.coil, reach: ST.throw.reach, settle: 0, lift: ST.throw.lift, pitch: ST.throw.pitch, roll: ST.throw.roll },
     },
     {
-      kind: "dance", on: taunt.on, lift: sub(mul(taunt.wave, n.temper.rise), mul(taunt.on, ST.dance.crouch)), side: taunt.step, turn: mul(taunt.swing, 0.06),
+      // A crab that bows (`rise` below 0) also pitches forward into it on each move: 0.14 rad per unit of drop (the spider
+      // crab's 2.2 is 0.31 rad, 18 degrees). Forward is negative pitch, the slam's direction. A crab that rises does not.
+      kind: "dance", on: taunt.on, lift: sub(mul(taunt.wave, n.temper.rise), mul(taunt.on, ST.dance.crouch)), pitch: mul(taunt.wave, -0.14 * Math.max(0, -n.temper.rise)), side: taunt.step, turn: mul(taunt.swing, 0.06),
       size: { sway: ST.dance.sway, roll: ST.dance.roll },
     },
     { kind: "walk", on: walking, gait: strode, size: { bob: n.bob, sway: n.sway, roll: n.roll, yaw: n.yaw } },
