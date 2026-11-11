@@ -214,7 +214,7 @@ export type SeaPalette =
 export const paint = {
   hotter: (o: { readonly margin?: number; readonly gain?: Rgb } = {}): Warm => ({ kind: "hotter", margin: o.margin ?? 0.33, gain: o.gain ?? [1.27, 1.18, 1] }),
   mottle: (o: { readonly size?: number; readonly cut?: number; readonly value?: number; readonly margin?: number } = {}): Mottle =>
-    ({ kind: "blotches", size: positive("mottle size", o.size ?? 0.55), cut: o.cut ?? 0.18, value: o.value ?? 0.74, margin: o.margin ?? 0.3 }),
+    ({ kind: "blotches", size: positive("mottle size", o.size ?? 0.42), cut: o.cut ?? 0.3, value: o.value ?? 0.74, margin: o.margin ?? 0.3 }),
   swelling: (o: { readonly width?: number; readonly key?: Key } = {}): LineWeight => ({ kind: "swelling", width: positive("line swelling", o.width ?? 0.05), key: o.key ?? light.key.offLens(45) }),
 };
 export const seaPalette = {
@@ -231,7 +231,10 @@ export type WoodblockSpec = {
   readonly print?: Print;
   readonly sky?: Partial<WoodblockSky>;
   readonly water?: { readonly eye?: WoodblockEye; /** The sea's inks. Default `seaPalette.swell()`, the print as it was. */ readonly palette?: SeaPalette };
-  /** The key line's width in world units (the param `woodblock.outline`). Default 0.05. */
+  /**
+   * The key line's width as a multiple of the param `woodblock.outline` (0.05 world units unless tuned). Default 1. A
+   * factor, not a width: the param is one per process, and two styles declaring it with different defaults collide.
+   */
   readonly outline?: number;
   /** How paints are inked before the print rule: hotter warm paints, mottling, the line's weight. Each off by default. */
   readonly paint?: { readonly warm?: Warm; readonly mottle?: Mottle; readonly line?: LineWeight };
@@ -448,7 +451,8 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   const eye: WoodblockEye = spec.water?.eye ?? { kind: "none" };
   const pattern: ContactFoam = spec.foam ?? foam.ridge();
   const crestPrint: MarksPrint = spec.marks ?? marksAs.flat();
-  const outline = param("woodblock.outline", spec.outline ?? 0.05, { min: 0, max: 0.2 });
+  const width = param("woodblock.outline", 0.05, { min: 0, max: 0.2 });
+  const outline = spec.outline === undefined ? width : mul(width, positive("woodblock outline factor", spec.outline));
   const pt: Painting = spec.paint === undefined ? AS_PAINTED : paintingOf(spec.paint, inks);
   const bodies: Bodies = spec.light === undefined ? asPrinted(inks, rule, pt) : underRecipe(inks, rule, spec.light, pt);
   const sea = seaInks(spec.water?.palette ?? seaPalette.swell());
@@ -755,8 +759,8 @@ export const REFERENCE_PAINT: NonNullable<WoodblockSpec["paint"]> = { warm: pain
 /** A look: what it is for, and the spec it makes of a scene's own (the scene's inks, rule and foam kept). */
 export type WoodblockLook = { readonly about: string; readonly on: (s: WoodblockSpec) => WoodblockSpec };
 const lightOnly = (about: string, r: LightRecipe): WoodblockLook => ({ about, on: (s) => ({ ...s, light: r }) });
-/** The reference palette over a spec: paint, a heavier key line (0.07), the deep sea. */
-const referenced = (s: WoodblockSpec): WoodblockSpec => ({ ...s, paint: REFERENCE_PAINT, outline: 0.07, water: { ...s.water, palette: seaPalette.deep() } });
+/** The reference palette over a spec: paint, a key line 1.4 times as heavy (0.07), the deep sea. */
+const referenced = (s: WoodblockSpec): WoodblockSpec => ({ ...s, paint: REFERENCE_PAINT, outline: 1.4, water: { ...s.water, palette: seaPalette.deep() } });
 
 /**
  * Every named look of the woodblock print: each recipe of `LIGHT` alone, the reference palette alone, and the two the

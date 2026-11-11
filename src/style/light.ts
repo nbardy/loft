@@ -160,8 +160,8 @@ export const light = {
     return { kind: "wash", foot: positive("bokashi foot", o.foot ?? 2.2), under, amount: within("bokashi amount", o.amount ?? 1, 0, 1) };
   },
   hatch: (o: { readonly edge?: Terminator; readonly over?: number; readonly deep?: number; readonly cap?: number; readonly spacing?: number; readonly least?: number; readonly ragged?: number } = {}): Hatch => ({
-    kind: "cross", edge: o.edge ?? section({ at: 0.2 }), over: positive("hatch over", o.over ?? 0.14), deep: positive("hatch deep", o.deep ?? 0.55),
-    cap: within("hatch cap", o.cap ?? 0.62, 0, 1), spacing: positive("hatch spacing", o.spacing ?? 0.2), least: positive("hatch least pixels", o.least ?? 3.4),
+    kind: "cross", edge: o.edge ?? section({ at: 0.3, key: { kind: "offLens", least: 60 } }), over: positive("hatch over", o.over ?? 0.16), deep: positive("hatch deep", o.deep ?? 0.32),
+    cap: within("hatch cap", o.cap ?? 0.72, 0, 1), spacing: positive("hatch spacing", o.spacing ?? 0.2), least: positive("hatch least pixels", o.least ?? 5),
     ragged: within("hatch ragged", o.ragged ?? 0.1, 0, 0.5),
   }),
   rim: (o: { readonly width?: number; readonly ink?: Rgb; readonly amount?: number; readonly key?: Key } = {}): Rim =>
@@ -179,7 +179,7 @@ export const light = {
  * line is 55% of a near-black brown over the colour, at 60% value. Brick (0.66, 0.22, 0.13) lines in (0.26, 0.08, 0.06),
  * cream in a warm grey (0.29, 0.25, 0.22).
  */
-const ENGRAVED: Block = light.block({ ink: [0.12, 0.04, 0.06], amount: 0.55, value: 0.6 });
+const ENGRAVED: Block = light.block({ ink: [0.12, 0.04, 0.06], amount: 0.6, value: 0.5 });
 
 /** A deeper, warmer block than the crab's indigo: a shadow of about 60% of the ink's value that keeps its hue. */
 const WARM: Block = light.block({ ink: [0.2, 0.1, 0.12], amount: 0.3, value: 0.9 });
@@ -248,6 +248,9 @@ const longDir = wgslFn<"vec3">({
   return select(vec3<f32>(0.0), g / max(l, 1e-6) * smoothstep(0.25, 0.6, l), abs(det) > 1e-12 && l < 4.0);
 }`,
 });
+
+/** How fast a value changes across the screen, per pixel (the length of its screen gradient). Fragment stage only. */
+const screenRate = wgslFn<"f32">({ name: "loft_screen_rate", ret: "f32", wgsl: "fn loft_screen_rate(x: f32) -> f32 { return length(vec2<f32>(dpdx(x), dpdy(x))); }" });
 
 /** The key light's direction. One handler per kind. */
 export function keyOf(k: Key, ctx: ShadeCtx): V {
@@ -320,12 +323,15 @@ function hatched(h: Hatch, ctx: ShadeCtx): F {
 function crossLines(h: Extract<Hatch, { kind: "cross" }>, ctx: ShadeCtx): F {
   // The share of a period a line takes: nothing `over` above the terminator, `cap` at `deep` below it.
   const measure = turn(h.edge, ctx);
+  // Rings seen end on (a limb pointing at the eye, an eyelid) print as a bullseye: none where the form's long direction
+  // is within about 20 degrees of the view.
+  const sideOn = sub(1, smoothstep(0.8, 0.95, abs(dot(longDir(ctx.world, ctx.normal, ctx.anchor.x), ctx.view))));
   const duty = (p: F, k: F): F => {
     // Each line ends at its own place: its terminator moved by a hash of its index on the finest level (p's phases are
     // line centres; dividing by k, p's lines per phase, names a line the same at every level, so a level change does
     // not change a line's length).
     const jag = mul(sub(hash2(vec2(div(floor(add(p, 0.5)), k), 0.37)), 0.5), 2 * h.ragged);
-    return mul(saturate(div(sub(h.over, add(measure, jag)), h.over + h.deep)), h.cap);
+    return mul(mul(saturate(div(sub(h.over, add(measure, jag)), h.over + h.deep)), h.cap), sideOn);
   };
   // Along the form: a body's anchor is its skin straightened at rest (x the length along the spine); a traced solid's
   // is its world point, where lines at level heights are the engraver's for a cliff or a crown.
@@ -333,8 +339,12 @@ function crossLines(h: Extract<Hatch, { kind: "cross" }>, ctx: ShadeCtx): F {
   const phase = div(along, h.spacing);
   // Octaves by screen size: a period is never under `least` pixels. Level k keeps every 2^k-th line (lines sit on
   // whole phases, so a coarser level's are among a finer one's); between two levels the dropped lines fade.
-  // Negative near the camera (lines split), positive far (lines merge to tone); four splits at most.
-  const level = max(div(log(div(mul(pixelWorld(ctx.world), h.least), h.spacing)), Math.LN2), -4);
+  // Measured on the lines themselves (how many periods a pixel crosses), not from the world size of a pixel: where a
+  // form's length runs toward the camera its rings crowd on screen, and a level from the pixel's world size left them
+  // two pixels apart on the head in `face` (2026-11-12). Negative near (lines split), positive far (lines merge to
+  // tone); four splits at most.
+  const rate = max(screenRate(phase), 1e-6);
+  const level = max(div(log(mul(rate, h.least)), Math.LN2), -4);
   const whole = floor(level), part = sub(level, whole);
   const scale = exp(mul(whole, -Math.LN2));
   const fw = max(mul(fwidth(phase), scale), 1e-5);
