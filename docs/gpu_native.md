@@ -616,6 +616,74 @@ In the slow clock state every term scales by about 2.5, the savings with them. P
 8/255 in every frame. Wrong if: a saving misses its prediction by more than 0.1 ms in like clock states; any frame
 shows a change an eye can find; the clearance passes cost more than 0.06 ms.
 
+### Measured (2026-11-11; before: b5f572c, after: this branch; both from built files)
+
+As built, against the design: the clearance's first pass works per 4 x 4 pixels with four `textureGather`s of the
+resolved depth (a nearest, clamp-to-edge sampler), all three targets are r8unorm (the row pass stores a tile offset
+0..8 exactly, the last pass clearance / 64; `scene_clearance` takes off the half step the store may round up). Three
+other shapes were built and timed and lost or tied: one fragment per 8 x 8 tile reading 64 depths behind a bounds test
+(0.22 ms in a profiling frame; branch-free, still the largest pass), the 2D search in one pass (225 reads, no better
+than two passes of 15), and the first pass reading the multisampled depth directly so it need not wait for the resolve
+(0.2 ms slower). `whirlpool.ts` gained `reaches`; `draw/surface.ts` gained the glazed colour in cases.
+
+**Pictures: unchanged.** All 14 frames at 1280 x 800 (six scenes at t = 1 and 2.5 from the game camera, grab from
+`three`, and reefback's `close` camera at both times, the crab standing in the water) are byte-identical to before.
+Titan in toon, biolume and papercraft (game t = 1, close t = 2.5): toon and biolume byte-identical, papercraft 2 and 3
+bytes differ by 1/255. The 640 x 400 proof frames: four scenes byte-identical, maelstrom and wreckers 1 to 3 pixels
+differing by 1/255 in one channel (fused multiply-adds contracted differently, as predicted). Files equal the scene
+(`tools/files_proof.ts`; both still differ from the phase-1 hashes exactly as main does).
+
+Normal frame, ms, fast clock state, 1280 x 800, t = 1. Two campaigns of 12 and 16 rounds (`tools/sea_bench.ts`,
+before, after and a frame without the sea alternated, least of 20 frames each); the saving is the median of the
+per-round paired differences (the two campaigns' values given where they differ); the sea is the frame less the frame
+without it.
+
+| Scene | frame before (median) | after (median) | saving (predicted) | sea before | sea after (predicted) |
+|---|---|---|---|---|---|
+| maelstrom_wyrm | 1.51-1.84 | 1.25-1.38 | 0.26-0.46 (0.57) | 0.79-0.98 | 0.52 (0.31) |
+| reefback_titan | 1.38-1.44 | 1.18-1.31 | 0.20-0.26 (0.37) | 0.52-0.66 | 0.32-0.39 (0.24) |
+| thundermaw | 1.38-1.51 | 1.05-1.11 | 0.33 (0.48) | 0.59-0.66 | 0.26-0.33 (0.18) |
+| tithe_fleet | 1.57-1.77 | 1.18-1.44 | 0.33 (0.63) | 0.72-0.79 | 0.39-0.46 (0.29) |
+| wreckers_lamp | 1.31 | 1.05-1.11 | 0.20-0.26 (0.40) | 0.59-0.66 | 0.33-0.46 (0.24) |
+| grab (three) | 0.98 | 0.92 | 0.07 (0.16) | 0.33-0.39 | 0.26-0.33 (0.20) |
+
+Slow clock state, caught in two rounds of reefback: 5.31 -> 4.39 ms (without the sea 2.85), the sea 2.45 -> 1.53.
+
+**Score: every saving is real and every one missed low**, by 0.09 (grab) to 0.30 (tithe); four of six miss by more
+than the 0.1 the prediction allowed. The pictures, the exactness argument and the case shares (titan 17.1% near,
+predicted 17.4; maelstrom 17.1% near and 28.9% in the whirlpool; thundermaw 3.3, tithe 8.1, wreckers 16.7, grab 18.7)
+held. Where the reasoning was wrong, from reefback priced by parts in one campaign (before 1.38, after 1.18; every quad
+forced clear, with the clearance 0.98, without it 0.85; no sea 0.79):
+
+1. **The clearance passes cost 0.13 ms, not 0.04.** The model priced their reads and stores; they are three passes
+   each waiting for the one before, and on this GPU a dependent pass with a small draw costs 0.03 to 0.045 ms however
+   little it reads (a chain of six measured alone: 0.13 to 0.26 ms). The cost is the dependency, so it scales with the
+   number of passes, not with the view; the separable form is still the cheapest shape found.
+2. **A near quad costs about 2.4 times its share of the sea's band and foam** (0.20 ms for 17% of the sea, against
+   0.08 predicted). The band was priced as an average over all pixels, and most pixels read 9 taps; the near pixels are
+   the ones that also read the inner 8 (`gap < 2 width`) with the ring at its widest, and SIMD groups that straddle the
+   edge of the near region run both cases.
+3. Tithe and wreckers were split by titan's ratios from a noisy "before" (0.92 for tithe; 0.72 to 0.79 measured here).
+
+Corrected, for reefback: sea after = open water 0.07 + clearance 0.13 + near quads 0.20 = 0.40 (measured 0.32 to 0.39).
+Exact skipping does pay: the sea's cost outside the near region and the whirlpool fell from 0.55 to 0.07 per frame.
+
+### What the frame is made of now, and the next largest cost
+
+Reefback, fast state: 1.18 ms, of which the sea 0.39 (near quads 0.20, clearance 0.13, the open water 0.07 to 0.10:
+one tick at 1280 x 800, 0.39 ms at four times the pixels, and nearly all of it the wobble noise, one gradient-noise
+evaluation of four hashed corners each with a sine and a cosine, priced by removal) and 0.79 without the sea (pose
+stages 0.2; fixed stages: clears and the opaque pass start, the depth resolve, the multisample resolve and the post
+pass, 0.25 to 0.5 in profiling frames; the crab 0.3; the sky 0.13). Maelstrom: the sea 0.52, the rest 0.72 to 0.85.
+
+Next, by size: (1) the near quads (0.2 in reefback and maelstrom): a depth-aware clearance (per tile the nearest and
+farthest opaque view depth, dilated like the distance) would also skip quads that are near a body on the screen but
+far from it in 3D (the water behind the atoll's trees and tower in reefback: about a fifth of its near region, by
+eye), but the `clear` contract would then be "band below a threshold" and the threshold differs by style (toon's foam
+widens with the footprint); (2) the clearance's three dependent passes (0.13): one fewer pass is worth about 0.04;
+(3) the wobble noise (0.1): it cannot be cut without moving the printed lines by a fraction of a pixel; per vertex it
+fails its certificate on the far sea, where cells are larger than the noise's lattice.
+
 ## Phase 3: textures and layers
 
 A texture is a table with two or three indices and mip levels. It is written as a function and baked by the

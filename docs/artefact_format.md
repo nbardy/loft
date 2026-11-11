@@ -99,6 +99,10 @@ Given a view: camera, width, height, time, input and param values, `construction
      for each run `draw(run.vertices, run.instances, 0, run.first)`.
    End the pass. Submit.
 
+A pass may draw into only part of its view-sized target (the clearance passes after the depth resolve draw one
+fragment per 4 x 4 or 8 x 8 pixels into the top left, sized in their vertex shaders from the textures they read); the
+loader does nothing different for it.
+
 All writes of a frame are issued before the submit that reads them. (A `writeBuffer` is ordered with submits, not with
 passes inside one encoder: a write between two passes of one encoder lands before both.)
 

@@ -1,7 +1,7 @@
 // Normal-frame GPU time of several built artefacts of one scene, timed in the same rounds (docs/gpu_native.md "The
 // sea"): every directory is loaded once on one device, and each round takes the least of `frames` normal frames of
 // each in turn, so before and after see the same clock state and the same load from other processes. Prints, per
-// directory, the least and the median over rounds, and per round the ratio to the first directory.
+// directory, the least and the median over rounds, and the median of its per-round differences from the first.
 //   bun tools/sea_bench.ts <proof name> <rounds> <dir> [dir ...] [--time t] [--view camera] [--frames n] [--size WxH]
 // A larger size scales the per-pixel work (the sea's) while fixed costs stay: use it to price small parts above the
 // timer's tick.
@@ -38,6 +38,11 @@ for (let r = 0; r < rounds; r++) {
   console.log(`round ${r}: ${ms.map((m) => m[r]!.toFixed(3)).join("  ")}`);
 }
 const median = (a: number[]): number => { const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]!; };
-for (const [i, d] of dirs.entries()) console.log(`${d}: least ${Math.min(...ms[i]!).toFixed(3)}  median ${median(ms[i]!).toFixed(3)}  max ${Math.max(...ms[i]!).toFixed(3)}`);
+// Paired: each round's difference from the first directory, so a round in the slow clock state (or under another
+// process's load) moves both terms together instead of widening the spread.
+for (const [i, d] of dirs.entries()) {
+  const diff = ms[i]!.map((x, r) => x - ms[0]![r]!);
+  console.log(`${d}: least ${Math.min(...ms[i]!).toFixed(3)}  median ${median(ms[i]!).toFixed(3)}  max ${Math.max(...ms[i]!).toFixed(3)}  paired difference from the first: median ${median(diff).toFixed(3)} (${Math.min(...diff).toFixed(3)} to ${Math.max(...diff).toFixed(3)})`);
+}
 for (const l of loaded) l.l.destroy();
 process.exit(0);
