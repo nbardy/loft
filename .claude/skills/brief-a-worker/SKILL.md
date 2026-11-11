@@ -8,6 +8,18 @@ description: Hand a piece of Loft work to a parallel agent or subagent and integ
 A worker knows only its brief and the repo. Point it at files; do not retype them. Spend the brief's words on what the
 repo does not say: the owner's words, what is wrong today, and what done looks like.
 
+## Which model, and how many
+
+- Set `model` on every spawn. The orchestrating session may be on the most capable model; workers must not inherit
+  it by default. Design, hard code and art that needs judging: `opus`. Rendering loops, measurement, building sheets
+  and clips, merges, doc edits: `sonnet`. A worker's model cannot be changed once it is running: stop an early-stage
+  one and respawn it; let a late-stage one finish.
+- No more than three or four at once. Seven saturated one GPU (a render that loads in 5 s took 283 s) and spent a
+  week's allowance in an evening; each used 350,000 to 960,000 tokens.
+- Every brief carries the spending rules: script anything done more than twice and read its summary, not its log; `rg`
+  logs, never read them whole; judge one contact sheet downscaled to about 1600 px, not many frames; do not re-read
+  files; load a slow scene once and take every frame from that load; stop when the checks pass and the picture is right.
+
 ## What a brief contains
 
 1. **The owner's words, quoted**, and what you take them to mean.
