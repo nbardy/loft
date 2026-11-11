@@ -186,3 +186,84 @@ Weak or unfinished:
   point must become a host input.
 - The contrast was measured on one frame by a throwaway script, not by a check.
 
+## Round 4: a face with a head (2026-11-11)
+
+The owner, of the twelve generated pictures in `crab_round3/`: "look at how expressive this is. Can we try modeling his
+face more like these, they're incredible, besides the weird diffusion artifacts; they have a more robust head shape and
+more expression." Of the dandy: "the moustache is great", "the islander is great". So the islander keeps everything
+but its face. The dandy is two eyes on poles; this round's face is a head: brows, eyes set in it, a mouth that opens.
+References made for the round: `crab_round4/` (a turnaround, six expressions, a game view, a short-stalk hybrid).
+
+The variant is `bruiser` (the islander's picks with `face: "brow"`); the face is `examples/bosses/titan/face/brow.ts`,
+built from parts in `examples/bosses/lib/face_parts.ts` that any creature can use. `dandy` and `islander` are untouched,
+so the two faces can be set side by side. `--variant bruiser,face=browStalk` is the same face with its eyes raised 1.1
+radii on short thick stalks (the hybrid picture): one number, `stalk`, 0 in the head.
+
+### The face
+
+- **A head.** A boxy superellipsoid (exponent 3) on the front of the carapace, placed and sized from the carapace's
+  numbers: 0.61 of its half-width across (5.0 wide on the base shell), 1.68 half-heights up and down (4.2), its middle
+  0.56 half-heights behind the shell's front end. Its face is tilted 0.7 rad up. Why 0.7: the game camera stands 40
+  degrees up and 49 degrees round to the crab's right; a face's normal tilted up by t meets it at
+  0.477 cos t + 0.68 sin t, which is flat from 0.6 to 1.0 rad (0.80 to 0.83). The tilt is not what costs the picture:
+  the 49 degrees to the side is (across the face a unit is 29 px, up it 34). I did not turn the head to the camera:
+  the head is the front of the shell and the game's camera may move.
+- **Relief and paint in the face's own coordinates**: a dish under each eye, a shelf the brows stand on, a muzzle, two
+  cheeks that rise and swell with the `cheek` channel, a mouth hollow that deepens with `jaw` while the head's lower
+  half drops 0.4. Paint: dark sockets (the white's surround), the maroon mouth with a tongue and a lip line, nostrils,
+  furrows that come with a scowl and folds that come with the cheeks.
+- **Eyes** of radius 0.85 and 0.72, sunk 0.3 of a radius, facing 15 degrees to the crab's right of the face's normal.
+  The iris is truly under the look while the look is within 0.45 of the eye's facing and is held at 0.45 past that, so
+  the eye follows the thrown ship behind its ear and still shows iris and pupil. Coral lids, as the dandy's.
+- **Brows**: one thick dark bar an eye, riding a sphere round the eye from straight over it (raised) to in front of
+  its middle (clamped), each end on its own angle (the slant), always facing the way the eye does.
+- **Mouth**: two cream plates like buck teeth at rest; they part to the mouth's corners as pointed tusks. The dandy's
+  moustache on the muzzle. Two antennae from the crown, loose.
+- **The score** (the loop is 22 s since the throw merged): greedy from the Grab's warning (0 to 3.0), straining
+  through the hold (3.0 to 6.1), gleeful from the let-go through the ship's whole flight (6.1 to 9.3) and fading as it
+  looks away after the landing, furious through Claw Crush's wind-up (10.55 to 12.0), wincing at the slam (0.5 s),
+  then **gloating** at the second boat its wave shoved (12.9 to 16.9), then posing.
+
+Inherited: the references; the dandy's moustache, score, coral lids, sliding iris and audience; the eyeball and the
+lid lune from `faceKit`. Mine: the head with its relief, brows as bars on the eyes' spheres, the gaze held at the rim,
+the mandible mouth with a jaw that drops, the antennae, and two checks (`spansOnScreen`, `staysInView`).
+
+### Predictions (written before the first render of this face)
+
+From `tools/brow_theory.ts`: plain arithmetic on the face's own numbers, the body at rest, each expression at full
+weight, the `game` camera at 1280 x 800.
+
+1. **Size.** The head is 143 px across and 142 px from crown to chin. The right eyeball is 58 px across and the left
+   47 (`minScreenSize` within 4 px of each). What shows of each eye when open, white and iris, is about 0.9 of the
+   ball across (the socket takes the rest): 52 and 42 px, both above the dandy's smaller eye (38). Irises 26 and 21 px.
+2. **Brows.** Each is 19 px thick and about 50 px long, a dark bar: by the inks, cream is 5 times as light as dark
+   brick. In the `game` picture at rest the mean luminance of the right eye's white over the mean of its brow will be
+   at least 3 to 1.
+3. **Mouth.** In the roar (0.3 s before the slam) the mandibles' hinges are 52 px apart (the limit is 40) and the
+   hollow behind them is 61 px wide and 37 px tall.
+4. **Expressions.** All seven (posing and six) reach at least 0.9 of the face in a loop. For every pair some drawn
+   vector (an eye's middle to each end of its brow, to each lid's middle, to its pupil; the mouth's top to each
+   mandible's tip) differs by at least a quarter of the right eye's width (14.5 px). The closest pair is greedy and
+   gloating at 20.6 px (the left upper lid), then greedy and gleeful at 21.5 (the lower lid), posing and gloating at
+   23.4 (the pupil); the farthest gleeful and wincing at 40. Measured on the moving crab (`expressionsRead`) the
+   closest pair will be between 14.5 and 27 px. By eye, from stills at the game camera, at least six of the seven are
+   told apart at a glance; the pair most likely to be confused is posing and gloating (the same raised brow; they
+   differ in where they look and in the cheeks).
+5. **Where it looks.** The iris's middle, in shares of the eye's radius, across and up: posing (0.32, 0.18) (at the
+   audience, truly); the ship afloat (-0.38, -0.23) and in flight (-0.45, 0.05), both held at the rim; the disc
+   (0.26, -0.37). Each is at most 0.45 from the eye's middle and the iris is 0.45, so iris and pupil are always on the
+   white.
+6. **The claws.** Neither eye's middle nor the mouth is behind either claw at rest (the great claw's nearest edge
+   passes about 1 unit, 30 px, to the camera's side of the right eye's line of sight). Through the loop no point is
+   hidden for more than 0.45 s at a stretch (the great claw crosses the lines of sight inside its 0.3 s strike; the
+   cutter works on the far side of the face from the game camera and never does), under 1 s in all of the 22.
+7. **In the head or on short stalks.** In the head will read better from the game camera: raised 1.1 radii the eyes
+   are 3% nearer the camera and no larger, their brows leave the head and the head keeps two empty dark dishes. The
+   stalked one will have the stronger outline from `far` and from the side.
+8. **Cost.** The islander on this tree: 116 draws, 121,681 triangles drawn from `game`, 192 map and 38 scan tables.
+   The dandy's face is 22 of those draws and 8,144 triangles. This face is 26 draws and 33,440 triangles (the head
+   alone 23,040: a grid of 80 by 72 drawn twice, once as ink hull), so the bruiser: 120 draws, about 147,000 triangles
+   drawn, about 208 map tables, 38 to 42 scan tables. GPU frame: one to three timer ticks over the islander in the
+   same clock state (0.07 to 0.2 ms): the head's vertex stage (5,900 vertices, each a five-point normal of a relief of
+   eight bumps, twice) is the new work; its paint covers about 140 by 140 px.
+
