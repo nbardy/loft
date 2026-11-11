@@ -102,6 +102,24 @@ parts are in `examples/bosses/lib/face_parts.ts` for any creature):
 - A face is hidden by what stands in front of it. `staysInView(points, blockers, { camera, period, hidden })` says for
   how long; the islander's banner claw stood over this face's right eye for 2 s of the Grab from the game camera.
 
+### Poses struck and held
+
+`src/geom/struck.ts`; the worked face is `examples/bosses/titan/face/mask.ts` (the samurai crab). Use it for a
+character whose expressions are few, large and held (kabuki's mie): it snaps into a pose in a few frames, holds it
+dead still, then lets it go. Beside characters that flow, the stillness is the character.
+
+- `struck(clock, { from, snap, hold, release })` is one weight for a `show` layer. From the cue (`from`, on any clock:
+  an attack's `tau`) it first goes the wrong way (anticipation: below 0, so the face leaves the pose it is about to
+  strike, in every channel at once), arrives at speed and stops in one frame; through the hold it is exactly 1; the
+  release eases. It also gives `still` (1 through the hold) and `since` (seconds since the pose arrived: the beat
+  loose parts swing from).
+- **Stillness is an order of layers, not a switch.** A `show` at weight exactly 1 replaces every channel with the
+  expression's own number. Lay what flows (a blink, a tremble, a moving hold) first and the struck poses after it: a
+  held pose then covers them. A pose struck over another before its release covers the release.
+- A struck face reads its score on one clock: a part that reads it late strikes late, and a mie lands on one beat.
+- `holdsStill(score, { pose: struck, ... }, { period, within })` checks it: through each hold every channel is the
+  cast's own number. It fails if a layer laid after a pose moves under it or if a pose is never held.
+
 ## Grabs
 
 `src/geom/grab.ts`, shown in `examples/grab.ts`. A grab is one clock and four beats: reach, close, hold, release. In a
