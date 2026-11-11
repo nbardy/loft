@@ -80,7 +80,7 @@ function painted(o: ImpactSpec, p: Expr<"vec2">): White {
       return { cream: foam, key: mul(edgeOf(cut, -0.07, 0.004), sub(1, foam)) };
     }
     case "roll": {
-      const r = rollOf(o.paint.head);
+      const r = rollOf(o.paint.head, 0.45);
       // The heads lean outward from the splash that makes the most foam here.
       const out = o.splashes.reduce<{ readonly most: F; readonly dir: Expr<"vec2"> }>((acc, s) => {
         const mine = splashShape(o, p, s);

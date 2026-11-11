@@ -53,13 +53,20 @@ function massAt(on: WhiteOn, degrees: number, cell: number, off: V2): F {
 /** What is printed at a pixel: how much of it is cream, and how much key line (never both: the key is beside the cream). */
 export type White = { readonly cream: F; readonly key: F };
 
-/** The sizes of one event's white water, world units: the largest head's radius and the key line's width. */
-export type Roll = { readonly head: number; readonly line: number };
+/**
+ * The sizes of one event's white water: the largest head's radius and the key line's width (world units), and the
+ * share of the heads' cells that hold a head.
+ */
+export type Roll = { readonly head: number; readonly line: number; readonly held: number };
 
-/** A roll whose key line is a tenth of its head (never under 1.5 pixels: `lineOf`). */
-export function rollOf(head: number): Roll {
+/**
+ * A roll whose key line is a tenth of its head (never under 1.5 pixels: `lineOf`). `held`: three cells in four for a
+ * collar (a narrow band: few cells touch it); a burst fills a disc and wants fewer, or it is all heads.
+ */
+export function rollOf(head: number, held = 0.75): Roll {
   if (!(head > 0)) throw new Error(`white water: a head's radius must be positive, got ${head}`);
-  return { head, line: head * 0.1 };
+  if (!(held >= 0 && held <= 1)) throw new Error(`white water: the share of cells with a head must be 0..1, got ${held}`);
+  return { head, line: head * 0.1, held };
 }
 
 /** xz along the unit direction at `degrees` from +x, in periods of `period`. */
@@ -81,14 +88,12 @@ const lineOf = (r: Roll, pixel: F): F => max(mul(pixel, 1.5), r.line);
 
 /** How fast a head's edge winds in: its radius falls by this share over one turn from the beak. */
 const WIND = 0.5;
-/** Share of the heads' cells that hold a head. */
-const HELD = 0.75;
 
 /** A layer's print and where it covers what is behind it (its cream, its key line, the water in its curl). */
 type Layer = White & { readonly covers: F };
 
 /**
- * Curled heads, one to a cell of a lattice 2.3 head radii across, in about three cells in four, half to full size and
+ * Curled heads, one to a cell of a lattice 2.3 head radii across, in `held` of the cells, half to full size and
  * sized by the mass. A head is a hook: with a the share of a turn from its beak (0..1) and r the distance from its
  * centre, u = (1 - r / R) / WIND - a is below 0 outside it, 0 on its edge (one turn of a spiral, so the edge ends in a
  * pointed beak over a notch WIND R deep, half the head) and a whole number on every further turn inward; u steps by exactly 1 across
@@ -106,7 +111,7 @@ function heads(on: WhiteOn, r: Roll, pixel: F): Layer {
   const steep = length(on.slope);
   const fits = select(gt(steep, 1e-4), sub(here, 0.05).div(max(steep, 1e-4)), 1e3);
   // Two more numbers for the cell from the two it has: which cells hold a head, and how large.
-  const held = step(1 - HELD, fract(mul(h.x, 7.13))), size = mix(0.45, 1, fract(mul(h.y, 5.71)));
+  const held = step(1 - r.held, fract(mul(h.x, 7.13))), size = mix(0.45, 1, fract(mul(h.y, 5.71)));
   const off = mul(sub(q, centre), cell); // world, from the head's centre
   const radius = mul(max(min(mul(r.head, size), fits), 0), mul(held, smoothstep(0.12, 0.3, here)));
   const safe = max(radius, 1e-4), dist = length(off);

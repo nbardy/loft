@@ -26,7 +26,7 @@
 // a ripple of the gun ports opening from stern to bow as the tell, a jolt and a billow of the rags as it fires, smoke
 // puffs, shells in flight with trails, and splash columns where they land at the arming time. It loops on time.
 
-import {
+import { foam, marksAs,
   abs, add, clamp, cos, div, every, exp, floor, fract, lift, mapNormal, max, mix, mul, pick, posedList, saturate, sin, size,
   smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, spacing,
   woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE, beats, dragged, impact, slowInOut, swing,
@@ -559,7 +559,7 @@ function volley(): { readonly balls: Drawable; readonly trails: Drawable; readon
     trails: lines("tithe_trails", trails, { width: 0.2, colour: WOODBLOCK_PALETTE.cream }),
     foam: ([1, -1] as const).map((side) => impactFoam(`tithe_splash_${side > 0 ? "starboard" : "port"}`, water, {
       area: lane(side), pad: 1.5, splashes: splashes[side]!, reach: 2.2, seconds: 1.2,
-      foam: WOODBLOCK_PALETTE.cream, line: WOODBLOCK_PALETTE.black, paint: impactPaint.ridge(),
+      foam: WOODBLOCK_PALETTE.cream, line: WOODBLOCK_PALETTE.black, paint: impactPaint.roll()(2.2),
     })),
   };
 }
@@ -582,7 +582,7 @@ export default scene({
     ...telegraphs, shots.balls, shots.trails, ...shots.foam,
     ...living.placed(livingChart, WIND),
   ],
-  style: woodblock({ print: print.bands({ named: { sail: SAIL } }) }),
+  style: woodblock({ print: print.bands({ named: { sail: SAIL } }), foam: foam.roll(), marks: marksAs.heads() }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     game: { kind: "perspective", eye: [-38, 46, 36], target: [-4, 0, -2], fovY: 0.62 },
