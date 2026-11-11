@@ -31,6 +31,9 @@ export { looping, alive, anticipated, arc, beats, dragged, echo, exaggerated, im
 export { ringWave, RingWave, type RingSpec, type Ride } from "./geom/ring.ts";
 export { pose, poseFrame, placedBy, blendFrames, turnedAbout, hosted, STAND_IN, type Pose, type Placer, type StandIn, type Hosted } from "./geom/placing.ts";
 export { thrown, throwOf, tumbled, handTurn, tumbleRate, SET_DOWN, type Ending, type SetDown, type Thrown, type ThrownSpec, type Throw } from "./geom/grab.ts";
+export { bent, bentTip, BendError, type Bend, type Bent, type BentSpec } from "./geom/bend.ts";
+export { pendulum, sway, jolt, PendulumError, type Drive, type Pendulum, type PendulumSpec } from "./geom/pendulum.ts";
+export { dart, chosen, tremor, RestlessError, type Dart, type DartSpec } from "./geom/restless.ts";
 export { cast, score, show, only, added, during, ExpressionError, type Cast, type Expression, type Layer, type Posed, type Score } from "./geom/expression.ts";
 export { grab, gripper, heldThing, fingerAngle, pincerAngle, wrap, type AxesSize, type Grab, type GrabBeats, type GrabSpec, type GripperSpec, type Held, type WrapSpec } from "./geom/grab.ts";
 export * from "./relief/index.ts";
@@ -38,7 +41,7 @@ export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from ".
 export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, releasesAt, throwLands, fliesClear, letsGoClean, shoves, frontFirst, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
 export { expressionsRead, spansOnScreen, staysInView, type Mark } from "./check.ts";
-export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, foam, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
+export { STYLES, STYLE_NAMES, styleNamed, withStyle, woodblock, print, foam, marksAs, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
 export { afloat, afloatFrame, type AfloatSpec, type Waters } from "./geom/afloat.ts";

@@ -690,3 +690,319 @@ Weak or unfinished:
 - The headland's barnacles on the nape end where the head's back begins (about x = 2.6 at the middle); none is under it.
 - The blink is not checked, and where the iris sits is not checked.
 
+
+## Round 4: the fiddler's and the spider crab's faces (2026-11-12)
+
+The owner, after the islander: "did we refine other crabs' gestures and faces?" We had not. The islander's face is a
+score of six expressions; the fiddler and the spider crab still wore first-pass faces (`face/periscope.ts`,
+`face/patient.ts`) with two states each (roused, braced). All four crabs will stand side by side in one video, so each
+needs a face and a temperament of its own. This round is those two faces. Their bodies' gestures (how each slams,
+throws and taunts) are another worker's.
+
+References, made for this (`crab_round4/others/`): `fiddler_expressions.webp`, `fiddler_turnaround.webp`,
+`fiddler_taunt.webp`, `stilt_expressions.webp`, `stilt_turnaround.webp`, `stilt_taunt.webp`. Six expressions each: at
+rest, wanting, straining, triumphant, furious, wincing. What I take from them: the fiddler's sheet has no brow and
+almost no lid; everything is the stalks (bent together, straight, spread in a V, one recoiled) and the pupils, and a
+mouth of two plates. The spider crab's sheet is lids and brows; its turnaround hangs the eyes from drooping stalks
+like bells, and that is the picture one remembers.
+
+What was wrong with the two first faces, on the pictures (`game`, 1280 x 800, main 9b3deee):
+
+- the fiddler's eyes are 34 px across and its stalks are dark on a dark shell; nothing about the face changes from
+  far away but the lid;
+- the spider crab's eyes are about 35 px, stand on stalks like everyone's, and sit 100 px from the frame's top; its
+  brows and mouth are 3 px strokes;
+- neither has more than two states, and both move on the base face's clocks: the same blink, the same whip.
+
+### What is built, and why
+
+Both faces are new options beside the old ones, and the variants pick them: `fiddler` and `fiddlerBaseDisc` pick
+`face=jitter` (`titan/face/jitter.ts`), `stilt` picks `face=mourner` (`titan/face/mourner.ts`). `periscope` and
+`patient` stay as options, untouched (parked; they are also the "before" in the cost comparison, in the same build).
+
+**The fiddler: the jitter.** Manic, twitchy, bug-eyed; a show-off who cannot keep still.
+
+- Bone-white eyes, big black pupils, a glint; no iris. Bigger than the periscope's (radius 0.72 and 0.66, were 0.46)
+  on stalks 3.3 and 2.95 tall, 1.3 times the islander's, thin (0.2 to 0.13), vermilion ringed black: the great claw's
+  ink, light against the oxblood shell and the sea. Lids are vermilion too and all but absent at rest.
+- **The stalks act.** A stalk is a bent spine (`src/geom/bend.ts`, new): its pose is three bends (a lean at the root, a
+  bow near the root, a crook near the tip), each two angles, and it keeps its length whatever they are. So an
+  expression says "bowed over toward the ship, tips craned" or "one thrown back in an S" in numbers, and the pose of
+  the stalks is the expression before a lid moves.
+- **The eyes swivel separately.** Each has its own restless clock (`src/geom/restless.ts`, new: `dart`): about every
+  0.85 s (right) and 1.15 s (left), at uneven intervals, it jumps to something else (the audience, its own great claw,
+  the other boat, the ship, nothing), in about a tenth of a second, and overshoots; its stalk flicks after it; it
+  blinks on four jumps in ten, one eye at a time. How much it wanders is a channel (`roam`): all the way at rest,
+  hardly at all when it wants the ship.
+- It trembles in bursts (two fast sines per bend, each stalk at its own rate), harder as `shake` rises; the stalks
+  whip after the slam and pop at the throw.
+- Two cream teeth high on the pebble's front (the sheet's two-plate mouth): they part, chatter, splay at the top (a
+  grin) or at the bottom (a sneer).
+- A flinch is not the same on both sides: the eye nearer the slam shuts and its stalk is thrown back; the other ducks
+  and peeks at the damage, half-lidded.
+
+**The spider crab: the mourner.** Patient, melancholy, eerie and slow.
+
+- **The eyes hang.** Each stalk leaves a socket on the bare front of the ball going forward and a little up, and
+  droops in a crook (the same bent spine: a crook of 2.0 rad hangs plumb); the eye hangs from its end, 0.85 of its
+  radius below the tip, like one more of the shrine's lanterns. From the `game` camera they hang clear of the body
+  against the sea, lower in the frame than the old eyes.
+- **They swing, and nothing is keyed.** Each eye is a pendulum (`src/geom/pendulum.ts`, new) whose period follows from
+  its own length and the world's gravity (the number the thrown ship and the ring wave already use, 5): arms of 1.98
+  and 2.17 give 3.95 and 4.14 s. The walk sways the body 0.42 each way every 4.2 s, so the pendulums are driven near
+  resonance, and the driven oscillator's steady state is the animation: a swing of 25 degrees each way, 0.87 and
+  1.00 s late. Each action jolts the sockets and the eyes swing on after it (the oscillator's impulse response): the
+  snatch, the throw, the slam. The left stalk is longer, so the two are never quite in step.
+- **Heavy lids.** The upper lid lies at the eye's middle and droops outward; the pupil is small and on the water. Lids
+  are straw-brown (between the cream and the sea behind) with a black lash line, so a shut eye is a closed bell.
+- **Late and slow.** The eyes read the score 0.2 and 0.45 s behind the fight; a mood comes on over a second or more;
+  a blink takes most of a second; the wince begins 0.12 s after the blow and lasts 1.3 s.
+- `stiff` is a channel: wrath lifts the stalks and holds the eyes out at the disc on stiff arms (they stop swinging);
+  grief lets them hang. Brows and a small mouth on the ball (inherited from `patient`), bolder, driven by the score.
+
+| | the fiddler (`jitter`) | the spider crab (`mourner`) |
+|---|---|---|
+| at rest | eyes wide, each wandering on its own; stalks a little apart, twitching | lids half down, pupils on the water, the eyes hanging plumb and swinging with the walk |
+| wanting (from the Grab's warning) | both stalks bowed hard over toward the ship and craned, pupils swollen; at once | the eyes drawn out toward the ship on lifted stalks, lids raised; 0.6 s late, over 1.5 s |
+| straining (the hold) | screwed shut, stalks ramrod straight, short and thick, shaking; teeth clenched; bites with each squeeze | shut tight, lids knotted to the middle, stalks drawn in and curled under; a slow shudder; it endures |
+| triumphant (from the let-go) | stalks shot up and apart, eyes popped 1.3 times, a grin; it cackles | it raises its eyes to watch the ship fly; the smallest smile, the grief still in the lids |
+| furious (Claw Crush's wind-up) | stalks short, spread in a V and thrust at the disc; lids hard down over pinpoints | the stalks rise and stiffen and hold the eyes at the disc; lids hard down to the middle; gathers through the whole warning |
+| wincing (the slam) | the near eye shut on a stalk thrown back, the far one ducked, peeking | a moment after: one eye shut, the other left half open; the stalks let go and the eyes swing far forward |
+
+Inherited: the eyeball with a sliding pupil in an audience-facing socket, the lid as a spherical lune, expressions as a
+cast and a score over the fight's clocks, the two checks (all the islander's, Round 3); the driven damped oscillator;
+the brows, mouth and horns of `patient`; the references. Mine: a stalk whose bending is the pose; eyes on separate
+restless clocks that pick real things to look at; the hanging eye as a pendulum derived from the rig's own sway and
+the world's gravity, with stiffness as a channel; a flinch that differs by side; measuring an expression's marks on
+the pose alone, so a swing or a wander cannot make two expressions look different to the check.
+
+### Which camera is honest for the spider crab
+
+The crab is 13.5 tall and the `game` camera cuts its shrine and its knees. Its eyes are not cut: they hang at about
+6.1 above the water, a third of the way down the frame (predicted at (696, 252) and (794, 205)), and the highest any
+eye's top comes in any expression is y = 115 of 800 at rest, about 90 with the swing. The check that an eye is big
+enough to read asks what a player sees, and the player has the `game` camera, so the sizes are held there. `far` is
+the camera that holds the whole crab, and the four-crab video will be nearer to it than to `game`; from it the eyes
+are a tenth smaller (41.7 px against 46.7), and the right eye is held there as well. The `face` camera is a portrait
+camera, not the game's: it follows a new number, `faceRise` (0 for the base), because very tall stalks leave its top
+and hanging eyes its bottom.
+
+### Amended by the theory, before the first render
+
+`tools/faces_fs_theory.ts` is plain arithmetic on the faces' own numbers (the body at rest, each expression at full
+weight, no swing, no wandering). Running it changed four things I had planned:
+
+- the fiddler's stalks stood 1.5 apart and its two eyes touched from the `game` camera (52 px between middles, 51 px
+  of radii). Now 1.9 apart and leaning apart: 69 px;
+- its "wanting" crossed the tips by 0.3 rad and the eyes overlapped. 0.1;
+- both faces put the pupil on the eye's rim when they looked far from the audience (the islander's lesson, not
+  applied). The fiddler's socket turn and slide went from 0.3 and 0.45 to 0.2 and 0.32, and its triumph looks half at
+  the ship and half at the audience; the spider crab's from 0.25 and 0.5 to 0.15 and 0.3, its sockets face 10 degrees
+  below the camera (not 25), and the water it watches is further ahead;
+- the fiddler's tremble was 0.055 rad a bend: 2 px at the tip at rest. Now 0.12: about 5 px at rest, 10 straining.
+
+### Predictions (written before the first render of either face)
+
+`game`, 1280 x 800; pixel figures from `tools/faces_fs_theory.ts` unless said.
+
+**The fiddler**
+
+1. **Size.** The right eye is 54 px across and the left 48 (the periscope's: 34). `minScreenSize` will measure each
+   within 4 px. Held: 48 and 40.
+2. **Light shapes with dark pupils.** In the `game` picture at rest the mean luminance of the right eye's cream
+   pixels over the mean of the ring from 1.0 to 1.3 radii round it is at least 3 to 1 (cream on sea, far legs and
+   shell; the islander measured 3.56). The pupil at rest is 23 px across.
+3. **Expressions.** All six (rest and five) reach at least 0.9 of the face in a cycle. The closest pair by the theory
+   is strain and wince at 27.6 px (0.51 of the right eye's width; the limit is 0.25), then rest and strain at 32.9.
+   On the moving crab `expressionsRead` will find its closest pair between 18 and 40 px. By eye, from stills at the
+   game camera, at least five of the six are told apart at a glance; the pair most likely confused is strain and
+   wince (each has a shut red eye).
+4. **Where it looks.** At rest (not wandering) the pupils are centred (2 px off); wanting, 20 px toward the ship, at
+   the eye's edge, as on the sheet; furious, 15 px straight down. Inside the white in each.
+5. **It never rests.** In a 22 s loop the right eye jumps 26 times and the left 19; a jump takes about 0.1 s and
+   overshoots by an eighth. At rest the right eye's middle is flicked at least 10 px by a jump and trembles by
+   about 5.
+6. **Cost.** `fiddler`, `game`: now 123 draws and 105,245 triangles. After: 123 draws (two teeth for two plates, two
+   cheeks for the gullet's two), about 107,700 triangles (taller stalks, finer balls, two more lids), about 30 more
+   per-frame tables, and one timer tick more GPU time (0.07 ms), at most two (0.13), compared back to back with
+   `face=periscope` in one clock state.
+
+**The spider crab**
+
+1. **Size.** The right eye is 47 px across and the left 42 from `game` (the old: about 35); from `far`, 42 and 37.
+   Held: 42 and 37 from `game`, 36 (right) from `far`. No eye's top comes above y = 90 in a cycle.
+2. **Light shapes with dark pupils.** As for the fiddler, at least 3 to 1 against the ring (cream on sea). The pupil
+   at rest is 13 px across and sits 14 px below and right of the eye's middle, inside the white.
+3. **Expressions.** All six reach at least 0.9. The closest pair by the theory is rest and wince at 25.1 px (0.54 of
+   the right eye's width), then rest and triumph at about 30. Measured on the moving crab, the closest pair will be
+   between 16 and 36 px. By eye at least five of six at a glance; the pair most likely confused is rest and triumph
+   (its triumph is the smallest smile).
+4. **The swing.** Pendulum periods 3.95 s (right) and 4.14 s (left). Walking, each eye swings 25 degrees each way,
+   0.87 and 1.00 s behind the body's sway: about 0.9 units, 29 px each way on screen (57 px from end to end, more
+   than an eye's width), once every 4.2 s. The slam throws them forward 0.4 rad on the first swing and half that on
+   the next. Wrath (stiff 0.85) cuts the swing to 15%.
+5. **Cost.** `stilt`, `game`: now 343 draws and 160,933 triangles. After: 345 draws (two cheeks), about 164,200
+   triangles, about 25 more per-frame tables, one timer tick more GPU time (0.07 ms), at most two, back to back with
+   `face=patient`.
+
+**Both**
+
+- Checks: `fiddler` and `fiddlerBaseDisc` pass 12 (9 and the face's 3); `stilt` passes 13 (9 and the face's 4); the
+  rest as they were.
+- The base, islander and mask pictures do not change. `game` hashes at t = 1.0, 3.6, 11.3, taken on this worktree
+  before any change: base `ec8c704f392bb4dd`, `d5a61b284211db4b`, `5d759b54f56d14dc`; islander `59ef0e317ccf25f4`,
+  `2d914b1e89233885`, `1c2f407adf50a56b`; mask `67124c3c355495a1`, `c53b63b41302c2ea`, `9acc5e0e00877f96`.
+
+## White water (2026-11-12)
+
+The owner, on the contact-foam sheet: "this is sick, this style for the white water interaction", of the round 4
+reference row (rolling cream foam, curled spiral heads, bold key lines). So that is the style for all white water:
+the collar where a body stands in the sea, a slam's burst, the ring wave's crest, a landing. This section is the
+design and its predictions, written before building; the score follows it. `curls` (above) is the starting point and
+its named gap is the brief: equal circles in a row, where the reference has a few large hooked heads on a rolling mass.
+
+### What white water is made of
+
+One painter, `rollingFoam` (to be `src/style/whitewater.ts`), draws white water from three things an event gives it: a
+**mass** (0 where there is none to 1 in the thick of it: the contact level for a collar, a splash's own shape for a
+burst, the sea's marks for a wave's crest), a **lean** (a direction on the water the heads curl toward, or none), and a
+**head** size (the world radius of the largest curled head). From them, back to front:
+
+1. **the roll**: round lobes on a jittered lattice a third of a head apart, sized by the mass: large and overlapping
+   into one cream mass where the mass is high, shrinking outward into separate **droplets**; one key line round the
+   mass, and inner arcs only on about half the lobes (every lobe outlined is what read as pebbles);
+2. **the heads**: one to a cell of a coarser lattice (2.4 head radii apart), present in about two cells in three, of
+   unequal size (half to full). A head is a **hook**, not a circle: its edge is one turn of a spiral, r = R (1 - 0.4 a)
+   for a the share of a turn from the beak, so it has a pointed beak overhanging a notch 0.4 R deep; the same spiral
+   goes on inward for a turn and a half as a channel of water between two key lines, closing to a line. The beak
+   points along the lean (all heads curl the same way); with no lean, by the cell's hash;
+3. events with a centre add a **crown**: pointed fingers round it (the angle is known there, so teeth can point
+   outward, which the collar's cannot).
+
+The spiral is a level set of u = (1 - r / R) / 0.4 - a: outside the head u < 0, the edge and every inner turn are the
+whole numbers, and u steps by exactly 1 across the beak's line, so "on a whole number" is continuous there. Mine; the
+hooked wave head itself is Hokusai's and the references'.
+
+It is a set of shared pieces that each drawer calls, not a sum type of events inside the style. An event's drawer
+already owns what the painter needs and the style cannot see: the collar is the sea's contact case, the crest is the
+sea's marks, a burst is its own patch on the water with its own clock (`examples/bosses/lib/impact.ts`). A dispatcher
+in the style would have to be handed all of that through one door. What is a sum type is the choice a scene makes:
+the collar's pattern (`ContactFoam` gains `roll`) and how the sea's marks print (`flat`, as now, or `heads`).
+
+What the sea must hand the style that it does not now, both added readouts: the sea's foam width beside the contact
+level (so a pattern's sizes follow the scene's sea: the other bosses' is 0.3, the crab's 0.85), the direction the
+largest swell travels (the collar's lean), and a lean beside a deformation's marks (the ring wave's is outward).
+
+### Predictions
+
+At the `game` camera, 1280 x 800, a near foot (35 px a unit), the crab's sea (foam width 0.85, so head R = 0.29,
+10 px):
+
+| what | predicted |
+|---|---|
+| collar at a foot, `game` | a cream mass 45 to 55 px wide with **2 or 3 heads** 10 to 20 px across (4 or 5 coarse cells touch the collar, two in three hold a head, sizes half to full), each showing its notch (4 px on the largest) and no inner spiral (drawn only where R is over 9 px); 3 to 6 droplets of 2 to 4 px beyond; one arc |
+| collar close (`back`, the island; about 55 px a unit) | heads 16 to 32 px across with a turn and a half of channel 2 to 3 px wide, beaks all toward the swell's travel; lobes behind them with few inner lines |
+| along the hull (3 units) | 4 coarse cells: 2 or 3 heads of unequal size over about 10 lobes; big, small, small, big by the hash, not by design |
+| slam, first 0.25 of its life | a crown of about 14 pointed fingers round the disc, each 0.3 of the reach long |
+| slam, after | a ring of heads (R = 0.5: 35 px across at `game`, spirals visible), beaks outward, thinning to droplets as it fades |
+| the ring wave's crest | a line of heads (R = 0.35) one deep along the front, beaks outward, breaking into separate heads and then droplets by three quarters of its reach |
+| landing | the slam's crown at the splash's smaller reach (heads R = 0.3) |
+| swims or pops | no: every lobe and head is fixed to the water; sizes follow the mass |
+
+Not predicted to work: a bow wave for a moving hull needs the hull's velocity, which neither the style nor the sea has;
+it would be a drawer of its own fed by the rig. Built last if at all.
+
+Where the reasoning is most likely wrong: a head is sized by the mass at each pixel, not at its centre, so a large head
+across a steep mass is squeezed on its far side and its spiral with it; and the heads sit wherever the lattice puts
+them, not on the mass's edge, where the reference has them.
+
+### Budget
+
+- The collar: no more than `curls` costs, +0.10 ms a frame over `ridge` at 1280 x 800 (measured before). By count it is
+  `curls` plus one cell hash (the heads' lattice is searched one cell deep; `curls` has four hashes and an arctangent,
+  this five and one): predicted equal within what can be measured.
+- A burst (`impactFoam`): today one gradient noise and three edges over its patch while live; the painter is five
+  hashes and an arctangent there: predicted up to twice the patch's cost for the 1.4 s it lives, under 0.05 ms.
+- The crest: today one threshold on a number the sea already has. Anything drawn costs more than that; the budget
+  cannot be "no dearer". To keep it small the crest gets the heads only (one hash, one arctangent), no roll:
+  predicted under 0.05 ms while the pulse is on the screen, nothing otherwise.
+- How it will be measured, with other workers on the GPU: `profile` of old and new built in turn (A, B, A, B, six of
+  each, 2560 x 1600 and 1280 x 800), the median and the whole range reported; a difference smaller than the range
+  between runs of one build is reported as not resolved, with no number.
+
+### Scored (2026-11-12, after building; merged with main 9f7d0e2)
+
+Pictures (git-ignored, `out/water/`): `sheet_white_water.webp` (ours beside each reference: the collar at a foot, close,
+the hull and the shoreline, the slam at four instants, the ring at the second boat, the landing), `sheet_styles.webp`
+(every selectable collar on the crab), `sheet_bosses.webp` (the other four bosses before and after),
+`lineup_t2.5.webp` (four crabs, the slam cascade), and clips of one 22 s cycle from `game` and `arena`.
+
+What was built is the design above with four changes, each forced by a picture:
+
+1. **A shape has to be sized by the mass at its own centre.** Sized at each pixel, a lobe as wide as the level's whole
+   range was cut along the level's own (rough) lines: a torn edge. The sea now returns, with the contact level, the unit
+   direction across the water to the nearest body point (`Contact.near.toward`: the hit the level already found,
+   carried through the same quad sharing); the level rises that way by 1 / width a unit, so the level at a lobe's or a
+   head's centre is known to first order and the shape is one whole circle or hook. For a mass that is a formula (a
+   splash, a wave's mark) the slope is taken from screen derivatives (`slopeOf`). This is the one thing the first
+   round lacked, and it is what the prediction named as most likely wrong.
+2. **The roll has no inner lines at all.** Half the lobes outlined still read as bubbles. The roll is one cream shape
+   with a scalloped edge; the lines inside the white water are the heads' spirals only.
+3. **The droplets are their own layer** (sparse dots with a thin key line in the outer fringe), not the roll's small
+   lobes: those made a froth.
+4. **The crown stands on the foam's outer edge and behind it**, with curved fingers. On the front itself it was hidden;
+   in front, it was a flat star that covered the curls.
+
+| what | predicted | seen |
+|---|---|---|
+| collar at a foot, `game` | a mass 45 to 55 px wide, 2 or 3 heads of 10 to 20 px with a notch, 3 to 6 droplets, one arc | a scalloped mass about 50 px wide with 1 or 2 hooked heads (15 to 25 px), 2 to 5 droplets; the arc is faint |
+| collar close | heads 16 to 32 px with a turn and a half of channel | heads 20 to 40 px, one turn of channel between two key lines (the spiral was made bolder: it winds in by half the head a turn, not 0.4) |
+| along the hull | 2 or 3 heads of unequal size over about 10 lobes | 3 heads of unequal size on one mass; the rhythm is the hash's, as predicted, and reads as irregular, not as big-small-small-big |
+| slam, first quarter | a crown of about 14 pointed fingers | 13 curved fingers behind a boil of rolling foam with curled heads |
+| slam, after | a ring of heads, beaks outward, thinning to droplets | that; the ring is thick and full of heads (a burst holds a head in 0.45 of its cells, a collar in 0.75) |
+| the crest | a line of heads one deep, breaking up by three quarters of its reach | a line of small hooked heads on the face that carries the boat, thinning to separate heads and droplets |
+| landing | the slam's crown, smaller | a small crown, a boil, a ring round the hull |
+| swims or pops | no | no popping seen in the stills of consecutive instants; the 22 s clips were rendered and not reviewed frame by frame |
+
+Against the references, what ours still lacks:
+
+- **Height.** The references' splashes stand up (a crown seen from the side, a wave front with a face). Ours is paint on
+  the water's surface: the crown is a flat star from above, and from the low `lineup` camera a burst is a thin band.
+- **The big sweep.** A reference head is larger than the mass it rises from and trails a tapering tail; ours are hooks
+  set into a scalloped mass, never larger than the collar is wide.
+- **Line weight.** The references' key line is heavier than ours (a tenth of a head, never under 1.5 px).
+- **The long ripple lines** outside the collar (smooth, like the sea's own lines); ours are the level's arcs, short and
+  a little rough.
+- **A bow wave and wake** for a moving hull: not built. It needs the hull's velocity, which neither the style nor the
+  sea has; it would be a drawer of its own fed by the rig.
+- **Lean relative to the body's edge.** The collar's heads curl the way the swell travels, all one way in the world;
+  the bursts' and the crest's curl outward. A lean that follows the body's edge needs a direction that is constant over
+  a head, and the level's is per pixel.
+
+Which bosses use it: the crab (collar, crest and bursts, by default: its `foam` slot's base); the wyrm, thundermaw and
+the lamp take the roll collar only. Left as they were, and why: the whirlpool's arms (as heads they broke into a
+dotted band; the flat spiral lines are better), the fleet (from its camera the hulls' foam is a few pixels and no
+different), and the other bosses' bursts (not looked at at their own instants, so not switched).
+
+Cost, `profile` (normal frame, least of 40), islander, `game`, 2560 x 1600, main and this branch in turn. The machine's
+load average was 60 to 90 throughout (seven workers); `tools/sea_bench.ts` and the 1280 x 800 runs were dropped.
+
+| instant | main (ridge), four or three runs | this branch (roll) | difference |
+|---|---|---|---|
+| t = 1.0, the collar only | 5.51, 5.51, 5.57, 8.45 | 6.09, 6.09, 6.09, 7.08 | +0.55 at the medians (+0.14 ms a 1280 x 800 frame) |
+| t = 12.4, the slam's burst and the crest too | 5.70, 5.77, 5.77 | 6.82, 6.88, 6.88 | +1.1 (+0.28 a frame) |
+
+Against the budget: the collar was to cost no more than `curls` (+0.10 over `ridge`); it reads +0.14. Three of four
+pairs agree to a timer tick and one run of each build is an outlier a third higher, so the sign is certain and the
+amount is good to about 0.03: it is probably over the budget by a little, from the droplets' hash, the direction's
+derivatives and the arctangent. The burst and the crest together add about 0.14 a frame while they are on screen,
+against the 0.10 predicted for the two. Neither was measured at 1280 x 800 or in a quiet machine.
+
+New base hashes (`game`, 1280 x 800, the base crab): t = 1.0 `00623051d0eb03ef`, t = 3.6 `9ca615e4fe5b5b4c`,
+t = 11.3 `322b7f7a5d7aa8c0` (main 9f7d0e2: `4d1bff1565296878`, `b6bceaf3bf6754fa`, `c1fe2acaa48c6e88`; the first was
+re-measured here, the other two are as given).
+
+Decisions the owner might reverse: the collar's heads curling with the swell (not with the body); the crown as flat
+claws on the water; the roll with no inner lines; a burst holding fewer heads than a collar; the whirlpool's arms left
+flat; the crab's `foam` slot kept as a look (the other collars one pick away) instead of removed.
+

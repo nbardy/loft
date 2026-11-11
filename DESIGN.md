@@ -171,6 +171,11 @@ What grew, additively, for these styles (both in `WaterCtx`, built by `src/geom/
   four more taps along the nearest hit's direction, the gap measured across the water (height counted double beyond a
   quarter of the width), and the quad's value tilted toward the hit so it varies per pixel. Either is emitted only if
   the style reads it. `level`'s own lines are still rough by a pixel or two: use it to size shapes drawn in the world.
+  With `level` comes `toward`, the unit direction across the water to the nearest body point (the way the level
+  rises, by 1 / `width` a unit), and `width`, the sea's foam width: a shape drawn in the world is sized by the level
+  at its own centre (level + offset . toward / width), so it stays one whole circle or hook. `WaterCtx.swell` is the
+  direction the largest swell travels; `WaterCtx.marksLean` the direction a deformation says its foam leans
+  (`SeaDeform.look` may return `lean`; the ring wave's is outward).
 - `phase`: the phase of the largest swell, in cycles. Contours of the height field of two crossed swells close into
   rings (a topographic map); lines of constant phase run along the crests, which is what a printed or cut sea follows.
 
@@ -203,6 +208,13 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
   scalloped shape; `foam.rings()`, ripple arcs; `foam.stipple()`, dots; `foam.breakers()`, blades along the printed swell
   lines: docs/art_direction/DIRECTION.md, "Contact foam"). Every pattern but `ridge` reads `Contact.near.level`, the
   sea's closeness without the band's grain (`loft_contact_level`, src/geom/sea.ts), which is computed only then.
+  White water (2026-11-12, DIRECTION.md "White water"): `foam.roll()` is the collar as a rolling cream mass with a few
+  large hooked heads, droplets and a ripple arc, and `marks: marksAs.heads()` prints a deformation's foam (a ring
+  wave's crest) as a line of the same heads leaning the way the deformation says; both call one painter,
+  `src/style/whitewater.ts` (`rollingFoam`, `curledHeads`, `crown`: given a mass 0..1, its slope, a lean and a head
+  size, they return how much of a pixel is cream and how much key line), which a burst's own patch calls too
+  (`examples/bosses/lib/impact.ts`, `impactPaint.roll()`). The five boss scenes use it; `woodblock()` stated nothing
+  is still `ridge` and the flat marks.
   `woodblock()` is unchanged pixel for pixel.
 - `biolume`: night sky and water; skin near black; a paint's light is `glowOf(base)`: as strong as it is bright and
   vivid, magenta for purples and reds, cyan for the rest, brightest facing the eye; cyan fresnel rim and hull; the water

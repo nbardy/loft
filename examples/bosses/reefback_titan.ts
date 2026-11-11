@@ -23,7 +23,8 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type ContactFoam, type Sea } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, marksAs, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type Sea } from "../../src/index.ts";
+import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
@@ -43,7 +44,9 @@ import { tongs } from "./titan/claws/tongs.ts";
 import { base as faceBase } from "./titan/face/base.ts";
 import { brow, browStalk } from "./titan/face/brow.ts";
 import { dandy } from "./titan/face/dandy.ts";
+import { jitter } from "./titan/face/jitter.ts";
 import { mask } from "./titan/face/mask.ts";
+import { mourner } from "./titan/face/mourner.ts";
 import { patient } from "./titan/face/patient.ts";
 import { periscope } from "./titan/face/periscope.ts";
 import { base as legsBase } from "./titan/legs/base.ts";
@@ -52,7 +55,7 @@ import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { AT_HOME, stage, type Staging } from "./titan/rig.ts";
-import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, FoamOption, LegsOption } from "./titan/slots.ts";
+import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption, WaterOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
 // comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
@@ -74,7 +77,7 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     // face head on, the legs from the right side at water level, the back from above and behind.
     far: at({ eye: [33, 21, 21], target: [3, 1.5, -1], fovY: 0.6 }, 0, rise * 0.35),
     // `close`'s eye with a longer lens: from lower or nearer, the resting claws cover the mouth.
-    face: at({ eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 }, front, rise),
+    face: at({ eye: [15.5, 9, 3], target: [4.5, 2.8, 0], fovY: 0.46 }, front, rise + n.faceRise),
     legs: at({ eye: [2, 0.9, 26], target: [1.5, 1.4, 0], fovY: 0.6 }, 0, rise * 0.85),
     back: at({ eye: [-15, 19, 9], target: [-1.5, 2.5, 0], fovY: 0.6 }, 0, rise * 0.5),
     // The throw in profile, from ahead of the crab looking back at it: the claw cocks on the left of
@@ -87,16 +90,31 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
   };
 };
 
+/**
+ * The ways white water is printed in a crab's scene; `base` is every crab's own. Exported for a scene that stages
+ * several crabs (it prints them all one way).
+ */
+export const WATER = {
+  base: { about: "roll: a rolling mass with curled heads, for the collar, the crest and the bursts", collar: foam.roll(), marks: marksAs.heads(), burst: impactPaint.roll() },
+  curls: { about: "round lobes lying over each other, some with a curl cut in", collar: foam.curls(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  apron: { about: "one flat scalloped shape with a key line", collar: foam.apron(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  rings: { about: "thin broken ripple arcs moving outward, no fill", collar: foam.rings(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  stipple: { about: "printed dots, dense at the body", collar: foam.stipple(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  breakers: { about: "a low collar and blades along the swell's printed lines", collar: foam.breakers(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  ridge: { about: "filaments along the zero lines of a noise (the first foam)", collar: foam.ridge(), marks: marksAs.flat(), burst: impactPaint.ridge },
+} satisfies Record<string, WaterOption>;
+
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
-export const styleFor = (n: Numbers, pattern: ContactFoam) => woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: pattern });
+export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">) =>
+  woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks });
 export const SUN = [0.15, 0.8, 0.6] as const;
 
-type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: FoamOption };
+type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: WaterOption };
 
 /** Numbers, then what the claws offer the rig, then the rig's first stage; on the sea given, the rig and each slot drawn on it. */
 function assemble(o: Slots, n: Numbers, how: Staging) {
   const offer = o.claws.offer(n);
-  const staged = stage(n, offer, o.boats, how);
+  const staged = stage(n, offer, o.boats, how, o.foam.burst);
   return {
     deforms: staged.deforms, sea: staged.sea,
     finish: (water: Sea) => {
@@ -171,36 +189,34 @@ export const design = makeDesign({
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
-    face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk } satisfies Record<string, FaceOption>,
+    face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk, jitter, mourner } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
-    // The contact foam's pattern (docs/art_direction/DIRECTION.md, "Contact foam"). `base` is the print as it was.
-    foam: {
-      base: { about: "ridge: filaments along the zero lines of a noise (the print as it was)", pattern: foam.ridge() },
-      rings: { about: "thin broken ripple arcs moving outward, no fill", pattern: foam.rings() },
-      apron: { about: "one flat scalloped shape with a key line", pattern: foam.apron() },
-      stipple: { about: "printed dots, dense at the body", pattern: foam.stipple() },
-      breakers: { about: "the swell's own lines breaking into blades on the body", pattern: foam.breakers() },
-      curls: { about: "rolling lobes with curled heads and a ripple arc (the round 4 pictures)", pattern: foam.curls() },
-    } satisfies Record<string, FoamOption>,
+    // How white water is printed (docs/art_direction/DIRECTION.md, "White water"). `base` is the rolling foam with
+    // curled heads for the collar, the wave's crest and the bursts; the others are the style's other collars, with the
+    // crest and the bursts as they were before. A look, not a part: see `looks` below.
+    foam: WATER,
   },
+  looks: ["foam"],
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
-    // patient sad face, a red shrine on its back. The ship is taken further round to the front (-0.55, not -0.75): at
+    // mourner's face on hanging eyes (face/mourner.ts; its first face, `patient`, is still an option), a red shrine on its
+    // back. The ship is taken further round to the front (-0.55, not -0.75): at
     // -0.75 it lay 2.8 from the front-left foot's foam.
     stilt: {
       about: "a colossal spider crab: thorny body on bamboo stilts, tongs, a shrine",
       // Patient, melancholy, eerie: everything late and slow, a long follow-through; in a taunt both tongs go up and it bows.
-      pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "patient", back: "shrine" },
+      pick: { carapace: "thorny", legs: "stilt", claws: "tongs", face: "mourner", back: "shrine" },
       numbers: { grabBearing: -0.55, temper: { snap: 1.5, arrive: 0.7, hold: 0.15, leave: 0.7, jitter: 0, lag: 0.6, rise: -1.6, reach: 1.1, together: 1 } },
     },
     // A colossal fiddler (docs/art_direction/crab_round2/fiddler_*.webp): one great claw as long as the body, a slender
-    // little cutter, periscope eyes, a dark pebble shell, a ruined lighthouse. Its inks: the body darkens to oxblood and
+    // little cutter, a manic face on very tall stalks (face/jitter.ts; its first face, `periscope`, is still an option), a
+    // dark pebble shell, a ruined lighthouse. Its inks: the body darkens to oxblood and
     // near-black; the great claw is the one accent, vermilion-brick to cream. Its claws ask for a crush disc of 4.4 (the
     // base's is 3.4): a bigger hand lands on a bigger area (claws/fiddler.ts), a gameplay change the owner decides.
     fiddler: {
-      about: "a colossal fiddler: one great claw, periscope eyes, a dark pebble, a ruined lighthouse",
-      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
+      about: "a colossal fiddler: one great claw, bug eyes on very tall stalks, a dark pebble, a ruined lighthouse",
+      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "jitter", back: "lighthouse" },
       // Manic, twitchy: fast and small, never still; it lands on the beat and shakes on the half-beats.
       numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, temper: { snap: 4, arrive: 0.15, hold: 0, leave: 0.12, jitter: 1, lag: 0.12, rise: 0.3, reach: 0.85, together: 0 } },
     },
@@ -208,7 +224,7 @@ export const design = makeDesign({
     // is 1.5% outside, 1.9 is at the 2% limit (theory.ts predicted 3.4 holds about g = 1.9 with the contact squash).
     fiddlerBaseDisc: {
       about: "the fiddler with the base crush disc (3.4): its great claw at the largest that fits",
-      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "periscope", back: "lighthouse" },
+      pick: { carapace: "pebble", legs: "slim", claws: "fiddler", face: "jitter", back: "lighthouse" },
       numbers: { ink: { brick: [0.34, 0.14, 0.14], brickDark: [0.16, 0.09, 0.11], accent: [0.78, 0.22, 0.12] }, crusher: 1.85, crushRadius: 3.4 },
     },
     // The heikegani: the carapace's front a scowling samurai war mask, armour on every limb, a keep and two pines on top.
@@ -249,7 +265,7 @@ export const design = makeDesign({
   build: (o, n) => {
     const a = assemble(o, n, AT_HOME), water = sea({ ...a.sea, deform: a.deforms }), m = a.finish(water);
     return {
-      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam.pattern), sun: SUN, cameras: camerasFor(n) }),
+      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam), sun: SUN, cameras: camerasFor(n) }),
       strikes: m.strikes, holds: m.holds, waves: m.waves, handoff: m.handoff, inputs: m.inputs, checks: [...m.checks, ...m.sceneChecks],
     };
   },

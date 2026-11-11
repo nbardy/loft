@@ -17,7 +17,7 @@
 // The ship is the game's size (about 4.5 long); the monster is drawn larger than the game brief's 6.5 u so it dwarfs
 // the ship, as DIRECTION.md asks.
 
-import {
+import { foam,
   abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul, neg, normalize, pick, points,
   lt, posed, pow, print, scene, sea, select, sign, sin, size, smoothstep, spacing, step, strand, sub, TAU, through, time, turn, vec2, vec3,
   vec4, woodblock, anticipated, dragged, swing as follow, type Drawable, type Expr, type F, type In, type P3, type PaintAt,
@@ -685,7 +685,7 @@ export default scene({
     ...victim,
   ],
   // Lantern paints have red and green both 0.3 above blue; cream (0.13) and the ship's wood (0.14) stay below 0.25.
-  style: woodblock({ print: print.bands({ accent: { hue: "yellow", margin: 0.25, inks: [{ ink: INK.lantern, from: 0 }, { ink: INK.lanternPale, from: 0.82 }] }, named: { sail: SAIL } }) }),
+  style: woodblock({ print: print.bands({ accent: { hue: "yellow", margin: 0.25, inks: [{ ink: INK.lantern, from: 0 }, { ink: INK.lanternPale, from: 0.82 }] }, named: { sail: SAIL } }), foam: foam.roll() }),
   sun: [-0.45, 0.75, 0.5],
   cameras: {
     game: { kind: "perspective", eye: around(34, faceYaw - 1.3, 31, middle), target: [middle[0], 5.5, middle[2]], fovY: 0.62 },
