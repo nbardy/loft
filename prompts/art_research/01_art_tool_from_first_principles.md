@@ -143,9 +143,10 @@ are not doctrine. Skip this section if you would rather form your own view first
 
 - With art compiled as part of the game client, an edit took 18 seconds to reach the screen. In the previous
   attempt, from the command to a picture on disk took 0.45 seconds for a serpent and 1.4 seconds for a ship.
-- A serpent's body was 62 named numbers.
-- A whole serpent, drawn as triangles computed from formulas, cost about 0.15 ms of GPU time. A ship cost about
-  0.3 ms, in 45 separate draws; its cost followed the number of draws, not triangles.
+- A serpent's body was 62 named numbers. (Counted in an earlier Rust version, not in the previous attempt itself.)
+- A whole serpent, drawn as triangles computed from formulas, cost less GPU time than our profiler could resolve:
+  under about 0.2 ms. A ship read between 0.2 and 1.4 ms across runs, in 45 separate draws; its cost followed the
+  number of draws, not triangles. Both figures are weak: the GPU clock ticked in 0.065 ms steps.
 - A branching coral drawn by marching a distance function cost 12.6 ms. With distances cached it cost 4.5 ms. Listed
   as 3,069 simple shapes and intersected exactly it cost 1.4 ms.
 - Cutting triangle counts by 2 to 2.7 times did not change frame time.

@@ -434,7 +434,8 @@ the fields are only ever evaluated in rest coordinates, where they are exact dis
 ## 7. Order of work
 
 1. Merge `wave3/triangles` and `wave3/tracer` and read `loft profile`. Done. In `examples/scenes/the_strike.ts` at the
-   game camera the serpent's draws sum to about 0.15 ms of GPU and the ship to 0.32 ms in 45 draws; the sea is 1.5 ms,
+   game camera the serpent's draws sum to under about 0.2 ms of GPU (each below the profiler's 0.065 ms tick, so the
+   sum is not reliable) and the ship read 0.32 ms in 45 draws (0.2 to 1.4 ms across runs); the sea is 1.5 ms,
    and the CPU pose and upload is 5.4 ms, more than every draw together. The next cost for many objects is the CPU
    pose, not the GPU.
 2. Unfold, on the coral. Done: 1.3 to 1.5 ms against 4.9 to 6.8 ms (5.3). Still to do: the compiler choosing it.

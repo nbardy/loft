@@ -74,7 +74,7 @@ Measured on 2026-11-11 on an M-series laptop, GPU time of the draw alone unless 
 
 | What the artist wants to say | Cheapest reading found | Status |
 |---|---|---|
-| A body around a skeleton | Triangles from the formula | Built; a whole serpent about 0.15 ms |
+| A body around a skeleton | Triangles from the formula | Built; a whole serpent under about 0.2 ms, below what the profiler resolves |
 | Repeats, branches, folds | List the copies, intersect each exactly | Built; coral 1.4 ms against 4.5 ms cached and 12.6 ms marched |
 | A smooth blend between parts | Triangles, each vertex pushed onto the blend | A 2D test of two convex parts only |
 | Twist, bend | Move the vertices; normal from the warp's Jacobian | Published in 1984 |
