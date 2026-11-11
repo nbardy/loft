@@ -33,6 +33,6 @@ export function withStyle(scene: Scene, style: Style): Scene {
   return { ...scene, style };
 }
 
-export { woodblock, print, foam, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
+export { woodblock, print, foam, marksAs, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";
 export { papercraft } from "./papercraft.ts";

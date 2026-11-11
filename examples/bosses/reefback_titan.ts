@@ -23,7 +23,8 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type ContactFoam, type Sea } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, marksAs, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, type Check, type Sea } from "../../src/index.ts";
+import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
@@ -52,7 +53,7 @@ import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
 import { AT_HOME, stage, type Staging } from "./titan/rig.ts";
-import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, FoamOption, LegsOption } from "./titan/slots.ts";
+import type { BackOption, BoatsOption, CarapaceOption, ClawsOption, FaceOption, LegsOption, WaterOption } from "./titan/slots.ts";
 
 // The cameras, from the build's numbers. The game's cameras (game, three, close, top, grab) are fixed in the world. The
 // comparison columns follow the crab where a variant moves it (docs/variants.md, "Limits"): `face` follows the head
@@ -87,16 +88,31 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
   };
 };
 
+/**
+ * The ways white water is printed in a crab's scene; `base` is every crab's own. Exported for a scene that stages
+ * several crabs (it prints them all one way).
+ */
+export const WATER = {
+  base: { about: "roll: a rolling mass with curled heads, for the collar, the crest and the bursts", collar: foam.roll(), marks: marksAs.heads(), burst: impactPaint.roll() },
+  curls: { about: "round lobes lying over each other, some with a curl cut in", collar: foam.curls(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  apron: { about: "one flat scalloped shape with a key line", collar: foam.apron(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  rings: { about: "thin broken ripple arcs moving outward, no fill", collar: foam.rings(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  stipple: { about: "printed dots, dense at the body", collar: foam.stipple(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  breakers: { about: "a low collar and blades along the swell's printed lines", collar: foam.breakers(), marks: marksAs.flat(), burst: impactPaint.ridge },
+  ridge: { about: "filaments along the zero lines of a noise (the first foam)", collar: foam.ridge(), marks: marksAs.flat(), burst: impactPaint.ridge },
+} satisfies Record<string, WaterOption>;
+
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
-export const styleFor = (n: Numbers, pattern: ContactFoam) => woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: pattern });
+export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">) =>
+  woodblock({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks });
 export const SUN = [0.15, 0.8, 0.6] as const;
 
-type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: FoamOption };
+type Slots = { readonly carapace: CarapaceOption; readonly legs: LegsOption; readonly claws: ClawsOption; readonly face: FaceOption; readonly back: BackOption; readonly boats: BoatsOption; readonly foam: WaterOption };
 
 /** Numbers, then what the claws offer the rig, then the rig's first stage; on the sea given, the rig and each slot drawn on it. */
 function assemble(o: Slots, n: Numbers, how: Staging) {
   const offer = o.claws.offer(n);
-  const staged = stage(n, offer, o.boats, how);
+  const staged = stage(n, offer, o.boats, how, o.foam.burst);
   return {
     deforms: staged.deforms, sea: staged.sea,
     finish: (water: Sea) => {
@@ -174,16 +190,12 @@ export const design = makeDesign({
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
-    // The contact foam's pattern (docs/art_direction/DIRECTION.md, "Contact foam"). `base` is the print as it was.
-    foam: {
-      base: { about: "ridge: filaments along the zero lines of a noise (the print as it was)", pattern: foam.ridge() },
-      rings: { about: "thin broken ripple arcs moving outward, no fill", pattern: foam.rings() },
-      apron: { about: "one flat scalloped shape with a key line", pattern: foam.apron() },
-      stipple: { about: "printed dots, dense at the body", pattern: foam.stipple() },
-      breakers: { about: "the swell's own lines breaking into blades on the body", pattern: foam.breakers() },
-      curls: { about: "rolling lobes with curled heads and a ripple arc (the round 4 pictures)", pattern: foam.curls() },
-    } satisfies Record<string, FoamOption>,
+    // How white water is printed (docs/art_direction/DIRECTION.md, "White water"). `base` is the rolling foam with
+    // curled heads for the collar, the wave's crest and the bursts; the others are the style's other collars, with the
+    // crest and the bursts as they were before. A look, not a part: see `looks` below.
+    foam: WATER,
   },
+  looks: ["foam"],
   variants: {
     // The spider crab (docs/art_direction/crab_round2/stilt_*.webp): a small thorny body high on bamboo stilts, tongs, a
     // patient sad face, a red shrine on its back. The ship is taken further round to the front (-0.55, not -0.75): at
@@ -249,7 +261,7 @@ export const design = makeDesign({
   build: (o, n) => {
     const a = assemble(o, n, AT_HOME), water = sea({ ...a.sea, deform: a.deforms }), m = a.finish(water);
     return {
-      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam.pattern), sun: SUN, cameras: camerasFor(n) }),
+      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam), sun: SUN, cameras: camerasFor(n) }),
       strikes: m.strikes, holds: m.holds, waves: m.waves, handoff: m.handoff, inputs: m.inputs, checks: [...m.checks, ...m.sceneChecks],
     };
   },

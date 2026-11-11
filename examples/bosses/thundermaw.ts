@@ -20,7 +20,7 @@
 //
 // Coordinates: y up, the cloud's axis on x = z = 0. The serpent's head is at its spine's m = 0.
 
-import {
+import { foam,
   abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette,
   points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, print, length, lt,
   displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_SEA, beats, dragged, slowInOut, swing, uneven, anticipated,
@@ -30,7 +30,7 @@ import { fwidth } from "../../src/lib/wgsl.ts";
 import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { wyrm, type Wyrm } from "../scenes/lib/wyrm.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
-import { impactFoam } from "./lib/impact.ts";
+import { impactFoam, impactPaint } from "./lib/impact.ts";
 import { PRINT_WARNING } from "./lib/warning.ts";
 
 // ---- the numbers an art director would change ---------------------------------------------------------------------
@@ -367,7 +367,7 @@ const scout = scaleShip.afloat(water, { at: [...SHIP.at], heading: SHIP.heading,
 /** The sea foams where the bolt lands. */
 const strikeFoam = impactFoam("tmStrikeFoam", water, {
   area: hit.disc({ centre: mark, radius: STRIKE.radius }), pad: 1.5, splashes: [{ at: mark, since }],
-  reach: STRIKE.radius * 1.3, seconds: 1.3, foam: COLOURS.belly, line: [0.075, 0.07, 0.09],
+  reach: STRIKE.radius * 1.3, seconds: 1.3, foam: COLOURS.belly, line: [0.075, 0.07, 0.09], paint: impactPaint.ridge(),
 });
 
 const creature: Drawable[] = serpent.things.filter((t) => !/Crest|Tail[LR]$/.test(t.name));
@@ -379,7 +379,7 @@ export default scene({
     ...scout, telegraph(bolt, { style: PRINT_WARNING }), strikeFoam, shower,
   ],
   // A storm sky: the indigo block printed low over a narrow cream horizon, the haze below it.
-  style: woodblock({ print: print.bands({ named: { sail: SAIL } }), sky: { haze: [0, 0.06], band: [0.08, 0.3], below: WOODBLOCK_SEA.haze } }),
+  style: woodblock({ print: print.bands({ named: { sail: SAIL } }), sky: { haze: [0, 0.06], band: [0.08, 0.3], below: WOODBLOCK_SEA.haze }, foam: foam.roll() }),
   sun: SUN,
   cameras: {
     game: { kind: "perspective", eye: [40, 50, 46], target: [4, 10, 3], fovY: 0.62 },
