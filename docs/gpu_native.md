@@ -469,6 +469,13 @@ Attribution from the per-stage profiling frame (which costs about 1.5x a normal 
 the largest draw in every scene, 1.86 to 3.95 ms; fixed stages (clears, depth and multisample resolves, the post pass)
 about 1.0 ms; the sky 0.33 to 0.43; no creature draw reaches 1 ms.
 
+One profiling row is not the draw's own cost: reefback's `scaleShip_gaffsail0` reads 0.6 ms for 704 triangles (a sail
+on about 1% of the view). Lifting removed its 133 per-frame nodes per vertex and the row did not move; with its
+fragment returning a constant it still read 0.59; with every vertex placed outside the view, so that nothing is drawn,
+it read 0.18 to 0.57. It is the cost of its pass in the profiling frame (each draw a pass that loads and stores the 4x
+targets), which the "pass overhead" subtraction (0.000 in these runs) does not remove. Read small draws from the
+profiling frame with that in mind; the normal frame is the number to optimise.
+
 The sea's fragment program, by rate (`tools/rates_census.ts --sea`; its `colour_sea` and the functions it calls):
 
 | Scene | (a) per frame | (b) smooth in the water's point | (c) per pixel | library calls |
