@@ -374,3 +374,23 @@ Targets: the main framing's low bodies at least 35%: the fiddler 35, the samurai
 28). The horizon 60 to 70%: 65 to 71 (the taunt's end 71, just over). Feet in the bottom 15%: 93% in the main framing,
 85% in the slam. Boats outside the events: none in frame. The 16:9 slam misses the body target (17 to 26%) by design:
 it is the one shot that has to hold four slams and four rides. Checks: 44 of 44 with the new places and throws.
+
+### Scored (second staging)
+
+One strip (960x540), one fix (the outer pair from 12 to 16 out, the main framing from 40 to 44 away), one full render.
+
+- **Boats: done.** No boat in frame outside the two events. The slam shows the four shoved boats at their discs and
+  then riding outward out of frame; the throw shows the boats being taken and then tumbling out over the top of the
+  frame; from 15.15 to the seam there are none. Checks 44 of 44.
+- **The middle pair: big.** Measured on the strip's main framing (from 40 away), the fiddler's shell top to waterline
+  is about 40% of the height and the samurai's about 50% (predicted 35 and 44); the horizon about 63% (predicted 67);
+  the white water at the feet at the bottom of the frame; the sun half hidden behind them; the taunt's push ends on
+  two faces, each more than a third of the height.
+- **The outer pair: lost in the main framing.** Wrong in the reasoning: the stand-in's bodies (8.2 wide) were narrower
+  than the drawn ones (about 10), and it had no great claw or eyestalks in its boxes, so it said the outer faces stood
+  clear past the middle pair's edges. In the picture the fiddler's great claw and eyestalk stand exactly where the
+  islander's face would show, and the samurai's armoured legs and gauntlet where the spider crab's would; moving them
+  out to 16 and the camera back to 44 did not uncover them. The islander is not seen in the throw or the taunt.
+- **The underlying conflict.** Our crabs' bodies are small on a 20-unit leg span (3.4 to 4.4 high). A body at 35% of
+  the height leaves a frame two crabs wide, so the main framing can have big bodies or four characters, not both. The
+  target picture has both because its crabs are drawn with bodies three to four times larger against their legs.
