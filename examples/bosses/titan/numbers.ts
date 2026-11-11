@@ -94,27 +94,30 @@ export const S = {
     /** How far the crown stands over the atoll's `top`; how high over the water the rim is round the tail (beside the
      * carapace it is the carapace's rim line). */
     crown: 1.2, rim: 0.5,
-    /** How conical the hull is: the exponent on its radius (0.8 a mesa with steep sides, whose plates a high camera sees
-     * edge on; 1.25 a cone whose plates face up as well as out). */
-    cone: 1.1,
+    /** The cap (G: 0 the crown, 1 the rim): out to G = `at` it is turf, nearly level (it falls `drop` of the island's
+     * height to its edge), reaching `radius` of the rim's radius; its edge wanders by `wander` in G. Below it the cliff
+     * falls as `1 - t^cliff` (t: 0 at the cap's edge, 1 at the rim): a rounded shoulder, steepest at the water. */
+    cap: { at: 0.42, radius: 0.55, drop: 0.2, wander: 0.05 }, cliff: 1.0,
     /** The island's outline as shares of the atoll's radii: at the bow and at the tail (an egg), and its lumps. */
     outline: { bow: 0.9, tail: 1.1, lumps: 0.025 },
-    /** The screw: thread groups from crown to rim, how hard its lines lean over as they climb (1 straight), how much
-     * wider the groups are on one side than the other (0 even) and toward which bearing they are widest, and the whole
-     * screw's turn (at 50 a broad plate rises from the right flank across the side the game camera sees). */
-    screw: { turns: 2.2, lean: 2.25, uneven: 0.16, widest: 60, phase: 50 },
-    /** How far a plate's lip stands out of the hull: the two blades of a group, then its broad plate. */
-    lobes: [0.26, 0.3, 0.46] as const,
-    /** Where (G: 0 crown, 1 rim) the plates give way to terraces, and the highest red at a plate's tip. */
-    terraced: [0.36, 0.56] as const, tip: 0.4,
-    /** How far below a plate's tip the turf hangs over its upper edge (in G). */
-    tongue: 0.14,
+    /** The shell plates laid over the cliff, each [its root's bearing at the rim, how far its bearing turns back as it
+     * climbs to its tip (degrees), its half-width (degrees) at its widest, its tip's G, how far it stands out of the
+     * hull]. Three broad plates, then three narrow blades; all lean the same way (the paint-overs' lower left to
+     * upper right). Broad plates at three corners of the island (one arching over the beach), blades between, every
+     * gap unequal; the game camera sees the first broad plate and the two blades beside it. */
+    plates: [[34, 30, 36, 0.43, 0.48], [158, 34, 38, 0.42, 0.5], [272, 30, 33, 0.44, 0.46], [96, 18, 15, 0.56, 0.32], [212, 20, 12, 0.6, 0.28], [330, 24, 17, 0.54, 0.34]] as const,
+    /** Turf ledges cut into the cliff, each [G of its tread's inner edge, the tread's width in G, its middle bearing,
+     * its half-span (degrees)]: arcs, not rings; the plates cross them. */
+    ledges: [[0.6, 0.07, 140, 28], [0.66, 0.06, 296, 22]] as const,
+    /** The plates' ribs: lines across a broad plate (sparse); how far past its tip a plate's ribs run on as stone
+     * flutes (in G), and how far the turf hangs down over its tip (in G). */
+    ribs: 7, flute: 0.12, tongue: 0.07,
     /** The point: its bearing, how far its tip is from the island's centre, its half-width, its rock's height at the
      * light and at the tip. */
     point: { bearing: 206, tip: 8.4, half: 1.15, top: 0.8, low: 0.3 },
     /** The beach under the plates' arch: its middle bearing, half its span, how far the sand runs beyond the rim, how
      * high the rim lifts over it. */
-    beach: { bearing: 176, span: 22, sand: 1.9, arch: 0.7 },
+    beach: { bearing: 176, span: 22, sand: 1.4, arch: 0.7, cove: 0.11 },
     /** The reef shelf and its three stacks: the shelf's bearing, how far it runs beyond the rim and its half-width; each
      * stack [distance from the island's centre, bearing, height, girth]. */
     shelf: { bearing: 122, reach: 2.3, half: 1.1 }, stacks: [[6.1, 126, 2.3, 0.72], [7.0, 121, 1.5, 0.5], [7.7, 117, 0.9, 0.36]] as const,
@@ -129,7 +132,7 @@ export const S = {
      * tower stands up out of the mound on its segmented neck; 0 down, and the neck is not drawn), `shutters` (0 shut,
      * 1 flung open).
      */
-    light: { at: 7.0, height: 3.2, girth: [0.66, 0.45] as const, crust: 0.32, size: 0.9, gulls: 2, lean: 0.34, rise: 0, shutters: 0 },
+    light: { at: 7.0, height: 3.6, girth: [0.64, 0.46] as const, crust: 0.3, size: 1.0, gulls: 2, lean: 0.24, rise: 0, shutters: 0 },
   },
   // ---- the spiral shell (back/spiral.ts): a hermit's shell, one tube coiled by Raup's law; read only by it ----
   // (docs/art_direction/DIRECTION.md, Round 5.) The coil turns counterclockwise going back from the mouth, seen from its

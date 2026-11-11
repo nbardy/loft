@@ -1,35 +1,27 @@
-// The terraces: the bruiser's back (docs/art_direction/DIRECTION.md, Round 5; the pictures are
+// The terraces: the bruiser's back (docs/art_direction/DIRECTION.md, Round 5, "Fifth pass"; the pictures are
 // docs/art_direction/crab_round5/back_paintover_*.webp and back_model_sheet.webp). The island and the shell as ONE
-// form: shell plates rise from the rim, lean over as they climb and become terraces that wind in to the crown.
+// form: a level turf cap over pale stone cliffs, and three broad shell plates laid on the cliffs like leaves, rising
+// from the water, leaning the same way as they climb, pointed at their tips under the turf. Their ribs run on past the
+// red as flutes in the stone, so shell and stone read as one form.
 //
-// One closed-form surface, and its second coordinate is the thing to understand. A surface swept round an axis usually
-// takes the bearing as its v, so its edges are rings (the headland: cap, cliff, tier, each closed by a level line). Here
-// v is the **thread** of a screw:
+// One closed-form surface over (u, v): u runs from the crown (0) to the rim (U_RIM) and on down the shore to under the
+// water (1); v is the bearing (a turn). Above the rim G = u / U_RIM: the hull is a cap (a level disc to G = cap.at) and
+// a cliff, and every plate is a function of (G, bearing):
 //
-//   bearing(G, v) = warp(TAU * (psi(G) / 3 - v) + phase)        G: 0 at the crown, 1 at the rim
+//   s = (1 - G) / (1 - tip)            0 at the rim, 1 at the plate's tip
+//   middle(s) = root - sweep * s       the plate leans back as it climbs (every plate the same way: the screw's hand)
+//   x = (bearing - middle) / width(s)  -1 to 1 across it; width is a leaf's, widest a quarter of the way up, 0 at the tip
 //
-// `psi` is how many thread groups lie between the crown and G (1.9 in all). A grid column (constant v) is therefore a
-// line that leaves the rim straight up (psi is flat there), leans over as it climbs and winds half a turn round the cap.
-// Three groups go round; within a group `fract(3 v)` is the place across it (KNOT): two blades and one broad plate,
-// each followed by a recessed band. Every edge of the form is a column, and every ink line (rib, stratum, turf line) is
-// a line of the same coordinate, so the form's lines run on through shell, stone and turf.
+// and it stands `thick * sqrt(1 - x^2)` out of the hull (more on its leading edge: a shingle's lip). Ledges are arcs of
+// level tread cut into the cliff (the height read at a held G while the radius runs on: DERIVATION in `ledged`).
 //
-// Across a group the hull is displaced two ways, blended by height (`terraced`):
-// - low, each plate is a shingle: a convex lobe swelling out of the hull to a lip, then a band falling back to the hull;
-// - high, the group is one terrace. DERIVATION (level treads): let p = psi(G) and f = fract(3 v), so the group's cell
-//   starts at p0 = p - f on this bearing. Take the hull's radius at psi = p0 + A(f) and its height at psi = p0 + B(f),
-//   with A = min(f / lip, 1) and B = max((f - lip) / (1 - lip), 0). For f below the lip the height is the hull's at p0
-//   whatever f is: a level tread whose radius runs the cell's whole width; beyond the lip the radius holds and the
-//   height falls: a riser. A cell that starts above the crown (p0 < 0) is clamped to it, so the three treads meet there
-//   in a pinwheel. At the lip and at f = 0 the surface has a crease; both are grid columns (KCOL).
-//
-// Below the rim the shore is one of the headland's four kinds at each bearing (its `Shore` and `blend`): shell (a cream
-// belly into the water), beach (sand under the plates' lifted rim), apron (the reef shelf the stacks stand on) or cape
+// Below the rim the shore is one of the headland's four kinds at each bearing (its `Shore` and `blend`): shell (into
+// the water), beach (sand in a cove under the plates' lifted rim), apron (the reef shelf the stacks stand on) or cape
 // (the point, with a mound for the light).
 //
 // Everything hangs off the shell frame (`rig.shell`) and the build's numbers: the island's centre and radii (`n.atoll`),
 // the carapace's rim line (`n.carapace`), the ride (the water) and `n.terraces`. Nothing is a world coordinate. Growth
-// is the kit's (examples/bosses/lib/growth.ts), placed at named places of this surface (`thread`, `ashore`, `onPoint`).
+// is the kit's (examples/bosses/lib/growth.ts), placed at named places of this surface (`facing`, `ashore`, `seam`).
 
 import {
   abs, add, clamp, compileJs, cos, div, draw, floor, fract, framed, inFrame, lift, max, min, mix, mul, pick, pow, saturate, sin, smoothstep, sqrt, sub, surface,
@@ -43,20 +35,14 @@ import type { BackOption } from "../slots.ts";
 import { beaconOn } from "./beacon.ts";
 import { blend, broadleaf, cape, crownPaint, hash, rockPaint, stations } from "./headland.ts";
 
-/** The grid: rows from the crown to under the water (the rim on row ROW_RIM), columns round (48 to a group). */
-const NU = 46, NV = 144, GROUPS = 3, ROW_RIM = 30;
+/** The grid: rows from the crown to under the water (the rim on row ROW_RIM), columns round (2.5 degrees each: a broad
+ * plate is 20 to 24 columns across). */
+const NU = 46, NV = 144, ROW_RIM = 30;
 /** The rim's u: above it u / U_RIM is G, below it the shore runs to u = 1. */
 const U_RIM = 0.74;
-/** Across a group (f = fract(3 v)): where each plate starts and where its lip is: blade, blade, broad plate; the bands
- * lie between a lip and the next start. And the grid columns that fall on those lines (of 48; even, so the grid's
- * halved levels keep every crease). */
-const KNOT = [0, 0.18, 0.24, 0.44, 0.5, 0.86, 1] as const, KCOL = [0, 10, 14, 26, 30, 42, 48] as const;
-const [, L1, S2, L2, S3, L3] = KNOT;
 /** The shore's stations below the rim (sigma: 0 the rim, 1 closed under the water): under the lip, the far edge of
  * the top, the waterline, the foot. */
 const SIGMA = [0, 0.1, 0.6, 0.75, 0.87, 1] as const;
-/** Rib lines to a group. */
-const RIBS = 22;
 
 /** What a copy in the reef list is (the id's first lane is its index here): the kit's growth, then this back's own. */
 const KINDS = [...GROWTH_KINDS, "trunk", "crown", "rock"] as const;
@@ -65,6 +51,19 @@ const cone = (kind: Kind, a: V3, b: V3, ra: number, rb: number, level: number, s
   ({ a, b, ra, rb, level, id: [KINDS.indexOf(kind), salt, mark] });
 
 const rad = (degrees: number): number => (degrees * Math.PI) / 180;
+/** The bearing at v. It runs backwards in v: so the grid's faces wind outward (with v forward they face in and the
+ * hull outline paints the island black). And v at a bearing, on the CPU. */
+const bearingOf = (v: F): F => mul(v, -TAU);
+const vAt = (bearing: number): number => (((-bearing / TAU) % 1) + 1) % 1;
+/** The signed difference of two bearings, in (-pi, pi]. */
+const turnFrom = (a: F, b: F | number): F => mul(sub(fract(add(div(sub(a, b), TAU), 0.5)), 0.5), TAU);
+/** A leaf's width along a plate, s from its root (0) to its tip (1): full most of the way up, then drawn to a point
+ * (the paint-overs' plates; a leaf widest a quarter of the way up left bare stone over the upper cliff). (1 - s)^0.45
+ * (1 + 0.6 s) peaks at 1.03 near s = 0.2; 0.91 at s = 0.5, 0.52 at 0.9. */
+const leaf = (s: F): F => div(mul(pow(max(sub(1, s), 1e-5), 0.45), add(1, mul(s, 0.6))), 1.03);
+
+/** A plate in plain numbers (radians), from numbers.ts `terraces.plates`. */
+type Plate = { readonly root: number; readonly sweep: number; readonly half: number; readonly tip: number; readonly thick: number };
 
 /** The plan in plain numbers, from the build's. Lengths become shares of the atoll's mean radius; bearings radians. */
 function planOf(n: Numbers) {
@@ -75,13 +74,14 @@ function planOf(n: Numbers) {
   const point = { bearing: rad(T.point.bearing), long: T.point.tip / R, half: T.point.half / R };
   const beach = { bearing: rad(T.beach.bearing), long: T.outline.tail + T.beach.sand / R, half: Math.sin(rad(T.beach.span)) * T.outline.tail * 1.12 };
   const shelf = { bearing: rad(T.shelf.bearing), long: mid + T.shelf.reach / R, half: T.shelf.half / R };
-  return { R, mid, egg, polar, point, beach, shelf, lightRho: T.light.at / R };
+  const plates: readonly Plate[] = T.plates.map(([root, sweep, half, tip, thick]) => ({ root: rad(root), sweep: rad(sweep), half: rad(half), tip, thick }));
+  return { R, mid, egg, polar, point, beach, shelf, plates, lightRho: T.light.at / R };
 }
 
 export const terraces: BackOption = {
-  about: "one screw of shell plates that become terraces: a point with a crusted light, a beach under the plates, three stacks",
+  about: "a turf cap on pale cliffs, three broad shell plates laid up them like leaves, a cove beach, a crusted light on a point, three stacks",
   // What a thrown ship must fly clear of beyond the atoll's cylinder (the design's `fliesClear`): the rim with its
-  // lobes, the point from the rim to its tip, the shelf with its stacks, and the light as it leans. They ride the shell.
+  // plates, the point from the rim to its tip, the shelf with its stacks, and the light as it leans. They ride the shell.
   keepClear: ({ n, shell }) => {
     const { R, polar, point, shelf, lightRho } = planOf(n), T = n.terraces, L = T.light;
     const disc = ([x, z]: readonly [number, number], radius: number): Target => {
@@ -91,7 +91,7 @@ export const terraces: BackOption = {
     const rim = T.outline.tail + 2 * T.outline.lumps, reach = (L.height + 1.5 * L.size) * L.lean, foot = polar(lightRho, point.bearing);
     const farthest = Math.max(...T.stacks.map(([r]) => r / R));
     return [
-      disc(n.atoll.centre, rim * Math.max(n.atoll.rx, n.atoll.rz) + Math.max(...T.lobes)),
+      disc(n.atoll.centre, rim * Math.max(n.atoll.rx, n.atoll.rz) + Math.max(...T.plates.map((p) => p[4]))),
       disc(polar((rim + point.long) / 2, point.bearing), Math.max(((point.long - rim) / 2) * R, point.half * R) + 0.3),
       disc(polar((rim + farthest) / 2, shelf.bearing), Math.max(((farthest - rim) / 2) * R, shelf.half * R) + 0.6),
       disc([foot[0] + Math.cos(point.bearing) * reach / 2, foot[1] + Math.sin(point.bearing) * reach / 2], L.girth[0] * 1.2 + reach / 2 + 0.3),
@@ -100,36 +100,20 @@ export const terraces: BackOption = {
   draw: (rig) => {
     const { n, shell } = rig;
     const I = n.ink, A = n.atoll, T = n.terraces, C = n.carapace;
-    const { R, mid, egg, polar, point: POINT, beach: BEACH, shelf: SHELF, lightRho } = planOf(n);
+    const { R, mid, egg, polar, point: POINT, beach: BEACH, shelf: SHELF, plates: PLATES, lightRho } = planOf(n);
     // Heights (crab y): the still water, the carapace's rim line (carapace/base.ts inks it at sin = -0.15 of its
     // half-height), the crown.
     const water = -n.ride, rimY = -0.15 * C.height, crownY = A.top + T.crown;
     const ink = (k: V3): P3 => vec3(...k);
-
-    // ---- the hull and the screw ----
-    /** The hull's radius (a share of the outline) and height at G: a mound, steep at the rim like the carapace's flank
-     * (the radius is a quarter turn's sine; the height falls as G^1.6, so the cap is a low cone and its risers stand 0.6 to 1.5). */
-    const quarter = (G: F): F => mul(clamp(G, 0, 1), Math.PI / 2);
-    const hullR = (G: F): F => pow(max(sin(quarter(G)), 1e-6), T.cone);
-    /** The rim's height at a bearing: the carapace's rim line beside the carapace; round the tail, where the island
-     * stands over open water, it comes down toward the water (the plates run down to the sea, as the pictures have them;
-     * a rim at the carapace's height all round left a cream plinth under the island). */
-    const rimLow = water + T.rim, rimAt = (a: F): F => mix(rimLow, rimY, smoothstep(-0.55, 0.2, cos(a)));
-    const hullY = (G: F, a: F): F => { const rim = rimAt(a); return add(rim, mul(sub(crownY, rim), sub(1, pow(max(clamp(G, 0, 1), 1e-6), 1.6)))); };
-    /** Thread groups between the crown and G, and its inverse. */
-    const TURNS = T.screw.turns, LEAN = T.screw.lean;
-    const psi = (G: F): F => mul(TURNS, sub(1, pow(max(sub(1, clamp(G, 0, 1)), 1e-6), LEAN)));
-    const levelOf = (p: F): F => sub(1, pow(max(sub(1, div(clamp(p, 0, TURNS), TURNS)), 1e-6), 1 / LEAN));
-    /** The groups are wider toward `widest`: the bearing of an even screw, warped. */
-    const UNEVEN = T.screw.uneven, WIDEST = rad(T.screw.widest), PHASE = rad(T.screw.phase);
-    const warp = (a0: F): F => add(a0, mul(UNEVEN, sin(sub(a0, WIDEST))));
-    const bearingAt = (G: F, v: F): F => warp(add(mul(sub(div(psi(G), GROUPS), v), TAU), PHASE));
+    const CAP = T.cap;
 
     // ---- outlines: radius (a share of the atoll's radii) over the bearing a ----
-    /** The rim: an egg, narrow at the bow, with slight lumps. */
-    const rimOf = (a: F): F => add(sub(mid, mul(egg, cos(a))), mul(add(sin(add(mul(a, 3), 1.1)), mul(sin(add(mul(a, 5), 2.3)), 0.7)), T.outline.lumps));
-    const pointOut = (a: F): F => cape(a, POINT.bearing, POINT.long, POINT.half);
     const sandEdge = (a: F): F => cape(a, BEACH.bearing, BEACH.long, BEACH.half);
+    /** How much a bearing is the cove's: 1 at the beach's middle, 0 beyond its span. */
+    const coveAt = (a: F): F => { const d = div(turnFrom(a, BEACH.bearing), rad(T.beach.span) * 1.15); return mul(saturate(sub(1, mul(d, d))), saturate(sub(1, mul(d, d)))); };
+    /** The rim: an egg, narrow at the bow, with slight lumps, pulled in over the beach (the cove). */
+    const rimOf = (a: F): F => sub(add(sub(mid, mul(egg, cos(a))), mul(add(sin(add(mul(a, 3), 1.1)), mul(sin(add(mul(a, 5), 2.3)), 0.7)), T.outline.lumps)), mul(coveAt(a), T.beach.cove));
+    const pointOut = (a: F): F => cape(a, POINT.bearing, POINT.long, POINT.half);
     const shelfEdge = (a: F): F => cape(a, SHELF.bearing, SHELF.long, SHELF.half);
     /** How much the shore at a bearing is each kind but shell (which is the rest): rock past the rim wins over sand. */
     const capeAt = (a: F): F => smoothstep(0, 0.06, sub(pointOut(a), rimOf(a)));
@@ -137,34 +121,56 @@ export const terraces: BackOption = {
     const beachAt = (a: F): F => smoothstep(0.01, 0.08, sub(sandEdge(a), rimOf(a)));
     const shoreAt = (a: F) => blend({ beach: beachAt(a), apron: apronAt(a), cape: capeAt(a) });
 
-    /** The point's top at (rho, a): low rock running out, a mound where the light stands, high at its root (it comes
-     * out from under the plates), rounded across. Crab y. */
-    const capeTop = (rho: F, a: F): F => {
-      const s = mul(mul(rho, R), cos(sub(a, POINT.bearing))), t = mul(mul(rho, R), sin(sub(a, POINT.bearing)));
-      const from = sub(s, lightRho * R), mound = sub(1, smoothstep(0.35, 1.35, sqrt(add(mul(from, from), mul(t, t)))));
-      const root = sub(1, smoothstep(T.outline.tail * R, T.outline.tail * R + 1.3, s));
-      const across = mul(div(t, POINT.half * R), div(t, POINT.half * R));
-      return add(water, sub(add(add(T.point.low, mul(mound, T.point.top - T.point.low)), mul(root, T.rim - T.point.low - 0.1)), mul(across, 0.18)));
+    // ---- the hull: a cap and a cliff ----
+    /** The cap's edge (G) at a bearing: it wanders, so the turf's edge is no ring. */
+    const capOf = (a: F): F => add(CAP.at, mul(add(sin(add(mul(a, 2), 0.7)), mul(sin(add(mul(a, 5), 2.9)), 0.5)), CAP.wander / 1.5));
+    /** The hull's radius (a share of the rim's) and height (a share from the rim, 0, to the crown, 1) at G. On the cap
+     * (gc = G / cap below 1) the radius runs out to cap.radius and the height falls cap.drop as gc^2; on the cliff (t
+     * from 0 at the cap's edge to 1 at the rim) the radius runs on to the rim and the height falls as t^cliff. */
+    const hullR = (G: F, a: F): F => { const c = capOf(a), gc = div(min(G, c), c), t = saturate(div(sub(G, c), sub(1, c))); return add(mul(gc, CAP.radius), mul(t, 1 - CAP.radius)); };
+    const hullH = (G: F, a: F): F => {
+      const c = capOf(a), gc = div(min(G, c), c), t = saturate(div(sub(G, c), sub(1, c)));
+      return sub(sub(1, mul(mul(gc, gc), CAP.drop)), mul(pow(max(t, 1e-6), T.cliff), 1 - CAP.drop));
     };
+    /** The rim's height at a bearing: the carapace's rim line beside the carapace; round the tail, where the island
+     * stands over open water, it comes down toward the water (the plates run down to the sea, as the pictures have them). */
+    const rimLow = water + T.rim, rimAt = (a: F): F => mix(rimLow, rimY, smoothstep(-0.55, 0.2, cos(a)));
+    /** DERIVATION (a level tread): the height is read at a held G. Over a ledge [g, g + w] in G, Gy = G until g, then g
+     * (held: the tread is level while the radius runs on), then climbs back to reach 1 at the rim: Gy = G - w sat((G - g)
+     * / w) + w sat((G - g - w) / (1 - g - w)). Each ledge is an arc: blended in by its window of bearing. */
+    const ledged = (G: F, a: F): F => T.ledges.reduce<F>((Gy, [g, w, bearing, span]) => {
+      const held = add(sub(Gy, mul(w, saturate(div(sub(G, g), w)))), mul(w, saturate(div(sub(G, g + w), 1 - g - w))));
+      const d = div(turnFrom(a, rad(bearing)), rad(span)), window = smoothstep(1, 0.55, abs(d));
+      return mix(Gy, held, window);
+    }, G);
+    const ledgeAt = (G: F, a: F): F => T.ledges.reduce<F>((on, [g, w, bearing, span]) => {
+      const d = div(turnFrom(a, rad(bearing)), rad(span));
+      return max(on, mul(smoothstep(1, 0.7, abs(d)), mul(cut(G, g - 0.004), sub(1, cut(G, g + w + 0.004)))));
+    }, lift<"f32">(0));
+
+    // ---- the plates ----
+    /** Where a point (G, a) is on a plate: s along it (0 the rim, 1 the tip; above 1 past the tip), x across it (-1 to
+     * 1 inside its width; a width of at least `least` of its half, so the flutes past the tip have one). */
+    const onPlate = (P: Plate, G: F, a: F, least: number) => {
+      const s = max(div(sub(1, G), 1 - P.tip), 0);
+      const x = div(turnFrom(a, sub(P.root, mul(P.sweep, s))), mul(P.half, max(leaf(min(s, 1)), least)));
+      return { s, x };
+    };
+    /** How far the plates stand out of the hull at (G, a): the sum of them (they do not overlap). */
+    const plateOut = (G: F, a: F): F => PLATES.map((P) => {
+      const { s, x } = onPlate(P, G, a, 0);
+      const across = mul(sqrt(max(sub(1, mul(x, x)), 0)), add(1, mul(saturate(x), 0.35)));
+      return mul(mul(across, sqrt(saturate(sub(1, mul(s, s))))), P.thick);
+    }).reduce((sum, d) => add(sum, d));
 
     // ---- the surface ----
-    /** Across a group: how far a plate's lobe stands out at f (0 at its start, its amount at its lip, back to 0 over the band). */
-    const lobes = (f: F): F => [[KNOT[0], L1, S2, T.lobes[0]], [S2, L2, S3, T.lobes[1]], [S3, L3, 1, T.lobes[2]]].map(([from, lip, next, amount]) => {
-      const x = saturate(div(sub(f, from!), lip! - from!)), fall = saturate(div(sub(f, lip!), next! - lip!));
-      return mul(mul(sub(1, mul(sub(1, x), sub(1, x))), sub(1, fall)), amount!);
-    }).reduce((s, x) => add(s, x));
-    /** 1 on the terraces, 0 on the plates. */
-    const terraced = (G: F): F => sub(1, smoothstep(T.terraced[0], T.terraced[1], G));
     const islandPoint = (u: F, v: F): P3 => {
-      const G = min(div(u, U_RIM), 1), sigma = saturate(div(sub(u, U_RIM), 1 - U_RIM));
-      const a = bearingAt(G, v), f = fract(mul(v, GROUPS)), p = psi(G), tau = terraced(G), shore = shoreAt(a);
-      // The terrace (see the DERIVATION at the top): the hull's radius and height read at two places in the cell.
-      const Gr = levelOf(add(p, mul(tau, sub(min(div(f, L3), 1), f)))), Gy = levelOf(add(p, mul(tau, sub(max(div(sub(f, L3), 1 - L3), 0), f))));
-      // The shingle: out along the hull's normal (level at the rim, up at the crown).
-      const lobe = mul(lobes(f), sub(1, tau)), rim = rimOf(a);
-      const hullRho = add(mul(hullR(Gr), rim), mul(lobe, div(sin(quarter(G)), R)));
+      const G = min(div(u, U_RIM), 1), sigma = saturate(div(sub(u, U_RIM), 1 - U_RIM)), a = bearingOf(v), shore = shoreAt(a);
+      const rim = rimOf(a), out = plateOut(G, a);
+      // A plate stands out mostly sideways (the cliff's normal), a little up.
+      const hullRho = add(mul(hullR(G, a), rim), div(mul(out, 0.9), R));
       // Over the beach the rim lifts: the plates arch over the sand.
-      const hullHeight = add(add(hullY(Gy, a), mul(lobe, cos(quarter(G)))), mul(mul(beachAt(a), T.beach.arch), smoothstep(0.7, 1, G)));
+      const hullHeight = add(add(add(rimAt(a), mul(hullH(ledged(G, a), a), sub(crownY, rimAt(a)))), mul(out, 0.4)), mul(mul(beachAt(a), T.beach.arch), smoothstep(0.7, 1, G)));
       // Below the rim, by the kind of shore: [under the lip, the far edge of the top, the waterline, the foot].
       const sand = sandEdge(a), ledge = shelfEdge(a), tip = pointOut(a);
       const rhoAt = (k: 0 | 1 | 2 | 3): F => shore({
@@ -181,67 +187,77 @@ export const terraces: BackOption = {
       return vec3(add(A.centre[0], mul(mul(rho, A.rx), cos(a))), y, add(A.centre[1], mul(mul(rho, A.rz), sin(a))));
     };
 
-    // What the inks read of the shore, per bearing, from one static table (x: the even screw's bearing over a turn).
-    const shoreTable = tabulate("terraces_shore", (x) => { const a = warp(add(mul(x, TAU), PHASE)); return vec4(capeAt(a), apronAt(a), beachAt(a), 0); }, 1025, "static");
+    /** The point's top at (rho, a): low rock running out, a mound where the light stands, high at its root (it comes
+     * out from under the plates), rounded across. Crab y. */
+    function capeTop(rho: F, a: F): F {
+      const s = mul(mul(rho, R), cos(sub(a, POINT.bearing))), t = mul(mul(rho, R), sin(sub(a, POINT.bearing)));
+      const from = sub(s, lightRho * R), mound = sub(1, smoothstep(0.35, 1.35, sqrt(add(mul(from, from), mul(t, t)))));
+      const root = sub(1, smoothstep(T.outline.tail * R, T.outline.tail * R + 1.3, s));
+      const across = mul(div(t, POINT.half * R), div(t, POINT.half * R));
+      return add(water, sub(add(add(T.point.low, mul(mound, T.point.top - T.point.low)), mul(root, T.rim - T.point.low - 0.1)), mul(across, 0.18)));
+    }
+
+    // What the inks read of the shore, per bearing, from one static table (x: v, the bearing backwards over a turn).
+    const shoreTable = tabulate("terraces_shore", (x) => { const a = bearingOf(x); return vec4(capeAt(a), apronAt(a), beachAt(a), capOf(a)); }, 1025, "static");
     const islandPaint = (u: F, v: F): P3 => {
-      const G = min(div(u, U_RIM), 1), sigma = saturate(div(sub(u, U_RIM), 1 - U_RIM)), f = fract(mul(v, GROUPS));
-      const at = shoreTable(fract(sub(div(psi(G), GROUPS), v)));
+      const G = min(div(u, U_RIM), 1), sigma = saturate(div(sub(u, U_RIM), 1 - U_RIM)), a = bearingOf(v);
+      const at = shoreTable(v);
       const shore = blend({ beach: cut(at.z, 0.5), apron: cut(at.y, 0.5), cape: cut(at.x, 0.5) });
-      // Which plate this is, and where across it (0 its start, 1 its lip, beyond 1 its band).
-      const second = cut(f, S2), third = cut(f, S3);
-      const from = add(mul(second, S2), mul(third, S3 - S2)), lip = add(L1, add(mul(second, L2 - L1), mul(third, L3 - L2)));
-      const x = div(sub(f, from), sub(lip, from));
-      // The broad plate's band is stone from the rim to the crown (low a recess, high a riser). A blade's band is stone
-      // only while it is a blade.
-      const band = max(third.mul(cut(f, L3)), mul(cut(x, 1), mul(sub(1, third), cut(G, T.terraced[0] + 0.07))));
-      // Ribs: lines of the thread. On the plates dark red, close; on the turf every fourth, broken into tufts.
-      // (`1 - cut(|x - 0.5|, w)` is 1 inside the half-width w: w is half the line's share of its period.)
-      const rib = sub(1, cut(abs(sub(fract(mul(f, RIBS)), 0.5)), 0.085));
-      const plate = mix(mix(mix(ink(I.brick), ink(I.brickDark), mul(rib, 0.85)), ink(I.cream), mul(cut(x, 0.88), sub(1, cut(x, 0.965)))), ink(I.black), cut(x, 0.965));
-      const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(f, RIBS / 5.5), 0.3)), 0.5)), 0.035)), cut(sin(add(mul(G, 52), mul(f, 31))), 0.2));
+      // On a plate: which (at most one), its s and x. Past its tip, its flute (a narrow corridor of stone ribs).
+      const plates = PLATES.map((P) => ({ P, ...onPlate(P, G, a, 0), flute: onPlate(P, G, a, 0.3) }));
+      const inside = plates.map(({ s, x }) => mul(sub(1, cut(abs(x), 1)), sub(1, cut(s, 1))));
+      const red = inside.reduce((m, w) => max(m, w));
+      const X = plates.map(({ x }, k) => mul(x, inside[k]!)).reduce((m, w) => add(m, w));
+      // A flute: past the tip, up to `flute` in G, inside 0.3 of the plate's half; its x for the ribs.
+      const fluted = plates.map(({ P, flute }) => mul(mul(sub(1, cut(abs(flute.x), 1)), cut(flute.s, 1)), sub(1, cut(flute.s, 1 + T.flute / (1 - P.tip)))));
+      const XF = plates.map(({ flute }, k) => mul(flute.x, fluted[k]!)).reduce((m, w) => add(m, w));
+      const flutes = fluted.reduce((m, w) => max(m, w));
+
+      // The plate: brick with dark ribs along it (lines of x: they gather to the tip, a fan), a cream lip on its leading
+      // edge, a black key line round it. (`1 - cut(|f - 0.5|, w)` is 1 inside the half-width w of the period's middle.)
+      const ribLine = (x: F, width: number): F => sub(1, cut(abs(sub(fract(mul(add(x, 1), T.ribs / 2)), 0.5)), width));
+      const plate = mix(mix(mix(ink(I.brick), ink(I.brickDark), mul(ribLine(X, 0.07), sub(1, cut(abs(X), 0.8)))), ink(I.cream), mul(cut(X, 0.78), sub(1, cut(X, 0.93)))), ink(I.black), cut(abs(X), 0.93));
+      // Stone: pale, with sparse level strata (lines of the hull's height) that wander a little; on a flute, ribs instead.
+      const h = hullH(G, a);
+      // Broken into dashes of unequal length, so no stratum closes into a ring.
+      const dash = cut(add(sin(add(mul(a, 7), mul(h, 11))), mul(sin(add(mul(a, 17), 1.3)), 0.6)), 0.15);
+      const strata = mul(mul(sub(1, cut(abs(sub(fract(add(mul(h, 3.2), mul(sin(mul(a, 3)), 0.12))), 0.5)), 0.035)), cut(G, add(at.w, 0.06))), dash);
+      const stone = mix(ink(I.stone), ink(I.bark), max(mul(strata, 0.85), mul(flutes, mul(ribLine(XF, 0.1), 0.8))));
+      // Turf: the cap, down to its wandering edge, and hanging over each plate's tip in a tongue; and the ledges' treads.
+      const tongue = mul(mul(T.tongue, sub(1, cut(abs(XF), 0.6))), flutes);
+      const turfEdge = add(add(at.w, mul(sin(add(mul(a, 23), 0.4)), 0.008)), tongue);
+      const isTurf = max(sub(1, cut(G, turfEdge)), ledgeAt(G, a));
+      const tuft = mul(sub(1, cut(abs(sub(fract(add(mul(a, 9), mul(G, 7))), 0.5)), 0.02)), cut(sin(add(mul(G, 61), mul(a, 13))), 0.6));
       const turf = mix(ink(I.moss), ink(I.mossDeep), tuft);
-      // Red reaches highest along a plate's lip and ends in a point there; turf hangs over the rest in tongues on the ribs.
-      const red = cut(G, add(add(T.tip, mul(T.tongue, pow(max(sub(1, x), 1e-4), 1.3))), mul(cos(mul(f, RIBS * TAU)), 0.014)));
-      // Stone: pale, with strokes across the band (down a riser).
-      const stroke = sub(1, cut(abs(sub(fract(add(mul(G, 19), mul(sin(mul(f, 37)), 0.12))), 0.5)), 0.07));
-      const stone = mix(ink(I.stone), ink(I.bark), mul(stroke, 0.8));
-      // Key lines where the form creases: at the broad plate's lip and its band's foot everywhere, at a blade's while it is a blade.
-      const blade = cut(G, T.terraced[0] + 0.07);
-      const near = (at: number): F => sub(1, cut(abs(sub(f, at)), 0.0045));
-      const crease = max(max(near(L3), max(near(0), near(1))), mul(blade, max(max(near(L1), near(S2)), max(near(L2), near(S3)))));
-      const above = mix(mix(mix(turf, plate, red), stone, band), ink(I.black), crease);
+      // Key lines: the turf's edge, and the foot of the cap's shoulder.
+      const turfLine = sub(1, cut(abs(sub(G, turfEdge)), 0.006));
+      const above = mix(mix(mix(stone, plate, red), turf, mul(isTurf, sub(1, red))), ink(I.black), mul(turfLine, sub(1, red)));
 
       // Below the rim, by the kind of shore.
       const dots = mul(sin(mul(v, 67 * TAU)), sin(mul(sigma, 60)));
-      // Shell: the carapace's black rim line; under it the shell's dark underside (cream, as the carapace's belly is, read as a plinth).
+      // Shell: the carapace's black rim line; under it the shell's dark underside.
       const belly = mix(ink(I.black), ink(I.brickDark), cut(sigma, 0.03));
       // Beach: dark under the plates' lip, then sand, speckled.
-      const sandInk = mix(ink(I.bark), mix(ink(I.cream), ink(I.stone), cut(dots, 0.8)), cut(sigma, SIGMA[1]));
-      // Rock (the shelf, the point): stone with level strata, cracked on top, dark and wet at the water.
-      const strata = sub(1, cut(abs(sub(fract(add(mul(sigma, 26), mul(sin(mul(v, 40 * TAU)), 0.3))), 0.5)), 0.09));
-      const rock = mix(mix(ink(I.stone), ink(I.bark), mul(strata, 0.85)), ink(I.bark), cut(sigma, SIGMA[3] - 0.035));
+      const sandInk = mix(ink(I.bark), mix(ink(I.cream), ink(I.stone), cut(dots, 0.93)), cut(sigma, SIGMA[1]));
+      // Rock (the shelf, the point): stone with level strata, dark and wet at the water.
+      const rockStrata = sub(1, cut(abs(sub(fract(add(mul(sigma, 14), mul(sin(mul(v, 40 * TAU)), 0.3))), 0.5)), 0.06));
+      const rock = mix(mix(ink(I.stone), ink(I.bark), mul(rockStrata, 0.85)), ink(I.bark), cut(sigma, SIGMA[3] - 0.035));
       // The point's top is paler, crusted: cream with stone blots (the light's crust runs down into it).
       const crust = mix(mix(ink(I.cream), ink(I.stone), cut(dots, 0.35)), rock, cut(sigma, SIGMA[2] - 0.02));
       const below = shore({ shell: belly, beach: sandInk, apron: rock, cape: crust });
       return mix(above, below, cut(u, U_RIM + 0.002));
     };
 
-    // Rows: ROW_RIM of them from the crown to the rim, the rest for the shore. Columns: the knots of each group on their
-    // grid lines (KCOL), even between.
+    // Rows: ROW_RIM of them from the crown to the rim, the rest for the shore. Columns: even in bearing.
     const rows = (s: F): F => stations(s, [0, ROW_RIM / NU, 1], [lift<"f32">(0), lift<"f32">(U_RIM), lift<"f32">(1)]);
-    const columns = (s: F): F => {
-      const x = mul(s, GROUPS), group = floor(x);
-      return div(add(group, stations(sub(x, group), KCOL.map((k) => k / (NV / GROUPS)), KNOT.map((k) => lift<"f32">(k)))), GROUPS);
-    };
     const island = draw.surface("island", framed(surface(islandPoint, { u: ["cap", "cap"], v: "periodic" }), { frame: shell, scale: lift<"f32">(1) }), {
-      paint: islandPaint, grid: { u: { count: NU, at: rows }, v: { count: NV, at: columns } }, sides: "one", outline: "hull",
+      paint: islandPaint, grid: { u: { count: NU, at: rows }, v: { count: NV, at: (s: F): F => s } }, sides: "one", outline: "hull",
     });
 
     // ---- the same closed forms on the CPU, for placing things on the surface ----
     const UV = [variable("terraces_u", "f32"), variable("terraces_v", "f32")] as const;
     const twin = <X>(e: F | P3) => { const g = compileJs([e]); return (x: number, y: number): X => g({ vars: { terraces_u: x, terraces_v: y }, inputs: {}, params: {} })[0] as X; };
     const onIsland = twin<V3>(islandPoint(UV[0], UV[1]));
-    const psiJs = ((g) => (G: number) => g(G, 0))(twin<number>(psi(UV[0])));
     const capeTopJs = twin<number>(capeTop(UV[0], UV[1]));
     /** The site at (u, v): the surface's point and its outward normal, by differences. */
     const siteAt = (u: number, v: number): Site => {
@@ -252,55 +268,41 @@ export const terraces: BackOption = {
       const sign = c[0] * (p[0] - A.centre[0]) + c[2] * (p[2] - A.centre[1]) + c[1] * 2 >= 0 ? 1 : -1;
       return { at: p, out: [(c[0] / l) * sign, (c[1] / l) * sign, (c[2] / l) * sign] };
     };
-    /** Named places. `thread`: on the hull at G, in thread group `group` (0 to 2), `f` across it. */
-    const thread = (group: number, f: number, G: number): Site => siteAt(G * U_RIM, (group + f) / GROUPS);
-    /** The v of a bearing at G: the screw's warp undone (a fixed point; it contracts by `uneven` a round). */
-    const vOf = (G: number, bearing: number): number => {
-      let a0 = bearing;
-      for (let k = 0; k < 24; k++) a0 = bearing - UNEVEN * Math.sin(a0 - WIDEST);
-      return psiJs(G) / GROUPS - (a0 - PHASE) / TAU;
-    };
-    /** On the hull at G, at a bearing. */
-    const facing = (G: number, bearing: number): Site => siteAt(G * U_RIM, vOf(G, bearing));
+    /** Named places. On the hull at G, at a bearing (radians). */
+    const facing = (G: number, bearing: number): Site => siteAt(G * U_RIM, vAt(bearing));
     /** On the shore below the rim at a bearing: sigma 0 the rim, SIGMA's stations below it. */
-    const ashore = (sigma: number, bearing: number): Site => siteAt(U_RIM + sigma * (1 - U_RIM), vOf(1, bearing));
-    /** The thread group and the place across it that lie at a bearing on the rim. */
-    const threadAt = (bearing: number): { readonly group: number; readonly f: number } => {
-      const x = (((vOf(1, bearing) % 1) + 1) % 1) * GROUPS;
-      return { group: Math.floor(x), f: x - Math.floor(x) };
+    const ashore = (sigma: number, bearing: number): Site => siteAt(U_RIM + sigma * (1 - U_RIM), vAt(bearing));
+    /** The seam between two plates (the stone strip between one's trailing edge and the next's leading edge) as a curve
+     * up it: t = 0 at the rim, 1 at `high` (G). It leans as the plates do. Growth gathers in these. */
+    const seam = (from: Plate, to: Plate, high: number) => (t: number): Site => {
+      const G = 0.985 - t * (0.985 - high), s = Math.max((1 - G) / (1 - (from.tip + to.tip) / 2), 0);
+      const gap = ((((to.root - from.root) % TAU) + TAU) % TAU), middle = from.root + gap / 2 - ((from.sweep + to.sweep) / 2) * s;
+      return facing(G, middle);
     };
-    /** The valley (a band's foot, where a plate starts) nearest a bearing on the rim, as a curve up it: t = 0 at the
-     * rim, 1 where the plates give way to terraces. Growth gathers in these. */
-    const valley = (bearing: number): ((t: number) => Site) => {
-      const { group, f } = threadAt(bearing), starts = [0, S2, S3, 1], foot = starts.reduce((best, s) => (Math.abs(s - f) < Math.abs(best - f) ? s : best));
-      return (t) => thread(group, foot - 0.012, 0.99 - t * (0.99 - T.terraced[1]));
-    };
+    /** At a plate's tip (just below it, on the red). */
+    const tipOf = (P: Plate): Site => facing(P.tip + 0.03, P.root - P.sweep * 0.94);
 
     // ---- growth: a few large clusters at low seams, thinning upward, rests between (the kit's recipes) ----
-    const P = rad(T.point.bearing), lightFoot = polar(lightRho, P), moundY = capeTopJs(lightRho, P);
+    const Pb = POINT.bearing, lightFoot = polar(lightRho, Pb), moundY = capeTopJs(lightRho, Pb);
     const mound: Site = { at: [lightFoot[0], moundY, lightFoot[1]], out: [0, 1, 0] };
     /** A site on the mound's flank, `far` from the light's foot toward a bearing (radians, crab), sunk as the mound falls. */
     const onMound = (far: number, toward: number, drop: number): Site => ({ at: [mound.at[0] + Math.cos(toward) * far, moundY - drop, mound.at[2] + Math.sin(toward) * far], out: unitOf([Math.cos(toward) * 0.7, 0.7, Math.sin(toward) * 0.7]) });
     const G0 = T.light.girth[0];
+    const [broad0, broad1, broad2, blade0, blade1, blade2] = PLATES as unknown as readonly [Plate, Plate, Plate, Plate, Plate, Plate];
     const growth: Sprig[] = [
       // The light's foot: crust all round it, thickest to seaward; a seam's worth where the mound meets the water.
-      ...[0, 1, 2, 3, 4].flatMap((k) => cluster(RECIPES.crust, onMound(G0 * 1.15, P + 0.4 + k * 1.26, 0.12), k === 0 ? 0.95 : 0.7, 500 + k)),
-      ...cluster(RECIPES.seam, onMound(1.25, P - 0.9, 0.42), 1.25, 510),
-      ...cluster(RECIPES.reef, onMound(1.3, P + 1.6, 0.45), 1.0, 511),
-      // Three seams: where the point leaves the plates, between the beach and the shelf, and on the right flank.
-      ...run(valley(P + 0.42), { recipe: RECIPES.seam, clusters: 4, size: 1.25, seed: 21 }),
-      ...run(valley(rad(T.beach.bearing - T.beach.span - 9)), { recipe: RECIPES.seam, clusters: 4, size: 1.15, seed: 22 }),
-      ...run(valley(rad(96)), { recipe: RECIPES.seam, clusters: 3, size: 1.0, seed: 23, thin: 0.65 }),
+      ...[0, 1, 2, 3, 4].flatMap((k) => cluster(RECIPES.crust, onMound(G0 * 1.15, Pb + 0.4 + k * 1.26, 0.12), k === 0 ? 1.05 : 0.75, 500 + k)),
+      ...cluster(RECIPES.seam, onMound(1.3, Pb - 0.9, 0.42), 1.3, 510),
+      ...cluster(RECIPES.reef, onMound(1.35, Pb + 1.6, 0.45), 1.05, 511),
+      // The low seams, every one between a broad plate and a blade (round from the bow): denser where the camera sees.
+      ...run(seam(broad0, blade0, 0.62), { recipe: RECIPES.seam, clusters: 4, size: 1.3, seed: 21 }),
+      ...run(seam(blade0, broad1, 0.66), { recipe: RECIPES.seam, clusters: 3, size: 1.15, seed: 22, thin: 0.6 }),
+      ...run(seam(blade1, broad2, 0.68), { recipe: RECIPES.seam, clusters: 2, size: 1.0, seed: 23, thin: 0.5 }),
+      ...run(seam(broad2, blade2, 0.66), { recipe: RECIPES.seam, clusters: 3, size: 1.1, seed: 24, thin: 0.6 }),
       // The shelf: a reef's worth at the foot of the tallest stack.
       ...cluster(RECIPES.reef, ashore(0.35, rad(T.shelf.bearing + 9)), 1.2, 30),
-      // Beads at the plates' tips, where each turns to turf (the pictures' signature): large on the three broad plates,
-      // small on the blades.
-      ...[0, 1, 2].flatMap((g) => [
-        ...cluster(RECIPES.bead, thread(g, L3 - 0.03, T.tip + 0.03), 0.95, 40 + g),
-        ...cluster(RECIPES.bead, thread(g, L1 - 0.025, T.tip + 0.04), 0.6, 43 + g), ...cluster(RECIPES.bead, thread(g, L2 - 0.025, T.tip + 0.04), 0.65, 46 + g),
-      ]),
-      // Where the island meets the carapace, either side of the head: crust creeping forward onto the shell.
-      ...[-58, 52].flatMap((b, k) => cluster(RECIPES.crust, facing(0.74, rad(b)), 0.75, 50 + k)),
+      // Beads at the broad plates' tips, where each turns to turf (the pictures' signature).
+      ...[broad0, broad1, broad2].flatMap((P, g) => cluster(RECIPES.bead, tipOf(P), 0.85, 40 + g)),
     ];
 
     // ---- trees: two groves on the treads, open turf between ----
@@ -336,7 +338,7 @@ export const terraces: BackOption = {
     // ---- the light, on the mound ----
     const L = T.light;
     const light: Drawable[] = beaconOn(rig, {
-      foot: [mound.at[0], moundY - 0.3, mound.at[2]], out: [Math.cos(P), Math.sin(P)], height: L.height, girth: L.girth, crust: L.crust, size: L.size, gulls: L.gulls,
+      foot: [mound.at[0], moundY - 0.3, mound.at[2]], out: [Math.cos(Pb), Math.sin(Pb)], height: L.height, girth: L.girth, crust: L.crust, size: L.size, gulls: L.gulls,
       lean: L.lean, rise: L.rise, shutters: L.shutters,
     });
 
