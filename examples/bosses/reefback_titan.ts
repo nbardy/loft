@@ -28,6 +28,7 @@ import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
 import { SCALE_SHIP_LENGTH } from "./lib/scale_ship.ts";
 import { base as backBase } from "./titan/back/base.ts";
+import { headland } from "./titan/back/headland.ts";
 import { keep } from "./titan/back/keep.ts";
 import { lighthouse } from "./titan/back/lighthouse.ts";
 import { shrine } from "./titan/back/shrine.ts";
@@ -93,7 +94,7 @@ export const design = makeDesign({
     legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy } satisfies Record<string, FaceOption>,
-    back: { base: backBase, lighthouse, keep, shrine } satisfies Record<string, BackOption>,
+    back: { base: backBase, lighthouse, keep, shrine, headland } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
   },
   variants: {
@@ -127,7 +128,7 @@ export const design = makeDesign({
     // crush disc of 4.4, as on the fiddler.
     islander: {
       about: "the island crab as a fiddler: low, the atoll on its back, one great claw, a vain face on tall eyestalks",
-      pick: { claws: "fiddler", face: "dandy" },
+      pick: { claws: "fiddler", face: "dandy", back: "headland" },
     },
     // stiltFiddler (fiddler claws on the stilt legs) was removed 2026-11-11, when the stilt legs became the spider crab's
     // (body 6.8 up). The fiddler's arms (2.5 + 2.4) cannot reach the water from there (grip 2.6 off, palm 3.7% outside).
@@ -180,6 +181,8 @@ export const design = makeDesign({
             fliesClear(r.grab, [
               { kind: "body", body: carapace.hull },
               { kind: "disc", centre: vec2(...n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
+              // And whatever the chosen back builds beyond that cylinder (slots.ts, `BackOption.keepClear`).
+              ...(o.back.keepClear?.(r) ?? []),
             ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
           ],
           host: () => [],
