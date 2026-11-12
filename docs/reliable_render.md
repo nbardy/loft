@@ -46,3 +46,34 @@ of 48 (few allocations between pack and call). A baseline of 0 does not refute H
    synchronous job ends (Dawn copies descriptors during the call, so that is long enough), then the same four loops.
 4. Whatever remains (H5) is classified as the environment's: retried a bounded number of times, then a distinct exit
    code and "not your scene".
+## 2. The twenty mistakes (fixtures: `tests/fixtures/mistakes/`, runner `run.ts` there)
+
+Each fixture is a correct scene (`_ok.ts`, drawn) with one mistake. "Today" is what `loft render` printed before this
+work (exit code, first line). "Wanted" is the message planned before any code changed: raised where the mistake is
+made, naming the user's thing, saying what was given, what was expected and the smallest fix. Every message that is
+the scene's fault ends the run with exit 4 and the last line `loft: scene: ...`; a command-line mistake with exit 2,
+`loft: usage: ...`. A SceneError also names the line of the user's file it was raised from.
+
+| # | Mistake | Today | Wanted (raised at) |
+|---|---|---|---|
+| 01 | surface returns a number, not a point | 1, `vec4(...) got 2 components`, stack in src/compile | `draw.surface "sheet"`: the surface's point is an f32; expected a vec3. Fix: return vec3(x, y, z) |
+| 02 | two things named alike | 1, `scene: two things are named "ball"` + stack | `scene`: two things named "ball"; names must be unique (sky, sea, shadows are taken). Fix: rename one |
+| 03 | camera eye = target | 1, `camera: eye and target coincide`, raised in src/host at draw time | `scene`: camera "three" eye equals target. Fix: move the eye back from the target |
+| 04 | paint returns a number | 1, `shader "surface.ball" failed to compile` (WGSL), src/host: looks like a GPU failure | `draw.surface "ball"`: paint returns an f32; expected a vec3 colour. Fix: vec3(g, g, g) |
+| 05 | zero-cell grid | 1, `grid.u.count must be a positive integer, got 0` + stack | same at `draw.surface "ball"`, typed; Fix: spacing.even(32) |
+| 06 | shape slot `undefined` | 1, `TypeError: undefined is not an object (evaluating 's.skeleton')` | `draw.surface "body"`: given undefined for the surface; expected a Surface (surface(), lathe(), sweep()...). Fix: define it before drawing |
+| 07 | input default wrong size | 1, `input "aim": default has 2 components, vec3 needs 3` + stack | `input "aim"`, typed; Fix: input("aim", "vec3", [0, 1, 0]) |
+| 08 | `--input` the scene does not declare | 2, message then the usage text (last line is usage) | exit 2, last line `loft: usage: input "wind": the scene declares no such input (it has: none)` |
+| 09 | `--style` that does not exist | 1, `unknown style "inky"` + stack | exit 2, usage: unknown style "inky"; styles: ... |
+| 10 | field not a distance | 1, `FieldSafetyError` (good text) + stack in src/compile | the same text, exit 4, no stack (raised at compile: measuring needs the CPU evaluation compile does) |
+| 11 | table of ten million entries | killed after 60 s (the compiler samples every entry) | `tabulate "lift"`: 10000000 entries; one binding holds 8388608. Fix: fewer samples |
+| 12 | Infinity in a shape | 1, `non-finite constant Infinity`, stack | `a number`: given Infinity; expected finite. Fix: a division by zero? (the user's line named) |
+| 13 | no `things` | 1, `TypeError: Spread syntax requires ...iterable` | `scene`: no things; expected things: [draw.surface(...), ...] |
+| 14 | option not in a slot | 2, `slot "colour" ... has no option "purple" (options: base, blue)` (good) | the same, last line `loft: usage: ...` |
+| 15 | sun [0, 0, 0] | 1, `the sun must be above the horizon (sun.y > 0)`: wrong cause | `scene`: sun is a zero vector; expected a direction toward the sun with y > 0. Fix: sun: [0.3, 0.8, 0.4] |
+| 16 | vec3 + vec2 | 1, `mismatched vector types vec3 and vec2`, stack | `add`: a vec3 and a vec2; expected one size or a number. Fix: vec3(v.x, v.y, 0) or .xy |
+| 17 | vec3 of two numbers | 1, `vec3(...) got 2 components`, stack | `vec3`: 2 components; expected 3, or 1 for all three. Fix: vec3(a, b, 0) |
+| 18 | a Surface put in `things` | 1, `TypeError: ... (evaluating 's.joints')`, stack in src/compile | `scene`: things[0] is a Surface, not a drawable. Fix: draw.surface("name", it, {...}) |
+| 19 | `fovY: 60` (degrees) | **0: draws a wrong picture** | `scene`: camera "three" fovY 60; expected radians in (0, pi). Fix: 60 * Math.PI / 180 |
+| 20 | `sides: "both"`, `outline: "ink"` | **0: draws, the misspellings silently ignored** | `draw.surface "ball"`: sides "both"; expected "one" or "two" (and outline: "hull", "border", "none") |
+| 21 | a design as the default export | 1, `TypeError: ... (evaluating 'scene.style.post')`, stack | load: the default export is a design; Fix: `export const design = ...` |
