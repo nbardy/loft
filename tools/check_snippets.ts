@@ -4,7 +4,8 @@
 //   bun tools/check_snippets.ts            README.md, docs/guide.md, docs/craft.md and the written part of `loft api`
 //
 // What counts, in those files:
-//   ```ts run    a whole scene module: typechecked, then rendered once at 160x100 through its first camera
+//   ```ts run    a whole scene module: typechecked, rendered once at 160x100 through its first camera, and when it
+//                exports `checks` or a `design`, checked with `loft check` (every combination for a design)
 //   ```ts check  a whole module that is not a scene (a drawable, a style): typechecked only
 //   ```sh        every line starting `loft ` is parsed by the CLI's own parser (nothing is executed), and every
 //                path it names under examples/ must exist
@@ -78,16 +79,22 @@ if (tsc.status !== 0) {
   if (failures.length === 0) failures.push(`typecheck failed outside the snippets:\n${tsc.stdout}${tsc.stderr}`);
 }
 
-let rendered = 0;
+let rendered = 0, checked = 0;
 for (const [k, s] of modules.entries()) {
   if (s.mode !== "run") continue;
   const cam = /cameras:\s*\{\s*(\w+)\s*:/.exec(s.code)?.[1] ?? "three";
   const r = spawnSync("bun", ["src/cli/main.ts", "render", files[k]!, "--out", resolve(OUT, `${k + 1}.webp`), "--views", cam, "--size", "160x100"], { cwd: ROOT, encoding: "utf8" });
   if (r.status !== 0) fail(s, `render: ${(r.stderr || r.stdout).trim().split("\n").slice(0, 4).join(" | ")}`);
   else rendered++;
+  // A scene that exports checks, or a design, must pass them: an example whose own checks fail teaches the wrong thing.
+  if (/export const (checks|design)\b/.test(s.code)) {
+    const c = spawnSync("bun", ["src/cli/main.ts", "check", files[k]!, ...(s.code.includes("export const design") ? ["--combinations"] : [])], { cwd: ROOT, encoding: "utf8" });
+    if (c.status !== 0) fail(s, `check: ${c.stdout.split("\n").filter((l) => /FAIL|NOT CHECKED/.test(l)).join(" | ")}`);
+    else checked++;
+  }
 }
 
 const typed = modules.length;
-console.log(`\n${commands} commands parsed, ${typed} modules typechecked, ${rendered} scenes rendered; ${failures.length} failed`);
+console.log(`\n${commands} commands parsed, ${typed} modules typechecked, ${rendered} scenes rendered, ${checked} passed their checks; ${failures.length} failed`);
 for (const f of failures) console.log(`FAIL ${f}`);
 process.exit(failures.length === 0 ? 0 : 1);

@@ -7,17 +7,16 @@ can be read whole.
 
 # Craft: making things that read, on Loft
 
-This is general help for making 3D pictures and motion, written for Loft as the surface you practise it on. It assumes
-no reference pictures and no one to ask: you set the target yourself, you make the range yourself, and your own
-renders are the only eye you have. Each point is the principle, why it works, and the Loft function or command that
-does it.
+General help for making 3D pictures and motion, practised on Loft. It assumes no reference pictures and no one to ask:
+you set the target, you make the range, and your own renders are your only eye. Each point is the principle, why it
+works, and the Loft function or command that does it.
 
 ## The surface
 
-Loft describes animated 3D things as TypeScript expressions: `add(a, b)`, `sin(time)`, `vec3(x, y, z)` build a graph
-that runs on the GPU to draw and on the CPU to check. A swept body is a coordinate system (m from 0 at its root to 1 at
-its tip, v round it), so paint and attached parts are functions of those coordinates and move with it. `time` is an
-argument: motion is a closed form, any frame draws alone. A scene is a module whose default export is a `scene`:
+Loft describes animated 3D things as TypeScript expressions (`add(a, b)`, `sin(time)`, `vec3(x, y, z)`) that run on
+the GPU to draw and on the CPU to check. A swept body is a coordinate system (m from 0 at its root to 1 at its tip, v
+round it); paint and attached parts are functions of it. `time` is an argument, so any frame draws alone. A scene is a
+module whose default export is a `scene`:
 
 ```ts run
 // examples/reed.ts
@@ -48,13 +47,13 @@ loft render examples/reed.ts --out out/reed.webp --views whole,tip --size 640x40
 loft frames examples/reed.ts --out out/reed_t.webp --times 0,0.8,1.6,2.4 --view whole --size 480x300
 ```
 
-`loft` is `bun src/cli/main.ts`. `render` puts one picture per camera on one sheet; `frames` one camera at several
-times; `dev` is a live page with orbit and a slider per `param`.
+`loft` is `bun src/cli/main.ts`: `render` puts one picture per camera on a sheet, `frames` one camera at several times,
+`dev` serves a live page.
 
 ## 1. Set the target in words before building
 
-Without a written target, the first thing that renders becomes the target, and it is always the nearest example with
-new numbers. Write an art direction in the file's top comment before any code:
+Without a written target, the first render becomes the target, and it is the nearest example with new numbers. Write
+an art direction in the file's top comment before any code:
 
 - the **silhouette** in one sentence: what it is from the main camera with paint switched off;
 - the **three largest forms** and their proportions to each other ("a body twice as long as it is tall, a head a
@@ -69,13 +68,12 @@ A reference picture, when a person supplies one, helps fill this in; it does not
 
 ## 2. Range in shape: change the construction, not the parameter
 
-Tuning a component's numbers explores one family. Every family has a law, and the law, not the numbers, is what a
-viewer recognises: ten spiral tubes with different curls are one shape. Range comes from changing what the shape is
-made of.
+A family of shapes is one law, and the law, not the numbers, is what a viewer recognises: ten spiral tubes with
+different curls are one shape. Range comes from changing what the shape is made of.
 
-**Make three to five far-apart candidates before refining any**, each from a different construction, side by side
-in one scene, judged on one sheet. Write the weakest thing about each in one sentence. Pick one and push it further
-than feels safe. Here, three candidates for "a tall thing standing in water", each a different law:
+**Make three to five far-apart candidates before refining any**, each a different construction, side by side on one
+sheet. Write the weakest thing about each in a sentence; pick one and push it further than feels safe. Three
+candidates for "a tall thing standing in water":
 
 ```ts run
 import { add, cos, draw, lathe, mul, scene, sea, sin, spacing, spiralLine, strand, toon, vec2, vec3, type F } from "../src/index.ts";
@@ -116,30 +114,24 @@ Ask of every candidate which of these it changed. If none, it is a retune, not a
 - **the construction**: swept, turned, extruded, lofted through curves (`loft`), traced from a distance function,
   grown by repetition (`src/lib/similar.ts`, `src/lib/grow.ts`), relief on a host surface (`draw.relief`).
 
-**Read a component's limits, then go one step down.** `loft api spiralTube` is the model. Its comment states its law
-(curl tied to taper), what the law cannot draw (an S-bend, a swelling club, a helix of constant pitch, any section
-but round) and the relatives one step down: keep the centre line with `spiralLine` and give `strand` your own girth
-or section (candidate A above); write the heading along the line yourself: linear in m is an arc, and with a drift
-along `up` a helix; growing as m squared is a clothoid, the fern head and the scorpion's tail (no closed form: sample it
-with `tabulate`, or lay it through points with `through`); an Archimedean spiral is the rope coil. Every component is
-a short composition over the level below, so leaving it is never a rewrite.
+**Read a component's limits, then go one step down.** `loft api spiralTube` is the model: its law (curl tied to
+taper), what the law cannot draw (an S-bend, a swelling club, a constant-pitch helix, a section not round), and its
+relatives: keep the centre line with `spiralLine` and give `strand` your own girth or section (candidate A); or write
+the heading along the line yourself (linear in m: an arc, a helix with a drift; growing as m squared: a clothoid, the
+fern head, via `tabulate` or `through`). Every component is a short composition over the level below.
 
-**Do not copy the nearest example's proportions.** Examples are written to show mechanisms. Their numbers (a girth,
-three swells, a camera at a certain place) are one author's taste on one day. Read an example for how a part is
-attached or how a motion is clocked, then close it and take every proportion from your own direction.
-
-**Know the pull, and the ways out.** The strongest pull on what you write is the example read last and the named
-presets (a style's defaults, `LOOKS`, a design's `base`). Say it to yourself: "this is the serpent's spine with new
-numbers". Ways out: start from a construction no example uses; start from the written direction, not a file; write
-the shape one level below the component you were about to call; make the first candidate the one you would not have.
+**Know the pull of examples and presets, and the ways out.** An example's numbers are one author's taste on one day;
+read it for how a part is attached or a motion clocked, then close it and take every proportion from your direction.
+The example read last and the named presets (a style's defaults, `LOOKS`, a design's `base`) pull hardest. Ways out:
+start from a construction no example uses, write the shape one level below the component you were about to call, and
+make the first candidate the one you would not have made.
 
 ## 3. Range in style: compose parts, write a part
 
-`--style` swaps a whole look for free (`toon`, `woodblock`, `biolume`, `papercraft`), and `--light` picks one of a
-style's lightings. Glance at them, but four presets are four looks, not range. Range in style comes from composing:
-paint written in the body's own coordinates; which parts carry ink; the sky and the water as part of the picture; and
-a style function of your own where no preset says what your direction says. A `Style` is a plain value, so a new look
-is often one function replaced:
+`--style` (`toon`, `woodblock`, `biolume`, `papercraft`) and `--light` swap whole looks for free, but four presets are
+four looks, not range. Range in style comes from composing: paint in the body's own coordinates, which parts carry
+ink, the sky and water as part of the picture, and a function of your own where no preset says what your direction
+says. A `Style` is a plain value, so a new look is often one function replaced:
 
 ```ts run
 import { add, dot, fract, max, mix, mul, palette, scene, sea, smoothstep, strand, toon, vec3, type F, type Style } from "../src/index.ts";
@@ -175,8 +167,8 @@ export default scene({
 });
 ```
 
-A post pass (`{ label, wgsl }` appended to `post`) changes the whole picture: grain, a palette quantised to a few inks,
-an edge from depth. `src/style/biolume.ts` (about 110 lines) is the shortest complete style to read.
+A post pass (`{ label, wgsl }` appended to `post`) changes the whole picture: grain, a few quantised inks, an edge
+from depth. `src/style/biolume.ts` is the shortest complete style to read.
 
 ## 4. Shapes that read
 
@@ -195,11 +187,8 @@ an edge from depth. `src/style/biolume.ts` (about 110 lines) is the shortest com
   it. Space bands by arc length round the section, or they bunch on one side and miss the part every camera sees.
 - **Contrast against what is behind.** Dark eyes on a dark body are two dots. Each feature's contrast with its
   surround, at the size it is seen, decides whether it exists.
-- **The camera decides.** A face aimed squarely at one camera shows its underside to a lower one. From a camera that
-  looks down the light, the shadow side of a ball is 4% of its disc (it is a quarter from the side), so a picture can
-  lose its modelling by where it is seen from.
-- **Cost is in the paint.** A paint function runs for every pixel and computes every branch: six patterns in one
-  paint cost six. Move what does not change per frame into a table, and profile before and after.
+- **The camera decides.** A face aimed squarely at one camera shows its underside to a lower one; from a camera that
+  looks down the light, a ball's shadow side is 4% of its disc (a quarter from the side), and the modelling is gone.
 
 ## 5. Motion that reads
 
@@ -238,30 +227,26 @@ export default scene({
 - **A pose struck and held.** `struck(clock, { from, snap, hold, release })` snaps into a pose in a few frames, holds it
   exactly, then lets it go. Beside parts that flow, stillness is character. In a `score` of named expressions (`cast`),
   lay the flowing layers first and the struck poses after, or the flow leaks through the hold; `holdsStill` checks it.
-- **Planted feet and a body that carries.** A heavy body does not move its feet to idle; it moves over them. `footing`
-  fixes each foot and steps only at named events, `carriage` rises, sinks, sways and rolls the body, `limb` solves each
-  leg between them, so the knees read for free. `gait` gives foot targets when it travels.
-- **Arcs and weight.** `arc(a, b, u, lift)` instead of a straight line; `squash(stretchOf(speed))` in flight and
-  `impact(after)` at the stop, volume kept. A thing that changes hands keeps its velocity at every hand-off (grip,
-  stroke, flight, water): `thrown`.
-- **Temperament is timing.** A nervous creature is still, then somewhere else (`dart`, `tremor`); a slow one reacts
-  late and lets what hangs from it move (`pendulum`). Stiffness can be a channel: rage holds a hanging thing rigid,
-  grief lets it swing.
-- **A group in unison, with contrast.** `routine` is one score for the whole group, evaluated per member, so unison is
-  a property of the data, not of performers trying to agree. Keys land on counts and hold; canon is a time shift per
-  member, mirror a sign, solos the contrast. `inSync` measures it from each member's own pose.
+- **Planted feet and a body that carries.** A heavy body idles by moving over its feet, not by moving them: `footing`
+  fixes each foot, `carriage` moves the body, `limb` solves each leg between, and the knees read for free. `gait`
+  gives foot targets for travel.
+- **Arcs and weight.** `arc(a, b, u, lift)`, not a line; `squash(stretchOf(speed))` in flight, `impact(after)` at the
+  stop. A thing that changes hands keeps its velocity at every hand-off (`thrown`).
+- **Temperament is timing.** A nervous creature is still, then elsewhere (`dart`, `tremor`); a slow one reacts late
+  and lets what hangs from it move (`pendulum`).
+- **A group in unison, with contrast.** `routine` is one score for the group, evaluated per member, so unison is in the
+  data. Keys land on counts and hold; canon is a time shift per member, mirror a sign, solos the contrast; `inSync`
+  measures it.
 - **An action with its warning.** `attack` takes a hit shape, an arming time and a warning; `telegraph` draws the
   warning on the water before the motion; `warned`, `landsInside` and `stopsAt` hold it to that. Ask what the world
   feels: a slam the water does not answer (`ring`), or a grab that sets nothing down, reads as unfinished.
-- **Sound from the same score.** Cues taken from a routine's keys land on its counts to the sample
-  (`examples/bosses/crab_song.ts`; example code, not a library part).
 - **Push it.** When it works, `exaggerated(x, rest, 1.3 to 2)` every departure from rest, and look again.
 
 ## 6. Predict before rendering
 
-Every expression also runs on the CPU, so the picture can be worked out before it is drawn: where a part is at any
-time, how big it is in pixels, what covers what. A prediction written first turns a render into a measurement; a miss
-then says the idea of the problem was wrong, which is worth more than a picture that happens to look right.
+Every expression also runs on the CPU, so where a part is, how many pixels it covers and what covers what can be worked
+out before drawing. A prediction written first turns a render into a measurement, and a miss says your idea of the
+problem was wrong.
 
 ```ts check
 import { compileJs, mul, sin, vec3, variable } from "../src/index.ts";
@@ -279,9 +264,8 @@ for (const s of [0, 0.8, 1.6]) {
 }
 ```
 
-Make a prediction permanent as a check: `minScreenSize` (a part is at least so many pixels), `spansOnScreen`,
-`staysInView` (a face is not covered), `expressionsRead` (two expressions are told apart), and an action's checks
-above. Export them as `checks` beside the scene; `loft check` runs them and exits 1 on a failure.
+Make a prediction permanent as a check (`minScreenSize`, `spansOnScreen`, `staysInView`, `expressionsRead`, an
+action's checks), exported as `checks` beside the scene; `loft check` exits 1 on a failure.
 
 ## 7. Look at your own render
 
@@ -297,7 +281,7 @@ Look before you report, and look the way the picture will be seen:
 loft render examples/reed.ts --out out/look.webp --views whole,tip --size 480x300
 loft frames examples/reed.ts --out out/across.webp --times 0,0.6,0.9,1.4,2 --view whole --size 320x200
 loft frames examples/stormwing.ts --out out/sweep.webp --times 1 --count 6 --sweep strike=0..1
-loft variants examples/bosses/reefback_titan.ts --views far
+loft variants examples/beacon.ts
 ```
 
 A picture is judged from what reads on screen, not from its code. Give every scene at least two cameras: one that shows
@@ -307,13 +291,13 @@ loop that closes (`period`). A detail that no camera shows is not in the picture
 
 ## 8. The loop, and its cost
 
-1. Write the direction and its predictions. 2. Make the candidates; render them once, small, on one sheet. 3. Score
-against the predictions, then by eye (section 7). 4. Choose, push, render again. 5. Make the predictions checks.
+Direction and predictions; candidates rendered once, small, on one sheet; score against the predictions, then by eye;
+choose, push, render again; make the predictions checks.
 
-Cost: `loft profile <scene> --view <camera>` prints GPU time per draw and a "normal frame" line; quote that one. The
-GPU timer ticks in 0.065 ms, and a GPU can sit in two clock states about three times apart, so compare before and
-after alternately within one state. A whole creature costs about 1 to 4 ms at 1280x800; the sea, outlines and post
-passes scale with resolution, and paint is usually the expensive part of a body.
+Cost: `loft profile <scene> --view <camera>` prints GPU time per draw and a "normal frame" line (quote that one). The
+timer ticks in 0.065 ms and the GPU has two clock states about three times apart, so compare before and after
+alternately in one state. A whole creature costs about 1 to 4 ms at 1280x800. Paint runs for every pixel and computes
+every branch (six patterns cost six), so it is usually a body's expensive part: move what does not change into a table.
 
 ```sh
 loft check examples/strike.ts

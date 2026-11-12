@@ -1,39 +1,69 @@
 # Loft
 
-Loft describes animated 3D things as TypeScript code. A compiler turns the description into WGSL plus tables of numbers (an
-`Artefact`, `src/artefact.ts`) that any WebGPU host can draw. Bodies are coordinate systems, so paint, fins and foam are
-functions of body coordinates; time is an argument, not a system. Design and rules: `DESIGN.md`.
+Loft describes animated 3D things as TypeScript and compiles the description to WGSL shaders plus tables of numbers
+that any WebGPU host can draw: a browser, bun headless, or a Rust game through `wgpu`. Shapes are functions, bodies are
+coordinate systems (so paint and parts move with them), and time is an argument (so motion is a closed form and any
+frame draws alone). The same expressions run on the CPU, where checks measure exactly what the GPU draws.
 
-## Install and run
+```ts run
+// examples/reed.ts
+import { add, mul, scene, sea, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
 
+const reed = strand({
+  name: "reed",
+  spine: (m: F) => vec3(mul(mul(m, m), mul(sin(time), 0.6)), mul(m, 4), 0), // m runs root (0) to tip (1)
+  girth: (m: F) => add(0.25, mul(m, -0.2)),
+  tips: ["open", "point"],
+  paint: [0.85, 0.55, 0.2],
+});
+
+export default scene({
+  sea: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  things: [reed],
+  style: toon(),
+  sun: [-0.4, 0.8, 0.45],
+  cameras: { three: { kind: "perspective", eye: [6, 4, 8], target: [0, 2, 0], fovY: 0.6 } },
+});
 ```
-pnpm install            # bun runs everything, pnpm installs
-bun test && pnpm exec tsc --noEmit
+
+## Install
+
+Needs [bun](https://bun.sh) and pnpm; `cwebp` for stills and `ffmpeg` for clips. Pictures render headless; no browser.
+
+```sh
+pnpm install
+alias loft="bun src/cli/main.ts"
+loft render examples/reed.ts --out out/reed.webp --views three
 ```
 
-Every command takes a scene module (default export is a scene) or `--fixture`, a hand-written artefact that needs no compiler.
+## Commands
 
+```sh
+loft render   examples/serpent.ts --out out/a.webp --views front,side,top,three   # one picture per camera, one sheet
+loft frames   examples/serpent.ts --out out/b.webp --times 0,0.5,1,1.5             # one camera, several times
+loft clip     examples/serpent.ts --out out/c.mp4 --seconds 8                      # H.264 through ffmpeg
+loft dev      examples/serpent.ts                                                   # live page: orbit, time, sliders
+loft check    examples/strike.ts                                                    # the scene's checks, on the CPU
+loft variants examples/beacon.ts                                                    # every variant of a design (docs/guide.md)
+loft profile  examples/serpent.ts --view three                                      # GPU time per draw
+loft build    examples/serpent.ts --out out/files/serpent                           # the scene as files for any host
+loft help
+loft api spiralTube                                                                 # one export, in full
+loft context                                                                        # craft guide and API, to read whole
 ```
-pnpm loft render examples/serpent.ts --out out/s.webp [--views front,side,top,three] [--time 1.0] [--size 1280x800] [--param name=value ...] [--construction]
-pnpm loft frames examples/serpent.ts --out out/m.webp --times 0,0.5,1,1.5 [--view three]    # one view, several times
-pnpm loft clip   examples/serpent.ts --out out/s.mp4 [--seconds 8] [--fps 30] [--view three] # raw RGBA piped to ffmpeg
-pnpm loft dev    examples/serpent.ts [--port 5173]                                           # live viewer
-pnpm loft frames examples/stormwing.ts --out out/w.webp --times 1 --count 6 --sweep strike=0..1   # an input swept across a sheet
-```
 
-`--input name=value` (repeatable; `x,y` for a vector) sets a host input on `render`, `frames` and `clip`; `--sweep
-name=a..b` moves one input evenly across the frames of `frames` or `clip`. An input the scene does not declare fails by
-name.
+`--style`, `--light`, `--variant`, `--input` and `--sweep` change what is drawn without editing the scene; `loft help`
+lists every flag.
 
-`render` writes one contact sheet (row-major, views in the order given); stills are WebP q90 (needs `cwebp`), clips are
-H.264 (needs `ffmpeg`). Timings print on every run. `dev` serves a WebGPU page with orbit (drag, wheel), the scene's named
-cameras, a time bar, one slider per param (no recompile), a construction toggle and a readout; it rebuilds on edits to
-`src/`, `examples/`, `viewer/` or the scene's directory, and keeps camera, time and sliders across reloads.
+## Where to go next
 
-## Where things live
+- `docs/guide.md`: the first scene, then one short section per task (a shape, motion, an action with checks, a
+  creature with variants, styles, clips, your own drawable or host), each with code that runs.
+- `docs/craft.md`: how to make shapes and motion that read, and how to get range in shape and style.
+- `docs/api.md`: every export by layer, generated from the source.
+- Examples, short to long: `examples/shell.ts`, `examples/brig.ts`, `examples/pearls.ts`, `examples/coral.ts`,
+  `examples/storm.ts`, `examples/serpent.ts`, `examples/maelstrom.ts`, `examples/scenes/`.
+- `docs/artefact_format.md` and `rust/loft-loader/` for drawing a scene outside this repository. `DESIGN.md` and the
+  rest of `docs/` are the record of how it was designed.
 
-- `src/expr.ts`, `src/artefact.ts`: expressions and the compiler/host contract
-- `src/map/`: the map algebra (signatures, warp, place, products, tables as functions); `src/draw/`: one drawable per signature
-- `src/curve.ts`, `src/geom/` (strand, crest, sea), `src/scene.ts`, `src/style.ts`, `src/lib/`: the library; `src/compile/`: the compiler; `src/bake/`: any surface to glTF
-- `src/host/`: WebGPU host (browser canvas and bun headless)
-- `src/cli/`: the commands; `viewer/`: the live page; `tests/`: tests; `out/`: generated output (gitignored)
+Every snippet in these docs is run by `bun tools/check_snippets.ts`. Typecheck: `pnpm exec tsc --noEmit`.

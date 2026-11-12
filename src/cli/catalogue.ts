@@ -251,43 +251,68 @@ export function moduleLine(file: string): string {
   return firstSentence(joinComment(head));
 }
 
-export type Group = { readonly file: string; readonly line: string; readonly layer: Layer; readonly values: readonly Entry[]; readonly types: readonly Entry[] };
+export type Group = {
+  /** The layer: one of the files the entry point re-exports (`src/core.ts` ...), or the entry itself when it has none. */
+  readonly layer: Layer;
+  /** The module that declares these names, and its opening sentence. */
+  readonly file: string;
+  readonly line: string;
+  /** Exported after the layer file's "one user so far" marker: not yet shown to be general. */
+  readonly unproven: boolean;
+  readonly values: readonly Entry[];
+  readonly types: readonly Entry[];
+};
+export type Layer = { readonly file: string; readonly name: string; readonly line: string };
 
-/**
- * The layers, bottom up. A module's layer is a judgement, so it is written here by path; a module this list does not
- * place prints under "Not yet placed", so a new module is never lost, only unsorted.
- */
-export const LAYERS = [
-  "Expressions and curves", "Maps", "Drawables", "Shapes", "Motion", "Actions, checks and designs", "Styles and light",
-  "Scene and compiler", "Library functions (import from src/lib/index.ts)", "Not yet placed",
-] as const;
-export type Layer = (typeof LAYERS)[number];
-const MOTION = ["lively", "motion", "gait", "stance", "ring", "placing", "grab", "bend", "pendulum", "restless", "expression", "struck"];
-export function layerOf(file: string): Layer {
-  const f = file.replace(/^src\//, "");
-  if (/^(expr|curve|grad)\.ts$/.test(f)) return "Expressions and curves";
-  if (f.startsWith("map/")) return "Maps";
-  if (/^(draw|soft|relief)\//.test(f)) return "Drawables";
-  if (f.startsWith("geom/")) return MOTION.includes(f.slice(5, -3)) ? "Motion" : "Shapes";
-  if (/^spacetime\/|^(check|design|lineup)\.ts$/.test(f)) return "Actions, checks and designs";
-  if (/^style\/|^(style|sun)\.ts$/.test(f)) return "Styles and light";
-  if (/^compile\/|^(scene|artefact)\.ts$/.test(f)) return "Scene and compiler";
-  if (f.startsWith("lib/")) return "Library functions (import from src/lib/index.ts)";
-  return "Not yet placed";
+/** A layer file marks the start of its unproven exports with a comment line saying so. */
+const UNPROVEN = /^\/\/.*one user so far/i;
+
+/** Names exported by statements after the unproven marker of a layer file. */
+function unprovenIn(file: string): Set<string> {
+  const lines = scan(file).lines, out = new Set<string>();
+  const at = lines.findIndex((l) => UNPROVEN.test(l));
+  if (at < 0) return out;
+  for (let i = at + 1; i < lines.length; i++) {
+    if (!lines[i]!.startsWith("export")) continue;
+    const { text, end } = statement(lines, i);
+    i = end;
+    const m = /^export\s+(type\s+)?\{([^}]*)\}/.exec(text);
+    if (m) for (const sp of specifiers(m[2]!)) out.add(sp.as);
+    else if (/^export\s+\*/.test(text)) throw new Error(`catalogue: ${rel(file)}: \`export *\` after the unproven marker cannot be told apart by name`);
+  }
+  return out;
 }
 
-/** The catalogue of one entry point: its names grouped by declaring file, the files ordered by layer, then as the entry point first names them. */
+/**
+ * The catalogue of one entry point, by layer. When the entry re-exports layer files (`export * from "./core.ts"` ...,
+ * each opening with a comment "<Name> layer: ..."), each is a layer, in that order, named from its opening comment; otherwise the entry is one layer. Within a layer, names
+ * are grouped by the module that declares them, in the layer's order, the unproven groups last.
+ */
 export function catalogue(entry: string): Group[] {
-  const byFile = new Map<string, Entry[]>();
-  for (const e of exportsOf(resolve(ROOT, entry)).values()) {
-    const list = byFile.get(e.file) ?? [];
-    list.push(e);
-    byFile.set(e.file, list);
+  const path = resolve(ROOT, entry);
+  const layerFiles = scan(path).lines.map((l) => /^export\s+\*\s+from\s+["']([^"']+)["']/.exec(l)?.[1]).filter((x): x is string => x !== undefined)
+    .map((spec) => resolveFrom(path, spec)).filter((f) => /^\S+ layer:/i.test(moduleLine(rel(f))));
+  // An entry whose `export *` targets do not open "<Name> layer:" (src/lib/index.ts) is one layer itself.
+  const layers = layerFiles.length > 0 ? layerFiles : [path];
+  const seen = new Set<string>();
+  const out: Group[] = [];
+  for (const lf of layers) {
+    const opening = moduleLine(rel(lf));
+    const layer: Layer = { file: rel(lf), name: /^(.+?) layer\b/i.exec(opening)?.[1] ?? rel(lf), line: opening.replace(/^.+? layer:\s*/i, "") };
+    const unproven = unprovenIn(lf);
+    const byKey = new Map<string, { file: string; unproven: boolean; es: Entry[] }>();
+    for (const e of exportsOf(lf).values()) {
+      if (seen.has(e.name)) continue;
+      seen.add(e.name);
+      const u = unproven.has(e.name), key = `${e.file}|${u}`;
+      const g = byKey.get(key) ?? { file: e.file, unproven: u, es: [] };
+      g.es.push(e);
+      byKey.set(key, g);
+    }
+    const groups = [...byKey.values()];
+    for (const g of [...groups.filter((x) => !x.unproven), ...groups.filter((x) => x.unproven)]) {
+      out.push({ layer, file: g.file, line: moduleLine(g.file), unproven: g.unproven, values: g.es.filter((e) => e.kind === "value"), types: g.es.filter((e) => e.kind === "type") });
+    }
   }
-  const groups = [...byFile].map(([file, es]): Group => ({
-    file, line: moduleLine(file), layer: layerOf(file),
-    values: es.filter((e) => e.kind === "value"), types: es.filter((e) => e.kind === "type"),
-  }));
-  // Stable: within a layer, the entry point's own order.
-  return groups.map((g, k) => ({ g, k })).sort((a, b) => LAYERS.indexOf(a.g.layer) - LAYERS.indexOf(b.g.layer) || a.k - b.k).map((x) => x.g);
+  return out;
 }

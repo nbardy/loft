@@ -160,21 +160,21 @@ definition. Export `checks` beside the scene and `loft check` runs them on the C
 draws, and exits 1 on a failure.
 
 ```ts run
-import { add, animate, attack, budget, f, hit, landsInside, minScreenSize, mul, part, scene, sea, strand, telegraph, toon, vec2, vec3, warned, type F } from "../src/index.ts";
+import { add, animate, attack, budget, f, hit, landsInside, minScreenSize, mul, part, scene, sea, strand, sub, telegraph, toon, vec2, vec3, warned, type F } from "../src/index.ts";
 
-// The rest pose: a tentacle standing out of the water.
-const rest = (m: F) => vec3(mul(m, 0.5), add(-0.5, mul(m, 4)), 0);
+// The rest pose: a tentacle standing out of the water. An attack moves the spine's m = 0 end, so that is the tip.
+const rest = (m: F) => vec3(mul(sub(1, m), 0.5), add(-0.5, mul(sub(1, m), 4)), 0);
 const lash = attack({
   name: "lash",
   arm: 3, // seconds: when it lands
-  warn: 1.5, // seconds of warning before that
+  warn: 2, // seconds of warning before that (it must start before the wind-up does)
   target: { kind: "disc", centre: vec2(7, 0), radius: f(1) },
   part: "tip",
   motion: { kind: "lunge", hit: hit.capsule({ a: [1.5, 0], b: [6, 0], radius: 0.8 }), reach: 0.4, lead: 1, height: 0.6, coil: 1.2, rise: 1, approach: 0.3, neck: 1.2 },
 });
 const creature = animate(rest, [lash], (spine) => {
-  const body = strand({ name: "tentacle", spine, girth: (m: F) => add(0.35, mul(m, -0.25)), tips: ["open", "round"], paint: [0.7, 0.3, 0.5] });
-  return { things: [body], parts: { tip: part("tip", body, { from: 0.6, tip: 1 }) } };
+  const body = strand({ name: "tentacle", spine, girth: (m: F) => add(0.1, mul(m, 0.25)), tips: ["round", "open"], paint: [0.7, 0.3, 0.5] });
+  return { things: [body], parts: { tip: part("tip", body, { from: 0, to: 0.15, tip: 0 }) } };
 });
 
 export default scene({
@@ -204,6 +204,7 @@ A design is one subject with a record of numbers, slots with named options, and 
 when it builds and passes the subject's checks, whatever proportions it changes. Export it as `design`.
 
 ```ts run
+// examples/beacon.ts
 import { add, mul, scene, sea, strand, toon, vec3, type Drawable, type F, type Option } from "../src/index.ts";
 import { design as makeDesign } from "../src/index.ts";
 
@@ -236,9 +237,9 @@ export const design = makeDesign({
 ```
 
 ```sh
-loft variants examples/bosses/reefback_titan.ts --only base,stilt --views far
-loft render examples/bosses/reefback_titan.ts --variant legs=stilt --views game --out out/try.webp
-loft check examples/bosses/reefback_titan.ts --combinations
+loft variants examples/beacon.ts
+loft render examples/beacon.ts --variant tall,top=base --views three --out out/beacon_mix.webp
+loft check examples/beacon.ts --combinations
 ```
 
 `loft variants` draws every named variant through the design's `compare` cameras onto one labelled sheet; `--variant`
@@ -367,7 +368,7 @@ loft clip     examples/serpent.ts --out out/c.mp4 --seconds 8 --fps 30
 loft dev      examples/serpent.ts --port 5173
 loft check    examples/strike.ts
 loft profile  examples/serpent.ts --view three --frames 30
-loft variants examples/bosses/reefback_titan.ts --views far,face
+loft variants examples/beacon.ts --views three
 loft gallery  --scenes "examples/*.ts" --styles toon,woodblock
 loft build    examples/serpent.ts --out out/files/serpent
 loft bake     examples/serpent.ts --out out/serpent.glb
