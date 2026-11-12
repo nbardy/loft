@@ -150,9 +150,9 @@ export const S = {
      * axis. 0 is a flat spiral face; 1.0 a turban, so the tip (and the light on it) is near the shell's top. */
     spire: 1.0,
     /** The axis (it points out of the spiral's face, toward the tip): raised by `tilt` above level, toward the crab's
-     * right flank (the side the game and back cameras see), and swung back by `rake` (radians). 1.0: the tip up and to
+     * right flank (the side the game and back cameras see), and swung back by `rake` (radians). 1.35: the tip up and a little to
      * the right, the face to game and from above, a banded cone from in front and behind. */
-    tilt: 1.0, rake: 0.0,
+    tilt: 1.35, rake: 0.0,
     /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane: 0 is straight ahead
      * of the axis, so the mouth faces down; 0.3 lifts its front lip, so it faces down, right and a little forward (0.45
      * brings the last whorl down onto the rear legs). */
@@ -160,12 +160,12 @@ export const S = {
     /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
      * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
      * centre, is 2 radial - lip behind it). */
-    seat: { in: 1.07, up: 1.6, side: 0.3, lip: 1.9 },
+    seat: { in: 1.07, up: 1.6, side: -0.2, lip: 1.9 },
     /** The printed bands, lines of constant phi that run the tube's length (spirals on the face, rings round the dome):
-     * `count` round the section, cream for `cream` of each period (a third as wide as the brick), the first one's middle
+     * `count` round the section, cream for `cream` of each period (0.3: a little under half the brick's width; at 0.25 the two key lines ate the band from far off), the first one's middle
      * `at` periods round from the tube's outer side; `proud` is how far a cream band stands out of the tube, as a share
      * of its section. */
-    band: { count: 6, cream: 0.25, at: 0.0, proud: 0.04 },
+    band: { count: 6, cream: 0.3, at: 0.0, proud: 0.0 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
     lip: { flare: 0.15, thick: 0.3, throat: 0.22 },

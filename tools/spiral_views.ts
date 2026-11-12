@@ -7,7 +7,7 @@
 //
 //   bun tools/spiral_views.ts [--set '{"tilt":0.6}'] [--sketch out/x.ppm]
 //   bun tools/spiral_views.ts --measure out/spiral/views.webp   counts bands on a render of the views in this order
-//       (loft render ... --views game,lowFront,lowRear,top), along the same lines, by ink: cream is light with green
+//       (loft render ... --views game,lowFront,lowRear,top: tiled as the render tiles them, rows of RW / 1280), along the same lines, by ink: cream is light with green
 //       near red (G/R > 0.7), brick is red (G/R < 0.55), key lines and anything else are neither.
 
 import { cameraMatrices, project } from "../src/host/camera.ts";
@@ -133,7 +133,9 @@ NAMES.forEach((name, v) => {
   const count = (c: Cls) => b.cls.reduce((s, x) => s + (x === c ? 1 : 0), 0);
   const shellArea = b.shell.reduce((s, x) => s + x, 0), bodyArea = b.body.reduce((s, x) => s + x, 0);
   const runs = crossings(cx, cy, (k) => b.cls[k] === 1 || b.cls[k] === 2, (k) => b.cls[k] === 2, (k) => b.cls[k] === 1);
-  console.log(`${name.padEnd(8)} cream bands crossed ${runs}; shell silhouette ${shellArea} px, body ${bodyArea} px (x ${f2(shellArea / Math.max(bodyArea, 1))}); seen: cream ${count(2)} brick ${count(1)} lip ${count(3)} throat ${count(4)} px; centre (${f2(cx, 0)}, ${f2(cy, 0)})`);
+  let x0 = W, x1 = 0, y0 = H, y1 = 0;
+  for (let k = 0; k < W * H; k++) if (b.shell[k]) { const x = k % W, y = Math.floor(k / W); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  console.log(`${name.padEnd(8)} cream bands crossed ${runs}; shell box x ${x0}..${x1} y ${y0}..${y1}; shell silhouette ${shellArea} px, body ${bodyArea} px (x ${f2(shellArea / Math.max(bodyArea, 1))}); seen: cream ${count(2)} brick ${count(1)} lip ${count(3)} throat ${count(4)} px; centre (${f2(cx, 0)}, ${f2(cy, 0)})`);
 });
 
 // ---- measuring a render ----
@@ -147,8 +149,8 @@ if (measure !== undefined) {
   const RW = fields[1]!, rgb = bytes.subarray(at);
   console.log(`\n== measured on ${measure} (${RW} x ${fields[2]}), the panes in order ${NAMES.join(", ")}`);
   NAMES.forEach((name, v) => {
-    const b = bufs[v]!, [cx, cy] = centres[v]!, ox = v * W;
-    const pix = (k: number) => { const x = ox + (k % W), y = Math.floor(k / W), i = (y * RW + x) * 3; return [rgb[i]!, rgb[i + 1]!, rgb[i + 2]!] as const; };
+    const cols = RW / W, b = bufs[v]!, [cx, cy] = centres[v]!, ox = (v % cols) * W, oy = Math.floor(v / cols) * H;
+    const pix = (k: number) => { const x = ox + (k % W), y = oy + Math.floor(k / W), i = (y * RW + x) * 3; return [rgb[i]!, rgb[i + 1]!, rgb[i + 2]!] as const; };
     const ratio = (k: number) => { const [r, g] = pix(k); return r < 40 ? -1 : g / r; };
     const runs = crossings(cx, cy, (k) => b.shell[k] === 1, (k) => ratio(k) > 0.7, (k) => ratio(k) >= 0 && ratio(k) < 0.55);
     console.log(`${name.padEnd(8)} cream bands crossed ${runs}`);
