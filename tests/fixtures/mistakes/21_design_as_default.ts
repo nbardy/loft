@@ -1,4 +1,5 @@
 // mistake: a design exported as the default export (Loft looks for `export const design`)
+// expect: load
 import { design as makeDesign, draw, scene, vec3 } from "../../../src/index.ts";
 import { ball, cameras, grid, style, water } from "./_parts.ts";
 

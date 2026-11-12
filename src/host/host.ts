@@ -15,6 +15,7 @@
 //
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts and files.ts) stays clean.
 
+import { EnvironmentError } from "../errors.ts";
 import type { Artefact, CpuUpload, FrameState, FrameStats, Host, Loaded, View } from "../artefact.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
@@ -156,8 +157,10 @@ async function scoped<T>(device: GPUDevice, what: string, create: () => Promise<
   device.pushErrorScope("validation");
   const result = await create().then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
   const error = await device.popErrorScope();
-  if (!result.ok) throw new Error(`${what}:\n${result.message}`);
-  if (error) throw new Error(`${what}:\n${error.message}`);
+  // The WGSL and descriptors are the compiler's, already accepted from the scene: a refusal here is the GPU stack's
+  // (or a compiler bug), never the scene's, and a fresh device may pass (src/cli/main.ts retries).
+  if (!result.ok) throw new EnvironmentError(`${what}:\n${result.message}`, true);
+  if (error) throw new EnvironmentError(`${what}:\n${error.message}`, true);
   return result.v;
 }
 

@@ -1,5 +1,6 @@
 // mistake: a variant picks an option the design's slot does not have
 // args: --variant colour=purple
+// expect: usage
 import { design as makeDesign, draw, scene, vec3 } from "../../../src/index.ts";
 import { ball, cameras, grid, style, water } from "./_parts.ts";
 

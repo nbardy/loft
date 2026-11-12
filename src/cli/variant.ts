@@ -5,9 +5,21 @@ import { BASE_ASK, subjectOf, type Subject } from "../design.ts";
 import type { Check } from "../check.ts";
 import type { Scene } from "../scene.ts";
 import type { VariantArg } from "./args.ts";
+import { LoadError } from "../errors.ts";
+import { isTypedRefusal, siteOf } from "./verdict.ts";
 
 export async function subjectAt(path: string): Promise<Subject> {
-  return subjectOf((await import(resolve(path))) as Record<string, unknown>, path);
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(resolve(path))) as Record<string, unknown>;
+  } catch (e) {
+    // A typed refusal raised at the module's top level is the scene's verdict; anything else stopped the module
+    // loading (a syntax or import error, a throw in the user's own code): src/cli/verdict.ts.
+    if (await isTypedRefusal(e)) throw e;
+    const site = e instanceof Error ? siteOf(e.stack) : undefined;
+    throw new LoadError(`${path} failed to load: ${e instanceof Error ? e.message : String(e)}${site === undefined ? "" : ` (at ${site})`}`);
+  }
+  return subjectOf(mod, path);
 }
 
 /** A scene to draw or check, named for the reader: the variant's canonical label, or "scene" for a plain module. */

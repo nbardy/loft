@@ -1,12 +1,13 @@
 // `loft check <scene.ts>`: a scene's checks (src/check.ts), run on the CPU against the scene they were built with,
 // printed as a table. A plain module: its exported `checks` against its default export. A design (docs/variants.md):
 // the variant given, or else every named variant, or with `--combinations` every combination of slot options; one
-// table per variant. Exits 1 when any check fails or any variant fails to build, so it can gate a build.
+// table per variant. Exits 5 when any check fails, or as the error of a variant that fails to build (README "Exit codes").
 import type { Command } from "./args.ts";
 import { choose, subjectAt, type Chosen } from "./variant.ts";
 import type { VariantAsk } from "../design.ts";
+import { ChecksFailed } from "./verdict.ts";
 
-type Outcome = { readonly label: string; readonly about: string; readonly result: { readonly kind: "built"; readonly failed: number; readonly total: number } | { readonly kind: "unbuilt"; readonly error: string } };
+type Outcome = { readonly label: string; readonly about: string; readonly result: { readonly kind: "built"; readonly failed: number; readonly total: number } | { readonly kind: "unbuilt"; readonly error: string; readonly thrown: unknown } };
 
 export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<void> {
   const subject = await subjectAt(cmd.path);
@@ -25,7 +26,7 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
     } catch (e) {
       const error = e instanceof Error ? e.message : String(e);
       console.log(`NOT CHECKED: ${error}`);
-      return { label, about, result: { kind: "unbuilt", error } };
+      return { label, about, result: { kind: "unbuilt", error, thrown: e } };
     }
   };
 
@@ -60,5 +61,8 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
     }
     console.log(`\n${outcomes.length - bad.length} of ${outcomes.length} variants pass`);
   }
-  if (bad.length > 0) process.exitCode = 1;
+  // A variant that did not build ends the command as its error does (src/cli/verdict.ts); else failed checks.
+  const unbuilt = outcomes.find((o) => o.result.kind === "unbuilt");
+  if (unbuilt !== undefined && unbuilt.result.kind === "unbuilt") throw unbuilt.result.thrown;
+  if (bad.length > 0) throw new ChecksFailed(`${bad.length} of ${outcomes.length} ${outcomes.length === 1 ? "scene has" : "variants have"} failing checks: ${bad.map((o) => o.label).join(", ")}`);
 }

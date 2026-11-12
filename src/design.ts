@@ -6,6 +6,7 @@
 // asks its options for what they offer the rig, builds the rig, draws each slot and assembles the scene.
 
 import type { Check } from "./check.ts";
+import { LoadError } from "./errors.ts";
 import type { Drawable } from "./compile/context.ts";
 import type { Sea, SeaDeform, SeaSpec } from "./geom/sea.ts";
 import type { Scene } from "./scene.ts";
@@ -230,7 +231,8 @@ export type Subject =
 export function subjectOf(mod: Record<string, unknown>, path: string): Subject {
   if (mod.design instanceof Design) return { kind: "design", design: mod.design as AnyDesign };
   if (mod.design !== undefined) throw new Error(`${path} exports a "design" that is not a Loft design (make it with design() from src/design.ts)`);
-  if (mod.default === undefined) throw new Error(`${path} has no default export (it must export a scene or a design)`);
+  if (mod.default === undefined) throw new LoadError(`${path} has no default export (it must export a scene or a design). Fix: export default scene({ ... })`);
+  if (mod.default instanceof Design) throw new LoadError(`${path}: the default export is a design; a design is exported by name. Fix: export const design = design({ ... }) (import design as makeDesign if the names clash)`);
   if (mod.checks !== undefined && !Array.isArray(mod.checks)) throw new Error(`${path} exports \`checks\` that is not an array`);
   return { kind: "scene", scene: mod.default as Scene, checks: mod.checks === undefined ? { kind: "absent" } : { kind: "exported", list: mod.checks as readonly Check[] } };
 }

@@ -19,6 +19,7 @@ const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
 
 // Defined beside the host contract, which the file loader imports without this module (docs/artefact_format.md).
 import { CURVE_N } from "./artefact.ts";
+import { SceneError } from "./errors.ts";
 export { CURVE_N };
 
 /** A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends. */
@@ -237,7 +238,7 @@ export class Expr<T extends Ty = Ty> {
 // ---- leaves -------------------------------------------------------------------------------------------------------
 
 function constant(ty: Ty, v: readonly number[]): Expr {
-  for (const n of v) if (!Number.isFinite(n)) throw new Error(`non-finite constant ${n}`);
+  for (const n of v) if (!Number.isFinite(n)) throw new SceneError("a number in an expression", String(n), "a finite number", "look for a division by zero, or a value read before it was set, on the line named at the end");
   return Expr.make({ op: "const", ty, v }, `c:${ty}:${v.join(",")}`);
 }
 
@@ -297,7 +298,7 @@ function scopedInput(name: string): string {
 /** A value the host supplies every frame (time, game state, a target position). In a namespace its name is the instance's: `id.name`. */
 export function input<T extends NumTy>(given: string, ty: T, def: readonly number[]): Expr<T> {
   const name = scopedInput(given);
-  if (def.length !== SIZE[ty]) throw new Error(`input "${name}": default has ${def.length} components, ${ty} needs ${SIZE[ty]}`);
+  if (def.length !== SIZE[ty]) throw new SceneError(`input "${name}"`, `a default of ${def.length} number${def.length === 1 ? "" : "s"} for a ${ty}`, `${SIZE[ty]} numbers`, `input("${given}", "${ty}", [${[...Array(SIZE[ty])].map((_, k) => def[k] ?? 0).join(", ")}])`);
   const spec: InputSpec = { name, ty, def };
   // An input's declaration belongs to the scene that reads it, not to the process: the variants of one design are
   // several scenes built in one process, and each may give an input its own default (where its ship floats). So the
@@ -390,7 +391,7 @@ function vecOf(ty: VecTy, parts: readonly Num[]): Expr {
   const args = parts.map((p) => lift(p as In));
   const total = args.reduce((n, a) => n + SIZE[a.ty as NumTy], 0);
   if (total !== SIZE[ty] && !(args.length === 1 && args[0].ty === "f32")) {
-    throw new Error(`${ty}(...) got ${total} components`);
+    throw new SceneError(ty, `${total} components`, `${SIZE[ty]} (or one number for all of them)`, `${ty}(${[...Array(SIZE[ty]).keys()].map((k) => (k < total ? "xyzw"[k] : "0")).join(", ")}): give exactly ${SIZE[ty]}`);
   }
   return Expr.make({ op: "vec", ty, args }, `V:${ty}:${args.map((a) => a.id).join(",")}`);
 }
@@ -407,12 +408,15 @@ function get<T extends NumTy>(a: Expr, sel: string): Expr<T> {
 
 // ---- operators ----------------------------------------------------------------------------------------------------
 
-function wider(...tys: Ty[]): NumTy {
+function wider(op: string, ...tys: Ty[]): NumTy {
   let out: NumTy = "f32";
   for (const t of tys) {
-    if (t === "bool") throw new Error("a bool is not a number here");
+    if (t === "bool") throw new SceneError(op, "a bool", "numbers", `choose between numbers with select(cond, a, b)`);
     if (t === "f32") continue;
-    if (out !== "f32" && out !== t) throw new Error(`mismatched vector types ${out} and ${t}`);
+    if (out !== "f32" && out !== t) {
+      const [big, small] = SIZE[out] > SIZE[t] ? [out, t] : [t, out];
+      throw new SceneError(op, `a ${out} and a ${t}`, "operands of one size (or a plain number, which goes with any)", `make both ${big}s (e.g. ${big}(v.${"xyzw".slice(0, SIZE[small])}, ${Array(SIZE[big] - SIZE[small]).fill("0").join(", ")})) or take .${"xyzw".slice(0, SIZE[small])} of the ${big}`);
+    }
     out = t;
   }
   return out;
@@ -446,7 +450,7 @@ interface Unary {
   (a: Lit): Expr<VecTy>;
   <A extends NumTy = "f32">(a: Expr<A> | number | Lit): Expr<A>;
 }
-const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(lift(a).ty, lift(b).ty), [a, b])) as Binary;
+const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b])) as Binary;
 const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
 export const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div");
@@ -474,7 +478,7 @@ export function mix(a: Lit, b: Lit, t: In<NumTy>): Expr<VecTy>;
 export function mix<A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, t: In<NumTy>): Expr<Wider<A, B>>;
 export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
   // The blend factor may be the only vector: the result is then a vector too.
-  return call("mix", wider(lift(a).ty, lift(b).ty, lift(t).ty), [a, b, t]);
+  return call("mix", wider("mix", lift(a).ty, lift(b).ty, lift(t).ty), [a, b, t]);
 }
 export function clamp(x: number, lo: number, hi: number): Expr<"f32">;
 export function clamp<A extends NumTy>(x: Expr<A>, lo: In<NumTy>, hi: In<NumTy>): Expr<A>;
@@ -487,7 +491,7 @@ export function smoothstep(lo: number, hi: number, x: number): Expr<"f32">;
 export function smoothstep<A extends NumTy>(lo: In<NumTy>, hi: In<NumTy>, x: Expr<A>): Expr<A>;
 export function smoothstep<A extends NumTy = "f32">(lo: In<NumTy>, hi: In<NumTy>, x: Expr<A> | number | Lit): Expr<A>;
 export function smoothstep(lo: In<NumTy>, hi: In<NumTy>, x: In<NumTy>): Expr {
-  return call("smoothstep", wider(lift(lo).ty, lift(hi).ty, lift(x).ty), [lo, hi, x]);
+  return call("smoothstep", wider("smoothstep", lift(lo).ty, lift(hi).ty, lift(x).ty), [lo, hi, x]);
 }
 export const length = (a: In<NumTy>): Expr<"f32"> => call("length", "f32", [a]) as Expr<"f32">;
 export const distance = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> => call("distance", "f32", [a, b]) as Expr<"f32">;
@@ -515,7 +519,7 @@ export function select<A extends NumTy>(cond: In<"bool">, yes: Expr<A>, no: Lit)
 export function select<B extends NumTy>(cond: In<"bool">, yes: Lit, no: Expr<B>): Expr<B extends "f32" ? VecTy : B>;
 export function select<A extends NumTy = "f32", B extends NumTy = "f32">(cond: In<"bool">, yes: Expr<A> | number | Lit, no: Expr<B> | number | Lit): Expr<Wider<A, B>>;
 export function select(cond: In<"bool">, yes: In<NumTy>, no: In<NumTy>): Expr {
-  return call("select", wider(lift(yes).ty, lift(no).ty), [cond, yes, no]);
+  return call("select", wider("select", lift(yes).ty, lift(no).ty), [cond, yes, no]);
 }
 
 /**

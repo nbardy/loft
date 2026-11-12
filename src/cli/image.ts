@@ -1,4 +1,5 @@
 // Contact sheets and WebP stills. A frame is tightly packed RGBA8, top row first (the Host contract).
+import { EnvironmentError } from "../errors.ts";
 import { deflateSync } from "node:zlib";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -74,8 +75,9 @@ export function writeWebp(path: string, f: Frame): void {
   const png = `${path}.tmp.png`;
   writeFileSync(png, encodePng(f));
   try {
+    if (Bun.which("cwebp") === null) throw new EnvironmentError("cwebp is not on PATH; it writes the .webp (install libwebp: brew install webp, apt install webp)", false);
     const r = Bun.spawnSync(["cwebp", "-quiet", "-q", "90", png, "-o", path]);
-    if (r.exitCode !== 0) throw new Error(`cwebp failed (${r.exitCode}): ${r.stderr.toString()}`);
+    if (r.exitCode !== 0) throw new EnvironmentError(`cwebp failed (${r.exitCode}): ${r.stderr.toString()}`, false);
   } finally {
     rmSync(png, { force: true });
   }

@@ -1,5 +1,6 @@
 // The only place the CLI touches the other agents' modules. They are imported dynamically, by URL, so this file
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
+import { UsageError } from "./args.ts";
 import type { Artefact } from "../artefact.ts";
 import type { GpuHost } from "../host/host.ts";
 import type { LightChoice, SceneSource, StyleChoice } from "./args.ts";
@@ -43,6 +44,8 @@ async function restyle(scene: unknown, style: StyleChoice): Promise<unknown> {
     case "scene": return scene;
     case "named": {
       const styles = await importFrom<Record<string, unknown>>("../style/index.ts");
+      const names = need<readonly string[]>(styles, "STYLE_NAMES", "src/style/index.ts");
+      if (!names.includes(style.name)) throw new UsageError(`--style "${style.name}": no such style (styles: ${names.join(", ")})`);
       const named = need<(n: string) => unknown>(styles, "styleNamed", "src/style/index.ts")(style.name);
       return need<(s: unknown, st: unknown) => unknown>(styles, "withStyle", "src/style/index.ts")(scene, named);
     }
