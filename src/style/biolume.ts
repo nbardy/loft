@@ -150,8 +150,9 @@ export function biolume(): Style {
       return vec4(c, alpha);
     },
     shadow: (ctx) => vec4(vec3(0, 0, 0), mul(ctx.amount, 0.3)),
-    // A plane: a dark floor a little lighter than the night, shadows darker still, fogged as the water is.
-    ground: (ctx) => mix(mul(rgb(C.water), sub(1.2, mul(ctx.shadow, 0.6))), rgb(C.horizon), fog(ctx.distance)),
+    // A plane: a moonlit floor twice the water's tone (so a shadow reads on it), shadows near the night, fogged as the
+    // water is.
+    ground: (ctx) => mix(mul(rgb(C.water), sub(2.2, mul(ctx.shadow, 1.7))), rgb(C.horizon), fog(ctx.distance)),
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(rgb(C.horizon), rgb(C.night), pow(saturate(up), 0.5));
