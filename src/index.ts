@@ -57,7 +57,7 @@ export {
   edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON,
   toon, type ToonSpec,
   woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec,
-  biolume, papercraft,
+  biolume, papercraft, sketch, neon,
 } from "./style/index.ts";
 // What a style is written with beyond expressions: the shade context's block types, noise and hashes, a colour's
 // luminance, and fragment-stage derivatives.

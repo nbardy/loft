@@ -5,7 +5,9 @@
 import { restyled, type Scene } from "../scene.ts";
 import type { Style } from "../style.ts";
 import { biolume } from "./biolume.ts";
+import { neon } from "./neon.ts";
 import { papercraft } from "./papercraft.ts";
+import { sketch } from "./sketch.ts";
 import { toon } from "./toon.ts";
 import { woodblock } from "./woodblock.ts";
 
@@ -18,6 +20,8 @@ export const STYLES = {
   woodblock,
   biolume,
   papercraft,
+  sketch,
+  neon,
 } as const satisfies Record<string, () => Style>;
 
 export type StyleName = keyof typeof STYLES;
@@ -56,3 +60,5 @@ export { toon, type ToonSpec } from "./toon.ts";
 export { woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";
 export { papercraft } from "./papercraft.ts";
+export { sketch } from "./sketch.ts";
+export { neon } from "./neon.ts";
