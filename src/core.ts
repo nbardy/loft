@@ -19,3 +19,7 @@ export { Copies, drawCopies, type CopiesHit, type CopiesOptions } from "./draw/c
 export * from "./relief/index.ts";
 export { drawRelief, ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export { movable, type Sun } from "./sun.ts";
+
+// What recipes under examples/ need of the core (examples/README.md).
+export { noise2, type Branch } from "./lib/index.ts";
+export type { Camera } from "./artefact.ts";

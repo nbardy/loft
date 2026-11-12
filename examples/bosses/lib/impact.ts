@@ -1,21 +1,39 @@
-// Water where an attack strikes it (docs/art_direction/DIRECTION.md: "foam as cream claws round whatever breaks the
-// water"). At the moment of impact a boil of clawed cream foam bursts on the water at each splash and runs out as a
-// ring that breaks up into fingers and is gone; a key-black line runs round the cream. Flat on the water, one glazed
-// draw for any number of splashes inside one area (the attack's own hit shape, so the patch is the area the game
-// already knows).
+// RECIPE: water where an attack strikes it. Copy this file and edit it; it imports only the library's public entry.
 //
-// How it is painted is a choice (`ImpactPaint`): `ridge`, the fingers of the woodblock sea's first foam (along the zero
-// lines of a noise field), as every boss had it; or `roll`, white water as the print's other events draw it
-// (src/style/whitewater.ts): a crown of pointed fingers thrown outward at the impact, falling into a ring of rolling
-// foam with curled heads that lean outward, thinning to droplets as it runs out.
-// The Reefback Titan's "crash" was the first of these; this is that crash for every boss.
+// What it makes, and from what (docs/art_direction/DIRECTION.md: "foam as cream claws round whatever breaks the
+// water"). At the moment of impact a boil of cream foam bursts on the water at each splash and runs out as a ring that
+// breaks up into fingers and is gone; a key-black line runs round the cream. It is one `draw.glazed` surface lying on
+// the sea (`Sea.height`), over the attack's own hit shape (`hitPatch`), so the patch is the area the game already knows,
+// and any number of splashes inside it cost one draw; between strikes the patch collapses to a point and costs nothing.
+// How it is painted is a choice (`ImpactPaint`): `ridge`, the fingers along the zero lines of a noise field (`noise2`),
+// as the woodblock sea's first foam has them; or `roll`, white water as the print's other events draw it (the library's
+// `crown`, `rollingFoam`, `behind`, `joined`): pointed fingers thrown outward at the impact, falling into a ring of
+// rolling foam with curled heads leaning outward. The Reefback Titan's "crash" was the first of these.
+//
+// Parameters: the area (a `Hit`) and how far past it the patch reaches; the splashes, each a place on the water and
+// the seconds since it landed (expressions: a game's input or a clock); how far the ring runs and how long it lives
+// (numbers); two inks; the paint.
+//
+// What it cannot do:
+// - leave the water: it is flat on the sea's surface (no spray, no sheet thrown up, no column);
+// - reach past its area: a ring that runs outside the patch is cut off by its edge;
+// - push the water: the sea's height is read, never changed (a crater or a wave from the strike is the sea's own
+//   deformations, not this);
+// - be hidden by what stands in it: it is glazed on the water without testing the scene's depth (`sceneDepth: false`),
+//   so what it covers is settled by the order of its phase (`on-water`), not by distance.
+//
+// Copying it: change `splashShape` first (the ring's life: how fast the front runs and how it thins), then the paint.
+// Relatives worth trying: a moving source instead of a fixed splash is a wake (the front's distance measured from a
+// line, not a point); the ring's front made a sum of two square roots is a double ring (a strike and its rebound);
+// the ridge cut on a spiral angle instead of noise is a whirlpool's foam.
 
-import { abs, add, gt, length, lift, max, mix, mul, saturate, select, smoothstep, sqrt, step, sub, vec2, vec3, vec4, draw, spacing, type Drawable, type Expr, type F, type In, type Rgb, type Sea } from "../../../src/index.ts";
-import { noise2 } from "../../../src/lib/index.ts";
-import { behind, crown, joined, rollingFoam, rollOf, slopeOf, type White } from "../../../src/style/whitewater.ts";
-import { hitPatch, type Hit } from "../../../src/spacetime/index.ts";
-import { edgeOf, rgb } from "../../../src/style/shared.ts";
-import { NO_SKELETON, type Surface } from "../../../src/map/types.ts";
+import {
+  abs, add, behind, crown, draw, edgeOf, gt, hitPatch, joined, length, lift, max, mix, mul, noise2, NO_SKELETON, rollingFoam, rollOf, saturate, select,
+  slopeOf, smoothstep, spacing, sqrt, step, sub, vec2, vec3, vec4, type Drawable, type Expr, type F, type Hit, type In, type Rgb, type Sea, type Surface,
+  type White,
+} from "../../../src/index.ts";
+
+const rgb = (c: Rgb) => vec3(c[0], c[1], c[2]);
 
 /** One splash: where it lands on the water (x, z) and the seconds since it landed (negative before). */
 export type Splash = { readonly at: In<"vec2">; readonly since: F };
