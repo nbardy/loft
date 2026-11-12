@@ -11,6 +11,7 @@ import { abs, add, dot, fract, keys, lift, limb, min, mix, mul, sin, smoothstep,
 import type { Reaching } from "../../../../src/check.ts";
 import { cut, sides, TAU } from "../ink.ts";
 import type { LegsOption } from "../slots.ts";
+import { pairLengths } from "./base.ts";
 
 /** Lames per leg (along the whole length), and how far a full fold slides them (in lames). */
 const LAMES = 13, SLIDE = 0.9;
@@ -26,7 +27,7 @@ export const armoured: LegsOption = {
     const things = sides.flatMap((s, si) => n.legRoots.map((x, i) => {
       const k = si * 4 + i;
       const root = local([x, -0.1, s * n.carapace.width * 0.85]);
-      const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
+      const spec = { root, target: walk.foot(k), lengths: pairLengths(n, i), bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
       const leg = limb(spec);
       limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: mul(body.z, s) });
       const [j0, j1, j2] = leg.joints;
@@ -43,7 +44,7 @@ export const armoured: LegsOption = {
         name: `leg${s < 0 ? "L" : "R"}${i}`, spine: leg.spine, stations: 40, tips: ["round", { point: 0.12 }],
         section: { aspect: 0.85 }, up: body.y,
         // A tooth per lame (girth grows down each lame by 26%; the legs a fifth thinner than the base's so the face leads), pinched under the cords.
-        girth: (m) => mul(mul(segs(m).x, 0.4), add(add(0.9, mul(mul(phase(m), 0.26), armoured(m))), mul(cordG(m), -0.12))),
+        girth: (m) => mul(mul(segs(m).x, 0.4 * n.legSize.girth[i]!), add(add(0.9, mul(mul(phase(m), 0.26), armoured(m))), mul(cordG(m), -0.12))),
         paint: (m, v) => {
           const p = phase(m);
           // Lacquer, a red band at each lame's flared lower edge, a black line where the next lame starts over it.

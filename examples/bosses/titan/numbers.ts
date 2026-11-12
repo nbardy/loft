@@ -38,6 +38,12 @@ export const S = {
   /** The carapace: its tail and nose (crab x), half-width, half-height, and how far its tail rises above its line (read
    * by carapace/base.ts: a hermit's body climbs into its shell; 0, level, for a crab). */
   carapace: { from: -1.6, to: 5.0, width: 4.1, height: 1.25, rise: 0 },
+  /** How the body is carried at rest (rig.ts): radians nose-down (a forward lean; below 0 the nose up) and radians
+   * listed toward its right flank. Every stance moves about this. */
+  carriage: { nose: 0, list: 0 },
+  /** Each leg pair's length and girth, times the legs' own (front pair first; read by the banded, slim and armoured
+   * legs): a crab whose forelegs are its pillars and whose rear legs are tucked. */
+  legSize: { length: [1, 1, 1, 1], girth: [1, 1, 1, 1] },
   legRoots: [3.2, 2.0, 0.8, -0.4], legFeet: [[6.8, 8.2], [4.0, 9.6], [0.8, 9.9], [-2.6, 9.0]] as const, legLengths: [4.0, 3.8, 1.6] as const,
   // ---- the walk (a game that moves the crab sets `legs.walking`; docs/stance.md) and the breath: a cycle's seconds (the
   // idle breathes at this rate, made whole breaths of the loop), share of it a foot stands, a step's height (a re-plant's

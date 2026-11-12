@@ -10,11 +10,13 @@ import { banded } from "./base.ts";
 export const hermit: LegsOption = {
   about: "the base legs worn by a hermit: three pairs fanned forward from under its shell's lip, the rearmost pair inside the shell",
   numbers: {
-    // Roots 0.4 to 1.2 forward of the base's (3.2, 2.0, 0.8): the third pair's thigh stays ahead of the lip's flank. The
+    // Roots 0.6 to 1.4 forward of the base's (3.2, 2.0, 0.8): the third pair's thigh stays ahead of the lip's flank. The
     // fourth root and foot are the base's, not drawn.
-    legRoots: [3.6, 2.8, 2.0, -0.4],
-    // Feet at 46, 64 and 80 degrees from ahead (the base's 50, 67, 85 and 106): the fan swings forward with the roots.
-    legFeet: [[7.2, 7.4], [4.6, 9.4], [1.8, 10.0], [-2.6, 9.0]],
+    legRoots: [3.8, 3.0, 2.2, -0.4],
+    // Fanned well forward, the owner's ask ("hermit crab legs coming on the front more"; DIRECTION.md, "Body plans"):
+    // feet at 35, 46 and 63 degrees from ahead (were 46, 64 and 80), the front pair 9 ahead of the body's middle, like a
+    // hand spread on a table. The third pair's foot is pulled in to 9.2: at 10.0 its leg overstretched in the throw's lean.
+    legFeet: [[9.0, 6.2], [7.2, 8.4], [4.6, 9.2], [-2.6, 9.0]],
   },
   draw: (rig) => banded(rig, 3),
 };

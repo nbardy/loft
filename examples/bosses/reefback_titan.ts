@@ -40,7 +40,7 @@ import { kabuto } from "./titan/carapace/kabuto.ts";
 import { pebble } from "./titan/carapace/pebble.ts";
 import { thorny } from "./titan/carapace/thorny.ts";
 import { base as clawsBase } from "./titan/claws/base.ts";
-import { fiddler, fiddlerAside } from "./titan/claws/fiddler.ts";
+import { fiddler, fiddlerAcross, fiddlerAside } from "./titan/claws/fiddler.ts";
 import { gauntlet } from "./titan/claws/gauntlet.ts";
 import { tongs } from "./titan/claws/tongs.ts";
 import { base as faceBase } from "./titan/face/base.ts";
@@ -223,7 +223,7 @@ export const design = makeDesign({
   slots: {
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
     legs: { base: legsBase, stilt, slim, armoured, hermit } satisfies Record<string, LegsOption>,
-    claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
+    claws: { base: clawsBase, fiddler, fiddlerAside, fiddlerAcross, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk, jitter, mourner } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland, terraces, spiral } satisfies Record<string, BackOption>,
     boats: { base: boatsBase, host: boatsHost } satisfies Record<string, BoatsOption>,
@@ -278,9 +278,9 @@ export const design = makeDesign({
       // that is a hermit crab"); the headland stays an option (`--variant islander,back=headland`).
       // A hermit (DIRECTION.md, Round 5, "The hermit"): its legs leave through the shell's mouth (legs/hermit.ts) and
       // its body's tail climbs into the shell.
-      pick: { claws: "fiddler", face: "dandy", back: "spiral", legs: "hermit" },
+      pick: { claws: "fiddlerAcross", face: "dandy", back: "spiral", legs: "hermit" },
       // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
-      numbers: { temper: SHOW_OFF, carapace: { rise: 2.2 } },
+      numbers: { temper: SHOW_OFF, crusher: 1.9, carapace: { rise: 3.2 }, carriage: { nose: 0.12 }, spiral: { tilt: 0.7, mouthAt: 0.45, growth: 2.4, spire: 1.0, seat: { up: 3.1 } } },
     },
     // The islander with a face that is a head (docs/art_direction/DIRECTION.md, Round 4): the islander's picks, and
     // face/brow.ts in place of the dandy. `--variant bruiser,face=browStalk` is the same with its eyes on short stalks.

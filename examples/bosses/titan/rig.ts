@@ -554,7 +554,9 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
     taunt.stance(max(crush.envelope(time).p, grabOn)),
     { kind: "walk", on: taunt.legs.body(time), gait: taunt.legs.gait, size: { bob: n.bob, sway: n.sway, roll: n.roll, yaw: n.yaw } },
   ]);
-  const bob = tabS("rise", C.rise), roll = tabS("roll", C.roll), yaw = tabS("yaw", C.yaw), sway = tabS("sway", C.sway), surge = tabS("surge", C.surge), tilt = tabS("tilt", C.pitch);
+  // The carriage (`n.carriage`): how this crab holds its body when nothing moves it, added to every stance's pitch and
+  // roll, so the face, the back and the leg roots go with it and the feet stay planted. 0 for the base (x + 0 is x).
+  const bob = tabS("rise", C.rise), roll = tabS("roll", add(C.roll, n.carriage.list)), yaw = tabS("yaw", C.yaw), sway = tabS("sway", C.sway), surge = tabS("surge", C.surge), tilt = tabS("tilt", sub(C.pitch, n.carriage.nose));
   const yx = rotateAbout(g.x, g.y, yaw), yz = rotateAbout(g.z, g.y, yaw);
   // Roll about the body's x, then pitch (the lean) about the rolled z: an orthonormal frame, as draw.copies' carry needs.
   const ry = rotateAbout(g.y, yx, roll), rz = rotateAbout(yz, yx, roll);

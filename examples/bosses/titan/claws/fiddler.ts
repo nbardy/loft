@@ -218,3 +218,14 @@ export const fiddlerAside: ClawsOption = fiddlerWith({
   wrist: { ahead: -0.2, up: 1.2, out: 3.8 }, along: [-0.3, 0.92, 0.3], wave: { every: (n) => n.crushPeriod / 2, from: 5.6 },
 });
 
+
+/**
+ * The same claw carried low across the front, as a hermit carries its great claw (docs/art_direction/DIRECTION.md,
+ * "Body plans"): the wrist ahead of the carapace's front and in toward the middle, the hand laid across the face toward
+ * the crab's left, a little up. From the front cameras it stands below the eyes, so the shell behind them shows (the
+ * banner beside the face covered it). It waves twice a loop, as the carried-aside claw does.
+ */
+export const fiddlerAcross: ClawsOption = fiddlerWith({
+  about: "the fiddler's great claw carried low across the front, as a hermit carries it",
+  wrist: { ahead: 1.3, up: -0.3, out: -0.6 }, along: [0.25, 0.3, -0.92], wave: { every: (n) => n.crushPeriod / 2, from: 5.6 },
+});
