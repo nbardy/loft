@@ -63,7 +63,7 @@ const spikes = draw.points("spikes", place(points(7, (i) => ({ at: vec3(i.mul(0.
 const fin = crest({ on: body, name: "fin", from: 0.12, to: 0.8, height: keys([[0, 0], [0.3, 1.2], [1, 0]]), paint: [0.75, 0.2, 0.28] });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.3], length: 14, height: 0.25, speed: 1.1 }] }),
+  ground: sea({ swell: [{ direction: [1, 0.3], length: 14, height: 0.25, speed: 1.1 }] }),
   things: [body, head, spikes, fin],
   style: toon({ bands: 3, outline: 0.045 }),
   sun: [-0.6, 0.5, -0.6],
@@ -310,7 +310,7 @@ interface Drawable {
 }
 interface CompileContext {
   readonly slots: Slots;                        // emit expressions: emitShaderFn(ctx.slots, { name, args, out, roots, ret })
-  readonly style: Style; readonly sea: Sea; readonly sun: V3; readonly things: readonly Drawable[];
+  readonly style: Style; readonly ground: Ground; readonly sun: V3; readonly things: readonly Drawable[];  // Ground: section 13
   table(t: TableSource): TableRef;              // only for raw WGSL; fetched tables are found by themselves
   post(pass: { label; wgsl }): void;
 }
@@ -1244,3 +1244,28 @@ Predictions, to be scored after building:
 
 Cut before building: a plane height or extent; a ground colour on the ground value; a separate shadow-on-ground style
 function; a backdrop function for nothing (the levelled sky is the style's own colour); renaming `sea_height`.
+
+### 13.6 As built: the predictions scored (2026-11-12, GPU shared with other workers, load average 17 to 26)
+
+1. **Held.** All nine baseline hashes unchanged: the crab's `game` frames `0c1b1e4368820ff8`, `0db3c25b4d11121b`,
+   `2315edeb83c975e9`; serpent `4ac451e2523b7e50`, storm `19aa1964b27034f1`, coral `49532c9dc621895d`, brig
+   `eb04fbef44946f76`, night hunt `d26dae4e0368cc86` (640 x 400, t = 2); the brig in woodblock `7035b5d1102924f3`,
+   biolume `d4787cc436169a5a`, papercraft `5a3dc2b08c70cef3`. `build` writes byte-identical files for brig and coral
+   (toon and woodblock), the crab and night hunt. One correction on the way: toon's ground colour was first made
+   eagerly with the others, which took an expression id and renumbered every later `let` in a sea scene's WGSL (the
+   same program in different bytes); it is now made inside `ground`, and the comment there says why.
+2. **Held by construction**: the crab's artefact is the same bytes, so the host does the same work. One reading for
+   the record, slow clock state under load: 5.31 ms normal frame at `game`, 1280 x 800.
+3. **Missed.** Predicted the plane under one 0.065 ms tick; measured 0.33 ms in the profiling frame, exactly the
+   sky's 0.33 ms in the same frame (`examples/first/lantern.ts`, `three`, 1280 x 800, under load; the sea in the
+   crab's frame read 1.27 ms in the same state). The arithmetic was not the cost: a full-screen pass here costs its
+   fill (a multisampled target), as the sky shows, and the frame-time skill already lists the sky at 0.13 ms in the
+   fast state. Corrected statement: **a plane costs one sky, about a quarter of a sea.** Not done: on a plane the sky
+   could skip the half of the screen the plane covers (it is overdrawn there), saving up to half a sky; a camera
+   below the plane would then see the clear colour.
+4. **Held.** On nothing a lantern is 3 draw calls (sky, body, outline); on the plane 5 (plus ground and shadows).
+5. **Held** in the part this change touches: `tools/check_loader_closure.ts` passes; `tools/files_proof.ts` draws
+   every proof identically from files and from the scene (files == scene for all six). Its comparison with the
+   phase-1 host's stored hashes (`tools/files_cases.ts`, last changed when the files format landed) reports all six
+   different; the artefacts of this change are byte-identical to the base's, so that is older drift of the stored
+   hashes, not this change.
