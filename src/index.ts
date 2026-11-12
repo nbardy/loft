@@ -56,3 +56,4 @@ export * from "./soft/index.ts";
 // Opened components, named for their shapes (the old names above stay as aliases until integration).
 export { coil, coilAt, coilPlan, COIL_TOPOLOGY, type CoilLaw, type CoilSection, type CoilSpec } from "./geom/spiral.ts";
 export { sheetOn, sheetOnEdges, type SheetOnSpec } from "./geom/crest.ts";
+export { chain, type Chain, type ChainSpec } from "./geom/limb.ts";
