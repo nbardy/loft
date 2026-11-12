@@ -1351,6 +1351,50 @@ seen from above and from the low rear the shell is a large red dome with three b
 `game`. The waterline foam is thin: the shell's back meets the sea, but the contact foam there is a line, not the
 pick's white ring.
 
+### Second pass: the face turned to the camera, one coil on it (2026-11-12)
+
+The coordinator, on the turban: the bands wrap and the size is right, but it reads as a beehive of three tiers seen from
+above, not as the spiral the owner picked. Two corrections to the brief: the pick's light is not on the tip (the tip is
+the face's centre) but on top of the outer whorl, on a barnacled collar; and what the pick keeps is that the spiral face
+is turned toward whoever looks.
+
+**The paint (ours).** Two prints by where on the section a point is, both functions of phi (`coilAt`, `bandAt`):
+- *The face*: each turn's strip that shows on the face (phi from `shows[0]`, where the next turn out covers it, to its
+  own suture) carries one cream band on its suture's side, `coil.cream` 0.5 of the strip. At the suture turn k's cream
+  meets turn k + 1's brick side, so cream and brick alternate turn by turn across the face: one coil to the curl, as
+  wide as the brick, key lines both sides, ending in a cream boss (the last 0.3 turn).
+- *The rim and far face*: the six bands along the tube as before, with the barnacle runs (only on rim edges).
+
+**The form (Raup's coil inherited; the pose and its search ours).** Nearly planispiral (`spire` 0.1), a fat section
+3.15 across by 2.3 along the axis (thin along it, so it clears the legs; 4.6 thick, so from the side a tube, not a
+plate). What the search (`spiral_views.ts`, about 120 poses) found, and what bound it:
+- *The hand.* The mouth's plane holds the axis, so with the face forward the mouth opens down only at a side of the
+  wheel, and the picked hand puts the wheel to the crab's right of its mouth. The mouth is at the crab's left, opening
+  down and forward over the carapace's back (`mouthAt` 1.7, opens toward (0.90, -0.34, -0.28)).
+- *The right legs.* Swinging the face toward `game` (yaw right) put the wheel 0.8 to 1.5 inside legR1 and R2; yawing it
+  left a fifth of a right angle (`rake` -1.9) clears them. So the face looks forward, up and a little left: away from the
+  great claw, as asked, but 0.55 is all the room there is.
+- *The frame.* From `lowFront` the light's top must stay in the frame and from `game` too; that caps the shell's top
+  (6.8) and the light (1.6 tall). And the face's area at `game` grows as the section squared: 3.0 gave 0.93 of the body,
+  3.15 gives 1.05. Those two pull against each other; this is where they meet.
+- The light stands on the outer whorl's summit (found: at (-3.4, 6.5, 2.3)), on a cream collar of radius 1.1 crusted
+  with barnacles; the groves either side along the whorl, 0.14 turn toward the mouth and toward the tip.
+
+### Predictions (before the first render of the wheel; at rest unless said)
+
+1. **Coil turns.** Along the best ray from the curl's centre the cream coil is crossed 4 times at `game` and at
+   `lowFront` (at least 2 asked) at t = 1; the great claw, at the crab's right, covers the face's right edge and leaves
+   at least two turns at three of the four times (1.0, 3.6, 11.3, 17.5).
+2. **Face area.** At `game` 37,900 px, 1.05 times the body's 36,100; at `lowFront` 0.92 times.
+3. **Light.** Top 28 px below the frame's top at `game` and 23 px at `lowFront` (the walk and slam move it about 10 to 30
+   px: at one of the four times it may touch the edge); it stands above the shell's outline at all four.
+4. **Order from `lowFront`, bottom to top:** face, eyestalks, the lip's arch (to the right of the eyes on screen, the
+   crab's left), the spiral, the light.
+5. **Clear.** Legs at rest 0.55 (legR1); through the cycle 0.2 to 0.4, nothing inside. Eyes: the face's front is at
+   x = 3.4, the eyes stand at 4.4 to 5.5 and up to 4: I expect 0.5 or more.
+6. **Checks, hashes, cost** as before: islander 14, others unchanged, base hashes unchanged, frame within 0.1 ms of the
+   turban's (the same grid; fewer barnacle runs).
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a

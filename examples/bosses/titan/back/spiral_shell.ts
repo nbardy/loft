@@ -122,6 +122,21 @@ export function bandAt(p: Plan, band: Band, phi: F): { readonly ring: F; readonl
   return { ring, across: mul(sub(g, ring), 1 / band.cream) };
 }
 
+/**
+ * The face's coil: one cream band per turn on the strip of the section that shows on the spiral's face, from where the
+ * next turn out covers it (phi = shows[0]) to its own suture (shows[1]). `across` is 0 at the first, 1 at the second;
+ * `inFace` is 1 on the strip (and a hair beyond it, so the strip's edges are the coil's, not a rim band's), else 0. The
+ * cream takes the suture's side: on turn k it runs up to the suture, where turn k + 1 comes out showing its brick side,
+ * so cream and brick alternate turn by turn across the face and the cream reads as one coil to the curl (the picked
+ * picture's read), not as rings.
+ */
+export function coilAt(p: Plan, phi: F): { readonly across: F; readonly inFace: F } {
+  const [lo, hi] = p.shows;
+  const up = mul(sub(phi, mul(floor(mul(phi, 1 / TAU)), TAU)), 1);
+  const across = mul(sub(up, lo), 1 / (hi - lo));
+  return { across, inFace: mul(smoothstep(-0.06, -0.05, across), sub(1, smoothstep(1.05, 1.06, across))) };
+}
+
 /** The cream bands round the whole section, as [from, to] in phi (radians from the tube's outer side toward the face,
  * 0 to 2 pi; a band across phi = 0 is split in two): where the key lines and the barnacle runs go. In order of phi. */
 export function bandEdges(p: Plan, band: Band): (readonly [number, number])[] {

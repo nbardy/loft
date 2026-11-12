@@ -5,7 +5,7 @@
 // bands a line through the shell crosses (the most over four directions), the shell's silhouette against the body's,
 // how much lip and throat show, and where the tip is.
 //
-//   bun tools/spiral_views.ts [--set '{"tilt":0.6}'] [--sketch out/x.ppm]
+//   bun tools/spiral_views.ts [--set '{"tilt":0.6}'] [--sketch out/x.ppm] [--quick: the plan and the legs only]
 //   bun tools/spiral_views.ts --measure out/spiral/views.webp   counts bands on a render of the views in this order
 //       (loft render ... --views game,lowFront,lowRear,top: tiled as the render tiles them, rows of RW / 1280), along the same lines, by ink: cream is light with green
 //       near red (G/R > 0.7), brick is red (G/R < 0.55), key lines and anything else are neither.
@@ -13,7 +13,8 @@
 import { cameraMatrices, project } from "../src/host/camera.ts";
 import { compileJs, variable } from "../src/index.ts";
 import { design } from "../examples/bosses/reefback_titan.ts";
-import { bandAt, shellTwin, U } from "../examples/bosses/titan/back/spiral_shell.ts";
+import { bandAt, coilAt, shellTwin, U } from "../examples/bosses/titan/back/spiral_shell.ts";
+import { lightPlan } from "../examples/bosses/titan/back/spiral.ts";
 import type { Numbers } from "../examples/bosses/titan/numbers.ts";
 
 type V = readonly [number, number, number];
@@ -40,7 +41,13 @@ const px = (view: number, p: V) => { const q = project(mats[view]!, [p[0], p[1] 
 
 // ---- the plan ----
 const PH = variable("views_phi", "f32"), band = compileJs([bandAt(P, n.spiral.band, PH).across]);
-const creamAt = (phi: number) => (band({ vars: { views_phi: phi }, inputs: {}, params: {} })[0] as number) < 1;
+const coilF = compileJs([coilAt(P, PH).across, coilAt(P, PH).inFace]);
+/** The print at phi, as the shader prints it: the face's coil (7 cream, 6 brick) where the face shows, the rim's bands (2, 1) elsewhere. */
+const printAt = (phi: number): Cls => {
+  const [across, inFace] = coilF({ vars: { views_phi: phi }, inputs: {}, params: {} }) as number[];
+  if (inFace! > 0.5) return across! > 1 - n.spiral.coil.cream ? 7 : 6;
+  return (band({ vars: { views_phi: phi }, inputs: {}, params: {} })[0] as number) < 1 ? 2 : 1;
+};
 const mouthOpens = ((): V => { const a = twin.at(0, Math.PI / 2), b = twin.at(0.05, Math.PI / 2); const d: V = [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; const l = Math.hypot(...d); return [d[0] / l, d[1] / l, d[2] / l]; })();
 const tipTop = twin.drawn(0, 0);
 console.log(`axis ${fv(P.axis)}; the mouth opens toward ${fv(mouthOpens)}; tip ${fv(tipTop)} (${f2(tipTop[1] - WATER)} above the water)`);
@@ -66,10 +73,13 @@ console.log(`axis ${fv(P.axis)}; the mouth opens toward ${fv(mouthOpens)}; tip $
     least = Math.min(least, g); gaps.push(`${s < 0 ? "L" : "R"}${i} ${f2(g)}`);
   });
   console.log(`legs at rest, least gap to the shell (below 0: inside): ${f2(least)}  [${gaps.join(", ")}]`);
+  console.log(`shell top y ${f2(Math.max(...cloud.map((c) => c[1])))}`);
 }
 
+if (args.includes("--quick")) process.exit(0);
+
 // ---- the splats: shell (class per point) and the carapace, each view ----
-type Cls = 0 | 1 | 2 | 3 | 4 | 5; // none, brick, cream, lip, throat, body
+type Cls = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; // none, brick, cream, lip, throat, body, face brick, face cream
 const bufs = NAMES.map(() => ({ cls: new Uint8Array(W * H), z: new Float32Array(W * H).fill(Infinity), shell: new Uint8Array(W * H), body: new Uint8Array(W * H) }));
 const splat = (v: number, p: V, c: Cls, r: number) => {
   const q = px(v, p), b = bufs[v]!, x0 = Math.round(q[0]), y0 = Math.round(q[1]);
@@ -86,7 +96,8 @@ for (let i = 0; i <= NU; i++) for (let j = 0; j < NV; j++) {
   const u = i / NU, vv = j / NV, p = twin.drawn(u, vv);
   if (p[1] < WATER) continue;
   lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1]), Math.min(lo[2], p[2])]; hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1]), Math.max(hi[2], p[2])];
-  const c: Cls = u > U.throat + 0.01 ? 4 : u > U.lip - 0.002 ? 3 : creamAt(-TAU * vv) ? 2 : 1;
+  const back = (1 - Math.min(u / U.lip, 1)) * P.whorls;
+  const c: Cls = u > U.throat + 0.01 ? 4 : u > U.lip - 0.002 ? 3 : back > P.whorls - n.spiral.coil.boss ? 7 : printAt(-TAU * vv);
   for (let v = 0; v < NAMES.length; v++) splat(v, p, c, 2);
 }
 const hullAt = (x: number) => {
@@ -122,9 +133,29 @@ function crossings(cx: number, cy: number, inShell: (k: number) => boolean, isCr
   }
   return best;
 }
+/** The curl's centre on screen, and the coil's cream runs crossed along the best of 24 rays from it (a run: 3 px). */
+const CURL = twin.drawn(0, 0);
+const LP = lightPlan(n, twin), LIGHT_FOOT = LP.towerFoot;
+const LIGHT_TOP: V = [LP.towerFoot[0] + LP.dir[0] * (LP.L.height + LP.L.size), LP.towerFoot[1] + LP.dir[1] * (LP.L.height + LP.L.size), LP.towerFoot[2] + LP.dir[2] * (LP.L.height + LP.L.size)];
+function turnsOf(v: number, inFace: (k: number) => boolean, isCream: (k: number) => boolean): number {
+  const [cx, cy] = px(v, CURL);
+  let best = 0;
+  for (let r = 0; r < 24; r++) {
+    const a = (r / 24) * TAU, dx = Math.cos(a), dy = Math.sin(a);
+    let runs = 0, len = 0;
+    for (let t = 0; t <= 900; t++) {
+      const x = Math.round(cx + dx * t), y = Math.round(cy + dy * t); if (x < 0 || x >= W || y < 0 || y >= H) break;
+      const k = y * W + x; if (!inFace(k)) continue;
+      if (isCream(k)) len++; else { if (len >= 3) runs++; len = 0; }
+    }
+    if (len >= 3) runs++;
+    best = Math.max(best, runs);
+  }
+  return best;
+}
 const centres = NAMES.map((_, v) => {
   const b = bufs[v]!; let sx = 0, sy = 0, m = 0;
-  for (let k = 0; k < W * H; k++) if (b.cls[k] === 1 || b.cls[k] === 2) { sx += k % W; sy += Math.floor(k / W); m++; }
+  for (let k = 0; k < W * H; k++) if (b.cls[k]! >= 1 && b.cls[k] !== 5 && b.cls[k]! <= 7 && b.cls[k] !== 3 && b.cls[k] !== 4) { sx += k % W; sy += Math.floor(k / W); m++; }
   return [sx / Math.max(m, 1), sy / Math.max(m, 1)] as const;
 });
 console.log("\n== predicted, per view (1280 x 800, at rest)");
@@ -133,6 +164,9 @@ NAMES.forEach((name, v) => {
   const count = (c: Cls) => b.cls.reduce((s, x) => s + (x === c ? 1 : 0), 0);
   const shellArea = b.shell.reduce((s, x) => s + x, 0), bodyArea = b.body.reduce((s, x) => s + x, 0);
   const runs = crossings(cx, cy, (k) => b.cls[k] === 1 || b.cls[k] === 2, (k) => b.cls[k] === 2, (k) => b.cls[k] === 1);
+  const face = count(6) + count(7), turns = turnsOf(v, (k) => b.cls[k] === 6 || b.cls[k] === 7, (k) => b.cls[k] === 7);
+  const lt = px(v, LIGHT_TOP), lf = px(v, LIGHT_FOOT);
+  console.log(`${name.padEnd(8)} face ${face} px (x ${f2(face / Math.max(b.body.reduce((s, x) => s + x, 0), 1))} the body), coil turns crossed ${turns}; light foot (${f2(lf[0], 0)}, ${f2(lf[1], 0)}) top (${f2(lt[0], 0)}, ${f2(lt[1], 0)})${lt[1] < 0 ? " OUT OF FRAME" : ""}`);
   let x0 = W, x1 = 0, y0 = H, y1 = 0;
   for (let k = 0; k < W * H; k++) if (b.shell[k]) { const x = k % W, y = Math.floor(k / W); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   console.log(`${name.padEnd(8)} cream bands crossed ${runs}; shell box x ${x0}..${x1} y ${y0}..${y1}; shell silhouette ${shellArea} px, body ${bodyArea} px (x ${f2(shellArea / Math.max(bodyArea, 1))}); seen: cream ${count(2)} brick ${count(1)} lip ${count(3)} throat ${count(4)} px; centre (${f2(cx, 0)}, ${f2(cy, 0)})`);
@@ -153,13 +187,14 @@ if (measure !== undefined) {
     const pix = (k: number) => { const x = ox + (k % W), y = oy + Math.floor(k / W), i = (y * RW + x) * 3; return [rgb[i]!, rgb[i + 1]!, rgb[i + 2]!] as const; };
     const ratio = (k: number) => { const [r, g] = pix(k); return r < 40 ? -1 : g / r; };
     const runs = crossings(cx, cy, (k) => b.shell[k] === 1, (k) => ratio(k) > 0.7, (k) => ratio(k) >= 0 && ratio(k) < 0.55);
-    console.log(`${name.padEnd(8)} cream bands crossed ${runs}`);
+    const turns = turnsOf(v, (k) => b.cls[k] === 6 || b.cls[k] === 7, (k) => ratio(k) > 0.7);
+    console.log(`${name.padEnd(8)} cream bands crossed ${runs}; coil turns crossed ${turns}`);
   });
 }
 
 const sketch = flag("--sketch");
 if (sketch !== undefined) {
-  const PAL: Record<Cls, readonly number[]> = { 0: [33, 51, 94], 1: [168, 56, 33], 2: [237, 224, 191], 3: [250, 240, 200], 4: [30, 20, 20], 5: [120, 60, 50] };
+  const PAL: Record<Cls, readonly number[]> = { 0: [33, 51, 94], 1: [168, 56, 33], 2: [237, 224, 191], 3: [250, 240, 200], 4: [30, 20, 20], 5: [120, 60, 50], 6: [190, 40, 20], 7: [255, 245, 210] };
   const out = new Uint8Array(W * 2 * H * 2 * 3);
   NAMES.forEach((_, v) => { const b = bufs[v]!, ox = (v % 2) * W, oy = Math.floor(v / 2) * H; for (let k = 0; k < W * H; k++) out.set(PAL[b.cls[k] as Cls], ((oy + Math.floor(k / W)) * W * 2 + ox + (k % W)) * 3); });
   const head = new TextEncoder().encode(`P6\n${W * 2} ${H * 2}\n255\n`), all = new Uint8Array(head.length + out.length);

@@ -178,7 +178,7 @@ for (const e of EYES) { const c = add(e.root, e.reach); const a = px("game", c),
 console.log("\n== what stands on it");
 // The light on the tip, as back/spiral.ts seats it; the groves on their whorls' shoulders.
 const LT = SP.light, LPl = lightPlan(n, twin), lightFoot = LPl.towerFoot, lightUp = LPl.out, leanDir = LPl.dir;
-const GROVES = SP.groves.map(([back, trees, radius]) => [back, shoulderOf(twin, back), trees, radius] as const);
+const GROVES = SP.groves.map(([db, trees, radius]) => { const back = LPl.top.back + db; return [back, shoulderOf(twin, back), trees, radius] as const; });
 const lightTop = add(lightFoot, mul(leanDir, LT.height + 1.0 * LT.size + LT.pose.rise));
 console.log(`light: foot ${fv(lightFoot)} (the shell's normal there ${fv(lightUp)}), top ${fv(lightTop)}, ${fmt(lightTop[1] - WATER)} above the water`);
 for (const cam of ["game", "back", "far", "pick"] as const) { const a = px(cam, lightFoot), b = px(cam, lightTop); console.log(`  ${cam}: foot (${fmt(a[0], 0)}, ${fmt(a[1], 0)}) top (${fmt(b[0], 0)}, ${fmt(b[1], 0)}): ${fmt(Math.hypot(a[0] - b[0], a[1] - b[1]), 0)} px; the top is ${fmt(b[1], 0)} px below the frame's top`); }
