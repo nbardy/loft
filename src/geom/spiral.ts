@@ -62,7 +62,7 @@ export const whorl = (u: F, turns: number): F => mul(u, turns);
 /** 0..1 within each of `perTurn` ridges per whorl, for paint that follows the folded ridges. */
 export const ridgePhase = (u: F, turns: number, perTurn: number): F => fract(mul(u, turns * perTurn));
 
-export type HornSpec = {
+export type SpiralTubeSpec = {
   readonly name: string;
   /** Length along the centre line. */
   readonly length: In<"f32">;
@@ -82,13 +82,14 @@ export type HornSpec = {
 };
 
 /**
- * A horn (claw, tooth, tusk): a tube on an equiangular spiral. With e^(k theta) = 1 + m (taper - 1), the arc length
+ * A tapered tube on an equiangular spiral, named for its shape, not for a use (a horn, a claw's finger, a tooth, a
+ * tusk, a tendril, a moustache are all this with different numbers). With e^(k theta) = 1 + m (taper - 1), the arc length
  * is linear in m and the radius is girth * e^(k theta), which is the spiral's own growth: the shape is self-similar,
  * like a shell's. A strand, so it has a skeleton, casts a shadow and carries body coordinates.
  */
-export function horn(spec: HornSpec): Strand {
+export function spiralTube(spec: SpiralTubeSpec): Strand {
   return strand({
-    name: spec.name, stations: 12, ...hornLine(spec),
+    name: spec.name, stations: 12, ...spiralLine(spec),
     tips: ["open", { point: 0.12 }],
     paint: spec.paint,
     detail: { along: spec.detail?.along ?? 24, around: spec.detail?.around ?? 12 },
@@ -96,12 +97,12 @@ export function horn(spec: HornSpec): Strand {
 }
 
 /**
- * A horn's centre line, its radius along it and its up direction, named as `strand` takes them: `horn` is
- * `strand({ name, ...hornLine(o), tips, paint })`. Exported so a horn is never a dead end: for a flat or ridged section,
+ * The tube's centre line, its radius along it and its up direction, named as `strand` takes them: `spiralTube` is
+ * `strand({ name, ...spiralLine(o), tips, paint })`. Exported so the tube is never a dead end: for a flat or ridged section,
  * other tips, a kink added to the spine or a girth that swells, spread this into your own `strand` and override what
  * you need, instead of starting again from nothing.
  */
-export function hornLine(spec: Pick<HornSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 } {
+export function spiralLine(spec: Pick<SpiralTubeSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 } {
   const L = lift<"f32">(spec.length), curl = lift<"f32">(spec.curl), taper = lift<"f32">(spec.taper), girth = lift<"f32">(spec.girth);
   const [o, w, sd] = basis(spec.out, spec.toward);
   const out = lift<"vec3">(o), toward = lift<"vec3">(w), side = lift<"vec3">(sd);
@@ -123,13 +124,20 @@ export function hornLine(spec: Pick<HornSpec, "length" | "curl" | "taper" | "gir
   return { spine, girth: (m) => mul(girth, add(1, mul(m, sub(taper, 1)))), up: side };
 }
 
+/**
+ * The old, subject's names for `spiralTube` and its spec. Kept only until the branches in flight on 2026-11-12 are
+ * merged; then every caller is renamed and these are removed in one commit.
+ */
+export const horn = spiralTube;
+export type HornSpec = SpiralTubeSpec;
+
 type V3 = readonly [number, number, number];
 
 /** Unit `out`, `toward` made perpendicular to it, and their cross product. */
 function basis(out: V3, toward: V3): [V3, V3, V3] {
   const unitOf = (v: readonly number[], what: string): V3 => {
     const l = Math.hypot(v[0], v[1], v[2]);
-    if (!(l > 1e-6)) throw new Error(`horn: ${what} must be a non-zero direction not parallel to out`);
+    if (!(l > 1e-6)) throw new Error(`spiralTube: ${what} must be a non-zero direction not parallel to out`);
     return [v[0] / l, v[1] / l, v[2] / l];
   };
   const o = unitOf(out, "out");

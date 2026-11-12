@@ -197,7 +197,7 @@ exported in the form the level below accepts, so leaving it is one step down.
 |---|---|---|
 | `strand` | spine, girth, twist and section aspect are functions | open |
 | `limb`, `fan`, `gripper`, `bent` | every slot an expression or a function | open |
-| `horn` | curl, taper, length: numbers (a tapered log-spiral tube and nothing else); 13 callers, so every claw finger, thorn, moustache and rostrum we have drawn is that one curve | **opened**: `hornLine` returns `{ spine, girth, up }` as `strand` takes them, and `horn` is `strand({ name, ...hornLine(o), tips, paint })` |
+| `horn` | curl, taper, length: numbers (a tapered log-spiral tube and nothing else); 13 callers, so every claw finger, thorn, moustache and rostrum we have drawn is that one curve | **opened** and renamed for its shape: `spiralLine` returns `{ spine, girth, up }` as `strand` takes them, and `spiralTube` is `strand({ name, ...spiralLine(o), tips, paint })`; `horn` is a temporary alias |
 | `shell` | Raup's four numbers; round or elliptical section only | closed |
 | `hull` | 16 numbers | closed in its numbers; check whether its `Lines` can be given directly |
 | `ship` | 14 numbers (masts, tiers, jibs): one kind of ship | closed |
@@ -205,9 +205,28 @@ exported in the form the level below accepts, so leaving it is one step down.
 | `whirlpool`, `cloud`, `pendulum` | numbers | closed |
 | `sea` | a list of swells; deformations | closed to anything that is not a swell or a listed deformation |
 
-The pattern for opening one, as done for `horn`: split it into its **mechanism** (a function that returns the spine,
+The pattern for opening one, as done for `horn` (now `spiralTube`): split it into its **mechanism** (a function that returns the spine,
 section, lines or field, named as the level below takes them) and a **composition** a few lines long. Nothing about the
 component's own call changes; the picture is byte-identical (the base crab's three `game` hashes, checked).
+
+### Names: geometry in the library, subjects in the examples (2026-11-12, the owner's rule)
+
+A name is a pull as well. A function called `horn` gets used for horns; called `spiralTube` it gets used for whatever
+is that shape. So a library name says what the geometry is, and a subject's name (`handlebar`, `tusk`, `rostrum`)
+appears only in an example, where the reader sees it is a shape plus numbers.
+
+Proposed, not yet done (each is a rename across callers, to be made when no branch is in flight):
+
+| Today | Shape | Proposed |
+|---|---|---|
+| `horn`, `hornLine` | a tapered tube on an equiangular spiral | `spiralTube`, `spiralLine` (done; alias pending removal) |
+| `shell` | a section swept on a growing spiral round an axis | `coil` |
+| `crest` | a sheet standing on a curve of a surface | `sheetOn` |
+| `limb` | a chain of straight segments reaching a target | `chain` |
+| `tusk` (example side) | a flat plate between two points | `plate` |
+| `dome` (example side) | a superellipsoid with relief on its front | `reliefDome` |
+| `strand`, `fan`, `whorl`, `gripper` | already say a shape or a mechanism | keep |
+| `hull`, `ship` | these are their subject (a lines plan is a hull's); the rule sends them toward the examples, with what is general under them (a surface lofted through stations) named for its shape | decide when `ship` is opened |
 
 The table below is kept as first written; rows 2, 4 and 5 are patterns by this rule (recipes, not core), rows 1, 3
 and 6 are limits or duplicates (do them), and rows 7 and 8 wait for a second use.
