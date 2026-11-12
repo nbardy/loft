@@ -73,8 +73,8 @@ const NONE: Bend = [0, 0];
  * - stretch or squash along its length.
  * - turns of more than about 3 radians: the four-point integral loses accuracy past that.
  *
- * Going past it: the heading is the law, so a bend shape of your own is a new weight in `turn`: any function w(m) times
- * a bend; a bend at m0 is a smoothstep there; a wave travelling up the stalk is a bend times sin(k m - w t). `bentTip`
+ * Going past it: the heading is the law, so a bend shape of your own is a new weight in its `turn` (copy `bent`, about twenty
+ * lines): any function w(m) times a bend; a bend at m0 is a smoothstep there; a wave travelling up the stalk is a bend times sin(k m - w t). `bentTip`
  * predicts a tip on the CPU. Relatives: a clothoid (turn growing as m^2) is `crook` with `sharp` 2; straight segments
  * between joints are `chain`; a fixed curve is `spiralLine`.
  */
