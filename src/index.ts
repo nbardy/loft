@@ -53,3 +53,5 @@ export { hull, Hull, type HullSpec, type HullLook, type Lines, type Station } fr
 export { ship, Ship, type ShipSpec, type ShipColours, type Placement } from "./geom/ship.ts";
 export { lines, type Rope, type LinesSpec } from "./geom/lines.ts";
 export * from "./soft/index.ts";
+// lib/second-subjects: names opened by the second-subject examples (examples/second/), one line, for the index split to place.
+export { carriedFrame } from "./geom/stance.ts";
