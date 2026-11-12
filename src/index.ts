@@ -53,3 +53,5 @@ export { hull, Hull, type HullSpec, type HullLook, type Lines, type Station } fr
 export { ship, Ship, type ShipSpec, type ShipColours, type Placement } from "./geom/ship.ts";
 export { lines, type Rope, type LinesSpec } from "./geom/lines.ts";
 export * from "./soft/index.ts";
+// ---- lib/recipes: what the recipes under examples/ need and could not reach (examples/README.md). One line per module. ----
+export { edgeOf } from "./style/shared.ts"; export { noise2, type Branch } from "./lib/index.ts"; export { behind, crown, joined, rollingFoam, rollOf, slopeOf, type White } from "./style/whitewater.ts"; export type { Camera } from "./artefact.ts";
