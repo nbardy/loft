@@ -1,7 +1,7 @@
 // Runs the code the docs show, so a guide cannot drift from the library. The bug it catches: a doc that names an
 // export, a field or a flag the library does not have (or no longer has).
 //
-//   bun tools/check_snippets.ts            README.md, docs/guide.md and the text of `loft context`
+//   bun tools/check_snippets.ts            README.md, docs/guide.md, docs/craft.md and the written part of `loft api`
 //
 // What counts, in those files:
 //   ```ts run    a whole scene module: typechecked, then rendered once at 160x100 through its first camera
@@ -17,7 +17,7 @@ import { spawnSync } from "node:child_process";
 import { parseArgs, UsageError } from "../src/cli/args.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
-const DOCS = ["README.md", "docs/guide.md", "src/cli/context.md"];
+const DOCS = ["README.md", "docs/guide.md", "docs/craft.md", "src/cli/api_preamble.md"];
 const OUT = resolve(ROOT, "out/snippets");
 
 type Snippet = { readonly doc: string; readonly line: number; readonly mode: "run" | "check" | "sh"; readonly code: string };

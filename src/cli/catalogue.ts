@@ -1,6 +1,6 @@
 // The catalogue of what Loft exports, read from the source at run time so it cannot go stale: every name an entry point
-// exports, grouped by the module that declares it, with the first sentence of its doc comment and the comment's
-// "cannot" lines. `loft context` prints it short; `loft context components` prints it whole (docs/components.md).
+// exports, traced to its declaration, with its signature (or a type's fields), its doc comment, and the comment's
+// "cannot" and "relatives" lists. `loft api` prints it (src/cli/api.ts); `loft context` prints it short.
 //
 // It reads the text, not the types: no TypeScript API is available here (typescript 7 ships a binary only), and a
 // scan of `export` statements covers every form the library uses (declarations, `export *`, `export { a as b } from`,
@@ -18,6 +18,10 @@ export type Entry = {
   readonly file: string;
   /** The comment as written above the declaration, joined to one paragraph per blank line; empty when there is none. */
   readonly doc: string;
+  /** The declaration as written, without its body: a function's parameters and result, a type's fields, a class's heritage. */
+  readonly signature: string;
+  /** For a constant that is an object of named parts (`draw`, `palette`, `hit`): each part and its comment. */
+  readonly members: readonly { readonly name: string; readonly doc: string }[];
 };
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -59,8 +63,10 @@ function joinComment(lines: readonly string[]): string {
   for (const raw of lines) {
     const l = raw.trim();
     if (l === "") { if (cur !== "") paras.push(cur); cur = ""; continue; }
-    if (l.startsWith("- ")) cur += (cur === "" ? "" : "\n") + l;
-    else cur += (cur === "" || cur.endsWith("\n") ? "" : " ") + l;
+    // A bullet starts a line; so does an unindented line after a bullet (the list has ended); an indented one continues it.
+    const afterBullet = /(^|\n)- [^\n]*$/.test(cur) && !/^\s{2,}/.test(raw);
+    if (l.startsWith("- ") || afterBullet) cur += (cur === "" ? "" : "\n") + l;
+    else cur += (cur === "" ? "" : " ") + l;
   }
   if (cur !== "") paras.push(cur);
   return paras.join("\n\n").trim();
@@ -119,7 +125,9 @@ export function exportsOf(file: string): Map<string, Entry> {
       const doc = commentAbove(lines, i);
       const names = kind === "value" && /^export\s+(const|let|var)\s/.test(line) ? constNames(line) : [d[2]!];
       // An overloaded function: the comment sits above the first signature; later ones must not erase it.
-      for (const name of names) if (!(doc === "" && out.get(name)?.file === rel(file))) out.set(name, { name, kind, file: rel(file), doc });
+      const members = names.length === 1 && /^export\s+const\s+[\w$]+(\s*:[^=]+)?\s*=\s*\{\s*$/.test(line) ? membersAfter(lines, i) : [];
+      const signature = signatureAt(lines, i, kind);
+      for (const name of names) if (!(doc === "" && out.get(name)?.file === rel(file))) out.set(name, { name, kind, file: rel(file), doc, signature, members });
       continue;
     }
     const { text, end } = statement(lines, i);
@@ -137,10 +145,56 @@ export function exportsOf(file: string): Map<string, Entry> {
     } else if ((m = /^export\s+(type\s+)?\{([^}]*)\}\s*;?\s*$/.exec(text))) {
       for (const s of specifiers(m[2]!)) out.set(s.as, { ...localOrImported(file, s.from), name: s.as });
     } else if (/^export\s+default\b/.test(text)) {
-      out.set("default", { name: "default", kind: "value", file: rel(file), doc: commentAbove(lines, i) });
+      out.set("default", { name: "default", kind: "value", file: rel(file), doc: commentAbove(lines, i), signature: "", members: [] });
     } else {
       throw new Error(`catalogue: ${rel(file)}:${i + 1}: an export form this scanner does not read: ${text.slice(0, 80)}`);
     }
+  }
+  return out;
+}
+
+const squash = (t: string) => t.replace(/\s+/g, " ").trim();
+
+/**
+ * A declaration without its body. A type that is an object lists its fields (`name`, `name?`); any other type is its
+ * text. A function is everything before the brace that opens its body; a constant, its annotation or its arrow's
+ * parameters; a class, its heading. Long ones are cut at 300 characters, marked with "...".
+ */
+function signatureAt(lines: readonly string[], at: number, kind: "value" | "type"): string {
+  const head = lines[at]!.replace(/^export\s+(declare\s+)?/, "");
+  const cut = (t: string) => (t.length > 300 ? `${t.slice(0, 297)}...` : t);
+  if (kind === "type") {
+    if (/=\s*\{\s*$/.test(head) || /^interface\b.*\{\s*$/.test(head)) {
+      const fields: string[] = [];
+      for (let i = at + 1; i < lines.length && !/^\}/.test(lines[i]!); i++) {
+        const m = /^ {2}(?:readonly\s+)?([A-Za-z_$][\w$]*)(\??)\s*[:(]/.exec(lines[i]!);
+        if (m) fields.push(m[1]! + m[2]!);
+      }
+      return cut(`${squash(head.replace(/\{\s*$/, ""))} { ${fields.join(", ")} }`);
+    }
+    let t = head, j = at;
+    while (!/;\s*$/.test(t) && j + 1 < lines.length && j < at + 8) t += " " + lines[++j]!.trim();
+    return cut(squash(t.replace(/;\s*$/, "")));
+  }
+  if (/^(async\s+)?function|^(abstract\s+)?class/.test(head)) {
+    let t = head, j = at;
+    while (!/\{\s*$/.test(t) && !/;\s*$/.test(t) && j + 1 < lines.length && j < at + 12) t += " " + lines[++j]!.trim();
+    return cut(squash(t.replace(/\s*\{\s*$/, "").replace(/;\s*$/, "")));
+  }
+  // A constant: its annotation, or an arrow's parameters and result, or the start of its value.
+  const ann = /^(const|let|var)\s+([\w$]+)\s*:\s*(.+?)\s*=\s/.exec(head);
+  if (ann) return cut(`const ${ann[2]}: ${ann[3]}`);
+  const arrow = /^(const|let|var)\s+([\w$]+)\s*=\s*(<[^=]*>)?\s*(\(.*?\)(?:\s*:\s*[^=]+?)?)\s*=>/.exec(head);
+  if (arrow) return cut(`const ${arrow[2]} = ${arrow[3] ?? ""}${arrow[4]} =>`);
+  return cut(squash(head.replace(/\{\s*$/, "{ ... }").replace(/;\s*$/, "")));
+}
+
+/** The named parts of an object literal opened on line `at`: keys at two spaces' indent, up to the closing brace. */
+function membersAfter(lines: readonly string[], at: number): { name: string; doc: string }[] {
+  const out: { name: string; doc: string }[] = [];
+  for (let i = at + 1; i < lines.length && !/^\}/.test(lines[i]!); i++) {
+    const m = /^ {2}(?:async\s+)?([A-Za-z_$][\w$]*)\s*(?:[:(<]|,|$)/.exec(lines[i]!);
+    if (m) out.push({ name: m[1]!, doc: commentAbove(lines, i) });
   }
   return out;
 }
@@ -156,7 +210,7 @@ function localOrImported(file: string, name: string): Entry {
   const decl = new RegExp(`^(?:function\\*?|const|let|var|class|type|interface)\\s+${name}\\b`);
   const at = lines.findIndex((l) => decl.test(l));
   if (at < 0) throw new Error(`catalogue: ${rel(file)} exports "${name}" but its declaration was not found`);
-  return { name, kind: /^(type|interface)\s/.test(lines[at]!) ? "type" : "value", file: rel(file), doc: commentAbove(lines, at) };
+  return { name, kind: /^(type|interface)\s/.test(lines[at]!) ? "type" : "value", file: rel(file), doc: commentAbove(lines, at), signature: signatureAt(lines, at, /^(type|interface)\s/.test(lines[at]!) ? "type" : "value"), members: [] };
 }
 
 /** The first sentence of a comment (to the first ". " before a capital, or the paragraph's end). */
@@ -167,21 +221,27 @@ export function firstSentence(doc: string): string {
 }
 
 /**
- * The comment's statements of what the thing cannot do: the bullets under a line that says "cannot", or else each
- * sentence containing "cannot". A component's limits are the part of its comment that pushes a reader outward.
+ * The lines of a comment's list introduced by a line matching `header`: the bullets that follow it, up to the first line
+ * that is not a bullet. With no bullets after it, the header's own sentence. This is how a component's comment states
+ * what it cannot do and which relatives to try (`spiralTube` in src/geom/spiral.ts is the worked example).
  */
-export function cannotLines(doc: string): string[] {
+function listUnder(doc: string, header: RegExp): string[] {
   const out: string[] = [];
-  for (const para of doc.split("\n\n")) {
-    const parts = para.split("\n");
-    if (/cannot/i.test(parts[0]!) && parts.length > 1 && parts.slice(1).every((p) => p.startsWith("- "))) {
-      out.push(...parts.slice(1).map((p) => p.slice(2).trim()));
-      continue;
-    }
-    for (const s of para.replace(/\n/g, " ").split(/(?<=[.;])\s+(?=[A-Z])/)) if (/\bcannot\b|\bcan't\b/i.test(s)) out.push(s.trim());
+  const lines = doc.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.startsWith("- ") || !header.test(lines[i]!)) continue;
+    const items: string[] = [];
+    for (let j = i + 1; j < lines.length && lines[j]!.startsWith("- "); j++) items.push(lines[j]!.slice(2).trim());
+    if (items.length > 0) out.push(...items);
+    else out.push(...lines[i]!.split(/(?<=[.;])\s+(?=[A-Z])/).filter((x) => header.test(x)).map((x) => x.trim()));
   }
   return out;
 }
+
+/** What the thing cannot do, as its comment states it. A limit that is not written down is read as the whole space. */
+export const cannotLines = (doc: string): string[] => listUnder(doc, /\bcannot\b|\bcan't\b/i);
+/** The relatives its comment invites a reader to try: other shapes from similar mathematics. */
+export const relativesLines = (doc: string): string[] => listUnder(doc, /\brelatives?\b/i);
 
 /** The first sentence of a file's opening comment: what the module is for. */
 export function moduleLine(file: string): string {
@@ -191,9 +251,32 @@ export function moduleLine(file: string): string {
   return firstSentence(joinComment(head));
 }
 
-export type Group = { readonly file: string; readonly line: string; readonly values: readonly Entry[]; readonly types: readonly Entry[] };
+export type Group = { readonly file: string; readonly line: string; readonly layer: Layer; readonly values: readonly Entry[]; readonly types: readonly Entry[] };
 
-/** The catalogue of one entry point: its names grouped by declaring file, in the order the entry point first names each file. */
+/**
+ * The layers, bottom up. A module's layer is a judgement, so it is written here by path; a module this list does not
+ * place prints under "Not yet placed", so a new module is never lost, only unsorted.
+ */
+export const LAYERS = [
+  "Expressions and curves", "Maps", "Drawables", "Shapes", "Motion", "Actions, checks and designs", "Styles and light",
+  "Scene and compiler", "Library functions (import from src/lib/index.ts)", "Not yet placed",
+] as const;
+export type Layer = (typeof LAYERS)[number];
+const MOTION = ["lively", "motion", "gait", "stance", "ring", "placing", "grab", "bend", "pendulum", "restless", "expression", "struck"];
+export function layerOf(file: string): Layer {
+  const f = file.replace(/^src\//, "");
+  if (/^(expr|curve|grad)\.ts$/.test(f)) return "Expressions and curves";
+  if (f.startsWith("map/")) return "Maps";
+  if (/^(draw|soft|relief)\//.test(f)) return "Drawables";
+  if (f.startsWith("geom/")) return MOTION.includes(f.slice(5, -3)) ? "Motion" : "Shapes";
+  if (/^spacetime\/|^(check|design|lineup)\.ts$/.test(f)) return "Actions, checks and designs";
+  if (/^style\/|^(style|sun)\.ts$/.test(f)) return "Styles and light";
+  if (/^compile\/|^(scene|artefact)\.ts$/.test(f)) return "Scene and compiler";
+  if (f.startsWith("lib/")) return "Library functions (import from src/lib/index.ts)";
+  return "Not yet placed";
+}
+
+/** The catalogue of one entry point: its names grouped by declaring file, the files ordered by layer, then as the entry point first names them. */
 export function catalogue(entry: string): Group[] {
   const byFile = new Map<string, Entry[]>();
   for (const e of exportsOf(resolve(ROOT, entry)).values()) {
@@ -201,8 +284,10 @@ export function catalogue(entry: string): Group[] {
     list.push(e);
     byFile.set(e.file, list);
   }
-  return [...byFile].map(([file, es]) => ({
-    file, line: moduleLine(file),
+  const groups = [...byFile].map(([file, es]): Group => ({
+    file, line: moduleLine(file), layer: layerOf(file),
     values: es.filter((e) => e.kind === "value"), types: es.filter((e) => e.kind === "type"),
   }));
+  // Stable: within a layer, the entry point's own order.
+  return groups.map((g, k) => ({ g, k })).sort((a, b) => LAYERS.indexOf(a.g.layer) - LAYERS.indexOf(b.g.layer) || a.k - b.k).map((x) => x.g);
 }
