@@ -146,7 +146,10 @@ export const S = {
      * touches the axis (Raup's D = 0): a shell with no navel. 3.15 across by 2.3 along (2.2 by 3.2 before 2026-11-12's
      * finish): the face about the body's area from `game`; thin along the axis, so the wheel clears the legs, but fat
      * enough to read as a tube from the side. */
-    mouth: { radial: 3.15, axial: 2.3 },
+    // 3.0 by 2.2 and seated 1.0 further back (in -0.5) by the integrator, 2026-11-12: at 3.15 with in 0.5 the eyes went
+    // 0.71 and 0.39 inside the shell's front rim as the slam lands (t = 12.4); now they clear by 0.55 and 0.71. The great
+    // claw still passes about 1.0 inside for half a second in the slam's wind-up (t = 11.5), at any size that reads.
+    mouth: { radial: 3.0, axial: 2.2 },
     /** Raup's T as a slope: how far each turn's crown steps down from the tip's plane per unit of its distance from the
      * axis. 0 is a flat spiral face; 0.1 nearly so, a wheel whose curl stands a little proud (1.0 was a turban, read from
      * above as tiers). */
@@ -164,7 +167,7 @@ export const S = {
     /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
      * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
      * centre, is 2 radial - lip behind it). */
-    seat: { in: 0.5, up: 2.0, side: -2.8, lip: 3.15 },
+    seat: { in: -0.5, up: 2.0, side: -2.8, lip: 3.0 },
     /** The rim's bands, lines of constant phi that run the tube's length round the whorl's outer side and far face:
      * `count` round the section, cream for `cream` of each period (0.3: at 0.25 the two key lines ate the band from far
      * off), the first one's middle `at` periods round from the tube's outer side; `proud` is how far a cream band stands
