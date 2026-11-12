@@ -3,9 +3,12 @@
 // them changes.
 
 import { restyled, type Scene } from "../scene.ts";
-import { toon, type Style } from "../style.ts";
+import type { Style } from "../style.ts";
 import { biolume } from "./biolume.ts";
+import { neon } from "./neon.ts";
 import { papercraft } from "./papercraft.ts";
+import { sketch } from "./sketch.ts";
+import { toon } from "./toon.ts";
 import { woodblock } from "./woodblock.ts";
 
 /**
@@ -17,6 +20,8 @@ export const STYLES = {
   woodblock,
   biolume,
   papercraft,
+  sketch,
+  neon,
 } as const satisfies Record<string, () => Style>;
 
 export type StyleName = keyof typeof STYLES;
@@ -42,7 +47,18 @@ export function withLight(scene: Scene, name: string): Scene {
   return restyled(scene, made());
 }
 
-export { light, LIGHT, type Block, type Bokashi, type Cast, type Core, type Hatch, type Highlight, type Key, type LightName, type LightRecipe, type Overlap, type Rim, type Terminator, type Waterline } from "./light.ts";
-export { woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, WOODBLOCK_PALETTE, WOODBLOCK_POST, WOODBLOCK_SEA, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./woodblock.ts";
+// The parts every style is composed from (docs/styles.md), then the styles. A built-in style imports only these.
+export { light, LIGHT, lit, litBodies, printedBlock, pullOf, markOf, blockInk, keyOf, type Bodies, type BlockInk, type Block, type Bokashi, type Cast, type Core, type Hatch, type Highlight, type Key, type LightName, type LightRecipe, type Overlap, type Pull, type Rim, type Terminator, type Waterline } from "./light.ts";
+export { skyOf, type Sky, type SkyClouds, type SkySun, type Wash } from "./sky.ts";
+export { swellLines, type SwellLines } from "./sea.ts";
+export { contactFoam, marksFoam, printLayers, foam, marksAs, type ContactFoam, type FoamInk, type HeadSize, type InkLayers, type MarksPrint } from "./foam.ts";
+export { rollingFoam, curledHeads, crown, behind, joined, rollOf, slopeOf, along, pixelOn, type Lean, type Roll, type White, type WhiteOn } from "./whitewater.ts";
+export { paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight, type Mottle, type Warm } from "./paint.ts";
+export { paperGrain, bloom, reflection } from "./post.ts";
+export { edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON } from "./shared.ts";
+export { toon, type ToonSpec } from "./toon.ts";
+export { woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";
 export { papercraft } from "./papercraft.ts";
+export { sketch } from "./sketch.ts";
+export { neon } from "./neon.ts";

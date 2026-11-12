@@ -1,12 +1,22 @@
-// White water as the woodblock prints it (docs/art_direction/DIRECTION.md, "White water"): a rolling cream mass with a
+// White water as a print draws it (docs/art_direction/DIRECTION.md, "White water"): a rolling cream mass with a
 // few large curled heads, droplets beyond it, a key line round everything. One painter for every event that makes
-// white water. An event's drawer (the sea's contact collar and its marks in src/style/woodblock.ts, a burst's own patch
+// white water. An event's drawer (the sea's contact collar and its marks in src/style/foam.ts, a burst's own patch
 // in examples/bosses/lib/impact.ts) gives it three things and prints what it returns:
 //  - a mass: 0 where there is no white water, 1 in the thick of it. It sizes the shapes; it does not cut them. Every
 //    edge here is a curve drawn in the world (a circle, a spiral), so a mass that is rough (the sea's contact level is,
 //    by a pixel or two) still gives clean edges, and nothing swims when the mass moves: shapes grow and shrink in place.
 //  - a lean: the direction on the water the heads curl toward, or none.
 //  - a head: the world radius of the largest curled head. Every other size follows from it.
+// It returns coverage (`White`: fill and line), never colour: the caller prints it in its own inks (src/style/foam.ts,
+// `printLayers`).
+//
+// Cannot: white water that is not flat on the water (a crest that stands up, spray in the air: those are soft things,
+// src/soft/); motion of its own (shapes grow and shrink in place as the mass changes; nothing flows along the water); a
+// head that curls in a direction that varies within one head.
+// Going past it: any mass is accepted, so a style or an event can make one from anything it can compute (a wake from a
+// path, a ring from a time). Relatives: the heads' lattice laid in polar coordinates round a centre (a crown of curls
+// round a splash, as `crown` does with fingers); droplets whose cell size follows the mass (finer spray far from the
+// body); the roll's lobes cut by the swell's printed lines (`swellLines.off`) so the foam rides the lines.
 
 import { abs, add, and, atan2, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, saturate, select, smoothstep, step, sub, vec2, type Expr } from "../expr.ts";
 import { hash22 } from "../lib/index.ts";
@@ -50,8 +60,8 @@ function massAt(on: WhiteOn, degrees: number, cell: number, off: V2): F {
   return add(on.mass, mul(add(mul(off.x, along1), mul(off.y, along2)), cell));
 }
 
-/** What is printed at a pixel: how much of it is cream, and how much key line (never both: the key is beside the cream). */
-export type White = { readonly cream: F; readonly key: F };
+/** What is printed at a pixel: how much of it is the white water's fill, and how much its key line (never both: the line is beside the fill). */
+export type White = { readonly fill: F; readonly line: F };
 
 /**
  * The sizes of one event's white water: the largest head's radius and the key line's width (world units), and the
@@ -139,7 +149,7 @@ function heads(on: WhiteOn, r: Roll, pixel: F): Layer {
   const key = mul(saturate(add(add(spiral, bank), under)), present);
   const cream = mul(mul(mul(inside, sub(1, channel)), sub(1, key)), present);
   // It covers what is behind it wherever it prints, and in its channel (the water shows there, not the roll behind).
-  return { cream, key, covers: mul(saturate(add(inside, key)), present) };
+  return { fill: cream, line: key, covers: mul(saturate(add(inside, key)), present) };
 }
 
 /** The angle a head's beak points at: along the lean, or by the cell's hash. */
@@ -179,7 +189,7 @@ function roll(on: WhiteOn, r: Roll, pixel: F): Layer {
   }
   const cream = over(union, 0, pixel);
   const key = mul(over(union, mul(lineOf(r, pixel), -1), pixel), sub(1, cream));
-  return { cream, key, covers: saturate(add(cream, key)) };
+  return { fill: cream, line: key, covers: saturate(add(cream, key)) };
 }
 
 /**
@@ -197,16 +207,16 @@ function droplets(on: WhiteOn, r: Roll, pixel: F): Layer {
   const cream = mul(over(s, 0, pixel), present);
   // A droplet's line is thinner than a head's: half, and never over half its own radius.
   const key = mul(mul(over(s, mul(min(mul(lineOf(r, pixel), 0.6), mul(radius, 0.5)), -1), pixel), sub(1, cream)), present);
-  return { cream, key, covers: saturate(add(cream, key)) };
+  return { fill: cream, line: key, covers: saturate(add(cream, key)) };
 }
 
 // ---- the painter ------------------------------------------------------------------------------------------------------
 
-const none: White = { cream: f(0), key: f(0) };
+const none: White = { fill: f(0), line: f(0) };
 /** One print over another. */
-const overPrint = (back: White, front: Layer): White => ({ cream: mix(back.cream, front.cream, front.covers), key: mix(back.key, front.key, front.covers) });
+const overPrint = (back: White, front: Layer): White => ({ fill: mix(back.fill, front.fill, front.covers), line: mix(back.line, front.line, front.covers) });
 /** Nothing where the mass is under 0.03 (so an event that gives exactly 0 away from itself prints exactly nothing there). */
-const gated = (w: White, mass: F): White => { const g = step(0.03, mass); return { cream: mul(w.cream, g), key: mul(w.key, g) }; };
+const gated = (w: White, mass: F): White => { const g = step(0.03, mass); return { fill: mul(w.fill, g), line: mul(w.line, g) }; };
 
 /** The whole of it: the droplets, the roll over them, and the curled heads in front. */
 export function rollingFoam(on: WhiteOn, r: Roll): White {
@@ -239,16 +249,16 @@ export function crown(d: V2, rim: F, reach: F, count: number, r: Roll): White {
   const line = lineOf(r, pixel);
   const cream = over(s, 0, pixel);
   const live = step(1e-4, reach);
-  return { cream: mul(cream, live), key: mul(mul(over(s, mul(line, -1), pixel), sub(1, cream)), live) };
+  return { fill: mul(cream, live), line: mul(mul(over(s, mul(line, -1), pixel), sub(1, cream)), live) };
 }
 
 /** One print behind another: the front one wherever it prints anything (its cream or its key line), the back one elsewhere. */
 export function behind(back: White, front: White): White {
-  return overPrint(back, { ...front, covers: saturate(add(front.cream, front.key)) });
+  return overPrint(back, { ...front, covers: saturate(add(front.fill, front.line)) });
 }
 
 /** Two prints as one: where either is cream it is cream; the key line only where neither is. */
 export function joined(a: White, b: White): White {
-  const cream = max(a.cream, b.cream);
-  return { cream, key: min(max(a.key, b.key), sub(1, cream)) };
+  const cream = max(a.fill, b.fill);
+  return { fill: cream, line: min(max(a.line, b.line), sub(1, cream)) };
 }
