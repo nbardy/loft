@@ -1395,6 +1395,23 @@ plate). What the search (`spiral_views.ts`, about 120 poses) found, and what bou
 6. **Checks, hashes, cost** as before: islander 14, others unchanged, base hashes unchanged, frame within 0.1 ms of the
    turban's (the same grid; fewer barnacle runs).
 
+**Scored, first render of the wheel (`rake` -1.9).** From `lowFront` it reads as the pick does at all four times: the
+coil behind the eyes, the light on top in frame, the lip's arch and throat right of the eyes, the groves on the
+shoulders. From `game` the great claw covers about a third to two fifths of the face (asked: a quarter), leaving the
+curl and two to three turns beside it. And `spiral_clear.ts` failed two things the rest-pose theory could not see: the
+great claw's slam wind-up passes **1.09 inside** the wheel's right side (t = 11.7, at (0.1, 3.5, 5.0)), and the wheel's
+lower rim cuts 0.81 into the carapace ahead of the lip. (The ink count of turns and coverage at `game` cannot tell the
+claw from the shell, both brick and cream; I judged those by eye.)
+
+**Amended (before the second render).** Probing the claw's and the carapace's points against poses: the claw clears its
+own half-thickness (about 0.9) only from `rake` -2.4 (seat side -2.8, up 2.0, `mouthAt` 2.2): nearest probe 0.96; the
+carapace ahead of the lip 0.10 clear; legs at rest 0.45. The price is the face's area: 0.65 of the body at `game` and
+0.63 at `lowFront` (asked: at least 1.0 at `game`). Larger sections or steeper tilts that win it back put the claw inside
+again or the light out of the low front frame. Predicted for the second render: the coil shows at least two turns at
+`game` at three of the four times and at `lowFront` at all four; the light in frame at `lowFront` (its top 7 px under the
+edge at rest: it may clip at one time); the claw covers less of the face at `game` than in the first render; the cycle
+clears with the least gap 0.1 to 0.4.
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a

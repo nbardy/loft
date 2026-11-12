@@ -182,13 +182,17 @@ if (measure !== undefined) {
   while (fields.length < 4) { let s = ""; while (bytes[at] !== 0x0a && bytes[at] !== 0x20) s += String.fromCharCode(bytes[at++]!); at++; if (s !== "") fields.push(s === "P6" ? 0 : Number(s)); }
   const RW = fields[1]!, rgb = bytes.subarray(at);
   console.log(`\n== measured on ${measure} (${RW} x ${fields[2]}), the panes in order ${NAMES.join(", ")}`);
-  NAMES.forEach((name, v) => {
-    const cols = RW / W, b = bufs[v]!, [cx, cy] = centres[v]!, ox = (v % cols) * W, oy = Math.floor(v / cols) * H;
+  // --pane-view game: every pane is that one view (a `loft frames` sheet of times), not the four in order.
+  const one = flag("--pane-view"), panes = one === undefined ? NAMES.map((_, v) => v) : Array.from({ length: (RW / W) * (fields[2]! / H) }, () => NAMES.indexOf(one as (typeof NAMES)[number]));
+  panes.forEach((v, pane) => {
+    const name = `${NAMES[v]} #${pane}`;
+    const cols = RW / W, b = bufs[v]!, [cx, cy] = centres[v]!, ox = (pane % cols) * W, oy = Math.floor(pane / cols) * H;
     const pix = (k: number) => { const x = ox + (k % W), y = oy + Math.floor(k / W), i = (y * RW + x) * 3; return [rgb[i]!, rgb[i + 1]!, rgb[i + 2]!] as const; };
     const ratio = (k: number) => { const [r, g] = pix(k); return r < 40 ? -1 : g / r; };
     const runs = crossings(cx, cy, (k) => b.shell[k] === 1, (k) => ratio(k) > 0.7, (k) => ratio(k) >= 0 && ratio(k) < 0.55);
     const turns = turnsOf(v, (k) => b.cls[k] === 6 || b.cls[k] === 7, (k) => ratio(k) > 0.7);
-    console.log(`${name.padEnd(8)} cream bands crossed ${runs}; coil turns crossed ${turns}`);
+    const faceSeen = (() => { let all = 0, seen = 0; for (let k = 0; k < W * H; k++) if (b.cls[k] === 6 || b.cls[k] === 7) { all++; const r = ratio(k); const [rr, gg, bb] = pix(k); if (r > 0.7 || (r >= 0 && r < 0.55 && rr > gg + 40)) seen++; } return seen / Math.max(all, 1); })();
+    console.log(`${name.padEnd(12)} cream bands crossed ${runs}; coil turns crossed ${turns}; of the face's predicted pixels, ${f2(faceSeen * 100, 0)}% print shell inks (cream or brick)`);
   });
 }
 

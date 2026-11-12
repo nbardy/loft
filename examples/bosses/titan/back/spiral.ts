@@ -1,8 +1,8 @@
 // The spiral shell: the islander's back (docs/art_direction/DIRECTION.md, Round 5; the picked picture
 // docs/art_direction/crab_round5/back_spiral_pick.webp). A hermit's shell: one tube coiled by Raup's law
-// (back/spiral_shell.ts), a turban standing on the crab's back with its tip up and to the right, its spiral face to
-// the right flank and the sky, its mouth down and forward over the carapace and its last whorl running down into the
-// sea behind; broad cream bands winding round every whorl; a red-brick lighthouse on the tip, on a cream collar
+// (back/spiral_shell.ts), nearly flat, standing on the crab's back like a wheel with its spiral face turned forward,
+// up and left (toward the cameras in front, away from the great claw), its mouth down and forward over the carapace;
+// one cream coil on the face, broad bands round the rim; a red-brick lighthouse on the outer whorl's summit, on a cream collar
 // crusted with barnacles; two groves on turf on the whorls' shoulders; runs of barnacles along the bands' edges.
 //
 // Everything is placed in crab coordinates from the build's numbers (`n.spiral`, `n.carapace` through the seat, the ride

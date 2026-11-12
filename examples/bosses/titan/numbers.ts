@@ -152,18 +152,19 @@ export const S = {
      * above as tiers). */
     spire: 0.1,
     /** The axis (it points out of the spiral's face, toward the tip): raised by `tilt` above level, toward the crab's
-     * right flank, and swung back by `rake` (radians). `rake` -1.9 swings it past forward (-pi/2) toward the crab's left, a
-     * fifth of a right angle: the face looks forward, up and a little left, at `game` and the dance video's low front
-     * camera, away from the great claw. `tilt` 0.95. Chosen with tools/spiral_views.ts (DIRECTION.md, Round 5). */
-    tilt: 0.95, rake: -1.9,
+     * right flank, and swung back by `rake` (radians). `rake` -2.4 swings it past forward (-pi/2) toward the crab's left,
+     * half a right angle: the face looks forward, up and left, at the dance video's low front camera and (obliquely) at
+     * `game`. -1.9 faced `game` better, but the great claw's slam wind-up passed 1.1 inside the wheel's right side; -2.4
+     * is the least that clears it. `tilt` 0.95. Chosen with tools/spiral_views.ts (DIRECTION.md, Round 5). */
+    tilt: 0.95, rake: -2.4,
     /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane. The mouth's plane
      * holds the axis, so with the face forward the mouth opens down only at the wheel's side: 1.7 puts it at the crab's
      * left of the wheel, opening down and forward over the carapace's back. */
-    mouthAt: 1.7,
+    mouthAt: 2.2,
     /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
      * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
      * centre, is 2 radial - lip behind it). */
-    seat: { in: 0.5, up: 2.2, side: -1.5, lip: 3.15 },
+    seat: { in: 0.5, up: 2.0, side: -2.8, lip: 3.15 },
     /** The rim's bands, lines of constant phi that run the tube's length round the whorl's outer side and far face:
      * `count` round the section, cream for `cream` of each period (0.3: at 0.25 the two key lines ate the band from far
      * off), the first one's middle `at` periods round from the tube's outer side; `proud` is how far a cream band stands
