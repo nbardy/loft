@@ -141,7 +141,7 @@ export const S = {
   spiral: {
     /** Raup's numbers. `whorls`: turns of the tube from its tip to the mouth. `growth` (W): how much every length grows
      * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
-    whorls: 3.75, growth: 1.75,
+    whorls: 3.0, growth: 1.75,
     /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
      * touches the axis (Raup's D = 0): a shell with no navel. 3.15 across by 2.3 along (2.2 by 3.2 before 2026-11-12's
      * finish): the face about the body's area from `game`; thin along the axis, so the wheel clears the legs, but fat
@@ -175,7 +175,7 @@ export const S = {
     band: { count: 6, cream: 0.3, at: 0.0, proud: 0.0 },
     /** The face's coil (`coilAt`): cream for `cream` of each turn's strip on the face, on its suture's side, so the face
      * is one cream coil about as wide as the brick between; and a cream boss over the last `boss` turns at the curl. */
-    coil: { cream: 0.5, boss: 0.3 },
+    coil: { cream: 0.62, boss: 0.45 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
     lip: { flare: 0.15, thick: 0.3, throat: 0.22 },
