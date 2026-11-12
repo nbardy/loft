@@ -797,3 +797,37 @@ included; no held pose needs moving. The single crab's wind-up still passes 1.02
 change a crab that does not dance in a group, so it is left.
 
 **White water** at the feet is now seen from above: judged on the strip.
+
+### Scored (framing from above)
+
+One strip (960 x 540 tiles, both formats, one load), two fixes, one full render (the first load of it failed creating a
+pipeline, "the entry point fs isn't the expected stage", the intermittent shader-module fault `AGENTS.md` names, with the
+machine's load average at 30; the second load built).
+
+| | Predicted (stand-in) | Measured (strip and the 1080p picks) |
+|---|---|---|
+| V (counts 2, 62; the thumbnail) | group 100 x 70%, front body 25%, all faces clear, horizon 18% | group about 100 x 75%, the islander's body about 25%, the five faces above one another, horizon about 18% |
+| the slam on the arc (12) | 100 x 61%, front 21% | five crash discs and five claws in one picture, group about 100 x 70% |
+| the release (26, 27) | 100 x 67%, samurai 83% at 26 | five boats on five claws; the samurai's face partly behind the centre's cutter at 26, clear at 27 |
+| diagonal (38 to 47) | 86 to 100 x 67 to 82%, front 20 to 28% | the fiddler large in front, the others stepping back up the frame; about 100 x 72%, front about 25% |
+| the turn (40) | bruiser's face 60% | its face is turned and partly behind the islander, as predicted |
+| square | V 52% (first pitch), the line 33% | at the first pitch the group sat in the bottom half under empty sea; pitched 22 to 28 degrees: V 54%, line 38%, diagonal 63% (stand-in), all five in frame and every face clear in the render |
+| checks | 56 | **56 of 56**; legs at most 0.94 of their span |
+| sync | unchanged | worst 4.6 ms, 0.12% (unchanged: the score is the same) |
+| seam | the same picture, inside the held pose | `d34b60970010b95a` both (wide), `e8965399c94ea636` both (square); across the seam 0.16 times the median change |
+| single crabs (main's shell merged) | unchanged | base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 18, islander 14, bruiser 16; base `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9` |
+| frame, 1920 x 1080 | | 10.0 ms least, 15.8 median (the machine loaded; the square 7.0) |
+
+Wrong or missed in the prediction:
+
+1. **The parked boats.** Parked 70 behind each crab (out of every low shot), from above they made a row of small boats
+   just under the horizon in every group shot. They are parked 150 in front of each crab now, behind every camera.
+2. **The square's pitch.** Pitched 12 to 20 degrees the square showed a band of empty sea above the group; the stand-in
+   said so (group 33 to 52% of the height) but I had taken "all five in frame" as enough.
+
+White water: the collars at the planted feet read from above as small cream ovals at every foot (most clearly under the
+spider crab's stilts), and the slam's crash as five full cream discs. Weak: the stepping feet's foam is not seen to
+change while they travel; at this distance it reads as the same collar.
+
+Weak still: the square's line (38% of the height) is the smallest group picture; the samurai's face at the release; at
+the turn one face is behind the islander; the islander's own solo swings its claw across its face.
