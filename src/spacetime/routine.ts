@@ -321,7 +321,9 @@ export class Routine {
     const holds = this.holdsOf(m);
     const still = (t: In<"f32">): F => {
       const u = sub(t, mul(floor(div(t, P)), P));
-      return holds.reduce<F>((s, h) => add(s, add(mul(select(ge(u, h.from), 1, 0), select(lt(u, h.to), 1, 0)), select(lt(u, h.to - P), 1, 0))), lift<"f32">(0));
+      // Clamped: two struck keys on one count (one for everyone, one for some) are one hold. Summed, `still` was 2 there
+      // and the groove, scaled by 1 - still, ran backwards through the button (found on the render: the held frames moved).
+      return clamp(holds.reduce<F>((s, h) => add(s, add(mul(select(ge(u, h.from), 1, 0), select(lt(u, h.to), 1, 0)), select(lt(u, h.to - P), 1, 0))), lift<"f32">(0)), 0, 1);
     };
     const groove = (t: In<"f32">): F => this.groove(m, t);
     const solo = this.soloWindow(m);
