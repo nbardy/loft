@@ -42,8 +42,12 @@ export type LineupLoop = { readonly kind: "open" } | { readonly kind: "every"; r
 /**
  * Stand several subjects in one sea. `water` is the sea without its deformations (the swell and the foam width): every
  * member's are added. Each member is built inside its own namespace, both stages.
+ *
+ * Members may be different designs: each one's numbers and staging are its own (`Standing<unknown, unknown, M>`; its
+ * numbers are checked against its design when it resolves). Until a lantern fish and a jellyfish stood together
+ * (examples/second/pair.ts) every member had to be a variant of one design, as the crab's five are.
  */
-export function lineup<N, H, M extends Member>(o: { readonly members: readonly Standing<N, H, M>[]; readonly water: Omit<SeaSpec, "deform">; readonly loop: LineupLoop }): Lineup<M> {
+export function lineup<M extends Member>(o: { readonly members: readonly Standing<unknown, unknown, M>[]; readonly water: Omit<SeaSpec, "deform">; readonly loop: LineupLoop }): Lineup<M> {
   if (o.members.length < 1) throw new Error("lineup: no members");
   const names = new Set<string>();
   for (const m of o.members) { if (names.has(m.name)) throw new Error(`lineup: two members are named "${m.name}"`); names.add(m.name); }
