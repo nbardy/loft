@@ -19,6 +19,7 @@ import { scaleShip, scaleShipNamed } from "../lib/scale_ship.ts";
 import { PRINT_WARNING } from "../lib/warning.ts";
 import { perFrame, sides, type V3 } from "./ink.ts";
 import type { Numbers } from "./numbers.ts";
+import type { Dancer, RoutineSpec, Stance } from "../../../src/index.ts";
 import type { BoatsOption, ClawsOffer } from "./slots.ts";
 
 type V2 = Expr<"vec2">;
@@ -122,11 +123,16 @@ export type Show =
     readonly sailBack: { readonly after: number; readonly seconds: number };
   };
 
-/** Whether the boss taunts: not at all, or a dance whose moves land `accents` seconds after `first` (every `crushPeriod`). */
+/**
+ * Whether the boss taunts: not at all; a dance of its own whose moves land `accents` seconds after `first` (every
+ * `crushPeriod`), in its own manner (`temper`); or a member's part in a group's routine (src/spacetime/routine.ts): the
+ * group's key poses, path and groove, in the group's manner, and its solo in `own` manner.
+ */
 export type Taunt =
   | { readonly kind: "none" }
   /** `pulse`: the seconds of the scene's subdivision, which a twitchy crab ticks on (absent: 0.25, the eighths at 120 a minute). */
-  | { readonly kind: "dance"; readonly first: number; readonly accents: readonly number[]; readonly pulse?: number };
+  | { readonly kind: "dance"; readonly first: number; readonly accents: readonly number[]; readonly pulse?: number }
+  | { readonly kind: "routine"; readonly dancer: Dancer; readonly size: RoutineSpec["size"]; readonly beat: number; readonly own: Numbers["temper"] };
 
 /** Where the boss's audience is (what a face that plays to it looks at): its own, a point in its axes that moves with it; or a place in the world (a camera's eye). */
 export type Audience = { readonly kind: "own" } | { readonly kind: "at"; readonly eye: V3 };
@@ -159,48 +165,133 @@ export type Dance = {
   /** x with k times one of the readouts above added: x itself for a boss that does not taunt. */
   readonly plus: (x: F, k: number, of: F) => F;
   /**
-   * A claw's rest wrist (crab coordinates) lifted by the dance: the great claw (side 1) up, out and forward on each move,
-   * swinging out one way and back the other; the small claw (side -1) the same, smaller, half a beat late. The wrist
-   * itself for a boss that does not taunt.
+   * A claw's rest wrist (crab coordinates) moved by the dance: in a dance of its own the great claw (side 1) up, out and
+   * forward on each move, swinging out one way and back the other, the small claw (side -1) the same, smaller, half a
+   * beat late; in a routine, to the score's aim from its shoulder in arm spans (`span`, the arm's two segments). The
+   * wrist itself for a boss that does not taunt.
    */
-  readonly raised: (side: 1 | -1, wrist: P3) => P3;
+  readonly raised: (side: 1 | -1, wrist: P3, span: number) => P3;
+  /** Where the boss stands and faces, from the `boss.at` and `boss.heading` inputs: the inputs themselves, or with a routine's path added. */
+  readonly carry: { readonly at: (input: V2) => V2; readonly heading: (input: F) => F };
+  /** The dance's stance on the body (docs/stance.md), given how far the attacks have the body (0..1). */
+  readonly stance: (attacking: F) => Stance;
+  /** The feet's walk: the gait a game drives by `legs.walking` (`feet` its weight in the footing, `body` in the carriage at a clock), or the routine's path, stepped on the beat. */
+  readonly legs: { readonly gait: Gait; readonly feet: F; readonly body: (t: F) => F };
 };
-function tauntOf(t: Taunt, period: number, T: Numbers["temper"]): Dance {
+/** What `tauntOf` needs of the crab: its numbers, its own walk (the gait a game drives), and its pose inputs and feet for a routine's path. */
+type TauntContext = {
+  readonly n: Numbers;
+  readonly walk: { readonly gait: Gait; readonly walking: F };
+  readonly pose: { readonly at: V2; readonly heading: F };
+  readonly feet: { readonly homes: readonly P3[]; readonly phase: readonly number[] };
+  readonly shoulder: (side: 1 | -1) => V3;
+};
+function tauntOf(t: Taunt, c: TauntContext): Dance {
+  const { n } = c, T = n.temper, ST = n.stance, period = n.crushPeriod;
   const zero = lift<"f32">(0);
+  // The crab's own taunt and its own walk: one stance each, as before a routine existed (docs/stance.md).
+  const own = (d: Pick<Dance, "on" | "wave" | "swing" | "step">, T: Numbers["temper"]) => (): Stance => ({
+    // A crab that bows (`rise` below 0) also pitches forward into it on each move: 0.14 rad per unit of drop (the spider
+    // crab's 2.2 is 0.31 rad, 18 degrees). Forward is negative pitch, the slam's direction. A crab that rises does not.
+    kind: "dance", on: d.on, lift: sub(mul(d.wave, T.rise), mul(d.on, ST.dance.crouch)), pitch: mul(d.wave, -0.14 * Math.max(0, -T.rise)), side: d.step, turn: mul(d.swing, 0.06),
+    size: { sway: ST.dance.sway, roll: ST.dance.roll },
+  });
+  const walked = { gait: c.walk.gait, feet: c.walk.walking, body: () => c.walk.walking };
+  const still = { at: (x: V2) => x, heading: (x: F) => x };
   switch (t.kind) {
-    case "none": return { on: zero, wave: zero, swing: zero, step: zero, answer: zero, onAt: () => zero, accents: [], display: (own) => own, plus: (x) => x, raised: (_side, wrist) => wrist };
+    case "none": {
+      const d = { on: zero, wave: zero, swing: zero, step: zero };
+      return { ...d, answer: zero, onAt: () => zero, accents: [], display: (o) => o, plus: (x) => x, raised: (_side, wrist) => wrist, carry: still, stance: own(d, T), legs: walked };
+    }
     case "dance": {
-      // The accents are the scene's (on its beats); how the crab arrives on them is its temperament: how long before the
-      // accent it starts (so a slow mover still lands on the beat), how sharply, how long it holds the pose, how long it
-      // takes to leave. The side changes a half beat (0.25 s at 120 a minute) after each accent.
-      const e = emote({ name: "taunt", arm: every(period, t.first), accents: t.accents, lead: T.arrive, hold: T.hold, fall: T.leave, snap: T.snap, offbeat: 0.25, shuffle: 0.22, settle: 0.4 });
-      const b = e.beats(time), late = e.beats(sub(time, T.lag));
-      const tab = (name: string, x: F): F => perFrame(`titan_s_taunt_${name}`, x);
-      const wave = tab("wave", b.wave), on = tab("on", b.on), swing = tab("swing", mul(sin(mul(b.turn, Math.PI)), b.wave));
-      // The small claw: late after the great one, or (together = 1) up with it.
-      const answer = tab("answer", mix(late.wave, b.wave, T.together));
-      // A twitch for a crab that has any: on each subdivision of the beat it snaps to the other side, overshoots and
-      // settles (a tick, then stillness till the next), not a shake. The side alternates (-1)^n, so the position is
-      // continuous: s_n (2 overshot(u) - 1) starts each tick where the last one settled. An even number of ticks in
-      // the loop (96 in 24 s at 0.25) keeps it periodic. (It was a sine at 8 a second, which read as a shake.)
-      const pulse = t.pulse ?? 0.25, ticks = div(time, pulse), n = floor(ticks), sign = sub(1, mul(sub(div(n, 2), floor(div(n, 2))), 4));
-      const tick = mul(sign, sub(mul(overshot(clamp(div(mul(sub(ticks, n), pulse), 0.14), 0, 1), 3), 2), 1));
-      const twitch = mul(mul(tick, T.jitter), add(mul(wave, 0.6), mul(on, 0.25)));
-      // How far the claws go: `reach` for the whole move, `lift` again for its height (both tongs high over the spider
-      // crab's body, which stands 6.8 up: its rest wrists are near the water).
-      const R = T.reach, L = T.lift;
-      const lifts = {
-        great: perFrame("titan_taunt_great", vec3(mul(wave, 0.3 * R), add(mul(wave, 2.4 * R * L), mul(on, 0.8)), add(add(mul(wave, 1.0 * R), mul(swing, 0.9 * R)), mul(twitch, 0.6)))),
-        small: perFrame("titan_taunt_small", vec3(mul(answer, 0.2 * R), add(mul(answer, (1.7 + 0.7 * T.together) * R * L), mul(on, 0.5)), sub(mul(answer, -0.8 * R), mul(twitch, 0.4)))),
-      };
-      const raised = (side: 1 | -1, wrist: P3): P3 => { switch (side) { case 1: return add(wrist, lifts.great); case -1: return add(wrist, lifts.small); } };
-      const tau = tab("tau", sub(time, e.armAt(time)));
+      const d = danceOf(t, period, T);
+      return { ...d, carry: still, stance: own(d, T), legs: walked };
+    }
+    case "routine": {
+      // A member of a group: the group's score in the group's manner (the crab's `temper` is the group's in a lineup);
+      // its solo, if it has one, is its own dance in its own manner (`own`) on the solo's accents.
+      const D = t.dancer, P = period;
+      if (Math.abs(P - Math.round(P / t.beat) * t.beat) > 1e-9) throw new Error(`taunt: the routine's counts do not fill the crab's loop (${P} s)`);
+      const solo = D.solo.length === 0 ? undefined : danceOf({ first: D.solo[0]! - 1, accents: D.solo.map((a) => a - D.solo[0]! + 1) }, P, t.own);
+      // The solo's own dance has the member inside its window (`soloing`); the score's claws give way to it there.
+      const soloOn = perFrame("titan_s_routine_solo", D.soloing());
+      const claw = (side: 1 | -1) => { const k = D.claw(side); return { weight: perFrame(`titan_s_routine_w${side > 0 ? "R" : "L"}`, mul(k.weight, sub(1, soloOn))), aim: perFrame(`titan_routine_aim${side > 0 ? "R" : "L"}`, k.aim) }; };
+      const great = claw(1), small = claw(-1);
+      const tab = (name: string, x: F): F => perFrame(`titan_s_routine_${name}`, x);
+      const rise = tab("rise", D.rise()), lean = tab("lean", D.lean());
+      // The feet step along the member's path: the gait's course is where the routine has the boss at a clock (in the
+      // world), paced two cycles a count, and a foot lifts only when its next plant is somewhere else (`minStep`), so the
+      // crab stands planted while the path is still and scuttles sideways, a step every half count, while it travels or
+      // turns. The feet are drawn in to 0.85 of the crab's own spread: travelling sideways moves a planted foot along its
+      // own leg, and at the full spread a travel of 3.6 a step stretched the middle legs to 1.09 of their span.
+      const homes = c.feet.homes.map((h) => vec3(h.x, h.y, mul(h.z, 0.85)));
+      const at = (tau: F): V2 => add(c.pose.at, D.place(tau)), heading = (tau: F): F => add(c.pose.heading, D.face(tau));
+      const path = gait({
+        feet: homes, phase: c.feet.phase, stride: 1, pace: { kind: "time", period: t.beat / 2 }, duty: n.duty, lift: n.lift, minStep: 1,
+        course: (s) => {
+          const tau = mul(s, t.beat / 2), p = at(tau), h = heading(tau);
+          return { o: vec3(p.x, 0, p.y), x: vec3(cos(h), 0, sin(h)), y: vec3(0, 1, 0), z: vec3(mul(sin(h), -1), 0, cos(h)) };
+        },
+      });
+      const sh = { 1: c.shoulder(1), [-1]: c.shoulder(-1) } as const;
       return {
-        on, wave, swing, step: tab("step", add(b.step, mul(twitch, 0.5))), answer, onAt: (at) => e.beats(at).on, accents: t.accents.map((a) => sub(tau, a)),
-        display: () => wave, plus: (x, k, of) => add(x, mul(of, k)), raised,
+        on: lift<"f32">(1), wave: great.weight, swing: solo?.swing ?? zero, step: solo?.step ?? zero, answer: small.weight, onAt: () => lift<"f32">(1), accents: [],
+        display: () => great.weight, plus: (x, k, of) => add(x, mul(of, k)),
+        raised: (side, wrist, span) => {
+          const k = side === 1 ? great : small, s = sh[side];
+          // The aim's third part is out from the claw's own side: the small claw's is to the crab's left.
+          const target = vec3(add(s[0], mul(k.aim.x, span)), add(s[1], mul(k.aim.y, span)), add(s[2], mul(k.aim.z, span * side)));
+          return mix(solo === undefined ? wrist : add(wrist, mul(sub(solo.raised(side, wrist, span), wrist), soloOn)), target, k.weight);
+        },
+        carry: { at: (x) => add(x, D.place()), heading: (x) => add(x, D.face()) },
+        // The body: the groove, the level and the lean, given up to the attacks while they have it; never idle (the
+        // routine is the crab's whole loop). Its solo adds its own rise and side.
+        stance: (attacking) => {
+          const free = sub(1, attacking);
+          return {
+            kind: "dance", on: lift<"f32">(1), lift: mul(add(rise, solo === undefined ? 0 : mul(mul(solo.wave, t.own.rise), soloOn)), free), pitch: lift<"f32">(0),
+            side: mul(add(lean, mul(mul(solo?.step ?? zero, 0.6), soloOn)), free), turn: mul(mul(solo?.swing ?? zero, 0.06), soloOn), size: { sway: t.size.lean, roll: t.size.roll },
+          };
+        },
+        // The body's motion is the groove: no walk carriage (its sway and roll are each crab's legs' numbers, which put a
+        // per-crab size into the unison keys made while travelling: measured 4.5% and 50 ms on the spider crab).
+        legs: { gait: path, feet: lift<"f32">(1), body: () => zero },
       };
     }
   }
+}
+
+/** A dance of the crab's own (the first lineup's taunt; a routine's solo): an emote on its accents in its manner `T`. */
+function danceOf(t: { readonly first: number; readonly accents: readonly number[]; readonly pulse?: number }, period: number, T: Numbers["temper"]): Omit<Dance, "carry" | "stance" | "legs"> {
+  // The accents are the scene's (on its beats); how the crab arrives on them is its temperament: how long before the
+  // accent it starts (so a slow mover still lands on the beat), how sharply, how long it holds the pose, how long it
+  // takes to leave. The side changes a half beat (0.25 s at 120 a minute) after each accent.
+  const e = emote({ name: "taunt", arm: every(period, t.first), accents: t.accents, lead: T.arrive, hold: T.hold, fall: T.leave, snap: T.snap, offbeat: 0.25, shuffle: 0.22, settle: 0.4 });
+  const b = e.beats(time), late = e.beats(sub(time, T.lag));
+  const tab = (name: string, x: F): F => perFrame(`titan_s_taunt_${name}`, x);
+  const wave = tab("wave", b.wave), on = tab("on", b.on), swing = tab("swing", mul(sin(mul(b.turn, Math.PI)), b.wave));
+  // The small claw: late after the great one, or (together = 1) up with it.
+  const answer = tab("answer", mix(late.wave, b.wave, T.together));
+  // A twitch for a crab that has any: on each subdivision of the beat it snaps to the other side, overshoots and
+  // settles (a tick, then stillness till the next), not a shake. The side alternates (-1)^n, so the position is
+  // continuous: s_n (2 overshot(u) - 1) starts each tick where the last one settled. An even number of ticks in
+  // the loop (96 in 24 s at 0.25) keeps it periodic. (It was a sine at 8 a second, which read as a shake.)
+  const pulse = t.pulse ?? 0.25, ticks = div(time, pulse), n = floor(ticks), sign = sub(1, mul(sub(div(n, 2), floor(div(n, 2))), 4));
+  const tick = mul(sign, sub(mul(overshot(clamp(div(mul(sub(ticks, n), pulse), 0.14), 0, 1), 3), 2), 1));
+  const twitch = mul(mul(tick, T.jitter), add(mul(wave, 0.6), mul(on, 0.25)));
+  // How far the claws go: `reach` for the whole move, `lift` again for its height (both tongs high over the spider
+  // crab's body, which stands 6.8 up: its rest wrists are near the water).
+  const R = T.reach, L = T.lift;
+  const lifts = {
+    great: perFrame("titan_taunt_great", vec3(mul(wave, 0.3 * R), add(mul(wave, 2.4 * R * L), mul(on, 0.8)), add(add(mul(wave, 1.0 * R), mul(swing, 0.9 * R)), mul(twitch, 0.6)))),
+    small: perFrame("titan_taunt_small", vec3(mul(answer, 0.2 * R), add(mul(answer, (1.7 + 0.7 * T.together) * R * L), mul(on, 0.5)), sub(mul(answer, -0.8 * R), mul(twitch, 0.4)))),
+  };
+  const raised = (side: 1 | -1, wrist: P3): P3 => { switch (side) { case 1: return add(wrist, lifts.great); case -1: return add(wrist, lifts.small); } };
+  const tau = tab("tau", sub(time, e.armAt(time)));
+  return {
+    on, wave, swing, step: tab("step", add(b.step, mul(twitch, 0.5))), answer, onAt: (at) => e.beats(at).on, accents: t.accents.map((a) => sub(tau, a)),
+    display: () => wave, plus: (x, k, of) => add(x, mul(of, k)), raised,
+  };
 }
 
 /** The audience's place in the world, given the boss's own carrying. */
@@ -230,20 +321,9 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   // ==== the boss's pose: where it stands and which way it faces, inputs whose defaults are `how.at`, `how.heading` ====
   // Everything below is authored in the boss's own axes (x forward, z to its right) and carried to the world by this
   // pose. At the default pose (0, 0; 0) the turn is by cos 0 = 1 and sin 0 = 0 and the shift by 0: the same numbers.
-  const bossAt = input("boss.at", "vec2", [...how.at]), bossHeading = input("boss.heading", "f32", [how.heading]);
-  const hc = perFrame("titan_s_boss_cos", cos(bossHeading)), hs = perFrame("titan_s_boss_sin", sin(bossHeading));
-  /** A direction in the boss's axes, in the world's (a turn about up). */
-  const turn3 = (v: P3): P3 => vec3(sub(mul(v.x, hc), mul(v.z, hs)), v.y, add(mul(v.x, hs), mul(v.z, hc)));
-  /** A point in the boss's axes, in the world: on the water (x, z), or in space. */
-  const place2 = (p: V2 | readonly [number, number]): V2 => { const q = lift<"vec2">(p); return add(bossAt, vec2(sub(mul(q.x, hc), mul(q.y, hs)), add(mul(q.x, hs), mul(q.y, hc)))); };
-  const place = (p: V3 | P3): P3 => { const q = turn3(lift<"vec3">(p)); return vec3(add(q.x, bossAt.x), q.y, add(q.z, bossAt.y)); };
-  const placeFrame = (g: Frame): Frame => ({ o: place(g.o), x: turn3(g.x), y: turn3(g.y), z: turn3(g.z) });
-
-  // ==== the stance (docs/stance.md): feet planted at their homes, the body carried over them ====
-  // The feet's homes on the ground, in the boss's axes; the ground frame is the boss's pose.
+  const atInput = input("boss.at", "vec2", [...how.at]), headingInput = input("boss.heading", "f32", [how.heading]);
+  // The feet's homes in the boss's axes, and the walk a game drives (below); a routine's path is stepped from the same feet.
   const feetHome = sides.flatMap((s) => n.legFeet.map(([x, z]) => [x, n.floor, s * z] as const));
-  const ground = placeFrame({ o: vec3(0, 0, 0), x: vec3(1, 0, 0), y: vec3(0, 1, 0), z: vec3(0, 0, 1) });
-  const g = ground;
   // The walk, for a crab a game moves: alternating tetrapods, each side a small wave toward the front, phased by the
   // distance the game says the crab has walked along its own z (sideways), the game moving `boss.at` by the same.
   // Its weight `legs.walking` (0 stands, 1 walks) is the game's; the default stands. `walkAhead` staggers a line's crabs.
@@ -253,6 +333,23 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
     feet: feetHome.map((f) => vec3(...f)), phase, course: course.line([0, 0, 0], -Math.PI / 2, Math.PI / 2),
     stride: n.stance.walk.stride, pace: { kind: "distance", travelled }, duty: n.duty, lift: n.lift,
   });
+  const shoulder = (side: 1 | -1): V3 => [n.carapace.to - 1.1, -0.1, side * n.carapace.width * 0.55];
+
+  // ---- the taunt: none, a dance of its own, or its part in a routine (docs/lineup.md) ----
+  const taunt = tauntOf(how.taunt, { n, walk: { gait: strode, walking }, pose: { at: atInput, heading: headingInput }, feet: { homes: feetHome.map((f) => vec3(...f)), phase }, shoulder });
+  const bossAt = taunt.carry.at(atInput), bossHeading = taunt.carry.heading(headingInput);
+  const hc = perFrame("titan_s_boss_cos", cos(bossHeading)), hs = perFrame("titan_s_boss_sin", sin(bossHeading));
+  /** A direction in the boss's axes, in the world's (a turn about up). */
+  const turn3 = (v: P3): P3 => vec3(sub(mul(v.x, hc), mul(v.z, hs)), v.y, add(mul(v.x, hs), mul(v.z, hc)));
+  /** A point in the boss's axes, in the world: on the water (x, z), or in space. */
+  const place2 = (p: V2 | readonly [number, number]): V2 => { const q = lift<"vec2">(p); return add(bossAt, vec2(sub(mul(q.x, hc), mul(q.y, hs)), add(mul(q.x, hs), mul(q.y, hc)))); };
+  const place = (p: V3 | P3): P3 => { const q = turn3(lift<"vec3">(p)); return vec3(add(q.x, bossAt.x), q.y, add(q.z, bossAt.y)); };
+  const placeFrame = (g: Frame): Frame => ({ o: place(g.o), x: turn3(g.x), y: turn3(g.y), z: turn3(g.z) });
+
+  // ==== the stance (docs/stance.md): feet planted at their homes, the body carried over them ====
+  // The ground frame is the boss's pose.
+  const ground = placeFrame({ o: vec3(0, 0, 0), x: vec3(1, 0, 0), y: vec3(0, 1, 0), z: vec3(0, 0, 1) });
+  const g = ground;
 
   // ---- what a game sets: host inputs, whose defaults are this show (docs/throw_and_shove.md, "The contract") ----
   //
@@ -264,7 +361,6 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   // from the shoulder along its keel bearing, and the claw arrives along the keel with a finger down each side of the
   // hull. A game that puts its ship elsewhere is trusted to arm the Grab only where the claw reaches (`gripReaches`
   // measures the default).
-  const shoulder = (side: 1 | -1): V3 => [n.carapace.to - 1.1, -0.1, side * n.carapace.width * 0.55];
   const shoulderL = shoulder(-1);
   const shipFar = n.grabWristReach + offer.cutter.closedDepth(scaleShip.hull.lines.beam);
   const B2 = n.boatTwo, TH = n.throw;
@@ -306,9 +402,6 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
     // sqrt(g (depth + holding height)).
     aftermath: ring({ speed: Math.sqrt(n.gravity * (n.seaDepth + n.wave.hold)), ...n.wave }),
   });
-
-  // ---- the taunt: an emote, if this staging has one (docs/lineup.md) ----
-  const taunt = tauntOf(how.taunt, n.crushPeriod, n.temper);
 
   // ---- the sea is the scene's: this boss's own, with its ring on it, or one shared with other bosses and their rings.
   // Everything from here on floats on it or reads it, so it is the second stage.
@@ -373,7 +466,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   // ---- the footing (docs/stance.md): planted feet; re-plants in the fight's idle time, stamps on the taunt's accents ----
   const ST = n.stance;
   /** How busy the crab is at a clock: the attacks' postures, the taunt, the walk. Idle below `idleBelow`. */
-  const busyAt = (at: F): F => max(max(crush.envelope(at).p, grab.envelope(at).p), max(taunt.onAt(at), walking));
+  const busyAt = (at: F): F => max(max(crush.envelope(at).p, grab.envelope(at).p), max(taunt.onAt(at), taunt.legs.body(at)));
   const stepT = { lead: ST.replant.lead, seconds: ST.replant.seconds, settle: ST.replant.settle };
   const schedule = replants({
     homes: feetHome.map(([x, , z]) => [x, z] as const), loop: n.crushPeriod, busy: busyAt, idleBelow: ST.replant.idleBelow,
@@ -388,7 +481,7 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
   const footed = footing({
     ground, homes: feetHome, stamps,
     replant: { schedule, loop: n.crushPeriod, step: stepT, height: n.lift, busy: busyAt, idleBelow: ST.replant.idleBelow, unload: ST.replant.unload, dip: ST.replant.dip },
-    walk: { gait: strode, on: walking, secondsPerCycle: n.period },
+    walk: { gait: taunt.legs.gait, on: taunt.legs.feet, secondsPerCycle: n.period },
   });
   // Each foot once per frame (every leg, foam and lantern reads the same table).
   const feetNow = feetHome.map((_, k) => ({
@@ -450,13 +543,8 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       load: throwLoad, drive: throwDrive, spring: throwDrive, absorb: lift<"f32">(0), lean: sub(throwDrive, mul(throwLoad, 0.5)), turn: lift<"f32">(0),
       size: { sink: ST.throw.sink, coil: ST.throw.coil, reach: ST.throw.reach, settle: 0, lift: ST.throw.lift, pitch: ST.throw.pitch, roll: ST.throw.roll },
     },
-    {
-      // A crab that bows (`rise` below 0) also pitches forward into it on each move: 0.14 rad per unit of drop (the spider
-      // crab's 2.2 is 0.31 rad, 18 degrees). Forward is negative pitch, the slam's direction. A crab that rises does not.
-      kind: "dance", on: taunt.on, lift: sub(mul(taunt.wave, n.temper.rise), mul(taunt.on, ST.dance.crouch)), pitch: mul(taunt.wave, -0.14 * Math.max(0, -n.temper.rise)), side: taunt.step, turn: mul(taunt.swing, 0.06),
-      size: { sway: ST.dance.sway, roll: ST.dance.roll },
-    },
-    { kind: "walk", on: walking, gait: strode, size: { bob: n.bob, sway: n.sway, roll: n.roll, yaw: n.yaw } },
+    taunt.stance(max(crush.envelope(time).p, grabOn)),
+    { kind: "walk", on: taunt.legs.body(time), gait: taunt.legs.gait, size: { bob: n.bob, sway: n.sway, roll: n.roll, yaw: n.yaw } },
   ]);
   const bob = tabS("rise", C.rise), roll = tabS("roll", C.roll), yaw = tabS("yaw", C.yaw), sway = tabS("sway", C.sway), surge = tabS("surge", C.surge), tilt = tabS("tilt", C.pitch);
   const yx = rotateAbout(g.x, g.y, yaw), yz = rotateAbout(g.z, g.y, yaw);

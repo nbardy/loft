@@ -111,12 +111,17 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
     const C = n.carapace;
     const wristHome = vec3(C.to + banner.wrist.ahead, banner.wrist.up, C.width * 0.55 + banner.wrist.out);
     const drift = vec3(alive(time, 0.25, 41, 0.17), alive(time, 0.3, 42, 0.21), alive(time, 0.2, 43, 0.19));
-    const restWrist = (m: F): P3 => mix(local(add(add(wristHome, mul(vec3(0, 1.1, 0.8), wave)), drift)), local(shoulder(1)), m);
+    // In a routine the wrist goes to the score's aim from the shoulder in arm spans (rig.dance.raised; the wrist itself
+    // without one), the hand turned by the same weight as by its own wave (`display`).
+    const span = h.arm[0] + h.arm[1];
+    const restWrist = (m: F): P3 => mix(local(rig.dance.raised(1, add(add(wristHome, mul(vec3(0, 1.1, 0.8), wave)), drift), span)), local(shoulder(1)), m);
 
     // The wrist is the m = 0 end of the spine Claw Crush poses (as the base crusher's): the lunge throws it back and up in
     // the wind-up and lands it `crushLead` short of the disc's centre.
+    let great: P3 | undefined;
     const crusher = animate(restWrist, [crush], (spine) => {
       const w = tabV("wrist", spine(lift<"f32">(0)));
+      great = w;
       // The lane: from the wrist toward the disc's centre, level. At contact it is the lunge's own lane.
       const toward = tabV("toward", normalize(vec3(sub(rig.crushCentre.x, w.x), 0, sub(rig.crushCentre.y, w.z))));
       const p = env.p, q = env.q;
@@ -185,7 +190,8 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
     });
     const strike = crusher.strikes.crush;
     if (strike === undefined) throw new Error("claws/fiddler: the great claw is not bound to Claw Crush");
-    return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers };
+    if (great === undefined) throw new Error("claws/fiddler: the great claw's wrist was not posed");
+    return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers, great: { wrist: great, span } };
   },
 });
 

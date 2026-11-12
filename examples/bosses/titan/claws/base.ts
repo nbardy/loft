@@ -123,6 +123,9 @@ function pincerClaw(rig: Rig, look: ClawLook, name: string, side: 1 | -1, size: 
   return { things: [armStrand, palm, ...fingers], palm, fingers };
 }
 
+/** A claw's arm, shoulder to wrist at full stretch: the two segments (`clawDims`). */
+const spanOf = (n: Numbers, size: number): number => clawDims(n, size).arm[0] + clawDims(n, size).arm[1];
+
 const wristRest = (look: ClawLook, n: Numbers, side: 1 | -1, size: number): readonly [number, number, number] =>
   look.rest !== undefined ? look.rest.wrist(n, side, size) : [n.carapace.to + 1.0 * size, 0.4, side * (n.carapace.width * 0.55 + 0.6 * size)];
 
@@ -150,7 +153,7 @@ export function cutterOf(rig: Rig, look: ClawLook): { readonly things: readonly 
   /** The cutter idles on its own seeds, held quieter while the crusher works. */
   const quiet = sub(1, mul(env.p, 0.8));
   // In a taunt the small claw answers the great one's wave (rig.dance.raised; the wrist as it is without a taunt).
-  const cutterIdle = local(rig.dance.raised(-1, add(vec3(...wristRest(look, n, -1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet))));
+  const cutterIdle = local(rig.dance.raised(-1, add(vec3(...wristRest(look, n, -1, n.cutter)), mul(vec3(alive(time, 0.45, 21, 0.19), alive(time, 0.4, 22, 0.27), alive(time, 0.25, 23, 0.21)), quiet)), spanOf(n, n.cutter)));
   /** Once home (the attack's span is over), the arm swings once. */
   const homeSwing = swing(sub(grabEnv.tau, grab.span.after), 0.4, 1.1, 0.3);
   // The grab's closed forms are long (arcs, selects, two finger angles); written inline they were re-evaluated by every
@@ -177,8 +180,10 @@ export function clawsOf(look: ClawLook): ClawsOption {
       // palm is the part that lands (its m = 1 end leads). In the attack the palm unfolds to drive straight on along its forearm.
       const crusherDrift = perFrame("titan_crusher_drift", mul(crusherIdle, sub(1, mul(grabOn, 0.8))));
       // In a taunt the great claw waves: its rest wrist is lifted up and out on each move (rig.dance.raised).
-      const crusher = animate((m) => mix(local(rig.dance.raised(1, add(vec3(...wristRest(look, n, 1, n.crusher)), crusherDrift))), local(shoulder(1)), m), [crush], (spine) => {
-        const c = pincerClaw(rig, look, "crusher", 1, n.crusher, spine(lift<"f32">(0)), crushGape, sub(1, env.p));
+      let wrist: P3 | undefined;
+      const crusher = animate((m) => mix(local(rig.dance.raised(1, add(vec3(...wristRest(look, n, 1, n.crusher)), crusherDrift), spanOf(n, n.crusher))), local(shoulder(1)), m), [crush], (spine) => {
+        wrist = spine(lift<"f32">(0));
+        const c = pincerClaw(rig, look, "crusher", 1, n.crusher, wrist, crushGape, sub(1, env.p));
         return { things: c.things, parts: { crusherPalm: part("crusherPalm", c.palm, { tip: 1 }) } };
       });
 
@@ -187,7 +192,8 @@ export function clawsOf(look: ClawLook): ClawsOption {
 
       const strike = crusher.strikes.crush;
       if (strike === undefined) throw new Error("claws: the crusher is not bound to Claw Crush (animate returned no strike \"crush\")");
-      return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers };
+      if (wrist === undefined) throw new Error("claws: the crusher's wrist was not posed");
+      return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers, great: { wrist, span: spanOf(n, n.crusher) } };
     },
   };
 }

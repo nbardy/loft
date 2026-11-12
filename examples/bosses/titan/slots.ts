@@ -4,6 +4,7 @@
 // legs raise the body), and a `draw` from the rig. The claws also *offer* the rig two measurements before the rig is
 // built (the Grab places the ship by them), because the attacks' geometry depends on the claws' shape.
 
+import type { P3 } from "../../../src/index.ts";
 import type { Check, Reaching, ContactFoam, Drawable, MarksPrint, Measured, Placer, Strand, Strike, Target } from "../../../src/index.ts";
 import type { Option } from "../../../src/design.ts";
 import type { ImpactPaint } from "../lib/impact.ts";
@@ -34,7 +35,8 @@ export type Gripper = { readonly closedDepth: (width: number) => number; readonl
 export type ClawsOffer = { readonly crushLead: number; readonly cutter: Gripper };
 /** The claws drawn: the crusher bound to Claw Crush (`rig.crush`, part "crusherPalm"), and the cutter's two fingers
  * that the grip check measures. */
-export type Claws = { readonly things: readonly Drawable[]; readonly crush: Strike; readonly cutterFingers: readonly [Measured, Measured] };
+/** `great`: the great claw's wrist (world) and its arm's span (the two segments): what a routine's aims are measured in (crab_lineup.ts, `inSync`). */
+export type Claws = { readonly things: readonly Drawable[]; readonly crush: Strike; readonly cutterFingers: readonly [Measured, Measured]; readonly great: { readonly wrist: P3; readonly span: number } };
 export type ClawsOption = Opt & { readonly offer: (n: Numbers) => ClawsOffer; readonly draw: (rig: Rig, offer: ClawsOffer) => Claws };
 
 /** The face on the front of the carapace (crab coordinates: the base face's brow V at x = 4.93 for the base carapace; a

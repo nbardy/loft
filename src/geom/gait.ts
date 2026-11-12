@@ -5,7 +5,7 @@
 // of which cycle it is, `floor(cycles + phase)`. The cycles are counted by the clock (`pace` time: t / period) or by
 // the distance walked (`pace` distance: travelled / stride, for a host that moves the creature and says how far).
 
-import { add, cos, floor, lift, mix, mul, sin, smoothstep, step, sub, saturate, div, vec3, time, type In } from "../expr.ts";
+import { add, cos, floor, length, lift, mix, mul, sin, smoothstep, step, sub, saturate, div, vec3, time, type In } from "../expr.ts";
 import { rotate } from "../map/chart.ts";
 import type { F, Frame, P3 } from "../map/types.ts";
 
@@ -26,6 +26,11 @@ export type GaitSpec = {
   readonly duty: In<"f32">;
   /** Peak height of a swinging foot above the line between its plants. */
   readonly lift: In<"f32">;
+  /**
+   * A step shorter than this does not lift the foot (in proportion below it): a body that stops on its course stands on
+   * its feet, and one whose course turns or moves again steps. Absent: every foot steps every cycle.
+   */
+  readonly minStep?: number;
 };
 
 /**
@@ -66,19 +71,30 @@ export function gait(spec: GaitSpec): Gait {
     travelled: at(cycles),
     body: spec.course(at(cycles)),
     cycles,
-    planted: (i) => sub(1, step(duty, sub(cycle(i), floor(cycle(i))))),
+    planted: (i) => sub(1, mul(step(duty, sub(cycle(i), floor(cycle(i)))), going(i))),
     since: (i) => { const s = sub(cycle(i), floor(cycle(i))); return { sincePlant: s, sinceLift: sub(s, duty) }; },
     foot: (i) => {
-      const c = cycle(i), k = floor(c), s = sub(c, k);
-      // The middle of this cycle's stance, and the next one's (in cycles): where the body's frame puts the home then.
-      const uMid = sub(add(k, mul(duty, 0.5)), spec.phase[i]);
-      const here = spec.course(at(uMid)), next = spec.course(at(add(uMid, 1)));
+      const { here, next, s } = plants(i);
       const swing = saturate(div(sub(s, duty), sub(1, duty)));
       // In stance swing is 0, so this is the plant itself: no branch between stance and swing.
-      const arc = mul(here.y, mul(spec.lift, sin(mul(swing, Math.PI))));
+      const arc = mul(here.y, mul(mul(spec.lift, going(i)), sin(mul(swing, Math.PI))));
       return add(mix(inFrame(here, spec.feet[i]), inFrame(next, spec.feet[i]), smoothstep(0, 1, swing)), arc);
     },
   };
+  /** Foot i's plant this cycle and the next one's: where the body's frame puts its home at the middle of each stance. */
+  function plants(i: number) {
+    const c = cycle(i), k = floor(c), s = sub(c, k);
+    const uMid = sub(add(k, mul(duty, 0.5)), spec.phase[i]);
+    return { here: spec.course(at(uMid)), next: spec.course(at(add(uMid, 1))), s };
+  }
+  /** How far foot i's step goes toward lifting it: 1 for every step without `minStep`, else its length over `minStep`, at most 1. */
+  function going(i: number): F {
+    const m = spec.minStep;
+    if (m === undefined) return lift<"f32">(1);
+    if (!(m > 0)) throw new Error(`gait: minStep must be more than 0, got ${m}`);
+    const { here, next } = plants(i);
+    return saturate(div(length(sub(inFrame(next, spec.feet[i]), inFrame(here, spec.feet[i]))), m));
+  }
 }
 
 /** Cycles counted by a pace. Classified once, here. */
