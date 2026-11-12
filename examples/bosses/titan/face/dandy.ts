@@ -27,7 +27,7 @@
 // lids, the size and the lopsidedness, the moustache, and expressions as values.
 
 import {
-  abs, add, added, alive, cast, clamp, cos, cross, div, dot, draw, during, expressionsRead, fract, horn, length, max, minScreenSize, mix, mul,
+  abs, add, added, alive, cast, clamp, cos, cross, div, dot, draw, during, expressionsRead, fract, spiralTube, length, max, minScreenSize, mix, mul,
   only, place, rigid, rotateAbout, score, show, sin, smoothstep, spacing, sqrt, strand, sub, surface, time, tolerance, unit, vec2, vec3,
   type Expression, type F, type P3, type Posed, type Score,
 } from "../../../../src/index.ts";
@@ -262,7 +262,7 @@ export const dandy: FaceOption = {
       const lift_ = add(add(add(face.whisk, mul(face.cock, 0.14 * s)), alive(time, 0.05, 61 + s)), mul(sin(mul(time, TAU * 9 + s)), mul(face.shake, 1.5)));
       // About the body's x, a positive turn takes +z toward -y: each side lifts by turning the other way.
       const y = rotateAbout(body.y, body.x, mul(lift_, -s)), z = rotateAbout(body.z, body.x, mul(lift_, -s));
-      return place(horn({
+      return place(spiralTube({
         name: `moustache${s < 0 ? "L" : "R"}`, length: 2.3, curl: 1.9, taper: 0.3, girth: 0.12, out: [0.25, -0.1, s], toward: [0, 1, 0],
         paint: () => vec3(...I.black), detail: { along: 16, around: 6 },
       }), rigid({ o: local([4.95, 0.2, -0.5 + s * 0.35]), x: body.x, y, z }));

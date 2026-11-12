@@ -9,7 +9,7 @@
 //   the eyes follow the ship, as if apologising to it.
 // The eyes and lids are `faceKit`'s (face/base.ts); the rest is drawn here on the body frame.
 
-import { add, horn, length, lift, lookAt, max, mix, mul, place, rigid, sin, smoothstep, strand, sub, through, time, unit, vec2, vec3 } from "../../../../src/index.ts";
+import { add, spiralTube, length, lift, lookAt, max, mix, mul, place, rigid, sin, smoothstep, strand, sub, through, time, unit, vec2, vec3 } from "../../../../src/index.ts";
 import { cut, type V3 } from "../ink.ts";
 import type { FaceOption } from "../slots.ts";
 import { faceKit, type Eye } from "./base.ts";
@@ -60,7 +60,7 @@ export const patient: FaceOption = {
     // Two rostral horns from between the eyes, forward and up, diverging a little: the face's own spikes.
     const rostrum = (s: 1 | -1) => {
       const o: V3 = at(-0.12, 0.28, s * 0.16);
-      return place(horn({
+      return place(spiralTube({
         name: `rostrum${s < 0 ? "L" : "R"}`, length: 1.9, curl: 0.35, taper: 0.12, girth: 0.13, out: [0.75, 0.62, s * 0.18], toward: [0, 1, 0],
         paint: (m) => mix(vec3(...I.thornDark), vec3(...I.straw), cut(m, 0.45)),
         detail: { along: 12, around: 8 },

@@ -16,7 +16,7 @@
 // right-handed frame, which a one-sided surface needs: mirrored, its front faces would be drawn as backs).
 
 import {
-  abs, add, cos, div, dot, draw, framed, horn, length, lift, lt, max, mix, mul, place, pow, rigid, rotateAbout, select, sin, smoothstep,
+  abs, add, cos, div, dot, draw, framed, spiralTube, length, lift, lt, max, mix, mul, place, pow, rigid, rotateAbout, select, sin, smoothstep,
   spacing, sqrt, strand, sub, surface, through, TAU, vec2, vec3, type Drawable, type F, type Frame, type In, type P3, type Sampling, type Strand,
 } from "../../../src/index.ts";
 import { edgeOf } from "../../../src/style/shared.ts";
@@ -237,7 +237,7 @@ export function handlebar(o: {
 }): Strand {
   // About the frame's x, a positive turn takes +z toward -y: each side lifts by turning the other way.
   const y = rotateAbout(o.frame.y, o.frame.x, mul(o.lift, -o.side)), z = rotateAbout(o.frame.z, o.frame.x, mul(o.lift, -o.side));
-  return place(horn({
+  return place(spiralTube({
     name: o.name, length: o.length, curl: 1.9, taper: 0.3, girth: o.girth, out: [0.25, -o.droop, o.side], toward: [0, 1, 0],
     paint: () => vec3(...o.ink), detail: { along: 16, around: 6 },
   }), rigid({ o: o.root, x: o.frame.x, y, z }));

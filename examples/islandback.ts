@@ -6,7 +6,7 @@
 // Faces +x, walks toward its right (+z), y up; the sea floor is at y = -1.
 
 import {
-  abs, add, course, cos, draw, framed, gait, horn, input, keys, lift, limb, lookAt, max, min, mix, mul, palette, param, place, ridgePhase,
+  abs, add, course, cos, draw, framed, gait, spiralTube, input, keys, lift, limb, lookAt, max, min, mix, mul, palette, param, place, ridgePhase,
   rotateAbout, scene, sea, shell, sin, smoothstep, spacing, strand, strike, sub, through, time, toon, vec3, whorl, unit, type F, type Frame, type P3,
 } from "../src/index.ts";
 import { rotate } from "../src/map/chart.ts";
@@ -103,7 +103,7 @@ function claw(name: string, side: 1 | -1, size: number, slams: boolean) {
     const f = palm.frame(vec3(0.9, v, 0.35));
     const a = mul(gape, opens);
     const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
-    return place(horn({ name: fname, length: mul(len, 0.9), curl: 0.75, taper: 0.18, girth: mul(fat, 0.42), out: [1, -0.15, 0], toward: [0, -1, 0], paint: (m) => mix(vec3(...S.back), vec3(...S.bone), smoothstep(0.55, 0.75, m)) }), rigid(hinged));
+    return place(spiralTube({ name: fname, length: mul(len, 0.9), curl: 0.75, taper: 0.18, girth: mul(fat, 0.42), out: [1, -0.15, 0], toward: [0, -1, 0], paint: (m) => mix(vec3(...S.back), vec3(...S.bone), smoothstep(0.55, 0.75, m)) }), rigid(hinged));
   };
   return [armStrand, palm, finger(`${name}Fixed`, side > 0 ? 0.5 : 0, 0.35), finger(`${name}Dactyl`, side > 0 ? 0 : 0.5, 1)];
 }

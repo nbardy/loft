@@ -151,13 +151,6 @@ export function spiralLine(spec: Pick<SpiralTubeSpec, "length" | "curl" | "taper
   return { spine, girth: (m) => mul(girth, add(1, mul(m, sub(taper, 1)))), up: side };
 }
 
-/**
- * The old, subject's names for `spiralTube` and its spec. Kept only until the branches in flight on 2026-11-12 are
- * merged; then every caller is renamed and these are removed in one commit.
- */
-export const horn = spiralTube;
-export type HornSpec = SpiralTubeSpec;
-
 type V3 = readonly [number, number, number];
 
 /** Unit `out`, `toward` made perpendicular to it, and their cross product. */

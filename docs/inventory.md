@@ -197,7 +197,7 @@ exported in the form the level below accepts, so leaving it is one step down.
 |---|---|---|
 | `strand` | spine, girth, twist and section aspect are functions | open |
 | `limb`, `fan`, `gripper`, `bent` | every slot an expression or a function | open |
-| `horn` | curl, taper, length: numbers (a tapered log-spiral tube and nothing else); 13 callers, so every claw finger, thorn, moustache and rostrum we have drawn is that one curve | **opened** and renamed for its shape: `spiralLine` returns `{ spine, girth, up }` as `strand` takes them, and `spiralTube` is `strand({ name, ...spiralLine(o), tips, paint })`; `horn` is a temporary alias |
+| `horn` | curl, taper, length: numbers (a tapered log-spiral tube and nothing else); 13 callers, so every claw finger, thorn, moustache and rostrum we have drawn is that one curve | **opened** and renamed for its shape: `spiralLine` returns `{ spine, girth, up }` as `strand` takes them, and `spiralTube` is `strand({ name, ...spiralLine(o), tips, paint })` |
 | `shell` | Raup's four numbers; round or elliptical section only | closed |
 | `hull` | 16 numbers | closed in its numbers; check whether its `Lines` can be given directly |
 | `ship` | 14 numbers (masts, tiers, jibs): one kind of ship | closed |
@@ -219,7 +219,7 @@ Proposed, not yet done (each is a rename across callers, to be made when no bran
 
 | Today | Shape | Proposed |
 |---|---|---|
-| `horn`, `hornLine` | a tapered tube on an equiangular spiral | `spiralTube`, `spiralLine` (done; alias pending removal) |
+| `horn`, `hornLine` | a tapered tube on an equiangular spiral | `spiralTube`, `spiralLine` (done) |
 | `shell` | a section swept on a growing spiral round an axis | `coil` |
 | `crest` | a sheet standing on a curve of a surface | `sheetOn` |
 | `limb` | a chain of straight segments reaching a target | `chain` |

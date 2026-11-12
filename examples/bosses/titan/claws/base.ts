@@ -4,7 +4,7 @@
 // claw that keeps this mechanism is a look and some numbers (claws/fiddler.ts).
 
 import {
-  abs, add, alive, animate, cos, div, fingerAngle, horn, lift, limb, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
+  abs, add, alive, animate, cos, div, fingerAngle, spiralTube, lift, limb, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
   time, unit, vec3, type Drawable, type F, type Frame, type Measured, type P3,
 } from "../../../../src/index.ts";
 import { cut, mottle, perFrame } from "../ink.ts";
@@ -114,7 +114,7 @@ function pincerClaw(rig: Rig, look: ClawLook, name: string, side: 1 | -1, size: 
     // (symmetric, so the grip's middle is on the palm's axis).
     const a = mix(mul(gape, opens), grip.angle, grip.on);
     const hinged: Frame = { o: f.o, x: rotateAbout(f.x, f.z, a), y: rotateAbout(f.y, f.z, a), z: f.z };
-    return place(horn({
+    return place(spiralTube({
       name: fname, length: d.len * 0.95, curl: 0.8, taper: 0.16, girth: mul(d.fat, 0.44), out: [1, -0.15, 0], toward: [0, -1, 0],
       paint: look.finger !== undefined ? (m) => look.finger!(I, m) : (m) => mix(mix(vec3(...I.brick), vec3(...I.cream), cut(m, 0.56)), vec3(...I.black), cut(m, 0.965)),
     }), rigid(hinged));

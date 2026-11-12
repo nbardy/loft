@@ -28,7 +28,7 @@
 //   has its own dimensions).
 
 import {
-  abs, add, alive, animate, cos, cross, div, horn, impact, keys, lift, limb, max, mix, mul, normalize, part, place, pow, rigid, sin, smoothstep, strand, sub, time,
+  abs, add, alive, animate, cos, cross, div, spiralTube, impact, keys, lift, limb, max, mix, mul, normalize, part, place, pow, rigid, sin, smoothstep, strand, sub, time,
   unit, vec3, type F, type Frame, type P3,
 } from "../../../../src/index.ts";
 import { cut, perFrame, TAU } from "../ink.ts";
@@ -179,7 +179,7 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
       const hingeAt = add(add(w, mul(a, mul(L, HINGE))), mul(o, mul(R, HINGE_OUT)));
       const ca = cos(gape), sa = sin(gape);
       const hinged: Frame = { o: hingeAt, x: add(mul(a, ca), mul(o, sa)), y: sub(mul(o, ca), mul(a, sa)), z: nrm };
-      const dactyl = place(horn({
+      const dactyl = place(spiralTube({
         name: "crusherDactyl", length: mul(L, DACTYL), curl: 0.75, taper: 0.22, girth: mul(R, 0.36), out: [1, 0, 0], toward: [0, -1, 0],
         paint: (m) => mix(mix(vec3(...I.accent), vec3(...I.cream), cut(m, 0.2)), vec3(...I.black), cut(m, 0.93)),
         detail: { along: 28, around: 14 },

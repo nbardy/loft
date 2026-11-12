@@ -6,7 +6,7 @@
 // and placed on it (`rigid`), so the left side is the mirror of the right.
 
 import {
-  add, max, min, fract, beat, breathe, cos, draw, fan, horn, input, keys, lift, limb, mirror, mix, mul, on, palette, param, place, polyline, rotateAbout,
+  add, max, min, fract, beat, breathe, cos, draw, fan, spiralTube, input, keys, lift, limb, mirror, mix, mul, on, palette, param, place, polyline, rotateAbout,
   scene, sea, sin, smoothstep, spacing, strike, strand, sub, through, time, toon, vec3, abs, framed, surface, retarded,
   type Expr, type F, type Frame, type P3,
 } from "../src/index.ts";
@@ -138,7 +138,7 @@ const jaw = place(strand({
   section: { aspect: 0.4 }, tips: [{ round: 0.2 }, { round: 0.15 }],
   paint: (_m, v) => mix(vec3(...S.belly), vec3(...S.mouth), smoothstep(0.75, 0.85, sin(mul(v, Math.PI * 2)))), detail: { along: 20, around: 16 },
 }), onRoot);
-const hornR = horn({ name: "swHornR", length: S.hornLength, curl: S.hornCurl, taper: 0.15, girth: 0.17, out: [-0.2, 1, 0.3], toward: [-1, 0, 0.1], paint: S.bone });
+const hornR = spiralTube({ name: "swHornR", length: S.hornLength, curl: S.hornCurl, taper: 0.15, girth: 0.17, out: [-0.2, 1, 0.3], toward: [-1, 0, 0.1], paint: S.bone });
 const horns = [place(hornR, on(head, [0.3, 0.25 - 0.09, 0.9])), place(mirror(hornR, "swHornL"), on(head, [0.3, 0.25 + 0.09, 0.9]))];
 const eyeR = strand({
   name: "swEyeR", spine: (m) => through(m, [[0, -0.2, 0], [0, 0.2, 0]]), stations: 4, girth: 0.2, tips: [{ round: 0.5 }, { round: 0.5 }],

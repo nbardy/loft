@@ -15,7 +15,7 @@
 // them differently (face/mask.ts) or draws its own.
 
 import {
-  abs, add, cos, cross, div, draw, fract, horn, length, lift, lookAt, max, min, mix, mul, place, points, rigid, sin, smoothstep, spacing, sqrt,
+  abs, add, cos, cross, div, draw, fract, spiralTube, length, lift, lookAt, max, min, mix, mul, place, points, rigid, sin, smoothstep, spacing, sqrt,
   strand, sub, surface, swing, through, time, unit, vec2, vec3, type F, type P3,
 } from "../../../../src/index.ts";
 import { cut, perFrame, TAU, type V3 } from "../ink.ts";
@@ -148,7 +148,7 @@ export function faceKit(rig: Rig) {
 
   /** Weed hanging from the carapace at (m, v, size) stations of its surface. */
   const beard = (carapace: Carapace, at: readonly V3[]) => {
-    const weed = horn({
+    const weed = spiralTube({
       name: "weed", length: 1.6, curl: 1.4, taper: 0.6, girth: 0.11, out: [0.4, 1, 0], toward: [1, 0, 0],
       paint: (m) => mix(vec3(...I.mossDeep), vec3(...I.moss), cut(sin(add(mul(m, 7), 1)), 0.6)),
     });

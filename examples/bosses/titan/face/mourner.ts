@@ -30,7 +30,7 @@
 // bends by, stiffness as a channel (wrath holds the eyes out on stiff arms; grief lets them hang).
 
 import {
-  abs, add, added, alive, cast, clamp, cross, div, during, expressionsRead, fract, horn, lift, max, minScreenSize, mix, mul, place, rigid, score, show, sin, smoothstep,
+  abs, add, added, alive, cast, clamp, cross, div, during, expressionsRead, fract, spiralTube, lift, max, minScreenSize, mix, mul, place, rigid, score, show, sin, smoothstep,
   staysInView, strand, sub, through, time, tolerance, unit, vec3,
   type Expression, type F, type P3, type Posed, type Score,
 } from "../../../../src/index.ts";
@@ -272,7 +272,7 @@ export const mourner: FaceOption = {
       girth: 0.1, tips: ["round", "round"], paint: () => vec3(...I.straw), detail: { along: 12, around: 8 },
     }), rigid(body));
     // Two rostral horns from between the sockets, forward and up, diverging a little: a spider crab's beak (face/patient.ts).
-    const rostrum = (s: 1 | -1) => place(horn({
+    const rostrum = (s: 1 | -1) => place(spiralTube({
       name: `rostrum${s < 0 ? "L" : "R"}`, length: 1.9, curl: 0.35, taper: 0.12, girth: 0.13, out: [0.75, 0.62, s * 0.18], toward: [0, 1, 0],
       paint: (m) => mix(vec3(...I.thornDark), vec3(...I.straw), cut(m, 0.45)), detail: { along: 12, around: 8 },
     }), rigid({ o: local(at(-0.12, 0.3, s * 0.16)), x: body.x, y: body.y, z: body.z }));

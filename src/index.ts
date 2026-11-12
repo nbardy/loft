@@ -25,7 +25,7 @@ export { limb, polyline, unit, type Limb, type LimbSpec } from "./geom/limb.ts";
 export { gait, course, type Course, type Gait, type GaitSpec, type Pace } from "./geom/gait.ts";
 export { carriage, footing, headingIn, replants, towardIn, type Carriage, type Footing, type FootingSpec, type Replant, type ReplantSpec, type Stamp, type Stance, type StepTiming, type Toward } from "./geom/stance.ts";
 export { fan, rayOf, catenary, type FanSpec } from "./geom/fan.ts";
-export { shell, spiralTube, spiralLine, horn, whorl, ridgePhase, type ShellSpec, type SpiralTubeSpec, type HornSpec } from "./geom/spiral.ts";
+export { shell, spiralTube, spiralLine, whorl, ridgePhase, type ShellSpec, type SpiralTubeSpec } from "./geom/spiral.ts";
 export { mirror, array, reflect } from "./geom/symmetry.ts";
 export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type BeatSpec, type StrikeSpec } from "./geom/motion.ts";
 export { looping, alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, overshot, slowIn, slowInOut, slowOut, squash, stretchOf, swing, uneven, type Beat, type Beats } from "./geom/lively.ts";

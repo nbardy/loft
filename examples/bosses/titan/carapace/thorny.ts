@@ -5,7 +5,7 @@
 //
 // It keeps the carapace contract: `hull` runs m from tail (0) to front (1).
 
-import { add, draw, fract, horn, mix, mul, pick, place, points, rigid, sin, smoothstep, strand, sub, vec3, type Drawable, type F } from "../../../../src/index.ts";
+import { add, draw, fract, spiralTube, mix, mul, pick, place, points, rigid, sin, smoothstep, strand, sub, vec3, type Drawable, type F } from "../../../../src/index.ts";
 import { cut } from "../ink.ts";
 import type { CarapaceOption } from "../slots.ts";
 
@@ -34,7 +34,7 @@ export const thorny: CarapaceOption = {
     }), rigid(body));
 
     // One thorn shape: leaves along the body's outward direction (y of the body's frame there), curling back toward the tail.
-    const thorn = horn({
+    const thorn = spiralTube({
       name: "thorn", length: 0.62, curl: 0.45, taper: 0.12, girth: 0.11, out: [0, 1, 0], toward: [-1, 0, 0],
       paint: (m) => mix(vec3(...I.thornDark), vec3(...I.straw), cut(m, 0.72)),
       detail: { along: 6, around: 6 },
@@ -51,7 +51,7 @@ export const thorny: CarapaceOption = {
     }), hull), thorn));
 
     // Long spines: six standing up off the shoulders and the back (the far silhouette's spikes).
-    const spine = horn({
+    const spine = spiralTube({
       name: "spine", length: 1.5, curl: 0.25, taper: 0.1, girth: 0.12, out: [0, 1, 0], toward: [-1, 0, 0],
       paint: (m) => mix(vec3(...I.thornDark), vec3(...I.straw), cut(m, 0.6)),
       detail: { along: 8, around: 6 },
