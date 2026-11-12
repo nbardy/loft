@@ -59,6 +59,10 @@ export {
   woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec,
   biolume, papercraft,
 } from "./style/index.ts";
+// What a style is written with beyond expressions: the shade context's block types, noise and hashes, a colour's
+// luminance, and fragment-stage derivatives.
+export { type BlockCast, type BlockOverlap, type ShadowBlock } from "./style.ts";
+export { noise2, noise3, hash2, hash22, cellular2, luminance, fwidth, pixelWorld, wgslFn } from "./lib/index.ts";
 export { struck, holdsStill, StruckError, type Struck, type StruckSpec } from "./geom/struck.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
