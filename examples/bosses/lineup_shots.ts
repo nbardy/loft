@@ -68,7 +68,9 @@ const lens = (eye: V3, target: V3, fovY: number): Lens => ({ eye, target, fovY }
 const SINGLE: Readonly<Record<string, { readonly distance: number; readonly aim: number }>> = {
   fiddler: { distance: 26, aim: 3.2 }, mask: { distance: 31, aim: 3.4 }, islander: { distance: 30, aim: 3.4 }, bruiser: { distance: 30, aim: 3.4 }, stilt: { distance: 40, aim: 5.8 },
 };
-const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.split("+")[0]!] ?? SINGLE.islander!; return lens([at[0] + d.distance, 3, at[1]], [at[0], d.aim, at[1]], 0.4); };
+// A fifth further back and aimed 1.5 higher than first framed: in their solos the great claws go up, and at the first
+// framing the fiddler's, the bruiser's and the tongs' fingers (their clicks) were above the frame.
+const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.split("+")[0]!] ?? SINGLE.islander!; return lens([at[0] + 1.2 * d.distance, 3, at[1]], [at[0], d.aim + 1.5, at[1]], 0.4); };
 
 /**
  * The group's framings (docs/lineup.md, "Framing from above"), by format: raised, wide, close to the front member and
@@ -84,7 +86,9 @@ export const raised = (front: number, z: number, height: number, distance: numbe
 export const GROUP = {
   wide: {
     V: raised(0, 3, 20, 34, 15, 0.8), line: raised(0, 0, 24, 40, 17, 0.8), lineLow: raised(0, 0, 24, 40, 17, 0.8),
-    lineClose: raised(0, 0, 22, 36, 18, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
+    // The throw's push-in ends further back and pitched less than first framed (22, 36, 18): the boats thrown over the
+    // heads top out about 26 up, and from there they left the frame's top for a second (docs/lineup.md, "Deeper").
+    lineClose: raised(0, 0, 22, 44, 13, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
   },
   // The square, searched with the formations as they are (tools/lineup_framing.ts --search square; docs/lineup.md,
   // "Deeper"): closer and a little lower than before, the group whole across the frame, every face clear in the V and

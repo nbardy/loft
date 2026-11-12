@@ -84,8 +84,9 @@ export const DANCE = routine({
     { solo: 0, on: [48, 49] }, { at: 48.5, who: { only: [0] }, click: 3 },
     { solo: 1, on: [50, 51] }, { at: 50, who: { only: [1] }, click: 1 }, { at: 51, who: { only: [1] }, click: 1 },
     // The islander's solo is scored, not its own manner (its show-off swing put the claw's arm across its face in the low
-    // front single): the claw high and out to its side, turned a little to its left to show the shell, a roll of clicks.
-    { at: 52, who: { only: [2] }, face: -0.35, over: 1 }, { at: 52, who: { only: [2] }, claw: HIGH_OUT, level: 0.6, lean: -0.6, click: 3 },
+    // front single): the claw high and out to its side, turned a little to its right so the claw's arm goes back past
+    // its face rather than across it (turned left, the arm still crossed the lower face), a roll of clicks.
+    { at: 52, who: { only: [2] }, face: 0.4, over: 1 }, { at: 52, who: { only: [2] }, claw: HIGH_OUT, level: 0.6, lean: -0.6, click: 3 },
     { at: 54, who: { only: [2] }, face: 0, over: 1, lean: 0 },
     { solo: 3, on: [54, 55] }, { at: 54, who: { only: [3] }, click: 2 }, { at: 55.5, who: { only: [3] }, click: 1 },
     { solo: 4, on: [56, 57] }, { at: 56, who: { only: [4] }, click: 4 },
