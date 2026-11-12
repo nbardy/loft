@@ -265,9 +265,11 @@ export const design = makeDesign({
       about: "the island crab as a fiddler: low, a spiral hermit's shell on its back, one great claw, a vain face on tall eyestalks",
       // Its back is the spiral shell (DIRECTION.md, Round 5: "the best back design for when it's a stick-eye crab, as
       // that is a hermit crab"); the headland stays an option (`--variant islander,back=headland`).
-      pick: { claws: "fiddler", face: "dandy", back: "spiral" },
+      // A hermit (DIRECTION.md, Round 5, "The hermit"): its legs leave through the shell's mouth (legs/hermit.ts) and
+      // its body's tail climbs into the shell.
+      pick: { claws: "fiddler", face: "dandy", back: "spiral", legs: "hermit" },
       // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
-      numbers: { temper: SHOW_OFF },
+      numbers: { temper: SHOW_OFF, carapace: { rise: 2.2 } },
     },
     // The islander with a face that is a head (docs/art_direction/DIRECTION.md, Round 4): the islander's picks, and
     // face/brow.ts in place of the dandy. `--variant bruiser,face=browStalk` is the same with its eyes on short stalks.

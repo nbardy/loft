@@ -89,8 +89,10 @@ export function lightPlan(n: Numbers, twin: Twin) {
  * between where the next covers them and their own suture). Where a grove stands. Exported for tools/spiral_views.ts.
  */
 export function shoulderOf(twin: Twin, back: number): number {
-  // (The last whorl shows all round but its inner side, which the inner whorl fills.)
-  const [lo, suture] = twin.plan.shows, from = back < 1 ? -Math.PI : lo + 0.2, to = suture - 0.2;
+  // (The last whorl shows all round but its inner side, which the inner whorl fills: kept 0.6 rad clear of it, phi = pi.
+  // Searching from -pi itself once put a grove there on the hermit's pose, where the tube's circumference c + r cos phi
+  // is zero and the trees' offsets divide by it.)
+  const [lo, suture] = twin.plan.shows, from = back < 1 ? -Math.PI + 0.6 : lo + 0.2, to = back < 1 ? Math.PI - 0.6 : suture - 0.2;
   let best = from, up = -Infinity;
   for (let k = 0; k <= 120; k++) { const phi = from + ((to - from) * k) / 120, y = twin.normal(back, phi)[1]; if (y > up) { up = y; best = phi; } }
   return best;

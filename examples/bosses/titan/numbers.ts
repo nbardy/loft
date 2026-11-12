@@ -35,7 +35,9 @@ export const S = {
 
   // ---- size and stance ----
   ride: 1.35, floor: -1.7,
-  carapace: { from: -1.6, to: 5.0, width: 4.1, height: 1.25 },
+  /** The carapace: its tail and nose (crab x), half-width, half-height, and how far its tail rises above its line (read
+   * by carapace/base.ts: a hermit's body climbs into its shell; 0, level, for a crab). */
+  carapace: { from: -1.6, to: 5.0, width: 4.1, height: 1.25, rise: 0 },
   legRoots: [3.2, 2.0, 0.8, -0.4], legFeet: [[6.8, 8.2], [4.0, 9.6], [0.8, 9.9], [-2.6, 9.0]] as const, legLengths: [4.0, 3.8, 1.6] as const,
   // ---- the walk (a game that moves the crab sets `legs.walking`; docs/stance.md) and the breath: a cycle's seconds (the
   // idle breathes at this rate, made whole breaths of the loop), share of it a foot stands, a step's height (a re-plant's
@@ -141,9 +143,9 @@ export const S = {
   spiral: {
     /** Raup's numbers. `whorls`: turns of the tube from its tip to the mouth. `growth` (W): how much every length grows
      * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
-    whorls: 3.0, growth: 1.75,
+    whorls: 3.0, growth: 3.0,
     /** Which way the tube turns about the axis going back from the mouth (back/spiral_shell.ts, `handOf`). */
-    hand: "dextral" as "dextral" | "sinistral",
+    hand: "sinistral" as "dextral" | "sinistral",
     /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
      * touches the axis (Raup's D = 0): a shell with no navel. 3.15 across by 2.3 along (2.2 by 3.2 before 2026-11-12's
      * finish): the face about the body's area from `game`; thin along the axis, so the wheel clears the legs, but fat
@@ -151,25 +153,25 @@ export const S = {
     // 3.0 by 2.2 and seated 1.0 further back (in -0.5) by the integrator, 2026-11-12: at 3.15 with in 0.5 the eyes went
     // 0.71 and 0.39 inside the shell's front rim as the slam lands (t = 12.4); now they clear by 0.55 and 0.71. The great
     // claw still passes about 1.0 inside for half a second in the slam's wind-up (t = 11.5), at any size that reads.
-    mouth: { radial: 3.0, axial: 2.2 },
+    mouth: { radial: 2.7, axial: 4.6 },
     /** Raup's T as a slope: how far each turn's crown steps down from the tip's plane per unit of its distance from the
      * axis. 0 is a flat spiral face; 0.1 nearly so, a wheel whose curl stands a little proud (1.0 was a turban, read from
      * above as tiers). */
-    spire: 0.1,
+    spire: 0.7,
     /** The axis (it points out of the spiral's face, toward the tip): raised by `tilt` above level, toward the crab's
      * right flank, and swung back by `rake` (radians). `rake` -2.4 swings it past forward (-pi/2) toward the crab's left,
      * half a right angle: the face looks forward, up and left, at the dance video's low front camera and (obliquely) at
      * `game`. -1.9 faced `game` better, but the great claw's slam wind-up passed 1.1 inside the wheel's right side; -2.4
      * is the least that clears it. `tilt` 0.95. Chosen with tools/spiral_views.ts (DIRECTION.md, Round 5). */
-    tilt: 0.95, rake: -2.4,
+    tilt: 0.08, rake: 3.22,
     /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane. The mouth's plane
      * holds the axis, so with the face forward the mouth opens down only at the wheel's side: 1.7 puts it at the crab's
      * left of the wheel, opening down and forward over the carapace's back. */
-    mouthAt: 2.2,
+    mouthAt: 0.75,
     /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
      * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
      * centre, is 2 radial - lip behind it). */
-    seat: { in: -0.5, up: 2.0, side: -2.8, lip: 3.0 },
+    seat: { in: 2.9, up: 2.1, side: 0.3, lip: 0.8 },
     /** The rim's bands, lines of constant phi that run the tube's length round the whorl's outer side and far face:
      * `count` round the section, cream for `cream` of each period (0.3: at 0.25 the two key lines ate the band from far
      * off), the first one's middle `at` periods round from the tube's outer side; `proud` is how far a cream band stands
@@ -177,10 +179,10 @@ export const S = {
     band: { count: 6, cream: 0.3, at: 0.0, proud: 0.0 },
     /** The face's coil (`coilAt`): cream for `cream` of each turn's strip on the face, on its suture's side, so the face
      * is one cream coil about as wide as the brick between; and a cream boss over the last `boss` turns at the curl. */
-    coil: { cream: 0.62, boss: 0.45 },
+    coil: { cream: 0.45, boss: 0.45 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
-    lip: { flare: 0.15, thick: 0.3, throat: 0.22 },
+    lip: { flare: 0.12, thick: 0.15, throat: 0.22 },
     /** The light: on the highest point of the outer whorl (found from the form), on a cream collar of radius `collar`
      * ringed with barnacles, leaning a little outward; its height and girth, its size against the fiddler's, its gulls.
      * `pose` is what it could later be animated by, with the defaults it is drawn in: `lean` (the tangent of its angle,
@@ -188,7 +190,7 @@ export const S = {
     light: { collar: 1.1, height: 1.6, girth: [0.55, 0.42] as const, size: 0.4, gulls: 0, pose: { lean: 0.12, rise: 0, shutters: 0 } },
     /** Two groves on turf, either side of the light along the outer whorl: each [turns from the light (minus: toward the
      * mouth), trees, the turf's radius], on the whorl's shoulder there (where it faces most nearly up and shows). */
-    groves: [[-0.14, 4, 1.3], [0.14, 3, 1.0]] as const,
+    groves: [[0.1, 4, 1.2], [0.19, 3, 0.9]] as const,
   },
 
   // ---- claws: the right (crusher) 1.4 times the left ----

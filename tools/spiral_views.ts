@@ -106,7 +106,7 @@ for (let i = 0; i <= NU; i++) for (let j = 0; j < NV; j++) {
 const hullAt = (x: number) => {
   const mm = (x - C.from) / (C.to - C.from);
   const g = mm < 0.45 ? Math.sqrt(Math.max(1 - (1 - mm / 0.45) ** 2, 0)) : mm > 0.6 ? Math.sqrt(Math.max(1 - ((mm - 0.6) / 0.4) ** 2, 0)) : 1;
-  return { half: g * C.width, tall: g * C.height, spine: -0.1 + Math.min(mm * 2, 1) * 0.25 };
+  return { half: g * C.width, tall: g * C.height, spine: -0.1 + Math.min(mm * 2, 1) * 0.25 + C.rise * Math.max(0, 1 - 2 * mm) };
 };
 for (let i = 0; i <= 160; i++) for (let j = 0; j < 160; j++) {
   const x = C.from + ((C.to - C.from) * i) / 160, h = hullAt(x), a = (j / 160) * TAU, e = 2 / 2.3;
@@ -174,6 +174,20 @@ NAMES.forEach((name, v) => {
   for (let k = 0; k < W * H; k++) if (b.shell[k]) { const x = k % W, y = Math.floor(k / W); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   console.log(`${name.padEnd(8)} cream bands crossed ${runs}; shell box x ${x0}..${x1} y ${y0}..${y1}; shell silhouette ${shellArea} px, body ${bodyArea} px (x ${f2(shellArea / Math.max(bodyArea, 1))}); seen: cream ${count(2)} brick ${count(1)} lip ${count(3)} throat ${count(4)} px; centre (${f2(cx, 0)}, ${f2(cy, 0)})`);
 });
+
+// ---- the lip's arc from the low front: over every column of the carapace, the lip shows above the carapace's top ----
+{
+  const v = NAMES.indexOf("lowFront"), b = bufs[v]!;
+  let cols = 0, arched = 0, gapSum = 0;
+  for (let x = 0; x < W; x++) {
+    let top = -1; for (let y = 0; y < H; y++) if (b.body[y * W + x]) { top = y; break; }
+    if (top < 0) continue;
+    cols++;
+    // The nearest lip pixel above the carapace's top in this column (the arc), and the throat between.
+    for (let y = top - 1; y >= Math.max(0, top - 120); y--) if (b.cls[y * W + x] === 3) { arched++; gapSum += top - y; break; }
+  }
+  console.log(`\nlowFront: the lip arcs over ${arched} of the carapace's ${cols} columns (${f2((100 * arched) / Math.max(cols, 1), 0)}%), the lip's underside on average ${f2(gapSum / Math.max(arched, 1), 0)} px above the carapace's top`);
+}
 
 // ---- measuring a render ----
 const measure = flag("--measure");
