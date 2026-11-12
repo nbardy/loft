@@ -60,7 +60,7 @@ export function impactFoam(name: string, water: Sea, o: ImpactSpec): Drawable {
     colour: (fr) => {
       const p = vec2(fr.world.x, fr.world.z);
       const white = painted(o, p);
-      return vec4(mix(rgb(o.line), rgb(o.foam), white.cream), max(white.cream, mul(white.key, 0.9)));
+      return vec4(mix(rgb(o.line), rgb(o.foam), white.fill), max(white.fill, mul(white.line, 0.9)));
     },
     grid: { u: spacing.even(24), v: spacing.even(24) }, phase: "on-water", sceneDepth: false,
   });
@@ -77,7 +77,7 @@ function painted(o: ImpactSpec, p: Expr<"vec2">): White {
       // (first version, 2026-11-11).
       const cut = sub(sub(shape, 0.5), mul(abs(noise2(mul(p, 1.3))), 0.6));
       const foam = edgeOf(cut, 0, 0.004);
-      return { cream: foam, key: mul(edgeOf(cut, -0.07, 0.004), sub(1, foam)) };
+      return { fill: foam, line: mul(edgeOf(cut, -0.07, 0.004), sub(1, foam)) };
     }
     case "roll": {
       const r = rollOf(o.paint.head, 0.45);

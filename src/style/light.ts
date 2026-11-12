@@ -17,8 +17,8 @@ import { abs, add, cross, div, dot, exp, f, floor, fract, gt, log, max, min, mix
 import { luminance } from "../lib/index.ts";
 import { hash2 } from "../lib/noise.ts";
 import { fwidth, pixelWorld, wgslFn } from "../lib/wgsl.ts";
-import type { BlockCast, BlockOverlap, Rgb, ShadeCtx } from "../style.ts";
-import { edgeOf, rgb } from "./shared.ts";
+import type { BlockCast, BlockOverlap, Rgb, ShadeCtx, Style } from "../style.ts";
+import { edgeOf, pixelsInside, rgb } from "./shared.ts";
 
 type F = Expr<"f32">;
 type V = Expr<"vec3">;
@@ -387,9 +387,7 @@ function rimmed(r: Rim, ctx: ShadeCtx): { readonly edge: F; readonly ink: Rgb } 
   switch (r.kind) {
     case "off": return { edge: f(0), ink: [0, 0, 0] };
     case "edge": {
-      // Pixels from the silhouette, to first order: how far the surface faces the eye over how fast that changes.
-      const facing = dot(ctx.normal, ctx.view);
-      const away = div(facing, max(fwidth(facing), 1e-5));
+      const away = pixelsInside(ctx);
       const wide = max(div(r.width, pixelWorld(ctx.world)), 1.5);
       const inside = sub(1, smoothstep(sub(wide, 0.75), add(wide, 0.75), away));
       return { edge: mul(mul(inside, edgeOf(dot(ctx.normal, keyOf(r.key, ctx)), 0.12, 1e-5)), r.amount), ink: r.ink };
@@ -425,6 +423,30 @@ export function lit(r: LightRecipe, ink: V, ctx: ShadeCtx): { readonly colour: V
   const rim = rimmed(r.rim, ctx);
   const tone = max(min(min(cored(r.core, ctx), hatched(r.hatch, ctx)), min(waterlined(r.waterline, ctx), washed(r.bokashi, ctx))), rim.edge);
   return { colour: mix(highlit(r.highlight, ink, tone, ctx), rgb(rim.ink), rim.edge), tone };
+}
+
+/** What a style's bodies are: their colour, their mark, and the shadow block if one is printed after them. */
+export type Bodies = Pick<Style, "shade" | "mark" | "block">;
+
+/**
+ * A style's bodies lit by a recipe: `ink` is the colour a body has in full light (whatever the style makes of its
+ * paint), `after` a last touch on the lit colour before the block prints over it (a key line: the block over black is
+ * black), `own` the block's ink where the recipe states none (`block: { kind: "rule" }`). With nothing cast from one
+ * thing on another the block is printed in each fragment; otherwise its tone goes in the mark and the block is printed
+ * after the bodies (`Style.block`), `shade` staying the whole colour for a fragment shaded alone (a smear).
+ *
+ * Cannot: light anything but bodies (water and sky have their own functions), or change the order of the treatments
+ * (`lit`'s). A colour that depends on the tone (a paint that changes hue in shadow) needs `lit` directly.
+ * Going past it: call `lit(recipe, ink, ctx)` yourself and print `printedBlock(pullOf(...), colour, tone)` however you
+ * like: two recipes whose tones are combined by `min` (cross-hatching in two directions), a tone that picks an ink.
+ */
+export function litBodies(recipe: LightRecipe, own: BlockInk, ink: (ctx: ShadeCtx) => V, after: (c: V, ctx: ShadeCtx) => V = (c) => c): Bodies {
+  const pull = pullOf(blockInk(recipe.block, own));
+  const both = (ctx: ShadeCtx) => { const b = lit(recipe, ink(ctx), ctx); return { colour: after(b.colour, ctx), tone: b.tone }; };
+  const whole: Bodies["shade"] = (ctx) => { const b = both(ctx); return printedBlock(pull, b.colour, b.tone); };
+  const cast = castOf(recipe.cast), overlap = overlapOf(recipe.overlap);
+  if (cast.kind === "none" && overlap.kind === "none") return { shade: whole, mark: () => f(1) };
+  return { shade: whole, mark: (ctx) => markOf(pull, both(ctx).tone), block: { body: (ctx) => both(ctx).colour, ink: pull.add, floor: pull.floor, cast, overlap } };
 }
 
 /** The block's ink: the style's own, or the recipe's. */

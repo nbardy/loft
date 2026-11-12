@@ -7,7 +7,7 @@ export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Out
 export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb } from "./geom/strand.ts";
 export { crest, type CrestSpec } from "./geom/crest.ts";
 export { sea, Sea, type SeaSpec, type SwellSpec } from "./geom/sea.ts";
-export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type ToonSpec } from "./style.ts";
+export { palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx } from "./style.ts";
 export { scene, DEFAULT_OUTLINE, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { lineup, type Lineup, type LineupLoop, type Standing } from "./lineup.ts";
 export { type Member, type Staged } from "./design.ts";
@@ -43,7 +43,22 @@ export * from "./spacetime/index.ts";
 export { landsInside, staysClear, stopsAt, gripReaches, releasesAt, throwLands, fliesClear, letsGoClean, shoves, frontFirst, warned, tolerance, minScreenSize, budget, runChecks, formatChecks, Probe, type Check, type CheckTime, type Tolerance, type Verdict, type Measured } from "./check.ts";
 export { expressionsRead, spansOnScreen, staysInView, limbsReach, type Mark, type Reaching } from "./check.ts";
 export { movable, type Sun } from "./sun.ts";
-export { STYLES, STYLE_NAMES, styleNamed, withStyle, withLight, light, LIGHT, type LightName, type LightRecipe, woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
+// Styles and the parts they are composed from (src/style/index.ts, docs/styles.md). `Key`, `Cast` and `Layer` are taken
+// by curves and expressions: the lighting recipe's are `LightKey` and `LightCast` here.
+export {
+  STYLES, STYLE_NAMES, styleNamed, withStyle, withLight, type StyleName,
+  light, LIGHT, lit, litBodies, printedBlock, pullOf, markOf, blockInk, keyOf, type Bodies, type BlockInk, type Block, type Bokashi, type Cast as LightCast, type Core, type Hatch, type Highlight, type Key as LightKey, type LightName, type LightRecipe, type Overlap, type Pull, type Rim, type Terminator, type Waterline,
+  skyOf, type Sky, type SkyClouds, type SkySun, type Wash,
+  swellLines, type SwellLines,
+  contactFoam, marksFoam, printLayers, foam, marksAs, type ContactFoam, type FoamInk, type HeadSize, type InkLayers, type MarksPrint,
+  rollingFoam, curledHeads, crown, behind, joined, rollOf, slopeOf, along, pixelOn, type Lean, type Roll, type White, type WhiteOn,
+  paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight, type Mottle, type Warm,
+  paperGrain, bloom, reflection,
+  edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON,
+  toon, type ToonSpec,
+  woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec,
+  biolume, papercraft,
+} from "./style/index.ts";
 export { struck, holdsStill, StruckError, type Struck, type StruckSpec } from "./geom/struck.ts";
 export { type SeaDeform } from "./geom/sea.ts";
 export { whirlpool, Whirlpool, PoolChart, type WhirlpoolSpec } from "./geom/whirlpool.ts";
