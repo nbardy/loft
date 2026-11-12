@@ -82,10 +82,37 @@ export type SpiralTubeSpec = {
 };
 
 /**
- * A tapered tube on an equiangular spiral, named for its shape, not for a use (a horn, a claw's finger, a tooth, a
- * tusk, a tendril, a moustache are all this with different numbers). With e^(k theta) = 1 + m (taper - 1), the arc length
- * is linear in m and the radius is girth * e^(k theta), which is the spiral's own growth: the shape is self-similar,
- * like a shell's. A strand, so it has a skeleton, casts a shadow and carries body coordinates.
+ * A tapered tube on an equiangular (logarithmic) spiral. Named for its shape, not for a use: a horn, a claw's finger,
+ * a tooth, a tusk, a tendril and a moustache have all been drawn with it, which is also a warning: reach for it by
+ * habit and everything pointed in your picture will be the same curve.
+ *
+ * The shape. The centre line turns through `curl` radians in the plane of `out` and `toward`, and the radius goes from
+ * `girth` at the root to `girth * taper` at the tip. The two are tied by one law: with e^(k theta) = 1 + m (taper - 1),
+ * arc length is linear in m (0 at the root, 1 at the tip) and the radius is girth * e^(k theta), the spiral's own growth.
+ * So the form is self-similar, as a shell's is: it tightens exactly as it thins.
+ *
+ * Parameters: `length`, `curl`, `taper`, `girth`, `twist` take numbers, expressions or host inputs (so they can move
+ * in time); `out` and `toward` are fixed directions.
+ *
+ * What it cannot do, because of that one law:
+ * - curl that does not follow the taper: a thick tight coil, a thin lazy one, a curl that reverses (an S), a straight
+ *   run and then a hook. With `taper` 1 it is a plain circular arc.
+ * - leave its plane properly: `twist` is a sideways drift growing as m^2, not a helix of constant pitch.
+ * - a radius that is not linear along its length: no swelling club, no waist, no ridges.
+ * - any section but round, and any ends but an open root and a point.
+ *
+ * Going past it is one step down, not a rewrite: `spiralLine` below gives this tube's centre line, radius and up
+ * direction as `strand` takes them, so `strand({ name, ...spiralLine(o), section, tips, girth, paint })` changes the
+ * section, the ends or the radius and keeps the curve. For another curve, write your own line with the same shape of
+ * result ({ spine, girth, up }). The recipe behind this one: choose the heading along the line, theta(m), and the
+ * spine is length times the integral of (cos theta, sin theta). Relatives worth trying:
+ * - theta linear in m: a circular arc; add a constant drift along `up` and it is a helix (a corkscrew, a spring).
+ * - theta growing as m^2 (a clothoid): straight at the root, curling faster and faster: a fern head, a tendril, a
+ *   scorpion's tail. No closed form: sample it once with `tabulate`, or lay it through points with `through`.
+ * - radius from the axis growing by a fixed step per turn (Archimedes' spiral): turns evenly spaced, a rope coil or a
+ *   watch spring, where this one's turns crowd toward the tip.
+ * - theta = curl * sin(pi m) or any curve of your own: S-bends and hooks.
+ * A strand, so it has a skeleton, casts a shadow and carries body coordinates (m along, v round) for paint.
  */
 export function spiralTube(spec: SpiralTubeSpec): Strand {
   return strand({
@@ -97,10 +124,10 @@ export function spiralTube(spec: SpiralTubeSpec): Strand {
 }
 
 /**
- * The tube's centre line, its radius along it and its up direction, named as `strand` takes them: `spiralTube` is
- * `strand({ name, ...spiralLine(o), tips, paint })`. Exported so the tube is never a dead end: for a flat or ridged section,
- * other tips, a kink added to the spine or a girth that swells, spread this into your own `strand` and override what
- * you need, instead of starting again from nothing.
+ * `spiralTube`'s centre line, its radius along it and its up direction, named as `strand` takes them, so the tube is
+ * never a dead end (see `spiralTube` for the law, its limits and its relatives). Spread it into your own `strand` and
+ * override what you need; or add to its `spine` (a kink, a wobble in time) or multiply its `girth` (a swelling, ridges):
+ * both are functions of m, the share of the way from root (0) to tip (1).
  */
 export function spiralLine(spec: Pick<SpiralTubeSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 } {
   const L = lift<"f32">(spec.length), curl = lift<"f32">(spec.curl), taper = lift<"f32">(spec.taper), girth = lift<"f32">(spec.girth);

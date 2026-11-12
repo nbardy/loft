@@ -228,6 +228,19 @@ Proposed, not yet done (each is a rename across callers, to be made when no bran
 | `strand`, `fan`, `whorl`, `gripper` | already say a shape or a mechanism | keep |
 | `hull`, `ship` | these are their subject (a lines plan is a hull's); the rule sends them toward the examples, with what is general under them (a surface lofted through stations) named for its shape | decide when `ship` is opened |
 
+### What a component's comment must say (2026-11-12, the owner's rule)
+
+Four parts, in this order, so that a reader (or a model) is pushed outward as well as shown the way in. `spiralTube`
+in `src/geom/spiral.ts` is the worked example.
+
+1. **The shape and its law**, in a sentence or two of mathematics: what is tied to what.
+2. **Parameters**: which take expressions (and so can move), which are fixed.
+3. **What it cannot do**, as a list, each item a consequence of the law. A limit that is not written down is read as
+   the whole space.
+4. **Going past it**: the one-step-down call that keeps most of it, and the relatives: other shapes from similar
+   mathematics, each with the line of reasoning that derives it, so a variation is an invitation and not a research
+   project.
+
 The table below is kept as first written; rows 2, 4 and 5 are patterns by this rule (recipes, not core), rows 1, 3
 and 6 are limits or duplicates (do them), and rows 7 and 8 wait for a second use.
 
