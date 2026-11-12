@@ -37,7 +37,7 @@ function sceneProblem(v: unknown): string | undefined {
   if (v === undefined) return "no default export";
   if (typeof v !== "object" || v === null) return `default export is a ${typeof v}, not a scene`;
   const o = v as Record<string, unknown>;
-  const missing = ["things", "sea", "sun", "cameras"].filter((k) => !(k in o));
+  const missing = ["things", "ground", "sun", "cameras"].filter((k) => !(k in o));
   return missing.length > 0 ? `default export is not a scene (no ${missing.join(", ")})` : undefined;
 }
 

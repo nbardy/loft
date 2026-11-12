@@ -14,7 +14,7 @@ const reference = JSON.parse(readFileSync(new URL("./fixtures/sweep_reference.js
 test("a sweep and a part placed on it reproduce the recorded strand surface and chart", () => {
   const body = strand({ name: "probe", ...probe, paint: [1, 0, 0] });
   const part = place(strand({ name: "stub", ...stub.spec, paint: [1, 1, 1] }), on(body, [stub.at.m, stub.at.v, stub.at.rho]));
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [body, part], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [body, part], style: toon(), sun: [0, 1, 0] }));
   const k = variable("c", "vec3");
   let worst = 0;
   for (const [name, b] of [["probe", body], ["stub", part]] as const) {

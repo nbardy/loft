@@ -15,7 +15,7 @@ const strip = (name: string, z: number) => draw.surface(name, surface((u, v) => 
 // programs), the frame value not filled or filled with the wrong value (its CPU reading against direct evaluation), and
 // a constant sub-graph left for every vertex to compute.
 test("a per-frame sub-graph read by two vertex functions is emitted once, in frame values, and folded constants vanish", () => {
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [strip("rateA", 0), strip("rateB", 2)], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [strip("rateA", 0), strip("rateB", 2)], style: toon(), sun: [0, 1, 0] }));
   const a = c.artefact;
   const shaders = Object.values(a.shaders).join("\n") + a.sceneWgsl;
   const stages = a.stages.map((s) => s.wgsl).join("\n");

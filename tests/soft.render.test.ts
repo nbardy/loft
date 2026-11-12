@@ -30,7 +30,7 @@ const front: Camera = { kind: "perspective", eye: [0, 4, 20], target: [0, 4, 0],
 const cloudAt = (z: number): Drawable => draw.density("veil", medium("veil", { puffs: [blob({ centre: [0, 4, z], radii: [2.5, 2.5, 1.2], density: 2, colour: [1, 1, 1] })] }), {
   bounds: { min: [-9, -4, z - 5], max: [9, 12, z + 5] }, sun: [1.2, 1.2, 1.2], sky: 0.5, forward: 0, shadowing: 1, detail: { kind: "none" }, haze: 0,
 });
-const withThings = (things: Drawable[]) => scene({ sea: swell, things, style: toon(), sun: [0.3, 0.8, 0.5], cameras: {} });
+const withThings = (things: Drawable[]) => scene({ ground: swell, things, style: toon(), sun: [0.3, 0.8, 0.5], cameras: {} });
 
 // Catches: the integral not stopping at the opaque scene's depth (a cloud behind a body drawn over it), the clip using
 // the wrong end of the ray (a cloud in front of a body not veiling it), the box's back faces depth-rejected behind the
@@ -61,7 +61,7 @@ test("a glow's falloff is symmetric about the curve, continuous, and does not de
   const cam: Camera = { kind: "orthographic", eye: [0, 50, 30], target: [0, 50, 0], height: 4 };
   const size = { width: 200, height: 200 };
   // A black sky, so the glow's light is all there is in the row.
-  const dark = (g: Drawable) => scene({ sea: swell, things: [g], style: toon({ sky: { zenith: [0, 0, 0], horizon: [0, 0, 0] } }), sun: [0.3, 0.8, 0.5], cameras: {} });
+  const dark = (g: Drawable) => scene({ ground: swell, things: [g], style: toon({ sky: { zenith: [0, 0, 0], horizon: [0, 0, 0] } }), sun: [0.3, 0.8, 0.5], cameras: {} });
   const cut = await shot(dark(line("cut", 8)), cam, size), whole = await shot(dark(line("whole", 1)), cam, size);
   const rowOf = (img: Uint8Array, y: number) => Array.from({ length: size.width }, (_, x) => img[(y * size.width + x) * 4 + 2]);
   // Segment joints are every 2 world units, 100 pixels apart: row 50 is at a joint (to half a pixel), row 75 between.

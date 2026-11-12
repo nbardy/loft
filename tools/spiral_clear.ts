@@ -43,7 +43,7 @@ const n = { ...n0, spiral: set === undefined ? n0.spiral : merge(n0.spiral, JSON
 // The lineup's taunt for its first crab (examples/bosses/crab_lineup.ts), on this crab's own 22 s cycle: armed at 14.5 s.
 const how: Staging = inRoutine ? lineupStaging(member, variant) : args.includes("--taunt") ? { ...AT_HOME, taunt: { kind: "dance", first: 14.5, accents: [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.0] } } : AT_HOME;
 const staged = design.stage(resolved, how), water = sea({ ...staged.sea, deform: staged.deforms }), m = staged.finish(water);
-const built = scene({ sea: water, things: m.things, style: styleFor(n0, WATER.ridge), sun: SUN, cameras: { game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 } } });
+const built = scene({ ground: water, things: m.things, style: styleFor(n0, WATER.ridge), sun: SUN, cameras: { game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 } } });
 const probe = new Probe(compileScene(built), {});
 
 // ---- the shell's outside as a cloud in crab coordinates, in a grid of cells for nearest-point queries ----

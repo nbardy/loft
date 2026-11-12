@@ -5,12 +5,13 @@ import type { Drawable, V3 } from "./compile/context.ts";
 import { light } from "./draw/light.ts";
 import { shadows } from "./draw/shadows.ts";
 import { sky } from "./draw/sky.ts";
-import type { Sea } from "./geom/sea.ts";
+import type { Ground } from "./draw/ground.ts";
 import type { Style } from "./style.ts";
 import type { Sun } from "./sun.ts";
 
 export type SceneSpec = {
-  readonly sea: Sea;
+  /** What the scene stands on: `sea({ swell })`, `plane` (flat, y = 0) or `nothing` (src/draw/ground.ts). */
+  readonly ground: Ground;
   /** Strands, crests, drawn surfaces and points, or any other `Drawable`. */
   readonly things: readonly Drawable[];
   readonly style: Style;
@@ -34,8 +35,8 @@ export type OutlineMethod = "hull" | "screen";
 export const DEFAULT_OUTLINE: OutlineMethod = "hull";
 
 export type Scene = {
-  readonly sea: Sea;
-  /** Everything drawn: the sky, the sea and the shadows the scene derives, then the spec's things. */
+  readonly ground: Ground;
+  /** Everything drawn: the sky, the ground and the shadows the scene derives, then the spec's things. */
   readonly things: readonly Drawable[];
   readonly style: Style;
   /** The sun as stated: the fixed direction, or a movable sun's default. */
@@ -54,7 +55,7 @@ export function scene(spec: SceneSpec): Scene {
   if (!(stated[1] > 0.05 * l)) throw new Error(`scene: the sun must be above the horizon (sun.y > 0), got [${stated.join(", ")}]`);
   const sun: V3 = [stated[0] / l, stated[1] / l, stated[2] / l];
   const sunAt: Sun = "kind" in spec.sun ? { kind: "input", name: spec.sun.name, dir: sun } : { kind: "fixed", dir: sun };
-  const things: Drawable[] = [sky, spec.sea, shadows, ...blockOf(spec.style), ...spec.things];
+  const things: Drawable[] = [sky, spec.ground, shadows, ...blockOf(spec.style), ...spec.things];
   const names = new Set<string>();
   for (const t of things) {
     if (names.has(t.name)) throw new Error(`scene: two things are named "${t.name}" (names key shaders)`);
@@ -62,7 +63,7 @@ export function scene(spec: SceneSpec): Scene {
   }
   if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);
   const loop: Loop = spec.period === undefined ? OPEN : { kind: "every", seconds: spec.period };
-  return { sea: spec.sea, things, style: spec.style, sun, sunAt, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
+  return { ground: spec.ground, things, style: spec.style, sun, sunAt, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
 }
 
 /** A style that prints its shadow as a block after the bodies (`Style.block`) has it drawn by `light` (src/draw/light.ts). */

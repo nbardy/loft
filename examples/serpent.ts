@@ -244,7 +244,7 @@ export const restGape = mul(add(1, mul(sin(mul(time, 0.9)), 0.4)), S.jawGape);
 const swimming = serpent({ spine: restSpine, gape: restGape });
 
 export default scene({
-  sea: sea({
+  ground: sea({
     swell: [
       { direction: [1, 0.3], length: 14, height: 0.35, speed: 1.1 },
       { direction: [-0.3, 1], length: 6.5, height: 0.12, speed: 0.8, phase: 1.3 },

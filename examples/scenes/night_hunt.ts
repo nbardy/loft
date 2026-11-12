@@ -161,7 +161,7 @@ const drawnBody = new Set(["hunter"]);
 const parts: Drawable[] = hunter.things.filter((t) => !drawnBody.has(t.name));
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [skin, ...parts, wake(hunter.body, { over: 2.4, samples: 10 }), ...fleet, ...lanterns, motes],
   style: biolume(),
   sun: [-0.3, 0.8, 0.5],

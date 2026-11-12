@@ -168,7 +168,7 @@ test("a body coiled by the whirlpool keeps its cross-section radii", () => {
   };
   const free = strand({ ...spec, name: "eelFree" });
   const coiled = place(strand({ ...spec, name: "eelCoil" }), pool.in(water));
-  const c = compileScene(scene({ sea: water, things: [free, coiled], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: water, things: [free, coiled], style: toon(), sun: [0, 1, 0] }));
   let worstR = 0;
   for (const t of [0, 3, 11]) {
     const frame = c.frame(stateAt(c.artefact, t));

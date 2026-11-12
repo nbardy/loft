@@ -97,11 +97,11 @@ test("the telegraph covers exactly the hit shape (capsule, disc, arc)", async ()
   const m = cameraMatrices(camera, W / H), pixel = 14 / H;
   for (const [name, h] of Object.entries(shapes)) {
     const a = attack({ name: `t_${name}`, arm: 3, warn: 2, target: { kind: "disc", centre: vec2(50, 50), radius: f(1) }, part: "none", motion: h.kind === "arc" ? { kind: "sweep", hit: h, root: 0.5, height: 0, inset: 0 } : { kind: "lunge", hit: h, reach: 0.3, lead: 1, height: 0, coil: 0, rise: 0, approach: 0, neck: 1 } });
-    const loaded = await host.load(compile(scene({ sea: calm, things: [telegraph(a)], style: toon(), sun: [0.2, 1, 0.1] })));
+    const loaded = await host.load(compile(scene({ ground: calm, things: [telegraph(a)], style: toon(), sun: [0.2, 1, 0.1] })));
     const water = await loaded.frame({ camera, width: W, height: H, time: 0 });
     const marked = await loaded.frame({ camera, width: W, height: H, time: 2.5 });
     loaded.destroy();
-    const probe = new Probe(compileScene(scene({ sea: calm, things: [telegraph(a)], style: toon(), sun: [0.2, 1, 0.1] })), {});
+    const probe = new Probe(compileScene(scene({ ground: calm, things: [telegraph(a)], style: toon(), sun: [0.2, 1, 0.1] })), {});
     const sdf = probe.planar((p) => hitSdf(h, p), 0);
     let wrong = 0, inside = 0;
     for (let x = -6.8; x < 6.8; x += 0.05) for (let z = -6.8; z < 6.8; z += 0.05) {

@@ -373,7 +373,7 @@ const strikeFoam = impactFoam("tmStrikeFoam", water, {
 const creature: Drawable[] = serpent.things.filter((t) => !/Crest|Tail[LR]$/.test(t.name));
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     ...creature, ...wings, mane, crownLobes, rimLobes, bellyLobes, strokeBolt, ...sparks,
     ...scout, telegraph(bolt, { style: PRINT_WARNING }), strikeFoam, shower,

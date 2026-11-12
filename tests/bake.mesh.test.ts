@@ -121,7 +121,7 @@ test("crests are single two-sided sheets, rooted on the host, with their normal 
 // Catches: a drawable that draws no bakeable surface being dropped without a word.
 test("a drawable with no surface is reported as skipped by name", () => {
   const custom: Drawable = { name: "mystery", draws: () => ({ shaders: {}, draws: [] }), skeletons: [], surfaces: [] };
-  const baked = bakeScene(scene({ sea: sea({ swell: [] }), style: toon(), sun: [0, 1, 0], things: [bent, custom] }), { time: 0, density });
+  const baked = bakeScene(scene({ ground: sea({ swell: [] }), style: toon(), sun: [0, 1, 0], things: [bent, custom] }), { time: 0, density });
   expect(baked.bodies.map((b) => b.name)).toEqual(["bent"]);
   expect(baked.skipped.map((s) => s.name)).toEqual(["sky", "sea", "shadows", "mystery"]);
 });

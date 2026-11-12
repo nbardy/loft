@@ -6,6 +6,7 @@ export * from "./map/index.ts";
 export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type Poseable, type ReliefOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { scene, DEFAULT_OUTLINE, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
+export { plane, nothing, GroundError, type Ground, type Plane, type Nothing } from "./draw/ground.ts";
 export { compile, compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
 export { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Phase, type PostSpec, type Shader, type TableRef } from "./compile/context.ts";
 export { emitFn, emitShaderFn } from "./compile/bind.ts";

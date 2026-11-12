@@ -58,7 +58,7 @@ const OPTS = { bounds: box, sun: [1, 1, 1], sky: 1, forward: 0.3, shadowing: 1, 
 // swapped), and f32 accuracy below what a cloud needs, on the same cases.
 test("the GPU closed form matches numerical integration in f32", async () => {
   const m = medium("g", { puffs: [blob({ centre: [0, 1, 0], radii: [1, 1, 1], density: 1, colour: [1, 1, 1] })] });
-  const a = compileScene(scene({ sea: swell, things: [draw.density("gcloud", m, OPTS)], style: toon(), sun: [0, 1, 0] })).artefact;
+  const a = compileScene(scene({ ground: swell, things: [draw.density("gcloud", m, OPTS)], style: toon(), sun: [0, 1, 0] })).artefact;
   const code = `fn probe(i: u32, x: vec4<f32>) -> vec4<f32> {
   let c = cases[i];
   return vec4<f32>(loft_gauss_ray(c[0], c[1], c[2].x, c[2].y), 0.0);
@@ -89,7 +89,7 @@ test("a medium's optical depth on the GPU is the sum of its parts, as numericall
     ],
     banks: [bank({ height: 1, thickness: 2, density: 0.2, colour: [1, 1, 1], edge: { through: [3, 0], clear: [1, 0.2], softness: 1.5 } })],
   });
-  const c = compileScene(scene({ sea: swell, things: [draw.density("paircloud", m, OPTS)], style: toon(), sun: [0.3, 1, 0.2] }));
+  const c = compileScene(scene({ ground: swell, things: [draw.density("paircloud", m, OPTS)], style: toon(), sun: [0.3, 1, 0.2] }));
   const tau = tauFunction(m, "probe_tau", accessMedium(m, [0, 1, 0], (t) => ({ wgsl: `t_${t.name}` })));
   const rays: { o: number[]; d: number[]; t0: number; t1: number }[] = [
     { o: [-12, 4.2, 0.1], d: [1, 0, 0], t0: 0, t1: 30 },          // through both blobs

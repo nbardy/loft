@@ -90,7 +90,7 @@ const strikes = creature.strikes;
 
 // ---- the scene ----------------------------------------------------------------------------------------------------
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     ...creature.things, ...quarry, hullProxy,
     telegraph(bite),

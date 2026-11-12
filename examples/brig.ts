@@ -29,7 +29,7 @@ const water = sea({
 const brig = ship(brigSpec);
 
 export default scene({
-  sea: water,
+  ground: water,
   things: brig.afloat(water, { at: [0, 0], heading: 0.15, wind: WIND }),
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.5, 0.7, 0.45],

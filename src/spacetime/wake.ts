@@ -13,6 +13,7 @@ import {
 } from "../expr.ts";
 import type { F } from "../map/types.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import { seaOf } from "../draw/ground.ts";
 import type { Body } from "../map/sweep.ts";
 import type { Skeleton } from "../map/types.ts";
 
@@ -40,14 +41,14 @@ class Wake implements Drawable {
   constructor(readonly name: string, readonly body: Body, readonly spec: Required<WakeSpec>) {}
 
   draws(ctx: CompileContext): Emitted {
-    const s = this.spec, dt = s.over / s.samples;
+    const s = this.spec, dt = s.over / s.samples, sea = seaOf(ctx.ground, `wake "${this.name}"`);
     // Past slices are skeletons only (positions and radii, no frames), at every STRIDE-th station: all a waterline
     // needs, at a third of the cost (DESIGN.md 9). Row 0 reads the live body at the same stations.
     const n = this.body.transport.stations, joints = Math.ceil((n - 1) / STRIDE) + 1, segs = joints - 1;
     const kept = Array.from({ length: joints }, (_, j) => Math.round((j * (n - 1)) / (joints - 1)));
     const live: Skeleton = { joints, joint: (j) => this.body.skeleton.joint(kept[j]!) };
     const slices = Array.from({ length: s.samples + 1 }, (_, k) => (k === 0 ? live : this.body.skeletonAt(sub(time, k * dt), kept)));
-    const source = wakeTable(this.name, slices, joints, dt, s.spread, (xz, t) => ctx.sea.height(xz, t));
+    const source = wakeTable(this.name, slices, joints, dt, s.spread, (xz, t) => sea.height(xz, t));
     const t = ctx.table(source).wgsl;
     const [fr, fg, fb] = s.colour;
     const code = /* wgsl */ `

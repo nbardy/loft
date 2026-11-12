@@ -77,7 +77,7 @@ const derived = new Set(["sky", "sea", "shadows"]);
 const creature: Drawable[] = serpent.things.filter((t) => !derived.has(t.name));
 
 export default scene({
-  sea: sea({
+  ground: sea({
     swell: [
       { direction: [1, 0.3], length: 14, height: 0.5, speed: 1.3 },
       { direction: [-0.3, 1], length: 6.5, height: 0.18, speed: 0.9, phase: 1.3 },

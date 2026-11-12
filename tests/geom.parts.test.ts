@@ -148,7 +148,7 @@ test("a mirrored part is the mirror image of the part", () => {
     stations: 10, girth: 0.3, section: { aspect: 0.6, squareness: 3 }, twist: (m) => mul(m, 1.1), level: 1, tips: ["round", "point"], paint: [1, 1, 1],
   });
   const r = mirror(s, "limbR");
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [s, r], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [s, r], style: toon(), sun: [0, 1, 0] }));
   const ms = [0.05, 0.3, 0.55, 0.8, 0.97], vs = [0, 0.1, 0.25, 0.4, 0.6, 0.75, 0.9];
   const roots: Expr[] = [];
   for (const m of ms) for (const v of vs) roots.push(s.point(f(m), f(0.5 - v)), r.point(f(m), f(v)), s.normal(f(m), f(0.5 - v)), r.normal(f(m), f(v)));

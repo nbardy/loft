@@ -72,7 +72,7 @@ const drawn = draw.field("nest", field, {
 });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.2], length: 9, height: 0.16, speed: 0.9 }] }),
+  ground: sea({ swell: [{ direction: [1, 0.2], length: 9, height: 0.16, speed: 0.9 }] }),
   things: [drawn],
   style: toon({ bands: 3, shadow: [0.55, 0.5, 0.85] }),
   sun: [-0.4, 0.8, 0.45],

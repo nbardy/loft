@@ -23,7 +23,7 @@ const full = body.at(whole);
 const reads = (name: string, tables: readonly TableSource[]): Drawable => ({
   name, skeletons: [], surfaces: [], draws: (ctx) => { for (const t of tables) ctx.table(t); return { shaders: {}, draws: [] }; },
 });
-const c = compileScene(scene({ sea: sea({ swell: [] }), things: [reads("slices", [headCopy.table, tail.table, full.table]), wakeOf], style: toon({ outline: 0.04 }), sun: [0, 1, 0], cameras: {} }));
+const c = compileScene(scene({ ground: sea({ swell: [] }), things: [reads("slices", [headCopy.table, tail.table, full.table]), wakeOf], style: toon({ outline: 0.04 }), sun: [0, 1, 0], cameras: {} }));
 const frame = c.frame(stateAt(c.artefact, 2.3));
 const table = (name: string) => frame.table(c.table(name));
 const ref = table(full.table.name);

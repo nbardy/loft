@@ -676,7 +676,7 @@ const around = (r: number, a: number, y: number, at: V3): [number, number, numbe
 const middle: V3 = [3, 3.5, 3];
 export const STILL_TIME = STILL;
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     spire, growth,
     body, head, lens, shutters, arms, ...hair,
