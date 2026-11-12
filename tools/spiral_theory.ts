@@ -12,6 +12,7 @@
 import { cameraMatrices, project } from "../src/host/camera.ts";
 import { GRID, U, bandEdges, shellTwin, vmath } from "../examples/bosses/titan/back/spiral_shell.ts";
 import { S, type Numbers } from "../examples/bosses/titan/numbers.ts";
+import { lightPlan, shoulderOf } from "../examples/bosses/titan/back/spiral.ts";
 
 type V = readonly [number, number, number];
 const { add, mul, dot, cross, unit } = vmath;
@@ -175,12 +176,13 @@ for (const e of EYES) { const c = add(e.root, e.reach); const a = px("game", c),
 
 // ---- 6. the light and the groves -------------------------------------------------------------------------------------
 console.log("\n== what stands on it");
-const LT = SP.light, lightFoot = twin.at(LT.back, LT.round), lightUp = twin.normal(LT.back, LT.round);
-const leanDir = unit(add([0, 1, 0], mul(unit([lightUp[0], 0, lightUp[2]]), LT.pose.lean)));
+// The light on the tip, as back/spiral.ts seats it; the groves on their whorls' shoulders.
+const LT = SP.light, LPl = lightPlan(n, twin), lightFoot = LPl.towerFoot, lightUp = LPl.out, leanDir = LPl.dir;
+const GROVES = SP.groves.map(([db, trees, radius]) => { const back = LPl.top.back + db; return [back, shoulderOf(twin, back), trees, radius] as const; });
 const lightTop = add(lightFoot, mul(leanDir, LT.height + 1.0 * LT.size + LT.pose.rise));
 console.log(`light: foot ${fv(lightFoot)} (the shell's normal there ${fv(lightUp)}), top ${fv(lightTop)}, ${fmt(lightTop[1] - WATER)} above the water`);
 for (const cam of ["game", "back", "far", "pick"] as const) { const a = px(cam, lightFoot), b = px(cam, lightTop); console.log(`  ${cam}: foot (${fmt(a[0], 0)}, ${fmt(a[1], 0)}) top (${fmt(b[0], 0)}, ${fmt(b[1], 0)}): ${fmt(Math.hypot(a[0] - b[0], a[1] - b[1]), 0)} px; the top is ${fmt(b[1], 0)} px below the frame's top`); }
-SP.groves.forEach(([back, round, trees, radius], i) => { const g = twin.at(back, round), q = px("game", g); console.log(`grove ${i}: ${trees} trees on turf ${radius} across at ${fv(g)}; game (${fmt(q[0], 0)}, ${fmt(q[1], 0)}), turf about ${fmt(radius * 2 * 31, 0)} px`); });
+GROVES.forEach(([back, round, trees, radius], i) => { const g = twin.at(back, round), q = px("game", g); console.log(`grove ${i}: ${trees} trees on turf ${radius} across at ${fv(g)}; game (${fmt(q[0], 0)}, ${fmt(q[1], 0)}), turf about ${fmt(radius * 2 * 31, 0)} px`); });
 
 // ---- 7. the throw ----------------------------------------------------------------------------------------------------
 {
@@ -228,7 +230,7 @@ if (sketch !== undefined) {
   for (let i = 0; i <= NUs; i++) for (let j = 0; j < NVs; j++) {
     const u = i / NUs, v = j / NVs, p = twin.drawn(u, v);
     if (p[1] < WATER) continue;
-    const phi = TAU * v, fold = Math.acos(Math.cos(phi));
+    const fold = (((-TAU * v) % TAU) + TAU) % TAU; // phi round the section, 0 to 2 pi (the drawn v runs against phi)
     const edge = EDGES.some(([a, b]) => Math.abs(fold - a) < 0.03 || Math.abs(fold - b) < 0.03), inBand = EDGES.some(([a, b]) => fold > a && fold < b);
     const rgb = u > U.throat ? dark : u > U.lip - 0.004 ? cream : edge ? [20, 18, 23] : inBand ? cream : brick;
     things.push({ p, rgb });
@@ -252,7 +254,7 @@ if (sketch !== undefined) {
   // The light and the groves' turf.
   tube(lightFoot, add(lightFoot, mul(leanDir, LT.height)), (LT.girth[0] + LT.girth[1]) / 2, coral);
   tube(add(lightFoot, mul(leanDir, LT.height)), lightTop, 0.56 * LT.size, dark);
-  for (const [back, round, , radius] of SP.groves) for (let i = 0; i < 300; i++) {
+  for (const [back, round, , radius] of GROVES) for (let i = 0; i < 300; i++) {
     const r = radius * Math.sqrt(i / 300), t = i * 2.39996, s = P.r * SP.growth ** -back;
     const q = twin.at(back + (r * Math.cos(t)) / (TAU * (P.c + P.r * Math.cos(round)) * SP.growth ** -back), round + (r * Math.sin(t)) / s), up = twin.normal(back, round);
     things.push({ p: add(q, mul(up, 0.08)), rgb: moss });
