@@ -796,8 +796,6 @@ Shells, horns, claws, teeth and tusks as one family: a cross-section growing alo
   - theta = curl * sin(pi m) or any curve of your own: S-bends and hooks.
 - **spiralLine**: `spiralTube`'s centre line, its radius along it and its up direction, named as `strand` takes them, so the tube is never a dead end (see `spiralTube` for the law, its limits and its relatives).
   `function spiralLine(spec: Pick<SpiralTubeSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 }`
-  relatives:
-  - `spiralTube`'s centre line, its radius along it and its up direction, named as `strand` takes them, so the tube is never a dead end (see `spiralTube` for the law, its limits and its relatives).
 - **whorl**: Growth-line coordinate of a shell point: whorls from the apex, for painting bands and ridges in its own coordinates.
   `const whorl = (u: F, turns: number): F =>`
 - **ridgePhase**: 0..1 within each of `perTurn` ridges per whorl, for paint that follows the folded ridges.
@@ -912,8 +910,6 @@ The closed forms soft things are made of: the optical depth of a Gaussian densit
   `const FAR = 1e4`
 - **SIMPSON**: Below this s L the segment integral uses Simpson's rule (relative error of the closed form there would be ~1e-5).
   `const SIMPSON = 0.05`
-  relatives:
-  - Below this s L the segment integral uses Simpson's rule (relative error of the closed form there would be ~1e-5).
 
 Types:
 - **Seg**: What a segment integral returns: unit-density optical depth, its centroid along the ray, and its spread (one sigma). `type Seg = { tau: number; tc: number; spread: number }`
@@ -1811,8 +1807,6 @@ Remapping, coordinates and colour helpers, all composed from the operators in ex
   `function smax(a: In<"f32">, b: In<"f32">, k: In<"f32">): Expr<"f32">`
 - **luminance**: Rec. 709 relative luminance of a linear rgb colour: in [0, 1] for rgb in [0, 1].
   `function luminance(rgb: In<"vec3">): Expr<"f32">`
-  relatives:
-  - Rec. 709 relative luminance of a linear rgb colour: in [0, 1] for rgb in [0, 1].
 - **hsv**: rgb in [0, 1] for hue h (a turn: 0 and 1 are both red, wraps outside [0, 1]), saturation s and value v in [0, 1].
   `function hsv(h: In<"f32">, s: In<"f32">, v: In<"f32">): Expr<"vec3">`
 

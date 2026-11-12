@@ -222,10 +222,11 @@ export function firstSentence(doc: string): string {
 
 /**
  * The lines of a comment's list introduced by a line matching `header`: the bullets that follow it, up to the first line
- * that is not a bullet. With no bullets after it, the header's own sentence. This is how a component's comment states
+ * that is not a bullet. With no bullets after it, the header's own sentence when `sentences` (a limit stated in prose
+ * is still a limit; a mention of relatives without a list is not a list). This is how a component's comment states
  * what it cannot do and which relatives to try (`spiralTube` in src/geom/spiral.ts is the worked example).
  */
-function listUnder(doc: string, header: RegExp): string[] {
+function listUnder(doc: string, header: RegExp, sentences: boolean): string[] {
   const out: string[] = [];
   const lines = doc.split("\n");
   for (let i = 0; i < lines.length; i++) {
@@ -233,15 +234,15 @@ function listUnder(doc: string, header: RegExp): string[] {
     const items: string[] = [];
     for (let j = i + 1; j < lines.length && lines[j]!.startsWith("- "); j++) items.push(lines[j]!.slice(2).trim());
     if (items.length > 0) out.push(...items);
-    else out.push(...lines[i]!.split(/(?<=[.;])\s+(?=[A-Z])/).filter((x) => header.test(x)).map((x) => x.trim()));
+    else if (sentences) out.push(...lines[i]!.split(/(?<=[.;])\s+(?=[A-Z])/).filter((x) => header.test(x)).map((x) => x.trim()));
   }
   return out;
 }
 
 /** What the thing cannot do, as its comment states it. A limit that is not written down is read as the whole space. */
-export const cannotLines = (doc: string): string[] => listUnder(doc, /\bcannot\b|\bcan't\b/i);
+export const cannotLines = (doc: string): string[] => listUnder(doc, /\bcannot\b|\bcan't\b/i, true);
 /** The relatives its comment invites a reader to try: other shapes from similar mathematics. */
-export const relativesLines = (doc: string): string[] => listUnder(doc, /\brelatives?\b/i);
+export const relativesLines = (doc: string): string[] => listUnder(doc, /\brelatives?\b/i, false);
 
 /** The first sentence of a file's opening comment: what the module is for. */
 export function moduleLine(file: string): string {
