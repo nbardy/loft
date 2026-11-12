@@ -1442,6 +1442,89 @@ front. The branch is left at the wheel, the form that reads; it fails the cleara
 take: route the great claw's slam wind-up outside the wheel (the rig is another worker's), or accept a smaller wheel
 (about 2.4 across the section: face about 0.4 of the body at `game`).
 
+### The hermit (2026-11-12, a third engineer): the crab comes out of the shell
+
+The owner, with two photographs (`hermit_reference/`): "study the way the shell and body line up; ours should line up
+better from multiple views." In them the crab comes out of the shell: the lip is a hood over the carapace's back, the
+rear of the body is inside, every leg leaves by the mouth, the shell's bulk hangs behind and reaches the ground, and the
+body's axis runs into the mouth from the front, the side and above. Ours was a whole round crab with a wheel standing on
+its back (`out/spiral/bold_sheet.webp`). Both earlier passes judged the shell against a body that could not be inside
+it; the body plan changes here, not only the shell's pose.
+
+**What Raup's coil allows, and why the pose is this one (the reasoning is mine; the coil is Raup's).**
+
+1. *A mouth facing forward puts the coil's face on a flank.* In the closed form the mouth's section lies in a plane that
+   holds the axis, so a mouth facing +x needs an axis across the body (along z). The spire then points to one side, and
+   the face (the spiral seen down the axis) is on that flank: what the pick shows, now for a reason.
+2. *The hand follows from the side.* The outer lip must be on top (it is the hood) and the mouth must face forward. With
+   the spire to the crab's left, away from the great claw, only a left-handed coil does both; the right-handed one faces
+   its mouth backward. A real hermit wears a right-handed shell with its spire to the right and its large claw on the
+   left; ours carries its great claw on the right, so it is that animal's mirror, and so is its shell. New: `hand`
+   (`dextral` | `sinistral`, read once by `handOf`), which mirrors the coil about its axis.
+3. *The body fills the opening, so the coil's centre lies under the body.* The mouth's opening runs from the axis (the
+   previous whorl fills the inner `1/W` of it) out to the outer lip, `2r (1 - 1/W)` deep; the carapace is 2.5 thick plus
+   its gaps. So the axis lies at least `2r/W` below the carapace's underside, which is 0.25 above the water: with a level
+   body the curl is under the sea, and from the flank only a cream fan of the last whorl shows (sketched:
+   `out/hermit/c4.webp`). Two ways lift it. Turning the mouth to face down lifts the coil, but the lip's feet on the flanks
+   then fall behind the carapace's tail (x -2.4 and -1.5 at 50 degrees down): a visor, the whole flank still showing, today's
+   crab-with-a-shell again. Or the body's rear climbs into the shell, as in both photographs. Chosen: the carapace's tail
+   rises 2.2 (`carapace.rise`, a new number read by the base carapace; 0 for every other crab, so the bruiser, which
+   shares the islander's body, is unchanged) and the mouth faces 33 degrees down along it.
+4. *The claw caps the hood.* The great claw's slam wind-up sweeps x 1.2 to 2.5, y 3 to 4 over the carapace; the lip's top
+   may come no further forward than x 2.2 at y 2.9 (crusher 0.17 clear there), which is why the lip crosses the carapace
+   at its middle and not right behind the eyestalks (x 4.1) as in the photographs.
+5. *A larger W shrinks the rear.* At W = 1.75 the shell ran 9 to 11 long (1.5 times the visible body); W = 3 (a globose
+   shell, its last whorl most of it, as hermits choose) brings it to 7.9.
+
+**The pose** (`n.spiral`; searched with `out/hermit/tools/score.ts` against the limbs' surfaces sampled over the cycle
+and the routine, then `spiral_views.ts`):
+
+| number | value | what it does |
+|---|---|---|
+| `hand` | sinistral | the mirror of the pick's coil: spire left, outer lip on top, mouth forward |
+| `growth`, `whorls`, `spire` | 3.0, 3, 0.7 | a globose shell; the curl 0.9 above the water on the left flank |
+| `mouth` | radial 2.7, axial 4.6 | an opening 9.2 across (the carapace is 8.2) and 3.6 deep over the inner whorl |
+| `tilt`, `rake` | 0.08, 3.22 | the axis to the left, a little up and forward: the lip square to the body from above (0 degrees) |
+| `mouthAt` | 0.75 | the mouth faces 33 degrees down, along the risen body |
+| `seat` | in 2.9, up 2.1, side 0.3, lip 0.8 | the lip's top at (2.16, 2.90, -0.65); the mouth's centre at z 0.09 |
+| `lip` | flare 0.12, thick 0.15 | a thinner roll: from the low front the 0.3 roll was a broad cream brim |
+| `coil.cream` | 0.45 | at W = 3 the last whorl's strip is most of the face; 0.62 printed it nearly all cream |
+| `groves` | 0.10 and 0.19 turns behind the light | the summit is 0.1 turn behind the lip; toward the mouth there is no shell |
+| `carapace.rise` (islander) | 2.2 | the tail climbs into the shell |
+
+**How the legs leave: through the mouth, forward (option a), the rearmost pair inside.** `legs/hermit.ts`: the base legs'
+front three pairs, roots moved forward (3.6, 2.8, 2.0; were 3.2, 2.0, 0.8) and feet fanned forward (46, 64, 80 degrees from
+ahead; were 50, 67, 85 and 106). The rearmost pair stays in the rig's footing (its feet still stand, and re-plant unseen)
+and is not drawn: in a hermit it is inside the shell. Not option b (a shell open below): its rear feet stand at x -2.6,
+under the shell's bulk, so its legs would still pass through the whorl; and the photographs show no leg behind the lip.
+Three pairs, not two: the third pair is what fans the side view's legs back toward the shell's flank, as the side
+photograph's do. Nothing needed from the rig or the stance: the feet are numbers of the option, and the base legs draw
+the first `pairs` of the rig's four feet a side (`banded`).
+
+**The clearance rule for a hermit**, measured by `spiral_clear.ts` (now: each point inside the shell is in the mouth,
+only the last whorl near the lip, or in the wall, anywhere else; `shellTwin`'s `where`): no limb in the wall; the
+carapace never in the wall; its least gap to the shell outside it is the throat under the lip.
+
+### Predictions (written before the first render; the islander as built on the CPU, 1280 x 800)
+
+| | predicted |
+|---|---|
+| `lowFront` at t = 1.0, 3.6, 11.3, 12.4, 17.5 | the lip's arc over the carapace's whole width (593 of its 593 columns at rest, sketched) and never touching it: the throat is at least 0.34 over the cycle; both eyes at least 1.9 in front of the lip (their least x 4.04 at t = 12.4, the lip's front 2.16) |
+| the throat from `lowFront` | a dark crescent between the lip and the carapace, about 8 px on average across it (the sketch) |
+| side (`lowLeft`) | the shell 7.89 long above the water against the visible body's 6.16 (the lip's front 2.38 to the cutter's tip 8.54): **1.28**; its lowest point 2.1 under the water; 5.15 tall above the water (the carapace 2.75) |
+| from above | the lip square to the body (0 degrees), the mouth's centre 0.09 off the body's line; the tube itself runs back 28 degrees toward the spire |
+| inside | **27%** of the carapace's surface at rest; the flanks show back to x -0.39 (the brief: a third or more; a predicted miss, held by the claw's cap on the lip) |
+| clear, one 22 s cycle (`spiral_clear.ts`) | nothing through the wall; great claw 0.12 (its wind-up, t = 11.7); legs 0.90 or more; eyes 2.09; cutter 1.98; the carapace never in the wall |
+| clear, the group routine | nothing through the wall; legs 0.56, great claw 1.06, eyes 2.08 |
+| coil from `lowLeft` | 3 turns crossed (2 asked); the curl 0.86 above the water |
+| the light | foot (-0.98, 3.55, -0.98), top 6.9 above the water; in frame from `lowFront` (its top 177 px down) and `game` (117 px); 2.2 from the great claw at its nearest |
+| checks | islander 14 (its reach check now over six legs); base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 18, bruiser 16; the lineup 56 |
+| base `game` hashes | unchanged: `0c1b1e4368820ff8`, `0db3c25b4d11121b`, `2315edeb83c975e9` |
+| frame at `game` | two legs fewer (about 3,000 triangles with their outlines), the shell's grid unchanged: within 0.1 ms of main's, if anything faster |
+
+Wrong if: from `lowLeft` the coil's curl is under the foam or reads as a fan; from `lowFront` the lip sits on the
+carapace with no dark between, or the eyes stand behind it; a leg is seen coming out of the shell's wall.
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a
