@@ -209,6 +209,24 @@ The pattern for opening one, as done for `horn` (now `spiralTube`): split it int
 section, lines or field, named as the level below takes them) and a **composition** a few lines long. Nothing about the
 component's own call changes; the picture is byte-identical (the base crab's three `game` hashes, checked).
 
+#### Plan for opening the rest (written before building, 2026-11-12)
+
+Each row: the law (what is tied to what), the mechanism one step down, the new name, the relatives its comment names.
+Old names stay as one-line aliases until integration renames the callers.
+
+| Today | Law | Mechanism (signature) | New name | Relatives the comment names |
+|---|---|---|---|---|
+| `shell` | a section carried round an axis while every length grows by W a whorl: point = W^(turns (u - 1)) R(2 pi turns u) [(c + x) out + (-T c + y) axis], c = a (1 + D) / (1 - D) | `coilAt(law): (u, across, along) => P3` places any point of a section at whorl position u (u may run backward: a throat); `coil({ section })` takes an ellipse `{ aspect, ridges }` or a curve `(u, phi) => [across, along]`; `coilPlan(law)` in plain numbers: the centre's offset, the arc of a section the next whorl out covers (the suture), and which whorls hold a point (the CPU twin's inside test, from `titan/back/spiral_shell.ts`) | `coil` (`ShellSpec` to `CoilSpec`; `coil: "right"` becomes `hand`) | a section that changes along u (a keel that grows, a mouth that flares); spire and growth as functions (Raup's T varying: a turban that flattens); W = 1 with a pitch (a spring, a helix: not this law); an Archimedean coil (fixed step per turn) |
+| `crest` | a ruled sheet between a root on the host's line v (rho 0.85) and an edge raised along the section's outward direction plus rake along the spine, scalloped by sag sin^2(pi rays x) | `sheetOnEdges(spec): { root, edge }` as `sheet(root, edge)` takes them; `v` and `rake` also take functions of x | `sheetOn` | a root that winds round the body (v a function: a spiral frill); a curled or doubled edge; a curved sheet (`surface` on the host's frame, not ruled); `fan` between rays |
+| `fan` | already open: rays are curves, sag and scallop expressions, catenary across each gap | (is the mechanism) | keep `fan` | rays from `bent` stalks; a fan of fans; a different gap profile than the catenary |
+| `limb` | two or three straight segments, the middle joint by the law of cosines on the `bend` side | already open: `joints`, `knots`, `spine`; `polyline` for more points | `chain` (`LimbSpec`, `Limb` to `ChainSpec`, `Chain`) | four or more segments (FABRIK, or chains of chains through `polyline`); curved segments (`bent` per segment); joint limits |
+| `hull` | stations from a lines plan (half-breadth, keel, sheer, superellipse bilge with tumblehome), lofted by Catmull-Rom along the length | the stations exist (`Hull.stations`, `Hull.section`); the general mechanism is the map algebra's `loft(curves)` | keep `hull` (a lines plan is a hull's) | any lofted body through your own stations: a pod, a canoe, a fish; `lathe` for round ones |
+| `ship` | 14 numbers pick one of three mast plans and decide everything else | not opened in code: its parts (`spar`, sails, pennant) are private | keep; **recommend moving to examples as a recipe** (a subject, not a shape) | |
+| `lines` | ropes between moving end points, parabolic sag, one stroke | already open (end points are expressions); `sag` becomes an expression | `ropes` (the type is already `Rope`; `lines` collides with the hull's `Lines`) | catenary sag; ropes along a curve (a net) |
+| `cloud` | puffs in a shape of revolution: three tiers by hash, flattened base, each puff boiling in its own noise and drifting | `billows(places, motion): Cloud` boils and drifts any list of puffs; `profile` also takes `(h, bearing) => share` | keep `cloud` (the shape's word; it is smoke, steam and dust as well) | a smoke ring, a trail along a curve, a column bent by wind: places from any curve or field |
+| `pendulum` | damped driven oscillator, steady state plus impulse response, linear in drives | already open: drives are a sum type summed by `answer` | keep | a piecewise-linear pivot path is exactly a sum of jolts at its keys; a double pendulum is not linear (not this) |
+| `strand`, `bent`, `gait`, `gripper` | already open | | keep | four-part comments only |
+
 ### Names: geometry in the library, subjects in the examples (2026-11-12, the owner's rule)
 
 A name is a pull as well. A function called `horn` gets used for horns; called `spiralTube` it gets used for whatever
