@@ -831,3 +831,165 @@ change while they travel; at this distance it reads as the same collar.
 
 Weak still: the square's line (38% of the height) is the smallest group picture; the samurai's face at the release; at
 the turn one face is behind the islander; the islander's own solo swings its claw across its face.
+
+## The song (2026-11-12): composed before the synthesiser
+
+The owner, on the drilled group: "can we go a bit deeper on this, I'm thinking we want to make a little bit of a crab
+style k pop song for background". What I take it to mean: a short, catchy, original pop-dance instrumental in the
+manner of Korean idol pop (tight drums, a bass that moves, bright chord stabs, one hook you can hum), with a crab's
+character in its sounds, that hits what the dance hits and loops with it. Nobody can hear it before the owner does, so
+the theory carries the music and instruments carry the proof.
+
+### What is inherited and what is mine
+
+Inherited from pop production: four on the floor under a chorus, claps on the backbeat, a sidechained bass pumping
+against the kick, saw-stack chord stabs, a riser and a beat of silence before the drop, a formant synth as a wordless
+"voice", the minor key's VI-III-VII-i loop, a lookahead limiter to -14 LUFS (what the streaming and social platforms
+normalise to). Inherited from Japanese music: the plucked koto and the minor pentatonic, the taiko and the shrine
+bell.
+
+Mine: (1) **the song is a function of the dance's score**: it imports `DANCE` and the attacks' numbers (`onTheBeat`)
+and reads every cue from them: the slam's count from `crushFirst`, the grip from `grabClose`, the release from the
+grip plus its hold, the whip from the throw's stroke, the stabs from the score's unison keys, the canon's five notes
+from the canon key's per-member delays, the wide chord from the mirror key, the breaks from the `Solo` entries, the last
+hit and its ring from the key with `hit`. Move a key and the song follows; nothing in the song retypes a count the score
+holds. (2) **The crabs are their own percussion section**: the woodblock clack is the one sound reserved to the claws,
+and it plays on the score's `click` (a key's count of snaps, a half count apart) and nowhere else. Each member's clack is
+tuned to its own degree of the pentatonic (fiddler A5, samurai C6, islander D6, bruiser E6, spider crab G6), so a unison
+snap of five claws is a chord, and a canon of snaps a run. (3) **The stereo picture is the stage**: every per-member
+sound (a clack, a canon note, a soloist's signature) is panned by where that member stands in the formation the score
+has it in at that count (the camera's left is the left speaker). (4) **The groove and the kick are the same thing**: the
+routine's groove bottoms the knees on every count; the chorus kick is on every count, so four on the floor is the
+dance's own pulse. (5) **The loop is closed by construction**, the way the routine's tracks are: every voice is written
+into one period's buffer at its sample index modulo the period, so a tail that rings past the end lands at the top;
+stateful effects (the reverb, the limiter) are run over two periods and the second kept.
+
+### Key, scale and harmony
+
+**A minor** (A natural minor, A B C D E F G) for the harmony; every melodic voice (hook, koto, canon, bells, clacks)
+on **A minor pentatonic** (A C D E G), so B and F occur only as chord tones. Chords change on bar lines except where
+the score puts a hit; the three impacts all land on the tonic. Bars are four counts; bar 1 is counts 0 to 3.
+
+| From count | Chord | Why there |
+|---|---|---|
+| 62 (the button) | Am, wide (A1 A2 E3 C4 E4 A4 C5 E5), rings over the seam | the last hit, held across the loop |
+| 4 | F | bar 2 of the verse |
+| 8 (the crouch) | G | the slam's load: VII wants to resolve |
+| 12 (the slam) | Am | impact on the tonic |
+| 16 (the throw begins) | Dm | pre-chorus: iv |
+| 20 | F | VI (the grips close on 21: a stab of F) |
+| 24 | G | VII, the whip on 25, silence on its second half |
+| 26 (release) | Am | the drop on the tonic |
+| 28 | F | the hook's loop VI-III-VII-i |
+| 32 | C | |
+| 36 | G | |
+| 40 | Am | |
+| 44 (the canon) | F | five notes falling over VI |
+| 47 (the mirror) | G, wide (G2 D3 B3 D4 A4) | an open VII before the breaks |
+| 48 (the solos) | Am, 52 F, 56 G | the breaks keep the loop's colour |
+| 58 to 61 (travel back) | G | the build back to the button |
+
+Why: i-VI-VII and the VI-III-VII-i loop (the rotation of vi-IV-I-V) are the commonest progressions of idol-pop
+choruses; the pre-chorus iv-VI-VII-i puts the bass on a rising line D-F-G-A into the drop. Bass on the root on every
+downbeat.
+
+### The hook (the formant "voice", doubled an octave up by the koto at -10 dB)
+
+Four bars from count 28 (one rhythm, a sequence that climbs then answers falling). Counts from 28, note, length in counts:
+
+| Bar (chord) | Notes |
+|---|---|
+| 1 (F) | 0 C5 0.5, 0.5 C5 0.5, 1 D5 0.5, **1.5 A5 1.0**, 2.5 G5 0.5, 3 D5 1.0 |
+| 2 (C) | 4 C5, 4.5 C5, 5 D5, **5.5 G5 1.0**, 6.5 E5 0.5, 7 C5 1.0 |
+| 3 (G) | 8 D5, 8.5 D5, 9 E5, **9.5 A5 1.0**, 10.5 G5 0.5, 11 D5 1.0 |
+| 4 (Am) | 12 E5, 12.5 D5, 13 C5, **13.5 A4 1.5** |
+
+The rhythm (three eighths, a held note across the beat, an eighth, a quarter) is the hook; the pitch climbs a step a bar
+and the fourth bar answers down to the root. Long notes sing "ah" (formants 730, 1090, 2440 Hz), short ones "eh" (530,
+1840, 2480). No E over F and no C over G, so the hook never sits a semitone from a chord tone.
+
+**The canon** (count 44, one note per member at the canon key's own delays, panned by place): A5 G5 D5 C5 A4, falling.
+
+**The verse koto** (counts 1 to 7, an answer to nobody: the woodblock-print world before the pop arrives): 1 E5, 1.5
+G5, 2 A5, 2.75 G5, 3 E5, 3.5 D5 | 4 C5, 4.5 D5, 5 A4, 6 C5, 6.5 D5, 7 G4.
+
+### Drums and arrangement against the score
+
+| Counts (from the score) | Section | Kick | Clap | Hats | Pitched | Other |
+|---|---|---|---|---|---|---|
+| 62 to 0.5 | the button's hold | (impact on 62) | | | wide Am, bass A1, ringing | the groove is stopped: nothing new |
+| 1 to 7 | verse: leans, sidestep | even counts (2, 4, 6) | odd counts, -6 dB | eighths on the "and" | koto riff, bass light (root on 8ths) | bubbles, sea wash low |
+| 8 to 11.75 | build: crouch, claws up on 9 | 8 | eighths 9 to 10.5, sixteenths 11 to 11.75 | | G pad swelling | sea wash's cutoff 300 to 4000 Hz, riser; silent from 11.75 |
+| 12 | **the slam** | impact | | | Am stab, wide; bass A1 2 counts | |
+| 13 to 15 | aftermath | 14 | | eighths | koto falling figure | sea wash, bubbles |
+| 16 to 24.75 | pre-chorus: the throw | every count to 24 | 17, 19; eighths 20 to 23.5; sixteenths 24 to 24.75 | sixteenths, rising | bass 8ths on Dm F G; F stab on the grip (21) | riser 16 to 25.5 |
+| 25 | the whip | | | | | a falling whoosh; silence from 25.5 |
+| 26 | **the release** | impact | | | Am stab, wide | the drop |
+| 27 to 47 | chorus | every count | counts 29, 31, 33 ... (the backbeat) | sixteenths, an open hat on every "and" | hook 28 to 43, pad, bass bouncing in octaves, **a stab on every unison key** | |
+| 44 to 46 | canon | every count | backbeat | | five falling notes, one per member | |
+| 47 | mirror | 47 | 47 | | the wide G | |
+| 48 to 57 | breaks: five solos | each soloist's first accent | | eighths, -6 dB | pad low, bass root on the accent | each soloist's signature on its accents |
+| 58 to 61.75 | travel back | every count | eighths 58 to 59.5, sixteenths 60 to 61.75 | sixteenths | bass eighths on G | riser; silent from 61.75 |
+| 62 | **the button** | impact | | | the wide Am rings 3 s | |
+| any key with `click: n` | the claws | | | | | n clacks a half count apart from the key's count, per member (canon delays included) |
+
+The stabs fall on the chorus's unison keys: today 27, 29, 30, 31, 32, 38, 39, 40, 41, 42, 43 (eleven).
+
+The signatures (member order, each on its solo's accents, panned to the soloist's place):
+
+| Member | Signature | Sound |
+|---|---|---|
+| fiddler | a fiddle run, four sixteenths an accent | saw, bowed attack 40 ms, vibrato 6 Hz 25 cents, body resonances 450 Hz and 2.8 kHz |
+| samurai (castle) | taiko: don, don, do-ko, don | sine 95 to 60 Hz decaying 0.5 s, a skin of low-passed noise |
+| islander (spiral shell, lighthouse) | a spiral of glass bells climbing two octaves in sixteenths | FM, ratio 2, index 2.5 decaying to 0.5 over 0.6 s |
+| bruiser (terraced island) | two brass growls, root then fifth, in octaves | saw stack, filter opening 300 to 2500 Hz in 60 ms, driven |
+| spider crab (shrine, lanterns) | a temple bell under suzu jingles | partials 1, 2, 2.76, 5.4 decaying 2 s; twelve sine pings 4 to 9 kHz scattered over 60 ms |
+
+### Sound design
+
+| Voice | Oscillators | Envelope | Filter, other |
+|---|---|---|---|
+| kick | sine, pitch 160 to 48 Hz (time constant 35 ms) | attack 0.5 ms, decay 0.32 s | a 4 ms noise click; tanh drive |
+| clap | three noise bursts 9 ms apart, then a tail | bursts 6 ms, tail 120 ms | band-pass 1.4 kHz, Q 0.7; left and right decorrelated |
+| hats | white noise | closed 35 ms, open 220 ms | two high-passes at 7 kHz |
+| clack (claws only) | two damped sines at f and 2.76 f, a 1.5 ms noise tick | 25 ms and 12 ms | f the member's degree |
+| bubbles | sine gliding up 500 to 1500 Hz in 50 ms | 2 ms up, 40 ms down | |
+| sea wash | white noise | the section's level | two-pole low-pass, its cutoff the section's |
+| riser, whoosh | white noise | +18 dB over the riser; the whoosh falls | resonant band-pass sweeping 400 to 8000 Hz (whoosh 6000 to 300) |
+| impact | sine 70 to 32 Hz decaying 1.2 s, a noise crash low-passed at 3 kHz decaying 0.8 s, a kick | | |
+| bass | sine sub and a saw at the root | attack 3 ms, release 30 ms | saw low-passed, cutoff 2200 to 400 Hz in 120 ms; sidechained |
+| stabs, pad, wide chords | three saws a note, -10, 0, +10 cents (left -10 and 0, right 0 and +10) | stab 0.18 s; pad 80 ms up, 300 ms down; wide 3 s | two-pole low-pass: stab 6 kHz to 1.2 kHz in 150 ms, pad 900 Hz |
+| koto | additive, 16 harmonics plucked at 0.23 of the string, partial n decaying 1.2 s / (1 + 0.6 (n - 1)) | a 2 ms noise pluck | |
+| hook voice | a saw, doubled 6 cents apart left and right | attack 15 ms, release 60 ms, vibrato 5.5 Hz 15 cents after 150 ms | three band-passes at the vowel's formants (gains 1, 0.5, 0.3) |
+
+**Mix.** Bands: sub (below 60 Hz) the kick's tail, the impacts' boom and the bass's sub; bass (60 to 250) the kick's
+body, the bass, the taiko; mids (250 to 2 k) the stabs, pad, koto, the hook's first formants, the clap's body;
+presence (2 k to 6 k) the hook's third formant, saw harmonics, clacks, koto attacks; air (above 6 k) hats, risers, the
+crash, the suzu. Levels before the master, peak dBFS in the chorus: kick -6, impacts -4, clap -12, hats -20, bass -10,
+stabs -12, hook -12, koto -16, pad -24, clacks -12, signatures -10, sea -28 (to -18 under the builds). The bass and the
+pad are ducked by every kick, -10 dB at the kick, back in 0.15 s. A reverb (four-line feedback delay network, RT60
+1.4 s, damped above 5 kHz) is sent the koto, hook, stabs, canon, signatures and wide chords; the drums stay dry but for
+the clap. The master: a lookahead limiter (5 ms ahead, 80 ms release, ceiling -1.3 dBFS), its gain set so the loop is
+-14 LUFS integrated.
+
+### Predicted, before the synthesiser exists
+
+| | Predicted |
+|---|---|
+| kick, clap, impact onsets (each voice rendered alone, onset where it first passes 5% of its own peak) | every one within 0.1 ms of its scheduled time (sample-exact placement; the kick's sine reaches 5% in 0.05 ms) |
+| clacks | none today: the score has no `click` yet, so the clack stem is silent (zero samples above zero). With a probe score that adds clicks, each clack within 0.1 ms of its click |
+| impacts | on counts 12, 26, 62 |
+| peak | sample peak -1.3 dBFS (the ceiling), true peak about -1.0; no clipped samples |
+| loudness | -14.0 LUFS integrated (set by my own BS.1770 measure; `ffmpeg ebur128` within 0.3) |
+| loudness by section (mean momentary) | verse -18, build -16, pre-chorus -14, chorus -12.5, breaks -16 LUFS: **the chorus 5.5 dB louder than the verse** |
+| energy by band, dB of the section's own total, verse / chorus | sub -5 / -6, bass -4 / -4, mids -8 / -7, presence -17 / -13, air -24 / -19: **the chorus brighter by 4 dB in presence and 5 in air** (each band within 4 dB) |
+| the seam (two periods back to back) | the largest sample step within 2 ms of the seam no larger than the largest in the 100 ms around it; momentary loudness across the seam smooth (the ring's decay, no bump over 0.5 dB) |
+| harmony | every pitched note in A natural minor, every melodic note in the pentatonic, the bass on the chord's root on every downbeat it plays, no two overlapping pitched notes 1 or 13 semitones apart: zero exceptions |
+| muxed clips | the video stream byte for byte the same; the audio AAC 48 kHz stereo, 32.000 s, its decoded samples aligned to the WAV within one sample |
+
+### What will most likely sound wrong (before hearing it)
+
+The formant "voice" is the riskiest: three band-passes on a saw read as a vowel only with a good source and vibrato; it
+may sound like a kazoo. The koto from additive partials may sound like a harp or a toy. A drop on the third beat of a
+bar (the release is on 26) is unusual in pop; the chorus's bar lines then fall two counts later (28), so the drop may
+feel early. Five identical sidesteps of pitch in a falling canon may sound like a scale exercise.
