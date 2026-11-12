@@ -7,6 +7,16 @@
 //    by a pixel or two) still gives clean edges, and nothing swims when the mass moves: shapes grow and shrink in place.
 //  - a lean: the direction on the water the heads curl toward, or none.
 //  - a head: the world radius of the largest curled head. Every other size follows from it.
+// It returns coverage (`White`: fill and line), never colour: the caller prints it in its own inks (src/style/foam.ts,
+// `printLayers`).
+//
+// Cannot: white water that is not flat on the water (a crest that stands up, spray in the air: those are soft things,
+// src/soft/); motion of its own (shapes grow and shrink in place as the mass changes; nothing flows along the water); a
+// head that curls in a direction that varies within one head.
+// Going past it: any mass is accepted, so a style or an event can make one from anything it can compute (a wake from a
+// path, a ring from a time). Relatives: the heads' lattice laid in polar coordinates round a centre (a crown of curls
+// round a splash, as `crown` does with fingers); droplets whose cell size follows the mass (finer spray far from the
+// body); the roll's lobes cut by the swell's printed lines (`swellLines.off`) so the foam rides the lines.
 
 import { abs, add, and, atan2, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, saturate, select, smoothstep, step, sub, vec2, type Expr } from "../expr.ts";
 import { hash22 } from "../lib/index.ts";

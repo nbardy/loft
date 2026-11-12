@@ -12,6 +12,19 @@
 // white line beside the key line (the print); two and three hard tones and a key light kept off the lens (cel
 // animation). Ours: the terminator measured round a form's section, the block carried in the picture's alpha, hatching
 // whose line count follows the screen.
+//
+// Any style lights its bodies by a recipe with `litBodies(recipe, ownBlock, ink, after)`: woodblock over its print rule,
+// toon over its bands, sketch over bare paper.
+//
+// Cannot: more than one of each treatment (one hatch direction, one rim, one key per treatment); light that is not one
+// direction for the whole picture (a lamp, a point light falling off); colour in the shadow other than one block ink
+// (a shadow that turns cooler on blue paint and warmer on red); hatching anywhere but rings along a body's length (or
+// level lines on a traced solid).
+// Going past it: `lit` returns the colour and the tone separately, so a style can combine two recipes' tones with `min`
+// (cross-hatching: a second hatch whose terminator sits deeper), choose an ink by the tone instead of overprinting one,
+// or read `keyOf` for a light of its own. Relatives: a tone that is a stipple instead of lines (dots on a lattice in the
+// anchor, their radius from the same terminator measure: the stipple foam's law moved onto the body); a hatch whose
+// spacing follows the paint's value (darker paints closer lines, which is how an etcher holds local colour without ink).
 
 import { abs, add, cross, div, dot, exp, f, floor, fract, gt, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec2, vec3, type Expr } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
