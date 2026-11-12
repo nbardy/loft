@@ -27,6 +27,8 @@ export const ATTACK_COUNTS = { slam: 12, grip: 22, release: 24, lands: 30 } as c
 const UP = [0.2, 0.76, 0.12] as const, OUT = [0.2, 0.28, 0.76] as const, LOW = [0.45, 0.05, 0.6] as const;
 /** The islander's solo: the claw high and out to its side, clear of its face and shell. */
 const HIGH_OUT = [0.1, 0.55, 0.85] as const;
+/** The centre's great claw in the button: up and a little out, clear of its face and of the samurai's. */
+const CROWN = [0.15, 0.72, 0.3] as const;
 /** The chorus's quarter turn (docs/lineup.md, "Deeper"): radians to the crab's right. */
 const TURN = 0.4;
 
@@ -95,7 +97,10 @@ export const DANCE = routine({
     { at: 58, claw: "rest", level: 0 },
     { at: 58.5, click: 1 }, { at: 59.5, click: 1 }, { at: 60, click: 4 },
     { at: 62, go: "V", over: 4 },
-    { at: 62, hit: 2.5, claw: UP, small: OUT, level: 1 },
+    // The button (the thumbnail): the centre's great claw held high and out to its side, the others straight up, so the
+    // claws make a crown over the V and the centre's face is not behind its own hand (with every claw up, it was).
+    { at: 62, hit: 2.5, small: OUT, level: 1 },
+    { at: 62, who: { only: [0, 1, 3, 4] }, hit: 2.5, claw: UP }, { at: 62, who: { only: [2] }, hit: 2.5, claw: CROWN },
   ],
 });
 
