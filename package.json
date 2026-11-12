@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Loft: 3D bodies as coordinate systems, authored as code, compiled to WGSL + tables for any WebGPU host.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core.ts",
+    "./shapes": "./src/shapes.ts",
+    "./motion": "./src/motion.ts",
+    "./actions": "./src/actions.ts",
+    "./checks": "./src/checks.ts",
+    "./styles": "./src/styles.ts"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",

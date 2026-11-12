@@ -1,0 +1,4 @@
+// Styles layer: how a scene is painted (toon and woodblock looks, palettes, light, water and sky recipes).
+// Appearance only; no geometry lives here.
+export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type ToonSpec } from "./style.ts";
+export { STYLES, STYLE_NAMES, styleNamed, withStyle, withLight, light, LIGHT, type LightName, type LightRecipe, woodblock, print, foam, marksAs, paint, seaPalette, LOOKS, REFERENCE_PAINT, type LookName, type WoodblockLook, type Warm, type Mottle, type LineWeight, type SeaPalette, biolume, papercraft, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type StyleName, type Accent, type ContactFoam, type MarksPrint, type HeadSize, type AccentHue, type AccentInk, type InkKey, type Print, type WoodblockEye, type WoodblockInks, type WoodblockSky, type WoodblockSpec } from "./style/index.ts";
