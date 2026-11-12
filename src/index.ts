@@ -58,3 +58,4 @@ export { coil, coilAt, coilPlan, COIL_TOPOLOGY, type CoilLaw, type CoilSection, 
 export { sheetOn, sheetOnEdges, type SheetOnSpec } from "./geom/crest.ts";
 export { chain, type Chain, type ChainSpec } from "./geom/limb.ts";
 export { ropes, type RopesSpec } from "./geom/lines.ts";
+export { billows, type BillowSpec, type PuffPlace } from "./soft/cloud.ts";
