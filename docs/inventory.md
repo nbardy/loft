@@ -61,9 +61,9 @@ All **library**.
 
 | Part | Where | Status |
 |---|---|---|
-| Strand (a swept body with tips and paint), crest, fan | `src/geom/strand.ts`, `crest.ts`, `fan.ts` | library |
-| Limb (two or three segments by closed-form inverse kinematics) | `src/geom/limb.ts` | library |
-| Shell, horn, whorl (one family on a logarithmic spiral) | `src/geom/spiral.ts` | library |
+| Strand (a swept body with tips and paint), sheetOn (was crest), fan | `src/geom/strand.ts`, `crest.ts`, `fan.ts` | library |
+| Chain (was limb: two or three segments by closed-form inverse kinematics) | `src/geom/limb.ts` | library |
+| Coil (was shell), spiral tube (was horn), whorl (one family on a logarithmic spiral) | `src/geom/spiral.ts` | library |
 | Symmetry: mirror, array, reflect | `src/geom/symmetry.ts` | library |
 | Hull from a lines plan; a sailing ship from named numbers; rigging lines | `src/geom/hull.ts`, `ship.ts`, `lines.ts`, `hull_distance.ts` | library |
 | Sea with swells; whirlpool; a body afloat | `src/geom/sea.ts`, `whirlpool.ts`, `afloat.ts` | library |
@@ -195,14 +195,17 @@ exported in the form the level below accepts, so leaving it is one step down.
 
 | Component | Shape slots | State |
 |---|---|---|
-| `strand` | spine, girth, twist and section aspect are functions | open |
-| `limb`, `fan`, `gripper`, `bent` | every slot an expression or a function | open |
+| `strand` | spine, girth, twist and section aspect are functions | open; four-part comment |
+| `limb` (now `chain`), `fan`, `gripper`, `bent` | every slot an expression or a function | open; four-part comments; `limb` renamed `chain` |
 | `horn` | curl, taper, length: numbers (a tapered log-spiral tube and nothing else); 13 callers, so every claw finger, thorn, moustache and rostrum we have drawn is that one curve | **opened** and renamed for its shape: `spiralLine` returns `{ spine, girth, up }` as `strand` takes them, and `spiralTube` is `strand({ name, ...spiralLine(o), tips, paint })` |
-| `shell` | Raup's four numbers; round or elliptical section only | closed |
-| `hull` | 16 numbers | closed in its numbers; check whether its `Lines` can be given directly |
-| `ship` | 14 numbers (masts, tiers, jibs): one kind of ship | closed |
-| `crest` | sag, rake, rays: numbers; flutter a function | mostly closed |
-| `whirlpool`, `cloud`, `pendulum` | numbers | closed |
+| `shell` (now `coil`) | the law's five numbers; the section an ellipse or any curve `(u, phi) => [across, along]` | **opened**: `coilAt(law)` places any section point at any whorl position (u may run back: a throat); `coilPlan` is the law in plain numbers (covered arc, which whorls hold a point), the general part of `titan/back/spiral_shell.ts` |
+| `hull` | 16 numbers | closed in its numbers (`Lines` is the numbers; the laws are methods and cannot be given directly); its step down is the map algebra's `loft` through stations (`Hull.stations`, `Hull.section`) of your own |
+| `ship` | 14 numbers (masts, tiers, jibs): one kind of ship | closed; commented as a composition to copy. Recommended: move to examples as a recipe (its spars, sails and pennant are private and are the ship's taste) |
+| `lines` (now `ropes`) | end points and sag expressions | open; renamed (`lines` collided with the hull's `Lines`) |
+| `crest` (now `sheetOn`) | height, v, rake, flutter take functions; sag and rays numbers | **opened**: `sheetOnEdges` returns `{ root, edge }` as `sheet` takes them |
+| `cloud` | numbers; `profile` keys or `(h, bearing) => share` | **opened**: `billows(places, motion)` boils and drifts any puffs |
+| `pendulum` | length, gravity, damping numbers; drives a sum type of expressions | open by its drives (a keyed pivot path is a list of jolts); four-part comment |
+| `whirlpool` | numbers | closed (not in this pass: owned by the scene-without-sea worker) |
 | `sea` | a list of swells; deformations | closed to anything that is not a swell or a listed deformation |
 
 The pattern for opening one, as done for `horn` (now `spiralTube`): split it into its **mechanism** (a function that returns the spine,
@@ -227,6 +230,12 @@ Old names stay as one-line aliases until integration renames the callers.
 | `pendulum` | damped driven oscillator, steady state plus impulse response, linear in drives | already open: drives are a sum type summed by `answer` | keep | a piecewise-linear pivot path is exactly a sum of jolts at its keys; a double pendulum is not linear (not this) |
 | `strand`, `bent`, `gait`, `gripper` | already open | | keep | four-part comments only |
 
+What changed from the plan when built: `hull` got no new code, because the general mechanism (`loft`) already existed
+in the map algebra and the hull's skin is that loft with u and v swapped; `ship` was commented, not opened, and is
+recommended for the examples. `coilPlan` takes an `aspect` (the plain-number twin knows only elliptical sections).
+`thunderhead` is a preset of `cloud` and by the naming rule belongs in the examples; left in place. The one-step-down
+uses are in `examples/open.ts`.
+
 ### Names: geometry in the library, subjects in the examples (2026-11-12, the owner's rule)
 
 A name is a pull as well. A function called `horn` gets used for horns; called `spiralTube` it gets used for whatever
@@ -238,13 +247,14 @@ Proposed, not yet done (each is a rename across callers, to be made when no bran
 | Today | Shape | Proposed |
 |---|---|---|
 | `horn`, `hornLine` | a tapered tube on an equiangular spiral | `spiralTube`, `spiralLine` (done) |
-| `shell` | a section swept on a growing spiral round an axis | `coil` |
-| `crest` | a sheet standing on a curve of a surface | `sheetOn` |
-| `limb` | a chain of straight segments reaching a target | `chain` |
+| `shell` | a section swept on a growing spiral round an axis | `coil` (done, alias kept) |
+| `crest` | a sheet standing on a curve of a surface | `sheetOn` (done, alias kept) |
+| `limb` | a chain of straight segments reaching a target | `chain` (done, alias kept) |
+| `lines` | ropes between moving end points, one stroke | `ropes` (done, alias kept) |
 | `tusk` (example side) | a flat plate between two points | `plate` |
 | `dome` (example side) | a superellipsoid with relief on its front | `reliefDome` |
-| `strand`, `fan`, `whorl`, `gripper` | already say a shape or a mechanism | keep |
-| `hull`, `ship` | these are their subject (a lines plan is a hull's); the rule sends them toward the examples, with what is general under them (a surface lofted through stations) named for its shape | decide when `ship` is opened |
+| `strand`, `fan`, `whorl`, `gripper`, `bent`, `gait`, `pendulum`, `cloud` | already say a shape or a mechanism | keep |
+| `hull`, `ship` | these are their subject (a lines plan is a hull's); the rule sends them toward the examples, with what is general under them (a surface lofted through stations) named for its shape | `hull` kept (the general part, `loft`, already existed in the map algebra); `ship` to examples, recommended |
 
 ### What a component's comment must say (2026-11-12, the owner's rule)
 
