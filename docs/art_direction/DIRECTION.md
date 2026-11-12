@@ -1272,6 +1272,55 @@ Crab at rest unless said; `game` at 1280 x 800; from `tools/spiral_theory.ts` (p
    drawn in total. GPU: the shell's paint is a log, a floor and two turf patches per pixel (the headland's island took
    0.51 ms in the slow state): the islander's frame 0.15 to 0.25 ms under the headland's in the slow clock state.
 
+### Finishing the shell (2026-11-12, a second engineer): why ours read as a red ball, and the turban
+
+Today's render (`out/spiral/now.webp`, before any change) against the pick: a red ball with a spiral roundel on one
+flank. The cause is the band law, not the paint: `bandAt` spaced the bands in log(1 + cos phi) so that seen along the
+axis the rings stood W apart. That is exact on the face, but `spiral_theory.ts` printed it: the last whorl's cream bands
+lay at 54..72, 95..105 and 119..125 degrees round the section, and the 107 degrees over the outer side (the dome every
+camera but `pick` sees) were brick. No choice of numbers in that law puts bands on the dome.
+
+**The bands (ours).** Still lines of constant phi, so each runs the tube's whole length (a spiral on the face, a ring
+round the dome), but spaced evenly in *arc length* round the section: s = phi + e sin(2 phi) / 2 with
+e = (a - r) / (a + r), first order in e and exact in the ratio of the ellipse's speeds (a : r). `count` 6 bands a
+section, cream a quarter of each period (a third as wide as the brick between). Every whorl carries the same six,
+shrunk by W a turn, so the face still reads as a spiral. Key lines on both edges of every band and on both sides of each
+suture (inner whorl at phi = `shows[0]`, outer at `shows[1]`).
+
+**The form (inherited: Raup's coil; the pose and its search are ours).** I searched poses with a new tool,
+`tools/spiral_views.ts` (the closed form splatted with a depth buffer into `game`, the lineup's low front camera, a low
+rear and `top`, painted by the shader's own `bandAt`, plus the rest-pose legs of `spiral_theory.ts`):
+- A forward-opening turban (axis near vertical, mouth facing +x) is what a hermit's shell does, but the mouth plane
+  contains the axis, so the aperture is 2a tall above a body 2.5 thick: from the low front a black hole over the face.
+  And the dextral hand puts the coil to the crab's right, onto the right legs: every one of 24 poses went 1.1 to 1.8
+  inside a thigh.
+- The legs leave free only the volume above y = 2.2 over the hip ring and everything behind x = -2. The original pose
+  (the mouth down over the carapace, `mouthAt` small) uses it; grown and stood up it becomes a turban: `tilt` 1.0
+  (the tip up and to the right), `spire` 1.0 (each turn's crown steps its own radius toward the tip, so the tip is
+  0.76 below the shell's top), section 3.0 by 3.0, `mouthAt` 0.3 (0.45 brings the last whorl onto legR3), seat up 1.6.
+  The last whorl runs back to x = -9.2 and down into the sea behind (the woodblock's contact foam rings it).
+- The light stands on the tip on a plinth, the last 0.9 turn printed cream (the collar) with a ring and a crust of
+  barnacles, leaning out along the spire and half as much back. Groves on the shoulders of the whorls at 0.3 and 1.15
+  turns (found, not given: where the surface faces most nearly up and shows). Barnacle knots run along one edge of
+  each band from the mouth toward the collar, the growth kit's `run` (crowded and large low, thinning upward).
+
+### Predictions (written before the first render of the turban; `spiral_views.ts`, `spiral_theory.ts`, at rest)
+
+1. **Bands.** Cream bands crossed by the best line through the shell: `game` 7, low front 4, `top` 8, low rear at
+   least 4 (the splat sketch is noisy from below; it counts 22). So at least three in every view.
+2. **Size.** Silhouettes at `game`: shell 71,400 px against the body's 36,100: 1.98 times (ask: 1.5). Shell 340 x 258
+   px (was 276 x 217), 7.3 above the water, 11.1 long, 9.4 wide. Low front: 2.1 times the body.
+3. **Mouth.** At `game`, 8,000 px of lip and 900 px of throat show (the body stand-in in front); the carapace ahead of
+   the lip is 0.60 clear; 13% of its top is under the shell.
+4. **Light.** Foot (-4.3, 5.0, 4.3), top 9.25 above the water; from `game` 101 px tall, its top 66 px below the
+   frame's top (the slam's lift leaves it in frame). Groves at `game` (475, 65) and (505, 104).
+5. **Clear.** Legs at rest 0.68 (legR3) and 0.96 (legL3). Through the cycle (`spiral_clear.ts`) I expect the walk to
+   take 0.3 to 0.5 of that: least about 0.2, nothing inside. The throw passes 9.7 from the shell.
+6. **Checks** islander 14, others unchanged; base hashes unchanged.
+7. **Cost.** The shell's grid is unchanged (74 x 32); the growth list grows from about 90 copies to about 250 (six runs
+   of eleven knots of three, less those hidden or under water, plus 26 at the collar): within 0.1 ms. Frame time at
+   `game` within 0.1 ms of today's.
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a

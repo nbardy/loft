@@ -96,28 +96,45 @@ export function planOf(n: Numbers) {
 }
 export type Plan = ReturnType<typeof planOf>;
 
+/** The printed bands' numbers: `count` cream bands round the section, each `cream` of its period, the first one's
+ * middle `at` periods round from the tube's outer side (phi = 0). */
+export type Band = { readonly count: number; readonly cream: number; readonly at: number };
+
 /**
- * Where a point of the section lies in the printed spiral: `ring` counts rings outward from the suture's own (0), so
- * ring k lies W^k times as far from the axis (below 0: inside the suture, covered by the turn before); `across` is how
- * far through the cream band it is (0 its inner edge, 1 its outer; above 1 it is brick).
+ * Where a point of the section lies in the printed bands. The bands are lines of constant phi, so each runs the whole
+ * length of the tube from the curl to the lip: on the spiral's face they are spirals, and on the last whorl they wind
+ * round the dome. They are spaced evenly in arc length round the section, not in phi: the section is an ellipse
+ * (a along the axis, r across), and s = phi + e sin(2 phi) / 2 with e = (a - r) / (a + r) is its arc length to first
+ * order in e (ds/dphi = 1 + e cos 2phi: a : r between the outer side and the crown, as the ellipse's own speed). So a
+ * band is as wide on the dome as on the face, and every whorl carries the same `count` bands, shrunk by W a turn.
+ *
+ * (The first build spaced bands in log(1 + cos phi), so that seen along the axis the rings stood W apart: true on the
+ * face, but it left less than one ring over the outer 107 degrees of the last whorl, and the dome printed plain brick.)
+ *
+ * `ring` numbers the band (0 to count - 1 round the section); `across` is how far through its cream it is (0 one
+ * edge, 1 the other; above 1 it is in the brick after it).
  */
-export function bandAt(p: Plan, band: { readonly cream: number; readonly at: number }, phi: F): { readonly ring: F; readonly across: F } {
-  const g = add(mul(log(max(mul(add(1, cos(phi)), 1 / p.sutureX), 1e-4)), 1 / p.lnW), band.cream / 2 - band.at);
+export function bandAt(p: Plan, band: Band, phi: F): { readonly ring: F; readonly across: F } {
+  const e = (p.a - p.r) / (p.a + p.r);
+  const s = add(phi, mul(sin(mul(phi, 2)), e / 2));
+  const g = add(mul(s, band.count / TAU), band.cream / 2 - band.at);
   const ring = floor(g);
   return { ring, across: mul(sub(g, ring), 1 / band.cream) };
 }
 
-/** The cream bands the last turn shows, as [from, to] round its section (radians from its outer side toward the face;
- * their mirror images lie on the far flank): the paint's key lines run along these. Outermost first. */
-export function bandEdges(p: Plan, band: { readonly cream: number; readonly at: number }): (readonly [number, number])[] {
-  const phiOf = (x: number): number => Math.acos(Math.min(1, Math.max(-1, x - 1)));
+/** The cream bands round the whole section, as [from, to] in phi (radians from the tube's outer side toward the face,
+ * 0 to 2 pi; a band across phi = 0 is split in two): where the key lines and the barnacle runs go. In order of phi. */
+export function bandEdges(p: Plan, band: Band): (readonly [number, number])[] {
+  const e = (p.a - p.r) / (p.a + p.r), sOf = (phi: number) => phi + (e / 2) * Math.sin(2 * phi);
+  /** phi at arc s (s is increasing in phi for e < 1): bisection. */
+  const phiAt = (s: number): number => { let lo = s - 1, hi = s + 1; for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (sOf(m) < s) lo = m; else hi = m; } return (lo + hi) / 2; };
   const out: (readonly [number, number])[] = [];
-  for (let k = 2; k >= -1; k--) {
-    const inner = p.sutureX * p.W ** (k + band.at - band.cream / 2), outer = inner * p.W ** band.cream;
-    if (inner >= 2) continue;
-    out.push([phiOf(outer), phiOf(inner)] as const);
+  for (let k = 0; k < band.count; k++) {
+    const from = phiAt(((k + band.at - band.cream / 2) * TAU) / band.count), to = phiAt(((k + band.at + band.cream / 2) * TAU) / band.count);
+    const wrap = (x: number) => ((x % TAU) + TAU) % TAU;
+    out.push([wrap(from), wrap(to)] as const);
   }
-  return out;
+  return out.sort((a, b) => a[0] - b[0]);
 }
 
 /** The lip's roll and the throat, as the build's numbers give them: the section's size at the mouth outside and inside. */
@@ -137,11 +154,10 @@ export function shellMap(n: Numbers) {
     const out = add(mul(fore, cos(psi)), mul(rise, sin(psi)));
     return add(tip, mul(add(mul(out, add(p.c, mul(mul(k, p.r), cos(phi)))), mul(axis, add(-p.t, mul(mul(k, p.a), sin(phi))))), s));
   };
-  /** How proud of the tube a cream band stands at phi: a rounded hump across the band, none inside the suture. */
+  /** How proud of the tube a cream band stands at phi: a rounded hump across the band. */
   const proud = (phi: F): F => {
-    const { ring, across } = bandAt(p, S.band, phi);
-    const hump = mul(smoothstep(0, 0.3, across), sub(1, smoothstep(0.7, 1, across)));
-    return mul(mul(hump, S.band.proud), smoothstep(-2.5, -1.5, ring));
+    const { across } = bandAt(p, S.band, phi);
+    return mul(mul(smoothstep(0, 0.3, across), sub(1, smoothstep(0.7, 1, across))), S.band.proud);
   };
   /** The flare toward the mouth: the section grows by `lip.flare` over the last `flareOver` of a turn. */
   const flared = (back: F): F => add(1, mul(sub(1, smoothstep(0, L.flareOver, back)), S.lip.flare));
