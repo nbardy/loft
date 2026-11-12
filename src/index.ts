@@ -53,3 +53,5 @@ export { hull, Hull, type HullSpec, type HullLook, type Lines, type Station } fr
 export { ship, Ship, type ShipSpec, type ShipColours, type Placement } from "./geom/ship.ts";
 export { lines, type Rope, type LinesSpec } from "./geom/lines.ts";
 export * from "./soft/index.ts";
+// Opened components, named for their shapes (the old names above stay as aliases until integration).
+export { coil, coilAt, coilPlan, COIL_TOPOLOGY, type CoilLaw, type CoilSection, type CoilSpec } from "./geom/spiral.ts";
