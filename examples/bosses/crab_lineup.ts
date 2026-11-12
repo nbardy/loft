@@ -33,7 +33,9 @@ const DIAGONAL = Math.PI / 4;
 export const DANCE = routine({
   beat: BEAT, length: 64, centre: 2, places: PLACES,
   manner: { arrive: 0.15, snap: 4 },
-  size: { bounce: 0.22, lean: 0.4, roll: 0.08, level: 0.55 },
+  // Pushed 1.6 to 1.8 times from the first strip's (0.22, 0.4, 0.08, 0.55), which did not read from the group's distance
+  // (a lean of 0.4 was 8 px); the legs keep inside their reach (planted feet drawn in: the worst stretch was 0.80).
+  size: { bounce: 0.35, lean: 0.8, roll: 0.14, level: 1.0 },
   score: [
     // 1 to 8: out of the button, a lean each way, sidestep into the line.
     { at: 1, level: 0, claw: "rest", small: "rest" },

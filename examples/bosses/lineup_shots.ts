@@ -58,15 +58,24 @@ const SINGLE: Readonly<Record<string, { readonly distance: number; readonly aim:
 };
 const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.split("+")[0]!] ?? SINGLE.islander!; return lens([at[0] + d.distance, 3, at[1]], [at[0], d.aim, at[1]], 0.4); };
 
-/** The group's framings (predicted in docs/lineup.md), by format. */
+/**
+ * The group's framings (predicted in docs/lineup.md), by format. Each is aimed so the group's waterline sits about 80%
+ * down the frame and the sunset fills the top (aimed at the group's own height, 4.5 to 6 up, the first strip put the
+ * group in a band across the middle over 40% of empty sea): the target's height is the eye's plus the distance times
+ * the angle from the waterline (eye height over distance) to 30% of the field of view above it.
+ */
+const aimed = (eye: V3, at: readonly [number, number], fovY: number): Lens => {
+  const d = Math.hypot(eye[0] - at[0], eye[2] - at[1]), a = 0.3 * fovY - eye[1] / d;
+  return lens(eye, [at[0], eye[1] + d * Math.tan(a), at[1]], fovY);
+};
 const GROUP = {
   wide: {
-    V: lens([55, 3, 6], [0, 4.5, 6], 0.5), line: lens([95, 3, 6], [0, 6, 6], 0.4), lineLow: lens([86, 2.5, 6], [0, 5.5, 6], 0.4),
-    lineClose: lens([78, 2.5, 6], [0, 5.2, 6], 0.4), diagonal: lens([63, 3, 6], [8, 4.5, 6], 0.4), diagonalIn: lens([55, 3, 6], [8, 4.5, 6], 0.4),
+    V: aimed([55, 3, 6], [0, 6], 0.5), line: aimed([95, 3, 6], [0, 6], 0.4), lineLow: aimed([86, 2.5, 6], [0, 6], 0.4),
+    lineClose: aimed([78, 2.5, 6], [0, 6], 0.4), diagonal: aimed([63, 3, 6], [8, 6], 0.4), diagonalIn: aimed([55, 3, 6], [8, 6], 0.4),
   },
   square: {
-    V: lens([62, 3, 4], [0, 4.5, 4], 0.6), line: lens([80, 3, 6], [0, 6, 6], 0.6), lineLow: lens([74, 2.5, 6], [0, 5.5, 6], 0.6),
-    lineClose: lens([68, 2.5, 6], [0, 5.2, 6], 0.6), diagonal: lens([66, 3, 6], [8, 4.5, 6], 0.5), diagonalIn: lens([58, 3, 6], [8, 4.5, 6], 0.5),
+    V: aimed([62, 3, 4], [0, 4], 0.6), line: aimed([80, 3, 6], [0, 6], 0.6), lineLow: aimed([74, 2.5, 6], [0, 6], 0.6),
+    lineClose: aimed([68, 2.5, 6], [0, 6], 0.6), diagonal: aimed([66, 3, 6], [8, 6], 0.5), diagonalIn: aimed([58, 3, 6], [8, 6], 0.5),
   },
 } as const;
 
