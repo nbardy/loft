@@ -729,3 +729,71 @@ What is weak:
 Re-render, one load, every deliverable:
 
     cd ~/git/_wt/loft-kpop && bun tools/lineup_deliver.ts ~/git/loft/out/kpop all --look engraving --formats wide,square --fps 30 --pick 13.55,0.3,6.05,20.1,22.6,23.55,25.1,28.05,31.2
+
+## Framing from above (2026-11-12): predicted before the cameras change
+
+The coordinator, on the scored clip: for about fifty of sixty-four counts the five crabs are a strip a fifth of the
+frame's height, and at that size the unison cannot be read. The cause is the camera's height: from 3 above the water
+depth in the formation maps to nothing on screen, so a V is a row. These crabs are wide and flat; their formation is a
+pattern on the water and has to be seen from above the heads. The score, the routine and the sync stay as they are.
+
+**The cameras.** Every group shot is raised, wide and close to the front member, pitched down: `raised(front, z,
+height, distance, pitch, fovY)` in `lineup_shots.ts`. Ground at distance x lies atan(h / x) below the horizon, so depth
+becomes height in the frame: the front member's feet near the bottom, the rows behind it higher, the horizon and the
+sunset a band at the top. Searched (`tools/lineup_framing.ts`, now with each crab's whole box from feet to buildings,
+its buildings as occluders and the great claw raised at the counts it is raised) over eye 12 to 24, distance 16 to 40,
+pitch 12 to 26 degrees and fovY 0.6 to 0.9 (the square to eye 36, distance 70, fovY 1.0):
+
+| Shot | 16:9: eye height, distance in front of the front member, pitch, fovY | square |
+|---|---|---|
+| V | 20, 34, 15 degrees, 0.8 | 36, 40, 20, 1.0 |
+| line (arc), the slam | 24, 40, 17, 0.8 | 36, 60, 15, 1.0 |
+| throw (push in) | to 22, 36, 18 | to 34, 54, 16 |
+| diagonal | 20, 30 to 28 (push in), 22, 0.8 | 24, 40 to 38, 12 to 13, 0.9 |
+
+**The formations, with depth** (world x toward the camera, z the camera's left; left to right fiddler, samurai,
+islander, bruiser, spider crab):
+
+| | V: three rows 8 deep | line: an arc | diagonal: away from the camera |
+|---|---|---|---|
+| fiddler | (-16, 30) | (-8, 26) | (0, 18) |
+| samurai | (-8, 15) | (-2, 13) | (-6, 9) |
+| islander | (0, 0) | (0, 0) | (-12, 0) |
+| bruiser | (-8, -12) | (-2, -13) | (-18, -9) |
+| spider crab | (-16, -24) | (-8, -26) | (-24, -18) |
+
+Every great claw is on the camera's left, so the V's left wing stands 3 wider than its right (15 against 12): at 12 the
+centre's claw covered the samurai's low face (window 0%; the stand-in searched 0 passing V framings), and swapping the
+samurai with the bruiser did not help. The line cannot be narrower than 13 apart (five slam discs and five boats in
+their lanes, as before), so it is an arc with its ends 8 back, framed from higher (24). The solos keep the low front
+singles; each soloist still steps 8 forward. Travel per change at most 20 (the diagonal to the V, the fiddler), 2.5 a
+step.
+
+**Predicted** (the stand-in; at the unison keys, wide):
+
+| Count | Shot | Group box (w x h) | Front member's body | Face windows (left to right) | Horizon from the top |
+|---|---|---|---|---|---|
+| 2, 62 | V | 100 x 70% | 25% (the islander) | all 100% | 18% |
+| 12 | line | 100 x 61% | 21% | 100, 92, 100, 100, 100 | 14% |
+| 26, 27 | throw | 100 x 67% | 23% | 26: samurai 83%; 27: all 100% | 12% |
+| 38 | chorus (moving in) | 86 x 67% | 20% (the fiddler) | all 100% | 11% |
+| 40 | diagonal, turned 45 degrees | 87 x 80% | 28% | 100, 93, 90, **60** (bruiser), 89 | 8% |
+| 43 | diagonal | 100 x 82% | 25% | all 100% | 4% |
+| square, 0 and 62 | V | 100 x 52% | 17% | all 100% | 17% |
+| square, 12 | line | 99 x 33% | 11% | all 100% | 25% |
+| square, 43 | diagonal | 100 x 56% | 16% | all 100% | 26% |
+
+Targets (group box at least 60% of the height and 85% of the width, the front body at least 20%, every face clear at
+the unison keys, the horizon in the V's frame): met by every 16:9 group shot except two faces: the bruiser's at the
+quarter turn (60%: the turned bodies lie across it; turning the other way left the islander's at 8%) and the samurai's
+at the release (83%). The square holds all five with every face clear but not the sizes: its V is 52% of the height
+with the front body at 17%, its line 33% (a square cannot be both 13-apart-wide and tall). The stand-in has read bodies
+small and faces small in every staging; I expect the picture to be larger than these numbers.
+
+**The spiral shell** (main's, merged): `bun tools/spiral_clear.ts --variant islander --routine` (new: the islander as
+its member of the routine, and `--except` to skip a stretch): in the routine the great claw stays outside the shell all
+loop, 0.71 at the nearest (t = 5.1, the slam's wind-up), 1.10 outside the wind-up (t = 20.6, the turn), the solo
+included; no held pose needs moving. The single crab's wind-up still passes 1.02 inside (t = 11.7); moving it would
+change a crab that does not dance in a group, so it is left.
+
+**White water** at the feet is now seen from above: judged on the strip.
