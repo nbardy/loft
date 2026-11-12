@@ -8,3 +8,4 @@ export { smear, type SmearSpec } from "./smear.ts";
 export { wake, type WakeSpec } from "./wake.ts";
 export { type RearSpec } from "./rear.ts";
 export { emote, Emote, type EmoteSpec, type EmoteBeat } from "./emote.ts";
+export { routine, Routine, RoutineError, type Aim, type Dancer, type Key, type Readouts, type RoutineSpec, type Solo, type SyncRow, type Who } from "./routine.ts";

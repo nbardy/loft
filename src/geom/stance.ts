@@ -279,8 +279,11 @@ export function footing(spec: FootingSpec): Footing {
     foot: (i) => {
       const es = mine(i);
       const stand = es.reduce<P3>((p, e) => add(add(p, e.offset), vec3(0, e.up, 0)), vec3(...spec.homes[i]!));
-      // The walk's feet relative to where its course has the body now (the host moves the creature itself).
-      const walk = sub(W.gait.foot(i), W.gait.body.o);
+      // The walk's feet relative to where its course has the body now, in that body's axes (the host moves the creature
+      // itself). Taken in the course's own axes so that a course that turns (an arc, a dance's path) puts each foot where
+      // its body is turned now; for a straight course whose frame is the ground's this is the old difference.
+      const d = sub(W.gait.foot(i), W.gait.body.o), b = W.gait.body;
+      const walk = vec3(add(add(mul(d.x, b.x.x), mul(d.y, b.x.y)), mul(d.z, b.x.z)), add(add(mul(d.x, b.y.x), mul(d.y, b.y.y)), mul(d.z, b.y.z)), add(add(mul(d.x, b.z.x), mul(d.y, b.z.y)), mul(d.z, b.z.z)));
       return inGround(mix(stand, walk, W.on));
     },
     planted: (i) => select(walking, W.gait.planted(i), sub(1, min(mine(i).reduce<F>((a, e) => add(a, e.air), lift<"f32">(0)), 1))),

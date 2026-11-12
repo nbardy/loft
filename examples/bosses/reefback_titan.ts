@@ -145,6 +145,8 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
         handoff: r.handoff,
         inputs: r.inputs,
         rig: r,
+        // The great claw's wrist and arm span: what a routine's aims are measured in (crab_lineup.ts, the sync instrument).
+        great: claws.great,
       checks: [
         landsInside(claws.crush), warned(r.crush), warned(r.grab),
         // Every leg inside its reach over the whole loop, with the body's full range of motion: never a straight snapped
