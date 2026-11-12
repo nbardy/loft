@@ -468,3 +468,172 @@ Character sheet: `tools/lineup_characters.sh` (each crab's best large frame cut 
 expression reference): the fiddler, the samurai and the spider crab read as their sheets; the islander's face is the
 weakest: small eyes on stalks, turned a little away, without the reference's brows and moustache (its face is the
 dandy; the reference sheet is the bruiser-like head).
+
+## A drilled group (2026-11-12): predicted before the code
+
+The owner: "sync the crab movements so they're like a kpop group". Earlier, on the same video: "they do their 1) slam
+water, 2) throw boat, 3) dance/emote taunt ... nice rhythm and loop", and "when dancing they lean and bend the knees and
+feet are planted". What I take it to mean: one move at one instant at one size from every member, a formation with a
+centre, framed wide enough that the sync is what you see; character in the faces and in short solos.
+
+What today's video does instead (checked on `out/lineup_engraving/strip_per_bar.webp`): one move (a claw wave) played in
+four manners (`temper` sets each crab's arrival, snap, hold, rise: the spider crab bows as the others rise); unison only
+in two accents of the last bar; about forty shots in 24 s, most of them one crab alone; an open row 20 apart that never
+changes; the slam a cascade.
+
+### What is inherited and what is mine
+
+Inherited from stage dance: counting in eights; key poses that arrive on a count and are held until the next ("hit and
+hold"); the groove (knees down on every beat); unison as the default with canon (a ripple down the line), mirror (the
+halves opposite about the centre) and solos as contrast; formations with a centre and changes that travel on the beat;
+a struck final pose ("the button"). Inherited from Loft: the emote and each crab's `temper` (now only for its solo), the
+stance's carriage, the gait, `anticipated` and the timing of `struck`.
+
+Mine: (1) a dance is **one score for the group**, evaluated per member as closed forms, so unison is a property of the
+data (every member reads the same key, ease and size) rather than of four performances that try to agree; the per-crab
+manner enters only through a solo. (2) **Every channel is a track of key poses** (lean, level, facing, place, each claw):
+a value that arrives on a count and is held, the sum of eased steps, cyclic, so the loop closes by construction (the
+value before the first key is the last key's). A formation change is the same thing on a place channel, and a turn on
+a facing channel; canon is a time shift per member, mirror a sign per member. (3) **A claw accent is an aim from the
+shoulder in arm spans**, so a fiddler's banner, a samurai's gauntlet and a spider crab's tongs go to the same angle at
+the same instant, each with its own arm. (4) **Feet follow the body's path by stepping on the beat**: the gait is
+given the formation path itself as its course, paced in beats, and a foot whose next plant is where it stands does not
+lift. So the crab stands planted when the path is still and walks sideways (really stepping) when it changes place or
+turns, with no blend between a standing and a walking foot. (5) **A sync instrument** measured on the CPU from each
+member's own rig (body frame, display wrist), not from the score.
+
+### The score as a user writes it (examples/bosses/crab_lineup.ts)
+
+    const UP = [0.2, 0.76, 0.12], OUT = [0.2, 0.28, 0.76], ACROSS = [0.6, 0.28, -0.44];  // wrist aims from the shoulder, in arm spans
+    export const DANCE = routine({
+      beat: BEAT, length: 64, centre: 2, start: "V",
+      places: { V: [...], line: [...], diagonal: [...] },          // each member's (x, z) in the world, by formation
+      manner: { arrive: 0.15, snap: 4 },                          // the group's: every key not in a solo
+      size: { bounce: 0.22, lean: 0.4, roll: 0.08, level: 0.55 },
+      score: [
+        { at: 1, level: 0, claw: "rest", small: "rest" },
+        { at: 2, lean: 1 }, { at: 3, lean: -1 },
+        { at: 8, go: "line", over: 4, lean: 0 },
+        ...
+        { at: 44, who: { canon: 0.5 }, claw: UP, level: 1 },
+        { at: 46, who: "mirror", lean: -1, claw: OUT, small: OUT },
+        { solo: 0, on: [48, 49] }, ...
+        { at: 62, go: "V", over: 4, hit: 3, claw: UP, small: OUT, level: 1 },
+      ],
+    });
+
+A key is the count it lands on (`at`), what it sets, and optionally `who` (default: everyone together), `over` (counts
+it takes; a travel or a turn takes at least one, so its feet can step), `hit` (counts it is held dead still, struck in
+a few frames). The library's new names: `routine` and its spec (`beat`, `length`, `centre`, `start`, `places`, `manner`,
+`size`, `score`), and the instrument `inSync`. The rig reads one new staging kind (`taunt: { kind: "routine" }`).
+
+### The score, beat by beat (120 BPM, 4/4; 16 bars, 64 counts, **32 s**)
+
+The loop grows from 24 s to 32 s: a phrase of moves, the slam and the throw do not fit 12 bars. Order left to right as
+the camera sees it: **fiddler (0), samurai (1), islander (2, the centre), bruiser (3), spider crab (4)**. A crab's right is the
+camera's left; lean +1 is onto its own right.
+
+| Counts | Move | Who | Formation | Shot (16:9) |
+|---|---|---|---|---|
+| 62 to 1 | the button: struck in 0.12 s, held dead still three counts across the seam (claws up and out, full rise) | all | V | V, still |
+| 1 | release: level 0, claws rest | all | V | V |
+| 2, 3 | lean right, lean left | all | V | V |
+| 4 to 8 | sidestep into the line (4 counts, a step a count) | all | V to line | pulls back to the line |
+| 8 | crouch (level -0.6): the slam's load | all | line | line |
+| 9 to 12 | **the slam**: five claws up on 9, five down on **12** (6.0 s) | all | line | line |
+| 16 to 26 | **the throw**: claws rise 16, grips close 21, squeezes 22 and 24, whip 25, five boats let go on **26** (13.0 s) | all | line | line, closer (cut on 16) |
+| 27, 29 | great claw punched up, full rise; down | all | line | line |
+| 30, 31, 32 | lean left, right, centre; the boats land on 32 | all | line | line |
+| 33 | | | | the islander's face (cut on 33) |
+| 34 to 38 | sidestep into the diagonal (front: the fiddler, the new centre) | all | line to diagonal | pushes in to the diagonal (cut on 34) |
+| 38, 39 | punch up and rise; down, lean left | all | diagonal | diagonal |
+| 40, 41 | **quarter turn** to the right diagonal (one count, stepping), sweep out; lean right | all | diagonal | diagonal |
+| 42, 43 | turn back, both claws across in front; deep crouch, claws rest | all | diagonal | diagonal |
+| 44 to 46 | **canon**: punch up and rise, a ripple down the line half a count apart (44, 44.5, 45, 45.5, 46) | canon | diagonal | diagonal |
+| 46, 47 | **mirror**: lean out and both claws out; lean in, claws rest | mirror | diagonal | diagonal |
+| 48 to 57 | **solos**, two counts each in its own manner (fiddler 48, samurai 50, islander 52, bruiser 54, spider crab 56); the rest hold a low frame (level -0.3, great claw across) and keep the groove | solo | diagonal | each soloist alone (cuts on 48, 50, 52, 54, 56) |
+| 58 to 62 | sidestep back into the V; the button on 62 | all | diagonal to V | pushes back to the V (cut on 58), still from 62 |
+
+Unison: 50 of 64 counts (78%); canon 2, mirror 2, solos 10. The groove (knees down on every count, 0.22) is under every
+count except the button's hold, and fades under the attacks' postures (the attacks own the body there).
+
+The attacks' seconds (overrides of the crab's numbers, the same for all five): the slam lands on count 12 (crushFirst
+6.0, wind-up three counts as before), warned four counts ahead, so its cycle turns on count 8; the grip closes on 21
+(grabClose 10.5), warned five counts ahead, so the thrown boat is home on the cut at 16; the rest as today (reach five
+counts, hold five, a flight of six). `crushPeriod` 32. The whole crab's `temper` is the group's in the lineup (snap 4,
+lag 0.2, no jitter), so the slam's rear and the shell's lag are in unison too; each crab's own temper is kept for its
+solo. The shoved boats are parked out of frame by the host for the whole video (the slam is about the water); the thrown
+boats are parked from the cut on 33 to the cut on 16. The sea's swells get periods of 16 s and 8 s (whole turns in 32).
+
+### The formations (world x toward the camera, z the camera's left; every crab faces +x)
+
+| Member | V | line | diagonal |
+|---|---|---|---|
+| fiddler (0) | (-6, 26) | (0, 32) | (8, 20) |
+| samurai (1) | (-3, 13) | (0, 19) | (4, 13) |
+| islander (2) | (0, 0) | (0, 6) | (0, 6) |
+| bruiser (3) | (-3, -7) | (0, -7) | (-4, -1) |
+| spider crab (4) | (-6, -14) | (0, -20) | (-8, -8) |
+
+Why these: every crab carries its great claw on its own right, the camera's left. In a V the left wing stands behind
+a neighbour's claw, so the V is lopsided: 13 apart on the left, 7 on the right (12.5 left the fiddler's claw on the
+islander's face in the third staging). The diagonal (front-left to back-right) puts every claw on the side away from
+the crabs behind it, so it can be tight (4 deep, 7 across): it is the formation for the chorus and the largest bodies.
+The line is for the attacks: each crab's disc and boat in its own lane (13 apart). Members never cross: the order left
+to right is kept, the new centre is whoever is in front.
+
+Travel per change (four counts, a step a count): V to line 6 to 8.5; line to diagonal 14.4 (fiddler, spider crab);
+diagonal to V 15.2 (fiddler). A step of up to 3.8: the walk's stride is 3.0.
+
+### Framing, predicted (`tools/lineup_framing.ts`; bodies shell top to waterline as a share of the height; face window the share of the face box no nearer member's body or great claw covers; left to right)
+
+| Shot | Bodies (%) | Face windows (%) | Faces (px) | Bodies span |
+|---|---|---|---|---|
+| 16:9 V, eye (55, 3, 6), fovY 0.5 | 13, 18, 19, 18, 19 | 100, 100, 100, 86, 100 | 213, 122, 216, 144, 99 | 4 to 94% of the width |
+| 16:9 line, (95, 3, 6), fovY 0.4 | 10, 13, 13, 13, 15 | all 100 | 165, 90, 150, 106, 78 | 6 to 94% |
+| 16:9 diagonal, (63, 3, 6) at (8, 4.5, 6), fovY 0.4 | 19, 22, 21, 19, 20 | 99, 92, 100, 92, 100 | 301, 151, 234, 154, 105 | 2 to 85% |
+| 16:9 diagonal pushed to (55, 3, 6) | 22, 26, 24, 22, 23 | 99, 92, 100, 92, 100 | 360, 178, 272, 178, 120 | -7 to 90% (the fiddler's legs cut) |
+| square V, (62, 3, 4), fovY 0.6 | 10, 13, 14, 13, 14 | 100, 100, 100, 93, 100 | 156, 89, 156, 105, 73 | the outer pair cut by the edges |
+| square diagonal, (66, 3, 6), fovY 0.5 | 14, 16, 15, 14, 15 | 99, 92, 100, 92, 100 | 225, 113, 177, 117, 80 | -14 to 98% |
+
+The group's bodies cannot be large: five crabs on 20-wide legs in one 16:9 frame give 13 to 26% (the search over
+spacing, depth, distance and lens found nothing past 18.5% for the smallest body with every face at least 85% clear).
+The stand-in read bodies 14% small and faces about half size before (second and third stagings), so I expect 15 to 30%
+bodies and faces past 150 px in the pictures. The edit answers it by holding the group in frame for 52 of 64 counts and
+pushing in on the diagonal, and by the five solos (singles as in the third staging: bodies 35 to 54%). The square
+cannot hold five: its group shots keep the middle three whole and cut the ends.
+
+### The instrument, predicted
+
+`DANCE.inSync(readouts)`, a check in the lineup's `check`: for every key of the score and every channel it sets, each
+member's arrival (when its readout crosses halfway between its value before the move and its value after) and size
+(the value at the key, from its own rest), from the members' rigs: body lift (its frame's height less its ride), lean
+(the body's roll), facing (the body's heading less the member's own), display claw (its wrist's height over its
+shoulder in arm spans). Sampled at 240 a second around each key.
+
+| | Limit | Predicted |
+|---|---|---|
+| unison keys: arrivals across members | within 1/60 s | under 1 ms (one expression, f32 rounding); the claws up to 5 ms (their rest drift differs) |
+| unison keys: sizes across members | within 5% | under 0.1% |
+| canon: arrival offsets against the scored 0.25 s | within 1/60 s | under 1 ms |
+| mirror: sizes, opposite in sign | within 5% | under 0.1% |
+| solos | not measured (their own manner) | |
+
+Wrong if the attacks' braces or the walk leak a per-crab difference into a unison key (different ride, legs, or numbers
+under `stance`): then the score is right and the rig is not.
+
+### Checks and the seam, predicted
+
+Every check of every crab with the new seconds and places: **55 of 55** (11 each), and the instrument: **56**. The legs'
+reach (`limbsReach`) is the one at risk: lean 0.4 with a rise of 0.55 over planted feet is near today's worst (0.960).
+The frame at t = 0 and t = 32: the same hash, and inside one shot: the button is held dead still across the seam with
+the camera still, so the change across the seam is an ordinary frame's (the sea's only), at most its median.
+
+### The cost of a fifth member, predicted
+
+From the four-crab measurements (draws 526, pipelines 531, WGSL 16.4 MB, load 83 s at best, 1920 x 1080 frame 5.24
+ms), a crab costs about a quarter of each except the shared passes: **draws about 660, pipelines about 665, WGSL about
+21 MB, load about 105 s on a quiet machine (5 to 7 minutes loaded), frame at 1920 x 1080 about 6.2 ms** (the passes
+and the sea about 1.5, each crab about 0.95). The score adds per crab a few dozen per-frame scalars and a gait whose
+course is the path (16 evaluations of a short piecewise path): under 0.1 ms. Five stops being reasonable if the load
+passes 10 minutes or a build refuses on a binding limit; then four, and the hermit stays the centre.
