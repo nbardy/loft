@@ -37,12 +37,14 @@ export const PLACES: Readonly<Record<string, readonly XZ[]>> = {
 
 // ---- the boats a host moves ----
 /**
- * The host's inputs at loop time t. The shoved boats (`boat2.at`) are parked out of every frame all through: the slam
+ * The host's inputs at loop time t. The shoved boats (`boat2.at`) are parked out of every frame (behind the cameras) all through: the slam
  * is about the water. Each thrown boat (`throw.land`, in its crab's axes) comes down where it is thrown, in the line's
  * foreground, on count 32; from the cut on 33 to the Grab's next cycle (the cut on 16, where it is home again) the
  * landing is a place far behind the group. Every move of a boat is on a cut. Checks read the defaults (the true places).
  */
-export const PARKED = [-70, 0] as const;
+// 150 in front of its crab: behind every camera (the furthest stands at world x 60; a parked boat at x 90 or more even
+// through the quarter turn). Parked 70 behind, it was a row of small boats below the horizon in every raised shot.
+export const PARKED = [150, 0] as const;
 export function hostInputs(names: readonly string[], land: (k: number) => XZ, t: number): Record<string, readonly number[]> {
   const u = ((t % PERIOD) + PERIOD) % PERIOD, thrownParked = u >= beat(33) || u < beat(16);
   return Object.fromEntries(names.flatMap((n, k) => [[`${n}.throw.land`, thrownParked ? PARKED : land(k)], [`${n}.boat2.at`, PARKED]]));
@@ -82,9 +84,11 @@ const GROUP = {
     V: raised(0, 3, 20, 34, 15, 0.8), line: raised(0, 0, 24, 40, 17, 0.8), lineLow: raised(0, 0, 24, 40, 17, 0.8),
     lineClose: raised(0, 0, 22, 36, 18, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
   },
+  // The square pitched steeper than first planned (20, 15, 12 degrees): the strip had the group in its bottom half under
+  // a band of empty sea; pitched 22 to 28 degrees the group fills 35 to 92% of the height (stand-in), every face clear.
   square: {
-    V: raised(0, 3, 36, 40, 20, 1.0), line: raised(0, 0, 36, 60, 15, 1.0), lineLow: raised(0, 0, 36, 60, 15, 1.0),
-    lineClose: raised(0, 0, 34, 54, 16, 1.0), diagonal: raised(0, 9, 24, 40, 12, 0.9), diagonalIn: raised(0, 9, 24, 38, 13, 0.9),
+    V: raised(0, 3, 36, 36, 28, 1.0), line: raised(0, 0, 40, 50, 26, 1.0), lineLow: raised(0, 0, 40, 50, 26, 1.0),
+    lineClose: raised(0, 0, 38, 46, 27, 1.0), diagonal: raised(0, 9, 28, 36, 22, 0.9), diagonalIn: raised(0, 9, 28, 34, 23, 0.9),
   },
 } as const;
 
