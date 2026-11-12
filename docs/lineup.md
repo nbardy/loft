@@ -831,3 +831,198 @@ change while they travel; at this distance it reads as the same collar.
 
 Weak still: the square's line (38% of the height) is the smallest group picture; the samurai's face at the release; at
 the turn one face is behind the islander; the islander's own solo swings its claw across its face.
+
+## Deeper (2026-11-12): clicks, a phrase in the chorus, the throw over the head; predicted before the render
+
+The owner, on the drilled group: "the synchronized scene is starting to look incredible ... can we go a bit deeper on
+this, I'm thinking we want to make a little bit of a crab style k pop song for background". Then, during this work:
+"let's make the boat grab a little faster and make them toss it over the head, and don't have them hang on to it so
+long". What I take it to mean: the dance is right in kind; give it percussion a song can hold on to (the crabs click
+their claws, and a clack that is heard is one that is seen), a chorus someone could learn, faces that stay clear, a
+square that holds the group larger; and a quicker grab whose boats fly up over the crabs' heads into the sunset.
+
+### What is inherited and what is mine
+
+Inherited: the hit-and-hold score, the motif-repeat-vary shape of a dance phrase, the drummer's habits (hi-hats on the
+off-beats, a fill into the downbeat, doubles in the chorus), `struck`'s snap, ballistic flight under gravity. Mine:
+(1) **the click is a channel of the score**, not a sound effect: a key's `click: n` is n snaps a half count apart,
+evaluated per member as two tracks (how far the fingers are the score's; how open), so the song can read the same
+data the picture is drawn from; every claws option shuts its own display claw on it (`rig.dance.clicked`). (2) A run of
+clicks that would overlap the next is one run (the fingers stay the score's), and a click while a struck pose holds is
+refused, so "none during the held final pose" is a property of the data. (3) **`who: { only: [...] }`**, the one other
+new name: a key taken by some members only. Without it a score cannot put two members low and three high on the same
+count, or give a soloist its own clicks. (4) For the throw: **a back as a column with a top** (`Target` kind `column`),
+so a check can say a boat flew *over* a back; until now a back was a cylinder of any height.
+
+### The score as built (examples/bosses/crab_lineup.ts), count by count; what changed from today's
+
+| Counts | Move (all unless said) | Clicks | Changed |
+|---|---|---|---|
+| 62 to 0.5 | the button, held dead still across the seam | none | |
+| 1 to 8 | release; lean right, left; sidestep into the line (4 to 8) | every off-beat: 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5 | clicks |
+| 8 to 13 | crouch; the slam (claws up 9, down **12**); up on 13 | a run into the slam: 10, 10.5, 11, 11.5 | clicks |
+| 16 to 19 | **the motif** stated and repeated: (a) great claw punched up, rise; (b) claw low and out beside the face, drop to -0.5, lean right; then a, b leaning left | b's double: 17, 17.5; 19, 19.5 | was the throw's reach |
+| 19.6 to 24 | **the grab**: claw rises 19.6, grips close **22**, one squeeze, every boat let go **24**, thrown up and back over its own head | | faster, shorter, over the head |
+| 26 to 29 | the motif again as the boats fly | 27, 27.5; 29, 29.5 | |
+| 30 | **the boats land behind the group**; the motif varied: its halves at once on two levels (fiddler, islander, spider crab up; samurai and bruiser low) | 30, 30.5 (the low pair) | level contrast (`only`) |
+| 31, 32 | drop; up | | |
+| 33 | the islander's face (cut) | | |
+| 34 to 38 | sidestep into the diagonal | | |
+| 38 to 41 | the motif in the diagonal; on 40 turned 0.4 rad to the right (stepping, one count) | 39, 39.5; 41, 41.5 | was a quarter turn of 0.785 |
+| 42, 43 | turn back and **slide 4 to the camera's left together**, both claws out; slide back, deep crouch | 42, 42.5 (joins 41's run) | travel in step |
+| 44 to 46 | canon: up and rise, half a count apart | | |
+| 47 | mirror: lean out, both claws out | | |
+| 48 to 57 | the solos; the others hold a low frame (claw low and out, not across the face) | fiddler 48.5, 49, 49.5; samurai 50, 51; islander 52, 52.5, 53; bruiser 54, 54.5, 55.5; spider crab 56, 56.5, 57, 57.5 | each soloist's figure |
+| 52, 53 | the islander's solo is **scored**: claw high and out to its side, turned 0.35 rad to its left (its shell's side), leaning away | | was its own manner, which swung the claw's arm across its face |
+| 58 to 62 | sidestep back into the V | 58.5, 59.5, then a run into the button: 60, 60.5, 61, 61.5 | clicks |
+
+**48 snaps** in the loop: 30 in unison, 2 by the low pair, 16 by soloists. Unison counts: everything except the level
+contrast (30), the canon (44 to 46), the mirror (47) and the solos (48 to 57): **49 of 64 (77%)**.
+
+**The click, timed** (`src/spacetime/routine.ts`): the fingers are given to the score over a quarter count (0.125 s)
+before the first snap while they open wide; each snap shuts in two frames at 30 a second (1/15 s) with `struck`'s ease
+(`anticipated`: it opens a touch wider first, then arrives at speed); between snaps of a run the next opening takes a
+quarter count; after the last the fingers stay shut 0.1 s and go back to the claw's own over 0.15 s. The fiddler's
+dactyl goes from 1.1 rad open to 0 (on the pollex); the base pincer's (gauntlet, tongs) from its wind-up gape 1.13 to its
+rest 0.28 (its fingers already meet there).
+
+**Each click's size on screen** (`tools/lineup_framing.ts`: a fingertip's travel from wide open to shut, the moving
+finger's chord times the gape's change: fiddler claws 3.8, gauntlet 3.7, tongs 3.2 units). In the 16:9 V camera (the
+verse): fiddler, samurai, islander, bruiser, spider crab **67, 75, 90, 75, 55 px**; in the line (the slam's run, the
+motif) 59 to 72 px; in the diagonal 45 to 103 px; in the button's push-in 55 to 111 px; in the solos' singles 250 to
+520 px. In the square, about 0.6 of these. The smallest is the spider crab's at the back (45 px): a claw opening as wide
+as the crab's face is tall.
+
+### The throw, over the head (the owner's second note)
+
+Counts fixed for the song: grips close on 22, every boat let go on 24, nothing moves for the boats before 19; I chose
+the landing on **30** (three seconds of flight, the most allowed). Exported as `ATTACK_COUNTS = { slam: 12, grip: 22,
+release: 24, lands: 30 }`, which `onTheBeat` reads.
+
+- The grab: posture 0.35 s, reach 0.65 s, close 0.22 s: the claw's first movement at 22 - 2.44 = **19.56**; held two
+  counts (1.0 s) with one squeeze (`grabPulses`, a crab's number: 2 for a crab alone); let go 1.0 s.
+- The arc. DERIVATION: a boat released at height y0 and landing at the water T later under gravity g rises
+  vy = (g T^2 / 2 - y0) / T; its top is y0 + vy^2 / 2g. It must pass over the back while still near the crab: the
+  back's columns stand 10.5 to 16 high (the stand-in's buildings plus 0.5), the boat is a ball of 1.9 with a margin of
+  0.5, so it must be 13 to 18.4 up within half a second of the release. Under the world's gravity (5) and T = 3 s,
+  vy = 5.8 from y0 = 5: the top is 8.4, **below every back**. No release point the cutter can reach fixes that, so the
+  flight's gravity is lofted to **20** (a number of the throw, `throw.gravity`; the ring wave keeps the world's 5):
+  vy = 28.3, the top about 25 above the water at 1.4 s, the boat over the back at about 15 to 19 up 0.25 to 0.5 s after
+  the release. From the raised line camera (eye 24, 40 in front) the top of the arc is about 2 degrees above level,
+  inside the frame's top (6 degrees); from the closer throw camera (eye 22, 36) at the frame's top edge.
+- The wind-back is 1.5 along the keel toward the crab (not 2.7) and 2.15 up (the spider crab's tongs 3.0), so the
+  release is in front of the face and the boat climbs before it is over the back; the stroke is 0.3 s. The boats land
+  16 behind each crab (the bruiser 20: its terraces' plan reaches back), behind the whole group.
+- Checks (`check examples/bosses/crab_lineup.ts`, tuned on the CPU before any render, nine runs): `fliesClear` passes
+  with the back as columns standing to each crab's stated top (least 0.73, the islander's shell, and 0.90, the spider
+  crab's shrine; limit 0.5); `letsGoClean` passes (clear within 0.45 s); `throwLands` 25.2 to 31.5 from where taken
+  (at least 25); the grips hold through the stroke (`gripReaches`). The stated tops are the stand-in's boxes, not the
+  geometry: a building taller than its box would not be caught.
+
+### Framing, predicted (`bun tools/lineup_framing.ts`; the stand-in now aims each great claw where the score has it,
+raises each body by the score's level, and reports each face's window from its own claw)
+
+| Count | 16:9: group, front body, faces from the others (left to right) | square |
+|---|---|---|
+| 0, 62 (the button) | 100 x 69%, 25%, 92/100/100/100/100 | 100 x 58%, 20%, all 100 |
+| 2 | 100 x 70%, 25%, all 100 | 100 x 59%, 20%, all 100 |
+| 12 (the slam) | 100 x 61%, 21%, 100/92/100/100/100 | 100 x 51%, 17%, 100/92/100/100/100 |
+| 16, 26 (motif a, in the line) | 100 x 61 to 67%, 21 to 23%, fiddler 67 to 75, samurai 86 | 100 x 48 to 51%, 16 to 17%, 75 to 83/83 |
+| 17, 27 (motif b, in the line) | **samurai 42 to 50%** (behind the islander's low claw) | the same |
+| 30 (the landing, two levels) | 100 x 72%, 23%, 100/94/100/100/100 | 100 x 53%, 17%, 100/89/100/100/100 |
+| 38, 39 | 86 to 88 x 66 to 70%, 20 to 21%, all 100 | 99 to 100 x 60%, 16 to 17%, all 100 |
+| 40, 41 (turned 0.4) | 91 to 94 x 80%, 26 to 28%, 100/92/100/92/100 | 100 x 63%, 23%, 100/92/100/92/100 |
+| 42, 43 | 93 to 100 x 80 to 83%, 24 to 25%, all 100 | 100 x 62%, 20 to 21%, all 100 |
+
+The turn: searched over -0.785 to 0.785 rad. At today's 0.785 the bruiser's face is 60% clear; turned the other way
+the fiddler's falls to 39 to 63%; at **0.4** every face is at least 92% clear at 40 and 41. It is a smaller turn (23
+degrees), so it reads less as a turn.
+
+Weak before the render: in the line the motif's low claw (b) covers the samurai's face by about half from every camera
+(a formation's problem, not a lens's; the strip will say whether the stand-in's box for a raised banner is too big,
+since it bounds a slanted hand with an upright box). The own-claw windows (not tabled) are 42 to 100%: low for every
+raised claw and every claw at rest, and the stand-in's boxes are pessimistic there; judged on the strip, the button above all.
+
+**The square** (`--search square`, the formations as they are, every face clear in the V and the diagonal, the group
+whole across the frame): V eye 28, 34 in front, pitched 18, fovY 1.0; the line eye 36, 38, 22; the diagonal eye 28, 34,
+18, fovY 0.9. Front bodies **20% (V, was 17), 17% (line, was 12), 20 to 24% (diagonal, was 18 to 22)**; the line's
+group 51% of the height (was 38%). It came out closer and a little lower than today's rather than steeper.
+
+### The instrument, predicted
+
+`DANCE.inSync`: 74 key-channels as before (all within 13.3 ms and 1.9%: the chorus's claws are the slowest) plus
+**48 clicks**. Each click's arrival is when the drawn fingers cross halfway from wide open to shut; the snap's ease puts
+that at x = 0.873 of the two frames: **8.5 ms before the scored instant for every member and every claw** (spread under
+0.1 ms: the opening is mixed to wide and shut regardless of the claw's own gape, so no claw's rest shifts it); limit
+16.7 ms from the instant. Sizes: every claw wide open as the snap starts and shut just after, 0.0%. Checks: **56 of 56**
+(55 crab checks, of which the throw's are new numbers, and the instrument).
+
+### One crab alone
+
+Unchanged by construction: outside a routine `clicked` is the gape itself (the same expression), `throw.gravity` is 5
+(the world's), `grabPulses` 2, `throw.over` Infinity (the back's cylinders as they were). Predicted: base `game`
+`0c1b1e4368820ff8`, `0db3c25b4d11121b`, `2315edeb83c975e9`, and the check counts as today.
+
+### Scored (Deeper)
+
+Built as predicted except where said below. CPU: nine runs of the lineup's checks to set the throw (the record above),
+the stand-in, the instrument. Pictures: one strip load (per-count strips, click open/shut pairs, the throw), and three
+full renders (one over the brief's two: the second showed the button moving and the square's empty sea).
+
+| | Predicted | Measured |
+|---|---|---|
+| clicks, arrival against the count | 8.5 ms before, every member, every claw | **-8.50 ms for all 48 snaps** (to the instrument's 0.01 ms), soloists included |
+| clicks, open and shut | 0% | 0.00% for all 48 |
+| other keys | within 13.3 ms, 1.9% | worst **13.34 ms** (count 38, the claw), **1.93%** (count 16, the claw) |
+| checks | 56 | **56 of 56** (the throw's: `fliesClear` least 0.73 and 0.90 above the islander's shell and the spider crab's shrine, others 2.1 to 3.6; `throwLands` 25.2 to 31.5 from where taken; legs at most 0.975 of their span, the islander's solo) |
+| single crabs | unchanged | base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 18, islander 14, bruiser 16; base `game` `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9` |
+| the arc | top about 25 up, inside the throw camera | from the strip: five boats in a row against the sunset at 13.4 s, then down behind the group; at the first throw camera (eye 22, 36 in front, pitched 18) they **left the frame's top for about a second**: the camera now ends 44 back pitched 13 |
+| click sizes | 45 to 111 px in the group shots | at 1080p the opening reads in the V and the line as a notch opening and shutting at each claw; in the solos it is large. In the first singles three soloists' raised claws were above the frame (no click seen): the singles are now a fifth further back and aimed 1.5 higher |
+| the islander's solo | face and shell | turned left (as first scored) its claw's arm still crossed the lower face; turned 0.4 to its right the arm goes back past the face, the shell fills the frame's top and the face shows under it, its claw high at the left |
+| the button (thumbnail) | every face clear | with every claw straight up the centre's face sat behind its own hand; with its claw up and a little out (`CROWN`, only the centre) all five faces read and the claws make a crown over the V |
+| the square | front bodies 17 to 24% | the first search (no bound on the horizon) came out lower and left a band of empty sea over the group (about a third of the height): searched again with the horizon at most 8% from the top, eye 36 to 40, pitched 22, fovY 0.8: front bodies 15 to 23%, group 48 to 64% of the height (stand-in). In the render the group is a band across the lower two thirds with every member whole and the sun at the frame's top edge: larger than today's square, but the sunset is mostly cut |
+| seam | the same picture, the hold dead still | the same hash at 0 and 32 in both formats; but on the second render the two frames before the seam changed 0.59 times an ordinary pair: **a bug**: two struck keys on one count (the button for everyone, and the claw for some) summed `still` to 2, so the groove ran backwards through the hold. Fixed in `routine.ts` (clamped). Third render: `0776fbff01cd0507` at 0 and 32 (wide), `68e3fe17aab4f5c9` (square); the two frames before the seam **0.11 and 0.09 times** an ordinary pair |
+
+Where the reasoning was wrong:
+
+1. **The throw needs a lofted gravity**, which the coordinator's counts force (a release on 24 and a landing by 30):
+   under the world's 5 no boat clears a back. I did not see that until the first check run; the derivation above was
+   written to it, after.
+2. **A struck hold taken by two keys** was a latent bug in `routine` (`still` summed, not clamped); the score never
+   had two hit keys on one count before `who.only`.
+3. **The square's search** maximised the front body and found lower cameras; the stand-in's group box includes the
+   buildings, so "group 58% of the height" left a third of the frame empty sea. A bound on the horizon fixed it.
+4. **The stand-in's own-claw windows** bound a slanted hand with an upright box, so they read 42 to 75% for claws the
+   pictures show beside the face; only the button's centre (55% predicted, behind its hand in the picture) was right.
+5. **The singles' framing** was set for a solo whose claw stays low; three soloists raise theirs above it.
+
+What the library gained:
+
+- `src/spacetime/routine.ts`: `Key.click` (snaps a half count apart; overlapping runs join; refused while a struck pose
+  holds), `who: { only: [...] }`, `Dancer.click(t)` (`weight`, `open`), the instrument's click rows (each snap against
+  its count), `Readouts.click`; a struck hold clamped to 1.
+- `src/spacetime/attack.ts`, `src/check.ts`: `Target` kind `column` (a disc that stands to `top`), measured by
+  `fliesClear`.
+- The crab (`titan/`): `Dance.clicked(own, shut, wide)` (the gape itself outside a routine); the base pincer
+  (gauntlet, tongs) and the fiddler claws click their display claw and report `great.open`; numbers `grabPulses`,
+  `throw.gravity`, `throw.over` (`reefback_titan.ts`: the back's cylinders become columns when a top is stated).
+- `examples/bosses/crab_lineup.ts`: `ATTACK_COUNTS`, read by `onTheBeat`.
+- `tools/lineup_framing.ts`: claws from the score, levels, own-claw windows, click sizes, `--turn`, `--search square`.
+
+What is weak:
+
+- The clicks are small in the group shots (45 to 110 px of fingertip travel at 1080p, a few frames open): they read
+  as a flicker at each claw, not a gesture. The song will carry them; a viewer looking for them finds them.
+- In the line the motif's low claw (count b) covers the samurai's face by about half (the stand-in and the strip agree).
+- The back heights the throw clears are the stand-in's boxes plus 0.5, not the geometry; the hermit's shell is being
+  refitted by another worker, so `TOPS.islander` must be re-measured after that merge (the margin over it is 0.73).
+- The throw's gravity is 4 times the world's: the boats rise fast and hang; physically it is a cartoon throw.
+- The quarter turn is now 0.4 rad (23 degrees): it clears every face but reads less as a turn.
+- The islander's solo is the group's manner now, not its show-off one, and the claw's arm still crosses its lower
+  face in the low front single (less than before: the eyes and shell read).
+- The square's steep cameras put the horizon at the top: the sunset is a sliver there.
+- Frame at 1920 x 1080: 5.8 ms least, 11.1 median (square 6.6, 7.4), with another worker on the GPU; 662 draws, as before.
+
+Re-render, one load, every deliverable:
+
+    cd ~/git/_wt/loft-kpop2 && bun tools/lineup_deliver.ts ~/git/loft/out/kpop_deep all --look engraving --formats wide,square --fps 30 --pick 0.2,3.05,6.05,12.05,13.4,15.05,20.55,26.3,28.3

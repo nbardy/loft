@@ -135,12 +135,30 @@ function discGap(a: readonly Joint[], centre: readonly [number, number], radius:
   return best;
 }
 
+/**
+ * Least distance from a chain's joints to a column (a disc standing up to `top`): the capped cylinder's own distance
+ * at each joint, less the joint's radius. Exact for a ball (a chain of one point, as a thrown thing is measured); for
+ * a longer chain it is measured at the joints only.
+ */
+function columnGap(a: readonly Joint[], centre: readonly [number, number], radius: number, top: number): number {
+  let best = Infinity;
+  for (const j of a) {
+    const dx = Math.hypot(j.p[0] - centre[0], j.p[2] - centre[1]) - radius, dy = j.p[1] - top;
+    best = Math.min(best, (dx > 0 && dy > 0 ? Math.hypot(dx, dy) : Math.max(dx, dy)) - j.r);
+  }
+  return best;
+}
+
 /** Distance from a chain to a target at time t. */
 function gap(probe: Probe, chain: readonly Joint[], target: Target, t: number): number {
   switch (target.kind) {
     case "disc": {
       const [c, r] = probe.eval([target.centre, target.radius], t) as [number[], number];
       return discGap(chain, [c[0], c[1]], r);
+    }
+    case "column": {
+      const [c, r, top] = probe.eval([target.centre, target.radius, target.top], t) as [number[], number, number];
+      return columnGap(chain, [c[0], c[1]], r, top);
     }
     case "body": {
       const b = chainOf(target.body);

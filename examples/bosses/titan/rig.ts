@@ -162,6 +162,12 @@ export type Dance = {
   readonly accents: readonly F[];
   /** What a great claw that has a display of its own should show: its own when there is no taunt, the dance's move when there is. */
   readonly display: (own: F) => F;
+  /**
+   * The great claw's finger opening (radians, as the claw draws it) under a routine's clicks: `own` when there is no
+   * routine; in one, opened to `wide` before each click and snapped to `shut` on it (src/spacetime/routine.ts, `click`).
+   * A crab outside a routine never clicks.
+   */
+  readonly clicked: (own: F, shut: number, wide: number) => F;
   /** x with k times one of the readouts above added: x itself for a boss that does not taunt. */
   readonly plus: (x: F, k: number, of: F) => F;
   /**
@@ -201,11 +207,11 @@ function tauntOf(t: Taunt, c: TauntContext): Dance {
   switch (t.kind) {
     case "none": {
       const d = { on: zero, wave: zero, swing: zero, step: zero };
-      return { ...d, answer: zero, onAt: () => zero, accents: [], display: (o) => o, plus: (x) => x, raised: (_side, wrist) => wrist, carry: still, stance: own(d, T), legs: walked };
+      return { ...d, answer: zero, onAt: () => zero, accents: [], display: (o) => o, clicked: (o) => o, plus: (x) => x, raised: (_side, wrist) => wrist, carry: still, stance: own(d, T), legs: walked };
     }
     case "dance": {
       const d = danceOf(t, period, T);
-      return { ...d, carry: still, stance: own(d, T), legs: walked };
+      return { ...d, clicked: (o) => o, carry: still, stance: own(d, T), legs: walked };
     }
     case "routine": {
       // A member of a group: the group's score in the group's manner (the crab's `temper` is the group's in a lineup);
@@ -218,6 +224,7 @@ function tauntOf(t: Taunt, c: TauntContext): Dance {
       const claw = (side: 1 | -1) => { const k = D.claw(side); return { weight: perFrame(`titan_s_routine_w${side > 0 ? "R" : "L"}`, mul(k.weight, sub(1, soloOn))), aim: perFrame(`titan_routine_aim${side > 0 ? "R" : "L"}`, k.aim) }; };
       const great = claw(1), small = claw(-1);
       const tab = (name: string, x: F): F => perFrame(`titan_s_routine_${name}`, x);
+      const click = D.click(), clickOn = tab("clickOn", click.weight), clickOpen = tab("clickOpen", click.open);
       const rise = tab("rise", D.rise()), lean = tab("lean", D.lean());
       // The feet step along the member's path: the gait's course is where the routine has the boss at a clock (in the
       // world), paced two cycles a count, and a foot lifts only when its next plant is somewhere else (`minStep`), so the
@@ -237,6 +244,7 @@ function tauntOf(t: Taunt, c: TauntContext): Dance {
       return {
         on: lift<"f32">(1), wave: great.weight, swing: solo?.swing ?? zero, step: solo?.step ?? zero, answer: small.weight, onAt: () => lift<"f32">(1), accents: [],
         display: () => great.weight, plus: (x, k, of) => add(x, mul(of, k)),
+        clicked: (o, shut, wide) => mix(o, add(shut, mul(clickOpen, wide - shut)), clickOn),
         raised: (side, wrist, span) => {
           const k = side === 1 ? great : small, s = sh[side];
           // The aim's third part is out from the claw's own side: the small claw's is to the crab's left.
@@ -262,7 +270,7 @@ function tauntOf(t: Taunt, c: TauntContext): Dance {
 }
 
 /** A dance of the crab's own (the first lineup's taunt; a routine's solo): an emote on its accents in its manner `T`. */
-function danceOf(t: { readonly first: number; readonly accents: readonly number[]; readonly pulse?: number }, period: number, T: Numbers["temper"]): Omit<Dance, "carry" | "stance" | "legs"> {
+function danceOf(t: { readonly first: number; readonly accents: readonly number[]; readonly pulse?: number }, period: number, T: Numbers["temper"]): Omit<Dance, "carry" | "stance" | "legs" | "clicked"> {
   // The accents are the scene's (on its beats); how the crab arrives on them is its temperament: how long before the
   // accent it starts (so a slow mover still lands on the beat), how sharply, how long it holds the pose, how long it
   // takes to leave. The side changes a half beat (0.25 s at 120 a minute) after each accent.
@@ -447,9 +455,9 @@ export function stage(n: Numbers, offer: ClawsOffer, boats: BoatsOption, how: St
       reachLift: 1.2, restGap: offer.cutter.restGap, windup: n.grabDrawBack, close: GS.close, release: GS.release,
     },
     effect: hold({
-      seconds: GS.hold, at: taken, radius: div(IN.boat1Beam, 2), carry: { kind: "arc", to: windback, lift: n.grabLift }, squeeze: n.grabSqueeze, pulses: 2,
+      seconds: GS.hold, at: taken, radius: div(IN.boat1Beam, 2), carry: { kind: "arc", to: windback, lift: n.grabLift }, squeeze: n.grabSqueeze, pulses: n.grabPulses,
       end: thrown({
-        land, flight: TH.flight, gravity: n.gravity, stroke: TH.stroke, follow: TH.follow, drag: TH.drag, heave: TH.heave,
+        land, flight: TH.flight, gravity: TH.gravity, stroke: TH.stroke, follow: TH.follow, drag: TH.drag, heave: TH.heave,
         placer: placedBy<Placer>(placer.boat1, { standIn: () => STAND_IN, host: (p) => hosted(middleOf(p)) }),
       }),
     }),

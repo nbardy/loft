@@ -28,7 +28,7 @@
 //   has its own dimensions).
 
 import {
-  abs, add, alive, animate, cos, cross, horn, impact, keys, lift, limb, max, mix, mul, normalize, part, place, pow, rigid, sin, smoothstep, strand, sub, time,
+  abs, add, alive, animate, cos, cross, div, horn, impact, keys, lift, limb, max, mix, mul, normalize, part, place, pow, rigid, sin, smoothstep, strand, sub, time,
   unit, vec3, type F, type Frame, type P3,
 } from "../../../../src/index.ts";
 import { cut, perFrame, TAU } from "../ink.ts";
@@ -47,6 +47,8 @@ const SIDE: readonly (readonly [number, number])[] = [[0, 0], [0.5, 0], [0.62, -
 const IMPACT = 0.1;
 /** Where the dactyl hinges along the hand, its length (share of the hand's) and its hinge's offset (share of FAT g). */
 const HINGE = 0.55, DACTYL = 0.5, HINGE_OUT = 0.45;
+/** The dactyl's gape (radians) wide open for a click: the wind-up's 1.05 and a little more. Shut is 0, on the pollex. */
+const DACTYL_WIDE = 1.1;
 
 const keyAt = (k: readonly (readonly [number, number])[], m: number): number => {
   for (let i = 1; i < k.length; i++) if (m <= k[i]![0]) { const [a, va] = k[i - 1]!, [b, vb] = k[i]!; return va + ((m - a) / (b - a)) * (vb - va); }
@@ -118,7 +120,7 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
 
     // The wrist is the m = 0 end of the spine Claw Crush poses (as the base crusher's): the lunge throws it back and up in
     // the wind-up and lands it `crushLead` short of the disc's centre.
-    let great: P3 | undefined;
+    let great: P3 | undefined, gapeOut: F | undefined;
     const crusher = animate(restWrist, [crush], (spine) => {
       const w = tabV("wrist", spine(lift<"f32">(0)));
       great = w;
@@ -171,7 +173,9 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
 
       // The dactyl: hinged on the hand's upper edge at HINGE, curling down onto the pollex. It gapes a little at rest (more
       // on the wave), wide in the wind-up, and is shut at contact; it opens again as the claw goes home.
-      const gape = tabS("gape", mul(mix(add(0.12, mul(wave, 0.45)), 1.05, p), sub(1, mul(p, smoothstep(0.55, 0.95, q)))));
+      // In a routine the dactyl clicks: opened wide before each click and shut on the pollex on it (rig.dance.clicked).
+      const gape = tabS("gape", rig.dance.clicked(mul(mix(add(0.12, mul(wave, 0.45)), 1.05, p), sub(1, mul(p, smoothstep(0.55, 0.95, q)))), 0, DACTYL_WIDE));
+      gapeOut = gape;
       const hingeAt = add(add(w, mul(a, mul(L, HINGE))), mul(o, mul(R, HINGE_OUT)));
       const ca = cos(gape), sa = sin(gape);
       const hinged: Frame = { o: hingeAt, x: add(mul(a, ca), mul(o, sa)), y: sub(mul(o, ca), mul(a, sa)), z: nrm };
@@ -190,8 +194,8 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
     });
     const strike = crusher.strikes.crush;
     if (strike === undefined) throw new Error("claws/fiddler: the great claw is not bound to Claw Crush");
-    if (great === undefined) throw new Error("claws/fiddler: the great claw's wrist was not posed");
-    return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers, great: { wrist: great, span } };
+    if (great === undefined || gapeOut === undefined) throw new Error("claws/fiddler: the great claw's wrist was not posed");
+    return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers, great: { wrist: great, span, open: div(gapeOut, DACTYL_WIDE) } };
   },
 });
 

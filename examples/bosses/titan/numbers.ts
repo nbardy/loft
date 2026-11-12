@@ -230,6 +230,8 @@ export const S = {
   // The carry's arch over the straight way from where the ship is taken to the wind-back place (2.15 up): with 2.0 the
   // ship tops out 3.5 above the water two thirds of the way, as the old lift did, then sinks back as the claw cocks.
   grabLift: 2.0, grabSqueeze: 0.5,
+  /** How many times the grip squeezes while it holds. */
+  grabPulses: 2,
 
   // ---- temperament: the manner one rig moves in (docs/lineup.md). The beats are the attacks' and the taunt's; this is
   // how this crab arrives on them. A variant overrides it; these are the crab as first drawn. ----
@@ -269,8 +271,12 @@ export const S = {
    * Since the owner's second note the landing is far (29 flown, 37 from the crab's middle): the game camera loses the
    * ship through its top right corner and the `arena` and `throw` cameras show it land. The landing the game camera
    * can show whole is (4.3, -19.6), with flight 2.6, stroke 0.5, follow 0.3 and one turn: 13.3 flown.
+   * `gravity` is the flight's: the world's (5) for a crab alone; a scene may loft it (a high arc in a short flight)
+   * without changing the ring wave's speed, which the world's gravity also sets. `over`: how high above the water the
+   * back's columns stand as a throw must clear them: Infinity for a crab alone (a back may not be flown over at any
+   * height); a scene that throws over the head states its back's top.
    */
-  throw: { back: 2.7, side: 0.9, up: 2.15, stroke: 0.4, follow: 0.25, flight: 3.2, land: [-1.0, -35.0] as const, drag: 0.2, heave: { hz: 0.9, damping: 0.45 }, turns: 2 },
+  throw: { back: 2.7, side: 0.9, up: 2.15, stroke: 0.4, follow: 0.25, flight: 3.2, land: [-1.0, -35.0] as const, drag: 0.2, heave: { hz: 0.9, damping: 0.45 }, turns: 2, gravity: 5, over: Infinity },
   /** The splash where the thrown ship lands: how far its foam runs, for how long, and the squash of the hull at touchdown. */
   splash: { reach: 3.6, seconds: 1.5, squash: 0.3 },
   /** Claw Crush's ring wave (docs/throw_and_shove.md, "The ride"): crest height at the disc's edge (the depth is 1.7; a

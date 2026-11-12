@@ -32,6 +32,8 @@ export const PLACES: Readonly<Record<string, readonly XZ[]>> = {
   V: [[-16, 30], [-8, 15], [0, 0], [-8, -12], [-16, -24]],
   line: [[-8, 26], [-2, 13], [0, 0], [-2, -13], [-8, -26]],
   diagonal: DIAGONAL,
+  // The diagonal slid 4 to the camera's left: the chorus's travel in step (count 42), not a change of formation.
+  diagonalLeft: DIAGONAL.map(([x, z]) => [x, z + 4] as const),
   solo0: soloing(0), solo1: soloing(1), solo2: soloing(2), solo3: soloing(3), solo4: soloing(4),
 };
 
@@ -66,7 +68,9 @@ const lens = (eye: V3, target: V3, fovY: number): Lens => ({ eye, target, fovY }
 const SINGLE: Readonly<Record<string, { readonly distance: number; readonly aim: number }>> = {
   fiddler: { distance: 26, aim: 3.2 }, mask: { distance: 31, aim: 3.4 }, islander: { distance: 30, aim: 3.4 }, bruiser: { distance: 30, aim: 3.4 }, stilt: { distance: 40, aim: 5.8 },
 };
-const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.split("+")[0]!] ?? SINGLE.islander!; return lens([at[0] + d.distance, 3, at[1]], [at[0], d.aim, at[1]], 0.4); };
+// A fifth further back and aimed 1.5 higher than first framed: in their solos the great claws go up, and at the first
+// framing the fiddler's, the bruiser's and the tongs' fingers (their clicks) were above the frame.
+const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.split("+")[0]!] ?? SINGLE.islander!; return lens([at[0] + 1.2 * d.distance, 3, at[1]], [at[0], d.aim + 1.5, at[1]], 0.4); };
 
 /**
  * The group's framings (docs/lineup.md, "Framing from above"), by format: raised, wide, close to the front member and
@@ -75,20 +79,23 @@ const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.spl
  * the top. `raised(front, z, height, distance, pitch, fovY)`: the eye `distance` in front of the front member (world x)
  * at `z`, `height` above the water, pitched down `pitch` degrees.
  */
-const raised = (front: number, z: number, height: number, distance: number, pitch: number, fovY: number): Lens => {
+export const raised = (front: number, z: number, height: number, distance: number, pitch: number, fovY: number): Lens => {
   const p = (pitch * Math.PI) / 180, x = front + distance;
   return lens([x, height, z], [x - 10 * Math.cos(p), height - 10 * Math.sin(p), z], fovY);
 };
-const GROUP = {
+export const GROUP = {
   wide: {
     V: raised(0, 3, 20, 34, 15, 0.8), line: raised(0, 0, 24, 40, 17, 0.8), lineLow: raised(0, 0, 24, 40, 17, 0.8),
-    lineClose: raised(0, 0, 22, 36, 18, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
+    // The throw's push-in ends further back and pitched less than first framed (22, 36, 18): the boats thrown over the
+    // heads top out about 26 up, and from there they left the frame's top for a second (docs/lineup.md, "Deeper").
+    lineClose: raised(0, 0, 22, 44, 13, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
   },
-  // The square pitched steeper than first planned (20, 15, 12 degrees): the strip had the group in its bottom half under
-  // a band of empty sea; pitched 22 to 28 degrees the group fills 35 to 92% of the height (stand-in), every face clear.
+  // The square, searched with the formations as they are (tools/lineup_framing.ts --search square; docs/lineup.md,
+  // "Deeper"): steep, with the horizon 2% from the top (a first search without that bound came out lower and left a
+  // band of empty sea over the group), the group whole across the frame, every face clear in the V and the diagonal.
   square: {
-    V: raised(0, 3, 36, 36, 28, 1.0), line: raised(0, 0, 40, 50, 26, 1.0), lineLow: raised(0, 0, 40, 50, 26, 1.0),
-    lineClose: raised(0, 0, 38, 46, 27, 1.0), diagonal: raised(0, 9, 28, 36, 22, 0.9), diagonalIn: raised(0, 9, 28, 34, 23, 0.9),
+    V: raised(0, 3, 40, 46, 22, 0.8), line: raised(0, 0, 40, 50, 22, 0.8), lineLow: raised(0, 0, 40, 53, 22, 0.8),
+    lineClose: raised(0, 0, 40, 50, 22, 0.8), diagonal: raised(0, 9, 36, 38, 22, 0.8), diagonalIn: raised(0, 9, 36, 39, 22, 0.8),
   },
 } as const;
 
