@@ -7,7 +7,7 @@ frame draws alone). The same expressions run on the CPU, where checks measure ex
 
 ```ts run
 // examples/reed.ts
-import { add, mul, scene, sea, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
+import { add, mul, scene, plane, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
 
 const reed = strand({
   name: "reed",
@@ -18,7 +18,7 @@ const reed = strand({
 });
 
 export default scene({
-  ground: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  ground: plane,
   things: [reed],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],

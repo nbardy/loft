@@ -31,7 +31,7 @@ Put this in `examples/reed.ts` (a scene is a module whose default export is a `s
 
 ```ts run
 // examples/reed.ts
-import { add, mul, scene, sea, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
+import { add, mul, scene, plane, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
 
 const reed = strand({
   name: "reed",
@@ -43,7 +43,7 @@ const reed = strand({
 });
 
 export default scene({
-  ground: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  ground: plane,
   things: [reed],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -72,7 +72,7 @@ is a step down and not a rewrite. `spiralTube` is a tapered tube on a logarithmi
 line and radius in the form `strand` takes, so you can keep the curve and change the rest.
 
 ```ts run
-import { add, cos, draw, mul, scene, sea, sin, spacing, spiralLine, spiralTube, strand, surface, toon, vec3, TAU, type F } from "../src/index.ts";
+import { add, cos, draw, mul, scene, plane, sin, spacing, spiralLine, spiralTube, strand, surface, toon, vec3, TAU, type F } from "../src/index.ts";
 
 // A spiral tube: one law ties the curl to the taper (read its doc comment for what it cannot do).
 const frond = spiralTube({ name: "frond", length: 5, curl: 2.4, taper: 0.2, girth: 0.3, out: [0, 1, 0], toward: [1, 0, 0], paint: [0.3, 0.6, 0.35] });
@@ -95,7 +95,7 @@ const bowl = surface((u: F, v: F) => {
 }, { u: ["cap", "free"], v: "periodic" });
 
 export default scene({
-  ground: sea({ swell: [] }),
+  ground: plane,
   things: [frond, club, draw.surface("bowl", bowl, { paint: () => vec3(0.9, 0.85, 0.7), grid: { u: spacing.even(24), v: spacing.even(32) }, sides: "two", outline: "border" })],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -118,7 +118,7 @@ Motion is a function of `time`. The library's motion helpers are the twelve prin
 overshoots, loose parts that arrive late and swing on, and a hold that never quite holds still.
 
 ```ts run
-import { add, alive, anticipated, beats, dragged, mod, mul, scene, sea, sin, strand, swing, time, toon, vec3, type F } from "../src/index.ts";
+import { add, alive, anticipated, beats, dragged, mod, mul, scene, plane, sin, strand, swing, time, toon, vec3, type F } from "../src/index.ts";
 
 // Every 4 seconds: a 0.8 s wind-up, a 0.2 s bow, then 1.5 s to settle.
 const b = beats(mod(time, 4), { anticipate: 0.8, act: 0.2, settle: 1.5 });
@@ -136,7 +136,7 @@ const stalk = strand({
 });
 
 export default scene({
-  ground: sea({ swell: [] }),
+  ground: plane,
   things: [stalk],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -205,7 +205,7 @@ when it builds and passes the subject's checks, whatever proportions it changes.
 
 ```ts run
 // examples/beacon.ts
-import { add, mul, scene, sea, strand, toon, vec3, type Drawable, type F, type Option } from "../src/index.ts";
+import { add, mul, scene, plane, strand, toon, vec3, type Drawable, type F, type Option } from "../src/index.ts";
 import { design as makeDesign } from "../src/index.ts";
 
 type N = { readonly height: number; readonly colour: readonly [number, number, number] };
@@ -225,7 +225,7 @@ export const design = makeDesign({
   compare: ["three"],
   build: (picked, n) => ({
     scene: scene({
-      ground: sea({ swell: [] }),
+      ground: plane,
       things: [stem(n), picked.top.draw(n)],
       style: toon(),
       sun: [-0.4, 0.8, 0.45],

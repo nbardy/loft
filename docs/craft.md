@@ -20,7 +20,7 @@ module whose default export is a `scene`:
 
 ```ts run
 // examples/reed.ts
-import { add, mul, scene, sea, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
+import { add, mul, scene, plane, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
 
 const reed = strand({
   name: "reed",
@@ -31,7 +31,7 @@ const reed = strand({
 });
 
 export default scene({
-  ground: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  ground: plane,
   things: [reed],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -76,7 +76,7 @@ sheet. Write the weakest thing about each in a sentence; pick one and push it fu
 candidates for "a tall thing standing in water":
 
 ```ts run
-import { add, cos, draw, lathe, mul, scene, sea, sin, spacing, spiralLine, strand, toon, vec2, vec3, type F } from "../src/index.ts";
+import { add, cos, draw, lathe, mul, scene, plane, sin, spacing, spiralLine, strand, toon, vec2, vec3, type F } from "../src/index.ts";
 
 // A: swept. A spiral's centre line, but a section that flattens to a blade toward the tip.
 const line = spiralLine({ length: 5, curl: 1.6, taper: 0.4, girth: 0.35, out: [0, 1, 0], toward: [1, 0, 0] });
@@ -97,7 +97,7 @@ const disc = (k: number) => strand({
 });
 
 export default scene({
-  ground: sea({ swell: [] }),
+  ground: plane,
   things: [blade, draw.surface("rings", rings, { paint: () => vec3(0.9, 0.85, 0.7), grid: { u: spacing.even(120), v: spacing.even(32) }, sides: "one", outline: "hull" }), ...Array.from({ length: 10 }, (_, k) => disc(k))],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -134,7 +134,7 @@ ink, the sky and water as part of the picture, and a function of your own where 
 says. A `Style` is a plain value, so a new look is often one function replaced:
 
 ```ts run
-import { add, dot, fract, max, mix, mul, palette, scene, sea, smoothstep, strand, toon, vec3, type F, type Style } from "../src/index.ts";
+import { add, dot, fract, max, mix, mul, palette, scene, plane, smoothstep, strand, toon, vec3, type F, type Style } from "../src/index.ts";
 
 const base = toon({ bands: 2, ink: [0.1, 0.05, 0.05] });
 // Engraved: light is drawn as lines whose width follows N.L, written on the body's anchor so they ride it.
@@ -159,7 +159,7 @@ const fish = strand({
 });
 
 export default scene({
-  ground: sea({ swell: [] }),
+  ground: plane,
   things: [fish],
   style: engraved,
   sun: [-0.4, 0.8, 0.45],
@@ -206,7 +206,7 @@ twelve principles in full.
   its own seed; `uneven(side)` so left and right are not twins.
 
 ```ts run
-import { add, alive, anticipated, beats, dragged, mod, mul, scene, sea, sin, strand, swing, time, toon, vec3, type F } from "../src/index.ts";
+import { add, alive, anticipated, beats, dragged, mod, mul, scene, plane, sin, strand, swing, time, toon, vec3, type F } from "../src/index.ts";
 
 const b = beats(mod(time, 4), { anticipate: 0.8, act: 0.2, settle: 1.5 }); // every 4 s
 const lean = add(add(mul(anticipated(b.anticipate), -0.3), b.act), add(mul(b.settle, -1), swing(b.after, 0.4)));
@@ -219,7 +219,7 @@ const stalk = strand({
 });
 
 export default scene({
-  ground: sea({ swell: [] }), things: [stalk], style: toon(), sun: [-0.4, 0.8, 0.45], period: 4,
+  ground: plane, things: [stalk], style: toon(), sun: [-0.4, 0.8, 0.45], period: 4,
   cameras: { side: { kind: "perspective", eye: [0, 3, 12], target: [0, 2, 0], fovY: 0.6 } },
 });
 ```
