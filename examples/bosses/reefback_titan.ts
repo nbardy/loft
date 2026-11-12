@@ -93,9 +93,10 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     // right, looking at the shell's face (DIRECTION.md, Round 5). Fixed in the world, as the game's.
     pick: { kind: "perspective", eye: [-12, 17, 19], target: [-1.5, 2, 0], fovY: 0.6 },
     // The lineup's single (examples/bosses/lineup_shots.ts): straight in front, the eye 3 above the water, 30 away; and
-    // the same from straight behind. For judging a back from the dance video's camera and from the rear.
+    // the same from straight behind and from the left side. For judging a back from the dance video's camera and round it.
     lowFront: { kind: "perspective", eye: [30, 3, 0], target: [0, 3.4, 0], fovY: 0.4 },
     lowRear: { kind: "perspective", eye: [-30, 5, 0], target: [0, 3.4, 0], fovY: 0.4 },
+    lowLeft: { kind: "perspective", eye: [1, 5, -30], target: [1, 3.4, 0], fovY: 0.4 },
   };
 };
 

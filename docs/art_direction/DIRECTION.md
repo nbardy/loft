@@ -1412,6 +1412,36 @@ again or the light out of the low front frame. Predicted for the second render: 
 edge at rest: it may clip at one time); the claw covers less of the face at `game` than in the first render; the cycle
 clears with the least gap 0.1 to 0.4.
 
+**Scored, second render (`rake` -2.4), and where the wheel stops.** The picture did better than the area number: from
+`game` the coil shows clear of the claw at all four times, the curl and three to four turns, the claw over about a
+quarter of the face or less; from `lowFront` two to three turns at 3.6, 11.3 and 17.5 (at 1.0 the eyes cover the
+curl), the light on top at all four, the lip's arch right of the eyes; from the left side, the bold coil and the lip over
+the dark throat. But the cycle failed, and the probe was why: I probed the claw where it hit the first pose, and the yaw
+swung the wheel's front edge forward over the head. `spiral_clear.ts`: great claw **-1.09** (t = 11.2, at (2.5, 3.9,
+2.6)), eyeR -0.71, eyeL -0.39, carapace ahead of the lip -0.86. Seated 1.5 and 2.1 further back (measured, not rendered):
+great claw still -0.95 and -0.62 (at (1.2 to 1.5, 3.1 to 3.6, 1.9 to 2.1), t = 11.7), carapace -0.89 and -0.82.
+
+*What stopped it.* The great claw's slam wind-up (t = 11.2 to 11.7) sweeps the volume over the carapace's middle,
+x 1.2 to 2.5, y 3 to 4, z 2 to 2.6, and a face turned to the cameras in front, large enough to read, stands in exactly
+that volume; and an upright wheel's lower rim cuts into the carapace ahead of its own mouth at every seat tried. The
+turban cleared both because it stood behind and to the right, which is why its face looked at the sky.
+
+| | turban (a3da544) | wheel (this branch) |
+|---|---|---|
+| reads as one coil from `game` / `lowFront` / left | rings from above / no / no | yes / yes at 3 of 4 times / yes |
+| light on top from `lowFront`, four times | yes (on the tip) | yes (on the summit) |
+| face area at `game`, theory | (tiers, not a face) | 0.65 of the body (asked 1.0) |
+| limbs through the shell over a 22 s cycle | none (least 0.78) | great claw -1.09, eyes -0.71 and -0.39 |
+| carapace ahead of the lip | 0.48 clear | 0.86 inside |
+| checks, base hashes | islander 14, others unchanged; unchanged | the same |
+| frame at `game`, slow clock state | 5.44 ms (main 5.31) | 5.44 ms (main 5.24 to 5.31) |
+
+The turban with the new paint (its pose numbers: `tilt` 1.35, `rake` 0, `mouthAt` 0.6, `spire` 1.0, mouth 3 by 3, seat
+in 0 up 1.6 side -0.2 lip 1.9) was rendered once: one coil seen from above at `game`, still a red dome from the low
+front. The branch is left at the wheel, the form that reads; it fails the clearance rule. Two ways on, neither mine to
+take: route the great claw's slam wind-up outside the wheel (the rig is another worker's), or accept a smaller wheel
+(about 2.4 across the section: face about 0.4 of the body at `game`).
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a
