@@ -1889,3 +1889,55 @@ the side away from a light kept well off the lens. So: the light the forms are t
 degrees off the lens (`offLens`), and the terminator is measured round the section (`section`), N.K < at |K across the
 form|, so every limb shows the same share in shadow, at 0.3 to 0.4 of the section. Cast shadows still fall along the
 true sun.
+
+## Body plans (2026-11-12, paused work in progress)
+
+**Where it stands (paused by the coordinator; nothing rendered since the start).** (1) The target sheet is done and good (`body_plans/`). (2) The four body plans below were found on the CPU instruments, and each passes its variant's checks with trial numbers. Only the islander's are written into the design; the fiddler, mask and bruiser numbers are in the table, not yet in `reefback_titan.ts`. (3) The library seams are in: `carriage` (standing nose-down and list, in `rig.ts`), `legSize` (per-pair length and girth, in the base, slim and armoured legs) and the claws `fiddlerAcross`. The base hashes have not been re-confirmed since then. (4) The islander's fit was last measured with nothing through the wall but the throat at 0.02 (it was 0.34), before its new legs and claw; re-run `spiral_clear` (one cycle and `--routine`) and open `seat.lip` or `seat.up` until the throat is about 0.3. (5) Next: write the three variants' numbers in; typecheck; base hashes; `check` every variant; the lineup's `TOPS` (bruiser up about 1) and `tools/lineup_framing.ts`'s hand-written boxes for the new bodies; one silhouette sheet from `tools/body_plans.ts`, then one GPU sheet thresholded to black, scored against the table; the lineup check once.
+
+The owner, on the dance video: "Yes to the taller shell to see it more", and "besides the spider crab, they need a little more
+variation in claw / leg / body size and alignment: hermit crab legs coming on the front more, and the other ones more squat
+or tall". Four of the five shared one body (measured on the CPU from the built geometry, `tools/body_plans.ts`, at t = 1.0):
+
+| today | body top above water | body width | leg span | great hand |
+|---|---|---|---|---|
+| fiddler | 3.12 | 7.72 | 20.0 | 8.6 |
+| mask | 4.05 | 9.00 | 20.1 | about 4 |
+| islander | 3.67 | 8.25 | 20.3 | 8.6 |
+| bruiser | 2.69 | 8.25 | 20.1 | 8.6 |
+
+**The target** (`body_plans/silhouettes_front.webp`, `silhouettes_high.webp`, `lineup_print.webp`, `hermit_front.webp`;
+the image model, prompt in `body_plans/prompt.md`): a tiny fiddler body high on near-vertical legs under a claw as long as
+the legs; the samurai the widest and flattest, low, short legs sprawled sideways, both claws low in front; the hermit's
+shell a high spire about 2.5 times the crab's height, legs splayed in front, the claw across the front; the bruiser the
+deepest body, pillar forelegs, rear legs tucked, the claw out to the side at mid height.
+
+**The plan** (numbers each passing its variant's checks with `tools/body_checks.ts <variant> '<json>'`; nothing rendered):
+
+| | numbers | why |
+|---|---|---|
+| fiddler | carapace from 1.4 (body 3.6 long), width 3.4, height 1.3; ride 3.4; slim legs x1.15 to 1.2 long, feet in to z 6.0 to 7.6; cutter arms 3.4 and 3.3 | slight and tall. A width of 3.0 fails `staysInView` (the great hand's wind-up covers the right eye for 0.55 s from `game`: the banner's wrist is placed from the shoulder, at 0.55 of the half-width); 3.4 passes |
+| mask | kabuto from -3.2 to 4.6, width 5.4, height 2.0; ride 0.6; armoured legs x0.95 long and x1.5 thick, roots 3.4 to -2.0, feet out to z 9.8 to 11.0; crusher 1.0 and cutter 1.0 | squat, broad and low, sprawled, two matched gauntlets. A matched pair at 1.2 or larger fails `letsGoClean` (the cutter's fingers 0.15 to 0.18 deep after the release), so the pair is matched at the cutter's size |
+| islander | hermit legs: roots 3.8, 3.0, 2.2, feet at 35, 46 and 63 degrees from ahead (the front pair 9 ahead); carriage nose 0.12; carapace rise 3.2; claws `fiddlerAcross` at crusher 1.9; spiral tilt 0.7, mouthAt 0.45, growth 2.4, spire 1.0, seat up 3.1 | legs forward, low in front and climbing into the shell, the claw low across the front, the shell taller |
+| bruiser | carapace -2.8 to 6.0, width 5.3, height 1.8; ride 2.2; carriage nose 0.14; legs x1.3, 1.05, 0.85, 0.7 long and x2.0, 1.4, 1.0, 0.9 thick, roots 4.2 to -1.0, the front feet 8.8 ahead; crusher 2.1; cutter arms 2.9 and 2.8 | big, top-heavy, leaning in, pillar forelegs. The brow face scales with the carapace (`headOf`) |
+
+**The hermit's shell over its head** (`tools/body_plans.ts`: the highest visible row of the coil against the eyes' top, 1920 x
+1080, at rest; V is the group's wide V with the crab at the V's front place, `single` its low single): today -122 px from
+`single` and -161 from `lowFront` (hidden below the eyes), 92 from V. With the plan's shell: **205 from `single`, 234 from
+`lowFront`, 255 from V**, and with the claw across the front it stands over everything in front too (205, 234, 173).
+Each lever alone buys about 70 px (tilt, mouthAt, seat with the tail's rise); the nose-down carriage adds about 85 (the
+eyes drop, the shell behind rises).
+
+**A limit of the closed form, found here.** The target's upright spire cannot be had with the mouth facing forward: the
+mouth's section lies in a plane holding the axis, so as the axis stands up (tilt 0.7 to 1.3, any rake from 2.8 to 4.4) the
+mouth turns 30 to 50 degrees to the crab's left (`spiral_views.ts --quick`). Tilt 0.7 turns it to 47 degrees (from 23) and
+still fits (one cycle: nothing through the wall, the carapace never in the wall, the crusher 0.34 into the mouth in its
+wind-up). From the front the shell reads as a dome humped up to the left with its coil on that flank, not the target's
+centred spire. An upright spire needs a mouth inclined to the axis (an aperture whose plane does not hold it): a new
+number in `back/spiral_shell.ts` and its CPU twin. That is the bolder step, not taken yet.
+
+Added (inherited from nothing; each because a body plan could not be said without it): `carriage` {nose, list} in the
+numbers, added to every stance's pitch and roll in `rig.ts` (0 for the base: x + 0 is x); `legSize` {length, girth} per leg
+pair, read by the base, slim and armoured legs (`pairLengths`); claws `fiddlerAcross` (a third carriage of the fiddler's
+banner); `tools/body_plans.ts` (the built geometry on the CPU: measured, rasterised as black silhouettes through the design's
+cameras and the lineup's V and single, the shell's height over the head) and `tools/body_checks.ts` (a variant's checks with
+numbers overridden).
