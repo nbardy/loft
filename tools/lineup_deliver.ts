@@ -2,7 +2,7 @@
 // shots in examples/bosses/lineup_shots.ts, docs/lineup.md "A drilled group"):
 //
 //   bun tools/lineup_deliver.ts <out dir> strip|shots|all [--line fiddler,mask,islander,bruiser,stilt] [--look default]
-//                               [--formats wide,square] [--fps 30,60] [--pick t,t,...] [--strip-width 960]
+//                               [--formats wide,square] [--fps 30,60] [--pick t,t,...] [--strip-width 960] [--silent]
 //
 //   strip   per format: a frame per count of the dance, a tenth of a count after it (one sheet), at --strip-width / 2
 //           a tile, and the sync instrument's table (sync.txt: CPU, from the same build)
@@ -13,12 +13,17 @@
 // --line: the variants left to right, as many as the dance has members (a variant may carry picks: `stilt,face=mask` is
 // not possible here since the list is comma separated; use `+` for picks: `stilt+face=mask`). --look: a look of `LOOKS` in the scene; an unknown one is
 // refused. Each format's clip names: wide lineup_1080p.mp4 (30 fps) and lineup_1080p_<fps>fps.mp4; square
-// lineup_square.mp4 and lineup_square_<fps>fps.mp4. H.264 yuv420p, exactly one period each.
+// lineup_square.mp4 and lineup_square_<fps>fps.mp4. H.264 yuv420p, exactly one period each, carrying the song
+// (examples/bosses/crab_song.ts, written as song.wav beside them; AAC, the video stream untouched) unless --silent.
 import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { loopTime, OPEN, type Camera } from "../src/artefact.ts";
 import { contactSheet, writeWebp, type Frame } from "../src/cli/image.ts";
 import { openVideo } from "../src/cli/video.ts";
+import { rmSync } from "node:fs";
+import { writeWav } from "./synth.ts";
+import { renderSong } from "./crab_song.ts";
+import { muxSong } from "./mux_song.ts";
 import { compile, compileScene } from "../src/compile/index.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost } from "../src/host/host.ts";
@@ -34,6 +39,8 @@ const formatNames = flag("--formats", "wide,square").split(",");
 const rates = flag("--fps", "30,60").split(",").map(Number);
 const pick = flag("--pick", "").split(",").filter((x) => x !== "").map(Number);
 const stripWidth = Number(flag("--strip-width", "960"));
+const silentAt = argv.indexOf("--silent"), silent = silentAt >= 0;
+if (silent) argv.splice(silentAt, 1);
 const [dir, what] = argv as [string | undefined, string | undefined];
 if (dir === undefined || (what !== "strip" && what !== "all" && what !== "shots")) throw new Error("usage: bun tools/lineup_deliver.ts <out dir> strip|shots|all [--line a,b,c,d] [--look name] [--formats wide,square] [--fps 30,60] [--pick t,...] [--strip-width 960]");
 const FORMATS = formatsOf(lineArg);
@@ -129,19 +136,23 @@ if (what === "all") {
     writeWebp(`${dir}/thumbnail.webp`, contactSheet([thumb]));
   }
 
-  // ---- the clips: exactly one period per format and rate ----
+  // ---- the clips: exactly one period per format and rate, with the song unless --silent ----
+  const song = `${dir}/song.wav`;
+  if (!silent) { const m = renderSong("main"); writeWav(song, m.mix); console.log(`wrote ${song}: ${m.lufs.toFixed(1)} LUFS, peak ${m.peakDb.toFixed(1)} dBFS`); }
   for (const f of formats) for (const fps of rates) {
     const n = Math.round(PERIOD * fps), name = `${f.name === "wide" ? "lineup_1080p" : `lineup_${f.name}`}${fps === 30 ? "" : `_${fps}fps`}.mp4`;
-    const video = openVideo(`${dir}/${name}`, f.width, f.height, fps);
+    const silentClip = silent ? `${dir}/${name}` : `${dir}/silent_${name}`, video = openVideo(silentClip, f.width, f.height, fps);
     const start = performance.now();
     for (let i = 0; i < n; i++) await video.write(await at(shotAt(f, i / fps).camera, i / fps, f.width, f.height));
     await video.finish();
+    if (!silent) { console.log(muxSong(silentClip, song, `${dir}/${name}`)); rmSync(silentClip); }
     console.log(`wrote ${dir}/${name}  ${n} frames at ${fps} fps (${((performance.now() - start) / 1000).toFixed(0)} s)`);
   }
 
   const beats = (ts: readonly number[]): string => ts.map((t) => `${t.toFixed(1)} s (bar ${Math.floor(t / BAR) + 1} beat ${((t % BAR) / BEAT + 1).toFixed(0)})`).join(", ");
   writeFileSync(`${dir}/README.txt`, [
-    "The crab lineup: examples/bosses/crab_lineup.ts, shots in examples/bosses/lineup_shots.ts (docs/lineup.md). No audio.",
+    "The crab lineup: examples/bosses/crab_lineup.ts, shots in examples/bosses/lineup_shots.ts (docs/lineup.md).",
+    silent ? "No audio (--silent)." : "Audio: the song (examples/bosses/crab_song.ts, docs/lineup.md \"The song\"), song.wav beside the clips; AAC in each clip.",
     "",
     `Tempo ${BPM} BPM, 4/4. A beat is ${BEAT} s, a bar ${BAR} s. ${BARS} bars: the period is ${PERIOD} s, and each clip is exactly one period, so it loops when repeated.`,
     `Left to right: ${lineArg.join(", ")}. Look: ${look}. The dance's score: examples/bosses/crab_lineup.ts (DANCE); every count's frame: strip_per_count.webp; the sync instrument: sync.txt.`,

@@ -993,3 +993,65 @@ The formant "voice" is the riskiest: three band-passes on a saw read as a vowel 
 may sound like a kazoo. The koto from additive partials may sound like a harp or a toy. A drop on the third beat of a
 bar (the release is on 26) is unusual in pop; the chorus's bar lines then fall two counts later (28), so the drop may
 feel early. Five identical sidesteps of pitch in a falling canon may sound like a scale exercise.
+
+### A change before the code: the throw's counts (2026-11-12)
+
+At the owner's request the throw is faster: grips close on **22**, every boat let go on **24** (a downbeat), the boats
+land on a count no later than 30. Until the choreography worker's `ATTACK_COUNTS` (counts `slam`, `grip`, `release`,
+`lands`) reaches this branch, `examples/bosses/crab_song.ts` holds the same constant with `lands: 30`; at integration it
+becomes the import. Taken as: the pre-chorus is counts 16 to 23 (Dm on 16, F on 20, G on the grip, 22), the whoosh on
+23, silence from 23.5, **the drop on 24 (Am)**, the hook from 28 as composed (one bar of drop first: the drop is now on a
+downbeat, which removes the worry above about a drop on beat three), a splash (a burst of bright sea and three bubbles)
+on the landing. The rest reads the score as before.
+
+### Scored (the song)
+
+`bun tools/crab_song.ts <dir>` writes the four takes (about 4 s each); `bun tools/crab_song_check.ts <dir>` measures.
+No one has heard it.
+
+| | Predicted | Measured |
+|---|---|---|
+| kick, clap, impact onsets | within 0.1 ms | 44 kicks, 46 claps, 3 impacts: worst 0.021, 0.042, 0.063 ms |
+| impacts | 12, 26, 62 (26 is 24 after the change) | 12.000, 24.000, 62.000 |
+| clacks | none today; on a probe score each within 0.1 ms | 0 snaps in the score, 0 clacks. A probe with two snaps on the chorus's first unison key and the canon key: 20 snaps, 20 clacks at their times, worst 0.000 ms |
+| peak | sample -1.3, true about -1.0 dBFS; none clipped | sample -1.91, true -1.8 dBFS; 0 clipped (the loudness was reached before the limiter's ceiling) |
+| loudness | -14.0 LUFS (ffmpeg within 0.3) | -14.00 (mine), **-14.0** (ffmpeg ebur128); range 5.3 LU |
+| sections (mean momentary) | verse -18, build -16, pre-chorus -14, chorus -12.5, breaks -16 | verse -17.1, build **-20.7**, pre-chorus -15.0, chorus -12.4, breaks -14.2, travel back -14.9 |
+| chorus against verse | 5.5 dB louder; presence +4, air +5 dB of the total | **4.7 dB louder; presence +1.2, air +8.8** (together +4.0) |
+| bands, verse | -5, -4, -8, -17, -24 | -4.2, -4.3, -6.2, -21.7, -28.0 |
+| bands, chorus | -6, -4, -7, -13, -19 | -4.1, -3.3, -9.0, -20.6, -19.2 |
+| the seam | step no larger than around it; no bump over 0.5 dB | 0.0178 at the seam against 0.0272 within 100 ms; bump -0.07 dB (the button's ring decaying through it) |
+| harmony | zero exceptions | 307 pitched notes: 0 out of key, 0 melodic out of the pentatonic, bass on the root on all 15 downbeats it plays, 0 pairs 1 or 13 semitones apart; the same for every alternate |
+| muxed clips | video the same, audio 32.000 s, aligned within a sample | the same video packets (md5), 1536000 samples decoded, lag 0 samples, on all five |
+
+Wrong in the prediction:
+
+1. **The chorus was not brighter at first.** First measure: 4.5 dB louder but presence -1.7 and air +2.8 dB of the
+   total, and the breaks (-12.2) louder than the chorus. The kick and the bouncing bass fill the chorus's low end, so the
+   hats at -21 dB and stabs closing to 1.2 kHz left it dark. Fixed in the mix (hats +6 dB, the stab's filter from 9 kHz
+   to 2 kHz, the hook's upper formants at 0.6, the koto's double +5 dB, the signatures 3 to 5 dB down). Presence is still
+   only +1.2: the brightness is mostly in the air band.
+2. **The build is the quietest section** (-20.7, predicted -16): its riser and claps are thin against the verse's kicks.
+   A build that drops before the slam may be right; it may also sound like the energy sags.
+3. Sub and bass take most of the energy everywhere (-2.5 to -4.3 dB each): more low end than I predicted.
+
+What a user writes to score music from a routine (`examples/bosses/crab_song.ts`): a function of the score.
+
+    const q = cuesOf(DANCE);                               // slam, release, button, canon, mirror, solos, unison keys, clicks
+    for (const c of q.unison.filter((c) => c > q.release && c < q.solos[0]!.on[0]!)) add(c, { kind: "chord", pitches: chordAt(c).voicing, seconds: 0.15, shape: "stab" }, -12);
+    q.canon.members.forEach((c, m) => koto(c, CANON[m]!, 0.5, -13, panOf(dance, m, c)));
+    for (const k of q.clicks) add(k.at, { kind: "clack", pitch: DEGREE[k.member]! }, -12, panOf(dance, k.member, k.at));
+    // crabSong("main", anotherRoutine) scores another routine; tools/synth.ts renders the events into one looping period.
+
+Commands:
+
+    bun tools/crab_song.ts ~/git/loft/out/kpop_song                 # song.wav and song_<take>.wav
+    bun tools/crab_song_check.ts ~/git/loft/out/kpop_song           # the instruments, spectrogram.webp
+    bun tools/mux_song.ts <clip.mp4> <song.wav> <out.mp4>           # add a song to a rendered clip
+    bun tools/lineup_deliver.ts <dir> all ...                       # clips now carry the song; --silent for none
+
+What will most likely sound wrong: the formant voice (a saw through three band-passes may be a kazoo, not a voice);
+the additive koto (a harp or a toy); the low end (sub and bass dominate every section and the kick and the bass's sub
+share 40 to 60 Hz); the build's dip; the five falling canon notes may sound like a scale exercise. The clips muxed today
+put the new throw's song on the old throw's video: the drop (24) comes a second before the boats leave on screen (26),
+until the video is rendered again.
