@@ -65,7 +65,10 @@ export type RoutineSpec = {
   readonly beat: number;
   /** Counts in the loop. */
   readonly length: number;
-  /** The member a mirror is about. */
+  /**
+   * What a mirror is about: a member (who takes no sided value), or the half between two (`0.5`: a duet, both mirrored).
+   * The half came from two buoys (examples/second/buoys.ts): about a member, one of a pair stood still through every mirror.
+   */
   readonly centre: number;
   /** Each formation: every member's place (world x, z), in member order. */
   readonly places: Readonly<Record<string, readonly (readonly [number, number])[]>>;
@@ -101,7 +104,13 @@ export type Dancer = {
 };
 
 /** What the instrument reads of a member, as expressions of `time`: body lift over its ride (units), its roll (radians), its heading off its own (radians), its great claw's wrist over its shoulder (arm spans). */
-export type Readouts = { readonly lift: F; readonly lean: F; readonly face: F; readonly claw: F; /** The great claw's fingers as drawn: 0 shut .. 1 wide open. */ readonly click: F };
+export type Readouts = {
+  readonly lift: F; readonly lean: F; readonly face: F;
+  /** Absent for a member with no claw (a buoy: examples/second/buoys.ts); then no key may score `claw` or `click`. */
+  readonly claw?: F;
+  /** The great claw's fingers as drawn: 0 shut .. 1 wide open. */
+  readonly click?: F;
+};
 
 export class RoutineError extends Error {}
 
@@ -145,7 +154,7 @@ export class Routine {
     if (forms.length === 0) throw new RoutineError("routine: no formations in `places`");
     this.members = forms[0]!.length;
     for (const [name, f] of Object.entries(places)) if (f.length !== this.members) throw new RoutineError(`routine: formation "${name}" places ${f.length} members, "${Object.keys(places)[0]}" ${this.members}`);
-    if (!(Number.isInteger(centre) && centre >= 0 && centre < this.members)) throw new RoutineError(`routine: centre must be a member (0 .. ${this.members - 1}), got ${centre}`);
+    if (!(Number.isInteger(centre * 2) && centre >= 0 && centre <= this.members - 1)) throw new RoutineError(`routine: centre must be a member or halfway between two (0, 0.5 .. ${this.members - 1}), got ${centre}`);
     if (!(manner.arrive > 0 && manner.snap >= 1)) throw new RoutineError(`routine: manner needs arrive > 0 s and snap >= 1, got ${manner.arrive}, ${manner.snap}`);
     for (const [k, v] of Object.entries(size)) if (!(v >= 0 && Number.isFinite(v))) throw new RoutineError(`routine: size.${k} must be a finite number, at least 0; got ${v}`);
     this.period = length * beat;
@@ -362,9 +371,15 @@ export class Routine {
   inSync(readouts: (m: number) => Readouts, o: { readonly arrival: number; readonly size: number; readonly rate?: number }): Check & { table(probe: Probe): readonly SyncRow[] } {
     const rate = o.rate ?? 240, routine = this;
     const reads = Array.from({ length: this.members }, (_, m) => readouts(m));
+    // Classified once: a channel the readouts lack is refused if the score sets it; otherwise its column is never read.
+    for (const [ch, scored] of [["claw", this.keys.some((k) => k.key.claw !== undefined)], ["click", this.keys.some((k) => k.key.click !== undefined)]] as const) {
+      const lacking = reads.findIndex((r) => r[ch] === undefined);
+      if (scored && lacking >= 0) throw new RoutineError(`routine: the score sets \`${ch}\` but member ${lacking}'s readouts have none to measure`);
+    }
+    const unread = lift<"f32">(0);
     // The groove is the same closed form for every member: it is taken out of the lift so a level's arrival is not found
     // on the groove's own swing (a rig that did not apply it identically is still caught: the residue stays in the lift).
-    const roots = reads.flatMap((r, m) => [sub(r.lift, this.groove(m, time)), r.lean, r.face, r.claw, r.click]);
+    const roots = reads.flatMap((r, m) => [sub(r.lift, this.groove(m, time)), r.lean, r.face, r.claw ?? unread, r.click ?? unread]);
     const CH = { level: 0, lean: 1, face: 2, claw: 3 } as const, N = 5, CLICK = 4;
     const scale: Record<keyof typeof CH, number> = {
       level: this.spec.size.level, lean: this.spec.size.roll,
