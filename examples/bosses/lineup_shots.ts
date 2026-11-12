@@ -91,11 +91,11 @@ export const GROUP = {
     lineClose: raised(0, 0, 22, 44, 13, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
   },
   // The square, searched with the formations as they are (tools/lineup_framing.ts --search square; docs/lineup.md,
-  // "Deeper"): closer and a little lower than before, the group whole across the frame, every face clear in the V and
-  // the diagonal: front body 17 to 20% (was 12 to 18%), the line's group 51% of the height (was 38%).
+  // "Deeper"): steep, with the horizon 2% from the top (a first search without that bound came out lower and left a
+  // band of empty sea over the group), the group whole across the frame, every face clear in the V and the diagonal.
   square: {
-    V: raised(0, 3, 28, 34, 18, 1.0), line: raised(0, 0, 36, 38, 22, 1.0), lineLow: raised(0, 0, 36, 41, 22, 1.0),
-    lineClose: raised(0, 0, 36, 38, 22, 1.0), diagonal: raised(0, 9, 28, 34, 18, 0.9), diagonalIn: raised(0, 9, 28, 32, 19, 0.9),
+    V: raised(0, 3, 40, 46, 22, 0.8), line: raised(0, 0, 40, 50, 22, 0.8), lineLow: raised(0, 0, 40, 53, 22, 0.8),
+    lineClose: raised(0, 0, 40, 50, 22, 0.8), diagonal: raised(0, 9, 36, 38, 22, 0.8), diagonalIn: raised(0, 9, 36, 39, 22, 0.8),
   },
 } as const;
 

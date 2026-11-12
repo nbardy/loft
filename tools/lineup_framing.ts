@@ -137,7 +137,7 @@ if (import.meta.main && flag("--search") === "square") {
       const rs = counts.map((c) => frameGroup(LINE, posesAt((c + 0.1) * BEAT), l, 1080, 1080));
       // The line's samurai is half behind the centre's low claw on the motif's second count from any square camera (the
       // formation's, not the lens's): there the bar is no worse than today's square.
-      if (rs.some((r) => Math.min(...r.windows) < (name.startsWith("line") ? 0.5 : 0.85) || r.groupW < 0.9 || r.horizon < 0)) continue;
+      if (rs.some((r) => Math.min(...r.windows) < (name.startsWith("line") ? 0.5 : 0.85) || r.groupW < 0.9 || r.horizon < 0 || r.horizon > 0.08)) continue;
       const score = Math.min(...rs.map((r) => Math.min(r.frontBody, r.groupH / 3)));
       if (score > best.score) best = { score, say: `eye ${h}, distance ${d}, pitch ${p}, fovY ${fov}: front body ${rs.map((r) => pc(r.frontBody)).join("/")}%, group h ${rs.map((r) => pc(r.groupH)).join("/")}%, worst window ${pc(Math.min(...rs.flatMap((r) => r.windows)))}%, horizon ${rs.map((r) => pc(r.horizon)).join("/")}%` };
     }
