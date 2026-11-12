@@ -3,14 +3,15 @@
 // `click`) and from the attacks' counts; nothing here retypes a count the score holds. Move a key and the song follows.
 //
 //   import { crabSong } from "./crab_song.ts";
-//   const song = crabSong("main");   // events (tools/synth.ts renders them), its chords, its cues
+//   const song = crabSong("main");          // from DANCE; crabSong("main", otherRoutine) scores another
+//                                            // events (tools/synth.ts renders them), its chords, its cues
 //
 // Takes: "main", and three alternates that each change one thing: "otherHook", "halfTime" (the chorus's drums),
 // "bMinor" (up a whole tone).
 
 import { DANCE, LINE } from "./crab_lineup.ts";
-import { BEAT, PLACES } from "./lineup_shots.ts";
-import type { Key, Solo } from "../../src/spacetime/routine.ts";
+import { BEAT } from "./lineup_shots.ts";
+import type { Key, Routine, Solo } from "../../src/spacetime/routine.ts";
 import type { Event, Pitch, Sound, Vowel } from "../../tools/synth.ts";
 
 /**
@@ -60,16 +61,16 @@ export type Cues = {
   readonly clicks: readonly { readonly at: number; readonly member: number }[];
 };
 
-export function cuesOf(): Cues {
-  const S = DANCE.spec, keys = S.score.filter((e): e is Key => !("solo" in e)), solos = S.score.filter((e): e is Solo => "solo" in e);
+export function cuesOf(dance: Routine): Cues {
+  const S = dance.spec, keys = S.score.filter((e): e is Key => !("solo" in e)), solos = S.score.filter((e): e is Solo => "solo" in e);
   const one = <T,>(xs: readonly T[], what: string): T => { if (xs.length !== 1) throw new Error(`crab song: the score must have one ${what}, it has ${xs.length}`); return xs[0]!; };
   const hit = one(keys.filter((k) => k.hit !== undefined), "struck key (`hit`)");
   const canonKey = one(keys.filter((k) => typeof k.who === "object"), "canon key");
   const mirror = one(keys.filter((k) => k.who === "mirror"), "mirror key");
   const backGo = one(keys.filter((k) => k.go !== undefined && k.at === hit.at), "travel landing on the struck key");
   // Member m's delay under a key's `who` (the routine's rule: a canon of c counts, member m arrives m * c after the first).
-  const delay = (k: Key, m: number): number => (typeof k.who === "object" ? (k.who.canon >= 0 ? m * k.who.canon : (DANCE.members - 1 - m) * -k.who.canon) : 0);
-  const members = Array.from({ length: DANCE.members }, (_, m) => m);
+  const delay = (k: Key, m: number): number => (typeof k.who === "object" ? (k.who.canon >= 0 ? m * k.who.canon : (dance.members - 1 - m) * -k.who.canon) : 0);
+  const members = Array.from({ length: dance.members }, (_, m) => m);
   const sOn = solos.map((s) => ({ member: s.solo, on: s.on })).sort((a, b) => a.on[0]! - b.on[0]!);
   const { slam, grip, release, lands } = ATTACK_COUNTS;
   // The slam's own seconds (warned four counts ahead: the crouch; three counts of wind-up: claws up).
@@ -85,8 +86,8 @@ export function cuesOf(): Cues {
 }
 
 /** Where member m stands at count c (the last formation it has arrived in), as a pan: the camera's left (+z) is the left speaker. */
-function panOf(m: number, c: number): number {
-  const goes = DANCE.spec.score.filter((e): e is Key => !("solo" in e) && e.go !== undefined).sort((a, b) => a.at - b.at);
+function panOf(dance: Routine, m: number, c: number): number {
+  const PLACES = dance.spec.places, goes = dance.spec.score.filter((e): e is Key => !("solo" in e) && e.go !== undefined).sort((a, b) => a.at - b.at);
   const last = [...goes].reverse().find((k) => k.at <= c) ?? goes[goes.length - 1]!;
   const zmax = Math.max(...Object.values(PLACES).flatMap((f) => f.map(([, z]) => Math.abs(z))));
   return -PLACES[last.go!]![m]![1] / zmax;
@@ -103,8 +104,10 @@ export type Song = {
   readonly sections: readonly { readonly name: string; readonly from: number; readonly to: number }[];
 };
 
-export function crabSong(take: Take): Song {
-  const q = cuesOf(), L = q.length, shift = take === "bMinor" ? 2 : 0;
+/** The song of a take, scored from a routine (the lineup's `DANCE` unless another is given). */
+export function crabSong(take: Take, dance: Routine = DANCE): Song {
+  if (dance.members !== LINE.length) throw new Error(`crab song: the routine has ${dance.members} members, the lineup ${LINE.length}`);
+  const q = cuesOf(dance), L = q.length, shift = take === "bMinor" ? 2 : 0;
   const ev: Event[] = [];
   const t = (c: number) => (((c % L) + L) % L) * BEAT;
   const add = (c: number, sound: Sound, db: number, pan = 0, send = 0) => ev.push({ at: t(c), sound, db, pan, send });
@@ -165,7 +168,7 @@ export function crabSong(take: Take): Song {
   for (const c of range(q.release + 1, firstSolo, 0.25)) {
     const f = c - Math.floor(c);
     if (take === "halfTime" && f !== 0 && f !== 0.5) continue;
-    hat(c, f === 0.5, f === 0.5 ? -22 : f === 0 ? -21 : -25);
+    hat(c, f === 0.5, f === 0.5 ? -15 : f === 0 ? -16 : -19);
   }
   // breaks: a kick on each soloist's first accent, light hats
   for (const s of q.solos) kick(s.on[0]!);
@@ -246,26 +249,26 @@ export function crabSong(take: Take): Song {
     const vowel: Vowel = l >= 1 ? "ah" : "eh";
     if (c + l > q.canon.at + 1e-9) throw new Error(`crab song: the hook runs past the canon (${c + l} > ${q.canon.at})`);
     add(c, { kind: "voice", pitch: P(p), seconds: l * BEAT * 0.95, vowel }, -12, 0, 0.2);
-    koto(c, P(p) + 12, l, -24, 0.3);
+    koto(c, P(p) + 12, l, -19, 0.3);
   });
 
   // ---- the canon: one falling note per member at its own delay, from where it stands ----
   const CANON = ["A5", "G5", "D5", "C5", "A4"];
-  q.canon.members.forEach((c, m) => koto(c, CANON[m % CANON.length]!, 0.5, -13, panOf(m, c)));
+  q.canon.members.forEach((c, m) => koto(c, CANON[m % CANON.length]!, 0.5, -13, panOf(dance, m, c)));
 
   // ---- the claws: a clack on each scored snap and nowhere else, tuned to the member's degree ----
   const DEGREE = ["A5", "C6", "D6", "E6", "G6"];
-  for (const k of q.clicks) add(k.at, { kind: "clack", pitch: P(DEGREE[k.member % DEGREE.length]!) }, -12, panOf(k.member, k.at) , 0.08);
+  for (const k of q.clicks) add(k.at, { kind: "clack", pitch: P(DEGREE[k.member % DEGREE.length]!) }, -12, panOf(dance, k.member, k.at), 0.08);
 
   // ---- the solos: each member's signature on its own accents, from where it stands ----
   for (const s of q.solos) {
-    const variant = LINE[s.member]!, pan = (c: number) => panOf(s.member, c);
+    const variant = LINE[s.member]!, pan = (c: number) => panOf(dance, s.member, c);
     switch (signatureOf(variant)) {
-      case "fiddle": s.on.forEach((a, i) => { const run = safe(a).slice(0, 6), notes = i % 2 === 0 ? run.slice(0, 4) : run.slice(-4).reverse(); notes.forEach((p, j) => add(a + j / 4, { kind: "fiddle", pitch: p, seconds: BEAT / 4 }, -10, pan(a), 0.3)); }); break;
-      case "taiko": s.on.forEach((a, i) => (i % 2 === 0 ? [0, 0.5] : [0, 0.25, 0.5]).forEach((d, j) => add(a + d, { kind: "taiko" }, j === 0 ? -6 : -10, pan(a), 0.15))); break;
-      case "spiral": { const notes = safe(s.on[0]!).slice(0, 4 * s.on.length); s.on.forEach((a, i) => notes.slice(4 * i, 4 * i + 4).forEach((p, j) => add(a + j / 4, { kind: "bell", pitch: p }, -12, pan(a), 0.35))); break; }
-      case "brass": s.on.forEach((a, i) => { const r = chordAt(a).root + 12 + (i % 2 === 0 ? 0 : 7); add(a, { kind: "brass", pitches: [r, r + 12], seconds: 0.6 * BEAT * 2 }, -9, pan(a), 0.2); }); break;
-      case "shrine": add(s.on[0]!, { kind: "temple", pitch: chordAt(s.on[0]!).root + 24 }, -9, pan(s.on[0]!), 0.35); s.on.forEach((a) => add(a, { kind: "suzu" }, -16, pan(a), 0.3)); break;
+      case "fiddle": s.on.forEach((a, i) => { const run = safe(a).slice(0, 6), notes = i % 2 === 0 ? run.slice(0, 4) : run.slice(-4).reverse(); notes.forEach((p, j) => add(a + j / 4, { kind: "fiddle", pitch: p, seconds: BEAT / 4 }, -14, pan(a), 0.3)); }); break;
+      case "taiko": s.on.forEach((a, i) => (i % 2 === 0 ? [0, 0.5] : [0, 0.25, 0.5]).forEach((d, j) => add(a + d, { kind: "taiko" }, j === 0 ? -10 : -14, pan(a), 0.15))); break;
+      case "spiral": { const notes = safe(s.on[0]!).slice(0, 4 * s.on.length); s.on.forEach((a, i) => notes.slice(4 * i, 4 * i + 4).forEach((p, j) => add(a + j / 4, { kind: "bell", pitch: p }, -15, pan(a), 0.35))); break; }
+      case "brass": s.on.forEach((a, i) => { const r = chordAt(a).root + 12 + (i % 2 === 0 ? 0 : 7); add(a, { kind: "brass", pitches: [r, r + 12], seconds: 0.6 * BEAT * 2 }, -14, pan(a), 0.2); }); break;
+      case "shrine": add(s.on[0]!, { kind: "temple", pitch: chordAt(s.on[0]!).root + 24 }, -13, pan(s.on[0]!), 0.35); s.on.forEach((a) => add(a, { kind: "suzu" }, -16, pan(a), 0.3)); break;
     }
   }
 

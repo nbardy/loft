@@ -205,7 +205,7 @@ export function note(s: Sound, seed: number): Note {
       });
     }
     case "voice": {
-      const F = s.vowel === "ah" ? [[730, 9], [1090, 12], [2440, 20]] : [[530, 7], [1840, 18], [2480, 20]], G = [1, 0.5, 0.3];
+      const F = s.vowel === "ah" ? [[730, 9], [1090, 12], [2440, 20]] : [[530, 7], [1840, 18], [2480, 20]], G = [1, 0.6, 0.6];
       return stereo(len(s.seconds + 0.06), (ch) => {
         const o = saw(ch === 0 ? 0 : 0.37), fs = F.map(() => new Svf()), f0 = hz(s.pitch) * cents(ch === 0 ? -6 : 6);
         return (_, t) => {
@@ -283,7 +283,7 @@ function chord(pitches: readonly Pitch[], seconds: number, shape: ChordShape, r:
       for (const q of oscs) x += q.a * q.o(q.dt);
       x /= Math.sqrt(oscs.length);
       switch (shape) {
-        case "stab": return f.run(x, 1200 + 4800 * Math.exp(-t / 0.15), 0.9).lp * Math.min(1, t / 0.002) * Math.exp(-t / 0.09);
+        case "stab": return f.run(x, 2000 + 7000 * Math.exp(-t / 0.15), 0.9).lp * Math.min(1, t / 0.002) * Math.exp(-t / 0.09);
         case "pad": return f.run(x, 900, 0.7).lp * gate(t, 0.08, seconds, 0.3);
         case "wide": return f.run(x, 1500 + 3500 * Math.exp(-t / 1.0), 0.8).lp * Math.min(1, t / 0.003) * Math.exp(-t / 1.2);
       }
