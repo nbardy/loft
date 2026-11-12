@@ -31,7 +31,7 @@ const reed = strand({
 });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  ground: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
   things: [reed],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -97,7 +97,7 @@ const disc = (k: number) => strand({
 });
 
 export default scene({
-  sea: sea({ swell: [] }),
+  ground: sea({ swell: [] }),
   things: [blade, draw.surface("rings", rings, { paint: () => vec3(0.9, 0.85, 0.7), grid: { u: spacing.even(120), v: spacing.even(32) }, sides: "one", outline: "hull" }), ...Array.from({ length: 10 }, (_, k) => disc(k))],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -159,7 +159,7 @@ const fish = strand({
 });
 
 export default scene({
-  sea: sea({ swell: [] }),
+  ground: sea({ swell: [] }),
   things: [fish],
   style: engraved,
   sun: [-0.4, 0.8, 0.45],
@@ -219,7 +219,7 @@ const stalk = strand({
 });
 
 export default scene({
-  sea: sea({ swell: [] }), things: [stalk], style: toon(), sun: [-0.4, 0.8, 0.45], period: 4,
+  ground: sea({ swell: [] }), things: [stalk], style: toon(), sun: [-0.4, 0.8, 0.45], period: 4,
   cameras: { side: { kind: "perspective", eye: [0, 3, 12], target: [0, 2, 0], fovY: 0.6 } },
 });
 ```

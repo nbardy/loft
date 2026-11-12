@@ -18,7 +18,7 @@ const reed = strand({
 });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  ground: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
   things: [reed],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],

@@ -263,7 +263,7 @@ content. Their value to others is as worked examples of slots and variants.
 
 ## 10. What blocks an outsider today
 
-1. **Every scene needs a sea.** `scene({ sea, ... })` has no other ground.
+1. ~~Every scene needs a sea.~~ Done 2026-11-12: `scene({ ground })` takes a sea, a plane or nothing (`DESIGN.md` 13).
 2. **One flat entry point with 380 names.** No layering tells a newcomer which twenty matter. A split by layer would:
    core (expressions, curves, maps, draw, scene, compile), shapes, motion, actions and checks, styles, kit, film.
 3. **No way in for a reader.** The README is 39 lines for someone who already knows the design; `DESIGN.md` is our

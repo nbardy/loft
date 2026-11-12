@@ -43,7 +43,7 @@ const reed = strand({
 });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
+  ground: sea({ swell: [{ direction: [1, 0], length: 8, height: 0.1, speed: 1 }] }),
   things: [reed],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -95,7 +95,7 @@ const bowl = surface((u: F, v: F) => {
 }, { u: ["cap", "free"], v: "periodic" });
 
 export default scene({
-  sea: sea({ swell: [] }),
+  ground: sea({ swell: [] }),
   things: [frond, club, draw.surface("bowl", bowl, { paint: () => vec3(0.9, 0.85, 0.7), grid: { u: spacing.even(24), v: spacing.even(32) }, sides: "two", outline: "border" })],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -136,7 +136,7 @@ const stalk = strand({
 });
 
 export default scene({
-  sea: sea({ swell: [] }),
+  ground: sea({ swell: [] }),
   things: [stalk],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -178,7 +178,7 @@ const creature = animate(rest, [lash], (spine) => {
 });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.3], length: 9, height: 0.15, speed: 1 }] }),
+  ground: sea({ swell: [{ direction: [1, 0.3], length: 9, height: 0.15, speed: 1 }] }),
   things: [...creature.things, telegraph(lash)],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
@@ -225,7 +225,7 @@ export const design = makeDesign({
   compare: ["three"],
   build: (picked, n) => ({
     scene: scene({
-      sea: sea({ swell: [] }),
+      ground: sea({ swell: [] }),
       things: [stem(n), picked.top.draw(n)],
       style: toon(),
       sun: [-0.4, 0.8, 0.45],
@@ -266,9 +266,18 @@ the shortest complete one to copy.
 
 ## The ground
 
-Today every scene has a sea: `sea({ swell: [...] })`, with any number of swells (an empty list is flat water). The
-sea gives contact foam where bodies meet it and receives their cast shadows. `examples/maelstrom.ts` deforms it into a
-whirlpool and `src/geom/afloat.ts` floats a body on it.
+A scene stands on one of three grounds, given as `ground:`
+
+```ts
+scene({ ground: sea({ swell: [...] }), things, style, sun })   // water: any number of swells (an empty list is flat water)
+scene({ ground: plane,   things, style, sun })                 // a flat floor at y = 0 in the style's ground colour
+scene({ ground: nothing, things, style, sun })                 // no floor: the style's sky all round
+```
+
+A sea gives contact foam where bodies meet it and takes their cast shadows; `examples/maelstrom.ts` deforms it into a
+whirlpool and `src/geom/afloat.ts` floats a body on it. A plane takes cast shadows and nothing else. On nothing there
+is nowhere for a shadow to fall. Things that need water say so by name: a wake on a plane, or a telegraph on nothing,
+throws a `GroundError`. The three smallest scenes that are not sea pictures are in `examples/first/`.
 
 ## Making a clip
 

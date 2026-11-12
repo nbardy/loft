@@ -512,8 +512,34 @@ A scene says what things are; `compile` decides where each part is evaluated.
 
 Types:
 - **OutlineMethod**: hull: every outlined surface drawn a second time, pushed out along its normal, front faces culled. screen: one full-screen pass after the scene finds the outlined surfaces' silhouettes in the depth (src/draw/ink.ts). `type OutlineMethod = "hull" | "screen"`
-- **Scene**: `type Scene = { sea, things, style, sun, sunAt, cameras, outline, loop }`
-- **SceneSpec**: `type SceneSpec = { sea, things, style, sun, cameras?, outline?, period? }`
+- **Scene**: `type Scene = { ground, things, style, sun, sunAt, cameras, outline, loop }`
+- **SceneSpec**: `type SceneSpec = { ground, things, style, sun, cameras?, outline?, period? }`
+
+### src/draw/ground.ts
+
+What a scene stands on (DESIGN.md 13): a sea, a plane, or nothing.
+
+- **plane**: (undocumented)
+  `const plane: Plane`
+  - `plane.kind`: (undocumented)
+  - `plane.name`: (undocumented)
+  - `plane.skeletons`: (undocumented)
+  - `plane.surfaces`: (undocumented)
+  - `plane.draws`: (undocumented)
+- **nothing**: (undocumented)
+  `const nothing: Nothing`
+  - `nothing.kind`: (undocumented)
+  - `nothing.name`: (undocumented)
+  - `nothing.skeletons`: (undocumented)
+  - `nothing.surfaces`: (undocumented)
+  - `nothing.draws`: (undocumented)
+- **GroundError**: A thing that needs a particular ground, in a scene that stands on another.
+  `class GroundError extends Error`
+
+Types:
+- **Ground**: What `scene({ ground })` takes. `type Ground = Sea | Plane | Nothing`
+- **Plane**: The flat ground y = 0, to the horizon, in the style's ground colour (`Style.ground`), taking cast shadows. `type Plane = Drawable & { readonly kind: "plane" }`
+- **Nothing**: No ground: the things hang in the style's sky (its horizon colour below the horizon); no cast shadows. `type Nothing = Drawable & { readonly kind: "nothing" }`
 
 ### src/compile/index.ts
 
@@ -537,7 +563,7 @@ The compiler's extension interface (DESIGN.md section 4).
 
 Types:
 - **Bakeable**: What the baker can evaluate. `type Bakeable = SurfaceBakeable | MeshBakeable`
-- **CompileContext**: `interface CompileContext { slots, style, sea, sun, sunAt, things, table, post, outline, markOut }`
+- **CompileContext**: `interface CompileContext { slots, style, ground, sun, sunAt, things, table, post, outline, markOut }`
 - **Drawable**: `interface Drawable { name, draws, skeletons, surfaces }`
 - **DrawSpec**: A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. `type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; readonly detail: DetailSpec }`
 - **Emitted**: `type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] }`
@@ -1605,13 +1631,14 @@ A style is a program in the same expression language (DESIGN.md 2.6): it maps a 
   `function dorsalness(v: Expr<"f32">): Expr<"f32">`
 
 Types:
-- **Style**: `type Style = { name, shade, ink, mark, outline, water, shadow, post, sky, clear, block?, lights? }`
+- **Style**: `type Style = { name, shade, ink, mark, outline, water, shadow, post, ground, sky, clear, block?, lights? }`
 - **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, depth, uv, anchor, id }`
 - **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, swell, phase }`
 - **Contact**: How near a body is to a pixel of water. `type Contact = /** * No opaque surface lies within the sea's search of this pixel (or of the other pixels of its 2 x 2 quad): the * band would be below -800 here, where every contact term of every style is exactly 0. `foam` holds only the * deformations' marks. A style prints no contact foam. */ ...`
 - **LayerCtx**: A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. `type LayerCtx = { world, view, distance, amount }`
 - **SkyCtx**: `type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> }`
-- **ToonSpec**: `type ToonSpec = { bands?, outline?, shadow?, ink?, water?, sky?, rim? }`
+- **GroundCtx**: What a fragment of a plane ground knows (src/draw/ground.ts): where it is, and how much of a cast shadow covers it. `type GroundCtx = { world, view, sun, distance, shadow }`
+- **ToonSpec**: `type ToonSpec = { bands?, outline?, shadow?, ink?, water?, sky?, rim?, ground? }`
 
 ### src/style/index.ts
 
@@ -1986,9 +2013,9 @@ Types:
 
 ## Coverage
 
-777 exports (452 values, 325 types) from src/index.ts and src/lib/index.ts.
+784 exports (455 values, 329 types) from src/index.ts and src/lib/index.ts.
 
-Values with no doc comment (118): Expr (src/expr.ts), f (src/expr.ts), vec2 (src/expr.ts), vec3 (src/expr.ts), vec4 (src/expr.ts), add (src/expr.ts), sub (src/expr.ts), mul (src/expr.ts), div (src/expr.ts), min (src/expr.ts), max (src/expr.ts), pow (src/expr.ts), neg (src/expr.ts), abs (src/expr.ts), sign (src/expr.ts), floor (src/expr.ts), fract (src/expr.ts), sqrt (src/expr.ts), exp (src/expr.ts), log (src/expr.ts), sin (src/expr.ts), cos (src/expr.ts), tan (src/expr.ts), normalize (src/expr.ts), mix (src/expr.ts), clamp (src/expr.ts), smoothstep (src/expr.ts), length (src/expr.ts), distance (src/expr.ts), dot (src/expr.ts), cross (src/expr.ts), lt (src/expr.ts), gt (src/expr.ts), le (src/expr.ts), ge (src/expr.ts), and (src/expr.ts), or (src/expr.ts), not (src/expr.ts), TAU (src/expr.ts), WGSL_TY (src/expr.ts), NO_SKELETON (src/map/types.ts), size (src/map/chart.ts), turn (src/map/chart.ts), warp (src/map/warp.ts), draw (src/draw/index.ts), FieldDrawable (src/draw/field.ts), FieldSafetyError (src/draw/field.ts), ReliefDrawable (src/draw/relief.ts), SurfaceDrawable (src/draw/surface.ts), scene (src/scene.ts), DEFAULT_OUTLINE (src/scene.ts), compile (src/compile/index.ts), compileScene (src/compile/index.ts), Impostors (src/draw/impostors.ts), Copies (src/draw/copies.ts), profile (src/relief/height.ts), shellModel (src/relief/trace.ts), KIND (src/relief/trace.ts), crest (src/geom/crest.ts), sea (src/geom/sea.ts), Sea (src/geom/sea.ts), limb (src/geom/limb.ts), fan (src/geom/fan.ts), whirlpool (src/geom/whirlpool.ts), Whirlpool (src/geom/whirlpool.ts), rigid (src/geom/rig.ts), hull (src/geom/hull.ts), Hull (src/geom/hull.ts), ship (src/geom/ship.ts), Ship (src/geom/ship.ts), BANK_LIB (src/soft/medium.ts), DensityDrawable (src/soft/density.ts), GlowDrawable (src/soft/glow.ts), gait (src/geom/gait.ts), footing (src/geom/stance.ts), hosted (src/geom/placing.ts), STAND_IN (src/geom/placing.ts), bent (src/geom/bend.ts), BendError (src/geom/bend.ts), pendulum (src/geom/pendulum.ts), sway (src/geom/pendulum.ts), jolt (src/geom/pendulum.ts), PendulumError (src/geom/pendulum.ts), dart (src/geom/restless.ts), RestlessError (src/geom/restless.ts), show (src/geom/expression.ts), only (src/geom/expression.ts), added (src/geom/expression.ts), ExpressionError (src/geom/expression.ts), StruckError (src/geom/struck.ts), part (src/spacetime/attack.ts), ring (src/spacetime/attack.ts), INSTANT (src/spacetime/attack.ts), STILL (src/spacetime/attack.ts), DANGER (src/spacetime/telegraph.ts), SET_DOWN (src/geom/grab.ts), design (src/design.ts), Design (src/design.ts), DesignError (src/design.ts), BASE_ASK (src/design.ts), Emote (src/spacetime/emote.ts), Routine (src/spacetime/routine.ts), RoutineError (src/spacetime/routine.ts), RingWave (src/geom/ring.ts), tolerance (src/check.ts), palette (src/style.ts), STYLE_NAMES (src/style/index.ts), light (src/style/light.ts), print (src/style/woodblock.ts), foam (src/style/woodblock.ts), marksAs (src/style/woodblock.ts), paint (src/style/woodblock.ts), seaPalette (src/style/woodblock.ts), biolume (src/style/biolume.ts), papercraft (src/style/papercraft.ts), placePart (src/lib/similar.ts), tree (src/lib/similar.ts), WORLD (src/lib/similar.ts).
+Values with no doc comment (120): Expr (src/expr.ts), f (src/expr.ts), vec2 (src/expr.ts), vec3 (src/expr.ts), vec4 (src/expr.ts), add (src/expr.ts), sub (src/expr.ts), mul (src/expr.ts), div (src/expr.ts), min (src/expr.ts), max (src/expr.ts), pow (src/expr.ts), neg (src/expr.ts), abs (src/expr.ts), sign (src/expr.ts), floor (src/expr.ts), fract (src/expr.ts), sqrt (src/expr.ts), exp (src/expr.ts), log (src/expr.ts), sin (src/expr.ts), cos (src/expr.ts), tan (src/expr.ts), normalize (src/expr.ts), mix (src/expr.ts), clamp (src/expr.ts), smoothstep (src/expr.ts), length (src/expr.ts), distance (src/expr.ts), dot (src/expr.ts), cross (src/expr.ts), lt (src/expr.ts), gt (src/expr.ts), le (src/expr.ts), ge (src/expr.ts), and (src/expr.ts), or (src/expr.ts), not (src/expr.ts), TAU (src/expr.ts), WGSL_TY (src/expr.ts), NO_SKELETON (src/map/types.ts), size (src/map/chart.ts), turn (src/map/chart.ts), warp (src/map/warp.ts), draw (src/draw/index.ts), FieldDrawable (src/draw/field.ts), FieldSafetyError (src/draw/field.ts), ReliefDrawable (src/draw/relief.ts), SurfaceDrawable (src/draw/surface.ts), scene (src/scene.ts), DEFAULT_OUTLINE (src/scene.ts), plane (src/draw/ground.ts), nothing (src/draw/ground.ts), compile (src/compile/index.ts), compileScene (src/compile/index.ts), Impostors (src/draw/impostors.ts), Copies (src/draw/copies.ts), profile (src/relief/height.ts), shellModel (src/relief/trace.ts), KIND (src/relief/trace.ts), crest (src/geom/crest.ts), sea (src/geom/sea.ts), Sea (src/geom/sea.ts), limb (src/geom/limb.ts), fan (src/geom/fan.ts), whirlpool (src/geom/whirlpool.ts), Whirlpool (src/geom/whirlpool.ts), rigid (src/geom/rig.ts), hull (src/geom/hull.ts), Hull (src/geom/hull.ts), ship (src/geom/ship.ts), Ship (src/geom/ship.ts), BANK_LIB (src/soft/medium.ts), DensityDrawable (src/soft/density.ts), GlowDrawable (src/soft/glow.ts), gait (src/geom/gait.ts), footing (src/geom/stance.ts), hosted (src/geom/placing.ts), STAND_IN (src/geom/placing.ts), bent (src/geom/bend.ts), BendError (src/geom/bend.ts), pendulum (src/geom/pendulum.ts), sway (src/geom/pendulum.ts), jolt (src/geom/pendulum.ts), PendulumError (src/geom/pendulum.ts), dart (src/geom/restless.ts), RestlessError (src/geom/restless.ts), show (src/geom/expression.ts), only (src/geom/expression.ts), added (src/geom/expression.ts), ExpressionError (src/geom/expression.ts), StruckError (src/geom/struck.ts), part (src/spacetime/attack.ts), ring (src/spacetime/attack.ts), INSTANT (src/spacetime/attack.ts), STILL (src/spacetime/attack.ts), DANGER (src/spacetime/telegraph.ts), SET_DOWN (src/geom/grab.ts), design (src/design.ts), Design (src/design.ts), DesignError (src/design.ts), BASE_ASK (src/design.ts), Emote (src/spacetime/emote.ts), Routine (src/spacetime/routine.ts), RoutineError (src/spacetime/routine.ts), RingWave (src/geom/ring.ts), tolerance (src/check.ts), palette (src/style.ts), STYLE_NAMES (src/style/index.ts), light (src/style/light.ts), print (src/style/woodblock.ts), foam (src/style/woodblock.ts), marksAs (src/style/woodblock.ts), paint (src/style/woodblock.ts), seaPalette (src/style/woodblock.ts), biolume (src/style/biolume.ts), papercraft (src/style/papercraft.ts), placePart (src/lib/similar.ts), tree (src/lib/similar.ts), WORLD (src/lib/similar.ts).
 
 Shape and motion functions whose comment states no limits (109): strand, crest, sea, limb, polyline, unit, fan, rayOf, catenary, shell, spiralLine, whorl, ridgePhase, mirror, array, reflect, whirlpool, afloat, afloatFrame, rigid, hull, ship, lines, erfcPos, gaussRay, gaussTail, gseg, gtail, GAUSS_WGSL, FAR, SIMPSON, bank, blob, flash, layer, medium, tauFunction, unionBox, GAUSS_LIB, BANK_LIB, boxVertexWgsl, cloud, thunderhead, hashUnit, flare, glow, glows, strokes, afterglow, bolt, boltFlash, displaced, flicker, sheetFlash, skyFlash, strikeAt, rain, splashes, gait, course, lookAt, breathe, beat, strike, looping, alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, overshot, slowIn, slowInOut, slowOut, squash, stretchOf, swing, uneven, carriage, footing, headingIn, replants, towardIn, pose, poseFrame, placedBy, blendFrames, turnedAbout, hosted, STAND_IN, bent, bentTip, pendulum, sway, jolt, dart, chosen, tremor, cast, score, show, only, added, during, struck, holdsStill.
 
