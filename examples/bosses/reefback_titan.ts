@@ -53,6 +53,7 @@ import { patient } from "./titan/face/patient.ts";
 import { periscope } from "./titan/face/periscope.ts";
 import { base as legsBase } from "./titan/legs/base.ts";
 import { armoured } from "./titan/legs/armoured.ts";
+import { hermit } from "./titan/legs/hermit.ts";
 import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
@@ -210,7 +211,7 @@ export const design = makeDesign({
   numbers: S as Numbers,
   slots: {
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
-    legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
+    legs: { base: legsBase, stilt, slim, armoured, hermit } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk, jitter, mourner } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland, terraces, spiral } satisfies Record<string, BackOption>,

@@ -7,7 +7,7 @@
 //
 //   bun tools/spiral_views.ts [--set '{"tilt":0.6}'] [--sketch out/x.ppm] [--quick: the plan and the legs only]
 //   bun tools/spiral_views.ts --measure out/spiral/views.webp   counts bands on a render of the views in this order
-//       (loft render ... --views game,lowFront,lowRear,top: tiled as the render tiles them, rows of RW / 1280), along the same lines, by ink: cream is light with green
+//       (loft render ... --views game,lowFront,lowRear,top,lowLeft,lowRight: tiled as the render tiles them, rows of RW / 1280), along the same lines, by ink: cream is light with green
 //       near red (G/R > 0.7), brick is red (G/R < 0.55), key lines and anything else are neither.
 
 import { cameraMatrices, project } from "../src/host/camera.ts";
@@ -34,6 +34,9 @@ const VIEWS = {
   lowFront: { kind: "perspective", eye: [30, 3, 0], target: [0, 3.4, 0], fovY: 0.4 },
   lowRear: { kind: "perspective", eye: [-30, 5, 0], target: [0, 3.4, 0], fovY: 0.4 },
   top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
+  // The scene's `lowLeft` and its mirror (`lowRight`): the side views a hermit's shell is judged from.
+  lowLeft: { kind: "perspective", eye: [1, 5, -30], target: [1, 3.4, 0], fovY: 0.4 },
+  lowRight: { kind: "perspective", eye: [1, 5, 30], target: [1, 3.4, 0], fovY: 0.4 },
 } as const;
 const NAMES = Object.keys(VIEWS) as (keyof typeof VIEWS)[];
 const mats = NAMES.map((k) => cameraMatrices(VIEWS[k] as Parameters<typeof cameraMatrices>[0], W / H));
@@ -97,7 +100,7 @@ for (let i = 0; i <= NU; i++) for (let j = 0; j < NV; j++) {
   if (p[1] < WATER) continue;
   lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1]), Math.min(lo[2], p[2])]; hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1]), Math.max(hi[2], p[2])];
   const back = (1 - Math.min(u / U.lip, 1)) * P.whorls;
-  const c: Cls = u > U.throat + 0.01 ? 4 : u > U.lip - 0.002 ? 3 : back > P.whorls - n.spiral.coil.boss ? 7 : printAt(-TAU * vv);
+  const c: Cls = u > U.throat + 0.01 ? 4 : u > U.lip - 0.002 ? 3 : back > P.whorls - n.spiral.coil.boss ? 7 : printAt(-TAU * P.turn * vv);
   for (let v = 0; v < NAMES.length; v++) splat(v, p, c, 2);
 }
 const hullAt = (x: number) => {
@@ -199,9 +202,9 @@ if (measure !== undefined) {
 const sketch = flag("--sketch");
 if (sketch !== undefined) {
   const PAL: Record<Cls, readonly number[]> = { 0: [33, 51, 94], 1: [168, 56, 33], 2: [237, 224, 191], 3: [250, 240, 200], 4: [30, 20, 20], 5: [120, 60, 50], 6: [190, 40, 20], 7: [255, 245, 210] };
-  const out = new Uint8Array(W * 2 * H * 2 * 3);
+  const rows = Math.ceil(NAMES.length / 2), out = new Uint8Array(W * 2 * H * rows * 3);
   NAMES.forEach((_, v) => { const b = bufs[v]!, ox = (v % 2) * W, oy = Math.floor(v / 2) * H; for (let k = 0; k < W * H; k++) out.set(PAL[b.cls[k] as Cls], ((oy + Math.floor(k / W)) * W * 2 + ox + (k % W)) * 3); });
-  const head = new TextEncoder().encode(`P6\n${W * 2} ${H * 2}\n255\n`), all = new Uint8Array(head.length + out.length);
+  const head = new TextEncoder().encode(`P6\n${W * 2} ${H * rows}\n255\n`), all = new Uint8Array(head.length + out.length);
   all.set(head); all.set(out, head.length); await Bun.write(sketch, all);
   console.log(`\nsketch (panes ${NAMES.join(", ")}): ${sketch}`);
 }

@@ -2,7 +2,11 @@
 // the legs through the walk, both claws through the Grab, its throw and the slam, the eyes on their stalks, and with
 // --taunt the lineup's dance (the great claw raised and waved). Measured on the CPU from the scene's own expressions:
 // every limb's drawn surface is sampled (not its skeleton, whose radii take a flat hand for a round one), carried
-// into the shell frame (`rig.shell`), and its distance to the shell's outside taken (negative: inside it).
+// into the shell frame (`rig.shell`), and its distance to the shell's outside taken (negative: inside it). A point
+// inside is told apart by where it is (`shellTwin`'s `where`): in the mouth (only the last whorl, near the lip: a limb
+// there has gone in through the opening) or in the wall (anywhere else: through the shell). The carapace is measured
+// the same way over the cycle: its rear belongs in the mouth, never in the wall, and where it is outside, its least
+// gap to the shell is the throat under the lip.
 //
 //   bun tools/spiral_clear.ts [--variant islander] [--taunt | --routine] [--except t0-t1] [--rate 10] [--set '{"tilt":0.6}']
 //
@@ -74,7 +78,12 @@ const hull = surfaces.find((t) => t.name === "titan");
 const shellRoots = [m.rig.shell.o, m.rig.shell.x, m.rig.shell.y, m.rig.shell.z];
 console.log(`${variant}${how.taunt.kind === "dance" ? " with the taunt" : how.taunt.kind === "routine" ? ` in the routine${except.length === 2 ? ` (except ${except[0]} to ${except[1]} s)` : ""}` : ""}: ${limbs.length} limb surfaces (${limbs.map((l) => l.name).join(", ")}); ${n.crushPeriod} s at ${rate} a second`);
 
-const least = new Map<string, { gap: number; when: number; at: V }>();
+type Least = { gap: number; when: number; at: V; kind: "clear" | "mouth" | "wall" };
+const least = new Map<string, Least>();
+const lipFront = Math.max(...Array.from({ length: 72 }, (_, j) => twin.at(0, (j / 72) * TAU)[0]));
+const eyesAt = new Map<number, number>(), EYE_TIMES = [1.0, 3.6, 11.3, 12.4, 17.5];
+const body = { wall: { gap: Infinity, when: 0, at: [0, 0, 0] as V }, throat: { gap: Infinity, when: 0, at: [0, 0, 0] as V } };
+const hullRoots = hull === undefined ? [] : [hull.point(UU, VV)];
 const group = (name: string) => name.replace(/^leg([LR])(\d)$/, "leg$1$2").replace(/^(crusher|cutter).*/, "$1 claw").replace(/^(stalk|eye|lid|cheek)([LR])$/, "eye$2");
 for (let t = 0; t < n.crushPeriod; t += 1 / rate) {
   if (except.length === 2 && t >= except[0]! && t < except[1]!) continue;
@@ -84,25 +93,22 @@ for (let t = 0; t < n.crushPeriod; t += 1 / rate) {
     const g = group(L.name);
     for (let i = 0; i <= 14; i++) for (let j = 0; j < 8; j++) {
       const p = inShell(probe.eval(L.roots, t, { clear_u: i / 14, clear_v: j / 8 })[0] as unknown as V);
-      const d = gapTo(p), was = least.get(g);
-      if (was === undefined || d < was.gap) least.set(g, { gap: d, when: t, at: p });
+      const d = gapTo(p), was = least.get(g), w = twin.where(p);
+      if (was === undefined || d < was.gap) least.set(g, { gap: d, when: t, at: p, kind: w.kind === "outside" ? "clear" : w.kind });
+      if (g.startsWith("eye")) for (const T of EYE_TIMES) if (Math.abs(t - T) < 0.5 / rate) eyesAt.set(T, Math.min(eyesAt.get(T) ?? Infinity, p[0]));
     }
+  }
+  // The carapace: in the wall anywhere (its rear belongs in the mouth), and its least gap to the shell outside it.
+  for (let i = 0; i <= 24; i++) for (let j = 0; j < 16 && hullRoots.length > 0; j++) {
+    const p = inShell(probe.eval(hullRoots, t, { clear_u: i / 24, clear_v: j / 16 })[0] as unknown as V), w = twin.where(p);
+    if (w.kind === "wall") { const d = gapTo(p); if (d < body.wall.gap) body.wall = { gap: d, when: t, at: p }; }
+    if (w.kind === "outside") { const d = gapTo(p); if (d < body.throat.gap) body.throat = { gap: d, when: t, at: p }; }
   }
 }
 console.log("least distance to the shell's outside (crab units; below 0 is inside the shell), when, and where on the limb (crab coordinates):");
-for (const [name, v] of [...least].sort((a, b) => a[1].gap - b[1].gap)) console.log(`  ${name.padEnd(13)} ${v.gap >= REACH * CELL ? `over ${(REACH * CELL).toFixed(1)}` : v.gap.toFixed(2).padStart(6)}  at t = ${v.when.toFixed(1)}  (${v.at.map((c) => c.toFixed(1)).join(", ")})`);
-
-// The carapace is tucked under the mouth by design; ahead of the outer lip it must be clear of the shell.
-const lipFront = Math.max(...Array.from({ length: 72 }, (_, j) => twin.at(0, (j / 72) * TAU)[0]));
-if (hull !== undefined) {
-  const roots = [hull.point(UU, VV)];
-  let best = Infinity, where: V = [0, 0, 0];
-  const [o, x, y, z] = probe.eval(shellRoots, 0) as unknown as V[];
-  for (let i = 0; i <= 60; i++) for (let j = 0; j < 40; j++) {
-    const w = probe.eval(roots, 0, { clear_u: i / 60, clear_v: j / 40 })[0] as unknown as V, d0 = sub(w, o!);
-    const p: V = [dot(d0, x!), dot(d0, y!), dot(d0, z!)];
-    if (p[0] < lipFront + 0.3) continue;
-    const d = gapTo(p); if (d < best) { best = d; where = p; }
-  }
-  console.log(`carapace, more than 0.3 ahead of the outer lip (x = ${lipFront.toFixed(2)}): ${best.toFixed(2)} from the shell at (${where.map((c) => c.toFixed(1)).join(", ")})`);
-}
+const fmt = (p: V) => `(${p.map((c) => c.toFixed(1)).join(", ")})`;
+for (const [name, v] of [...least].sort((a, b) => a[1].gap - b[1].gap)) console.log(`  ${name.padEnd(13)} ${v.gap >= REACH * CELL ? `over ${(REACH * CELL).toFixed(1)}` : v.gap.toFixed(2).padStart(6)}  ${v.kind.padEnd(5)}  at t = ${v.when.toFixed(1)}  ${fmt(v.at)}`);
+const through = [...least].filter(([, v]) => v.kind === "wall").map(([k]) => k);
+console.log(`through the wall: ${through.length === 0 ? "nothing" : through.join(", ")}`);
+console.log(`carapace: ${body.wall.gap === Infinity ? "never in the wall" : `IN THE WALL ${body.wall.gap.toFixed(2)} at t = ${body.wall.when.toFixed(1)} ${fmt(body.wall.at)}`}; least gap to the shell outside it (the throat) ${body.throat.gap.toFixed(2)} at t = ${body.throat.when.toFixed(1)} ${fmt(body.throat.at)}`);
+console.log(`eyes' least x against the lip's front (x = ${lipFront.toFixed(2)}): ${EYE_TIMES.filter((T) => eyesAt.has(T)).map((T) => `t ${T}: ${eyesAt.get(T)!.toFixed(2)}`).join(", ")}`);

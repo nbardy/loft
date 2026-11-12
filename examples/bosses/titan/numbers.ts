@@ -142,6 +142,8 @@ export const S = {
     /** Raup's numbers. `whorls`: turns of the tube from its tip to the mouth. `growth` (W): how much every length grows
      * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
     whorls: 3.0, growth: 1.75,
+    /** Which way the tube turns about the axis going back from the mouth (back/spiral_shell.ts, `handOf`). */
+    hand: "dextral" as "dextral" | "sinistral",
     /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
      * touches the axis (Raup's D = 0): a shell with no navel. 3.15 across by 2.3 along (2.2 by 3.2 before 2026-11-12's
      * finish): the face about the body's area from `game`; thin along the axis, so the wheel clears the legs, but fat
