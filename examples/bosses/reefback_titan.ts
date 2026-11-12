@@ -53,6 +53,7 @@ import { patient } from "./titan/face/patient.ts";
 import { periscope } from "./titan/face/periscope.ts";
 import { base as legsBase } from "./titan/legs/base.ts";
 import { armoured } from "./titan/legs/armoured.ts";
+import { hermit } from "./titan/legs/hermit.ts";
 import { slim } from "./titan/legs/slim.ts";
 import { stilt } from "./titan/legs/stilt.ts";
 import { S, type Numbers } from "./titan/numbers.ts";
@@ -97,6 +98,8 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     lowFront: { kind: "perspective", eye: [30, 3, 0], target: [0, 3.4, 0], fovY: 0.4 },
     lowRear: { kind: "perspective", eye: [-30, 5, 0], target: [0, 3.4, 0], fovY: 0.4 },
     lowLeft: { kind: "perspective", eye: [1, 5, -30], target: [1, 3.4, 0], fovY: 0.4 },
+    // `lowLeft`'s mirror: the islander's shell turns its coil to the left flank and its base to the right.
+    lowRight: { kind: "perspective", eye: [1, 5, 30], target: [1, 3.4, 0], fovY: 0.4 },
   };
 };
 
@@ -219,7 +222,7 @@ export const design = makeDesign({
   numbers: S as Numbers,
   slots: {
     carapace: { base: carapaceBase, pebble, kabuto, thorny } satisfies Record<string, CarapaceOption>,
-    legs: { base: legsBase, stilt, slim, armoured } satisfies Record<string, LegsOption>,
+    legs: { base: legsBase, stilt, slim, armoured, hermit } satisfies Record<string, LegsOption>,
     claws: { base: clawsBase, fiddler, fiddlerAside, gauntlet, tongs } satisfies Record<string, ClawsOption>,
     face: { base: faceBase, mask, periscope, patient, dandy, brow, browStalk, jitter, mourner } satisfies Record<string, FaceOption>,
     back: { base: backBase, lighthouse, keep, shrine, headland, terraces, spiral } satisfies Record<string, BackOption>,
@@ -273,9 +276,11 @@ export const design = makeDesign({
       about: "the island crab as a fiddler: low, a spiral hermit's shell on its back, one great claw, a vain face on tall eyestalks",
       // Its back is the spiral shell (DIRECTION.md, Round 5: "the best back design for when it's a stick-eye crab, as
       // that is a hermit crab"); the headland stays an option (`--variant islander,back=headland`).
-      pick: { claws: "fiddler", face: "dandy", back: "spiral" },
+      // A hermit (DIRECTION.md, Round 5, "The hermit"): its legs leave through the shell's mouth (legs/hermit.ts) and
+      // its body's tail climbs into the shell.
+      pick: { claws: "fiddler", face: "dandy", back: "spiral", legs: "hermit" },
       // Vain, a show-off, a bully: broad confident moves, a beat of pose for the camera.
-      numbers: { temper: SHOW_OFF },
+      numbers: { temper: SHOW_OFF, carapace: { rise: 2.2 } },
     },
     // The islander with a face that is a head (docs/art_direction/DIRECTION.md, Round 4): the islander's picks, and
     // face/brow.ts in place of the dandy. `--variant bruiser,face=browStalk` is the same with its eyes on short stalks.

@@ -67,7 +67,10 @@ export function planOf(n: Numbers) {
   const r = S.mouth.radial, a = S.mouth.axial, c = r, t = a + S.spire * c;
   const axis: V3 = [-Math.sin(S.rake) * Math.cos(S.tilt), Math.sin(S.tilt), Math.cos(S.rake) * Math.cos(S.tilt)];
   const fore = unitV(addV([1, 0, 0], mulV(axis, -axis[0])));
-  const rise = crossV(axis, fore);
+  // The hand: which way the tube turns about the axis going back from the mouth. `rise` is the coil plane's second
+  // axis, so mirroring it mirrors the coil while the spire still points along `axis`.
+  const turn = handOf(S.hand);
+  const rise = mulV(crossV(axis, fore), turn);
   const outAt = (back: number): V3 => { const psi = S.mouthAt + TAU * back; return addV(mulV(fore, Math.cos(psi)), mulV(rise, Math.sin(psi))); };
   /** The body's point in the mouth (crab coordinates), and from it the tip: the outer lip passes `seat.lip` beyond the body's point. */
   const seat: V3 = [n.carapace.from + S.seat.in, S.seat.up, S.seat.side];
@@ -88,13 +91,26 @@ export function planOf(n: Numbers) {
   /** The suture's distance from the axis in units of the turn's own r that it lies on (the larger one): 1 + cos(phi) there. */
   const sutureX = (1 + Math.cos(lo)) / W;
   return {
-    W, whorls: S.whorls, r, a, c, t, axis, fore, rise, tip, seat, outAt, sutureX,
+    W, whorls: S.whorls, r, a, c, t, axis, fore, rise, turn, tip, seat, outAt, sutureX,
     /** Where each turn but the last shows, round its section: from where the next turn out covers it to its own suture. */
     shows: [lo, Math.acos(sutureX - 1)] as const,
     lnW: Math.log(W),
   };
 }
 export type Plan = ReturnType<typeof planOf>;
+
+/**
+ * The coil's hand, read once: +1 turns the tube counterclockwise about the axis going back from the mouth, seen from the
+ * face (the picked picture's hand, a right-handed shell); -1 its mirror. Worn with the spire to the crab's right, a
+ * right-handed shell's mouth faces forward with its outer lip on top (a real hermit's: its abdomen curls right); with the
+ * spire to the left, only the left-handed one does.
+ */
+function handOf(hand: "dextral" | "sinistral"): 1 | -1 {
+  switch (hand) {
+    case "dextral": return 1;
+    case "sinistral": return -1;
+  }
+}
 
 /** The printed bands' numbers: `count` cream bands round the section, each `cream` of its period, the first one's
  * middle `at` periods round from the tube's outer side (phi = 0). */
@@ -177,9 +193,10 @@ export function shellMap(n: Numbers) {
   /** The flare toward the mouth: the section grows by `lip.flare` over the last `flareOver` of a turn. */
   const flared = (back: F): F => add(1, mul(sub(1, smoothstep(0, L.flareOver, back)), S.lip.flare));
   const outside = (back: F, phi: F): P3 => coil(back, phi, mul(flared(back), add(1, proud(phi))));
-  // v runs against phi: the coil turns counterclockwise going back (seen from the face), so with u from tip to mouth
-  // d/du x d/dv faces out of the tube only if v turns the other way (checked in tools/spiral_theory.ts).
-  const phiOf = (v: F): F => mul(v, -TAU);
+  // v runs against phi for a right-handed coil: it turns counterclockwise going back (seen from the face), so with u from
+  // tip to mouth d/du x d/dv faces out of the tube only if v turns the other way (checked in tools/spiral_theory.ts).
+  // The mirror turns v with phi.
+  const phiOf = (v: F): F => mul(v, -TAU * p.turn);
   const point = (u: F, v: F): P3 => {
     const phi = phiOf(v);
     // Along the outside: `whorls` back at u = 0, the lip at U.lip; the tip closes over its last tenth of a turn (by
@@ -206,31 +223,43 @@ export function shellTwin(n: Numbers) {
   const m = shellMap(n), B = variable("spiral_back", "f32"), PH = variable("spiral_phi", "f32");
   const f = compileJs([m.outside(B, PH)]);
   const at = (back: number, phi: number): V3 => f({ vars: { spiral_back: back, spiral_phi: phi }, inputs: {}, params: {} })[0] as unknown as V3;
+  const p = m.plan;
   const normal = (back: number, phi: number): V3 => {
     const e = 1e-3, db = addV(at(back - e, phi), mulV(at(back + e, phi), -1)), dp = addV(at(back, phi + e), mulV(at(back, phi - e), -1));
     // `back` falls toward the mouth and phi turns from the outer side to the face; with the coil turning counterclockwise
     // going back (seen from the face), (d/dphi) x (toward the mouth) points out.
-    return unitV(crossV(dp, db));
+    return mulV(unitV(crossV(dp, db)), p.turn);
   };
   const U2 = variable("spiral_u", "f32"), V2 = variable("spiral_v", "f32");
   const g = compileJs([m.point(U2, V2)]);
   const drawn = (u: number, v: number): V3 => g({ vars: { spiral_u: u, spiral_v: v }, inputs: {}, params: {} })[0] as unknown as V3;
   /**
-   * Whether a crab-coordinate point is inside the bare coil (bands and flare aside): in the coil's own cylinder
-   * coordinates, inside the section of any turn that passes its bearing. Ahead of the mouth's plane there is no turn
-   * `back` < 0, so a point in front of the open mouth is outside.
+   * Where a crab-coordinate point is against the bare coil (bands and flare aside), in the coil's own cylinder
+   * coordinates: inside the section of every turn that passes its bearing, or of none. Ahead of the mouth's plane there
+   * is no turn `back` < 0, so a point in front of the open mouth is outside. Inside only the last whorl and within
+   * `MOUTH` turns of the lip, it is in the mouth (where a hermit's body and the roots of what leaves it may be); any
+   * other inside point is in the shell's wall (an earlier whorl, or deep in the last one).
    */
-  const inside = (q: V3): boolean => {
-    const p = m.plan, d = addV(q, mulV(p.tip, -1)), h = dotV(d, p.axis), x = dotV(d, p.fore), y = dotV(d, p.rise);
+  const where = (q: V3): Where => {
+    const d = addV(q, mulV(p.tip, -1)), h = dotV(d, p.axis), x = dotV(d, p.fore), y = dotV(d, p.rise);
     const rho = Math.hypot(x, y), turn = (Math.atan2(y, x) - n.spiral.mouthAt) / TAU, first = turn - Math.floor(turn);
+    const turns: number[] = [];
     for (let back = first; back <= p.whorls; back += 1) {
       const s = p.W ** -back;
-      if (((rho / s - p.c) / p.r) ** 2 + ((h / s + p.t) / p.a) ** 2 < 1) return true;
+      if (((rho / s - p.c) / p.r) ** 2 + ((h / s + p.t) / p.a) ** 2 < 1) turns.push(back);
     }
-    return false;
+    if (turns.length === 0) return { kind: "outside" };
+    return turns.length === 1 && turns[0]! < MOUTH ? { kind: "mouth", back: turns[0]! } : { kind: "wall", back: turns[turns.length - 1]! };
   };
-  return { plan: m.plan, at, normal, drawn, inside };
+  const inside = (q: V3): boolean => where(q).kind !== "outside";
+  return { plan: m.plan, at, normal, drawn, inside, where };
 }
+
+/** Where a point is against the shell (`shellTwin`'s `where`): outside it, in its mouth, or in its wall; `back` is the
+ * turn (from the lip) whose section holds it. */
+export type Where = { readonly kind: "outside" } | { readonly kind: "mouth"; readonly back: number } | { readonly kind: "wall"; readonly back: number };
+/** How far back into the last whorl, in turns, the mouth reaches: what a body in the shell may fill. */
+const MOUTH = 0.15;
 
 /** The plain vector arithmetic the plan is written in, for what is placed from it. */
 export const vmath = { add: addV, mul: mulV, dot: dotV, cross: crossV, unit: unitV };

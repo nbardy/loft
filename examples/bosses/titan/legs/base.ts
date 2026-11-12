@@ -4,15 +4,20 @@
 import { abs, add, keys, lift, limb, max, min, mix, mul, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
 import type { Reaching } from "../../../../src/check.ts";
 import { cut, mottle, sides } from "../ink.ts";
-import type { LegsOption } from "../slots.ts";
+import type { Rig } from "../rig.ts";
+import type { Legs, LegsOption } from "../slots.ts";
 
 export const base: LegsOption = {
   about: "three tapering segments, pinched and banded at the joints",
-  draw: ({ n, walk, body, local }) => {
+  draw: (rig) => banded(rig, 4),
+};
+
+/** The base legs for the first `pairs` of the rig's four feet a side (the rest stay in the rig's footing, undrawn). */
+export function banded({ n, walk, body, local }: Rig, pairs: number): Legs {
     const I = n.ink;
     const segs = keys([[0, 1], [0.4, 0.85], [0.8, 0.5], [1, 0.18]]);
     const limbs: Reaching[] = [];
-    const things = sides.flatMap((s, si) => n.legRoots.map((x, i) => {
+    const things = sides.flatMap((s, si) => n.legRoots.slice(0, pairs).map((x, i) => {
       const k = si * 4 + i;
       const root = local([x, -0.1, s * n.carapace.width * 0.85]);
       const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
@@ -36,5 +41,4 @@ export const base: LegsOption = {
       });
     }));
     return { things, limbs };
-  },
-};
+}

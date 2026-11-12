@@ -7,7 +7,7 @@
 //
 //   bun tools/spiral_views.ts [--set '{"tilt":0.6}'] [--sketch out/x.ppm] [--quick: the plan and the legs only]
 //   bun tools/spiral_views.ts --measure out/spiral/views.webp   counts bands on a render of the views in this order
-//       (loft render ... --views game,lowFront,lowRear,top: tiled as the render tiles them, rows of RW / 1280), along the same lines, by ink: cream is light with green
+//       (loft render ... --views game,lowFront,lowRear,top,lowLeft,lowRight: tiled as the render tiles them, rows of RW / 1280), along the same lines, by ink: cream is light with green
 //       near red (G/R > 0.7), brick is red (G/R < 0.55), key lines and anything else are neither.
 
 import { cameraMatrices, project } from "../src/host/camera.ts";
@@ -34,6 +34,9 @@ const VIEWS = {
   lowFront: { kind: "perspective", eye: [30, 3, 0], target: [0, 3.4, 0], fovY: 0.4 },
   lowRear: { kind: "perspective", eye: [-30, 5, 0], target: [0, 3.4, 0], fovY: 0.4 },
   top: { kind: "orthographic", eye: [1, 50, 0.001], target: [1, 0, 1], height: 34 },
+  // The scene's `lowLeft` and its mirror (`lowRight`): the side views a hermit's shell is judged from.
+  lowLeft: { kind: "perspective", eye: [1, 5, -30], target: [1, 3.4, 0], fovY: 0.4 },
+  lowRight: { kind: "perspective", eye: [1, 5, 30], target: [1, 3.4, 0], fovY: 0.4 },
 } as const;
 const NAMES = Object.keys(VIEWS) as (keyof typeof VIEWS)[];
 const mats = NAMES.map((k) => cameraMatrices(VIEWS[k] as Parameters<typeof cameraMatrices>[0], W / H));
@@ -97,13 +100,13 @@ for (let i = 0; i <= NU; i++) for (let j = 0; j < NV; j++) {
   if (p[1] < WATER) continue;
   lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1]), Math.min(lo[2], p[2])]; hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1]), Math.max(hi[2], p[2])];
   const back = (1 - Math.min(u / U.lip, 1)) * P.whorls;
-  const c: Cls = u > U.throat + 0.01 ? 4 : u > U.lip - 0.002 ? 3 : back > P.whorls - n.spiral.coil.boss ? 7 : printAt(-TAU * vv);
+  const c: Cls = u > U.throat + 0.01 ? 4 : u > U.lip - 0.002 ? 3 : back > P.whorls - n.spiral.coil.boss ? 7 : printAt(-TAU * P.turn * vv);
   for (let v = 0; v < NAMES.length; v++) splat(v, p, c, 2);
 }
 const hullAt = (x: number) => {
   const mm = (x - C.from) / (C.to - C.from);
   const g = mm < 0.45 ? Math.sqrt(Math.max(1 - (1 - mm / 0.45) ** 2, 0)) : mm > 0.6 ? Math.sqrt(Math.max(1 - ((mm - 0.6) / 0.4) ** 2, 0)) : 1;
-  return { half: g * C.width, tall: g * C.height, spine: -0.1 + Math.min(mm * 2, 1) * 0.25 };
+  return { half: g * C.width, tall: g * C.height, spine: -0.1 + Math.min(mm * 2, 1) * 0.25 + C.rise * Math.max(0, 1 - 2 * mm) };
 };
 for (let i = 0; i <= 160; i++) for (let j = 0; j < 160; j++) {
   const x = C.from + ((C.to - C.from) * i) / 160, h = hullAt(x), a = (j / 160) * TAU, e = 2 / 2.3;
@@ -172,6 +175,20 @@ NAMES.forEach((name, v) => {
   console.log(`${name.padEnd(8)} cream bands crossed ${runs}; shell box x ${x0}..${x1} y ${y0}..${y1}; shell silhouette ${shellArea} px, body ${bodyArea} px (x ${f2(shellArea / Math.max(bodyArea, 1))}); seen: cream ${count(2)} brick ${count(1)} lip ${count(3)} throat ${count(4)} px; centre (${f2(cx, 0)}, ${f2(cy, 0)})`);
 });
 
+// ---- the lip's arc from the low front: over every column of the carapace, the lip shows above the carapace's top ----
+{
+  const v = NAMES.indexOf("lowFront"), b = bufs[v]!;
+  let cols = 0, arched = 0, gapSum = 0;
+  for (let x = 0; x < W; x++) {
+    let top = -1; for (let y = 0; y < H; y++) if (b.body[y * W + x]) { top = y; break; }
+    if (top < 0) continue;
+    cols++;
+    // The nearest lip pixel above the carapace's top in this column (the arc), and the throat between.
+    for (let y = top - 1; y >= Math.max(0, top - 120); y--) if (b.cls[y * W + x] === 3) { arched++; gapSum += top - y; break; }
+  }
+  console.log(`\nlowFront: the lip arcs over ${arched} of the carapace's ${cols} columns (${f2((100 * arched) / Math.max(cols, 1), 0)}%), the lip's underside on average ${f2(gapSum / Math.max(arched, 1), 0)} px above the carapace's top`);
+}
+
 // ---- measuring a render ----
 const measure = flag("--measure");
 if (measure !== undefined) {
@@ -199,9 +216,9 @@ if (measure !== undefined) {
 const sketch = flag("--sketch");
 if (sketch !== undefined) {
   const PAL: Record<Cls, readonly number[]> = { 0: [33, 51, 94], 1: [168, 56, 33], 2: [237, 224, 191], 3: [250, 240, 200], 4: [30, 20, 20], 5: [120, 60, 50], 6: [190, 40, 20], 7: [255, 245, 210] };
-  const out = new Uint8Array(W * 2 * H * 2 * 3);
+  const rows = Math.ceil(NAMES.length / 2), out = new Uint8Array(W * 2 * H * rows * 3);
   NAMES.forEach((_, v) => { const b = bufs[v]!, ox = (v % 2) * W, oy = Math.floor(v / 2) * H; for (let k = 0; k < W * H; k++) out.set(PAL[b.cls[k] as Cls], ((oy + Math.floor(k / W)) * W * 2 + ox + (k % W)) * 3); });
-  const head = new TextEncoder().encode(`P6\n${W * 2} ${H * 2}\n255\n`), all = new Uint8Array(head.length + out.length);
+  const head = new TextEncoder().encode(`P6\n${W * 2} ${H * rows}\n255\n`), all = new Uint8Array(head.length + out.length);
   all.set(head); all.set(out, head.length); await Bun.write(sketch, all);
   console.log(`\nsketch (panes ${NAMES.join(", ")}): ${sketch}`);
 }
