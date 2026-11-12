@@ -107,7 +107,30 @@ export class Strand extends Body implements Drawable {
   }
 }
 
-/** Canonicalise a strand spec: every default is decided here, once. */
+/**
+ * A swept body: a section carried along a spine. Snakes, tentacles, necks, tails, spars, ropes thick enough to light,
+ * horns (`spiralTube` is one), limbs on a `chain`.
+ *
+ * The shape and its law. At each m in [0, 1] the section is a superellipse of half-width `girth(m)`, `aspect(m)` as
+ * tall, of `squareness`, set in a frame carried along the spine with the least rotation (plus `twist`, bleeding back
+ * toward `up` by `level`). Where the spine stretches the radii shrink by 1 / sqrt(stretch), so volume is kept, at most
+ * `bulge` times. Its ends close by `tips`. It draws itself and carries body coordinates (m along, v round) for paint, a
+ * skeleton for shadows, and a chart other things stand on (`sheetOn`, `rayOf`).
+ *
+ * Parameters: spine, girth, aspect and twist are functions of m (and of time, inputs, params), so the body moves and
+ * swells; squareness, tips, stations, detail and up are fixed.
+ *
+ * What it cannot do, because of the law:
+ * - a section that is not a superellipse: no keel, no flat belly with a round back, no ridges round it, no hole.
+ * - branch: one spine, two ends (a fork is two strands meeting).
+ * - fold back on itself sharply: the section is perpendicular to the spine, so a bend tighter than the girth pinches.
+ * - change topology in time (split, merge).
+ *
+ * Going past it: the spine is the open slot (`chain`, `bent`, `spiralLine`, `wrap`, `through` give spines), and one
+ * step down is `sweep` with a `Section` of your own, or a `surface((m, v) => ...)` that places any section curve in
+ * `Body.frame(m)`: a keeled hull of a body, a fluted column. Relatives: `lathe` for a body round an axis, `loft` through
+ * sections that are not one shape scaled, `coil` for a section on a growing spiral.
+ */
 export function strand(spec: StrandSpec): Strand {
   const name = spec.name;
   const tips: readonly [TipSpec, TipSpec] = spec.tips === undefined ? ["round", "round"]

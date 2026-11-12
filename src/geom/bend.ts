@@ -57,6 +57,27 @@ const GAUSS: readonly (readonly [number, number])[] = [[0.0694318442, 0.17392742
 
 const NONE: Bend = [0, 0];
 
+/**
+ * A stalk that bends by a pose: an eye stalk, a neck, a stem, an antenna, a tail.
+ *
+ * The shape and its law. The heading at every point is a turn away from the root's heading by the sphere's exponential
+ * map of lean + bow (1 - (1 - m)^2) + crook m^sharp, and the spine is the integral of the heading, so the stalk keeps its
+ * length in every pose and is parametrised by arc length.
+ *
+ * Parameters: root, frame, length and the three bends are expressions (they move; read each on its own clock and the
+ * stalk whips); `sharp` is a fixed number.
+ *
+ * What it cannot do, because of the law:
+ * - bend anywhere but by these three shapes: no S with two bows at chosen places, no kink in the middle.
+ * - twist about itself (the heading turns; the stalk has no roll of its own).
+ * - stretch or squash along its length.
+ * - turns of more than about 3 radians: the four-point integral loses accuracy past that.
+ *
+ * Going past it: the heading is the law, so a bend shape of your own is a new weight in `turn`: any function w(m) times
+ * a bend; a bend at m0 is a smoothstep there; a wave travelling up the stalk is a bend times sin(k m - w t). `bentTip`
+ * predicts a tip on the CPU. Relatives: a clothoid (turn growing as m^2) is `crook` with `sharp` 2; straight segments
+ * between joints are `chain`; a fixed curve is `spiralLine`.
+ */
 export function bent(spec: BentSpec): Bent {
   const sharp = spec.sharp ?? 2;
   if (!(sharp >= 1 && Number.isFinite(sharp))) throw new BendError(`bent: sharp must be a finite number >= 1 (1 is an even arc), got ${sharp}`);
