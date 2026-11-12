@@ -57,3 +57,4 @@ export * from "./soft/index.ts";
 export { coil, coilAt, coilPlan, COIL_TOPOLOGY, type CoilLaw, type CoilSection, type CoilSpec } from "./geom/spiral.ts";
 export { sheetOn, sheetOnEdges, type SheetOnSpec } from "./geom/crest.ts";
 export { chain, type Chain, type ChainSpec } from "./geom/limb.ts";
+export { ropes, type RopesSpec } from "./geom/lines.ts";

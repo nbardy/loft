@@ -261,6 +261,30 @@ function canonical(spec: HullSpec): Lines {
   return lines;
 }
 
+/**
+ * A boat's hull from its lines, as a naval architect's lines plan gives one.
+ *
+ * The shape and its law. Four curves along the length decide every station: the half-breadth (a power law forward and
+ * aft of the widest station, `entry` and `run`, narrowing to the `transom`), the keel (cut away at the forefoot), the
+ * sheer (rising toward both ends, with raised `castle` decks) and the section's fullness (finer at the ends). Each
+ * station's section is a quarter superellipse below the turn of the bilge (lifted by `deadrise`) and topsides above
+ * it drawn in by `tumblehome`; the skin is a Catmull-Rom loft through the stations, so it passes through every one.
+ * Deck, bulwarks and transom follow from the same lines, and `paint` is a function of the hull's (u, v).
+ *
+ * Parameters: sixteen numbers, all fixed at build (the lines are decided once, in `canonical`).
+ *
+ * What it cannot do, because of the law:
+ * - lines other than these power laws and smoothsteps: no hollow bow, no bulbous forefoot, no clipper's flared entry.
+ * - a section other than superellipse plus topsides: no chine (a hard corner), no flat-bottomed punt, no catamaran.
+ * - move: a hull that flexes, breathes or is crushed in place needs its stations to be functions of time.
+ * - be anything but a monohull with a transom stern and a raked stem.
+ *
+ * Going past it is one step down: `Hull.stations` are its section curves (and `Hull.section(u, v)` the law that makes
+ * them), and the map algebra's `loft(curves)` makes a skin through any row of curves, so `loft([...])` through
+ * stations of your own (edited copies of these, or written from scratch, moving or not) is any lofted body: a canoe, a
+ * pod, a seed, a fish, a fuselage. Relatives: `lathe` for a body that is round in every section; `sheet` for a skin
+ * between two curves; `extrude` for one swept straight. A sailing ship built on this hull is `ship`.
+ */
 export function hull(spec: HullSpec): Hull {
   return new Hull(spec);
 }
