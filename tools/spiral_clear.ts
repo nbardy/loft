@@ -4,7 +4,11 @@
 // every limb's drawn surface is sampled (not its skeleton, whose radii take a flat hand for a round one), carried
 // into the shell frame (`rig.shell`), and its distance to the shell's outside taken (negative: inside it).
 //
-//   bun tools/spiral_clear.ts [--variant islander] [--taunt] [--rate 10] [--set '{"tilt":0.6}']
+//   bun tools/spiral_clear.ts [--variant islander] [--taunt | --routine] [--except t0-t1] [--rate 10] [--set '{"tilt":0.6}']
+//
+// --routine: the variant as its member of the lineup's group dance (examples/bosses/crab_lineup.ts, `DANCE`), with the
+// lineup's numbers (its 32 s loop, the group's manner) and its solo. --except skips a stretch of the loop (seconds),
+// such as the slam's wind-up, so that the rest of the loop's nearest approach is reported.
 //
 // The limbs do not depend on the back, so this measures any shell numbers against the variant as built.
 
@@ -15,6 +19,7 @@ import { design, styleFor, SUN, WATER } from "../examples/bosses/reefback_titan.
 import { shellTwin, vmath } from "../examples/bosses/titan/back/spiral_shell.ts";
 import { AT_HOME, type Staging } from "../examples/bosses/titan/rig.ts";
 import type { Numbers } from "../examples/bosses/titan/numbers.ts";
+import { LINE, lineupStaging, onTheBeat } from "../examples/bosses/crab_lineup.ts";
 
 type V = readonly [number, number, number];
 const { dot } = vmath;
@@ -25,11 +30,14 @@ const merge = (a: Record<string, unknown>, b: Record<string, unknown>): Record<s
   Object.fromEntries(Object.entries(a).map(([k, v]) => [k, k in b ? (typeof v === "object" && !Array.isArray(v) ? merge(v as Record<string, unknown>, b[k] as Record<string, unknown>) : b[k]) : v]));
 
 const variant = flag("--variant") ?? "islander", rate = Number(flag("--rate") ?? 10), set = flag("--set");
-const resolved = design.resolve({ variant, picks: [] });
+const inRoutine = args.includes("--routine"), member = LINE.indexOf(variant as (typeof LINE)[number]);
+if (inRoutine && member < 0) throw new Error(`spiral_clear: --routine needs a variant in the lineup (${LINE.join(", ")})`);
+const resolved = design.resolve({ variant, picks: [] }, inRoutine ? onTheBeat(member) : undefined);
+const except = (flag("--except") ?? "").split("-").filter((x) => x !== "").map(Number);
 const n0 = resolved.numbers as Numbers;
 const n = { ...n0, spiral: set === undefined ? n0.spiral : merge(n0.spiral, JSON.parse(set)) } as Numbers;
 // The lineup's taunt for its first crab (examples/bosses/crab_lineup.ts), on this crab's own 22 s cycle: armed at 14.5 s.
-const how: Staging = args.includes("--taunt") ? { ...AT_HOME, taunt: { kind: "dance", first: 14.5, accents: [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.0] } } : AT_HOME;
+const how: Staging = inRoutine ? lineupStaging(member, variant) : args.includes("--taunt") ? { ...AT_HOME, taunt: { kind: "dance", first: 14.5, accents: [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.0] } } : AT_HOME;
 const staged = design.stage(resolved, how), water = sea({ ...staged.sea, deform: staged.deforms }), m = staged.finish(water);
 const built = scene({ sea: water, things: m.things, style: styleFor(n0, WATER.ridge), sun: SUN, cameras: { game: { kind: "perspective", eye: [23, 27, 21], target: [3, 0.5, 2.5], fovY: 0.6 } } });
 const probe = new Probe(compileScene(built), {});
@@ -64,11 +72,12 @@ const surfaces = (m.things as readonly unknown[]).filter(isSurf);
 const limbs = surfaces.filter((t) => LIMB.test(t.name)).map((t) => ({ name: t.name, roots: [t.point(UU, VV)] }));
 const hull = surfaces.find((t) => t.name === "titan");
 const shellRoots = [m.rig.shell.o, m.rig.shell.x, m.rig.shell.y, m.rig.shell.z];
-console.log(`${variant}${how.taunt.kind === "dance" ? " with the taunt" : ""}: ${limbs.length} limb surfaces (${limbs.map((l) => l.name).join(", ")}); ${n.crushPeriod} s at ${rate} a second`);
+console.log(`${variant}${how.taunt.kind === "dance" ? " with the taunt" : how.taunt.kind === "routine" ? ` in the routine${except.length === 2 ? ` (except ${except[0]} to ${except[1]} s)` : ""}` : ""}: ${limbs.length} limb surfaces (${limbs.map((l) => l.name).join(", ")}); ${n.crushPeriod} s at ${rate} a second`);
 
 const least = new Map<string, { gap: number; when: number; at: V }>();
 const group = (name: string) => name.replace(/^leg([LR])(\d)$/, "leg$1$2").replace(/^(crusher|cutter).*/, "$1 claw").replace(/^(stalk|eye|lid|cheek)([LR])$/, "eye$2");
 for (let t = 0; t < n.crushPeriod; t += 1 / rate) {
+  if (except.length === 2 && t >= except[0]! && t < except[1]!) continue;
   const [o, x, y, z] = probe.eval(shellRoots, t) as unknown as V[];
   const inShell = (p: V): V => { const d = sub(p, o!); return [dot(d, x!), dot(d, y!), dot(d, z!)]; };
   for (const L of limbs) {

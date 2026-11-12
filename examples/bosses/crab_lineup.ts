@@ -77,7 +77,7 @@ const GROUP: Numbers["temper"] = { snap: 4, arrive: 0.15, hold: 0, leave: 0.25, 
  */
 export const FAN = [[42, 0], [40, 0], [38, -2], [40, -4], [42, -4]] as const;
 /** What the scene changes of a crab's numbers: its attacks' seconds on counts, its props in its lane, the group's manner. The crab alone keeps its own. */
-const onTheBeat = (k: number) => ({
+export const onTheBeat = (k: number) => ({
   crushPeriod: PERIOD, period: BAR, temper: GROUP,
   // Three counts from the claw's first movement to its landing on 12; warned four counts ahead, so its cycle turns on 8.
   crushSeconds: { windup: 3 * BEAT - 0.3, strike: 0.3 }, crushWarn: 4 * BEAT, crushFirst: beat(12),
@@ -96,7 +96,8 @@ const onTheBeat = (k: number) => ({
 
 /** A crab's own manner (its variant's `temper`), for its solo. */
 const ownManner = (variant: string): Numbers["temper"] => design.resolve(parseVariantAsk(variant)).numbers.temper;
-const how = (k: number, variant: string): Staging => ({
+/** How member k (its variant) stands in the lineup: at its place in the score, dancing its part. */
+export const lineupStaging = (k: number, variant: string): Staging => ({
   at: DANCE.member(k).home, heading: 0, walkAhead: 0,
   // Every boat goes home on a cut (16, the seam): no sinking, no sailing in.
   show: { kind: "cut" },
@@ -154,7 +155,7 @@ const camerasOf = (line: readonly string[]): Readonly<Record<string, Camera>> =>
 export function lineupScene(o: { readonly line: readonly string[]; readonly look: string }) {
   if (o.line.length !== DANCE.members) throw new Error(`crab lineup: the dance has ${DANCE.members} members, left to right; got ${o.line.length} variants`);
   const line = lineup({
-    members: o.line.map((variant, k) => ({ name: `crab${k}`, design, variant, numbers: onTheBeat(k), how: how(k, variant) })),
+    members: o.line.map((variant, k) => ({ name: `crab${k}`, design, variant, numbers: onTheBeat(k), how: lineupStaging(k, variant) })),
     // The swells' periods are 16 s and 8 s: whole turns in the loop.
     water: { swell: [{ direction: [1, 0.3], length: 13, height: 0.2, speed: 13 / 16 }, { direction: [-0.3, 1], length: 6, height: 0.07, speed: 6 / 8, phase: 1.3 }], foam: 0.85 },
     loop: { kind: "every", seconds: PERIOD },

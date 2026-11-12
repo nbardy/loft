@@ -16,18 +16,21 @@ export const beat = (c: number): number => c * BEAT;
 export const AUDIENCE = [100, 3, 6] as const;
 type XZ = readonly [number, number];
 /**
- * The formations: every member's place (world x toward the camera, z the camera's left), left to right. Every crab
- * carries its great claw on its own right (the camera's left), so in the V the left wing stands behind a claw: 13 apart
- * there, 7 on the right. The diagonal (front-left to back-right) has every claw on the side away from those behind it,
- * so it is tight (4 deep, 7 across). The line is for the attacks: each crab's disc and boat in its own lane (13 apart).
+ * The formations: every member's place (world x toward the camera, z the camera's left), left to right, seen from above
+ * the heads (docs/lineup.md, "Framing from above"): depth in a formation is height on screen, so each has real depth.
+ * The V is three rows 8 deep: the centre in front, a pair behind it 12 to the right and 15 to the left (every great claw
+ * is on the camera's left, so the left wing stands 3 wider to keep the samurai's low face out from behind the
+ * centre's claw), the outer pair behind them. The line is a shallow arc, 13 apart (the least width that keeps five
+ * slam discs and five boats in their own lanes), its ends 8 back. The diagonal runs away from the camera, the fiddler
+ * in front, each next member 6 back and 9 to the right.
  */
-const DIAGONAL: readonly XZ[] = [[8, 20], [4, 13], [0, 6], [-4, -1], [-8, -8]];
-/** The diagonal with member k stepped 8 forward, out of the group, for its solo (in the diagonal a soloist's own single
- * had its front-left neighbour's eyestalks, legs and gauntlet across its face: the first strip, counts 50 and 52). */
+const DIAGONAL: readonly XZ[] = [[0, 18], [-6, 9], [-12, 0], [-18, -9], [-24, -18]];
+/** The diagonal with member k stepped 8 forward, out of the group, for its solo (in the group a soloist's own low single
+ * had its front-left neighbour's eyestalks, legs and gauntlet across its face). */
 const soloing = (k: number): readonly XZ[] => DIAGONAL.map(([x, z], j) => [j === k ? x + 8 : x, z] as const);
 export const PLACES: Readonly<Record<string, readonly XZ[]>> = {
-  V: [[-6, 26], [-3, 13], [0, 0], [-3, -7], [-6, -14]],
-  line: [[0, 32], [0, 19], [0, 6], [0, -7], [0, -20]],
+  V: [[-16, 30], [-8, 15], [0, 0], [-8, -12], [-16, -24]],
+  line: [[-8, 26], [-2, 13], [0, 0], [-2, -13], [-8, -26]],
   diagonal: DIAGONAL,
   solo0: soloing(0), solo1: soloing(1), solo2: soloing(2), solo3: soloing(3), solo4: soloing(4),
 };
@@ -64,23 +67,24 @@ const SINGLE: Readonly<Record<string, { readonly distance: number; readonly aim:
 const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.split("+")[0]!] ?? SINGLE.islander!; return lens([at[0] + d.distance, 3, at[1]], [at[0], d.aim, at[1]], 0.4); };
 
 /**
- * The group's framings (predicted in docs/lineup.md), by format. Each is aimed so the group's waterline sits about 80%
- * down the frame and the sunset fills the top (aimed at the group's own height, 4.5 to 6 up, the first strip put the
- * group in a band across the middle over 40% of empty sea): the target's height is the eye's plus the distance times
- * the angle from the waterline (eye height over distance) to 30% of the field of view above it.
+ * The group's framings (docs/lineup.md, "Framing from above"), by format: raised, wide, close to the front member and
+ * pitched down, so that depth in the formation becomes height in the frame, the front member is large, the others
+ * step back up the frame, rear faces show above the front members' heads, and the horizon and the sunset are a band at
+ * the top. `raised(front, z, height, distance, pitch, fovY)`: the eye `distance` in front of the front member (world x)
+ * at `z`, `height` above the water, pitched down `pitch` degrees.
  */
-const aimed = (eye: V3, at: readonly [number, number], fovY: number): Lens => {
-  const d = Math.hypot(eye[0] - at[0], eye[2] - at[1]), a = 0.3 * fovY - eye[1] / d;
-  return lens(eye, [at[0], eye[1] + d * Math.tan(a), at[1]], fovY);
+const raised = (front: number, z: number, height: number, distance: number, pitch: number, fovY: number): Lens => {
+  const p = (pitch * Math.PI) / 180, x = front + distance;
+  return lens([x, height, z], [x - 10 * Math.cos(p), height - 10 * Math.sin(p), z], fovY);
 };
 const GROUP = {
   wide: {
-    V: aimed([55, 3, 6], [0, 6], 0.5), line: aimed([95, 3, 6], [0, 6], 0.4), lineLow: aimed([86, 2.5, 6], [0, 6], 0.4),
-    lineClose: aimed([78, 2.5, 6], [0, 6], 0.4), diagonal: aimed([63, 3, 6], [8, 6], 0.4), diagonalIn: aimed([55, 3, 6], [8, 6], 0.4),
+    V: raised(0, 3, 20, 34, 15, 0.8), line: raised(0, 0, 24, 40, 17, 0.8), lineLow: raised(0, 0, 24, 40, 17, 0.8),
+    lineClose: raised(0, 0, 22, 36, 18, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
   },
   square: {
-    V: aimed([62, 3, 4], [0, 4], 0.6), line: aimed([80, 3, 6], [0, 6], 0.6), lineLow: aimed([74, 2.5, 6], [0, 6], 0.6),
-    lineClose: aimed([68, 2.5, 6], [0, 6], 0.6), diagonal: aimed([66, 3, 6], [8, 6], 0.5), diagonalIn: aimed([58, 3, 6], [8, 6], 0.5),
+    V: raised(0, 3, 36, 40, 20, 1.0), line: raised(0, 0, 36, 60, 15, 1.0), lineLow: raised(0, 0, 36, 60, 15, 1.0),
+    lineClose: raised(0, 0, 34, 54, 16, 1.0), diagonal: raised(0, 9, 24, 40, 12, 0.9), diagonalIn: raised(0, 9, 24, 38, 13, 0.9),
   },
 } as const;
 
