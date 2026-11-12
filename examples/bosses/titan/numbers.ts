@@ -143,36 +143,50 @@ export const S = {
      * in one turn; the printed spiral's rings stand `growth` apart, and the last turn is 1 - 1/growth of the width. */
     whorls: 3.75, growth: 1.75,
     /** The mouth's section: half-extents across the coil (toward and away from the axis) and along the axis. The tube
-     * touches the axis (Raup's D = 0): a shell with no navel. */
-    mouth: { radial: 2.2, axial: 3.2 },
+     * touches the axis (Raup's D = 0): a shell with no navel. 3.15 across by 2.3 along (2.2 by 3.2 before 2026-11-12's
+     * finish): the face about the body's area from `game`; thin along the axis, so the wheel clears the legs, but fat
+     * enough to read as a tube from the side. */
+    // 3.0 by 2.2 and seated 1.0 further back (in -0.5) by the integrator, 2026-11-12: at 3.15 with in 0.5 the eyes went
+    // 0.71 and 0.39 inside the shell's front rim as the slam lands (t = 12.4); now they clear by 0.55 and 0.71. The great
+    // claw still passes about 1.0 inside for half a second in the slam's wind-up (t = 11.5), at any size that reads.
+    mouth: { radial: 3.0, axial: 2.2 },
     /** Raup's T as a slope: how far each turn's crown steps down from the tip's plane per unit of its distance from the
-     * axis. 0 is a flat spiral face; 0.15 a low cone, so the curl stands a little proud. */
-    spire: 0.15,
+     * axis. 0 is a flat spiral face; 0.1 nearly so, a wheel whose curl stands a little proud (1.0 was a turban, read from
+     * above as tiers). */
+    spire: 0.1,
     /** The axis (it points out of the spiral's face, toward the tip): raised by `tilt` above level, toward the crab's
-     * right flank (the side the game and back cameras see), and swung back by `rake` (radians). */
-    tilt: 0.3, rake: 0.0,
-    /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane: 0 is straight ahead
-     * of the axis, so the mouth faces down; 0.15 lifts its front lip, so it faces down and a little forward. */
-    mouthAt: 0.15,
+     * right flank, and swung back by `rake` (radians). `rake` -2.4 swings it past forward (-pi/2) toward the crab's left,
+     * half a right angle: the face looks forward, up and left, at the dance video's low front camera and (obliquely) at
+     * `game`. -1.9 faced `game` better, but the great claw's slam wind-up passed 1.1 inside the wheel's right side; -2.4
+     * is the least that clears it. `tilt` 0.95. Chosen with tools/spiral_views.ts (DIRECTION.md, Round 5). */
+    tilt: 0.95, rake: -2.4,
+    /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane. The mouth's plane
+     * holds the axis, so with the face forward the mouth opens down only at the wheel's side: 1.7 puts it at the crab's
+     * left of the wheel, opening down and forward over the carapace's back. */
+    mouthAt: 2.2,
     /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
      * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
      * centre, is 2 radial - lip behind it). */
-    seat: { in: 1.07, up: 1.26, side: 0.3, lip: 1.9 },
-    /** The printed bands: cream for `cream` of each ring (the rest is brick); `at` is where the cream band's middle lies
-     * across a ring (0: on the suture, so the cream straddles the line where two turns meet; 0.5: midway between
-     * sutures); `proud` is how far a cream band stands out of the tube, as a share of its section. */
-    band: { cream: 0.35, at: 0.0, proud: 0.05 },
+    seat: { in: -0.5, up: 2.0, side: -2.8, lip: 3.0 },
+    /** The rim's bands, lines of constant phi that run the tube's length round the whorl's outer side and far face:
+     * `count` round the section, cream for `cream` of each period (0.3: at 0.25 the two key lines ate the band from far
+     * off), the first one's middle `at` periods round from the tube's outer side; `proud` is how far a cream band stands
+     * out of the tube, as a share of its section. Where the spiral's face shows, the coil is printed instead. */
+    band: { count: 6, cream: 0.3, at: 0.0, proud: 0.0 },
+    /** The face's coil (`coilAt`): cream for `cream` of each turn's strip on the face, on its suture's side, so the face
+     * is one cream coil about as wide as the brick between; and a cream boss over the last `boss` turns at the curl. */
+    coil: { cream: 0.5, boss: 0.3 },
     /** The lip: how far the mouth flares (a share of the section), the lip's thickness (the same), and how far back
      * the dark throat runs inside (turns). */
-    lip: { flare: 0.12, thick: 0.2, throat: 0.22 },
-    /** The light: where it stands on the last turn (turns back from the mouth, and round the section from the tube's
-     * outer side toward the spiral's face, radians), its height and girth, its size against the fiddler's, its gulls.
+    lip: { flare: 0.15, thick: 0.3, throat: 0.22 },
+    /** The light: on the highest point of the outer whorl (found from the form), on a cream collar of radius `collar`
+     * ringed with barnacles, leaning a little outward; its height and girth, its size against the fiddler's, its gulls.
      * `pose` is what it could later be animated by, with the defaults it is drawn in: `lean` (the tangent of its angle,
-     * out and back), `rise` (how far a segmented neck lifts it, units; 0: no neck), `shutters` (0 shut, 1 open). */
-    light: { back: 0.3, round: 0.6, height: 2.3, girth: [0.55, 0.4] as const, size: 0.45, gulls: 0, pose: { lean: 0.25, rise: 0, shutters: 0 } },
-    /** Two groves, each [turns back from the mouth, round the section (radians, as the light), trees, the turf's radius]:
-     * one on the crown beside the light, one lower on the forward shoulder behind the eyestalks. */
-    groves: [[0.18, 0.9, 4, 1.2], [0.05, 1.0, 3, 0.9]] as const,
+     * outward), `rise` (how far a segmented neck lifts it, units; 0: no neck), `shutters` (0 shut, 1 open). */
+    light: { collar: 1.1, height: 1.6, girth: [0.55, 0.42] as const, size: 0.4, gulls: 0, pose: { lean: 0.12, rise: 0, shutters: 0 } },
+    /** Two groves on turf, either side of the light along the outer whorl: each [turns from the light (minus: toward the
+     * mouth), trees, the turf's radius], on the whorl's shoulder there (where it faces most nearly up and shows). */
+    groves: [[-0.14, 4, 1.3], [0.14, 3, 1.0]] as const,
   },
 
   // ---- claws: the right (crusher) 1.4 times the left ----

@@ -1272,6 +1272,176 @@ Crab at rest unless said; `game` at 1280 x 800; from `tools/spiral_theory.ts` (p
    drawn in total. GPU: the shell's paint is a log, a floor and two turf patches per pixel (the headland's island took
    0.51 ms in the slow state): the islander's frame 0.15 to 0.25 ms under the headland's in the slow clock state.
 
+### Finishing the shell (2026-11-12, a second engineer): why ours read as a red ball, and the turban
+
+Today's render (`out/spiral/now.webp`, before any change) against the pick: a red ball with a spiral roundel on one
+flank. The cause is the band law, not the paint: `bandAt` spaced the bands in log(1 + cos phi) so that seen along the
+axis the rings stood W apart. That is exact on the face, but `spiral_theory.ts` printed it: the last whorl's cream bands
+lay at 54..72, 95..105 and 119..125 degrees round the section, and the 107 degrees over the outer side (the dome every
+camera but `pick` sees) were brick. No choice of numbers in that law puts bands on the dome.
+
+**The bands (ours).** Still lines of constant phi, so each runs the tube's whole length (a spiral on the face, a ring
+round the dome), but spaced evenly in *arc length* round the section: s = phi + e sin(2 phi) / 2 with
+e = (a - r) / (a + r), first order in e and exact in the ratio of the ellipse's speeds (a : r). `count` 6 bands a
+section, cream a quarter of each period (a third as wide as the brick between). Every whorl carries the same six,
+shrunk by W a turn, so the face still reads as a spiral. Key lines on both edges of every band and on both sides of each
+suture (inner whorl at phi = `shows[0]`, outer at `shows[1]`).
+
+**The form (inherited: Raup's coil; the pose and its search are ours).** I searched poses with a new tool,
+`tools/spiral_views.ts` (the closed form splatted with a depth buffer into `game`, the lineup's low front camera, a low
+rear and `top`, painted by the shader's own `bandAt`, plus the rest-pose legs of `spiral_theory.ts`):
+- A forward-opening turban (axis near vertical, mouth facing +x) is what a hermit's shell does, but the mouth plane
+  contains the axis, so the aperture is 2a tall above a body 2.5 thick: from the low front a black hole over the face.
+  And the dextral hand puts the coil to the crab's right, onto the right legs: every one of 24 poses went 1.1 to 1.8
+  inside a thigh.
+- The legs leave free only the volume above y = 2.2 over the hip ring and everything behind x = -2. The original pose
+  (the mouth down over the carapace, `mouthAt` small) uses it; grown and stood up it becomes a turban: `tilt` 1.0
+  (the tip up and to the right), `spire` 1.0 (each turn's crown steps its own radius toward the tip, so the tip is
+  0.76 below the shell's top), section 3.0 by 3.0, `mouthAt` 0.3 (0.45 brings the last whorl onto legR3), seat up 1.6.
+  The last whorl runs back to x = -9.2 and down into the sea behind (the woodblock's contact foam rings it).
+- The light stands on the tip on a plinth, the last 0.9 turn printed cream (the collar) with a ring and a crust of
+  barnacles, leaning out along the spire and half as much back. Groves on the shoulders of the whorls at 0.3 and 1.15
+  turns (found, not given: where the surface faces most nearly up and shows). Barnacle knots run along one edge of
+  each band from the mouth toward the collar, the growth kit's `run` (crowded and large low, thinning upward).
+
+### Predictions (written before the first render of the turban; `spiral_views.ts`, `spiral_theory.ts`, at rest)
+
+1. **Bands.** Cream bands crossed by the best line through the shell: `game` 7, low front 4, `top` 8, low rear at
+   least 4 (the splat sketch is noisy from below; it counts 22). So at least three in every view.
+2. **Size.** Silhouettes at `game`: shell 71,400 px against the body's 36,100: 1.98 times (ask: 1.5). Shell 340 x 258
+   px (was 276 x 217), 7.3 above the water, 11.1 long, 9.4 wide. Low front: 2.1 times the body.
+3. **Mouth.** At `game`, 8,000 px of lip and 900 px of throat show (the body stand-in in front); the carapace ahead of
+   the lip is 0.60 clear; 13% of its top is under the shell.
+4. **Light.** Foot (-4.3, 5.0, 4.3), top 9.25 above the water; from `game` 101 px tall, its top 66 px below the
+   frame's top (the slam's lift leaves it in frame). Groves at `game` (475, 65) and (505, 104).
+5. **Clear.** Legs at rest 0.68 (legR3) and 0.96 (legL3). Through the cycle (`spiral_clear.ts`) I expect the walk to
+   take 0.3 to 0.5 of that: least about 0.2, nothing inside. The throw passes 9.7 from the shell.
+6. **Checks** islander 14, others unchanged; base hashes unchanged.
+7. **Cost.** The shell's grid is unchanged (74 x 32); the growth list grows from about 90 copies to about 250 (six runs
+   of eleven knots of three, less those hidden or under water, plus 26 at the collar): within 0.1 ms. Frame time at
+   `game` within 0.1 ms of today's.
+
+### Scored (the same day; the numbers as committed: `tilt` 1.35, `mouthAt` 0.6, seat in 0.0 up 1.6 side -0.2, cream 0.3)
+
+The first render missed twice, and the numbers moved after the predictions:
+- **Cream 0.25 printed as thin lines.** The law was right (a half-cream test showed three broad bands on the dome),
+  but each band's two key lines and the proud hump's hull creases ate it from far off. Cream 0.3 (a little under half
+  the brick's width, broader than the brief's third), no hump.
+- **From the low front the light stood behind the great claw** (tip at z = 4.5; the claw is at z 5 to 6). Standing the
+  axis up (`tilt` 1.35) brings the tip to z = 2.5: the light over the middle, above the eyes.
+- **The mouth was behind the great claw from `game` at every time.** Seating the shell 1.07 further back and turning
+  the mouth forward (`mouthAt` 0.6; legs clearer, not tighter) did not fix it: from `game` the fiddler's great claw
+  stands exactly between the camera and the shell's front-right. Only a sliver of lip and throat shows beside it. A miss.
+
+Measured (`spiral_views.ts --measure out/spiral/v4.webp`, t = 1, by ink along the best of four lines; barnacles are
+cream too, so the counts were checked by eye: at least three broad bands in each view):
+
+| | predicted (first form) | after the moves (theory) | measured |
+|---|---|---|---|
+| bands crossed: game, low front, low rear, top | 7, 4, >= 4, 8 | 5, 5, 13 (noisy), 8 | 5, 6, 5, 7 |
+| shell / body silhouette at `game` | 1.98 | 1.89 | (theory only: the body and shell share an ink) |
+| least limb gap through a 22 s cycle | about 0.2 | | 0.78 (legR3 at t = 5.2); great claw 1.42 |
+| checks | islander 14, others as they were | | islander 14; base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 18, bruiser 16 |
+| base `game` hashes | unchanged | | 0c1b1e4368820ff8, 0db3c25b4d11121b, 2315edeb83c975e9 |
+| frame at `game`, slow clock state | within 0.1 ms | | 5.31 -> 5.44 ms (+2 ticks; three alternating rounds, another worker on the GPU) |
+
+Still worse than the pick: the pick shows the spiral on the flank, bold and nearly as much cream as brick; ours turns
+its face to the sky (the price of the light on top from the front and the legs' clearance), so from `game` the spiral is
+seen from above and from the low rear the shell is a large red dome with three bands. The mouth does not read from
+`game`. The waterline foam is thin: the shell's back meets the sea, but the contact foam there is a line, not the
+pick's white ring.
+
+### Second pass: the face turned to the camera, one coil on it (2026-11-12)
+
+The coordinator, on the turban: the bands wrap and the size is right, but it reads as a beehive of three tiers seen from
+above, not as the spiral the owner picked. Two corrections to the brief: the pick's light is not on the tip (the tip is
+the face's centre) but on top of the outer whorl, on a barnacled collar; and what the pick keeps is that the spiral face
+is turned toward whoever looks.
+
+**The paint (ours).** Two prints by where on the section a point is, both functions of phi (`coilAt`, `bandAt`):
+- *The face*: each turn's strip that shows on the face (phi from `shows[0]`, where the next turn out covers it, to its
+  own suture) carries one cream band on its suture's side, `coil.cream` 0.5 of the strip. At the suture turn k's cream
+  meets turn k + 1's brick side, so cream and brick alternate turn by turn across the face: one coil to the curl, as
+  wide as the brick, key lines both sides, ending in a cream boss (the last 0.3 turn).
+- *The rim and far face*: the six bands along the tube as before, with the barnacle runs (only on rim edges).
+
+**The form (Raup's coil inherited; the pose and its search ours).** Nearly planispiral (`spire` 0.1), a fat section
+3.15 across by 2.3 along the axis (thin along it, so it clears the legs; 4.6 thick, so from the side a tube, not a
+plate). What the search (`spiral_views.ts`, about 120 poses) found, and what bound it:
+- *The hand.* The mouth's plane holds the axis, so with the face forward the mouth opens down only at a side of the
+  wheel, and the picked hand puts the wheel to the crab's right of its mouth. The mouth is at the crab's left, opening
+  down and forward over the carapace's back (`mouthAt` 1.7, opens toward (0.90, -0.34, -0.28)).
+- *The right legs.* Swinging the face toward `game` (yaw right) put the wheel 0.8 to 1.5 inside legR1 and R2; yawing it
+  left a fifth of a right angle (`rake` -1.9) clears them. So the face looks forward, up and a little left: away from the
+  great claw, as asked, but 0.55 is all the room there is.
+- *The frame.* From `lowFront` the light's top must stay in the frame and from `game` too; that caps the shell's top
+  (6.8) and the light (1.6 tall). And the face's area at `game` grows as the section squared: 3.0 gave 0.93 of the body,
+  3.15 gives 1.05. Those two pull against each other; this is where they meet.
+- The light stands on the outer whorl's summit (found: at (-3.4, 6.5, 2.3)), on a cream collar of radius 1.1 crusted
+  with barnacles; the groves either side along the whorl, 0.14 turn toward the mouth and toward the tip.
+
+### Predictions (before the first render of the wheel; at rest unless said)
+
+1. **Coil turns.** Along the best ray from the curl's centre the cream coil is crossed 4 times at `game` and at
+   `lowFront` (at least 2 asked) at t = 1; the great claw, at the crab's right, covers the face's right edge and leaves
+   at least two turns at three of the four times (1.0, 3.6, 11.3, 17.5).
+2. **Face area.** At `game` 37,900 px, 1.05 times the body's 36,100; at `lowFront` 0.92 times.
+3. **Light.** Top 28 px below the frame's top at `game` and 23 px at `lowFront` (the walk and slam move it about 10 to 30
+   px: at one of the four times it may touch the edge); it stands above the shell's outline at all four.
+4. **Order from `lowFront`, bottom to top:** face, eyestalks, the lip's arch (to the right of the eyes on screen, the
+   crab's left), the spiral, the light.
+5. **Clear.** Legs at rest 0.55 (legR1); through the cycle 0.2 to 0.4, nothing inside. Eyes: the face's front is at
+   x = 3.4, the eyes stand at 4.4 to 5.5 and up to 4: I expect 0.5 or more.
+6. **Checks, hashes, cost** as before: islander 14, others unchanged, base hashes unchanged, frame within 0.1 ms of the
+   turban's (the same grid; fewer barnacle runs).
+
+**Scored, first render of the wheel (`rake` -1.9).** From `lowFront` it reads as the pick does at all four times: the
+coil behind the eyes, the light on top in frame, the lip's arch and throat right of the eyes, the groves on the
+shoulders. From `game` the great claw covers about a third to two fifths of the face (asked: a quarter), leaving the
+curl and two to three turns beside it. And `spiral_clear.ts` failed two things the rest-pose theory could not see: the
+great claw's slam wind-up passes **1.09 inside** the wheel's right side (t = 11.7, at (0.1, 3.5, 5.0)), and the wheel's
+lower rim cuts 0.81 into the carapace ahead of the lip. (The ink count of turns and coverage at `game` cannot tell the
+claw from the shell, both brick and cream; I judged those by eye.)
+
+**Amended (before the second render).** Probing the claw's and the carapace's points against poses: the claw clears its
+own half-thickness (about 0.9) only from `rake` -2.4 (seat side -2.8, up 2.0, `mouthAt` 2.2): nearest probe 0.96; the
+carapace ahead of the lip 0.10 clear; legs at rest 0.45. The price is the face's area: 0.65 of the body at `game` and
+0.63 at `lowFront` (asked: at least 1.0 at `game`). Larger sections or steeper tilts that win it back put the claw inside
+again or the light out of the low front frame. Predicted for the second render: the coil shows at least two turns at
+`game` at three of the four times and at `lowFront` at all four; the light in frame at `lowFront` (its top 7 px under the
+edge at rest: it may clip at one time); the claw covers less of the face at `game` than in the first render; the cycle
+clears with the least gap 0.1 to 0.4.
+
+**Scored, second render (`rake` -2.4), and where the wheel stops.** The picture did better than the area number: from
+`game` the coil shows clear of the claw at all four times, the curl and three to four turns, the claw over about a
+quarter of the face or less; from `lowFront` two to three turns at 3.6, 11.3 and 17.5 (at 1.0 the eyes cover the
+curl), the light on top at all four, the lip's arch right of the eyes; from the left side, the bold coil and the lip over
+the dark throat. But the cycle failed, and the probe was why: I probed the claw where it hit the first pose, and the yaw
+swung the wheel's front edge forward over the head. `spiral_clear.ts`: great claw **-1.09** (t = 11.2, at (2.5, 3.9,
+2.6)), eyeR -0.71, eyeL -0.39, carapace ahead of the lip -0.86. Seated 1.5 and 2.1 further back (measured, not rendered):
+great claw still -0.95 and -0.62 (at (1.2 to 1.5, 3.1 to 3.6, 1.9 to 2.1), t = 11.7), carapace -0.89 and -0.82.
+
+*What stopped it.* The great claw's slam wind-up (t = 11.2 to 11.7) sweeps the volume over the carapace's middle,
+x 1.2 to 2.5, y 3 to 4, z 2 to 2.6, and a face turned to the cameras in front, large enough to read, stands in exactly
+that volume; and an upright wheel's lower rim cuts into the carapace ahead of its own mouth at every seat tried. The
+turban cleared both because it stood behind and to the right, which is why its face looked at the sky.
+
+| | turban (a3da544) | wheel (this branch) |
+|---|---|---|
+| reads as one coil from `game` / `lowFront` / left | rings from above / no / no | yes / yes at 3 of 4 times / yes |
+| light on top from `lowFront`, four times | yes (on the tip) | yes (on the summit) |
+| face area at `game`, theory | (tiers, not a face) | 0.65 of the body (asked 1.0) |
+| limbs through the shell over a 22 s cycle | none (least 0.78) | great claw -1.09, eyes -0.71 and -0.39 |
+| carapace ahead of the lip | 0.48 clear | 0.86 inside |
+| checks, base hashes | islander 14, others unchanged; unchanged | the same |
+| frame at `game`, slow clock state | 5.44 ms (main 5.31) | 5.44 ms (main 5.24 to 5.31) |
+
+The turban with the new paint (its pose numbers: `tilt` 1.35, `rake` 0, `mouthAt` 0.6, `spire` 1.0, mouth 3 by 3, seat
+in 0 up 1.6 side -0.2 lip 1.9) was rendered once: one coil seen from above at `game`, still a red dome from the low
+front. The branch is left at the wheel, the form that reads; it fails the clearance rule. Two ways on, neither mine to
+take: route the great claw's slam wind-up outside the wheel (the rig is another worker's), or accept a smaller wheel
+(about 2.4 across the section: face about 0.4 of the body at `game`).
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a
