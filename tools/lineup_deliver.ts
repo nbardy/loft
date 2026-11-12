@@ -93,9 +93,8 @@ if (what === "all") {
   const change = (a: Uint8Array, b: Uint8Array): number => { let s = 0; for (let i = 0; i < a.length; i++) s += Math.abs(a[i]! - b[i]!); return s / a.length; };
   const seam: string[] = [];
   for (const f of formats) {
-    // ---- the seam: one frame at 0 and at the period; the seam is a cut (the taunt's last frame to the slam's first),
-    // so what must also hold is that the shot running into it has no jump of its own: its last two frames change as
-    // ordinary consecutive frames do.
+    // ---- the seam: one frame at 0 and at the period, the same picture; across the seam and in the two frames before
+    // it, no jump: they change as ordinary consecutive frames do or less.
     const W = f.width, H = f.height, dt = 1 / 30, px = (t: number) => at(shotAt(f, t).camera, t, W, H);
     const first = await px(0), again = await px(PERIOD), last = await px(PERIOD - dt), before = await px(PERIOD - 2 * dt);
     const ordinary: number[] = [];
@@ -104,7 +103,7 @@ if (what === "all") {
     seam.push(
       `${f.name} ${W}x${H}:`,
       `  frame at t = 0: ${hash(first)}; at t = ${PERIOD} (the period): ${hash(again)}   ${hash(first) === hash(again) ? "the same picture" : "DIFFERENT"}`,
-      `  across the seam (t = ${(PERIOD - dt).toFixed(4)} to 0) is a cut, as at every shot change: mean change of a channel ${change(last, first).toFixed(3)}`,
+      `  across the seam (t = ${(PERIOD - dt).toFixed(4)} to 0): mean change of a channel ${change(last, first).toFixed(3)} (${shotAt(f, PERIOD - dt).shot.name === shotAt(f, 0).shot.name ? "inside one shot" : "a cut"}; the camera at 0 is the camera at the period)`,
       `  the two frames before it (t = ${(PERIOD - 2 * dt).toFixed(4)} to ${(PERIOD - dt).toFixed(4)}): ${change(before, last).toFixed(3)}; ordinary consecutive frames at ${ordinary.length} instants: median ${median.toFixed(3)}, least ${sorted[0]!.toFixed(3)}, most ${sorted[sorted.length - 1]!.toFixed(3)}: ${(change(before, last) / median).toFixed(2)} times the median`,
     );
     writeWebp(`${dir}/seam_frames${suffix(f)}.webp`, contactSheet([{ width: W, height: H, rgba: before }, { width: W, height: H, rgba: last }, { width: W, height: H, rgba: first }].map((x) => x)));
