@@ -80,7 +80,7 @@ const boats = draw.posed("boats", posed(3, (i) => ({
 })), hull);
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [...arms, fingers, tentacle, boats, ...prizeHeld],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.4, 0.8, 0.5],

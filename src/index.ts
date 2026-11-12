@@ -7,7 +7,8 @@ export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Out
 export { strand, Strand, type StrandSpec, type TipSpec, type PaintSpec, type Rgb } from "./geom/strand.ts";
 export { crest, type CrestSpec } from "./geom/crest.ts";
 export { sea, Sea, type SeaSpec, type SwellSpec } from "./geom/sea.ts";
-export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type ToonSpec } from "./style.ts";
+export { plane, nothing, GroundError, type Ground, type Plane, type Nothing } from "./draw/ground.ts";
+export { toon, palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type GroundCtx, type ToonSpec } from "./style.ts";
 export { scene, DEFAULT_OUTLINE, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { lineup, type Lineup, type LineupLoop, type Standing } from "./lineup.ts";
 export { type Member, type Staged } from "./design.ts";

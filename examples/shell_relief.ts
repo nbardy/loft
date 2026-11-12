@@ -77,7 +77,7 @@ const things = [
 ];
 
 export default scene({
-  sea: shellScene.sea,
+  ground: shellScene.ground,
   things,
   style: shellScene.style,
   sun: [-0.4, 0.8, 0.45],

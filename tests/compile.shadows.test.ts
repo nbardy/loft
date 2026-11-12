@@ -12,7 +12,7 @@ const capsules = (t: Float32Array): number[][] =>
 // 2 under a sun tilted toward +x by 0.5 per unit up throws its shadow 1 unit toward -x.
 test("a raised bar casts one linked chain of capsules along the sun onto the water", () => {
   const bar = strand({ name: "bar", spine: (m) => through(m, [[-3, 2, 0.5], [3, 2, 0.5]]), stations: 16, girth: 0.5, tips: "open", paint: [1, 1, 1] });
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [bar], style: toon(), sun: [0.5, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [bar], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
   const s = capsules(t);
   expect(s.length).toBe(15);
@@ -36,7 +36,7 @@ test("a raised bar casts one linked chain of capsules along the sun onto the wat
 test("copies made with draw.points each cast their own chain, carried by their placement", () => {
   const post = strand({ name: "post", spine: (m) => through(m, [[0, 0, -1], [0, 0, 1]]), stations: 6, girth: 0.3, tips: "open", paint: [1, 1, 1] });
   const posts = draw.points("posts", points(3, (i) => ({ at: vec3(mul(sub(i, 1), 4), 2, 0), scale: 1 })), post);
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [posts], style: toon(), sun: [0.5, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [posts], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
   const s = capsules(t);
   expect(s.length).toBe(3 * 5);
@@ -50,7 +50,7 @@ test("a traced solid casts a soft blob fitted to its inside", () => {
   const ball = draw.field("ball", (p) => sub(length(sub(p, vec3(3, 2, -1))), 1), {
     bounds: bound.sphere([3, 2, -1], 1.2), paint: () => vec3(1, 1, 1), steps: 32, outline: "none", schedule: "trace",
   });
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [ball], style: toon(), sun: [0.5, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [ball], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
   const s = capsules(t);
   expect(s.length).toBeGreaterThan(0);

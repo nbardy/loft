@@ -1,8 +1,8 @@
-// The WGSL every shader shares (`Artefact.sceneWgsl`): the tables' bindings and accessors, the sea's height field, the
-// style's functions and small helpers. Module-scope WGSL is order-independent, so the parts are simply concatenated.
+// The WGSL every shader shares (`Artefact.sceneWgsl`): the tables' bindings and accessors, the ground's height field
+// (`sea_height`, whatever the ground: src/draw/ground.ts), the style's functions and small helpers. Module-scope WGSL is order-independent, so the parts are simply concatenated.
 
-import { lift, variable } from "../expr.ts";
-import type { Sea } from "../geom/sea.ts";
+import { lift, variable, vec2, type Expr } from "../expr.ts";
+import { levelOf, type Ground } from "../draw/ground.ts";
 import { shadeVariables, type Style } from "../style.ts";
 import { sunDir, type Sun } from "../sun.ts";
 import { emitFn, type Slots } from "./bind.ts";
@@ -10,8 +10,8 @@ import { emitFn, type Slots } from "./bind.ts";
 export const lit = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 export const vec3Lit = (v: readonly number[]): string => `vec3<f32>(${v.map(lit).join(", ")})`;
 
-/** The style's and the sea's functions. Emitted once, before the drawables' shared code is collected. */
-export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [number, number, number], at: Sun): string {
+/** The style's and the ground's functions. Emitted once, before the drawables' shared code is collected. */
+export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: readonly [number, number, number], at: Sun): string {
   const c = <T extends "f32" | "vec3">(name: string, ty: T) => variable(`c_${name}`, ty);
   const shadeCtx = shadeVariables(sunDir(at));
   // A style that prints its shadow as a block afterwards (`Style.block`) gives the bodies its colour before the block;
@@ -21,14 +21,32 @@ export function styleWgsl(slots: Slots, style: Style, sea: Sea, sun: readonly [n
   const layerCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), amount: c("amount", "f32") };
   const layerArgs = [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_amount", "f32"]] as const;
   const xz = variable("xz", "vec2");
+  // What the ground's surface is coloured by where a shadow lies on it: the sea's shadow layer (blended over the water),
+  // or the plane's own colour at the shadow's coverage (src/draw/shadows.ts); nothing has no surface to colour.
+  const onGround = (): string[] => {
+    switch (ground.kind) {
+      case "sea": return [emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0])];
+      case "plane": {
+        const groundCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), sun: lift<"vec3">(sunDir(at)), shadow: c("shadow", "f32") };
+        return [emitFn(slots, "ground_colour", [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_shadow", "f32"]], "vec3<f32>", [style.ground(groundCtx)], (v) => v[0])];
+      }
+      case "nothing": return [];
+    }
+  };
+  const gradient = (): Expr<"vec2"> => {
+    switch (ground.kind) {
+      case "sea": return ground.gradient(xz);
+      case "plane": case "nothing": return vec2(0, 0);
+    }
+  };
   return [
     `const SUN: vec3<f32> = ${vec3Lit(sun)};`,
-    emitFn(slots, "sea_height", [["xz", "vec2"]], "f32", [sea.height(xz)], (v) => v[0]),
-    emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [sea.gradient(xz)], (v) => v[0]),
+    emitFn(slots, "sea_height", [["xz", "vec2"]], "f32", [levelOf(ground)(xz)], (v) => v[0]),
+    emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [gradient()], (v) => v[0]),
     emitFn(slots, "shade", shadeArgs, "vec3<f32>", [body], (v) => v[0]),
     emitFn(slots, "ink", shadeArgs, "vec3<f32>", [style.ink(shadeCtx)], (v) => v[0]),
     emitFn(slots, "mark", shadeArgs, "f32", [style.mark(shadeCtx)], (v) => v[0]),
-    emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0]),
+    ...onGround(),
     emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)) })], (v) => v[0]),
     emitFn(slots, "outline_world", [], "f32", [style.outline], (v) => v[0]),
   ].join("\n");

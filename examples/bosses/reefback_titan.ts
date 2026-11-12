@@ -306,7 +306,7 @@ export const design = makeDesign({
   build: (o, n) => {
     const a = assemble(o, n, AT_HOME), water = sea({ ...a.sea, deform: a.deforms }), m = a.finish(water);
     return {
-      scene: scene({ sea: water, things: m.things, style: styleFor(n, o.foam, undefined, o.light), sun: SUN, cameras: camerasFor(n) }),
+      scene: scene({ ground: water, things: m.things, style: styleFor(n, o.foam, undefined, o.light), sun: SUN, cameras: camerasFor(n) }),
       strikes: m.strikes, holds: m.holds, waves: m.waves, handoff: m.handoff, inputs: m.inputs, checks: [...m.checks, ...m.sceneChecks],
     };
   },

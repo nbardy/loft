@@ -36,7 +36,7 @@ function scales(m: Expr<"f32">, v: Expr<"f32">): Expr<"vec3"> {
 }
 
 export default scene({
-  sea: serpent.sea,
+  ground: serpent.ground,
   things: [strand({ ...bodySpec, name: "scaled", paint: scales, detail: { along: 200, around: 32 } })],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],

@@ -8,7 +8,7 @@ import { frameUniform, viewState } from "../src/host/host.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 
 const water = sea({ swell: [{ direction: [1, 0.3], length: 14, height: 0.25, speed: 1.1 }, { direction: [-0.4, 1], length: 6, height: 0.08, speed: 0.7, phase: 1 }] });
-const compiled = compileScene(scene({ sea: water, things: [], style: toon(), sun: [0.3, 1, 0.2] }));
+const compiled = compileScene(scene({ ground: water, things: [], style: toon(), sun: [0.3, 1, 0.2] }));
 const a = compiled.artefact;
 const seaDraw = a.draws.find((d) => d.label === "sea")!;
 const X = variable("x", "f32"), Z = variable("z", "f32");

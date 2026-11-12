@@ -7,7 +7,7 @@
 
 import type { Detail, Draw } from "../artefact.ts";
 import type { Expr, LibFn, TableSource } from "../expr.ts";
-import type { Sea } from "../geom/sea.ts";
+import type { Ground } from "../draw/ground.ts";
 import type { Grid } from "../draw/surface.ts";
 import type { P3, Paint, Skeleton, Surface } from "../map/types.ts";
 import type { TriangleMesh } from "../map/nets.ts";
@@ -24,8 +24,8 @@ export type TableRef = { readonly name: string; readonly wgsl: string };
 /**
  * When a draw runs. Opaque phases run first, then transparent ones; within a phase, in the order drawables emit.
  * background: behind everything, no depth (the sky). opaque: solid geometry. on-bodies: what is laid on the opaque
- * scene before the water covers it (a style's shadow block, src/draw/light.ts). water: the sea surface. on-water: layers
- * laid on the water after it (shadows, markers, wakes). transparent: soft things over everything (clouds, glows).
+ * scene before the water covers it (a style's shadow block, src/draw/light.ts). water: the ground (a sea, or a plane),
+ * which writes no depth. on-water: layers laid on the ground after it (shadows, markers, wakes). transparent: soft things over everything (clouds, glows).
  */
 export type Phase = "background" | "opaque" | "on-bodies" | "water" | "on-water" | "transparent";
 export const PHASES: readonly Phase[] = ["background", "opaque", "on-bodies", "water", "on-water", "transparent"];
@@ -70,7 +70,8 @@ export interface CompileContext {
   /** Where inputs, params, curve rows and tables live: emit expressions with `emitShaderFn(ctx.slots, ...)`. */
   readonly slots: Slots;
   readonly style: Style;
-  readonly sea: Sea;
+  /** What the scene stands on: a sea, a plane or nothing (src/draw/ground.ts dispatches on it). */
+  readonly ground: Ground;
   /** Unit direction toward the sun as the scene states it (a movable sun's default). */
   readonly sun: V3;
   /** The sun as shaders read it: that literal, or a host input (src/sun.ts). */

@@ -13,6 +13,7 @@ import {
 import { scopedName } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment } from "../draw/surface.ts";
+import { surfaceOf } from "../draw/ground.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../lib/sdf2.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import { NO_SKELETON, type Surface } from "../map/types.ts";
@@ -108,9 +109,9 @@ class Telegraph implements Drawable {
   }
 
   draws(ctx: CompileContext): Emitted {
-    const h = this.attack.hit, sea = ctx.sea;
+    const h = this.attack.hit, height = surfaceOf(ctx.ground, `telegraph "${this.name}"`);
     const surface: Surface = {
-      point: (u, v) => { const xz = hitPatch(h, u, v, lift<"f32">(PAD)); return vec3(xz.x, sea.height(xz), xz.y); },
+      point: (u, v) => { const xz = hitPatch(h, u, v, lift<"f32">(PAD)); return vec3(xz.x, height(xz), xz.y); },
       normal: () => vec3(0, 1, 0),
       anchor: (u, v) => vec3(u, v, 0), // a glazed marker: its colour reads (u, v) itself
       topology: { u: ["free", "free"], v: "free" },

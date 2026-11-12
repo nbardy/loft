@@ -147,7 +147,7 @@ const shellPaint = (u: F, v: F) => {
 const shellDrawn = draw.surface("shell", framed(spiral, { frame: shellFrame, scale: shellSize }), { paint: shellPaint, grid: { u: spacing.even(220), v: spacing.even(32) }, sides: "one", outline: "hull" });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.3], length: 12, height: 0.18, speed: 0.9 }, { direction: [-0.3, 1], length: 5.5, height: 0.06, speed: 0.7, phase: 1.3 }] }),
+  ground: sea({ swell: [{ direction: [1, 0.3], length: 12, height: 0.18, speed: 0.9 }, { direction: [-0.3, 1], length: 5.5, height: 0.06, speed: 0.7, phase: 1.3 }] }),
   things: [carapace, shellDrawn, ...legs, ...claws, ...eyes],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],

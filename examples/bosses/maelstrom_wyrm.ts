@@ -539,7 +539,7 @@ const gills = [-1, 1].map((s) => draw.surface(s < 0 ? "wyrmGillL" : "wyrmGillR",
 export const strikes = restAnimated.strikes;
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     ...restAnimated.things, head, jaw, ...teeth, ...eyes, brow, nostrils, antlers, whiskers, ...gills, ridge, pearls,
     telegraph(lash, { style: { ...PRINT_WARNING, spacing: 1.1, edge: 0.2 } }),

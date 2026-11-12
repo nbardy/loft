@@ -7,6 +7,7 @@
 import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, vec4, type Expr } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, nameId, spacing, type Fragment } from "../draw/surface.ts";
+import { levelOf } from "../draw/ground.ts";
 import { viewDir } from "../lib/wgsl.ts";
 import type { Strand } from "../geom/strand.ts";
 import { NO_SKELETON, type Surface } from "../map/types.ts";
@@ -58,7 +59,7 @@ class Smear implements Drawable {
         const view = mul(viewDir(fr.world), -1);
         // The copy is the part itself an instant ago: its own coordinates, anchor and identity, so its pattern matches.
         const lit = fr.style.shade({
-          base: part.body.look.paint(m, fr.v, { world: fr.world, normal, copy: f(0) }), normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(ctx.sea.height(fr.world.xz), fr.world.y),
+          base: part.body.look.paint(m, fr.v, { world: fr.world, normal, copy: f(0) }), normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(levelOf(ctx.ground)(fr.world.xz), fr.world.y),
           uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)),
         });
         return vec4(lit, mul(show, step(0, dot(normal, view))));

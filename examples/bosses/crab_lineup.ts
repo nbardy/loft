@@ -215,7 +215,7 @@ export function lineupScene(o: { readonly line: readonly string[]; readonly look
     return { lift: sub(r.body.o.y, r.n.ride), lean: r.body.z.y, face: atan2(r.body.x.z, r.body.x.x), claw: div(sub(great.wrist.y, shoulder.y), great.span), click: great.open };
   }, { arrival: 1 / 60, size: 0.05 });
   const cameras = camerasOf(o.line);
-  return { scene: scene({ sea: line.sea, things: line.things, style: styleOf(lookOf(o.look)), sun: sunOf(lookOf(o.look)), cameras, period: PERIOD }), checks: [...line.checks, sync], sync, members: line.members };
+  return { scene: scene({ ground: line.sea, things: line.things, style: styleOf(lookOf(o.look)), sun: sunOf(lookOf(o.look)), cameras, period: PERIOD }), checks: [...line.checks, sync], sync, members: line.members };
 }
 
 const built = lineupScene({ line: LINE, look: "default" });

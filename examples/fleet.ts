@@ -44,7 +44,7 @@ const things = [
 ];
 
 export default scene({
-  sea: water,
+  ground: water,
   things,
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.5, 0.7, 0.45],

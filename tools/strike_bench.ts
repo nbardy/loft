@@ -16,7 +16,7 @@ const variants = {
 };
 const host = createHost(await headlessDevice());
 for (const [label, things] of Object.entries(variants)) {
-  const artefact = compile(scene({ sea: strike.sea, things, style: strike.style, sun: strike.sun, cameras: strike.cameras }));
+  const artefact = compile(scene({ ground: strike.ground, things, style: strike.style, sun: strike.sun, cameras: strike.cameras }));
   const loaded = await host.load(artefact);
   const best = { pose: Infinity, encode: Infinity, readback: Infinity, total: Infinity };
   for (let i = 0; i < N; i++) {

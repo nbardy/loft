@@ -150,7 +150,7 @@ const boats = [
 
 // ---- the scene ----------------------------------------------------------------------------------------------------
 export default scene({
-  sea: water,
+  ground: water,
   things: [bed, ...reefs, ...crab, crust, clawCrust, ...palms, ...boats],
   style: toon({
     bands: 3, outline: 0.04,

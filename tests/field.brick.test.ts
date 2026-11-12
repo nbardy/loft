@@ -112,7 +112,7 @@ test("a field drawn as a mesh bakes to a closed body painted at its vertices", (
   const ball = draw.field("ball", (p: P3) => min(sdSphere(sub(p, c), 0.8), sdSphere(sub(p, vec3(0.7, 1.2, 0)), 0.4)), {
     bounds: bound.box([-1, 0, -1], [1.3, 2, 1]), paint: ({ p }) => vec3(0.5, p.y.mul(0.5), 0.25), steps: 32, outline: "none", schedule: "mesh",
   });
-  const baked = bakeScene(scene({ sea: sea({ swell: [] }), things: [ball], style: toon(), sun: [0, 1, 0] }), { time: 0, density: { along: 8, around: 8 } });
+  const baked = bakeScene(scene({ ground: sea({ swell: [] }), things: [ball], style: toon(), sun: [0, 1, 0] }), { time: 0, density: { along: 8, around: 8 } });
   expect(baked.skipped.map((s) => s.name)).not.toContain("ball");
   const body = baked.bodies[0]!;
   expect(body.closed).toBe(true);

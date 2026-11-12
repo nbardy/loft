@@ -105,6 +105,16 @@ export type LayerCtx = {
 
 export type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> };
 
+/** What a fragment of a plane ground knows (src/draw/ground.ts): where it is, and how much of a cast shadow covers it. */
+export type GroundCtx = {
+  readonly world: Expr<"vec3">;
+  readonly view: Expr<"vec3">;
+  readonly sun: Expr<"vec3">;
+  readonly distance: Expr<"f32">;
+  /** Cast shadow coverage, 0..1, antialiased: the shadow is drawn as the ground's own colour at this coverage. */
+  readonly shadow: Expr<"f32">;
+};
+
 /**
  * A shadow printed as a block after the bodies are drawn (docs/lighting.md). A style that has one writes a tone in its
  * `mark` (the picture's alpha): 1 where nothing prints, down to `floor` where the block prints whole. Its bodies are
@@ -151,6 +161,11 @@ export type Style = {
   shadow(ctx: LayerCtx): Expr<"vec4">;
   /** Full-screen passes after the scene, in order (ink from depth edges, paper grain); empty for none. */
   readonly post: readonly PostSpec[];
+  /**
+   * A plane ground's colour (`scene({ ground: plane })`), with its cast shadow in it at `ctx.shadow`; opaque. A sea or
+   * nothing never calls it.
+   */
+  ground(ctx: GroundCtx): Expr<"vec3">;
   /** Background along a view ray, above and below the horizon. */
   sky(ctx: SkyCtx): Expr<"vec3">;
   /** Clear colour: the horizon. */
@@ -177,6 +192,8 @@ export type ToonSpec = {
   readonly water?: { readonly shallow?: Rgb; readonly deep?: Rgb; readonly foam?: Rgb; readonly shade?: Rgb };
   readonly sky?: { readonly zenith?: Rgb; readonly horizon?: Rgb };
   readonly rim?: Rgb;
+  /** A plane ground's colour (`scene({ ground: plane })`). */
+  readonly ground?: Rgb;
 };
 
 /**
@@ -197,6 +214,7 @@ export function toon(spec: ToonSpec = {}): Style {
   const horizonC: Rgb = spec.sky?.horizon ?? [0.78, 0.9, 0.96];
   const horizon = rgb(horizonC);
   const rimColour = rgb(spec.rim ?? [0.75, 0.95, 1.0]);
+  const groundColour: Rgb = spec.ground ?? [0.86, 0.8, 0.68];
   const outline = param("toon.outline", spec.outline ?? 0.04, { min: 0, max: 0.2 });
 
   /**
@@ -257,6 +275,10 @@ export function toon(spec: ToonSpec = {}): Style {
     // Laid over the fogged water: mixing the shadow colour in and then fogging (as one shader did before) equals
     // fogging the shadow colour and mixing it over the fogged water, which is what a layer can do.
     shadow: (ctx) => vec4(mix(seaShadow, horizon, fogOf(ctx.distance)), mul(ctx.amount, 0.55)),
+    // Lit as a body facing up is, its shadow toward the shadow tint as a body's dark side; fogged as the water is.
+    // (Its colour is made here, not above with the others: an expression made eagerly takes an id, which renumbers
+    // every later expression in a sea scene's WGSL, the same program in different bytes.)
+    ground: (ctx) => mix(mul(rgb(groundColour), mix(mix(shadowTint, vec3(1.08, 1.04, 0.96), banded(ctx.sun.y)), shadowTint, mul(ctx.shadow, 0.8))), horizon, fogOf(ctx.distance)),
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(horizon, zenith, pow(saturate(up), 0.6));

@@ -583,6 +583,9 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       return vec4(eyed(eye, inks, c, ctx.crest), 1);
     },
     shadow: (ctx) => vec4(rgb(inks.indigo), mul(edgeOf(ctx.amount, 0.3, 0.01), 0.5)),
+    // A plane: the paper under a light wash, its shadow cut flat in indigo as on the water, hazed toward the sky's own
+    // horizon (whatever its grade) as the far sea is.
+    ground: (ctx) => mix(mix(mul(rgb(inks.cream), 0.88), rgb(inks.indigo), mul(edgeOf(ctx.shadow, 0.3, 0.01), 0.5)), graded(sky, inks, f(0)), mul(smoothstep(50, 220, ctx.distance), 0.85)),
     sky: (ctx) => {
       // The grade, then the sun and the clouds printed over it; below the horizon `below`. With the defaults each step
       // returns what it was given, so the sky is the print's as it was, expression for expression.

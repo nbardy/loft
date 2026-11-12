@@ -197,6 +197,8 @@ export function papercraft(): Style {
       return vec4(c, 1);
     },
     shadow: (ctx) => vec4(mul(rgb(C.sheetDeep), 0.55), mul(ctx.amount, 0.35)),
+    // A plane: one sheet of the cut-paper white, its shadow as the water's, hazed toward the backdrop as the water is.
+    ground: (ctx) => mix(mix(mul(rgb(C.cut), 0.92), mul(rgb(C.sheetDeep), 0.55), mul(ctx.shadow, 0.35)), rgb(C.backdrop), saturate(mul(sub(ctx.distance, 40), 1 / 120))),
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(rgb(C.backdrop), rgb(C.backdropTop), smoothstep(0.0, 0.6, up));

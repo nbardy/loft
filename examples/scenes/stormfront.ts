@@ -84,7 +84,7 @@ const prey = ship(brig("runner", 6, PLAYER)).afloat(water, { at: vec2(add(SHIP_A
 
 // ---- the scene ----------------------------------------------------------------------------------------------------
 export default scene({
-  sea: water,
+  ground: water,
   things: [...creature, ...prey, cloud, channel, embers, contact, inside, drops, rings,
     skyFlash("stormFlash", mul(max(strike.flash, mul(sheet.brightness, 0.4)), 0.16), FLASH)],
   style: toon({
