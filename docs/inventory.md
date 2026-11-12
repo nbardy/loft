@@ -167,6 +167,29 @@ Not done today: the recipe reaches only woodblock; sky, sea and foam are woodblo
 | Skills for agents: an art-direction round, frame time, briefing a worker, lively motion | `.claude/skills/` | process |
 | Design notes | `DESIGN.md` (1,160), `docs/` (12 files, 5,350) | written for us, as a record |
 
+## 9a. Extract or not: the rule (added after the owner asked whether extraction bakes our patterns in)
+
+Moving code into `src/` is a promise to keep its shape. Three different things were being called "extraction", and
+only the first belongs in the core:
+
+- **Removing a limit** (the core assumes something of ours): a scene must have a sea; the sky, sea lines and white
+  water belong to woodblock; names from our history in public types. Fixing these makes the library *less* opinionated.
+  Do them.
+- **Removing a duplicate**: two shells. Do it when next touched.
+- **Promoting a pattern** (how we happened to build a creature, a rig, a film): the creature parts, a legged-body rig,
+  the shots system. These are taste, proven on one subject. Do **not** put them in the core. Keep them as recipes: one
+  self-contained file each under `examples/`, importing only the public entry point, written to be copied and edited.
+  A user gets all of the code and none of the commitment.
+
+A pattern earns a place in the core only when a second, unrelated subject uses it unchanged and it is something a user
+could not write from the primitives in an afternoon. By that rule several modules already in `src/` with the crab as
+their only user (stance, routine, expression casts, struck poses, emotes, placing, the ring wave, the lineup) are
+unproven: they should not be presented as settled API until a non-crab example uses each one. Where that example has
+to fight a module, the module is a baked pattern and should be cut back into smaller functions.
+
+The table below is kept as first written; rows 2, 4 and 5 are patterns by this rule (recipes, not core), rows 1, 3
+and 6 are limits or duplicates (do them), and rows 7 and 8 wait for a second use.
+
 ## 9. What can be extracted next, most valuable first
 
 | # | Extract | From | Into | Why it is worth a name |
