@@ -1321,6 +1321,36 @@ rear and `top`, painted by the shader's own `bandAt`, plus the rest-pose legs of
    of eleven knots of three, less those hidden or under water, plus 26 at the collar): within 0.1 ms. Frame time at
    `game` within 0.1 ms of today's.
 
+### Scored (the same day; the numbers as committed: `tilt` 1.35, `mouthAt` 0.6, seat in 0.0 up 1.6 side -0.2, cream 0.3)
+
+The first render missed twice, and the numbers moved after the predictions:
+- **Cream 0.25 printed as thin lines.** The law was right (a half-cream test showed three broad bands on the dome),
+  but each band's two key lines and the proud hump's hull creases ate it from far off. Cream 0.3 (a little under half
+  the brick's width, broader than the brief's third), no hump.
+- **From the low front the light stood behind the great claw** (tip at z = 4.5; the claw is at z 5 to 6). Standing the
+  axis up (`tilt` 1.35) brings the tip to z = 2.5: the light over the middle, above the eyes.
+- **The mouth was behind the great claw from `game` at every time.** Seating the shell 1.07 further back and turning
+  the mouth forward (`mouthAt` 0.6; legs clearer, not tighter) did not fix it: from `game` the fiddler's great claw
+  stands exactly between the camera and the shell's front-right. Only a sliver of lip and throat shows beside it. A miss.
+
+Measured (`spiral_views.ts --measure out/spiral/v4.webp`, t = 1, by ink along the best of four lines; barnacles are
+cream too, so the counts were checked by eye: at least three broad bands in each view):
+
+| | predicted (first form) | after the moves (theory) | measured |
+|---|---|---|---|
+| bands crossed: game, low front, low rear, top | 7, 4, >= 4, 8 | 5, 5, 13 (noisy), 8 | 5, 6, 5, 7 |
+| shell / body silhouette at `game` | 1.98 | 1.89 | (theory only: the body and shell share an ink) |
+| least limb gap through a 22 s cycle | about 0.2 | | 0.78 (legR3 at t = 5.2); great claw 1.42 |
+| checks | islander 14, others as they were | | islander 14; base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 18, bruiser 16 |
+| base `game` hashes | unchanged | | 0c1b1e4368820ff8, 0db3c25b4d11121b, 2315edeb83c975e9 |
+| frame at `game`, slow clock state | within 0.1 ms | | 5.31 -> 5.44 ms (+2 ticks; three alternating rounds, another worker on the GPU) |
+
+Still worse than the pick: the pick shows the spiral on the flank, bold and nearly as much cream as brick; ours turns
+its face to the sky (the price of the light on top from the front and the legs' clearance), so from `game` the spiral is
+seen from above and from the low rear the shell is a large red dome with three bands. The mouth does not read from
+`game`. The waterline foam is thin: the shell's back meets the sea, but the contact foam there is a line, not the
+pick's white ring.
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a

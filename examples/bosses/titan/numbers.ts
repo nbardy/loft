@@ -154,13 +154,13 @@ export const S = {
      * the right, the face to game and from above, a banded cone from in front and behind. */
     tilt: 1.35, rake: 0.0,
     /** Where round the axis the mouth sits, radians from forward toward up in the coil's own plane: 0 is straight ahead
-     * of the axis, so the mouth faces down; 0.3 lifts its front lip, so it faces down, right and a little forward (0.45
+     * of the axis, so the mouth faces down; 0.6 lifts its front lip, so it faces right and forward, toward `game` past the great claw (with the seat at 1.07 ahead of the tail, 0.45
      * brings the last whorl down onto the rear legs). */
-    mouthAt: 0.3,
+    mouthAt: 0.6,
     /** Where the mouth sits over the body: its plane passes `up` above the body's origin at `in` ahead of the
      * carapace's tail end, `side` to the right; that point is `lip` short of the outer lip (so the axis, the curl's
      * centre, is 2 radial - lip behind it). */
-    seat: { in: 1.07, up: 1.6, side: -0.2, lip: 1.9 },
+    seat: { in: 0.0, up: 1.6, side: -0.2, lip: 1.9 },
     /** The printed bands, lines of constant phi that run the tube's length (spirals on the face, rings round the dome):
      * `count` round the section, cream for `cream` of each period (0.3: a little under half the brick's width; at 0.25 the two key lines ate the band from far off), the first one's middle
      * `at` periods round from the tube's outer side; `proud` is how far a cream band stands out of the tube, as a share
