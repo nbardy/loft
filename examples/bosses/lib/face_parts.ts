@@ -1,25 +1,41 @@
-// Parts of a face with a head, for any creature (first used by the Reefback Titan's `brow` face, titan/face/brow.ts;
-// docs/art_direction/DIRECTION.md, Round 4). Each takes world points and directions as closed forms and plain inks, and
-// knows nothing of the creature it is on.
+// RECIPE: parts of a face, for any creature with a head. Copy this file and edit it; it imports only the library's
+// public entry. First used by the Reefback Titan's `brow` face (titan/face/brow.ts; docs/art_direction/DIRECTION.md, Round 4).
 //
-// - `dome`: a head mass. A superellipsoid with a height field of relief on its front (sockets, a muzzle, cheeks, a
-//   mouth that deepens) and paint in the same face coordinates, so features are placed once and both follow. It gives
-//   back `skin(X, Y)`, the point of its surface at a face coordinate, for whatever rides it.
-// - `eyeball` and `lid`: a sphere whose iris slides over its front, and a spherical lune hinged on the eye's corners.
+// What it makes, and from what. Each part takes world points and directions as closed forms and plain inks, and knows
+// nothing of the creature it is on:
+// - `dome`: a head mass. A superellipsoid |x|^p + |y|^p + |z|^p = 1 (a `surface` with poles at the head's sides, `framed`
+//   in the head's frame) with a height field of relief on its front (sockets, a muzzle, cheeks, a mouth that deepens)
+//   and paint in the same face coordinates, so features are placed once and both follow. It gives back `skin(X, Y)`, the
+//   point of its surface at a face coordinate, for whatever rides it.
+// - `eyeball` and `lid`: a sphere (a four-station `strand`) whose iris slides over its front, and a spherical lune (a
+//   `surface`) hinged on the eye's corners.
 // - `gazeOf`: where the iris sits for a look, true while the look is in front of the eye and held at the rim past that,
 //   so an eye sunk in a head still shows iris and pupil when its target is behind its ear.
-// - `hoodBrow`: a brow half that rides the eye's own sphere, from raised clear of it to clamped down over it.
-// - `tusk`: a flat plate from a hinge to a tip (a mandible, a tooth, a horn laid flat).
-// - `handlebar`: half a moustache, a curled horn in a frame that lifts and droops.
-//
+// - `hoodBrow`: a brow half that rides the eye's own sphere (a `strand` through three points on it), from raised clear
+//   of it to clamped down over it.
+// - `tusk` and `handlebar`: a mandible and half a moustache; each is a shape with numbers (see each).
+// - marks: `crisp`, `bump`, `ell`, `inkLine`, `inked`: edges and lines in paint and relief.
 // Face coordinates are a picture's: X to the viewer's right, Y up the face, Z out of it toward the viewer (a
 // right-handed frame, which a one-sided surface needs: mirrored, its front faces would be drawn as backs).
+//
+// Parameters. Points, directions, angles and the relief and paint functions take expressions, so everything can move
+// in time; the dome's radii (but `down`, an expression so a jaw can drop), power and cell counts are numbers.
+//
+// What it cannot do:
+// - a head that is not one superellipsoid: no snout that leaves the mass, no overhanging brow ridge in the relief
+//   (relief is a height along Z, so it cannot undercut), nothing behind the face's front half;
+// - an eye that is not a sphere, or a lid that is not a lune of a sphere round it (no slit pupils' lids, no cat's
+//   third lid); an iris that is not a disc;
+// - a brow that leaves its eye's sphere.
+//
+// Copying it: change the dome's `relief` and `paint` first (they are the face); then the eye's inks and `gazeOf`'s reach.
+// Relatives worth trying: a dome with power below 2 is a star-shaped, pinched mass (a lizard's head); relief as a sum of
+// `bump`s along a curve is a ridge or a scar; a lid with a second hinge angle is a squint.
 
 import {
   abs, add, cos, div, dot, draw, framed, spiralTube, length, lift, lt, max, mix, mul, place, pow, rigid, rotateAbout, select, sin, smoothstep,
-  spacing, sqrt, strand, sub, surface, through, TAU, vec2, vec3, type Drawable, type F, type Frame, type In, type P3, type Sampling, type Strand,
+  spacing, sqrt, strand, sub, surface, through, TAU, vec2, vec3, edgeOf, type Drawable, type F, type Frame, type In, type P3, type Sampling, type Strand,
 } from "../../../src/index.ts";
-import { edgeOf } from "../../../src/style/shared.ts";
 
 export type Ink = readonly [number, number, number];
 type S = In<"f32">;
@@ -209,7 +225,11 @@ export function hoodBrow(b: HoodBrowSpec): { readonly strand: Strand; readonly e
 
 // ---- the mouth ----
 
-/** A flat plate from `hinge` to `tip` (a mandible, a tusk): `girth` its half-width along it, `flat` its depth as a share, `face` the way its broad side looks. */
+/**
+ * A tusk is a flat plate: a `strand` on the straight line from `hinge` to `tip`, bowed 4 m (1 - m) `bow` along `face`,
+ * section aspect `flat`, squareness 2.6 (a mandible, a tooth, a horn laid flat). `girth` its half-width along it, `flat`
+ * its depth as a share, `face` the way its broad side looks.
+ */
 export function tusk(o: {
   readonly name: string; readonly hinge: P3; readonly tip: P3; readonly girth: (m: F) => F; readonly flat: number; readonly face: P3;
   /** How far its middle bows out along `face`, world units. */
@@ -225,6 +245,8 @@ export function tusk(o: {
 }
 
 /**
+ * A handlebar is a `spiralTube` (curl 1.9, taper 0.3, out [0.25, -droop, side]) placed in `frame` turned by `lift`.
+ *
  * Half a handlebar moustache: a curled horn from `root` out to one side (`side` 1 the frame's +z) that curls up at its
  * end. `frame` is where it is worn (x out of the face, y up it, z across); `lift` radians raise the half (a grin),
  * negative lets it droop.

@@ -5,7 +5,7 @@ import { film, type Format, type Lens } from "./recipes/film.ts";
 
 const side: Lens = { eye: [-0.5, 4, 28], target: [-0.5, 1.2, 0], fovY: 0.6 };
 const three: Lens = { eye: [14, 8.5, 16], target: [0, 1, 0], fovY: 0.6 };
-const head: Lens = { eye: [12, 3, 5], target: [4, 1.6, 0], fovY: 0.45 };
+const head: Lens = { eye: [15, 3.8, 8], target: [5, 2.8, 0], fovY: 0.5 };
 const above: Lens = { eye: [6, 20, 12], target: [0, 0.5, 0], fovY: 0.7 };
 const low: Lens = { eye: [-16, 1.2, 9], target: [0, 1.4, 0], fovY: 0.55 };
 // The square sees less across, so each camera opens up by a third.
