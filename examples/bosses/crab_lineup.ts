@@ -55,8 +55,10 @@ export const DANCE = routine({
     // 44 to 46: a canon down the line, half a count apart: up and rise. 47: a mirror: lean out, both claws out.
     { at: 44, who: { canon: 0.5 }, claw: UP, level: 1 },
     { at: 47, who: "mirror", lean: -1, claw: OUT, small: OUT, level: 0 },
-    // 48 to 58: the solos, two counts each, while the rest hold a low frame and keep the groove.
+    // 48 to 58: the solos, two counts each: each soloist steps out to the front for its part (and back as the next one
+    // steps out), while the rest hold a low frame and keep the groove.
     { at: 48, lean: 0, level: -0.3, claw: ACROSS, small: "rest" },
+    { at: 48, go: "solo0", over: 1 }, { at: 50, go: "solo1", over: 1 }, { at: 52, go: "solo2", over: 1 }, { at: 54, go: "solo3", over: 1 }, { at: 56, go: "solo4", over: 1 },
     { solo: 0, on: [48, 49] }, { solo: 1, on: [50, 51] }, { solo: 2, on: [52, 53] }, { solo: 3, on: [54, 55] }, { solo: 4, on: [56, 57] },
     // 58 to 62: sidestep back into the V; the button on 62, struck and held dead still across the loop's seam.
     { at: 58, claw: "rest", level: 0 },

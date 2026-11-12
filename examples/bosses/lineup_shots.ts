@@ -21,10 +21,15 @@ type XZ = readonly [number, number];
  * there, 7 on the right. The diagonal (front-left to back-right) has every claw on the side away from those behind it,
  * so it is tight (4 deep, 7 across). The line is for the attacks: each crab's disc and boat in its own lane (13 apart).
  */
-export const PLACES: Readonly<Record<"V" | "line" | "diagonal", readonly XZ[]>> = {
+const DIAGONAL: readonly XZ[] = [[8, 20], [4, 13], [0, 6], [-4, -1], [-8, -8]];
+/** The diagonal with member k stepped 8 forward, out of the group, for its solo (in the diagonal a soloist's own single
+ * had its front-left neighbour's eyestalks, legs and gauntlet across its face: the first strip, counts 50 and 52). */
+const soloing = (k: number): readonly XZ[] => DIAGONAL.map(([x, z], j) => [j === k ? x + 8 : x, z] as const);
+export const PLACES: Readonly<Record<string, readonly XZ[]>> = {
   V: [[-6, 26], [-3, 13], [0, 0], [-3, -7], [-6, -14]],
   line: [[0, 32], [0, 19], [0, 6], [0, -7], [0, -20]],
-  diagonal: [[8, 20], [4, 13], [0, 6], [-4, -1], [-8, -8]],
+  diagonal: DIAGONAL,
+  solo0: soloing(0), solo1: soloing(1), solo2: soloing(2), solo3: soloing(3), solo4: soloing(4),
 };
 
 // ---- the boats a host moves ----
@@ -91,9 +96,9 @@ function edit(f: keyof typeof GROUP, line: readonly string[]): Format["cuts"] {
   const cuts: { at: number; shot: Shot }[] = [
     { at: at(0), shot: { kind: "move", name: "open", from: G.V, to: G.line, start: at(4), end: at(8) } },
     { at: at(16), shot: { kind: "move", name: "throw", from: G.lineLow, to: G.lineClose, start: at(16), end: at(26) } },
-    { at: at(33), shot: { kind: "still", name: "face", lens: single(line[2]!, PLACES.line[2]!) } },
+    { at: at(33), shot: { kind: "still", name: "face", lens: single(line[2]!, PLACES.line![2]!) } },
     { at: at(34), shot: { kind: "move", name: "chorus", from: G.line, to: G.diagonalIn, start: at(34), end: at(46) } },
-    ...line.map((v, k) => ({ at: at(48 + 2 * k), shot: { kind: "still" as const, name: `solo${k}`, lens: single(v, PLACES.diagonal[k]!) } })),
+    ...line.map((v, k) => ({ at: at(48 + 2 * k), shot: { kind: "still" as const, name: `solo${k}`, lens: single(v, PLACES[`solo${k}`]![k]!) } })),
     { at: at(58), shot: { kind: "move", name: "button", from: G.diagonal, to: G.V, start: at(58), end: at(62) } },
   ];
   return cuts;
