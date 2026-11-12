@@ -87,6 +87,21 @@ export type HornSpec = {
  * like a shell's. A strand, so it has a skeleton, casts a shadow and carries body coordinates.
  */
 export function horn(spec: HornSpec): Strand {
+  return strand({
+    name: spec.name, stations: 12, ...hornLine(spec),
+    tips: ["open", { point: 0.12 }],
+    paint: spec.paint,
+    detail: { along: spec.detail?.along ?? 24, around: spec.detail?.around ?? 12 },
+  });
+}
+
+/**
+ * A horn's centre line, its radius along it and its up direction, named as `strand` takes them: `horn` is
+ * `strand({ name, ...hornLine(o), tips, paint })`. Exported so a horn is never a dead end: for a flat or ridged section,
+ * other tips, a kink added to the spine or a girth that swells, spread this into your own `strand` and override what
+ * you need, instead of starting again from nothing.
+ */
+export function hornLine(spec: Pick<HornSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 } {
   const L = lift<"f32">(spec.length), curl = lift<"f32">(spec.curl), taper = lift<"f32">(spec.taper), girth = lift<"f32">(spec.girth);
   const [o, w, sd] = basis(spec.out, spec.toward);
   const out = lift<"vec3">(o), toward = lift<"vec3">(w), side = lift<"vec3">(sd);
@@ -105,14 +120,7 @@ export function horn(spec: HornSpec): Strand {
     const across = div(mul(rho0, sub(mul(kk, im), re)), q);
     return add(add(mul(out, along), mul(toward, across)), mul(side, mul(mul(L, lift<"f32">(spec.twist ?? 0)), mul(m, m))));
   };
-  return strand({
-    name: spec.name, spine, stations: 12,
-    girth: (m) => mul(girth, add(1, mul(m, sub(taper, 1)))),
-    tips: ["open", { point: 0.12 }],
-    up: side,
-    paint: spec.paint,
-    detail: { along: spec.detail?.along ?? 24, around: spec.detail?.around ?? 12 },
-  });
+  return { spine, girth: (m) => mul(girth, add(1, mul(m, sub(taper, 1)))), up: side };
 }
 
 type V3 = readonly [number, number, number];

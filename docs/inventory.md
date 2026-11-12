@@ -187,6 +187,28 @@ their only user (stance, routine, expression casts, struck poses, emotes, placin
 unproven: they should not be presented as settled API until a non-crab example uses each one. Where that example has
 to fight a module, the module is a baked pattern and should be cut back into smaller functions.
 
+### Closed components: an audit (2026-11-12)
+
+A component is **closed** when its shape slots take only numbers: its family of shapes is fixed, and anything outside
+it means abandoning the component. It is **open** when its shape slots take functions, or when its mechanism is
+exported in the form the level below accepts, so leaving it is one step down.
+
+| Component | Shape slots | State |
+|---|---|---|
+| `strand` | spine, girth, twist and section aspect are functions | open |
+| `limb`, `fan`, `gripper`, `bent` | every slot an expression or a function | open |
+| `horn` | curl, taper, length: numbers (a tapered log-spiral tube and nothing else); 13 callers, so every claw finger, thorn, moustache and rostrum we have drawn is that one curve | **opened**: `hornLine` returns `{ spine, girth, up }` as `strand` takes them, and `horn` is `strand({ name, ...hornLine(o), tips, paint })` |
+| `shell` | Raup's four numbers; round or elliptical section only | closed |
+| `hull` | 16 numbers | closed in its numbers; check whether its `Lines` can be given directly |
+| `ship` | 14 numbers (masts, tiers, jibs): one kind of ship | closed |
+| `crest` | sag, rake, rays: numbers; flutter a function | mostly closed |
+| `whirlpool`, `cloud`, `pendulum` | numbers | closed |
+| `sea` | a list of swells; deformations | closed to anything that is not a swell or a listed deformation |
+
+The pattern for opening one, as done for `horn`: split it into its **mechanism** (a function that returns the spine,
+section, lines or field, named as the level below takes them) and a **composition** a few lines long. Nothing about the
+component's own call changes; the picture is byte-identical (the base crab's three `game` hashes, checked).
+
 The table below is kept as first written; rows 2, 4 and 5 are patterns by this rule (recipes, not core), rows 1, 3
 and 6 are limits or duplicates (do them), and rows 7 and 8 wait for a second use.
 
