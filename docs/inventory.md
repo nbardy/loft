@@ -295,3 +295,41 @@ Missing, and each should be one short file that shows one idea:
 | a duet | `routine`, `inSync` | two buoys or two cranes dancing eight counts |
 | a clip to share | shots on beats, formats, the seam | any of the above (needs item 2) |
 | a scene as files | `build`, the loader, the Rust loader | the first scene |
+
+## 12. The work, in waves (2026-11-12)
+
+The owner: "do all the library work; reflect and map it all out; use sub agents and get it all done." What "all" is,
+what depends on what, and who holds which files. A wave starts when the files it needs are free.
+
+### Wave 1: running now (five workers; five is one over the usual cap, taken because the fifth barely uses the GPU)
+
+| Work | Branch | Owns | Proof it is done |
+|---|---|---|---|
+| A scene without a sea: the ground as a choice (sea, plain ground, nothing) | `lib/ground` | `src/scene.ts`, `src/compile/`, `src/draw/`, `src/geom/sea.ts`, `src/check.ts`, `src/host/`, `examples/first/` | existing pictures byte-identical; three non-sea examples in four styles |
+| Style parts out of woodblock; the lighting recipe for any style; `sketch` and `neon` built from public parts only | `lib/style-parts` | `src/style/`, `src/style.ts`, `src/draw/light.ts`, `docs/styles.md` | four styles byte-identical; two new styles in about 100 lines each |
+| Closed components opened, named for their geometry, commented in four parts | `lib/open-components` | `src/geom/` except the sea's files, `src/soft/cloud.ts`, `examples/open.ts` | pictures byte-identical; one use of each a step down |
+| `loft api` (the reference, generated), the craft guide (`docs/craft.md`), `loft context` (both), `docs/guide.md`, `README.md` | `docs/guide-context` | `src/cli/`, `README.md`, `docs/guide.md`, `docs/craft.md`, `docs/api.md` | every snippet run by a script; every export listed |
+| Crab body plans and a taller hermit shell (art, not library) | `art/body-plans` | `examples/bosses/titan/` | silhouettes tell the five apart; checks pass |
+
+### Wave 2: when wave 1 has merged (the callers are free and the ground exists)
+
+| Work | Needs | Proof |
+|---|---|---|
+| Renames finished: every caller on the shape names, every alias deleted, in one commit | open-components and body-plans merged | no alias left; pictures byte-identical |
+| The second shell removed: the hermit crab's shell as a thin use of the library's coil | open-components and body-plans merged | the islander's pictures byte-identical or better by the owner's eye |
+| **A second subject for every one-user module** (stance, gait with planted feet, expression casts, struck poses, emotes, the routine, placing, the ring wave, the lineup, the design's slots): short non-crab examples, each one idea: a heron that walks, an owl's face that acts, two buoys in a duet, a lighthouse beam as an attack a game can read, a lantern fish with variants | ground merged | each example under about 100 lines; where one has to fight a module, the module is cut back into smaller functions and the fight is written down |
+| Recipes: the boss parts (`examples/bosses/lib/`), the shots-on-beats cut and the clip delivery, as self-contained files that import only the public entry and say in their header "copy and edit" | open-components merged | each runs alone; none imports another example's private file |
+| Guide and craft text revised for the ground, the style parts and the new names; the snippet check re-run | all of wave 1 merged | every snippet passes on main |
+
+### Wave 3: last, because everything else moves what it touches
+
+| Work | Proof |
+|---|---|
+| The entry point by layer: core (expressions, curves, maps, drawables, scene, compile), shapes, motion, actions and checks, styles; the one flat list of about 380 names goes, and the modules still unproven after wave 2 are marked so | `loft api` shows the layers; every example still imports from a public entry |
+| Robustness an outsider meets: the shader module that fails to build now and then under load (find the cause); load time against content (five crabs: one to three minutes), with what can be cached or built ahead | the failure reproduced and fixed or explained; a measured load-time table |
+| Package: an export map, a version, what runs without bun; nothing is published without the owner saying so | `pnpm pack` produces a package whose examples run |
+| The whole test suite once on a quiet machine, and every failure chased | all green, or each failure named |
+| The basin test: a fresh agent, the library and `loft context`, three unrelated prompts with no reference; do the results share silhouettes, proportions or palette with our examples? | a sheet and a verdict; whatever pulls is fixed in the docs or the examples |
+
+Not planned: a judging packet or any training material (the team that trains has its own; Loft supplies its type
+checker and a render that succeeds or fails); promoting the boss parts or a legged rig into the core (9a).
