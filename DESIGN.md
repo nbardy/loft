@@ -1154,3 +1154,93 @@ one sheet family whose per-sail corners, billow and team colour come from a per-
 (3) The rigging, already one draw. Outlines then need either the screen pass (12.3) or one more draw of (1) inflated.
 Two things the host would need: per-instance vertex counts within one call (`drawIndirect` per run, or a fixed
 vertex count per call with surplus vertices collapsed), and the compiler's shader key being the family, not the part.
+
+## 13. The ground: a sea, a plane, or nothing (2026-11-12, designed before building)
+
+Until now every scene stood on a sea (`scene({ sea, ... })`), so a first scene that is not a sea picture (a lantern on
+a table, a logo in space) could not be written (`docs/inventory.md` 9, 10).
+
+### 13.1 What a user writes (written before the library, read cold)
+
+```ts
+scene({ ground: sea({ swell: [{ direction: [1, 0], length: 20, height: 0.6, speed: 2 }] }), things, style: toon(), sun });
+scene({ ground: plane, things: [lantern], style: toon(), sun: [-0.5, 0.8, 0.4], cameras });   // flat ground at y = 0
+scene({ ground: nothing, things: [lantern], style: toon(), sun: [-0.5, 0.8, 0.4], cameras }); // the style's sky all round
+```
+
+Questions a stranger asks, and the answer that removed each:
+
+- *Sea or ground?* One key. Every scene is changed from `sea:` to `ground:` in the commit that adds the ground (about
+  40 examples and 25 tests, one line each), instead of keeping `sea:` beside `ground:`: two keys for one idea is the
+  question itself.
+- *Where is the plane, and what colour?* `y = 0`, to the horizon, in the style's ground colour (`Style.ground`; toon
+  takes `toon({ ground: rgb })` as it takes its water and sky). A plane has no parameters: a height would be moving
+  every thing by the same amount, which the things already say; a coloured or bounded ground (a table top, a rug) is a
+  thing the user draws, standing on the plane.
+- *What is under the horizon with nothing?* The style's horizon colour (its sky with the ray levelled), not its water.
+- *Does anything cast a shadow on nothing?* No: there is nothing to cast on. Bodies still darken each other in a style
+  that prints a shadow block (woodblock).
+- *Can a ring wave, a whirlpool or a wake stand on a plane?* A ring wave and a whirlpool are deformations given to
+  `sea(...)`, so the types already refuse them elsewhere. A wake asks the scene's ground for a sea and throws
+  `GroundError` naming itself on any other; a telegraph (a marker laid on the ground) takes a sea or a plane and
+  refuses nothing.
+
+### 13.2 The type, and the idea
+
+```ts
+type Ground = Sea | Plane | Nothing;   // each a Drawable, told apart by kind: "sea" | "plane" | "nothing"
+```
+
+Inherited: the sea as the scene's root surface. Every shader already calls `sea_height(xz)` for depth below the water
+(the submerged tint), shadows are lifted along the sun onto it, the shadow block and rain discard below it, a fog bank
+ends on it. Mine: that surface is **the ground**, and a sea is the one kind of ground that moves and is see-through.
+The plane is a sea with no swell drawn opaque in the style's ground colour; nothing is no surface at all, which every
+existing consumer already handles if its height is far below anything drawn (`BOTTOMLESS`, -1e9: depth is negative
+everywhere, so nothing is tinted as submerged, discarded as under water, or splashed on). The WGSL name
+`sea_height` is kept (it is read by style post passes owned elsewhere); it now means the ground's height.
+
+### 13.3 Where each kind is handled (each one exhaustive `switch` on `ground.kind`)
+
+| Where | sea | plane | nothing |
+|---|---|---|---|
+| `levelOf` (`src/draw/ground.ts`): the height shaders call `sea_height`, and a smear's depth | its swell | 0 | `BOTTOMLESS` |
+| `styleWgsl` (`src/compile/scene_wgsl.ts`) | `sea_shadow` from `style.shadow`, as now | `ground_colour` from `style.ground` | neither |
+| the sky (`src/draw/sky.ts`) | `sky(dir)`, as now | `sky` with the ray levelled below the horizon | the same |
+| the ground's own draw | the sea, as now | one full-screen triangle (below) | none |
+| cast shadows (`src/draw/shadows.ts`) | patches blended `sea_shadow`, as now | the same patches at y = 0, opaque, `ground_colour` at the shadow's coverage | none |
+| `seaOf` / `surfaceOf` (`src/draw/ground.ts`), for wakes and telegraphs | the sea | `GroundError` / the plane | `GroundError` |
+
+The plane is drawn like the sky, as one full-screen triangle, in the water's phase (no depth write, so the style's
+post passes and the screen ink see it as they see the sea: not a body). Each pixel meets `y = 0` in closed form and
+writes that point's depth for the depth test, so a body in front hides it and anything below it is covered; a ray that
+misses discards. Exact to the horizon: no grid, no reach, no seam.
+
+### 13.4 What each style draws on each ground
+
+One required member is added to `Style`: `ground(ctx: GroundCtx): Expr<"vec3">`, with
+`GroundCtx = { world, view, distance, sun, shadow }`. The cast shadow's coverage is an input, not a second layer: a
+shadow patch draws the ground's own colour at its coverage, opaque, so the edge of a shadow meets the ground exactly
+and no blend constant has to match it. Each style: toon a warm stone, shadows toward its shadow tint, fogged to its
+horizon as its water is; woodblock its cream paper with a thin wash, shadows in its block ink, hazed toward the sky's
+horizon as its far sea is; biolume a dark floor with the night's horizon; papercraft a card sheet, shadows as its
+sheets shade each other, hazed toward its backdrop. On nothing, each style shows its sky above and its horizon below.
+
+### 13.5 The artefact, and the cost
+
+The format does not change: the plane is one more draw with raw WGSL, nothing is no draw. The Rust loader is
+untouched.
+
+Predictions, to be scored after building:
+
+1. Every existing scene draws byte-identically (the crab's three `game` hashes; serpent, storm, coral, brig, night hunt;
+   the brig in woodblock, biolume and papercraft). Stronger: `build` of brig and coral, in toon and woodblock, writes
+   the same files byte for byte, because a sea scene's WGSL is emitted by the same expressions in the same order.
+2. A sea scene's frame time is unchanged (the same artefact); the crab at `game` within noise.
+3. The plane costs one draw: about 1.0 M fragments at 1280 x 800 below the horizon, each a ray-plane intersection and
+   the style's ground (toon: about 20 ALU operations and one `exp`), no early depth rejection because it writes its
+   depth. Predicted under the GPU clock's 0.065 ms step. Shadows on it cost what they cost on the sea.
+4. Nothing costs nothing: no ground draw, the shadows drawable emits no draw.
+5. `tools/files_proof.ts` and `tools/check_loader_closure.ts` pass unchanged.
+
+Cut before building: a plane height or extent; a ground colour on the ground value; a separate shadow-on-ground style
+function; a backdrop function for nothing (the levelled sky is the style's own colour); renaming `sea_height`.
