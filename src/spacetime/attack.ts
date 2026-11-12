@@ -50,6 +50,8 @@ export type Spine = (m: F) => P3;
  */
 export type Target =
   | { readonly kind: "disc"; readonly centre: V2; readonly radius: F }
+  /** A disc that stands only up to `top` (world y): what a thrown thing may pass over, as a crab's back. */
+  | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F }
   | { readonly kind: "body"; readonly body: Body }
   | { readonly kind: "hull"; readonly hull: Hull; readonly frame: Frame };
 

@@ -4,7 +4,7 @@
 // claw that keeps this mechanism is a look and some numbers (claws/fiddler.ts).
 
 import {
-  abs, add, alive, animate, cos, fingerAngle, horn, lift, limb, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
+  abs, add, alive, animate, cos, div, fingerAngle, horn, lift, limb, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
   time, unit, vec3, type Drawable, type F, type Frame, type Measured, type P3,
 } from "../../../../src/index.ts";
 import { cut, mottle, perFrame } from "../ink.ts";
@@ -165,6 +165,9 @@ export function cutterOf(rig: Rig, look: ClawLook): { readonly things: readonly 
   return { things: cutter.things, fingers: cutter.fingers };
 }
 
+/** The crusher's gape (radians): at rest (its fingers meet), and wide (the wind-up's). */
+const CRUSH_SHUT = 0.28, CRUSH_WIDE = 0.28 + 0.85;
+
 export function clawsOf(look: ClawLook): ClawsOption {
   return {
     about: look.about, ...(look.numbers === undefined ? {} : { numbers: look.numbers }), offer,
@@ -173,7 +176,9 @@ export function clawsOf(look: ClawLook): ClawsOption {
       const env = crush.envelope(time);
 
       // The crusher gapes wide in the wind-up and shuts on the hit; the cutter works slowly at rest.
-      const crushGape = add(0.28, mul(mul(env.p, sub(1, smoothstep(0.55, 1, env.q))), 0.85));
+      // In a routine the great claw clicks: opened to the wind-up's gape before each click and shut to its own rest (which
+      // is closed: its fingers already meet) on it (rig.dance.clicked; the gape itself outside a routine).
+      const crushGape = rig.dance.clicked(add(0.28, mul(mul(env.p, sub(1, smoothstep(0.55, 1, env.q))), 0.85)), CRUSH_SHUT, CRUSH_WIDE);
       // The crusher at rest is never still (a moving hold, its own seeds); while the cutter works, it keeps quieter.
       const crusherIdle = vec3(alive(time, 0.3, 31, 0.17), alive(time, 0.25, 32, 0.23), alive(time, 0.25, 33, 0.2));
       // The crusher's wrist is the m = 0 end of a spine from the wrist at rest back to the shoulder, posed by the crush; the
@@ -193,7 +198,7 @@ export function clawsOf(look: ClawLook): ClawsOption {
       const strike = crusher.strikes.crush;
       if (strike === undefined) throw new Error("claws: the crusher is not bound to Claw Crush (animate returned no strike \"crush\")");
       if (wrist === undefined) throw new Error("claws: the crusher's wrist was not posed");
-      return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers, great: { wrist, span: spanOf(n, n.crusher) } };
+      return { things: [...crusher.things, ...cutter.things], crush: strike, cutterFingers: cutter.fingers, great: { wrist, span: spanOf(n, n.crusher), open: div(sub(crushGape, CRUSH_SHUT), CRUSH_WIDE - CRUSH_SHUT) } };
     },
   };
 }

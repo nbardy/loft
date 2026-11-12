@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type WoodblockLook, type WoodblockSpec, type WoodblockSky } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type Target, type WoodblockLook, type WoodblockSpec, type WoodblockSky } from "../../src/index.ts";
 import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
@@ -174,11 +174,14 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
             throwLands(r.grab, { least: 25, speed: tolerance.share(0.02), place: tolerance.share(0.01) }),
             // In the air the ship (a ball of half its length) passes through neither the carapace nor the atoll (a
             // cylinder of its larger radius: the ship may not fly over the island at any height).
+            // A throw over the head (the numbers' `throw.over`) may pass above the back: each cylinder then stands to the stated top.
             fliesClear(r.grab, [
               { kind: "body", body: carapace.hull },
-              { kind: "disc", centre: r.place2(n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
-              // And whatever the chosen back builds beyond that cylinder (slots.ts, `BackOption.keepClear`).
-              ...(o.back.keepClear?.(r) ?? []),
+              ...overBack(n.throw.over, [
+                { kind: "disc", centre: r.place2(n.atoll.centre), radius: lift<"f32">(Math.max(n.atoll.rx, n.atoll.rz)) },
+                // And whatever the chosen back builds beyond that cylinder (slots.ts, `BackOption.keepClear`).
+                ...(o.back.keepClear?.(r) ?? []),
+              ]),
             ], { size: SCALE_SHIP_LENGTH / 2, margin: 0.5 }),
             // The claw's own fingers let it go: the hand has turned toward the throw, so the hull leaves between them, no
             // more than a tenth of its beam deeper into either than the grip itself, and clear of both in 0.45 s (a crab
@@ -200,6 +203,12 @@ function assemble(o: Slots, n: Numbers, how: Staging) {
       };
     },
   };
+}
+
+/** The back's cylinders as a throw must clear them: standing to `top` above the water (`Numbers["throw"]["over"]`); to an infinite top, as they are. */
+function overBack(top: number, targets: readonly Target[]): Target[] {
+  if (top === Infinity) return [...targets];
+  return targets.map((t) => (t.kind === "disc" ? { kind: "column", centre: t.centre, radius: t.radius, top: lift<"f32">(top) } : t));
 }
 
 /** The islander's temperament (and the bruiser's, the same crab with another face): broad, confident, posed for the camera. */

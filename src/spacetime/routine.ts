@@ -25,8 +25,12 @@ type V3 = readonly [number, number, number];
 
 /** Where a claw's wrist goes, from its shoulder, in the crab's axes (forward, up, out from its own side), in arm spans; or back to its own rest. */
 export type Aim = V3 | "rest";
-/** Who takes a key other than everyone together: a canon (member k arrives `canon` counts after member k - 1; below 0, from the last member), or a mirror (members before the centre take the sided values negated, the centre none). */
-export type Who = "mirror" | { readonly canon: number };
+/**
+ * Who takes a key other than everyone together: a canon (member k arrives `canon` counts after member k - 1; below 0,
+ * from the last member), a mirror (members before the centre take the sided values negated, the centre none), or only
+ * the members listed (the rest keep what they have: two levels at once, a soloist's own clicks).
+ */
+export type Who = "mirror" | { readonly canon: number } | { readonly only: readonly number[] };
 /** A key pose: what arrives on count `at`. Absent channels keep their value. */
 export type Key = {
   readonly at: number;
@@ -46,6 +50,12 @@ export type Key = {
   /** The great claw and the small one. */
   readonly claw?: Aim;
   readonly small?: Aim;
+  /**
+   * Clicks: the great claw's fingers snap shut this many times, on `at` and then every half count. Each opens wide
+   * before its count and shuts on it in two frames at 30 a second (the snap of `struck`); the last is held shut a moment
+   * and let go to the claw's own. A song plays a clack on each snap, so a clack that is heard is one that is seen.
+   */
+  readonly click?: number;
 };
 /** A member's solo: its own dance (its own manner) with moves landing on these counts. */
 export type Solo = { readonly solo: number; readonly on: readonly number[] };
@@ -84,16 +94,30 @@ export type Dancer = {
   still(t?: In<"f32">): F;
   /** A claw's aim (from its shoulder, in its axes, in arm spans) and how far the claw is given to it (0 its own rest, 1 the aim). Side 1 the great claw. */
   claw(side: 1 | -1, t?: In<"f32">): { readonly weight: F; readonly aim: Expr<"vec3"> };
+  /** The great claw's fingers by the score's clicks: how far they are the score's (0 the claw's own), and how open (0 shut .. 1 wide). */
+  click(t?: In<"f32">): { readonly weight: F; readonly open: F };
   /** Its solo's accents, seconds into the loop, ascending (none if it has no solo). */
   readonly solo: readonly number[];
 };
 
 /** What the instrument reads of a member, as expressions of `time`: body lift over its ride (units), its roll (radians), its heading off its own (radians), its great claw's wrist over its shoulder (arm spans). */
-export type Readouts = { readonly lift: F; readonly lean: F; readonly face: F; readonly claw: F };
+export type Readouts = { readonly lift: F; readonly lean: F; readonly face: F; readonly claw: F; /** The great claw's fingers as drawn: 0 shut .. 1 wide open. */ readonly click: F };
 
 export class RoutineError extends Error {}
 
 type Channel = "lean" | "level" | "face" | "claw" | "small";
+/** A key's `who`, classified once. */
+type Taking = { readonly kind: "together" } | { readonly kind: "canon"; readonly by: number } | { readonly kind: "mirror" } | { readonly kind: "only"; readonly members: ReadonlySet<number> };
+const takingOf = (w: Who | undefined): Taking =>
+  w === undefined ? { kind: "together" } : w === "mirror" ? { kind: "mirror" } : "canon" in w ? { kind: "canon", by: w.canon } : { kind: "only", members: new Set(w.only) };
+const whoName = (t: Taking): string => {
+  switch (t.kind) {
+    case "together": return "together";
+    case "mirror": return "mirror";
+    case "canon": return `canon ${t.by}`;
+    case "only": return `only ${[...t.members].join(",")}`;
+  }
+};
 /** A key as one member takes it on one channel. */
 type Step = { readonly arrive: number; readonly lead: number; readonly value: number; readonly ease: Ease; readonly key: number };
 type Ease = { readonly kind: "smooth"; readonly power: number } | { readonly kind: "struck" } | { readonly kind: "jump" };
@@ -102,12 +126,15 @@ type Entry = { readonly kind: "key"; readonly key: Key; readonly index: number }
 
 /** Seconds a struck pose takes to arrive: four frames at 30 a second (`struck`). */
 const SNAP = 0.13;
+/** A click's snap shut: two frames at 30 a second. Its opening takes half of the half count before it; the last snap of a
+ * run is held shut 0.4 of a half count and let go over the rest of it. */
+const CLICK_SNAP = 2 / 30, CLICK_HOLD = 0.4;
 const TAU = Math.PI * 2;
 
 export class Routine {
   readonly period: number;
   readonly members: number;
-  private readonly keys: readonly { readonly key: Key; readonly index: number }[];
+  private readonly keys: readonly { readonly key: Key; readonly index: number; readonly who: Taking }[];
   private readonly solos: readonly Solo[];
 
   constructor(readonly spec: RoutineSpec) {
@@ -123,7 +150,7 @@ export class Routine {
     for (const [k, v] of Object.entries(size)) if (!(v >= 0 && Number.isFinite(v))) throw new RoutineError(`routine: size.${k} must be a finite number, at least 0; got ${v}`);
     this.period = length * beat;
     const entries: Entry[] = score.map((e, index) => ("solo" in e ? { kind: "solo", solo: e } : { kind: "key", key: e, index }));
-    this.keys = entries.flatMap((e) => (e.kind === "key" ? [{ key: e.key, index: e.index }] : []));
+    this.keys = entries.flatMap((e) => (e.kind === "key" ? [{ key: e.key, index: e.index, who: takingOf(e.key.who) }] : []));
     this.solos = entries.flatMap((e) => (e.kind === "solo" ? [e.solo] : []));
     for (const { key: k, index } of this.keys) {
       const where = `routine: score[${index}] (count ${k.at})`;
@@ -132,6 +159,10 @@ export class Routine {
       if ((k.go !== undefined || k.face !== undefined) && !(k.over !== undefined && k.over >= 1)) throw new RoutineError(`${where}: a travel or a turn takes at least one count (\`over\`), so its feet can step`);
       if (k.hit !== undefined && !(k.hit > 0)) throw new RoutineError(`${where}: hit is the counts a struck pose is held, more than 0`);
       if (k.over !== undefined && !(k.over > 0)) throw new RoutineError(`${where}: over must be more than 0 counts`);
+      if (k.click !== undefined && !(Number.isInteger(k.click) && k.click >= 1)) throw new RoutineError(`${where}: click is how many snaps, a whole number, at least 1; got ${k.click}`);
+      if (k.click !== undefined && !(beat / 4 >= CLICK_SNAP)) throw new RoutineError(`${where}: a click opens over a quarter count and snaps in ${CLICK_SNAP.toFixed(3)} s; a count of ${beat} s is too quick`);
+      const w = takingOf(k.who);
+      if (w.kind === "only" && (w.members.size === 0 || [...w.members].some((m) => !(Number.isInteger(m) && m >= 0 && m < this.members)))) throw new RoutineError(`${where}: who.only lists members 0 .. ${this.members - 1}, at least one; got [${[...w.members].join(", ")}]`);
     }
     for (const s of this.solos) {
       if (!(Number.isInteger(s.solo) && s.solo >= 0 && s.solo < this.members)) throw new RoutineError(`routine: a solo by member ${s.solo}, of ${this.members}`);
@@ -139,19 +170,71 @@ export class Routine {
     }
     if (!this.keys.some((k) => k.key.go !== undefined)) throw new RoutineError("routine: no key says where the members stand (`go`)");
     // Each member's tracks, built once here so an overlap is refused before anything is drawn.
-    for (let m = 0; m < this.members; m++) for (const c of ["lean", "level", "face", "claw", "small"] as const) this.steps(m, c);
+    for (let m = 0; m < this.members; m++) {
+      for (const c of ["lean", "level", "face", "claw", "small"] as const) this.steps(m, c);
+      this.clickSteps(m, "weight");
+      // A struck pose is dead still: no click may move the fingers while one holds.
+      for (const c of this.clicksOf(m)) for (const h of this.holdsOf(m)) {
+        const P = this.period, a = c.from, b = c.to;
+        for (const shift of [-P, 0, P]) if (a < h.to + shift && b > h.from + shift) throw new RoutineError(`routine: member ${m}'s click score[${c.key}] moves its fingers (${a.toFixed(3)} .. ${b.toFixed(3)} s) while the struck pose of score[${h.key}] holds (${h.from.toFixed(3)} .. ${h.to.toFixed(3)} s)`);
+      }
+    }
+  }
+
+  /** Whether member m takes a key at all (`who.only` leaves the others out). */
+  private takes(m: number, w: Taking): boolean {
+    return w.kind !== "only" || w.members.has(m);
+  }
+  /** Member m's struck holds, seconds into the loop. */
+  private holdsOf(m: number): { readonly from: number; readonly to: number; readonly key: number }[] {
+    return this.keys.filter((k) => k.key.hit !== undefined && this.takes(m, k.who)).map((k) => ({ from: k.key.at * this.spec.beat + this.delay(m, k.who), to: (k.key.at + k.key.hit!) * this.spec.beat + this.delay(m, k.who), key: k.index }));
+  }
+  /** Member m's runs of clicks: each snap's instant (seconds), and the span the fingers move over (runs that would overlap are one). */
+  private clicksOf(m: number): { readonly snaps: readonly number[]; readonly from: number; readonly to: number; readonly key: number }[] {
+    const half = this.spec.beat / 2;
+    return this.keys.filter((k) => k.key.click !== undefined && this.takes(m, k.who)).map((k) => {
+      const a = k.key.at * this.spec.beat + this.delay(m, k.who), snaps = Array.from({ length: k.key.click! }, (_, i) => a + i * half);
+      return { snaps, from: a - CLICK_SNAP - half / 2, to: snaps[snaps.length - 1]! + half, key: k.index };
+    }).sort((x, y) => x.from - y.from).reduce<{ snaps: readonly number[]; from: number; to: number; key: number }[]>((runs, r) => {
+      // A run that starts opening before the last one has let go continues it: its fingers stay the score's.
+      const last = runs[runs.length - 1];
+      if (last !== undefined && r.from < last.to) runs[runs.length - 1] = { ...last, snaps: [...last.snaps, ...r.snaps], to: r.to };
+      else runs.push(r);
+      return runs;
+    }, []);
+  }
+  /**
+   * Member m's clicks as two tracks: `weight` (how far the fingers are the score's, 0 their own: 1 from the first
+   * opening to the last snap's let-go) and `open` (0 shut .. 1 wide: opened over a quarter count before each snap,
+   * snapped shut on it).
+   */
+  private clickSteps(m: number, part: "weight" | "open"): Step[] {
+    const half = this.spec.beat / 2, out: Step[] = [];
+    for (const c of this.clicksOf(m)) {
+      if (part === "weight") {
+        out.push({ arrive: c.from + half / 2, lead: half / 2, value: 1, ease: { kind: "smooth", power: 2 }, key: c.key });
+        out.push({ arrive: c.to, lead: half * (1 - CLICK_HOLD), value: 0, ease: { kind: "smooth", power: 2 }, key: c.key });
+      } else for (const s of c.snaps) {
+        out.push({ arrive: s - CLICK_SNAP, lead: half / 2, value: 1, ease: { kind: "smooth", power: 2 }, key: c.key });
+        out.push({ arrive: s, lead: CLICK_SNAP, value: 0, ease: { kind: "struck" }, key: c.key });
+      }
+    }
+    return this.inOrder(out.map((s) => ({ ...s, arrive: wrap(s.arrive, this.period) })).sort((a, b) => a.arrive - b.arrive), m, `click ${part}`);
   }
 
   /** Seconds after the score's count at which member m takes a key (its canon delay). */
-  private delay(m: number, who: Who | undefined): number {
-    if (who === undefined || who === "mirror") return 0;
-    const n = this.members;
-    return (who.canon >= 0 ? m * who.canon : (n - 1 - m) * -who.canon) * this.spec.beat;
+  private delay(m: number, who: Taking): number {
+    switch (who.kind) {
+      case "together": case "mirror": case "only": return 0;
+      case "canon": return (who.by >= 0 ? m * who.by : (this.members - 1 - m) * -who.by) * this.spec.beat;
+    }
   }
   /** The sign member m gives a sided value (lean, face) of a key. */
-  private side(m: number, who: Who | undefined): number {
-    if (who !== "mirror") return 1;
-    return m < this.spec.centre ? -1 : m === this.spec.centre ? 0 : 1;
+  private side(m: number, who: Taking): number {
+    switch (who.kind) {
+      case "together": case "canon": case "only": return 1;
+      case "mirror": return m < this.spec.centre ? -1 : m === this.spec.centre ? 0 : 1;
+    }
   }
   private leadOf(k: Key): { readonly lead: number; readonly ease: Ease } {
     if (k.hit !== undefined) return { lead: SNAP, ease: { kind: "struck" } };
@@ -163,14 +246,14 @@ export class Routine {
   private steps(m: number, c: Channel, part?: 0 | 1 | 2): Step[] {
     const out: Step[] = [];
     let aimFrom: Aim = "rest";
-    const ordered = [...this.keys].sort((a, b) => a.key.at + this.delay(m, a.key.who) / this.spec.beat - (b.key.at + this.delay(m, b.key.who) / this.spec.beat));
-    for (const { key: k, index } of ordered) {
+    const ordered = this.keys.filter((k) => this.takes(m, k.who)).sort((a, b) => a.key.at + this.delay(m, a.who) / this.spec.beat - (b.key.at + this.delay(m, b.who) / this.spec.beat));
+    for (const { key: k, index, who } of ordered) {
       const v = valueOf(k, c);
       if (v === undefined) continue;
-      const { lead, ease } = this.leadOf(k), arrive = k.at * this.spec.beat + this.delay(m, k.who);
+      const { lead, ease } = this.leadOf(k), arrive = k.at * this.spec.beat + this.delay(m, who);
       const value = (() => {
         switch (v.kind) {
-          case "sided": return v.value * this.side(m, k.who);
+          case "sided": return v.value * this.side(m, who);
           case "plain": return v.value;
           // A claw: its weight (part undefined), or one part of its aim. An aim given from rest jumps there at the
           // start of the move (unseen: the claw is at its own rest), so the claw rises straight to it.
@@ -183,10 +266,14 @@ export class Routine {
       if (v.kind === "aim") aimFrom = v.aim;
       out.push({ arrive, lead, value, ease: jump ? { kind: "jump" } : ease, key: index });
     }
-    // A key starts moving after the one before it has arrived (in a loop, the first after the last, a period earlier).
+    return this.inOrder(out, m, `${c}${part === undefined ? "" : `[${part}]`}`);
+  }
+
+  /** A track's steps, refused if one starts moving before the one before it has arrived (in a loop, the first after the last, a period earlier). */
+  private inOrder(out: Step[], m: number, name: string): Step[] {
     for (let i = 0; i < out.length; i++) {
       const s = out[i]!, prev = i > 0 ? out[i - 1]! : out.length > 1 ? { ...out[out.length - 1]!, arrive: out[out.length - 1]!.arrive - this.period } : undefined;
-      if (prev !== undefined && s.arrive - s.lead < prev.arrive - 1e-6) throw new RoutineError(`routine: member ${m}'s ${c}${part === undefined ? "" : `[${part}]`} key score[${s.key}] starts moving (${(s.arrive - s.lead).toFixed(3)} s) before score[${prev.key}] has arrived (${prev.arrive.toFixed(3)} s)`);
+      if (prev !== undefined && s.arrive - s.lead < prev.arrive - 1e-6) throw new RoutineError(`routine: member ${m}'s ${name} key score[${s.key}] starts moving (${(s.arrive - s.lead).toFixed(3)} s) before score[${prev.key}] has arrived (${prev.arrive.toFixed(3)} s)`);
     }
     return out;
   }
@@ -206,10 +293,10 @@ export class Routine {
 
   /** The place track (world x, z): each `go` is a key on it, taken by every member with its own formation's place. */
   private placeSteps(m: number, axis: 0 | 1): Step[] {
-    return [...this.keys].filter((k) => k.key.go !== undefined).sort((a, b) => a.key.at - b.key.at).map(({ key: k, index }) => {
+    return this.inOrder(this.keys.filter((k) => k.key.go !== undefined && this.takes(m, k.who)).sort((a, b) => a.key.at - b.key.at).map(({ key: k, index, who }) => {
       const { lead, ease } = this.leadOf(k);
-      return { arrive: k.at * this.spec.beat + this.delay(m, k.who), lead, value: this.spec.places[k.go!]![m]![axis], ease, key: index };
-    });
+      return { arrive: k.at * this.spec.beat + this.delay(m, who), lead, value: this.spec.places[k.go!]![m]![axis], ease, key: index };
+    }), m, axis === 0 ? "place x" : "place z");
   }
 
   /** Member m's solo, seconds into the loop: from three quarters of a count before its first accent to a count after its last. */
@@ -231,7 +318,7 @@ export class Routine {
     const lean = (t: In<"f32">) => this.track(this.steps(m, "lean"), t), level = (t: In<"f32">) => this.track(this.steps(m, "level"), t);
     const px = this.placeSteps(m, 0), pz = this.placeSteps(m, 1);
     const home = [valueAt(px, 0, P), valueAt(pz, 0, P)] as const;
-    const holds = this.keys.filter((k) => k.key.hit !== undefined).map((k) => ({ from: k.key.at * beat + this.delay(m, k.key.who), to: (k.key.at + k.key.hit!) * beat + this.delay(m, k.key.who) }));
+    const holds = this.holdsOf(m);
     const still = (t: In<"f32">): F => {
       const u = sub(t, mul(floor(div(t, P)), P));
       return holds.reduce<F>((s, h) => add(s, add(mul(select(ge(u, h.from), 1, 0), select(lt(u, h.to), 1, 0)), select(lt(u, h.to - P), 1, 0))), lift<"f32">(0));
@@ -255,6 +342,7 @@ export class Routine {
       },
       still: (t = time) => still(t),
       claw: (side, t = time) => claw(side, t),
+      click: (t = time) => ({ weight: this.track(this.clickSteps(m, "weight"), t), open: this.track(this.clickSteps(m, "open"), t) }),
       solo: this.solos.filter((s) => s.solo === m).flatMap((s) => s.on.map((c) => c * beat)).sort((a, b) => a - b),
     };
   }
@@ -267,14 +355,15 @@ export class Routine {
    * mirror's sided values by magnitude, its other values within each half, its centre left out). Canon: each member's
    * arrival after the first within `arrival` of its scored delay. A member in its solo is its own manner and is not
    * measured there, nor a claw going back to its own rest (each rest is its own), nor the places (each walks its own path).
+   * `who.only`: the members listed, against each other. Clicks: below.
    */
   inSync(readouts: (m: number) => Readouts, o: { readonly arrival: number; readonly size: number; readonly rate?: number }): Check & { table(probe: Probe): readonly SyncRow[] } {
     const rate = o.rate ?? 240, routine = this;
     const reads = Array.from({ length: this.members }, (_, m) => readouts(m));
     // The groove is the same closed form for every member: it is taken out of the lift so a level's arrival is not found
     // on the groove's own swing (a rig that did not apply it identically is still caught: the residue stays in the lift).
-    const roots = reads.flatMap((r, m) => [sub(r.lift, this.groove(m, time)), r.lean, r.face, r.claw]);
-    const CH = { level: 0, lean: 1, face: 2, claw: 3 } as const;
+    const roots = reads.flatMap((r, m) => [sub(r.lift, this.groove(m, time)), r.lean, r.face, r.claw, r.click]);
+    const CH = { level: 0, lean: 1, face: 2, claw: 3 } as const, N = 5, CLICK = 4;
     const scale: Record<keyof typeof CH, number> = {
       level: this.spec.size.level, lean: this.spec.size.roll,
       face: Math.max(1e-6, ...this.keys.map((k) => Math.abs(k.key.face ?? 0))), claw: Math.max(1e-6, ...this.keys.flatMap((k) => (k.key.claw === undefined || k.key.claw === "rest" ? [] : [Math.hypot(...k.key.claw)]))),
@@ -283,7 +372,7 @@ export class Routine {
       const at = new Map<number, number[]>();
       const sample = (t: number): number[] => { const q = Math.round(t * rate); let v = at.get(q); if (!v) { v = probe.eval(roots, q / rate) as number[]; at.set(q, v); } return v; };
       const rows: SyncRow[] = [];
-      for (const { key: k, index } of this.keys) for (const ch of Object.keys(CH) as (keyof typeof CH)[]) {
+      for (const { key: k, index, who: taking0 } of this.keys) for (const ch of Object.keys(CH) as (keyof typeof CH)[]) {
         const c = ch === "claw" ? k.claw : k[ch];
         if (c === undefined || c === "rest") continue;
         const { lead } = routine.leadOf(k);
@@ -299,32 +388,56 @@ export class Routine {
         });
         if (!moves.some((x) => x)) continue;
         const per = Array.from({ length: routine.members }, (_, m) => {
-          const a = k.at * routine.spec.beat + routine.delay(m, k.who), from = a - lead - 0.04, to = a + 0.03;
-          const v0 = sample(from)[4 * m + CH[ch]]!, v1 = sample(to)[4 * m + CH[ch]]!, mid = (v0 + v1) / 2;
+          const a = k.at * routine.spec.beat + routine.delay(m, taking0), from = a - lead - 0.04, to = a + 0.03;
+          const v0 = sample(from)[N * m + CH[ch]]!, v1 = sample(to)[N * m + CH[ch]]!, mid = (v0 + v1) / 2;
           let crossing = NaN;
           for (let q = Math.round(from * rate); q < Math.round(to * rate) && Number.isNaN(crossing); q++) {
-            const x0 = sample(q / rate)[4 * m + CH[ch]]!, x1 = sample((q + 1) / rate)[4 * m + CH[ch]]!;
+            const x0 = sample(q / rate)[N * m + CH[ch]]!, x1 = sample((q + 1) / rate)[N * m + CH[ch]]!;
             if ((x0 - mid) * (x1 - mid) <= 0 && x0 !== x1) crossing = (q + (mid - x0) / (x1 - x0)) / rate;
           }
           return { arrival: crossing, value: v1, moved: Math.abs(v1 - v0) };
         });
-        const who = k.who === undefined ? "together" : k.who === "mirror" ? "mirror" : `canon ${k.who.canon}`;
-        const taking = per.map((p, m) => ({ ...p, m })).filter((p) => moves[p.m] && !(k.who === "mirror" && p.m === routine.spec.centre));
+        const who = whoName(taking0), mirror = taking0.kind === "mirror";
+        const taking = per.map((p, m) => ({ ...p, m })).filter((p) => moves[p.m] && !(mirror && p.m === routine.spec.centre));
         // Arrivals: together and mirror against each other; a canon against its scored delays from the first member.
         // An arrival is when the readout crosses halfway: measured only for members whose readout moves at least 15% of
         // the channel's largest (a claw whose own rest lies near the aim has no halfway worth timing; its value still counts).
-        const offs = taking.filter((p) => p.moved >= 0.15 * scale[ch]).map((p) => p.arrival - routine.delay(p.m, k.who));
+        const offs = taking.filter((p) => p.moved >= 0.15 * scale[ch]).map((p) => p.arrival - routine.delay(p.m, taking0));
         const arrival = offs.length < 2 ? 0 : Math.max(...offs) - Math.min(...offs);
         // Values: a sided channel (lean, face) under a mirror by magnitude, everyone against everyone; any other channel
         // under a mirror within each half (the halves' bodies lean opposite ways, so a claw on one side sits differently).
         const spread = (xs: readonly number[]) => (xs.length < 2 ? 0 : Math.max(...xs) - Math.min(...xs));
         const sided = ch === "lean" || ch === "face";
-        const size = (k.who === "mirror" && !sided
+        const size = (mirror && !sided
           ? Math.max(spread(taking.filter((p) => p.m < routine.spec.centre).map((p) => p.value)), spread(taking.filter((p) => p.m > routine.spec.centre).map((p) => p.value)))
-          : spread(taking.map((p) => (k.who === "mirror" ? Math.abs(p.value) : p.value)))) / scale[ch];
+          : spread(taking.map((p) => (mirror ? Math.abs(p.value) : p.value)))) / scale[ch];
         rows.push({ key: index, count: k.at, channel: ch, who, arrival, size, pass: Number.isFinite(arrival) && arrival <= o.arrival && size <= o.size, arrivals: per.map((p) => p.arrival), values: per.map((p) => p.value) });
       }
-      return rows;
+      // Clicks: every snap of every member that takes it, soloists included (a clack is heard on the count whoever plays
+      // it). Its arrival is when the drawn fingers cross halfway from wide open (as the snap starts) to shut, against the
+      // scored instant: the snap's own ease puts that 8.5 ms before it, the same for every claw, so `arrival` here is the
+      // largest distance of any member's crossing from the scored instant. Its size is how far any member's fingers are
+      // from wide open as the snap starts or from shut just after it.
+      for (const { key: k, index, who: w } of this.keys) {
+        if (k.click === undefined) continue;
+        for (let i = 0; i < k.click; i++) {
+          const per = Array.from({ length: routine.members }, (_, m) => {
+            if (!routine.takes(m, w)) return { arrival: NaN, value: NaN, off: NaN };
+            const s = (k.at + i / 2) * routine.spec.beat + routine.delay(m, w), from = s - CLICK_SNAP, to = s + 0.03;
+            const v0 = sample(from)[N * m + CLICK]!, v1 = sample(to)[N * m + CLICK]!;
+            let crossing = NaN;
+            for (let q = Math.floor(from * rate); q < Math.ceil(to * rate) && Number.isNaN(crossing); q++) {
+              const x0 = sample(q / rate)[N * m + CLICK]!, x1 = sample((q + 1) / rate)[N * m + CLICK]!;
+              if ((x0 - 0.5) * (x1 - 0.5) <= 0 && x0 !== x1) crossing = (q + (0.5 - x0) / (x1 - x0)) / rate;
+            }
+            return { arrival: crossing - s, value: v1, off: Math.max(Math.abs(1 - v0), Math.abs(v1)) };
+          });
+          const taking = per.filter((p) => !Number.isNaN(p.off));
+          const arrival = Math.max(...taking.map((p) => Math.abs(p.arrival))), size = Math.max(...taking.map((p) => p.off));
+          rows.push({ key: index, count: k.at + i / 2, channel: "click", who: whoName(w), arrival, size, pass: Number.isFinite(arrival) && arrival <= o.arrival && size <= o.size, arrivals: per.map((p) => p.arrival), values: per.map((p) => p.value) });
+        }
+      }
+      return rows.sort((a, b) => a.count - b.count);
     };
     return {
       name: `the routine in sync (${this.keys.length} keys, ${this.members} members)`,
@@ -379,6 +492,8 @@ function valueAt(steps: readonly Step[], u: number, P: number): number {
 }
 
 const pow2 = (x: F): F => mul(x, x);
+/** Seconds into the loop, 0 .. period. */
+const wrap = (t: number, P: number): number => ((t % P) + P) % P;
 
 /** A routine (see `Routine`). */
 export function routine(spec: RoutineSpec): Routine {

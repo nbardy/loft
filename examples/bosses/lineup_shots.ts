@@ -32,6 +32,8 @@ export const PLACES: Readonly<Record<string, readonly XZ[]>> = {
   V: [[-16, 30], [-8, 15], [0, 0], [-8, -12], [-16, -24]],
   line: [[-8, 26], [-2, 13], [0, 0], [-2, -13], [-8, -26]],
   diagonal: DIAGONAL,
+  // The diagonal slid 4 to the camera's left: the chorus's travel in step (count 42), not a change of formation.
+  diagonalLeft: DIAGONAL.map(([x, z]) => [x, z + 4] as const),
   solo0: soloing(0), solo1: soloing(1), solo2: soloing(2), solo3: soloing(3), solo4: soloing(4),
 };
 
@@ -75,20 +77,21 @@ const single = (variant: string, at: XZ): Lens => { const d = SINGLE[variant.spl
  * the top. `raised(front, z, height, distance, pitch, fovY)`: the eye `distance` in front of the front member (world x)
  * at `z`, `height` above the water, pitched down `pitch` degrees.
  */
-const raised = (front: number, z: number, height: number, distance: number, pitch: number, fovY: number): Lens => {
+export const raised = (front: number, z: number, height: number, distance: number, pitch: number, fovY: number): Lens => {
   const p = (pitch * Math.PI) / 180, x = front + distance;
   return lens([x, height, z], [x - 10 * Math.cos(p), height - 10 * Math.sin(p), z], fovY);
 };
-const GROUP = {
+export const GROUP = {
   wide: {
     V: raised(0, 3, 20, 34, 15, 0.8), line: raised(0, 0, 24, 40, 17, 0.8), lineLow: raised(0, 0, 24, 40, 17, 0.8),
     lineClose: raised(0, 0, 22, 36, 18, 0.8), diagonal: raised(0, 9, 20, 30, 22, 0.8), diagonalIn: raised(0, 9, 20, 28, 22, 0.8),
   },
-  // The square pitched steeper than first planned (20, 15, 12 degrees): the strip had the group in its bottom half under
-  // a band of empty sea; pitched 22 to 28 degrees the group fills 35 to 92% of the height (stand-in), every face clear.
+  // The square, searched with the formations as they are (tools/lineup_framing.ts --search square; docs/lineup.md,
+  // "Deeper"): closer and a little lower than before, the group whole across the frame, every face clear in the V and
+  // the diagonal: front body 17 to 20% (was 12 to 18%), the line's group 51% of the height (was 38%).
   square: {
-    V: raised(0, 3, 36, 36, 28, 1.0), line: raised(0, 0, 40, 50, 26, 1.0), lineLow: raised(0, 0, 40, 50, 26, 1.0),
-    lineClose: raised(0, 0, 38, 46, 27, 1.0), diagonal: raised(0, 9, 28, 36, 22, 0.9), diagonalIn: raised(0, 9, 28, 34, 23, 0.9),
+    V: raised(0, 3, 28, 34, 18, 1.0), line: raised(0, 0, 36, 38, 22, 1.0), lineLow: raised(0, 0, 36, 41, 22, 1.0),
+    lineClose: raised(0, 0, 36, 38, 22, 1.0), diagonal: raised(0, 9, 28, 34, 18, 0.9), diagonalIn: raised(0, 9, 28, 32, 19, 0.9),
   },
 } as const;
 
