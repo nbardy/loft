@@ -1525,6 +1525,41 @@ carapace never in the wall; its least gap to the shell outside it is the throat 
 Wrong if: from `lowLeft` the coil's curl is under the foam or reads as a fan; from `lowFront` the lip sits on the
 carapace with no dark between, or the eyes stand behind it; a leg is seen coming out of the shell's wall.
 
+### Scored (the same day, one render of this form; sheet `out/hermit/hermit_sheet.webp`, ours beside the photographs and the pick)
+
+| | predicted | measured |
+|---|---|---|
+| `lowFront`, the lip's arc and the eyes, t = 1.0, 3.6, 11.3, 12.4, 17.5 | continuous, a dark throat, eyes in front | **yes at all five** (by eye; the throat a black band under the lip's cream roll); eyes' least x 4.04 to 4.15 against the lip's 2.16 |
+| side length against the visible body | 1.28 | 1.28 (the build's numbers: shell 7.89, body 6.16); by eye from `lowLeft` about one to one |
+| lowest point | 2.1 under the water | the same; the white water rings its foot from `lowLeft` and `lowRear` |
+| through the wall, one cycle / the routine | nothing / nothing | **nothing / nothing** (`spiral_clear.ts`; great claw 0.12 at t = 11.7, legs 0.90 and 0.56 in the routine, eyes 2.08, carapace never in the wall, throat 0.34) |
+| coil from `lowLeft` | 3 turns | **2 to 3** above the foam at t = 1.0, 11.3 and 12.4, the curl clear of the water |
+| inside | 27% of the carapace | 27% (the flanks show back to x -0.39): short of the asked third |
+| checks | islander 14, others unchanged, lineup 56 | **islander 14/14**; base 11, stilt 16, fiddler 15, fiddlerBaseDisc 15, mask 18, bruiser 16; lineup **56/56** |
+| base `game` hashes | unchanged | `0c1b1e4368820ff8`, `0db3c25b4d11121b`, `2315edeb83c975e9`: unchanged |
+| frame at `game` (fast clock state, five alternating rounds, load average 7 to 15 from other workers) | within 0.1 ms, if anything faster | main 1.44 ms; this branch 1.31, 1.38, 1.44 ms: the same within a tick or two |
+
+The clearance and length rows were computed by the instruments on the built scene before the render, so their
+"measured" is the same run; the render's check of them is by eye (no leg is seen leaving the wall from any of the six
+views).
+
+Still worse than the photographs:
+- **The dome hides from the front.** The shell stands 5.15 above the water, but from `lowFront` the great claw, the eyes
+  and the light cover most of it; what reads is the lip's band and the light. In the photographs the dome rises well
+  above the eyes.
+- **The lip crosses the carapace's middle, not right behind the eyestalks.** The great claw's slam wind-up caps it at
+  x 2.2; 4 units of carapace stand ahead of the lip, where the photographs show a short head. A shorter carapace for the
+  islander (or the wind-up routed higher) would let the lip come forward; both reach into the claws' geometry.
+- **Only 27% of the body is inside**, and the face on the flank prints pale (its shadow side's indigo greys the cream),
+  so the coil reads as a thin red line on grey more than as the pick's bold alternation.
+- From above the tube runs back 28 degrees toward the spire, so the shell's bulk sits a little to the left of the
+  body's line; the lip itself is square to it.
+- The hidden pair's feet still re-plant in the idle, unseen: the body shifts its weight for steps nobody sees.
+
+Decisions the owner may want to reverse: the left-handed coil (the pick's mirror, forced by the spire on the left); three
+leg pairs, not two; the body's tail risen 2.2 (`carapace.rise`); growth 3 (a globose shell, its inner turns small); the
+thinner lip; the groves behind the light, not either side of it; a new `lowRight` camera.
+
 ## Round 4: the samurai's face (2026-11-11)
 
 The owner, looking at the four crabs: "did we refine other crabs' gestures and faces?" We had not. The islander has a

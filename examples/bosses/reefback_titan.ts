@@ -98,6 +98,8 @@ const camerasFor = (n: Numbers): Readonly<Record<string, Camera>> => {
     lowFront: { kind: "perspective", eye: [30, 3, 0], target: [0, 3.4, 0], fovY: 0.4 },
     lowRear: { kind: "perspective", eye: [-30, 5, 0], target: [0, 3.4, 0], fovY: 0.4 },
     lowLeft: { kind: "perspective", eye: [1, 5, -30], target: [1, 3.4, 0], fovY: 0.4 },
+    // `lowLeft`'s mirror: the islander's shell turns its coil to the left flank and its base to the right.
+    lowRight: { kind: "perspective", eye: [1, 5, 30], target: [1, 3.4, 0], fovY: 0.4 },
   };
 };
 
