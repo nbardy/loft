@@ -23,7 +23,7 @@ import type { Chart, F, Frame, P3, Paint, Size, Skeleton, Surface } from "../map
 import { afloat, type Waters } from "./afloat.ts";
 import { Hull, type HullSpec, type Rgb } from "./hull.ts";
 import type { Target } from "../spacetime/attack.ts";
-import { lines, type Rope } from "./lines.ts";
+import { ropes as ropeStroke, type Rope } from "./lines.ts";
 import { strand, type Strand } from "./strand.ts";
 
 export type ShipColours = {
@@ -232,7 +232,7 @@ export class Ship {
       paint: (u, v) => mix(rgb(C.team), mul(rgb(C.team), 0.7), smoothstep(0.45, 0.55, abs(sub(v, 0.5)).mul(2).add(u.mul(0.3)))),
       grid: { u: spacing.even(32), v: spacing.even(2) }, sides: "two", outline: "border",
     }));
-    out.push(lines(`${n}_rigging`, ropes.map((r) => ({ a: toWorld(r.a), b: toWorld(r.b), sag: r.sag })), { width: 0.012 + 0.0015 * S.mastHeight, colour: C.rope }));
+    out.push(ropeStroke(`${n}_rigging`, ropes.map((r) => ({ a: toWorld(r.a), b: toWorld(r.b), sag: r.sag })), { width: 0.012 + 0.0015 * S.mastHeight, colour: C.rope }));
     return out;
   }
 
@@ -432,6 +432,30 @@ function evalNum(e: Expr<"f32">): number {
   return evaluate(e) as number;
 }
 
+/**
+ * A sailing ship of the age of sail from named numbers: one, two or three masts, square or fore-and-aft rigged.
+ *
+ * The shape and its law. The hull is `hull` (its lines are part of the spec). `masts` picks one of three fixed mast
+ * plans (positions along the hull and heights); `tiers` square sails go up each mast on fixed yard heights, yards
+ * shortening by 0.76 a tier; a fore-and-aft rig, or the aftermost mast of a square rig, carries a gaff sail; up to three
+ * jibs run from the bowsprit to the foremast. The wind, given in the world, braces the yards, swings the booms to
+ * leeward and bellies every sail; the cloth flutters by a wave travelling across it, stronger as a sail luffs.
+ *
+ * Parameters: all numbers, fixed at build; the wind direction is fixed; placement (`afloat`, `placed`) takes a chart,
+ * so the ship follows the water, a whirlpool or a grip.
+ *
+ * What it cannot do, because of the law:
+ * - any rig but these: no lateen, junk, sprit or crab-claw sail, no fourth mast, no oars, no steam.
+ * - masts anywhere but the plan's places; sails of any cut but quadrilateral square, gaff and triangular jib.
+ * - a wind that changes, or a sail that is furled, torn or set aback by choice.
+ * - be anything but whole: its spars and sails are private parts (`spar`, the sail surfaces, the pennant).
+ *
+ * Going past it: it is a composition, so a different vessel is a new composition of the same library parts, not an
+ * edit here. `hull` (or `loft` through stations of your own) for the body; `strand` between two points for a spar;
+ * a `surface` between two spars for a sail (flat between them, plus a belly along their common normal); `ropes` for the
+ * rigging; `afloat` and `afloatChart` to set it on the water and place more on its deck. The source below is the
+ * worked example to copy.
+ */
 export function ship(spec: ShipSpec): Ship {
   return new Ship(spec);
 }

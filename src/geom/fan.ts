@@ -38,6 +38,29 @@ function pick(k: F, values: readonly P3[]): P3 {
   return out;
 }
 
+/**
+ * A membrane spanned between rays: a wing, a tail fluke, a frill, a gill, an umbrella's cloth, a webbed foot.
+ *
+ * The shape and its law. Coordinates (u, v): u across the rays (ray k at u = k / (n - 1)), v along them from the root
+ * (0) to the tips (1). Between two neighbouring rays the cloth is the ruled surface between them, plus two catenaries
+ * across the gap (the curve a hanging cloth takes): a belly of `sag` times the gap toward the front, and a cut of
+ * `scallop` times the chord between the tips toward the root, weighted by v^2 so it is whole at the free edge.
+ *
+ * Parameters: the rays are curves (closed-form bones, the spines of flexing bodies, anything that moves); `sag` and
+ * `scallop` take expressions and can move; `slack` (how taut the cloth hangs) is a fixed number.
+ *
+ * What it cannot do, because of the law:
+ * - cloth that is not between neighbouring rays: no membrane past the outer rays, none skipping a ray.
+ * - a gap whose profile is not a catenary, or a belly that differs between gaps (one `sag` for all).
+ * - a free edge anywhere but at the tips (v = 1): no cloth that stops short of a ray's end.
+ * - a root edge: every ray starts at v = 0 and the cloth runs right to it.
+ *
+ * Going past it: the rays are the open slot, so most variation is in choosing them: `rayOf` puts one on a body's
+ * spine, `bent` gives stalks that bow and crook (a frill that curls), `chain` gives jointed ones (a bat's fingers).
+ * For a different cloth, `catenary` below is the profile, and `surface((u, v) => ...)` with your own law across the gap
+ * keeps the same coordinates. Relatives: a ruled sheet between two curves is `sheet`; between many curves smoothly is
+ * `loft`; a sheet standing on one line of a body is `sheetOn`.
+ */
 export function fan(spec: FanSpec): Surface {
   const rays = spec.rays, n = rays.length;
   if (n < 2) throw new Error(`fan: need at least two rays, got ${n}`);

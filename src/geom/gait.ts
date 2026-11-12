@@ -60,6 +60,28 @@ export type Gait = {
 /** A point given in a frame's coordinates, in the world. */
 const inFrame = (g: Frame, p: In<"vec3">): P3 => add(g.o, rotate(g, lift<"vec3">(p)));
 
+/**
+ * Foot targets for many legs from one cycle: each foot planted fixed in the world while the body moves over it, then
+ * swung on an arc to its next plant.
+ *
+ * The shape and its law. A foot is planted for `duty` of its cycle where the body's course frame put its home at the
+ * middle of that stance, `floor(cycles + phase)` naming which plant, so it needs no state; between plants it moves by a
+ * smoothstep and lifts by a half sine. Cycles are counted by the clock or by the distance walked (`Pace`).
+ *
+ * Parameters: feet, stride, duty and lift are expressions; the phases are fixed numbers; the course is any closed-form
+ * function of distance.
+ *
+ * What it cannot do, because of the law:
+ * - feet that adapt to ground: plants are where the course puts them, at the course's height.
+ * - a gait that changes rhythm (walk to gallop) other than by blending two gaits.
+ * - a step of any shape but smoothstep along and half sine up, or a foot that turns as it lands.
+ * - stop with feet anywhere but their last plants (`minStep` keeps short steps down, nothing more).
+ *
+ * Going past it: the result is a target per foot, so legs are `chain`s reaching for `foot(i)`; `since(i)` gives each
+ * step's phase to drive a toe curl or a stomp. A course is any function from distance to a frame (`course.line`,
+ * `course.arc` are two), so a figure eight or a path through points is one function. Relatives: `footing` and
+ * `replants` (in `stance.ts`) plant feet from chosen stances rather than a cycle.
+ */
 export function gait(spec: GaitSpec): Gait {
   if (spec.phase.length !== spec.feet.length) throw new Error(`gait: ${spec.feet.length} feet need as many phases, got ${spec.phase.length}`);
   const duty = lift<"f32">(spec.duty), stride = lift<"f32">(spec.stride);

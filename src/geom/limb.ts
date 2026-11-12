@@ -1,12 +1,10 @@
-// A limb: two or three straight segments from a root toward a foot target, posed by closed-form inverse kinematics
-// (the law of cosines), so a leg is an expression of its root and its target and needs no solver state. The joints
-// are expressions; `spine(m)` is the polyline through them by arc fraction, which is what a strand along the limb
-// sweeps (the station table rounds each joint over about one station; pinch the girth there to read as a joint).
+// A chain of two or three straight segments reaching from a root toward a target by closed-form inverse kinematics
+// (the law of cosines): a leg, an arm, a crane's jib, a desk lamp. See `chain`.
 
 import { abs, add, clamp, div, dot, length, lift, lt, max, mix, mul, select, sqrt, sub, type In } from "../expr.ts";
 import type { F, P3 } from "../map/types.ts";
 
-export type LimbSpec = {
+export type ChainSpec = {
   /** Where the limb leaves the body (the hip or shoulder). */
   readonly root: In<"vec3">;
   /** Where the foot (or hand) should be. */
@@ -19,7 +17,7 @@ export type LimbSpec = {
   readonly foot?: In<"vec3">;
 };
 
-export type Limb = {
+export type Chain = {
   /** Root, middle joint(s), tip: three points for two segments, four for three. */
   readonly joints: readonly P3[];
   /** Arc fraction of each joint (0 at the root, 1 at the tip). */
@@ -48,7 +46,33 @@ function twoBone(root: P3, target: P3, a: F, b: F, bend: P3): readonly [P3, P3] 
   return [knee, add(knee, mul(unit(sub(target, knee)), b))];
 }
 
-export function limb(spec: LimbSpec): Limb {
+/**
+ * A chain of two or three straight segments from `root` reaching toward `target`, posed by closed-form inverse
+ * kinematics, so it is an expression of its root and target and needs no solver state.
+ *
+ * The shape and its law. Two segments: the middle joint sits where both lengths are exact (the law of cosines), on the
+ * side of the root-target line that `bend` points to; out of reach the chain lies straight toward the target. Three:
+ * the last segment is held along `foot`, and the first two reach its start. `spine(m)` is the polyline through the
+ * joints by arc fraction, which is what a `strand` along it sweeps (pinch the girth at a joint to read as one).
+ *
+ * Parameters: every slot is an expression (root, target, lengths, bend, foot), so a chain follows anything that moves.
+ *
+ * What it cannot do, because of the law:
+ * - more than three segments, or a middle joint that is not decided by the other two (a spine, a tail, a snake).
+ * - bend in two planes: one `bend` direction for the whole chain, so no knee that also twists out.
+ * - curved segments: each is a straight line (sweep a `strand` along a curve of your own for a curved bone).
+ * - joint limits: a knee bends as far as the target asks, backward included if `bend` says so.
+ * - reach past its length: the tip stops short on the line to the target.
+ *
+ * Going past it: the result is the mechanism (`joints`, `knots`, `spine`), and `polyline(m, points, knots)` draws a
+ * spine through any joints, so adding a segment, a kink or a finger is a list edit. Relatives:
+ * - many segments: FABRIK (reach forward and back along the chain a few times) is closed form for a fixed number of
+ *   passes; unroll it and pass the joints to `polyline`.
+ * - a chain of chains: one chain's tip as the next one's root (an arm, then a hand, then fingers).
+ * - curved bones: `bent` per segment, each starting where the last ended, gives a crooked finger or a tentacle.
+ * - a coil round a thing: `wrap` (in `grab.ts`) is a chain's opposite: a body that winds instead of reaches.
+ */
+export function chain(spec: ChainSpec): Chain {
   const root = lift<"vec3">(spec.root), target = lift<"vec3">(spec.target), bend = lift<"vec3">(spec.bend);
   const ls = spec.lengths.map((x) => lift<"f32">(x));
   const joints: P3[] = ls.length === 2 ? twoLimb(root, target, ls[0], ls[1], bend) : threeLimb(root, target, ls[0], ls[1], ls[2], bend, lift<"vec3">(spec.foot ?? [0, -1, 0]));
@@ -83,3 +107,9 @@ export function polyline(m: F, points: readonly P3[], knots: readonly F[]): P3 {
   return out;
 }
 
+/** @deprecated Use `ChainSpec`. Removed at integration. */
+export type LimbSpec = ChainSpec;
+/** @deprecated Use `Chain`. Removed at integration. */
+export type Limb = Chain;
+/** @deprecated Use `chain`. Removed at integration. */
+export const limb = chain;

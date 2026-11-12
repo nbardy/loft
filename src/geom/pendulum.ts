@@ -52,6 +52,28 @@ export type Pendulum = {
   readonly answer: (t: In<"f32">, drives: readonly Drive[]) => F;
 };
 
+/**
+ * A hanging thing's swing: a bob on an arm under gravity, lightly damped, hung from a pivot something else moves.
+ *
+ * The shape and its law. The small-swing damped driven oscillator above: psi'' + 2 zeta w0 psi' + w0^2 psi = -x_p'' / L.
+ * Its answer is linear in the drives, so `answer(t, drives)` sums the closed-form answer to each: a sway's steady state,
+ * a jolt's ringing. How fast it swings follows from length and gravity; how far from how hard the pivot moves.
+ *
+ * Parameters: `length`, `gravity`, `damping` are fixed numbers (they decide the natural frequency on the CPU); a sway's
+ * amplitude and a jolt's time and speed are expressions, so the drives can come from any clock.
+ *
+ * What it cannot do, because of the law:
+ * - large swings: the law is linearised, so a swing past about half a radian is too regular and never goes over the top.
+ * - a pivot path that is neither a steady sway nor a sudden change of speed (a sway that starts, a smooth push).
+ * - more than one degree of freedom: no swing in two planes at once (a conical swing), no double pendulum, no chain.
+ * - a bob that hits something, or a length that changes.
+ *
+ * Going past it: the drives are a sum type summed by `answer`, so a new motion of the pivot is a sum of the two kinds:
+ * a pivot path that is piecewise linear in time is exactly a jolt at each key (the change of speed there), so any keyed
+ * path is a list of `jolt`s; a sway that fades in is a sway times a ramp plus the jolt of its start. Relatives: two
+ * planes are two pendulums on the same pivot, one per axis (exact for small swings); a stalk that bends by a pose is
+ * `bent`, whose `bow` and `crook` can be driven by a pendulum's angle each, the crook later than the bow (whip).
+ */
 export function pendulum(spec: PendulumSpec): Pendulum {
   const { length: L, gravity: g, damping: zeta } = spec;
   if (!(L > 0 && Number.isFinite(L))) throw new PendulumError(`pendulum: length must be a positive number, got ${L}`);

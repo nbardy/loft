@@ -315,9 +315,23 @@ export function heldThing(since: In<"f32">, seconds: number, from: P3, carry: (u
 export type GripperSpec = Pick<GrabSpec, "rest" | "radius" | "reachLift" | "up" | "margin" | "restGap" | "windup">;
 
 /**
- * The gripper round a held thing `h`, on the grab's clock `since` (seconds since the reach began) and its beats: it
- * reaches for `h.from`, closes, follows `h.thing` through the hold (b.hold must be the hold's seconds), lets go at `h.to`
- * as the hold's ending says (`h.leave`: it opens where it is and withdraws, or follows a throw through) and goes home to `rest`.
+ * The gripper round a held thing `h`, on the grab's clock `since` (seconds since the reach began) and its beats.
+ *
+ * The shape and its law. A palm and a gap: the palm reaches from `rest` to `h.from` on an arc (with an optional wind-up
+ * first), follows `h.thing` through the hold, lets go at `h.to` as the hold's ending says (`h.leave`: open where it is
+ * and withdraw, or follow a throw through) and goes home; the gap opens to the thing's width plus `margin` by 0.65 of
+ * the reach, closes to the width times the squeeze, and opens again on release.
+ *
+ * Parameters: rest, radius, lift, up and rest gap are expressions; the beats and margin are fixed seconds and shares.
+ *
+ * What it cannot do, because of the law:
+ * - turn the gap into a pose: it says how far apart, not how fingers stand (that is `fingerAngle`, `pincerAngle`, `wrap`).
+ * - reach along anything but its arc, or take something that moves away during the reach other than by `h.from`.
+ * - regrip, pass the thing hand to hand, or hold two things.
+ *
+ * Going past it: a gripper is a palm and a gap, so any pose of yours reads them: fingers from `fingerAngle`, a jaw from
+ * `pincerAngle`, a coiling body from `wrap`; the palm is a target for a `chain`. A different path is an `arc` of your
+ * own between the same beats; a different hold is a `Held` from `heldThing` with your own carry curve.
  */
 export function gripper(since: In<"f32">, spec: GripperSpec, b: GrabBeats, h: Held): Grab {
   for (const [k, v] of Object.entries(b)) if (!(v > 0 && Number.isFinite(v))) throw new Error(`grab: ${k} must be a positive, finite number of seconds; got ${v}`);
