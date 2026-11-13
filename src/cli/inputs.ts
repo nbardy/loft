@@ -70,7 +70,7 @@ export function checkInputs(a: Pick<Artefact, "inputs">, fixed: InputValues, swe
   for (const [name, count] of given) {
     if (name === "time") throw new UsageError(`input "time": use --time / --times (or the clip's clock) instead`);
     const s = declared.find((d) => d.name === name);
-    if (!s) throw new UsageError(`input "${name}": the scene declares no such input (it has: ${declared.map((d) => `${d.name} (${d.def.length})`).join(", ") || "none"})`);
+    if (!s) throw new UsageError(`input "${name}": the scene declares no such input (it has: ${declared.map((d) => `${d.name} (${d.def.length})`).join(", ") || "none"}). Fix: drop --input ${name}, or declare it in the scene: input("${name}", "f32", 0)`);
     if (s.def.length !== count) throw new UsageError(`input "${name}": takes ${s.def.length} number(s), got ${count}`);
   }
 }

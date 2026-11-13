@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  bun-webgpu@0.1.7:
+    hash: c66d3b43202b39f2daccccb2a4427ac0c1662bdff3f622b220e91d34e7a5d8fa
+    path: patches/bun-webgpu@0.1.7.patch
+
 importers:
 
   .:
@@ -16,7 +21,7 @@ importers:
         version: 0.1.74
       bun-webgpu:
         specifier: 0.1.7
-        version: 0.1.7
+        version: 0.1.7(patch_hash=c66d3b43202b39f2daccccb2a4427ac0c1662bdff3f622b220e91d34e7a5d8fa)
       playwright:
         specifier: ^1.65.0
         version: 1.65.0
@@ -291,7 +296,7 @@ snapshots:
   bun-webgpu-win32-x64@0.1.7:
     optional: true
 
-  bun-webgpu@0.1.7:
+  bun-webgpu@0.1.7(patch_hash=c66d3b43202b39f2daccccb2a4427ac0c1662bdff3f622b220e91d34e7a5d8fa):
     dependencies:
       '@webgpu/types': 0.1.74
     optionalDependencies:

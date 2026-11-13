@@ -8,6 +8,8 @@ import { sky } from "./draw/sky.ts";
 import type { Ground } from "./draw/ground.ts";
 import type { Style } from "./style.ts";
 import type { Sun } from "./sun.ts";
+import { SceneError } from "./errors.ts";
+import { refuseScene } from "./mistakes.ts";
 
 export type SceneSpec = {
   /** What the scene stands on: `sea({ swell })`, `plane` (flat, y = 0) or `nothing` (src/draw/ground.ts). */
@@ -49,6 +51,7 @@ export type Scene = {
 };
 
 export function scene(spec: SceneSpec): Scene {
+  refuseScene(spec);
   // Classified once: a bare vector is a fixed sun.
   const stated: readonly [number, number, number] = "kind" in spec.sun ? spec.sun.dir : spec.sun;
   const l = Math.hypot(...stated);
@@ -58,7 +61,10 @@ export function scene(spec: SceneSpec): Scene {
   const things: Drawable[] = [sky, spec.ground, shadows, ...blockOf(spec.style), ...spec.things];
   const names = new Set<string>();
   for (const t of things) {
-    if (names.has(t.name)) throw new Error(`scene: two things are named "${t.name}" (names key shaders)`);
+    if (names.has(t.name)) {
+      const own = [sky, spec.ground, shadows, light].some((d) => d.name === t.name);
+      throw new SceneError("scene()", `two things named "${t.name}"`, own ? `a name the scene's own ${t.name} does not take` : "a different name for each thing (names key shaders)", `rename one: "${t.name}2"`);
+    }
     names.add(t.name);
   }
   if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);

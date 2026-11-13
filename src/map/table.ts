@@ -4,6 +4,10 @@
 
 import { clamp, compileJs, div, f, fetch, floor, mapOf, min, mix, mul, sub, vec4, type Expr, type In, type NumTy, type TableSource } from "../expr.ts";
 import { scopedName } from "../expr.ts";
+import { SceneError } from "../errors.ts";
+
+/** One storage binding of 128 MiB holds this many vec4s (BINDING_VEC4S in src/compile/tables.ts, not imported: the map layer does not load the compiler). */
+const TABLE_ENTRIES_MAX = (128 * 1024 * 1024) / 16;
 import type { F } from "./types.ts";
 
 export type Schedule = "static" | "frame";
@@ -36,7 +40,10 @@ const unpad = <T extends NumTy>(ty: T, e: Expr<"vec4">): Expr<T> => {
  */
 export function tabulate<T extends NumTy>(given: string, fn: (x: F) => Expr<T>, n: number, when: Schedule): (x: In<"f32">) => Expr<T> {
   const name = scopedName(given);
-  if (!(Number.isInteger(n) && n >= 2)) throw new Error(`tabulate "${name}": need an integer n >= 2 samples, got ${n}`);
+  if (!(Number.isInteger(n) && n >= 2)) throw new SceneError(`tabulate "${name}"`, `${n} samples`, "a whole number of at least 2", `tabulate("${given}", fn, 64, "${when}")`);
+  // Refused before sampling: the samples are built one by one, so ten million of them hang the compile long before
+  // the table budget (src/compile/tables.ts, one storage binding of 128 MiB) would refuse them.
+  if (n > TABLE_ENTRIES_MAX) throw new SceneError(`tabulate "${name}"`, `${n} samples`, `at most ${TABLE_ENTRIES_MAX} (one GPU storage binding)`, `fewer samples: a piecewise-linear table rarely needs more than a few thousand, e.g. tabulate("${given}", fn, 1024, "${when}")`);
   const samples = Array.from({ length: n }, (_, k) => fn(f(k / (n - 1))));
   const ty = samples[0].ty as T;
   const roots = samples.map(pad);

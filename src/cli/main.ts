@@ -3,13 +3,14 @@ import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
 import type { Artefact } from "../artefact.ts";
 import type { GpuLoaded } from "../host/host.ts";
-import { DesignError } from "../design.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { contactSheet, writeWebp, type Frame } from "./image.ts";
 import { checkInputs, viewInputs, type Sweep } from "./inputs.ts";
 import { headlessHost, loadArtefact } from "./load.ts";
 import { openVideo } from "./video.ts";
+import { exitWith, headed, verdictOf } from "./verdict.ts";
+import { EnvironmentError } from "../errors.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
@@ -33,9 +34,31 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       checkInputs(artefact, cmd.inputs, sweep);
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
       t = performance.now();
-      const loaded: GpuLoaded = await (await headlessHost()).load(artefact);
+      const loaded = await loadedWithRetries(artefact);
       console.log(`load     ${ms(t)}`);
       return { info: artefact, loaded };
+    }
+  }
+}
+
+/**
+ * The artefact on a fresh device, tried up to three times: a shader or pipeline that fails to build from WGSL the
+ * compiler wrote is the environment's (until 2026-11-12 it was bun-webgpu freeing descriptor strings early, now
+ * patched: docs/reliable_render.md), and a fresh device is what can make it pass.
+ */
+async function loadedWithRetries(artefact: Artefact): Promise<GpuLoaded> {
+  const seen: string[] = [];
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await (await headlessHost()).load(artefact);
+    } catch (e) {
+      if (!(e instanceof EnvironmentError && e.transient)) throw e;
+      seen.push(headed(e.message)[0]);
+      console.error(`loft: load attempt ${attempt} failed in the GPU (not the scene): ${seen.at(-1)}`);
+      if (attempt === 3) {
+        const same = seen.every((m) => m === seen[0]);
+        throw new EnvironmentError(`${e.message}\nthe GPU refused the compiled scene on 3 fresh devices${same ? ", the same way each time: likely a bug in Loft's compiler, worth reporting" : ", differently each time"}`, false);
+      }
     }
   }
 }
@@ -164,15 +187,5 @@ async function main(argv: readonly string[]) {
 try {
   await main(process.argv.slice(2));
 } catch (e) {
-  if (e instanceof UsageError) {
-    console.error(`loft: ${e.message}\n${USAGE}`);
-    process.exit(2);
-  }
-  // A variant, slot or option that the design does not have: the message lists the valid names; no stack.
-  if (e instanceof DesignError) {
-    console.error(`loft: ${e.message}`);
-    process.exit(2);
-  }
-  console.error(`loft: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
-  process.exit(1);
+  exitWith(await verdictOf(e));
 }

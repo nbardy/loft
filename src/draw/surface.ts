@@ -14,6 +14,8 @@ import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import { sunDir } from "../sun.ts";
+import { refuseSurface } from "../mistakes.ts";
+import { SceneError } from "../errors.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -85,10 +87,9 @@ export class SurfaceDrawable implements Drawable {
   ) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.surface "${name}": names must be identifiers (they name shaders)`);
     this.name = scopedName(name);
-    for (const [axis, s] of [["u", grid.u], ["v", grid.v]] as const) {
-      if (!(Number.isInteger(s.count) && s.count >= 1)) throw new Error(`draw.surface "${name}": grid.${axis}.count must be a positive integer, got ${s.count}`);
-    }
-    if (look.kind === "lit" && look.sides === "two" && look.outline === "hull") throw new Error(`draw.surface "${name}": a two-sided surface has no back faces to draw a hull outline with; use "border"`);
+    // Refused here, by the user's name, before anything is built from them (src/mistakes.ts).
+    refuseSurface(name, surface, grid, look, () => surface.point(U, V), look.kind === "glazed" ? undefined : () => look.paint(U, V, AT));
+    if (look.kind === "lit" && look.sides === "two" && look.outline === "hull") throw new SceneError(`draw.surface "${name}"`, `sides "two" with outline "hull"`, "a hull outline only on a one-sided surface (it draws the back faces)", `outline: "border"`);
     this.skeletons = skeletonsOf(surface, copies);
     this.surfaces = bakeablesOf(this, copies);
   }
