@@ -442,3 +442,124 @@ Still mode, exactly:
 - Restyling: passes come and go with the expressions that read them; a scene's own passes (the pool) draw with
   whatever style is chosen.
 - The CPU checks: `.project` evaluates; `.at` is reported as GPU-only, as `loft_fwidth` is today.
+
+## 6. Amendments to the four proposals
+
+Each is a precise change to a type, with the reason. None changes what an existing scene writes; each keeps its
+proposal's byte-identity claims, by the same "default is the old node" device the materials proposal uses.
+
+### A1. Materials: `scatter`, a response to a light's direction, and units
+
+```ts
+// src/map/types.ts, Painted gains one reserved key (beside `base` and `shade`):
+  /**
+   * How this surface answers light from `toward` (unit, from the surface toward the light): the share that leaves
+   * toward the eye (`ctx.view`), cosine included, per colour channel. A style calls it per light and prints the result
+   * in its own medium; an integrator calls it per sample. Prefer it to `shade` for anything that is a property of the
+   * surface (a film, a grating, a sheen, brushed metal); keep `shade` for changes to the picture.
+   */
+  readonly scatter?: (ctx: ShadeCtx, toward: Expr<"vec3">) => P3;
+
+// src/style.ts, ShadeCtx gains one member (beside `channel` and `sky`):
+  /** This thing's `scatter` toward `toward` if its paint gives one, else `otherwise` (the style's own term). */
+  scatter(toward: Expr<"vec3">, otherwise: In<"vec3">): Expr<"vec3">;
+
+// src/style/standard.ts (new, about 40 lines): the response an integrator falls back to.
+/** Lambert plus a Trowbridge-Reitz (GGX) lobe with Smith masking and Schlick's Fresnel, from base (linearised), gloss
+ *  (roughness alpha = max(0.02, (1 - gloss)^2)) and metal. Inherited (Walter et al. 2007; Karis 2013). */
+export function standard(ctx: ShadeCtx, toward: Expr<"vec3">): Expr<"vec3">;
+```
+
+Reasons:
+
+- **The wrap cannot be called by anything but the style that produced `styled`.** A path tracer has no styled
+  colour; a style with three lights cannot apply a wrap per light; a reflection ray that meets the thing cannot ask
+  it how it looks from there. A function of the light's direction can be called by all of them. This is the answer to
+  the brief's question 4: yes, a thing's response is better defined as a function of the incoming direction, and the
+  finished-colour wrap is the right tool only for a picture-level change.
+- **`otherwise` makes it free** where a thing gives no `scatter`: the call returns the style's own node, so the style's
+  WGSL is unchanged, exactly as `channel(name, otherwise)` is.
+- **The beetle, rewritten**, answers each light at its half-vector, which a film really does (the view-only version is
+  right only for light from the eye's direction):
+  `scatter: (ctx, l) => mul(film(dot(ctx.normal, normalize(add(l, ctx.view))), nm), max(dot(ctx.normal, l), 0))`.
+  Toon bands the luminance of the sum over lights and keeps its hue; an integrator uses it as it stands.
+- **Units, fixed now because they cannot be fixed later without changing every scene that relies on them.** `base`
+  stays sRGB as written (styles print it, and every scene writes it so); a reader that needs reflectance linearises it
+  at its boundary. `emits` is **linear radiance and may exceed 1**; a style that prints into 8 bits compresses it, as
+  toon would. `gloss` maps to a roughness by the formula above, which the comment of `glossed` should state so that the
+  sky's reflection and a light's highlight are the same lobe.
+
+Cost: one reserved word in `loft context` (counted in §11), one export (`standard`), one `ShadeCtx` member.
+
+### A2. Light: distance, size, a sample, and families
+
+Working from the sketch in `docs/open_design.md` (`(p) => ({ toward, colour })`), since the light proposal was not
+written:
+
+```ts
+/** What arrives at p from one light. `colour` is linear and unbounded: the light at p, before the surface's response. */
+export type Lit = {
+  readonly toward: Expr<"vec3">;  // unit, from p toward the light (the point sampled on it, given xi)
+  readonly colour: Expr<"vec3">;
+  readonly distance: Expr<"f32">; // to that point: where a shadow ray stops (a large number for the sun)
+  readonly size: Expr<"f32">;     // the light's apparent radius from p, radians: a soft shadow's cone, a highlight's widening
+};
+/** A light. Without `xi`, its representative point; with `xi` uniform in the unit square, a point on its area, with
+ *  `colour` already divided by that point's probability, so the average over samples is exact. */
+export type Light = (p: Expr<"vec3">, xi?: Expr<"vec2">) => Lit;
+/** Many lights that are one function: member i, and a sphere outside which member i is negligible. Culled per tile. */
+export type LightFamily = { readonly count: number; readonly light: (p: Expr<"vec3">, i: F, xi?: Expr<"vec2">) => Lit; readonly reach: (i: F) => { readonly centre: P3; readonly radius: F } };
+
+// scene({ lights?: readonly (Light | LightFamily)[] }); a function is one light, an object a family (classified once).
+// ShadeCtx gains, instead of an array of lights:
+  /** The sum over every light reaching here of `term(lit)`: the style says what one light does, Loft does the loop. */
+  lights(term: (lit: Lit) => Expr<"vec3">): Expr<"vec3">;
+```
+
+Reasons: `distance` and `size` are what a shadow ray (`castRay`, `march`) needs to be bounded and soft, and what a
+glossy highlight from a non-point light needs; `xi` is what sampling needs (still mode, an integrator); families are
+the only form clustered culling can loop over; and `lights(term)` is the only form that works for both a fixed list
+and a tile's list, while letting a banded style apply its band after the sum. Every addition is optional for the
+author: a three-line point light gives `size: 0` and ignores `xi`.
+
+### A3. Geometry: hits that say what they hit, and drawables that say what they are
+
+```ts
+// castRay returns, beside t, gap, normal and colour:
+  readonly id: Expr<"f32">;  // the thing's ShadeCtx.id (a hash of its name, varied per copy), so id-keyed patterns survive in a reflection
+  readonly m: Expr<"f32">;   // where along the hit chain, 0 root to 1 tip (a strand's own m)
+
+// src/compile/context.ts: Drawable.surfaces (Bakeable = SurfaceBakeable | MeshBakeable, told apart by `"mesh" in s`)
+// becomes a sum type every reader dispatches on exhaustively:
+export type Form =
+  | { readonly kind: "surface"; readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number }
+  | { readonly kind: "mesh"; readonly name: string; readonly mesh: TriangleMesh; readonly paint: (hit: { readonly p: P3; readonly normal: P3 }) => P3 | Painted }
+  | { readonly kind: "field"; readonly name: string; readonly field: Field; readonly bound: TraceBound; readonly paint: (hit: FieldHit) => P3 | Painted }
+  | { readonly kind: "medium"; readonly name: string; readonly bound: TraceBound; readonly density: (p: P3) => F; readonly colour: (p: P3) => P3 }
+  /** Your own: any solid you can intersect. Every other kind can be lowered to this one by a reader that wants to. */
+  | { readonly kind: "hit"; readonly name: string; readonly count: number; readonly bound: TracedOptions["bound"]; readonly hit: (ray: Ray, copy: F) => Traced; readonly paint: TracedOptions["paint"] };
+
+export interface Drawable {
+  readonly name: string;
+  draws(ctx: CompileContext): Emitted;          // how THIS renderer draws it
+  readonly skeletons: readonly Skeleton[];
+  /** What it is, for any other reader (the baker, the checks, another renderer). Empty: nothing a reader can use. */
+  readonly forms: readonly Form[];
+}
+```
+
+Reasons: today a second reader cannot see a traced field's distance function, a medium's density or an author's
+tracer at all (verified: `FieldDrawable.surfaces` returns `[]` for the trace and brick schedules, and
+`density`, `copies`, `impostors` and `glow` return `[]`; the field function is a public property of the
+`FieldDrawable` class but not of `Drawable`, so reaching it would take an `instanceof` test). The kind test
+`"mesh" in s` in `src/bake/mesh.ts` is the dispatch this replaces. The geometry proposal's `draw.mesh` and
+`draw.traced` give a `mesh` and a `hit` form; `draw.field` gives `field`; `draw.density` gives `medium`. Cost: about
+150 lines, mostly moving what each drawable already holds into one member; the baker's dispatch becomes a switch.
+No word in `loft context` (the `Drawable` level is for drawable authors).
+
+### A4. State: a step never reads a pass
+
+One line in the state proposal's "what a step may read": **a pass is refused**, naming it. A recurrence that read a
+rendered picture would make the baked trajectory depend on rasterisation on the baking GPU, and would be the door
+through which frame history comes back (a probe "converging" over steps). Nothing else in the state proposal
+constrains headroom: it is orthogonal to light.
