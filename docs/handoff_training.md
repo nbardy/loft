@@ -63,6 +63,22 @@ The last line on stderr matches `^loft: (internal|usage|load|scene|check|environ
 A refusal's last line is written to be fed back to the model as it stands: it says what was given, what was expected
 and the smallest fix. `docs/errors.md` has the table of the 23 mistakes we test (`bun tests/fixtures/mistakes/run.ts`).
 
+### What each kind of failure prints
+
+Checked on the day of writing with one sample of each. No stack trace is printed for any of these.
+
+| The sample | Type-check gate (`tsc`) | Render gate |
+|---|---|---|
+| does not parse (a missing brace) | `train/x.ts(2,129): error TS1005: ',' expected.` | exit 3: `loft: load: train/x.ts failed to load: 2 syntax errors: train/x.ts:2:129: Expected "}" but found ")" near \`…\`; …` (file, line, column, what was expected, the text round it; at most three) |
+| wrong type (a string where a number goes) | `train/x.ts(2,69): error TS2322: Type 'string' is not assignable to type 'number \| Fn1'.` | may still draw, or be refused with exit 4: the type checker is the gate for this |
+| imports a name Loft does not export | `error TS2305` naming it | exit 3 with the nearest real name as the fix, if the name is used; an unused import is dropped by the runtime and draws |
+| throws while loading (its own code) | passes | exit 3: `loft: load: … failed to load: <the error's message> (at train/x.ts:3)` |
+| is refused by the library | passes | exit 4: `loft: scene: <who>: given …; expected … Fix: … (at train/x.ts:3)` |
+
+So a parse error is reported by both gates with its line and column. The type checker reports every error in the
+file; the render gate stops at the first failure. Feed the model the type checker's lines when that gate fails, and
+the render gate's last line when that one does.
+
 ### False failures
 
 A render used to fail now and then for no fault of the scene: a use-after-free in `bun-webgpu` 0.1.7 let the garbage

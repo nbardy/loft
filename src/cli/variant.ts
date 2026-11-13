@@ -19,9 +19,29 @@ export async function subjectAt(path: string): Promise<Subject> {
     const site = e instanceof Error ? siteOf(e.stack) : undefined;
     // Paths relative to where loft runs: the same message on every machine, and short enough to read.
     const said = (e instanceof Error ? e.message : String(e)).replaceAll(`${process.cwd()}/`, "").replace(/\.$/, "");
+    // A module that does not parse: Bun says only "N errors building", with each error's text and place on `errors`.
+    // Those are the message a writer needs (which line, which column, what was expected), so they are stated here.
+    const parse = parseErrorsOf(e);
+    if (parse !== undefined) throw new LoadError(`${path} failed to load: ${parse}`);
     throw new LoadError(`${path} failed to load: ${said}${site === undefined ? "" : ` (at ${site})`}${await importHint(said)}`);
   }
   return subjectOf(mod, path);
+}
+
+/** The parse or resolve errors Bun attaches to a failed build, each as `file:line:column: what`, at most three; undefined when `e` carries none. */
+function parseErrorsOf(e: unknown): string | undefined {
+  const errors = (e as { errors?: unknown })?.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return undefined;
+  const one = (x: unknown): string => {
+    const m = x as { message?: string; position?: { file?: string; line?: number; column?: number; lineText?: string } | null };
+    const at = m.position?.file === undefined ? "" : `${m.position.file.replaceAll(`${process.cwd()}/`, "")}:${m.position.line}:${m.position.column}: `;
+    // The line's text round the column (40 characters either side), so the place can be seen without opening the file.
+    const col = m.position?.column ?? 0, line = m.position?.lineText;
+    const text = line === undefined ? "" : ` near \`${line.slice(Math.max(0, col - 40), col + 40).trim()}\``;
+    return `${at}${m.message ?? String(x)}${text}`;
+  };
+  const more = errors.length > 3 ? ` (and ${errors.length - 3} more)` : "";
+  return `${errors.length === 1 ? "a syntax error" : `${errors.length} syntax errors`}: ${errors.slice(0, 3).map(one).join("; ")}${more}`;
 }
 
 /** For an import of a name Loft does not export (Bun: "Export named 'x' not found"): the nearest export, as a fix. */
