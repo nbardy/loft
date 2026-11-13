@@ -46,6 +46,31 @@ of 48 (few allocations between pack and call). A baseline of 0 does not refute H
    synchronous job ends (Dawn copies descriptors during the call, so that is long enough), then the same four loops.
 4. Whatever remains (H5) is classified as the environment's: retried a bounded number of times, then a distinct exit
    code and "not your scene".
+### The score (2026-11-13, after merging main; M-series Mac, load average 4 to 9 before the loops)
+
+`bun tools/render_loop.ts <tag> <scene:view> --procs P --runs R [--env BUN_JSC_collectContinuously=1]`. "Attempts" counts
+the load attempts the CLI retried on a fresh device (src/cli/main.ts), which a run's exit code hides.
+
+| Loop | bun-webgpu | Runs failed (exit 6) | Load attempts failed |
+|---|---|---|---|
+| crab, 6 x 8 | as published | 0 of 48 | 0 |
+| crab, 6 x 8 | patched | 0 of 48 | 0 |
+| crab, 4 x 3, collector forced | as published | **12 of 12** | **36 of 36** |
+| crab, 4 x 3, collector forced | patched | 0 of 12 | 0 |
+| shell, 4 x 12, collector forced | as published | **10 of 48** | **72 of 110** |
+| shell, 4 x 12, collector forced | patched | 0 of 48 | 0 |
+
+The failing text, as published: `surface.shell (shell): pipeline creation failed: The stage (Fragment) of the entry
+point "fs" isn't the expected one (Vertex).` (stage: pipeline), and `shader "surface.sea" ... failed to compile:` with
+WGSL Loft never wrote (stage: shader module), and on the crab every kind of build (pose stages, surfaces, outlines).
+H1 holds as predicted, both ways: the forced collector breaks the published binding at the predicted rates (crab more
+than half, shell at least one in ten) and the patched binding not once. The unforced baseline is 0 of 48 both ways
+on a quiet machine, as predicted (a baseline of 0 does not refute H1). H2 to H5 were not seen.
+
+The fix is installed by pnpm: `pnpm-workspace.yaml` names `patches/bun-webgpu@0.1.7.patch` under
+`patchedDependencies`, and the lockfile records its hash, so `pnpm install` (checked from an empty `node_modules`)
+links the patched copy. A bun-webgpu other than 0.1.7 makes `pnpm install` fail until the patch is redone.
+
 ## 2. The twenty mistakes (fixtures: `tests/fixtures/mistakes/`, runner `run.ts` there)
 
 Each fixture is a correct scene (`_ok.ts`, drawn) with one mistake. "Today" is what `loft render` printed before this
