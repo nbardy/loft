@@ -82,8 +82,8 @@ across the motion (frames, above); change the largest thing first.
 # Wrong without an error
 
 A one-sided surface wound inside out shows its far wall or nothing (try `sides: "two"`); a camera aimed past the
-subject draws empty sky; a subject far too small or large for its camera; a `period` that is not every motion's own jumps at the loop.
-`minScreenSize` and `staysInView` catch the middle two. Exit 6 is the environment, not the scene.
+subject shows sky; a subject far too small or large for its camera; a `period` that is not every motion's own jumps at the loop.
+`minScreenSize` and `staysInView` catch two. Exit 6 is the environment, not the scene.
 
 # More
 
