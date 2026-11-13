@@ -9,7 +9,7 @@ import { contactSheet, writeWebp, type Frame } from "./image.ts";
 import { checkInputs, viewInputs, type Sweep } from "./inputs.ts";
 import { headlessHost, loadArtefact } from "./load.ts";
 import { openVideo } from "./video.ts";
-import { exitWith, verdictOf } from "./verdict.ts";
+import { exitWith, headed, verdictOf } from "./verdict.ts";
 import { EnvironmentError } from "../errors.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
@@ -53,7 +53,7 @@ async function loadedWithRetries(artefact: Artefact): Promise<GpuLoaded> {
       return await (await headlessHost()).load(artefact);
     } catch (e) {
       if (!(e instanceof EnvironmentError && e.transient)) throw e;
-      seen.push(e.message.split("\n")[0]!);
+      seen.push(headed(e.message)[0]);
       console.error(`loft: load attempt ${attempt} failed in the GPU (not the scene): ${seen.at(-1)}`);
       if (attempt === 3) {
         const same = seen.every((m) => m === seen[0]);

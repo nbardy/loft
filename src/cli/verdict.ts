@@ -76,12 +76,23 @@ const LINE: Readonly<Record<Verdict["kind"], string>> = {
   load: "load",
   scene: "scene",
   check: "check",
-  environment: "environment (not your scene)",
+  environment: "environment (not the scene's fault)",
 };
+
+/**
+ * A message as its last line and the rest. A first line ending in ":" only introduces its reason (the GPU's
+ * "pipeline creation failed:" then Dawn's text), so the reason is pulled up onto it: the last line must say why.
+ */
+export function headed(message: string): [string, ...string[]] {
+  const [first, ...rest] = message.split("\n");
+  const k = rest.findIndex((l) => l.trim() !== "");
+  if (!first!.trimEnd().endsWith(":") || k < 0) return [first!, ...rest];
+  return [`${first!.trimEnd()} ${rest[k]!.trim()}`, ...rest.slice(k + 1)];
+}
 
 /** Prints the verdict (the detail, then one last line) and exits with its code. */
 export function exitWith(v: Verdict): never {
-  const [head, ...rest] = v.message.split("\n");
+  const [head, ...rest] = headed(v.message);
   switch (v.kind) {
     case "usage": console.error(USAGE); break;
     case "internal": console.error(v.stack); break;
