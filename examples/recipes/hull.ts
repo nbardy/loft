@@ -1,4 +1,4 @@
-// Recipe: a boat's hull lofted from a lines plan. Copy this file and edit it; it imports only the public entry.
+// RECIPE: a boat's hull lofted from a lines plan. Copy this file and edit it; it imports only the public entry.
 //
 // What it makes: the hull of a wooden monohull with a transom stern, the way a naval architect's lines plan defines
 // one: a sheer line (the deck edge's height along the length), a half-breadth plan (how wide each station is), a keel
@@ -7,7 +7,7 @@
 // exactly. Deck, bulwarks and transom are `sheet`s between curves of the same lines; paint is a function of (u, v).
 //
 // From which library pieces: `through` (the loft along the length), `sheet` and `mapNormal` (the deck, bulwarks and
-// transom), `sdBox` and `fwidth` (gun ports drawn in paint), plain expressions for every law.
+// transom), `fwidth` and a box distance (gun ports drawn in paint), plain expressions for every law.
 //
 // Coordinates (all local to the hull): x toward the bow, y up, z to starboard, the waterline at y = 0, amidships at
 // x = 0. The skin's (u, v): u from the stern (0) to the bow (1); v round the section from the port deck edge (0)
@@ -32,12 +32,14 @@
 // fuselage. For a body round in every section use `lathe`; for one swept straight, `extrude`.
 
 import {
-  abs, add, atan2, clamp, cos, div, fract, lift, lt, mapNormal, max, mix, mul, NO_SKELETON, pow, select, sheet, sign, sin, smoothstep, sqrt, sub,
-  through, vec2, vec3, type Expr, type F, type In, type P3, type Paint, type Rgb, type Skeleton, type Surface,
+  abs, add, atan2, clamp, cos, div, fract, lift, lt, mapNormal, max, min, mix, mul, NO_SKELETON, pow, select, sheet, sign, sin, smoothstep, sqrt, sub,
+  through, vec2, vec3, fwidth, length, type Expr, type F, type In, type P3, type Paint, type Rgb, type Skeleton, type Surface,
 } from "../../src/index.ts";
-import { fwidth, sdBox } from "../../src/lib/index.ts";
 
 export type { Rgb };
+
+/** Exact distance to an axis-aligned box centred on the origin with half extents `half` (the gun ports). */
+const sdBox = (p: Expr<"vec2">, half: Expr<"vec2">): F => { const q = sub(abs(p), half); return add(length(max(q, 0)), min(max(q.x, q.y), 0)); };
 
 export type HullSpec = {
   /** Stem to stern along the waterline, world units. */

@@ -837,11 +837,11 @@ Where the plan met the code:
   Before: each copy and sample posed the whole body (1054 stations against 142). CPU pose, best of 3000 interleaved
   in one process: 0.47 -> 0.22 ms with smear and wake (0.11 without); `tools/strike_bench.ts` on the loaded machine:
   2.1-4.0 -> 1.5-2.2 ms (0.5-0.7 without). Tests: `tests/spacetime.slices.test.ts`.
-- **A ship is its hull** (polish pass, 2026-11-11). `Target` has a third kind, `{ kind: "hull", hull, frame }`
+- **A ship is its hull** (polish pass, 2026-11-11). `Target` has a third kind, `{ kind: "skin", skin, frame }`
   (`Ship.target(chart)`, with `Ship.afloatChart` the chart `afloat` uses): checks move the chain into the ship's frame
   and measure the hull's signed distance (`src/geom/skin_distance.ts`, a `skin` target: the skin sampled 64 x 65, closed across the rail
   and at both ends, nearest strips first with box pruning, inside by the parity of an upward ray; within 1e-3 of the
-  closed-form skin, `tests/hull.distance.test.ts`), at points along each capsule half its smaller radius apart, skipping
+  closed-form skin, `tests/skin.distance.test.ts`), at points along each capsule half its smaller radius apart, skipping
   any whose distance to the hull's box cannot beat the best. `examples/strike.ts` now strikes two cutters built by
   `ship` (the fleet's sloop, smaller): contact at arming reads 0.044 (bite) and 0.093 (lash) with `contact: 0.1`, where
   the stand-in read 0.46 against a 0.6 allowance. A sample point inside a raked bow was called outside by the first

@@ -23,7 +23,7 @@ const water = sea({
   ],
 });
 
-// ---- the ships: small cutters (src/geom/ship.ts) afloat on the swell, broadside to the serpent ---------------------
+// ---- the ships: small cutters (examples/recipes/ship.ts) afloat on the swell, broadside to the serpent ---------------------
 
 const WIND = [0.8, 0.6] as const;
 /** A cutter about 5.6 long: the fleet's sloop, smaller. Its half-beam is where the bite's lane stops short. */

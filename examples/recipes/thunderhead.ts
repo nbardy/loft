@@ -1,4 +1,4 @@
-// Recipe: a storm cloud, a broad dark-based tower under a wide anvil, boiling slowly. Copy it and edit the numbers.
+// RECIPE: a storm cloud, a broad dark-based tower under a wide anvil, boiling slowly. Copy it and edit the numbers.
 //
 // What it makes: `cloud` with a profile that narrows from the base into a tower and spreads into an anvil near the top,
 // slow boiling, white puffs (the style and the light give them their dark base).
@@ -26,6 +26,7 @@ export type ThunderheadSpec = {
   readonly seconds: number;
 };
 
+/** A storm cloud: `cloud` with a tower-and-anvil profile, boiling slowly. */
 export function thunderhead(t: ThunderheadSpec): Cloud {
   return cloud({
     at: t.at, size: [t.width, t.height, t.width * 0.8],

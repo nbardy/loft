@@ -1,5 +1,6 @@
-// Recipe: a sailing ship from named numbers. Copy this file and edit it; it imports only the public entry and the hull
+// RECIPE: a sailing ship from named numbers. Copy this file and edit it; it imports only the public entry and the hull
 // recipe beside it.
+// Uses: ./hull.ts
 //
 // What it makes: a ship of one, two or three masts, square or fore-and-aft rigged, on the lines-plan hull of
 // `./hull.ts` (its lines are part of the spec). `masts` picks one of three fixed mast plans (positions along the hull

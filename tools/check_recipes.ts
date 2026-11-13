@@ -8,7 +8,7 @@ import { dirname, relative, resolve } from "node:path";
 const ROOT = resolve(import.meta.dir, "..");
 const ENTRY = resolve(ROOT, "src/index.ts");
 export const KIT = [
-  "examples/recipes/film.ts",
+  "examples/recipes/film.ts", "examples/recipes/hull.ts", "examples/recipes/ship.ts", "examples/recipes/thunderhead.ts",
   "examples/bosses/lib/face_parts.ts", "examples/bosses/lib/stalk_eyes.ts", "examples/bosses/lib/growth.ts",
   "examples/bosses/lib/impact.ts", "examples/bosses/lib/scale_ship.ts", "examples/bosses/lib/warning.ts",
   "examples/scenes/lib/wyrm.ts", "examples/scenes/lib/fleet.ts",

@@ -1,4 +1,4 @@
-// Ships and whirlpools (src/geom/hull.ts, afloat.ts, whirlpool.ts, ship.ts): the hull against its lines, a ship afloat
+// Ships and whirlpools (examples/recipes/hull.ts and ship.ts, src/geom/afloat.ts and whirlpool.ts): the hull against its lines, a ship afloat
 // against the swell's formula, the whirlpool's map (identity outside, a round trip inside, no edge at the rim), a point
 // advected by the whirlpool's velocity against the map itself, and a body coiled by the whirlpool against its radii.
 import { expect, test } from "bun:test";
