@@ -5,7 +5,8 @@
 //
 //   bun tools/rename_exports.ts [--dry] <file or directory> ...
 //
-// e.g. `bun tools/rename_exports.ts examples tools tests docs`. It prints each file it changed.
+// e.g. `bun tools/rename_exports.ts examples tools tests README.md docs`. It prints each file it changed; with an error in
+// any file it prints every error, writes nothing and exits 1.
 //
 // It reads tokens, not types (the repository's TypeScript 7 has no JavaScript API): within a file that imports `lines`,
 // every identifier `lines` that is not a property name (`x.lines`, `{ lines: ... }`) is the import. It stops with an
@@ -177,7 +178,10 @@ function editsOf(text: string, label: string, from: string | undefined): Edit[] 
     if (!isOld && !isNew) continue;
     if (prev && (prev.text === "." || prev.text === "?.")) continue; // a property
     const inBraces = stack.at(-1)?.text === "{";
-    if (nxt?.text === ":" && inBraces && prev && (prev.text === "{" || prev.text === ",")) continue; // a key
+    // A key: in an object literal after `{` or `,`; in a type literal also after `;` or `readonly`, and optional (`key?:`).
+    const keyed = nxt?.text === ":" || nxt?.text === "?" && t[k + 2]?.text === ":";
+    const before = prev?.text === "readonly" ? t[k - 2] : prev; // `readonly key:` in a type literal
+    if (keyed && inBraces && before && ["{", ",", ";"].includes(before.text)) continue;
     if (isNew) throw new RenameError(`${where(k)}: "${tok.text}" already names something in this file; rename it first`);
     // A declaration of the old name: a local that may shadow the import.
     const declares = prev && (DECLARES.has(prev.text)
@@ -254,11 +258,22 @@ const dry = args.includes("--dry");
 const paths = args.filter((a) => a !== "--dry");
 if (paths.length === 0) throw new RenameError("usage: bun tools/rename_exports.ts [--dry] <file or directory> ...");
 const self = resolve(import.meta.path);
-const results = paths.flatMap(filesUnder).filter((f) => resolve(f) !== self).map((f) => {
+const errors: string[] = [];
+const results = paths.flatMap(filesUnder).filter((f) => resolve(f) !== self).flatMap((f) => {
   const before = readFileSync(f, "utf8");
-  return { f, before, after: extname(f) === ".md" ? renameMd(f, before) : apply(before, editsOf(before, f, resolve(f))) };
+  try {
+    return [{ f, before, after: extname(f) === ".md" ? renameMd(f, before) : apply(before, editsOf(before, f, resolve(f))) }];
+  } catch (e) {
+    if (!(e instanceof RenameError)) throw e;
+    errors.push(e.message);
+    return [];
+  }
 });
-// Every file is renamed before any is written, so an error leaves the tree as it was.
+// Every file is renamed before any is written, so an error anywhere leaves the tree as it was.
+if (errors.length > 0) {
+  console.error(`nothing written; fix these first:\n${errors.join("\n")}`);
+  process.exit(1);
+}
 for (const r of results) if (r.after !== r.before) {
   console.log(r.f);
   if (!dry) writeFileSync(r.f, r.after);

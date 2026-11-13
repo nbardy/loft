@@ -2,7 +2,7 @@
 // ink on top, cream beneath, a cream band and a black ring at each joint, a dark point. The fiddler's legs are long and
 // thin under a heavy claw.
 
-import { abs, add, keys, lift, limb, min, mix, mul, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
+import { abs, add, keys, lift, chain, min, mix, mul, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
 import type { Reaching } from "../../../../src/check.ts";
 import { cut, sides, TAU } from "../ink.ts";
 import type { LegsOption } from "../slots.ts";
@@ -15,7 +15,7 @@ export const slim: LegsOption = {
     const limbs: Reaching[] = [];
     const things = sides.flatMap((s, si) => n.legRoots.map((x, i) => {
       const spec = { root: local([x, -0.1, s * n.carapace.width * 0.85]), target: walk.foot(si * 4 + i), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
-      const leg = limb(spec);
+      const leg = chain(spec);
       limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: mul(body.z, s) });
       const nearKnot = (m: F): F => leg.knots.slice(1, 3).reduce((d: F, kn) => min(d, abs(sub(m, kn))), lift<"f32">(1));
       return strand({

@@ -71,8 +71,3 @@ export function ropes(given: string, ropes: readonly Rope[], spec: RopesSpec): D
   const [r, g, b] = spec.colour;
   return draw.curve(name, curve, { width, paint: () => vec3(r, g, b), segments: cells });
 }
-
-/** @deprecated Use `RopesSpec`. Removed at integration. */
-export type LinesSpec = RopesSpec;
-/** @deprecated Use `ropes`. Removed at integration. */
-export const lines = ropes;

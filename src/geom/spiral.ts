@@ -170,11 +170,6 @@ export function coilPlan(spec: CoilLaw & { readonly aspect?: number }): {
   return { centre: c, drop, covered, holding };
 }
 
-/** @deprecated Use `CoilSpec` (`coil` is now `hand`; `aspect` and `ridges` are now `section`). Removed at integration. */
-export type ShellSpec = CoilLaw & { readonly aspect?: number; readonly coil?: "right" | "left"; readonly ridges?: { readonly perTurn: number; readonly height: number } };
-/** @deprecated Use `coil`. Removed at integration. */
-export const shell = (s: ShellSpec): Surface => coil({ ...s, hand: s.coil ?? s.hand, section: { aspect: s.aspect, ridges: s.ridges } });
-
 /** Growth-line coordinate of a shell point: whorls from the apex, for painting bands and ridges in its own coordinates. */
 export const whorl = (u: F, turns: number): F => mul(u, turns);
 /** 0..1 within each of `perTurn` ridges per whorl, for paint that follows the folded ridges. */

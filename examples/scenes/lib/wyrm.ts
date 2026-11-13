@@ -22,7 +22,7 @@
 // dragon's frill.
 
 import {
-  abs, add, cos, crest, cross, dot, draw, keys, lift, lt, mix, mod, mul, normalize, on, palette, place, points, rotateAbout as rotate,
+  abs, add, cos, sheetOn, cross, dot, draw, keys, lift, lt, mix, mod, mul, normalize, on, palette, place, points, rotateAbout as rotate,
   select, sin, smoothstep, strand, sub, TAU, through, time, vec3,
   type Drawable, type F, type In, type P3, type Strand,
 } from "../../../src/index.ts";
@@ -167,14 +167,14 @@ export function wyrm(s: WyrmSpec): Wyrm {
 
   // ---- the crest: a membrane down the back that ripples with a wave running tailward --------------------------------
   const profile = keys([[0, 0], [0.06, 1], [0.35, 0.85], [0.75, 0.55], [1, 0]]);
-  const dorsal = crest({
+  const dorsal = sheetOn({
     on: body, from: s.crest.from, to: s.crest.to, name: n("Crest"),
     height: (x: In<"f32">) => mul(profile(x).x, s.crest.height),
     paint: C.membrane, rays: 22, sag: 0.4, rake: 0.6,
     flutter: (m) => mul(sin(mul(sub(mul(m, 4), mul(time, 0.8)), TAU)), 0.25),
     rows: 220,
   });
-  const tailFins = [-1, 1].map((side) => crest({
+  const tailFins = [-1, 1].map((side) => sheetOn({
     on: body, from: 0.86, to: 0.995, name: n(side < 0 ? "TailL" : "TailR"), v: 0.25 + side * 0.09,
     height: keys([[0, 0], [0.45, 0.7 * s.girth], [0.85, 2.2 * s.girth], [1, 0]]),
     paint: C.membrane, rays: 7, sag: 0.25, rake: 0.9, rows: 48,

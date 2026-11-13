@@ -2,7 +2,7 @@
 // checked on the CPU backend over sweeps of inputs.
 import { expect, test } from "bun:test";
 import {
-  compileJs, compileScene, course, fan, gait, limb, mirror, scene, sea, shell, sin, strand, through, time, toon, variable, vec3, mul, add,
+  compileJs, compileScene, course, fan, gait, chain, mirror, scene, sea, coil, sin, strand, through, time, toon, variable, vec3, mul, add,
   catenary, f, mapNormal, type Expr, type V,
 } from "../src/index.ts";
 import { stateAt } from "./compile.harness.ts";
@@ -17,8 +17,8 @@ const T = variable("target", "vec3");
 // bend hint ignored (knees flipping). Two and three segments, over a grid of targets in and out of reach.
 test("a limb reaches its target exactly in range, points straight at it out of range, and keeps its lengths", () => {
   const root: V3 = [0.3, 1, -0.2], bend: V3 = [0, 1, 0.3];
-  const two = limb({ root, target: T, lengths: [2, 1.3], bend });
-  const three = limb({ root, target: T, lengths: [2, 1.3, 0.6], bend, foot: [0, -1, 0] });
+  const two = chain({ root, target: T, lengths: [2, 1.3], bend });
+  const three = chain({ root, target: T, lengths: [2, 1.3, 0.6], bend, foot: [0, -1, 0] });
   const ev2 = run(two.joints), ev3 = run(three.joints);
   let reached = 0, straight = 0;
   for (let x = -4; x <= 4; x += 0.7) for (let y = -4; y <= 3; y += 0.9) for (let z = -3; z <= 3; z += 1.1) {
@@ -122,9 +122,9 @@ const evalF = (e: Expr<"f32">) => (compileJs([e])({ vars: {}, inputs: {}, params
 // count is not whole per whorl), and a section orientation that turns the front inward (a one-sided draw would cull
 // the outside of the shell). Both coils, with ridges folded in.
 test("a shell's successive whorls scale by the growth factor, and its front faces out", () => {
-  for (const coil of ["right", "left"] as const) {
+  for (const h of ["right", "left"] as const) {
     const turns = 3.5, growth = 2.3;
-    const s = shell({ turns, growth, aperture: 1.2, umbilicus: 0.2, spire: 0.8, aspect: 1.3, coil, ridges: { perTurn: 9, height: 0.06 } });
+    const s = coil({ turns, growth, aperture: 1.2, umbilicus: 0.2, spire: 0.8, section: { aspect: 1.3, ridges: { perTurn: 9, height: 0.06 } }, hand: h });
     const U = variable("u", "f32"), Vv = variable("v", "f32");
     const ev = run([s.point(U, Vv), s.point(add(U, 1 / turns), Vv), s.normal(U, Vv)]);
     for (let u = 0.02; u < 1 - 1 / turns; u += 0.037) for (let v = 0; v < 1; v += 0.13) {

@@ -104,11 +104,6 @@ export function sheetOnEdges(spec: Omit<SheetOnSpec, "paint" | "name" | "rows"> 
   return { root, edge };
 }
 
-/** @deprecated Use `SheetOnSpec`. Removed at integration. */
-export type CrestSpec = SheetOnSpec;
-/** @deprecated Use `sheetOn`. Removed at integration. */
-export const crest = sheetOn;
-
 /** The default membrane: darker toward the root, with darker rays (as in `strand_kit::crest`). */
 function membrane(c: Rgb, rays: number): Paint {
   const colour = vec3(c[0], c[1], c[2]);

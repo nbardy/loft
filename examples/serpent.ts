@@ -4,7 +4,7 @@
 // +x. Ported from keel's preview_probe `serpent.rs`.
 
 import {
-  add, crest, draw, lift, cross, dot, floor, keys, lt, mod, mul, normalize, on, palette, param, place, points, retarded,
+  add, sheetOn, draw, lift, cross, dot, floor, keys, lt, mod, mul, normalize, on, palette, param, place, points, retarded,
   rotateAbout as rotate, scene, sea, select, sin, smoothstep, strand, sub, TAU, through, time, toon, vec3, wave, abs, cos, mix,
   type Drawable, type Expr, type In, type Strand, type StrandSpec,
 } from "../src/index.ts";
@@ -218,7 +218,7 @@ export function serpent(o: { readonly spine: (m: Expr<"f32">) => Expr<"vec3">; r
 
   const crestHeight = param("serpent.crestHeight", S.crestHeight, { min: 0, max: 3 });
   const crestProfile = keys([[0, 0], [0.07, 1], [0.35, 0.85], [0.75, 0.6], [1, 0]]);
-  const dorsal = crest({
+  const dorsal = sheetOn({
     on: body, from: S.crestSpan[0], to: S.crestSpan[1], name: "dorsal",
     height: (x: In<"f32">) => mul(crestProfile(x), crestHeight),
     paint: S.membrane, rays: S.crestRays, sag: S.crestSag, rake: S.crestRake,
@@ -229,7 +229,7 @@ export function serpent(o: { readonly spine: (m: Expr<"f32">) => Expr<"vec3">; r
   // The tail fin is two lobes splayed either side of the dorsal line: a single membrane went edge-on (a thin spike)
   // whenever the tail swung its plane through the camera, which the rising tail does in the three-quarter view.
   const TAIL_SPLAY = 0.09;
-  const tailFins = [-1, 1].map((side) => crest({
+  const tailFins = [-1, 1].map((side) => sheetOn({
     on: body, from: 0.84, to: 0.995, name: `tailfin${side < 0 ? "L" : "R"}`, v: 0.25 + side * TAIL_SPLAY,
     height: keys([[0, 0], [0.45, 0.7], [0.85, 1.5], [1, 0]]),
     paint: S.membrane, rays: 6, sag: 0.25, rake: 0.9, rows: 48,

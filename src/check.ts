@@ -15,7 +15,7 @@ import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
 import type { Arming, Attack, Effect, Hold, Motion, Part, Ring, Strike, Target } from "./spacetime/attack.ts";
 import type { Thrown } from "./geom/grab.ts";
-import type { LimbSpec } from "./geom/limb.ts";
+import type { ChainSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_distance.ts";
 import { RingWave } from "./geom/ring.ts";
@@ -521,7 +521,7 @@ function nearestSurface(chain: readonly Joint[], p: V3): { readonly at: V3; read
 
 /** A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of
  * (outboard of the root: a knee that crosses inward has folded under the body). */
-export type Reaching = { readonly name: string; readonly limb: LimbSpec; readonly outward: In<"vec3"> };
+export type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> };
 
 /**
  * Every limb stays inside its reach over [0, `period`): the distance from the root to the middle segments' target (the

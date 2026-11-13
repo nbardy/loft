@@ -6,8 +6,8 @@
 // Faces +x, walks toward its right (+z), y up; the sea floor is at y = -1.
 
 import {
-  abs, add, course, cos, draw, framed, gait, spiralTube, input, keys, lift, limb, lookAt, max, min, mix, mul, palette, param, place, ridgePhase,
-  rotateAbout, scene, sea, shell, sin, smoothstep, spacing, strand, strike, sub, through, time, toon, vec3, whorl, unit, type F, type Frame, type P3,
+  abs, add, course, cos, draw, framed, gait, spiralTube, input, keys, lift, chain, lookAt, max, min, mix, mul, palette, param, place, ridgePhase,
+  rotateAbout, scene, sea, coil, sin, smoothstep, spacing, strand, strike, sub, through, time, toon, vec3, whorl, unit, type F, type Frame, type P3,
 } from "../src/index.ts";
 import { rotate } from "../src/map/chart.ts";
 import { rigid } from "../src/geom/rig.ts";
@@ -65,7 +65,7 @@ const legs = sides.flatMap((s, si) => S.legRoots.map((x, i) => {
   const k = si * 4 + i;
   const root = local([x, 0.1, s * S.width * 0.78]);
   const lengths = S.legLengths.map((l) => mul(legReach, l)) as unknown as readonly [F, F, F];
-  const leg = limb({ root, target: walk.foot(k), lengths, bend: add(body.y, mul(body.z, s * 0.45)), foot: mul(body.y, -1) });
+  const leg = chain({ root, target: walk.foot(k), lengths, bend: add(body.y, mul(body.z, s * 0.45)), foot: mul(body.y, -1) });
   // Thinner at each joint (the knots), tapering to a dark point.
   const pinch = (m: F) => leg.knots.slice(1, 3).reduce((p: F, kn) => sub(p, mul(smoothstep(0.05, 0, abs(sub(m, kn))), 0.3)), lift<"f32">(1));
   return strand({
@@ -85,7 +85,7 @@ function claw(name: string, side: 1 | -1, size: number, slams: boolean) {
   const z = side * S.width * 0.5;
   const rest = vec3(S.length + 1.9 * size, 0.7, z + side * 1.2 * size);
   const target = slams ? add(rest, add(mul(vec3(-1.6, S.slamRaise, side * 0.4), raised), mul(vec3(S.slamReach, -2.4, -side * 0.6), driven))) : rest;
-  const arm = limb({ root: local([S.length * 0.75, 0.2, z]), target: local(target), lengths: [mul(clawSize, 1.9 * size + 0.4), mul(clawSize, 1.7 * size + 0.4)], bend: add(mul(body.z, side), mul(body.y, -0.4)) });
+  const arm = chain({ root: local([S.length * 0.75, 0.2, z]), target: local(target), lengths: [mul(clawSize, 1.9 * size + 0.4), mul(clawSize, 1.7 * size + 0.4)], bend: add(mul(body.z, side), mul(body.y, -0.4)) });
   const [, elbow, wrist] = arm.joints;
   // At rest the palm folds in across the front of the face, as a crab holds its claws; in the slam it drives straight on.
   const along = unit(add(unit(sub(wrist, elbow)), mul(body.z, mul(sub(1, driven), -side * (slams ? 0.9 : 1.2)))));
@@ -128,7 +128,7 @@ const eyes = sides.flatMap((s) => {
 // ---- the shell: a Raup spiral with ridges folded into its section, moss on the upper side of every whorl --------------
 
 const turns = S.turns;
-const spiral = shell({ turns, growth: S.growth, aperture: S.aperture, umbilicus: S.umbilicus, spire: S.spire, aspect: 1.1, ridges: { perTurn: S.ridgesPerTurn, height: 0.035 } });
+const spiral = coil({ turns, growth: S.growth, aperture: S.aperture, umbilicus: S.umbilicus, spire: S.spire, section: { aspect: 1.1, ridges: { perTurn: S.ridgesPerTurn, height: 0.035 } } });
 // Apex up, its last whorl sunk onto the carapace. The aperture is at the shell's -x facing its -z (where the coil
 // grows at u = 1 for 4.5 turns), so a quarter turn back puts it on the crab's left, opening backward, away from view.
 const yawShell = -Math.PI / 2;

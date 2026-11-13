@@ -1,7 +1,7 @@
 // Legs: three segments by inverse kinematics from a root on the body's side to the walk's foot, pinched and banded at
 // the joints (a cream band before each, a black ring at it), cream dactyls to a black point.
 
-import { abs, add, keys, lift, limb, max, min, mix, mul, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
+import { abs, add, keys, lift, chain, max, min, mix, mul, sin, smoothstep, strand, sub, vec3, type F } from "../../../../src/index.ts";
 import type { Reaching } from "../../../../src/check.ts";
 import { cut, mottle, sides } from "../ink.ts";
 import type { Rig } from "../rig.ts";
@@ -21,7 +21,7 @@ export function banded({ n, walk, body, local }: Rig, pairs: number): Legs {
       const k = si * 4 + i;
       const root = local([x, -0.1, s * n.carapace.width * 0.85]);
       const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
-      const leg = limb(spec);
+      const leg = chain(spec);
       limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: mul(body.z, s) });
       const nearKnot = (m: F): F => leg.knots.slice(1, 3).reduce((d: F, kn) => min(d, abs(sub(m, kn))), lift<"f32">(1));
       const pinch = (m: F) => sub(1, mul(smoothstep(0.05, 0, nearKnot(m)), 0.3));

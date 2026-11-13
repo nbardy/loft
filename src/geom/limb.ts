@@ -107,9 +107,3 @@ export function polyline(m: F, points: readonly P3[], knots: readonly F[]): P3 {
   return out;
 }
 
-/** @deprecated Use `ChainSpec`. Removed at integration. */
-export type LimbSpec = ChainSpec;
-/** @deprecated Use `Chain`. Removed at integration. */
-export type Limb = Chain;
-/** @deprecated Use `chain`. Removed at integration. */
-export const limb = chain;
