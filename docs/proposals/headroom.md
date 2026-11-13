@@ -706,3 +706,135 @@ has at least two readers in sight; that is the test.
 | **A material graph, a node editor, a material library** | Channels, `scatter` and functions are the vocabulary (rule 1). A menu of materials is the box `docs/open_design.md` exists to avoid. |
 | **Physically based camera exposure, tone-mapping pipelines, colour management beyond sRGB** | A style decides how light becomes ink; a single `emits` compression per style is enough. A colour-managed pipeline is a large surface in `loft context` for no look Loft draws. |
 | **Hardware ray tracing** | Not in browser WebGPU; experimental in native `wgpu` only. Revisit when it ships in Dawn, through `forms`, without any scene changing. |
+
+## 11. The words in `loft context`
+
+What this proposal adds (about 25 words):
+
+- In the materials proposal's opening line, after `shade`: "`scatter: (ctx, toward) => colour` answers each light;
+  prefer it to `shade` for what a surface is" (about 16 words, replacing its 23-word craft line, below).
+- The API map, generated: `frame: pass({name, size, camera | screen, keep?}): .at(uv), .project(p)` (about 10 words).
+- After the render commands: "`--samples 64 --shutter 0.03` makes a still: area lights, motion blur" (about 9 words).
+
+The five proposals together, against today's 2,251 words (measured with `loft context | wc -w`; the light proposal
+is a guess because it is not written):
+
+| Source | Words |
+|---|---|
+| Today | 2,251 |
+| Materials (its §5) | +105 |
+| State (its §7) | +85 |
+| Geometry and rays (its §7) | +91 |
+| Light (not written; a guess from the sketch's size, plus A2's fields) | +60 |
+| This proposal | +25 |
+| **Total as proposed** | **2,617**, about 320 over |
+
+**The budget does not survive. Cuts, each counted from today's output:**
+
+| Cut | Words saved |
+|---|---|
+| The API map's domain modules (`lightning` 35, `rain` 21, `whitewater` 21, `foam` 18, `cloud` 15, `crest` 14, `grab` 50) become one line: "weather, sea and throwing: `loft api lightning`, `rain`, `cloud`, `whitewater`, `foam`, `crest`, `grab`" (about 14 words) | -160 |
+| The `light:` line of woodblock's recipe parts (40) moves behind `loft api woodblock`; a style's parts are read when writing that style | -35 |
+| Geometry's 64-word paragraph cut to its two capabilities in 30 words: "`draw.mesh` draws triangles your code makes, moved by `at(row)`; `draw.traced` draws any solid you can intersect, and its `hit` (or `march(field)`, `castRay`) answers rays from any paint." | -34 |
+| State's 48-word craft paragraph cut to its first sentence and the rule: "State: closed form first (`jolt`, `dragged`, modes); `recur` only what truly steps; it is baked, never live." (about 20) | -28 |
+| Materials' craft line (23) dropped, its point carried by the `scatter` clause above; its opening line tightened from 57 to 45 words | -35 |
+| **Total cut** | **-292** |
+
+**Result: about 2,325 words**, within the budget's "about". The rule this applies, worth keeping: the API map is for
+what a scene author reaches for in most scenes; a domain module (weather, sea foam, throwing) is reached through
+`loft api`, which the context already points to.
+
+## 12. Predictions, plan and stop rule
+
+### 12.1 Predictions a build will be scored against
+
+Machine and method as the geometry proposal's: GPU timestamps, best of 30 to 40 frames, fast and slow clock states
+reported apart; "largest example" is `examples/bosses/reefback_titan.ts`, `game` view, 1280 x 800, 2.1 ms fast and
+5.44 ms slow today, 125k triangles.
+
+| Quantity | Prediction | Wrong if |
+|---|---|---|
+| Scenes that read no pass, after every stage | Byte-identical WGSL, manifest (version 1) and pixels; the 17 `rgba` hashes in `docs/styles.md` unchanged | any byte differs |
+| A1 with no `scatter` given | Byte-identical (the `otherwise` node is the style's own) | any byte differs |
+| A 2048² depth pass on the largest example (§3.1's part) | +0.4 to 1.0 ms fast (vertex work about that of the view's opaque bodies, 0.3 to 0.7 ms; unshaded depth fragments 0.1 to 0.3 ms); 16.8 MB of depth | over 2 ms fast |
+| Load time with that depth pass | +15 to 40% (one depth pipeline per drawn shader; no shading code in it) | over +50% |
+| A colour pass (the pool's mirror) | **0 new pipelines**; full size +1.0 to 1.8 ms fast; half size +0.6 to 1.2 ms (vertex work does not halve); half size 9.2 MB | any new pipeline; full size over 2.5 ms |
+| Shadow-map acne on the reed scene | None visible at a bias of 0.002 and a 0.02 normal offset; `.project` on the CPU reports every reed inside the sun's picture | acne on more than 0.1% of lit pixels |
+| A 64-sample still of the largest example | 0.13 to 0.16 s fast; bitwise identical from two fresh processes | any bit differs between processes |
+| Motion blur | A sphere moving at a known speed, 64 samples, shutter s: its streak is speed x s long on screen within 1 px, measured against `.project` of its ends | off by more than 2 px |
+| Area light | 256-sample penumbra of the lamp in §3.3 matches R d_receiver / d_occluder within 2 px | off by more than 4 px |
+| The parameter-grid hierarchy (experiment, §7.3) | Refit 0.1 to 0.2 ms; traversal at least half the rays per second of a sorted hierarchy on the same frame | below a third |
+| Path-traced rays per second (experiment) | Small scene 0.7 to 1.4 G; largest 90 to 240 M | outside by 2x either way: the §7.3 table is redone |
+| Library code | Pass and still mode: about 650 lines TS, 90 Rust. A1: about 60. A3: about 170. | over 1.5x |
+| Exported names | 2 (`pass`, `standard`) | more than 3 |
+| `loft context` after the §11 cuts | about 2,325 words | over 2,400 |
+
+### 12.2 Staged plan
+
+| Stage | Work | Days | Done when |
+|---|---|---|---|
+| 0 | Write A1 to A4 into the four proposals before any of them is built | 0.5 | The proposals' types read as in §6. |
+| 1 | `forms` (A3): the sum type; every drawable fills it; the baker switches over it | 1.5 | glTF from every example byte-identical to today's; a traced field now bakes through surface nets instead of being skipped. |
+| 2 | `pass` with `look` cameras and `keep: "depth"`; depth entries for surfaces and the shared tracer; group 3; fixed-size textures; the reed scene's shadow part | 3 | The reed scene shades its neighbours. Byte-identity and the depth-pass predictions hold. |
+| 3 | `mirror` and `matrix` cameras, colour and light keeps, `screen` passes, the reader rule and its note, the Rust loader | 2.5 | The pool renders in the TS host and the Rust loader. A bloom chain of three `screen` passes replaces nothing but proves the stated limit of `bloom` is gone. |
+| 4 | Still mode: the three flags, the accumulator, `xi` to lights | 1.5 | The motion-blur and area-light predictions hold; two processes agree bitwise. |
+| 5 | The path-tracing experiment (throwaway, under `out/`) | 2 | The rays-per-second table is measured; the owner decides on a separate renderer. |
+
+About 11 days. The first picture is the reed scene's shadows at the end of stage 2.
+
+### 12.3 Stop rules
+
+- **If any byte of a scene that reads no pass changes**, stop: discovery from expressions is leaking into scenes
+  that do not use it, and the design rests on that not happening.
+- **If the depth pass costs over 2 ms fast or over +50% load on the largest example**, stop before stage 3 and redesign
+  depth entries (the likely fault: shading code not eliminated from tracers' depth entries).
+- **Rule 9:** if after stage 3 no second, unrelated style or scene uses `pass` beyond the two examples here, freeze it:
+  no cascades, no probes, no `only` list.
+- **If still mode is not bitwise reproducible**, stop: a still that differs between runs is worse than none.
+- **If the parameter-grid hierarchy traverses at under a third of a sorted one**, withdraw the "no sort" claim (§7.2);
+  a separate renderer may still sort for itself, since it is not bound by the table programs.
+
+## 13. Open questions for the owner
+
+1. **Is real-time physically based light out of scope for good, with path tracing only as a separate offline tool
+   built on `forms`?** Recommended: yes. The frame budget and the looks Loft exists for both say so, and the seam
+   keeps the door open at about 300 lines.
+2. **Should `scatter` (A1) be in the first build of the materials proposal, not later?** Recommended: yes. Models
+   learn the form they see first; teaching thin films as a finished-colour wrap and correcting it later costs a
+   retraining of habits, and A1 is about 60 lines.
+3. **Accept still mode as a separate compile (lights given `xi`), living only in the TypeScript host and the command
+   line?** Recommended: yes. A game draws frames; the file format and the Rust loader stay free of it.
+4. **Keep the context at about 2,300 words by moving domain modules out of the API map (§11), or raise the budget to
+   2,600?** Recommended: cut. The map is read before every scene; weather and foam are read in few.
+5. **May a game that loads Loft's files ever add temporal antialiasing?** Recommended: on its own display, as its own
+   renderer's business, yes; inside a scene, an artefact, a check, a clip or a variant, never.
+
+## Inherited and mine
+
+Inherited: render-to-texture and frame graphs ordered by reads; shadow mapping (Williams 1978) and percentage-closer
+filtering (Reeves, Salesin and Cook 1987); planar reflection with an oblique near plane (Lengyel 2005); microfacet
+response with a GGX lobe (Walter et al. 2007) and its real-time form (Karis 2013); quasi-random sampling (Halton, R2)
+with Cranley-Patterson rotation; hero-wavelength spectral sampling (Wilkie et al. 2014); analytic colour-matching fits
+(Wyman, Sloan and Shirley 2013); bounding volume hierarchies refitted per frame.
+
+Mine, as far as I know: passes discovered from the expressions that read them, so the files hold a pass exactly when
+something reads it; a pass camera that is an expression, computed in the pose pass, with a projection the CPU checks
+can measure; reuse of the view's pipelines for colour passes by matching formats; a depth entry as a sum type on the
+draw; the reader-exclusion rule that makes mirrors and shadows safe with no lists; exact motion blur by sampling time,
+which is an argument; the `otherwise` form of `ctx.scatter`, which keeps every unchanged scene byte-identical; the
+parameter-grid quadtree as a sort-free hierarchy for Loft's surfaces; and `forms` as the one seam four readers share.
+
+## Sources
+
+- [gpuweb implementation status (wiki)](https://github.com/gpuweb/gpuweb/wiki/Implementation-Status)
+- [Chrome: New in WebGPU 147 and 148](https://developer.chrome.com/blog/new-in-webgpu-147-148)
+- [WebRTX: a ray tracing extension for WebGPU, implemented in compute shaders](https://github.com/codedhead/webrtx)
+- [wgpu: ray tracing extension documentation (`EXPERIMENTAL_RAY_QUERY`, `enable wgpu_ray_query`)](https://wgpu.rs/doc/wgpu/documentation/extensions/ray_tracing/index.html)
+- [WebGPU mailing list, 2018: a ray tracing extension once native APIs mature](https://lists.w3.org/Archives/Public/public-gpu/2018Dec/0003.html)
+- L. Williams, "Casting curved shadows on curved surfaces", SIGGRAPH 1978.
+- W. Reeves, D. Salesin, R. Cook, "Rendering antialiased shadows with depth maps", SIGGRAPH 1987.
+- E. Lengyel, "Oblique view frustum depth projection and clipping", Journal of Game Development, 2005.
+- B. Walter, S. Marschner, H. Li, K. Torrance, "Microfacet models for refraction through rough surfaces", EGSR 2007.
+- B. Karis, "Real shading in Unreal Engine 4", SIGGRAPH course notes, 2013.
+- A. Wilkie, S. Nawaz, M. Droske, A. Weidlich, J. Hanika, "Hero wavelength spectral sampling", EGSR 2014.
+- C. Wyman, P.-P. Sloan, P. Shirley, "Simple analytic approximations to the CIE XYZ color matching functions", JCGT 2013.
