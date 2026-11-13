@@ -115,3 +115,141 @@ the new `pass` (§5). Amendments A1 to A4 are §6.
 Reading the table by column: **the design rules out only what needs history, and real-time global tracing of
 everything**, and the second is a cost, not a door. Every other technique is either already expressible or one named
 addition away, and the additions concentrate in two places: the pass (eight rows) and the light's shape (four rows).
+
+## 3. What an author writes with the new piece
+
+Three scenes, written before the design in §5 and then read cold. The first two use `pass`; the third uses still
+mode, which needs no new name in a scene. Lights in the third follow the sketch in `docs/open_design.md` with the
+shape amendment A2, since the light proposal did not exist when this was written.
+
+### 3.1 Shadows from every shape the sun sees (a style part)
+
+```ts
+// Reeds over a floor, toon, with shadows from a depth picture taken from the sun: every shape casts, not only the
+// skeletons' capsules, and a reed shades its neighbour. The picture covers a 12-unit square round the origin.
+import { add, f, le, mix, mul, pass, plane, scene, select, sin, strand, time, toon, vec2, vec3, type F, type P3, type Style } from "../src/index.ts";
+
+const SUN = vec3(-0.4, 0.8, 0.45).normalize();
+const fromSun = pass({
+  name: "fromSun",
+  size: [2048, 2048],
+  keep: "depth",                                         // only how near the sun each texel's first surface is
+  camera: { kind: "look", eye: mul(SUN, 20), target: vec3(0, 0, 0), lens: { halfHeight: 6 } },
+});
+
+/** 1 where the sun reaches p, 0 where a nearer surface covers it; nine taps soften the edge over one texel. */
+function sunlit(p: P3, normal: P3): F {
+  const q = fromSun.project(add(p, mul(normal, 0.02)));  // xy: where p lands in the picture (0..1); z: its depth there
+  let lit: F = f(0);
+  for (const dx of [-1, 0, 1]) for (const dy of [-1, 0, 1]) {
+    const nearest = fromSun.at(add(q.xy, vec2(dx / 2048, dy / 2048))).x;
+    lit = add(lit, select(le(q.z, add(nearest, 0.002)), 1, 0));
+  }
+  return mul(lit, 1 / 9);
+}
+
+const base = toon();
+const shadowed: Style = {
+  ...base,
+  name: "shadowed",
+  shade: (ctx) => mix(mul(base.shade(ctx), 0.55), base.shade(ctx), sunlit(ctx.world, ctx.normal)),
+  ground: (ctx) => base.ground({ ...ctx, shadow: sub(1, sunlit(ctx.world, vec3(0, 1, 0))) }),
+};
+
+const reed = (k: number) => strand({
+  name: `reed${k}`,
+  spine: (m: F) => vec3(add(k * 0.7 - 2, mul(mul(m, m), mul(sin(add(time, k)), 0.5))), mul(m, 3.5), k % 2 ? 0.3 : -0.3),
+  girth: (m: F) => add(0.2, mul(m, -0.17)),
+  tips: ["open", "point"],
+  paint: [0.85, 0.55, 0.2],
+});
+
+export default scene({
+  ground: plane, things: [0, 1, 2, 3, 4, 5].map(reed), style: shadowed, sun: [-0.4, 0.8, 0.45],
+  cameras: { whole: { kind: "perspective", eye: [6, 4, 8], target: [0, 1.5, 0], fovY: 0.6 } },
+});
+```
+
+`--style woodblock` drops the shadow map with the style that read it: the pass is found from the style's expressions,
+so a scene drawn in another style has no such pass in its files.
+
+### 3.2 A pool that mirrors what stands round it (a scene)
+
+```ts
+// A still pool in a plane floor: inside 2 units of the origin the ground is a dark mirror, rippled by a closed form
+// of time. The mirrored picture is the view's own camera reflected in y = 0, half the view's size.
+import { add, dot, length, lt, mix, mul, pass, plane, scene, select, sin, time, toon, vec2, type Style } from "../src/index.ts";
+import { crab } from "./scenes/crab_parts.ts"; // any things; the pool does not care what they are
+
+const mirrored = pass({ name: "mirrored", size: { scale: 0.5 }, camera: { kind: "mirror", normal: [0, 1, 0], offset: 0 } });
+
+const base = toon();
+const pooled: Style = {
+  ...base,
+  name: "pooled",
+  ground: (ctx) => {
+    const r = length(vec2(ctx.world.x, ctx.world.z));
+    const ripple = mul(vec2(sin(add(mul(r, 9), mul(time, 2))), 0), 0.004);
+    const seen = mirrored.at(add(mirrored.project(ctx.world).xy, ripple)).xyz;
+    return select(lt(r, 2), mix([0.05, 0.08, 0.1], seen, 0.85), base.ground(ctx));
+  },
+};
+
+export default scene({
+  ground: plane, things: crab, style: pooled, sun: [-0.4, 0.8, 0.45],
+  cameras: { whole: { kind: "perspective", eye: [5, 3, 6], target: [0, 1, 0], fovY: 0.6 } },
+});
+```
+
+The pass draws every thing with the scene's style from the mirrored camera, clipped at the plane, and leaves out
+the ground (whose shader reads the pass): a pass never draws a reader of itself.
+
+### 3.3 A still with an area lamp, soft shadows and motion blur (no new name)
+
+```ts
+// A spinning top under a round lamp. In a normal frame the lamp is its centre, and soft shadows come from the cone
+// of its apparent size. In a still (`--samples`), each sample takes a point on the disc, and `--shutter` spreads the
+// samples over a span of time, so the stripes blur along their motion.
+import { add, div, dot, f, fract, length, lt, max, mul, neg, plane, scene, select, sqrt, strand, sub, time, cos, sin, toon, vec3, type F, type Light } from "../src/index.ts";
+
+const C = vec3(0, 3, 0), R = 0.3;
+/** A disc lamp facing down, 40 units of radiance. With xi, a point on the disc; the same law gives an exact average. */
+const lamp: Light = (p, xi) => {
+  const q = xi === undefined ? C : add(C, vec3(mul(mul(sqrt(xi.x), R), cos(mul(xi.y, 6.2832))), 0, mul(mul(sqrt(xi.x), R), sin(mul(xi.y, 6.2832)))));
+  const d = sub(q, p), r = length(d), toward = div(d, r);
+  const facing = max(dot(neg(toward), vec3(0, -1, 0)), 0);           // the disc's cosine toward p
+  return { toward, distance: r, size: div(R, r), colour: mul(vec3(40, 36, 30), div(mul(facing, Math.PI * R * R), mul(r, r))) };
+};
+
+const top = strand({
+  name: "top",
+  spine: (m: F) => vec3(0, add(0.05, mul(m, 0.9)), 0),
+  girth: (m: F) => mul(sin(mul(m, Math.PI)), 0.5),
+  paint: (m: F, v: F) => select(lt(fract(add(mul(v, 6), mul(time, 9))), 0.5), [0.8, 0.15, 0.1], [0.95, 0.9, 0.8]),
+});
+
+export default scene({
+  ground: plane, things: [top], style: toon(), sun: [-0.4, 0.8, 0.45], lights: [lamp],
+  cameras: { whole: { kind: "perspective", eye: [2.5, 2, 3], target: [0, 0.5, 0], fovY: 0.6 } },
+});
+```
+
+```sh
+loft render examples/top.ts --out out/top.webp                                  # a frame: the lamp's centre, cone-soft shadows
+loft render examples/top.ts --out out/top_still.webp --samples 64 --shutter 0.03 # 64 samples: disc points, 30 ms of motion
+```
+
+The lamp's estimator is unbiased by construction: with `xi` uniform on the unit square, the point is uniform on the
+disc (pdf 1 / (pi R²)), and the colour carries the factor pi R² · cos / r², so the average over samples is the exact
+integral over the disc (DERIVATION; the representative point without `xi` is its first-order approximation).
+
+### 3.4 What a stranger asked on reading cold, and what changed
+
+| Question | Defect? | Change |
+|---|---|---|
+| "Where is `fromSun` registered? I never pass it to `scene`." | No: by design. | It is found from the expressions that read it, as tables are. Said in `pass`'s comment, first line. |
+| "Is `project(p).z` the same depth `at(...).x` holds?" | Yes, the first draft had `z` as a distance. | Both are the pass's depth, 0 at the near plane to 1 at the far one, as WebGPU's. One convention. |
+| "`keep: "depth"`: does the pass shade at all?" | Partly. | No: a depth pass runs each drawable's depth-only fragment entry, which computes coverage and depth and nothing else (§5.3). Said in the type. |
+| "Does the mirror show the pool inside the pool?" | No. | A pass leaves out every draw whose shader reads it, and `loft` reports the names. |
+| "Why is there a `sample` input in the third scene?" | Yes: the first draft exported `sample` so a scene could jitter by it. | Removed. The lamp gets `xi`, the camera's jitter and aperture belong to the still mode, and time is already an argument. One export fewer. |
+| "Can `at` run in a check?" | No defect. | `.at` is GPU-only (reported as `loft_fwidth` is today); `.project` is an expression and runs on the CPU, so "is the whole grove inside the sun's picture" is a check. |
