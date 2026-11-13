@@ -457,7 +457,8 @@ export function fingerAngle(gap: In<"f32">, length: In<"f32">, hinge: In<"f32"> 
 
 /**
  * A pincer: one finger fixed, one moving, both of `length` (hinge to tip, straight) from one hinge. The angle between
- * them for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A crab's claw, a beak.
+ * them for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A beak, tongs, a pair of shears.
+ * It cannot open past a straight angle: a gap wider than 2 length gives pi, and two fingers hinged apart are `fingerAngle`.
  */
 export function pincerAngle(gap: In<"f32">, length: In<"f32">): F {
   const s = clamp(div(gap, mul(length, 2)), 0, 1);
@@ -481,8 +482,28 @@ export type WrapSpec = {
 
 /**
  * A coil round a thing, by its size. The number of turns is derived from the body's length (fact 3), so the same body
- * goes round a small ship more times than round a large one, and takes up more turns as it tightens. `spine(m)` is the
+ * goes round a small thing more times than round a large one, and takes up more turns as it tightens. `spine(m)` is the
  * coil by arc length, m in [0, 1], centred on `centre`: blend a strand's free spine into it as the grip closes.
+ *
+ * The law: a helix of radius r and pitch p round `axis`, with turns = length / sqrt((2 pi r)^2 + p^2) (one turn's arc
+ * length), spine(m) = centre + axis p turns (m - 1/2) + r (e1 cos(2 pi turns m) + e2 sin(2 pi turns m)), e1 starting
+ * on the `toward` side.
+ *
+ * Parameters: every field takes an expression or a host input, so the coil can tighten (`radius` times a `crush`), spend
+ * more of the body (`length`) or follow a moving thing (`centre`).
+ *
+ * What it cannot do, because of the law:
+ * - wrap anything but a cylinder of one radius: no taper, no bulge, no corners.
+ * - change pitch or radius along the coil: no loose end turns, no tighter middle.
+ * - keep clear of itself: a pitch below the body's width overlaps its turns, unchecked.
+ * - move from free to coiled: it is the coiled spine only; the blend (and its timing) is yours.
+ *
+ * Going past it: `spine` is a function of m; add to it or replace the radius with a function of m in a spine of your own
+ * written the same way. Relatives worth trying:
+ * - a conical helix: r a function of the height along the axis, for a tapering thing (a cone, a bottle's neck).
+ * - a coil round a curved thing: the same angle and advance laid in a strand's frame along its spine instead of a fixed
+ *   axis.
+ * - a knot or a hitch: the coil, then a turn back under itself (a `through` curve over points you choose).
  */
 export function wrap(spec: WrapSpec): { readonly turns: F; spine(m: F): P3 } {
   const axis = lift<"vec3">(spec.axis), centre = lift<"vec3">(spec.centre), r = lift<"f32">(spec.radius), pitch = lift<"f32">(spec.pitch);

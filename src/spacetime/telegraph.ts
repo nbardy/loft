@@ -150,8 +150,8 @@ class Telegraph implements Drawable {
  * - change its motif: teeth on a bone edge round a fill; only the colours and sizes in `TelegraphStyle` are open.
  *
  * Going past it: `hitSdf(attack.hit, p)` is the same distance, and `hitPatch` the same patch, so a marker of your own is
- * a `surface` over the patch whose look reads the distance and k from `attack.arm` and `attack.warn`. Relatives worth
- * trying:
+ * a `surface` over the patch whose look reads the distance and k from `attack.arm` and `attack.warn`.
+ * Relatives worth trying:
  * - a fill that closes in from the edge: inside where d < (k - 1) times the inradius, so the safe time is the empty
  *   middle.
  * - a sweep shown as a moving line: an arc's angle mixed from `from` to `to` by k, a band along it.

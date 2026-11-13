@@ -45,7 +45,8 @@ export type AfloatSpec = {
 /**
  * `afloat`'s frame without the chart: origin at the water level under the thing's centre, x forward, y up, z to the
  * right, all expressions. One step down from `afloat` (see it for the law and limits): turn it, lift it, blend it with
- * another frame (`turnedAbout`, `blendFrames`), then place with `rigid`.
+ * another frame (`turnedAbout`, `blendFrames`), then place with `rigid`. It cannot see the water between its four
+ * samples, nor lag behind it: it is the surface's tilt now, under those four points.
  */
 export function afloatFrame(w: Waters, spec: AfloatSpec): Frame {
   if (!(spec.length > 0 && spec.beam > 0)) throw new Error(`afloat: length and beam must be positive, got ${spec.length}, ${spec.beam}`);

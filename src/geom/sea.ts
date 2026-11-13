@@ -1,10 +1,10 @@
-// The sea: the root chart, local (x, z, height above the surface) with a swell that moves in time, and the water drawn
-// as a glazed `Surface` in that chart. The surface is a projected grid (`Detail` kind "projected"): cells of about
-// SEA_CELL x `View.cellPixels` pixels laid over the image of the still water out to `reach`, each vertex the point of
-// the still water its pixel sees, lifted to the swell there (exactly the height function at that point). Its cells
-// are the same size on screen everywhere, so the far sea is no longer drawn with triangles far smaller than a pixel.
-// It is evaluated on the GPU only, coloured per pixel by the style's `water`, with foam where the water meets any
-// opaque body found from the scene's depth.
+// The sea: one of the grounds, and a chart, local (x, z, height above the surface), with a swell that moves in time;
+// the water is drawn as a glazed `Surface` in that chart. The surface is a projected grid (`Detail` kind "projected"):
+// cells of about SEA_CELL x `View.cellPixels` pixels laid over the image of the still water out to `reach`, each vertex
+// the point of the still water its pixel sees, lifted to the swell there (exactly the height function at that point).
+// Its cells are the same size on screen everywhere, so the far sea is no longer drawn with triangles far smaller than a
+// pixel. It is evaluated on the GPU only, coloured per pixel by the style's `water`, with foam where the water meets
+// any opaque body found from the scene's depth.
 //
 // Vertices move over the water as the camera moves (a projected grid "swims"). What that can change is small: colour,
 // crest, foam and slope are evaluated per pixel at the interpolated point, and a point of the swell sampled anywhere
