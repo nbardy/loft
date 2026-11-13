@@ -9,7 +9,7 @@ functions, folds, noise, raw WGSL). `loft` is `bun src/cli/main.ts`.
 **The layers** (the sections below, in this order). Each is written in the one below, so leaving a component is a step
 down, not a rewrite. Core: expressions (`time`, `input`, `param`), curves, maps (a shape is a function:
 `surface((u, v) => point)`, `sweep`, `lathe`), drawables (`draw.*`), the scene and the compiler. Shapes: `strand`,
-`spiralTube`, `shell`, `limb`, `fan`, `crest`, `hull`, `ship`, soft media. Motion: the animation principles as
+`spiralTube`, `coil`, `chain`, `fan`, `sheetOn`, `ropes`, soft media. Motion: the animation principles as
 formulas, gaits, struck poses. Actions: `attack` and its warning, grabs and throws, `design` with slots and variants,
 group routines. Checks: measured on the CPU from the same expressions (`loft check`). Styles: `Style` values and the
 named ones. A module marked "unproven" has had one user so far; expect to cut it down when your subject fights it.
@@ -34,8 +34,8 @@ from another. A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/` (`doc
 - No simulation: everything is a closed form of time and inputs; nothing carries state from frame to frame.
 - No meshes in: shapes are functions (`loft bake` writes glTF out).
 - Headless rendering needs bun; the package is not published; a large subject is megabytes of WGSL and seconds to load.
-- Several components take only numbers, so their family is fixed (`shell`, `ship`, `whirlpool`, `cloud`, `pendulum`,
-  `sea`): leave them by writing the map yourself one level down.
+- Several components take only numbers, so their family is fixed (`whirlpool`, `sea`): leave them by
+  writing the map yourself one level down.
 
 **Reading the entries below.** Each value has the first sentence of its comment; `cannot:` and `relatives:` lists
 where its comment states them. A component with no `cannot:` list has not said where its family ends: assume it ends
@@ -49,164 +49,132 @@ the expression language, curves, the map algebra, drawables, relief, the scene, 
 
 Loft L0: symbolic maths.
 
+- **Expr**: A node in a typed expression graph: a number, a vec2, vec3, vec4 or a bool (the type parameter), built by the functions of this file (`add`, `mix`, `vec3`, ...) from constants and named inputs.
+  `class Expr<T extends Ty = Ty>`
 - **Row**: A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends.
   `class Row`
-- **mapOf**: A map whose every entry is the same closed form in the entry index.
-  `const mapOf = (entries: number, lanes: MapRun["lanes"]): TableProgram =>`
-- **listOf**: A map whose entries share no closed form: entry k is `entries[k]` (one run each).
-  `const listOf = (entries: readonly (readonly Expr<"vec4">[])[]): TableProgram =>`
-- **Expr**: (undocumented)
-  `class Expr<T extends Ty = Ty>`
-- **lift**: Lift a plain value to an expression.
-  `function lift<T extends Ty>(x: In<T>): Expr<T>`
-- **f**: (undocumented)
-  `const f = (x: number): Expr<"f32"> =>`
-- **variable**: A free variable, bound by whoever consumes the expression (u, v, rho, a world point).
-  `function variable<T extends Ty>(name: string, ty: T): Expr<T>`
-- **namespaced**: Run `build` with every name it makes prefixed by `id` (an identifier).
-  `function namespaced<T>(id: string, build: () => T): T`
-- **currentNamespace**: The namespace now ("" outside any).
-  `const currentNamespace = (): string =>`
-- **namespaceSeed**: A number that differs from one namespace to the next and is 0 outside any: what makes instances built by the same code differ where their code asks for a seed (each crab of a line its own idle, not four copies of one puppet).
-  `function namespaceSeed(): number`
-- **scopedName**: An identifier (a thing's or a table's name) in the namespace now: `id__name`.
-  `function scopedName(name: string): string`
-- **input**: A value the host supplies every frame (time, game state, a target position).
-  `function input<T extends NumTy>(given: string, ty: T, def: readonly number[]): Expr<T>`
-- **time**: Seconds since the scene started.
-  `const time: Expr<"f32">`
-- **param**: A named tunable number.
-  `function param(name: string, def: number, range?: { min?: number; max?: number }): Expr<"f32">`
-- **row**: Look up a table-backed curve at x in [0, 1].
-  `function row(r: Row, x: In<"f32">): Expr<"vec4">`
-- **fetch**: Entry `index` of a per-frame table, vec4 number `lane` of that entry.
-  `function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4">`
-- **iterate**: Repeat `step` `count` times from `init`: a real loop in both backends (the body is emitted once, whatever the count).
-  `function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S): S`
-- **lib**: Call a library function.
-  `function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T>`
-- **vec2**: (undocumented)
-  `const vec2 = (...p: Num[]): Expr<"vec2"> =>`
-- **vec3**: (undocumented)
-  `const vec3 = (...p: Num[]): Expr<"vec3"> =>`
-- **vec4**: (undocumented)
-  `const vec4 = (...p: Num[]): Expr<"vec4"> =>`
-- **add**: (undocumented)
-  `const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div")`
-- **sub**: (undocumented)
-  `const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div")`
-- **mul**: (undocumented)
-  `const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div")`
-- **div**: (undocumented)
-  `const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div")`
-- **min**: (undocumented)
-  `const min = binary("min"), max = binary("max"), pow = binary("pow")`
-- **max**: (undocumented)
-  `const min = binary("min"), max = binary("max"), pow = binary("pow")`
-- **pow**: (undocumented)
-  `const min = binary("min"), max = binary("max"), pow = binary("pow")`
-- **mod**: Floored modulo (the result has the sign of the divisor), unlike WGSL's `%`.
-  `const mod = binary("mod")`
+- **TAU**: 2 pi, the angle of a full turn in radians, as a plain number.
+  `const TAU = Math.PI * 2`
+- **abs**: `abs(a)`: the absolute value, componentwise.
+  `const abs = unary("abs")`
+- **add**: `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one.
+  `const add = binary("add")`
+- **and**: `and(a, b)`: whether both bools hold (WGSL `&&`; both sides are always evaluated).
+  `const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> =>`
 - **atan2**: atan2(y, x).
   `const atan2 = binary("atan2")`
-- **step**: step(edge, x): 0 below the edge, 1 at or above it.
-  `const step = binary("step")`
-- **neg**: (undocumented)
-  `const neg = unary("neg"), abs = unary("abs"), sign = unary("sign"), floor = unary("floor"), fract = unary("fract")`
-- **abs**: (undocumented)
-  `const neg = unary("neg"), abs = unary("abs"), sign = unary("sign"), floor = unary("floor"), fract = unary("fract")`
-- **sign**: (undocumented)
-  `const neg = unary("neg"), abs = unary("abs"), sign = unary("sign"), floor = unary("floor"), fract = unary("fract")`
-- **floor**: (undocumented)
-  `const neg = unary("neg"), abs = unary("abs"), sign = unary("sign"), floor = unary("floor"), fract = unary("fract")`
-- **fract**: (undocumented)
-  `const neg = unary("neg"), abs = unary("abs"), sign = unary("sign"), floor = unary("floor"), fract = unary("fract")`
-- **sqrt**: (undocumented)
-  `const sqrt = unary("sqrt"), exp = unary("exp"), log = unary("log")`
-- **exp**: (undocumented)
-  `const sqrt = unary("sqrt"), exp = unary("exp"), log = unary("log")`
-- **log**: (undocumented)
-  `const sqrt = unary("sqrt"), exp = unary("exp"), log = unary("log")`
-- **sin**: (undocumented)
-  `const sin = unary("sin"), cos = unary("cos"), tan = unary("tan")`
-- **cos**: (undocumented)
-  `const sin = unary("sin"), cos = unary("cos"), tan = unary("tan")`
-- **tan**: (undocumented)
-  `const sin = unary("sin"), cos = unary("cos"), tan = unary("tan")`
-- **saturate**: Clamp to [0, 1].
-  `const saturate = unary("saturate")`
-- **normalize**: (undocumented)
-  `const normalize = unary("normalize")`
-- **mix**: (undocumented)
-  `function mix(a: number, b: number, t: In<NumTy>): Expr<"f32">`
-- **clamp**: (undocumented)
+- **clamp**: `clamp(x, lo, hi)`: x limited to the range from lo to hi, componentwise; lo and hi may be scalars.
   `function clamp(x: number, lo: number, hi: number): Expr<"f32">`
-- **smoothstep**: (undocumented)
-  `function smoothstep(lo: number, hi: number, x: number): Expr<"f32">`
-- **length**: (undocumented)
-  `const length = (a: In<NumTy>): Expr<"f32"> =>`
-- **distance**: (undocumented)
-  `const distance = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> =>`
-- **dot**: (undocumented)
-  `const dot = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> =>`
-- **cross**: (undocumented)
+- **compileJs**: Compile expressions to one JavaScript function.
+  `function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (env: Env) => (V | boolean)[]`
+- **cos**: `cos(a)`: the cosine of an angle in radians, componentwise.
+  `const cos = unary("cos")`
+- **cross**: `cross(a, b)`: the cross product of two vec3, a vec3 perpendicular to both.
   `const cross = (a: In<"vec3">, b: In<"vec3">): Expr<"vec3"> =>`
-- **lt**: (undocumented)
-  `const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = compare("ge")`
-- **gt**: (undocumented)
-  `const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = compare("ge")`
-- **le**: (undocumented)
-  `const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = compare("ge")`
-- **ge**: (undocumented)
-  `const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = compare("ge")`
+- **distance**: `distance(a, b)`: the Euclidean distance between two points of the same vector type, as an f32.
+  `const distance = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> =>`
+- **div**: `div(a, b)`: a / b, componentwise; a scalar operand is applied to every component of a vector one.
+  `const div = binary("div")`
+- **dot**: `dot(a, b)`: the dot product of two vectors of the same type, as an f32.
+  `const dot = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> =>`
 - **eq**: Exact equality and inequality of two f32 values.
   `const eq = compare("eq"), ne = compare("ne")`
+- **evaluate**: Evaluate once on the CPU.
+  `function evaluate(e: Expr, env: Partial<Env> = {}): V | boolean`
+- **exp**: `exp(a)`: e raised to a, componentwise.
+  `const exp = unary("exp")`
+- **f**: `f(x)`: the constant expression for the number x (an f32); the same as passing x where an expression is expected.
+  `const f = (x: number): Expr<"f32"> =>`
+- **fetch**: Entry `index` of a per-frame table, vec4 number `lane` of that entry.
+  `function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4">`
+- **floor**: `floor(a)`: the largest whole number not above a, componentwise.
+  `const floor = unary("floor")`
+- **fract**: `fract(a)`: a - floor(a), the part after the point, componentwise (always in [0, 1)).
+  `const fract = unary("fract")`
+- **ge**: `ge(a, b)`: whether a >= b, for two f32 values; a bool.
+  `const ge = compare("ge")`
+- **gt**: `gt(a, b)`: whether a > b, for two f32 values; a bool.
+  `const gt = compare("gt")`
+- **input**: A value the host supplies every frame (time, game state, a target position).
+  `function input<T extends NumTy>(given: string, ty: T, def: readonly number[]): Expr<T>`
+- **iterate**: Repeat `step` `count` times from `init`: a real loop in both backends (the body is emitted once, whatever the count).
+  `function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S): S`
+- **le**: `le(a, b)`: whether a <= b, for two f32 values; a bool.
+  `const le = compare("le")`
+- **length**: `length(v)`: the Euclidean length of a vector (the absolute value of a scalar), as an f32.
+  `const length = (a: In<NumTy>): Expr<"f32"> =>`
+- **lib**: Call a library function.
+  `function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T>`
+- **lift**: Lift a plain value to an expression.
+  `function lift<T extends Ty>(x: In<T>): Expr<T>`
+- **log**: `log(a)`: the natural logarithm, componentwise; undefined for a not above 0.
+  `const log = unary("log")`
+- **lt**: `lt(a, b)`: whether a < b, for two f32 values; a bool.
+  `const lt = compare("lt")`
+- **max**: `max(a, b)`: the larger of a and b, componentwise; a scalar operand is applied to every component.
+  `const max = binary("max")`
+- **min**: `min(a, b)`: the smaller of a and b, componentwise; a scalar operand is applied to every component.
+  `const min = binary("min")`
+- **mix**: `mix(a, b, t)`: a + (b - a) t, the linear blend from a (t = 0) to b (t = 1), componentwise; t may be a scalar or the same vector type, and it is not clamped.
+  `function mix(a: number, b: number, t: In<NumTy>): Expr<"f32">`
+- **mod**: Floored modulo (the result has the sign of the divisor), unlike WGSL's `%`.
+  `const mod = binary("mod")`
+- **mul**: `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component.
+  `const mul = binary("mul")`
+- **namespaceSeed**: A number that differs from one namespace to the next and is 0 outside any: what makes instances built by the same code differ where their code asks for a seed (each crab of a line its own idle, not four copies of one puppet).
+  `function namespaceSeed(): number`
 - **ne**: Exact equality and inequality of two f32 values.
   `const eq = compare("eq"), ne = compare("ne")`
-- **and**: (undocumented)
-  `const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> =>`
-- **or**: (undocumented)
-  `const or = (a: In<"bool">, b: In<"bool">): Expr<"bool"> =>`
-- **not**: (undocumented)
+- **neg**: `neg(a)`: -a, componentwise.
+  `const neg = unary("neg")`
+- **normalize**: `normalize(v)`: v scaled to length 1 (WGSL `normalize`); v must be a vec2, vec3 or vec4 that is not zero.
+  `const normalize = unary("normalize")`
+- **not**: `not(a)`: the opposite of a bool.
   `const not = (a: In<"bool">): Expr<"bool"> =>`
-- **select**: `yes` where the condition holds, otherwise `no`.
-  `function select(cond: In<"bool">, yes: number, no: number): Expr<"f32">`
+- **or**: `or(a, b)`: whether either bool holds (WGSL `||`; both sides are always evaluated).
+  `const or = (a: In<"bool">, b: In<"bool">): Expr<"bool"> =>`
+- **param**: A named tunable number.
+  `function param(name: string, def: number, range?: { min?: number; max?: number }): Expr<"f32">`
 - **pick**: `values[i]` for a whole-number index expression `i` in [0, values.length): one `select` on `i == k` per value after the first.
   `function pick<T extends NumTy>(i: In<"f32">, values: readonly Expr<T>[]): Expr<T>`
   cannot:
   - Outside that range the index is an error the GPU cannot report: it reads the first value (as `fetch` leaves an out-of-range index undefined, callers keep it in range).
+- **pow**: `pow(a, b)`: a raised to the power b, componentwise; as in WGSL, a negative base gives an undefined result.
+  `const pow = binary("pow")`
 - **round**: Round to the nearest integer, halves upward.
   `function round<A extends NumTy = "f32">(x: Expr<A> | number | Lit): Expr<A> { return floor(add(x as Expr<A>, 0.5)) as Expr<A>; } /** Any component selection, for example `swizzle(p, "zyx")`. The getters (`.x`, `.xy`, `.xyz`, ...) cover the common ones. */ export function swizzle<T extends NumTy>(...`
+- **row**: Look up a table-backed curve at x in [0, 1].
+  `function row(r: Row, x: In<"f32">): Expr<"vec4">`
+- **saturate**: Clamp to [0, 1].
+  `const saturate = unary("saturate")`
+- **select**: `yes` where the condition holds, otherwise `no`.
+  `function select(cond: In<"bool">, yes: number, no: number): Expr<"f32">`
+- **sign**: `sign(a)`: -1, 0 or 1 by the sign of a, componentwise.
+  `const sign = unary("sign")`
+- **sin**: `sin(a)`: the sine of an angle in radians, componentwise.
+  `const sin = unary("sin")`
+- **smoothstep**: `smoothstep(lo, hi, x)`: 0 below lo, 1 above hi, and the smooth cubic 3t^2 - 2t^3 of t = (x - lo) / (hi - lo) between; componentwise in x, with scalar edges. lo must be below hi.
+  `function smoothstep(lo: number, hi: number, x: number): Expr<"f32">`
+- **sqrt**: `sqrt(a)`: the square root, componentwise; undefined for a negative a.
+  `const sqrt = unary("sqrt")`
+- **step**: step(edge, x): 0 below the edge, 1 at or above it.
+  `const step = binary("step")`
+- **sub**: `sub(a, b)`: a - b, componentwise; a scalar operand is applied to every component of a vector one.
+  `const sub = binary("sub")`
 - **swizzle**: Any component selection, for example `swizzle(p, "zyx")`.
-  `function swizzle<T extends NumTy>(a: Expr<VecTy>, sel: string): Expr<T> { return get<T>(a, sel); } export const TAU = Math.PI * 2`
-- **TAU**: (undocumented)
-  `const TAU = Math.PI * 2`
-- **children**: The nodes a node reads (a loop's results read its count, its start and what its body reads from outside).
-  `function children(e: Expr): readonly Expr[]`
-- **everything**: Every node reachable from the roots, including the bodies of loops (but not the loops' own variables).
-  `function everything(roots: readonly Expr[]): Expr[]`
-- **topo**: Every node reachable from the roots, dependencies first.
-  `function topo(roots: readonly Expr[]): Expr[]`
-- **splitOn**: Split the nodes reachable from `roots` by whether they depend on any of `vars` (free variables): `inner` do, in dependency order; `outer` are the nodes that do not but are read by an inner node or are roots themselves (what a loop computes once, before it starts).
-  `function splitOn(roots: readonly Expr[], vars: readonly Expr[]): { inner: Expr[]; outer: Expr[] }`
-- **leaves**: The leaves a set of expressions depends on: what a compiler must bind before emitting them.
-  `function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs: InputSpec[]; params: ParamSpec[]; rows: Row[]; tables: TableSource[]; libs: LibFn[] }`
-- **libsOf**: The library functions a set of expressions uses, each after the functions it depends on.
-  `function libsOf(roots: readonly Expr[]): LibFn[]`
-- **WGSL_TY**: (undocumented)
-  `const WGSL_TY: Readonly<Record<Ty, string>>`
-- **emitWgsl**: WGSL statements for a set of expressions: one `let` per shared node, in dependency order, and a `for` loop per `iterate`.
-  `function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: ReadonlyMap<number, string> = new Map()): { lines: string[]; out: string[]; libs: LibFn[]; names: ReadonlyMap<number, string> }`
-- **substitute**: The same expressions with every occurrence of `from` replaced by `to`.
-  `function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[]`
-- **replace**: The same expressions with each node whose id is a key of `by` replaced by its value (of the same type).
-  `function replace(roots: readonly Expr[], by: ReadonlyMap<number, Expr>): Expr[]`
-- **compileJs**: Compile expressions to one JavaScript function.
-  `function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (env: Env) => (V | boolean)[]`
-- **fold**: The same expressions with every constant sub-graph replaced by its value, in f32 (`foldNode`): what a GPU would compute for it at every invocation, computed once at build.
-  `function fold(roots: readonly Expr[]): Expr[]`
-- **evaluate**: Evaluate once on the CPU.
-  `function evaluate(e: Expr, env: Partial<Env> = {}): V | boolean`
+  `function swizzle<T extends NumTy>(a: Expr<VecTy>, sel: string): Expr<T> { return get<T>(a, sel); } /** 2 pi, the angle of a full turn in radians, as a plain number. */ export const TAU = Math.PI * 2`
+- **tan**: `tan(a)`: the tangent of an angle in radians, componentwise.
+  `const tan = unary("tan")`
+- **time**: Seconds since the scene started.
+  `const time: Expr<"f32">`
+- **variable**: A free variable, bound by whoever consumes the expression (u, v, rho, a world point).
+  `function variable<T extends Ty>(name: string, ty: T): Expr<T>`
+- **vec2**: `vec2(...parts)`: a vec2 from numbers or expressions (`vec2(x, y)`), or one scalar repeated into both components.
+  `const vec2 = (...p: Num[]): Expr<"vec2"> =>`
+- **vec3**: `vec3(...parts)`: a vec3 from numbers, expressions or smaller vectors (`vec3(p.xy, 0)`), or one scalar repeated.
+  `const vec3 = (...p: Num[]): Expr<"vec3"> =>`
+- **vec4**: `vec4(...parts)`: a vec4 from numbers, expressions or smaller vectors (`vec4(rgb, 1)`), or one scalar repeated.
+  `const vec4 = (...p: Num[]): Expr<"vec4"> =>`
 
 Types:
 - **Ty**: `type Ty = "f32" | "vec2" | "vec3" | "vec4" | "bool"`
@@ -217,33 +185,11 @@ Types:
 - **Fn**: `type Fn = | "add" | "sub" | "mul" | "div" | "neg" | "min" | "max" | "pow" | "mod" | "atan2" | "step" | "abs" | "sign" | "floor" | "fract" | "sqrt" | "exp" | "log" | "sin" | "cos" | "tan" | "saturate" | "normalize" | "mix" | "clamp" | "smoothstep" | "length" | "distance" | "dot" | "cross" | "lt" |...`
 - **LibFn**: A named function written once in each backend's language: the way to add vocabulary (noise, a custom falloff) that the built-in operators cannot express compactly. `type LibFn = { name, ret, wgsl, js, deps? }`
 - **TableSource**: A table of vec4s, filled once per frame (or once at build) and bound for every shader: `entries` entries of `lanes` vec4s each. `type TableSource = ProgramTable | FilledTable`
-- **ProgramTable**: `type ProgramTable = TableShape & { readonly program: TableProgram }`
-- **FilledTable**: A hand-written fill. `type FilledTable = TableShape & { prepare(p: TablePrep): TableFill }`
-- **MapRun**: Entries `count` long, each a closed form in its index `i` within the run (0 .. count - 1, an f32 holding a whole number): `lanes(i)` gives the entry's `lanes` vec4s. `type MapRun = { readonly count: number; readonly lanes: (i: Expr<"f32">) => readonly Expr<"vec4">[] }`
-- **ScanStep**: What one step of a scan gives: the state after it, and the entry it writes. `type ScanStep = { readonly next: readonly Expr<NumTy>[]; readonly lanes: readonly Expr<"vec4">[] }`
-- **TableProgram**: How a per-frame table is filled. `type TableProgram = | { readonly kind: "map"; readonly runs: readonly MapRun[] } | { readonly kind: "scan"`
-- **TableFill**: Fill `out` (`entries * lanes * 4` floats, zeroed) for this frame. `type TableFill = (frame: TableFrame, out: Float32Array) => void`
-- **TableFrame**: What a fill sees: this frame's environment, and other tables (filled on first read; a cycle is an error). `interface TableFrame { env, table }`
-- **TablePrep**: What a table may ask of the compiler while it is prepared. `interface TablePrep { compile }`
-- **Loop**: One `iterate` form. `type Loop = { id, count, init, state, index, next, inner, outer, step, results }`
-- **Node**: The node kinds. `type Node = | { readonly op: "lib"; readonly ty: Ty; readonly fn: LibFn; readonly args: readonly Expr[] } | { readonly op: "const"; readonly ty: Ty; readonly v: readonly number[] } | { readonly op: "var"; readonly ty: Ty; readonly name: string } | { readonly op: "input"; readonly ty: NumTy; reado...`
-- **Lit**: A vector written as a plain array. `type Lit = readonly number[]`
 - **In**: Anything accepted where an expression of type T is wanted: plain numbers lift to constants. `type In<T extends Ty = Ty> = Expr<T> | (T extends "f32" ? number : T extends "bool" ? boolean : readonly number[])`
 - **Num**: `type Num = Expr<NumTy> | number | readonly number[]`
-- **Bind**: How a backend spells the leaves. `type Bind = { variable, input, param, row, table }`
+- **Lit**: A vector written as a plain array. `type Lit = readonly number[]`
 - **V**: A CPU value: a number, or the components of a vector. `type V = number | number[]`
-- **RowSource**: Where curve rows are read from on the CPU. `type RowSource = /** Each row's own samples, as authored (one-off evaluation, tests). */ | { readonly kind: "own" } /** * A curve table laid out by slot, passed in `Env.curves` on every call: a compiled artefact's pose, so a host's * `setCurves` edit reaches the CPU exactly as it reaches the GPU....`
 - **Env**: What the CPU evaluator reads leaves from. `type Env = { vars, inputs, params, curves?, tables? }`
-
-### src/artefact.ts
-
-The contract between the compiler and a host.
-
-- **CURVE_N**: Samples per table-backed curve row.
-  `const CURVE_N = 64`
-
-Types:
-- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, shaders, draws, post?, stages, tables, cpuPose, pose, cameras, loop?, stats }`
 
 ### src/curve.ts
 
@@ -274,7 +220,7 @@ Types:
 
 The signatures (DESIGN.md 7.1): a shape is a function, and its signature says how it can be drawn.
 
-- **NO_SKELETON**: (undocumented)
+- **NO_SKELETON**: The `Skeleton` with no joints: what a drawable that casts no shadow reports.
   `const NO_SKELETON: Skeleton`
 
 Types:
@@ -284,7 +230,6 @@ Types:
 - **Placed**: A frame and a uniform scale: where one instance of something goes. `type Placed = { readonly frame: Frame; readonly scale: F }`
 - **Points**: index -> frame. `interface Points { count, at }`
 - **Size**: How a copy is scaled: evenly, or by its own length along each axis of its frame (a spar's length and girth, a rag's width, drop and belly). `type Size = { readonly kind: "even"; readonly k: F } | { readonly kind: "axes"; readonly k: P3 }`
-- **Posed**: Where one copy goes: a frame (turned as the copy is) and a size. `type Posed = { readonly frame: Frame; readonly size: Size }`
 - **Poses**: index -> posed copy: `Points` whose copies may also be scaled along each axis. `interface Poses { count, at }`
 - **Curve**: (u) -> point, u in [0, 1]. `type Curve = CurveOf<"vec3">`
 - **End**: What an edge of a surface's (u, v) square is. `type End = "free" | "pole" | "cap"`
@@ -317,19 +262,17 @@ Charts and placement (DESIGN.md 7.2, "compose behind").
   `function posed(count: number, spec: (i: F) => PoseSpec): PoseSet`
 - **posedList**: Copies whose poses are separate expressions (each spar of a fleet between its own two points, each puff on its own clock), listed: every pose is evaluated once per frame by a pose stage into one table (`poses_<name>`), and the vertex stage fetches its copy's.
   `function posedList(given: string, specs: readonly PoseSpec[]): Poses`
-- **posesOf**: Points as poses: each copy's even scale.
-  `function posesOf(points: Points): Poses`
-- **shifted**: `chart` moved by the world vector `by` (a ship lifted off the water it floats on).
+- **shifted**: `chart` moved by the world vector `by` (a thing lifted off the surface it rides on).
   `function shifted(chart: Chart, by: In<"vec3">): Chart`
-- **size**: (undocumented)
+- **size**: How a posed copy is scaled (`PoseSpec.size`): `size.even(k)` by one factor, or `size.axes([kx, ky, kz])` per axis.
   `const size = { ... }`
   - `size.even`: (undocumented)
   - `size.axes`: Lengths along the copy's x, y and z (each positive).
-- **sized**: `chart` with its local coordinates scaled by `k` along their axes before they are placed, so everything built in it is squeezed or stretched as one (a ship in a grip).
+- **sized**: `chart` with its local coordinates scaled by `k` along their axes before they are placed, so everything built in it is squeezed or stretched as one (a thing squeezed in a grip).
   `function sized(chart: Chart, k: In<"vec3">): Chart`
 - **sizeLengths**: A size as lengths along x, y and z.
   `function sizeLengths(z: Size): P3`
-- **turn**: (undocumented)
+- **turn**: How a posed copy is turned (`PoseSpec.turn`): `turn.none`, `turn.about(axis, angle)` for an angle in radians about a unit axis, or `turn.axes(x, y)` for unit, perpendicular x and y axes (z is their cross product).
   `const turn = { ... }`
   - `turn.none`: (undocumented)
   - `turn.about`: (undocumented)
@@ -348,7 +291,7 @@ Types:
 
 Compose in front (DESIGN.md 7.2): `warp` evaluates a shape at a mapped coordinate.
 
-- **warp**: (undocumented)
+- **warp**: Applies a fold (a `Warp`: a map from a point to its folded point, with the cell it fell in) to something that is a function of position, so that thing repeats or mirrors wherever the fold sends points onto it.
   `const warp = { ... }`
   - `warp.paint`: The paint at the folded coordinate: the motif repeats wherever the fold sends points onto it.
   - `warp.field`: A distance field through a fold: evaluated at the folded point and turned back into a distance by the fold.
@@ -397,8 +340,6 @@ The sweep (DESIGN.md 7.2, "multiply"): a section swept along a spine, with frame
 
 - **Body**: A swept body.
   `class Body implements Surface, Chart, Placeable<Body>`
-- **stationSample**: The station table's sample at m: Catmull-Rom through the station positions with mirrored phantom ends (as in `through`), its derivative per unit m, the nlerped frame and the interpolated stretch.
-  `function stationSample(t: TableSource, m: F): FrameSample`
 - **sweep**: A section swept along `spine` (in world coordinates; place it to put it elsewhere).
   `function sweep(name: string, spine: (m: F) => P3, section: Section, transport: Transport): Body`
 
@@ -419,16 +360,16 @@ Frames transported along a spine, once per frame: the part of a sweep that canno
 
 One generic drawable per signature (DESIGN.md 7.4): `draw.surface`, `draw.curve`, `draw.points`, `draw.field` (field.ts), `draw.relief` (relief.ts) and `draw.density` (../soft/density.ts) are all implemented. the tracers of docs/folding_and_tracing.md.
 
-- **draw**: (undocumented)
+- **draw**: Wraps a shape as a `Drawable`, which is how it reaches the screen.
   `const draw = { ... }`
-  - `draw.surface`: A surface, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked.
-  - `draw.glazed`: A surface with its own colour and alpha (the sea, decals).
+  - `draw.surface`: A parametric surface (u, v) -> point, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked.
+  - `draw.glazed`: A surface that supplies its own colour and alpha and is blended over what is behind it, instead of being lit by the style.
   - `draw.curve`: A stroke: a ribbon of half-width `width(u)` along the curve, facing the camera, coloured by `paint` (unlit).
-  - `draw.points`: One copy of `thing` per point, each in its point's frame and scale.
+  - `draw.points`: One copy of a drawable `thing` (one that can be instanced) per point of `points`, each in its point's frame and scale.
   - `draw.posed`: One copy of `thing` per pose (`posed`, `posedList`): each turned by its own frame and scaled along each of its axes, normals turned with it; paint is told the copy's index and its world normal (`PaintAt`).
-  - `draw.field`: A distance field, sphere-traced inside its bounds (folded and recursive solids).
-  - `draw.relief`: Relief shell-traced on a surface, in its own coordinates (scales, spikes, barnacles).
-  - `draw.copies`: Listed copies of a simple solid, each intersected exactly per pixel (a fold run backwards: trees, coral, spines).
+  - `draw.field`: A solid given as a signed distance field, sphere-traced per pixel inside its bounds; suits folded and recursive solids.
+  - `draw.relief`: Height detail (scales, spikes, bumps) ray-marched in a thin shell over a surface, in the surface's own (u, v) coordinates.
+  - `draw.copies`: A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms.
   - `draw.density`: A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to the opaque scene, lit by the sun, the sky and flashes inside it (`src/soft/density.ts`).
 
 Types:
@@ -449,18 +390,14 @@ Types:
 
 draw.field: a solid defined by a distance function, sphere-traced per pixel inside a bound (docs/folding_and_tracing.md section 3.1).
 
-- **checkField**: Check a field the way compilation does: throws FieldSafetyError, or returns the measured constant.
-  `function checkField(name: string, field: Field, b: TraceBound): number`
-- **FieldDrawable**: (undocumented)
+- **FieldDrawable**: The `Drawable` that `draw.field` returns: a signed distance field sphere-traced per pixel inside its bounding box.
   `class FieldDrawable implements Drawable`
 - **fieldPixel**: The world size of one pixel at the point the field is evaluated at.
   `const fieldPixel: F`
-- **FieldSafetyError**: (undocumented)
+- **FieldSafetyError**: Raised at compile time when a `draw.field` field cannot be certified for sphere tracing: its measured Lipschitz constant is above 1 (steps could pass through the surface), or it calls a GPU-only function the CPU cannot sample.
   `class FieldSafetyError extends Error`
-- **LIPSCHITZ_LIMIT**: Largest sampled Lipschitz constant accepted.
-  `const LIPSCHITZ_LIMIT = 1.01`
-- **measureField**: The sampled Lipschitz constant of a field, worst over full detail and the coarsest detail in its bound.
-  `function measureField(field: Field, b: TraceBound): number`
+  cannot:
+  - Raised at compile time when a `draw.field` field cannot be certified for sphere tracing: its measured Lipschitz constant is above 1 (steps could pass through the surface), or it calls a GPU-only function the CPU cannot sample.
 
 Types:
 - **FieldOptions**: `type FieldOptions = { bounds, paint, steps, outline, schedule, safety? }`
@@ -471,9 +408,7 @@ Types:
 
 draw.relief: relief shell-traced on a surface, in the surface's own coordinates (docs/folding_and_tracing.md 3.3).
 
-- **drawRelief**: Relief shell-traced on a surface, in its own coordinates (scales, spikes, barnacles).
-  `function drawRelief(name: string, surface: Surface, o: ReliefOptions): ReliefDrawable`
-- **ReliefDrawable**: (undocumented)
+- **ReliefDrawable**: The `Drawable` that `draw.relief` returns: a height function ray-marched in a thin shell over a surface.
   `class ReliefDrawable implements Drawable`
 
 Types:
@@ -490,7 +425,7 @@ draw.surface: one drawable for every `Surface` (DESIGN.md 7.4).
   - `spacing.even`: (undocumented)
   - `spacing.ends`: Crowded toward both ends (2.5x denser there at the default), where tips close fast.
   - `spacing.from`: Even, from `start` to `start + 1` without wrapping (round a tube: a vertex on the line `start`, a seam that interpolates continuously).
-- **SurfaceDrawable**: (undocumented)
+- **SurfaceDrawable**: The `Drawable` that `draw.surface`, `draw.glazed` and `draw.curve` return: a (u, v) surface drawn as a grid in the vertex stage.
   `class SurfaceDrawable implements Drawable`
 
 Types:
@@ -505,10 +440,8 @@ Types:
 
 A scene says what things are; `compile` decides where each part is evaluated.
 
-- **scene**: (undocumented)
+- **scene**: Assembles a scene: a ground, the things drawn (each a `Drawable`), a style, a sun direction above the horizon, and optionally named cameras, an outline method and a loop period.
   `function scene(spec: SceneSpec): Scene`
-- **DEFAULT_OUTLINE**: (undocumented)
-  `const DEFAULT_OUTLINE: OutlineMethod`
 
 Types:
 - **OutlineMethod**: hull: every outlined surface drawn a second time, pushed out along its normal, front faces culled. screen: one full-screen pass after the scene finds the outlined surfaces' silhouettes in the depth (src/draw/ink.ts). `type OutlineMethod = "hull" | "screen"`
@@ -519,14 +452,14 @@ Types:
 
 What a scene stands on (DESIGN.md 13): a sea, a plane, or nothing.
 
-- **plane**: (undocumented)
+- **plane**: The ground choice for a flat floor at y = 0 that runs to the horizon, in the style's ground colour and receiving cast shadows; `scene({ ground: plane })`.
   `const plane: Plane`
   - `plane.kind`: (undocumented)
   - `plane.name`: (undocumented)
   - `plane.skeletons`: (undocumented)
   - `plane.surfaces`: (undocumented)
   - `plane.draws`: (undocumented)
-- **nothing**: (undocumented)
+- **nothing**: The ground choice for no floor at all: things hang in the style's sky and cast no shadows; `scene({ ground: nothing })`.
   `const nothing: Nothing`
   - `nothing.kind`: (undocumented)
   - `nothing.name`: (undocumented)
@@ -545,10 +478,8 @@ Types:
 
 compile(scene) -> Artefact.
 
-- **compile**: (undocumented)
+- **compile**: Compiles a `Scene` to an `Artefact`: the WGSL shaders, draw list, and tables a WebGPU host draws, plus the CPU functions that pose the per-frame tables.
   `function compile(scene: Scene): Artefact`
-- **compileScene**: (undocumented)
-  `function compileScene(scene: Scene): Compiled`
 
 Types:
 - **Compiled**: The artefact, and the compiler's own view of it, for checks, tests and the baker. `type Compiled = { artefact, frame, cpu, poseProfile, table, programs }`
@@ -558,13 +489,13 @@ Types:
 
 The compiler's extension interface (DESIGN.md section 4).
 
-- **drawSpec**: A draw with the defaults most draws share; each field still has to be meant.
+- **drawSpec**: Builds one `DrawSpec` (a draw call: label, shader, vertex count and its state) with the defaults most draws share.
   `function drawSpec(d: Pick<DrawSpec, "label" | "shader" | "vertices"> & Partial<DrawSpec>): DrawSpec`
 
 Types:
 - **Bakeable**: What the baker can evaluate. `type Bakeable = SurfaceBakeable | MeshBakeable`
-- **CompileContext**: `interface CompileContext { slots, style, ground, sun, sunAt, things, table, post, outline, markOut }`
-- **Drawable**: `interface Drawable { name, draws, skeletons, surfaces }`
+- **CompileContext**: What a `Drawable` is handed when it emits its shaders: the slots for inputs, params and tables, the scene's style, ground and sun, and every other thing in the scene. `interface CompileContext { slots, style, ground, sun, sunAt, things, table, post, outline, markOut }`
+- **Drawable**: Anything a scene can draw: a name, the shaders and draw calls it emits for a `CompileContext`, the shadow-casting chains it has, and the surfaces it offers for baking. `interface Drawable { name, draws, skeletons, surfaces }`
 - **DrawSpec**: A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. `type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; readonly detail: DetailSpec }`
 - **Emitted**: `type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] }`
 - **Phase**: When a draw runs. `type Phase = "background" | "opaque" | "on-bodies" | "water" | "on-water" | "transparent"`
@@ -576,9 +507,9 @@ Types:
 
 Slots: where each leaf of the expression graph lives at run time.
 
-- **emitFn**: A WGSL function for `sceneWgsl` (shared by every shader): its library functions go there too.
+- **emitFn**: Emits a WGSL function from expressions and returns its source, to be shared by every shader in the scene (its library functions go to the shared scene code).
   `function emitFn(slots: Slots, name: string, args: FnSpec["args"], out: string, roots: readonly Expr[], ret: FnSpec["ret"]): string`
-- **emitShaderFn**: A WGSL function for one shader module: the code, and the library functions it calls (for that module's `Shader`).
+- **emitShaderFn**: Emits a WGSL function from expressions for one shader module and returns its code and the library functions it calls (a `Shader`).
   `function emitShaderFn(slots: Slots, f: FnSpec): Shader`
 
 ### src/compile/tables.ts
@@ -587,6 +518,15 @@ Per-frame tables: the registry they are declared into (by expressions that `fetc
 
 - **TableBudgetError**: The scene's per-frame tables do not fit the storage buffers a shader stage can bind.
   `class TableBudgetError extends Error`
+
+### src/artefact.ts
+
+The contract between the compiler and a host.
+
+
+Types:
+- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, shaders, draws, post?, stages, tables, cpuPose, pose, cameras, loop?, stats }`
+- **Camera**: `type Camera = | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number } | { readonly kind: "orthographic"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, numbe...`
 
 ### src/draw/trace.ts
 
@@ -608,7 +548,7 @@ impostors: many copies of a sphere, capsule or rounded cone, one per cell of a l
 
 - **impostors**: Many copies of a simple shape, one per lattice cell, ray-cast per pixel by walking the cells the ray crosses.
   `function impostors(name: string, o: ImpostorOptions): Impostors`
-- **Impostors**: (undocumented)
+- **Impostors**: The `Drawable` that `impostors` returns: one sphere, capsule or rounded cone per cell of a lattice, ray-cast per pixel.
   `class Impostors implements Drawable`
 
 Types:
@@ -621,10 +561,8 @@ Types:
 
 draw.copies: a list of simple solids (spheres, capsules or rounded cones), each intersected exactly per pixel inside its own box (docs/tracing_sota.md 5.3).
 
-- **Copies**: (undocumented)
+- **Copies**: The `Drawable` that `draw.copies` returns: a static list of spheres, capsules or rounded cones, each intersected exactly per pixel.
   `class Copies implements Drawable`
-- **drawCopies**: Listed copies of a simple solid, each intersected exactly per pixel inside its own box.
-  `function drawCopies(name: string, o: CopiesOptions): Copies`
 
 Types:
 - **CopiesHit**: What `paint` sees at a hit: the point and normal (in the carrying frame's coordinates when carried, else the world's), and which copy it is on (its level and id, as when asked). `type CopiesHit = { readonly p: P3; readonly normal: P3; readonly level: F; readonly id: Expr<"vec3"> }`
@@ -640,7 +578,7 @@ Height functions of a surface's own coordinates (DESIGN.md 8): the layers of for
   `function segmentDistance(patch: Patch, u: F, v: F, a: UV, b: UV): F`
 - **pathDistance**: The distance from (u, v) to a polyline in (u, v), world units on the patch.
   `function pathDistance(patch: Patch, u: F, v: F, path: readonly UV[]): F`
-- **profile**: (undocumented)
+- **profile**: The falloff curve named by `p` at r in [0, 1], as an expression: 1 at the centre, 0 from r = 1 on (`bump` stamps use it).
   `function profile(p: Profile, r: F): F`
 - **bump**: A round stamp centred at `at` (in (u, v)), `radius` and `height` in world units.
   `function bump(patch: Patch, s: BumpSpec): Height`
@@ -682,10 +620,6 @@ A sculpt layer: a height function of (u, v) backed by a table (DESIGN.md 7.3, th
 
 - **sculptLayer**: A sculpt layer: `samples` (row-major, sample (i, j) at index i + nu * j, i along u, j along v) as a height function of (u, v), closed in the directions `wrap` names.
   `function sculptLayer(name: string, samples: ArrayLike<number>, size: readonly [number, number], o: { readonly wrap: Wrap }): Height`
-- **sampleGrid**: Samples of a function of (u, v) on the grid `sculptLayer` reads with the same size and wrap (a procedural bake).
-  `function sampleGrid(fn: (u: number, v: number) => number, size: readonly [number, number], o: { readonly wrap: Wrap }): Float32Array`
-- **SculptTable**: The table: one vec4 per sample, entry i + nu * j.
-  `class SculptTable implements FilledTable`
 
 ### src/relief/displace.ts
 
@@ -693,32 +627,6 @@ Displacement in the vertex stage, and the local frame a shell tracer needs: both
 
 - **displace**: The surface moved along its normal by `height(u, v)` (world units; negative goes in).
   `function displace(s: Surface, height: Height): Surface`
-- **shellFrame**: The shell frame of `s` at (u, v), by symbolic differentiation of its point and normal.
-  `function shellFrame(s: Surface, u: F, v: F): ShellFrame`
-
-Types:
-- **ShellFrame**: A surface and its first derivatives at a point: what the shell tracer's local model is made of. `type ShellFrame = { base, su, sv, n, nu, nv }`
-
-### src/relief/trace.ts
-
-Shell tracing in a surface's own coordinates (docs/folding_and_tracing.md 3.3), as expressions: the same march runs in the fragment stage and on the CPU (tests), so its accuracy is measured on the code that draws.
-
-- **firstRoot**: The smallest root > 0 of a t^2 + b t + c, or BIG when there is none.
-  `function firstRoot(a: F, b: F, c: F): F`
-- **shellModel**: (undocumented)
-  `function shellModel(fr: ShellFrame, uv0: Expr<"vec2">, ray: ShellRay): ShellModel`
-- **traceMarch**: March the shell: `steps` evenly spaced samples of f(t) = h(t) - H(u(t), v(t)) from the entry to the end of the span, the first sign change bracketed and refined by safeguarded regula falsi.
-  `function traceMarch(fr: ShellFrame, uv0: Expr<"vec2">, ray: ShellRay, height: Height, b: MarchBudget): Traced`
-- **tracePlain**: Relief below a pixel: no march.
-  `function tracePlain(fr: ShellFrame, uv0: Expr<"vec2">, ray: ShellRay, height: Height, ink: F): Traced`
-- **KIND**: (undocumented)
-  `const KIND = { miss: 0, ink: 0.5, hit: 1 } as const`
-
-Types:
-- **MarchBudget**: `type MarchBudget = { steps, refine, ink, detail }`
-- **ShellModel**: The local model of the shell along one ray: coordinates at distance t along it. `type ShellModel = { at, slide, c0, c1, c2 }`
-- **ShellRay**: The view ray where it enters the shell: `entry` on the shell's top at the pixel, `dir` a unit vector, `top` the shell's thickness. `type ShellRay = { readonly entry: P3; readonly dir: P3; readonly top: F }`
-- **Traced**: What a trace found. `type Traced = { kind, world, uvh, normal }`
 
 ### src/sun.ts
 
@@ -730,16 +638,40 @@ The sun's direction: fixed when the scene is written, or a host input a game or 
 Types:
 - **Sun**: `type Sun = | { readonly kind: "fixed"; readonly dir: V3 } /** `dir` is the input's default, a unit vector. */ | { readonly kind: "input"; readonly name: string; readonly dir: V3 }`
 
+### src/lib/noise.ts
+
+Hashing and noise.
+
+- **noise2**: Smooth gradient noise (quintic interpolation): range [-1, 1], exactly 0 at integer lattice points.
+  `const noise2 = (p: In<"vec2">): Expr<"f32"> =>`
+
+### src/lib/similar.ts
+
+Similarity folds with two readings (docs/tracing_sota.md 5.3).
+
+
+Types:
+- **Branch**: One listed branch: where it is, how deep, and the id `at` reports on it. `type Branch = Placed & { readonly level: number; readonly id: V3 }`
+
 ## Shapes (src/shapes.ts)
 
-everything that builds a shape or a place (strands, crests, fans, limbs, spirals, hulls, seas, soft media).
+everything that builds a shape or a place (strands, sheets, fans, chains, coils, seas, soft media).
 
 ### src/geom/strand.ts
 
 A strand: the library form of a sweep (src/map/sweep.ts) with a look.
 
-- **strand**: Canonicalise a strand spec: every default is decided here, once.
+- **strand**: A swept body: a section carried along a spine.
   `function strand(spec: StrandSpec): Strand`
+  cannot:
+  - a section that is not a superellipse: no keel, no flat belly with a round back, no ridges round it, no hole.
+  - branch: one spine, two ends (a fork is two strands meeting).
+  - fold back on itself sharply: the section is perpendicular to the spine, so a bend tighter than the girth pinches.
+  - change topology in time (split, merge).
+  relatives:
+  - a profile turned round a fixed axis instead of carried along a spine: `lathe` (a vase, a bead, a dome).
+  - sections that are not one shape scaled, blended from one to the next: `loft` through them.
+  - a section on a growing spiral, all lengths scaling together: `coil`; a tapered tube on a flat spiral: `spiralTube`.
 - **Strand**: A swept body that draws itself.
   `class Strand extends Body implements Drawable`
 
@@ -749,65 +681,60 @@ Types:
 - **PaintSpec**: A colour, or colour as a function of body coordinates. `type PaintSpec = Rgb | Paint`
 - **Rgb**: `type Rgb = readonly [number, number, number]`
 
-### src/geom/crest.ts
-
-A crest: a sheet standing on a curve drawn in a body's coordinates (a dorsal fin, a frill).
-
-- **crest**: (undocumented)
-  `function crest(spec: CrestSpec): SurfaceDrawable`
-
-Types:
-- **CrestSpec**: `type CrestSpec = { on, from, to, height, v?, paint, sag?, rays?, rake?, flutter?, name, rows? }`
-
 ### src/geom/sea.ts
 
-The sea: the root chart, local (x, z, height above the surface) with a swell that moves in time, and the water drawn as a glazed `Surface` in that chart.
+The sea: one of the grounds, and a chart, local (x, z, height above the surface), with a swell that moves in time; the water is drawn as a glazed `Surface` in that chart.
 
-- **sea**: (undocumented)
+- **sea**: A moving water surface over the xz plane: a sum of travelling sine waves, deformed by maps of the plane.
   `function sea(spec: SeaSpec): Sea`
-- **Sea**: (undocumented)
+  cannot:
+  - sharp crests and wide troughs: a sum of sines is as round on top as below, and points only rise and fall, never move sideways (no trochoidal, Gerstner, profile).
+  - break, curl or overhang: the surface is a height over each point of the plane.
+  - keep wave speed and length physically tied: `speed` is free, so short waves may outrun long ones; deep water would have speed = sqrt(g length / 2 pi).
+  - change in time other than travelling: a swell does not grow, die out, or turn, and never ends at a shore.
+  - depth: there is no bottom and nothing beneath the surface but what shows through it.
+  relatives:
+  - move points sideways as well as up, x' = x + sum_i d_i a_i cos(phase_i): Gerstner waves, sharp crests and flat troughs (they fold over themselves once k a passes 1).
+  - tie speed to length by the dispersion relation, w_i = sqrt(g k_i): a group of swells then disperses as real water.
+  - an amplitude that is a function of x (a slow envelope): a swell that fades behind a headland or grows over a shoal.
+  - a radially symmetric deformation in closed form: `whirlpool` (a twist and an inward drift, integrated exactly) and `ringWave` (one crest and its trough running outward).
+- **Sea**: A sea, made by `sea`: at once a ground that draws itself (kind "sea", the moving, see-through one beside `plane` and `nothing`) and a chart, (x, z, height above the surface), so things are placed on the water by its coordinates.
   `class Sea implements Chart, Drawable`
+  cannot:
+  - It cannot overhang: the surface is a height over each point of the plane, one sheet, so a crest never curls over a trough.
 
 Types:
 - **SeaSpec**: `type SeaSpec = { swell, deform?, reach?, foam? }`
 - **SwellSpec**: `type SwellSpec = { direction, length, height, speed, phase? }`
 - **SeaDeform**: A deformation of the sea (a whirlpool, src/geom/whirlpool.ts): a map of the sea plane that is exactly the identity outside its reach. `interface SeaDeform { toLocal, dip, rise, calm, look, reaches }`
 
-### src/geom/limb.ts
-
-A limb: two or three straight segments from a root toward a foot target, posed by closed-form inverse kinematics (the law of cosines), so a leg is an expression of its root and its target and needs no solver state.
-
-- **limb**: (undocumented)
-  `function limb(spec: LimbSpec): Limb`
-- **polyline**: Piecewise-linear through points at arc fractions `knots` (increasing, 0 to 1).
-  `function polyline(m: F, points: readonly P3[], knots: readonly F[]): P3`
-- **unit**: A unit vector along v; a zero vector stays (nearly) zero instead of becoming NaN.
-  `const unit = (v: P3): P3 =>`
-
-Types:
-- **Limb**: `type Limb = { joints, knots, spine }`
-- **LimbSpec**: `type LimbSpec = { root, target, lengths, bend, foot? }`
-
 ### src/geom/fan.ts
 
 A fan: a membrane spanned between rays (a wing, a tail fluke, a frill).
 
-- **fan**: (undocumented)
+- **fan**: A membrane spanned between rays: a wing, a tail fluke, a frill, a gill, an umbrella's cloth, a webbed foot.
   `function fan(spec: FanSpec): Surface`
-- **rayOf**: A body's spine as a ray (its centre line at v on the dorsal side), so a fan can be spanned between flexing bodies.
+  cannot:
+  - cloth that is not between neighbouring rays: no membrane past the outer rays, none skipping a ray.
+  - a gap whose profile is not a catenary, or a belly that differs between gaps (one `sag` for all).
+  - a free edge anywhere but at the tips (v = 1): no cloth that stops short of a ray's end.
+  - a root edge: every ray starts at v = 0 and the cloth runs right to it.
+- **rayOf**: A body's centre line as a curve m -> point (m from 0 at its root to 1 at its tip), so a `fan` can be spanned between flexing bodies: the point is `body.frame(vec3(m, v, 0)).o`, which moves as the body moves.
   `const rayOf = (body: Chart, v = 0.25): Curve =>`
-- **catenary**: The catenary across a gap, normalised: 0 at f = 0 and f = 1, 1 at the middle.
+  cannot:
+  - It cannot put the ray off the centre line: in a body's coordinates (m, v, rho) the third is the share of the way from the centre line to the skin, here 0, so `v` changes nothing.
+- **catenary**: The catenary across a gap, normalised: the curve a hanging cloth or chain takes, 0 at f = 0 and f = 1 and 1 at the middle, (cosh(k / 2) - cosh(k (f - 1/2))) / (cosh(k / 2) - 1).
   `function catenary(f: F, k: number): F`
+  cannot:
+  - It cannot be lopsided: the ends are at the same height, so a chain hung between points at different heights needs the catenary shifted off centre, which this does not do.
 
 Types:
 - **FanSpec**: `type FanSpec = { rays, sag, scallop, slack? }`
 
 ### src/geom/spiral.ts
 
-Shells, horns, claws, teeth and tusks as one family: a cross-section growing along an equiangular (logarithmic) spiral, every length scaling together, so the form is self-similar (Raup 1966).
+Shapes on an equiangular (logarithmic) spiral, every length scaling together so the form is self-similar (Raup 1966).
 
-- **shell**: The shell's surface, apex at the origin and spire along +y, aperture toward -y: (u, v) with u from apex to aperture and v once round the section (0 the outer side).
-  `function shell(spec: ShellSpec): Surface`
 - **spiralTube**: A tapered tube on an equiangular (logarithmic) spiral.
   `function spiralTube(spec: SpiralTubeSpec): Strand`
   cannot:
@@ -820,36 +747,105 @@ Shells, horns, claws, teeth and tusks as one family: a cross-section growing alo
   - theta growing as m^2 (a clothoid): straight at the root, curling faster and faster: a fern head, a tendril, a scorpion's tail. No closed form: sample it once with `tabulate`, or lay it through points with `through`.
   - radius from the axis growing by a fixed step per turn (Archimedes' spiral): turns evenly spaced, a rope coil or a watch spring, where this one's turns crowd toward the tip.
   - theta = curl * sin(pi m) or any curve of your own: S-bends and hooks.
-- **spiralLine**: `spiralTube`'s centre line, its radius along it and its up direction, named as `strand` takes them, so the tube is never a dead end (see `spiralTube` for the law, its limits and its relatives).
+- **spiralLine**: `spiralTube`'s centre line, its radius along it and its up direction, named as `strand` takes them, so the tube is never a dead end (see `spiralTube` for the law and its relatives).
   `function spiralLine(spec: Pick<SpiralTubeSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 }`
-- **whorl**: Growth-line coordinate of a shell point: whorls from the apex, for painting bands and ridges in its own coordinates.
+  cannot:
+  - curl that does not follow the taper: the heading is ln(1 + m (taper - 1)) / k, tied to the radius.
+  - a sideways run other than `twist` m^2: no helix of constant pitch.
+  - a radius that is not linear in m: girth (1 + m (taper - 1)).
+  - an up direction that turns: `up` is the fixed normal of the curl's plane.
+- **whorl**: Whorls from the apex at whorl position u of a coil of `turns` (u turns): a coordinate along the growth of a coil, for paint, so a band at a whole number of whorls follows one turn of the coil.
   `const whorl = (u: F, turns: number): F =>`
-- **ridgePhase**: 0..1 within each of `perTurn` ridges per whorl, for paint that follows the folded ridges.
+  cannot:
+  - It cannot follow growth lines that are not evenly spaced in u: it counts turns, not the coil's size.
+- **ridgePhase**: Where u lies within the ridges of a coil's section: fract(u turns perTurn), 0 between two ridges and 0.5 on a ridge's crest, so paint can darken ridges or the furrows between them in step with `coil`'s `ridges`.
   `const ridgePhase = (u: F, turns: number, perTurn: number): F =>`
+  cannot:
+  - It cannot follow ridges of a section function of your own: it matches `coil`'s ridges of `perTurn` per whorl only.
+- **coil**: A coil: a section carried round an axis while every length grows by the same factor each whorl (Raup 1966), so the form is self-similar.
+  `function coil(spec: CoilSpec): Surface`
+  cannot:
+  - growth that changes along the coil (a shell that stops growing, a coil that tightens late): W is one number.
+  - a pitch that does not grow with the coil: the drop is T times the distance from the axis, so W = 1 (a spring, a helix of constant pitch) is excluded, and a flat spiral is T = 0, never a gently rising one with constant step.
+  - turns spaced evenly (a rope coil, a watch spring): in a logarithmic spiral the turns crowd toward the apex.
+  - an axis that bends (a shell that uncoils, Spirula's open hook, a corkscrew whose axis wanders).
+  - a mouth: the tube ends at u = 1 with an open rim; no lip rolled outward, no throat.
+  relatives:
+  - growth as a function of u: s = exp(turns * integral of ln W), so a coil that slows its growth and closes its mouth. Write s yourself in a `surface`; the rest of `coilAt` is three lines.
+  - drop decoupled from growth: along = -T c s + p u (an added pitch p): a helix when W = 1, a rising flat spiral at T = 0.
+  - Archimedes' spiral: distance from the axis c + k theta, size fixed: evenly spaced turns.
+  - an axis that is itself a curve: a `strand` whose spine is your coil's centre line, `spiralLine` for one in a plane.
+- **coilAt**: `coil`'s law without its section: the point `across` away from the axis and `along` up it from the section's centre, at whorl position u (0 apex, 1 aperture; any expression), in world units at the aperture's scale.
+  `function coilAt(law: CoilLaw): (u: F, across: F, along: F) => P3`
+  cannot:
+  - grow, turn or drop by amounts that change in time or along u: `turns`, `growth`, `umbilicus` and `spire` are numbers, not expressions (write s yourself in a `surface` for growth as a function of u).
+  - coil without growing: growth must be above 1 (it throws), so a helix of constant radius is not this law.
+  - leave its axis: the axis is y through the origin; place the result in a chart to move it.
+- **coilPlan**: `coil`'s law in plain numbers, on the CPU, for checks and placement: where a whorl's section is hidden inside the next one out, and which whorls hold a point.
+  `function coilPlan(spec: CoilLaw & { readonly aspect?: number }):`
+  cannot:
+  - It cannot see a section of your own: it reasons about the ellipse of `aspect` alone, without ridges or a section function, and the arc it finds is sampled (720 steps, then bisected), so a covered arc narrower than half a degree may be missed.
+- **COIL_TOPOLOGY**: The (u, v) layout of a `coil`, for `surface((u, v) => coilAt(law)(u, ...), COIL_TOPOLOGY)`: u from the apex (0, an edge closed by a flat disc when the surface is made solid; the coil is tiny there) to the aperture (1, a free open rim), v once round the section and glued to itself.
+  `const COIL_TOPOLOGY = { u: ["cap", "free"], v: "periodic" } as const satisfies Topology`
+  cannot:
+  - It cannot describe a coil whose mouth is closed or whose apex ends in a point: give your own `Topology` (`pole` at that end) for those.
 
 Types:
-- **ShellSpec**: `type ShellSpec = { turns, growth, aperture, umbilicus, spire, aspect?, coil?, ridges? }`
 - **SpiralTubeSpec**: `type SpiralTubeSpec = { name, length, curl, taper, girth, out, toward, twist?, paint, detail? }`
+- **CoilLaw**: Raup's coiling law: how a coil grows, turns and drops, apart from its section. `type CoilLaw = { turns, growth, aperture, umbilicus, spire, hand? }`
+- **CoilSection**: A coil's section at whorl position u and angle phi round it, counterclockwise from the outer side (phi = 0, away from the axis) toward the spire (a quarter turn): an ellipse `aspect` tall with growth `ridges` folded in, or any closed curve of your own, (u, phi) => [across, along] in world units at the aperture's scale (across away from the axis, along up the axis, both from the section's centre). `type CoilSection = | { readonly aspect?: number; readonly ridges?: { readonly perTurn: number; readonly height: number } } | ((u: F, phi: F) => readonly [F, F])`
+- **CoilSpec**: `type CoilSpec = CoilLaw & { /** Default an ellipse of aspect 1 (a round section) without ridges. */ readonly section?: CoilSection`
 
 ### src/geom/symmetry.ts
 
 Bilateral pairs and rows.
 
-- **mirror**: The mirror image of a part across z = 0 of its own coordinates, as a new part named `name`.
+- **mirror**: The mirror image of a part across the z = 0 plane of its own coordinates, as a new part named `name`: the other half of a bilaterally symmetric pair.
   `function mirror(part: Strand, name: string): Strand`
-- **array**: `count` copies of a part, copy i placed in `placement(i)` (rigid charts such as `on(host, [m, v, rho])`) and named `<name>_<i>`.
+  cannot:
+  - move differently from its original: both read the same time and inputs, so a gait's opposite phase or a different pose on the other side must be built into the part before mirroring (build each side from a function of its side).
+  - reflect across any plane but z = 0 of the part's own coordinates: build the part so its plane of symmetry is there.
+  - mirror a time slice of a strand, or the instances of an instanced drawable (it throws).
+  relatives:
+  - a turn instead of a reflection (rotational symmetry, a flower, a wheel's spokes): `array` with placements turned by 2 pi i / n.
+  - a reflection followed by a shift along the plane (glide symmetry, footprints): `array` placing the mirrored part at alternate stations.
+  - reflection through a point, p -> -p (central symmetry): a `surface` of your own reading -point(u, v).
+- **array**: `count` copies of a part in a row of charts: ribs along a body, legs down a side, posts along a path.
   `function array(part: Strand, count: number, placement: (i: number) => Chart): Strand[]`
-- **reflect**: Reflection across z = 0.
+  cannot:
+  - vary the shape by i (longer ribs toward the middle, a thinner last leg): build the parts yourself in a loop.
+  - be cheap in large numbers: each copy is its own drawable and draw; many identical copies want instancing.
+  - copy the instances of an instanced drawable, or a count that changes at run time.
+  relatives:
+  - placements turned about an axis by 2 pi i / count: rotational symmetry (petals, spokes, a crown of spikes).
+  - placements at stations along a body's spine, `on(body, [i / (count - 1), v, 1])`: a row that bends with the body.
+  - placements alternating `mirror`ed parts: left and right legs in pairs.
+- **reflect**: Reflection of a point across the plane z = 0: (x, y, z) to (x, y, -z).
   `const reflect = (p: P3): P3 =>`
+  cannot:
+  - It cannot reflect across any other plane: compose it with your own placement for that.
 
 ### src/geom/whirlpool.ts
 
 A whirlpool is a deformation of the sea (DESIGN.md 8.3): a chart of the sea plane whose twist accumulates with time and is faster toward the centre, with an inward drift and a funnel, and which is exactly the identity beyond its radius.
 
-- **whirlpool**: (undocumented)
+- **whirlpool**: A whirlpool on a sea: water inside a disc turned and drawn inward, faster toward the centre, over a funnel that dips below the surface, with foam arms winding in.
   `function whirlpool(spec: WhirlpoolSpec): Whirlpool`
-- **Whirlpool**: (undocumented)
+  cannot:
+  - turn without drawing in: drift must be positive, or the paths are circles and the coordinates above do not exist.
+  - push water outward (a boil, a spring): the clock only runs inward.
+  - wander, grow, spin up or die away: centre, radius, spin and depth are numbers, not expressions.
+  - an off-round or leaning funnel, or a rim raised above the sea: it only dips, the same at every angle.
+  - a hole: the funnel is a height of the sea, so it has a bottom at `depth` and never overhangs.
+  relatives:
+  - omega(L) of your own (any function vanishing fast as L grows): a vortex with a solid-turning core, a Rankine-like profile; eta keeps the form angle - integral of omega / c.
+  - c a function of t (integrate it once, xi = L + C(t)): a whirlpool that opens and closes.
+  - the same characteristic construction on a line instead of a circle (L along a channel, the turn a sideways shear): a rip current or a mill race.
+  - a ring that runs outward instead of turning: `ringWave`.
+- **Whirlpool**: A whirlpool, made by `whirlpool`: a deformation a `sea` takes (`sea({ deform: [pool] })`), a map of the sea plane that turns and draws the water inward and is exactly the identity beyond `radius`.
   `class Whirlpool implements SeaDeform`
+  cannot:
+  - It cannot be used alone: it draws nothing until a sea takes it.
 - **PoolChart**: The whirlpool's chart on its sea.
   `class PoolChart implements Chart`
 
@@ -858,12 +854,23 @@ Types:
 
 ### src/geom/afloat.ts
 
-Afloat: a rigid placement on the water whose height, pitch and roll come from the water under the hull, so a ship rides the swell (or a whirlpool's funnel wall) with no animation code of its own.
+Afloat: a rigid placement on the water whose height, pitch and roll come from the water under it, so a floating thing rides the swell (or a whirlpool's funnel wall) with no animation code of its own.
 
-- **afloat**: Float something on the water: a rigid placement that rides the surface under it.
+- **afloat**: A rigid placement that floats on water: its height, pitch and roll are read from the surface under it, so it rides a swell, a whirlpool's funnel wall or a passing ring wave with no motion of its own.
   `function afloat(w: Waters, spec: AfloatSpec): Chart`
-- **afloatFrame**: The placement's frame, as expressions: origin on the waterline amidships, x the bow, y up, z starboard.
+  cannot:
+  - respond with weight or inertia: it sits exactly on the water now, with no lag, no bobbing after a wave passes, no sinking deeper when loaded.
+  - see water shorter than itself: a wave whose length is near `length` or `beam` puts samples on crest and trough alike, and the thing sits level or jerks; detail between the four points is not seen at all.
+  - be pushed by the water: where it is comes from `at` (and a whirlpool's carry), never from the slope or a wave.
+  - tilt about anything but the sampled axes, or bend: it is one rigid frame.
+  relatives:
+  - more samples, with the plane fitted to them by least squares: a long thing on short waves, averaged instead of aliased.
+  - the frame read at an earlier time, height(xz, t - lag), and blended with the present (`blendFrames`): a heavy thing that lags and overshoots the swell.
+  - `at` driven by the water's own velocity (a whirlpool chart's `drift`, a ring wave's `pushed`): flotsam that drifts.
+- **afloatFrame**: `afloat`'s frame without the chart: origin at the water level under the thing's centre, x forward, y up, z to the right, all expressions.
   `function afloatFrame(w: Waters, spec: AfloatSpec): Frame`
+  cannot:
+  - It cannot see the water between its four samples, nor lag behind it: it is the surface's tilt now, under those four points.
 
 Types:
 - **AfloatSpec**: `type AfloatSpec = { at, heading, length, beam, lift?, wind? }`
@@ -873,97 +880,67 @@ Types:
 
 A closed-form frame as a rigid chart: a creature's root (hovering, walking a course) is a Frame of expressions, and its parts are authored in that frame's coordinates and placed with `rigid(frame)`, so mirroring them across the creature's own z = 0 plane (`mirror`, before placing) is a mirror across its sagittal plane wherever it is.
 
-- **rigid**: (undocumented)
+- **rigid**: A chart that carries local coordinates rigidly with one frame: everything built in it moves and turns together, keeping its shape.
   `function rigid(g: Frame): Chart`
-
-### src/geom/hull.ts
-
-A hull from its lines, the way a naval architect's lines plan defines one: a sheer line (the deck edge's height along the length), a half-breadth plan (how wide each station is), a keel profile, and a body plan (the shape of each section).
-
-- **hull**: (undocumented)
-  `function hull(spec: HullSpec): Hull`
-- **Hull**: (undocumented)
-  `class Hull`
-
-Types:
-- **HullSpec**: `type HullSpec = { length, beam, depth, freeboard, sheer?, castle?, entry?, run?, widest?, fullness?, deadrise?, tumblehome?, transom?, rake?, stations?, bulwark? }`
-- **HullLook**: `type HullLook = { hull, ports }`
-- **Lines**: Every number of the lines decided. `type Lines = { readonly [K in keyof HullSpec]-?: Exclude<HullSpec[K], undefined> }`
-- **Station**: A station: its place along the length (u) and its section curve (v round the section). `type Station = { readonly u: number; readonly curve: (v: F) => P3 }`
-
-### src/geom/ship.ts
-
-A sailing ship from a couple of dozen named numbers (DESIGN.md 8.2).
-
-- **ship**: (undocumented)
-  `function ship(spec: ShipSpec): Ship`
-- **Ship**: (undocumented)
-  `class Ship`
-
-Types:
-- **ShipSpec**: `type ShipSpec = HullSpec & { /** An identifier: it prefixes every part's name. */ readonly name: string`
-- **ShipColours**: `type ShipColours = { hull, spar, team }`
-- **Placement**: `type Placement = { at, heading, wind }`
-
-### src/geom/lines.ts
-
-Many straight ropes as one stroke: standing rigging, ratlines, stays.
-
-- **lines**: All of `ropes` as one stroke.
-  `function lines(given: string, ropes: readonly Rope[], spec: LinesSpec): Drawable`
-
-Types:
-- **Rope**: One rope: from a to b, sagging by `sag` (world units, at its middle, downward). `type Rope = { readonly a: P3; readonly b: P3; readonly sag: number }`
-- **LinesSpec**: `type LinesSpec = { width, colour, segments? }`
-
-### src/soft/gauss.ts
-
-The closed forms soft things are made of: the optical depth of a Gaussian density along a straight ray.
-
-- **erfcPos**: erfc(z) for z >= 0 (Numerical Recipes `erfcc`, fractional error < 1.2e-7).
-  `function erfcPos(z: number): number`
-- **gaussRay**: int_{t0}^{t1} exp(-|O + D t|^2) dt (O, D given as 4 components; pass 0 for unused ones), with the centroid of the integrand on the segment and a spread. t1 <= t0 gives 0 (and the centroid t0).
-  `function gaussRay(O: readonly number[], D: readonly number[], t0: number, t1: number): Seg`
-- **gaussTail**: int_0^infinity exp(-|O + D t|^2) dt, 3 components (toward the sun from a point).
-  `function gaussTail(O: readonly number[], D: readonly number[]): number`
-- **gseg**: int_a^b exp(-x^2) dx for a <= b, accurate in the tails.
-  `function gseg(a: number, b: number): number`
-- **gtail**: int_a^infinity exp(-x^2) dx.
-  `function gtail(a: number): number`
-- **GAUSS_WGSL**: The same functions in WGSL.
-  `const GAUSS_WGSL = /* wgsl */ ``
-- **FAR**: An optical depth's own ray never reaches further than this (a stand-in for infinity in "toward the sun").
-  `const FAR = 1e4`
-- **SIMPSON**: Below this s L the segment integral uses Simpson's rule (relative error of the closed form there would be ~1e-5).
-  `const SIMPSON = 0.05`
-
-Types:
-- **Seg**: What a segment integral returns: unit-density optical depth, its centroid along the ray, and its spread (one sigma). `type Seg = { tau: number; tc: number; spread: number }`
+  cannot:
+  - bend, twist or stretch what it carries: every point gets the same axes (give axes that are not unit and perpendicular and it scales and shears instead, silently).
+  - follow a surface: a part reaching off the frame's origin does not touch the ground or the water there.
+  relatives:
+  - a frame that turns along one coordinate: `bent`, a stalk whose heading turns away from its root's.
+  - local coordinates scaled per axis before placing: `sized` (squash and stretch as one).
+  - a frame read off a surface under the thing: `afloat` tilts it by the water's heights at four points.
 
 ### src/soft/medium.ts
 
 A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by the sun, the sky and any flashes inside it.
 
-- **bank**: A fog bank: a layer that ends at a soft vertical wall.
+- **bank**: A fog bank: a horizontal `layer` that ends at a soft vertical wall, clear air on one side.
   `function bank(b: BankSpec): Bank`
-- **blob**: A Gaussian blob.
+  cannot:
+  - move or bend its edge: the wall is a fixed straight vertical plane.
+  - have more than one edge: a strip or a patch of fog is several banks (each a separate wall), or blobs.
+  - lean: the wall is vertical, a fog that rolls over a cliff edge is not one.
+- **blob**: One soft puff of a volume: a Gaussian density about a centre, the brick every cloud, plume and puff of smoke in a `medium` is built from.
   `function blob(b: BlobSpec): Blob`
-- **flash**: A flash inside the medium.
+  cannot:
+  - turn: the radii lie along the world axes, so an ellipsoid tilted off them (a leaning plume) is not one blob.
+  - have an edge: it fades smoothly for ever (cut at 3.6 radii for culling); a crisp silhouette comes only from many small dense blobs together, or from the drawable's noise detail.
+  - be anything but convex and single-peaked: a hollow, a ring or a long thin streak is many blobs.
+  - shade itself in full: the light it gets from the sun through the other blobs is computed at two points on the CPU each frame (one radius either side of its centre), so shading within one large blob is approximate.
+  relatives:
+  - a Gaussian in one coordinate only, unbounded in the others: `layer` (fog in height).
+  - the same, cut off past a plane by a second Gaussian factor: `bank`.
+  - a Gaussian tube along a segment (exp of the squared distance to a line, times a Gaussian along it): a streak of smoke or a contrail, whose ray integral is a two-dimensional Gaussian and so still closed form; not built here.
+- **flash**: A light inside a medium: a point that lights the puffs around it, as a lightning stroke lights a cloud from within.
   `function flash(f: { readonly at: In<"vec3">; readonly power: In<"f32">; readonly colour: readonly [number, number, number]; readonly reach: number }): Flash`
-- **layer**: A horizontal fog layer: a Gaussian in height, unbounded across (ground fog, haze).
+  cannot:
+  - light within a blob: each blob gets one light value, at its centre, so a large blob is lit evenly by a flash touching its edge.
+  - shine on anything but its medium: bodies, the ground and the water are not lit by it (a `skyFlash` or a `glow` does that part).
+  - be a line: a lightning channel is one point here; several flashes along a `bolt` stand in for a line.
+  - cost nothing: each frame the CPU traces from every blob to every flash.
+- **layer**: A horizontal fog layer: a density that depends on height alone, unbounded across.
   `function layer(l: LayerSpec): Layer`
-- **medium**: Build a medium.
+  cannot:
+  - stop anywhere across: it is the same at every x and z out to the medium's bounds; for an edge use `bank`.
+  - lie on a slope or follow the ground: it is level, a Gaussian in world height.
+  - have structure inside it (wisps, holes): only the drawable's noise detail breaks it up.
+  relatives:
+  - a layer that stops at a soft vertical wall: `bank`.
+  - a layer whose height is a function of x and z (fog lying in a valley): the exponent is then not quadratic along a ray, so no longer closed form; approximate with many blobs.
+- **medium**: A soft volume: blobs, fog layers and fog banks summed into one density, lit by the sun, the sky and flashes inside it, drawn by `draw.density`; glows behind or inside it name it as their veil and are dimmed by it.
   `function medium(name: string, parts: { readonly puffs?: readonly Puff[]; readonly banks?: readonly Bank[]; readonly flashes?: readonly Flash[] }): Medium`
+  cannot:
+  - be empty of blobs: fog alone needs one blob (of density 0).
+  - have blobs appear, split or vanish: the count is fixed; fade one in or out by its density.
+  - be cheap in large numbers: the light pass is O(N^2) on the CPU every frame, and each pixel loops over the blob clusters its ray meets; hundreds of blobs, not tens of thousands.
+  - cast shadows on bodies or the ground, or be lit by anything but the sun, the sky and its own flashes.
+  - draw outside its box: `draw.density` integrates only within `bounds` (keep it 3 radii past every puff; `cloud` and `billows` return one, and `unionBox` joins several).
+- **unionBox**: The smallest axis-aligned box holding all of `boxes`: the bounds of a medium made of several clouds, each with its own box.
+  `function unionBox(boxes: readonly Box[]): Box`
+  cannot:
+  - It cannot take an empty list (it throws), and it holds the boxes, not what is in them: two far-apart clouds give one large box, every pixel of which runs the medium's shader.
 - **Medium**: A soft volume.
   `class Medium`
-- **tauFunction**: `fn <fn>(o, d, t0, t1) -> f32`: the medium's whole optical depth along a ray segment (every blob, layer and bank, no lighting).
-  `function tauFunction(m: Medium, fn: string, acc: MediumAccess): { readonly code: string; readonly libs: readonly LibFn[] }`
-- **unionBox**: The union of boxes.
-  `function unionBox(boxes: readonly Box[]): Box`
-- **GAUSS_LIB**: The closed forms as a library entry, so every module that integrates a medium carries them once.
-  `const GAUSS_LIB: LibFn`
-- **BANK_LIB**: (undocumented)
-  `const BANK_LIB: LibFn`
 
 Types:
 - **Bank**: A fog layer with a soft vertical edge: fog where s <= 0, s = n . `type Bank = { layer, normal, through, softness }`
@@ -972,47 +949,81 @@ Types:
 - **Box**: The axis-aligned box a volume is drawn in (and integrated over). `type Box = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }`
 - **Flash**: A light inside the medium: where, how bright (an expression of time; 0 is off), its colour and reach. `type Flash = { readonly at: P3; readonly power: F; readonly colour: readonly [number, number, number]; readonly reach: number }`
 - **LayerSpec**: `type LayerSpec = { height, thickness, density, colour }`
-- **MediumTables**: The tables of a medium (for one sun direction). `type MediumTables = { blobs, clusters, layers, banks }`
 - **Puff**: `type Puff = Blob | Layer`
 
 ### src/soft/density.ts
 
 draw.density: a medium integrated per pixel in closed form (no marching, no sorting of primitives).
 
-- **DensityDrawable**: (undocumented)
+- **DensityDrawable**: The `Drawable` that `draw.density` returns: a medium (puffs, fog banks) integrated along each view ray and lit by the sun and sky.
   `class DensityDrawable implements Drawable`
-- **boxVertexWgsl**: Box vertex stage shared by the soft volumes: back faces at depth 0, the world point as a varying.
-  `function boxVertexWgsl(b: Box): string`
 
 ### src/soft/cloud.ts
 
-Clouds from a handful of numbers: a billowing mass of Gaussian puffs in a shape of revolution, three tiers of puff size (a few big ones fill the core, medium ones make the lobes, many small ones roughen the surface: the cauliflower look of cumulus), a flattened base, boiling from noise and a drift.
+Clouds: masses of Gaussian puffs that boil and drift, in closed form of time.
 
-- **cloud**: A billowing mass of puffs.
+- **cloud**: A billowing mass of puffs: a cumulus, a tower under an anvil, a bank of smoke or steam.
   `function cloud(spec: CloudSpec): Cloud`
-- **thunderhead**: A thunderhead: a broad dark-based tower under a wide anvil, boiling slowly.
-  `function thunderhead(t: ThunderheadSpec): Cloud`
-- **hashUnit**: A hash of (seed, i, k) to [0, 1): integer arithmetic only (pure, the same everywhere).
-  `function hashUnit(seed: number, i: number, k: number): number`
+  cannot:
+  - a mass that is not a star-shaped solid about one vertical axis: no hole (a smoke ring), no arch, no overhang under a lobe, no second tower.
+  - follow a curve: no trail, no column bent by wind, no plume from a chimney.
+  - change shape in time beyond boiling in place: it does not grow, tower up or tear apart.
+  - tiers or flattening of your own: the cumulus recipe is fixed.
+  relatives:
+  - a smoke ring: places round a circle in a vertical plane (a torus of puffs), drifting along its axis.
+  - a trail or plume: places along any curve (smoke from a chimney bent by wind), radii growing along it.
+  - puffs on a surface: places at points of a body (steam rising off it).
+  - a different law entirely: `blob` is one puff and `medium` integrates any list of them; layers and banks (`layer`, `bank`) are the flat relatives.
+- **billows**: Puffs that boil and drift, from places you choose: `cloud`'s motion without its shape, so any arrangement of blobs (a ring, a plume, steam off a body) moves like a cloud.
+  `function billows(places: readonly PuffPlace[], motion: BillowSpec): Cloud`
+  cannot:
+  - move a puff along a path of its own (rising, spreading, swirling): every puff has the same drift, and the wander is about its place, never away from it.
+  - grow, fade or be born: radii and densities only breathe about their values, and the count is fixed.
+  - stay in its bounds after `seconds`: past that, the drift carries puffs out of the box and they are cut off.
+  relatives:
+  - places filling a shape of revolution in tiers: `cloud`.
+  - places round a circle in a vertical plane, drifting along its axis: a smoke ring.
+  - places along a curve, radii growing along it: a plume or a trail.
 
 Types:
 - **Cloud**: What a cloud builder returns: its puffs, and the box they stay inside for `seconds`. `type Cloud = { readonly puffs: readonly Puff[]; readonly bounds: Box }`
 - **CloudSpec**: `type CloudSpec = { at, size, profile, blobs, turbulence, billow, drift, density, colour, seed, seconds }`
-- **ThunderheadSpec**: `type ThunderheadSpec = { at, height, width, blobs, seed, drift, seconds }`
+- **BillowSpec**: How puffs boil and drift: `CloudSpec`'s motion and colour. `type BillowSpec = Pick<CloudSpec, "turbulence" | "billow" | "drift" | "colour" | "seed" | "seconds">`
+- **PuffPlace**: One puff before it moves: its centre, its 1/e radii per axis and its peak extinction per world unit. `type PuffPlace = { readonly at: V3; readonly radii: V3; readonly density: number }`
 
 ### src/soft/glow.ts
 
 Glows: light around curves, as a falloff of the distance from each pixel's view ray to the curve.
 
-- **flare**: A point of light: a hot centre, a halo and (optionally) a star of thin rays.
+- **flare**: A point of light: a hot centre, a halo and (optionally) a star of thin rays, additive, seen through a medium and hidden by bodies in front.
   `function flare(name: string, at: In<"vec3">, o: FlareOptions): Drawable`
-- **glow**: A glow along one curve (u in [0, 1] -> point), sampled into `segments` segments per frame.
+  cannot:
+  - turn its star: the arms stand at fixed angles in the view plane (the first along the view's right), and do not rotate or twinkle on their own.
+  - change its arms' length or thinness (2.5 halo radii, 1.2 pixels), or its number of rays in time.
+  - light anything around it, or darken: it only adds light (see `glows`).
+- **glow**: Light along one curve, u in [0, 1] -> point, sampled into `segments` segments per frame: a neon tube, a glowing thread, a laser.
   `function glow(name: string, curve: (u: F) => P3, o: Omit<GlowOptions, "brightness"> & { readonly intensity: In<"f32">; readonly segments: number }): Drawable`
-- **glows**: A glow along each of a family of strokes.
+  cannot:
+  - It cannot taper: the width is the same along the whole curve; for a taper, build `strokes` with one and call `glows`.
+- **glows**: Light along each of a family of strokes: a hot core and a soft halo round every curve, additive, seen through a medium and hidden by bodies in front.
   `function glows(name: string, s: Strokes, o: GlowOptions): Drawable`
-- **strokes**: Strokes from a function; the table is made once per object.
+  cannot:
+  - darken, or hide what is behind it: it only adds light, so a glow over a bright sky barely shows.
+  - light anything: bodies, the ground and the water near it are not lit (a `flash` lights a medium; a `skyFlash` washes the screen).
+  - glow from a surface or a volume: only from curves (a glowing sheet is many strokes; a glowing cloud is a medium lit by a flash).
+  - count its own crossings once: two parts of strokes that cross on screen add (brighter where they cross); only the joints between neighbouring segments are drawn once.
+  - dim smoothly through a medium along one segment: the veil is taken once per segment, at its middle.
+  relatives:
+  - one curve: `glow`; one point with a star of rays: `flare`.
+  - a taper that grows along u: a beam or a cone of light (a searchlight) rather than a line.
+  - another falloff of d, a Lorentzian 1 / (1 + (d / w)^2): a longer, hazier halo, as through mist; written by copying this drawable's shader, not by an option.
+- **strokes**: A family of curves to draw as light: stroke i (0 to count - 1) is u in [0, 1] -> `point(u, i)`, with a `taper(u, i)` (a multiple of the glow's width; 0 is gone).
   `function strokes(name: string, count: number, segments: number, point: (u: F, i: F) => P3, taper: (u: F, i: F) => In<"f32"> = () => 1): Strokes`
-- **GlowDrawable**: (undocumented)
+  cannot:
+  - change its number of strokes or segments in time: hide a stroke with a taper or brightness of 0 instead.
+  - follow detail finer than a segment: between samples it is straight, so a sharp kink or a fast wiggle needs more segments (and cost grows with count x segments, per frame on the CPU and per pixel near each segment).
+  - use expressions the CPU cannot evaluate (GPU-only functions).
+- **GlowDrawable**: The `Drawable` that `glow`, `glows` and `flare` return: additive light around curves or a point, softened by distance from each pixel's view ray.
   `class GlowDrawable implements Drawable`
 
 Types:
@@ -1026,22 +1037,47 @@ Types:
 
 Lightning: strikes scheduled as a pure function of time, each a branching bolt made by hashed midpoint displacement, and the light it makes (a flicker of return strokes, then an afterglow).
 
-- **afterglow**: The channel's glow after the flash: rises with the first stroke, then decays with time constant `seconds`.
+- **afterglow**: The glow a lightning channel keeps after its flash: 0 before the strike, 1 at its start, then exp(-since / seconds).
   `function afterglow(since: F, seconds: number): F`
-- **bolt**: A branching bolt for each strike of a schedule.
+  cannot:
+  - It cannot rise gradually or hold: it jumps to full at once and only decays.
+- **bolt**: A branching lightning bolt, new for each strike of a schedule: a jagged main channel from cloud to ground with branches leaving it, as `strokes` for `glows` to light, with the strike's index, timing and flicker.
   `function bolt(spec: BoltSpec): Bolt`
-- **boltFlash**: The light a bolt casts into a medium: a flash at its top (inside the cloud), brightness following the flicker.
+  cannot:
+  - grow: the whole channel exists at once for the strike; there is no leader stepping down from the cloud.
+  - branch twice: branches leave the main channel only, never another branch.
+  - seek a target: it lands at `to` (give or take `wander`), never on the tallest thing near it.
+  - change shape within a strike, or light itself: how bright it is is the glow's (`flash` here is its flicker).
+  - curve smoothly: it is straight between displaced points.
+  relatives:
+  - reveal the channel by time, taper 0 where u > since / duration: a leader that steps down, then the flash.
+  - branches from branches: call `displaced` from a point of a branch, keyed by both indices: a tree of discharges.
+  - the same displacement laid on a surface instead of across a chord: cracks in ice, rivers on a map, roots.
+  - `from` and `to` both on moving bodies, with a short `every`: an arc between two electrodes.
+- **boltFlash**: The light a bolt casts into a medium: a `flash` at the bolt's top, `lift` above it (inside the cloud), whose power is `power` times the strike's flicker.
   `function boltFlash(b: Bolt, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number; readonly lift: number }): Flash`
-- **displaced**: A curve from a to b, displaced at `levels` levels of midpoints by hashes of (cell, level, key).
+  cannot:
+  - It cannot light along the channel: it is one point, so the cloud glows round the top and not where the channel runs below the cloud's base; for that add flashes at points of the channel.
+- **displaced**: A jagged curve from a to b at u in [0, 1]: midpoint displacement in closed form.
   `function displaced(u: F, a: P3, b: P3, levels: number, rough: number, key: F): P3`
-- **flicker**: The flicker of a strike's return strokes, `since` seconds after it began: 0 before, about 1 at each stroke.
+  cannot:
+  - It cannot be smooth (it is straight between the points of the finest level, kinked at every one), and its offsets lie in a plane across the chord chosen from a fixed vector, so a chord along (0.31, 0.12, 0.94) has no defined across direction.
+- **flicker**: The brightness of a strike's return strokes `since` seconds after it began: 0 before, then four sharp pulses (at 0, 0.085, 0.19 and 0.3 s, of 1, 0.75, 0.9 and 0.45), each decaying as exp(-t / 0.03 s), summed.
   `function flicker(since: F): F`
-- **sheetFlash**: Flashes inside a cloud with no channel to the sea: hashed points in a box, one per strike.
+  cannot:
+  - It cannot vary from strike to strike: the stroke times and strengths are fixed, so every strike flickers alike (offset `since` by a hash of the index for variety).
+- **sheetFlash**: Lightning hidden inside a cloud, with no channel to the ground: for each strike of the schedule, a `flash` at a point of `box` hashed from the strike's index, its brightness the flicker (capped at 1.2).
   `function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number }): { readonly flash: Flash; readonly brightnes...`
-- **skyFlash**: The whole sky lighting up: a full-screen additive wash of `colour` times `brightness`, stronger where nothing opaque is near (the sky and the sea) than on bodies close by, which the flash light reaches but does not drown.
+  cannot:
+  - It cannot place the light where the cloud is dense: the point is uniform in the box, so in a sparse corner the flash lights little.
+- **skyFlash**: The whole sky lighting up: a full-screen additive wash of `colour` times `brightness` (an expression: give it a strike's flicker), at full strength where the scene's depth is far (the sky, distant water) and half on near bodies, which the flash reaches but does not drown.
   `function skyFlash(name: string, brightness: In<"f32">, colour: readonly [number, number, number]): Drawable`
-- **strikeAt**: The strike in progress at time t: its index (an integer-valued f32) and the seconds since it began.
+  cannot:
+  - It cannot light from a direction: it is an even wash, with no shading or shadows on the bodies it brightens.
+- **strikeAt**: The strike of a schedule in progress at time t: its index k (a whole number, as an f32) and the seconds since it began.
   `function strikeAt(s: StrikeSchedule, t: In<"f32"> = time): { readonly index: F; readonly since: F }`
+  cannot:
+  - It cannot space strikes unevenly beyond `jitter` of a period (no bursts, no lulls) or overlap two strikes: one is in progress at a time, until the next begins.
 
 Types:
 - **Bolt**: A bolt: its strokes (0 the main channel, then the branches), the strike in progress and its light. `type Bolt = { strokes, index, since, flash, top, ground }`
@@ -1050,16 +1086,105 @@ Types:
 
 ### src/soft/rain.ts
 
-Rain: streaks falling through a shaft, and the rings they make where they meet the sea.
+Rain: streaks falling through a shaft, and the rings they make where they meet the ground (a sea or a plane).
 
-- **rain**: Rain falling through a shaft.
+- **rain**: Rain falling through a round shaft below a cloud: thin streaks, slanted by the wind, that stop at the ground.
   `function rain(name: string, r: RainSpec): Drawable`
-- **splashes**: Ring splashes on the sea where the rain lands.
+  cannot:
+  - start, stop or move: the shaft stands where it is at one strength (`count` and `opacity` are fixed), so a drifting storm or a passing shower is not this.
+  - gust: the fall line is straight and the same for every drop and every moment.
+  - land on bodies: a streak stops only at the ground's surface, never at a roof or anything else in its way.
+  - fill the sky: it is one round shaft; widespread rain is a large radius (and a large count) or several shafts.
+  relatives:
+  - fall speed near 0 and a wandering sideways drift: snow, ash, or seeds in the air.
+  - the loop running upward from the ground: sparks, bubbles, embers.
+  - landing points hashed over a surface instead of a disc: drips from a roof's edge, spray off a crest.
+- **splashes**: Rings where rain lands: for each of the first `count` streaks of the same `RainSpec`, the ring it made where it landed at the end of its previous fall, laid on the ground's surface (it follows a swell), growing and fading.
   `function splashes(name: string, r: RainSpec, s: SplashSpec): Drawable`
+  cannot:
+  - splash upward: it is a flat ring on the surface, no crown of droplets, no bounce.
+  - land on bodies or anything but the ground's surface (on `nothing` there is no surface to see them on).
+  - interact: rings overlap by drawing over each other, without interference or a wake.
+  - outlast the fall: a ring lives at most one fall period; a `life` longer than top / speed is cut short.
 
 Types:
 - **RainSpec**: `type RainSpec = { centre, radius, top, count, speed, wind, length, width, colour, opacity, flash, seed }`
 - **SplashSpec**: `type SplashSpec = { count, radius, life, colour, opacity }`
+
+### src/geom/crest.ts
+
+A sheet standing on a line of a body (a dorsal fin, a frill, a sail on a back, a ridge of plates).
+
+- **sheetOn**: A sheet standing on a line of a body: a dorsal fin, a frill, a sail on a back, a row of plates seen as one membrane.
+  `function sheetOn(spec: SheetOnSpec): SurfaceDrawable`
+  cannot:
+  - curve between root and edge: every line from root to edge is straight, so no cupped fin, no frill that curls over.
+  - stand on anything but the body's outward direction: no fin lying along the skin, no sheet hanging below a spar.
+  - a free edge other than the scallop: rays evenly spaced, each sag the same shape (sin^2), no spines past the edge.
+  - stand on a surface that is not a chart in body coordinates (m, v, rho), or span past m in [0, 1].
+  relatives:
+  - a curved sheet: write `surface((x, f) => ...)` from the host's frame at the root (`on.frame(vec3(m, v, rho))` gives its origin and axes) and bend f along any curve in that frame: a cupped fin, a frill that rolls over (an arc in the frame's y-z plane), a collar.
+  - a membrane between rays you choose: `fan`, with the rays from `rayOf` or `bent` stalks standing on the body.
+  - a sheet on two bodies: `sheet(rayOf(a), rayOf(b))`, webbing between fingers or a skin between two tails.
+  - plates instead of one membrane: `strand.instanced` along the same line, one solid per ray.
+- **sheetOnEdges**: `sheetOn`'s root and free edge over x in [0, 1], as `sheet(root, edge)` takes them: the mechanism one step down, so a sheet that stands on a body is never a dead end (see `sheetOn` for the law, its limits and its relatives).
+  `function sheetOnEdges(spec: Omit<SheetOnSpec, "paint" | "name" | "rows"> & { readonly name?: string }): { readonly root: Curve; readonly edge: Curve }`
+  cannot:
+  - curve between root and edge: `sheet` is ruled, straight from each root point to its edge point.
+  - stand anywhere but on a body's chart in coordinates (m, v, rho), with 0 <= from < to <= 1.
+
+Types:
+- **SheetOnSpec**: `type SheetOnSpec = { on, from, to, height, v?, paint, sag?, rays?, rake?, flutter?, name, rows? }`
+
+### src/geom/limb.ts
+
+A chain of two or three straight segments reaching from a root toward a target by closed-form inverse kinematics (the law of cosines): a leg, an arm, a crane's jib, a desk lamp.
+
+- **chain**: A chain of two or three straight segments from `root` reaching toward `target`, posed by closed-form inverse kinematics, so it is an expression of its root and target and needs no solver state.
+  `function chain(spec: ChainSpec): Chain`
+  cannot:
+  - more than three segments, or a middle joint that is not decided by the other two (a spine, a tail, a snake).
+  - bend in two planes: one `bend` direction for the whole chain, so no knee that also twists out.
+  - curved segments: each is a straight line (sweep a `strand` along a curve of your own for a curved bone).
+  - joint limits: a knee bends as far as the target asks, backward included if `bend` says so.
+  - reach past its length: the tip stops short on the line to the target.
+  relatives:
+  - many segments: FABRIK (reach forward and back along the chain a few times) is closed form for a fixed number of passes; unroll it and pass the joints to `polyline`.
+  - a chain of chains: one chain's tip as the next one's root (an arm, then a hand, then fingers).
+  - curved bones: `bent` per segment, each starting where the last ended, gives a crooked finger or a tentacle.
+  - a coil round a thing: `wrap` (in `grab.ts`) is a chain's opposite: a body that winds instead of reaches.
+- **polyline**: The point at m (0 to 1, clamped) on the broken line through `points`, point j sitting at m = knots[j]: straight between neighbours, linear in m within each piece.
+  `function polyline(m: F, points: readonly P3[], knots: readonly F[]): P3`
+  cannot:
+  - turn smoothly: the heading jumps at every point, so a strand swept along it shows a crease at each joint.
+  - check its knots: they must be as many as the points, start at 0, end at 1 and increase; anything else is not caught and gives a wrong line, not an error.
+  - keep speed: m runs at a constant rate within a piece, so equal steps in m are equal lengths only if the knots are the true arc fractions.
+  relatives:
+  - `through`: a Catmull-Rom cubic through the points, with a continuous heading (a curved bone, a tail).
+  - corners rounded by a circular arc of radius r at each inner point: a bent pipe, a jointed limb with fleshy joints.
+- **unit**: The unit vector along v, v / max(|v|, 1e-6): a zero vector stays (nearly) zero instead of becoming NaN.
+  `const unit = (v: P3): P3 =>`
+  cannot:
+  - It cannot give a direction for a vector shorter than 1e-6: such a vector comes back shorter than 1, so a caller that needs a true direction there must choose one itself.
+
+Types:
+- **Chain**: `type Chain = { joints, knots, spine }`
+- **ChainSpec**: `type ChainSpec = { root, target, lengths, bend, foot? }`
+
+### src/geom/lines.ts
+
+Many ropes as one stroke: rigging, ratlines, stays, washing lines, cables, webs.
+
+- **ropes**: Many ropes as one stroke, so a rig of any number of ropes is one draw call however many ropes it has.
+  `function ropes(given: string, ropes: readonly Rope[], spec: RopesSpec): Drawable`
+  cannot:
+  - hang any way but straight down, or by any curve but a parabola (a true catenary, a rope blown sideways).
+  - pass through more than two points: no rope over a pulley, round a yard, or draped over a body.
+  - vary in width or colour from rope to rope.
+
+Types:
+- **Rope**: One rope: from a to b, sagging by `sag` (world units, at its middle, downward; an expression, so it can tighten). `type Rope = { readonly a: P3; readonly b: P3; readonly sag: In<"f32"> }`
+- **RopesSpec**: `type RopesSpec = { width, colour, segments? }`
 
 ## Motion (src/motion.ts)
 
@@ -1069,10 +1194,29 @@ how a shape moves over time (gaits, looks, breathing, beats, animation principle
 
 A gait: foot targets for many legs from one cycle, as a pure function of time.
 
-- **gait**: (undocumented)
+- **gait**: Foot targets for a legged body with any number of limbs, from one cycle: each foot planted fixed in the world while the body moves over it, then swung to its next plant.
   `function gait(spec: GaitSpec): Gait`
-- **course**: Courses: a straight line, and an arc of constant turning.
+  cannot:
+  - feet that follow terrain: a plant is wherever the course frame puts the home, at the course's own height.
+  - change rhythm (walk to gallop): the phases are fixed numbers, so the footfall pattern is one per gait; blending two gaits' `foot(i)` mixes positions, and mid-blend feet slide.
+  - change speed smoothly under `pace` time by moving `period`: cycles = t / period, so a period that changes makes the count leap. A speed that changes is `pace` distance with a `travelled` the host accumulates.
+  - a step of another shape: along is always smoothstep and up a half sine, so a foot lands with downward speed and stops in one frame; a foot is a point and never turns as it lands.
+  - stop with feet anywhere but their plants: `minStep` scales a short step's lift down, nothing more.
+  relatives:
+  - all phases equal and `duty` below 0.5: every foot leaves the ground together, a hop or a bound; add the body's rise from `carriage`'s walk or an `arc` on the cycle's fraction.
+  - phase[i] = i * q for a row of many limbs: a wave of steps running down the body (a metachronal wave), its speed set by q.
+  - the same plant law without a cycle: feet that stay home and leave only on named events, scheduled ones and ones on a beat, are `footing` with `replants`.
+- **course**: Courses: the body's frame after travelling a distance s, for a `gait`.
   `const course = { ... }`
+  cannot:
+  - leave level ground: the path stays at origin.y, and the frame never pitches or rolls.
+  - any curvature but 0 or one constant: no path that straightens out, no S-bend, no stop.
+  - face anywhere but a fixed angle off its direction of travel.
+  relatives:
+  - yaw growing as s^2 (a clothoid): a path that bends tighter and tighter, a body turning into a spiral. Its position is a Fresnel integral with no closed form: sample it once with `tabulate`.
+  - yaw = A sin(2 pi s / L): a weave, and with the right A a figure eight; its position is again an integral of (cos yaw, -sin yaw), tabulated.
+  - a path through points: `through(s / total, points)` for the origin and its difference for the yaw; s is then not arc length, so the stride stretches where points are far apart.
+  - terrain: any course with origin.y replaced by a height function of origin.x and origin.z.
   - `course.line`: (undocumented)
   - `course.arc`: Turning left (counter-clockwise seen from above) at `radius`; a negative radius turns right.
 
@@ -1086,14 +1230,51 @@ Types:
 
 Motion helpers, closed form in time (or in a 0..1 progress input): no state, so any of them can be read at another time for a telegraph or a smear, and superpose.
 
-- **lookAt**: The direction toward a target as yaw and pitch, each held within its limit, and the unit direction they give.
+- **lookAt**: The direction toward a target as yaw and pitch, each held within its limit, and the unit direction they give: where an eye, a head or a turret points.
   `function lookAt(spec: LookSpec): { readonly yaw: F; readonly pitch: F; readonly dir: P3 }`
-- **breathe**: A breathing scale, 1 at rest out to 1 + depth: the breath in is quicker than the breath out (the phase is skewed, theta + 0.4 sin theta), so it reads as breathing and not as a pulse.
+  cannot:
+  - lag, ease or overshoot: it is where the target is now, so a target that jumps is followed in one frame.
+  - pass behind smoothly: as the target crosses straight behind, atan2 goes from +pi to -pi and the held yaw jumps from one limit to the other.
+  - soften at its limits: the clamp stops dead, with a corner in the motion.
+  - roll, or say anything when the target is at `from.o` (no direction).
+  relatives:
+  - eyes and head sharing a look: the head takes this with small limits, the eyes take the remainder of the angle with their own, so the eyes lead and the head follows.
+  - saccades: a target chosen per hold of `dart` (`chosen` of its `now`), so the gaze is still and then elsewhere.
+  - smooth pursuit: the target read at t - lag, or passed through `response` per angle, so the look trails and settles.
+- **breathe**: A breathing scale, 1 at rest out to 1 + depth, for a chest, a body or anything that swells and empties.
   `function breathe(spec: BreathSpec): F`
-- **beat**: A wing beat: the angle at r in [0, 1] along the wing.
+  cannot:
+  - pause: there is no rest at the top or the bottom of a breath; it is always moving.
+  - vary one breath from the next: every breath is the same, with no sigh and no catch.
+  - change rate smoothly by moving `rate`: the phase is rate * t, so a rate that changes makes the phase leap. Count the phase yourself (a clock you integrate) and pass it as `t` with `rate` 1.
+  - shrink below rest, or change the in-to-out ratio (the skew is fixed at 0.4).
+  relatives:
+  - a breath with a pause: hold the phase still for part of the cycle (theta through a `slowInOut` of its fraction), so the chest rests empty before it fills.
+  - a heartbeat: two narrow bumps a cycle (lub, dub) instead of one wide one: a sum of two `pulse`s on the cycle's fraction.
+  - a sigh: an occasional larger breath, its depth chosen per hold of `dart`.
+  - the moving hold of a whole pose: `alive`, two slow sines that never line up.
+- **beat**: A wing beat: the angle at r in [0, 1] along the wing, +angle up.
   `function beat(r: In<"f32">, spec: BeatSpec): F`
-- **strike**: A strike envelope over its progress s in [0, 1]: 0 at rest, down to -anticipation (the wind-up), up to 1 (the hit), on to 1 + follow (follow-through), then back to 0 by s = 1.
+  cannot:
+  - leave its plane: it is one angle, so no sweep fore and aft and no twist of the wing about its own length (the figure-eight stroke of a hovering wing is out of reach on its own).
+  - change shape along the wing: every point swings the same amplitude, only later.
+  - change rate smoothly by moving `rate`: the phase is rate * t, so a rate that changes makes the beat leap.
+  - vary one stroke from the next, or stop and glide, except by the caller blending `amplitude` to 0.
+  relatives:
+  - a twist (feathering): a second `beat` about the wing's length on a clock a quarter cycle off (`t` minus 0.25 / rate), so the wing turns most while it moves fastest and lies flatter on the way up.
+  - the figure eight of a hover: a sweep angle fore and aft at twice the rate of this one.
+  - a swimming body or a waving flag: the same delayed clock with r along the body and the amplitude growing with r, a travelling wave (`wave` writes it as a displacement).
+- **strike**: A strike envelope over its progress s in [0, 1]: a number to drive any pose that winds up, hits and recovers.
   `function strike(s: In<"f32">, spec: StrikeSpec): F`
+  cannot:
+  - land at speed: every key is reached with zero speed, the hit included, so it eases into the blow.
+  - more or fewer phases than five: no double wind-up, no hold before the hit, no second blow.
+  - say where the pose goes: it is one number, and the caller maps it onto angles or positions.
+  relatives:
+  - a blow that lands at speed: the wind-up-to-hit segment by `slowIn` instead of a smoothstep.
+  - a springy recovery: from the hit, `response` or `swing` on seconds since it, so the part rings and settles.
+  - the same three parts on a clock in seconds instead of a progress: `beats` to split the clock, `anticipated` for the action, `overshot` for the arrival.
+  - a combination: several strikes on shifted progresses, summed.
 
 Types:
 - **LookSpec**: `type LookSpec = { from, target, yaw, pitch }`
@@ -1107,38 +1288,154 @@ Lively motion: the twelve principles of animation (Johnston and Thomas, The Illu
 
 - **looping**: Build something that must loop every `seconds`: while `build` runs, every `alive` not given a period of its own takes this one, so idle motion written without a thought for looping comes round exactly.
   `function looping<T>(seconds: number, build: () => T): T`
+  cannot:
+  - make anything but `alive` loop: `breathe`, `beat`, `tremor`, a gait and any sine of your own keep the rates they are given; choose them as whole turns per period yourself.
+  - reach expressions built after `build` returns (in a callback run later): the setting is read when `alive` is called, not when the expression is drawn.
+  - keep the rates asked for in a short loop: rounding to whole turns moves each rate by up to half a turn per period, so 0.23 Hz in a 2 second loop becomes 0.5 Hz.
+  relatives:
+  - `dart` fits a whole number of holds into its `period`, and its warp a whole number of turns, by the same rounding.
+  - an idle stance (`carriage`'s idle) rounds its breaths to whole breaths per loop.
+  - a gait loops when a whole number of cycles fit the period: period = T / round(T / period).
 - **alive**: The moving hold.
   `function alive(t: In<"f32">, amount: In<"f32">, seed: In<"f32"> = 0, hz = 0.23, period?: number): F`
-- **anticipated**: Anticipation. 0..1 that first goes the wrong way: it dips by about `back * 0.06` (for back = 1.7, to -0.1), then drives through to 1.
+  cannot:
+  - arrive anywhere or hold: it is always drifting, smoothly, never still and never sudden (still-then-jump is `dart`).
+  - hide its rhythm for long: it is two sines, so over a few of the slower swings the pattern can be seen.
+  - stay aperiodic with a period: the rounded rates repeat exactly in it (that is what the period is for).
+  relatives:
+  - three or more sines at rates in golden ratio to each other: a drift with no visible rhythm.
+  - `tremor`: the same two-sine idea at a fast rate, a shake instead of a sway.
+  - `dart`: holds and jumps on an uneven clock, for a nervous thing instead of a calm one.
+  - noise of the clock (a smooth hash along t): a wander that is not a sum of sines, at the price of looping.
+- **anticipated**: Anticipation. 0..1 that first goes the wrong way, then drives through to 1.
   `function anticipated(u: In<"f32">, back = 1.7): F`
+  cannot:
+  - set the dip's depth and its place apart: one number sets both, and a deeper dip comes later.
+  - settle: it arrives at full speed and stops dead at 1 (held there), so pair it with `overshot`, `impact` or a `swing` after.
+  - wind up more than once, or hold at the bottom of the wind-up.
+  relatives:
+  - `overshot` is its mirror, 1 - f(1 - u): it leaves at speed and runs past 1 instead.
+  - both in one move (wind up, then overshoot): `anticipated` on the first half and `overshot` on the second, each on its half of u.
+  - the same thing from a spring: `response` with r below 0 goes the wrong way first, then overshoots and settles, as a function of seconds rather than progress.
 - **arc**: Arc.
   `function arc(a: In<"vec3">, b: In<"vec3">, u: In<"f32">, lift_: In<"f32">, up: In<"vec3"> = [0, 1, 0]): P3`
+  cannot:
+  - an arch whose top is not at the middle, or which is not a parabola (a circle, a hook over at the end).
+  - ease: speed along the chord is constant in u; ease it by passing `slowInOut(u)` or `slowIn(u)`.
+  - stand square to the chord when `up` is not perpendicular to b - a: the arch leans with `up`.
+  relatives:
+  - a thrown thing: a ballistic flight from a to b in T seconds is exactly this with u = t / T and lift = g T^2 / 8.
+  - an arch that peaks late (a pounce) or early (a toss): 4 x (1 - x) replaced by c x^p (1 - x)^q, peaking at p / (p + q).
+  - a path through several points: `through`.
 - **beats**: Timing.
   `function beats(since: In<"f32">, b: Beats): Beat`
+  cannot:
+  - ease: each beat is linear, so its shape comes from what the caller passes it through (`slowInOut`, `anticipated`, `overshot`).
+  - stretch at run time: the durations are numbers, so a game cannot make one action slower; it can only drive `since` faster or slower.
+  - more than three beats, a hold between them, or repeat: it is one shot from since = 0.
+  relatives:
+  - a looping action: `since` = mod(t, A + B + C), so the three beats repeat.
+  - a pose struck and held: `struck` is snap, hold and release on the same plan, with a hold that is exactly still.
+  - a window of seconds on any clock with eased edges: `during`.
+  - follow-through after the act: `swing(after, ...)` or `response(after, ...)`, which start where the act ends.
 - **dragged**: Overlap and drag.
   `const dragged = (t: In<"f32">, along: In<"f32">, lag: In<"f32">): F =>`
+  cannot:
+  - change the motion: the trailing part does exactly what the lead did, only later, at the same size (no fading, no extra bend).
+  - delay unevenly: the lag grows in proportion to `along`, a constant speed down the body.
+  - stay well behaved if `lag` moves fast: a lag that grows faster than the clock runs this clock backward.
+  relatives:
+  - `retarded`: the same clock given a speed instead of a lag per unit.
+  - fading down the body: the motion read on this clock times e^(-k along), so a tail tip moves less than its root.
+  - `echo`: a delay with a gain, for a smaller later copy rather than a trailing part.
+  - a delay that grows toward the tip (a whip): along^2 in place of along.
 - **echo**: Secondary action.
   `const echo = (f: (t: F) =>`
+  cannot:
+  - change the shape: the echo is the same motion, smaller; a secondary action of a different kind is a different f.
+  - echo more than once: one copy; a train of echoes is a sum.
+  - echo a motion that keeps state: f must give its value at any time it is asked.
+  relatives:
+  - a train of echoes with gains g, g^2, g^3 at delays d, 2d, 3d: a ringing that dies away, a step toward a damped spring (`swing`, `response`) built from the motion itself.
+  - `dragged`: the delay without the gain, for a part that trails.
+  - an echo in another channel: f read late and fed to a different part (a tail answering a head's turn).
 - **exaggerated**: Exaggeration.
   `const exaggerated = (x: In<"f32">, rest: In<"f32">, by: In<"f32">): F =>`
-- **impact**: The squash at an impact: `depth` at the moment of contact (`after` = 0), sprung back out by `after` seconds later.
+  cannot:
+  - keep a value in its range: a doubled angle can pass a joint's limit; hold the result yourself.
+  - push the big moves more than the small: the factor is the same for a twitch and a lunge, noise included.
+  - exaggerate timing: it scales values, not when they happen.
+  relatives:
+  - rest + sign(d) |d|^p: p above 1 keeps small moves small and makes big ones bigger, p below 1 the reverse.
+  - exaggerated timing: the clock scaled about the moment of the action (shorter `act` in `beats`, a longer `anticipate`).
+  - a vector departure: the same line on each axis of a position.
+- **impact**: The squash at an impact: a length factor for `squash`, 1 before contact, 1 - `depth` at the moment of contact (`after` = 0), sprung back out over the seconds after.
   `function impact(after: In<"f32">, depth = 0.35, hz = 3, damping = 0.35): F`
-- **overshot**: Overshoot. 0..1 that runs past 1 (to about 1 + back * 0.06) and comes back.
+  cannot:
+  - squash gradually: it jumps from 1 to 1 - depth in one frame at contact (this is the point of it).
+  - answer how hard the thing hit: the squash is `depth` whatever the speed; scale it yourself.
+  - land more than once, or settle without ringing (damping must stay below 1).
+  relatives:
+  - `swing` is the same spring with a sine: it starts at rest position with speed (a part flung), where this starts displaced at rest (a part pressed).
+  - a squash that scales with the hit: depth from the speed just before contact, as `stretchOf` scales the stretch.
+  - a bounce: hops of falling height, an `arc` per hop on a clock cut by each landing, with an impact at each.
+- **overshot**: Overshoot. 0..1 that runs past 1 and comes back.
   `function overshot(u: In<"f32">, back = 1.7): F`
-- **slowIn**: Slow in only: leaves gently, arrives at speed.
+  cannot:
+  - ring: it passes 1 once and comes back once; a wobble that dies away is `response` or `swing`.
+  - set the overshoot's height and its place apart: one number sets both.
+  - start from rest: it leaves 0 at full speed (it is the end of a move, not the whole of one).
+  relatives:
+  - `anticipated`, its mirror: the wrong way first instead of too far at the end.
+  - several overshoots dying away: a damped spring, `response` on seconds since the move began.
+  - an overshoot in space rather than value: an `arc` whose end point is pushed past the target by this curve.
+- **slowIn**: Slow in only: u^power, u held to [0, 1].
   `const slowIn = (u: In<"f32">, power = 2): F =>`
-- **slowInOut**: Slow in and slow out. 0..1 with zero speed at both ends; `power` 2 is gentle, 4 holds the extremes longer.
+  cannot:
+  - It cannot stop at the end: the speed drops to 0 in one frame at u = 1, which is what an impact looks like.
+- **slowInOut**: Slow in and slow out. 0..1 with zero speed at both ends; `power` 2 is gentle, 4 holds the extremes longer: two halves of x^power, (2u)^p / 2 below the middle and its mirror above it, with u held to [0, 1].
   `function slowInOut(u: In<"f32">, power = 2): F`
-- **slowOut**: Slow out only: starts at speed, arrives gently.
+  cannot:
+  - It cannot overshoot or go the wrong way (that is `overshot` and `anticipated`), and its two halves are always mirror images, so it cannot ease out more than it eases in; `power` is a fixed number, at least 1.
+- **slowOut**: Slow out only: 1 - (1 - u)^power, u held to [0, 1].
   `const slowOut = (u: In<"f32">, power = 2): F =>`
-- **squash**: Squash and stretch, with volume kept.
+  cannot:
+  - It cannot overshoot, and the speed it starts at (power times the average) is set by `power`.
+- **squash**: Squash and stretch, with volume kept: a `Size` to give a placed copy.
   `function squash(along: In<"f32">): Size`
-- **stretchOf**: The length factor a moving thing should wear: 1 at rest, longer the faster it goes, never beyond `most`.
+  cannot:
+  - squash along any axis but the copy's own y: turn the copy so its y lies along the motion.
+  - squash the two across axes differently: they are always equal, so a flattening that spreads one way only is out.
+  - bend or shear: a body smeared along a curved path, or leaning into its motion, is not a scale.
+  relatives:
+  - area kept instead of volume (a flat thing, a sheet): across = 1 / along on the one other axis.
+  - squash along a direction d: the same factors applied in a frame whose y is d, by turning the copy into that frame first.
+  - a swelling with no squash: `breathe` scales all three axes up together.
+- **stretchOf**: The length factor a moving thing should wear: min(1 + per * speed, most). 1 at rest, longer the faster it goes, never beyond `most`.
   `const stretchOf = (speed: In<"f32">, per = 0.15, most = 1.6): F =>`
+  cannot:
+  - It cannot tell direction (pass the speed's size: a negative speed shortens the thing), and it reaches `most` with a corner, not an ease; `per` and `most` are fixed numbers.
 - **swing**: Follow through.
   `function swing(after: In<"f32">, amount: In<"f32">, hz = 1.4, damping = 0.25): F`
+  cannot:
+  - derive its rate from the part: `hz` is chosen, not given by a length or a weight.
+  - answer more than one stop: one push from one instant; later stops need more swings, summed.
+  - swing in two directions at once, or big: it is one linear number to add.
+  relatives:
+  - `pendulum`: the same spring with its rate from length and gravity and its push from the pivot's change of speed (its `jolt`), so a part's swing follows from the rig.
+  - `impact`: the cosine of the same spring, starting displaced instead of moving.
+  - `response`: the same spring's answer to a step, for a part that moves to a new rest instead of returning.
+  - a swing travelling down a chain: each link reads `after` on a `dragged` clock.
 - **uneven**: Against twins.
   `const uneven = (part: In<"f32">, spread = 0.15): F =>`
+  cannot:
+  - change in time: it is fixed per part (a time-varying difference is `alive` with a seed per part).
+  - differ between two uses on one part: the same `part` gives the same factor everywhere; offset the part number per use (part + 100 for sizes, part + 200 for rates) to make them independent.
+  - favour small differences: every value in the range is as likely as any other.
+  relatives:
+  - a factor per hold of a motion rather than per part: `chosen` of a `dart`'s `now`.
+  - a difference that drifts: `alive` with the part as its seed, added to 1.
+  - differences mostly small with rare large ones: the hash through a curve that is flat near the middle.
 
 Types:
 - **Beat**: Where a clock is in each beat: 0 before it, 1 after it, rising across it. `type Beat = { anticipate, act, settle, after }`
@@ -1146,27 +1443,63 @@ Types:
 
 ### src/geom/stance.ts (unproven: one user so far)
 
-Stance: a heavy creature standing on its feet (docs/stance.md).
+Stance: a heavy legged body standing on its feet (docs/stance.md).
 
 - **carriage**: The body's carriage over its feet: every stance's, summed; `idle` takes what the others leave (1 - the largest `on`).
   `function carriage(stances: readonly Stance[]): Carriage`
-- **footing**: (undocumented)
+  cannot:
+  - give one stance priority over another: busy stances add, so two at once sum their offsets; only idle yields.
+  - know whether the legs reach: a rise or surge past what the legs can span is returned all the same.
+  - shape the walk's body motion: bob, sway, roll and yaw are fixed sines of the gait's cycle, only scaled.
+  - carry a body that leaves its feet (a jump): the carriage is an offset from rest over planted feet.
+  relatives:
+  - a hop: rise from an `arc` on a `beats` clock, with an `impact` taken by `absorb` at the landing.
+  - a recoil: a brace with `drive` below 0 (sitting back), driven by `swing` on seconds since the hit.
+  - a body swaying on soft legs: roll and sway driven by a `pendulum`'s angle under a `sway` drive.
+- **footing**: Where each foot of a standing, stepping, walking body is, and whether it bears weight: one function of the clock for every foot, from its home and the named events that move it.
   `function footing(spec: FootingSpec): Footing`
-- **headingIn**: A world direction made level and given in the ground frame (unit).
+  cannot:
+  - follow terrain: a foot is on the ground frame's plane plus an event's lift.
+  - leave a foot where it was moved: a re-plant always brings it home, and a stamp never moves it.
+  - blend into the walk cleanly: positions are mixed linearly, so mid-blend feet slide, and planted switches at on = 0.5 in one frame.
+  - turn a foot: feet are points.
+  - keep two events on one foot apart: their offsets and lifts add.
+  relatives:
+  - feet on a cycle instead of events: `gait`, the walk this blends in.
+  - a kick: a stamp whose offset is an `arc` forward and back instead of in place.
+  - a hand or a tail tip braced on something: the same home-plus-events law for any contact point.
+- **headingIn**: A world direction made level and given in the ground frame (unit): a velocity or a facing as a brace's `toward`.
   `function headingIn(ground: Frame, v: P3): Toward`
-- **replants**: The re-plants of one loop.
+  cannot:
+  - It cannot see the vertical part, it reads only the x and z parts of the ground's axes (so the ground frame should be level), and a straight up or down direction gives no true heading.
+- **replants**: The re-plants of one loop: when an idle legged body shifts a foot to a new place and later puts it back, scheduled once on the CPU for `footing` to play.
   `function replants(spec: ReplantSpec): readonly Replant[]`
-- **towardIn**: The level direction from the ground frame's origin toward a world point, in the ground frame (unit).
+  cannot:
+  - answer the game at run time: the schedule is made once from the inputs' defaults; a body made busy by an input only has steps gated off (in `footing`), never moved.
+  - see an action shorter than a twentieth of a second in `busy`: it is sampled.
+  - put a foot anywhere but outward from its home by `reach`, or leave it there past its pair's `back` time.
+  - schedule a body whose feet are all on one side: the feet are taken from the left and right in turn.
+  relatives:
+  - steps on a cycle instead of a schedule: `gait`, where which plant is a floor of the clock.
+  - steps in place on an accent: a `footing`'s stamps.
+  - a shuffle that never lifts: a re-plant played with `height` 0 (the foot slides to its new place).
+- **towardIn**: The level direction from the ground frame's origin toward a world point, in the ground frame (unit): what a brace's `toward` takes.
   `function towardIn(ground: Frame, p: P3): Toward`
+  cannot:
+  - It cannot see height (the vertical part is dropped), it reads only the x and z parts of the ground's axes (so the ground frame should be level), and a point straight above the origin gives no true direction.
+- **carriedFrame**: The body's frame over `ground` carried by `c`: offset by surge (x), rise (y) and sway (z), then turned by yaw about up, roll about the turned forward, pitch about the rolled right, with the signs `Carriage` states.
+  `function carriedFrame(ground: Frame, c: Carriage): Frame`
+  cannot:
+  - It cannot turn in another order (yaw, then roll, then pitch is fixed, which matters at large angles), and the offsets are along the ground's axes, not the turned body's: a surge is forward over the ground, whatever the yaw.
 
 Types:
 - **Carriage**: The body's offset from its rest over its feet, in the ground frame (x forward, y up, z to its right). `type Carriage = { readonly surge: F; readonly rise: F; readonly sway: F; readonly roll: F; readonly pitch: F; readonly yaw: F }`
 - **Footing**: `type Footing = { foot, planted, since, unload }`
-- **FootingSpec**: `type FootingSpec = { ground, homes, t?, replant, stamps, walk }`
+- **FootingSpec**: `type FootingSpec = { ground, homes, t?, replant?, stamps?, walk }`
 - **Replant**: One foot stepping away at `out` and back home at `back` (seconds in the loop, back after out), placed `to` (ground x, z) away. `type Replant = { readonly foot: number; readonly out: number; readonly back: number; readonly to: readonly [number, number] }`
 - **ReplantSpec**: `type ReplantSpec = { homes, loop, busy, idleBelow, every, step, reach, seed }`
 - **Stamp**: A stamp: foot `foot` lifts `lead` seconds before an accent and comes down on it, in place. `type Stamp = { readonly foot: number; readonly since: F; readonly lead: number; readonly height: number }`
-- **Stance**: What a creature is doing with its weight. `type Stance = /** * Standing: breathing (`breath.rise` at `breath.period`, made whole turns of `loop`), a slow shift of weight side to * side and fore and aft (`alive`, own `seed`), tilting toward the loaded side by `tilt` radians per unit of shift, a * small turn; plus what the footing asks (the...`
+- **Stance**: What a body on its feet is doing with its weight. `type Stance = /** * Standing: breathing (`breath.rise` at `breath.period`, made whole turns of `loop`), a slow shift of weight side to * side and fore and aft (`alive`, own `seed`), tilting toward the loaded side by `tilt` radians per unit of shift, a * small turn; plus what the footing asks (the...`
 - **StepTiming**: `type StepTiming = { readonly lead: number; readonly seconds: number; readonly settle: number }`
 - **Toward**: A level direction in the ground frame (unit): x forward, z to the right. `type Toward = { readonly x: F; readonly z: F }`
 
@@ -1176,21 +1509,55 @@ Who places a thing, and a thing's transform as a game gives it (docs/throw_and_s
 
 - **pose**: A pose from its four parts; none is defaulted (a level thing says pitch 0 and heel 0).
   `function pose(o: { readonly at: In<"vec3">; readonly heading: In<"f32">; readonly pitch: In<"f32">; readonly heel: In<"f32"> }): Pose`
-- **poseFrame**: The frame a pose gives: x toward the bow, y up through the mast, z to starboard (= x cross y), origin at `at`.
+  cannot:
+  - say a turn that is not heading, then pitch, then heel: a thing pointing straight up has no well-defined heading (the angles lock), and a tumbling thing is better said as a frame.
+  - scale or bend: it is a rigid placement.
+  - say how fast it moves: velocity is the caller's, from the same expressions read at another time.
+  relatives:
+  - a thing turned about any axis: `turnedAbout` a frame by an axis and an angle, with no order of angles to lock.
+  - a thing on its way between two owners: `blendFrames` of their frames.
+  - a thing riding a surface: `afloatFrame`, whose axes are the same as a pose's.
+- **poseFrame**: The frame a pose gives: x toward the front, y up through the thing, z to its right (= x cross y), origin at `at`.
   `function poseFrame(p: Pose): Frame`
+  cannot:
+  - turn in another order: heading, then pitch, then heel is fixed; at pitch +-pi/2 heading and heel turn about the same axis and one of them is lost.
+  - follow the heading sense of `course` frames: here heading turns from +x toward +z, there yaw turns from +x toward -z; convert by negating.
+  relatives:
+  - a turn about any axis, with no order: `turnedAbout`.
+  - a frame between two others: `blendFrames`.
+  - a frame looking at a target: `lookAt`'s yaw and pitch put into this law with heel 0.
 - **placedBy**: The one dispatcher on who places a thing: a handler per variant.
   `function placedBy<T>(p: Placer, by: { readonly standIn: () => T; readonly host: (pose: Pose) => T }): T`
+  cannot:
+  - switch at run time: the variant is chosen when the scene is built, so a scene that is sometimes placed by the host and sometimes by Loft blends the two handlers' results by a weight instead.
+  - default a handler: both must be given, so a new variant breaks every caller until each handles it.
+  relatives:
+  - the same pattern for any choice made once at the boundary: a `Drive` of a `pendulum`, a `Layer` of a `score`.
+  - the hand-over between them: `blendFrames` of the stand-in's frame and the host's `poseFrame`.
 - **blendFrames**: Frame a at w = 0, frame b at w = 1, between them for w between: the origin mixed, the axes mixed and made orthonormal again (x kept, y made perpendicular to it).
   `function blendFrames(a: Frame, b: Frame, w: In<"f32">): Frame`
+  cannot:
+  - It cannot blend frames a half turn apart (the mixed axes pass through zero; keep them within a right angle of each other), and the turn between them is not at an even rate in w.
 - **turnedAbout**: Frame g with its axes turned by `angle` (radians) about `axis` (unit, through g's origin, which stays): Rodrigues' rotation.
   `function turnedAbout(g: Frame, axis: In<"vec3">, angle: In<"f32">): Frame`
-- **hosted**: (undocumented)
+  cannot:
+  - It cannot turn about an axis away from the origin (move the origin yourself), and an axis that is not unit length gives axes that are not.
+- **hosted**: The host places the thing: it gives the pose every frame (through host inputs in the pose's expressions) and Loft draws the thing there.
   `const hosted = (p: Pose): Hosted =>`
-- **STAND_IN**: (undocumented)
+  cannot:
+  - move the thing on Loft's own clock as well: the host's pose is the whole of its place (add a closed form to the pose's expressions if the host wants a wobble on top).
+  - say anything but a rigid pose: no bend, no parts moving on their own.
+  - know the host's velocity: anything that needs one (a splash, a smear) takes it from the host as another input.
+  relatives:
+  - Loft placing it: `STAND_IN`, its handler a closed form (a flight, a drift).
+  - a thing taken from one placer to another over a moment: both handlers' frames through `blendFrames`.
+- **STAND_IN**: Loft places the thing itself, by whatever closed form the caller's `standIn` handler gives, so a scene plays with no game attached.
   `const STAND_IN: StandIn`
+  cannot:
+  - It carries nothing: it cannot say where (the handler does), and it cannot hand over to the host part way through a scene (a `Placer` is chosen once).
 
 Types:
-- **Pose**: A thing's transform as a game states it: where its origin is (world), its heading (radians from +x toward +z), its pitch (radians, bow up) and its heel (radians, to starboard). `type Pose = { readonly at: P3; readonly heading: F; readonly pitch: F; readonly heel: F }`
+- **Pose**: A thing's transform as a game states it: where its origin is (world), its heading (radians from +x toward +z), its pitch (radians, front up) and its heel (radians, leaning toward its right, +z at heading 0). `type Pose = { readonly at: P3; readonly heading: F; readonly pitch: F; readonly heel: F }`
 - **Placer**: `type Placer = StandIn | Hosted`
 - **StandIn**: Loft's stand-in places the thing: a closed form of the clock, so the scene plays with no game. `type StandIn = { readonly kind: "standIn" }`
 - **Hosted**: The host places the thing: it gives the pose every frame and Loft draws the thing there. `type Hosted = { readonly kind: "host"; readonly pose: Pose }`
@@ -1199,11 +1566,24 @@ Types:
 
 A stalk that bends by a pose (docs/animation_principles.md, "Stalks and hanging things").
 
-- **bent**: (undocumented)
+- **bent**: A stalk that bends by a pose: an eye stalk, a neck, a stem, an antenna, a tail.
   `function bent(spec: BentSpec): Bent`
-- **bentTip**: The same in plain numbers: what a theory predicts a tip's place from before anything is drawn.
+  cannot:
+  - bend anywhere but by these three shapes: no S with two bows at chosen places, no kink in the middle.
+  - twist about itself (the heading turns; the stalk has no roll of its own).
+  - stretch or squash along its length.
+  - large or sharp turns exactly: the spine is a four-point Gauss-Legendre integral, off by about 4e-4 of the length at 3 radians of bow or crook, and by about 6e-3 for a 3 radian crook with `sharp` 4.
+  - keep its length on a skewed frame: `along`, `a` and `b` must be unit and at right angles, or the heading is not unit and the length is not kept (nothing checks this).
+  relatives:
+  - a bend gathered at m0: the weight smoothstep(m0 - h, m0 + h, m), a joint with a soft knee anywhere along it.
+  - a wave travelling up the stalk (a swimming tail, a whip): a bend times sin(k m - w t), the turn moving outward.
+  - a clothoid, curvature growing evenly toward the tip: turn growing as m^2, which is `crook` with `sharp` 2.
+  - straight segments between hard joints: `chain`. A fixed curve that tightens as it thins: `spiralLine`.
+- **bentTip**: `bent`'s tip and its heading in plain numbers, on the CPU: the same law and the same four-point integral, so it predicts where the drawn tip will be before anything is drawn (for aiming a stalk, or checking a pose reaches).
   `function bentTip(o:`
-- **BendError**: (undocumented)
+  cannot:
+  - It cannot take expressions (every input is a number), and unlike `bent` it does not check `sharp`.
+- **BendError**: Raised by `bent` when `sharp` is not a finite number at least 1; it carries only the message, which names the value.
   `class BendError extends Error {} /** Four-point Gauss-Legendre on [0, 1]: nodes and weights. */ const GAUSS: readonly (readonly [number, number])[] = [[0.0694318442, 0.1739274226], [0.3300094782, 0.3260725774], [0.6699905218, 0.3260725774], [0.9305681558, 0.1739274226]]`
 
 Types:
@@ -1215,13 +1595,37 @@ Types:
 
 A hanging thing's swing, in closed form (docs/animation_principles.md, "Stalks and hanging things").
 
-- **pendulum**: (undocumented)
+- **pendulum**: A hanging thing's swing: a bob on an arm under gravity, lightly damped, hung from a pivot something else moves.
   `function pendulum(spec: PendulumSpec): Pendulum`
-- **sway**: (undocumented)
+  cannot:
+  - large swings: the law is linearised, so a swing past about half a radian is too regular and never goes over the top.
+  - a pivot path that is neither a steady sway nor a list of sudden changes of speed: a sway that starts or stops, or a smooth push, except as many small jolts.
+  - more than one degree of freedom: no swing in two planes at once (a conical swing), no double pendulum, no chain.
+  - a bob that hits something, or a length that changes.
+  relatives:
+  - a swing in two planes: two pendulums on the same pivot, one per horizontal axis (exact for small swings).
+  - a stiff stalk instead of a hanging arm: the same oscillator with w0 from the stalk's stiffness instead of g / L (pass `gravity` = w0^2 L to choose it), the pivot's push the same; drive `bent`'s `bow` by its angle.
+  - a whip: `bent`'s `bow` and `crook` each driven by a pendulum's angle, the crook on a later clock than the bow.
+  - a part that just rings after a stop, with a rate chosen rather than derived: `swing`.
+- **sway**: A pivot that sways: x_p = amplitude sin(2 pi t / period + phase), and has been swaying long enough that the bob has settled into its steady answer, G sin(w t + phase - lag) (see `pendulum`).
   `const sway = (amplitude: In<"f32">, period: number, phase = 0): Drive =>`
-- **jolt**: (undocumented)
+  cannot:
+  - start or stop: it has always been swaying; a start from rest leaves out the ringing a real start would set off.
+  - follow an amplitude that changes fast: the answer is the steady one for whatever the amplitude is now, which is right only while it changes slowly against the swing.
+  - change its period in time: the period is a number.
+  relatives:
+  - a pivot that sways in a figure of two rates: two `sway`s, one per rate, summed.
+  - a pivot keyed by hand: a `jolt` at each key of a piecewise-linear path.
+- **jolt**: A pivot whose speed changes by `speed` (units / s) at the instant `after` passes 0: a slam, a snatch, a throw's release.
   `const jolt = (after: In<"f32">, speed: In<"f32">): Drive =>`
-- **PendulumError**: (undocumented)
+  cannot:
+  - spread the change over time: it is instant; a push over a while is several jolts in a row, or a sway.
+  - start the bob anywhere but plumb at rest: it is the answer to one change from stillness.
+  - happen twice: one instant per jolt; several are several `jolt`s.
+  relatives:
+  - a `swing` from `lively.ts`: the same ringing with a chosen rate, for a part that has no length to derive one from.
+  - a stop: a jolt whose speed is minus the speed the pivot had, so a part swings forward when its carrier halts.
+- **PendulumError**: Raised by `pendulum` for a length or gravity that is not a positive number, a damping outside [0, 1), and by its `gain` (and so `answer` with a sway) for a sway period that is not a positive number.
   `class PendulumError extends Error {} export type Pendulum =`
 
 Types:
@@ -1231,16 +1635,30 @@ Types:
 
 ### src/geom/restless.ts (unproven: one user so far)
 
-Restless motion: what a twitchy creature does between its actions (docs/animation_principles.md, "Temperament").
+Restless motion: what a twitchy body does between its actions (docs/animation_principles.md, "Temperament").
 
-- **dart**: (undocumented)
+- **dart**: A nervous rhythm: still, then somewhere else, at intervals that are never quite even, overshooting on arrival.
   `function dart(t: In<"f32">, o: DartSpec): Dart`
+  cannot:
+  - choose its moments: the jumps fall where the warped count crosses a whole number, not on a cue.
+  - make holds very uneven, or uneven at random: the warp is one sine, so long and short holds come in a slow wave, and at the default 0.4 they run from about 0.6 to 1.8 times `every`.
+  - jump other than by `overshot`: every arrival takes `snap` and overshoots by the same `past`.
+  - say what is held: `now` and `before` are numbers; the meaning is the caller's (`chosen` to hash them).
+  relatives:
+  - a gaze that darts: `lookAt` toward a target picked by `chosen(now, seed)`, mixed from `before`'s by `arrive`.
+  - a twitch in place: a pose offset that is 0 at most holds and set at a few, by `chosen` against a threshold.
+  - a calm counterpart: `alive`, which drifts and never holds.
+  - an even step sequence: `uneven` 0, a metronome with an overshoot (a clock's second hand).
 - **chosen**: A number in [0, 1) for a hold, fixed for that hold: hash a dart's `now` or `before` with a seed of your own.
   `const chosen = (hold: In<"f32">, seed: number): F =>`
+  cannot:
+  - It cannot avoid repeats: two holds in a row can draw nearly the same number, so a choice that must move each time needs a rule of your own (add the previous choice, take it mod 1).
 - **tremor**: A shake: two fast sines that never line up, in -1..1, so it shivers instead of humming.
   `const tremor = (t: In<"f32">, hz: number, seed = 0): F =>`
-- **RestlessError**: (undocumented)
-  `class RestlessError extends Error {} export function dart(t: In<"f32">, o: DartSpec): Dart`
+  cannot:
+  - It cannot loop in a short chosen period (the two rates come back into step only every 100 / hz seconds), and cannot jerk: it is smooth at every instant; `hz` and `seed` are fixed numbers.
+- **RestlessError**: Raised by `dart` when its timing would not run: snap not between 0 and `every`, a period shorter than one hold, or an `uneven` that would stop or reverse the warped clock (the message gives the largest that works).
+  `class RestlessError extends Error {} /** * A nervous rhythm: still, then somewhere else, at intervals that are never quite even, overshooting on arrival. It * returns which hold it is in and which it came from, not a value: the caller says what each hold means (a place to * look, a pose, a colour...`
 
 Types:
 - **Dart**: `type Dart = { now, arrive, since, holds }`
@@ -1252,34 +1670,97 @@ Expressions as values (docs/animation_principles.md, Appeal).
 
 - **cast**: A cast from its rest expression and each named expression's departures from rest: a channel a named expression does not mention is the rest's.
   `function cast<K extends string, N extends string>(rest: Expression<K>, named: Readonly<Record<N, Partial<Expression<K>>>>): Cast<K, N>`
+  cannot:
+  - hold a channel that is not a number (a choice of shape, a texture): a discrete choice is a number the drawing code thresholds.
+  - name an expression that moves by itself (a trembling fear): a named expression is a point; the motion is an `added` layer in the score.
+  - add a channel later: the channels are the rest's.
+  relatives:
+  - a cast of poses rather than faces: channels that are joint angles, so `score` mixes body poses the same way.
+  - one expression per hold of a `dart`: the named expression chosen by `chosen(now, seed)`, shown by `arrive`.
 - **score**: A score: the cast's rest expression under the layers `layersAt(t)` gives for a clock, applied in order.
   `function score<K extends string, N extends string>(cast_: Cast<K, N>, layersAt: (t: F) => readonly Layer<NoInfer<K>, NoInfer<N>>[]): Score<K, N>`
-- **show**: (undocumented)
+  cannot:
+  - remember: a layer's weight cannot depend on what the face did before, only on the clock.
+  - blend other than in straight lines: every mix is linear in channel space, so an in-between face is an average.
+  - reorder by priority: later layers win by order, not by weight; a struck pose must be laid last to hold.
+  relatives:
+  - parts that lag: each part reads `score.at(sub(time, lag))`, so a face's parts arrive one after another.
+  - a pose held dead still: `struck` gives the weight for a `show`, and `holdsStill` checks the hold.
+  - a body instead of a face: a cast whose channels are joint angles, scored the same way.
+- **show**: A layer that takes the whole face toward a named expression by `weight` (0 not at all, 1 entirely).
   `const show = <N extends string>(name: N, weight: In<"f32">): Layer<never, N> =>`
-- **only**: (undocumented)
-  `const only = <K extends string, N extends string>(name: N, channels: readonly K[], weight: In<"f32">): Layer<K, N> =>`
-- **added**: (undocumented)
+  cannot:
+  - move some channels and not others: that is `only`.
+  - pass anywhere but the straight line between the two faces: halfway between two expressions is their average.
+  - keep what was laid before it at weight 1: a later `show` covers every earlier layer, so order the layers with what flows first and what is struck last.
+  relatives:
+  - `only`: the same mix on a list of channels.
+  - `added`: an offset instead of a mix, for motion on top of a pose.
+  - a mix that is not a straight line: two `show`s in a row (to an in-between expression, then to the target), the first weight rising and falling.
+- **only**: Only some channels move: toward a named expression's numbers (`only("wince", ["upper", "lower"], w)`), or toward numbers given here (`only({ lid: 1 }, w)`).
+  `function only<K extends string, N extends string>(name: N, channels: readonly K[], weight: In<"f32">): Layer<K, N>`
+  cannot:
+  - give each channel its own weight: one weight for the list (several `only` layers for several weights).
+  - count toward `shares`: the face never becomes the named expression by it.
+  - target a moving number: the given numbers are fixed (a moving offset is `added`).
+  relatives:
+  - a blink: `only({ lid: 1 }, w)` with w a short `during` window on the clock, or a pulse at each hold of a `dart`.
+  - a look that leaves the rest of the face: `only` on the gaze channels toward an expression that looks.
+- **added**: A layer added on top of whatever is showing, `by` per channel times `weight`: a tremble, a breath.
   `const added = <K extends string>(by: Partial<Readonly<Record<K, In<"f32">>>>, weight: In<"f32"> = 1): Layer<K, never> =>`
+  cannot:
+  - keep a channel in range: an offset can take a lid past shut; hold the channel where it is drawn.
+  - count toward `shares`.
+  - survive a `show` at weight 1 laid after it (lay it after the struck pose if it must move during the hold).
+  relatives:
+  - a trembling expression: `show` the expression, then `added` a `tremor` on the channels that shake.
+  - a breathing face: `added` with `breathe(...) - 1` on a mouth or a nostril channel.
+  - a moving hold on a held face: `added` with `alive` per channel, its seed per channel.
 - **during**: A weight from a clock: 0 before `from`, rising over `rise` seconds, 1 until `to`, falling over `fall` seconds after it.
   `function during(clock: In<"f32">, o: { readonly from: number; readonly to?: number; readonly rise: number; readonly fall?: number }): F`
-- **ExpressionError**: (undocumented)
+  cannot:
+  - move its edges at run time: the window is fixed seconds on its clock (drive the clock instead).
+  - overshoot or anticipate: it stays within [0, 1].
+  - fall before it has risen: with `to` earlier than `from + rise` the fall starts during the rise and the weight never reaches 1.
+  relatives:
+  - a sharp arrival held still: `struck`'s weight, which snaps in and holds exactly 1.
+  - a window that repeats: the clock passed through mod(t, period).
+  - an action's beats on the same clock: `beats`, three ramps instead of one window.
+- **ExpressionError**: Raised when a cast or a score is given something it does not know: a named expression with a channel the rest lacks, a number that is not finite, an expression named "rest", a layer naming an expression or channel the cast lacks (raised when the score is read), or a `during` window with no rise, no fall or an end before its start.
   `class ExpressionError extends Error {} /** * A cast from its rest expression and each named expression's departures from rest: a channel a named expression does * not mention is the rest's. A named expression that mentions a channel the rest lacks, or a number that is not finite, * is an `Express...`
 
 Types:
 - **Cast**: A cast: the rest expression and the named ones, each complete (one number for every channel). `type Cast<K extends string, N extends string> = { channels, rest, named }`
 - **Expression**: An expression: one number per channel. `type Expression<K extends string> = Readonly<Record<K, number>>`
 - **Layer**: One layer of a score. `type Layer<K extends string, N extends string> = /** The whole face goes toward a named expression by `weight` (0 not at all, 1 entirely). */ | { readonly kind: "show"; readonly show: N; readonly weight: In<"f32"> } /** Only the listed channels go toward it: a blink moves the lids and leaves the ...`
+- **Posed**: Channels as closed forms of the clock: what a face is drawn from. `type Posed<K extends string> = Readonly<Record<K, F>>`
 - **Score**: `type Score<K extends string, N extends string> = { cast, at, shares }`
 
 ### src/geom/struck.ts (unproven: one user so far)
 
 A pose struck and held (docs/animation_principles.md, Expressions; the timing of kabuki's mie).
 
-- **struck**: A pose struck on `clock` (any expression of seconds: an attack's `tau`, the scene's `time`).
+- **struck**: A pose struck on `clock` (any expression of seconds: an attack's `tau`, the scene's `time`): driven into a pose in a few frames, held dead still, then let go.
   `function struck(clock: In<"f32">, o: StruckSpec): Struck`
+  cannot:
+  - ease into the pose: it arrives at full speed and stops in one frame (the snap is the point).
+  - hold for a time the game decides: the hold is fixed seconds on its clock; drive the clock to stretch it.
+  - keep anything moving under it during the hold: everything laid before it is covered; what must move goes after.
+  - strike twice: one cue per `struck`; a second pose is a second `struck` laid over the first's release.
+  relatives:
+  - loose parts that keep moving through the hold: `swing(since, ...)`, so cords and tassels swing beside a face that does not.
+  - a softer arrival: `overshot` in place of the snap, for a pose that lands and settles instead of locking.
+  - a pose that comes and goes without a hold: `during`, or `strike` on a progress.
 - **holdsStill**: Through each struck pose's hold, over one `period` of the scene's clock, every channel of the score is the named expression's own number to `within` (units of the channel, or a share of the channel's spread across the cast).
   `function holdsStill<K extends string, N extends string>(score: Score<K, N>, poses: Readonly<Partial<Record<N, Struck>>>, o: { readonly period: number; readonly within: Tolerance; readonly rate?: number }): Check`
-- **StruckError**: (undocumented)
+  cannot:
+  - follow a score or pose driven by anything but the scene clock `time`: the probe steps only the clock, and every host input stays where the probe set it (its default unless the check's caller set it).
+  - see a hold shorter than about two samples, or a flicker between samples.
+  - check a pose with `hold` 0: it is never still, so it fails as never held.
+  relatives:
+  - a check that the pose is reached at all, whenever it is shown: the same sampling, with the weight above a threshold in place of `still`.
+  - a check that loose parts do move during the hold: the same samples, measuring their spread instead of a bound.
+- **StruckError**: Raised by `struck` for a snap or release that is not a positive number of seconds, a hold below 0, a cue that is not finite or a recoil below 0; and by `holdsStill` when given no poses or a pose the cast does not name.
   `class StruckError extends Error {} /** A struck pose's timing on its clock, seconds. */ export type StruckSpec =`
 
 Types:
@@ -1294,26 +1775,40 @@ attacks, hit shapes, telegraphs, smears, wakes, grabs, the lineup and the design
 
 The simulation's hit shapes on the water (DESIGN.md 8).
 
-- **hit**: Constructors: the simulation's numbers (inputs, or expressions of them) as canonical hit shapes.
+- **hit**: The hit shapes an attack is aimed by, made from the game's numbers: `hit.capsule({ a, b, radius })` (a lane), `hit.disc({ centre, radius })` (a slam) and `hit.arc({ centre, inner, outer, from, to })` (a sweep), all on the ground's (x, z) plane.
   `const hit = { ... }`
-  - `hit.capsule`: (undocumented)
-  - `hit.disc`: (undocumented)
-  - `hit.arc`: (undocumented)
+  cannot:
+  - any shape but these three: no box, no cone wider than a half turn, no full ring, no polygon.
+  - a union: one shape per attack (two lanes are two attacks).
+  - height or volume: a shape lies on the plane; what stands up is a `Target`, measured by checks, not a hit.
+  relatives:
+  - a box: the distance to a rotated rectangle, max(|x| - w, |z| - h) inside and the corner distance outside.
+  - a full ring (a shockwave all round): |length(p - c) - mid| - half.
+  - a cone from a point: an arc with `inner` 0 (already possible, up to a half turn).
+  - `hit.capsule`: A lane: the segment `a` to `b` on the plane (x, z), widened by `radius`.
+  - `hit.disc`: A disc of `radius` round `centre` on the plane (x, z).
+  - `hit.arc`: An annular sector round `centre`: radii `inner` to `outer`, angles `from` to `to` (radians, +x toward +z, at most a half turn).
 - **hitSdf**: Signed distance to the hit shape in the plane: negative inside.
   `function hitSdf(h: Hit, p: V2): F`
-- **hitPatch**: The patch of the plane the shape is drawn on, (u, v) in [0, 1]^2, padded by `pad` all round.
+  cannot:
+  - measure in three dimensions: it is the plane's distance, the same at every height.
+  - be exact for an arc over a half turn: nothing refuses one, so keep `to - from` at most pi yourself.
+  relatives:
+  - a soft edge: smoothstep across d for a glow that fades out from the shape.
+  - a filling marker: inside where d < (k - 1) times the shape's inradius, k the warning's progress 0..1.
+- **hitPatch**: The patch of the plane the shape is drawn on, (u, v) in [0, 1]^2, padded by `pad` all round: the ground a marker covers, so drawing it costs about the shape's own pixels.
   `function hitPatch(h: Hit, u: F, v: F, pad: F): V2`
-- **hitContour**: Signed distance and the position along the nearest edge, in teeth about `spacing` apart.
-  `function hitContour(h: Hit, p: V2, spacing: In<"f32">): Contour`
-- **hitInradius**: Half the shape's narrowest width: how deep inward teeth may reach before they meet.
-  `function hitInradius(h: Hit): F`
+  cannot:
+  - fit the shape tightly: a disc's square spends its corners, a capsule's rectangle its caps' corners.
+  - follow the ground's height: it is a patch of the plane; lift it onto a sea or a plane yourself (the telegraph does).
+  relatives:
+  - a patch with relief: lift the points by a function of `hitSdf` (a rim that stands up at the edge).
 
 Types:
 - **Hit**: `type Hit = Capsule | Disc | Arc`
 - **Capsule**: A capsule: the segment a to b, widened by `radius` (a lunge's lane). `type Capsule = { readonly kind: "capsule"; readonly a: V2; readonly b: V2; readonly radius: F }`
 - **Disc**: A disc (a slam). `type Disc = { readonly kind: "disc"; readonly centre: V2; readonly radius: F }`
 - **Arc**: An annular sector (a sweep): radii `inner` to `outer` round `centre`, angles `from` to `to` (radians, from < to, at most a half turn apart). `type Arc = { readonly kind: "arc"; readonly centre: V2; readonly inner: F; readonly outer: F; readonly from: F; readonly to: F }`
-- **Contour**: Where a point is relative to the nearest edge: signed distance, position along the edge in teeth, world length of one tooth. `type Contour = { readonly d: F; readonly phase: F; readonly pitch: F }`
 
 ### src/spacetime/attack.ts
 
@@ -1321,25 +1816,78 @@ An attack defined once, everything derived from it (DESIGN.md 8).
 
 - **attack**: An attack, defined once: by a body part (`part` and a lunge, sweep or rear), by a gripper (`grip`, holding what it takes), or remote (a hit shape, timing and effect only).
   `function attack<W extends Aftermath = Still>(spec: BodyAttackSpec<W>): BodyAttack<W>`
+  cannot:
+  - aim at anything but its hit shape: the target is not read while posing, so a body that crosses the target on the way is not stopped (`stopsAt` and `staysClear` measure that afterward).
+  - change course, be parried or miss once warned: q is a fixed function of tau. A hit shape that moves carries the landing with it, at every clock at once (the past and future poses move too).
+  - overshoot its landing: q is normalised to its first peak (a recoil after it, with `zeta` below 1, is allowed).
+  - strike along any path but its motion's: a lunge lays the m = 0 end along a capsule's lane on a quadratic Bezier (or toward a disc's centre from where it rests), a sweep swings the m = 1 end round an arc's centre, a rear stands a middle stretch up as a loop and topples it onto a capsule. A remote attack poses nothing.
+  - strike with two parts in one attack: two parts are two attacks, applied in turn by `animate`.
+  - repeat on anything but a fixed period that holds the whole attack (`every` refuses one too short).
+  relatives:
+  - a strike that follows a moving target in: hit-shape fields that read the target's place until T and hold it after (a `select` on time); every clock reads the same shape, so the strike homes and then stays.
+  - another strike curve: q from `anticipated`, `overshot` or a `pendulum`'s swing in a pose of your own, with p from `envelope` for the posture.
+  - a combination: several attacks on one part, each armed later than the last, applied in turn by `animate` (each poses the spine the one before it left).
+  - a projectile: a remote attack whose hit shape is where it lands, and a thing of your own flown along `arc` from the launcher to the shape's centre over the `act` beat.
 - **animate**: Build a creature on its rest spine with attacks applied (each to its own stretch of the spine), and bind each attack to the part it names.
   `function animate(rest: Spine, attacks: readonly BodyAttack[], build: (spine: Spine) => Creature): Animated`
-- **part**: (undocumented)
+  cannot:
+  - pose more than one spine: every attack mixes the one spine `build` receives. A second limb with its own spine is a second `animate` (or `BodyAttack.pose` on that spine).
+  - mix attacks: they are applied in order, so where two stretches overlap the later one's rest is the earlier one's pose.
+  - bind an attack to a part `build` does not return, or two attacks of one name (both refused).
+  relatives:
+  - a blend instead of a sequence: two posed spines mixed by a weight of your own.
+  - a spine that drives a `chain` or `polyline`: read the posed spine at a few m and use the points as joints.
+- **part**: Names the stretch of a strand that strikes: m from `from` (default 0) to `to` (default 1) of `body`, its striking tip at m = `tip`.
   `function part(name: string, body: Strand, range: { readonly from?: number; readonly to?: number; readonly tip: number }): Part`
+  cannot:
+  - It cannot name a stretch of anything but a `Strand`, nor two disjoint stretches as one part (make two parts).
 - **once**: Arm once, at time `at` (seconds; an input for a game that sets it).
   `const once = (at: In<"f32">): Arming =>`
+  cannot:
+  - repeat by itself: once over, the attack rests until `at` changes (`every` repeats).
+  - remember a strike in progress: nothing is kept between frames, so changing `at` mid-attack jumps the pose to where the new arming puts it. A game sets the next arming only after the last one's span (`attack.span`) is over.
+  relatives:
+  - a list of arming times the game walks through: the input set to the next one when `attack.span.after` has passed.
+  - a fixed rhythm: `every`, which also checks that the attack fits its period.
 - **every**: Arm every `period` seconds, first at `first` (which may be an input but must not read time).
   `function every(period: number, first: In<"f32">): Arming`
-- **hold**: A hold of `seconds` on a thing of half width `radius` taken at `at`.
+  cannot:
+  - vary its spacing: every cycle is `period` long (no swing, no random gaps, no speeding up).
+  - overlap one cycle with the next: an attack longer than its period is refused, never cut short.
+  - stop: it repeats for ever from its first cycle (and before it, at negative cycles); gate what you draw by time.
+  relatives:
+  - two attacks on one period, the second `first` offset by half of it: an alternating pair (left, right).
+  - a period that is a whole number of the music's bars, `first` on a downbeat: an attack in time with a score.
+- **hold**: An attack's effect that holds a thing: from the arming time T for `seconds`, the attack owns the place and size of a thing of half width `radius` taken at `at`, and after it as `end` says (`SET_DOWN`, the default, or `thrown({...})`).
   `function hold<N extends Ending>(o: HoldSpec & { readonly end: N }): Hold<N>`
-- **ring**: (undocumented)
+  cannot:
+  - hold for a length decided at run time, or let go early: the hold ends at T + seconds, always.
+  - hold two things, or let go and take again: one thing, one carry.
+  - carry that answers the thing's weight or what it meets: the carry is a fixed curve of u, followed exactly.
+  - squeeze unevenly or along two axes: one axis narrows, the other two grow equally.
+  - end other than set down where the carry ends or thrown (`thrown`).
+  relatives:
+  - a drag inward: offset(u) on a spiral of shrinking radius about a centre (a vortex pulling a thing down).
+  - a swallow: a path into a body, and the thing drawn at `squeezed(base)` with base falling toward 0 over the hold.
+  - a pin that does not move: an arc carry with `to` equal to `at`, and squeezes for the struggle.
+- **ring**: An attack's aftermath that sends a ring wave over the sea from its hit disc at the arming time T (the wave is a `RingWave`, src/geom/ring.ts).
   `const ring = (o: Omit<Ring, "kind">): Ring =>`
-- **INSTANT**: (undocumented)
+  cannot:
+  - leave a hit shape that is not a disc: a capsule or an arc has no one edge at one distance (refused when made).
+  - start anywhere or any time but the attack's disc at its arming time: a splash elsewhere is `ringWave`.
+  - exist on a ground that is not a sea: it is a sea deformation.
+  - steepen, break, disperse, reflect or be blocked: one speed, one shape, nothing in its way.
+  relatives:
+  - a wave from a lane: distance from a segment instead of a centre; near the segment the crest barely falls (a plane wave), far away it falls as 1 / sqrt(r). A `SeaDeform` of your own reading `hitSdf` of a capsule.
+  - ripples that sort themselves: several pulses, each running at its wavelength's deep-water speed sqrt(g lambda / 2 pi), so the long ones outrun the short.
+  - a bore that slows as it falls: speed sqrt(g (depth + a)) with a the crest's height at r; the front's time is then an integral of 1 / speed over r, tabulated once.
+- **INSTANT**: The effect of an attack that acts at its arming instant and owns nothing after it: a hit.
   `const INSTANT: Instant`
-- **STILL**: (undocumented)
+- **STILL**: The aftermath that leaves the water as it was: what an attack given no `aftermath` has.
   `const STILL: Still`
-- **Attack**: An attack of any kind: its hit shape, schedule, warning, timing and effect.
+- **Attack**: An attack as `attack` builds it: its hit shape, schedule, warning, timing, effect and aftermath, and the closed forms every reader shares: `armAt(t)` and `arm` (the arming time of the cycle), `first` (what checks measure at), `envelope(t)` (posture p and strike progress q), `beats(t, settle)` and `span`.
   `class Attack<M extends Motion = Motion, E extends Effect = Effect, W extends Aftermath = Aftermath>`
-- **BodyAttack**: An attack whose motion poses a body part: `animate` binds it to the part it names.
+- **BodyAttack**: An attack by a body part (a lunge, a sweep or a rear), as `attack` builds it: `pose(rest)` is the rest spine with the attack mixed in, `landing(rest)` where its striking end is at the arming time, and `part` the name `animate` binds it to.
   `class BodyAttack<W extends Aftermath = Aftermath> extends Attack<BodyMotion, Instant, W>`
 
 Types:
@@ -1349,9 +1897,9 @@ Types:
 - **AttackSpec**: `type AttackSpec = BodyAttackSpec | RemoteAttackSpec | GripAttackSpec`
 - **BodyAttackSpec**: An attack by a body part: the creature's part named `part` moves by `motion` (`animate` binds it). `type BodyAttackSpec<W extends Aftermath = Aftermath> = Common<W> & { /** The name of the creature's part that strikes. */ readonly part: string`
 - **RemoteAttackSpec**: An attack that moves no body part: only its hit shape and timing, and its effect (an instant if none is given). `type RemoteAttackSpec<E extends Effect = Effect, W extends Aftermath = Aftermath> = Common<W> & { readonly motion: RemoteSpec; readonly effect?: E }`
-- **RemoteSpec**: A remote attack: a hit shape and its timing, and no body part that strikes (a broadside, a lightning bolt, a beam). `type RemoteSpec = { readonly kind: "remote"; readonly hit: Hit }`
+- **RemoteSpec**: A remote attack: a hit shape and its timing, and no body part that strikes (a falling rock, a lightning bolt, a beam). `type RemoteSpec = { readonly kind: "remote"; readonly hit: Hit }`
 - **GripAttackSpec**: A gripper's attack: it holds what it takes. `type GripAttackSpec<H extends Hold = Hold, W extends Aftermath = Aftermath> = Common<W> & { readonly motion: GripSpec; readonly effect: H }`
-- **GripSpec**: A grip: a gripper (a claw, a jaw) reaches for the thing its attack holds, closes on it at the arming time, follows it through the hold, opens and goes home (src/geom/grab.ts). `type GripSpec = Omit<GripperSpec, "rest" | "radius"> & { readonly kind: "grip"`
+- **GripSpec**: A grip: a gripper (two fingers, a jaw) reaches for the thing its attack holds, closes on it at the arming time, follows it through the hold, opens and goes home (src/geom/grab.ts). `type GripSpec = Omit<GripperSpec, "rest" | "radius"> & { readonly kind: "grip"`
 - **Effect**: `type Effect = Instant | Hold`
 - **Instant**: Acts at the arming instant and owns nothing after it: a hit. `type Instant = { readonly kind: "instant" }`
 - **Hold**: Acts for `seconds` from the arming time and owns its thing's place and size meanwhile, and after it as its ending says: set down, the thing stays where the carry ended; thrown, it flies and lands (the carry ends at the wind-back). `type Hold<N extends Ending = Ending> = { kind, seconds, at, radius, carry, squeeze, pulses, end }`
@@ -1359,12 +1907,12 @@ Types:
 - **CarrySpec**: A carry as written: `arc` is lifted `lift` (default 0) on an arch along `up` (default +y) and set down at `to`, slow in and slow out (`to` the place taken pins it there); `path` is dragged along `offset(u)` from the place taken (a whirlpool's spiral; `offset(0)` must be 0, or the thing jumps at the arming time). `type CarrySpec = | { readonly kind: "arc"; readonly to: In<"vec3">; readonly lift?: In<"f32">; readonly up?: In<"vec3"> } | { readonly kind: "path"; readonly offset: (u: F) => P3 }`
 - **AttackBeat**: The beats of an attack on its own clock: `anticipate` over the wind-up, `act` over the strike, `hold` over the effect, `release` over the motion's let-go, `flight` over a thrown thing's time in the air (a step at the hold's end otherwise), `settle` once the action is over: the part has let go and what it threw has landed. `type AttackBeat = Beat & { readonly hold: F; readonly release: F; readonly flight: F }`
 - **BodyMotion**: The motions that move a body part's spine. `type BodyMotion = LungeSpec | SweepSpec | RearSpec`
-- **Arming**: When an attack arms: once at a time, or every `period` seconds from `first`. `type Arming = | { readonly kind: "once"; readonly at: F } | { readonly kind: "every"; readonly period: number; readonly first: F }`
+- **Arming**: A schedule: when an attack (or an emote) arms, once at a time (`once`) or every `period` seconds from `first` (`every`). `type Arming = | { readonly kind: "once"; readonly at: F } | { readonly kind: "every"; readonly period: number; readonly first: F }`
 - **LungeSpec**: A lunge: the m = 0 end of the spine is laid along the lane and lands with the part's tip on the shape's far end. `type LungeSpec = { kind, hit, reach, lead, height, coil, rise, approach, neck }`
 - **SweepSpec**: A sweep: the m = 1 end of the spine swings round the arc's centre from its `from` angle to its `to` angle. `type SweepSpec = { kind, hit, root, height, inset }`
 - **Motion**: How an attack moves its part (the m = 0 end lunges, the m = 1 end sweeps, a middle stretch rears and slams, a gripper takes), or not at all. `type Motion = LungeSpec | SweepSpec | RearSpec | RemoteSpec | GripSpec`
 - **Timing**: Seconds and rates of an attack, all relative to its arming time T. `type Timing = { windup, strike, zeta, anticipation, hold, recover, travel }`
-- **Target**: What an attack must not pass into: a disc on the water (a vertical cylinder), a body's skeleton, or a ship's hull in the frame it is placed in (its signed distance, src/geom/hull_distance.ts; `Ship.target`). `type Target = | { readonly kind: "disc"; readonly centre: V2; readonly radius: F } /** A disc that stands only up to `top` (world y): what a thrown thing may pass over, as a crab's back. */ | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F } | { readonly kind: ...`
+- **Target**: A solid a striking body must not pass into, as the checks measure it (`stopsAt`, `staysClear` take one): a disc on the ground (a vertical cylinder without top), a column (a disc that stops at a height), a body's skeleton, or a closed skin in the frame it is placed in. `type Target = | { readonly kind: "disc"; readonly centre: V2; readonly radius: F } /** A disc that stands only up to `top` (world y): what a thrown thing may pass over (a low wall, a body's back). */ | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F } | { reado...`
 - **Part**: A stretch of a body that strikes: m from `from` to `to`, its striking tip at m = `tip`. `type Part = { readonly name: string; readonly body: Strand; readonly from: number; readonly to: number; readonly tip: number }`
 - **Strike**: An attack bound to the part of the posed creature that strikes with it; `before` is the spine the attack was applied to. `type Strike = { readonly attack: BodyAttack; readonly part: Part; readonly before: Spine }`
 - **Creature**: What a creature builder returns: its drawables, and the parts an attack may name. `type Creature = { readonly things: readonly Drawable[]; readonly parts: Readonly<Record<string, Part>> }`
@@ -1376,9 +1924,18 @@ Types:
 
 The telegraph: the simulation's own hit shape drawn on the water as a danger marker (DESIGN.md 8).
 
-- **telegraph**: The attack's hit shape on the water, as a danger marker that sharpens until the arming time.
+- **telegraph**: The attack's hit shape on the ground (a sea or a plane), as a danger marker that sharpens until the arming time.
   `function telegraph(attack: Attack, o: { readonly style?: Partial<TelegraphStyle>; readonly name?: string } = {}): Drawable`
-- **DANGER**: (undocumented)
+  cannot:
+  - draw anything but the hit shape: not the body, not a path, not a cone of sight.
+  - lie on a ground of nothing, on a wall or on a body: it is a patch of the ground's surface.
+  - warn for longer than `warn`, or stay after its fade: it is drawn only from T - warn to T + flash + fade.
+  - change its motif: teeth on a bone edge round a fill; only the colours and sizes in `TelegraphStyle` are open.
+  relatives:
+  - a fill that closes in from the edge: inside where d < (k - 1) times the inradius, so the safe time is the empty middle.
+  - a sweep shown as a moving line: an arc's angle mixed from `from` to `to` by k, a band along it.
+  - a warning on the body instead: paint on the striking part that brightens with the same k.
+- **DANGER**: The default look of a telegraph: a dark-red fill that strengthens toward the arming time, a bone edge with teeth pointing inward, an ink line round it so it reads on bright and dark ground alike, a pale flash at arming.
   `const DANGER: TelegraphStyle`
   - `DANGER.bone`: (undocumented)
   - `DANGER.spacing`: (undocumented)
@@ -1392,6 +1949,15 @@ The smear: the striking part over the recent past, as fading translucent copies 
 
 - **smear**: Fading copies of the attack's striking part over the last `over` seconds, shown while it moves fast.
   `function smear(strike: Strike, spec: SmearSpec): Drawable`
+  cannot:
+  - blur continuously: the copies are discrete, so a part that moves further than its own width in dt shows gaps.
+  - smear anything but a `Strike`'s part: a stretch of a strand bound to an attack by `animate`.
+  - answer speed anywhere but at the tip: a stretch that whips at its root while its tip is still shows nothing.
+  - be cheap at many samples: each copy poses the part's stations again and draws the stretch again.
+  relatives:
+  - a swept ribbon (a blade's trail): one `surface` between the tip's place now (u = 0) and at time - over (u = 1), across the part's width, fading along u. One draw, no gaps.
+  - speed lines: a few thin strands along the tip's past path, sampled at past times.
+  - a smear of the whole body: `body.at(time - k dt)` copies of everything, for a dash.
 
 Types:
 - **SmearSpec**: `type SmearSpec = { over, samples, speed?, opacity? }`
@@ -1402,13 +1968,23 @@ The wake: foam on the water where a body crossed the surface in the recent past 
 
 - **wake**: Foam on the water where the body crossed the surface over the last `over` seconds, fading with age.
   `function wake(body: Body, spec: WakeSpec): Drawable`
+  cannot:
+  - exist without a sea: it reads the sea's height at past times (a plane or nothing is refused).
+  - move the water: it is foam only, no wave and no displacement.
+  - drift: the foam is fixed where the body crossed, not carried by the swell or a current.
+  - show the body's present waterline: the live slice is left to the sea's contact foam, so a body that holds still leaves no trail.
+  - follow detail finer than every third station, or remember longer than `over`.
+  relatives:
+  - a Kelvin wake: the V of waves behind a moving point, its arms at 19.5 degrees to the path whatever the speed, as a `SeaDeform` summing crests along the past path.
+  - a dust trail on a plane: the same capsules, cut by the ground at height 0 instead of the sea.
+  - a ring per touchdown: a `ringWave` started at each moment a joint first cuts the water.
 
 Types:
 - **WakeSpec**: `type WakeSpec = { over, samples?, spread?, colour? }`
 
 ### src/spacetime/rear.ts
 
-A rear-and-slam: a stretch in the MIDDLE of a body (a sea serpent's coil arch) stands up as a tall loop during the wind-up and topples over onto the lane, landing as a narrow loop lying flat along a capsule.
+A rear-and-slam: a stretch in the MIDDLE of a body (a long body's arch) stands up as a tall loop during the wind-up and topples over onto the lane, landing as a narrow loop lying flat along a capsule.
 
 
 Types:
@@ -1420,30 +1996,74 @@ A grab: a gripper reaches for a thing, closes on it by its size, carries it, squ
 
 - **thrown**: A hold that ends in a throw (see `Thrown`).
   `function thrown(o: ThrownSpec): Thrown`
-- **throwOf**: The throw from wind-back place W.
-  `function throwOf(windback: P3, e: Thrown): Throw`
+  cannot:
+  - choose its release speed or angle: both follow from where and when it lands.
+  - feel air, spin or wind: the flight is a parabola.
+  - bounce, roll or come to rest on anything but a level it floats at: after touchdown it skids and heaves, as on water, whatever the ground.
+  - wind back anywhere but the carry's end (move the carry's `to` to move it).
+  relatives:
+  - a lob and a line drive: the same `land` with a long `flight` (high arc) or a short one (flat and fast).
+  - a bounce: a second parabola from touchdown with the vertical speed times a restitution below 1.
+  - a tumble in the air: `tumbled`, with `handTurn` for the hand's turn over the stroke.
 - **tumbled**: A thrown thing's axes in the hand and in the air: `g` (as it was taken) turned about `axis` (unit, fixed in space, through g's origin).
   `function tumbled(g: Frame, axis: In<"vec3">, e: Pick<Thrown, "flight" | "stroke">, turns: number, at: { readonly whip: In<"f32">; readonly u: In<"f32"> }): Frame`
+  cannot:
+  - wobble or precess: a free body's spin about one fixed axis, as a symmetric thing spun about a principal axis.
+  - land other than the way up it left: `turns` is whole.
+  - turn after it lands: at touchdown u is 1 and the angle stays.
+  relatives:
+  - a spiral pass: the axis along the release velocity (`attack.toss().velocity`), so it spins about its flight path.
+  - a wobble: a second, small turn about an axis that itself turns with the spin, its angle a sine of the first.
 - **handTurn**: The angle the hand turns a thrown thing through over the stroke, radians, so that it leaves turning at exactly the rate of its tumble: `turns` whole turns in the flight is a rate of 2 pi turns / flight, and a uniform angular acceleration from rest reaches that rate over the stroke after turning pi turns stroke / flight.
   `function handTurn(e: Pick<Thrown, "flight" | "stroke">, turns: number): number`
-- **tumbleRate**: The rate of that tumble, radians per second: the hand's own at the release, and the thing's through the flight (a free body's does not change).
+  cannot:
+  - It cannot take a fractional turn, so a thing always comes down the way up it left the hand (refused when asked).
+- **tumbleRate**: The rate a thrown thing tumbles at, radians per second: 2 pi turns / flight, the hand's own at the release and the thing's through the flight (a free body's does not change).
   `const tumbleRate = (e: Pick<Thrown, "flight">, turns: number): number =>`
-- **SET_DOWN**: (undocumented)
+- **SET_DOWN**: The ending in which a held thing is set down, at rest, where the carry ends; the grip opens there, then withdraws.
   `const SET_DOWN: SetDown`
-- **grab**: A grab on the clock `since` (seconds since it began; before 0 the gripper is at rest).
+- **grab**: A grab on the clock `since` (seconds since it began; before 0 the gripper is at rest): a gripper reaches for a thing, closes on it by its size, carries it, squeezes it and lets it go, with no attack around it (no hit shape, no warning).
   `function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab`
-- **gripper**: The gripper round a held thing `h`, on the grab's clock `since` (seconds since the reach began) and its beats: it reaches for `h.from`, closes, follows `h.thing` through the hold (b.hold must be the hold's seconds), lets go at `h.to` as the hold's ending says (`h.leave`: it opens where it is and withdraws, or follows a throw through) and goes home to `rest`.
+  cannot:
+  - pose fingers: it gives a palm and a gap; `fingerAngle`, `pincerAngle` or `wrap` turn the gap into a pose.
+  - chase: the palm arrives at `from` as it is at each instant, so a thing that moves during the reach is followed only if `from` is an expression of where it is.
+  - fail to take, regrip, pass the thing hand to hand or hold two things.
+  - carry along anything but the arch from `from` to `to` (an attack's `hold` takes a path of your own).
+  relatives:
+  - two hands: two grabs on one clock with `from` on either side of the thing, `to` the same, one closing a beat later.
+  - a grab that misses: `from` where the thing was, the thing moved away by the game before the close (draw the thing from the game's place, not `thing`).
+  - a grab that repeats: `since` as time modulo a period longer than the four beats.
+- **gripper**: The gripper round a held thing `h`, on the grab's clock `since` (seconds since the reach began) and its beats.
   `function gripper(since: In<"f32">, spec: GripperSpec, b: GrabBeats, h: Held): Grab`
+  cannot:
+  - turn the gap into a pose: it says how far apart, not how fingers stand (that is `fingerAngle`, `pincerAngle`, `wrap`).
+  - reach along anything but its arc, or take something that moves away during the reach other than by `h.from`.
+  - regrip, pass the thing hand to hand, or hold two things.
+  relatives:
+  - a hook that does not close: ignore the gap and hang the thing under the palm (the palm and `thing` are enough).
+  - a suction cup or a magnet: gap unused, the thing snapped to the palm over the close beat.
+  - a two-handed lift: two grippers round one `Held`, their rests on either side.
 - **heldThing**: The thing a hold owns, on `since` (seconds since it was taken; negative before) for a hold of `seconds`: `carry(u)` is its place at u in [0, 1] of the carry (u = 0 must be `from`), squeezed `pulses` times to `1 - squeeze` of its width while carried; `end` is how the hold ends (set down: the carry is the whole hold).
   `function heldThing(since: In<"f32">, seconds: number, from: P3, carry: (u: F) => P3, squeeze: number, pulses: number, end: Ending): Held`
 - **fingerAngle**: The angle each of two fingers (or the two halves of a jaw) stands off the grip's forward axis so that their tips are `gap` apart: fingers of `length`, hinged `hinge` apart at the palm.
   `function fingerAngle(gap: In<"f32">, length: In<"f32">, hinge: In<"f32"> = 0): F`
   cannot:
   - A gap the fingers cannot span gives a right angle.
-- **pincerAngle**: A pincer: one finger fixed, one moving, both of `length` (hinge to tip, straight) from one hinge.
+- **pincerAngle**: The angle between the two fingers of a pincer (one fixed, one moving, both of `length` from one hinge, measured hinge to tip in a straight line) for their tips to be `gap` apart: gap = 2 length sin(angle / 2).
   `function pincerAngle(gap: In<"f32">, length: In<"f32">): F`
+  cannot:
+  - It cannot open past a straight angle: a gap over 2 length gives pi.
 - **wrap**: A coil round a thing, by its size.
   `function wrap(spec: WrapSpec): { readonly turns: F; spine(m: F): P3 }`
+  cannot:
+  - wrap anything but a cylinder of one radius: no taper, no bulge, no corners.
+  - change pitch or radius along the coil: no loose end turns, no tighter middle.
+  - keep clear of itself: a pitch below the body's width overlaps its turns, unchecked.
+  - move from free to coiled: it is the coiled spine only; the blend (and its timing) is yours.
+  relatives:
+  - a conical helix: r a function of the height along the axis, for a tapering thing (a cone, a bottle's neck).
+  - a coil round a curved thing: the same angle and advance laid in a strand's frame along its spine instead of a fixed axis.
+  - a knot or a hitch: the coil, then a turn back under itself (a `through` curve over points you choose).
 
 Types:
 - **Ending**: How a hold ends. `type Ending = SetDown | Thrown`
@@ -1463,21 +2083,19 @@ Types:
 
 Design variants (docs/variants.md).
 
-- **design**: (undocumented)
+- **design**: Makes a `Design` from a spec: the subject's `numbers`, its `slots` of options, its named `variants`, and a `build` from a chosen option per slot to a scene with its checks.
   `function design<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member>(spec: DesignSpec<N, T, B, H, M>): Design<N, T, B, H, M>`
-- **Design**: (undocumented)
+- **Design**: One subject with named slots of options and named variants, built into a scene and its checks.
   `class Design<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member>`
-- **DesignError**: (undocumented)
+- **DesignError**: Raised when a variant request is malformed or names a variant, slot, option or number that does not exist, two options set the same number differently, or a staged build is asked of a design without one.
   `class DesignError extends Error`
 - **parseVariantAsk**: `name`, `slot=option,...` or `name,slot=option,...`.
   `function parseVariantAsk(text: string): VariantAsk`
-- **BASE_ASK**: (undocumented)
-  `const BASE_ASK: VariantAsk`
 
 Types:
 - **Member**: One of several subjects in a scene (src/lineup.ts): what it draws (the sea is the scene's) and its checks, and whatever more its game reads. `type Member = { readonly things: readonly Drawable[]; readonly checks: readonly Check[] }`
 - **Staged**: A subject built in two stages, so that several can share one sea: first what it does to the sea (its attacks' ring waves) and the sea it would have alone; then, on the sea the scene made with every subject's deformations, the rest. `type Staged<M extends Member = Member> = { readonly deforms: readonly SeaDeform[]; readonly sea: SeaSpec; readonly finish: (water: Sea) => M }`
-- **Built**: What a build gives: the scene, and what the game and the checks read of it. `type Built = { scene, checks, strikes, holds, waves }`
+- **Built**: What every build gives: the scene and its checks. `type Built = { readonly scene: Scene; readonly checks: readonly Check[] }`
 - **Choice**: An option name for every slot. `type Choice<T> = { readonly [S in keyof T]: keyof T[S] & string }`
 - **DesignSpec**: `B` is what this subject's build gives: `Built`, and whatever more its game reads (a hand-off record), kept typed through `Design.build`. `type DesignSpec<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member> = { name, numbers, slots, variants, compare, looks?, build, stage? }`
 - **Option**: One option of a slot. `type Option<N> = { readonly about: string; readonly numbers?: Overrides<N> }`
@@ -1493,9 +2111,20 @@ Types:
 
 An emote: an action with no hit (a taunt, a dance, a roar).
 
-- **emote**: An emote (see `Emote`).
+- **emote**: An emote: an action with no hit (a taunt, a dance, a bow, a roar), on a schedule as an attack is (`once`, `every`), with accents, the instants its moves land on.
   `function emote(spec: EmoteSpec): Emote`
-- **Emote**: (undocumented)
+  cannot:
+  - vary a move by accent: every move has the same rise, hold, fall and size (scale a move yourself by which accent it is).
+  - overlap moves: they are combined by max, so accents closer than `lead + fall` merge into one longer move.
+  - alternate among more than two sides: `step` is +1 or -1.
+  - change tempo or take accents decided at run time: they are fixed seconds after arming.
+  - pose anything: it says when and how much; which limb goes where is the body's.
+  relatives:
+  - a move per accent of its own size: weights indexed by floor(count / 2) of the moves passed, multiplied into `wave`.
+  - three sides (left, middle, right): the number of off-beats passed, mod 3.
+  - swing: accents placed long-short (2/3 and 1/3 of each beat) instead of even.
+  - a group on counts with unison and canon checked: `routine`.
+- **Emote**: A scheduled performance with no hit, as `emote` builds it: `beats(t)` gives its four readouts at a clock (`on`, `wave`, `turn`, `step`, see `EmoteBeat`), `armAt(t)` the arming time of the cycle t is in, and `span` the seconds it moves before and after arming.
   `class Emote`
 
 Types:
@@ -1506,17 +2135,32 @@ Types:
 
 A routine: one dance for a group, as a score of key poses on counts (docs/lineup.md, "A drilled group").
 
-- **routine**: A routine (see `Routine`).
+- **routine**: A routine: one dance for a group, as a score of key poses on counts that every member reads, so unison is a property of the data: the same key arrives at the same instant with the same ease and size for everyone, unless the key says otherwise (`who`: a canon down the line, a mirror about the centre, or only some members).
   `function routine(spec: RoutineSpec): Routine`
-- **Routine**: (undocumented)
+  cannot:
+  - A member without limbs leaves those out (its readouts have no `claw`); a subject with some other moving part (a bell, a jib, a tail) cannot have it scored.
+  - score a channel it does not know: only lean, level, face, place, two limb aims and clicks.
+  - change tempo or loop length: one beat, one loop, the same for every member.
+  - pass through a pose: each key is held until the next; there are no curves through keys.
+  - overlap two keys' moves on one channel, or run a canon past the loop's end (both refused).
+  - give one member a different size of move: one size table (scale a member's readouts yourself).
+  - groove on any pattern but every count.
+  relatives:
+  - keys over named channels the routine is given (a bell's swing, a jib's slew), with lean, level and face as a default set: the same track law over a record of channels.
+  - keys that flow: a curve through the key values (`through`) instead of eased steps, so a move passes through a pose.
+  - a swung groove: the drop on the count, a smaller one on the off-beat.
+  - a crowd: members' places from a formula of the index, and a canon whose delay grows along the line.
+- **Routine**: A group dance as `routine` builds it: `member(m)` is member m's dance as closed forms of a clock (a `Dancer`), `inSync(readouts, limits)` the check that measures the members as drawn against each other, `period` the loop's seconds and `members` how many dance.
   `class Routine`
-- **RoutineError**: (undocumented)
+- **RoutineError**: The error `routine`, `Routine.member` and `inSync` raise when a score cannot be danced as written: a key outside the loop or on a formation not in `places`, a travel or turn shorter than a count, two keys on one channel whose moves overlap, a click while a struck pose holds, a canon that runs past the loop's end, a channel the score sets that a member's readouts lack.
   `class RoutineError extends Error {} type Channel = "lean" | "level" | "face" | "claw" | "small"`
+  cannot:
+  - The error `routine`, `Routine.member` and `inSync` raise when a score cannot be danced as written: a key outside the loop or on a formation not in `places`, a travel or turn shorter than a count, two keys on one channel whose moves overlap, a click while a struck pose holds, a canon that runs past the loop's end, a channel the score sets that a member's readouts lack.
 
 Types:
-- **Aim**: Where a claw's wrist goes, from its shoulder, in the crab's axes (forward, up, out from its own side), in arm spans; or back to its own rest. `type Aim = V3 | "rest"`
+- **Aim**: Where a limb's wrist goes, from its shoulder, in the body's axes (forward, up, out from its own side), in arm spans; or back to its own rest. `type Aim = V3 | "rest"`
 - **Dancer**: One member's dance: closed forms of a clock (seconds; `time` by default). `type Dancer = { home, rise, lean, face, place, soloing, still, claw, click, solo }`
-- **Readouts**: What the instrument reads of a member, as expressions of `time`: body lift over its ride (units), its roll (radians), its heading off its own (radians), its great claw's wrist over its shoulder (arm spans). `type Readouts = { readonly lift: F; readonly lean: F; readonly face: F; readonly claw: F; /** The great claw's fingers as drawn: 0 shut .. 1 wide open. */ readonly click: F }`
+- **Readouts**: What the instrument reads of a member, as expressions of `time`: body lift over its ride (units), its roll (radians), its heading off its own (radians), its larger limb's wrist over its shoulder (arm spans). `type Readouts = { lift, claw?, click? }`
 - **RoutineSpec**: `type RoutineSpec = { beat, length, centre, places, manner, size, score }`
 - **Solo**: A member's solo: its own dance (its own manner) with moves landing on these counts. `type Solo = { readonly solo: number; readonly on: readonly number[] }`
 - **SyncRow**: One key on one channel, measured across members. `type SyncRow = { readonly key: number; readonly count: number; readonly channel: string; readonly who: string; readonly arrival: number; readonly size: number; readonly pass: boolean; readonly arrivals: readonly number[]; readonly values: readonly number[] }`
@@ -1526,9 +2170,19 @@ Types:
 
 A ring wave: what a slam leaves on the water (docs/throw_and_shove.md).
 
-- **ringWave**: A ring wave (see `RingWave`).
+- **ringWave**: A ring wave: one crest and its trough leaving the edge of a disc at an instant and running out over the sea, shoving what floats.
   `function ringWave(spec: RingSpec): RingWave`
-- **RingWave**: (undocumented)
+  cannot:
+  - change speed: one speed for the whole run, though a real front of finite height runs faster while it is tall.
+  - disperse, steepen or break: the pulse keeps its shape and length.
+  - meet anything: no shore, no reflection, no shadow behind a body, no sum with a second ring beyond adding heights.
+  - push a thing that is moving already, or turn one: the stand-in starts from rest at its own place and slides outward.
+  - exist on a ground that is not a sea.
+  relatives:
+  - a wave from a line: distance from a segment instead of a point; the crest barely falls near the line (a plane wave) and as 1 / sqrt(r) far away.
+  - deep-water ripples: several pulses, each at its wavelength's speed sqrt(g lambda / 2 pi), so the long ones lead and the ring spreads into a train.
+  - a bore that slows as it falls: speed sqrt(g (depth + a)) with a the crest's height at r, the front's time an integral of 1 / speed over r, tabulated once (`tabulate`).
+- **RingWave**: A ring wave on the sea, as `ringWave` (or an attack's `ring` aftermath) makes it: a sea deformation to pass to `sea({ deform })`, and the rule a game reads to move floating things itself: `arrival(place)` (seconds after the start that the front reaches a place), `speed`, `lag`, `holds(place)`, `dropRadius`, `lifts(place, t)` (the surface's rise), `ride(place)`; and Loft's stand-in for a thing at rest that it shoves, `pushed(place, t)` and `shoved(place)`.
   `class RingWave implements SeaDeform`
 
 Types:
@@ -1537,10 +2191,19 @@ Types:
 
 ### src/lineup.ts (unproven: one user so far)
 
-Several subjects in one scene (docs/lineup.md): four crabs side by side.
+Several subjects in one scene (docs/lineup.md), side by side.
 
 - **lineup**: Stand several subjects in one sea.
-  `function lineup<N, H, M extends Member>(o: { readonly members: readonly Standing<N, H, M>[]; readonly water: Omit<SeaSpec, "deform">; readonly loop: LineupLoop }): Lineup<M>`
+  `function lineup<M extends Member>(o: { readonly members: readonly Standing<unknown, unknown, M>[]; readonly water: Omit<SeaSpec, "deform">; readonly loop: LineupLoop }): Lineup<M>`
+  cannot:
+  - stand members on a plane or on nothing: it always makes a sea.
+  - let one member read another: each is built alone in its namespace; only the shared sea passes between them.
+  - take a member that is not a staged design.
+  - place members: where each stands is its own build's (`how`, `numbers`).
+  relatives:
+  - a crowd: many members of one design, `numbers` varied by index (a size, a phase, a place).
+  - a duet that dances: two members whose rigs read one `routine`, each its own `member(m)`.
+  - a lineup on a plane: the same two stages by hand, each member in `namespaced`, finished on a plane (no deformations).
 
 Types:
 - **Lineup**: `type Lineup<M extends Member> = { sea, members, things, checks }`
@@ -1561,7 +2224,7 @@ Checks: arithmetic on the CPU from the same description the GPU draws (DESIGN.md
   `function staysClear(body: Measured, target: Target, o: { readonly until: CheckTime; readonly from?: CheckTime; readonly margin?: number; readonly rate?: number; readonly label?: string }): Check`
 - **stopsAt**: The striking part reaches the target at the arming time (within `contact`) and never enters it over the whole attack (it stops at the hull: the least distance is at least `-tolerance`).
   `function stopsAt(strike: Strike, target: Target, o: { readonly contact?: number; readonly tolerance?: number; readonly rate?: number } = {}): Check`
-- **gripReaches**: A two-sided gripper (a claw's fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing instant (the arming time) and at every sampled instant of the hold, the point of each drawn finger's surface nearest the thing's middle is found.
+- **gripReaches**: A two-sided gripper (two fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing instant (the arming time) and at every sampled instant of the hold, the point of each drawn finger's surface nearest the thing's middle is found.
   `function gripReaches(attack: Attack<Motion, Hold>, fingers: readonly [Measured, Measured], o: { readonly middle: Tolerance; readonly gap: Tolerance; readonly rate?: number }): Check`
 - **releasesAt**: The hand-off a throw promises a game (docs/throw_and_shove.md, "The contract"): at the stated release instant the thing is at the stated release point, and the gripper has brought it to the stated release velocity.
   `function releasesAt(attack: Attack<Motion, Hold<Thrown>>, o: { readonly speed: Tolerance; readonly place: Tolerance }): Check`
@@ -1570,16 +2233,16 @@ Checks: arithmetic on the CPU from the same description the GPU draws (DESIGN.md
 - **fliesClear**: A thrown thing, as a ball of radius `size` round its middle, keeps at least `margin` clear of every target (the thrower's own body, its shell) from its release to its touchdown.
   `function fliesClear(attack: Attack<Motion, Hold<Thrown>>, targets: readonly Target[], o: { readonly size: number; readonly margin?: number; readonly rate?: number }): Check`
 - **letsGoClean**: A gripper lets go cleanly: from the release its drawn fingers come out of the thing they threw and stay out.
-  `function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: readonly Measured[], hull: Target, o: { readonly seconds: number; readonly depth: Tolerance; readonly rate?: number }): Check`
+  `function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: readonly Measured[], thing: Target, o: { readonly seconds: number; readonly depth: Tolerance; readonly rate?: number }): Check`
 - **shoves**: The stand-in's shove is the ring's own ride, and it is enough (docs/throw_and_shove.md, "The ride").
-  `function shoves(attack: Attack<Motion, Effect, Ring>, place: In<"vec2">, o: { readonly least: number; readonly speed: Tolerance; readonly place: Tolerance }): Check`
+  `function shoves(ringing: Ringing, place: In<"vec2">, o: { readonly least: number; readonly speed: Tolerance; readonly place: Tolerance }): Check`
   cannot:
   - A thing the front cannot hold where it floats (no ride) is measured on the last alone.
 - **frontFirst**: Nothing moves before the front arrives, and nothing is carried before its face does: at each place, from a second before the arming time until the ring's leading edge reaches it, the shove and the wave's lift are exactly 0; from then until the face takes the thing (`lag` later) the shove is still exactly 0 (the water lifts it and that is all); and one drag time after that the thing has moved (so the check is not passed by a wave that never comes).
-  `function frontFirst(attack: Attack<Motion, Effect, Ring>, places: readonly In<"vec2">[], o: { readonly rate?: number } = {}): Check`
+  `function frontFirst(ringing: Ringing, places: readonly In<"vec2">[], o: { readonly rate?: number } = {}): Check`
 - **warned**: The warning comes first and covers what is taken: it starts no later than the motion's first movement (`warn >= span.before`), and for a hold the thing's footprint where it is taken (a disc of its radius round its middle) lies inside the warned hit shape.
   `function warned(attack: Attack): Check`
-- **tolerance**: (undocumented)
+- **tolerance**: Makes a `Tolerance` for a check that takes one: `tolerance.units(d)` for a distance in world units, or `tolerance.share(s)` for a share of a reference the check names.
   `const tolerance = { ... }`
   - `tolerance.units`: (undocumented)
   - `tolerance.share`: (undocumented)
@@ -1609,19 +2272,17 @@ Types:
 - **Verdict**: What a check reports. `type Verdict = { readonly name: string; readonly pass: boolean; readonly value: number; readonly measured: string; readonly limit: string }`
 - **Measured**: Something with a skeleton to measure: a whole body, or a part (its stretch of joints). `type Measured = Body | Part`
 - **Mark**: A drawn length: two world points (closed forms of the clock) whose difference a viewer sees: an eye's middle to its lid's edge, a stalk's root to its tip, an eye's middle to its pupil. `type Mark = { readonly from: In<"vec3">; readonly to: In<"vec3"> }`
-- **Reaching**: A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of (outboard of the root: a knee that crosses inward has folded under the body). `type Reaching = { readonly name: string; readonly limb: LimbSpec; readonly outward: In<"vec3"> }`
+- **Reaching**: A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of (outboard of the root: a knee that crosses inward has folded under the body). `type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> }`
 
 ## Styles (src/styles.ts)
 
-how a scene is painted (toon and woodblock looks, palettes, light, water and sky recipes).
+how a scene is painted.
 
 ### src/style.ts
 
 A style is a program in the same expression language (DESIGN.md 2.6): it maps a shading context to a colour.
 
-- **toon**: Banded toon lighting from the sun, a rim term, an ink outline (drawn by the compiler as a second pass of every surface pushed out along its normal, front faces culled), and a stylised sea.
-  `function toon(spec: ToonSpec = {}): Style`
-- **palette**: (undocumented)
+- **palette**: Colour recipes for painting a body, as functions of its length coordinate `m` (metres) and its around coordinate `v` (0 to 1): `countershade` (dark back, pale belly), `bands`, `spot`, and `clamp`.
   `const palette = { ... }`
   - `palette.countershade`: Dark back, pale belly (counter-shading).
   - `palette.bands`: Saddle bands across the back: `count` bands over [from, to] in m, each `width` of its period, fading out on the belly.
@@ -1638,7 +2299,9 @@ Types:
 - **LayerCtx**: A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. `type LayerCtx = { world, view, distance, amount }`
 - **SkyCtx**: `type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> }`
 - **GroundCtx**: What a fragment of a plane ground knows (src/draw/ground.ts): where it is, and how much of a cast shadow covers it. `type GroundCtx = { world, view, sun, distance, shadow }`
-- **ToonSpec**: `type ToonSpec = { bands?, outline?, shadow?, ink?, water?, sky?, rim?, ground? }`
+- **BlockCast**: `type BlockCast = | { readonly kind: "none" } /** From the capsules of every thing's skeleton, as the shadows on the water are, onto bodies up to `reach` behind; none from a capsule thinner than `thin`. */ | { readonly kind: "capsules"; readonly reach: number; readonly thin: number }`
+- **BlockOverlap**: `type BlockOverlap = | { readonly kind: "none" } /** `width` wide (world units) round a part that stands less than `gap` in front; `amount` of the block (0..1). */ | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number }`
+- **ShadowBlock**: A shadow printed as a block after the bodies are drawn (docs/lighting.md). `type ShadowBlock = { body, ink, floor, cast, overlap }`
 
 ### src/style/index.ts
 
@@ -1650,7 +2313,9 @@ Styles by name, and a scene drawn in another style.
   - `STYLES.woodblock`: (undocumented)
   - `STYLES.biolume`: (undocumented)
   - `STYLES.papercraft`: (undocumented)
-- **STYLE_NAMES**: (undocumented)
+  - `STYLES.sketch`: (undocumented)
+  - `STYLES.neon`: (undocumented)
+- **STYLE_NAMES**: The names of the built-in styles, as the keys of `STYLES` (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`); what `styleNamed` and the gallery's `--styles` accept.
   `const STYLE_NAMES = Object.keys(STYLES) as readonly StyleName[]`
 - **styleNamed**: The named style; an unknown name throws, listing the known ones.
   `function styleNamed(name: string): Style`
@@ -1666,7 +2331,7 @@ Types:
 
 Lighting for a print: a recipe of shading treatments, each on or off with its own options (docs/lighting.md).
 
-- **light**: (undocumented)
+- **light**: Builders for the lighting treatments a style can lay over its bodies: `key` (where the light comes from), `edge` (where a shadow begins on a form), and the treatments `core`, `highlight`, `cast`, `waterline`, `overlap`, `bokashi`, `hatch`, `rim` and `block`, which `light.recipe` gathers into a `LightRecipe`.
   `const light = { ... }`
   - `light.key`: (undocumented)
   - `light.edge`: (undocumented)
@@ -1685,16 +2350,192 @@ Lighting for a print: a recipe of shading treatments, each on or off with its ow
   - `LIGHT.flat`: No shading at all: every surface in its lit ink, the key line and nothing else.
   - `LIGHT.twoTone`: Two tones: the shadow side of every form, and the shadows the parts cast on each other.
   - `LIGHT.threeTone`: Two tones and a third: a hard lighter shape on every form's sunward shoulder.
-  - `LIGHT.bokashi`: The wash from a form's middle down (the painted reference grades the claw's whole lower half into indigo), in the print's indigo, deeper than the core's block: a grade that stops at a quarter strength reads as dirt, not form.
+  - `LIGHT.bokashi`: The wash from a form's middle down (the painted reference grades a form's whole lower half into indigo), in the print's indigo, deeper than the core's block: a grade that stops at a quarter strength reads as dirt, not form.
   - `LIGHT.hatched`: The shadow side drawn in lines across the form that swell as it turns away; no flat shadow.
   - `LIGHT.contact`: Flat inks, and a dark band wherever a part lies on another or stands in the water.
   - `LIGHT.rim`: Night, a storm, a lamp behind: the body mostly in a deep indigo block, a cream edge toward the light.
   - `LIGHT.cel`: The cel set: two tones, cast shadows, contact bands and sparse highlights.
   - `LIGHT.sunset`: The sun low behind the subject: the forms turned by a light fixed up and left of the camera (hatched, as the engraving), the shadow block lifted and violet so no face goes black, and a warm gold rim on the sunward edge.
+- **lit**: A recipe over a lit ink: the colour before the block (the highlight and the rim on it) and the block's tone.
+  `function lit(r: LightRecipe, ink: V, ctx: ShadeCtx): { readonly colour: V; readonly tone: F }`
+- **litBodies**: A style's bodies lit by a recipe: `ink` is the colour a body has in full light (whatever the style makes of its paint), `after` a last touch on the lit colour before the block prints over it (a key line: the block over black is black), `own` the block's ink where the recipe states none (`block: { kind: "rule" }`).
+  `function litBodies(recipe: LightRecipe, own: BlockInk, ink: (ctx: ShadeCtx) => V, after: (c: V, ctx: ShadeCtx) => V = (c) => c): Bodies`
+  cannot:
+  - Cannot: light anything but bodies (water and sky have their own functions), or change the order of the treatments (`lit`'s).
+- **printedBlock**: The block printed over a colour, in the fragment itself.
+  `function printedBlock(p: Pull, colour: V, tone: F): V`
+- **pullOf**: Reduces a shadow block's ink to the two numbers a blend needs (`floor` and `add`), so a tone can be printed over a colour; throws if the block would print nothing.
+  `function pullOf(b: BlockInk): Pull`
+- **markOf**: The tone as the picture's alpha carries it: `floor` under a whole block, 1 where it does not print.
+  `const markOf = (p: Pull, tone: F): F =>`
+- **blockInk**: The block's ink: the style's own, or the recipe's.
+  `function blockInk(b: Block, own: BlockInk): BlockInk`
+- **keyOf**: The key light's direction.
+  `function keyOf(k: Key, ctx: ShadeCtx): V`
 
 Types:
+- **Bodies**: What a style's bodies are: their colour, their mark, and the shadow block if one is printed after them. `type Bodies = Pick<Style, "shade" | "mark" | "block">`
+- **BlockInk**: `type BlockInk = { readonly ink: Rgb; readonly amount: number; readonly value: number }`
+- **Block**: The shadow block's ink: the style's own (its print rule's), or stated: a full shadow is mix(colour, ink, amount) * value. `type Block = { readonly kind: "rule" } | { readonly kind: "ink"; readonly ink: Rgb; readonly amount: number; readonly value: number }`
+- **Bokashi**: Bokashi, the one soft thing: the block wiped to a grade. `type Bokashi = { readonly kind: "off" } | { readonly kind: "wash"; readonly foot: number; readonly under: readonly [number, number]; readonly amount: number }`
+- **LightCast**: Shadows one thing casts on another: from the capsules of every skeleton, onto bodies up to `reach` behind along the sun. `type Cast = { readonly kind: "off" } | { readonly kind: "capsules"; readonly reach: number; readonly thin: number }`
+- **Core**: The core shadow: the block printed flat on the shadow side of `edge`. `type Core = { readonly kind: "off" } | { readonly kind: "flat"; readonly edge: Terminator }`
+- **Hatch**: Shadow carried by lines across the form (rings of constant length along a body's spine; level lines on a traced solid). `type Hatch = { readonly kind: "off" } | { readonly kind: "cross"; readonly edge: Terminator; readonly over: number; readonly deep: number; readonly cap: number; readonly spacing: number; readonly least: number; readonly ragged: number }`
+- **Highlight**: A third, lighter tone: `amount` of `ink` over the lit ink, hard-edged, where the surface faces half way between the key and the eye within `size` degrees: a patch of sin^2(size) of a ball's disc, a stripe along a limb that lies across that direction. `type Highlight = { readonly kind: "off" } | { readonly kind: "shoulder"; readonly size: number; readonly ink: Rgb; readonly amount: number; readonly key: Key }`
+- **LightKey**: Where the light that turns the forms comes from. - `sun`: the scene's sun. - `offLens`: the sun, but never nearer the lens than `least` degrees: when the camera looks down the sun (the game camera is 23 degrees off it, and a ball then shows 4% of itself in shadow) the form light is the sun swung away from the view axis, in the plane of the two, until it is `least` off. `type Key = { readonly kind: "sun" } | { readonly kind: "offLens"; readonly least: number } | { readonly kind: "camera"; readonly side: number; readonly up: number }`
 - **LightName**: `type LightName = keyof typeof LIGHT`
 - **LightRecipe**: `type LightRecipe = { core, hatch, waterline, bokashi, rim, highlight, cast, overlap, block }`
+- **Overlap**: A flat band on whatever lies less than `gap` behind a nearer part, `width` wide round that part's outline. `type Overlap = { readonly kind: "off" } | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number }`
+- **Pull**: How a block prints, as the two numbers a blend needs: where the tone is t the picture is colour * m + `add` * (1 - m) with m = mix(`floor`, 1, t). `type Pull = { readonly floor: number; readonly add: Rgb }`
+- **Rim**: A light edge inside the key line where the surface turns from the eye on the key's side: `width` world units (never under 1.5 pixels), `amount` of `ink`, cut out of the block. `type Rim = { readonly kind: "off" } | { readonly kind: "edge"; readonly width: number; readonly ink: Rgb; readonly amount: number; readonly key: Key }`
+- **Terminator**: Where the shadow side begins, as a signed measure that is positive in the light. - `sun`: N.K - at. `type Terminator = | { readonly kind: "sun"; readonly at: number; readonly key: Key } | { readonly kind: "section"; readonly at: number; readonly key: Key }`
+- **Waterline**: A flat band where a body stands in the water: `amount` of the block from the waterline up to `height`. `type Waterline = { readonly kind: "off" } | { readonly kind: "band"; readonly height: number; readonly amount: number }`
+
+### src/style/sky.ts
+
+The sky as a print paints it: an ink at the horizon with washes wiped over it by the view's height, a sun disc, cloud bands, and one ink below the horizon.
+
+- **skyOf**: The sky along a view ray: the washes, then the sun and the clouds printed over them; below the horizon `below`.
+  `function skyOf(sky: Sky, ctx: SkyCtx): Expr<"vec3">`
+
+Types:
+- **Sky**: A whole sky: the horizon's ink, the washes over it in order, the ink below the horizon, a sun and clouds. `type Sky = { readonly horizon: Rgb; readonly washes: readonly Wash[]; readonly below: Rgb; readonly sun: SkySun; readonly clouds: SkyClouds }`
+- **SkyClouds**: Cloud bands: none, or flat bands in `ink` with a key line in `key`, each lying on a view height `at` (its flat underside) between two bearings (radians about up, from +x toward +z), its top scalloped in `lumps` across that span and `thick` at most. `type SkyClouds = | { readonly kind: "none" } | { readonly kind: "bands"; readonly ink: Rgb; readonly key: Rgb; readonly line: number; readonly bands: readonly { readonly at: number; readonly thick: number; readonly from: number; readonly to: number; readonly lumps: number }[] }`
+- **SkySun**: A sun disc: none, or one in the direction `toward` (world; normalised here), `radius` radians across its half, in `ink`, flat. `type SkySun = { readonly kind: "none" } | { readonly kind: "disc"; readonly toward: readonly [number, number, number]; readonly radius: number; readonly ink: Rgb }`
+- **Wash**: An ink wiped over the sky from nothing at view height `from` to full at `to`. `type Wash = { readonly ink: Rgb; readonly from: number; readonly to: number }`
+
+### src/style/sea.ts
+
+Lines printed along the swell: what a cut or printed sea follows.
+
+- **swellLines**: The printed lines of constant phase that follow the swell's crests, for a style that draws the water as lines.
+  `function swellLines(ctx: WaterCtx, o: { readonly perWave: number; readonly width: readonly [number, number] }): SwellLines`
+
+Types:
+- **SwellLines**: The swell's printed lines here. `type SwellLines = { readonly cover: Expr<"f32">; readonly off: Expr<"f32">; readonly live: Expr<"f32">; readonly swell: Expr<"f32"> }`
+
+### src/style/foam.ts
+
+Foam where the water meets a body, and the foam a sea's deformations mark on it, printed in any style's inks.
+
+- **contactFoam**: The contact foam: nothing where the sea found no body near, the pattern where one may be.
+  `function contactFoam(p: ContactFoam, ctx: WaterCtx, lines: Pick<SwellLines, "off" | "live">): InkLayers`
+- **marksFoam**: The deformations' foam (`WaterCtx.marks`).
+  `function marksFoam(p: MarksPrint, ctx: WaterCtx): InkLayers`
+- **printLayers**: Layers printed over a colour in a style's inks.
+  `function printLayers(under: Expr<"vec3">, layers: InkLayers, inks: Readonly<Record<FoamInk, Rgb>>): Expr<"vec3">`
+- **foam**: Builders for the pattern of foam printed where water meets a body (`ContactFoam`): `ridge`, `rings`, `apron`, `stipple`, `breakers`, `curls` and `roll`.
+  `const foam = { ... }`
+  - `foam.ridge`: Filaments along the zero lines of a noise (the first foam).
+  - `foam.rings`: Ripple arcs.
+  - `foam.apron`: A flat scalloped apron.
+  - `foam.stipple`: Dots.
+  - `foam.breakers`: The swell's own lines breaking on the body.
+  - `foam.curls`: Rolling lobes with curled heads.
+  - `foam.roll`: The rolling mass with curled heads.
+- **marksAs**: Builders for how the foam that a sea's deformations mark is printed (`MarksPrint`): `marksAs.flat()` as a flat fill, or `marksAs.heads({ head })` as a line of curled heads.
+  `const marksAs = { ... }`
+  - `marksAs.flat`: Fill where the mark is over 0.45.
+  - `marksAs.heads`: A line of curled heads.
+
+Types:
+- **ContactFoam**: `type ContactFoam = | { readonly kind: "ridge" } | { readonly kind: "rings"; readonly count: number; readonly drift: number } | { readonly kind: "apron"; readonly lobe: number } | { readonly kind: "stipple"; readonly dot: number } | { readonly kind: "breakers"; readonly reach: number } | { readonl...`
+- **FoamInk**: The foam's inks: `fill` its body, `line` its key line, `edge` the softer outline of the `ridge` pattern. `type FoamInk = "fill" | "line" | "edge"`
+- **HeadSize**: How large a roll's largest curled head is: a share of the sea's foam width (so it follows the scene's sea), or a world radius. `type HeadSize = { readonly kind: "ofWidth"; readonly share: number } | { readonly kind: "world"; readonly radius: number }`
+- **InkLayers**: Coverage of each of the foam's inks, in printing order (a later layer prints over an earlier one). `type InkLayers = readonly { readonly ink: FoamInk; readonly cover: F }[]`
+- **MarksPrint**: How the foam the sea's deformations mark is printed: `flat` over 0.45, or a line of curled heads of world radius `head`. `type MarksPrint = { readonly kind: "flat" } | { readonly kind: "heads"; readonly head: number }`
+
+### src/style/whitewater.ts
+
+White water as a print draws it (docs/art_direction/DIRECTION.md, "White water"): a rolling cream mass with a few large curled heads, droplets beyond it, a key line round everything.
+
+- **rollingFoam**: The whole of it: the droplets, the roll over them, and the curled heads in front.
+  `function rollingFoam(on: WhiteOn, r: Roll): White`
+- **curledHeads**: The heads alone: a line of them where the mass is a narrow band (a wave's crest), with no roll behind.
+  `function curledHeads(on: WhiteOn, r: Roll): White`
+- **crown**: A crown: pointed fingers thrown outward round a centre.
+  `function crown(d: V2, rim: F, reach: F, count: number, r: Roll): White`
+- **behind**: One print behind another: the front one wherever it prints anything (its cream or its key line), the back one elsewhere.
+  `function behind(back: White, front: White): White`
+- **joined**: Two prints as one: where either is cream it is cream; the key line only where neither is.
+  `function joined(a: White, b: White): White`
+- **rollOf**: A roll whose key line is a tenth of its head (never under 1.5 pixels: `lineOf`).
+  `function rollOf(head: number, held = 0.75): Roll`
+- **slopeOf**: How a value on the water changes across it, per world unit (x, z), from its screen derivatives and the position's: the slope of a mass that is a smooth formula (a splash's shape, a wave's mark).
+  `const slopeOf = wgslFn<"vec2">({ ... }`
+- **along**: xz along the unit direction at `degrees` from +x, in periods of `period`.
+  `const along = (xz: V2, degrees: number, period: number): F =>`
+- **pixelOn**: The world size of a pixel on the water.
+  `const pixelOn = (xz: V2): F =>`
+
+Types:
+- **Lean**: Which way the heads curl: toward a direction on the water (x, z; any length, zero for none there), or each its own way. `type Lean = { readonly kind: "none" } | { readonly kind: "toward"; readonly dir: V2 }`
+- **Roll**: The sizes of one event's white water: the largest head's radius and the key line's width (world units), and the share of the heads' cells that hold a head. `type Roll = { readonly head: number; readonly line: number; readonly held: number }`
+- **White**: What is printed at a pixel: how much of it is the white water's fill, and how much its key line (never both: the line is beside the fill). `type White = { readonly fill: F; readonly line: F }`
+- **WhiteOn**: Where white water is printed: the water's world (x, z), the mass there, the lean, and the mass's `slope`: how it changes across the water (per world unit, x and z), to first order, or zero if that is not known. `type WhiteOn = { readonly xz: V2; readonly mass: F; readonly slope: V2; readonly lean: Lean }`
+
+### src/style/paint.ts
+
+Paint treatments: what a style does to a body's paint before it lights it, and the weight of the line inside its hull.
+
+- **paint**: Builders for how a style treats a body's paint before lighting it: `hotter` (warm reds pushed warmer), `mottle` (darker blotches on red paints), and the weight of the line inside the hull, `swelling` or `wandering`.
+  `const paint = { ... }`
+  - `paint.hotter`: (undocumented)
+  - `paint.mottle`: (undocumented)
+  - `paint.swelling`: (undocumented)
+  - `paint.wandering`: (undocumented)
+- **warmed**: The warm paints, as painted or hotter.
+  `function warmed(w: Warm, c: Expr<"vec3">): Expr<"vec3">`
+- **mottled**: Blotches on the red paints, in the surface's own coordinates.
+  `function mottled(m: Mottle, c: Expr<"vec3">, ctx: ShadeCtx): Expr<"vec3">`
+- **weighted**: The line inside the hull printed over a colour in `ink`.
+  `function weighted(l: LineWeight, c: Expr<"vec3">, ink: Rgb, ctx: ShadeCtx): Expr<"vec3">`
+- **standsOut**: How far a paint stands out as the hue (positive: it does).
+  `function standsOut(hue: Hue, c: Expr<"vec3">): Expr<"f32">`
+
+Types:
+- **Hue**: A hue a paint can stand out as: `red` when its red stands above both green and blue, `yellow` when red and green stand above blue. `type Hue = "red" | "yellow"`
+- **LineWeight**: The line inside the hull. `type LineWeight = | { readonly kind: "even" } | { readonly kind: "swelling"; readonly width: number; readonly key: Key } | { readonly kind: "wandering"; readonly least: number; readonly most: number; readonly size: number; readonly key: Key }`
+- **Mottle**: Darker blotches on the red paints, in the anchor: the larger octave `size` world units across, cut at `cut`, at `value` of the paint. `type Mottle = { readonly kind: "off" } | { readonly kind: "blotches"; readonly size: number; readonly cut: number; readonly value: number; readonly margin: number }`
+- **Warm**: The warm paints as painted, or hotter: a paint that stands out as red by `margin` multiplied by `gain`. `type Warm = { readonly kind: "asPainted" } | { readonly kind: "hotter"; readonly margin: number; readonly gain: Rgb }`
+
+### src/style/post.ts
+
+Full-screen passes a style runs after the scene (`Style.post`), each with its numbers as options.
+
+- **paperGrain**: Paper fibre and tooth.
+  `function paperGrain(o: { readonly fibre?: number; readonly tooth?: number } = {}): PostSpec`
+- **bloom**: Bloom.
+  `function bloom(o: { readonly radius?: number; readonly gain?: number; readonly from?: number; readonly to?: number } = {}): PostSpec`
+- **reflection**: The light of bodies smeared down the water below them.
+  `function reflection(o: { readonly gain?: number } = {}): PostSpec`
+
+### src/style/shared.ts
+
+Pieces every style and part shares: an antialiased edge, colour helpers, the distance in from a silhouette, and WGSL for post passes.
+
+- **edgeOf**: 0 below `edge`, 1 above, antialiased over about a pixel of x's change (never narrower than `soft`, never wider than `widest`, in units of x).
+  `function edgeOf(x: Expr<"f32">, edge: number | Expr<"f32">, soft: number, widest = 0.05): Expr<"f32">`
+- **pixelsInside**: How many pixels in from the silhouette a body fragment is, to first order: how far the surface faces the eye (N.V) over how fast that changes across the screen. 0 on the silhouette, growing inward; a band `w` pixels wide along every outline is where this is under `w` (the rim, a line drawn heavier inside the hull, a neon tube's glow).
+  `function pixelsInside(ctx: ShadeCtx): Expr<"f32">`
+  cannot:
+  - Cannot: see a crease or a fold inside the outline (N.V does not reach 0 there), or measure in the world.
+- **rgb**: A colour triple as a vec3 expression, for use inside a style's shading.
+  `const rgb = (c: Rgb): Expr<"vec3"> =>`
+- **wgslRgb**: A colour triple as WGSL source text (`vec3<f32>(r, g, b)`), for style code written as raw WGSL.
+  `const wgslRgb = (c: Rgb): string =>`
+- **POST_COMMON**: WGSL helpers for post passes: a hash of a pixel index, value noise fixed to the screen, the view depth of the opaque scene, and whether a pixel shows the sea in front of whatever opaque thing is behind it.
+  `const POST_COMMON = /* wgsl */ ``
+
+### src/style/toon.ts
+
+Toon: banded light from the sun, a rim, a gloss, an ink hull, a translucent stylised sea.
+
+- **toon**: The cartoon style: sun light in a few flat bands with coloured (not grey) shadows, a rim light, a small gloss, an ink outline hull, and a translucent blue sea with foam.
+  `function toon(spec: ToonSpec = {}): Style`
+
+Types:
+- **ToonSpec**: `type ToonSpec = { bands?, outline?, shadow?, ink?, water?, sky?, rim?, ground?, light? }`
 
 ### src/style/woodblock.ts
 
@@ -1702,34 +2543,16 @@ Woodblock: a colour print.
 
 - **woodblock**: The woodblock print, with the scene's own inks, rule, sky and eye if it states them.
   `function woodblock(spec: WoodblockSpec = {}): Style`
-- **print**: (undocumented)
+- **print**: Builders for the rule that decides which ink a paint prints in under the woodblock style: `print.bands` (by the paint's value, with a warm accent ink), `print.keys` (by the nearest of named paint colours) or `print.overprint` (the paint as it is, the shadow side overprinted).
   `const print = { ... }`
   - `print.bands`: By value in bands, with the accent (vermilion for red paints by default).
   - `print.keys`: By name: each paint prints in the inks of the nearest key.
   - `print.overprint`: As painted, the shadow side overprinted.
-- **foam**: (undocumented)
-  `const foam = { ... }`
-  - `foam.ridge`: The print as it was: filaments along the zero lines of a noise.
-  - `foam.rings`: Ripple arcs.
-  - `foam.apron`: A flat scalloped apron.
-  - `foam.stipple`: Printed dots.
-  - `foam.breakers`: The swell's own lines breaking on the body.
-  - `foam.curls`: Rolling lobes with curled heads.
-  - `foam.roll`: The rolling mass with curled heads.
-- **marksAs**: (undocumented)
-  `const marksAs = { ... }`
-  - `marksAs.flat`: Cream where the mark is over 0.45: the print as it was.
-  - `marksAs.heads`: A line of curled heads.
-- **paint**: (undocumented)
-  `const paint = { ... }`
-  - `paint.hotter`: (undocumented)
-  - `paint.mottle`: (undocumented)
-  - `paint.swelling`: (undocumented)
-- **seaPalette**: (undocumented)
+- **seaPalette**: Builders for the colours of the woodblock style's water (`SeaPalette`): `seaPalette.swell()` for the print's own two blues, or `seaPalette.deep(overrides)` for one deep ink with thin pale lines.
   `const seaPalette = { ... }`
   - `seaPalette.swell`: (undocumented)
   - `seaPalette.deep`: (undocumented)
-- **LOOKS**: Every named look of the woodblock print: each recipe of `LIGHT` alone, the reference palette alone, and the two the four-crab video uses. docs/lighting.md has a line each.
+- **LOOKS**: Every named look of the woodblock print: each recipe of `LIGHT` alone, the reference palette alone, and two combinations of them. docs/lighting.md has a line each.
   `const LOOKS = { ... }`
   - `LOOKS.referencePalette`: The reference palette (hotter red, mottling, swelling lines, the deep sea with cream lines) with the print's own shading.
   - `LOOKS.engraving`: The video's look: the engraving (`hatched`) in the reference palette.
@@ -1747,38 +2570,75 @@ Woodblock: a colour print.
   `const WOODBLOCK_SEA = { deep: [0.11, 0.18, 0.35], mid: [0.16, 0.26, 0.45], line: [0.58, 0.68, 0.78], haze: [0.7, 0.76, 0.78] } as const satisfies Record<string, Rgb>`
 
 Types:
-- **LookName**: `type LookName = keyof typeof LOOKS`
-- **WoodblockLook**: A look: what it is for, and the spec it makes of a scene's own (the scene's inks, rule and foam kept). `type WoodblockLook = { readonly about: string; readonly on: (s: WoodblockSpec) => WoodblockSpec }`
-- **Warm**: The warm paints hotter: a paint whose red stands above its green and blue by `margin` is multiplied by `gain`. `type Warm = { readonly kind: "asPainted" } | { readonly kind: "hotter"; readonly margin: number; readonly gain: Rgb }`
-- **Mottle**: Darker blotches on the warm paints, in the surface's own coordinates (its anchor, the skin at rest), so they ride the body and never swim: two octaves of noise, the larger `size` world units across, cut hard where they pass `cut` (higher: sparser), printed at `value` of the paint (the reference's blotches are 0.72 of the shell's red). `type Mottle = { readonly kind: "off" } | { readonly kind: "blotches"; readonly size: number; readonly cut: number; readonly value: number; readonly margin: number }`
-- **LineWeight**: The key line's weight. `type LineWeight = { readonly kind: "even" } | { readonly kind: "swelling"; readonly width: number; readonly key: Key }`
-- **SeaPalette**: The sea's inks. `type SeaPalette = | { readonly kind: "swell" } | { readonly kind: "deep"; readonly sea: Rgb; readonly trough: Rgb; readonly line: Rgb; readonly width: readonly [number, number]; readonly haze: Rgb }`
-- **Accent**: The warm ink: paints of `hue` standing out by `margin` print in it, flat (unlit: the accent is its own light). `type Accent = { readonly hue: AccentHue; readonly margin: number; readonly inks: readonly AccentInk[] }`
-- **ContactFoam**: The pattern printed where the water meets a body (docs/art_direction/DIRECTION.md, "Contact foam"). `type ContactFoam = | { readonly kind: "ridge" } | { readonly kind: "rings"; readonly count: number; readonly drift: number } | { readonly kind: "apron"; readonly lobe: number } | { readonly kind: "stipple"; readonly dot: number } | { readonly kind: "breakers"; readonly reach: number } | { readonl...`
-- **MarksPrint**: How the foam the sea's deformations mark on the water (a ring wave's crest, a whirlpool's arms) is printed: `flat`, cream where the mark is over 0.45, the print as it was; `heads`, a line of curled heads of world radius `head` along it, leaning the way the deformation says (`WaterCtx.marksLean`), over a thin flat core. `type MarksPrint = { readonly kind: "flat" } | { readonly kind: "heads"; readonly head: number }`
-- **HeadSize**: How large a roll's largest curled head is: a share of the sea's foam width (so it follows the scene's sea), or a world radius. `type HeadSize = { readonly kind: "ofWidth"; readonly share: number } | { readonly kind: "world"; readonly radius: number }`
-- **AccentHue**: How a paint is told to stand out as the accent: `red` when its red stands above both green and blue (vermilion's test), `yellow` when red and green both stand above blue (lantern yellow's). `type AccentHue = "red" | "yellow"`
+- **Accent**: The warm ink: paints that stand out as `hue` by `margin` print in it, flat (unlit: the accent is its own light). `type Accent = { readonly hue: Hue; readonly margin: number; readonly inks: readonly AccentInk[] }`
 - **AccentInk**: One accent ink, printed where the paint's luminance is at least `from` (the first from 0; a paler one above it). `type AccentInk = { readonly ink: Rgb; readonly from: number }`
 - **InkKey**: A key of the `keys` rule: the paint colour that names it, and the inks it prints in. `type InkKey = { readonly key: Rgb; readonly shadow: Rgb; readonly lit: Rgb }`
+- **LookName**: `type LookName = keyof typeof LOOKS`
 - **Print**: Which paints print in which inks (the rule a scene states): - `bands`: by value. `type Print = | { readonly kind: "bands"; readonly accent: Accent; readonly named: readonly InkKey[]; readonly reach: number } | { readonly kind: "keys"; readonly keys: readonly InkKey[] } | { readonly kind: "overprint"; readonly ink: Rgb; readonly amount: number; readonly value: number; readonly ...`
+- **SeaPalette**: The sea's inks. `type SeaPalette = | { readonly kind: "swell" } | { readonly kind: "deep"; readonly sea: Rgb; readonly trough: Rgb; readonly line: Rgb; readonly width: readonly [number, number]; readonly haze: Rgb }`
 - **WoodblockEye**: The eye of a whirlpool: where a deformation's shading darkens the water below `below` (in the crest's units, negative down), the key black is printed, `amount` of it. `type WoodblockEye = { readonly kind: "none" } | { readonly kind: "ink"; readonly below: number; readonly amount: number }`
 - **WoodblockInks**: The key block's four inks: the bands a body prints in by value (black, indigo, pale, cream), and what the sky, the foam, the shadows and the paper are printed in. `type WoodblockInks = { readonly black: Rgb; readonly indigo: Rgb; readonly pale: Rgb; readonly cream: Rgb }`
-- **WoodblockSky**: The sky's bokashi, in the view direction's height y: cream at the horizon graded to the haze over `haze`, the indigo band printed in over `band`; below the horizon `below`. `type WoodblockSky = { haze, grade, sun, clouds }`
+- **WoodblockLook**: A look: what it is for, and the spec it makes of a scene's own (the scene's inks, rule and foam kept). `type WoodblockLook = { readonly about: string; readonly on: (s: WoodblockSpec) => WoodblockSpec }`
 - **WoodblockSpec**: `type WoodblockSpec = { inks?, print?, sky?, water?, outline?, paint?, foam?, marks?, light? }`
 
 ### src/style/biolume.ts
 
 Biolume: a night sea.
 
-- **biolume**: (undocumented)
+- **biolume**: The night style: near-black sky, water and bodies, where the bright, saturated parts of a body's paint become light (cyan or magenta by hue), a cold rim of light on every silhouette, and glowing foam where bodies break the water.
   `function biolume(): Style`
 
 ### src/style/papercraft.ts
 
 Papercraft: a folded-paper diorama under soft studio light.
 
-- **papercraft**: (undocumented)
+- **papercraft**: The folded-paper style: bodies cut into flat facets lit as separate planes, the water as layered cut-paper sheets with scalloped edges and small shadows, soft studio light, and a post pass of crease occlusion and paper fibre.
   `function papercraft(): Style`
+
+### src/style/sketch.ts
+
+Sketch: graphite on paper.
+
+- **sketch**: The graphite-on-paper style: no flat colour, a body is bare paper with its form drawn by hatching, a thin outline with a wandering inner line, and near-black paint filled in solid.
+  `function sketch(): Style`
+
+### src/style/neon.ts
+
+Neon: a dark ground and light from tubes.
+
+- **neon**: The neon-tube style: a dark ground where each body is near black and its paint becomes a saturated light, shown as the outline, an inner glow and a sheen.
+  `function neon(): Style`
+
+### src/lib/noise.ts
+
+Hashing and noise.
+
+- **noise3**: Smooth gradient noise (quintic interpolation): range [-1, 1], exactly 0 at integer lattice points.
+  `const noise3 = (p: In<"vec3">): Expr<"f32"> =>`
+- **hash2**: A hash of the integer cell containing p, uniform in [0, 1).
+  `const hash2 = (p: In<"vec2">): Expr<"f32"> =>`
+- **hash22**: Two independent hashes of the integer cell containing p, each in [0, 1).
+  `const hash22 = (p: In<"vec2">): Expr<"vec2"> =>`
+- **cellular2**: Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cell: both in [0, ~1.5].
+  `const cellular2 = (p: In<"vec2">): Expr<"vec2"> =>`
+
+### src/lib/util.ts
+
+Remapping, coordinates and colour helpers, all composed from the operators in expr.ts (so both backends agree by construction; the tests check the composition, not the operators).
+
+- **luminance**: Rec. 709 relative luminance of a linear rgb colour: in [0, 1] for rgb in [0, 1].
+  `function luminance(rgb: In<"vec3">): Expr<"f32">`
+
+### src/lib/wgsl.ts
+
+The raw-shader escape hatch: a WGSL function with no CPU twin.
+
+- **fwidth**: How much `x` changes from one pixel to the next (WGSL `fwidth`): the width to antialias an edge of `x` with.
+  `const fwidth = wgslFn<"f32">({ name: "loft_fwidth", ret: "f32", wgsl: "fn loft_fwidth(x: f32) -> f32 { return fwidth(x); }" })`
+- **pixelWorld**: World size of one pixel at a world point.
+  `const pixelWorld = wgslFn<"f32">({ name: "loft_pixel_world", ret: "f32", wgsl: "fn loft_pixel_world(p: vec3<f32>) -> f32 { return pixel_world(p); }" })`
+- **wgslFn**: Wraps a hand-written WGSL function as a callable that builds a call to it inside an expression.
+  `function wgslFn<T extends Ty>(spec: WgslFnSpec<T>): (...args: In[]) => Expr<T>`
 
 ## Library functions (import from src/lib/index.ts)
 
@@ -1788,24 +2648,14 @@ Papercraft: a folded-paper diorama under soft studio light.
 
 Hashing and noise.
 
-- **hash2**: A hash of the integer cell containing p, uniform in [0, 1).
-  `const hash2 = (p: In<"vec2">): Expr<"f32"> =>`
 - **hash3**: A hash of the integer cell containing p, uniform in [0, 1).
   `const hash3 = (p: In<"vec3">): Expr<"f32"> =>`
-- **hash22**: Two independent hashes of the integer cell containing p, each in [0, 1).
-  `const hash22 = (p: In<"vec2">): Expr<"vec2"> =>`
 - **hash33**: Three independent hashes of the integer cell containing p, each in [0, 1).
   `const hash33 = (p: In<"vec3">): Expr<"vec3"> =>`
-- **noise2**: Smooth gradient noise (quintic interpolation): range [-1, 1], exactly 0 at integer lattice points.
-  `const noise2 = (p: In<"vec2">): Expr<"f32"> =>`
-- **noise3**: Smooth gradient noise (quintic interpolation): range [-1, 1], exactly 0 at integer lattice points.
-  `const noise3 = (p: In<"vec3">): Expr<"f32"> =>`
 - **fbm2**: Fractal gradient noise, normalised by the total amplitude so the range stays within [-1, 1].
   `function fbm2(p: In<"vec2">, spec: Fbm): Expr<"f32">`
 - **fbm3**: Fractal gradient noise, normalised by the total amplitude so the range stays within [-1, 1].
   `function fbm3(p: In<"vec3">, spec: Fbm): Expr<"f32">`
-- **cellular2**: Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cell: both in [0, ~1.5].
-  `const cellular2 = (p: In<"vec2">): Expr<"vec2"> =>`
 - **cellular3**: Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cube: both in [0, ~1.7].
   `const cellular3 = (p: In<"vec3">): Expr<"vec2"> =>`
 
@@ -1832,8 +2682,6 @@ Remapping, coordinates and colour helpers, all composed from the operators in ex
   `function smin(a: In<"f32">, b: In<"f32">, k: In<"f32">): Expr<"f32">`
 - **smax**: Polynomial smooth maximum: >= max(a, b) and within k / 4 of it, equal to max(a, b) once |a - b| >= k.
   `function smax(a: In<"f32">, b: In<"f32">, k: In<"f32">): Expr<"f32">`
-- **luminance**: Rec. 709 relative luminance of a linear rgb colour: in [0, 1] for rgb in [0, 1].
-  `function luminance(rgb: In<"vec3">): Expr<"f32">`
 - **hsv**: rgb in [0, 1] for hue h (a turn: 0 and 1 are both red, wraps outside [0, 1]), saturation s and value v in [0, 1].
   `function hsv(h: In<"f32">, s: In<"f32">, v: In<"f32">): Expr<"vec3">`
 
@@ -1864,16 +2712,10 @@ Remapping, coordinates and colour helpers, all composed from the operators in ex
 
 The raw-shader escape hatch: a WGSL function with no CPU twin.
 
-- **wgslFn**: A callable that builds a call to a GPU-only WGSL function.
-  `function wgslFn<T extends Ty>(spec: WgslFnSpec<T>): (...args: In[]) => Expr<T>`
-- **fwidth**: How much `x` changes from one pixel to the next (WGSL `fwidth`): the width to antialias an edge of `x` with.
-  `const fwidth = wgslFn<"f32">({ name: "loft_fwidth", ret: "f32", wgsl: "fn loft_fwidth(x: f32) -> f32 { return fwidth(x); }" })`
 - **viewDir**: Unit direction from the eye toward a world point (the camera's forward direction when orthographic).
   `const viewDir = wgslFn<"vec3">({ name: "loft_view_dir", ret: "vec3", wgsl: "fn loft_view_dir(p: vec3<f32>) -> vec3<f32> { return view_dir(p); }" })`
 - **eyePosition**: The eye position in world space.
   `const eyePosition = wgslFn<"vec3">({ name: "loft_eye", ret: "vec3", wgsl: "fn loft_eye() -> vec3<f32> { return frame.eye.xyz; }" })`
-- **pixelWorld**: World size of one pixel at a world point.
-  `const pixelWorld = wgslFn<"f32">({ name: "loft_pixel_world", ret: "f32", wgsl: "fn loft_pixel_world(p: vec3<f32>) -> f32 { return pixel_world(p); }" })`
 
 Types:
 - **WgslFnSpec**: `type WgslFnSpec<T extends Ty> = { name, ret, wgsl, deps? }`
@@ -1990,18 +2832,17 @@ Similarity folds with two readings (docs/tracing_sota.md 5.3).
   `function list(chain: readonly Gen[], parent: Frame): Copy[]`
 - **partDistance**: The part's distance at a point of its own coordinates.
   `function partDistance(part: Part, q: P3): F`
-- **placePart**: (undocumented)
+- **placePart**: The part `part` placed in the world by frame `fr`: its end points moved by the frame and its radii scaled by the frame's scale.
   `function placePart(part: Part, fr: Frame): Placed`
 - **toWorld**: A point of a frame, in the world.
   `function toWorld(fr: Frame, q: V3): V3`
-- **tree**: (undocumented)
+- **tree**: A branching recursion of one `Part`: the part at every level, with each level's coordinates reached from its parent's by the generators in `spec.step`.
   `function tree(spec: TreeSpec): Tree`
-- **WORLD**: (undocumented)
+- **WORLD**: The identity `Frame`: origin at zero, unit axes, scale 1, so a part in it is already in world coordinates.
   `const WORLD: Frame`
 
 Types:
 - **Axis**: `type Axis = "x" | "y" | "z"`
-- **Branch**: One listed branch: where it is, how deep, and the id `at` reports on it. `type Branch = Placed & { readonly level: number; readonly id: V3 }`
 - **Copy**: One copy of a chain: its frame in the world and the id `ask` reports inside it. `type Copy = { readonly frame: Frame; readonly id: V3 }`
 - **Frame**: A copy's coordinates in the world: world = o + m q, with m's columns `scale` long. `type Frame = { readonly o: V3; readonly m: readonly [V3, V3, V3]; readonly scale: number }`
 - **Gen**: One generator. `type Gen = /** q - by: the origin moves to `by`. */ | { readonly kind: "shift"; readonly by: V3 } /** The plane's two coordinates rotated counter-clockwise by `angle` (as `rotate2`). */ | { readonly kind: "turn"; readonly plane: Plane; readonly angle: number } /** |coordinate|: the two sides of t...`
@@ -2013,9 +2854,9 @@ Types:
 
 ## Coverage
 
-784 exports (455 values, 329 types) from src/index.ts and src/lib/index.ts.
+773 exports (440 values, 333 types) from src/index.ts and src/lib/index.ts.
 
-Values with no doc comment (120): Expr (src/expr.ts), f (src/expr.ts), vec2 (src/expr.ts), vec3 (src/expr.ts), vec4 (src/expr.ts), add (src/expr.ts), sub (src/expr.ts), mul (src/expr.ts), div (src/expr.ts), min (src/expr.ts), max (src/expr.ts), pow (src/expr.ts), neg (src/expr.ts), abs (src/expr.ts), sign (src/expr.ts), floor (src/expr.ts), fract (src/expr.ts), sqrt (src/expr.ts), exp (src/expr.ts), log (src/expr.ts), sin (src/expr.ts), cos (src/expr.ts), tan (src/expr.ts), normalize (src/expr.ts), mix (src/expr.ts), clamp (src/expr.ts), smoothstep (src/expr.ts), length (src/expr.ts), distance (src/expr.ts), dot (src/expr.ts), cross (src/expr.ts), lt (src/expr.ts), gt (src/expr.ts), le (src/expr.ts), ge (src/expr.ts), and (src/expr.ts), or (src/expr.ts), not (src/expr.ts), TAU (src/expr.ts), WGSL_TY (src/expr.ts), NO_SKELETON (src/map/types.ts), size (src/map/chart.ts), turn (src/map/chart.ts), warp (src/map/warp.ts), draw (src/draw/index.ts), FieldDrawable (src/draw/field.ts), FieldSafetyError (src/draw/field.ts), ReliefDrawable (src/draw/relief.ts), SurfaceDrawable (src/draw/surface.ts), scene (src/scene.ts), DEFAULT_OUTLINE (src/scene.ts), plane (src/draw/ground.ts), nothing (src/draw/ground.ts), compile (src/compile/index.ts), compileScene (src/compile/index.ts), Impostors (src/draw/impostors.ts), Copies (src/draw/copies.ts), profile (src/relief/height.ts), shellModel (src/relief/trace.ts), KIND (src/relief/trace.ts), crest (src/geom/crest.ts), sea (src/geom/sea.ts), Sea (src/geom/sea.ts), limb (src/geom/limb.ts), fan (src/geom/fan.ts), whirlpool (src/geom/whirlpool.ts), Whirlpool (src/geom/whirlpool.ts), rigid (src/geom/rig.ts), hull (src/geom/hull.ts), Hull (src/geom/hull.ts), ship (src/geom/ship.ts), Ship (src/geom/ship.ts), BANK_LIB (src/soft/medium.ts), DensityDrawable (src/soft/density.ts), GlowDrawable (src/soft/glow.ts), gait (src/geom/gait.ts), footing (src/geom/stance.ts), hosted (src/geom/placing.ts), STAND_IN (src/geom/placing.ts), bent (src/geom/bend.ts), BendError (src/geom/bend.ts), pendulum (src/geom/pendulum.ts), sway (src/geom/pendulum.ts), jolt (src/geom/pendulum.ts), PendulumError (src/geom/pendulum.ts), dart (src/geom/restless.ts), RestlessError (src/geom/restless.ts), show (src/geom/expression.ts), only (src/geom/expression.ts), added (src/geom/expression.ts), ExpressionError (src/geom/expression.ts), StruckError (src/geom/struck.ts), part (src/spacetime/attack.ts), ring (src/spacetime/attack.ts), INSTANT (src/spacetime/attack.ts), STILL (src/spacetime/attack.ts), DANGER (src/spacetime/telegraph.ts), SET_DOWN (src/geom/grab.ts), design (src/design.ts), Design (src/design.ts), DesignError (src/design.ts), BASE_ASK (src/design.ts), Emote (src/spacetime/emote.ts), Routine (src/spacetime/routine.ts), RoutineError (src/spacetime/routine.ts), RingWave (src/geom/ring.ts), tolerance (src/check.ts), palette (src/style.ts), STYLE_NAMES (src/style/index.ts), light (src/style/light.ts), print (src/style/woodblock.ts), foam (src/style/woodblock.ts), marksAs (src/style/woodblock.ts), paint (src/style/woodblock.ts), seaPalette (src/style/woodblock.ts), biolume (src/style/biolume.ts), papercraft (src/style/papercraft.ts), placePart (src/lib/similar.ts), tree (src/lib/similar.ts), WORLD (src/lib/similar.ts).
+Values with no doc comment (0): .
 
-Shape and motion functions whose comment states no limits (109): strand, crest, sea, limb, polyline, unit, fan, rayOf, catenary, shell, spiralLine, whorl, ridgePhase, mirror, array, reflect, whirlpool, afloat, afloatFrame, rigid, hull, ship, lines, erfcPos, gaussRay, gaussTail, gseg, gtail, GAUSS_WGSL, FAR, SIMPSON, bank, blob, flash, layer, medium, tauFunction, unionBox, GAUSS_LIB, BANK_LIB, boxVertexWgsl, cloud, thunderhead, hashUnit, flare, glow, glows, strokes, afterglow, bolt, boltFlash, displaced, flicker, sheetFlash, skyFlash, strikeAt, rain, splashes, gait, course, lookAt, breathe, beat, strike, looping, alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, overshot, slowIn, slowInOut, slowOut, squash, stretchOf, swing, uneven, carriage, footing, headingIn, replants, towardIn, pose, poseFrame, placedBy, blendFrames, turnedAbout, hosted, STAND_IN, bent, bentTip, pendulum, sway, jolt, dart, chosen, tremor, cast, score, show, only, added, during, struck, holdsStill.
+Shape and motion functions whose comment states no limits (0): .
 

@@ -1,4 +1,4 @@
-// Restless motion: what a twitchy creature does between its actions (docs/animation_principles.md, "Temperament").
+// Restless motion: what a twitchy body does between its actions (docs/animation_principles.md, "Temperament").
 //
 // `alive` is a slow breath: it never arrives anywhere. A nervous thing does the opposite: it is still, then somewhere
 // else, at intervals that are never quite even, and it overshoots when it gets there. `dart` is that as a closed form

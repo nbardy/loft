@@ -410,8 +410,9 @@ export type GripperSpec = Pick<GrabSpec, "rest" | "radius" | "reachLift" | "up" 
  *
  * Going past it: a gripper is a palm and a gap, so any pose of yours reads them: fingers from `fingerAngle`, a jaw from
  * `pincerAngle`, a coiling body from `wrap`; the palm is a target for a `chain`. A different path is an `arc` of your
- * own between the same beats; a different hold is a `Held` object of your own (its `from`, `to`, `thing`, `held`,
- * `crush`, `flying`, `squeezed` and `leave`), or the one an attack's `hold` makes, through `attack.grip(rest)`.
+ * own between the same beats; a different hold is `heldThing` along a carry path of your own, a `Held` object written
+ * by hand (its `from`, `to`, `thing`, `held`, `crush`, `flying`, `squeezed` and `leave`), or the one an attack's `hold`
+ * makes, through `attack.grip(rest)`.
  * Relatives worth trying:
  * - a hook that does not close: ignore the gap and hang the thing under the palm (the palm and `thing` are enough).
  * - a suction cup or a magnet: gap unused, the thing snapped to the palm over the close beat.

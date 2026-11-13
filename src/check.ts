@@ -576,7 +576,7 @@ export function limbsReach(limbs: readonly Reaching[], o: { readonly period: num
 }
 
 /**
- * A two-sided gripper (a claw's fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing
+ * A two-sided gripper (two fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing
  * instant (the arming time) and at every sampled instant of the hold, the point of each drawn finger's surface nearest
  * the thing's middle is found. The grip's middle (halfway between those points) must be within `middle` of the thing's
  * middle, and their distance apart within `gap` of the thing's width times its crush. Shares are of the thing's width.

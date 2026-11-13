@@ -1,5 +1,5 @@
-// Stance: a heavy creature standing on its feet (docs/stance.md). The feet are fixed points in the world and the body
-// is a frame that rises, sinks, shifts and tilts over them; the legs (`limb`) join the two, so the knees take up every
+// Stance: a heavy legged body standing on its feet (docs/stance.md). The feet are fixed points in the world and the body
+// is a frame that rises, sinks, shifts and tilts over them; the legs (`chain`) join the two, so the knees take up every
 // change. Two things, both closed forms of the clock with nothing stored:
 //
 // - a carriage: the body's offset from its rest over the feet (surge forward, rise, sway to its right, roll, pitch,

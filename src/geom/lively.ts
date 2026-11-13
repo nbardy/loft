@@ -388,7 +388,7 @@ function swings(hz: number, l: Looping): { readonly hzA: number; readonly hzB: n
  * - noise of the clock (a smooth hash along t): a wander that is not a sum of sines, at the price of looping.
  */
 export function alive(t: In<"f32">, amount: In<"f32">, seed: In<"f32"> = 0, hz = 0.23, period?: number): F {
-  // In a namespace each instance has its own seeds (four crabs built by one rig do not idle in step); outside any, the
+  // In a namespace each instance has its own seeds (four bodies built by one rig do not idle in step); outside any, the
   // seed is the one given.
   const ns = namespaceSeed(), s = ns === 0 ? lift<"f32">(seed) : add(seed, ns), ph = mul(hash3(vec3(s, 17.3, 4.1)), TAU);
   const { hzA, hzB } = swings(hz, period === undefined ? loop : { kind: "loop", seconds: period });

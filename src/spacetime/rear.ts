@@ -1,4 +1,4 @@
-// A rear-and-slam: a stretch in the MIDDLE of a body (a sea serpent's coil arch) stands up as a tall loop during the
+// A rear-and-slam: a stretch in the MIDDLE of a body (a long body's arch) stands up as a tall loop during the
 // wind-up and topples over onto the lane, landing as a narrow loop lying flat along a capsule. `lunge` moves the
 // m = 0 end and `sweep` the m = 1 end; neither can lift a stretch whose both ends stay where they are (added for the
 // Maelstrom Wyrm's Coil Lash, examples/bosses/maelstrom_wyrm.ts, 2026-11-11).

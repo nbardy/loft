@@ -330,15 +330,15 @@ const lightOnly = (about: string, r: LightRecipe): WoodblockLook => ({ about, on
 const referenced = (s: WoodblockSpec): WoodblockSpec => ({ ...s, paint: REFERENCE_PAINT, outline: 1.4, water: { ...s.water, palette: seaPalette.deep() } });
 
 /**
- * Every named look of the woodblock print: each recipe of `LIGHT` alone, the reference palette alone, and the two the
- * four-crab video uses. docs/lighting.md has a line each.
+ * Every named look of the woodblock print: each recipe of `LIGHT` alone, the reference palette alone, and two
+ * combinations of them. docs/lighting.md has a line each.
  */
 export const LOOKS = {
   ...(Object.fromEntries(Object.entries(LIGHT).map(([name, r]) => [name, lightOnly(`the ${name} lighting recipe`, r)])) as Record<keyof typeof LIGHT, WoodblockLook>),
   /** The reference palette (hotter red, mottling, swelling lines, the deep sea with cream lines) with the print's own shading. */
   referencePalette: { about: "the reference palette with the print's own two tones", on: referenced },
   /** The video's look: the engraving (`hatched`) in the reference palette. */
-  engraving: { about: "hatched, in the reference palette: the four-crab video", on: (s) => referenced({ ...s, light: LIGHT.hatched }) },
+  engraving: { about: "hatched, in the reference palette", on: (s) => referenced({ ...s, light: LIGHT.hatched }) },
   /** The video's look with the sun low behind: `sunset` in the reference palette. */
   engravingSunset: { about: "the sunset recipe, in the reference palette: the video at sunset", on: (s) => referenced({ ...s, light: LIGHT.sunset }) },
 } satisfies Record<string, WoodblockLook>;

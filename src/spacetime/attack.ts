@@ -138,7 +138,7 @@ export type SweepSpec = {
 export type RemoteSpec = { readonly kind: "remote"; readonly hit: Hit };
 
 /**
- * A grip: a gripper (a claw, a jaw) reaches for the thing its attack holds, closes on it at the arming time, follows it
+ * A grip: a gripper (two fingers, a jaw) reaches for the thing its attack holds, closes on it at the arming time, follows it
  * through the hold, opens and goes home (src/geom/grab.ts). Its reach is the attack's strike less `close`; its wind-up
  * into posture is the attack's `windup`; the hold is the effect's. `hit` is the warned shape where the thing is taken.
  * The rest place is given when it is posed (`attack.grip(rest)`), as a body attack's rest spine is.

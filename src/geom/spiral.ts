@@ -1,7 +1,7 @@
 // Shapes on an equiangular (logarithmic) spiral, every length scaling together so the form is self-similar (Raup 1966).
 // `coil` carries a section round an axis by Raup's parameters (W the growth per whorl, D the inner-to-outer distance
 // ratio, T the translation along the axis): shells, ammonites, turbans. `spiralTube` is the same law in one plane, a
-// tube whose radius grows with the spiral (length, curl, taper): horns, claws, tusks, tendrils. Both are closed form,
+// tube whose radius grows with the spiral (length, curl, taper): horns, hooks, tusks, tendrils. Both are closed form,
 // and each has its mechanism exported one step down (`coilAt`, `spiralLine`).
 
 import { abs, add, cos, exp, fract, lift, log, lt, mul, pow, select, sin, sub, div, sqrt, max, TAU, vec3, type In } from "../expr.ts";
@@ -224,7 +224,7 @@ export type SpiralTubeSpec = {
 };
 
 /**
- * A tapered tube on an equiangular (logarithmic) spiral. Named for its shape, not for a use: a horn, a claw's finger,
+ * A tapered tube on an equiangular (logarithmic) spiral. Named for its shape, not for a use: a horn, a hooked finger,
  * a tooth, a tusk, a tendril and a moustache have all been drawn with it, which is also a warning: reach for it by
  * habit and everything pointed in your picture will be the same curve.
  *

@@ -37,7 +37,7 @@ export function compose(outer: Chart, inner: Chart): Chart {
 
 /**
  * `chart` with its local coordinates scaled by `k` along their axes before they are placed, so everything built in it
- * is squeezed or stretched as one (a ship in a grip). Positions scale; directions keep the chart's. A body placed in it
+ * is squeezed or stretched as one (a thing squeezed in a grip). Positions scale; directions keep the chart's. A body placed in it
  * has its spine scaled and keeps its own girth. `at(t)` moves the chart to time t and keeps this frame's `k`.
  */
 export function sized(chart: Chart, k: In<"vec3">): Chart {
@@ -45,7 +45,7 @@ export function sized(chart: Chart, k: In<"vec3">): Chart {
   return { frame: (c) => chart.frame(mul(c, ke)), at: (t) => sized(chart.at(t), ke), atNear: (t, c) => sized(chart.atNear(t, mul(c, ke)), ke) };
 }
 
-/** `chart` moved by the world vector `by` (a ship lifted off the water it floats on). */
+/** `chart` moved by the world vector `by` (a thing lifted off the surface it rides on). */
 export function shifted(chart: Chart, by: In<"vec3">): Chart {
   const b = lift<"vec3">(by);
   const move = (g: Frame): Frame => ({ o: add(g.o, b), x: g.x, y: g.y, z: g.z });
