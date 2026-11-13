@@ -290,3 +290,155 @@ Why the recommended row wins, and what is mine in it:
 Inherited: render-to-texture, shadow mapping (Williams 1978), percentage-closer filtering (Reeves et al. 1987), planar
 reflection by a mirrored camera with an oblique near plane (Lengyel 2005), frame graphs that order passes by declared
 reads (as in production engines).
+
+## 5. The recommendation: `pass`, and still mode
+
+### 5.1 Types
+
+```ts
+// src/frame/pass.ts (new, about 220 lines with its comment). Exported from src/core.ts.
+
+/**
+ * How a pass looks at the world. A mechanism, so a closed list, with "your own" as the last variant (rule 4).
+ * - look: from `eye` toward `target`; `fovY` (perspective, radians) or `halfHeight` (orthographic, world units).
+ * - mirror: the view's own camera reflected in the plane dot(normal, p) = offset, clipped at it (an oblique near
+ *   plane), so nothing behind the mirror shows in it.
+ * - matrix: your own view-projection, four columns, and the eye it is from (for view directions and pixel sizes).
+ * Every field is an expression: a camera may follow the sun, a creature's eye or the view; it is computed once a
+ * frame on the GPU, and on the CPU for `project`.
+ */
+export type PassCamera =
+  | { readonly kind: "look"; readonly eye: In<"vec3">; readonly target: In<"vec3">; readonly up?: In<"vec3">;
+      readonly lens: { readonly fovY: In<"f32"> } | { readonly halfHeight: In<"f32"> }; readonly near?: number; readonly far?: number }
+  | { readonly kind: "mirror"; readonly normal: Rgb; readonly offset: number }
+  | { readonly kind: "matrix"; readonly columns: readonly [In<"vec4">, In<"vec4">, In<"vec4">, In<"vec4">]; readonly eye: In<"vec3"> };
+
+/**
+ * A picture drawn off screen this frame. Nothing registers it: it is in the scene's files exactly when an expression
+ * that is drawn reads it (`at`), and it is drawn before every draw that reads it. A draw that reads a pass is never
+ * drawn into that pass (`loft` notes which were left out).
+ *
+ * - size: the view's size, a share of it, or fixed pixels.
+ * - what: `scene` draws the scene's things from `camera`; `screen` is a full-screen expression of the pixel's uv
+ *   (0..1), which may read other passes (a blur, a smaller copy, one level of a bloom chain).
+ * - keep (scene only): "colour" (default) is the picture as the style draws it, through the view's own pipelines;
+ *   "depth" runs each thing's depth-only fragment (coverage and depth, no shading) and keeps the depth, 0 near to 1
+ *   far; "light" keeps colour in 16-bit float, for a style that writes values above 1.
+ *
+ * Cannot: read the previous frame (nothing carries over); scatter; draw a list of things other than the scene's
+ * (`only` is a later addition on first need); be read on the CPU (`at` is GPU-only; `project` is not).
+ * Going past it: a `PostSpec` reads passes by name (`reads`), in WGSL. Relatives: cascades (three `look` passes over
+ * nested squares); a normals picture for a custom ink (a `scene` pass under a style whose shade returns the normal);
+ * six `look` passes as a probe's cube.
+ */
+export type PassSpec = {
+  readonly name: string;
+  readonly size: "view" | { readonly scale: number } | readonly [number, number];
+} & (
+  | { readonly what: "scene"; readonly camera: PassCamera; readonly keep?: "colour" | "depth" | "light" }
+  | { readonly what: "screen"; readonly colour: (uv: Expr<"vec2">) => Expr<"vec4"> }
+);
+
+export type Pass = {
+  readonly name: string;
+  /** The picture at uv (0..1): colour, or the depth in x. Bilinear for colour, nearest for depth. GPU-only. */
+  at(uv: In<"vec2">): Expr<"vec4">;
+  /** Where a world point lands: xy its uv (0..1), z its depth (0 near to 1 far). An expression: runs on the CPU. */
+  project(p: In<"vec3">): Expr<"vec3">;
+};
+
+export function pass(spec: PassSpec): Pass;
+```
+
+The scenes in §3 omit `what: "scene"` for brevity; in the build it is the default when `camera` is given, so they
+run as written. `Rgb` is the existing `readonly [number, number, number]`.
+
+### 5.2 Where it plugs in
+
+| Piece | Where | Lines (estimate) |
+|---|---|---|
+| `pass`, `Pass`, the camera's view-projection as expressions (look-at, perspective or orthographic, the mirror's reflection with an oblique near plane); `.at` as a GPU-only `LibFn` naming the pass; `.project` as plain expressions | `src/frame/pass.ts` (new) | 220 |
+| Discovery: collect the passes named by the `LibFn`s of every emitted shader and post spec; order passes by what they read (dependency levels, as tables are); refuse a cycle by name; the left-out list per pass | `src/compile/passes.ts` (new) | 120 |
+| The camera: lifted by the existing rates machinery into a frame-values computation, written by one dispatch into a 48-float buffer laid out as `struct Frame` (with the pass's own `viewport`) and bound as that pass's group 0 | `src/compile/tables.ts`, `src/host/lower.ts` | 60 |
+| Lowering: per pass, its textures, its group-0 bind group (its own `frame`), a group-3 bind group with every other pass's texture (a 1 x 1 stand-in in its own place, because WebGPU forbids a texture as attachment and binding in one pass), and its draw commands: the view's commands minus readers; for `depth`, the depth pipelines | `src/host/lower.ts` | 150 |
+| Group 3 declarations prepended to modules and post passes that read passes (as `SCENE_DEPTH_WGSL` is for group 2) | `src/artefact.ts` | 30 |
+| Format: `TextureDesc.size` becomes a sum (below); `Draw.depth` (5.3); manifest version 2 only when a pass exists | `src/host/manifest.ts`, `docs/artefact_format.md` | 40 |
+| Rust loader: fixed and scaled textures, the extra bind groups and passes (it already runs dispatches and passes from lists) | `rust/loft-loader` | 90 |
+| Still mode in the TS host and the command line (5.4) | `src/host/host.ts`, `src/cli/` | 70 |
+
+```ts
+// src/host/manifest.ts: TextureDesc gains a size; today's is { kind: "view", scale: 1 }.
+export type TextureSize = { readonly kind: "view"; readonly scale: number } | { readonly kind: "fixed"; readonly width: number; readonly height: number };
+export type TextureDesc = { readonly label: string; readonly size: TextureSize; readonly format: GPUTextureFormat; readonly sampleCount: number; readonly usage: readonly TextureUsage[] };
+```
+
+Why a colour pass reuses the view's pipelines: a render pipeline is fixed by its shader, its target formats and its
+sample count. A colour pass renders into `rgba8unorm` with 4 samples and `depth32float`, exactly as the view does, and
+resolves into a single-sample texture for reading. So it creates **no new pipeline**, and adds nothing to the load
+time, which on the largest example is dominated by pipeline creation. A colour pass at half the view's size costs 640
+x 400 x 4 samples x 8 bytes = 8.2 MB plus its 1 MB resolve.
+
+### 5.3 The depth-only fragment, and the one rule about readers
+
+A shadow map that ran every thing's full shading would pay for colour nobody sees: on a traced field that is the
+march **and** the style. So a draw states how it draws depth, as a sum type, and the compiler dispatches on it:
+
+```ts
+// src/artefact.ts, Draw gains:
+/** How this draw writes depth alone, for a "depth" pass. Absent: it is left out of depth passes, and `loft` notes it. */
+readonly depth?:
+  /** No fragment stage: the rasterised triangle is the depth (surfaces, meshes). */
+  | { readonly kind: "vertex" }
+  /** A fragment entry that computes coverage and depth and discards, without shading (every tracer). */
+  | { readonly kind: "entry"; readonly entry: string };
+```
+
+The built-in surfaces state `vertex`. The shared tracer fragment (`src/draw/trace.ts`, and `draw.traced` in the
+geometry proposal) gains `fs_depth`: the twelve shared lines minus paint and shade. A drawable written by an author
+inherits it through `draw.traced`; a hand-written `Drawable` that states nothing is simply left out, never wrong.
+
+**The rule about readers.** A draw whose module reads pass X is not drawn into X. In a depth pass this almost never
+bites, because a depth entry does not shade and so reads no pass; a depth entry that does read X (a shape whose
+geometry depends on its own shadow) is a true cycle and is refused. In a colour pass it is exactly what a mirror needs:
+the mirror surface is left out of its own reflection.
+
+### 5.4 History, and still mode
+
+Three options (question 3 of the brief):
+
+| Option | What it buys | What it costs |
+|---|---|---|
+| **Never** | Every property Loft has. | No accumulation at all: soft area shadows only as cones, no exact motion blur, AA only from MSAA and coverage. |
+| **Still mode** (recommended): many samples of one instant, fixed seeds, averaged | Area lights sampled exactly, depth of field, extra AA, and motion blur across a shutter; each frame still a function of its time and its sample count, byte-identical from a fresh process. | N times the frame, for stills and clips only. A separate compile, because lights are called with `xi` (below). |
+| **Opt-in history** (TAA, temporal denoising, probes that converge) | Real-time quality at a fraction of the cost per frame. | Gives up any frame drawn alone, parallel and out-of-order clips, checks at an instant, and byte-identical pictures (they depend on the frames before, and on frame timing). |
+
+**Recommendation: still mode now; opt-in history never in a scene, an artefact, a check, a clip or a variant.** If a
+game that loads Loft's files wants temporal antialiasing on its own display, that is the game's renderer on top of
+the files and nothing of it flows back. What I would never do: let any picture `loft` makes depend on an earlier
+frame; ship reprojection heuristics in the core; let baked state read a rendered picture (that is history smuggled
+through `recur`, amendment A4).
+
+Still mode, exactly:
+
+- `loft render`, `frames` and `clip` take `--samples N` (default 1: today's frame), `--shutter s` (default 0) and
+  `--aperture r` (default 0; the focus is the camera's target).
+- Sample k (0..N-1) is drawn at time t + s (k + 0.5) / N, with the projection offset by the k-th point of the (2, 3)
+  Halton sequence inside the pixel, and the eye moved to the k-th point of a disc of radius r about it, aimed at the
+  same target. Lights receive `xi` = the k-th point of the R2 sequence, rotated per pixel by a hash of the pixel
+  (Cranley-Patterson rotation, inherited). All of it is a function of (t, k, pixel): no state.
+- Each sample's picture is resolved as today and added into an `rgba32float` accumulator by a full-screen pass; the
+  average then goes through the style's own post passes once (bloom, grain, ink from depth use the depth of sample 0).
+- Still mode compiles the scene with `xi` given to lights, so a normal frame never contains the sampled branch and
+  stays byte-identical. Still mode lives in the TypeScript host and the command line only: the file format and the
+  Rust loader do not change for it, since a game draws frames, not stills.
+- The time spread gives **exact motion blur with no motion vectors** (mine): because time is an argument, sample k
+  is simply the scene at its own time. Engines estimate motion blur from velocity buffers because they cannot ask
+  for the scene at another time; Loft can.
+
+### 5.5 What stays byte-identical
+
+- Every scene that reads no pass: WGSL, manifest (version 1) and pixels, through every stage of the build.
+- Every normal frame of a scene in still mode's absence (`--samples 1`).
+- Restyling: passes come and go with the expressions that read them; a scene's own passes (the pool) draw with
+  whatever style is chosen.
+- The CPU checks: `.project` evaluates; `.at` is reported as GPU-only, as `loft_fwidth` is today.
