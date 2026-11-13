@@ -201,3 +201,31 @@ changes every existing scene's pixels and is a decision for the owner.
 ## Commits
 
 Listed in the answer to the request; `git log a2d82a2..training-host-contract`.
+
+## Follow-up: two refusals moved earlier
+
+Asked for after the report above. Two changes, each with a test. No default, limit or existing picture changes.
+
+1. **`strand` without `paint`** is now a scene refusal (exit 4), raised by `strand()` where the scene wrote it
+   (`src/geom/strand.ts`):
+   `loft: scene: strand "bare": given paint undefined; expected paint: a colour [r, g, b] in 0..1, or a function of
+   the body coordinates returning vec3. Fix: paint: [0.8, 0.4, 0.3] (at tests/fixtures/host/no_paint.ts:7)`.
+   Before, it was the spread's TypeError: exit 3 (`load: ... Spread syntax requires ...iterable`) on the new fixture, or
+   exit 1 (`internal`) on the path the report above hit. Only values that spread cannot take are refused (absent, null,
+   not iterable), so every scene that drew before draws the same.
+2. **`--view whole` is resolved before the GPU load.** `open` in `src/cli/main.ts` now resolves every requested view's
+   camera between the budget check and `loadedWithRetries`, so an absent camera (exit 2) and a `whole` with nothing to
+   measure (exit 4) are refused before any pipeline is built. `examples/pearls.ts` is a real case: it used to print
+   `load 90 ms` and then refuse; now it refuses after `compile`. The derived-camera note on stderr now comes before the
+   `load` line instead of after it. A built directory (`--artefact`) still resolves after its load, because its loader
+   reads and loads in one step; its refusal is a cheap usage error.
+
+Verification, at `dea7ed4` (changes stashed) and after:
+
+- `bun test --timeout 120000`: before **223 pass, 0 fail** (79.1 s); after **224 pass, 0 fail** (78.2 s). The new test
+  is `a strand without paint ...`; the `whole` refusal test now also asserts no `load` line. Both fail on the old
+  source (exit 3 instead of 4; `load` printed). `tsc --noEmit` and `tools/check_loader_closure.ts` pass.
+- `render` (default views), `frames` (4 times, 480x300) and `frames --view whole` (2 times, 256x256, PNGs) of shell,
+  brig, pearls, coral, serpent and storm: all 22 picture files are byte-identical (`cmp`), and so are all 58
+  per-frame RGBA hashes and the derived-camera notes. `loft context` is byte-identical (sha256 `f34053e5…`).
+  Script: `out/followup/snap.sh` (git-ignored).

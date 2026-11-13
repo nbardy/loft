@@ -24,7 +24,12 @@ type Info = Pick<Artefact, "cameras" | "inputs" | "stats">;
  */
 type Measure = { readonly kind: "scene"; readonly opened: Extract<Opened, { kind: "scene" }> } | { readonly kind: "none"; readonly why: string };
 
-async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }>, sweep: Sweep): Promise<{ info: Info; loaded: GpuLoaded; measure: Measure }> {
+/**
+ * The command's source compiled (or read), checked, its views' cameras resolved, then loaded on the GPU, in that order:
+ * every refusal the scene can earn (inputs, budget, a camera it lacks or a `whole` with nothing to measure) comes
+ * before any pipeline is built. `cameras` is in `views` order.
+ */
+async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }>, sweep: Sweep, views: readonly string[]): Promise<{ info: Info; loaded: GpuLoaded; cameras: Camera[] }> {
   let t = performance.now();
   switch (cmd.source.kind) {
     case "artefact": {
@@ -35,7 +40,9 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       const m = bundle.manifest;
       checkInputs(m, cmd.inputs, sweep);
       console.log(`files    ${ms(t)}  read and loaded ${cmd.source.dir}  (${fillCounts(m.tables)}; ${m.modules.length} modules, ${m.renderPipelines.length + m.computePipelines.length} pipelines)`);
-      return { info: m, loaded, measure: { kind: "none", why: "a built directory has no scene to measure" } };
+      // The loader reads and loads in one step, so here the cameras can only come after the GPU load.
+      const cameras = await camerasOf(m, { kind: "none", why: "a built directory has no scene to measure" }, views, cmd.size);
+      return { info: m, loaded, cameras };
     }
     case "file": case "fixture": {
       const opened = await openScene(cmd.source);
@@ -43,10 +50,12 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       checkInputs(artefact, cmd.inputs, sweep);
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
       withinBudget(artefact, cmd.budget);
+      const measure: Measure = opened.kind === "scene" ? { kind: "scene", opened } : { kind: "none", why: "the fixture has no scene to measure" };
+      const cameras = await camerasOf(artefact, measure, views, cmd.size);
       t = performance.now();
       const loaded = await loadedWithRetries(artefact);
       console.log(`load     ${ms(t)}`);
-      return { info: artefact, loaded, measure: opened.kind === "scene" ? { kind: "scene", opened } : { kind: "none", why: "the fixture has no scene to measure" } };
+      return { info: artefact, loaded, cameras };
     }
   }
 }
@@ -69,6 +78,13 @@ function withinBudget(a: Artefact, budget: Budget): void {
   ].filter((x) => x !== "").join("; and ");
   const limits = [budget.triangles !== Infinity ? `${budget.triangles} triangles` : "", budget.draws !== Infinity ? `${budget.draws} draws` : ""].filter((x) => x !== "").join(" and ");
   throw new SceneError("--budget", over, `at most ${limits}`, fix);
+}
+
+/** Each view's camera, in order. */
+async function camerasOf(info: Info, measure: Measure, names: readonly string[], size: Size): Promise<Camera[]> {
+  const cameras: Camera[] = [];
+  for (const name of names) cameras.push(await cameraOf(info, measure, name, size));
+  return cameras;
 }
 
 /** The camera a view name draws through; `whole` always resolves (the scene's own, or derived and said on stderr). */
@@ -154,10 +170,10 @@ async function witness(cmd: Extract<Command, { kind: "render" | "frames" | "clip
 }
 
 async function render(cmd: Extract<Command, { kind: "render" }>) {
-  const { info: artefact, loaded, measure } = await open(cmd, { kind: "none" });
+  const { info: artefact, loaded, cameras } = await open(cmd, { kind: "none" }, cmd.views);
   const frames: Frame[] = [];
-  for (const name of cmd.views) {
-    const camera = await cameraOf(artefact, measure, name, cmd.size);
+  for (const [k, name] of cmd.views.entries()) {
+    const camera = cameras[k]!;
     const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
     frames.push({ ...cmd.size, rgba });
   }
@@ -167,8 +183,7 @@ async function render(cmd: Extract<Command, { kind: "render" }>) {
 }
 
 async function frames(cmd: Extract<Command, { kind: "frames" }>) {
-  const { info: artefact, loaded, measure } = await open(cmd, cmd.sweep);
-  const camera = await cameraOf(artefact, measure, cmd.view, cmd.size);
+  const { info: artefact, loaded, cameras: [camera] } = await open(cmd, cmd.sweep, [cmd.view]);
   const out: Frame[] = [];
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
@@ -182,8 +197,7 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
 }
 
 async function clip(cmd: Extract<Command, { kind: "clip" }>) {
-  const { info: artefact, loaded, measure } = await open(cmd, cmd.sweep);
-  const camera = await cameraOf(artefact, measure, cmd.view, cmd.size);
+  const { info: artefact, loaded, cameras: [camera] } = await open(cmd, cmd.sweep, [cmd.view]);
   const count = Math.round(cmd.seconds * cmd.fps);
   const video = openVideo(cmd.out, cmd.size.width, cmd.size.height, cmd.fps);
   const t0 = performance.now();

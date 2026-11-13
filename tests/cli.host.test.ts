@@ -90,6 +90,8 @@ test("--view whole with nothing to measure and no camera of that name is a scene
   expect(r.code).toBe(4);
   expect(lastLine(r.err)).toContain(`loft: scene: camera "whole": given a scene with no camera "whole" and no thing whose shape Loft can measure on the CPU (spark)`);
   expect(lastLine(r.err)).toContain(`Fix: add cameras: { whole:`);
+  expect(r.out).toContain("compile");
+  expect(r.out).not.toContain("load "); // refused before any GPU work, not after the pipelines are built
 });
 
 test("--budget over the limit refuses after compiling and before any GPU work, with the counts and where to cut", () => {
