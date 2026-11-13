@@ -10,7 +10,7 @@ export default makeDesign({
   variants: {},
   compare: ["three"],
   build: (_picked, n) => ({
-    scene: scene({ sea: water, style, sun: [0.3, 0.8, 0.4], cameras, things: [draw.surface("ball", ball, { paint: () => vec3(n.r, n.g, n.b), grid, sides: "one", outline: "hull" })] }),
+    scene: scene({ ground: water, style, sun: [0.3, 0.8, 0.4], cameras, things: [draw.surface("ball", ball, { paint: () => vec3(n.r, n.g, n.b), grid, sides: "one", outline: "hull" })] }),
     checks: [], strikes: {}, holds: {}, waves: {},
   }),
 });

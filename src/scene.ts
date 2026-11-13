@@ -62,7 +62,7 @@ export function scene(spec: SceneSpec): Scene {
   const names = new Set<string>();
   for (const t of things) {
     if (names.has(t.name)) {
-      const own = [sky, spec.sea, shadows, light].some((d) => d.name === t.name);
+      const own = [sky, spec.ground, shadows, light].some((d) => d.name === t.name);
       throw new SceneError("scene()", `two things named "${t.name}"`, own ? `a name the scene's own ${t.name} does not take` : "a different name for each thing (names key shaders)", `rename one: "${t.name}2"`);
     }
     names.add(t.name);

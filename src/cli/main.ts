@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
 import type { Artefact } from "../artefact.ts";
 import type { GpuLoaded } from "../host/host.ts";
-import { parseArgs, type Command } from "./args.ts";
+import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { contactSheet, writeWebp, type Frame } from "./image.ts";
 import { checkInputs, viewInputs, type Sweep } from "./inputs.ts";
