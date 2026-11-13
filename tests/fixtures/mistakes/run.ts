@@ -4,7 +4,7 @@
 // is printed. `_ok.ts` must draw (exit 0). The kinds and codes: src/cli/verdict.ts.
 //   bun tests/fixtures/mistakes/run.ts [name-filter]
 import { readdirSync, readFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 
 const dir = import.meta.dir;
 const filter = process.argv[2] ?? "";
@@ -17,7 +17,7 @@ for (const f of files) {
   const text = readFileSync(join(dir, f), "utf8");
   const expect = (text.match(/^\/\/ expect: (\w+)$/m)?.[1] ?? "scene") as keyof typeof CODE;
   const args = text.match(/^\/\/ args: (.*)$/m)?.[1]?.split(" ") ?? [];
-  const p = Bun.spawn(["bun", "src/cli/main.ts", "render", join(dir, f), "--views", "three", "--size", "64x40", "--out", `out/mistakes/${f}.webp`, ...args], {
+  const p = Bun.spawn(["bun", "src/cli/main.ts", "render", relative(process.cwd(), join(dir, f)), "--views", "three", "--size", "64x40", "--out", `out/mistakes/${f}.webp`, ...args], {
     stdout: "pipe", stderr: "pipe",
   });
   // A mistake that hangs the compiler is a failure too: 60 s is ten times the slowest correct fixture.
