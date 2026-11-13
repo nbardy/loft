@@ -20,9 +20,13 @@ export type Entry = {
   readonly doc: string;
   /** The declaration as written, without its body: a function's parameters and result, a type's fields, a class's heritage. */
   readonly signature: string;
-  /** For a constant that is an object of named parts (`draw`, `palette`, `hit`): each part and its comment. */
-  readonly members: readonly { readonly name: string; readonly doc: string }[];
+  /** For a constant that is an object of named parts (`draw`, `palette`, `hit`): each part, its comment, and its declaration (the part's own, or the function it names). */
+  readonly members: readonly Member[];
+  /** For a type that is an object: each field and its type as written (a method `f(a): R` as `(a) => R`). */
+  readonly fields: readonly Field[];
 };
+export type Member = { readonly name: string; readonly doc: string; readonly signature: string };
+export type Field = { readonly name: string; readonly optional: boolean; readonly type: string };
 
 const ROOT = resolve(import.meta.dir, "../..");
 const rel = (p: string) => relative(ROOT, p);
@@ -125,9 +129,9 @@ export function exportsOf(file: string): Map<string, Entry> {
       const doc = commentAbove(lines, i);
       const names = kind === "value" && /^export\s+(const|let|var)\s/.test(line) ? constNames(line) : [d[2]!];
       // An overloaded function: the comment sits above the first signature; later ones must not erase it.
-      const members = names.length === 1 && /^export\s+const\s+[\w$]+(\s*:[^=]+)?\s*=\s*\{\s*$/.test(line) ? membersAfter(lines, i) : [];
-      const signature = signatureAt(lines, i, kind);
-      for (const name of names) if (!(doc === "" && out.get(name)?.file === rel(file))) out.set(name, { name, kind, file: rel(file), doc, signature, members });
+      const members = names.length === 1 && /^export\s+const\s+[\w$]+(\s*:[^=]+)?\s*=\s*\{\s*$/.test(line) ? membersAfter(file, lines, i) : [];
+      const signature = signatureAt(lines, i, kind), fields = kind === "type" ? fieldsAt(lines, i) : [];
+      for (const name of names) if (!(doc === "" && out.get(name)?.file === rel(file))) out.set(name, { name, kind, file: rel(file), doc, signature, members, fields });
       continue;
     }
     const { text, end } = statement(lines, i);
@@ -145,11 +149,26 @@ export function exportsOf(file: string): Map<string, Entry> {
     } else if ((m = /^export\s+(type\s+)?\{([^}]*)\}\s*;?\s*$/.exec(text))) {
       for (const s of specifiers(m[2]!)) out.set(s.as, { ...localOrImported(file, s.from), name: s.as });
     } else if (/^export\s+default\b/.test(text)) {
-      out.set("default", { name: "default", kind: "value", file: rel(file), doc: commentAbove(lines, i), signature: "", members: [] });
+      out.set("default", { name: "default", kind: "value", file: rel(file), doc: commentAbove(lines, i), signature: "", members: [], fields: [] });
     } else {
       throw new Error(`catalogue: ${rel(file)}:${i + 1}: an export form this scanner does not read: ${text.slice(0, 80)}`);
     }
   }
+  return out;
+}
+
+/** Split at commas or semicolons outside brackets (an arrow's `=>` is not a bracket). */
+export function topLevel(t: string, sep = /[,;]/): string[] {
+  const out: string[] = [];
+  let depth = 0, cur = "";
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i]!;
+    if (c === "=" && t[i + 1] === ">") { cur += "=>"; i++; continue; }
+    if ("([{<".includes(c)) depth++;
+    else if (")]}>".includes(c)) depth--;
+    if (depth === 0 && sep.test(c)) { out.push(cur.trim()); cur = ""; } else cur += c;
+  }
+  if (cur.trim() !== "") out.push(cur.trim());
   return out;
 }
 
@@ -189,12 +208,43 @@ function signatureAt(lines: readonly string[], at: number, kind: "value" | "type
   return cut(squash(head.replace(/\{\s*$/, "{ ... }").replace(/;\s*$/, "")));
 }
 
-/** The named parts of an object literal opened on line `at`: keys at two spaces' indent, up to the closing brace. */
-function membersAfter(lines: readonly string[], at: number): { name: string; doc: string }[] {
-  const out: { name: string; doc: string }[] = [];
+/**
+ * The named parts of an object literal opened on line `at`: keys at two spaces' indent, up to the closing brace. A
+ * part's signature is its own (`curve(name, curve, o): Drawable`, `x: (a) => ...`), or that of the function it names
+ * (`surface: drawSurface`), or empty when neither can be read.
+ */
+function membersAfter(file: string, lines: readonly string[], at: number): Member[] {
+  const out: Member[] = [];
   for (let i = at + 1; i < lines.length && !/^\}/.test(lines[i]!); i++) {
     const m = /^ {2}(?:async\s+)?([A-Za-z_$][\w$]*)\s*(?:[:(<]|,|$)/.exec(lines[i]!);
-    if (m) out.push({ name: m[1]!, doc: commentAbove(lines, i) });
+    if (!m) continue;
+    const rest = lines[i]!.slice(m[0].length - 1).trim();
+    let signature = "";
+    const named = /^:\s*([A-Za-z_$][\w$]*)\s*,?\s*$/.exec(rest);
+    if (named) { try { signature = localOrImported(file, named[1]!).signature; } catch { signature = ""; } }
+    else if (/^[(<]/.test(rest)) signature = squash(`${m[1]}${rest}`.replace(/\s*\{\s*$/, ""));
+    else if (/^:\s*(<[^=]*>)?\s*\(/.test(rest)) signature = squash(`const ${m[1]} = ${rest.replace(/^:\s*/, "")}`);
+    out.push({ name: m[1]!, doc: commentAbove(lines, i), signature });
+  }
+  return out;
+}
+
+/** The fields of an object type opened on line `at` (two spaces' indent), each with its type as written on its line. */
+function fieldsAt(lines: readonly string[], at: number): Field[] {
+  const head = lines[at]!;
+  // A type written on one line: `type O = { readonly a: A; readonly b?: B };`.
+  const one = /=\s*\{(.*)\}\s*;?\s*$/.exec(head);
+  if (one) return topLevel(one[1]!).flatMap((f) => {
+    const m = /^(?:readonly\s+)?([A-Za-z_$][\w$]*)(\??)\s*:\s*([\s\S]*)$/.exec(f);
+    return m ? [{ name: m[1]!, optional: m[2] === "?", type: m[3]!.trim() }] : [];
+  });
+  if (!(/=\s*\{\s*$/.test(head) || /^export\s+interface\b.*\{\s*$/.test(head))) return [];
+  const out: Field[] = [];
+  for (let i = at + 1; i < lines.length && !/^\}/.test(lines[i]!); i++) {
+    const m = /^ {2}(?:readonly\s+)?([A-Za-z_$][\w$]*)(\??)\s*([:(])(.*)$/.exec(lines[i]!);
+    if (!m) continue;
+    const type = (m[3] === "(" ? `(${m[4]!.replace(/\)\s*:\s*/, ") => ")}` : m[4]!).trim().replace(/[;,]\s*$/, "");
+    out.push({ name: m[1]!, optional: m[2] === "?", type });
   }
   return out;
 }
@@ -210,7 +260,7 @@ function localOrImported(file: string, name: string): Entry {
   const decl = new RegExp(`^(?:function\\*?|const|let|var|class|type|interface)\\s+${name}\\b`);
   const at = lines.findIndex((l) => decl.test(l));
   if (at < 0) throw new Error(`catalogue: ${rel(file)} exports "${name}" but its declaration was not found`);
-  return { name, kind: /^(type|interface)\s/.test(lines[at]!) ? "type" : "value", file: rel(file), doc: commentAbove(lines, at), signature: signatureAt(lines, at, /^(type|interface)\s/.test(lines[at]!) ? "type" : "value"), members: [] };
+  return { name, kind: /^(type|interface)\s/.test(lines[at]!) ? "type" : "value", file: rel(file), doc: commentAbove(lines, at), signature: signatureAt(lines, at, /^(type|interface)\s/.test(lines[at]!) ? "type" : "value"), members: [], fields: /^(type|interface)\s/.test(lines[at]!) ? fieldsAt(lines, at) : [] };
 }
 
 /** The first sentence of a comment (to the first ". " before a capital, or the paragraph's end). */
