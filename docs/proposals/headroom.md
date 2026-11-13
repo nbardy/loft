@@ -127,9 +127,9 @@ shape amendment A2, since the light proposal did not exist when this was written
 ```ts
 // Reeds over a floor, toon, with shadows from a depth picture taken from the sun: every shape casts, not only the
 // skeletons' capsules, and a reed shades its neighbour. The picture covers a 12-unit square round the origin.
-import { add, f, le, mix, mul, pass, plane, scene, select, sin, strand, time, toon, vec2, vec3, type F, type P3, type Style } from "../src/index.ts";
+import { add, f, le, mix, mul, normalize, pass, plane, scene, select, sin, strand, sub, time, toon, vec2, vec3, type F, type P3, type Style } from "../src/index.ts";
 
-const SUN = vec3(-0.4, 0.8, 0.45).normalize();
+const SUN = normalize(vec3(-0.4, 0.8, 0.45));
 const fromSun = pass({
   name: "fromSun",
   size: [2048, 2048],
@@ -253,3 +253,40 @@ integral over the disc (DERIVATION; the representative point without `xi` is its
 | "Does the mirror show the pool inside the pool?" | No. | A pass leaves out every draw whose shader reads it, and `loft` reports the names. |
 | "Why is there a `sample` input in the third scene?" | Yes: the first draft exported `sample` so a scene could jitter by it. | Removed. The lamp gets `xi`, the camera's jitter and aperture belong to the still mode, and time is already an argument. One export fewer. |
 | "Can `at` run in a check?" | No defect. | `.at` is GPU-only (reported as `loft_fwidth` is today); `.project` is an expression and runs on the CPU, so "is the whole grove inside the sun's picture" is a check. |
+
+## 4. Options for opening the frame
+
+The question is how an author says "draw these things from this camera into this target, then let an expression read
+it", without a menu and without breaking the three things the frame owes everyone: byte-identical pictures from a
+fresh process, the artefact as files that a loader executes without deciding anything, and restyling.
+
+| Family | What a user writes | What it cannot express | What it costs |
+|---|---|---|---|
+| **Special types** | `shadowMap({ light, size, cascades })`, `planarReflection({ plane })`, `cubeProbe({ at })` | Everything off the menu: a pass from a camera that follows a creature's eye, a normals picture for a custom ink, a picture read by a light, a probe at a moving point. | A module per technique (shadows alone are four: plain, cascaded, PCF, PCSS), each with a style-side reader. Every style must know every kind. Breaks rules 1 and 4. |
+| **Parameters only** | `scene({ shadows: { size: 2048 }, mirror: { plane } })` | The same, plus any reading other than the library's. | Smaller, but every new reading is a release. |
+| **A render-graph object** (the engine shape) | `graph.addPass({ inputs, outputs, execute(enc) })` with resources declared, ordered by the author | Nothing, on the GPU. | Hands the author the encoder: no CPU twin, no restyling (the graph is not a function of the style), the order of calls becomes state, and the loader must run author code, which the files cannot carry. Breaks "a loader decides nothing". |
+| **Shaders only** | Raw WGSL `PostSpec` plus host changes | Off-screen targets and second cameras: a post pass cannot draw geometry. | Exists for full-screen passes only; the host would need a new hook per technique. |
+| **Passes as expressions** (recommended) | `pass({ name, size, keep?, camera })` returns a value whose `.at(uv)` and `.project(p)` are expressions; nothing is registered. | A pass whose contents depend on the previous frame (by design); a pass that draws something other than the scene's things or a full-screen expression (a custom draw list is the `only` field, a later addition on first need); compute passes that scatter (the state proposal's rule). | One export. A camera computed in the pose pass; fixed-size textures, comparison samplers and one more bind group in the format; a depth-only fragment entry per drawable kind. About 650 lines TS, 90 Rust (§12). |
+| **Something subtler: passes as tables** | Treat a rendered picture as one more table kind, `fetch`ed like any other | The same as the row above. | The table machinery (levels, slots, `varianceOf`) assumes buffers filled by compute and evaluable on the CPU; a picture is neither. Forcing it in would add a GPU-only table kind that every table reader must special-case. Rejected, but the recommendation borrows its one good idea: **discovery from expressions**. |
+
+Why the recommended row wins, and what is mine in it:
+
+- **Discovery, not declaration** (mine, borrowed from how Loft already finds per-frame tables). A pass exists in the
+  files exactly when some emitted expression reads it. A style that reads a shadow map brings it; `--style` to one
+  that does not removes it; a scene with no reader is byte-identical. The order is not written by anyone: a pass is
+  drawn before every draw that reads it, and passes that read passes are ordered by the same dependency levels as
+  tables. A cycle is refused by name.
+- **A camera is an expression** (mine). The pass's view-projection is computed in the pose pass from expressions
+  (the sun, a creature's eye, the view's own camera reflected) into a buffer that is then bound as that pass's
+  `frame`. The loader computes nothing new: it runs one more dispatch it already knows how to run. Every pass reuses
+  every drawable's pipelines, because a drawable already reads its camera from `frame`, including `frame.viewport`
+  for pixel footprints and coverage, so ink widths and trace coverage come out right in the pass's own pixels.
+- **`project` runs on the CPU** (mine). A pass's camera is an expression, so where a world point lands in it is
+  arithmetic: a check can measure that every caster is inside the sun's picture, or how many texels a reed's width
+  spans, before anything is drawn. Shadow-map acne and coverage are measurable, not looked for.
+- **A reader is never drawn into what it reads.** This one rule makes mirrors and shadow maps safe without asking
+  the author to list anything (below).
+
+Inherited: render-to-texture, shadow mapping (Williams 1978), percentage-closer filtering (Reeves et al. 1987), planar
+reflection by a mirrored camera with an oblique near plane (Lengyel 2005), frame graphs that order passes by declared
+reads (as in production engines).
