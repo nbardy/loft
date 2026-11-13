@@ -149,6 +149,12 @@ function section(o: { readonly at?: number; readonly key?: Key } = {}): Terminat
   return { kind: "section", at: within("terminator", o.at ?? 0.4, -0.95, 0.95), key: o.key ?? OFF_LENS };
 }
 
+/**
+ * Builders for the lighting treatments a style can lay over its bodies: `key` (where the light comes from), `edge`
+ * (where a shadow begins on a form), and the treatments `core`, `highlight`, `cast`, `waterline`, `overlap`,
+ * `bokashi`, `hatch`, `rim` and `block`, which `light.recipe` gathers into a `LightRecipe`. Each treatment is a
+ * plain value; a treatment left out is off.
+ */
 export const light = {
   key: {
     sun: (): Key => ({ kind: "sun" }),
@@ -475,6 +481,10 @@ export function blockInk(b: Block, own: BlockInk): BlockInk {
  * with m = mix(`floor`, 1, t). At t = 0 that is mix(colour, ink, amount) * value.
  */
 export type Pull = { readonly floor: number; readonly add: Rgb };
+/**
+ * Reduces a shadow block's ink to the two numbers a blend needs (`floor` and `add`), so a tone can be printed over a
+ * colour; throws if the block would print nothing.
+ */
 export function pullOf(b: BlockInk): Pull {
   const floor = (1 - b.amount) * b.value;
   if (!(floor < 1 - 1e-3)) throw new Error(`light: the shadow block prints nothing (amount ${b.amount}, value ${b.value}); give it an ink`);

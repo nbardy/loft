@@ -9,7 +9,9 @@ import { add, div, dot, max, min, mul, smoothstep, sub, vec3, type Expr } from "
 import { fwidth } from "../lib/wgsl.ts";
 import type { Rgb, ShadeCtx } from "../style.ts";
 
+/** A colour triple as a vec3 expression, for use inside a style's shading. */
 export const rgb = (c: Rgb): Expr<"vec3"> => vec3(c[0], c[1], c[2]);
+/** A colour triple as WGSL source text (`vec3<f32>(r, g, b)`), for style code written as raw WGSL. */
 export const wgslRgb = (c: Rgb): string => `vec3<f32>(${c.map((x) => x.toFixed(4)).join(", ")})`;
 
 /**

@@ -96,6 +96,10 @@ const PROFILES: Readonly<Record<Profile, (r: F) => F>> = {
   plateau: (r) => smoothstep(1.0, 0.6, r),
 };
 
+/**
+ * The falloff curve named by `p` at r in [0, 1], as an expression: 1 at the centre, 0 from r = 1 on (`bump` stamps use
+ * it).
+ */
 export function profile(p: Profile, r: F): F {
   return PROFILES[p](r);
 }

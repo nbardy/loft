@@ -185,6 +185,11 @@ export function dorsalness(v: Expr<"f32">): Expr<"f32"> {
   return smoothstep(-0.3, -0.12, sin(mul(v, TAU)));
 }
 
+/**
+ * Colour recipes for painting a body, as functions of its length coordinate `m` (metres) and its around coordinate `v`
+ * (0 to 1): `countershade` (dark back, pale belly), `bands`, `spot`, and `clamp`. Each takes and returns a vec3 colour,
+ * so they layer by passing one result as the next one's `under`.
+ */
 export const palette = {
   /** Dark back, pale belly (counter-shading). */
   countershade(v: Expr<"f32">, c: { readonly back: In<"vec3">; readonly belly: In<"vec3"> }): Expr<"vec3"> {

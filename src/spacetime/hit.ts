@@ -28,7 +28,29 @@ export type Disc = { readonly kind: "disc"; readonly centre: V2; readonly radius
 export type Arc = { readonly kind: "arc"; readonly centre: V2; readonly inner: F; readonly outer: F; readonly from: F; readonly to: F };
 export type Hit = Capsule | Disc | Arc;
 
-/** Constructors: the simulation's numbers (inputs, or expressions of them) as canonical hit shapes. */
+/**
+ * The hit shapes an attack is aimed by, made from the game's numbers: `hit.capsule({ a, b, radius })` (a lane),
+ * `hit.disc({ centre, radius })` (a slam) and `hit.arc({ centre, inner, outer, from, to })` (a sweep), all on the
+ * ground's (x, z) plane.
+ *
+ * The law: one shape per attack, and everything Loft draws or checks about the attack (the pose's landing, the
+ * telegraph, `landsInside`) is derived from it by its signed distance (`hitSdf`), negative inside, the same expression
+ * on the GPU and in the checks.
+ *
+ * Parameters: every field takes a number, an expression or a host input, so a game moves its shapes and the attack
+ * follows. Angles run from +x toward +z; an arc's `from` is below its `to`, at most a half turn apart.
+ *
+ * What it cannot do, because of the law:
+ * - any shape but these three: no box, no cone wider than a half turn, no full ring, no polygon.
+ * - a union: one shape per attack (two lanes are two attacks).
+ * - height or volume: a shape lies on the plane; what stands up is a `Target`, measured by checks, not a hit.
+ *
+ * Going past it: a new kind is a variant of `Hit` with its three handlers (signed distance, drawing patch, contour
+ * coordinate) in src/spacetime/hit.ts. Relatives worth trying, each a signed distance in the plane:
+ * - a box: the distance to a rotated rectangle, max(|x| - w, |z| - h) inside and the corner distance outside.
+ * - a full ring (a shockwave all round): |length(p - c) - mid| - half.
+ * - a cone from a point: an arc with `inner` 0 (already possible, up to a half turn).
+ */
 export const hit = {
   capsule: (o: { readonly a: In<"vec2">; readonly b: In<"vec2">; readonly radius: In<"f32"> }): Capsule =>
     ({ kind: "capsule", a: lift<"vec2">(o.a), b: lift<"vec2">(o.b), radius: lift<"f32">(o.radius) }),
@@ -137,7 +159,25 @@ const arc = {
 
 // ---- dispatch -----------------------------------------------------------------------------------------------------
 
-/** Signed distance to the hit shape in the plane: negative inside. */
+/**
+ * Signed distance to the hit shape in the plane: negative inside. The one expression the telegraph draws and the checks
+ * evaluate, so a shader or paint of your own that reads it agrees with both.
+ *
+ * The law: for a capsule, the distance to its segment less its radius; for a disc, the distance to its centre less its
+ * radius; for an arc, inside it the least distance to its outer, inner and end edges (negated), outside past an end
+ * the distance to that end's radial segment. Exact for all three, an arc up to a half turn.
+ *
+ * Parameters: `p` is any point of the plane (x, z) held as a vec2; the shape's fields are expressions.
+ *
+ * What it cannot do, because of the law:
+ * - measure in three dimensions: it is the plane's distance, the same at every height.
+ * - be exact for an arc over a half turn (refused by its shape's rule anyway).
+ *
+ * Going past it: combine distances yourself, min(d1, d2) for a union and max(d1, -d2) for a cut, to draw or test shapes
+ * the attack itself cannot be. Relatives worth trying:
+ * - a soft edge: smoothstep across d for a glow that fades out from the shape.
+ * - a filling marker: inside where d < (k - 1) times the shape's inradius, k the warning's progress 0..1.
+ */
 export function hitSdf(h: Hit, p: V2): F {
   switch (h.kind) {
     case "capsule": return capsule.sdf(h, p);
@@ -146,7 +186,23 @@ export function hitSdf(h: Hit, p: V2): F {
   }
 }
 
-/** The patch of the plane the shape is drawn on, (u, v) in [0, 1]^2, padded by `pad` all round. */
+/**
+ * The patch of the plane the shape is drawn on, (u, v) in [0, 1]^2, padded by `pad` all round: the ground a marker
+ * covers, so drawing it costs about the shape's own pixels.
+ *
+ * The law: a capsule's patch is the rectangle along its lane from a - (radius + pad) to b + (radius + pad); a disc's
+ * the square round it; an arc's a polar patch of its own sector (angles padded by pad / inner, at most an eighth turn).
+ *
+ * Parameters: u, v and pad are expressions; the shape's fields too, so the patch moves with it.
+ *
+ * What it cannot do, because of the law:
+ * - fit the shape tightly: a disc's square spends its corners, a capsule's rectangle its caps' corners.
+ * - follow the ground's height: it is a patch of the plane; lift it onto a sea or a plane yourself (the telegraph does).
+ *
+ * Going past it: a `surface` of your own over the patch, `point(u, v)` from this and the ground's height, carries any
+ * look you like. Relatives worth trying:
+ * - a patch with relief: lift the points by a function of `hitSdf` (a rim that stands up at the edge).
+ */
 export function hitPatch(h: Hit, u: F, v: F, pad: F): V2 {
   switch (h.kind) {
     case "capsule": return capsule.patch(h, u, v, pad);

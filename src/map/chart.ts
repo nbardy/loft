@@ -97,12 +97,17 @@ export type Turn =
   | { readonly kind: "about"; readonly axis: P3; readonly angle: F }
   | { readonly kind: "axes"; readonly x: P3; readonly y: P3 };
 
+/**
+ * How a posed copy is turned (`PoseSpec.turn`): `turn.none`, `turn.about(axis, angle)` for an angle in radians about a
+ * unit axis, or `turn.axes(x, y)` for unit, perpendicular x and y axes (z is their cross product).
+ */
 export const turn = {
   none: { kind: "none" } as Turn,
   about: (axis: In<"vec3">, angle: In<"f32">): Turn => ({ kind: "about", axis: lift<"vec3">(axis), angle: lift<"f32">(angle) }),
   axes: (x: In<"vec3">, y: In<"vec3">): Turn => ({ kind: "axes", x: lift<"vec3">(x), y: lift<"vec3">(y) }),
 };
 
+/** How a posed copy is scaled (`PoseSpec.size`): `size.even(k)` by one factor, or `size.axes([kx, ky, kz])` per axis. */
 export const size = {
   even: (k: In<"f32">): Size => ({ kind: "even", k: lift<"f32">(k) }),
   /** Lengths along the copy's x, y and z (each positive). */

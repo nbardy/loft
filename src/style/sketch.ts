@@ -21,6 +21,11 @@ const GRAPHITE: Rgb = [0.17, 0.17, 0.2];
 /** White water is left as paper and outlined; ridge foam's softer edge is graphite too. */
 const FOAM: Record<FoamInk, Rgb> = { fill: PAPER, line: GRAPHITE, edge: GRAPHITE };
 
+/**
+ * The graphite-on-paper style: no flat colour, a body is bare paper with its form drawn by hatching, a thin outline
+ * with a wandering inner line, and near-black paint filled in solid. The water is paper with the swell's lines drawn
+ * across it. Composed of `litBodies`, `light.hatch`, `paint.wandering`, `swellLines` and `paperGrain`.
+ */
 export function sketch(): Style {
   // Tone is hatching alone: closer and more ragged than the woodblock's engraving, nearly solid in the deepest shadow.
   const recipe = light.recipe({ hatch: light.hatch({ spacing: 0.12, least: 4, cap: 0.85, ragged: 0.3 }) });

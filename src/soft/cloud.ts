@@ -144,9 +144,28 @@ export type BillowSpec = Pick<CloudSpec, "turbulence" | "billow" | "drift" | "co
 type V3 = readonly [number, number, number];
 
 /**
- * Puffs that boil and drift, from places you choose: `cloud`'s motion without its shape (see `cloud` for the relatives).
- * Puff i wanders through a noise field of its own (seeded by `seed` and i) by `turbulence` of its radius, breathes, is
- * tinted a little, and drifts with the rest; `bounds` covers them for `seconds`.
+ * Puffs that boil and drift, from places you choose: `cloud`'s motion without its shape, so any arrangement of blobs
+ * (a ring, a plume, steam off a body) moves like a cloud.
+ *
+ * The law. Puff i (a `blob`) sits at its place plus a wander n_i(t) times `turbulence` times its radius (n_i three
+ * noise values of time at `billow` cells per second, seeded by `seed` and i; the vertical wander is 0.6 of the
+ * horizontal), plus `drift` t; its radii breathe by 1 + 0.25 turbulence times another noise; its colour is `colour`
+ * tinted by up to 8%. `bounds` is a box holding every puff from time 0 to `seconds`.
+ *
+ * Parameters: the places (centre, radii, density per puff) are fixed numbers; `turbulence`, `billow`, `drift`,
+ * `colour`, `seed` and `seconds` are fixed. The motion is a closed form of time.
+ *
+ * What it cannot do, because of the law:
+ * - move a puff along a path of its own (rising, spreading, swirling): every puff has the same drift, and the wander
+ *   is about its place, never away from it.
+ * - grow, fade or be born: radii and densities only breathe about their values, and the count is fixed.
+ * - stay in its bounds after `seconds`: past that, the drift carries puffs out of the box and they are cut off.
+ *
+ * Going past it: `blob` takes expressions for centre, radii and density, so a puff of your own (one that rises and
+ * thins, `density` falling with time) is a `blob` call; pass the list to `medium`. Relatives, by the places you give:
+ * - places filling a shape of revolution in tiers: `cloud`.
+ * - places round a circle in a vertical plane, drifting along its axis: a smoke ring.
+ * - places along a curve, radii growing along it: a plume or a trail.
  */
 export function billows(places: readonly PuffPlace[], motion: BillowSpec): Cloud {
   const puffs: Puff[] = [];

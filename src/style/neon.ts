@@ -26,6 +26,11 @@ function tubeOf(c: Expr<"vec3">): Expr<"vec3"> {
   return mul(mix(vec3(0.75, 0.88, 1), hue, smoothstep(0.04, 0.18, sub(hi, lo))), 1.6);
 }
 
+/**
+ * The neon-tube style: a dark ground where each body is near black and its paint becomes a saturated light, shown as
+ * the outline, an inner glow and a sheen. The water is black glass with faint violet swell lines and cyan rings round
+ * bodies. Composed of `pixelsInside`, `swellLines`, the `reflection` and `bloom` post passes.
+ */
 export function neon(): Style {
   /** Light fades under the water. */
   const sunk = (depth: Expr<"f32">) => exp(mul(max(depth, 0), -1.2));

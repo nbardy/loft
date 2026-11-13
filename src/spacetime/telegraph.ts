@@ -44,6 +44,11 @@ export type TelegraphStyle = {
   readonly fade: number;
 };
 
+/**
+ * The default look of a telegraph: a dark-red fill that strengthens toward the arming time, a bone edge with teeth
+ * pointing inward, an ink line round it so it reads on bright and dark ground alike, a pale flash at arming. Override
+ * any field with `telegraph(attack, { style: { ... } })`.
+ */
 export const DANGER: TelegraphStyle = {
   bone: [0.98, 0.93, 0.8], fill: [1.0, 0.26, 0.08], ink: [0.12, 0.02, 0.03], flash: [1.0, 0.97, 0.88],
   spacing: 0.85, edge: 0.13, line: 0.06, fillFrom: 0.25, fillTo: 0.78, teethFrom: 0.35, teethTo: 1.1, fade: 0.3,
@@ -123,7 +128,35 @@ class Telegraph implements Drawable {
   }
 }
 
-/** The attack's hit shape on the water, as a danger marker that sharpens until the arming time. */
+/**
+ * The attack's hit shape on the ground (a sea or a plane), as a danger marker that sharpens until the arming time. It is
+ * the hit shape itself, not the body's future footprint: the game resolves the hit against the shape, so the player is
+ * shown exactly that.
+ *
+ * The law. With k = (time - (T - warn)) / warn clamped to 0..1 (T the attack's arming time, `attack.arm`), the
+ * marker is coloured per pixel from the shape's signed distance d: a fill inside whose opacity rises with k^2 and throbs
+ * at a rate rising from 1 to 5 Hz; a bone edge whose inward teeth (spaced `spacing` along the edge, a whole number per
+ * edge) lengthen with k^1.5 up to 0.8 of the shape's inradius; an ink line round the bone. At T the whole shape flashes
+ * for one frame, then fades over `fade` seconds. Antialiased by d's own screen derivative, so it is crisp at any zoom.
+ *
+ * Parameters: the shape, the arming time and the warning are the attack's (expressions, so a game moves them); the
+ * style's colours and sizes are fixed numbers; the flash's length is a host input, `<attack>.flashSeconds` (default
+ * 1/30), since only the host knows its frame rate.
+ *
+ * What it cannot do, because of the law:
+ * - draw anything but the hit shape: not the body, not a path, not a cone of sight.
+ * - lie on a ground of nothing, on a wall or on a body: it is a patch of the ground's surface.
+ * - warn for longer than `warn`, or stay after its fade: it is drawn only from T - warn to T + flash + fade.
+ * - change its motif: teeth on a bone edge round a fill; only the colours and sizes in `TelegraphStyle` are open.
+ *
+ * Going past it: `hitSdf(attack.hit, p)` is the same distance, and `hitPatch` the same patch, so a marker of your own is
+ * a `surface` over the patch whose look reads the distance and k from `attack.arm` and `attack.warn`. Relatives worth
+ * trying:
+ * - a fill that closes in from the edge: inside where d < (k - 1) times the inradius, so the safe time is the empty
+ *   middle.
+ * - a sweep shown as a moving line: an arc's angle mixed from `from` to `to` by k, a band along it.
+ * - a warning on the body instead: paint on the striking part that brightens with the same k.
+ */
 export function telegraph(attack: Attack, o: { readonly style?: Partial<TelegraphStyle>; readonly name?: string } = {}): Drawable {
   return new Telegraph(scopedName(o.name ?? `telegraph_${attack.name}`), attack, { ...DANGER, ...o.style });
 }

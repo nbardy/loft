@@ -189,6 +189,10 @@ fn imp_closest(o: vec3<f32>, d: vec3<f32>, a: vec3<f32>, b: vec3<f32>) -> f32 {
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(num).join(", ")})`;
 
+/**
+ * The `Drawable` that `impostors` returns: one sphere, capsule or rounded cone per cell of a lattice, ray-cast per
+ * pixel. A scene author gets it from `impostors`, not by constructing it.
+ */
 export class Impostors implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
   readonly surfaces: readonly Bakeable[] = [];

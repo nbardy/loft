@@ -1,14 +1,13 @@
-// Afloat: a rigid placement on the water whose height, pitch and roll come from the water under the hull, so a ship
-// rides the swell (or a whirlpool's funnel wall) with no animation code of its own.
+// Afloat: a rigid placement on the water whose height, pitch and roll come from the water under it, so a floating
+// thing rides the swell (or a whirlpool's funnel wall) with no animation code of its own.
 //
-// The water is sampled at four points: bow and stern (half the length either side of the centre, along the heading)
-// and port and starboard (half the beam either side). The origin sits at the mean of the four heights; the bow axis
-// climbs by the bow-to-stern difference over the length (pitch), the starboard axis by the starboard-to-port
-// difference over the beam (roll). A wind on the sails heels the ship further, toward leeward, in proportion to how
-// much of the wind comes across it.
+// The water is sampled at four points: front and back (half the length either side of the centre, along the heading)
+// and left and right (half the beam either side). The origin sits at the mean of the four heights; the forward axis
+// climbs by the front-to-back difference over the length (pitch), the right axis by the right-to-left difference over
+// the beam (roll). A wind heels the thing further, away from the wind, in proportion to how much of it comes across.
 //
-// Local coordinates of the placed thing: x toward the bow, y up, z to starboard (= x cross y), origin on the waterline
-// amidships.
+// Local coordinates of the placed thing: x forward, y up, z to the right (= x cross y), origin at the water level
+// at its centre.
 
 import { add, cos, cross, dot, lift, mul, normalize, sin, sub, substitute, time, vec2, vec3, type Expr, type In } from "../expr.ts";
 import { rigid } from "./rig.ts";
@@ -29,21 +28,25 @@ export interface Waters {
 export type AfloatSpec = {
   /** Where, in the water's own plane coordinates (x, z). */
   readonly at: In<"vec2">;
-  /** Heading of the bow, radians from +x toward +z, in the water's coordinates (it turns with the water). */
+  /** Heading of the forward axis, radians from +x toward +z, in the water's coordinates (it turns with the water). */
   readonly heading: In<"f32">;
-  /** The span the water is sampled over: length (bow to stern) and beam. */
+  /** The span the water is sampled over: length (front to back) and beam (side to side). */
   readonly length: number;
   readonly beam: number;
   /** How high the local origin sits above the mean water level. Default 0. */
   readonly lift?: number;
   /**
-   * Wind on the sails: the direction it blows toward (x, z) and the heel, radians, it gives when it comes straight
-   * across. The heel is toward leeward and breathes a little with gusts. Default no wind.
+   * A wind: the direction it blows toward (x, z) and the heel, radians, it gives when it comes straight across. The
+   * heel is away from the wind and breathes a little with gusts (a fixed 12% wobble in time). Default no wind.
    */
   readonly wind?: { readonly direction: readonly [number, number]; readonly heel: number };
 };
 
-/** The placement's frame, as expressions: origin on the waterline amidships, x the bow, y up, z starboard. */
+/**
+ * `afloat`'s frame without the chart: origin at the water level under the thing's centre, x forward, y up, z to the
+ * right, all expressions. One step down from `afloat` (see it for the law and limits): turn it, lift it, blend it with
+ * another frame (`turnedAbout`, `blendFrames`), then place with `rigid`.
+ */
 export function afloatFrame(w: Waters, spec: AfloatSpec): Frame {
   if (!(spec.length > 0 && spec.beam > 0)) throw new Error(`afloat: length and beam must be positive, got ${spec.length}, ${spec.beam}`);
   const c = w.carry(lift<"vec2">(spec.at));
@@ -78,7 +81,34 @@ function heelOf(spec: AfloatSpec, stbd: V2): F {
   return mul(mul(across, wind.heel), gust);
 }
 
-/** Float something on the water: a rigid placement that rides the surface under it. */
+/**
+ * A rigid placement that floats on water: its height, pitch and roll are read from the surface under it, so it rides a
+ * swell, a whirlpool's funnel wall or a passing ring wave with no motion of its own.
+ *
+ * The shape and its law. The water (`sea`, or `pool.in(sea)` for water that carries things round) is sampled at four
+ * points, half the length ahead and behind along the heading and half the beam to either side. The origin sits at the
+ * mean of the four heights (plus `lift`); the forward axis climbs by (front - back) / length, the right axis by
+ * (right - left) / beam; then a wind heels it about the forward axis by heel times the share of the wind coming across.
+ *
+ * Parameters: `at` and `heading` take expressions (it can be driven across the water); `length`, `beam`, `lift` and the
+ * wind are fixed numbers. On a whirlpool's chart `at` is in the whirlpool's coordinates and the water carries it.
+ *
+ * What it cannot do, because it is four samples of a height:
+ * - respond with weight or inertia: it sits exactly on the water now, with no lag, no bobbing after a wave passes, no
+ *   sinking deeper when loaded.
+ * - see water shorter than itself: a wave whose length is near `length` or `beam` puts samples on crest and trough
+ *   alike, and the thing sits level or jerks; detail between the four points is not seen at all.
+ * - be pushed by the water: where it is comes from `at` (and a whirlpool's carry), never from the slope or a wave.
+ * - tilt about anything but the sampled axes, or bend: it is one rigid frame.
+ *
+ * Going past it: `afloatFrame` gives the same frame as expressions, to change before placing with `rigid`. Relatives,
+ * each by changing how the frame is read from the water:
+ * - more samples, with the plane fitted to them by least squares: a long thing on short waves, averaged instead of
+ *   aliased.
+ * - the frame read at an earlier time, height(xz, t - lag), and blended with the present (`blendFrames`): a heavy thing
+ *   that lags and overshoots the swell.
+ * - `at` driven by the water's own velocity (a whirlpool chart's `drift`, a ring wave's `pushed`): flotsam that drifts.
+ */
 export function afloat(w: Waters, spec: AfloatSpec): Chart {
   return rigid(afloatFrame(w, spec));
 }

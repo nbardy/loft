@@ -55,17 +55,31 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
   return { point, normal: (u) => mul(viewDir(curve(u)), -1), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
 }
 
+/**
+ * Wraps a shape as a `Drawable`, which is how it reaches the screen. A scene's `things` list takes only Drawables, so a
+ * surface, curve, field or point set that is not wrapped by one of these (or by `glow`, `flare`, `impostors`) is never
+ * drawn. Every member takes a unique `name` (it names the shaders) as its first argument.
+ * - `surface`: a parametric surface (u, v) -> point, lit by the scene's style.
+ * - `glazed`: a surface with its own colour and alpha, blended over what is behind it.
+ * - `curve`: a camera-facing ribbon stroke along a curve, unlit.
+ * - `points`: one copy of a drawable per point of a `Points`.
+ * - `posed`: one copy of a drawable per pose, each turned and scaled along its own axes.
+ * - `field`: a signed distance field, sphere-traced per pixel inside a bounding box.
+ * - `relief`: bumps, scales or spikes ray-marched on top of a surface, in its own coordinates.
+ * - `copies`: a list of spheres, capsules or rounded cones, each intersected exactly per pixel.
+ * - `density`: a cloud or fog (a `Medium`) integrated along each view ray.
+ */
 export const draw = {
-  /** A surface, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked. */
+  /** A parametric surface (u, v) -> point, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked. */
   surface: drawSurface,
-  /** A surface with its own colour and alpha (the sea, decals). */
+  /** A surface that supplies its own colour and alpha and is blended over what is behind it, instead of being lit by the style. */
   glazed: drawGlazed,
   /** A stroke: a ribbon of half-width `width(u)` along the curve, facing the camera, coloured by `paint` (unlit). */
   curve(name: string, curve: Curve, o: CurveOptions): Drawable {
     const grid: Grid = { u: spacing.even(o.segments), v: spacing.even(1) };
     return drawFlat(name, ribbon(curve, o.width), { paint: o.paint, grid });
   },
-  /** One copy of `thing` per point, each in its point's frame and scale. */
+  /** One copy of a drawable `thing` (one that can be instanced) per point of `points`, each in its point's frame and scale. */
   points(name: string, points: Points, thing: Instanceable): Drawable {
     return thing.instanced(name, points);
   },
@@ -76,11 +90,11 @@ export const draw = {
   posed(name: string, poses: Poses, thing: Poseable): Drawable {
     return thing.posed(name, poses);
   },
-  /** A distance field, sphere-traced inside its bounds (folded and recursive solids). */
+  /** A solid given as a signed distance field, sphere-traced per pixel inside its bounds; suits folded and recursive solids. */
   field: drawField,
-  /** Relief shell-traced on a surface, in its own coordinates (scales, spikes, barnacles). */
+  /** Height detail (scales, spikes, bumps) ray-marched in a thin shell over a surface, in the surface's own (u, v) coordinates. */
   relief: drawRelief,
-  /** Listed copies of a simple solid, each intersected exactly per pixel (a fold run backwards: trees, coral, spines). */
+  /** A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms. */
   copies: drawCopies,
   /**
    * A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to

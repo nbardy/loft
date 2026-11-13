@@ -50,6 +50,7 @@ export type Bent = {
   readonly tip: P3; readonly tipHeading: P3;
 };
 
+/** Raised by `bent` when `sharp` is not a finite number at least 1; it carries only the message, which names the value. */
 export class BendError extends Error {}
 
 /** Four-point Gauss-Legendre on [0, 1]: nodes and weights. */
@@ -71,12 +72,17 @@ const NONE: Bend = [0, 0];
  * - bend anywhere but by these three shapes: no S with two bows at chosen places, no kink in the middle.
  * - twist about itself (the heading turns; the stalk has no roll of its own).
  * - stretch or squash along its length.
- * - turns of more than about 3 radians: the four-point integral loses accuracy past that.
+ * - large or sharp turns exactly: the spine is a four-point Gauss-Legendre integral, off by about 4e-4 of the length
+ *   at 3 radians of bow or crook, and by about 6e-3 for a 3 radian crook with `sharp` 4.
+ * - keep its length on a skewed frame: `along`, `a` and `b` must be unit and at right angles, or the heading is not
+ *   unit and the length is not kept (nothing checks this).
  *
- * Going past it: the heading is the law, so a bend shape of your own is a new weight in its `turn` (copy `bent`, about twenty
- * lines): any function w(m) times a bend; a bend at m0 is a smoothstep there; a wave travelling up the stalk is a bend times sin(k m - w t). `bentTip`
- * predicts a tip on the CPU. Relatives: a clothoid (turn growing as m^2) is `crook` with `sharp` 2; straight segments
- * between joints are `chain`; a fixed curve is `spiralLine`.
+ * Going past it: the heading is the law, so a bend shape of your own is a new weight in its `turn` (copy `bent`, about
+ * twenty lines): any function w(m) times a bend. `bentTip` predicts a tip on the CPU. Relatives:
+ * - a bend gathered at m0: the weight smoothstep(m0 - h, m0 + h, m), a joint with a soft knee anywhere along it.
+ * - a wave travelling up the stalk (a swimming tail, a whip): a bend times sin(k m - w t), the turn moving outward.
+ * - a clothoid, curvature growing evenly toward the tip: turn growing as m^2, which is `crook` with `sharp` 2.
+ * - straight segments between hard joints: `chain`. A fixed curve that tightens as it thins: `spiralLine`.
  */
 export function bent(spec: BentSpec): Bent {
   const sharp = spec.sharp ?? 2;
@@ -100,7 +106,11 @@ export function bent(spec: BentSpec): Bent {
   return { spine, heading, tip: spine(1), tipHeading: heading(1) };
 }
 
-/** The same in plain numbers: what a theory predicts a tip's place from before anything is drawn. */
+/**
+ * `bent`'s tip and its heading in plain numbers, on the CPU: the same law and the same four-point integral, so it
+ * predicts where the drawn tip will be before anything is drawn (for aiming a stalk, or checking a pose reaches). It
+ * cannot take expressions (every input is a number), and unlike `bent` it does not check `sharp`.
+ */
 export function bentTip(o: {
   readonly root: readonly [number, number, number]; readonly along: readonly [number, number, number];
   readonly a: readonly [number, number, number]; readonly b: readonly [number, number, number];

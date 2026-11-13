@@ -104,6 +104,10 @@ function copiesShadow(copies: readonly Branch[]): Skeleton {
   return shadowSkeleton({ kind: "sampled", inside: cast.length, chain: fitBlob(cast, 0.5 * Math.max(...cast.map((q) => q.r))) });
 }
 
+/**
+ * The `Drawable` that `draw.copies` returns: a static list of spheres, capsules or rounded cones, each intersected
+ * exactly per pixel. A scene author gets it from `draw.copies`, not by constructing it.
+ */
 export class Copies implements Drawable {
   readonly skeletons: readonly Skeleton[];
   readonly surfaces: readonly Bakeable[] = [];

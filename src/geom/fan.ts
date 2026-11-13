@@ -23,7 +23,13 @@ export type FanSpec = {
 
 const H = 1e-3;
 
-/** The catenary across a gap, normalised: 0 at f = 0 and f = 1, 1 at the middle. */
+/**
+ * The catenary across a gap, normalised: the curve a hanging cloth or chain takes, 0 at f = 0 and f = 1 and 1 at the
+ * middle, (cosh(k / 2) - cosh(k (f - 1/2))) / (cosh(k / 2) - 1). `fan` uses it for the belly and the scalloped edge;
+ * use it for any sag between two fixed points. `k` (positive, fixed) sets how taut: near 0 a parabola, larger flatter
+ * in the middle and steeper at the ends. It cannot be lopsided: the ends are at the same height, so a chain hung
+ * between points at different heights needs the catenary shifted off centre, which this does not do.
+ */
 export function catenary(f: F, k: number): F {
   if (!(k > 0)) throw new Error(`catenary: the parameter must be positive, got ${k}`);
   const cosh = (x: F): F => mul(add(exp(x), exp(mul(x, -1))), 0.5);
@@ -85,5 +91,13 @@ export function fan(spec: FanSpec): Surface {
   return surface(point, { u: ["free", "free"], v: "free" });
 }
 
-/** A body's spine as a ray (its centre line at v on the dorsal side), so a fan can be spanned between flexing bodies. */
+/**
+ * A body's centre line as a curve m -> point (m from 0 at its root to 1 at its tip), so a `fan` can be spanned between
+ * flexing bodies: the point is `body.frame(vec3(m, v, 0)).o`, which moves as the body moves.
+ *
+ * It cannot put the ray off the centre line: in a body's coordinates (m, v, rho) the third is the share of the way from
+ * the centre line to the skin, here 0, so `v` changes nothing. For a ray along the skin on one side, write the curve
+ * yourself: `(m) => body.frame(vec3(m, v, 1)).o`. Relatives: any `Curve` is a ray, so a `chain`'s `spine`, a `bent`
+ * stalk's, or a `spiralLine`'s `spine` serve as well.
+ */
 export const rayOf = (body: Chart, v = 0.25): Curve => (m) => body.frame(vec3(m, v, 0)).o;

@@ -12,8 +12,9 @@ export type WgslFnSpec<T extends Ty> = {
 };
 
 /**
- * A callable that builds a call to a GPU-only WGSL function. Evaluating the resulting expression on the CPU throws
- * (`compileJs` raises its "GPU-only" error), so use it only in shader-stage expressions.
+ * Wraps a hand-written WGSL function as a callable that builds a call to it inside an expression. Evaluating the
+ * resulting expression on the CPU throws (`compileJs` raises its "GPU-only" error), so use it only in shader-stage
+ * expressions. For authors who need raw WGSL beyond the expression functions; most scenes do not.
  */
 export function wgslFn<T extends Ty>(spec: WgslFnSpec<T>): (...args: In[]) => Expr<T> {
   if (!new RegExp(`\\bfn\\s+${spec.name}\\s*\\(`).test(spec.wgsl)) {

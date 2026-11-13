@@ -62,6 +62,7 @@ export interface Skeleton {
   readonly joints: number;
   joint(k: number): { readonly p: P3; readonly r: F };
 }
+/** The `Skeleton` with no joints: what a drawable that casts no shadow reports. It has no `joint(k)` to ask for. */
 export const NO_SKELETON: Skeleton = { joints: 0, joint: (k) => { throw new Error(`NO_SKELETON has no joint ${k}`); } };
 
 /**

@@ -84,12 +84,29 @@ export function coil(spec: CoilSpec): Surface {
   return surface((u, v) => { const [x, y] = section(u, mul(v, -TAU * hand)); return at(u, x, y); }, COIL_TOPOLOGY);
 }
 
-/** A coil's (u, v): capped at the apex, open at the aperture, once round the section. */
+/**
+ * The (u, v) layout of a `coil`, for `surface((u, v) => coilAt(law)(u, ...), COIL_TOPOLOGY)`: u from the apex (0, an
+ * edge closed by a flat disc when the surface is made solid; the coil is tiny there) to the aperture (1, a free open
+ * rim), v once round the section and glued to itself. It cannot describe a coil whose mouth is closed or whose apex
+ * ends in a point: give your own `Topology` (`pole` at that end) for those.
+ */
 export const COIL_TOPOLOGY = { u: ["cap", "free"], v: "periodic" } as const satisfies Topology;
 
 /**
  * `coil`'s law without its section: the point `across` away from the axis and `along` up it from the section's centre,
- * at whorl position u (0 apex, 1 aperture; any expression), in world units at the aperture's scale. See `coil`.
+ * at whorl position u (0 apex, 1 aperture; any expression), in world units at the aperture's scale. See `coil` for the
+ * law, the relatives and the recipe this is one step down of.
+ *
+ * The law: with s = W^(turns (u - 1)) and theta = 2 pi turns u (signed by `hand`),
+ *   point = s R_y(theta) [ (c + across) x + (-T c + along) y ],   c = aperture (1 + D) / (1 - D).
+ * u, across and along take expressions, so a section can move, u can run past 1 (a flare) or back (a throat), and
+ * points of the coil can be placed; the law's numbers are fixed.
+ *
+ * What it cannot do, because the law's numbers are fixed at build:
+ * - grow, turn or drop by amounts that change in time or along u: `turns`, `growth`, `umbilicus` and `spire` are
+ *   numbers, not expressions (write s yourself in a `surface` for growth as a function of u).
+ * - coil without growing: growth must be above 1 (it throws), so a helix of constant radius is not this law.
+ * - leave its axis: the axis is y through the origin; place the result in a chart to move it.
  */
 export function coilAt(law: CoilLaw): (u: F, across: F, along: F) => P3 {
   const { turns, growth, aperture, umbilicus: D, spire } = law;
@@ -127,11 +144,15 @@ function handOf(hand: CoilLaw["hand"]): 1 | -1 {
 }
 
 /**
- * `coil`'s law in plain numbers, for an elliptical section of `aspect` (ridges aside), in the coil's own coordinates:
+ * `coil`'s law in plain numbers, on the CPU, for checks and placement: where a whorl's section is hidden inside the
+ * next one out, and which whorls hold a point. For an elliptical section of `aspect`, in the coil's own coordinates:
  * - `centre`: the section's centre off the axis at u = 1, and `drop`: its depth below the apex there;
  * - `covered`: the arc of phi (radians, as in `CoilSection`, from `from` to `to` going up) of any whorl's section that
  *   lies inside the next whorl out, so it never shows; its ends are the suture. Undefined when the whorls stand apart.
  * - `holding(q)`: the whorl positions u whose section holds the point q (empty when q is outside the coil).
+ * It cannot see a section of your own: it reasons about the ellipse of `aspect` alone, without ridges or a section
+ * function, and the arc it finds is sampled (720 steps, then bisected), so a covered arc narrower than half a degree
+ * may be missed.
  */
 export function coilPlan(spec: CoilLaw & { readonly aspect?: number }): {
   readonly centre: number; readonly drop: number;
@@ -170,9 +191,17 @@ export function coilPlan(spec: CoilLaw & { readonly aspect?: number }): {
   return { centre: c, drop, covered, holding };
 }
 
-/** Growth-line coordinate of a shell point: whorls from the apex, for painting bands and ridges in its own coordinates. */
+/**
+ * Whorls from the apex at whorl position u of a coil of `turns` (u turns): a coordinate along the growth of a coil, for
+ * paint, so a band at a whole number of whorls follows one turn of the coil. It cannot follow growth lines that are
+ * not evenly spaced in u: it counts turns, not the coil's size.
+ */
 export const whorl = (u: F, turns: number): F => mul(u, turns);
-/** 0..1 within each of `perTurn` ridges per whorl, for paint that follows the folded ridges. */
+/**
+ * Where u lies within the ridges of a coil's section: fract(u turns perTurn), 0 between two ridges and 0.5 on a
+ * ridge's crest, so paint can darken ridges or the furrows between them in step with `coil`'s `ridges`. It cannot
+ * follow ridges of a section function of your own: it matches `coil`'s ridges of `perTurn` per whorl only.
+ */
 export const ridgePhase = (u: F, turns: number, perTurn: number): F => fract(mul(u, turns * perTurn));
 
 export type SpiralTubeSpec = {
@@ -238,9 +267,15 @@ export function spiralTube(spec: SpiralTubeSpec): Strand {
 
 /**
  * `spiralTube`'s centre line, its radius along it and its up direction, named as `strand` takes them, so the tube is
- * never a dead end (see `spiralTube` for the law, its limits and its relatives). Spread it into your own `strand` and
- * override what you need; or add to its `spine` (a kink, a wobble in time) or multiply its `girth` (a swelling, ridges):
- * both are functions of m, the share of the way from root (0) to tip (1).
+ * never a dead end (see `spiralTube` for the law and its relatives). Spread it into your own `strand` and override what
+ * you need; or add to its `spine` (a kink, a wobble in time) or multiply its `girth` (a swelling, ridges): both are
+ * functions of m, the share of the way from root (0) to tip (1).
+ *
+ * What it cannot do is what the law cannot (adding to the result is how to get past each):
+ * - curl that does not follow the taper: the heading is ln(1 + m (taper - 1)) / k, tied to the radius.
+ * - a sideways run other than `twist` m^2: no helix of constant pitch.
+ * - a radius that is not linear in m: girth (1 + m (taper - 1)).
+ * - an up direction that turns: `up` is the fixed normal of the curl's plane.
  */
 export function spiralLine(spec: Pick<SpiralTubeSpec, "length" | "curl" | "taper" | "girth" | "out" | "toward" | "twist">): { readonly spine: (m: F) => P3; readonly girth: (m: F) => F; readonly up: P3 } {
   const L = lift<"f32">(spec.length), curl = lift<"f32">(spec.curl), taper = lift<"f32">(spec.taper), girth = lift<"f32">(spec.girth);

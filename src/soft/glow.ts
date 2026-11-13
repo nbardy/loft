@@ -28,7 +28,24 @@ export interface Strokes {
   taper(u: F, i: F): F;
 }
 
-/** Strokes from a function; the table is made once per object. */
+/**
+ * A family of curves to draw as light: stroke i (0 to count - 1) is u in [0, 1] -> `point(u, i)`, with a `taper(u, i)`
+ * (a multiple of the glow's width; 0 is gone). It is the geometry `glows` lights, `bolt` fills with lightning, and any
+ * curve family (a spline, a body's spine, rings, sparks) can be.
+ *
+ * The law: every frame the CPU samples each stroke at u = k / `segments`, k = 0..segments, into a table; the glow draws
+ * the polyline through those samples. So `point` and `taper` may be any expression the CPU can evaluate (time, inputs,
+ * hashes, another body's frame).
+ *
+ * Parameters: `name` (an identifier: it names the table), `count` and `segments` fixed whole numbers; `point` and
+ * `taper` functions of (u, i) returning expressions.
+ *
+ * What it cannot do, because it is sampled into a fixed table:
+ * - change its number of strokes or segments in time: hide a stroke with a taper or brightness of 0 instead.
+ * - follow detail finer than a segment: between samples it is straight, so a sharp kink or a fast wiggle needs more
+ *   segments (and cost grows with count x segments, per frame on the CPU and per pixel near each segment).
+ * - use expressions the CPU cannot evaluate (GPU-only functions).
+ */
 export function strokes(name: string, count: number, segments: number, point: (u: F, i: F) => P3, taper: (u: F, i: F) => In<"f32"> = () => 1): Strokes {
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`strokes "${name}": names must be identifiers (they name tables)`);
   if (!(Number.isInteger(count) && count >= 1 && Number.isInteger(segments) && segments >= 1)) throw new Error(`strokes "${name}": count and segments must be positive integers`);
@@ -77,6 +94,10 @@ function strokeTable(s: Strokes): TableSource {
 const fl = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 const rgb = (c: Rgb): string => `vec3<f32>(${c.map(fl).join(", ")})`;
 
+/**
+ * The `Drawable` that `glow`, `glows` and `flare` return: additive light around curves or a point, softened by
+ * distance from each pixel's view ray. A scene author gets it from those functions, not by constructing it.
+ */
 export class GlowDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
   readonly surfaces = [];
@@ -241,12 +262,45 @@ fn glow_eval(o: vec3<f32>, d: vec3<f32>, stroke: u32, seg: u32) -> GlowAt {
 }`;
 }
 
-/** A glow along each of a family of strokes. */
+/**
+ * Light along each of a family of strokes: a hot core and a soft halo round every curve, additive, seen through a
+ * medium and hidden by bodies in front. Lightning, a neon tube, a laser, sparks, a glowing vein.
+ *
+ * The shape and its law. For each pixel, d is the distance from its view ray to the nearest point of the stroke, w the
+ * width times the taper there, and px a pixel's world size. The light added is
+ *   brightness(i) (core * exp(-(d / rc)^2) (w / rc) + colour * (0.65 exp(-(d / h)^2) + 0.35 exp(-3 d / h))),
+ * rc = max(w, 0.7 px), h = max(halo w, 1.5 px): the core never thins below a pixel (it dims instead, keeping its
+ * energy), and the whole is multiplied by exp(-optical depth) of the `veil` medium up to the curve.
+ *
+ * Parameters: `width` and `brightness(i)` take expressions (a flash envelope, a pulse per stroke); `halo`, `colour`,
+ * `core` and `veil` are fixed. The curves move as the strokes do.
+ *
+ * What it cannot do, because the light is added along a distance to a curve:
+ * - darken, or hide what is behind it: it only adds light, so a glow over a bright sky barely shows.
+ * - light anything: bodies, the ground and the water near it are not lit (a `flash` lights a medium; a `skyFlash`
+ *   washes the screen).
+ * - glow from a surface or a volume: only from curves (a glowing sheet is many strokes; a glowing cloud is a medium
+ *   lit by a flash).
+ * - count its own crossings once: two parts of strokes that cross on screen add (brighter where they cross); only the
+ *   joints between neighbouring segments are drawn once.
+ * - dim smoothly through a medium along one segment: the veil is taken once per segment, at its middle.
+ *
+ * Going past it: `strokes` is the open slot (any curves the CPU can evaluate). Relatives:
+ * - one curve: `glow`; one point with a star of rays: `flare`.
+ * - a taper that grows along u: a beam or a cone of light (a searchlight) rather than a line.
+ * - another falloff of d, a Lorentzian 1 / (1 + (d / w)^2): a longer, hazier halo, as through mist; written by
+ *   copying this drawable's shader, not by an option.
+ */
 export function glows(name: string, s: Strokes, o: GlowOptions): Drawable {
   return new GlowDrawable(name, s, o, { kind: "line" });
 }
 
-/** A glow along one curve (u in [0, 1] -> point), sampled into `segments` segments per frame. */
+/**
+ * Light along one curve, u in [0, 1] -> point, sampled into `segments` segments per frame: a neon tube, a glowing
+ * thread, a laser. It is `glows` with a single stroke and `intensity` for its brightness, so its law, its limits (it
+ * only adds light, lights nothing, glows from curves only) and its relatives are those of `glows`. It cannot taper:
+ * the width is the same along the whole curve; for a taper, build `strokes` with one and call `glows`.
+ */
 export function glow(name: string, curve: (u: F) => P3, o: Omit<GlowOptions, "brightness"> & { readonly intensity: In<"f32">; readonly segments: number }): Drawable {
   return glows(name, strokes(name, 1, o.segments, (u) => curve(u)), { ...o, brightness: () => o.intensity });
 }
@@ -259,7 +313,26 @@ export type FlareOptions = Omit<GlowOptions, "brightness" | "width"> & {
   readonly rays: number;
 };
 
-/** A point of light: a hot centre, a halo and (optionally) a star of thin rays. */
+/**
+ * A point of light: a hot centre, a halo and (optionally) a star of thin rays, additive, seen through a medium and
+ * hidden by bodies in front. A star, a lamp, a spark, a muzzle flash, the sun's glint.
+ *
+ * The shape and its law: `glows`' law about a single point (d is the distance from the pixel's view ray to `at`), with
+ * `size` as the core's half-width; with `rays` > 0, `rays` thin arms are added, each exp(-across / (1.2 px)) times
+ * (1 - r / len)^2, len = 2.5 times the halo's radius, laid in the view plane by folding the angle into one sector.
+ *
+ * Parameters: `at`, `size` and `intensity` take expressions (it can move, swell, flicker); `halo`, `colour`, `core`,
+ * `rays` and `veil` are fixed.
+ *
+ * What it cannot do, because of the law:
+ * - turn its star: the arms stand at fixed angles in the view plane (the first along the view's right), and do not
+ *   rotate or twinkle on their own.
+ * - change its arms' length or thinness (2.5 halo radii, 1.2 pixels), or its number of rays in time.
+ * - light anything around it, or darken: it only adds light (see `glows`).
+ *
+ * Relatives: a glow along a short curve (`glow`) is a streak; many flares are a field of stars, cheaper as one `glows`
+ * with `count` single-point strokes; for arms that turn, a `glows` whose strokes are short lines from the point.
+ */
 export function flare(name: string, at: In<"vec3">, o: FlareOptions): Drawable {
   const s = strokes(name, 1, 1, () => lift<"vec3">(at));
   const shape: Shape = o.rays > 0 ? { kind: "star", rays: o.rays, length: 2.5, thin: 1.2 } : { kind: "line" };

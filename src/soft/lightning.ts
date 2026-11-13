@@ -23,7 +23,13 @@ function strikeTime(s: StrikeSchedule, k: F): F {
   return add(add(s.first, mul(k, s.every)), mul(hash33(vec3(k, s.seed, 7)).x, s.jitter * s.every));
 }
 
-/** The strike in progress at time t: its index (an integer-valued f32) and the seconds since it began. */
+/**
+ * The strike of a schedule in progress at time t: its index k (a whole number, as an f32) and the seconds since it
+ * began. Strike k begins at first + k every + hash(k) jitter every, so strikes come at a steady rate with an uneven
+ * beat, and everything keyed by the index (a bolt's shape, a flash's place) is new each strike and the same on every
+ * replay. It cannot space strikes unevenly beyond `jitter` of a period (no bursts, no lulls) or overlap two strikes:
+ * one is in progress at a time, until the next begins.
+ */
 export function strikeAt(s: StrikeSchedule, t: In<"f32"> = time): { readonly index: F; readonly since: F } {
   if (!(s.every > 0 && s.jitter >= 0 && s.jitter < 1)) throw new Error("strikes: every must be positive and jitter in [0, 1)");
   const tt = lift<"f32">(t);
@@ -37,12 +43,20 @@ const STROKES = [[0, 1], [0.085, 0.75], [0.19, 0.9], [0.3, 0.45]] as const;
 /** Each return stroke fades with this time constant, seconds. */
 const STROKE_FADE = 0.03;
 
-/** The flicker of a strike's return strokes, `since` seconds after it began: 0 before, about 1 at each stroke. */
+/**
+ * The brightness of a strike's return strokes `since` seconds after it began: 0 before, then four sharp pulses (at 0,
+ * 0.085, 0.19 and 0.3 s, of 1, 0.75, 0.9 and 0.45), each decaying as exp(-t / 0.03 s), summed. Drive a bolt's glow,
+ * a `flash`'s power or a `skyFlash` with it. It cannot vary from strike to strike: the stroke times and strengths are
+ * fixed, so every strike flickers alike (offset `since` by a hash of the index for variety).
+ */
 export function flicker(since: F): F {
   return STROKES.reduce<F>((acc, [t0, b]) => add(acc, mul(mul(step(t0, since), exp(mul(max(sub(since, t0), 0), -1 / STROKE_FADE))), b)), lift<"f32">(0));
 }
 
-/** The channel's glow after the flash: rises with the first stroke, then decays with time constant `seconds`. */
+/**
+ * The glow a lightning channel keeps after its flash: 0 before the strike, 1 at its start, then exp(-since / seconds).
+ * It cannot rise gradually or hold: it jumps to full at once and only decays.
+ */
 export function afterglow(since: F, seconds: number): F {
   return mul(step(0, since), exp(mul(max(since, 0), -1 / seconds)));
 }
@@ -51,9 +65,9 @@ export type BoltSpec = {
   /** Identifier (names the strokes' table). */
   readonly name: string;
   /**
-   * Where the channel starts (in the cloud) and ends (at the sea), before each strike's own offset. Expressions, so a
-   * bolt can leave a moving jaw or land on a mark an input sets; they are read every frame where the strokes' table is
-   * filled (on the CPU), so they must be CPU-evaluable.
+   * Where the channel starts (in the cloud) and ends (on the ground), before each strike's own offset. Expressions, so
+   * a bolt can leave a moving point or land on a mark an input sets; they are read every frame where the strokes' table
+   * is filled (on the CPU), so they must be CPU-evaluable.
    */
   readonly from: In<"vec3">;
   readonly to: In<"vec3">;
@@ -77,7 +91,7 @@ export type Bolt = {
   readonly since: F;
   /** Return-stroke flicker, 0..about 1. */
   readonly flash: F;
-  /** Where the channel enters the cloud and where it meets the sea, this strike. */
+  /** Where the channel enters the cloud and where it meets the ground, this strike. */
   readonly top: P3;
   readonly ground: P3;
 };
@@ -85,8 +99,13 @@ export type Bolt = {
 const LEVEL_GAIN = 0.55;
 
 /**
- * A curve from a to b, displaced at `levels` levels of midpoints by hashes of (cell, level, key). The offsets lie
- * across the chord; the first level's amplitude is `rough` times the chord's length.
+ * A jagged curve from a to b at u in [0, 1]: midpoint displacement in closed form. Level l (1 to `levels`) splits the
+ * chord into 2^(l - 1) cells and adds, over each, a hat (0 at the cell's ends, 1 at its middle) times an offset across
+ * the chord hashed from (cell, level, key); the first level's offset reaches `rough` times the chord's length and each
+ * level is 0.55 of the one before. So the ends stay at a and b, and the curve is a pure function of u: any stage can
+ * evaluate any point. The same `key` gives the same curve. It cannot be smooth (it is straight between the points of
+ * the finest level, kinked at every one), and its offsets lie in a plane across the chord chosen from a fixed vector,
+ * so a chord along (0.31, 0.12, 0.94) has no defined across direction.
  */
 export function displaced(u: F, a: P3, b: P3, levels: number, rough: number, key: F): P3 {
   const chord = sub(b, a);
@@ -106,7 +125,34 @@ export function displaced(u: F, a: P3, b: P3, levels: number, rough: number, key
   return p;
 }
 
-/** A branching bolt for each strike of a schedule. */
+/**
+ * A branching lightning bolt, new for each strike of a schedule: a jagged main channel from cloud to ground with
+ * branches leaving it, as `strokes` for `glows` to light, with the strike's index, timing and flicker.
+ *
+ * The shape and its law. For strike k (`strikeAt`), the ends are `from` and `to` each moved by a hash of k up to
+ * `wander` in x and z. The main channel is `displaced` between them (`levels`, `roughness`, keyed by k). Branch j
+ * leaves the channel at a hashed point between 0.1 and 0.75 of the way down, angled 0.45 to 0.95 radians off the
+ * channel's axis toward a hashed side, 0.1 to 0.3 of the chord long (shorter lower down), itself `displaced` one level
+ * less and 1.3 times rougher; branches taper to nothing at their tips. The shape is fixed for the whole strike.
+ *
+ * Parameters: `from` and `to` take expressions the CPU can evaluate (a bolt can leave a moving point or land on a
+ * mark an input sets); `wander`, `roughness`, `levels` (1 to 10), `branches`, `segments` and the schedule are fixed.
+ *
+ * What it cannot do, because of the law:
+ * - grow: the whole channel exists at once for the strike; there is no leader stepping down from the cloud.
+ * - branch twice: branches leave the main channel only, never another branch.
+ * - seek a target: it lands at `to` (give or take `wander`), never on the tallest thing near it.
+ * - change shape within a strike, or light itself: how bright it is is the glow's (`flash` here is its flicker).
+ * - curve smoothly: it is straight between displaced points.
+ *
+ * Going past it is one step down: `displaced(u, a, b, levels, rough, key)` is the channel's curve, and
+ * `strokes(name, count, segments, point, taper)` draws any family of curves, so a bolt of your own is a `point(u, i)`
+ * built from `displaced` calls. Relatives, by changing one part of the law:
+ * - reveal the channel by time, taper 0 where u > since / duration: a leader that steps down, then the flash.
+ * - branches from branches: call `displaced` from a point of a branch, keyed by both indices: a tree of discharges.
+ * - the same displacement laid on a surface instead of across a chord: cracks in ice, rivers on a map, roots.
+ * - `from` and `to` both on moving bodies, with a short `every`: an arc between two electrodes.
+ */
 export function bolt(spec: BoltSpec): Bolt {
   if (!(Number.isInteger(spec.levels) && spec.levels >= 1 && spec.levels <= 10)) throw new Error("bolt: levels must be an integer in [1, 10]");
   if (!(Number.isInteger(spec.branches) && spec.branches >= 0)) throw new Error("bolt: branches must be a non-negative integer");
@@ -138,12 +184,21 @@ export function bolt(spec: BoltSpec): Bolt {
   return { strokes: strokes(spec.name, 1 + spec.branches, spec.segments, point, taper), index, since, flash: flicker(since), top, ground };
 }
 
-/** The light a bolt casts into a medium: a flash at its top (inside the cloud), brightness following the flicker. */
+/**
+ * The light a bolt casts into a medium: a `flash` at the bolt's top, `lift` above it (inside the cloud), whose power is
+ * `power` times the strike's flicker. It cannot light along the channel: it is one point, so the cloud glows round the
+ * top and not where the channel runs below the cloud's base; for that add flashes at points of the channel.
+ */
 export function boltFlash(b: Bolt, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number; readonly lift: number }): Flash {
   return flash({ at: add(b.top, vec3(0, o.lift, 0)), power: mul(b.flash, o.power), colour: o.colour, reach: o.reach });
 }
 
-/** Flashes inside a cloud with no channel to the sea: hashed points in a box, one per strike. */
+/**
+ * Lightning hidden inside a cloud, with no channel to the ground: for each strike of the schedule, a `flash` at a
+ * point of `box` hashed from the strike's index, its brightness the flicker (capped at 1.2). Returns the flash for the
+ * medium, the brightness (to drive a `skyFlash`) and where it is. It cannot place the light where the cloud is dense:
+ * the point is uniform in the box, so in a sparse corner the flash lights little.
+ */
 export function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number }): { readonly flash: Flash; readonly brightness: F; readonly at: P3 } {
   const { index, since } = strikeAt(s);
   const h = hash33(vec3(index, s.seed, 11));
@@ -153,8 +208,10 @@ export function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [num
 }
 
 /**
- * The whole sky lighting up: a full-screen additive wash of `colour` times `brightness`, stronger where nothing opaque
- * is near (the sky and the sea) than on bodies close by, which the flash light reaches but does not drown.
+ * The whole sky lighting up: a full-screen additive wash of `colour` times `brightness` (an expression: give it a
+ * strike's flicker), at full strength where the scene's depth is far (the sky, distant water) and half on near bodies,
+ * which the flash reaches but does not drown. It cannot light from a direction: it is an even wash, with no shading or
+ * shadows on the bodies it brightens.
  */
 export function skyFlash(name: string, brightness: In<"f32">, colour: readonly [number, number, number]): Drawable {
   return {

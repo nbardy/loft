@@ -77,6 +77,11 @@ export type Resolved<N = unknown> = {
 };
 
 export type DesignErrorKind = "syntax" | "unknown-variant" | "unknown-slot" | "unknown-option" | "unknown-number" | "conflict";
+/**
+ * Raised when a variant request is malformed or names a variant, slot, option or number that does not exist, two
+ * options set the same number differently, or a staged build is asked of a design without one. Carries a `kind`
+ * (`DesignErrorKind`) and a message that names the offender.
+ */
 export class DesignError extends Error {
   constructor(readonly kind: DesignErrorKind, message: string) { super(message); }
 }
@@ -121,6 +126,11 @@ function leaves(over: unknown, path: string, out: Map<string, unknown>): void {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
+/**
+ * One subject with named slots of options and named variants, built into a scene and its checks. `design(spec)` makes
+ * one; `resolve` turns a variant request into a choice and numbers, and `build` turns that into the scene. Every
+ * variant is resolved when the design is made, so a bad name fails there, not when drawn.
+ */
 export class Design<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member> {
   readonly kind = "design";
   private readonly built = new Map<string, B>();
@@ -213,6 +223,11 @@ export class Design<N, T extends SlotTable<N>, B extends Built = Built, H = neve
   }
 }
 
+/**
+ * Makes a `Design` from a spec: the subject's `numbers`, its `slots` of options, its named `variants`, and a `build`
+ * from a chosen option per slot to a scene with its checks. Use it when one subject has several variants that
+ * `loft variants` compares; a single fixed scene needs only `scene`.
+ */
 export function design<N, T extends SlotTable<N>, B extends Built = Built, H = never, M extends Member = Member>(spec: DesignSpec<N, T, B, H, M>): Design<N, T, B, H, M> {
   return new Design(spec);
 }

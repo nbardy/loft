@@ -75,6 +75,7 @@ const INK_OF: Readonly<Record<ReliefOptions["outline"], { readonly width: (p: st
 
 const siteOf = (fold: Warp<"vec2">) => (u: F, v: F): ReliefSite => ({ u, v, cell: fold(vec2(u, v)) });
 
+/** The `Drawable` that `draw.relief` returns: a height function ray-marched in a thin shell over a surface. A scene author gets it from `draw.relief`, not by constructing it. */
 export class ReliefDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
   readonly surfaces: readonly Bakeable[];

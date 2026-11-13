@@ -1,4 +1,4 @@
-// Rain: streaks falling through a shaft, and the rings they make where they meet the sea.
+// Rain: streaks falling through a shaft, and the rings they make where they meet the ground (a sea or a plane).
 //
 // Instancing with a generator (docs/folding_and_tracing.md section 1): streak i is an index hashed to a place, falling
 // on a loop of period `height / speed`; each loop (a cycle) it is hashed to a new place, so the pattern never repeats
@@ -200,12 +200,58 @@ struct VOut {
   }
 }
 
-/** Rain falling through a shaft. */
+/**
+ * Rain falling through a round shaft below a cloud: thin streaks, slanted by the wind, that stop at the ground. Drawn
+ * by instancing: nothing is stored and the pattern never repeats.
+ *
+ * The shape and its law. Streak i falls on a loop of period top / speed, offset by a hash of i; in each loop (cycle c)
+ * it is hashed to a landing point, at a radius r = radius sqrt(-ln(1 - 0.985 h)) from `centre` at a uniform angle (so
+ * the streaks' density is a Gaussian of the distance from the centre, cut at about 2 radii). Its head moves along the
+ * straight fall line (down at `speed`, sideways at `wind`) from height `top` to y = 0 at that point; the streak is the
+ * `length` behind the head, a camera-facing quad faded at both ends and across, kept at least a pixel wide (fainter by
+ * the ratio when widened), and cut where it is below the ground's surface (`sea_height`).
+ *
+ * Parameters: `flash` (extra brightness, e.g. a strike's flicker) takes an expression; everything else (`centre`,
+ * `radius`, `top`, `count`, `speed`, `wind`, `length`, `width`, `colour`, `opacity`, `seed`) is a fixed number.
+ *
+ * What it cannot do, because of the law:
+ * - start, stop or move: the shaft stands where it is at one strength (`count` and `opacity` are fixed), so a
+ *   drifting storm or a passing shower is not this.
+ * - gust: the fall line is straight and the same for every drop and every moment.
+ * - land on bodies: a streak stops only at the ground's surface, never at a roof or anything else in its way.
+ * - fill the sky: it is one round shaft; widespread rain is a large radius (and a large count) or several shafts.
+ *
+ * Going past it: `splashes` draws the rings the same streaks make where they land. Relatives, by the same generator
+ * (an index hashed to a place, a loop in time, a new place each loop):
+ * - fall speed near 0 and a wandering sideways drift: snow, ash, or seeds in the air.
+ * - the loop running upward from the ground: sparks, bubbles, embers.
+ * - landing points hashed over a surface instead of a disc: drips from a roof's edge, spray off a crest.
+ */
 export function rain(name: string, r: RainSpec): Drawable {
   return new RainDrawable(name, r);
 }
 
-/** Ring splashes on the sea where the rain lands. */
+/**
+ * Rings where rain lands: for each of the first `count` streaks of the same `RainSpec`, the ring it made where it
+ * landed at the end of its previous fall, laid on the ground's surface (it follows a swell), growing and fading.
+ *
+ * The shape and its law: a ring of age a (seconds since that landing, up to `life`) has radius radius sqrt(a / life),
+ * the curve of a spreading ripple, and opacity opacity (1 - a / life)^2; its line is 0.03 + 0.04 radius wide (at
+ * least a pixel's footprint, fainter when widened). The landings are the rain's own hashes, so every ring is under a
+ * streak that just fell.
+ *
+ * Parameters: `count` (at most the rain's), `radius`, `life`, `colour` and `opacity`, fixed numbers; the rain's spec,
+ * which fixes where and when.
+ *
+ * What it cannot do, because of the law:
+ * - splash upward: it is a flat ring on the surface, no crown of droplets, no bounce.
+ * - land on bodies or anything but the ground's surface (on `nothing` there is no surface to see them on).
+ * - interact: rings overlap by drawing over each other, without interference or a wake.
+ * - outlast the fall: a ring lives at most one fall period; a `life` longer than top / speed is cut short.
+ *
+ * Relatives: the same rings keyed by another generator (a fountain's landing points, fish rising) are a few lines of
+ * WGSL on the same pattern; for one ring that carries things, `ringWave` deforms the sea itself.
+ */
 export function splashes(name: string, r: RainSpec, s: SplashSpec): Drawable {
   return new SplashDrawable(name, r, s);
 }

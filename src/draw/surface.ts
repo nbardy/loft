@@ -72,6 +72,10 @@ const U = variable("u", "f32"), V = variable("v", "f32");
 /** What paint is told besides (u, v), as the fragment stage binds it (`PaintAt`). */
 const AT = { world: variable("p_world", "vec3"), normal: variable("p_normal", "vec3"), copy: variable("p_copy", "f32") };
 
+/**
+ * The `Drawable` that `draw.surface`, `draw.glazed` and `draw.curve` return: a (u, v) surface drawn as a grid in the
+ * vertex stage. A scene author gets it from `draw`, not by constructing it.
+ */
 export class SurfaceDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
   readonly surfaces: readonly Bakeable[];

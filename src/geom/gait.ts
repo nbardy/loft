@@ -36,7 +36,7 @@ export type GaitSpec = {
 /**
  * What counts a gait's cycles. `time`: `period` seconds a cycle on the clock `t` (default `time`); the body travels
  * `stride` a cycle, so it walks away along its course. `distance`: one cycle per `stride` of `travelled`, a distance
- * a host sets (it moves the creature itself and says how far it has walked); the stride must not be 0.
+ * a host sets (it moves the body itself and says how far it has walked); the stride must not be 0.
  */
 export type Pace =
   | { readonly kind: "time"; readonly period: In<"f32">; readonly t?: In<"f32"> }
@@ -61,26 +61,40 @@ export type Gait = {
 const inFrame = (g: Frame, p: In<"vec3">): P3 => add(g.o, rotate(g, lift<"vec3">(p)));
 
 /**
- * Foot targets for many legs from one cycle: each foot planted fixed in the world while the body moves over it, then
- * swung on an arc to its next plant.
+ * Foot targets for a legged body with any number of limbs, from one cycle: each foot planted fixed in the world while
+ * the body moves over it, then swung to its next plant.
  *
- * The shape and its law. A foot is planted for `duty` of its cycle where the body's course frame put its home at the
- * middle of that stance, `floor(cycles + phase)` naming which plant, so it needs no state; between plants it moves by a
- * smoothstep and lifts by a half sine. Cycles are counted by the clock or by the distance walked (`Pace`).
+ * The law. Foot i reads the cycle c = cycles + phase[i], with k = floor(c) and s = c - k. Plant k is the foot's home
+ * carried by the course frame at distance stride (k + duty / 2 - phase[i]): where the body is at the middle of that
+ * stance. For s < duty the foot sits on plant k; after that, with w = (s - duty) / (1 - duty), it moves from plant k to
+ * plant k + 1 by smoothstep(w) and rises lift sin(pi w) along the plant frame's up. The body is the course frame at
+ * stride * cycles. So a planted foot is fixed while the body passes over it, its position is continuous through every
+ * lift and landing, and nothing is stored: which plant is a floor of the clock. `cycles` is t / period (`Pace` time)
+ * or travelled / stride (`Pace` distance).
  *
- * Parameters: feet, stride, duty and lift are expressions; the phases are fixed numbers; the course is any closed-form
- * function of distance.
+ * Parameters: `feet`, `stride`, `duty`, `lift` and the pace's `period`, `t` or `travelled` take expressions; `phase`
+ * and `minStep` are fixed numbers; `course` is any closed-form function from distance to a frame.
  *
  * What it cannot do, because of the law:
- * - feet that adapt to ground: plants are where the course puts them, at the course's height.
- * - a gait that changes rhythm (walk to gallop) other than by blending two gaits.
- * - a step of any shape but smoothstep along and half sine up, or a foot that turns as it lands.
- * - stop with feet anywhere but their last plants (`minStep` keeps short steps down, nothing more).
+ * - feet that follow terrain: a plant is wherever the course frame puts the home, at the course's own height.
+ * - change rhythm (walk to gallop): the phases are fixed numbers, so the footfall pattern is one per gait; blending two
+ *   gaits' `foot(i)` mixes positions, and mid-blend feet slide.
+ * - change speed smoothly under `pace` time by moving `period`: cycles = t / period, so a period that changes makes
+ *   the count leap. A speed that changes is `pace` distance with a `travelled` the host accumulates.
+ * - a step of another shape: along is always smoothstep and up a half sine, so a foot lands with downward speed and
+ *   stops in one frame; a foot is a point and never turns as it lands.
+ * - stop with feet anywhere but their plants: `minStep` scales a short step's lift down, nothing more.
  *
- * Going past it: the result is a target per foot, so legs are `chain`s reaching for `foot(i)`; `since(i)` gives each
- * step's phase to drive a toe curl or a stomp. A course is any function from distance to a frame (`course.line`,
- * `course.arc` are two), so a figure eight or a path through points is one function. Relatives: `footing` and
- * `replants` (in `stance.ts`) plant feet from chosen stances rather than a cycle.
+ * Going past it: the result is a target per foot, so legs are `chain`s reaching for `foot(i)`, and `since(i)` gives
+ * each step's phase to drive a toe curl or a stomp. The one step down is the course: any function from distance to a
+ * frame, so terrain is a course whose origin follows a height function, and a figure eight is a course whose yaw is a
+ * sine of s. Relatives:
+ * - all phases equal and `duty` below 0.5: every foot leaves the ground together, a hop or a bound; add the body's
+ *   rise from `carriage`'s walk or an `arc` on the cycle's fraction.
+ * - phase[i] = i * q for a row of many limbs: a wave of steps running down the body (a metachronal wave), its speed
+ *   set by q.
+ * - the same plant law without a cycle: feet that stay home and leave only on named events, scheduled ones and ones on
+ *   a beat, are `footing` with `replants`.
  */
 export function gait(spec: GaitSpec): Gait {
   if (spec.phase.length !== spec.feet.length) throw new Error(`gait: ${spec.feet.length} feet need as many phases, got ${spec.phase.length}`);
@@ -129,7 +143,35 @@ function cyclesOf(p: Pace, stride: In<"f32">): F {
   }
 }
 
-/** Courses: a straight line, and an arc of constant turning. Ground at y = origin.y; `facing` turns the body (radians, about up) from its direction of travel (a crab walking sideways faces a quarter turn off it). */
+/**
+ * Courses: the body's frame after travelling a distance s, for a `gait`. Two are given: a straight line and an arc of
+ * constant turning.
+ *
+ * The law. A course frame has its origin on the path and its x level at a yaw (radians counter-clockwise from +x seen
+ * from above), y straight up, z to the body's right. `line(origin, heading, facing)`: origin + s (cos h, 0, -sin h),
+ * yaw = heading + facing. `arc(origin, heading, radius, facing)`: with phi = s / radius, dir = (cos h, 0, -sin h) and
+ * left = (-sin h, 0, -cos h), origin + radius (dir sin phi + left (1 - cos phi)), yaw = heading + phi + facing; a
+ * negative radius turns right. In both, s is arc length, so a
+ * stride is a true distance along the path.
+ *
+ * Parameters: `origin` takes an expression (it can move); `heading`, `radius` and `facing` are fixed numbers.
+ * `facing` turns the body from its direction of travel: a quarter turn walks sideways.
+ *
+ * What it cannot do, because of the law:
+ * - leave level ground: the path stays at origin.y, and the frame never pitches or rolls.
+ * - any curvature but 0 or one constant: no path that straightens out, no S-bend, no stop.
+ * - face anywhere but a fixed angle off its direction of travel.
+ *
+ * Going past it: a course is only a function `(s) => Frame`, so a path of your own is one function: put the origin
+ * where the path is after s and the yaw along its tangent. Relatives:
+ * - yaw growing as s^2 (a clothoid): a path that bends tighter and tighter, a body turning into a spiral. Its position
+ *   is a Fresnel integral with no closed form: sample it once with `tabulate`.
+ * - yaw = A sin(2 pi s / L): a weave, and with the right A a figure eight; its position is again an integral of
+ *   (cos yaw, -sin yaw), tabulated.
+ * - a path through points: `through(s / total, points)` for the origin and its difference for the yaw; s is then not
+ *   arc length, so the stride stretches where points are far apart.
+ * - terrain: any course with origin.y replaced by a height function of origin.x and origin.z.
+ */
 export const course = {
   line(origin: In<"vec3">, heading: number, facing = 0): Course {
     return (s) => frameAt(add(lift<"vec3">(origin), mul(vec3(Math.cos(heading), 0, -Math.sin(heading)), s)), lift<"f32">(heading + facing));

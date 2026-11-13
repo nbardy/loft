@@ -32,6 +32,11 @@ export type Compiled = {
   readonly programs: readonly (readonly Program[])[];
 };
 
+/**
+ * Compiles a `Scene` to an `Artefact`: the WGSL shaders, draw list, and tables a WebGPU host draws, plus the CPU
+ * functions that pose the per-frame tables. Called by a host or tool, once per scene; a scene author builds the
+ * `Scene` and does not need to look inside the result.
+ */
 export function compile(scene: Scene): Artefact {
   return compileScene(scene).artefact;
 }

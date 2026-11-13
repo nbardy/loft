@@ -3,7 +3,7 @@
 // radius. The sea takes it as a deformation (`sea({ deform: [pool] })`): the surface dips into the funnel, and the
 // swell, the foam arms and the shading are evaluated in the whirlpool's coordinates, so they wind into spirals. Things
 // are placed in it through `pool.in(sea)`, a chart whose coordinates are the whirlpool's (x, z) and the height above
-// the water (y): a ship or debris placed there is carried round and tilts with the funnel wall, and a body whose spine
+// the water (y): a floating thing placed there is carried round and tilts with the funnel wall, and a body whose spine
 // is given there is wound into a coil (its skeleton is mapped; its cross-sections keep their shape).
 //
 // The flow, in closed form both ways. Write s = r / R (radius over the whirlpool's) and the radial clock
@@ -66,6 +66,13 @@ const sigmoid = (x: F): F => div(1, add(1, exp(mul(x, -1))));
 /** Closest a radius fraction gets to 0 or 1 inside the map (tan(pi (s - 1/2)) must stay finite and on its branch). */
 const S_MIN = 1e-4, S_MAX = 1 - 1e-6;
 
+/**
+ * A whirlpool, made by `whirlpool`: a deformation a `sea` takes (`sea({ deform: [pool] })`), a map of the sea plane
+ * that turns and draws the water inward and is exactly the identity beyond `radius`. What a user reads off it:
+ * `flow(p, t)` (where whirlpool coordinates p are on the sea plane at time t, and how far a thing there has turned),
+ * `toLocal` (the inverse), `dip` (the funnel's depth), `c` (the inward rate of the radial clock), and `in(sea)`, the
+ * chart to place things in so they are carried round. It cannot be used alone: it draws nothing until a sea takes it.
+ */
 export class Whirlpool implements SeaDeform {
   /** The inward clock: dL/dt = -c. */
   readonly c: number;
@@ -237,7 +244,37 @@ export class PoolChart implements Chart {
 
 const POOL_P = variable("loft_pool_p", "vec2");
 
-
+/**
+ * A whirlpool on a sea: water inside a disc turned and drawn inward, faster toward the centre, over a funnel that dips
+ * below the surface, with foam arms winding in. Pass it to `sea({ deform: [pool] })`.
+ *
+ * The shape and its law. With s = r / radius and the radial clock L = tan(pi (s - 1/2)), every point of water moves
+ * inward at a constant rate in L and turns at a speed set by L alone:
+ *   dL/dt = -c (c = pi drift / radius),   d(angle)/dt = spin sigmoid(-L).
+ * Both integrate in closed form: xi = L + c t and eta = angle - (spin / c) softplus(-L) are constant along each path,
+ * so a straight line in whirlpool coordinates is a spiral on the water at every time, and paint periodic in xi streams
+ * inward for ever without winding tighter. The map is the identity, with every derivative, at the rim. The funnel is
+ * steady: depth (1 - s^2)^3 / (1 + (s / throat)^2).
+ *
+ * Parameters: `at`, `radius`, `spin`, `depth`, `drift`, `throat`, `arms` are fixed numbers at build. Time moves the
+ * water through the law; the whirlpool itself does not change.
+ *
+ * What it cannot do, because of that law:
+ * - turn without drawing in: drift must be positive, or the paths are circles and the coordinates above do not exist.
+ * - push water outward (a boil, a spring): the clock only runs inward.
+ * - wander, grow, spin up or die away: centre, radius, spin and depth are numbers, not expressions.
+ * - an off-round or leaning funnel, or a rim raised above the sea: it only dips, the same at every angle.
+ * - a hole: the funnel is a height of the sea, so it has a bottom at `depth` and never overhangs.
+ *
+ * Going past it: `flow` and `toLocal` are the whole map, so a `SeaDeform` of your own can wrap a whirlpool and change
+ * its dip, calm or marks while keeping the flow. Relatives, each by changing one tie in the law:
+ * - omega(L) of your own (any function vanishing fast as L grows): a vortex with a solid-turning core, a Rankine-like
+ *   profile; eta keeps the form angle - integral of omega / c.
+ * - c a function of t (integrate it once, xi = L + C(t)): a whirlpool that opens and closes.
+ * - the same characteristic construction on a line instead of a circle (L along a channel, the turn a sideways shear):
+ *   a rip current or a mill race.
+ * - a ring that runs outward instead of turning: `ringWave`.
+ */
 export function whirlpool(spec: WhirlpoolSpec): Whirlpool {
   return new Whirlpool(spec);
 }

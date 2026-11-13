@@ -74,6 +74,11 @@ export type InkKey = { readonly key: Rgb; readonly shadow: Rgb; readonly lit: Rg
 
 const VERMILION: Accent = { hue: "red", margin: BAND.warm, inks: [{ ink: WOODBLOCK_PALETTE.vermilion, from: 0 }] };
 
+/**
+ * Builders for the rule that decides which ink a paint prints in under the woodblock style: `print.bands` (by the
+ * paint's value, with a warm accent ink), `print.keys` (by the nearest of named paint colours) or `print.overprint`
+ * (the paint as it is, the shadow side overprinted).
+ */
 export const print = {
   /** By value in bands, with the accent (vermilion for red paints by default). */
   bands(o: { readonly accent?: Accent; readonly named?: Readonly<Record<string, InkKey>>; readonly reach?: number } = {}): Print {
@@ -111,6 +116,10 @@ export type SeaPalette =
   | { readonly kind: "swell" }
   | { readonly kind: "deep"; readonly sea: Rgb; readonly trough: Rgb; readonly line: Rgb; readonly width: readonly [number, number]; readonly haze: Rgb };
 
+/**
+ * Builders for the colours of the woodblock style's water (`SeaPalette`): `seaPalette.swell()` for the print's own two
+ * blues, or `seaPalette.deep(overrides)` for one deep ink with thin pale lines.
+ */
 export const seaPalette = {
   swell: (): SeaPalette => ({ kind: "swell" }),
   deep: (o: Partial<Omit<Extract<SeaPalette, { kind: "deep" }>, "kind">> = {}): SeaPalette => ({

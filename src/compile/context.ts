@@ -66,6 +66,11 @@ export type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; read
 /** A full-screen pass after the scene: `wgsl` defines `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`. */
 export type PostSpec = { readonly label: string; readonly wgsl: string };
 
+/**
+ * What a `Drawable` is handed when it emits its shaders: the slots for inputs, params and tables, the scene's style,
+ * ground and sun, and every other thing in the scene. For authors of their own drawable or host; a scene author does
+ * not need it.
+ */
 export interface CompileContext {
   /** Where inputs, params, curve rows and tables live: emit expressions with `emitShaderFn(ctx.slots, ...)`. */
   readonly slots: Slots;
@@ -102,6 +107,11 @@ export type MeshBakeable = { readonly name: string; readonly mesh: TriangleMesh;
  */
 export type Bakeable = SurfaceBakeable | MeshBakeable;
 
+/**
+ * Anything a scene can draw: a name, the shaders and draw calls it emits for a `CompileContext`, the shadow-casting
+ * chains it has, and the surfaces it offers for baking. The `draw` members, `glow` and `flare` make Drawables. For
+ * authors of their own drawable; a scene author builds Drawables with those and does not need this interface.
+ */
 export interface Drawable {
   readonly name: string;
   draws(ctx: CompileContext): Emitted;
@@ -111,7 +121,10 @@ export interface Drawable {
   readonly surfaces: readonly Bakeable[];
 }
 
-/** A draw with the defaults most draws share; each field still has to be meant. */
+/**
+ * Builds one `DrawSpec` (a draw call: label, shader, vertex count and its state) with the defaults most draws share.
+ * For authors of their own drawable; a scene author does not need it.
+ */
 export function drawSpec(d: Pick<DrawSpec, "label" | "shader" | "vertices"> & Partial<DrawSpec>): DrawSpec {
   return {
     instances: 1, phase: "opaque", cull: "back", depthWrite: true, blend: "none", layer: "scene", constants: {}, detail: { kind: "fixed" },

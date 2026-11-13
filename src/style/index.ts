@@ -25,6 +25,10 @@ export const STYLES = {
 } as const satisfies Record<string, () => Style>;
 
 export type StyleName = keyof typeof STYLES;
+/**
+ * The names of the built-in styles, as the keys of `STYLES` (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`,
+ * `neon`); what `styleNamed` and the gallery's `--styles` accept.
+ */
 export const STYLE_NAMES = Object.keys(STYLES) as readonly StyleName[];
 
 /** The named style; an unknown name throws, listing the known ones. */

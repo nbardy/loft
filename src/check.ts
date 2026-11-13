@@ -483,6 +483,11 @@ export function staysInView(points: Readonly<Record<string, In<"vec3">>>, blocke
  * check taking it names (for `gripReaches`, the held thing's width). A value, so a check never takes a bare number.
  */
 export type Tolerance = { readonly kind: "units"; readonly units: number } | { readonly kind: "share"; readonly share: number };
+/**
+ * Makes a `Tolerance` for a check that takes one: `tolerance.units(d)` for a distance in world units, or
+ * `tolerance.share(s)` for a share of a reference the check names. Both throw unless the number is finite and not
+ * negative.
+ */
 export const tolerance = {
   units: (units: number): Tolerance => {
     if (!(units >= 0 && Number.isFinite(units))) throw new Error(`tolerance.units: need a finite distance >= 0, got ${units}`);
