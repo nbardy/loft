@@ -563,3 +563,145 @@ One line in the state proposal's "what a step may read": **a pass is refused**, 
 rendered picture would make the baked trajectory depend on rasterisation on the baking GPU, and would be the door
 through which frame history comes back (a probe "converging" over steps). Nothing else in the state proposal
 constrains headroom: it is orthogonal to light.
+
+## 7. A physically based mode
+
+**Can a path tracer read the same scene description?** After A1 to A3, yes, and nothing it needs would be a second
+copy of the scene: shapes from `forms`, surface response from `scatter` (or `standard` over `base`, `gloss`, `metal`),
+emitters from `lights` (sampled with `xi`) and from paint's `emits` (met by rays), the environment from the style's
+`sky`, which is a closed-form function of direction and so an exact environment light with no map and no resolution
+(the materials proposal's observation, which pays twice here). Before A1 to A3 it cannot: a traced field, a medium
+and an author's tracer are invisible to any reader but this rasteriser, the only response is a finished colour, and a
+light has no area to sample.
+
+### 7.1 Three routes
+
+| Route | How | For Loft's things | Verdict |
+|---|---|---|---|
+| **Everything as distance, marched** | One scene distance, sphere-traced per bounce | Fields: exact. Swept and parametric surfaces (strands, sheets, lathes, most of what Loft draws) have **no distance function**; the nearest one is the skeleton's capsules, which is the wrong shape, or a closest-point solve on (u, v) per step, 10 to 20 surface evaluations a step. | Rejected as the main route; right for fields. |
+| **Triangles in a hierarchy built in shader code, other forms as leaves** | Posed triangles of every surface and mesh in a two-level hierarchy; a leaf may be a field's bound (marched with `march`), an author's `hit`, or a medium's bound | All forms, each read exactly as it is | **Recommended.** |
+| **Hybrid with a rasterised first hit** | The first hit from a G-buffer pass (P), bounces traced | Saves one ray of about seven per sample | A later optimisation, not a route. |
+
+### 7.2 The hierarchy needs no sort, for Loft's own surfaces (mine)
+
+The geometry proposal rules out exact rays against rasterised surfaces because a per-frame hierarchy over moving
+triangles needs a sort, which Loft's table programs (map, scan) cannot express. That is true of triangle soup. It is
+not true of Loft's surfaces: **every surface is a map from a fixed (u, v) grid, so the grid's quadtree is already a
+hierarchy**, fixed in topology for the life of the scene. Per frame only its boxes change:
+
+- A leaf box is the box of a cell's four posed corners, and that box is exact for the cell's two triangles (a
+  triangle lies in the hull of its corners). One map table over cells.
+- A parent's box is the union of its four children's: one map table per level, log4 of the cell count levels.
+- On the largest example (125k triangles, about 62k cells, 8 or 9 levels) that is about 10 dispatches at the
+  measured 5 to 15 us each: **0.1 to 0.2 ms per frame, with no sort** (*estimate*).
+- Its quality is the open risk: siblings overlap where a map folds back on itself (a coil, a curled fin), and overlap
+  costs traversal steps. A continuous map keeps neighbours in (u, v) near in space, which is what a hierarchy needs;
+  how near depends on the map's stretch, which `loft profile` could report per surface. CONJECTURE until measured
+  against a sorted hierarchy built on the CPU for the same frame.
+- The top level is one box per drawn instance (about 100 on the largest example), tested by brute force or by the
+  chain spheres the geometry proposal already builds for `castRay`.
+
+`draw.mesh` triangles from the author's own code have no grid; they take a hierarchy built once at build on the CPU
+(sorted, of the rest mesh) and refitted per frame through `at` by the same level-by-level unions.
+
+### 7.3 Cost per frame (estimate, and how to measure it)
+
+Per sample per pixel: one primary ray, three bounces, one shadow ray per bounce toward a sampled light: about 7 rays.
+At 1280 x 800 that is 7.2M rays per sample.
+
+| Scene | Rays per second (software traversal, this machine; CONJECTURE) | Per sample | 256 samples (no denoiser) | 16 samples + a spatial denoiser |
+|---|---|---|---|---|
+| Small (the reed: a few thousand triangles, a plane, a sky) | 0.7 to 1.4 G | 5 to 10 ms | 1.3 to 2.6 s | 0.1 to 0.2 s |
+| Largest example (125k triangles, 48 chains, fields) | 90 to 240 M | 30 to 80 ms | 8 to 20 s | 0.5 to 1.3 s |
+
+So a path-traced Loft frame is a still or an offline clip (a 10 s clip at 30 frames a second and 256 samples: 40 to
+100 minutes on the largest example), never a game frame on this hardware. A second cost to watch: hits must evaluate
+the paint and `scatter` of whatever they meet, so one module holds every thing's paint (the largest example's
+per-thing module code is 1.45 MB of WGSL today); its compile time may dominate a short render.
+
+**How to measure before building anything:** a throwaway compute shader under `out/` that traces the largest
+example's triangles at one time (taken from the bake, which already writes them) through (a) the parameter-grid
+hierarchy and (b) a sorted hierarchy built on the CPU, with flat-coloured hits, counting rays per second with GPU
+timestamps over 30 frames. The table above is scored against it. Two days.
+
+### 7.4 A style, a second renderer, or a separate tool?
+
+**A second renderer, kept as a separate tool, built only on a second user's need.** Not a style: a style is a program
+inside a rasterised frame, and a path tracer owns the whole frame (compute dispatches, an accumulator, its own
+emitter sampling). Not inside `compile`: `compile` is one function from a scene to an artefact for this renderer; the
+path tracer is another function from the same scene, and the `forms` seam (A3) is what makes that possible. What the
+core does **now** is only A1 to A3, so the door stays open at the cost of about 300 lines and one context word. What
+a physically based mode honestly loses: `--style` means nothing to it beyond the sky and the post passes, because a
+style is a look and a path tracer has none; ink outlines and printed blocks do not exist there.
+
+## 8. Colour
+
+**What three numbers rule out.** Effects whose colour comes from wavelength-dependent geometry across the scene:
+dispersion through refraction (a prism's spread becomes three offset copies), a diffraction grating seen in a
+reflected ray (three discrete images, banded), thick films (interference that aliases at three samples),
+fluorescence, and lights whose spectra make metamers (a sodium lamp turning two equal paints apart). Inside one
+surface's own response none of these are ruled out: **a function can loop over wavelengths**. The beetle samples three;
+a grating's colours at 16 wavelengths, folded into RGB with an analytic fit of the colour-matching functions (Wyman et
+al. 2013), is about 30 operations per wavelength, 500 per fragment, which is 0.5 GFLOP over a million fragments, about
+0.1 to 0.2 ms on this GPU (*estimate*). Loft's closed-form, per-light shading is, for once, better placed than a path
+tracer here: exact and noise-free.
+
+**What a wavelength in the shading context would cost.** In a raster style: N times the shading arithmetic, for every
+fragment. In a path tracer: one hero wavelength plus three rotated companions per path (Wilkie et al. 2014), where
+traversal dominates, so about 10 to 30% more per sample.
+
+**Leave room in the types now?** No new type. Two things only: A1 fixes units (`emits` and lights linear and
+unbounded, `base` sRGB as written), and the comment of `scatter` reserves an optional third argument, `nm`, for a
+spectral reader. Adding an optional argument later breaks no function written without it, so the room costs nothing
+today. The other colour limit is not three numbers but **eight bits, display-referred**: light above 1 cannot be held
+between passes. `pass({ keep: "light" })` (16-bit float) and still mode's 32-bit accumulator remove it where it
+matters; the view's own target stays `rgba8unorm`, so every existing picture is unchanged.
+
+## 9. Swapping the renderer
+
+The owner's question: if someone wants to replace the ray tracing or the marching, swap the renderer, or add
+features, does Loft let them, and should it? From the code, level by level:
+
+| Level | What an author writes | Today | With the proposals |
+|---|---|---|---|
+| **One thing's drawing** (their own marcher for their own solid) | A `Drawable`: `draws(ctx)` returning shaders and `drawSpec`s, raw WGSL or `emitShaderFn`; `wgslFn` for raw code inside expressions | A cliff. `Drawable`, `CompileContext`, `drawSpec`, `emitShaderFn` are exported (`src/core.ts`), but the tracer plumbing is not: `traceWgsl`, `tracePlumbingWgsl`, `traceShadeWgsl`, `outlineWgsl` and `aabbOf` are exported from `src/draw/trace.ts` and not from the core. The geometry proposal measured about 200 lines and the prelude's undocumented eight-argument `shade`. | `draw.traced(name, { bound, hit, paint, outline })`: the author writes only `hit`. A raw marcher goes inside `hit` through `wgslFn` (losing only the CPU twin). It also gets the depth entry (§5.3) and a `hit` form (A3) for free. |
+| **The look** | A `Style` value: spread one and replace `shade`, or write all of it | Done. | A style may also own passes (§3.1), and read `scatter` and `lights(term)`. |
+| **The host** | A loader of the files: `manifest.json`, WGSL chunks, f32 blobs | Done: "a loader executes it; it decides nothing". The Rust loader is about 1,950 lines plus a 280-line viewer; it has not been re-verified since the ground kinds landed. | Passes add fixed-size textures and one bind group: about 90 lines of Rust. |
+| **The renderer, wholesale** (a path tracer, a differentiable renderer, another rasteriser) | Today: a function over `scene.things` that reads `surfaces` and `skeletons` | **Impossible except for surfaces.** Verified: the baker (`src/bake/mesh.ts`) reads `Drawable.surfaces`, and every traced field (trace and brick schedules), `copies`, `impostors`, `density` and `glow` return `[]`. A field's function is reachable only by an `instanceof FieldDrawable` test. What a style means is not readable at all except as code for this rasteriser. | `forms` (A3): a sum type of what a thing is, with "your own `hit`" as a variant. A second renderer is `(scene) => picture` that switches over `forms`, evaluates paint through the materials proposal's `classify`, and reads `lights` and `style.sky`. |
+
+**Where the one seam goes.** Between what a thing **is** (`forms`: a surface, a mesh, a field, a medium, or your own
+intersection, each with its paint) and how this renderer **draws** it (`draws(ctx)`). It is one member on
+`Drawable`, filled from values each drawable already holds. It serves four readers at once, which is why it is worth
+its 150 lines:
+
+- **The physically based mode** (§7) reads every variant.
+- **Baking** reads `surface` and `mesh` today and could mesh a `field` by surface nets (which exists) instead of
+  skipping it.
+- **The CPU checks** could test the exact `hit` or `field` of a named thing, where `staysInView` now uses capsules.
+- **Differentiation** (`docs/differentiable.md`): forms are expressions, so `grad.ts` reaches them; the implicit-function
+  derivative of a field's hit needs the field, which today no reader but the rasteriser can see.
+
+**What it must not become.** A closed menu of shape kinds that every new idea must join: the `hit` variant is the
+author's own function, and any other variant can be lowered to it by a reader that wants to. Nor an abstract
+`Renderer` interface with a registry, plug-ins or a scene graph that renderers subscribe to: `compile` stays one
+function, and a second renderer is another function. And a reader that meets a form it does not handle reports it
+by name (as the baker's `skipped` list does), never falls back silently.
+
+**Should it be modular everywhere?** No. Modular at the four seams above, and nowhere inside them, because inside them
+each piece has one right answer and one implementation (rule 3): the order of the built-in phases (passes open the
+frame at its edge; the inside stays fixed), a style's mark and printed-block protocol, the level-of-detail planner,
+table scheduling and binding, the prelude, the sea's own paths. An interface with one implementation buys no
+capability and costs names, words in `loft context`, and indirection a model must read through. Every seam named here
+has at least two readers in sight; that is the test.
+
+## 10. What to leave alone
+
+| Practice | Why Loft should never chase it |
+|---|---|
+| **Temporal reprojection** (TAA, temporal upscaling, temporal denoisers, probes converging over frames) | It trades "any frame draws alone" and byte-identical pictures for frame time. Loft's antialiasing from closed-form coverage already beats it on edges, and still mode gives exact accumulation where quality matters. |
+| **Real-time path tracing and real-time global illumination** | 30 to 80 ms per sample on the largest example (§7.3): two orders of magnitude over the frame budget, and the looks Loft exists for (toon, woodblock, print, neon) are decided by a style, not by converged light. |
+| **Deferred shading** | Its benefit is many lights; clustered forward gets that without a G-buffer, keeps 4x MSAA cheap, and keeps per-thing `scatter` and wraps in per-thing modules. |
+| **Virtual shadow maps, virtual textures, mesh streaming** | Feedback from the previous frame (history), page tables and streaming exist for asset-scale worlds. Loft's scenes are code-scale. |
+| **A material graph, a node editor, a material library** | Channels, `scatter` and functions are the vocabulary (rule 1). A menu of materials is the box `docs/open_design.md` exists to avoid. |
+| **Physically based camera exposure, tone-mapping pipelines, colour management beyond sRGB** | A style decides how light becomes ink; a single `emits` compression per style is enough. A colour-managed pipeline is a large surface in `loft context` for no look Loft draws. |
+| **Hardware ray tracing** | Not in browser WebGPU; experimental in native `wgpu` only. Revisit when it ships in Dawn, through `forms`, without any scene changing. |
