@@ -217,7 +217,8 @@ component's own call changes; the picture is byte-identical (the base crab's thr
 #### Plan for opening the rest (written before building, 2026-11-12)
 
 Each row: the law (what is tied to what), the mechanism one step down, the new name, the relatives its comment names.
-Old names stay as one-line aliases until integration renames the callers.
+Old names stayed as one-line aliases until the callers were renamed; they are gone now (`bun tools/rename_exports.ts
+<paths>` renames a branch's callers).
 
 | Today | Law | Mechanism (signature) | New name | Relatives the comment names |
 |---|---|---|---|---|
@@ -249,14 +250,14 @@ Proposed, not yet done (each is a rename across callers, to be made when no bran
 | Today | Shape | Proposed |
 |---|---|---|
 | `horn`, `hornLine` | a tapered tube on an equiangular spiral | `spiralTube`, `spiralLine` (done) |
-| `shell` | a section swept on a growing spiral round an axis | `coil` (done, alias kept) |
-| `crest` | a sheet standing on a curve of a surface | `sheetOn` (done, alias kept) |
-| `limb` | a chain of straight segments reaching a target | `chain` (done, alias kept) |
-| `lines` | ropes between moving end points, one stroke | `ropes` (done, alias kept) |
+| `shell` | a section swept on a growing spiral round an axis | `coil` (done; alias removed) |
+| `crest` | a sheet standing on a curve of a surface | `sheetOn` (done; alias removed) |
+| `limb` | a chain of straight segments reaching a target | `chain` (done; alias removed) |
+| `lines` | ropes between moving end points, one stroke | `ropes` (done; alias removed) |
 | `tusk` (example side) | a flat plate between two points | `plate` |
 | `dome` (example side) | a superellipsoid with relief on its front | `reliefDome` |
 | `strand`, `fan`, `whorl`, `gripper`, `bent`, `gait`, `pendulum`, `cloud` | already say a shape or a mechanism | keep |
-| `hull`, `ship` | these are their subject (a lines plan is a hull's); the rule sends them toward the examples, with what is general under them (a surface lofted through stations) named for its shape | `hull` kept (the general part, `loft`, already existed in the map algebra); `ship` to examples, recommended |
+| `hull`, `ship` | these are their subject (a lines plan is a hull's) | done: both are recipes (`examples/recipes/hull.ts`, `ship.ts`); the library keeps only a `skin` attack target, the closed solid any lofted surface bounds (`src/geom/skin_distance.ts`); `thunderhead` likewise (`examples/recipes/thunderhead.ts`) |
 
 ### What a component's comment must say (2026-11-12, the owner's rule)
 
