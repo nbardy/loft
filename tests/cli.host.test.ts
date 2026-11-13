@@ -110,3 +110,9 @@ test("an absent camera is the command's mistake (exit 2, usage), naming the came
   expect(r.code).toBe(2);
   expect(lastLine(r.err)).toBe(`loft: usage: no camera "nope": the scene names [tip], defaults are [front, side, top, three]`);
 });
+
+test("a strand without paint is a scene refusal (exit 4) naming the fix, not an internal TypeError", () => {
+  const r = loft("frames", `${FIX}/no_paint.ts`, "--times", "0", "--view", "front", "--size", "32x32", "--out", `${mkdtempSync(join(tmpdir(), "loft-p-"))}/`);
+  expect(r.code).toBe(4);
+  expect(lastLine(r.err)).toBe(`loft: scene: strand "bare": given paint undefined; expected paint: a colour [r, g, b] in 0..1, or a function of the body coordinates returning vec3. Fix: paint: [0.8, 0.4, 0.3] (at tests/fixtures/host/no_paint.ts:7)`);
+});

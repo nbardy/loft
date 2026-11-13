@@ -2,6 +2,7 @@
 // returns a `Strand`, which is a `Body` (Surface, Chart, Skeleton) that also draws itself with `draw.surface`: rings
 // crowded toward the tips, a vertex on the dorsal line at every density, lit by the style with an ink hull.
 
+import { SceneError, shown } from "../errors.ts";
 import { lift, vec3, type Expr, type In } from "../expr.ts";
 import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
@@ -144,6 +145,12 @@ export function strand(spec: StrandSpec): Strand {
     leastStretch: leastStretchOf(spec.bulge, name),
   };
   const paint = spec.paint;
+  // Refused here, where the scene wrote it: unchecked, a missing paint crashed at compile as an internal TypeError
+  // (exit 1) from the spread below. Only what that spread cannot take is refused, so no scene that drew changes.
+  if (typeof paint !== "function" && (paint === undefined || paint === null || !(Symbol.iterator in Object(paint)))) {
+    throw new SceneError(`strand "${name}"`, `paint ${shown(paint)}`, "paint: a colour [r, g, b] in 0..1, or a function of the body coordinates returning vec3",
+      "paint: [0.8, 0.4, 0.3]");
+  }
   const paintFn: Paint = typeof paint === "function" ? paint : () => vec3(...(paint as Rgb));
   const transport = { stations: spec.stations ?? 32, twist: spec.twist ?? (() => lift<"f32">(0)), up: lift<"vec3">(spec.up ?? [0, 1, 0]), level: spec.level ?? 0 };
   return new Strand(sweepArgs(name, spec.spine, section, transport), { paint: paintFn, along: Math.round(spec.detail?.along ?? 96), around: Math.round(spec.detail?.around ?? 24) });
