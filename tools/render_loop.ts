@@ -29,7 +29,9 @@ const STAGES: readonly [string, RegExp][] = [
   ["uncaptured", /uncaptured WebGPU error/],
 ];
 
-type Result = { code: number; ms: number; stage: string; tail: string };
+// `retried`: load attempts the CLI retried on a fresh device (src/cli/main.ts) before this run's verdict. A run that
+// passed on its second attempt exits 0, so the raw build-failure rate is attempts, not exit codes.
+type Result = { code: number; ms: number; stage: string; tail: string; retried: string[] };
 
 async function once(worker: number, run: number): Promise<Result> {
   const t = performance.now();
@@ -40,8 +42,9 @@ async function once(worker: number, run: number): Promise<Result> {
   const text = `${out}\n${err}`;
   const stage = code === 0 ? "ok" : (STAGES.find(([, re]) => re.test(text))?.[0] ?? "other");
   const tail = err.trim().split("\n").slice(-6).join("\n");
-  const r = { code, ms: performance.now() - t, stage, tail };
-  if (code !== 0 || /uncaptured/.test(text)) appendFileSync(log, JSON.stringify({ worker, run, ...r, rgba: out.match(/rgba (\w+)/)?.[1] }) + "\n");
+  const retried = [...err.matchAll(/^loft: load attempt \d+ failed in the GPU \(not the scene\): (.*)$/gm)].map((m) => m[1]!);
+  const r = { code, ms: performance.now() - t, stage, tail, retried };
+  if (code !== 0 || retried.length > 0 || /uncaptured/.test(text)) appendFileSync(log, JSON.stringify({ worker, run, ...r, rgba: out.match(/rgba (\w+)/)?.[1] }) + "\n");
   return r;
 }
 
@@ -56,3 +59,6 @@ for (const r of all) by.set(r.stage, (by.get(r.stage) ?? 0) + 1);
 const failed = all.filter((r) => r.code !== 0).length;
 console.log(`${tag}: ${failed} of ${all.length} failed  (${scene}${view ? `:${view}` : ""}, ${procs} x ${runs}, ${((performance.now() - t0) / 1000).toFixed(0)} s, env ${JSON.stringify(env)})`);
 for (const [s, n] of by) console.log(`  ${s.padEnd(34)} ${n}`);
+const attempts = all.flatMap((r) => r.retried);
+console.log(`  load attempts retried               ${attempts.length} (in ${all.filter((r) => r.retried.length > 0).length} runs)`);
+for (const m of new Set(attempts)) console.log(`    ${m.slice(0, 160)}`);
