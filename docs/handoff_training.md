@@ -142,6 +142,13 @@ Linux, tell us before you start: this is the one item that could take days.
 - A differentiable renderer: `docs/differentiable.md`. Not built; the first run does not use it.
 - Judging packets, reference pictures, any reward beyond the two gates: the training team has its own.
 
+## State of main when this was written
+
+The whole test suite passes: 215 of 215 tests in 54 files (`pnpm test`, about five minutes; use that script and not a
+bare `bun test`, which gives some GPU tests a 5-second limit they miss when everything runs at once). Type-check clean;
+24 of 24 mistake fixtures as expected; every snippet in the docs and in `loft context` runs; the recipe and style
+import checkers pass.
+
 ## Checks to run after pulling a new commit
 
 ```
