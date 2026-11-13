@@ -1,6 +1,6 @@
 # A differentiable Loft: follow-up, deferred
 
-Written 2026-11-13 as a note for later. Nothing here is built. The first training run does not use it.
+Written 2026-11-13 as a note for later. Nothing here is built.
 
 ## The question
 
