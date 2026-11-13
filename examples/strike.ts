@@ -108,7 +108,7 @@ const parts = creature.parts;
 export const strikes = creature.strikes;
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     ...creature.things, ...bowShip.things, ...sternShip.things,
     telegraph(bite), telegraph(lash),

@@ -574,7 +574,7 @@ const flagLook: HullLook = { sink: RIDING[0].sink, tiers: PORT_TIERS, pitch: 1.0
 const escortLook: HullLook = { sink: 0.32, tiers: [0.6], pitch: 0.75, ports: [0.3, 0.7], tell: lift<"f32">(0) };
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     ...hullParts("tithe_flag", flagHull, slice(ships, 0, 1), flagLook),
     ...hullParts("tithe_escort", escortHull, slice(ships, 1, 3), escortLook),

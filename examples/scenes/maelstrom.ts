@@ -121,7 +121,7 @@ const wreckage = [
 
 // ---- the scene ----------------------------------------------------------------------------------------------------
 export default scene({
-  sea: water,
+  ground: water,
   things: [...guardian.things, ...ships, ...wreckage],
   style: woodblock(),
   sun: [-0.45, 0.75, 0.5],

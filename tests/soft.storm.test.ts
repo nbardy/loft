@@ -23,7 +23,7 @@ async function shots(blobs: number): Promise<Float64Array[]> {
   const cloud = draw.density(`cloud${blobs}`, medium(`m${blobs}`, { puffs }), {
     bounds: head.bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.3, shadowing: 0.8, detail: { kind: "noise", amount: 2, scale: 1.5 }, haze: 0.004,
   });
-  const s = scene({ sea: sea({ swell: [] }), things: [cloud], style: toon({ outline: 0.04, sky: { zenith: [0.12, 0.15, 0.24], horizon: [0.52, 0.56, 0.62] } }), sun: [-0.55, 0.5, 0.65], cameras: {} });
+  const s = scene({ ground: sea({ swell: [] }), things: [cloud], style: toon({ outline: 0.04, sky: { zenith: [0.12, 0.15, 0.24], horizon: [0.52, 0.56, 0.62] } }), sun: [-0.55, 0.5, 0.65], cameras: {} });
   const loaded = await createHost(await headlessDevice()).load(compile(s));
   const out: Float64Array[] = [];
   for (const camera of cameras) for (const time of [1, 9]) {

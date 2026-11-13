@@ -23,7 +23,7 @@
 import { foam,
   abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette,
   points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, print, length, lt,
-  displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_SEA, beats, dragged, slowInOut, swing, uneven, anticipated,
+  displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_PALETTE, WOODBLOCK_SEA, beats, dragged, slowInOut, swing, uneven, anticipated,
   type Drawable, type F, type P3, type PaintAt,
 } from "../../src/index.ts";
 import { fwidth } from "../../src/lib/wgsl.ts";
@@ -373,13 +373,13 @@ const strikeFoam = impactFoam("tmStrikeFoam", water, {
 const creature: Drawable[] = serpent.things.filter((t) => !/Crest|Tail[LR]$/.test(t.name));
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [
     ...creature, ...wings, mane, crownLobes, rimLobes, bellyLobes, strokeBolt, ...sparks,
     ...scout, telegraph(bolt, { style: PRINT_WARNING }), strikeFoam, shower,
   ],
   // A storm sky: the indigo block printed low over a narrow cream horizon, the haze below it.
-  style: woodblock({ print: print.bands({ named: { sail: SAIL } }), sky: { haze: [0, 0.06], band: [0.08, 0.3], below: WOODBLOCK_SEA.haze }, foam: foam.roll() }),
+  style: woodblock({ print: print.bands({ named: { sail: SAIL } }), sky: { washes: [{ ink: WOODBLOCK_SEA.haze, from: 0, to: 0.06 }, { ink: WOODBLOCK_PALETTE.indigo, from: 0.08, to: 0.3 }], below: WOODBLOCK_SEA.haze }, foam: foam.roll() }),
   sun: SUN,
   cameras: {
     game: { kind: "perspective", eye: [40, 50, 46], target: [4, 10, 3], fovY: 0.62 },

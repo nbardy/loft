@@ -166,7 +166,7 @@ const bolt = draw.curve("bolt", (u) => add(mix(top, bottom, u), vec3(0, mul(sin(
 const drawWing = (name: string, s: typeof wingR) => draw.surface(name, s, { paint: wingPaint, grid: wingGrid, sides: "two", outline: "border" });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.3], length: 14, height: 0.35, speed: 1.1 }, { direction: [-0.3, 1], length: 6.5, height: 0.12, speed: 0.8, phase: 1.3 }] }),
+  ground: sea({ swell: [{ direction: [1, 0.3], length: 14, height: 0.35, speed: 1.1 }, { direction: [-0.3, 1], length: 6.5, height: 0.12, speed: 0.8, phase: 1.3 }] }),
   things: [body, head, jaw, ...horns, ...eyes, crown, drawWing("wingR", wingR), drawWing("wingL", wingL), ...bones, fluke, bolt],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],

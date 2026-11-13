@@ -55,7 +55,7 @@ test("the whirlpool's map agrees on the GPU and the CPU, and round-trips in f32"
   const f = pool.flow(P, T);
   const roots = [f.xz, pool.toLocal(f.xz, T)];
   // The map reads only its two arguments and constants: emitted directly, with nothing else bound.
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [], style: toon(), sun: [0, 1, 0] }));
   const none = (what: string) => (): never => { throw new Error(`the whirlpool's map read a ${what}`); };
   const { lines, out } = emitWgsl(roots, { variable: (name) => name, input: none("input"), param: none("param"), row: none("curve row"), table: none("table") });
   const code = `fn pool_map(p: vec2<f32>, t: f32) -> vec4<f32> {\n${lines.map((l) => `  ${l}`).join("\n")}\n  return vec4<f32>(${out[0]}, ${out[1]});\n}\n`;

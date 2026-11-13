@@ -1,6 +1,6 @@
 # Lighting the print: looks and recipes
 
-The woodblock style (`src/style/woodblock.ts`) lights its bodies by a recipe: a record of shading treatments, each on or
+The woodblock style (`src/style/woodblock.ts`) lights its bodies by a recipe (and so can any style, through `litBodies`: `toon({ light })` and `--light name` on a toon scene, `sketch`; docs/styles.md): a record of shading treatments, each on or
 off with its own options. With no recipe the style is the print as it was (the rule's own two tones, split at
 N.L = 0), and every picture made before recipes is unchanged. Code: `src/style/light.ts` (the treatments, the named
 recipes), `src/draw/light.ts` (shadows that fall from one thing on another). Why it is built this way, what was

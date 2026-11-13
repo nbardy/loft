@@ -1,7 +1,5 @@
-// Clouds from a handful of numbers: a billowing mass of Gaussian puffs in a shape of revolution, three tiers of puff
-// size (a few big ones fill the core, medium ones make the lobes, many small ones roughen the surface: the cauliflower
-// look of cumulus), a flattened base, boiling from noise and a drift. Placement is a pure function of the seed (an
-// integer hash, no randomness), and the motion is a closed-form expression of time.
+// Clouds: masses of Gaussian puffs that boil and drift, in closed form of time. `cloud` places them in a shape of
+// revolution from a handful of numbers; `billows` boils and drifts any puffs you place yourself.
 
 import { add, mul, time, vec3, type Expr } from "../expr.ts";
 import { noise3 } from "../lib/noise.ts";
@@ -15,10 +13,11 @@ export type CloudSpec = {
   /** Width (x), height (y), depth (z) of the mass. */
   readonly size: readonly [number, number, number];
   /**
-   * Half-width as a share of size, against height as a share (0 base, 1 top), piecewise linear. A cumulus bulges in the
-   * middle; a thunderhead is a narrow tower under a wide anvil.
+   * Half-width as a share of size, against height as a share (0 base, 1 top): keys [height, share], piecewise linear,
+   * or a function of (height, bearing in radians round the axis), so the mass need not be round. A cumulus bulges in
+   * the middle; a thunderhead is a narrow tower under a wide anvil.
    */
-  readonly profile: readonly (readonly [number, number])[];
+  readonly profile: readonly (readonly [number, number])[] | ((h: number, bearing: number) => number);
   /** Number of puffs. Cost per pixel grows with it (see DESIGN.md 8). */
   readonly blobs: number;
   /** Boiling: how far puffs wander, as a share of their radius (0 still, 0.5 lively). */
@@ -55,6 +54,14 @@ function profileAt(profile: readonly (readonly [number, number])[], h: number): 
   return profile[profile.length - 1][1];
 }
 
+/** The profile as a function of (height, bearing), classified once. */
+function profileOf(p: CloudSpec["profile"]): (h: number, bearing: number) => number {
+  if (typeof p === "function") return p;
+  if (p.length < 2) throw new Error("cloud: the profile needs at least two keys");
+  for (let k = 1; k < p.length; k++) if (!(p[k][0] > p[k - 1][0])) throw new Error("cloud: profile heights must increase");
+  return (h) => profileAt(p, h);
+}
+
 /** Tiers: share of the puffs, radius as a share of the cloud's half-width, how far out they sit, density share. */
 // Radii are shares of the local half-width (the profile at the puff's height), so a narrow tower gets small puffs.
 // The surface tier is the densest: a Gaussian's visible edge is sharper the larger its peak optical depth, so dense
@@ -66,11 +73,36 @@ const TIERS = [
   { share: 0.6, radius: 0.11, out: [0.76, 1.0], density: 2.6 },
 ] as const;
 
-/** A billowing mass of puffs. */
+/**
+ * A billowing mass of puffs: a cumulus, a thunderhead, a bank of smoke or steam.
+ *
+ * The shape and its law. `blobs` Gaussian puffs fill a shape of revolution about a vertical axis: at height h (a share
+ * of `size`'s height) the mass reaches `profile(h)` of its half-width. The puffs come in three tiers, a few big ones in
+ * the core, more middling ones in the lobes, many small dense ones on the surface (the cauliflower look), stratified by
+ * height; puffs at the base and in a wide anvil are flattened, and none goes below the base. Each puff then boils in a
+ * noise field of its own and the whole drifts (`billows`). Placement is a pure function of `seed` (an integer hash).
+ *
+ * Parameters: all numbers, fixed at build, and `profile` (keys, or a function of height and bearing). The motion is a
+ * closed form of time; nothing else moves.
+ *
+ * What it cannot do, because of the law:
+ * - a mass that is not a star-shaped solid about one vertical axis: no hole (a smoke ring), no arch, no overhang
+ *   under a lobe, no second tower.
+ * - follow a curve: no trail, no column bent by wind, no plume from a chimney.
+ * - change shape in time beyond boiling in place: it does not grow, tower up or tear apart.
+ * - tiers or flattening of your own: the cumulus recipe is fixed.
+ *
+ * Going past it is one step down: `billows(places, motion)` boils and drifts any list of puffs, each a place, radii and
+ * a density, so the shape is whatever produces the list. Relatives:
+ * - a smoke ring: places round a circle in a vertical plane (a torus of puffs), drifting along its axis.
+ * - a trail or plume: places along any curve (a ship's smoke, a whale's spout bent by wind), radii growing along it.
+ * - puffs on a surface: places at points of a body (steam off a back, spray on a crest).
+ * - a different law entirely: `blob` is one puff and `medium` integrates any list of them; layers and banks
+ *   (`layer`, `bank`) are the flat relatives.
+ */
 export function cloud(spec: CloudSpec): Cloud {
   if (!(Number.isInteger(spec.blobs) && spec.blobs >= 1)) throw new Error(`cloud: blobs must be a positive integer, got ${spec.blobs}`);
-  if (spec.profile.length < 2) throw new Error("cloud: the profile needs at least two keys");
-  for (let k = 1; k < spec.profile.length; k++) if (!(spec.profile[k][0] > spec.profile[k - 1][0])) throw new Error("cloud: profile heights must increase");
+  const profile = profileOf(spec.profile);
   const [W, H, Dp] = spec.size;
   const half = Math.max(W, Dp) / 2;
   // The tiers' radii are calibrated for TIER_BLOBS puffs; with fewer (cheaper: cost per pixel and the light pass both
@@ -78,8 +110,7 @@ export function cloud(spec: CloudSpec): Cloud {
   // a puff's optical depth through its middle (density times radius), and with it the cloud's shading, stays the same.
   // Thinner still (keeping the cloud's mass) went pale and see-through; checked in tests/soft.storm.test.ts.
   const fill = Math.cbrt(TIER_BLOBS / spec.blobs);
-  const puffs: Puff[] = [];
-  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  const places: PuffPlace[] = [];
   let start = 0;
   TIERS.forEach((tier, ti) => {
     const n = ti === TIERS.length - 1 ? spec.blobs - start : Math.max(1, Math.round(spec.blobs * tier.share));
@@ -88,8 +119,8 @@ export function cloud(spec: CloudSpec): Cloud {
       const u = (k: number) => hashUnit(spec.seed, i, k);
       // Height: stratified within the tier so every level gets puffs; the core stays off the very top and bottom.
       const h = ti === 0 ? 0.15 + 0.7 * ((j + u(0)) / n) : (j + u(0)) / n;
-      const R = profileAt(spec.profile, h);
       const theta = u(1) * Math.PI * 2;
+      const R = profile(h, theta);
       const rho = tier.out[0] + (tier.out[1] - tier.out[0]) * Math.sqrt(u(2));
       const r = R * half * tier.radius * fill * (0.75 + 0.5 * u(3));
       // Flatter toward the base (a level, dark bottom) and in the anvil (a wide, thin sheet).
@@ -99,24 +130,45 @@ export function cloud(spec: CloudSpec): Cloud {
       const z = spec.at[2] + Math.sin(theta) * rho * R * (Dp / 2);
       // Never below the base: the base is a level line.
       const y = Math.max(spec.at[1] + h * H, spec.at[1] + ry * 0.9);
-      const base = [x, y, z];
-      // Boiling: each puff wanders through a noise field of its own; radii breathe with another.
-      const seedOff = [u(4) * 97, u(5) * 89, u(6) * 83];
-      const clock = mul(time, spec.billow);
-      const wander = (axis: number): Expr<"f32"> => noise3(vec3(seedOff[axis], add(clock, axis * 13.7), seedOff[(axis + 1) % 3]));
-      const reach = spec.turbulence * r;
-      const centre = add(add(vec3(...base), vec3(mul(wander(0), reach), mul(wander(1), reach * 0.6), mul(wander(2), reach))), mul(vec3(...spec.drift), time));
-      const breathe = add(1, mul(noise3(vec3(seedOff[2], add(clock, 41.3), seedOff[0])), 0.25 * spec.turbulence));
-      const tint = 0.92 + 0.08 * u(7);
-      puffs.push(blob({ centre, radii: mul(vec3(r, ry, r), breathe), density: (spec.density * tier.density) / fill, colour: spec.colour.map((c) => c * tint) as [number, number, number] }));
-      const m = [r, ry, r].map((x) => 3.2 * x * (1 + 0.25 * spec.turbulence) + reach);
-      for (let a = 0; a < 3; a++) {
-        const end = base[a] + spec.drift[a] * spec.seconds;
-        lo[a] = Math.min(lo[a], base[a] - m[a], end - m[a]);
-        hi[a] = Math.max(hi[a], base[a] + m[a], end + m[a]);
-      }
+      places.push({ at: [x, y, z], radii: [r, ry, r], density: (spec.density * tier.density) / fill });
     }
     start += n;
+  });
+  return billows(places, spec);
+}
+
+/** One puff before it moves: its centre, its 1/e radii per axis and its peak extinction per world unit. */
+export type PuffPlace = { readonly at: V3; readonly radii: V3; readonly density: number };
+/** How puffs boil and drift: `CloudSpec`'s motion and colour. */
+export type BillowSpec = Pick<CloudSpec, "turbulence" | "billow" | "drift" | "colour" | "seed" | "seconds">;
+type V3 = readonly [number, number, number];
+
+/**
+ * Puffs that boil and drift, from places you choose: `cloud`'s motion without its shape (see `cloud` for the relatives).
+ * Puff i wanders through a noise field of its own (seeded by `seed` and i) by `turbulence` of its radius, breathes, is
+ * tinted a little, and drifts with the rest; `bounds` covers them for `seconds`.
+ */
+export function billows(places: readonly PuffPlace[], motion: BillowSpec): Cloud {
+  const puffs: Puff[] = [];
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  places.forEach((p, i) => {
+    const u = (k: number) => hashUnit(motion.seed, i, k);
+    const base = p.at, [r] = p.radii;
+    // Boiling: each puff wanders through a noise field of its own; radii breathe with another.
+    const seedOff = [u(4) * 97, u(5) * 89, u(6) * 83];
+    const clock = mul(time, motion.billow);
+    const wander = (axis: number): Expr<"f32"> => noise3(vec3(seedOff[axis], add(clock, axis * 13.7), seedOff[(axis + 1) % 3]));
+    const reach = motion.turbulence * r;
+    const centre = add(add(vec3(...base), vec3(mul(wander(0), reach), mul(wander(1), reach * 0.6), mul(wander(2), reach))), mul(vec3(...motion.drift), time));
+    const breathe = add(1, mul(noise3(vec3(seedOff[2], add(clock, 41.3), seedOff[0])), 0.25 * motion.turbulence));
+    const tint = 0.92 + 0.08 * u(7);
+    puffs.push(blob({ centre, radii: mul(vec3(...p.radii), breathe), density: p.density, colour: motion.colour.map((c) => c * tint) as [number, number, number] }));
+    const m = p.radii.map((x) => 3.2 * x * (1 + 0.25 * motion.turbulence) + reach);
+    for (let a = 0; a < 3; a++) {
+      const end = base[a] + motion.drift[a] * motion.seconds;
+      lo[a] = Math.min(lo[a], base[a] - m[a], end - m[a]);
+      hi[a] = Math.max(hi[a], base[a] + m[a], end + m[a]);
+    }
   });
   return { puffs, bounds: { min: lo as unknown as [number, number, number], max: hi as unknown as [number, number, number] } };
 }

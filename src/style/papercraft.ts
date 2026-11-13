@@ -11,6 +11,7 @@ import { fwidth, wgslFn } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Contact, Rgb, Style } from "../style.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
+import { skyOf, type Sky } from "./sky.ts";
 
 const C = {
   key: [1.06, 1.0, 0.9],
@@ -147,6 +148,9 @@ const card = (c: Expr<"vec3">): Expr<"vec3"> => {
   return add(mul(mix(c, grey, 0.45), 0.78), 0.2);
 };
 
+/** The studio backdrop: graded to a cooler top over the view's height 0..0.6; the deep sheet below the horizon. */
+const SKY: Sky = { horizon: C.backdrop, washes: [{ ink: C.backdropTop, from: 0, to: 0.6 }], below: C.sheetDeep, sun: { kind: "none" }, clouds: { kind: "none" } };
+
 export function papercraft(): Style {
   const outline = param("papercraft.outline", 0.0, { min: 0, max: 0.1 });
   /** Sheet k's colour: one of the blues between deep and light, by a golden-ratio walk so neighbours differ. */
@@ -197,11 +201,9 @@ export function papercraft(): Style {
       return vec4(c, 1);
     },
     shadow: (ctx) => vec4(mul(rgb(C.sheetDeep), 0.55), mul(ctx.amount, 0.35)),
-    sky: (ctx) => {
-      const up = ctx.dir.y;
-      const above = mix(rgb(C.backdrop), rgb(C.backdropTop), smoothstep(0.0, 0.6, up));
-      return mix(above, rgb(C.sheetDeep), sub(1, smoothstep(-0.002, 0.0, up)));
-    },
+    // A plane: one sheet of the cut-paper white, its shadow as the water's, hazed toward the backdrop as the water is.
+    ground: (ctx) => mix(mix(mul(rgb(C.cut), 0.92), mul(rgb(C.sheetDeep), 0.55), mul(ctx.shadow, 0.35)), rgb(C.backdrop), saturate(mul(sub(ctx.distance, 40), 1 / 120))),
+    sky: (ctx) => skyOf(SKY, ctx),
   };
 }
 

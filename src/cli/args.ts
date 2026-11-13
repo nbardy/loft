@@ -43,9 +43,16 @@ export type Command =
   }
   | { readonly kind: "build"; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
   | { readonly kind: "profile"; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
-  | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } };
+  | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } }
+  /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
+  | { readonly kind: "help" }
+  | { readonly kind: "api"; readonly name: { readonly kind: "all" } | { readonly kind: "one"; readonly name: string } }
+  | { readonly kind: "context" };
 
 export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact dir> [flags]
+  help                 this text
+  api [name]           the API reference, generated from the source (one export in full with a name; docs/api.md)
+  context              docs/craft.md (making things that read, with range) then the compact API: to read whole
   build  <scene> --out dir [--style name]   (the artefact as files: manifest.json, wgsl/, bin/; refuses cpu tables by name)
   render <scene> --out f.webp [--views front,side,top,three] [--time 1.0] [--size 1280x800] [--param name=value ...] [--construction]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
@@ -142,6 +149,15 @@ function outlineOf(text: string | undefined): "scene" | OutlineMethod {
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
+  // The text commands take no scene and no flags.
+  if (name === "help" || name === "--help" || name === "-h") return { kind: "help" };
+  if (name === "context" || name === "api") {
+    const extra = rest.find((a) => a.startsWith("-"));
+    if (extra !== undefined) throw new UsageError(`${name}: takes no flags (got ${extra})`);
+    if (name === "context") { if (rest.length > 0) throw new UsageError(`context: takes no argument (got "${rest[0]}"); \`loft api <name>\` prints one export`); return { kind: "context" }; }
+    if (rest.length > 1) throw new UsageError(`api: one name at most (got ${rest.length})`);
+    return { kind: "api", name: rest.length === 0 ? { kind: "all" } : { kind: "one", name: rest[0]! } };
+  }
   if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build", "variants"].includes(name)) throw new UsageError(`unknown command "${name}"`);
   if (name === "gallery") return parseGalleryArgs(rest);
 

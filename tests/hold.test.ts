@@ -22,7 +22,7 @@ function claw(reach: number, shift: number) {
     spine: (m: F) => add(g.palm, vec3(add(mul(add(mul(g.gap, 0.5), reach), side), shift), add(mul(m, -2), 1), 0)),
   });
   const fingers = [finger(-1), finger(1)] as const;
-  const s = scene({ sea: sea({ swell: [] }), things: [...fingers], style: toon({}), sun: [0.3, 0.8, 0.5], cameras: { c: { kind: "perspective", eye: [0, 2, 9], target: [0, 1, 0], fovY: 0.6 } } });
+  const s = scene({ ground: sea({ swell: [] }), things: [...fingers], style: toon({}), sun: [0.3, 0.8, 0.5], cameras: { c: { kind: "perspective", eye: [0, 2, 9], target: [0, 1, 0], fovY: 0.6 } } });
   return gripReaches(grab, fingers, { middle: tolerance.share(0.1), gap: tolerance.share(0.1) }).run(new Probe(compileScene(s), {}));
 }
 
@@ -49,7 +49,7 @@ function throwOf(placer: Placer) {
     }),
   });
   const mark = strand({ name: "mark", stations: 4, girth: 0.2, paint: [0.8, 0.2, 0.1], spine: (m: F) => add(toss.thing(), vec3(0, m, 0)) });
-  const s = scene({ sea: sea({ swell: [] }), things: [mark], style: toon({}), sun: [0.3, 0.8, 0.5], cameras: { c: { kind: "perspective", eye: [0, 2, 9], target: [0, 1, 0], fovY: 0.6 } } });
+  const s = scene({ ground: sea({ swell: [] }), things: [mark], style: toon({}), sun: [0.3, 0.8, 0.5], cameras: { c: { kind: "perspective", eye: [0, 2, 9], target: [0, 1, 0], fovY: 0.6 } } });
   const probe = new Probe(compileScene(s), {});
   const tol = { speed: tolerance.share(0.02), place: tolerance.share(0.02) };
   return { hand: releasesAt(toss, tol).run(probe), flown: throwLands(toss, { least: 8, ...tol }).run(probe) };

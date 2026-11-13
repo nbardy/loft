@@ -304,6 +304,8 @@ type ReachCase = "open" | "deformed";
 const CONTACT_CASES: readonly ContactCase[] = ["clear", "near"];
 
 export class Sea implements Chart, Drawable {
+  /** One kind of ground (src/draw/ground.ts): the one that moves and is see-through. */
+  readonly kind = "sea";
   readonly name = "sea";
   readonly skeletons: readonly Skeleton[] = [];
   /** The water follows the camera and reads the scene's depth: nothing to bake. */

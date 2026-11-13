@@ -170,6 +170,17 @@ async function main(argv: readonly string[]) {
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
     case "profile": return (await import("./profile.ts")).profile(cmd);
     case "variants": return (await import("./variants.ts")).variants(cmd);
+    case "help": return void console.log(USAGE);
+    case "api": {
+      const api = await import("./api.ts");
+      try {
+        return void console.log(cmd.name.kind === "all" ? api.apiFull() : api.apiOne(cmd.name.name));
+      } catch (e) {
+        if (e instanceof api.ApiError) throw new UsageError(`api: ${e.message}`);
+        throw e;
+      }
+    }
+    case "context": return void console.log((await import("./context.ts")).context());
   }
 }
 

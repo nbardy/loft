@@ -1,4 +1,5 @@
-// Cast shadows on the water, from every thing's skeletons.
+// Cast shadows on the ground (src/draw/ground.ts), from every thing's skeletons: on a sea a layer blended over the
+// water, on a plane the plane's own colour at the shadow's coverage, on nothing none.
 //
 // Two pose-stage maps (docs/gpu_native.md). The first evaluates each skeleton's joints (expressions over the bodies' own
 // tables, the same ones the vertex stage reads) and the sea's height under them, and lifts each joint along the sun onto
@@ -18,6 +19,7 @@ import {
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { F, Skeleton } from "../map/types.ts";
 import { sunParts } from "../sun.ts";
+import { levelOf } from "./ground.ts";
 
 /** vec4s per capsule: (end a xz, end b xz), (radius a, radius b, strength, softness), (has previous, has next, valid, 0). */
 const ENTRY = 3;
@@ -32,10 +34,21 @@ export const shadows: Drawable = {
   skeletons: [],
   surfaces: [],
   draws(ctx: CompileContext): Emitted {
+    switch (ctx.ground.kind) {
+      case "sea": return patches(ctx, "sea_shadow(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s)", "alpha");
+      // Opaque: where the coverage falls to 0 the colour is the plane's own, so the shadow's edge meets it exactly.
+      case "plane": return patches(ctx, "vec4<f32>(ground_colour(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s), 1.0)", "none");
+      case "nothing": return { shaders: {}, draws: [] };
+    }
+  },
+};
+
+/** One patch per capsule laid on the ground, coloured by `colour` (WGSL over `in.world` and the coverage `s`). */
+function patches(ctx: CompileContext, colour: string, blend: "alpha" | "none"): Emitted {
     // A chain of fewer than two joints has no segment (and a surface with nothing to cast has none at all).
     const { chains, at } = casters(ctx.things);
     const capacity = chains.reduce((n, c) => n + c.length - 1, 0);
-    const source = shadowTable(chains, (xz) => ctx.sea.height(xz), sunParts(ctx.sunAt), at);
+    const source = shadowTable(chains, levelOf(ctx.ground), sunParts(ctx.sunAt), at);
     const t = ctx.table(source).wgsl;
     const code = /* wgsl */ `
 const PATCH: u32 = ${PATCH}u;
@@ -86,14 +99,13 @@ fn capsule_shadow(i: u32, p: vec2<f32>, px: f32) -> f32 {
   let s = capsule_shadow(i, p, px);
   let c = ${t}(2u + ${ENTRY}u * i);
   if (s <= 0.0 || (c.x > 0.5 && capsule_shadow(i - 1u, p, px) > s) || (c.y > 0.5 && capsule_shadow(i + 1u, p, px) >= s)) { discard; }
-  return sea_shadow(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s);
+  return ${colour};
 }`;
     return {
       shaders: { shadows: { code, libs: [] } },
-      draws: [drawSpec({ label: "shadows", shader: "shadows", vertices: 6 * PATCH * PATCH, instances: Math.max(capacity, 1), phase: "on-water", cull: "none", depthWrite: false, blend: "alpha" })],
+      draws: [drawSpec({ label: "shadows", shader: "shadows", vertices: 6 * PATCH * PATCH, instances: Math.max(capacity, 1), phase: "on-water", cull: "none", depthWrite: false, blend })],
     };
-  },
-};
+}
 
 /** smoothstep(0, 1, x), written out (as the CPU fill had it). */
 const smooth = (x: F): F => { const t = saturate(x); return mul(mul(t, t), sub(3, mul(t, 2))); };

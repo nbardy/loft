@@ -79,7 +79,7 @@ function coiled(thing: Drawable): Drawable {
 const parts = serpent.things.slice(3).filter((t) => t.name !== "serpent").map(coiled);
 
 export default scene({
-  sea: water,
+  ground: water,
   things: [...ships, ...debris, body, ...parts],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],

@@ -39,7 +39,7 @@ test("a strand at time + offset, or at an input's time, is the same strand at th
   const arm = input("attack.arm", "f32", [0]);
   const slices = [eel, eel.at(add(time, 0.5)), eel.at(arm)];
   const slicer: Drawable = { name: "slicer", skeletons: [], surfaces: [], draws: (ctx) => { for (const s of slices) ctx.table(s.table); return { shaders: {}, draws: [] }; } };
-  const c = compileScene(scene({ sea: flat, things: [slicer], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: flat, things: [slicer], style: toon(), sun: [0, 1, 0] }));
   const [now, later, armed] = slices.map((s) => s.table);
   expect(new Set([now, later, armed].map((t) => t.name)).size).toBe(3);
   const at = (t: number, table: TableSource, arming = 0) => Array.from(c.frame(stateAt(c.artefact, t, { inputs: { "attack.arm": arming } })).table(table));
@@ -55,7 +55,7 @@ test("a strand at time + offset, or at an input's time, is the same strand at th
 test("a placed part stays on its host's surface through the animation", () => {
   const at = [0.37, 0.31, 1] as const;
   const stub = place(strand({ name: "stub", spine: (m) => through(m, [[0, 0, 0], [0, 0.5, 0]]), stations: 4, girth: 0.05, tips: "open", up: [1, 0, 0], paint: [1, 1, 1] }), on(eel, at));
-  const c = compileScene(scene({ sea: flat, things: [eel, stub], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: flat, things: [eel, stub], style: toon(), sun: [0, 1, 0] }));
   const hostFrame = eel.frame(vec3(...at));
   const host = c.cpu([hostFrame.o, hostFrame.y]);
   let worst = 0;
@@ -73,7 +73,7 @@ test("a placed part stays on its host's surface through the animation", () => {
 // Catches the staleness reported at M1: a host's `setCurves` edit reached the GPU but the CPU pose still read the
 // curves the scene was authored with. The pose must read the curve table it is handed.
 test("an edited curve table moves the CPU pose", () => {
-  const c = compileScene(scene({ sea: flat, things: [eel], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: flat, things: [eel], style: toon(), sun: [0, 1, 0] }));
   const a = c.artefact;
   const doubled = a.curves.map((x) => x * 2);
   const before = c.frame(stateAt(a, 0.5)).table(eel.table), after = c.frame(stateAt(a, 0.5, { curves: doubled })).table(eel.table);
@@ -90,5 +90,5 @@ test("a scene whose tables exceed what a shader stage can bind fails by name", (
     for (let i = 0; i < 6; i++) ctx.table({ name: `hog${i}`, lanes: 1, entries: (128 * 1024 * 1024) / 16, role: "data", prepare: () => () => {} });
     return { shaders: {}, draws: [] };
   } };
-  expect(() => compile(scene({ sea: flat, things: [hog], style: toon(), sun: [0, 1, 0] }))).toThrow(TableBudgetError);
+  expect(() => compile(scene({ ground: flat, things: [hog], style: toon(), sun: [0, 1, 0] }))).toThrow(TableBudgetError);
 });

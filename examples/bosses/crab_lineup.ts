@@ -8,7 +8,7 @@
 // The scene's cameras are those shots' first frames.
 
 import type { Camera } from "../../src/artefact.ts";
-import { atan2, div, lineup, movable, parseVariantAsk, routine, scene, sub } from "../../src/index.ts";
+import { atan2, div, lineup, movable, parseVariantAsk, routine, scene, sub, WOODBLOCK_PALETTE } from "../../src/index.ts";
 import type { Key } from "../../src/spacetime/routine.ts";
 import { design, LOOK, styleFor, SUN, WATER } from "./reefback_titan.ts";
 import { AUDIENCE, BAR, BEAT, beat, formats, PERIOD, PLACES, shotAt } from "./lineup_shots.ts";
@@ -154,14 +154,15 @@ export const lineupStaging = (k: number, variant: string): Staging => ({
 });
 
 /**
- * The sunset (docs/lineup.md, "The sky"): a bokashi from orange-gold at the horizon through vermilion and violet to
+ * The sunset (docs/lineup.md, "The sky"): washes from orange-gold at the horizon through vermilion and violet to
  * indigo, a red sun half set behind the group, three cream cloud bands, and the far sea's strip at the horizon printed
  * orange-gold (the sky's `below`). Heights are the view direction's y.
  */
 const SUNSET = {
-  grade: { kind: "stops", stops: [{ at: 0, ink: [0.97, 0.74, 0.36] }, { at: 0.03, ink: [0.95, 0.52, 0.22] }, { at: 0.07, ink: [0.82, 0.28, 0.2] }, { at: 0.12, ink: [0.42, 0.24, 0.42] }, { at: 0.2, ink: [0.13, 0.15, 0.33] }] },
+  horizon: [0.97, 0.74, 0.36],
+  washes: [{ ink: [0.95, 0.52, 0.22], from: 0, to: 0.03 }, { ink: [0.82, 0.28, 0.2], from: 0.03, to: 0.07 }, { ink: [0.42, 0.24, 0.42], from: 0.07, to: 0.12 }, { ink: [0.13, 0.15, 0.33], from: 0.12, to: 0.2 }],
   sun: { kind: "disc", toward: [-1, 0.012, 0], radius: 0.075, ink: [0.84, 0.2, 0.13] },
-  clouds: { kind: "bands", ink: [0.93, 0.87, 0.74], line: 0.0012, bands: [
+  clouds: { kind: "bands", ink: [0.93, 0.87, 0.74], key: WOODBLOCK_PALETTE.black, line: 0.0012, bands: [
     // Thin and short: the first strip's (0.018 to 0.03 thick, 0.26 to 0.37 long) were slabs across the frame.
     { at: 0.112, thick: 0.013, from: 2.88, to: 3.1, lumps: 4 }, { at: 0.145, thick: 0.011, from: 3.2, to: 3.38, lumps: 3 }, { at: 0.085, thick: 0.009, from: 3.3, to: 3.45, lumps: 3 },
   ] },
@@ -215,7 +216,7 @@ export function lineupScene(o: { readonly line: readonly string[]; readonly look
     return { lift: sub(r.body.o.y, r.n.ride), lean: r.body.z.y, face: atan2(r.body.x.z, r.body.x.x), claw: div(sub(great.wrist.y, shoulder.y), great.span), click: great.open };
   }, { arrival: 1 / 60, size: 0.05 });
   const cameras = camerasOf(o.line);
-  return { scene: scene({ sea: line.sea, things: line.things, style: styleOf(lookOf(o.look)), sun: sunOf(lookOf(o.look)), cameras, period: PERIOD }), checks: [...line.checks, sync], sync, members: line.members };
+  return { scene: scene({ ground: line.sea, things: line.things, style: styleOf(lookOf(o.look)), sun: sunOf(lookOf(o.look)), cameras, period: PERIOD }), checks: [...line.checks, sync], sync, members: line.members };
 }
 
 const built = lineupScene({ line: LINE, look: "default" });

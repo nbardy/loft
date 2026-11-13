@@ -1,7 +1,27 @@
-// Sea growth for any creature: a small kit of print motifs (docs/art_direction/crab_round4/growth/motif_sheet.webp) made
-// of rounded cones, so a whole creature's growth is copies in ONE `draw.copies` list (no draw per barnacle), and three
-// ways to put it on a surface: one motif (`sprout`), a cluster at a place (`cluster`), or a run of clusters along a
-// curve with rests between them (`run`: a seam, a band's edge, a tide line).
+// RECIPE: sea growth for any creature. Copy this file and edit it; it imports only the library's public entry.
+//
+// What it makes, and from what. A small kit of print motifs (docs/art_direction/crab_round4/growth/motif_sheet.webp:
+// acorn barnacles, a mussel bed, a branching coral, a fan coral, a kelp fringe), every one of them made of rounded
+// cones (`Branch`), so a whole creature's growth is copies in ONE `draw.copies` list (no draw per barnacle), and three
+// ways to put it on a surface: one motif (`sprout`), a cluster at a place (`cluster`, by a `Recipe` of parts), or a run
+// of clusters along a curve with rests between them (`run`: a seam, a band's edge, a tide line). Flat inks with key
+// lines (`growthPaints`). It all runs once, on the CPU, when the scene is built: plain numbers, seeded, so the same seed
+// grows the same growth.
+//
+// Parameters: a site (a point and the outward normal), a size and a seed for each call; `RECIPES` holds four clusters;
+// `run` takes how many clusters, how they crowd the low end, thin upward and break into rests.
+//
+// What it cannot do:
+// - move: growth is fixed in the coordinates of the list it rides (it sways only if that list's carrier does);
+// - anything that is not a cone: no plates, no blades, no shells with an opening, no fronds wider than a cone;
+// - lie on the surface: each motif stands on its site along the normal there, and does not follow a curved surface
+//   beyond that point (a large cluster on a tight curve floats at its edges);
+// - avoid itself or the body: clusters may cross each other, and nothing keeps a cone out of the creature.
+//
+// Copying it: add a motif first (a case in `Motif`, a function returning `Sprig`s, a line in `sprout`, a paint in
+// `growthPaints`), then a recipe. Relatives worth trying: the same cones placed by a branching rule are trees and
+// antlers (the library's `tree`); placed on a sphere by a golden-angle spiral they are a sea urchin's spines; on a run
+// along a strand's spine they are a dorsal row of spikes.
 //
 // Nothing here knows the creature. The creature gives **sites** (a point on its surface and the outward normal there,
 // in whatever coordinates its list rides) and its inks, and adds the kit's kinds to its own list:
@@ -20,9 +40,7 @@
 // A copy's id carries its kind's index in the list (first lane) and two numbers its own paint reads (`lanes`).
 // Sizes: at size 1 a cluster is about 1.6 across and its largest barnacle 0.5; `cluster` scales everything.
 
-import { abs, add, cos, dot, max, mix, mul, sin, sqrt, sub, vec3, type Expr, type F, type P3 } from "../../../src/index.ts";
-import { edgeOf } from "../../../src/style/shared.ts";
-import type { Branch } from "../../../src/lib/index.ts";
+import { abs, add, cos, dot, edgeOf, max, mix, mul, sin, sqrt, sub, vec3, type Branch, type Expr, type F, type P3 } from "../../../src/index.ts";
 
 export type V3 = readonly [number, number, number];
 type Rgb = readonly [number, number, number];

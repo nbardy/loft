@@ -18,7 +18,7 @@ test("every shader compiles and every draw makes a pipeline under the contract's
   const dev = await gpu();
   const stroke = draw.curve("stroke", (u) => vec3(mul(u, 4), add(1, sin(mul(u, 6))), 0), { width: () => 0.05, paint: () => vec3(0, 0, 0), segments: 64 });
   const errors: string[] = [];
-  for (const a of [compileScene(serpent).artefact, compileScene(shell).artefact, compileScene(scales).artefact, compileScene(scene({ sea: swell, things: [stroke], style: toon(), sun: [0, 1, 0] })).artefact]) {
+  for (const a of [compileScene(serpent).artefact, compileScene(shell).artefact, compileScene(scales).artefact, compileScene(scene({ ground: swell, things: [stroke], style: toon(), sun: [0, 1, 0] })).artefact]) {
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
     const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
     for (const d of a.draws) {
@@ -110,7 +110,7 @@ async function agreement(c: Compiled, name: string, surfaceOf: (i: number) => Su
 // surfaces: a body (a sweep over its table), a torus written directly as a map (finite-difference normal), and
 // copies of a body at points placed on another body.
 test("drawn surfaces land where a CPU evaluation of the same expressions says", async () => {
-  const c = compileScene(scene({ sea: swell, things: [body, torusDrawn, bumps], style: toon(), sun: [0.3, 0.8, 0.2] }));
+  const c = compileScene(scene({ ground: swell, things: [body, torusDrawn, bumps], style: toon(), sun: [0.3, 0.8, 0.2] }));
   const ends = spacing.ends(1).at, round = spacing.from(1, 0.25).at, even = (x: F) => x;
   const b = await agreement(c, "probe", () => body, { u: ends, v: round }, 1, 1.37);
   const tor = await agreement(c, "torus", () => torus, { u: even, v: even }, 1, 0.8);
@@ -143,7 +143,7 @@ test("a table a drawable declares reaches the shader with the values its fill wr
   } };
   const refs: { wgsl: string }[] = [];
   const thing: Drawable = { name: "tabled", skeletons: [], surfaces: [], draws(ctx) { refs.push(ctx.table(first), ctx.table(second)); return { shaders: {}, draws: [] }; } };
-  const c = compileScene(scene({ sea: swell, things: [body, thing], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: swell, things: [body, thing], style: toon(), sun: [0, 1, 0] }));
   const state = stateAt(c.artefact, 2.5, { params: { "probe.lift": 1.25 } });
   const code = `fn probe(i: u32, x: vec4<f32>) -> vec4<f32> { return select(${refs[1].wgsl}(i - 3u), ${refs[0].wgsl}(i), i < 3u); }`;
   const got = await probe(c.artefact, state, "", code, [[0], [0], [0], [0], [0]]);
@@ -160,7 +160,7 @@ test("post passes from a style and a drawable run in order on the host", async (
     ctx.post({ label: "red", wgsl: "@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> { return vec4<f32>(post_color(in.uv).r, 0.0, 0.0, 1.0); }" });
     return { shaders: {}, draws: [] };
   } };
-  const a = compileScene(scene({ sea: swell, things: [body, redOnly], style, sun: [0, 1, 0] })).artefact;
+  const a = compileScene(scene({ ground: swell, things: [body, redOnly], style, sun: [0, 1, 0] })).artefact;
   expect(a.post?.map((p) => p.label)).toEqual(["magenta", "red"]);
   const loaded = await createHost(await gpu()).load(a);
   const px = await loaded.frame({ camera: { kind: "perspective", eye: [0, 3, 10], target: [0, 0, 0], fovY: 0.8 }, width: 16, height: 8, time: 0 });

@@ -52,11 +52,25 @@ export type Layer<K extends string, N extends string> =
   | { readonly kind: "show"; readonly show: N; readonly weight: In<"f32"> }
   /** Only the listed channels go toward it: a blink moves the lids and leaves the rest of the face alone. */
   | { readonly kind: "only"; readonly show: N; readonly channels: readonly K[]; readonly weight: In<"f32"> }
+  /** The listed channels go toward the numbers given, not a named expression's: a shut lid that is no face of its own. */
+  | { readonly kind: "toward"; readonly to: Partial<Readonly<Record<K, number>>>; readonly weight: In<"f32"> }
   /** Added on top of whatever is showing, `by` per channel times `weight`: a tremble, a breath. */
   | { readonly kind: "add"; readonly by: Partial<Readonly<Record<K, In<"f32">>>>; readonly weight: In<"f32"> };
 
 export const show = <N extends string>(name: N, weight: In<"f32">): Layer<never, N> => ({ kind: "show", show: name, weight });
-export const only = <K extends string, N extends string>(name: N, channels: readonly K[], weight: In<"f32">): Layer<K, N> => ({ kind: "only", show: name, channels, weight });
+/**
+ * Only some channels move: toward a named expression's numbers (`only("wince", ["upper", "lower"], w)`), or toward
+ * numbers given here (`only({ lid: 1 }, w)`). The second form came from an owl (examples/second/owl.ts): its blink is a
+ * shut lid, which is no expression of the face, and naming it one made `expressionsRead` demand it be shown whole.
+ */
+export function only<K extends string, N extends string>(name: N, channels: readonly K[], weight: In<"f32">): Layer<K, N>;
+export function only<K extends string>(to: Partial<Readonly<Record<K, number>>>, weight: In<"f32">): Layer<K, never>;
+export function only<K extends string, N extends string>(a: N | Partial<Readonly<Record<K, number>>>, b: readonly K[] | In<"f32">, c?: In<"f32">): Layer<K, N> {
+  // Classified once, here: a name with its channels, or the numbers themselves.
+  if (typeof a === "string") return { kind: "only", show: a, channels: b as readonly K[], weight: c as In<"f32"> };
+  for (const [k, x] of Object.entries(a)) if (!Number.isFinite(x)) throw new ExpressionError(`only: channel "${k}" is ${x}, not a finite number`);
+  return { kind: "toward", to: a, weight: b as In<"f32"> };
+}
 export const added = <K extends string>(by: Partial<Readonly<Record<K, In<"f32">>>>, weight: In<"f32"> = 1): Layer<K, never> => ({ kind: "add", by, weight });
 
 /**
@@ -106,6 +120,7 @@ export function score<K extends string, N extends string>(cast_: Cast<K, N>, lay
       switch (layer.kind) {
         case "show": { const e = known(layer.show); for (const k of cast_.channels) posed[k] = mix(posed[k], e[k], layer.weight); break; }
         case "only": { const e = known(layer.show); for (const k of layer.channels) posed[channel(k)] = mix(posed[k], e[k], layer.weight); break; }
+        case "toward": { for (const k of Object.keys(layer.to) as K[]) posed[channel(k)] = mix(posed[k], layer.to[k] as number, layer.weight); break; }
         case "add": {
           for (const k of Object.keys(layer.by) as K[]) posed[channel(k)] = add(posed[k], mul(layer.by[k] as In<"f32">, layer.weight));
           break;
@@ -125,7 +140,7 @@ export function score<K extends string, N extends string>(cast_: Cast<K, N>, lay
           share[layer.show] = add(share[layer.show], layer.weight);
           break;
         }
-        case "only": case "add": break;
+        case "only": case "toward": case "add": break;
       }
     }
     return share;

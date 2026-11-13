@@ -1,14 +1,14 @@
 // Biolume: a night sea. Sky and water near black; bodies dark, with their paint's bright and saturated features
 // turned into light, cyan or magenta by hue; a rim of cold light on every silhouette; foam and the waterline glowing
-// faintly where bodies break the water. Two post passes: the glow smeared down the water as a reflection, then bloom,
-// which glows whatever is bright (in this picture, only what emits).
+// faintly where bodies break the water. Two post passes (`reflection`, `bloom`): the glow smeared down the water, then
+// bloom, which glows whatever is bright (in this picture, only what emits).
 
 import { abs, add, dot, exp, fract, length, lift, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
 import { hash22, luminance, noise2 } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
-import type { PostSpec } from "../compile/context.ts";
 import type { Contact, Rgb, Style } from "../style.ts";
-import { POST_COMMON, rgb } from "./shared.ts";
+import { bloom, reflection } from "./post.ts";
+import { rgb } from "./shared.ts";
 
 const C = {
   cyan: [0.15, 0.95, 1.0],
@@ -19,70 +19,6 @@ const C = {
   body: [0.035, 0.04, 0.07],
   moon: [0.35, 0.45, 0.7],
 } as const satisfies Record<string, Rgb>;
-
-/**
- * The glow's reflection: for a pixel of open water, light from bodies above it in the picture (a reflection in
- * gently moving water lies below what it reflects), gathered along a short column that wavers with the swell.
- */
-const REFLECT = /* wgsl */ `${POST_COMMON}
-@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
-  let c = post_color(in.uv).rgb;
-  let px = in.px.xy;
-  if (sty_water(px) < 0.5) { return vec4<f32>(c, 1.0); }
-  let scale = max(frame.viewport.y / 800.0, 0.375);
-  var acc = vec3<f32>(0.0);
-  for (var k = 1u; k <= 24u; k++) {
-    let fk = f32(k);
-    let wave = sin(px.y * 0.11 / scale + fk * 0.7 + frame.time.x * 1.3) * 2.5 * scale;
-    let q = px + vec2<f32>(wave, -fk * 4.0 * scale);
-    let p = scene_position(q);
-    // Only bodies above the water reflect.
-    if (sty_solid(q) && p.y > sea_height(p.xz)) {
-      let s = post_color(q * frame.viewport.zw).rgb;
-      acc += max(s - vec3<f32>(0.1), vec3<f32>(0.0)) * exp(-fk * 0.11);
-    }
-  }
-  return vec4<f32>(c + acc * 0.09, 1.0);
-}
-`;
-
-/**
- * Bloom in one pass: a spiral of taps out to R, weighted by a Gaussian, over the bright part of the picture. The
- * spiral turns from pixel to pixel (interleaved gradient noise, fixed to the screen) so its taps leave fine grain
- * instead of ghost copies.
- */
-const BLOOM = /* wgsl */ `${POST_COMMON}
-const BL_TAPS: u32 = 40u;
-fn bl_bright(c: vec3<f32>) -> vec3<f32> {
-  let l = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-  return c * smoothstep(0.12, 0.5, l);
-}
-@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
-  let c = post_color(in.uv).rgb;
-  let scale = max(frame.viewport.y / 800.0, 0.375);
-  let px = in.px.xy;
-  let turn = 6.2831853 * fract(52.9829189 * fract(dot(floor(px), vec2<f32>(0.06711056, 0.00583715))));
-  var acc = vec3<f32>(0.0);
-  var total = 0.0;
-  for (var i = 0u; i < BL_TAPS; i++) {
-    let t = (f32(i) + 0.5) / f32(BL_TAPS);
-    let r = 30.0 * scale * sqrt(t);
-    let a = f32(i) * 2.3999632 + turn;
-    let w = exp(-3.0 * t);
-    acc += bl_bright(post_color((px + vec2<f32>(cos(a), sin(a)) * r) * frame.viewport.zw).rgb) * w;
-    total += w;
-  }
-  let glow = acc / total;
-  // Added, then softly compressed so a bright core saturates to white-tinted colour instead of clipping flat.
-  let lit = c + glow * 1.6;
-  return vec4<f32>(lit / (1.0 + 0.25 * max(lit - vec3<f32>(0.8), vec3<f32>(0.0))), 1.0);
-}
-`;
-
-export const BIOLUME_POST = {
-  reflect: { label: "biolume reflection", wgsl: REFLECT },
-  bloom: { label: "biolume bloom", wgsl: BLOOM },
-} as const satisfies Record<string, PostSpec>;
 
 /**
  * Light from a paint: as strong as the paint is bright and vivid; magenta for purples, pinks and reds (red and blue
@@ -103,7 +39,7 @@ export function biolume(): Style {
     name: "biolume",
     outline,
     clear: C.night,
-    post: [BIOLUME_POST.reflect, BIOLUME_POST.bloom],
+    post: [reflection(), bloom()],
     shade: (ctx) => {
       const ndl = dot(ctx.normal, ctx.sun);
       const facing = saturate(dot(ctx.normal, ctx.view));
@@ -150,6 +86,9 @@ export function biolume(): Style {
       return vec4(c, alpha);
     },
     shadow: (ctx) => vec4(vec3(0, 0, 0), mul(ctx.amount, 0.3)),
+    // A plane: a moonlit floor twice the water's tone (so a shadow reads on it), shadows near the night, fogged as the
+    // water is.
+    ground: (ctx) => mix(mul(rgb(C.water), sub(2.2, mul(ctx.shadow, 1.7))), rgb(C.horizon), fog(ctx.distance)),
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(rgb(C.horizon), rgb(C.night), pow(saturate(up), 0.5));

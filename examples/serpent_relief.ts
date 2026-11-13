@@ -134,7 +134,7 @@ const relief = draw.relief("serpentRelief", body, {
 });
 
 export default scene({
-  sea: serpent.sea,
+  ground: serpent.ground,
   things: [relief, ...serpent.things.filter((t) => !["sky", "sea", "shadows", "serpent"].includes(t.name))],
   style: serpent.style,
   sun: [-0.45, 0.75, 0.5],

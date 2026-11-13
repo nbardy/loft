@@ -1,8 +1,25 @@
-// A sea serpent at any size, for the showcase scenes. examples/serpent.ts builds one serpent at one size: its girth is a
-// global param (`serpent.girth`, default 0.64) and its head, horns, teeth and eyes are absolute numbers, so a scene
-// cannot make it bigger or thicker without redeclaring that param (params are global by name: a second default
-// throws). This builder is the same anatomy with every head measure multiplied by `size` and the body's girth given
-// by the scene, every drawable's name prefixed so two wyrms can share a scene. Head toward the spine's m = 0.
+// RECIPE: a sea serpent at any size. Copy this file and edit it; it imports only the library's public entry.
+//
+// What it makes, and from what. The anatomy of examples/serpent.ts with every head measure multiplied by `size` and the
+// body's girth given by the scene, every drawable's name prefixed so two wyrms can share a scene (examples/serpent.ts
+// builds one at one size: its girth is a global param, and params are global by name). The body is a `strand` on the
+// scene's spine with a girth curve (`keys`) and countershaded, banded paint (`palette`); the head, jaw, eyes and horns
+// are strands carried `on` the body and the head (so they ride its coordinates); the teeth are `draw.points`; the
+// dorsal crest and the tail fins are `crest`s standing on the body. Head toward the spine's m = 0.
+//
+// Parameters (`WyrmSpec`): the spine (a function of m: it may move in time), stations and rings along it, girth, size,
+// gape (an expression), colours, the crest's span and height, the bands, and a paint to replace the default.
+//
+// What it cannot do:
+// - another head: the skull, jaw, horns and teeth are serpent.ts's, only scaled (no snout length or horn count of its own);
+// - limbs, or anything not carried on the body or the head;
+// - a body section that is not one rounded oval (aspect 1.05, squareness 2.2) along all its length;
+// - a spine it does not get from the scene: it swims only as the scene's spine moves.
+//
+// Copying it: change the girth curve and the head's `section` first (they are the silhouette), then the paint.
+// Relatives worth trying: the same build on a spine that coils (the library's `spiralLine` gives one) is a snake
+// at rest; the head's strands with `forward` turned down and a longer jaw are an eel's; the crest made `fan`s is a
+// dragon's frill.
 
 import {
   abs, add, cos, crest, cross, dot, draw, keys, lift, lt, mix, mod, mul, normalize, on, palette, place, points, rotateAbout as rotate,

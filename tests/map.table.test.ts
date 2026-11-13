@@ -16,7 +16,7 @@ const strip = draw.surface("strip", surface((u, v) => vec3(u, byFrame(u).add(onc
 // Catches: an interpolant reading the wrong neighbour or weight (an off-by-one in the cell, the fraction taken from the
 // wrong end), a table not filled, a frame table that ignores a param change, or a static one that follows it.
 test("a tabulated function interpolates its source within the linear-interpolation bound", () => {
-  const c = compileScene(scene({ sea: sea({ swell: [] }), things: [strip], style: toon(), sun: [0, 1, 0] }));
+  const c = compileScene(scene({ ground: sea({ swell: [] }), things: [strip], style: toon(), sun: [0, 1, 0] }));
   const x = variable("x", "f32");
   const run = c.cpu([byFrame(x), once(x), source(x)]);
   // |f - interpolant| <= h^2 / 8 max|f''|, with f'' = (2 pi)^2 amp and h = 1 / (N - 1).

@@ -36,7 +36,7 @@ const paint = tile(compose(shear, fold2.repeat([1, 1])), (cell) => {
 });
 
 export default scene({
-  sea: sea({ swell: [{ direction: [1, 0.2], length: 9, height: 0.12, speed: 0.8 }] }),
+  ground: sea({ swell: [{ direction: [1, 0.2], length: 9, height: 0.12, speed: 0.8 }] }),
   things: [draw.surface("shell", shell, { paint, grid: { u: spacing.even(220), v: spacing.even(40) }, sides: "two", outline: "none" })],
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.4, 0.8, 0.45],

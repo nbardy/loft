@@ -97,7 +97,7 @@ function hitBox(r: Ray, lo: Vec3, hi: Vec3): { t: number; edge: number } | undef
 }
 
 const water = sea({ swell: [{ direction: [1, 0], length: 10, height: 0.1, speed: 1 }] });
-const sceneOf = (...things: Parameters<typeof scene>[0]["things"]) => scene({ sea: water, things, style: toon(), sun: [0.3, 1, 0.2] });
+const sceneOf = (...things: Parameters<typeof scene>[0]["things"]) => scene({ ground: water, things, style: toon(), sun: [0.3, 1, 0.2] });
 const W = 200, H = 150;
 const cameras: readonly Camera[] = [
   { kind: "perspective", eye: [3.2, 2.6, 4.1], target: [0, 1, 0], fovY: 0.8 },

@@ -12,7 +12,7 @@ beforeAll(() => {
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 const put = (rel: string, text: string) => writeFileSync(join(dir, rel), text);
 
-const SCENE = "export default { things: [], sea: {}, sun: [0, 1, 0], cameras: {} };\n";
+const SCENE = "export default { things: [], ground: {}, sun: [0, 1, 0], cameras: {} };\n";
 
 test("discovery lists scenes, names every skipped file with its reason, and reports unloadable files", async () => {
   put("a.ts", SCENE);
