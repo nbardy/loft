@@ -38,7 +38,7 @@ export type Hit = Capsule | Disc | Arc;
  * on the GPU and in the checks.
  *
  * Parameters: every field takes a number, an expression or a host input, so a game moves its shapes and the attack
- * follows. Angles run from +x toward +z; an arc's `from` is below its `to`, at most a half turn apart.
+ * follows. Angles run from +x toward +z; an arc's `from` is below its `to`, at most a half turn apart (not checked).
  *
  * What it cannot do, because of the law:
  * - any shape but these three: no box, no cone wider than a half turn, no full ring, no polygon.
@@ -52,10 +52,13 @@ export type Hit = Capsule | Disc | Arc;
  * - a cone from a point: an arc with `inner` 0 (already possible, up to a half turn).
  */
 export const hit = {
+  /** A lane: the segment `a` to `b` on the plane (x, z), widened by `radius`. A lunge lands at its far end. */
   capsule: (o: { readonly a: In<"vec2">; readonly b: In<"vec2">; readonly radius: In<"f32"> }): Capsule =>
     ({ kind: "capsule", a: lift<"vec2">(o.a), b: lift<"vec2">(o.b), radius: lift<"f32">(o.radius) }),
+  /** A disc of `radius` round `centre` on the plane (x, z). A lunge lands at its centre; a ring aftermath leaves its edge. */
   disc: (o: { readonly centre: In<"vec2">; readonly radius: In<"f32"> }): Disc =>
     ({ kind: "disc", centre: lift<"vec2">(o.centre), radius: lift<"f32">(o.radius) }),
+  /** An annular sector round `centre`: radii `inner` to `outer`, angles `from` to `to` (radians, +x toward +z, at most a half turn). */
   arc: (o: { readonly centre: In<"vec2">; readonly inner: In<"f32">; readonly outer: In<"f32">; readonly from: In<"f32">; readonly to: In<"f32"> }): Arc =>
     ({ kind: "arc", centre: lift<"vec2">(o.centre), inner: lift<"f32">(o.inner), outer: lift<"f32">(o.outer), from: lift<"f32">(o.from), to: lift<"f32">(o.to) }),
 };
@@ -164,17 +167,18 @@ const arc = {
  * evaluate, so a shader or paint of your own that reads it agrees with both.
  *
  * The law: for a capsule, the distance to its segment less its radius; for a disc, the distance to its centre less its
- * radius; for an arc, inside it the least distance to its outer, inner and end edges (negated), outside past an end
- * the distance to that end's radial segment. Exact for all three, an arc up to a half turn.
+ * radius; for an arc, within its angles the largest of rho - outer, inner - rho and minus the distance to the nearer end
+ * edge, and past an end the distance to that end's radial segment. Exact for all three, an arc up to a half turn.
  *
  * Parameters: `p` is any point of the plane (x, z) held as a vec2; the shape's fields are expressions.
  *
  * What it cannot do, because of the law:
  * - measure in three dimensions: it is the plane's distance, the same at every height.
- * - be exact for an arc over a half turn (refused by its shape's rule anyway).
+ * - be exact for an arc over a half turn: nothing refuses one, so keep `to - from` at most pi yourself.
  *
  * Going past it: combine distances yourself, min(d1, d2) for a union and max(d1, -d2) for a cut, to draw or test shapes
- * the attack itself cannot be. Relatives worth trying:
+ * no single hit is.
+ * Relatives worth trying:
  * - a soft edge: smoothstep across d for a glow that fades out from the shape.
  * - a filling marker: inside where d < (k - 1) times the shape's inradius, k the warning's progress 0..1.
  */

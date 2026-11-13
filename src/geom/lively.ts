@@ -50,7 +50,8 @@ export type Beat = {
  *   `since` faster or slower.
  * - more than three beats, a hold between them, or repeat: it is one shot from since = 0.
  *
- * Going past it: the beats are three clamps of one clock, so more beats or a hold are more clamps of your own. Relatives:
+ * Going past it: the beats are three clamps of one clock, so more beats or a hold are more clamps of your own.
+ * Relatives:
  * - a looping action: `since` = mod(t, A + B + C), so the three beats repeat.
  * - a pose struck and held: `struck` is snap, hold and release on the same plan, with a hold that is exactly still.
  * - a window of seconds on any clock with eased edges: `during`.

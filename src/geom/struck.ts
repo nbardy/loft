@@ -20,6 +20,11 @@ import { anticipated } from "./lively.ts";
 
 type F = Expr<"f32">;
 
+/**
+ * Raised by `struck` for a snap or release that is not a positive number of seconds, a hold below 0, a cue that is not
+ * finite or a recoil below 0; and by `holdsStill` when given no poses or a pose the cast does not name. It carries only
+ * the message, which names the value.
+ */
 export class StruckError extends Error {}
 
 /** A struck pose's timing on its clock, seconds. */
@@ -47,7 +52,33 @@ export type Struck = {
   readonly since: F;
 };
 
-/** A pose struck on `clock` (any expression of seconds: an attack's `tau`, the scene's `time`). */
+/**
+ * A pose struck on `clock` (any expression of seconds: an attack's `tau`, the scene's `time`): driven into a pose in a
+ * few frames, held dead still, then let go. The weight is for a score's `show` layer.
+ *
+ * What it assumes of the subject: one drawn from a `score`, where a `show` at weight exactly 1 replaces every channel.
+ * Used for anything else (a pose's angle), the weight is still an envelope, but nothing guarantees stillness.
+ *
+ * The law. With arrive = from + snap and leave = arrive + hold: before arrive the weight is `anticipated`((t - from) /
+ * snap, recoil), which dips below 0 and reaches 1 at full speed; from arrive to leave it is exactly 1 (a separate
+ * branch, so f32 rounding of the snap's polynomial lets nothing under the pose show through); after, it is
+ * 1 - smoothstep(leave, leave + release, t). `still` is 1 through the hold, and `since` is t - arrive.
+ *
+ * Parameters: the clock takes an expression; `from`, `snap`, `hold`, `release` and `recoil` are fixed numbers.
+ *
+ * What it cannot do, because of the law:
+ * - ease into the pose: it arrives at full speed and stops in one frame (the snap is the point).
+ * - hold for a time the game decides: the hold is fixed seconds on its clock; drive the clock to stretch it.
+ * - keep anything moving under it during the hold: everything laid before it is covered; what must move goes after.
+ * - strike twice: one cue per `struck`; a second pose is a second `struck` laid over the first's release.
+ *
+ * Going past it: the weight is three branches of one clock, so another timing is the same shape with your own
+ * segments. Relatives:
+ * - loose parts that keep moving through the hold: `swing(since, ...)`, so cords and tassels swing beside a face that
+ *   does not.
+ * - a softer arrival: `overshot` in place of the snap, for a pose that lands and settles instead of locking.
+ * - a pose that comes and goes without a hold: `during`, or `strike` on a progress.
+ */
 export function struck(clock: In<"f32">, o: StruckSpec): Struck {
   for (const k of ["snap", "release"] as const) if (!(o[k] > 0 && Number.isFinite(o[k]))) throw new StruckError(`struck: ${k} must be a positive number of seconds, got ${o[k]}`);
   if (!(o.hold >= 0 && Number.isFinite(o.hold))) throw new StruckError(`struck: hold must be a finite number of seconds, at least 0; got ${o.hold}`);
@@ -66,6 +97,24 @@ export function struck(clock: In<"f32">, o: StruckSpec): Struck {
  * Through each struck pose's hold, over one `period` of the scene's clock, every channel of the score is the named
  * expression's own number to `within` (units of the channel, or a share of the channel's spread across the cast). It
  * fails if a layer laid after the pose moves under it, if the pose's weight is not 1 there, or if a pose is never held.
+ *
+ * The law. A `Check`: on the CPU it samples the clock at `rate` per second (default 30) over [0, period), keeps the
+ * samples where a pose's `still` is 1 at the sample and half a sample either side, and measures the largest distance of
+ * any channel of `score.at(time)` from that pose's numbers. It passes when every pose was held at some sample and no
+ * distance passed the allowance.
+ *
+ * Parameters: the score and the poses as built; `period`, `within` (a `tolerance`) and `rate` are fixed.
+ *
+ * What it cannot do, because of the law:
+ * - follow a score or pose driven by anything but the scene clock `time`: the probe steps only the clock, and every
+ *   host input stays where the probe set it (its default unless the check's caller set it).
+ * - see a hold shorter than about two samples, or a flicker between samples.
+ * - check a pose with `hold` 0: it is never still, so it fails as never held.
+ *
+ * Going past it: it is one `Check`, so a check of your own on the same probe follows its pattern. Relatives:
+ * - a check that the pose is reached at all, whenever it is shown: the same sampling, with the weight above a
+ *   threshold in place of `still`.
+ * - a check that loose parts do move during the hold: the same samples, measuring their spread instead of a bound.
  */
 export function holdsStill<K extends string, N extends string>(score: Score<K, N>, poses: Readonly<Partial<Record<N, Struck>>>, o: { readonly period: number; readonly within: Tolerance; readonly rate?: number }): Check {
   const names = Object.keys(poses) as N[];

@@ -4,8 +4,8 @@
 // a thing placed with `afloat` rises over the crest and heels on its faces with no animation of its own. Things afloat
 // are also forced outward: a thing caught by the front's face is carried with it, at the wave's speed, for as long as
 // the crest is tall enough to hold it, then dropped to coast (docs/throw_and_shove.md, "The ride"). A game reads the
-// rule's parts (`arrival`, `speed`, `lag`, `holds`, `lifts`) and integrates its own floating thing; `pushed` is Loft's stand-in,
-// the same rule solved in closed form with a linear drag for a thing that starts at rest at its own place.
+// rule's parts (`arrival`, `speed`, `lag`, `holds`, `lifts`) and integrates its own floating things; `pushed` is Loft's
+// stand-in, the same rule solved in closed form with a linear drag for a thing that starts at rest at its own place.
 //
 // Four facts the formulas are built on:
 //   1. A ring's energy is spread round a growing circle, so its height falls as 1 / sqrt(r).
@@ -145,9 +145,10 @@ export class RingWave implements SeaDeform {
   }
 
   /**
-   * Loft's stand-in for a boat on the ride: how far a thing afloat whose own place is `place` has been forced outward at
-   * time t, on the sea plane (x, z). Exactly 0 until the face takes it; then `speed` times the seconds carried; then the
-   * ride's distance plus a coast under a linear drag, `letGo drag (1 - exp(-q / drag))`, q seconds after it is dropped.
+   * Loft's stand-in for a floating thing on the ride: how far a thing afloat whose own place is `place` has been forced
+   * outward at time t, on the sea plane (x, z). Exactly 0 until the face takes it; then `speed` times the seconds
+   * carried; then the ride's distance plus a coast under a linear drag, `letGo drag (1 - exp(-q / drag))`, q seconds
+   * after it is dropped.
    */
   pushed(place: In<"vec2">, t: In<"f32">): V2 {
     const k = this.ride(place), s = sub(this.spec.since(t), k.taken), q = max(sub(s, k.seconds), 0);
@@ -187,18 +188,18 @@ export class RingWave implements SeaDeform {
  * what floats. The same wave an attack's `ring` aftermath makes, here with a centre, radius and clock of your own (a
  * splash where a thrown thing lands, a stone dropped in a pond).
  *
- * What it assumes (used so far by an attack's ring and by a splash where a thrown thing lands): the ground is a sea of one depth, shallow next to the pulse's length
- * (so the pulse runs at one speed without spreading), with nothing in it to block or reflect the wave; and a floating
- * thing is a point at its middle, taken by the front's face and carried at the wave's speed. A subject that needs depth
- * that changes, a shore, or a long thing turned by the wave does not fit.
+ * What it assumes (used so far by an attack's ring and by a splash where a thrown thing lands): the ground is a sea of
+ * one depth, shallow next to the pulse's length (so the pulse runs at one speed without spreading), with nothing in it
+ * to block or reflect the wave; and a floating thing is a point at its middle, taken by the front's face and carried at
+ * the wave's speed. A subject that needs depth that changes, a shore, or a long thing turned by the wave does not fit.
  *
  * The law. With tau = since(t) and r the distance from `centre`, the front is at radius + speed tau; a point xi =
  * (radius + speed tau - r) / length behind it (0..1) is lifted height sqrt(radius / r) shape(xi), shape a crest (sin^2
- * over the first half) then a trough 0.3 as deep, faded to nothing over the last quarter of `reach`. Ahead of the
- * front and behind the trough the water is exactly as it was. A thing afloat at rest is taken by the face `lag` after
- * the front arrives and carried at `speed` while the crest there is at least `hold` tall (out to radius (height /
- * hold)^2, or three quarters of `reach`); then it coasts under a linear drag of `drag` seconds. Beyond the drop radius it
- * is given only the share height sqrt(radius / r) / hold of the speed, so the shove is continuous across it.
+ * over the first half) then a trough 0.3 as deep, faded to nothing over the last quarter of `reach`. Ahead of the front
+ * and behind the trough the water is exactly as it was. A thing afloat at rest is taken by the face `lag` after the
+ * front arrives and carried at `speed` while the crest there is at least `hold` tall (out to radius (height / hold)^2,
+ * or three quarters of `reach`); then it coasts under a linear drag of `drag` seconds. Beyond the drop radius it is
+ * given only the share height sqrt(radius / r) / hold of the speed, so the shove is continuous across it.
  *
  * Parameters: `centre`, `radius` and the `since` clock take expressions (a game starts the wave when it likes);
  * `speed`, `height`, `length`, `reach`, `hold` and `drag` are fixed numbers.
@@ -217,8 +218,8 @@ export class RingWave implements SeaDeform {
  *   wave) and as 1 / sqrt(r) far away.
  * - deep-water ripples: several pulses, each at its wavelength's speed sqrt(g lambda / 2 pi), so the long ones lead and
  *   the ring spreads into a train.
- * - a bore that slows as it falls: speed sqrt(g (depth + a)) with a the crest's height at r, the front's time an integral
- *   of 1 / speed over r, tabulated once (`tabulate`).
+ * - a bore that slows as it falls: speed sqrt(g (depth + a)) with a the crest's height at r, the front's time an
+ *   integral of 1 / speed over r, tabulated once (`tabulate`).
  */
 export function ringWave(spec: RingSpec): RingWave {
   return new RingWave(spec);

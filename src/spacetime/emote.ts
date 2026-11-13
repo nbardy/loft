@@ -45,6 +45,11 @@ export type EmoteBeat = {
   readonly step: F;
 };
 
+/**
+ * A scheduled performance with no hit, as `emote` builds it: `beats(t)` gives its four readouts at a clock (`on`,
+ * `wave`, `turn`, `step`, see `EmoteBeat`), `armAt(t)` the arming time of the cycle t is in, and `span` the seconds it
+ * moves before and after arming.
+ */
 export class Emote {
   readonly name: string;
   readonly arming: Arming;
@@ -106,7 +111,43 @@ export class Emote {
   }
 }
 
-/** An emote (see `Emote`). */
+/**
+ * An emote: an action with no hit (a taunt, a dance, a bow, a roar), on a schedule as an attack is (`once`, `every`),
+ * with accents, the instants its moves land on. Nothing is hit, warned or checked against a target; a body and a face
+ * read its beats as numbers, so the game and the art read the same performance.
+ *
+ * What it assumes about the body: nothing but that it has something to move and, for `step`, two sides to alternate
+ * between (left and right, two feet, two hands, a lean one way and the other). It gives numbers, not a pose, so any
+ * subject fits; tried so far on a legged body's taunt and on a floating thing rocking onto each clang of a bell.
+ *
+ * The law. Move i rises over [a_i - lead, a_i] and falls over [a_i + hold, a_i + hold + fall] (a_i the accents, seconds
+ * after arming), each eased by slowInOut with power `snap`, and
+ *   wave = max_i rise_i(t) (1 - fall_i(t)),
+ *   turn = (sum_i (rise_i + fall_i)) mod 2 - 1   (-1 at a move's start, 0 on its accent, 1 at its end),
+ *   step = +1 after the first accent's off-beat, flipped after each later one, back to 0 after the last move,
+ * each flip eased over `shuffle` seconds from `offbeat` after its accent; `on` eases from 0 to 1 over `settle` seconds
+ * before the first move and back after the last.
+ *
+ * Parameters: `arm` takes a time, an expression, a host input, `once` or `every`; the accents, `lead`, `hold`, `fall`,
+ * `snap`, `offbeat`, `shuffle` and `settle` are fixed numbers. A repeating emote must fit its period (checked).
+ *
+ * What it cannot do, because of the law:
+ * - vary a move by accent: every move has the same rise, hold, fall and size (scale a move yourself by which accent it
+ *   is).
+ * - overlap moves: they are combined by max, so accents closer than `lead + fall` merge into one longer move.
+ * - alternate among more than two sides: `step` is +1 or -1.
+ * - change tempo or take accents decided at run time: they are fixed seconds after arming.
+ * - pose anything: it says when and how much; which limb goes where is the body's.
+ *
+ * Going past it: `beats(t)` at any clock (a delayed clock for a part that follows, `time - 0.1`) and the shapes it is
+ * made of, `slowInOut`, `anticipated`, `overshot`, are public, so a readout of your own is a few lines of the same
+ * form.
+ * Relatives worth trying:
+ * - a move per accent of its own size: weights indexed by floor(count / 2) of the moves passed, multiplied into `wave`.
+ * - three sides (left, middle, right): the number of off-beats passed, mod 3.
+ * - swing: accents placed long-short (2/3 and 1/3 of each beat) instead of even.
+ * - a group on counts with unison and canon checked: `routine`.
+ */
 export function emote(spec: EmoteSpec): Emote {
   return new Emote(spec);
 }

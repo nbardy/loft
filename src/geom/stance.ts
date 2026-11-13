@@ -48,7 +48,7 @@ export function headingIn(ground: Frame, v: P3): Toward {
   return { x: div(x, l), z: div(z, l) };
 }
 
-/** What a body standing on its feet is doing with its weight. Every kind but `idle` says how far it is in it (`on`, 0..1). */
+/** What a body on its feet is doing with its weight. Every kind but `idle` says how far it is in it (`on`, 0..1). */
 export type Stance =
   /**
    * Standing: breathing (`breath.rise` at `breath.period`, made whole turns of `loop`), a slow shift of weight side to

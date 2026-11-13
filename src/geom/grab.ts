@@ -106,8 +106,9 @@ export type Grab = {
  * - fail to take, regrip, pass the thing hand to hand or hold two things.
  * - carry along anything but the arch from `from` to `to` (an attack's `hold` takes a path of your own).
  *
- * Going past it: an attack with a grip motion and a `hold` effect has the same gripper, with a path carry, a schedule and
- * a warning; `gripper` alone poses a palm and gap round any `Held` of yours. Relatives worth trying:
+ * Going past it: an attack with a grip motion and a `hold` effect has the same gripper, with a path carry, a schedule
+ * and a warning; `gripper` alone poses a palm and gap round any `Held` of yours.
+ * Relatives worth trying:
  * - two hands: two grabs on one clock with `from` on either side of the thing, `to` the same, one closing a beat later.
  * - a grab that misses: `from` where the thing was, the thing moved away by the game before the close (draw the thing
  *   from the game's place, not `thing`).
@@ -402,7 +403,8 @@ export type GripperSpec = Pick<GrabSpec, "rest" | "radius" | "reachLift" | "up" 
  * Parameters: rest, radius, lift, up and rest gap are expressions; the beats and margin are fixed seconds and shares.
  *
  * What it cannot do, because of the law:
- * - turn the gap into a pose: it says how far apart, not how fingers stand (that is `fingerAngle`, `pincerAngle`, `wrap`).
+ * - turn the gap into a pose: it says how far apart, not how fingers stand (that is `fingerAngle`, `pincerAngle`,
+ *   `wrap`).
  * - reach along anything but its arc, or take something that moves away during the reach other than by `h.from`.
  * - regrip, pass the thing hand to hand, or hold two things.
  *
@@ -456,9 +458,9 @@ export function fingerAngle(gap: In<"f32">, length: In<"f32">, hinge: In<"f32"> 
 }
 
 /**
- * A pincer: one finger fixed, one moving, both of `length` (hinge to tip, straight) from one hinge. The angle between
- * them for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A beak, tongs, a pair of shears.
- * It cannot open past a straight angle: a gap wider than 2 length gives pi, and two fingers hinged apart are `fingerAngle`.
+ * The angle between the two fingers of a pincer (one fixed, one moving, both of `length` from one hinge, measured hinge
+ * to tip in a straight line) for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A beak, tongs, shears.
+ * It cannot open past a straight angle: a gap over 2 length gives pi. Two fingers hinged apart are `fingerAngle`.
  */
 export function pincerAngle(gap: In<"f32">, length: In<"f32">): F {
   const s = clamp(div(gap, mul(length, 2)), 0, 1);

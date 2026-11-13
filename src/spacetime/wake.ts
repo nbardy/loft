@@ -182,11 +182,12 @@ function wakeTable(name: string, slices: readonly Skeleton[], joints: number, dt
  * Foam on the water where the body crossed the surface over the last `over` seconds, fading with age. Read from the
  * body at earlier times, never from state kept between frames.
  *
- * The law. Past slice k (1 to `samples`, dt = over / samples) is the body's skeleton at time - k dt, every third station.
- * Where a joint's sphere (radius r, centre h above the sea at that slice's time) cuts the water its waterline is a disc of
- * radius sqrt(r^2 - h^2); consecutive joints make a tapered capsule, widened by `spread` times its age. A pixel is foamed
- * by the youngest slice that covers it and nowhere a younger one does, so the trail fades with age and foam never stacks:
- * lace from value noise against a threshold that rises with age, and a brighter rim where the waterline was.
+ * The law. Past slice k (1 to `samples`, dt = over / samples) is the body's skeleton at time - k dt, every third
+ * station. Where a joint's sphere (radius r, centre h above the sea at that slice's time) cuts the water its waterline
+ * is a disc of radius sqrt(r^2 - h^2); consecutive joints make a tapered capsule, widened by `spread` times its age. A
+ * pixel is foamed by the youngest slice that covers it and nowhere a younger one does, so the trail fades with age and
+ * foam never stacks: lace from value noise against a threshold that rises with age, and a brighter rim where the
+ * waterline was.
  *
  * Parameters: `over`, `samples` (default 10), `spread` (default 0.35 units a second) and `colour` are fixed; the body
  * is any `Body` and moves as it moves.

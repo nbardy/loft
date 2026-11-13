@@ -41,7 +41,7 @@ export type Dart = {
 };
 
 /**
- * Raised by `dart` when its timing cannot run: snap not between 0 and `every`, a period shorter than one hold, or an
+ * Raised by `dart` when its timing would not run: snap not between 0 and `every`, a period shorter than one hold, or an
  * `uneven` that would stop or reverse the warped clock (the message gives the largest that works). It carries only
  * the message.
  */
@@ -52,8 +52,8 @@ export class RestlessError extends Error {}
  * returns which hold it is in and which it came from, not a value: the caller says what each hold means (a place to
  * look, a pose, a colour), so two parts can share one rhythm or each have their own by the seed.
  *
- * The law. With n = max(2, round(period / every)) holds and m = max(1, round(n / 3.1)) turns of the warp per period, the
- * warped count is c = n t / period + uneven sin(2 pi m t / period + 1.7 seed). Hold k = floor(c) is `now` = k mod n,
+ * The law. With n = max(2, round(period / every)) holds and m = max(1, round(n / 3.1)) turns of the warp per period,
+ * the warped count is c = n t / period + uneven sin(2 pi m t / period + 1.7 seed). Hold k = floor(c) is `now` = k mod n,
  * `before` = (k - 1) mod n, `since` = fract(c) period / n, and `arrive` = `overshot`(since / snap, past). Its rate
  * stays positive (checked), so holds come in order, their lengths vary smoothly around `every`, and the whole sequence
  * repeats exactly every `period`.
@@ -101,8 +101,9 @@ export const chosen = (hold: In<"f32">, seed: number): F => hash3(vec3(hold, see
 
 /**
  * A shake: two fast sines that never line up, in -1..1, so it shivers instead of humming. Scale it by a weight.
- * It is 0.6 sin(2 pi hz t + 2.1 seed) + 0.4 sin(2 pi 1.37 hz t + 3.3 seed + 1). It cannot loop in a chosen period
- * (1.37 is not a ratio of whole numbers; choose `hz` with that in mind) and cannot jerk: it is smooth at every instant.
+ * It is 0.6 sin(2 pi hz t + 2.1 seed) + 0.4 sin(2 pi 1.37 hz t + 3.3 seed + 1). It cannot loop in a short chosen
+ * period (the two rates come back into step only every 100 / hz seconds), and cannot jerk: it is smooth at every
+ * instant; `hz` and `seed` are fixed numbers.
  */
 export const tremor = (t: In<"f32">, hz: number, seed = 0): F =>
   add(mul(sin(add(mul(lift<"f32">(t), hz * TAU), seed * 2.1)), 0.6), mul(sin(add(mul(lift<"f32">(t), hz * 1.37 * TAU), seed * 3.3 + 1)), 0.4));

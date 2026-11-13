@@ -61,9 +61,11 @@ const NONE: Bend = [0, 0];
 /**
  * A stalk that bends by a pose: an eye stalk, a neck, a stem, an antenna, a tail.
  *
- * The shape and its law. The heading at every point is a turn away from the root's heading by the sphere's exponential
- * map of lean + bow (1 - (1 - m)^2) + crook m^sharp, and the spine is the integral of the heading, so the stalk keeps its
- * length in every pose and is parametrised by arc length.
+ * The shape and its law. Each bend is two angles (toward `a`, toward `b`). The heading at m in [0, 1] is the root's
+ * heading turned by the sphere's exponential map of lean + bow (1 - (1 - m)^2) + crook m^sharp (a turn by that
+ * vector's size toward its direction), and the spine is root + length times the integral of the heading from 0 to m,
+ * so the stalk keeps its length in every pose and is parametrised by arc length. The lean turns it all from the root,
+ * the bow mostly near the root, the crook mostly near the tip.
  *
  * Parameters: root, frame, length and the three bends are expressions (they move; read each on its own clock and the
  * stalk whips); `sharp` is a fixed number.

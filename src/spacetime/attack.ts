@@ -165,8 +165,8 @@ export type Carry =
   | { readonly kind: "path"; readonly offset: (u: F) => P3 };
 
 /**
- * A carry as written: `arc` is lifted `lift` (default 0) on an arch along `up` (default +y) and set down at `to`, slow in
- * and slow out (`to` the place taken pins it there); `path` is dragged along `offset(u)` from the place taken (a
+ * A carry as written: `arc` is lifted `lift` (default 0) on an arch along `up` (default +y) and set down at `to`, slow
+ * in and slow out (`to` the place taken pins it there); `path` is dragged along `offset(u)` from the place taken (a
  * whirlpool's spiral; `offset(0)` must be 0, or the thing jumps at the arming time).
  */
 export type CarrySpec =
@@ -217,9 +217,9 @@ type HoldSpec = { readonly seconds: number; readonly at: In<"vec3">; readonly ra
  * thrown ending takes the hold's last `stroke` seconds for the throw, so the carry runs over the rest. The readouts
  * (`attack.held`, `thing`, `crush`, `squeezed`) are these closed forms: the game and the art read the same numbers.
  *
- * Parameters: `at`, `radius` and an arc carry's `to`, `lift` and `up` take expressions or host inputs (a game says where
- * the thing is); a path carry is any function of u; `seconds`, `squeeze` and `pulses` are fixed numbers (the schedule and
- * the period check need the hold's length).
+ * Parameters: `at`, `radius` and an arc carry's `to`, `lift` and `up` take expressions or host inputs (a game says
+ * where the thing is); a path carry is any function of u; `seconds`, `squeeze` and `pulses` are fixed numbers (the
+ * schedule and the period check need the hold's length).
  *
  * What it cannot do, because of the law:
  * - hold for a length decided at run time, or let go early: the hold ends at T + seconds, always.
@@ -321,12 +321,13 @@ export const STILL: Still = { kind: "still" };
  * - exist on a ground that is not a sea: it is a sea deformation.
  * - steepen, break, disperse, reflect or be blocked: one speed, one shape, nothing in its way.
  *
- * Going past it: `ringWave` is the same wave with its own centre, radius and clock (`since`), so a ring can start where a
- * thrown thing lands or at any instant of yours. Relatives, each by changing one fact:
+ * Going past it: `ringWave` is the same wave with its own centre, radius and clock (`since`), so a ring can start where
+ * a thrown thing lands or at any instant of yours.
+ * Relatives, each by changing one fact:
  * - a wave from a lane: distance from a segment instead of a centre; near the segment the crest barely falls (a plane
  *   wave), far away it falls as 1 / sqrt(r). A `SeaDeform` of your own reading `hitSdf` of a capsule.
- * - ripples that sort themselves: several pulses, each running at its wavelength's deep-water speed sqrt(g lambda / 2 pi),
- *   so the long ones outrun the short.
+ * - ripples that sort themselves: several pulses, each running at its wavelength's deep-water speed sqrt(g lambda / 2
+ *   pi), so the long ones outrun the short.
  * - a bore that slows as it falls: speed sqrt(g (depth + a)) with a the crest's height at r; the front's time is then an
  *   integral of 1 / speed over r, tabulated once.
  */
@@ -473,10 +474,11 @@ function armingOf(arm: In<"f32"> | Arming): Arming {
 /**
  * An attack as `attack` builds it: its hit shape, schedule, warning, timing, effect and aftermath, and the closed forms
  * every reader shares: `armAt(t)` and `arm` (the arming time of the cycle), `first` (what checks measure at),
- * `envelope(t)` (posture p and strike progress q), `beats(t, settle)` and `span`. A `BodyAttack` also poses a body part; a
- * grip attack poses a gripper (`grip`); a hold's readouts (`held`, `thing`, `crush`, `squeezed`) exist only on attacks
- * whose effect is a hold (their `this` says so, so asking an instant is a type error, not a run-time one); a throw's
- * (`toss`, `flight`) only on holds that end thrown; a ring's (`wave`, `pushed`, `arrives`) only on a ring aftermath.
+ * `envelope(t)` (posture p and strike progress q), `beats(t, settle)` and `span`. A `BodyAttack` also poses a body
+ * part; a grip attack poses a gripper (`grip`); a hold's readouts (`held`, `thing`, `crush`, `squeezed`) exist only on
+ * attacks whose effect is a hold (their `this` says so, so asking an instant is a type error, not a run-time one); a
+ * throw's (`toss`, `flight`) only on holds that end thrown; a ring's (`wave`, `pushed`, `arrives`) only on a ring
+ * aftermath.
  */
 export class Attack<M extends Motion = Motion, E extends Effect = Effect, W extends Aftermath = Aftermath> {
   readonly name: string;
@@ -617,8 +619,8 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
   /** 1 while the thing is held (from the arming time for the hold's seconds), else 0: the game's "this is held". */
   held(this: Attack<Motion, Hold>, t: In<"f32"> = time): F { return this.held_(t).held; }
   /**
-   * The held thing's middle: where it was taken until then, carried during the hold, and after it where its ending
-   * puts it (set down: where it was let go; thrown: along its flight, then where it landed, skidding and heaving to rest).
+   * The held thing's middle: where it was taken until then, carried during the hold, and after it where its ending puts
+   * it (set down: where it was let go; thrown: along its flight, then where it landed, skidding and heaving to rest).
    */
   thing(this: Attack<Motion, Hold>, t: In<"f32"> = time): P3 { return this.held_(t).thing; }
   /** Its width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak of each squeeze. */
@@ -767,8 +769,8 @@ export class BodyAttack<W extends Aftermath = Aftermath> extends Attack<BodyMoti
  *
  * Parameters: `arm` (a time, `once`, `every`) and `warn` take expressions or host inputs, and so does every field of
  * the hit shape: a game moves them and the pose, the marker and the checks follow. `timing`, the motion's own numbers
- * (`reach`, `lead`, `height`, `coil`, `rise`, `inset`, `lean`) and an `every`'s period are fixed numbers: they select the
- * closed forms.
+ * (`reach`, `lead`, `height`, `coil`, `rise`, `inset`, `lean`) and an `every`'s period are fixed numbers: they select
+ * the closed forms.
  *
  * What it cannot do, because of the law:
  * - aim at anything but its hit shape: the target is not read while posing, so a body that crosses the target on the way
@@ -901,7 +903,8 @@ export type Animated = Creature & {
  * What it cannot do, because of the law:
  * - pose more than one spine: every attack mixes the one spine `build` receives. A second limb with its own spine is a
  *   second `animate` (or `BodyAttack.pose` on that spine).
- * - mix attacks: they are applied in order, so where two stretches overlap the later one's rest is the earlier one's pose.
+ * - mix attacks: they are applied in order, so where two stretches overlap the later one's rest is the earlier one's
+ *   pose.
  * - bind an attack to a part `build` does not return, or two attacks of one name (both refused).
  *
  * Going past it: `BodyAttack.pose(rest)` is one step down; apply attacks to any spine in any order and build what you

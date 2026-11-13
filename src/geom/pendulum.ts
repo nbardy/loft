@@ -103,16 +103,20 @@ export type Pendulum = {
 /**
  * A hanging thing's swing: a bob on an arm under gravity, lightly damped, hung from a pivot something else moves.
  *
- * The shape and its law. The small-swing damped driven oscillator above: psi'' + 2 zeta w0 psi' + w0^2 psi = -x_p'' / L.
- * Its answer is linear in the drives, so `answer(t, drives)` sums the closed-form answer to each: a sway's steady state,
- * a jolt's ringing. How fast it swings follows from length and gravity; how far from how hard the pivot moves.
+ * The law. The angle from plumb psi obeys the small-swing damped driven oscillator
+ * psi'' + 2 zeta w0 psi' + w0^2 psi = -x_p'' / L, with w0 = sqrt(gravity / length), zeta the damping and x_p the
+ * pivot's displacement. It is linear in the drives, so `answer(t, drives)` sums the closed-form answer to each: a
+ * sway's steady state, a jolt's ringing. How fast it swings follows from length and gravity; how far from how hard
+ * the pivot moves. No state: every answer is a function of the clock.
  *
- * Parameters: `length`, `gravity`, `damping` are fixed numbers (they decide the natural frequency on the CPU); a sway's
- * amplitude and a jolt's time and speed are expressions, so the drives can come from any clock.
+ * Parameters: `length`, `gravity`, `damping` are fixed numbers (they decide the natural frequency on the CPU); a
+ * sway's amplitude and a jolt's time and speed are expressions, so the drives can come from any clock.
  *
  * What it cannot do, because of the law:
- * - large swings: the law is linearised, so a swing past about half a radian is too regular and never goes over the top.
- * - a pivot path that is neither a steady sway nor a sudden change of speed (a sway that starts, a smooth push).
+ * - large swings: the law is linearised, so a swing past about half a radian is too regular and never goes over the
+ *   top.
+ * - a pivot path that is neither a steady sway nor a list of sudden changes of speed: a sway that starts or stops,
+ *   or a smooth push, except as many small jolts.
  * - more than one degree of freedom: no swing in two planes at once (a conical swing), no double pendulum, no chain.
  * - a bob that hits something, or a length that changes.
  *

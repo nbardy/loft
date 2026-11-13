@@ -76,9 +76,10 @@ class Smear implements Drawable {
  * Fading copies of the attack's striking part over the last `over` seconds, shown while it moves fast.
  *
  * The law. With dt = over / samples, copy k (1 to `samples`) is the part's stretch of its body posed at time - k dt,
- * lit by the scene's style with the part's own paint, back faces dropped (one layer of translucency each). Its opacity is
- * opacity (1 - (k - 1) / samples) times smoothstep(speed[0], speed[1], v), v the speed of the part's tip between copy k
- * and copy k - 1 (the nearest skeleton station to `tip`). Oldest is drawn first, so younger copies lie over older ones.
+ * lit by the scene's style with the part's own paint, back faces dropped (one layer of translucency each). Its opacity
+ * is opacity (1 - (k - 1) / samples) times smoothstep(speed[0], speed[1], v), v the speed of the part's tip between
+ * copy k and copy k - 1 (the nearest skeleton station to `tip`). Oldest is drawn first, so younger copies lie over
+ * older ones.
  *
  * Parameters: `over`, `samples`, `speed` (default [5, 11] world units a second) and `opacity` (default 0.5) are fixed
  * numbers; the part moves by its attack.
