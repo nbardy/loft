@@ -108,7 +108,9 @@ surface's level of detail from the previous frame. So: one scene per process, ti
 - **Styles**: `toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`, or a `Style` value the scene composes
   from the exported parts. `--style <name>` redraws any scene in another style without editing it, and `--light <name>`
   relights a style that has named lightings: useful for a judge that scores form apart from look.
-- **Not there**: reflections and bounced light (it is not a path tracer), more than one sun, imported meshes, physics.
+- **Not there**: mirror reflections on bodies and bounced light (it is not a path tracer; water can mirror what stands
+  on it through the `reflection` post pass that `biolume` and `neon` use), any light on bodies but the one sun (soft
+  media take point flashes), imported meshes (meshes come out, through `loft bake`), physics.
 
 ## What we know is weak
 
