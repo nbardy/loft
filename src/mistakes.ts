@@ -58,7 +58,14 @@ const isDrawable = (t: unknown): boolean =>
   typeof t === "object" && t !== null && typeof (t as { draws?: unknown }).draws === "function" && typeof (t as { name?: unknown }).name === "string";
 
 /** scene(): things, the sun and the cameras (the names are checked where the scene adds its own things). */
-export function refuseScene(spec: { readonly things?: unknown; readonly sun?: unknown; readonly cameras?: unknown }): void {
+export function refuseScene(spec: { readonly ground?: unknown; readonly things?: unknown; readonly sun?: unknown; readonly cameras?: unknown }): void {
+  const ground = spec.ground as { readonly kind?: unknown } | undefined;
+  if (!(typeof ground === "object" && ground !== null && (ground.kind === "sea" || ground.kind === "plane" || ground.kind === "nothing"))) {
+    // `sea:` was the key before 2026-11 (scenes and docs written then use it): name it when it is what was given.
+    const oldKey = "sea" in (spec as object);
+    throw new SceneError("scene()", oldKey ? "sea: ... (the old key) and no ground" : `ground: ${shown(spec.ground)}`, "ground: a sea({ swell }), plane or nothing",
+      oldKey ? "rename the key: ground: sea({ swell: [...] })" : "ground: plane (flat, y = 0), ground: nothing, or ground: sea({ swell: [...] })");
+  }
   if (!Array.isArray(spec.things)) {
     throw new SceneError("scene()", `things: ${shown(spec.things)}`, "things: an array of drawables", `things: [draw.surface("name", shape, { paint, grid, sides: "one", outline: "hull" })]`);
   }

@@ -38,8 +38,9 @@ export function siteOf(stack: string | undefined): string | undefined {
 
 /** The library's typed errors that are the scene's fault, loaded only when an error needs classifying. */
 async function isLibraryRefusal(e: Error): Promise<boolean> {
-  const [lib, host] = await Promise.all([import("../index.ts"), import("../host/host.ts")]);
-  const kinds = [lib.FieldSafetyError, lib.TableBudgetError, lib.BendError, lib.PendulumError, lib.RestlessError, lib.ExpressionError, lib.StruckError, lib.RoutineError, host.NotDataError];
+  const [lib, host, field] = await Promise.all([import("../index.ts"), import("../host/host.ts"), import("../draw/field.ts")]);
+  // DerivativeError is left out on purpose: a missing derivative rule is Loft's gap, not the scene's (internal).
+  const kinds = [lib.FieldSafetyError, field.FieldScheduleError, lib.GroundError, lib.TableBudgetError, lib.BendError, lib.PendulumError, lib.RestlessError, lib.ExpressionError, lib.StruckError, lib.RoutineError, host.NotDataError];
   return kinds.some((k) => e instanceof k);
 }
 
