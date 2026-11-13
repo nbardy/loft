@@ -2,9 +2,10 @@
 // really takes the thing its hold owns.
 import { expect, test } from "bun:test";
 import {
-  add, attack, compileJs, compileScene, emote, variable, gripReaches, hit, hold, hosted, input, lift, mul, pose, Probe, releasesAt, scene, sea, STAND_IN, strand, throwLands,
+  add, attack, compileJs, emote, variable, gripReaches, hit, hold, hosted, input, lift, mul, pose, Probe, releasesAt, scene, sea, STAND_IN, strand, throwLands,
   thrown, tolerance, toon, vec2, vec3, type F, type Placer,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 
 const R = 0.12; // the fingers' radius
 

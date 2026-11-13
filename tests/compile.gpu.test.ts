@@ -6,9 +6,10 @@ import serpent from "../examples/serpent.ts";
 import shell from "../examples/shell.ts";
 import scales from "../examples/serpent_scales.ts";
 import {
-  add, compileScene, cos, draw, keys, lift, mul, param, place, points, scene, sea, sin, spacing, strand, surface, through, time,
+  add, cos, draw, keys, lift, mul, param, place, points, scene, sea, sin, spacing, strand, surface, through, time,
   toon, variable, vec3, wave, framed, type Compiled, type Drawable, type F, type Surface, type TableSource,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { FRAGMENT, gpu, layouts, probe, relErr, stateAt, VERTEX } from "./compile.harness.ts";
 
 // Scenes: the serpent, the two map demonstrations (a shell written as a map, the body with folded scales) and a stroke.

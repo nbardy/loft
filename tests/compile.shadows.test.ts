@@ -1,6 +1,7 @@
 // Cast shadows derived from the skeleton (src/draw/shadows.ts), checked on a body whose shadow is known.
 import { expect, test } from "bun:test";
-import { bound, compileScene, draw, length, mul, points, scene, sea, strand, sub, through, toon, vec3 } from "../src/index.ts";
+import { bound, draw, length, mul, points, scene, sea, strand, sub, through, toon, vec3 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { stateAt } from "./compile.harness.ts";
 
 /** The valid capsules of a shadow table, in order: 12 floats each (lane 2's z is the valid flag). */

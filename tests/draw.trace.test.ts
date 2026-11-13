@@ -7,9 +7,10 @@ import nest from "../examples/nest.ts";
 import pearls from "../examples/pearls.ts";
 import coralList from "../examples/coral_list.ts";
 import {
-  add, bound, compileJs, compileScene, cos, draw, FieldSafetyError, impostors, min, mul, scene, sea, sin, spacing, sub, surface, toon, variable, vec3,
+  add, bound, compileJs, cos, draw, FieldSafetyError, impostors, min, mul, scene, sea, sin, spacing, sub, surface, toon, variable, vec3,
   f, type F, type ImpostorShape, type Scene,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { cameraMatrices, type CameraMatrices, type Vec3 } from "../src/host/camera.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost, type GpuHost } from "../src/host/index.ts";

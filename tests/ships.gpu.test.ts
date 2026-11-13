@@ -5,7 +5,9 @@ import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact } f
 import brig from "../examples/brig.ts";
 import fleet from "../examples/fleet.ts";
 import maelstrom from "../examples/maelstrom.ts";
-import { compileJs, compileScene, emitWgsl, scene, sea, toon, variable, whirlpool } from "../src/index.ts";
+import { compileJs, scene, sea, toon, variable, whirlpool } from "../src/index.ts";
+import { emitWgsl } from "../src/expr.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { FRAGMENT, gpu, layouts, probe, stateAt, VERTEX } from "./compile.harness.ts";
 
 async function pipelineErrors(a: Artefact): Promise<string[]> {

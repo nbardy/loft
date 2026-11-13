@@ -5,9 +5,10 @@ import { expect, test } from "bun:test";
 import strike, { checks, strikes } from "../examples/strike.ts";
 import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
 import {
-  attack, compile, compileScene, f, fetch, hit, hitSdf, landsInside, Probe, runChecks, scene, sea, staysClear, stopsAt, sub, telegraph, time, toon, vec2,
+  attack, compile, f, fetch, hit, hitSdf, landsInside, Probe, runChecks, scene, sea, staysClear, stopsAt, sub, telegraph, time, toon, vec2,
   type Check, type Hit, type Target,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { cameraMatrices, createHost, project } from "../src/host/index.ts";
 import { FRAGMENT, gpu, layouts, VERTEX } from "./compile.harness.ts";
 

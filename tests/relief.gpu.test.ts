@@ -2,7 +2,7 @@
 // contract's layouts (Dawn / bun-webgpu), including the relief's fragment-stage depth and its march loops.
 import { expect, test } from "bun:test";
 import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL } from "../src/artefact.ts";
-import { compileScene } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import serpentRelief from "../examples/serpent_relief.ts";
 import shellRelief from "../examples/shell_relief.ts";
 import { FRAGMENT, gpu, layouts, VERTEX } from "./compile.harness.ts";

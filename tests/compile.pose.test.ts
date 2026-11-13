@@ -2,9 +2,10 @@
 import { expect, test } from "bun:test";
 import serpent from "../examples/serpent.ts";
 import {
-  add, compile, compileScene, input, keys, mul, on, place, scene, sea, sin, strand, TableBudgetError, through, time, toon, vec3,
+  add, compile, input, keys, mul, on, place, scene, sea, sin, strand, TableBudgetError, through, time, toon, vec3,
   type Drawable, type TableSource,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { STATION_VEC4S, v3, type V3 } from "../src/map/transport.ts";
 import { stateAt } from "./compile.harness.ts";
 

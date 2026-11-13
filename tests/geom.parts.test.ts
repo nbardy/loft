@@ -2,9 +2,10 @@
 // checked on the CPU backend over sweeps of inputs.
 import { expect, test } from "bun:test";
 import {
-  compileJs, compileScene, course, fan, gait, chain, mirror, scene, sea, coil, sin, strand, through, time, toon, variable, vec3, mul, add,
+  compileJs, course, fan, gait, chain, mirror, scene, sea, coil, sin, strand, through, time, toon, variable, vec3, mul, add,
   catenary, f, mapNormal, type Expr, type V,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { stateAt } from "./compile.harness.ts";
 import { v3, type V3 } from "../src/map/transport.ts";
 

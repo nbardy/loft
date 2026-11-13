@@ -3,7 +3,8 @@
 // branch at the Simpson switch or a tail computed as a difference of nearly equal numbers shows here as a wrong
 // optical depth, which on screen is only "the cloud looks a bit off".
 import { expect, test } from "bun:test";
-import { compileJs, compileScene, draw, scene, sea, toon, variable, vec3, type Expr } from "../src/index.ts";
+import { compileJs, draw, scene, sea, toon, variable, vec3, type Expr } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { gaussRay, gaussTail, GAUSS_WGSL } from "../src/soft/gauss.ts";
 import { accessMedium, bank, blob, layer, medium, tauFunction, type Medium } from "../src/soft/medium.ts";
 import { probe, stateAt } from "./compile.harness.ts";
