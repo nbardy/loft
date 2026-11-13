@@ -15,7 +15,7 @@ export type CloudSpec = {
   /**
    * Half-width as a share of size, against height as a share (0 base, 1 top): keys [height, share], piecewise linear,
    * or a function of (height, bearing in radians round the axis), so the mass need not be round. A cumulus bulges in
-   * the middle; a thunderhead is a narrow tower under a wide anvil.
+   * the middle; a storm cloud is a narrow tower under a wide anvil.
    */
   readonly profile: readonly (readonly [number, number])[] | ((h: number, bearing: number) => number);
   /** Number of puffs. Cost per pixel grows with it (see DESIGN.md 8). */
@@ -74,7 +74,7 @@ const TIERS = [
 ] as const;
 
 /**
- * A billowing mass of puffs: a cumulus, a thunderhead, a bank of smoke or steam.
+ * A billowing mass of puffs: a cumulus, a tower under an anvil, a bank of smoke or steam.
  *
  * The shape and its law. `blobs` Gaussian puffs fill a shape of revolution about a vertical axis: at height h (a share
  * of `size`'s height) the mass reaches `profile(h)` of its half-width. The puffs come in three tiers, a few big ones in
@@ -95,8 +95,8 @@ const TIERS = [
  * Going past it is one step down: `billows(places, motion)` boils and drifts any list of puffs, each a place, radii and
  * a density, so the shape is whatever produces the list. Relatives:
  * - a smoke ring: places round a circle in a vertical plane (a torus of puffs), drifting along its axis.
- * - a trail or plume: places along any curve (a ship's smoke, a whale's spout bent by wind), radii growing along it.
- * - puffs on a surface: places at points of a body (steam off a back, spray on a crest).
+ * - a trail or plume: places along any curve (smoke from a chimney bent by wind), radii growing along it.
+ * - puffs on a surface: places at points of a body (steam rising off it).
  * - a different law entirely: `blob` is one puff and `medium` integrates any list of them; layers and banks
  *   (`layer`, `bank`) are the flat relatives.
  */
@@ -171,26 +171,4 @@ export function billows(places: readonly PuffPlace[], motion: BillowSpec): Cloud
     }
   });
   return { puffs, bounds: { min: lo as unknown as [number, number, number], max: hi as unknown as [number, number, number] } };
-}
-
-export type ThunderheadSpec = {
-  /** Centre of the base. */
-  readonly at: readonly [number, number, number];
-  /** From base to the top of the anvil. */
-  readonly height: number;
-  /** Width of the anvil. */
-  readonly width: number;
-  readonly blobs: number;
-  readonly seed: number;
-  readonly drift: readonly [number, number, number];
-  readonly seconds: number;
-};
-
-/** A thunderhead: a broad dark-based tower under a wide anvil, boiling slowly. */
-export function thunderhead(t: ThunderheadSpec): Cloud {
-  return cloud({
-    at: t.at, size: [t.width, t.height, t.width * 0.8],
-    profile: [[0, 0.5], [0.12, 0.6], [0.45, 0.44], [0.7, 0.42], [0.84, 0.72], [0.93, 1.0], [1, 0.8]],
-    blobs: t.blobs, turbulence: 0.35, billow: 0.12, drift: t.drift, density: 0.9, colour: [1, 1, 1], seed: t.seed, seconds: t.seconds,
-  });
 }

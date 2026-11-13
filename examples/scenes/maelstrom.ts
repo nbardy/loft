@@ -6,9 +6,10 @@
 // The serpent is authored in world coordinates (not wound through the whirlpool's chart, which stretches a body into
 // a ribbon along the spiral): its spine is a helix whose phase turns slowly with the water and whose neck sways.
 import {
-  add, cos, draw, floor, mod, mul, place, points, scene, sea, ship, sin, strand, through, time, vec3, whirlpool, woodblock,
+  add, cos, draw, floor, mod, mul, place, points, scene, sea, sin, strand, through, time, vec3, whirlpool, woodblock,
   type F, type P3,
 } from "../../src/index.ts";
+import { ship } from "../recipes/ship.ts";
 import { brig, sloop } from "./lib/fleet.ts";
 import { wyrm } from "./lib/wyrm.ts";
 

@@ -4,9 +4,10 @@
 // tentacle's length, so it takes up another half turn each time it tightens. The largest claw takes a whole ship (hull,
 // mast, sails, rigging): the ship is placed with the grab's squeezed size across its beam.
 import {
-  add, draw, fingerAngle, floor, grab, lt, mix, mod, mul, pick, posed, scene, sea, select, shifted, ship, sin, size, strand, sub, through, time, toon, turn, vec3, wrap, cos,
+  add, draw, fingerAngle, floor, grab, lt, mix, mod, mul, pick, posed, scene, sea, select, shifted, sin, size, strand, sub, through, time, toon, turn, vec3, wrap, cos,
   type Expr, type Grab,
 } from "../src/index.ts";
+import { ship } from "./recipes/ship.ts";
 import { sloop } from "./scenes/lib/fleet.ts";
 
 type F = Expr<"f32">;

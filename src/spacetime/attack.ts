@@ -34,8 +34,7 @@ import { arc, slowInOut, type Beat } from "../geom/lively.ts";
 import type { Drawable } from "../compile/context.ts";
 import type { Body } from "../map/sweep.ts";
 import type { Strand } from "../geom/strand.ts";
-import type { Hull } from "../geom/hull.ts";
-import type { Frame } from "../map/types.ts";
+import type { Frame, Surface } from "../map/types.ts";
 import { hitInradius, laneOf, polar, type Arc, type Capsule, type Disc, type Hit } from "./hit.ts";
 import { rearLanding, rearSpine, type RearSpec } from "./rear.ts";
 
@@ -45,15 +44,20 @@ type V2 = Expr<"vec2">;
 export type Spine = (m: F) => P3;
 
 /**
- * What an attack must not pass into: a disc on the water (a vertical cylinder), a body's skeleton, or a ship's hull in
- * the frame it is placed in (its signed distance, src/geom/hull_distance.ts; `Ship.target`).
+ * What an attack must not pass into: a disc on the ground (a vertical cylinder), a column, a body's skeleton, or a
+ * closed skin in the frame it is placed in.
  */
 export type Target =
   | { readonly kind: "disc"; readonly centre: V2; readonly radius: F }
   /** A disc that stands only up to `top` (world y): what a thrown thing may pass over, as a crab's back. */
   | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F }
   | { readonly kind: "body"; readonly body: Body }
-  | { readonly kind: "hull"; readonly hull: Hull; readonly frame: Frame };
+  /**
+   * The solid a lofted surface closes, measured by its signed distance (src/geom/skin_distance.ts): u runs along the
+   * body, v round each section from one edge of its opening to the other; each section is closed by the chord across
+   * its opening and both end sections are capped flat. `frame` places the skin's own coordinates in the world.
+   */
+  | { readonly kind: "skin"; readonly skin: Surface; readonly frame: Frame };
 
 /** A stretch of a body that strikes: m from `from` to `to`, its striking tip at m = `tip`. */
 export type Part = { readonly name: string; readonly body: Strand; readonly from: number; readonly to: number; readonly tip: number };

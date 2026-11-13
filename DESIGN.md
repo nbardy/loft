@@ -839,7 +839,7 @@ Where the plan met the code:
   2.1-4.0 -> 1.5-2.2 ms (0.5-0.7 without). Tests: `tests/spacetime.slices.test.ts`.
 - **A ship is its hull** (polish pass, 2026-11-11). `Target` has a third kind, `{ kind: "hull", hull, frame }`
   (`Ship.target(chart)`, with `Ship.afloatChart` the chart `afloat` uses): checks move the chain into the ship's frame
-  and measure the hull's signed distance (`src/geom/hull_distance.ts`: the skin sampled 64 x 65, closed across the rail
+  and measure the hull's signed distance (`src/geom/skin_distance.ts`, a `skin` target: the skin sampled 64 x 65, closed across the rail
   and at both ends, nearest strips first with box pruning, inside by the parity of an upward ray; within 1e-3 of the
   closed-form skin, `tests/hull.distance.test.ts`), at points along each capsule half its smaller radius apart, skipping
   any whose distance to the hull's box cannot beat the best. `examples/strike.ts` now strikes two cutters built by
@@ -862,7 +862,7 @@ Where the plan met the code:
 
 Library functions on the map algebra; examples `examples/brig.ts`, `examples/fleet.ts`, `examples/maelstrom.ts`.
 
-### 8.1 A hull from its lines (`src/geom/hull.ts`)
+### 8.1 A hull from its lines (now the recipe `examples/recipes/hull.ts`)
 
 `hull({ length, beam, depth, freeboard, sheer: [aft, fore], castle: [aft, fore], entry, run, widest, fullness, deadrise,
 tumblehome, transom, rake, stations, bulwark })` returns a `Hull`: `skin`, `deck`, `bulwarks` (inner faces), `transom`
@@ -876,7 +876,7 @@ toward both ends; the lower stern sections pinch to the post (a wineglass stern)
 breadth, neighbouring stations differed by orders of magnitude at the keel and the loft's overshoot folded the skin
 there. Strakes, wale, gun ports, trim band and boot-top are paint in the skin's (u, v), from the same closed-form lines.
 
-### 8.2 A ship (`src/geom/ship.ts`, `src/geom/lines.ts`)
+### 8.2 A ship (now the recipe `examples/recipes/ship.ts`; `src/geom/lines.ts`)
 
 `ship(spec)` takes the hull's numbers plus `name, masts (1..3), mastHeight, mastRake, tiers (square sails per mast; 0 a
 fore-and-aft rig), yard, spanker, jibs, bowsprit, billow, flutter, heel, ports, colours { hull, bottom, wale, trim, deck,

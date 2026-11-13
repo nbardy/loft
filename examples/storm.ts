@@ -6,9 +6,10 @@
 
 import serpent from "./serpent.ts";
 import {
-  bank, bolt, boltFlash, draw, flare, glows, layer, medium, rain, scene, sea, sheetFlash, skyFlash, splashes, thunderhead,
+  bank, bolt, boltFlash, draw, flare, glows, layer, medium, rain, scene, sea, sheetFlash, skyFlash, splashes,
   toon, unionBox, afterglow, blob, lt, max, mul, select, type Drawable,
 } from "../src/index.ts";
+import { thunderhead } from "./recipes/thunderhead.ts";
 
 const S = {
   base: 10.5, height: 30, width: 46, blobs: 96,

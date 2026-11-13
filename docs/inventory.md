@@ -65,7 +65,8 @@ All **library**.
 | Chain (was limb: two or three segments by closed-form inverse kinematics) | `src/geom/limb.ts` | library |
 | Coil (was shell), spiral tube (was horn), whorl (one family on a logarithmic spiral) | `src/geom/spiral.ts` | library |
 | Symmetry: mirror, array, reflect | `src/geom/symmetry.ts` | library |
-| Hull from a lines plan; a sailing ship from named numbers; rigging lines | `src/geom/hull.ts`, `ship.ts`, `lines.ts`, `hull_distance.ts` | library |
+| Hull from a lines plan; a sailing ship from named numbers | `examples/recipes/hull.ts`, `ship.ts` | recipe |
+| Ropes; the signed distance of a closed skin (an attack's `skin` target) | `src/geom/lines.ts`, `skin_distance.ts` | library |
 | Sea with swells; whirlpool; a body afloat | `src/geom/sea.ts`, `whirlpool.ts`, `afloat.ts` | library |
 | Distance functions (2D, 3D), folds, similarity folds, iterated folds, noise | `src/lib/` | library |
 | Height layers, sculpt tables, displacement | `src/relief/` | library |
@@ -233,7 +234,7 @@ Old names stay as one-line aliases until integration renames the callers.
 What changed from the plan when built: `hull` got no new code, because the general mechanism (`loft`) already existed
 in the map algebra and the hull's skin is that loft with u and v swapped; `ship` was commented, not opened, and is
 recommended for the examples. `coilPlan` takes an `aspect` (the plain-number twin knows only elliptical sections).
-`thunderhead` is a preset of `cloud` and by the naming rule belongs in the examples; left in place. The one-step-down
+`thunderhead` is a preset of `cloud` and by the naming rule belongs in the examples; moved to `examples/recipes/`. The one-step-down
 uses are in `examples/open.ts`.
 
 ### Names: geometry in the library, subjects in the examples (2026-11-12, the owner's rule)

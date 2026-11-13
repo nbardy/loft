@@ -9,7 +9,8 @@
 //  - `bands` (the Lamp, Thundermaw, the Tithe Fleet): the scene names SAIL to the rule (`print.bands({ named: { sail: SAIL } })`),
 //    so the cloth prints in SAIL's inks and every other paint by value.
 
-import { ship, type Rgb, type ShipColours } from "../../../src/index.ts";
+import { type Rgb } from "../../../src/index.ts";
+import { ship, type ShipColours } from "../../recipes/ship.ts";
 import { sloop } from "../../scenes/lib/fleet.ts";
 
 /** Hull length, world units: small beside every monster, and still a ship from the strategy camera. */

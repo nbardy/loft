@@ -1,30 +1,44 @@
-// A sailing ship from a couple of dozen named numbers (DESIGN.md 8.2). The hull is lofted from its lines (hull.ts); the
-// rest of the ship is library functions on the map algebra, all authored in the ship's own coordinates (x toward the
-// bow, y up, z to starboard, the waterline at y = 0) and placed rigidly:
+// Recipe: a sailing ship from named numbers. Copy this file and edit it; it imports only the public entry and the hull
+// recipe beside it.
 //
-//   masts, yards, bowsprit, boom and gaff    sweeps (strands), placed through the placement chart
-//   square sails, gaff sails, jibs          sheets between spars, bellied downwind and fluttering (a wave that
-//                                            travels across the cloth, stronger as the sail luffs)
-//   standing and running rigging            one stroke through every rope (lines.ts)
-//   pennant                                  a two-sided strip streaming downwind from the main truck
-//   rudder                                   a thickened sheet on the sternpost
-//   strakes, wale, gun ports, boot-top      paint in the hull's (u, v)
+// What it makes: a ship of one, two or three masts, square or fore-and-aft rigged, on the lines-plan hull of
+// `./hull.ts` (its lines are part of the spec). `masts` picks one of three fixed mast plans (positions along the hull
+// and heights); `tiers` square sails go up each mast on fixed yard heights, yards shortening by 0.76 a tier; a
+// fore-and-aft rig, or the aftermost mast of a square rig, carries a gaff sail; up to three jibs run from the bowsprit
+// to the foremast. The wind, given in the world, braces the yards, swings the booms to leeward and bellies every sail;
+// the cloth flutters by a wave travelling across it, stronger as a sail luffs. Team colour goes on the cloth.
 //
-// The wind is given in the world; each part reads it in the ship's frame, so yards brace round to it, gaff booms swing
-// to leeward and the sails belly to it wherever the water carries the ship. Team colour goes on the cloth.
+// From which library pieces, all authored in the ship's own coordinates (x toward the bow, y up, z to starboard, the
+// waterline at y = 0) and carried by one rigid chart:
+//
+//   masts, yards, bowsprit, boom and gaff    `strand` between two points (`spar` below), `place`d in the chart
+//   square sails, gaff sails, jibs          `surface`s between spars: flat between them plus a belly along their
+//                                            normal and a travelling flutter, `framedPose`d into the chart
+//   standing and running rigging            one `ropes` stroke through every rope
+//   pennant                                  a two-sided `surface` streaming downwind from the main truck
+//   rudder                                   `thicken` of a `sheet` on the sternpost
+//   on the water                             `afloat`: the water under the hull sets height, pitch and roll
+//
+// Parameters: `ShipSpec`, all numbers, fixed at build; the wind direction is fixed; placement (`afloat`, `placed`)
+// takes a chart, so the ship follows the water or a grip. `target` is the hull as a `skin` target for checks.
+//
+// What it cannot do:
+// - any rig but these: no lateen, junk, sprit or crab-claw sail, no fourth mast, no oars, no engine.
+// - masts anywhere but the plan's places; sails of any cut but quadrilateral square, gaff and triangular jib.
+// - a wind that changes, or a sail that is furled, torn or set aback by choice.
+//
+// What to change first when copying it: `PLANS` and `YARD_AT` (where masts stand and where yards hang), then the sail
+// point functions in `squareRig`, `gaffRig` and `jib`. A different vessel is a new composition of the same pieces:
+// a hull of your own lines (or `loft` through stations of your own), `strand`s for spars, `surface`s for sails,
+// `ropes` for rigging.
 
-import { abs, add, atan2, clamp, cos, cross, dot, evaluate, fract, lift, max, min, mix, mul, normalize, pow, sin, smoothstep, sub, time, TAU, vec3, type Expr, type In } from "../expr.ts";
-import { through } from "../curve.ts";
-import type { Drawable } from "../compile/context.ts";
-import { drawSurface, spacing } from "../draw/surface.ts";
-import { place, rotate, size as sizes, sized, sizeLengths } from "../map/chart.ts";
-import { atRest, framedPose, mapNormal, sheet, thicken } from "../map/surface.ts";
-import type { Chart, F, Frame, P3, Paint, Size, Skeleton, Surface } from "../map/types.ts";
-import { afloat, type Waters } from "./afloat.ts";
+import {
+  abs, add, afloat, atan2, clamp, cos, cross, dot, draw, evaluate, fract, framedPose, inFrame, lift, max, min, mix, mul, normalize, place, pow,
+  sheet, sin, size as sizes, sized, sizeLengths, smoothstep, spacing, strand, sub, surface, thicken, through, time, TAU, vec3, ropes as ropeStroke,
+  type Chart, type Drawable, type Expr, type F, type Frame, type In, type P3, type Paint, type Rope, type Size, type Skeleton, type Strand,
+  type Surface, type Target, type Waters,
+} from "../../src/index.ts";
 import { Hull, type HullSpec, type Rgb } from "./hull.ts";
-import type { Target } from "../spacetime/attack.ts";
-import { ropes as ropeStroke, type Rope } from "./lines.ts";
-import { strand, type Strand } from "./strand.ts";
 
 export type ShipColours = {
   readonly hull: Rgb; readonly bottom: Rgb; readonly wale: Rgb; readonly trim: Rgb; readonly deck: Rgb;
@@ -128,9 +142,9 @@ export class Ship {
     });
   }
 
-  /** The hull in `chart` as an attack's target: checks measure its signed distance (src/geom/hull_distance.ts). */
+  /** The hull in `chart` as an attack's target: checks measure contact with its skin's own shape. */
   target(chart: Chart): Target {
-    return { kind: "hull", hull: this.hull, frame: chart.frame(lift<"vec3">([0, 0, 0])) };
+    return { kind: "skin", skin: this.hull.skin, frame: chart.frame(lift<"vec3">([0, 0, 0])) };
   }
 
   /**
@@ -147,19 +161,19 @@ export class Ship {
     const W = vec3(wind[0] / l, 0, wind[1] / l);
     // The wind in the ship's frame, laid flat on its deck plane.
     const wl = normalize(vec3(dot(W, G.x), 0, dot(W, G.z)));
-    const toWorld = (p: P3): P3 => add(G.o, rotate(G, mul(p, k)));
+    const toWorld = (p: P3): P3 => add(G.o, inFrame(G, mul(p, k)));
     const surf = (s: Surface): Surface => framedPose(s, { frame: G, size });
     const lit = (name: string, s: Surface, paint: Paint, nu: number, nv: number, sides: "one" | "two") =>
-      drawSurface(name, surf(s), { paint, grid: { u: spacing.even(nu), v: spacing.even(nv) }, sides, outline: sides === "one" ? "hull" : "border" });
+      draw.surface(name, surf(s), { paint, grid: { u: spacing.even(nu), v: spacing.even(nv) }, sides, outline: sides === "one" ? "hull" : "border" });
     const out: Drawable[] = [];
 
     // ---- hull, deck, bulwarks, transom, rails, rudder -----------------------------------------------------------
-    out.push(drawSurface(`${n}_hull`, { ...surf(H.skin), skeleton: mapSkeleton(H.skeleton(), toWorld) }, {
+    out.push(draw.surface(`${n}_hull`, { ...surf(H.skin), skeleton: mapSkeleton(H.skeleton(), toWorld) }, {
       paint: H.paint({ ...C, ports: S.ports }), grid: { u: spacing.ends(120, 0.35), v: spacing.even(56) }, sides: "one", outline: "hull",
     }));
-    out.push(drawSurface(`${n}_deck`, surf(H.deck), { paint: deckPaint(C.deck), grid: { u: spacing.even(64), v: spacing.even(6) }, sides: "one", outline: "none" }));
-    H.bulwarks.forEach((b, i) => out.push(drawSurface(`${n}_bulwark${i}`, surf(b), { paint: () => mul(rgb(C.hull), 0.8), grid: { u: spacing.even(64), v: spacing.even(1) }, sides: "two", outline: "none" })));
-    out.push(drawSurface(`${n}_transom`, surf(H.transom), { paint: transomPaint(C), grid: { u: spacing.even(32), v: spacing.even(3) }, sides: "one", outline: "none" }));
+    out.push(draw.surface(`${n}_deck`, surf(H.deck), { paint: deckPaint(C.deck), grid: { u: spacing.even(64), v: spacing.even(6) }, sides: "one", outline: "none" }));
+    H.bulwarks.forEach((b, i) => out.push(draw.surface(`${n}_bulwark${i}`, surf(b), { paint: () => mul(rgb(C.hull), 0.8), grid: { u: spacing.even(64), v: spacing.even(1) }, sides: "two", outline: "none" })));
+    out.push(draw.surface(`${n}_transom`, surf(H.transom), { paint: transomPaint(C), grid: { u: spacing.even(32), v: spacing.even(3) }, sides: "one", outline: "none" }));
     const railGirth = 0.035 + 0.02 * L.freeboard;
     for (const [side, v] of [["S", 1], ["P", 0]] as const) {
       out.push(place(strand({
@@ -228,7 +242,7 @@ export class Ship {
     // ---- pennant, rigging -------------------------------------------------------------------------------------
     const main = this.plan.reduce((a, b) => (b.height > a.height ? b : a));
     const mainTop = mastTops[this.plan.indexOf(main)];
-    out.push(drawSurface(`${n}_pennant`, surf(pennant(mainTop, wl, 0.45 * S.mastHeight, 0.06 * S.mastHeight)), {
+    out.push(draw.surface(`${n}_pennant`, surf(pennant(mainTop, wl, 0.45 * S.mastHeight, 0.06 * S.mastHeight)), {
       paint: (u, v) => mix(rgb(C.team), mul(rgb(C.team), 0.7), smoothstep(0.45, 0.55, abs(sub(v, 0.5)).mul(2).add(u.mul(0.3)))),
       grid: { u: spacing.even(32), v: spacing.even(2) }, sides: "two", outline: "border",
     }));
@@ -272,7 +286,7 @@ export class Ship {
         const rise = mul(mul(abs(depth), mul(belly, v)), 0.25);
         return add(add(flat(u, v), mul(face, add(mul(belly, depth), flutter))), vec3(0, rise, 0));
       };
-      out.push(drawSurface(`${n}_sail${i}_${k}`, framedChart(point, chart, k3), {
+      out.push(draw.surface(`${n}_sail${i}_${k}`, framedChart(point, chart, k3), {
         paint: clothPaint(C, "square", k), grid: { u: spacing.even(22), v: spacing.even(14) }, sides: "two", outline: "border",
       }));
       if (k === 0) {
@@ -306,7 +320,7 @@ export class Ship {
       const flutter = mul(mul(fluttering(u, v, i * 3.1), mul(S.flutter, add(0.35, mul(sub(1, abs(fill)), 0.9)))), mul(u, powz(sin(mul(v, Math.PI)), 0.5)));
       return add(flat, mul(side, add(mul(belly, mul(fill, S.billow * boomLen)), flutter)));
     };
-    out.push(drawSurface(`${n}_gaffsail${i}`, framedChart(point, chart, k3), {
+    out.push(draw.surface(`${n}_gaffsail${i}`, framedChart(point, chart, k3), {
       paint: clothPaint(C, "gaff", i), grid: { u: spacing.even(22), v: spacing.even(16) }, sides: "two", outline: "border",
     }));
     ropes.push({ a: at(1), b: add(boom0, mul(aft, boomLen)), sag: 0.03 }, { a: at(0.97), b: add(throat, mul(gaffDir, gaffLen)), sag: 0.02 });
@@ -327,7 +341,7 @@ export class Ship {
       const flutter = mul(fluttering(u, v, 0.7), mul(S.flutter, mul(v, sub(1, v))));
       return add(flat, mul(n0, add(mul(mul(belly, fill), mul(width, S.billow * 1.6)), flutter)));
     };
-    return drawSurface(name, framedFrame(point, G, k3), { paint: clothPaint(C, "jib", 0), grid: { u: spacing.even(20), v: spacing.even(10) }, sides: "two", outline: "border" });
+    return draw.surface(name, framedFrame(point, G, k3), { paint: clothPaint(C, "jib", 0), grid: { u: spacing.even(20), v: spacing.even(10) }, sides: "two", outline: "border" });
   }
 
   /** The rudder: a thickened sheet hung on the sternpost, from the keel up to near the deck. */
@@ -359,7 +373,7 @@ function framedChart(point: (u: F, v: F) => P3, chart: Chart, k: P3): Surface {
   return framedFrame(point, chart.frame(lift<"vec3">([0, 0, 0])), k);
 }
 function framedFrame(point: (u: F, v: F) => P3, G: Frame, k: P3): Surface {
-  return framedPose({ point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } }, { frame: G, size: sizes.axes(k) });
+  return framedPose(surface(point, { u: ["free", "free"], v: "free" }), { frame: G, size: sizes.axes(k) });
 }
 
 /** A wave travelling across the cloth, -1..1: two crossing trains so it never looks like a single ripple. */
@@ -419,7 +433,7 @@ function pennant(top: P3, wl: P3, length: number, width: number): Surface {
     const along = add(add(root, mul(wl, mul(u, length))), mul(side, mul(mul(add(wave, mul(wave2, 0.3)), u), length * 0.08)));
     return add(add(along, mul(UP, mul(sub(v, 0.5), w))), vec3(0, mul(mul(u, u), -length * 0.12), 0));
   };
-  return { point, normal: mapNormal(point), anchor: atRest(point), topology: { u: ["free", "free"], v: "free" }, skeleton: { joints: 0, joint: () => { throw new Error("no joints"); } } };
+  return surface(point, { u: ["free", "free"], v: "free" });
 }
 
 /** A skeleton given in local coordinates, carried to the world. */
@@ -432,30 +446,7 @@ function evalNum(e: Expr<"f32">): number {
   return evaluate(e) as number;
 }
 
-/**
- * A sailing ship of the age of sail from named numbers: one, two or three masts, square or fore-and-aft rigged.
- *
- * The shape and its law. The hull is `hull` (its lines are part of the spec). `masts` picks one of three fixed mast
- * plans (positions along the hull and heights); `tiers` square sails go up each mast on fixed yard heights, yards
- * shortening by 0.76 a tier; a fore-and-aft rig, or the aftermost mast of a square rig, carries a gaff sail; up to three
- * jibs run from the bowsprit to the foremast. The wind, given in the world, braces the yards, swings the booms to
- * leeward and bellies every sail; the cloth flutters by a wave travelling across it, stronger as a sail luffs.
- *
- * Parameters: all numbers, fixed at build; the wind direction is fixed; placement (`afloat`, `placed`) takes a chart,
- * so the ship follows the water, a whirlpool or a grip.
- *
- * What it cannot do, because of the law:
- * - any rig but these: no lateen, junk, sprit or crab-claw sail, no fourth mast, no oars, no steam.
- * - masts anywhere but the plan's places; sails of any cut but quadrilateral square, gaff and triangular jib.
- * - a wind that changes, or a sail that is furled, torn or set aback by choice.
- * - be anything but whole: its spars and sails are private parts (`spar`, the sail surfaces, the pennant).
- *
- * Going past it: it is a composition, so a different vessel is a new composition of the same library parts, not an
- * edit here. `hull` (or `loft` through stations of your own) for the body; `strand` between two points for a spar;
- * a `surface` between two spars for a sail (flat between them, plus a belly along their common normal); `ropes` for the
- * rigging; `afloat` and `afloatChart` to set it on the water and place more on its deck. The source below is the
- * worked example to copy.
- */
+/** A ship from its spec (see the header for what it makes and what it cannot). */
 export function ship(spec: ShipSpec): Ship {
   return new Ship(spec);
 }

@@ -4,9 +4,10 @@
 // beside the shell, so the creature reads as an island that walks. Small sloops stand off at a respectful distance
 // for scale.
 import {
-  abs, add, div, draw, f, fract, log, lt, max, min, mix, mod, mul, on, place, points, scene, sea, select, ship, sin,
+  abs, add, div, draw, f, fract, log, lt, max, min, mix, mod, mul, on, place, points, scene, sea, select, sin,
   smoothstep, spacing, step, strand, sub, surface, time, toon, vec2, vec3, type Drawable, type F, type P3, type Strand,
 } from "../../src/index.ts";
+import { ship } from "../recipes/ship.ts";
 import { bound } from "../../src/draw/trace.ts";
 import { fieldPixel } from "../../src/draw/field.ts";
 import { grow, hash3, hsv, levels, rotate2, sdRoundCone, type Folded } from "../../src/lib/index.ts";

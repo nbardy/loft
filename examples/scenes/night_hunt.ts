@@ -3,10 +3,11 @@
 // lateral line of magenta photophores down each flank; pearls of living light drift in the black water around it and
 // its wake burns behind it. Everything bright is either the hunter (cyan, magenta) or the hunted (lantern amber).
 import {
-  abs, add, div, draw, flare, floor, fract, ge, impostors, lift, lt, mix, mod, mul, pow, saturate, scene, sea, select, ship, sin,
+  abs, add, div, draw, flare, floor, fract, ge, impostors, lift, lt, mix, mod, mul, pow, saturate, scene, sea, select, sin,
   smoothstep, spacing, sub, through, time, TAU, vec2, vec3, biolume, wake,
   type Drawable, type Expr, type F, type P3,
 } from "../../src/index.ts";
+import { ship } from "../recipes/ship.ts";
 import type { ReliefPoint, ReliefSite } from "../../src/draw/relief.ts";
 import type { Warp } from "../../src/map/types.ts";
 import { hash2, hash33 } from "../../src/lib/index.ts";

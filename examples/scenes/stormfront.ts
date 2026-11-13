@@ -4,9 +4,10 @@
 // in the cloud between strikes. Seen from the game's high camera the cloud sits behind the creature (away from the
 // eye), so the dark kite of the wings reads against the lit sea and the ship against the foam of the strike.
 import {
-  afterglow, bolt, boltFlash, draw, flare, glows, lt, max, medium, mul, rain, scene, sea, select, sheetFlash, ship, skyFlash,
+  afterglow, bolt, boltFlash, draw, flare, glows, lt, max, medium, mul, rain, scene, sea, select, sheetFlash, skyFlash,
   splashes, cloud as cloudMass, toon, unionBox, blob, add, time, vec2, type Drawable,
 } from "../../src/index.ts";
+import { ship } from "../recipes/ship.ts";
 import stormwing from "../stormwing.ts";
 import { brig, PLAYER } from "./lib/fleet.ts";
 

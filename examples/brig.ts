@@ -1,7 +1,8 @@
 // One brig under sail on a swell, close enough to see the rigging. Everything about the ship is in its named numbers
 // (src/geom/ship.ts); it floats with `afloat`, so it rides the swell with no animation code, and its yards, sails and
 // pennant answer the wind in its own frame.
-import { scene, sea, ship, toon } from "../src/index.ts";
+import { scene, sea, toon } from "../src/index.ts";
+import { ship } from "./recipes/ship.ts";
 
 export const brigSpec = {
   name: "brig",

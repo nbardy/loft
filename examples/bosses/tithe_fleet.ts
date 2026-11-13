@@ -28,11 +28,12 @@
 
 import {
   abs, add, clamp, cos, div, every, exp, floor, fract, lift, mapNormal, max, mix, mul, pick, posedList, saturate, sin, size,
-  smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, spacing,
+  smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, lines, scene, sea, spacing,
   woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE, beats, dragged, impact, slowInOut, swing,
-  type Drawable, type Expr, type F, type Frame, type Hull, type HullSpec, type P3, type Paint, type PoseSpec, type Poses,
+  type Drawable, type Expr, type F, type Frame, type P3, type Paint, type PoseSpec, type Poses,
   type Rope, type Sea, type Surface,
 } from "../../src/index.ts";
+import { hull, type Hull, type HullSpec } from "../recipes/hull.ts";
 import { atRest } from "../../src/map/surface.ts";
 import { noise2 } from "../../src/lib/noise.ts";
 import { sdBox } from "../../src/lib/sdf2.ts";

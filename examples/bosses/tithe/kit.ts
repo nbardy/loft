@@ -10,8 +10,9 @@
 import {
   abs, add, cos, evaluate, floor, fract, lift, lt, max, mix, mul, pow, select, sin, size, smoothstep, sub, turn,
   time, TAU, vec2, vec3, afloatFrame, lathe, mapNormal, NO_SKELETON,
-  type Expr, type F, type Frame, type Hull, type In, type P3, type PoseSpec, type Poses, type Surface, type Topology, type Waters,
+  type Expr, type F, type Frame, type In, type P3, type PoseSpec, type Poses, type Surface, type Topology, type Waters,
 } from "../../../src/index.ts";
+import { type Hull } from "../../recipes/hull.ts";
 import { atRest } from "../../../src/map/surface.ts";
 
 export type V3 = readonly [number, number, number];

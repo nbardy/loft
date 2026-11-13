@@ -1,26 +1,43 @@
-// A hull from its lines, the way a naval architect's lines plan defines one: a sheer line (the deck edge's height along
-// the length), a half-breadth plan (how wide each station is), a keel profile, and a body plan (the shape of each
-// section). Each station is a section curve across the hull, and the skin is a loft through them: a uniform Catmull-Rom
-// spline in the length direction, so the skin passes through every station curve exactly.
+// Recipe: a boat's hull lofted from a lines plan. Copy this file and edit it; it imports only the public entry.
 //
-// Coordinates (all local to the ship): x toward the bow, y up, z to starboard, the waterline at y = 0, amidships at
+// What it makes: the hull of a wooden monohull with a transom stern, the way a naval architect's lines plan defines
+// one: a sheer line (the deck edge's height along the length), a half-breadth plan (how wide each station is), a keel
+// profile and a body plan (the shape of each section). Each station is a section curve across the hull; the skin is a
+// loft through them, a uniform Catmull-Rom spline along the length (`through`), so it passes through every station
+// exactly. Deck, bulwarks and transom are `sheet`s between curves of the same lines; paint is a function of (u, v).
+//
+// From which library pieces: `through` (the loft along the length), `sheet` and `mapNormal` (the deck, bulwarks and
+// transom), `sdBox` and `fwidth` (gun ports drawn in paint), plain expressions for every law.
+//
+// Coordinates (all local to the hull): x toward the bow, y up, z to starboard, the waterline at y = 0, amidships at
 // x = 0. The skin's (u, v): u from the stern (0) to the bow (1); v round the section from the port deck edge (0)
-// through the keel (1/2) to the starboard deck edge (1), so the normal d/du x d/dv points outward. Paint on the hull is
-// a function of (u, v) (strakes, wale, gun ports, boot-top), so it moves with the hull exactly.
+// through the keel (1/2) to the starboard deck edge (1), so the normal d/du x d/dv points outward. The skin is a
+// `skin` target as it stands (`{ kind: "skin", skin: h.skin, frame }`): checks measure contact with its own shape.
 //
 // A section, half of it at a time (w = |2v - 1|, 0 at the keel, 1 at the deck edge): from the keel to the turn of the
 // bilge a quarter superellipse of exponent `fullness` (2 a round bilge, higher a flat floor and hard bilge, nearer 1 a
 // V), its floor lifted by `deadrise`; from there to the deck edge the topsides, drawn in by `tumblehome`. The two pieces
 // meet with a common vertical tangent at the greatest breadth, so the section has no crease.
+//
+// Parameters: `HullSpec`, sixteen numbers, all fixed at build (decided once, in `canonical`).
+//
+// What it cannot do:
+// - lines other than these power laws and smoothsteps: no hollow bow, no bulbous forefoot, no flared entry.
+// - a section other than superellipse plus topsides: no chine (a hard corner), no flat-bottomed punt, no catamaran.
+// - move: a body that flexes, breathes or is crushed in place needs its stations to be functions of time.
+// - be anything but a monohull with a transom stern and a raked stem.
+//
+// What to change first when copying it: `section` (the body plan) and `half` (the half-breadth law). The skin is
+// `through(u, stations)`, so any row of section curves you write, moving or not, lofts the same way: a pod, a seed, a
+// fuselage. For a body round in every section use `lathe`; for one swept straight, `extrude`.
 
-import { abs, add, atan2, clamp, cos, div, fract, lift, lt, max, mix, mul, pow, select, sign, sin, smoothstep, sqrt, sub, vec2, vec3, type Expr, type In } from "../expr.ts";
-import { through } from "../curve.ts";
-import { sdBox } from "../lib/sdf2.ts";
-import { fwidth } from "../lib/wgsl.ts";
-import { mapNormal, sheet } from "../map/surface.ts";
-import { NO_SKELETON, type F, type P3, type Paint, type Skeleton, type Surface } from "../map/types.ts";
+import {
+  abs, add, atan2, clamp, cos, div, fract, lift, lt, mapNormal, max, mix, mul, NO_SKELETON, pow, select, sheet, sign, sin, smoothstep, sqrt, sub,
+  through, vec2, vec3, type Expr, type F, type In, type P3, type Paint, type Rgb, type Skeleton, type Surface,
+} from "../../src/index.ts";
+import { fwidth, sdBox } from "../../src/lib/index.ts";
 
-export type Rgb = readonly [number, number, number];
+export type { Rgb };
 
 export type HullSpec = {
   /** Stem to stern along the waterline, world units. */
@@ -261,30 +278,7 @@ function canonical(spec: HullSpec): Lines {
   return lines;
 }
 
-/**
- * A boat's hull from its lines, as a naval architect's lines plan gives one.
- *
- * The shape and its law. Four curves along the length decide every station: the half-breadth (a power law forward and
- * aft of the widest station, `entry` and `run`, narrowing to the `transom`), the keel (cut away at the forefoot), the
- * sheer (rising toward both ends, with raised `castle` decks) and the section's fullness (finer at the ends). Each
- * station's section is a quarter superellipse below the turn of the bilge (lifted by `deadrise`) and topsides above
- * it drawn in by `tumblehome`; the skin is a Catmull-Rom loft through the stations, so it passes through every one.
- * Deck, bulwarks and transom follow from the same lines, and `paint` is a function of the hull's (u, v).
- *
- * Parameters: sixteen numbers, all fixed at build (the lines are decided once, in `canonical`).
- *
- * What it cannot do, because of the law:
- * - lines other than these power laws and smoothsteps: no hollow bow, no bulbous forefoot, no clipper's flared entry.
- * - a section other than superellipse plus topsides: no chine (a hard corner), no flat-bottomed punt, no catamaran.
- * - move: a hull that flexes, breathes or is crushed in place needs its stations to be functions of time.
- * - be anything but a monohull with a transom stern and a raked stem.
- *
- * Going past it is one step down: `Hull.stations` are its section curves (and `Hull.section(u, v)` the law that makes
- * them), and the map algebra's `loft(curves)` makes a skin through any row of curves, so `loft([...])` through
- * stations of your own (edited copies of these, or written from scratch, moving or not) is any lofted body: a canoe, a
- * pod, a seed, a fish, a fuselage. Relatives: `lathe` for a body that is round in every section; `sheet` for a skin
- * between two curves; `extrude` for one swept straight. A sailing ship built on this hull is `ship`.
- */
+/** A hull from its lines (see the header for its law and limits). */
 export function hull(spec: HullSpec): Hull {
   return new Hull(spec);
 }
