@@ -28,7 +28,7 @@ export const BOTTOMLESS = -1e9;
 /** A thing that needs a particular ground, in a scene that stands on another. */
 export class GroundError extends Error {
   constructor(who: string, needs: string, ground: Ground["kind"]) {
-    super(`${who} needs ${needs}; this scene's ground is ${ground === "nothing" ? "nothing" : `a ${ground}`}`);
+    super(`${who} needs ${needs}; this scene's ground is ${ground === "nothing" ? "nothing" : `a ${ground}`}. Fix: ${needs === "a sea" ? "ground: sea({ swell: [...] })" : "ground: plane or ground: sea({ swell: [...] })"}, or take ${who} out of the scene`);
     this.name = "GroundError";
   }
 }
