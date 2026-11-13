@@ -102,7 +102,8 @@ test("every example's shaders build pipelines under the contract's layouts", asy
   const errors: string[] = [];
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
     const mod = (await import(resolve(dir, file))) as { default?: Scene };
-    if (!mod.default) continue;
+    // An example's default export is not always a scene (a cut list for a clip is one that is not): only scenes compile.
+    if (!mod.default || !("style" in mod.default && "things" in mod.default)) continue;
     const a = compile(mod.default);
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
     const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });

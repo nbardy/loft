@@ -3,7 +3,8 @@
 - `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
 - Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
   not there.
-- `bun test` is the suite. Under a loaded machine it can time out or fail once and pass on the next run; the intermittent shader-module
+- `pnpm test` is the suite (`bun test --timeout 120000`: a bare `bun test` gives some GPU tests bun's 5 s limit, which
+  they miss when the whole suite runs at once, although `tests/setup.ts` asks for 60 s). The old note: Under a loaded machine it can time out or fail once and pass on the next run; the intermittent shader-module
   failure was bun-webgpu freeing descriptor strings early, patched (`docs/reliable_render.md`). Exit codes: `docs/errors.md`.
 - GPU time per draw: `bun src/cli/main.ts profile <scene> --view <camera>`. It also prints the pose stages (the
   per-frame tables, computed on the GPU since phase 1 of `docs/gpu_native.md`), the CPU pose time, and every table

@@ -12,7 +12,7 @@ let dir: string;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "loft-gallery-run-"));
   writeFileSync(join(dir, "good.ts"), `export { default } from ${JSON.stringify(resolve("examples/pearls.ts"))};\n`);
-  writeFileSync(join(dir, "badcompile.ts"), "export default { things: [{}], sea: {}, sun: [0, 1, 0], cameras: {} };\n");
+  writeFileSync(join(dir, "badcompile.ts"), "export default { things: [{}], ground: {}, sun: [0, 1, 0], cameras: {} };\n");
   writeFileSync(join(dir, "boom.ts"), 'throw new Error("boom at import");\n');
   writeFileSync(join(dir, "helper.ts"), "export const x = 1;\n");
 });
