@@ -55,6 +55,21 @@ loft context                                                                    
 `--style`, `--light`, `--variant`, `--input` and `--sweep` change what is drawn without editing the scene; `loft help`
 lists every flag.
 
+## Exit codes
+
+`render`, `frames`, `clip` and `check` end with one last line on stderr, `loft: <kind>: <message>`, that a script can
+match. A scene refusal names your own thing, what was given, what was expected and the fix (`docs/errors.md` lists them).
+
+| Exit | Last line starts | Meaning |
+|---|---|---|
+| 0 | | drew; or every check passed |
+| 1 | `loft: internal` | a bug in Loft, or a mistake no constructor catches yet (a stack is printed) |
+| 2 | `loft: usage:` | the command line asked for something absent (flag, camera, variant, option, input, style) |
+| 3 | `loft: load:` | the module did not load as a scene (syntax, unknown import, a throw at top level, wrong exports) |
+| 4 | `loft: scene:` | a constructor refused the scene: `given ...; expected ... Fix: ... (at file:line)` |
+| 5 | `loft: check:` | the scene drew and the checks named on the line failed |
+| 6 | `loft: environment (not the scene's fault):` | GPU, WebGPU binding, or missing `cwebp`/`ffmpeg`; builds already retried on 3 fresh devices |
+
 ## Where to go next
 
 - `docs/guide.md`: the first scene, then one short section per task (a shape, motion, an action with checks, a
