@@ -3,3 +3,4 @@ out/
 .scratch/
 dist/
 *.log
+train/

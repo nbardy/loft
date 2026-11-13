@@ -5,5 +5,5 @@
     "exactOptionalPropertyTypes": false, "skipLibCheck": true, "noEmit": true, "allowImportingTsExtensions": true,
     "types": ["@webgpu/types", "bun"]
   },
-  "include": ["src", "examples", "viewer", "tests", "tools"]
+  "include": ["src", "examples", "viewer", "tests", "tools", "train"]
 }
