@@ -164,6 +164,23 @@ async function scoped<T>(device: GPUDevice, what: string, create: () => Promise<
   return result.v;
 }
 
+/**
+ * Every creation started at once inside one validation scope, then awaited together. The first rejection names its
+ * object (`what`); an error only the scope caught names none, and says so. Both are the environment's, as in `scoped`.
+ */
+async function scopedAll<T>(device: GPUDevice, items: readonly { readonly what: string; readonly create: () => Promise<T> }[]): Promise<T[]> {
+  device.pushErrorScope("validation");
+  const settled = await Promise.allSettled(items.map((i) => i.create()));
+  const error = await device.popErrorScope();
+  const k = settled.findIndex((r) => r.status === "rejected");
+  if (k >= 0) {
+    const reason = (settled[k] as PromiseRejectedResult).reason;
+    throw new EnvironmentError(`${items[k]!.what}:\n${reason instanceof Error ? reason.message : String(reason)}`, true);
+  }
+  if (error) throw new EnvironmentError(`a pipeline failed to build (the GPU's error scope does not say which):\n${error.message}`, true);
+  return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+}
+
 /** The objects a manifest describes, created; textures and the bind groups that name them come per view size (`sized`). */
 export type Objects = {
   readonly manifest: Manifest;
@@ -207,16 +224,17 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
     }).join("");
     modules.push(await scoped(device, `${mod.label} failed to compile`, async () => device.createShaderModule({ label: mod.label, code })));
   }
-  // Pipelines are built eagerly, so every error surfaces at load and a frame never stalls on compilation.
-  const computePipelines: GPUComputePipeline[] = [];
-  for (const p of m.computePipelines) {
-    computePipelines.push(await scoped(device, `pose stage "${p.label}": pipeline creation failed`, () => device.createComputePipelineAsync({
+  // Pipelines are built eagerly, so every error surfaces at load and a frame never stalls on compilation. They are
+  // all asked for at once and awaited together: Dawn compiles them in parallel, which halves a fresh scene's load
+  // (20 strands, 43 pipelines: 3.9 s to 2.0 s on an M-series Mac; REPORT.md of branch training-host-contract). One
+  // error scope covers them all, because scopes are a stack and interleaved awaits would pop each other's; a failed
+  // creation still names its pipeline through its own rejection. The patched bun-webgpu keeps each descriptor alive
+  // until Dawn has copied it in the call (docs/reliable_render.md), so overlapping calls share no memory.
+  const pipelines = await scopedAll<GPUComputePipeline | GPURenderPipeline>(device, [
+    ...m.computePipelines.map((p) => ({ what: `pose stage "${p.label}": pipeline creation failed`, create: () => device.createComputePipelineAsync({
       label: p.label, layout: pipelineLayouts[p.layout]!, compute: { module: modules[p.module]!, entryPoint: p.entryPoint },
-    })));
-  }
-  const renderPipelines: GPURenderPipeline[] = [];
-  for (const p of m.renderPipelines) {
-    renderPipelines.push(await scoped(device, `${p.label}: pipeline creation failed`, () => device.createRenderPipelineAsync({
+    }) })),
+    ...m.renderPipelines.map((p) => ({ what: `${p.label}: pipeline creation failed`, create: () => device.createRenderPipelineAsync({
       label: p.label,
       layout: pipelineLayouts[p.layout]!,
       vertex: { module: modules[p.vertex.module]!, entryPoint: p.vertex.entryPoint, constants: p.vertex.constants },
@@ -224,8 +242,11 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
       primitive: p.primitive,
       ...(p.depthStencil === undefined ? {} : { depthStencil: p.depthStencil }),
       multisample: p.multisample,
-    })));
-  }
+    }) })),
+  ]);
+  // In the order asked: the compute pipelines, then the render pipelines.
+  const computePipelines = pipelines.slice(0, m.computePipelines.length) as GPUComputePipeline[];
+  const renderPipelines = pipelines.slice(m.computePipelines.length) as GPURenderPipeline[];
   const named = (g: Manifest["bindGroups"][number]) => g.entries.some((e) => "texture" in e);
   const group = (k: number, views: readonly GPUTextureView[]): GPUBindGroup => {
     const g = m.bindGroups[k]!;
