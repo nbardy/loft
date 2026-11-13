@@ -4,10 +4,10 @@
 //   full     every export: signature or fields, first sentence, cannot and relatives lists, an object's parts.
 //            `loft api` prints it; docs/api.md is this text, committed.
 //   one      `loft api <name>`: one entry with its whole comment.
-//   compact  the form `loft context` ends with: a short sentence per value, specs' fields, limits kept.
-import { readFileSync } from "node:fs";
+//   map      the form `loft context` carries: `name(args)` per value, specs' fields inline, operators on one line.
+import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { catalogue, cannotLines, firstSentence, relativesLines, exportsOf, type Entry, type Group, type Layer } from "./catalogue.ts";
+import { catalogue, cannotLines, firstSentence, relativesLines, exportsOf, type Entry, type Field, type Group, topLevel, type Layer } from "./catalogue.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
 /** The public entry points: the library, and the plain functions `src/lib` adds (distance functions, folds, noise, raw WGSL). */
@@ -96,34 +96,124 @@ export function apiOne(name: string): string {
   ].join("\n")).join("\n\n");
 }
 
-/**
- * Modules whose names say what they do (arithmetic, distance functions, the compiler's entry points) print by name only
- * in the compact form; that, and a sentence cut at twelve words, is what keeps `loft context` readable whole.
- */
-const NAMES_ONLY = (g: Group) => g.layer.file === "src/lib/index.ts" || /^src\/(expr|artefact)\.ts$|^src\/compile\//.test(g.file);
+// The map: the form `loft context` prints. What a scene author calls, as `name(args)`, one module to a line; a spec's
+// fields inline; operators on one line; types only where examples write them. It is read from the same catalogue as
+// the full reference, so a rename shows here the next time it runs.
 
-/** The short form for `loft context`. */
-export function apiCompact(): string {
-  const out = ["# The API (compact: `loft api` prints it all, `loft api <name>` one entry whole)", "", preamble(), ""];
-  for (const { layer, groups: here } of byLayer(groups())) {
-    out.push(`## ${layerTitle(layer)}`, "");
-    for (const g of here) {
-      out.push(`### ${groupTitle(g)}${g.line === "" ? "" : `: ${words(g.line, 10)}`}`);
-      const terse = NAMES_ONLY(g);
-      for (const e of g.values.filter((x) => x.doc !== "" && !terse)) {
-        out.push(`- ${e.name}: ${words(firstSentence(e.doc), 10)}`);
-        out.push(...list("cannot", cannotLines(e.doc).map((x) => words(x, 18)), "  "), ...list("relatives", relativesLines(e.doc).map((x) => words(x, 18)), "  "));
-        if (e.members.length > 0) out.push(`  parts: ${e.members.map((m) => m.name).join(", ")}`);
-      }
-      const bare = g.values.filter((x) => x.doc === "" || terse);
-      if (bare.length > 0) out.push(`- ${terse ? "values" : "also (no comment)"}: ${bare.map((x) => (x.members.length > 0 ? `${x.name} {${x.members.map((m) => m.name).join(", ")}}` : x.name)).join(", ")}`);
-      // A spec's fields are what a caller writes, so they are kept; other types by name.
-      const isSpec = (t: Entry) => /(Spec|Options)$/.test(t.name) && t.signature.includes("{");
-      for (const t of g.types.filter(isSpec)) out.push(`- ${t.name} ${t.signature.slice(t.signature.indexOf("{"))}`);
-      const rest = g.types.filter((t) => !isSpec(t));
-      if (rest.length > 0) out.push(`- types: ${rest.map((t) => t.name).join(", ")}`);
-      out.push("");
-    }
+/** The parameter text inside the parentheses that open at `from` (balanced over (), [], {}, <>). */
+function balanced(t: string, from: number): string {
+  let depth = 0;
+  for (let i = from; i < t.length; i++) {
+    const c = t[i]!;
+    if (c === "=" && t[i + 1] === ">") { i++; continue; } // an arrow's `>` closes nothing
+    if ("([{<".includes(c)) depth++;
+    else if (")]}>".includes(c) && --depth === 0) return t.slice(from + 1, i);
   }
+  return t.slice(from + 1);
+}
+
+/** The parameters of a callable declaration or function type, or null when it is not one. */
+function paramsOf(sig: string): string[] | null {
+  const m = /^(?:(?:async\s+)?function\*?\s+[\w$]+|const\s+[\w$]+\s*=|[\w$]+)\s*(<[^(]*?>)?\s*\(/.exec(sig) ?? /^\s*(<[^(]*?>)?\s*\(/.exec(sig);
+  if (!m) return null;
+  if (sig.startsWith("const ") && !/=>|^const\s+[\w$]+\s*=\s*(<[^(]*?>)?\s*\(/.test(sig)) return null;
+  return topLevel(balanced(sig, m[0].length - 1), /,/);
+}
+
+/** A function-valued type's parameter names (`(m: F) => P3` gives ["m"]), or null. A union with a function counts. */
+function fnParams(type: string, types: ReadonlyMap<string, Entry>): string[] | null {
+  const alias = /^([A-Z][\w$]*)(<.*>)?$/.exec(type.trim());
+  if (alias) { const t = types.get(alias[1]!); return t && !t.signature.includes("{") ? fnParams(t.signature.replace(/^type\s+[\w$]+(<[^=]*>)?\s*=\s*/, ""), types) : null; }
+  const m = /\(([^()]*)\)\s*=>/.exec(type);
+  return m ? topLevel(m[1]!, /,/).map((p) => /^\.{0,3}[\w$]+/.exec(p)?.[0] ?? p) : null;
+}
+
+/** A spec's fields as the caller writes them: `name`, `opt?`, `fn(m)`, `opt?(m)`. */
+const fieldList = (fields: readonly Field[], types: ReadonlyMap<string, Entry>) =>
+  `{${fields.map((f) => { const ps = fnParams(f.type, types); return `${f.name}${f.optional ? "?" : ""}${ps ? `(${ps.join(", ")})` : ""}`; }).join(", ")}}`;
+
+/** One parameter as the caller writes it: its name, or a spec's fields (the first time that spec is met), or `fn(args)` for a function. */
+function param(p: string, types: ReadonlyMap<string, Entry>, shown: Set<string>): string {
+  const m = /^(\.\.\.)?([\w$]+|\{[^}]*\})(\?)?\s*(?::\s*([\s\S]*?))?(?:\s*=(?!>)\s*[\s\S]*)?$/.exec(p);
+  if (!m) return p;
+  const opt = m[3] !== undefined || /=\s*[^>]/.test(p.replace(/=>/g, "")) ? "?" : "";
+  const type = (m[4] ?? "").trim();
+  if (m[2]!.startsWith("{")) return `{${m[2]!.slice(1, -1).split(",").map((x) => x.trim().split(/[:=\s]/)[0]).filter(Boolean).join(", ")}}${opt}`;
+  // An optional options bag prints as its name: its fields are `loft api <name>`'s to give.
+  if (opt !== "" && /^\{|^[\w$]+(Spec|Options)$/.test(type)) return `${m[2]}?`;
+  const inline = /^\{([\s\S]*)\}$/.exec(type);
+  if (inline) return `{${topLevel(inline[1]!).map((f) => /^(?:readonly\s+)?([\w$]+\??)/.exec(f)?.[1]).filter(Boolean).join(", ")}}${opt}`;
+  const spec = /^([\w$]+(?:Spec|Options))$/.exec(type);
+  const t = spec ? types.get(spec[1]!) : undefined;
+  if (t && t.fields.length > 0 && !shown.has(t.name)) { shown.add(t.name); return `${fieldList(t.fields, types)}${opt}`; }
+  const ps = fnParams(type, types);
+  return `${m[1] ?? ""}${m[2]}${opt}${ps && /^\(|^[A-Z]/.test(type) ? `(${ps.join(", ")})` : ""}`;
+}
+
+/** A value as the caller writes it, or null for what a scene author does not call (classes, errors). */
+function call(e: { name: string; signature: string }, types: ReadonlyMap<string, Entry>, shown: Set<string>): string | null {
+  if (/^(abstract\s+)?class\b/.test(e.signature)) return null;
+  const alias = /^const\s+[\w$]+\s*=\s*([A-Za-z_$][\w$]*)$/.exec(e.signature);
+  if (alias) return `${e.name} = ${alias[1]}`;
+  const ann = /^const\s+[\w$]+:\s*(.+)$/.exec(e.signature);
+  const ps = ann ? (/=>/.test(ann[1]!) ? fnParams(ann[1]!, types) : null) : paramsOf(e.signature);
+  return ps === null ? e.name : `${e.name}(${ps.map((p) => param(p, types, shown)).join(", ")})`;
+}
+
+const builtOp = (e: Entry) => /=\s*(binary|unary|compare)\(/.test(e.signature);
+/**
+ * An operator: a value built from `binary`/`unary`/`compare`, or one beside them (in their module) taking at most three
+ * plain numbers or expressions.
+ */
+function isOperator(e: Entry, g: Group): boolean {
+  if (builtOp(e)) return true;
+  if (!g.values.some(builtOp)) return false;
+  const ps = paramsOf(e.signature);
+  return ps !== null && ps.length > 0 && ps.length <= 3 && e.name.length <= 10 &&
+    ps.every((p) => /:\s*(In<[^>]*>|number|Num(\[\])?|Lit|Expr<[^>]*>)(\s*\|\s*(number|Lit|Expr<[^>]*>))*$/.test(p.replace(/^\.\.\./, "")));
+}
+
+/** The exported types that examples import: the ones a user writes. */
+function writtenTypes(all: ReadonlyMap<string, Entry>): string[] {
+  const seen = new Map<string, number>();
+  const dir = resolve(ROOT, "examples");
+  for (const f of readdirSync(dir).filter((x) => x.endsWith(".ts"))) {
+    for (const m of readFileSync(resolve(dir, f), "utf8").matchAll(/import\s*\{([^}]*)\}\s*from\s*["'][./]*src\/(?:lib\/)?index\.ts["']/g))
+      for (const t of m[1]!.matchAll(/\btype\s+([\w$]+)/g)) if (all.get(t[1]!)?.kind === "type") seen.set(t[1]!, (seen.get(t[1]!) ?? 0) + 1);
+  }
+  return [...seen].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+}
+
+/** Every value a scene author calls, by layer and module, as `name(args)`. */
+export function apiMap(): string {
+  const gs = groups();
+  const types = new Map<string, Entry>();
+  for (const g of gs) for (const t of g.types) types.set(t.name, t);
+  const all = new Map<string, Entry>([...gs.flatMap((g) => [...g.values, ...g.types].map((e) => [e.name, e] as const))]);
+  const shown = new Set<string>();
+  // A module by its file's base name, or its path where the base name is shared or says nothing (`types`, `index`).
+  const path = (f: string) => f.replace(/^src\/|(\/index)?\.ts$/g, "");
+  const base = (f: string) => path(f).replace(/^.*\//, "");
+  const label = (f: string) => (gs.some((g) => g.file !== f && base(g.file) === base(f)) || /^(types|index)$/.test(base(f)) ? path(f) : base(f));
+  const out = ["# API map (`loft api` for all of it; `loft api <name>` for one entry whole)", "",
+    "`name(args)`; `{a, b?}` a spec's fields (`?` optional), `f(m)` a field or argument that is a function. `~` marks a module with one user so far: cut it down when your subject fights it.", ""];
+  for (const { layer, groups: here } of byLayer(gs)) {
+    out.push(`## ${layer.file === "src/lib/index.ts" ? "Library (import from src/lib/index.ts)" : layer.name}`);
+    // An object of parts: each callable part as `obj.part(args)`, the rest as `obj.{a, b}`.
+    const parts = (e: Entry): string[] => {
+      const callable = e.members.filter((m) => m.signature !== "");
+      const plain = e.members.filter((m) => m.signature === "");
+      return [...callable.map((m) => call({ name: `${e.name}.${m.name}`, signature: m.signature }, types, shown) ?? m.name), ...(plain.length > 0 ? [`${e.name}.{${plain.map((m) => m.name).join(", ")}}`] : [])];
+    };
+    const partSigs = new Set(gs.flatMap((g) => g.values.flatMap((e) => e.members.map((m) => m.signature).filter((x) => x !== ""))));
+    const ops = layer.name === "Core" ? here.flatMap((g) => g.values.filter((e) => isOperator(e, g))) : [];
+    if (ops.length > 0) out.push(`operators: ${ops.map((e) => e.name).join(", ")}`);
+    for (const g of here) {
+      const items = g.values.filter((e) => !ops.includes(e) && !partSigs.has(e.signature)).flatMap((e) => (e.members.length > 0 && !/^const\s+[\w$]+\s*:/.test(e.signature) ? parts(e) : [call(e, types, shown)])).filter((x): x is string => x !== null);
+      if (items.length > 0) out.push(`${g.unproven ? "~" : ""}${label(g.file)}: ${items.join("; ")}`);
+    }
+    out.push("");
+  }
+  out.push(`Types you write: ${writtenTypes(all).join(", ")}.`);
   return out.join("\n");
 }

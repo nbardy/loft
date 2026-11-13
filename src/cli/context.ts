@@ -1,15 +1,18 @@
-// `loft context`: what a model (or a person) needs in its context to use Loft well, in one print to be read whole: the
-// craft guide (docs/craft.md: how to make pictures and motion that read, with range), then the API in its compact
-// form (src/cli/api.ts, generated from the source), then what a failure means (docs/errors.md, its first part: exit
-// codes and the likeliest refusals). No GPU, no compiler: it reads text.
+// `loft context`: what a model (or a person) needs in its context to write a Loft scene, in one print read whole before
+// every scene, so every word is paid for each time. docs/context.md is the written part (the craft, condensed;
+// failures; where to read more) and the API map is generated (src/cli/api.ts) and printed where that file's marker
+// stands. No GPU, no compiler: it reads text.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { apiCompact } from "./api.ts";
+import { apiMap } from "./api.ts";
 
 const ROOT = resolve(import.meta.dir, "../..");
+const MARKER = "<!-- the API map is printed here -->";
 
 export function context(): string {
-  const craft = readFileSync(resolve(ROOT, "docs/craft.md"), "utf8").replace(/<!--[\s\S]*?-->\n*/g, "").trim();
-  const errors = readFileSync(resolve(ROOT, "docs/errors.md"), "utf8").split("\n## Every refusal")[0]!.replace(/<!--[\s\S]*?-->\n*/g, "").trim();
-  return `${craft}\n\n${apiCompact()}\n\n${errors}`;
+  const text = readFileSync(resolve(ROOT, "docs/context.md"), "utf8");
+  const [before, after] = text.split(MARKER);
+  if (after === undefined) throw new Error(`docs/context.md: the marker "${MARKER}" is missing`);
+  const clean = (s: string) => s.replace(/<!--[\s\S]*?-->\n*/g, "").trim();
+  return `${clean(before!)}\n\n${apiMap()}\n\n${clean(after)}\n`;
 }
