@@ -23,7 +23,7 @@
 
 import { BASE_ASK, design as makeDesign } from "../../src/design.ts";
 import type { Camera } from "../../src/artefact.ts";
-import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type Target, type WoodblockLook, type WoodblockSpec, type WoodblockSky } from "../../src/index.ts";
+import { fliesClear, foam, frontFirst, gripReaches, landsInside, letsGoClean, lift, limbsReach, marksAs, movable, placedBy, print, releasesAt, scene, sea, shoves, throwLands, tolerance, warned, woodblock, LOOKS, type Check, type Sea, type Target, type WoodblockLook, type WoodblockSpec, type Sky } from "../../src/index.ts";
 import { impactPaint } from "./lib/impact.ts";
 import { base as boatsBase } from "./titan/boats/base.ts";
 import { host as boatsHost } from "./titan/boats/host.ts";
@@ -118,7 +118,7 @@ export const WATER = {
 } satisfies Record<string, WaterOption>;
 
 /** The print every crab is drawn in, from its inks; and the sun. Exported for a scene that stages several crabs. */
-export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">, sky?: Partial<WoodblockSky>, look: WoodblockLook = LOOK.base) =>
+export const styleFor = (n: Numbers, water: Pick<WaterOption, "collar" | "marks">, sky?: Partial<Sky>, look: WoodblockLook = LOOK.base) =>
   woodblock(look.on({ print: print.overprint({ ink: n.ink.indigo, amount: n.shadowIndigo, value: n.shadowValue, black: 0.1 }), foam: water.collar, marks: water.marks, sky }));
 
 /**

@@ -2,7 +2,9 @@
 // (crab_lineup.ts), the deliverables (tools/lineup_deliver.ts) and the framing stand-in (tools/lineup_framing.ts) all
 // read them here, so a camera is stated once.
 
-import type { Camera } from "../../src/artefact.ts";
+import type { Camera } from "../../src/index.ts";
+import { shotAt as filmShotAt, type Format, type Lens, type Shot } from "../recipes/film.ts";
+export type { Format, Lens, Shot };
 
 // ---- the tempo ----
 export const BPM = 120;
@@ -52,17 +54,8 @@ export function hostInputs(names: readonly string[], land: (k: number) => XZ, t:
   return Object.fromEntries(names.flatMap((n, k) => [[`${n}.throw.land`, thrownParked ? PARKED : land(k)], [`${n}.boat2.at`, PARKED]]));
 }
 
-// ---- the shots ----
+// ---- the shots (a cut list of the film recipe, examples/recipes/film.ts) ----
 type V3 = readonly [number, number, number];
-/** A camera: low (just above the water), level, perspective. */
-export type Lens = { readonly eye: V3; readonly target: V3; readonly fovY: number };
-/** A shot holds one camera, or moves from one to another between two instants (seconds of the loop), eased in and out. */
-export type Shot =
-  | { readonly kind: "still"; readonly name: string; readonly lens: Lens }
-  | { readonly kind: "move"; readonly name: string; readonly from: Lens; readonly to: Lens; readonly start: number; readonly end: number };
-/** A format: its frame, and its shots, each from `at` seconds to the next one's (the last to the period). Every `at` is on a count. */
-export type Format = { readonly name: string; readonly width: number; readonly height: number; readonly cuts: readonly { readonly at: number; readonly shot: Shot }[] };
-
 const lens = (eye: V3, target: V3, fovY: number): Lens => ({ eye, target, fovY });
 /** One member alone, straight in front of its place (a solo, a face): close enough that its body is a third of the height or more (docs/lineup.md, "Third staging"). */
 const SINGLE: Readonly<Record<string, { readonly distance: number; readonly aim: number }>> = {
@@ -123,24 +116,7 @@ export function formats(line: readonly string[]): { readonly wide: Format; reado
 }
 export type FormatName = "wide" | "square";
 
-/** Ease in and out (the shape of `slowInOut` in src/geom/lively.ts, power 2), on the CPU: a camera is a number per frame. */
-const ease = (u: number): number => (u < 0.5 ? 2 * u * u : 1 - 2 * (1 - u) * (1 - u));
-const mixLens = (a: Lens, b: Lens, u: number): Lens => {
-  const m = (x: number, y: number) => x + (y - x) * u;
-  return { eye: [m(a.eye[0], b.eye[0]), m(a.eye[1], b.eye[1]), m(a.eye[2], b.eye[2])], target: [m(a.target[0], b.target[0]), m(a.target[1], b.target[1]), m(a.target[2], b.target[2])], fovY: m(a.fovY, b.fovY) };
-};
-/** The shot's camera at loop time t. */
-function lensOf(s: Shot, t: number): Lens {
-  switch (s.kind) {
-    case "still": return s.lens;
-    case "move": return mixLens(s.from, s.to, ease(Math.min(Math.max((t - s.start) / (s.end - s.start), 0), 1)));
-  }
-}
 /** The shot in force at time t (wrapped into the loop), and its camera. */
 export function shotAt(f: Format, t: number): { readonly shot: Shot; readonly camera: Camera } {
-  const u = ((t % PERIOD) + PERIOD) % PERIOD;
-  let cut = f.cuts[0]!;
-  for (const c of f.cuts) if (c.at <= u) cut = c;
-  const l = lensOf(cut.shot, u);
-  return { shot: cut.shot, camera: { kind: "perspective", eye: [...l.eye], target: [...l.target], fovY: l.fovY } };
+  return filmShotAt(f, ((t % PERIOD) + PERIOD) % PERIOD);
 }

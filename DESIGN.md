@@ -187,9 +187,9 @@ sky nor the sea needed pixel coordinates.
 width) and `POST_COMMON` (WGSL for post passes, prefixed `sty_`: pixel hash and value noise, view depth, a normal
 reconstructed from neighbouring depths using the nearer of each pair, "is this pixel the sea", "is it submerged").
 
-**The styles.**
+**The styles** (since 2026-11-12 each is composed from parts in `src/style/`, and `sketch` and `neon` join them: docs/styles.md is the current account; the descriptions below are of the pictures, which are unchanged).
 
-- `toon` (`src/style.ts`): banded sun, rim, gloss, an ink hull, a translucent stylised sea.
+- `toon` (`src/style/toon.ts`): banded sun, rim, gloss, an ink hull, a translucent stylised sea.
 - `woodblock(spec?)`: bodies print in five inks (`WOODBLOCK_PALETTE`: black, indigo, a pale blue, cream, one vermilion), chosen
   by the paint's luminance times a two-tone light in value bands; a paint whose red stands above its green and blue
   prints vermilion. Every edge is antialiased by a pixel and no more. Post: a key line (silhouettes on their near side,

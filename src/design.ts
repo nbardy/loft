@@ -9,7 +9,6 @@ import type { Check } from "./check.ts";
 import type { Drawable } from "./compile/context.ts";
 import type { Sea, SeaDeform, SeaSpec } from "./geom/sea.ts";
 import type { Scene } from "./scene.ts";
-import type { Attack, Effect, Motion, Ring, Strike } from "./spacetime/attack.ts";
 
 /** Overrides on a numbers record: any field, nested records merged, arrays and numbers replaced whole. */
 export type Overrides<N> = { readonly [K in keyof N]?: N[K] extends readonly unknown[] ? N[K] : N[K] extends object ? Overrides<N[K]> : N[K] };
@@ -27,15 +26,13 @@ export type Picked<T> = { readonly [S in keyof T]: T[S][keyof T[S]] };
 
 export type VariantSpec<N, T> = { readonly about: string; readonly pick?: Partial<Choice<T>>; readonly numbers?: Overrides<N> };
 
-/** What a build gives: the scene, and what the game and the checks read of it. */
-export type Built = {
-  readonly scene: Scene;
-  readonly checks: readonly Check[];
-  readonly strikes: Readonly<Record<string, Strike>>;
-  readonly holds: Readonly<Record<string, Attack>>;
-  /** The attacks whose aftermath is a ring wave: a game reads `pushed(place)` and `arrives(place)` of each. */
-  readonly waves: Readonly<Record<string, Attack<Motion, Effect, Ring>>>;
-};
+/**
+ * What every build gives: the scene and its checks. A subject with more for its game (an attack's strikes, holds and
+ * ring waves, a hand-off record) says so in its own `B`, which extends this; the crab's does. Until a lantern fish
+ * (examples/second/lanternfish.ts) the attack readouts were required here, and a subject with no attacks wrote three
+ * empty records.
+ */
+export type Built = { readonly scene: Scene; readonly checks: readonly Check[] };
 
 /** One of several subjects in a scene (src/lineup.ts): what it draws (the sea is the scene's) and its checks, and whatever more its game reads. */
 export type Member = { readonly things: readonly Drawable[]; readonly checks: readonly Check[] };

@@ -11,3 +11,4 @@ export { pendulum, sway, jolt, PendulumError, type Drive, type Pendulum, type Pe
 export { dart, chosen, tremor, RestlessError, type Dart, type DartSpec } from "./geom/restless.ts";
 export { cast, score, show, only, added, during, ExpressionError, type Cast, type Expression, type Layer, type Posed, type Score } from "./geom/expression.ts";
 export { struck, holdsStill, StruckError, type Struck, type StruckSpec } from "./geom/struck.ts";
+export { carriedFrame } from "./geom/stance.ts";

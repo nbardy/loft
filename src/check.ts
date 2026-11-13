@@ -18,6 +18,7 @@ import type { Thrown } from "./geom/grab.ts";
 import type { LimbSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_distance.ts";
+import { RingWave } from "./geom/ring.ts";
 
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
@@ -781,6 +782,20 @@ export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: reado
 // ---- the aftermath on the water -----------------------------------------------------------------------------------
 
 /**
+ * A ring on the water: an attack's ring aftermath, or a ring wave of its own (`ringWave`) that starts at `first` (its
+ * `since` is 0 then) under a name. The second came from a crate's splash (examples/second/crane.ts): a ring left by a
+ * thrown thing's landing belongs to no attack's hit disc, and these checks took only attacks.
+ */
+export type Ringing = Attack<Motion, Effect, Ring> | { readonly name: string; readonly wave: RingWave; readonly first: In<"f32"> };
+type RingRead = { readonly name: string; readonly wave: RingWave; readonly first: Expr<"f32">; readonly pushed: (at: In<"vec2">) => Expr<"vec2">; readonly drag: number };
+/** Classified once: what the two checks read of a ring. */
+function ringRead(r: Ringing): RingRead {
+  if (r.wave instanceof RingWave) { const w = r.wave; return { name: r.name, wave: w, first: lift<"f32">(r.first), pushed: (at) => w.pushed(at, time), drag: w.spec.drag }; }
+  const a = r as Attack<Motion, Effect, Ring>;
+  return { name: a.name, wave: a.wave(), first: a.first, pushed: (at) => a.pushed(at), drag: a.aftermath.drag };
+}
+
+/**
  * The stand-in's shove is the ring's own ride, and it is enough (docs/throw_and_shove.md, "The ride"). Measured over
  * the first arming for a thing afloat at `place` (x, z), on the attack's `pushed` against the readouts a game uses:
  * - half way through its ride it moves outward at the wave's `speed` (a central difference a 60th of a second wide),
@@ -791,13 +806,13 @@ export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: reado
  * - six drag times after that it has come to `wave.shoved(place)` (to 0.5%), which is at least `least`.
  * A thing the front cannot hold where it floats (no ride) is measured on the last alone.
  */
-export function shoves(attack: Attack<Motion, Effect, Ring>, place: In<"vec2">, o: { readonly least: number; readonly speed: Tolerance; readonly place: Tolerance }): Check {
-  const wave = attack.wave(), at = lift<"vec2">(place), k = wave.ride(at), now = add(at, attack.pushed(at));
+export function shoves(ringing: Ringing, place: In<"vec2">, o: { readonly least: number; readonly speed: Tolerance; readonly place: Tolerance }): Check {
+  const attack = ringRead(ringing), wave = attack.wave, at = lift<"vec2">(place), k = wave.ride(at), now = add(at, attack.pushed(at));
   const stated = [wave.shoved(at), k.taken, k.seconds, k.distance, k.out, at], moving = [attack.pushed(at), wave.arrival(now), wave.holds(now)];
   return {
     name: `${attack.name}: its ring carries what floats at the place given, as its own readouts say`,
     run(probe) {
-      const T = probe.scalar(attack.first), c = wave.speed, drag = attack.aftermath.drag;
+      const T = probe.scalar(attack.first), c = wave.speed, drag = attack.drag;
       const [end, taken, seconds, distance, out, p] = probe.eval(stated, T) as [number[], number, number, number, number[], number[]];
       const sample = (t: number) => { const [push, edge, holds] = probe.eval(moving, t) as [number[], number, number]; return { along: push[0]! * out[0]! + push[1]! * out[1]!, edge, holds }; };
       const final = Math.hypot(end[0]!, end[1]!), dropped = T + taken + seconds;
@@ -827,8 +842,8 @@ export function shoves(attack: Attack<Motion, Effect, Ring>, place: In<"vec2">, 
  * and one drag time after that the thing has moved (so the check is not passed by a wave that never comes). Measured
  * over the first arming.
  */
-export function frontFirst(attack: Attack<Motion, Effect, Ring>, places: readonly In<"vec2">[], o: { readonly rate?: number } = {}): Check {
-  const rate = o.rate ?? 60, wave = attack.wave();
+export function frontFirst(ringing: Ringing, places: readonly In<"vec2">[], o: { readonly rate?: number } = {}): Check {
+  const attack = ringRead(ringing), rate = o.rate ?? 60, wave = attack.wave;
   if (places.length < 1) throw new Error(`frontFirst "${attack.name}": no places`);
   const roots = places.map((place) => { const at = lift<"vec2">(place); return { arrival: [wave.arrival(at)], moved: [attack.pushed(at), wave.lifts(at, time)] }; });
   return {
@@ -844,7 +859,7 @@ export function frontFirst(attack: Attack<Motion, Effect, Ring>, places: readonl
           const m = Math.max(Math.abs(push[0]!), Math.abs(push[1]!), t < T + arrival ? Math.abs(rise) : 0);
           if (m > early) { early = m; when = t; }
         }
-        const [push] = probe.eval(r.moved, T + arrival + wave.lag + attack.aftermath.drag) as [number[], number];
+        const [push] = probe.eval(r.moved, T + arrival + wave.lag + attack.drag) as [number[], number];
         later = Math.min(later, Math.hypot(push[0]!, push[1]!));
       }
       return {

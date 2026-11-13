@@ -152,8 +152,9 @@ each in under about 100 lines, from public parts only, and give `toon` the hatch
 If that works, a custom style is fast to roll and no registry or plugin mechanism is needed: a style is a value handed
 to `scene({ style })`.
 
-Not done today: the recipe reaches only woodblock; sky, sea and foam are woodblock's; `toon`, `biolume` and
-`papercraft` each shade their own way and share little.
+Done 2026-11-12 (docs/styles.md): the parts are out of woodblock (`skyOf`, `swellLines`, `contactFoam`/`marksFoam`
+with `printLayers`, paint treatments, `paperGrain`/`bloom`/`reflection`, `litBodies`); every style is composed from
+them, toon takes a recipe, and `sketch` and `neon` are written from public parts only (`tools/style_imports.ts`).
 
 ## 8. Process: how the pictures got good
 

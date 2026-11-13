@@ -1,27 +1,42 @@
-// An eye on a stalk that acts: the stalk bends by a pose (src/geom/bend.ts), the eyeball faces where its socket is
-// turned and its pupil slides across it, two lids close over it. One piece for an eye held up on a periscope and for an
-// eye hung from a crook like a lantern: the difference is the pose and `hang`.
+// RECIPE: an eye on a stalk that acts. Copy this file and edit it; it imports only the library's public entry.
 //
-// The eyeball, the sliding pupil and the lid as a spherical lune hinged on the eye's corners are the islander's
-// (titan/face/dandy.ts). lib/face_parts.ts has them too (`eyeball`, `lid`), for an eye of fixed size with an iris, set
-// in a head; this file's ball swells and has none, so only the hinge is shared. New here: the stalk is a bent spine, so its
-// shape is part of the expression; the ball may swell (through a sized chart, so the strand's volume keeping does not
-// turn a swollen ball into an egg); and the ball may hang beyond the stalk's tip along the stalk's own heading.
+// What it makes, and from what. The stalk is a `strand` on a bent spine (`bent`, a pose's bends evaluated once a frame);
+// the eyeball a four-station `strand` placed at the stalk's tip through a `sized` chart (so it can swell without the
+// strand's volume keeping turning it into an egg), facing where its socket is turned, its pupil sliding across it; two
+// lids, each a spherical lune (`surface`) hinged on the eye's corners, close over it. One piece for an eye held up on a
+// periscope and for one hung from a crook like a lantern: the difference is the pose and `hang`. Everything a vertex or
+// a pixel reads is tabulated once a frame (`tabulate`; `prefix` names the tables). It also gives the marks a check reads
+// (`expressionsRead`, `minScreenSize`). `lookOf` turns a target and an audience into a look: the socket turns part of the
+// way, the pupil slides the rest.
+// First drawn as the islander's eye (titan/face/dandy.ts); face_parts.ts has a fixed-size eye with an iris set in a
+// head, where this ball swells and has none.
 //
-// Everything a vertex or a pixel reads is tabulated once a frame here (`prefix` names the tables).
+// Parameters (`StalkEyeSpec`): the bent stalk, its girths and paint; the ball's radius and `swell`; `hang`; the look
+// (a function of the ball's middle); pupil size; inks; the lids' angles and slant. Angles, swell, pupil and the look are
+// expressions; radii, girths, `hang` and the inks are numbers.
+//
+// What it cannot do:
+// - an eye that is not a sphere, or a pupil that is not a disc (no slit, no bar);
+// - lids that are not lunes of one sphere round the ball, hinged on one line (no lower lid that folds, no third lid);
+// - a stalk that is not one strand (no joint, no branching, no retraction into a socket other than by the pose's bends);
+// - more than the drawn ball in the marks: an iris has no mark.
+//
+// Copying it: change `lookOf` first (it decides what the eye says), then the ball's paint. Relatives worth trying:
+// `hang` above 1 with a soft pose is a lantern (an anglerfish's lure, with the ball's paint made to glow); two balls on
+// one stalk's tip is a snail's tentacle pair; the ball's paint with a band instead of a pupil is a slug's eye spot.
 
 import {
   add, cos, cross, dot, draw, length, max, mix, mul, place, rigid, sin, spacing, sqrt, strand, sub, surface, tabulate, unit, vec2, vec3,
-  type Drawable, type F, type Mark, type P3, type Strand,
+  edgeOf, sized, type Bent, type Drawable, type F, type Mark, type P3, type Strand,
 } from "../../../src/index.ts";
-import type { Bent } from "../../../src/geom/bend.ts";
-import { sized } from "../../../src/map/chart.ts";
-import { lidHinge } from "./face_parts.ts";
-import { edgeOf } from "../../../src/style/shared.ts";
 
 type V3 = readonly [number, number, number];
 const TAU = 2 * Math.PI;
 const cut = (x: F, at: number | F): F => edgeOf(x, at, 1e-5);
+/** The hinge of a pair of lids: the eye's side and up tipped by `slant` radians (positive raises the side's own end). As face_parts.ts has it. */
+function lidHinge(axes: { readonly side: P3; readonly up: P3 }, slant: F): { readonly side: P3; readonly up: P3 } {
+  return { side: add(mul(axes.side, cos(slant)), mul(axes.up, sin(slant))), up: sub(mul(axes.up, cos(slant)), mul(axes.side, sin(slant))) };
+}
 
 export type StalkEyeSpec = {
   /** Names the parts (`stalk<tag>`, `eye<tag>`, `lid<tag>`, `cheek<tag>`) and, with `prefix`, the per-frame tables. */
@@ -85,7 +100,7 @@ export function stalkEye(e: StalkEyeSpec): StalkEye {
   const gx = tabF("gx", look.gaze[0]), gy = tabF("gy", look.gaze[1]), pupilR = tabF("pupil", e.pupil);
   const upper = tabF("upper", e.lids.upper), lower = tabF("lower", e.lids.lower), slant = tabF("slant", e.lids.slant);
   // The lids' hinge, tipped by the slant.
-  const { side, up } = lidHinge({ front, side: side0, up: up0 }, slant);
+  const { side, up } = lidHinge({ side: side0, up: up0 }, slant);
 
   const stalk = strand({
     name: `stalk${e.tag}`, spine: (m) => b.spine(m), stations: 8,

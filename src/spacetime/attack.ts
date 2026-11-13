@@ -723,7 +723,10 @@ function sweepSpine(a: Attack, m: SweepSpec, rest: Spine): Spine {
   return (s) => {
     // The motion runs toward the tip, like a whip: parts nearer the root move first (their clock runs ahead).
     const env = a.envelope(add(time, mul(sub(1, s), 1 / a.timing.travel)));
-    const weight = smoothstep(m.root, m.root + 0.08, s);
+    // The swept stretch is joined to the rest of the body over 0.08 of m after `root`. With `root` 0 there is no rest of
+    // the body: the whole spine is swept (a lighthouse's band, examples/second/lighthouse.ts). Joined there too, its first
+    // 8% was a mix of two angles, a chord inside the arc's inner edge, and `landsInside` failed it (2.9% outside).
+    const weight = m.root > 0 ? smoothstep(m.root, m.root + 0.08, s) : lift<"f32">(1);
     return mix(rest(s), sweepPoint(m, s, env.q), mul(weight, env.p));
   };
 }
