@@ -11,6 +11,7 @@
 
 import { add, clamp, compileJs, div, floor, ge, gt, lift, lt, max, min, mix, mul, pow, select, sin, smoothstep, sub, time, variable, vec3, type In } from "../expr.ts";
 import { rotate } from "../map/chart.ts";
+import { rotateAbout } from "../map/transport.ts";
 import type { F, Frame, P3 } from "../map/types.ts";
 import type { Gait } from "./gait.ts";
 import { alive } from "./lively.ts";
@@ -113,6 +114,18 @@ function braceOf(s: Extract<Stance, { kind: "brace" }>): Carriage {
 function danceOf(s: Extract<Stance, { kind: "dance" }>): Carriage {
   return { surge: lift<"f32">(0), rise: s.lift, sway: mul(s.side, s.size.sway), roll: mul(s.side, s.size.roll), pitch: s.pitch, yaw: s.turn };
 }
+/**
+ * The body's frame over `ground` carried by `c`: offset by surge (x), rise (y) and sway (z), then turned by yaw about up,
+ * roll about the turned forward, pitch about the rolled right, with the signs `Carriage` states. Added when a heron
+ * (examples/second/heron.ts) had to copy these six rotations out of the crab's rig to use a carriage at all.
+ */
+export function carriedFrame(ground: Frame, c: Carriage): Frame {
+  const yx = rotateAbout(ground.x, ground.y, c.yaw), yz = rotateAbout(ground.z, ground.y, c.yaw);
+  const ry = rotateAbout(ground.y, yx, c.roll), rz = rotateAbout(yz, yx, c.roll);
+  const o = add(add(add(ground.o, mul(ground.y, c.rise)), mul(ground.z, c.sway)), mul(ground.x, c.surge));
+  return { o, x: rotateAbout(yx, rz, c.pitch), y: rotateAbout(ry, rz, c.pitch), z: rz };
+}
+
 function walkOf(s: Extract<Stance, { kind: "walk" }>): Carriage {
   const u = mul(s.gait.cycles, TAU), z = s.size;
   return times({
@@ -207,9 +220,13 @@ export type FootingSpec = {
   /** Each foot's home in the ground frame (on the ground). */
   readonly homes: readonly (readonly [number, number, number])[];
   readonly t?: In<"f32">;
-  /** The re-plants, run every `loop` seconds; each pair only if `busy` is idle at its four times (both steps' leads and settles). */
-  readonly replant: { readonly schedule: readonly Replant[]; readonly loop: number; readonly step: StepTiming; readonly height: number; readonly busy: (t: F) => F; readonly idleBelow: number; readonly unload: number; readonly dip: number };
-  readonly stamps: readonly Stamp[];
+  /**
+   * The re-plants, run every `loop` seconds; each pair only if `busy` is idle at its four times (both steps' leads and
+   * settles). Absent: the feet never re-plant (a creature that only walks: the heron in examples/second/).
+   */
+  readonly replant?: { readonly schedule: readonly Replant[]; readonly loop: number; readonly step: StepTiming; readonly height: number; readonly busy: (t: F) => F; readonly idleBelow: number; readonly unload: number; readonly dip: number };
+  /** Absent: no stamps. */
+  readonly stamps?: readonly Stamp[];
   /** The walk: its gait (homed in the ground frame, whose course starts at the origin), its weight, and the seconds a cycle is taken to last for `since`. */
   readonly walk: { readonly gait: Gait; readonly on: F; readonly secondsPerCycle: number };
 };
@@ -230,12 +247,15 @@ const LONG_AGO = 1000;
 const wrap = (x: F, p: number): F => sub(x, mul(floor(div(x, p)), p));
 
 export function footing(spec: FootingSpec): Footing {
-  const t = lift<"f32">(spec.t ?? time), R = spec.replant, S = R.step, P = R.loop;
-  const idleAt = (at: F): F => select(lt(R.busy(at), R.idleBelow), 1, 0);
+  const t = lift<"f32">(spec.t ?? time);
   type Event = { readonly foot: number; readonly offset: P3; readonly up: F; readonly air: F; readonly sincePlant: F; readonly sinceLift: F };
   const events: Event[] = [];
   const unloads: Carriage[] = [];
-  for (const p of R.schedule) {
+  // An absent section is no events of its kind (read once, here).
+  const R = spec.replant;
+  if (R !== undefined) for (const p of R.schedule) {
+    const S = R.step, P = R.loop;
+    const idleAt = (at: F): F => select(lt(R.busy(at), R.idleBelow), 1, 0);
     // One clock per pair, so its two steps reset together at the loop's turn (both done, both 0: no jump).
     const tau = wrap(sub(t, p.out), P), start = sub(t, tau), gap = p.back - p.out;
     const g = [-S.lead, S.seconds + S.settle, gap - S.lead, gap + S.seconds + S.settle].reduce<F>((acc, dt) => mul(acc, idleAt(add(start, dt))), lift<"f32">(1));
@@ -262,7 +282,7 @@ export function footing(spec: FootingSpec): Footing {
       });
     }
   }
-  for (const s of spec.stamps) {
+  for (const s of spec.stamps ?? []) {
     const u = div(add(s.since, s.lead), s.lead), air = select(gt(u, 0), select(lt(u, 1), 1, 0), 0);
     // Up fast and down hard on the accent: the height rises as sin(pi u^0.6), its top a third of the way.
     events.push({
