@@ -1,7 +1,13 @@
 // Runs the code the docs show, so a guide cannot drift from the library. The bug it catches: a doc that names an
 // export, a field or a flag the library does not have (or no longer has).
 //
-//   bun tools/check_snippets.ts            README.md, docs/guide.md, docs/craft.md, docs/errors.md and the written part of `loft api`
+//   bun tools/check_snippets.ts            README.md, docs/guide.md, docs/craft.md, docs/errors.md, docs/context.md and the
+//                                          written part of `loft api`
+//
+// And the names in `loft context`: every identifier in docs/context.md's inline code must be an export of the public
+// entry (src/index.ts, src/lib/index.ts), a part of an exported object (`draw.field`) or a field of an exported type
+// (`squareness`); a span starting `loft ` is parsed as a command. The map it prints beside them is generated, so this
+// keeps the written part true after a rename.
 //
 // What counts, in those files:
 //   ```ts run    a whole scene module: typechecked, rendered once at 160x100 through its first camera, and when it
@@ -16,9 +22,10 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseArgs, UsageError } from "../src/cli/args.ts";
+import { exportsOf } from "../src/cli/catalogue.ts";
 
 const ROOT = resolve(import.meta.dir, "..");
-const DOCS = ["README.md", "docs/guide.md", "docs/craft.md", "docs/errors.md", "src/cli/api_preamble.md"];
+const DOCS = ["README.md", "docs/guide.md", "docs/craft.md", "docs/errors.md", "docs/context.md", "src/cli/api_preamble.md"];
 const OUT = resolve(ROOT, "out/snippets");
 
 type Snippet = { readonly doc: string; readonly line: number; readonly mode: "run" | "check" | "sh"; readonly code: string };
@@ -60,6 +67,35 @@ for (const s of all.filter((x) => x.mode === "sh")) {
   }
 }
 
+// Names in docs/context.md's inline code (outside fences): exports, parts of exported objects, fields of exported types.
+const known = new Set<string>();
+for (const entry of ["src/index.ts", "src/lib/index.ts"]) for (const e of exportsOf(resolve(ROOT, entry)).values()) {
+  known.add(e.name);
+  for (const m of e.members) known.add(m.name);
+  for (const f of e.fields) known.add(f.name);
+}
+let names = 0;
+{
+  const doc = "docs/context.md";
+  const lines = readFileSync(resolve(ROOT, doc), "utf8").split("\n");
+  let fenced = false;
+  for (const [k, line] of lines.entries()) {
+    if (line.startsWith("```")) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    for (const [, span] of line.matchAll(/`([^`]+)`/g)) {
+      const s: Snippet = { doc, line: k + 1, mode: "sh", code: span! };
+      if (span!.startsWith("loft ")) { try { parseArgs(span!.slice(5).split(/\s+/)); } catch (e) { fail(s, `\`${span}\`: ${e instanceof UsageError ? e.message : String(e)}`); } continue; }
+      if (span!.startsWith("--") || span!.includes("/")) continue; // a flag, or a path
+      // Identifiers outside string literals; one-letter ones are coordinates and arguments (m, v, x).
+      for (const [id] of span!.replace(/"[^"]*"|'[^']*'/g, "").matchAll(/[A-Za-z_$][\w$]*/g)) {
+        if (id.length === 1 || /^\d/.test(id)) continue;
+        names++;
+        if (!known.has(id)) fail(s, `\`${span}\` names "${id}", which the public entry does not export (nor any exported object or type has)`);
+      }
+    }
+  }
+}
+
 // Modules: written out, typechecked together, scenes rendered.
 const modules = all.filter((x) => x.mode !== "sh");
 const files = modules.map((s, k) => {
@@ -95,6 +131,6 @@ for (const [k, s] of modules.entries()) {
 }
 
 const typed = modules.length;
-console.log(`\n${commands} commands parsed, ${typed} modules typechecked, ${rendered} scenes rendered, ${checked} passed their checks; ${failures.length} failed`);
+console.log(`\n${names} names in docs/context.md found, ${commands} commands parsed, ${typed} modules typechecked, ${rendered} scenes rendered, ${checked} passed their checks; ${failures.length} failed`);
 for (const f of failures) console.log(`FAIL ${f}`);
 process.exit(failures.length === 0 ? 0 : 1);
