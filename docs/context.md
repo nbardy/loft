@@ -11,7 +11,9 @@ TypeScript expressions compiled to WGSL. A scene imports from `../src/index.ts` 
 an argument, in seconds, so any frame draws alone; `period` says when every motion repeats. Expressions (`add`, `sin(time)`,
 `vec3`) draw on the GPU and evaluate on the CPU. A swept body's m runs 0 (root) to 1 (tip) and v 0 to 1 round it; a
 surface's u and v run 0 to 1; paint is a function of them. Give every scene two cameras: the whole with room round
-it, and the focus. One sun; no reflections, no simulation, no meshes in. `loft` is `bun src/cli/main.ts`.
+it, and the focus. `strand`, `spiralTube`, `sheetOn`, `ropes` and `impostors` return things: put them in `things`. `coil`, `fan`,
+`sheet`, `lathe`, `loft` and `extrude` return a bare surface: draw it first, `draw.surface(name, surface, { paint, grid })`.
+One sun; no reflections, no simulation, no meshes in. `loft` is `bun src/cli/main.ts`.
 
 ```ts run
 // examples/reed.ts
