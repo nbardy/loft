@@ -2,6 +2,8 @@
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
 import { UsageError } from "./args.ts";
 import type { Artefact } from "../artefact.ts";
+import type { Compiled } from "../compile/index.ts";
+import type { Scene } from "../scene.ts";
 import type { GpuHost } from "../host/host.ts";
 import type { LightChoice, SceneSource, StyleChoice } from "./args.ts";
 
@@ -16,17 +18,35 @@ function need<T>(mod: Record<string, unknown>, name: string, from: string): T {
 }
 
 export async function loadArtefact(source: SceneSource): Promise<Artefact> {
+  const opened = await openScene(source);
+  switch (opened.kind) {
+    case "fixture": return opened.artefact;
+    case "scene": return opened.compiled.artefact;
+  }
+}
+
+/**
+ * The source compiled, keeping what can still be measured on the CPU: a scene file's scene (as styled) and its
+ * compile, from which the artefact is taken; a fixture is an artefact with no scene behind it.
+ */
+export type Opened =
+  | { readonly kind: "fixture"; readonly artefact: Artefact }
+  | { readonly kind: "scene"; readonly scene: Scene; readonly compiled: Compiled };
+
+export async function openScene(source: SceneSource): Promise<Opened> {
   switch (source.kind) {
     case "fixture": {
       const mod = await importFrom<Record<string, unknown>>("../host/fixture.ts");
-      return need<Artefact>(mod, "fixture", "src/host/fixture.ts");
+      return { kind: "fixture", artefact: need<Artefact>(mod, "fixture", "src/host/fixture.ts") };
     }
     case "file": {
       // A design draws the chosen variant (its base when none is given); a plain scene draws its default export.
       const { chosenAt } = await import("./variant.ts");
       const { scene } = await chosenAt(source.path, source.variant);
-      const index = await importFrom<Record<string, unknown>>("../index.ts");
-      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style, source.light));
+      const compiler = await importFrom<Record<string, unknown>>("../compile/index.ts");
+      const drawn = (await styled(scene, source.style, source.light)) as Scene;
+      // compileScene(s).artefact is what `compile(s)` returns (src/compile/index.ts): the same artefact as before.
+      return { kind: "scene", scene: drawn, compiled: need<(s: Scene) => Compiled>(compiler, "compileScene", "src/compile/index.ts")(drawn) };
     }
   }
 }

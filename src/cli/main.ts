@@ -3,40 +3,100 @@ import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
 import type { Artefact } from "../artefact.ts";
 import type { GpuLoaded } from "../host/host.ts";
-import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
+import { parseArgs, USAGE, UsageError, type Budget, type Command, type Out, type Size } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
-import { contactSheet, writeWebp, type Frame } from "./image.ts";
+import { contactSheet, writePngs, writeWebp, type Frame } from "./image.ts";
 import { checkInputs, viewInputs, type Sweep } from "./inputs.ts";
-import { headlessHost, loadArtefact } from "./load.ts";
+import { headlessHost, loadArtefact, openScene, type Opened } from "./load.ts";
 import { openVideo } from "./video.ts";
 import { exitWith, headed, verdictOf } from "./verdict.ts";
-import { EnvironmentError } from "../errors.ts";
+import { EnvironmentError, SceneError } from "../errors.ts";
+import type { Camera } from "../artefact.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
 /** What the CLI reads of an artefact, whichever way it came: compiled here, or a built directory. */
 type Info = Pick<Artefact, "cameras" | "inputs" | "stats">;
 
-async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }>, sweep: Sweep): Promise<{ info: Info; loaded: GpuLoaded }> {
+/**
+ * What a named view is drawn through: a camera the artefact names (or a fallback), or `whole` derived on the CPU from
+ * the scene (src/cli/whole.ts), which a built directory or a fixture cannot do: they have no scene behind them.
+ */
+type Measure = { readonly kind: "scene"; readonly opened: Extract<Opened, { kind: "scene" }> } | { readonly kind: "none"; readonly why: string };
+
+async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }>, sweep: Sweep): Promise<{ info: Info; loaded: GpuLoaded; measure: Measure }> {
   let t = performance.now();
   switch (cmd.source.kind) {
     case "artefact": {
+      if (cmd.budget.triangles !== Infinity || cmd.budget.draws !== Infinity) throw new UsageError("--budget: needs a scene file (a built directory's counts are in its manifest.json under stats)");
       // Without the compiler: the loader reads the directory alone (src/cli/run_files.ts).
       const { openFiles } = await import("./run_files.ts");
       const { bundle, loaded } = await openFiles(cmd.source.dir);
       const m = bundle.manifest;
       checkInputs(m, cmd.inputs, sweep);
       console.log(`files    ${ms(t)}  read and loaded ${cmd.source.dir}  (${fillCounts(m.tables)}; ${m.modules.length} modules, ${m.renderPipelines.length + m.computePipelines.length} pipelines)`);
-      return { info: m, loaded };
+      return { info: m, loaded, measure: { kind: "none", why: "a built directory has no scene to measure" } };
     }
     case "file": case "fixture": {
-      const artefact = await loadArtefact(cmd.source);
+      const opened = await openScene(cmd.source);
+      const artefact = opened.kind === "scene" ? opened.compiled.artefact : opened.artefact;
       checkInputs(artefact, cmd.inputs, sweep);
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
+      withinBudget(artefact, cmd.budget);
       t = performance.now();
       const loaded = await loadedWithRetries(artefact);
       console.log(`load     ${ms(t)}`);
-      return { info: artefact, loaded };
+      return { info: artefact, loaded, measure: opened.kind === "scene" ? { kind: "scene", opened } : { kind: "none", why: "the fixture has no scene to measure" } };
+    }
+  }
+}
+
+/**
+ * `--budget`: the compiled scene's declared counts against the caller's limits, before any GPU work. Over either, a
+ * scene refusal (exit 4) with both counts, the limits and the draws that cost the most, which is where to cut.
+ */
+function withinBudget(a: Artefact, budget: Budget): void {
+  const { maxTriangles: triangles, draws } = a.stats;
+  if (triangles <= budget.triangles && draws <= budget.draws) return;
+  // Per thing, not per draw: a strand's surface and its outline are one cost, cut by one change (labels: "name kind").
+  const byThing = new Map<string, number>();
+  for (const d of a.draws) if (d.layer === "scene") byThing.set(d.label.split(" ")[0]!, (byThing.get(d.label.split(" ")[0]!) ?? 0) + (d.vertices / 3) * d.instances);
+  const heaviest = [...byThing].sort((x, y) => y[1] - x[1]).slice(0, 5).map(([name, n]) => `${name} ${n}`).join(", ");
+  const over = [triangles > budget.triangles ? `${triangles} triangles (limit ${budget.triangles})` : "", draws > budget.draws ? `${draws} draws (limit ${budget.draws})` : ""].filter((x) => x !== "").join(" and ");
+  const fix = [
+    triangles > budget.triangles ? `lower a strand's stations or detail ({ along, around }: the defaults 32 and 96 x 24 are the most a strand costs) on the heaviest things (triangles: ${heaviest})` : "",
+    draws > budget.draws ? "draw fewer things: merge parts that move together into one strand or surface (each thing is at least one draw, more with ink or shadow)" : "",
+  ].filter((x) => x !== "").join("; and ");
+  const limits = [budget.triangles !== Infinity ? `${budget.triangles} triangles` : "", budget.draws !== Infinity ? `${budget.draws} draws` : ""].filter((x) => x !== "").join(" and ");
+  throw new SceneError("--budget", over, `at most ${limits}`, fix);
+}
+
+/** The camera a view name draws through; `whole` always resolves (the scene's own, or derived and said on stderr). */
+async function cameraOf(info: Info, measure: Measure, name: string, size: Size): Promise<Camera> {
+  if (name !== "whole" || info.cameras["whole"] !== undefined) return resolveCamera(info, name);
+  switch (measure.kind) {
+    case "none": throw new UsageError(`--view whole: ${measure.why}, and it names no camera "whole"; render the scene file, or give it cameras.whole before building`);
+    case "scene": {
+      const { deriveWhole, derivedNote } = await import("./whole.ts");
+      const d = deriveWhole(measure.opened.scene, measure.opened.compiled, size.width / size.height);
+      console.error(derivedNote(d));
+      return d.camera;
+    }
+  }
+}
+
+/** The pictures, written as asked: one lossy sheet, or one lossless PNG each. */
+function writeOut(out: Out, frames: readonly Frame[], what: string): void {
+  switch (out.kind) {
+    case "sheet": {
+      const sheet = contactSheet(frames);
+      writeWebp(out.path, sheet);
+      console.log(`wrote ${out.path}  ${sheet.width}x${sheet.height}  ${what}`);
+      return;
+    }
+    case "pngs": {
+      for (const p of writePngs(out.dir, frames)) console.log(`wrote ${p}`);
+      return;
     }
   }
 }
@@ -94,23 +154,21 @@ async function witness(cmd: Extract<Command, { kind: "render" | "frames" | "clip
 }
 
 async function render(cmd: Extract<Command, { kind: "render" }>) {
-  const { info: artefact, loaded } = await open(cmd, { kind: "none" });
+  const { info: artefact, loaded, measure } = await open(cmd, { kind: "none" });
   const frames: Frame[] = [];
   for (const name of cmd.views) {
-    const camera = resolveCamera(artefact, name);
+    const camera = await cameraOf(artefact, measure, name, cmd.size);
     const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
     frames.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
-  const sheet = contactSheet(frames);
-  writeWebp(cmd.out, sheet);
-  console.log(`wrote ${cmd.out}  ${sheet.width}x${sheet.height}  [${cmd.views.join(", ")}]`);
+  writeOut(cmd.out, frames, `[${cmd.views.join(", ")}]`);
   await witness(cmd);
 }
 
 async function frames(cmd: Extract<Command, { kind: "frames" }>) {
-  const { info: artefact, loaded } = await open(cmd, cmd.sweep);
-  const camera = resolveCamera(artefact, cmd.view);
+  const { info: artefact, loaded, measure } = await open(cmd, cmd.sweep);
+  const camera = await cameraOf(artefact, measure, cmd.view, cmd.size);
   const out: Frame[] = [];
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
@@ -119,15 +177,13 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
     out.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
-  const sheet = contactSheet(out);
-  writeWebp(cmd.out, sheet);
-  console.log(`wrote ${cmd.out}  ${sheet.width}x${sheet.height}  times [${cmd.times.join(", ")}]`);
+  writeOut(cmd.out, out, `times [${cmd.times.join(", ")}]`);
   await witness(cmd);
 }
 
 async function clip(cmd: Extract<Command, { kind: "clip" }>) {
-  const { info: artefact, loaded } = await open(cmd, cmd.sweep);
-  const camera = resolveCamera(artefact, cmd.view);
+  const { info: artefact, loaded, measure } = await open(cmd, cmd.sweep);
+  const camera = await cameraOf(artefact, measure, cmd.view, cmd.size);
   const count = Math.round(cmd.seconds * cmd.fps);
   const video = openVideo(cmd.out, cmd.size.width, cmd.size.height, cmd.fps);
   const t0 = performance.now();

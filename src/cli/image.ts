@@ -2,7 +2,7 @@
 import { EnvironmentError } from "../errors.ts";
 import { deflateSync } from "node:zlib";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 export type Frame = { readonly width: number; readonly height: number; readonly rgba: Uint8Array };
 export type Sheet = Frame & { readonly columns: number; readonly rows: number };
@@ -81,4 +81,14 @@ export function writeWebp(path: string, f: Frame): void {
   } finally {
     rmSync(png, { force: true });
   }
+}
+
+/** One lossless PNG per frame, `dir/0.png`, `dir/1.png`, ... in order; the paths written. */
+export function writePngs(dir: string, frames: readonly Frame[]): string[] {
+  mkdirSync(dir, { recursive: true });
+  return frames.map((f, k) => {
+    const path = join(dir, `${k}.png`);
+    writeFileSync(path, encodePng(f));
+    return path;
+  });
 }

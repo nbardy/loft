@@ -70,3 +70,13 @@ and last line.
 | 21 | `load: ...: the default export is a design` | a design exported as default | `export const design = design({...})` |
 | 22 | `scene(): given sea: ... (the old key) and no ground` | the key before 2026-11 | `ground: sea({...})` |
 | 23 | `load: ... Export named 'spiralTub' not found` | a misspelt import | `spiralTube` (suggested) |
+
+## Refusals of what the command asked
+
+Not scene mistakes but limits the caller set, tested in `tests/cli.host.test.ts`:
+
+| Message (after `loft: <kind>:`) | Cause | Fix |
+|---|---|---|
+| `scene: --budget: given 234786 triangles (limit 120000); expected at most 120000 triangles ...` | the compiled scene declares more than `--budget` allows; refused before any GPU work | lower `stations` or `detail` on the heaviest things it names, or draw fewer things |
+| `scene: camera "whole": given a scene with no camera "whole" and no thing whose shape Loft can measure on the CPU` | `--view whole`, no such camera, and nothing to frame (only glows, rain, media) | add `cameras: { whole: {...} }` |
+| `usage: --view whole: a built directory has no scene to measure` | `--artefact` without a `whole` camera | render the scene file, or give it `cameras.whole` before `loft build` |

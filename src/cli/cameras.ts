@@ -1,4 +1,5 @@
 import type { Artefact, Camera } from "../artefact.ts";
+import { UsageError } from "./args.ts";
 
 /** Fallbacks frame the origin; a scene's own named camera always wins. */
 export const FALLBACK_CAMERAS: Readonly<Record<string, Camera>> = {
@@ -10,6 +11,7 @@ export const FALLBACK_CAMERAS: Readonly<Record<string, Camera>> = {
 
 export function resolveCamera(artefact: Pick<Artefact, "cameras">, name: string): Camera {
   const own = artefact.cameras[name] ?? FALLBACK_CAMERAS[name];
-  if (!own) throw new Error(`no camera "${name}": the scene names [${Object.keys(artefact.cameras).join(", ")}], defaults are [${Object.keys(FALLBACK_CAMERAS).join(", ")}]`);
+  // The command asked for an absent view: a usage error (exit 2), as README.md's table says; it was untyped (exit 1).
+  if (!own) throw new UsageError(`no camera "${name}": the scene names [${Object.keys(artefact.cameras).join(", ")}], defaults are [${Object.keys(FALLBACK_CAMERAS).join(", ")}]`);
   return own;
 }

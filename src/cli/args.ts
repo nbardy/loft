@@ -24,14 +24,22 @@ export type Source =
 export type SceneSource = Exclude<Source, { kind: "artefact" }>;
 export type Size = { readonly width: number; readonly height: number };
 export type ViewName = string;
+/**
+ * Where `render` and `frames` write: one lossy WebP contact sheet (`--out f.webp`, `cwebp -q 90`), or one lossless PNG
+ * per picture at the requested size (`--out dir/`, a trailing slash: `dir/0.png`, `dir/1.png`, ... in --times or
+ * --views order).
+ */
+export type Out = { readonly kind: "sheet"; readonly path: string } | { readonly kind: "pngs"; readonly dir: string };
+/** Caller-supplied limits, enforced after compiling and before any GPU work (`--budget`); Infinity where none is given. */
+export type Budget = { readonly triangles: number; readonly draws: number };
 
-type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues };
+type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly budget: Budget };
 
 export type Command =
   | GalleryCommand
-  | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
+  | (Shared & { readonly kind: "render"; readonly out: Out; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName; readonly sweep: Sweep })
-  | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
+  | (Shared & { readonly kind: "frames"; readonly out: Out; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
   | { readonly kind: "dev"; readonly source: SceneSource; readonly port: number }
   /** `combinations`: every combination of every slot's options, instead of the named variants. */
   | { readonly kind: "check"; readonly path: string; readonly variant: VariantArg; readonly combinations: boolean }
@@ -57,6 +65,11 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   render <scene> --out f.webp [--views front,side,top,three] [--time 1.0] [--size 1280x800] [--param name=value ...] [--construction]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
+  --out dir/          (render, frames) a trailing slash: one lossless PNG per picture, dir/0.png, dir/1.png, ... in the
+                      order of --views or --times, each at --size, instead of the lossy WebP sheet
+  --view whole        (render, clip, frames) always draws: the scene's camera "whole" if it has one, else one derived
+                      from the bounds of its things with room round them (stderr says so)
+  --budget triangles=120000,draws=96   (render, clip, frames) refuse a scene over these before any GPU work (either alone)
   dev    <scene> [--port 5173]
   profile <scene> [--view game] [--size 1280x800] [--frames 30] [--time 1.0] [--style name] [--outline hull|screen]   (GPU ms per draw, best of frames)
   check  <scene> [--variant v | --combinations]   (runs the checks on the CPU; exits 1 if any fails. A design: every
@@ -100,6 +113,7 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--port": { value: true, commands: ["dev"] },
   "--style": { value: true, commands: ["render", "clip", "frames", "dev", "profile", "build", "variants"] },
   "--light": { value: true, commands: ["render", "clip", "frames", "profile", "build", "variants"] },
+  "--budget": { value: true, commands: ["render", "clip", "frames"] },
 };
 
 function num(flag: string, text: string): number {
@@ -137,6 +151,24 @@ function variantOf(text: string | undefined): VariantArg {
 }
 
 const names = (text: string): string[] => text.split(",").map((s) => s.trim()).filter((s) => s !== "");
+
+function budgetOf(text: string | undefined): Budget {
+  if (text === undefined) return { triangles: Infinity, draws: Infinity };
+  const limits = { triangles: Infinity, draws: Infinity };
+  for (const part of names(text)) {
+    const m = /^(triangles|draws)=(\d+)$/.exec(part);
+    if (!m) throw new UsageError(`--budget: "${part}" is not triangles=N or draws=N (e.g. --budget triangles=120000,draws=96)`);
+    limits[m[1] as keyof Budget] = Number(m[2]);
+  }
+  return limits;
+}
+
+/** `--out`: a .webp sheet, or a directory (trailing slash) of lossless PNGs; clip and bake keep their one extension. */
+function outOf(name: string, out: string): Out {
+  if (out.endsWith("/")) return { kind: "pngs", dir: out };
+  if (out.endsWith(".webp")) return { kind: "sheet", path: out };
+  throw new UsageError(`--out: ${name} writes a .webp sheet, or one lossless PNG per picture into a directory given with a trailing slash (e.g. out/${name}/); got "${out}"`);
+}
 
 function outlineOf(text: string | undefined): "scene" | OutlineMethod {
   switch (text) {
@@ -232,8 +264,8 @@ export function parseArgs(argv: readonly string[]): Command {
 
   const out = one("--out");
   if (out === undefined) throw new UsageError(`${name}: --out is required`);
-  const wantExt = name === "clip" ? ".mp4" : name === "bake" ? ".glb" : ".webp";
-  if (!out.endsWith(wantExt)) throw new UsageError(`--out: ${name} writes ${wantExt} files, got "${out}"`);
+  const wantExt = name === "clip" ? ".mp4" : ".glb";
+  if ((name === "clip" || name === "bake") && !out.endsWith(wantExt)) throw new UsageError(`--out: ${name} writes ${wantExt} files, got "${out}"`);
   if (name === "bake") {
     if (source.kind === "artefact") throw new UsageError("bake: needs a scene file");
     const d = /^(\d+)x(\d+)$/.exec(one("--density") ?? "48x16");
@@ -248,13 +280,14 @@ export function parseArgs(argv: readonly string[]): Command {
     size: parseSize(one("--size") ?? "1280x800"),
     params: Object.fromEntries((flags.get("--param") ?? []).map(parseParam)),
     inputs: parseInputs(flags.get("--input") ?? []),
+    budget: budgetOf(one("--budget")),
   };
   const sweep = parseSweep(one("--sweep"));
 
   switch (name) {
     case "render":
       return {
-        ...shared, kind: "render", out,
+        ...shared, kind: "render", out: outOf(name, out),
         views: (one("--views") ?? "front,side,top,three").split(",").map((s) => s.trim()).filter((s) => s !== ""),
         time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
         construction: flags.has("--construction"),
@@ -270,7 +303,7 @@ export function parseArgs(argv: readonly string[]): Command {
       const t = one("--times");
       if (t === undefined) throw new UsageError("frames: --times is required, e.g. --times 0,0.5,1");
       const listed = t.split(",").map((s) => num("--times", s));
-      return { ...shared, kind: "frames", out, times: frameTimes(listed, sweep, one("--count")), view: one("--view") ?? "three", sweep };
+      return { ...shared, kind: "frames", out: outOf(name, out), times: frameTimes(listed, sweep, one("--count")), view: one("--view") ?? "three", sweep };
     }
     default:
       throw new UsageError(`unhandled command "${name}"`);

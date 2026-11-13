@@ -53,6 +53,7 @@ loft render examples/reed.ts --out out/reed.webp --views three
 ```sh
 loft render   examples/serpent.ts --out out/a.webp --views front,side,top,three   # one picture per camera, one sheet
 loft frames   examples/serpent.ts --out out/b.webp --times 0,0.5,1,1.5             # one camera, several times
+loft frames   examples/serpent.ts --out out/b/ --times 0,1 --view whole             # one lossless PNG per time; whole always draws
 loft clip     examples/serpent.ts --out out/c.mp4 --seconds 8                      # H.264 through ffmpeg
 loft dev      examples/serpent.ts                                                   # live page: orbit, time, sliders
 loft check    examples/strike.ts                                                    # the scene's checks, on the CPU
@@ -65,7 +66,7 @@ loft context                                                                    
 ```
 
 `--style`, `--light`, `--variant`, `--input` and `--sweep` change what is drawn without editing the scene; `loft help`
-lists every flag.
+lists every flag. `--budget triangles=120000,draws=96` refuses a scene over those counts before any GPU work.
 
 ## Exit codes
 
