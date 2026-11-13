@@ -1,8 +1,9 @@
 // RECIPE: the one small ship every boss picture carries for scale. Copy it and edit it.
-// Uses: ../../scenes/lib/fleet.ts (sloop): the game-scale sloop; besides that, only the library's public entry.
+// Uses: ../../scenes/lib/fleet.ts (sloop): the game-scale sloop; ../../recipes/ship.ts (ship); besides those, only the
+// library's public entry.
 //
 // What it makes (docs/art_direction/DIRECTION.md: "each monster dwarfs a ship; every picture has one small ship with
-// blue sails for scale"): the game's sloop (`ship`) at 3.8 units, a warm brown hull, cream trim and team stripe, and
+// blue sails for scale"): the game's sloop (the recipe's `ship`) at 3.8 units, a warm brown hull, cream trim and team stripe, and
 // sails in the print's blue. Each scene places it (`scaleShip.afloat`, or `afloatChart` when an attack targets it);
 // what it is is decided here only.
 //
@@ -15,7 +16,8 @@
 // Parameters: the length, the colours, the sail's inks. What it cannot do: be any ship but the sloop (see fleet.ts).
 // Copying it: change the length first, so it reads as small beside your subject from your game's camera; then the cloth.
 
-import { ship, type Rgb, type ShipColours } from "../../../src/index.ts";
+import { type Rgb } from "../../../src/index.ts";
+import { ship, type ShipColours } from "../../recipes/ship.ts";
 import { sloop } from "../../scenes/lib/fleet.ts";
 
 /** Hull length, world units: small beside every monster, and still a ship from the strategy camera. */

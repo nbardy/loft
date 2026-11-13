@@ -71,6 +71,10 @@ const positive = (what: string, x: number): number => {
   return x;
 };
 
+/**
+ * Builders for the pattern of foam printed where water meets a body (`ContactFoam`): `ridge`, `rings`, `apron`,
+ * `stipple`, `breakers`, `curls` and `roll`. Each takes optional sizes in world units and returns a plain value.
+ */
 export const foam = {
   /** Filaments along the zero lines of a noise (the first foam). */
   ridge(): ContactFoam { return { kind: "ridge" }; },
@@ -88,13 +92,17 @@ export const foam = {
   curls(o: { readonly lobe?: number } = {}): ContactFoam { return { kind: "curls", lobe: positive("curls lobe", o.lobe ?? 0.5) }; },
   /**
    * The rolling mass with curled heads. `head`: the world radius of the largest head; left out, it is half the
-   * sea's foam width (0.42 on the crab's sea of 0.85, 0.15 on a sea of 0.3).
+   * sea's foam width (0.42 on a sea whose foam width is 0.85).
    */
   roll(o: { readonly head?: number } = {}): ContactFoam {
     return { kind: "roll", head: o.head === undefined ? { kind: "ofWidth", share: 0.5 } : { kind: "world", radius: positive("roll head", o.head) } };
   },
 };
 
+/**
+ * Builders for how the foam that a sea's deformations mark is printed (`MarksPrint`): `marksAs.flat()` as a flat
+ * fill, or `marksAs.heads({ head })` as a line of curled heads.
+ */
 export const marksAs = {
   /** Fill where the mark is over 0.45. */
   flat(): MarksPrint { return { kind: "flat" }; },

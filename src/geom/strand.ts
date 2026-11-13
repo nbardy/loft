@@ -128,8 +128,11 @@ export class Strand extends Body implements Drawable {
  *
  * Going past it: the spine is the open slot (`chain`, `bent`, `spiralLine`, `wrap`, `through` give spines), and one
  * step down is `sweep` with a `Section` of your own, or a `surface((m, v) => ...)` that places any section curve in
- * the strand's own frame (it is a chart: `frame(vec3(m, v, 0))`): a keeled hull of a body, a fluted column. Relatives: `lathe` for a body round an axis, `loft` through
- * sections that are not one shape scaled, `coil` for a section on a growing spiral.
+ * the strand's own frame (it is a chart: `frame(vec3(m, v, 0))`): a keeled body, a fluted column. Relatives, each by
+ * changing what is swept or what it is swept along:
+ * - a profile turned round a fixed axis instead of carried along a spine: `lathe` (a vase, a bead, a dome).
+ * - sections that are not one shape scaled, blended from one to the next: `loft` through them.
+ * - a section on a growing spiral, all lengths scaling together: `coil`; a tapered tube on a flat spiral: `spiralTube`.
  */
 export function strand(spec: StrandSpec): Strand {
   const name = spec.name;

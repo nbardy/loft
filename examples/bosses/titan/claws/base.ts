@@ -4,7 +4,7 @@
 // claw that keeps this mechanism is a look and some numbers (claws/fiddler.ts).
 
 import {
-  abs, add, alive, animate, cos, div, fingerAngle, spiralTube, lift, limb, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
+  abs, add, alive, animate, cos, div, fingerAngle, spiralTube, lift, chain, max, mix, mul, part, place, rigid, rotateAbout, sin, smoothstep, strand, sub, swing,
   time, unit, vec3, type Drawable, type F, type Frame, type Measured, type P3,
 } from "../../../../src/index.ts";
 import { cut, mottle, perFrame } from "../ink.ts";
@@ -84,7 +84,7 @@ function pincerClaw(rig: Rig, look: ClawLook, name: string, side: 1 | -1, size: 
   const { n, body, local, shoulder } = rig;
   const I = n.ink;
   const d = clawDims(n, size);
-  const arm = limb({ root: local(shoulder(side)), target: wrist, lengths: d.arm, bend: add(mul(body.z, side), mul(body.y, 0.5)) });
+  const arm = chain({ root: local(shoulder(side)), target: wrist, lengths: d.arm, bend: add(mul(body.z, side), mul(body.y, 0.5)) });
   const [, elbow, w] = arm.joints;
   // The palm continues the forearm, folded in toward the face at rest as a crab carries it.
   const free = unit(add(unit(sub(w, elbow)), mul(body.z, mul(fold, -side * (look.rest?.fold ?? 0.55)))));

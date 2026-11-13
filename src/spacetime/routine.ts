@@ -3,11 +3,12 @@
 // and the same size for everyone, unless the key says otherwise (`who`: a canon down the line, or a mirror about the
 // centre). A member's own manner enters only through its solo.
 //
-// Every channel (the body's lean, its level, which way it faces, where it stands, each claw) is a track of key poses: a
-// value that arrives on a count and is held until the next key of that channel. A track is the sum of eased steps from
-// each key's value to the next, and it is cyclic: the value before the first key is the last key's, and a key whose move
-// starts before the loop's start also runs at its end, so the loop closes by construction. A formation change is a key
-// on the place channel; a turn, a key on the facing channel; both take whole counts (`over`) so that feet can step.
+// Every channel (the body's lean, its level, which way it faces, where it stands, each limb's aim) is a track of key
+// poses: a value that arrives on a count and is held until the next key of that channel. A track is the sum of eased
+// steps from each key's value to the next, and it is cyclic: the value before the first key is the last key's, and a
+// key whose move starts before the loop's start also runs at its end, so the loop closes by construction. A formation
+// change is a key on the place channel; a turn, a key on the facing channel; both take whole counts (`over`) so that
+// feet can step.
 //
 // Under everything, the groove: the knees go down on every count (`size.bounce`), except while a struck pose (`hit`)
 // holds dead still.
@@ -23,7 +24,7 @@ type F = Expr<"f32">;
 type V2 = Expr<"vec2">;
 type V3 = readonly [number, number, number];
 
-/** Where a claw's wrist goes, from its shoulder, in the crab's axes (forward, up, out from its own side), in arm spans; or back to its own rest. */
+/** Where a limb's wrist goes, from its shoulder, in the body's axes (forward, up, out from its own side), in arm spans; or back to its own rest. */
 export type Aim = V3 | "rest";
 /**
  * Who takes a key other than everyone together: a canon (member k arrives `canon` counts after member k - 1; below 0,
@@ -47,13 +48,13 @@ export type Key = {
   readonly face?: number;
   /** A formation of `places`: walk there (sideways, stepping). */
   readonly go?: string;
-  /** The great claw and the small one. */
+  /** The aims of the larger gripping limb (`claw`) and the smaller one (`small`). */
   readonly claw?: Aim;
   readonly small?: Aim;
   /**
-   * Clicks: the great claw's fingers snap shut this many times, on `at` and then every half count. Each opens wide
+   * Clicks: the larger limb's fingers snap shut this many times, on `at` and then every half count. Each opens wide
    * before its count and shuts on it in two frames at 30 a second (the snap of `struck`); the last is held shut a moment
-   * and let go to the claw's own. A song plays a clack on each snap, so a clack that is heard is one that is seen.
+   * and let go to the limb's own. A song plays a clack on each snap, so a clack that is heard is one that is seen.
    */
   readonly click?: number;
 };
@@ -66,8 +67,9 @@ export type RoutineSpec = {
   /** Counts in the loop. */
   readonly length: number;
   /**
-   * What a mirror is about: a member (who takes no sided value), or the half between two (`0.5`: a duet, both mirrored).
-   * The half came from two buoys (examples/second/buoys.ts): about a member, one of a pair stood still through every mirror.
+   * What a mirror is about: a member (who takes no sided value), or the half between two (`0.5`: a duet, both
+   * mirrored). The half came from two buoys (examples/second/buoys.ts): about a member, one of a pair stood still
+   * through every mirror.
    */
   readonly centre: number;
   /** Each formation: every member's place (world x, z), in member order. */
@@ -91,27 +93,33 @@ export type Dancer = {
   face(t?: In<"f32">): F;
   /** World (x, z) it has moved from `home`. */
   place(t?: In<"f32">): V2;
-  /** How far it is in its solo (0..1): 1 from three quarters of a count before its first accent to a count after its last, eased over a quarter second at each end. Its own dance has it there; the score's claws give way. */
+  /** How far it is in its solo (0..1): 1 from three quarters of a count before its first accent to a count after its last, eased over a quarter second at each end. Its own dance has it there; the score's limb aims give way. */
   soloing(t?: In<"f32">): F;
   /** 1 while a struck pose holds, else 0. */
   still(t?: In<"f32">): F;
-  /** A claw's aim (from its shoulder, in its axes, in arm spans) and how far the claw is given to it (0 its own rest, 1 the aim). Side 1 the great claw. */
+  /** A limb's aim (from its shoulder, in its axes, in arm spans) and how far the limb is given to it (0 its own rest, 1 the aim). Side 1 the larger limb. */
   claw(side: 1 | -1, t?: In<"f32">): { readonly weight: F; readonly aim: Expr<"vec3"> };
-  /** The great claw's fingers by the score's clicks: how far they are the score's (0 the claw's own), and how open (0 shut .. 1 wide). */
+  /** The larger limb's fingers by the score's clicks: how far they are the score's (0 the claw's own), and how open (0 shut .. 1 wide). */
   click(t?: In<"f32">): { readonly weight: F; readonly open: F };
   /** Its solo's accents, seconds into the loop, ascending (none if it has no solo). */
   readonly solo: readonly number[];
 };
 
-/** What the instrument reads of a member, as expressions of `time`: body lift over its ride (units), its roll (radians), its heading off its own (radians), its great claw's wrist over its shoulder (arm spans). */
+/** What the instrument reads of a member, as expressions of `time`: body lift over its ride (units), its roll (radians), its heading off its own (radians), its larger limb's wrist over its shoulder (arm spans). */
 export type Readouts = {
   readonly lift: F; readonly lean: F; readonly face: F;
-  /** Absent for a member with no claw (a buoy: examples/second/buoys.ts); then no key may score `claw` or `click`. */
+  /** Absent for a member with no gripping limb (examples/second/buoys.ts); then no key may score `claw` or `click`. */
   readonly claw?: F;
-  /** The great claw's fingers as drawn: 0 shut .. 1 wide open. */
+  /** The larger limb's fingers as drawn: 0 shut .. 1 wide open. */
   readonly click?: F;
 };
 
+/**
+ * The error `routine`, `Routine.member` and `inSync` raise when a score cannot be danced as written: a key outside the
+ * loop or on a formation not in `places`, a travel or turn shorter than a count, two keys on one channel whose moves
+ * overlap, a click while a struck pose holds, a canon that runs past the loop's end, a channel the score sets that a
+ * member's readouts lack. It carries only its message, which names the member, the score index and the seconds.
+ */
 export class RoutineError extends Error {}
 
 type Channel = "lean" | "level" | "face" | "claw" | "small";
@@ -140,6 +148,11 @@ const SNAP = 0.13;
 const CLICK_SNAP = 2 / 30, CLICK_HOLD = 0.4;
 const TAU = Math.PI * 2;
 
+/**
+ * A group dance as `routine` builds it: `member(m)` is member m's dance as closed forms of a clock (a `Dancer`),
+ * `inSync(readouts, limits)` the check that measures the members as drawn against each other, `period` the loop's
+ * seconds and `members` how many dance.
+ */
 export class Routine {
   readonly period: number;
   readonly members: number;
@@ -315,7 +328,7 @@ export class Routine {
     return { from: (Math.min(...on) - 0.75) * this.spec.beat, to: (Math.max(...on) + 1) * this.spec.beat };
   }
 
-  /** The groove: down on every count, a squared cosine (the drop sharper than the rise back), stopped while a struck pose holds. */
+  /** The groove: down on every count, a squared cosine (a narrow dip, symmetric about the count), stopped while a struck pose holds. */
   private groove(m: number, t: In<"f32">): F {
     return mul(mul(pow2(mul(add(cos(mul(div(t, this.spec.beat), TAU)), 1), 0.5)), -this.spec.size.bounce), sub(1, this.member(m).still(t)));
   }
@@ -365,8 +378,8 @@ export class Routine {
    * `arrival` seconds of each other, values within `size` of the channel's largest scored value of each other (a
    * mirror's sided values by magnitude, its other values within each half, its centre left out). Canon: each member's
    * arrival after the first within `arrival` of its scored delay. A member in its solo is its own manner and is not
-   * measured there, nor a claw going back to its own rest (each rest is its own), nor the places (each walks its own path).
-   * `who.only`: the members listed, against each other. Clicks: below.
+   * measured there, nor a claw going back to its own rest (each rest is its own), nor the places (each walks its own
+   * path). `who.only`: the members listed, against each other. Clicks: below.
    */
   inSync(readouts: (m: number) => Readouts, o: { readonly arrival: number; readonly size: number; readonly rate?: number }): Check & { table(probe: Probe): readonly SyncRow[] } {
     const rate = o.rate ?? 240, routine = this;
@@ -512,7 +525,46 @@ const pow2 = (x: F): F => mul(x, x);
 /** Seconds into the loop, 0 .. period. */
 const wrap = (t: number, P: number): number => ((t % P) + P) % P;
 
-/** A routine (see `Routine`). */
+/**
+ * A routine: one dance for a group, as a score of key poses on counts that every member reads, so unison is a property
+ * of the data: the same key arrives at the same instant with the same ease and size for everyone, unless the key says
+ * otherwise (`who`: a canon down the line, a mirror about the centre, or only some members).
+ *
+ * What it assumes about the body, tried so far on a legged, two-armed body and on floating buoys: every member has the
+ * same fixed channels, a lean (its weight's side, with a sway and a roll), a level (a rise or a crouch), a facing, and a
+ * place on the ground (x, z); and optionally a larger and a smaller limb aimed in the body's axes (`claw`, `small`),
+ * the larger with fingers that click. A member without limbs leaves those out (its readouts have no `claw`); a subject
+ * with some other moving part (a bell, a jib, a tail) cannot have it scored. One set of sizes serves every member.
+ *
+ * The law. A loop of `length` counts of `beat` seconds. Each channel is a cyclic track: the last key's value plus, for
+ * each key, an eased step from the value before it to its own, arriving on its count (plus a canon's delay) over
+ * `over` counts or the manner's `arrive` seconds, eased by slowInOut (power `snap`, or 2 with `over`); a key with `hit`
+ * is struck instead (`anticipated` over 0.13 s) and held dead still for `hit` counts. A step that starts before the loop
+ * also runs a period later, so the loop closes by construction. A mirror negates the sided values (lean, face) of
+ * members before `centre`. Under it all the groove: the level drops by bounce ((1 + cos(2 pi t / beat)) / 2)^2, lowest
+ * on every count, stopped while a struck pose holds.
+ *
+ * Parameters: everything in the spec is a fixed number (the score is data); a member's readouts are closed forms of a
+ * clock t, an expression, so a body reads them at delayed clocks too.
+ *
+ * What it cannot do, because of the law:
+ * - score a channel it does not know: only lean, level, face, place, two limb aims and clicks.
+ * - change tempo or loop length: one beat, one loop, the same for every member.
+ * - pass through a pose: each key is held until the next; there are no curves through keys.
+ * - overlap two keys' moves on one channel, or run a canon past the loop's end (both refused).
+ * - give one member a different size of move: one size table (scale a member's readouts yourself).
+ * - groove on any pattern but every count.
+ *
+ * Going past it: `member(m)` gives every track as a closed form of the clock, so a rig mixes them with its own motion
+ * (a solo is an `emote` armed on the member's counts, faded in by `soloing`); and `inSync` measures whatever the rig
+ * drew.
+ * Relatives worth trying:
+ * - keys over named channels the routine is given (a bell's swing, a jib's slew), with lean, level and face as a default
+ *   set: the same track law over a record of channels.
+ * - keys that flow: a curve through the key values (`through`) instead of eased steps, so a move passes through a pose.
+ * - a swung groove: the drop on the count, a smaller one on the off-beat.
+ * - a crowd: members' places from a formula of the index, and a canon whose delay grows along the line.
+ */
 export function routine(spec: RoutineSpec): Routine {
   return new Routine(spec);
 }

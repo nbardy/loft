@@ -7,9 +7,10 @@
 // the shape and the strike follows. Run `loft check examples/strike.ts` for the checks.
 
 import {
-  add, atan2, div, input, length, lift, mod, mul, normalize, scene, sea, ship, smoothstep, sub, time, toon, vec2,
-  type Expr, type ShipSpec,
+  add, atan2, div, input, length, lift, mod, mul, normalize, scene, sea, smoothstep, sub, time, toon, vec2,
+  type Expr,
 } from "../src/index.ts";
+import { ship, type ShipSpec } from "./recipes/ship.ts";
 import { sloopSpec } from "./fleet.ts";
 import { animate, attack, hit, part, smear, telegraph, wake, type Target } from "../src/spacetime/index.ts";
 import { budget, landsInside, minScreenSize, staysClear, stopsAt } from "../src/check.ts";
@@ -22,7 +23,7 @@ const water = sea({
   ],
 });
 
-// ---- the ships: small cutters (src/geom/ship.ts) afloat on the swell, broadside to the serpent ---------------------
+// ---- the ships: small cutters (examples/recipes/ship.ts) afloat on the swell, broadside to the serpent ---------------------
 
 const WIND = [0.8, 0.6] as const;
 /** A cutter about 5.6 long: the fleet's sloop, smaller. Its half-beam is where the bite's lane stops short. */

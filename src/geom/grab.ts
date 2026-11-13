@@ -5,7 +5,7 @@
 // Three facts the formulas are built on:
 //   1. The grip opens before it arrives, and by the thing's size. In reach-to-grasp the aperture peaks about two
 //      thirds of the way through the reach and grows linearly with the object (Jeannerod 1984). So the opening is a
-//      function of the thing's radius, not a fixed pose, and a small ship and a large one are taken differently.
+//      function of the thing's radius, not a fixed pose, and a small thing and a large one are taken differently.
 //   2. A squeezed thing keeps its volume: narrowed to k across the grip, it grows by 1 / sqrt(k) along the other two.
 //   3. A body of fixed length wrapped round a thing makes length / (length of one turn) turns. A bigger thing gets
 //      fewer turns from the same body, and tightening the coil adds turns. `wrap` derives the turn count; nobody sets it.
@@ -79,11 +79,41 @@ export type Grab = {
   squeezed(base?: In<"f32">, across?: "x" | "y" | "z"): AxesSize;
   /** The thing's width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak. */
   readonly crush: F;
-  /** 1 while the thing is in the grip, else 0. The game's rule for "this ship is held" reads the same number. */
+  /** 1 while the thing is in the grip, else 0. The game's rule for "this is held" reads the same number. */
   readonly held: F;
 };
 
-/** A grab on the clock `since` (seconds since it began; before 0 the gripper is at rest). */
+/**
+ * A grab on the clock `since` (seconds since it began; before 0 the gripper is at rest): a gripper reaches for a thing,
+ * closes on it by its size, carries it, squeezes it and lets it go, with no attack around it (no hit shape, no warning).
+ * An attack whose motion is a grip is the same gripper on the attack's own schedule.
+ *
+ * The law. Four beats in a row: `reach`, `close`, `hold`, `release` seconds. The palm travels from `rest` to `from` on
+ * `arc` (lifted `reachLift` along `up`, slow in and out, or drawn back first by `windup`), follows the thing through the
+ * hold, and goes home after letting go. The gap between the gripping surfaces opens to the thing's width times
+ * (1 + margin) by 0.65 of the reach (the hand opens by the object's size before it arrives), closes to the width at
+ * speed, narrows with each squeeze and opens again on release. The thing waits at `from`, rides an arch to `to` (lifted
+ * `carryLift`) over the hold, is squeezed `pulses` times with its volume kept, and ends as `end` says (set down at `to`,
+ * or thrown).
+ *
+ * Parameters: `rest`, `from`, `to`, `radius`, `reachLift`, `carryLift`, `up` and `restGap` take expressions or host
+ * inputs; the beats, `margin`, `squeeze`, `pulses` and `windup` are fixed numbers.
+ *
+ * What it cannot do, because of the law:
+ * - pose fingers: it gives a palm and a gap; `fingerAngle`, `pincerAngle` or `wrap` turn the gap into a pose.
+ * - chase: the palm arrives at `from` as it is at each instant, so a thing that moves during the reach is followed only
+ *   if `from` is an expression of where it is.
+ * - fail to take, regrip, pass the thing hand to hand or hold two things.
+ * - carry along anything but the arch from `from` to `to` (an attack's `hold` takes a path of your own).
+ *
+ * Going past it: an attack with a grip motion and a `hold` effect has the same gripper, with a path carry, a schedule
+ * and a warning; `gripper` alone poses a palm and gap round any `Held` of yours.
+ * Relatives worth trying:
+ * - two hands: two grabs on one clock with `from` on either side of the thing, `to` the same, one closing a beat later.
+ * - a grab that misses: `from` where the thing was, the thing moved away by the game before the close (draw the thing
+ *   from the game's place, not `thing`).
+ * - a grab that repeats: `since` as time modulo a period longer than the four beats.
+ */
 export function grab(since: In<"f32">, spec: GrabSpec, b: GrabBeats): Grab {
   const from = lift<"vec3">(spec.from), to = lift<"vec3">(spec.to ?? spec.from), up = lift<"vec3">(spec.up ?? [0, 1, 0]);
   const carryLift = spec.carryLift ?? 0;
@@ -130,10 +160,40 @@ export type Thrown = {
 /** How a hold ends. One handler per kind (`courseOf`); nothing else asks which. */
 export type Ending = SetDown | Thrown;
 
+/**
+ * The ending in which a held thing is set down, at rest, where the carry ends; the grip opens there, then withdraws.
+ * What a `hold` or a `grab` given no `end` has.
+ */
 export const SET_DOWN: SetDown = { kind: "setDown" };
 
 export type ThrownSpec = Omit<Thrown, "kind" | "land" | "up"> & { readonly land: In<"vec3">; /** Default +y. */ readonly up?: In<"vec3"> };
-/** A hold that ends in a throw (see `Thrown`). Every number is checked here, once. */
+/**
+ * A hold that ends in a throw (see `Thrown`). Every number is checked here, once.
+ *
+ * The law: the thing's velocity is the same on both sides of every hand-off. The carry ends at rest at the wind-back
+ * place W; over the hold's last `stroke` seconds it is accelerated uniformly to the release velocity
+ *   v0 = ((land - W) / T + up g T / 2) / (1 + stroke / (2 T)),   T = flight,
+ * the one that lands it at `land` after T seconds of ballistic flight under `gravity`. Then it skids on along the water
+ * under a linear drag (time constant `drag`) and heaves as a damped spring (`heave`), both started with its touchdown
+ * velocity. The gripper follows through along the throw for `follow` seconds, decelerating, and goes home.
+ *
+ * Parameters: `land` and `up` take expressions or host inputs; `flight`, `gravity`, `stroke`, `follow`, `drag` and
+ * `heave` are fixed numbers; `placer` says who places the thing after the release (`STAND_IN`, this law, or
+ * `hosted(pose)`, the host's own physics from the release point at the release velocity).
+ *
+ * What it cannot do, because of the law:
+ * - choose its release speed or angle: both follow from where and when it lands.
+ * - feel air, spin or wind: the flight is a parabola.
+ * - bounce, roll or come to rest on anything but a level it floats at: after touchdown it skids and heaves, as on water,
+ *   whatever the ground.
+ * - wind back anywhere but the carry's end (move the carry's `to` to move it).
+ *
+ * Going past it: `hosted(pose)` hands the thing to the host at the release; up to there the throw is the same, after it
+ * the host's physics owns it. Relatives worth trying:
+ * - a lob and a line drive: the same `land` with a long `flight` (high arc) or a short one (flat and fast).
+ * - a bounce: a second parabola from touchdown with the vertical speed times a restitution below 1.
+ * - a tumble in the air: `tumbled`, with `handTurn` for the hand's turn over the stroke.
+ */
 export function thrown(o: ThrownSpec): Thrown {
   const positive = { flight: o.flight, gravity: o.gravity, stroke: o.stroke, follow: o.follow, drag: o.drag, "heave.hz": o.heave.hz };
   for (const [k, v] of Object.entries(positive)) if (!(v > 0 && Number.isFinite(v))) throw new Error(`thrown: ${k} must be a positive, finite number; got ${v}`);
@@ -251,12 +311,17 @@ function thrownCourse(e: Thrown, seconds: number, carry: (u: F) => P3): Course {
  * The angle the hand turns a thrown thing through over the stroke, radians, so that it leaves turning at exactly the
  * rate of its tumble: `turns` whole turns in the flight is a rate of 2 pi turns / flight, and a uniform angular
  * acceleration from rest reaches that rate over the stroke after turning pi turns stroke / flight.
+ * It cannot take a fractional turn, so a thing always comes down the way up it left the hand (refused when asked).
  */
 export function handTurn(e: Pick<Thrown, "flight" | "stroke">, turns: number): number {
   if (!Number.isInteger(turns)) throw new Error(`handTurn: turns must be a whole number (the thing lands the way up it left the hand); got ${turns}`);
   return (Math.PI * turns * e.stroke) / e.flight;
 }
-/** The rate of that tumble, radians per second: the hand's own at the release, and the thing's through the flight (a free body's does not change). */
+/**
+ * The rate a thrown thing tumbles at, radians per second: 2 pi turns / flight, the hand's own at the release and the
+ * thing's through the flight (a free body's does not change). Use it for what must spin in step with the throw (a trail
+ * of spray, a sound).
+ */
 export const tumbleRate = (e: Pick<Thrown, "flight">, turns: number): number => (TAU * turns) / e.flight;
 
 /**
@@ -265,6 +330,19 @@ export const tumbleRate = (e: Pick<Thrown, "flight">, turns: number): number => 
  * it starts, 1 from the release) the hand turns it with uniform angular acceleration through `handTurn`; over the
  * flight (`u`, its share gone) it turns on at the rate it left with, `turns` whole turns, so it comes down as it left
  * the hand. Both shares are `Attack.flight()`'s.
+ *
+ * The law: angle = whip^2 handTurn(e, turns) + u turns 2 pi, about one fixed axis.
+ *
+ * Parameters: `axis`, `whip` and `u` take expressions; `turns` is a whole number, fixed.
+ *
+ * What it cannot do, because of the law:
+ * - wobble or precess: a free body's spin about one fixed axis, as a symmetric thing spun about a principal axis.
+ * - land other than the way up it left: `turns` is whole.
+ * - turn after it lands: at touchdown u is 1 and the angle stays.
+ *
+ * Going past it: `turnedAbout(g, axis, angle)` with an angle of your own. Relatives worth trying:
+ * - a spiral pass: the axis along the release velocity (`attack.toss().velocity`), so it spins about its flight path.
+ * - a wobble: a second, small turn about an axis that itself turns with the spin, its angle a sine of the first.
  */
 export function tumbled(g: Frame, axis: In<"vec3">, e: Pick<Thrown, "flight" | "stroke">, turns: number, at: { readonly whip: In<"f32">; readonly u: In<"f32"> }): Frame {
   const w = clamp(at.whip, 0, 1), angle = add(mul(mul(w, w), handTurn(e, turns)), mul(clamp(at.u, 0, 1), turns * TAU));
@@ -325,13 +403,20 @@ export type GripperSpec = Pick<GrabSpec, "rest" | "radius" | "reachLift" | "up" 
  * Parameters: rest, radius, lift, up and rest gap are expressions; the beats and margin are fixed seconds and shares.
  *
  * What it cannot do, because of the law:
- * - turn the gap into a pose: it says how far apart, not how fingers stand (that is `fingerAngle`, `pincerAngle`, `wrap`).
+ * - turn the gap into a pose: it says how far apart, not how fingers stand (that is `fingerAngle`, `pincerAngle`,
+ *   `wrap`).
  * - reach along anything but its arc, or take something that moves away during the reach other than by `h.from`.
  * - regrip, pass the thing hand to hand, or hold two things.
  *
  * Going past it: a gripper is a palm and a gap, so any pose of yours reads them: fingers from `fingerAngle`, a jaw from
  * `pincerAngle`, a coiling body from `wrap`; the palm is a target for a `chain`. A different path is an `arc` of your
- * own between the same beats; a different hold is a `Held` from `heldThing` with your own carry curve.
+ * own between the same beats; a different hold is `heldThing` along a carry path of your own, a `Held` object written
+ * by hand (its `from`, `to`, `thing`, `held`, `crush`, `flying`, `squeezed` and `leave`), or the one an attack's `hold`
+ * makes, through `attack.grip(rest)`.
+ * Relatives worth trying:
+ * - a hook that does not close: ignore the gap and hang the thing under the palm (the palm and `thing` are enough).
+ * - a suction cup or a magnet: gap unused, the thing snapped to the palm over the close beat.
+ * - a two-handed lift: two grippers round one `Held`, their rests on either side.
  */
 export function gripper(since: In<"f32">, spec: GripperSpec, b: GrabBeats, h: Held): Grab {
   for (const [k, v] of Object.entries(b)) if (!(v > 0 && Number.isFinite(v))) throw new Error(`grab: ${k} must be a positive, finite number of seconds; got ${v}`);
@@ -374,8 +459,9 @@ export function fingerAngle(gap: In<"f32">, length: In<"f32">, hinge: In<"f32"> 
 }
 
 /**
- * A pincer: one finger fixed, one moving, both of `length` (hinge to tip, straight) from one hinge. The angle between
- * them for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A crab's claw, a beak.
+ * The angle between the two fingers of a pincer (one fixed, one moving, both of `length` from one hinge, measured hinge
+ * to tip in a straight line) for their tips to be `gap` apart: gap = 2 length sin(angle / 2). A beak, tongs, shears.
+ * It cannot open past a straight angle: a gap over 2 length gives pi. Two fingers hinged apart are `fingerAngle`.
  */
 export function pincerAngle(gap: In<"f32">, length: In<"f32">): F {
   const s = clamp(div(gap, mul(length, 2)), 0, 1);
@@ -399,8 +485,28 @@ export type WrapSpec = {
 
 /**
  * A coil round a thing, by its size. The number of turns is derived from the body's length (fact 3), so the same body
- * goes round a small ship more times than round a large one, and takes up more turns as it tightens. `spine(m)` is the
+ * goes round a small thing more times than round a large one, and takes up more turns as it tightens. `spine(m)` is the
  * coil by arc length, m in [0, 1], centred on `centre`: blend a strand's free spine into it as the grip closes.
+ *
+ * The law: a helix of radius r and pitch p round `axis`, with turns = length / sqrt((2 pi r)^2 + p^2) (one turn's arc
+ * length), spine(m) = centre + axis p turns (m - 1/2) + r (e1 cos(2 pi turns m) + e2 sin(2 pi turns m)), e1 starting
+ * on the `toward` side.
+ *
+ * Parameters: every field takes an expression or a host input, so the coil can tighten (`radius` times a `crush`), spend
+ * more of the body (`length`) or follow a moving thing (`centre`).
+ *
+ * What it cannot do, because of the law:
+ * - wrap anything but a cylinder of one radius: no taper, no bulge, no corners.
+ * - change pitch or radius along the coil: no loose end turns, no tighter middle.
+ * - keep clear of itself: a pitch below the body's width overlaps its turns, unchecked.
+ * - move from free to coiled: it is the coiled spine only; the blend (and its timing) is yours.
+ *
+ * Going past it: `spine` is a function of m; add to it or replace the radius with a function of m in a spine of your own
+ * written the same way. Relatives worth trying:
+ * - a conical helix: r a function of the height along the axis, for a tapering thing (a cone, a bottle's neck).
+ * - a coil round a curved thing: the same angle and advance laid in a strand's frame along its spine instead of a fixed
+ *   axis.
+ * - a knot or a hitch: the coil, then a turn back under itself (a `through` curve over points you choose).
  */
 export function wrap(spec: WrapSpec): { readonly turns: F; spine(m: F): P3 } {
   const axis = lift<"vec3">(spec.axis), centre = lift<"vec3">(spec.centre), r = lift<"f32">(spec.radius), pitch = lift<"f32">(spec.pitch);

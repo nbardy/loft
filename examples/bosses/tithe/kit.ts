@@ -1,6 +1,6 @@
 // The ghost fleet's kit: parts drawn once for the whole fleet.
 //
-// A ship from `src/geom/ship.ts` is about 45 draws (DESIGN.md 12.5) and its GPU cost follows the draw count, so four
+// A ship from `examples/recipes/ship.ts` is about 45 draws (DESIGN.md 12.5) and its GPU cost follows the draw count, so four
 // ships that way are about 180 draws. Here every kind of part is ONE posed draw for every ship that has it: each copy's
 // pose (where it goes, its turn and its size along each axis) is an expression of each ship's frame on the swell and of
 // the attack's clock, listed by `posedList` (src/map/chart.ts), which fills one table per frame on the CPU; the vertex
@@ -10,8 +10,9 @@
 import {
   abs, add, cos, evaluate, floor, fract, lift, lt, max, mix, mul, pow, select, sin, size, smoothstep, sub, turn,
   time, TAU, vec2, vec3, afloatFrame, lathe, mapNormal, NO_SKELETON,
-  type Expr, type F, type Frame, type Hull, type In, type P3, type PoseSpec, type Poses, type Surface, type Topology, type Waters,
+  type Expr, type F, type Frame, type In, type P3, type PoseSpec, type Poses, type Surface, type Topology, type Waters,
 } from "../../../src/index.ts";
+import { type Hull } from "../../recipes/hull.ts";
 import { atRest } from "../../../src/map/surface.ts";
 
 export type V3 = readonly [number, number, number];

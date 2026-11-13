@@ -7,7 +7,7 @@
 //   dot of the first two segments' directions), so a folding leg telescopes its plates.
 // - At each joint a cord binding: no lames, a pinch, cream with a twist line.
 
-import { abs, add, dot, fract, keys, lift, limb, min, mix, mul, sin, smoothstep, strand, sub, unit, vec3, type F } from "../../../../src/index.ts";
+import { abs, add, dot, fract, keys, lift, chain, min, mix, mul, sin, smoothstep, strand, sub, unit, vec3, type F } from "../../../../src/index.ts";
 import type { Reaching } from "../../../../src/check.ts";
 import { cut, sides, TAU } from "../ink.ts";
 import type { LegsOption } from "../slots.ts";
@@ -27,7 +27,7 @@ export const armoured: LegsOption = {
       const k = si * 4 + i;
       const root = local([x, -0.1, s * n.carapace.width * 0.85]);
       const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: add(body.y, mul(body.z, s * 0.4)), foot: mul(body.y, -1) };
-      const leg = limb(spec);
+      const leg = chain(spec);
       limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: mul(body.z, s) });
       const [j0, j1, j2] = leg.joints;
       // The knee's bend: 1 straight, falling as it folds. The lames' phase moves with it.

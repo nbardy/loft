@@ -1,13 +1,15 @@
-// A hull as an attack's target (src/geom/hull_distance.ts): its signed distance must agree with the hull's own surface.
+// A closed skin as an attack's target (src/geom/skin_distance.ts), measured on a lofted hull: its signed distance must
+// agree with the skin's own surface.
 // Before it, a ship was measured as its skeleton (capsules as wide as its beam), so contact read as a gap of half a
 // unit. Off the sampling grid, so this measures the mesh against the closed-form skin, not the mesh against itself.
 import { expect, test } from "bun:test";
 import { brigSpec } from "../examples/brig.ts";
-import { compileJs, f, ship } from "../src/index.ts";
-import { hullDistance, type V3 } from "../src/geom/hull_distance.ts";
+import { compileJs, f } from "../src/index.ts";
+import { ship } from "../examples/recipes/ship.ts";
+import { skinDistance, type V3 } from "../src/geom/skin_distance.ts";
 
 const hull = ship({ ...brigSpec, name: "measured" }).hull;
-const h = hullDistance(hull), sdf = (q: V3) => h.distance(q);
+const h = skinDistance(hull.skin), sdf = (q: V3) => h.distance(q);
 const at = (u: number, v: number): { p: V3; n: V3 } => {
   const [p, n] = compileJs([hull.skin.point(f(u), f(v)), hull.skin.normal(f(u), f(v))])({ vars: {}, inputs: {}, params: {} }) as unknown as [V3, V3];
   return { p, n };

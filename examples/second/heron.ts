@@ -15,7 +15,7 @@
 // would hand its feet from the walk to `homes`, which are fixed numbers in the ground frame, not where the walk last
 // planted them, so the feet would slide as `walk.on` falls; `homes` as expressions would let a caller pass the last plants.
 import {
-  add, carriage, carriedFrame, course, footing, gait, limb, lift, mix, mul, place, rigid, scene, plane, smoothstep, strand, sub, through, toon, vec3,
+  add, carriage, carriedFrame, course, footing, gait, chain, lift, mix, mul, place, rigid, scene, plane, smoothstep, strand, sub, through, toon, vec3,
   type Frame, type P3,
 } from "../../src/index.ts";
 import { rotate } from "../../src/map/chart.ts";
@@ -70,7 +70,7 @@ const crest = place(strand({
 // ---- legs: hip to foot by IK, the joint bent backward (a heron's visible "knee" is its ankle) -----------------------------
 const legSpecs = homes.map((h, i) => ({ root: at([0, -0.15, h[2] * 0.8]), target: feet.foot(i), lengths: H.legs, bend: mul(body.x, -1) }));
 const legs = legSpecs.map((spec, i) => strand({
-  name: `leg${i}`, spine: limb(spec).spine, stations: 12, girth: 0.045, tips: ["round", "round"], paint: bill, detail: { along: 24, around: 8 },
+  name: `leg${i}`, spine: chain(spec).spine, stations: 12, girth: 0.045, tips: ["round", "round"], paint: bill, detail: { along: 24, around: 8 },
 }));
 // Toes: three per foot, splayed forward on the floor, drawn from the foot the footing gives.
 const toes = homes.flatMap((_, i) => [-0.5, 0, 0.5].map((a, k) => strand({

@@ -1,7 +1,8 @@
 // Tables as functions (src/map/table.ts): a tabulated function interpolates its source, and where it is filled decides
 // what it follows.
 import { expect, test } from "bun:test";
-import { compileScene, draw, mul, param, scene, sea, sin, spacing, surface, tabulate, toon, variable, vec3, type F } from "../src/index.ts";
+import { draw, mul, param, scene, sea, sin, spacing, surface, tabulate, toon, variable, vec3, type F } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { stateAt } from "./compile.harness.ts";
 
 const amp = param("tab.amp", 1);

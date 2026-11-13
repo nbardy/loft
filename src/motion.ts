@@ -3,7 +3,7 @@
 export { gait, course, type Course, type Gait, type GaitSpec, type Pace } from "./geom/gait.ts";
 export { lookAt, breathe, beat, strike, type LookSpec, type BreathSpec, type BeatSpec, type StrikeSpec } from "./geom/motion.ts";
 export { looping, alive, anticipated, arc, beats, dragged, echo, exaggerated, impact, overshot, slowIn, slowInOut, slowOut, squash, stretchOf, swing, uneven, type Beat, type Beats } from "./geom/lively.ts";
-// ---- one user so far (the crab): general or not is unproven until a second subject uses it ----
+// ---- one user so far: general or not is unproven until a second subject uses it ----
 export { carriage, footing, headingIn, replants, towardIn, type Carriage, type Footing, type FootingSpec, type Replant, type ReplantSpec, type Stamp, type Stance, type StepTiming, type Toward } from "./geom/stance.ts";
 export { pose, poseFrame, placedBy, blendFrames, turnedAbout, hosted, STAND_IN, type Pose, type Placer, type StandIn, type Hosted } from "./geom/placing.ts";
 export { bent, bentTip, BendError, type Bend, type Bent, type BentSpec } from "./geom/bend.ts";

@@ -1,23 +1,24 @@
-// The signed distance to a hull, on the CPU, in the ship's own coordinates (x toward the bow, y up, z to starboard):
-// what an attack's checks measure contact with (`Target` "hull", src/check.ts). A ship used to be a target only as its
-// skeleton, capsules as wide as its beam, so "contact" read as a gap of about half a unit.
+// The signed distance to a closed skin, on the CPU, in the skin's own coordinates: what an attack's checks measure
+// contact with (`Target` "skin", src/check.ts). The solid is a surface lofted through sections (u along, v round each
+// section from one edge of its opening to the other), closed by the straight chord across each section's opening and by
+// a flat fan over both end sections. Measuring a body by its skeleton instead (capsules as wide as the body) reads
+// "contact" as a gap of half the body's width.
 //
-// The solid is the skin up to the rail, closed across the rail at every station (the top) and at both ends. The skin is
-// sampled once (it does not move in the ship's frame) on a grid of stations along the length and points round each
-// section, and the distance is to that triangle mesh: strips between neighbouring stations are tested nearest first and
+// The skin is sampled once (it does not move in its own frame) on a grid of sections along u and points round each
+// section, and the distance is to that triangle mesh: strips between neighbouring sections are tested nearest first and
 // the search stops once a strip's bounding box is farther than the best distance found (Ericson, Real-Time Collision
 // Detection 5.1.5, for the point-triangle distance). Inside or outside is the parity of a ray's crossings of the closed
-// mesh (straight up, tilted off the grid's lines). A point-in-section test in the station nearest along the length
-// called points inside the raked bow outside (its sections lean forward by `rake` per unit of height).
+// mesh (straight up, tilted off the grid's lines). A point-in-section test in the nearest section along u misses points
+// inside a section that leans along u (a raked end), which the ray does not.
 
 import { compileJs, variable, type V } from "../expr.ts";
-import type { Hull } from "./hull.ts";
+import type { Surface } from "../map/types.ts";
 
 export type V3 = readonly [number, number, number];
-/** The hull's box (ship coordinates) and its signed distance there: negative inside. */
-export type HullDistance = { readonly lo: V3; readonly hi: V3; distance(q: V3): number };
+/** The skin's box (its own coordinates) and its signed distance there: negative inside. */
+export type SkinDistance = { readonly lo: V3; readonly hi: V3; distance(q: V3): number };
 
-/** Stations along the length and points round a section (odd, so the keel line v = 1/2 is sampled: between samples the chord cut 3 cm off the keel). */
+/** Sections along u and points round each (odd, so the line v = 1/2 is sampled: on a 12-unit lofted body, between samples the chord cut 3 cm off the bottom). */
 const ALONG = 64, AROUND = 65;
 
 const sub = (a: V3, b: V3): V3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -46,7 +47,7 @@ function triangle2(p: V3, a: V3, b: V3, c: V3): number {
   return len2(sub(ap, [ab[0] * v + ac[0] * w, ab[1] * v + ac[1] * w, ab[2] * v + ac[2] * w]));
 }
 
-/** The parity ray: up, tilted so it does not run along the mesh's station or waterline edges. */
+/** The parity ray: up, tilted so it does not run along the mesh's section or constant-v edges. */
 const RAY: V3 = (() => { const r: V3 = [0.0123, 1, 0.0071]; const l = Math.sqrt(dot(r, r)); return [r[0] / l, r[1] / l, r[2] / l]; })();
 
 /** Whether the ray from p along RAY crosses triangle abc (Moller and Trumbore). */
@@ -69,22 +70,22 @@ const boxDist2 = (p: V3, lo: V3, hi: V3): number => {
   return s;
 };
 
-const made = new WeakMap<Hull, HullDistance>();
+const made = new WeakMap<Surface, SkinDistance>();
 
-/** The hull's signed distance function (built once per hull). */
-export function hullDistance(hull: Hull): HullDistance {
-  const seen = made.get(hull);
+/** The signed distance function of the solid `skin` closes (built once per surface object). */
+export function skinDistance(skin: Surface): SkinDistance {
+  const seen = made.get(skin);
   if (seen) return seen;
   const U = variable("hd_u", "f32"), Vv = variable("hd_v", "f32");
-  const skin = compileJs([hull.skin.point(U, Vv)]);
+  const at = compileJs([skin.point(U, Vv)]);
   const vars = { hd_u: 0, hd_v: 0 };
-  // Rings: station i's section from the port rail (v = 0) round the keel to the starboard rail (v = 1); the polygon
-  // closes across the rail, which is the top of the solid.
+  // Rings: section i from one edge of the opening (v = 0) round to the other (v = 1); the polygon closes across the
+  // opening.
   const rings: V3[][] = Array.from({ length: ALONG }, (_, i) => Array.from({ length: AROUND }, (_, j) => {
     vars.hd_u = i / (ALONG - 1); vars.hd_v = j / (AROUND - 1);
-    return skin({ vars, inputs: {}, params: {} })[0] as V as unknown as V3;
+    return at({ vars, inputs: {}, params: {} })[0] as V as unknown as V3;
   }));
-  // Each strip between neighbouring stations, with its bounding box; the end sections as fans from their centres.
+  // Each strip between neighbouring sections, with its bounding box; the end sections as fans from their centres.
   type Tri = readonly [V3, V3, V3];
   type Strip = { readonly tris: Tri[]; readonly lo: V3; readonly hi: V3 };
   const strip = (tris: Tri[]): Strip => {
@@ -117,8 +118,8 @@ export function hullDistance(hull: Hull): HullDistance {
       for (const t of s.tris) best = Math.min(best, triangle2(q, t[0], t[1], t[2]));
     }
     const dist = Math.sqrt(best);
-    if (boxDist2(q, lo, hi) > 0) return dist; // outside the box is outside the hull
-    // Crossings of the ray up to the top of the hull: only strips whose box its footprint can meet.
+    if (boxDist2(q, lo, hi) > 0) return dist; // outside the box is outside the solid
+    // Crossings of the ray up to the top of the mesh: only strips whose box its footprint can meet.
     const reach = Math.max(top - q[1], 0) / RAY[1];
     const x0 = q[0], x1 = q[0] + RAY[0] * reach, z0 = q[2], z1 = q[2] + RAY[2] * reach;
     let n = 0;
@@ -128,12 +129,12 @@ export function hullDistance(hull: Hull): HullDistance {
     }
     return n % 2 === 1 ? -dist : dist;
   };
-  const fn: HullDistance = { lo, hi, distance };
-  made.set(hull, fn);
+  const fn: SkinDistance = { lo, hi, distance };
+  made.set(skin, fn);
   return fn;
 }
 
-/** Distance from a point to the hull's box: a lower bound of its distance to the hull, for skipping queries. */
-export function hullBoxDistance(h: HullDistance, q: V3): number {
+/** Distance from a point to the skin's box: a lower bound of its distance to the solid, for skipping queries. */
+export function skinBoxDistance(h: SkinDistance, q: V3): number {
   return Math.sqrt(boxDist2(q, h.lo, h.hi));
 }

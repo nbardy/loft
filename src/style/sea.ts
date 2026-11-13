@@ -29,6 +29,11 @@ import type { WaterCtx } from "../style.ts";
  */
 export type SwellLines = { readonly cover: Expr<"f32">; readonly off: Expr<"f32">; readonly live: Expr<"f32">; readonly swell: Expr<"f32"> };
 
+/**
+ * The printed lines of constant phase that follow the swell's crests, for a style that draws the water as lines.
+ * Takes the water context, `perWave` (lines per wavelength) and `width` (half-width as a share of line spacing, in the
+ * troughs and at the crests); returns the coverage and position of the lines (`SwellLines`).
+ */
 export function swellLines(ctx: WaterCtx, o: { readonly perWave: number; readonly width: readonly [number, number] }): SwellLines {
   if (!(o.perWave > 0)) throw new Error(`swellLines: perWave must be positive, got ${o.perWave}`);
   // A little wobble, no blobs: the lines must follow the swell, not a noise field.

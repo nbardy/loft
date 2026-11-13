@@ -15,7 +15,7 @@ export type CloudSpec = {
   /**
    * Half-width as a share of size, against height as a share (0 base, 1 top): keys [height, share], piecewise linear,
    * or a function of (height, bearing in radians round the axis), so the mass need not be round. A cumulus bulges in
-   * the middle; a thunderhead is a narrow tower under a wide anvil.
+   * the middle; a storm cloud is a narrow tower under a wide anvil.
    */
   readonly profile: readonly (readonly [number, number])[] | ((h: number, bearing: number) => number);
   /** Number of puffs. Cost per pixel grows with it (see DESIGN.md 8). */
@@ -74,7 +74,7 @@ const TIERS = [
 ] as const;
 
 /**
- * A billowing mass of puffs: a cumulus, a thunderhead, a bank of smoke or steam.
+ * A billowing mass of puffs: a cumulus, a tower under an anvil, a bank of smoke or steam.
  *
  * The shape and its law. `blobs` Gaussian puffs fill a shape of revolution about a vertical axis: at height h (a share
  * of `size`'s height) the mass reaches `profile(h)` of its half-width. The puffs come in three tiers, a few big ones in
@@ -95,8 +95,8 @@ const TIERS = [
  * Going past it is one step down: `billows(places, motion)` boils and drifts any list of puffs, each a place, radii and
  * a density, so the shape is whatever produces the list. Relatives:
  * - a smoke ring: places round a circle in a vertical plane (a torus of puffs), drifting along its axis.
- * - a trail or plume: places along any curve (a ship's smoke, a whale's spout bent by wind), radii growing along it.
- * - puffs on a surface: places at points of a body (steam off a back, spray on a crest).
+ * - a trail or plume: places along any curve (smoke from a chimney bent by wind), radii growing along it.
+ * - puffs on a surface: places at points of a body (steam rising off it).
  * - a different law entirely: `blob` is one puff and `medium` integrates any list of them; layers and banks
  *   (`layer`, `bank`) are the flat relatives.
  */
@@ -144,9 +144,28 @@ export type BillowSpec = Pick<CloudSpec, "turbulence" | "billow" | "drift" | "co
 type V3 = readonly [number, number, number];
 
 /**
- * Puffs that boil and drift, from places you choose: `cloud`'s motion without its shape (see `cloud` for the relatives).
- * Puff i wanders through a noise field of its own (seeded by `seed` and i) by `turbulence` of its radius, breathes, is
- * tinted a little, and drifts with the rest; `bounds` covers them for `seconds`.
+ * Puffs that boil and drift, from places you choose: `cloud`'s motion without its shape, so any arrangement of blobs
+ * (a ring, a plume, steam off a body) moves like a cloud.
+ *
+ * The law. Puff i (a `blob`) sits at its place plus a wander n_i(t) times `turbulence` times its radius (n_i three
+ * noise values of time at `billow` cells per second, seeded by `seed` and i; the vertical wander is 0.6 of the
+ * horizontal), plus `drift` t; its radii breathe by 1 + 0.25 turbulence times another noise; its colour is `colour`
+ * tinted by up to 8%. `bounds` is a box holding every puff from time 0 to `seconds`.
+ *
+ * Parameters: the places (centre, radii, density per puff) are fixed numbers; `turbulence`, `billow`, `drift`,
+ * `colour`, `seed` and `seconds` are fixed. The motion is a closed form of time.
+ *
+ * What it cannot do, because of the law:
+ * - move a puff along a path of its own (rising, spreading, swirling): every puff has the same drift, and the wander
+ *   is about its place, never away from it.
+ * - grow, fade or be born: radii and densities only breathe about their values, and the count is fixed.
+ * - stay in its bounds after `seconds`: past that, the drift carries puffs out of the box and they are cut off.
+ *
+ * Going past it: `blob` takes expressions for centre, radii and density, so a puff of your own (one that rises and
+ * thins, `density` falling with time) is a `blob` call; pass the list to `medium`. Relatives, by the places you give:
+ * - places filling a shape of revolution in tiers: `cloud`.
+ * - places round a circle in a vertical plane, drifting along its axis: a smoke ring.
+ * - places along a curve, radii growing along it: a plume or a trail.
  */
 export function billows(places: readonly PuffPlace[], motion: BillowSpec): Cloud {
   const puffs: Puff[] = [];
@@ -171,26 +190,4 @@ export function billows(places: readonly PuffPlace[], motion: BillowSpec): Cloud
     }
   });
   return { puffs, bounds: { min: lo as unknown as [number, number, number], max: hi as unknown as [number, number, number] } };
-}
-
-export type ThunderheadSpec = {
-  /** Centre of the base. */
-  readonly at: readonly [number, number, number];
-  /** From base to the top of the anvil. */
-  readonly height: number;
-  /** Width of the anvil. */
-  readonly width: number;
-  readonly blobs: number;
-  readonly seed: number;
-  readonly drift: readonly [number, number, number];
-  readonly seconds: number;
-};
-
-/** A thunderhead: a broad dark-based tower under a wide anvil, boiling slowly. */
-export function thunderhead(t: ThunderheadSpec): Cloud {
-  return cloud({
-    at: t.at, size: [t.width, t.height, t.width * 0.8],
-    profile: [[0, 0.5], [0.12, 0.6], [0.45, 0.44], [0.7, 0.42], [0.84, 0.72], [0.93, 1.0], [1, 0.8]],
-    blobs: t.blobs, turbulence: 0.35, billow: 0.12, drift: t.drift, density: 0.9, colour: [1, 1, 1], seed: t.seed, seconds: t.seconds,
-  });
 }

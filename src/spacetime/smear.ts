@@ -72,7 +72,31 @@ class Smear implements Drawable {
   }
 }
 
-/** Fading copies of the attack's striking part over the last `over` seconds, shown while it moves fast. */
+/**
+ * Fading copies of the attack's striking part over the last `over` seconds, shown while it moves fast.
+ *
+ * The law. With dt = over / samples, copy k (1 to `samples`) is the part's stretch of its body posed at time - k dt,
+ * lit by the scene's style with the part's own paint, back faces dropped (one layer of translucency each). Its opacity
+ * is opacity (1 - (k - 1) / samples) times smoothstep(speed[0], speed[1], v), v the speed of the part's tip between
+ * copy k and copy k - 1 (the nearest skeleton station to `tip`). Oldest is drawn first, so younger copies lie over
+ * older ones.
+ *
+ * Parameters: `over`, `samples`, `speed` (default [5, 11] world units a second) and `opacity` (default 0.5) are fixed
+ * numbers; the part moves by its attack.
+ *
+ * What it cannot do, because of the law:
+ * - blur continuously: the copies are discrete, so a part that moves further than its own width in dt shows gaps.
+ * - smear anything but a `Strike`'s part: a stretch of a strand bound to an attack by `animate`.
+ * - answer speed anywhere but at the tip: a stretch that whips at its root while its tip is still shows nothing.
+ * - be cheap at many samples: each copy poses the part's stations again and draws the stretch again.
+ *
+ * Going past it: `strike.part.body.partAt(t, from)` is the stretch at any other time t, so copies of your own (other
+ * spacing in time, another fade, other lighting) are a few lines. Relatives worth trying:
+ * - a swept ribbon (a blade's trail): one `surface` between the tip's place now (u = 0) and at time - over (u = 1),
+ *   across the part's width, fading along u. One draw, no gaps.
+ * - speed lines: a few thin strands along the tip's past path, sampled at past times.
+ * - a smear of the whole body: `body.at(time - k dt)` copies of everything, for a dash.
+ */
 export function smear(strike: Strike, spec: SmearSpec): Drawable {
   if (!(Number.isInteger(spec.samples) && spec.samples >= 1)) throw new Error(`smear: samples must be a positive integer, got ${spec.samples}`);
   if (!(spec.over > 0)) throw new Error(`smear: over must be positive, got ${spec.over}`);

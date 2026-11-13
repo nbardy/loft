@@ -34,8 +34,7 @@ import { arc, slowInOut, type Beat } from "../geom/lively.ts";
 import type { Drawable } from "../compile/context.ts";
 import type { Body } from "../map/sweep.ts";
 import type { Strand } from "../geom/strand.ts";
-import type { Hull } from "../geom/hull.ts";
-import type { Frame } from "../map/types.ts";
+import type { Frame, Surface } from "../map/types.ts";
 import { hitInradius, laneOf, polar, type Arc, type Capsule, type Disc, type Hit } from "./hit.ts";
 import { rearLanding, rearSpine, type RearSpec } from "./rear.ts";
 
@@ -45,19 +44,32 @@ type V2 = Expr<"vec2">;
 export type Spine = (m: F) => P3;
 
 /**
- * What an attack must not pass into: a disc on the water (a vertical cylinder), a body's skeleton, or a ship's hull in
- * the frame it is placed in (its signed distance, src/geom/hull_distance.ts; `Ship.target`).
+ * A solid a striking body must not pass into, as the checks measure it (`stopsAt`, `staysClear` take one): a disc on
+ * the ground (a vertical cylinder without top), a column (a disc that stops at a height), a body's skeleton, or a
+ * closed skin in the frame it is placed in. An attack carries one (`AttackSpec.target`), but the pose never reads it:
+ * the strike is aimed by its hit shape, and the target is what a check measures the landing against.
  */
 export type Target =
   | { readonly kind: "disc"; readonly centre: V2; readonly radius: F }
-  /** A disc that stands only up to `top` (world y): what a thrown thing may pass over, as a crab's back. */
+  /** A disc that stands only up to `top` (world y): what a thrown thing may pass over (a low wall, a body's back). */
   | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F }
   | { readonly kind: "body"; readonly body: Body }
-  | { readonly kind: "hull"; readonly hull: Hull; readonly frame: Frame };
+  /**
+   * The solid a lofted surface closes, measured by its signed distance (src/geom/skin_distance.ts): u runs along the
+   * body, v round each section from one edge of its opening to the other; each section is closed by the chord across
+   * its opening and both end sections are capped flat. `frame` places the skin's own coordinates in the world.
+   */
+  | { readonly kind: "skin"; readonly skin: Surface; readonly frame: Frame };
 
 /** A stretch of a body that strikes: m from `from` to `to`, its striking tip at m = `tip`. */
 export type Part = { readonly name: string; readonly body: Strand; readonly from: number; readonly to: number; readonly tip: number };
 
+/**
+ * Names the stretch of a strand that strikes: m from `from` (default 0) to `to` (default 1) of `body`, its striking tip
+ * at m = `tip`. A creature builder returns its parts by name (`Creature.parts`); `animate` binds each body attack to the
+ * part it names, `smear` copies that stretch, and `landsInside` and `stopsAt` measure it. Numbers, fixed at build. It
+ * cannot name a stretch of anything but a `Strand`, nor two disjoint stretches as one part (make two parts).
+ */
 export function part(name: string, body: Strand, range: { readonly from?: number; readonly to?: number; readonly tip: number }): Part {
   const from = range.from ?? 0, to = range.to ?? 1;
   if (!(from >= 0 && to <= 1 && from < to)) throw new Error(`part "${name}": need 0 <= from < to <= 1, got ${from}..${to}`);
@@ -120,13 +132,13 @@ export type SweepSpec = {
 };
 
 /**
- * A remote attack: a hit shape and its timing, and no body part that strikes (a broadside, a lightning bolt, a beam).
+ * A remote attack: a hit shape and its timing, and no body part that strikes (a falling rock, a lightning bolt, a beam).
  * Nothing is posed; the telegraph, the checks of the shape and the schedule read it as any attack's.
  */
 export type RemoteSpec = { readonly kind: "remote"; readonly hit: Hit };
 
 /**
- * A grip: a gripper (a claw, a jaw) reaches for the thing its attack holds, closes on it at the arming time, follows it
+ * A grip: a gripper (two fingers, a jaw) reaches for the thing its attack holds, closes on it at the arming time, follows it
  * through the hold, opens and goes home (src/geom/grab.ts). Its reach is the attack's strike less `close`; its wind-up
  * into posture is the attack's `windup`; the hold is the effect's. `hit` is the warned shape where the thing is taken.
  * The rest place is given when it is posed (`attack.grip(rest)`), as a body attack's rest spine is.
@@ -153,8 +165,8 @@ export type Carry =
   | { readonly kind: "path"; readonly offset: (u: F) => P3 };
 
 /**
- * A carry as written: `arc` is lifted `lift` (default 0) on an arch along `up` (default +y) and set down at `to`, slow in
- * and slow out (`to` the place taken pins it there); `path` is dragged along `offset(u)` from the place taken (a
+ * A carry as written: `arc` is lifted `lift` (default 0) on an arch along `up` (default +y) and set down at `to`, slow
+ * in and slow out (`to` the place taken pins it there); `path` is dragged along `offset(u)` from the place taken (a
  * whirlpool's spiral; `offset(0)` must be 0, or the thing jumps at the arming time).
  */
 export type CarrySpec =
@@ -188,11 +200,39 @@ export type Hold<N extends Ending = Ending> = {
 };
 export type Effect = Instant | Hold;
 
+/**
+ * The effect of an attack that acts at its arming instant and owns nothing after it: a hit. What a body attack always
+ * has, and a remote attack given no `effect`.
+ */
 export const INSTANT: Instant = { kind: "instant" };
 type HoldSpec = { readonly seconds: number; readonly at: In<"vec3">; readonly radius: In<"f32">; readonly carry: CarrySpec; readonly squeeze?: number; readonly pulses?: number };
 /**
- * A hold of `seconds` on a thing of half width `radius` taken at `at`. `end` is how it ends: `thrown({...})`
- * (src/geom/grab.ts), or set down where the carry ends (`SET_DOWN`, the ending when none is given).
+ * An attack's effect that holds a thing: from the arming time T for `seconds`, the attack owns the place and size of a
+ * thing of half width `radius` taken at `at`, and after it as `end` says (`SET_DOWN`, the default, or `thrown({...})`).
+ *
+ * The law. With u = (t - T) / seconds in [0, 1], the thing's middle is `at` before T, carry(u) during the hold, and its
+ * ending's place after. An `arc` carry is `arc(at, to, slowInOut(u), lift, up)`: an arch, slow in and slow out; a
+ * `path` carry is `at + offset(u)`. While carried it is squeezed `pulses` times: its width across the grip is
+ * crush = 1 - squeeze sin^2(pi pulses u), and it grows by 1 / sqrt(crush) along the other two axes (volume kept). A
+ * thrown ending takes the hold's last `stroke` seconds for the throw, so the carry runs over the rest. The readouts
+ * (`attack.held`, `thing`, `crush`, `squeezed`) are these closed forms: the game and the art read the same numbers.
+ *
+ * Parameters: `at`, `radius` and an arc carry's `to`, `lift` and `up` take expressions or host inputs (a game says
+ * where the thing is); a path carry is any function of u; `seconds`, `squeeze` and `pulses` are fixed numbers (the
+ * schedule and the period check need the hold's length).
+ *
+ * What it cannot do, because of the law:
+ * - hold for a length decided at run time, or let go early: the hold ends at T + seconds, always.
+ * - hold two things, or let go and take again: one thing, one carry.
+ * - carry that answers the thing's weight or what it meets: the carry is a fixed curve of u, followed exactly.
+ * - squeeze unevenly or along two axes: one axis narrows, the other two grow equally.
+ * - end other than set down where the carry ends or thrown (`thrown`).
+ *
+ * Going past it: a `path` carry takes any curve of u, so the clock, the squeeze and every readout stay and the way the
+ * thing travels is yours; `attack.thing(t)` and `attack.held(t)` are what to draw from. Relatives worth trying:
+ * - a drag inward: offset(u) on a spiral of shrinking radius about a centre (a vortex pulling a thing down).
+ * - a swallow: a path into a body, and the thing drawn at `squeezed(base)` with base falling toward 0 over the hold.
+ * - a pin that does not move: an arc carry with `to` equal to `at`, and squeezes for the struggle.
  */
 export function hold<N extends Ending>(o: HoldSpec & { readonly end: N }): Hold<N>;
 export function hold(o: HoldSpec): Hold<SetDown>;
@@ -260,8 +300,38 @@ export type Still = { readonly kind: "still" };
 export type Ring = { readonly kind: "ring"; readonly speed: number; readonly height: number; readonly length: number; readonly reach: number; readonly hold: number; readonly drag: number };
 export type Aftermath = Still | Ring;
 
+/** The aftermath that leaves the water as it was: what an attack given no `aftermath` has. */
 export const STILL: Still = { kind: "still" };
-export const ring = (o: Omit<Ring, "kind">): Ring => ({ kind: "ring", ...o });
+/**
+ * An attack's aftermath that sends a ring wave over the sea from its hit disc at the arming time T (the wave is a
+ * `RingWave`, src/geom/ring.ts).
+ *
+ * The law. One crest and a shallower trough, `length` long together, leave the disc's edge (radius R) at T and run out
+ * at `speed`; the crest is `height` at R and falls as sqrt(R / r), fading to nothing over the last quarter of `reach`.
+ * What floats is carried by the front at `speed` while the crest is at least `hold` tall, out to R (height / hold)^2,
+ * then let go to coast under a linear drag of `drag` seconds. The sea takes it as a deformation (`attack.deforms()`),
+ * so whatever rides the sea's height rises over it.
+ *
+ * Parameters: `speed`, `height`, `length`, `reach`, `hold` and `drag` are fixed numbers; the centre and radius are the
+ * hit disc's, so they move with it.
+ *
+ * What it cannot do, because of the law:
+ * - leave a hit shape that is not a disc: a capsule or an arc has no one edge at one distance (refused when made).
+ * - start anywhere or any time but the attack's disc at its arming time: a splash elsewhere is `ringWave`.
+ * - exist on a ground that is not a sea: it is a sea deformation.
+ * - steepen, break, disperse, reflect or be blocked: one speed, one shape, nothing in its way.
+ *
+ * Going past it: `ringWave` is the same wave with its own centre, radius and clock (`since`), so a ring can start where
+ * a thrown thing lands or at any instant of yours.
+ * Relatives, each by changing one fact:
+ * - a wave from a lane: distance from a segment instead of a centre; near the segment the crest barely falls (a plane
+ *   wave), far away it falls as 1 / sqrt(r). A `SeaDeform` of your own reading `hitSdf` of a capsule.
+ * - ripples that sort themselves: several pulses, each running at its wavelength's deep-water speed sqrt(g lambda / 2
+ *   pi), so the long ones outrun the short.
+ * - a bore that slows as it falls: speed sqrt(g (depth + a)) with a the crest's height at r; the front's time is then an
+ *   integral of 1 / speed over r, tabulated once.
+ */
+export const ring =(o: Omit<Ring, "kind">): Ring => ({ kind: "ring", ...o });
 
 /** An aftermath bound to its attack: the ring's wave is made once, from the attack's hit shape and clock. */
 type Water = { readonly kind: "still" } | { readonly kind: "ring"; readonly wave: RingWave };
@@ -307,20 +377,49 @@ function releaseSeconds(m: Motion): number {
 export type AttackBeat = Beat & { readonly hold: F; readonly release: F; readonly flight: F };
 
 /**
- * When an attack arms: once at a time, or every `period` seconds from `first`. A value, so the pose, the telegraph and
- * the checks all read the same arming times (the scenes wrote `floor(time / LOOP) * LOOP + at` by hand, and checks
- * that evaluated that at time 0 measured the wrong cycle, or one that had not happened).
+ * A schedule: when an attack (or an emote) arms, once at a time (`once`) or every `period` seconds from `first`
+ * (`every`). A value, not an expression, so the pose, the telegraph and the checks all read the same arming times: a
+ * pose reads the cycle the clock is in (`Attack.armAt`), a check the first arming (`CheckTime`), never a cycle that has
+ * passed or not yet begun.
  */
 export type Arming =
   | { readonly kind: "once"; readonly at: F }
   | { readonly kind: "every"; readonly period: number; readonly first: F };
 
-/** Arm once, at time `at` (seconds; an input for a game that sets it). */
+/**
+ * Arm once, at time `at` (seconds; an input for a game that sets it).
+ *
+ * The law: the arming time is `at` at every clock, so the attack is posed by tau = t - at and rests again once its
+ * recovery is over. `at` takes an expression or a host input; a game re-arms the attack by setting it again.
+ *
+ * What it cannot do, because of the law:
+ * - repeat by itself: once over, the attack rests until `at` changes (`every` repeats).
+ * - remember a strike in progress: nothing is kept between frames, so changing `at` mid-attack jumps the pose to where
+ *   the new arming puts it. A game sets the next arming only after the last one's span (`attack.span`) is over.
+ *
+ * Going past it: `at` is one input, so a game drives any schedule of its own through it. Relatives worth trying:
+ * - a list of arming times the game walks through: the input set to the next one when `attack.span.after` has passed.
+ * - a fixed rhythm: `every`, which also checks that the attack fits its period.
+ */
 export const once = (at: In<"f32">): Arming => ({ kind: "once", at: lift<"f32">(at) });
 /**
- * Arm every `period` seconds, first at `first` (which may be an input but must not read time). A cycle runs from the
- * start of its warning (or of its wind-up, if that is longer) to the start of the next one's, so the arming time steps
- * to the next cycle only when this one's warning is due; the attack must fit in its period (checked when it is made).
+ * Arm every `period` seconds, first at `first` (which may be an input but must not read time).
+ *
+ * The law: the arming time at clock t is first + period floor((t - first + lead) / period), with lead the longer of the
+ * warning and the motion's wind-up (`attack.span.before`). A cycle runs from the start of its lead to the start of the
+ * next one's, so the arming time steps to the next cycle only when this one's warning is due. The attack must fit its
+ * period: lead, recovery, a thrown thing's flight and settling and a ring's run, all inside it (checked when made).
+ *
+ * Parameters: `first` takes an expression or a host input; `period` is a fixed number of seconds.
+ *
+ * What it cannot do, because of the law:
+ * - vary its spacing: every cycle is `period` long (no swing, no random gaps, no speeding up).
+ * - overlap one cycle with the next: an attack longer than its period is refused, never cut short.
+ * - stop: it repeats for ever from its first cycle (and before it, at negative cycles); gate what you draw by time.
+ *
+ * Going past it: `once` with an input the game sets is any schedule at all. Relatives worth trying:
+ * - two attacks on one period, the second `first` offset by half of it: an alternating pair (left, right).
+ * - a period that is a whole number of the music's bars, `first` on a downbeat: an attack in time with a score.
  */
 export function every(period: number, first: In<"f32">): Arming {
   if (!(period > 0 && Number.isFinite(period))) throw new Error(`every: the period must be a positive number of seconds, got ${period}`);
@@ -373,10 +472,13 @@ function armingOf(arm: In<"f32"> | Arming): Arming {
 }
 
 /**
- * An attack of any kind: its hit shape, schedule, warning, timing and effect. A `BodyAttack` also poses a body part; a
- * grip attack poses a gripper (`grip`); a hold's readouts (`held`, `thing`, `crush`, `squeezed`) exist only on attacks
- * whose effect is a hold (their `this` says so, so asking an instant is a type error, not a run-time one); a throw's
- * (`toss`, `flight`) only on holds that end thrown; a ring's (`wave`, `pushed`, `arrives`) only on a ring aftermath.
+ * An attack as `attack` builds it: its hit shape, schedule, warning, timing, effect and aftermath, and the closed forms
+ * every reader shares: `armAt(t)` and `arm` (the arming time of the cycle), `first` (what checks measure at),
+ * `envelope(t)` (posture p and strike progress q), `beats(t, settle)` and `span`. A `BodyAttack` also poses a body
+ * part; a grip attack poses a gripper (`grip`); a hold's readouts (`held`, `thing`, `crush`, `squeezed`) exist only on
+ * attacks whose effect is a hold (their `this` says so, so asking an instant is a type error, not a run-time one); a
+ * throw's (`toss`, `flight`) only on holds that end thrown; a ring's (`wave`, `pushed`, `arrives`) only on a ring
+ * aftermath.
  */
 export class Attack<M extends Motion = Motion, E extends Effect = Effect, W extends Aftermath = Aftermath> {
   readonly name: string;
@@ -517,8 +619,8 @@ export class Attack<M extends Motion = Motion, E extends Effect = Effect, W exte
   /** 1 while the thing is held (from the arming time for the hold's seconds), else 0: the game's "this is held". */
   held(this: Attack<Motion, Hold>, t: In<"f32"> = time): F { return this.held_(t).held; }
   /**
-   * The held thing's middle: where it was taken until then, carried during the hold, and after it where its ending
-   * puts it (set down: where it was let go; thrown: along its flight, then where it landed, skidding and heaving to rest).
+   * The held thing's middle: where it was taken until then, carried during the hold, and after it where its ending puts
+   * it (set down: where it was let go; thrown: along its flight, then where it landed, skidding and heaving to rest).
    */
   thing(this: Attack<Motion, Hold>, t: In<"f32"> = time): P3 { return this.held_(t).thing; }
   /** Its width across the grip as a fraction of its own: 1 unsqueezed, 1 - squeeze at the peak of each squeeze. */
@@ -614,7 +716,11 @@ function fitsPeriod(a: Attack, warn: In<"f32">): void {
   }
 }
 
-/** An attack whose motion poses a body part: `animate` binds it to the part it names. */
+/**
+ * An attack by a body part (a lunge, a sweep or a rear), as `attack` builds it: `pose(rest)` is the rest spine with the
+ * attack mixed in, `landing(rest)` where its striking end is at the arming time, and `part` the name `animate` binds it
+ * to. Its effect is always an instant.
+ */
 export class BodyAttack<W extends Aftermath = Aftermath> extends Attack<BodyMotion, Instant, W> {
   declare readonly motion: BodyMotion;
   readonly part: string;
@@ -647,7 +753,49 @@ export class BodyAttack<W extends Aftermath = Aftermath> extends Attack<BodyMoti
 
 /**
  * An attack, defined once: by a body part (`part` and a lunge, sweep or rear), by a gripper (`grip`, holding what it
- * takes), or remote (a hit shape, timing and effect only).
+ * takes), or remote (a hit shape, timing and effect only). The game supplies the hit shape (`hit.capsule`, `hit.disc`,
+ * `hit.arc`), the arming time and the warning; the pose, the telegraph, the smear, a held thing's place, a ring on the
+ * sea and the checks are all derived from them as closed forms of the clock, so nothing is stored between frames.
+ *
+ * The law. At clock t, with tau = t - T and T the arming time of the cycle t is in (`armAt`), the striking stretch is
+ *   spine(m) = mix(rest(m), pose(m, q), w(m) p),
+ * p the posture (eased in over `windup`, held, then let go by a critically damped response `hold` seconds after the
+ * effect and any release are over) and q the strike's progress: a second-order step response (damping `zeta`, initial
+ * value `anticipation`) started `strike` seconds before T and divided by its own first peak, so q is exactly 1 at T and
+ * never above it. So the striking end is where the hit shape says at the arming instant, and never past it. Each m
+ * reads a clock retarded by its distance along the body over `travel` (from the head for a lunge, from the root for a
+ * sweep, from the loop's top for a rear), so the motion runs along the body. The effect says what happens from T on
+ * (`INSTANT`, or a `hold`), the aftermath what is left on the sea (`STILL`, or a `ring`).
+ *
+ * Parameters: `arm` (a time, `once`, `every`) and `warn` take expressions or host inputs, and so does every field of
+ * the hit shape: a game moves them and the pose, the marker and the checks follow. `timing`, the motion's own numbers
+ * (`reach`, `lead`, `height`, `coil`, `rise`, `inset`, `lean`) and an `every`'s period are fixed numbers: they select
+ * the closed forms.
+ *
+ * What it cannot do, because of the law:
+ * - aim at anything but its hit shape: the target is not read while posing, so a body that crosses the target on the way
+ *   is not stopped (`stopsAt` and `staysClear` measure that afterward).
+ * - change course, be parried or miss once warned: q is a fixed function of tau. A hit shape that moves carries the
+ *   landing with it, at every clock at once (the past and future poses move too).
+ * - overshoot its landing: q is normalised to its first peak (a recoil after it, with `zeta` below 1, is allowed).
+ * - strike along any path but its motion's: a lunge lays the m = 0 end along a capsule's lane on a quadratic Bezier (or
+ *   toward a disc's centre from where it rests), a sweep swings the m = 1 end round an arc's centre, a rear stands a
+ *   middle stretch up as a loop and topples it onto a capsule. A remote attack poses nothing.
+ * - strike with two parts in one attack: two parts are two attacks, applied in turn by `animate`.
+ * - repeat on anything but a fixed period that holds the whole attack (`every` refuses one too short).
+ *
+ * Going past it: an attack is two envelopes and a schedule, and they are public. A remote attack keeps the hit shape,
+ * the schedule, the warning, the telegraph and the checks; its `envelope(t)` (p, q) and `beats(t, settle)` then drive
+ * any pose of your own: a `chain` whose target is mixed from rest to the landing by q, a `strand` whose spine you mix
+ * yourself, a thing flown along `arc`. Relatives worth trying:
+ * - a strike that follows a moving target in: hit-shape fields that read the target's place until T and hold it after
+ *   (a `select` on time); every clock reads the same shape, so the strike homes and then stays.
+ * - another strike curve: q from `anticipated`, `overshot` or a `pendulum`'s swing in a pose of your own, with p from
+ *   `envelope` for the posture.
+ * - a combination: several attacks on one part, each armed later than the last, applied in turn by `animate` (each
+ *   poses the spine the one before it left).
+ * - a projectile: a remote attack whose hit shape is where it lands, and a thing of your own flown along `arc` from the
+ *   launcher to the shape's centre over the `act` beat.
  */
 export function attack<W extends Aftermath = Still>(spec: BodyAttackSpec<W>): BodyAttack<W>;
 export function attack<H extends Hold = Hold, W extends Aftermath = Still>(spec: GripAttackSpec<H, W>): Attack<GripSpec, H, W>;
@@ -744,6 +892,25 @@ export type Animated = Creature & {
 /**
  * Build a creature on its rest spine with attacks applied (each to its own stretch of the spine), and bind each
  * attack to the part it names. An attack naming a part the creature does not have is an error.
+ *
+ * The law: spine = a_n.pose(... a_2.pose(a_1.pose(rest))), in the order given, and `build(spine)` makes the creature;
+ * each attack is bound to `parts[attack.part]` of what `build` returns, with the spine it was applied to (`Strike`),
+ * which is what `smear`, `landsInside` and `stopsAt` read.
+ *
+ * Parameters: `rest` is a function of m and may read time and inputs (a body that breathes, swims or walks while it
+ * attacks); the attacks are a fixed list; `build` is yours.
+ *
+ * What it cannot do, because of the law:
+ * - pose more than one spine: every attack mixes the one spine `build` receives. A second limb with its own spine is a
+ *   second `animate` (or `BodyAttack.pose` on that spine).
+ * - mix attacks: they are applied in order, so where two stretches overlap the later one's rest is the earlier one's
+ *   pose.
+ * - bind an attack to a part `build` does not return, or two attacks of one name (both refused).
+ *
+ * Going past it: `BodyAttack.pose(rest)` is one step down; apply attacks to any spine in any order and build what you
+ * like, then bind `{ attack, part, before }` yourself for the checks. Relatives worth trying:
+ * - a blend instead of a sequence: two posed spines mixed by a weight of your own.
+ * - a spine that drives a `chain` or `polyline`: read the posed spine at a few m and use the points as joints.
  */
 export function animate(rest: Spine, attacks: readonly BodyAttack[], build: (spine: Spine) => Creature): Animated {
   const before: Spine[] = [];

@@ -1,15 +1,15 @@
-// The sea: the root chart, local (x, z, height above the surface) with a swell that moves in time, and the water drawn
-// as a glazed `Surface` in that chart. The surface is a projected grid (`Detail` kind "projected"): cells of about
-// SEA_CELL x `View.cellPixels` pixels laid over the image of the still water out to `reach`, each vertex the point of
-// the still water its pixel sees, lifted to the swell there (exactly the height function at that point). Its cells
-// are the same size on screen everywhere, so the far sea is no longer drawn with triangles far smaller than a pixel.
-// It is evaluated on the GPU only, coloured per pixel by the style's `water`, with foam where the water meets any
-// opaque body found from the scene's depth.
+// The sea: one of the grounds, and a chart, local (x, z, height above the surface), with a swell that moves in time;
+// the water is drawn as a glazed `Surface` in that chart. The surface is a projected grid (`Detail` kind "projected"):
+// cells of about SEA_CELL x `View.cellPixels` pixels laid over the image of the still water out to `reach`, each vertex
+// the point of the still water its pixel sees, lifted to the swell there (exactly the height function at that point).
+// Its cells are the same size on screen everywhere, so the far sea is no longer drawn with triangles far smaller than a
+// pixel. It is evaluated on the GPU only, coloured per pixel by the style's `water`, with foam where the water meets
+// any opaque body found from the scene's depth.
 //
 // Vertices move over the water as the camera moves (a projected grid "swims"). What that can change is small: colour,
 // crest, foam and slope are evaluated per pixel at the interpolated point, and a point of the swell sampled anywhere
 // is still on the swell; only the straight edges between vertices cut the crests, by at most A (pi c / L)^2 / 2 for
-// cells c across a wave of length L and amplitude A (0.003 for the serpent's swell at 1-unit cells).
+// cells c across a wave of length L and amplitude A (0.003 for a swell 2 units high and 40 long, at 1-unit cells).
 
 import {
   add, cross, distance, gt, lift, max, mul, normalize, or, select, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
@@ -303,6 +303,14 @@ type ContactCase = Contact["kind"];
 type ReachCase = "open" | "deformed";
 const CONTACT_CASES: readonly ContactCase[] = ["clear", "near"];
 
+/**
+ * A sea, made by `sea`: at once a ground that draws itself (kind "sea", the moving, see-through one beside `plane` and
+ * `nothing`) and a chart, (x, z, height above the surface), so things are placed on the water by its coordinates. What
+ * a user reads off it: `height(xz, t)` and `gradient(xz, t)` of the surface (expressions, GPU or CPU), `frame(c)` (the
+ * point and the water's tilted frame there), `local(xz, t)` (where water at xz sits in its deformations' coordinates)
+ * and `at(t)` (the chart frozen at time t). It cannot overhang: the surface is a height over each point of the plane,
+ * one sheet, so a crest never curls over a trough.
+ */
 export class Sea implements Chart, Drawable {
   /** One kind of ground (src/draw/ground.ts): the one that moves and is see-through. */
   readonly kind = "sea";
@@ -496,6 +504,40 @@ function reachedBy(deforms: readonly SeaDeform[], r: ReachCase): readonly SeaDef
   }
 }
 
+/**
+ * A moving water surface over the xz plane: a sum of travelling sine waves, deformed by maps of the plane. One of the
+ * grounds a scene stands on, beside `plane` (still and opaque) and `nothing`; and a chart things are placed in.
+ *
+ * The shape and its law. Each swell i has a unit direction d_i, wavenumber k_i = 2 pi / length, amplitude
+ * a_i = height / 2 and angular frequency w_i = k_i speed, and the still surface is
+ *   h(x, t) = sum_i a_i sin(k_i d_i . x - w_i t + phase_i).
+ * Each deformation D (applied in order) moves where the water is read: h is evaluated at D.toLocal(x, t), multiplied by
+ * D.calm(x), and lowered by D.dip(x, t). Height, slope (symbolic, through the deformations) and the frame at a point
+ * all come from that one expression, so what floats on it sits exactly on what is drawn.
+ *
+ * Parameters: the swells (`direction`, `length`, `height`, `speed`, `phase`), `reach` and `foam` are fixed numbers at
+ * build; the motion is time in the law, not changing parameters. Deformations bring their own (a `whirlpool`'s, a
+ * `ringWave`'s).
+ *
+ * What it cannot do, because of that law:
+ * - sharp crests and wide troughs: a sum of sines is as round on top as below, and points only rise and fall, never
+ *   move sideways (no trochoidal, Gerstner, profile).
+ * - break, curl or overhang: the surface is a height over each point of the plane.
+ * - keep wave speed and length physically tied: `speed` is free, so short waves may outrun long ones; deep water would
+ *   have speed = sqrt(g length / 2 pi).
+ * - change in time other than travelling: a swell does not grow, die out, or turn, and never ends at a shore.
+ * - depth: there is no bottom and nothing beneath the surface but what shows through it.
+ *
+ * Going past it: a `SeaDeform` of your own (any map of the plane that is the identity outside its reach, with its dip,
+ * calm and marks) bends the water without touching the swell; the sea's `height`, `gradient` and `frame` follow it.
+ * Relatives, each by changing one tie in the law:
+ * - move points sideways as well as up, x' = x + sum_i d_i a_i cos(phase_i): Gerstner waves, sharp crests and flat
+ *   troughs (they fold over themselves once k a passes 1).
+ * - tie speed to length by the dispersion relation, w_i = sqrt(g k_i): a group of swells then disperses as real water.
+ * - an amplitude that is a function of x (a slow envelope): a swell that fades behind a headland or grows over a shoal.
+ * - a radially symmetric deformation in closed form: `whirlpool` (a twist and an inward drift, integrated exactly) and
+ *   `ringWave` (one crest and its trough running outward).
+ */
 export function sea(spec: SeaSpec): Sea {
   const waves = spec.swell.map((s, i): Wave => {
     const l = Math.hypot(s.direction[0], s.direction[1]);

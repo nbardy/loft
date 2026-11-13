@@ -50,6 +50,12 @@ export type Scene = {
   readonly loop: Loop;
 };
 
+/**
+ * Assembles a scene: a ground, the things drawn (each a `Drawable`), a style, a sun direction above the horizon, and
+ * optionally named cameras, an outline method and a loop period. Returns a `Scene`, which `compile` turns into an
+ * artefact a host draws. The sky, ground and shadows are added to `things` for you. Throws if two things share a name,
+ * the sun is not above the horizon, or the period is not a positive number of seconds.
+ */
 export function scene(spec: SceneSpec): Scene {
   refuseScene(spec);
   // Classified once: a bare vector is a fixed sun.

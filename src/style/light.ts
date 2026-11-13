@@ -149,6 +149,12 @@ function section(o: { readonly at?: number; readonly key?: Key } = {}): Terminat
   return { kind: "section", at: within("terminator", o.at ?? 0.4, -0.95, 0.95), key: o.key ?? OFF_LENS };
 }
 
+/**
+ * Builders for the lighting treatments a style can lay over its bodies: `key` (where the light comes from), `edge`
+ * (where a shadow begins on a form), and the treatments `core`, `highlight`, `cast`, `waterline`, `overlap`,
+ * `bokashi`, `hatch`, `rim` and `block`, which `light.recipe` gathers into a `LightRecipe`. Each treatment is a
+ * plain value; a treatment left out is off.
+ */
 export const light = {
   key: {
     sun: (): Key => ({ kind: "sun" }),
@@ -209,7 +215,7 @@ export const LIGHT = {
   /** Two tones and a third: a hard lighter shape on every form's sunward shoulder. */
   threeTone: light.recipe({ core: light.core(), cast: light.cast(), highlight: light.highlight(), block: WARM }),
   /** Flat inks with a graded wash under every form and up from the water. The one soft recipe. */
-  // The wash from a form's middle down (the painted reference grades the claw's whole lower half into indigo), in the
+  // The wash from a form's middle down (the painted reference grades a form's whole lower half into indigo), in the
   // print's indigo, deeper than the core's block: a grade that stops at a quarter strength reads as dirt, not form.
   bokashi: light.recipe({ bokashi: light.bokashi({ under: [-0.3, 0.55] }), block: light.block({ ink: [0.13, 0.2, 0.37], amount: 0.62, value: 0.72 }) }),
   /** The shadow side drawn in lines across the form that swell as it turns away; no flat shadow. */
@@ -475,6 +481,10 @@ export function blockInk(b: Block, own: BlockInk): BlockInk {
  * with m = mix(`floor`, 1, t). At t = 0 that is mix(colour, ink, amount) * value.
  */
 export type Pull = { readonly floor: number; readonly add: Rgb };
+/**
+ * Reduces a shadow block's ink to the two numbers a blend needs (`floor` and `add`), so a tone can be printed over a
+ * colour; throws if the block would print nothing.
+ */
 export function pullOf(b: BlockInk): Pull {
   const floor = (1 - b.amount) * b.value;
   if (!(floor < 1 - 1e-3)) throw new Error(`light: the shadow block prints nothing (amount ${b.amount}, value ${b.value}); give it an ink`);

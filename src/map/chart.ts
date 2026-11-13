@@ -37,7 +37,7 @@ export function compose(outer: Chart, inner: Chart): Chart {
 
 /**
  * `chart` with its local coordinates scaled by `k` along their axes before they are placed, so everything built in it
- * is squeezed or stretched as one (a ship in a grip). Positions scale; directions keep the chart's. A body placed in it
+ * is squeezed or stretched as one (a thing squeezed in a grip). Positions scale; directions keep the chart's. A body placed in it
  * has its spine scaled and keeps its own girth. `at(t)` moves the chart to time t and keeps this frame's `k`.
  */
 export function sized(chart: Chart, k: In<"vec3">): Chart {
@@ -45,7 +45,7 @@ export function sized(chart: Chart, k: In<"vec3">): Chart {
   return { frame: (c) => chart.frame(mul(c, ke)), at: (t) => sized(chart.at(t), ke), atNear: (t, c) => sized(chart.atNear(t, mul(c, ke)), ke) };
 }
 
-/** `chart` moved by the world vector `by` (a ship lifted off the water it floats on). */
+/** `chart` moved by the world vector `by` (a thing lifted off the surface it rides on). */
 export function shifted(chart: Chart, by: In<"vec3">): Chart {
   const b = lift<"vec3">(by);
   const move = (g: Frame): Frame => ({ o: add(g.o, b), x: g.x, y: g.y, z: g.z });
@@ -97,12 +97,17 @@ export type Turn =
   | { readonly kind: "about"; readonly axis: P3; readonly angle: F }
   | { readonly kind: "axes"; readonly x: P3; readonly y: P3 };
 
+/**
+ * How a posed copy is turned (`PoseSpec.turn`): `turn.none`, `turn.about(axis, angle)` for an angle in radians about a
+ * unit axis, or `turn.axes(x, y)` for unit, perpendicular x and y axes (z is their cross product).
+ */
 export const turn = {
   none: { kind: "none" } as Turn,
   about: (axis: In<"vec3">, angle: In<"f32">): Turn => ({ kind: "about", axis: lift<"vec3">(axis), angle: lift<"f32">(angle) }),
   axes: (x: In<"vec3">, y: In<"vec3">): Turn => ({ kind: "axes", x: lift<"vec3">(x), y: lift<"vec3">(y) }),
 };
 
+/** How a posed copy is scaled (`PoseSpec.size`): `size.even(k)` by one factor, or `size.axes([kx, ky, kz])` per axis. */
 export const size = {
   even: (k: In<"f32">): Size => ({ kind: "even", k: lift<"f32">(k) }),
   /** Lengths along the copy's x, y and z (each positive). */

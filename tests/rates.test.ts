@@ -1,7 +1,8 @@
 // Rates (src/compile/rates.ts, docs/gpu_native.md "Rates"): a per-frame sub-graph that faster programs read is
 // computed once per frame, in a frame-values table, and fetched; build constants are folded.
 import { expect, test } from "bun:test";
-import { add, compileScene, cos, draw, evaluate, mul, param, scene, sea, sin, smoothstep, spacing, surface, time, toon, vec3 } from "../src/index.ts";
+import { add, cos, draw, evaluate, mul, param, scene, sea, sin, smoothstep, spacing, surface, time, toon, vec3 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { stateAt } from "./compile.harness.ts";
 
 // Unusual constants, so the sub-graph can be found in the text.

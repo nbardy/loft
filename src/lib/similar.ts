@@ -92,6 +92,7 @@ export function ask(chain: readonly Gen[]): (p: In<"vec3">) => Folded<"vec3"> {
 
 /** A copy's coordinates in the world: world = o + m q, with m's columns `scale` long. */
 export type Frame = { readonly o: V3; readonly m: readonly [V3, V3, V3]; readonly scale: number };
+/** The identity `Frame`: origin at zero, unit axes, scale 1, so a part in it is already in world coordinates. */
 export const WORLD: Frame = { o: [0, 0, 0], m: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], scale: 1 };
 
 /** A point of a frame, in the world. */
@@ -162,6 +163,10 @@ export function partDistance(part: Part, q: P3): F {
 /** A part placed in the world: two ends with their radii (equal ends for a sphere, equal radii for a capsule). */
 export type Placed = { readonly a: V3; readonly ra: number; readonly b: V3; readonly rb: number };
 
+/**
+ * The part `part` placed in the world by frame `fr`: its end points moved by the frame and its radii scaled by the
+ * frame's scale.
+ */
 export function placePart(part: Part, fr: Frame): Placed {
   switch (part.kind) {
     case "sphere": { const c = toWorld(fr, part.centre), r = part.radius * fr.scale; return { a: c, ra: r, b: c, rb: r }; }
@@ -195,6 +200,12 @@ export type Tree = {
   readonly branches: (levels: number, root: Frame) => Branch[];
 };
 
+/**
+ * A branching recursion of one `Part`: the part at every level, with each level's coordinates reached from its
+ * parent's by the generators in `spec.step`. Gives two readings of one description: `at(p, count)` asks a point for
+ * the distance, level and id of the union (an expression, for `draw.field`), and `branches(levels, root)` lists every
+ * branch down to a level as placed parts (for `draw.copies`).
+ */
 export function tree(spec: TreeSpec): Tree {
   const fold = ask(spec.step);
   return {

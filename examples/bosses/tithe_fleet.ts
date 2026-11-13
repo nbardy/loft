@@ -28,11 +28,12 @@
 
 import {
   abs, add, clamp, cos, div, every, exp, floor, fract, lift, mapNormal, max, mix, mul, pick, posedList, saturate, sin, size,
-  smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, hull, lines, scene, sea, spacing,
+  smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, ropes, scene, sea, spacing,
   woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE, beats, dragged, impact, slowInOut, swing,
-  type Drawable, type Expr, type F, type Frame, type Hull, type HullSpec, type P3, type Paint, type PoseSpec, type Poses,
+  type Drawable, type Expr, type F, type Frame, type P3, type Paint, type PoseSpec, type Poses,
   type Rope, type Sea, type Surface,
 } from "../../src/index.ts";
+import { hull, type Hull, type HullSpec } from "../recipes/hull.ts";
 import { atRest } from "../../src/map/surface.ts";
 import { noise2 } from "../../src/lib/noise.ts";
 import { sdBox } from "../../src/lib/sdf2.ts";
@@ -424,8 +425,8 @@ function ragDraw(name: string, list: readonly PoseSpec[], seed: number): Drawabl
 }
 const rags = [ragDraw("tithe_flag_rags", built[0].rags, 3.1), ragDraw("tithe_escort_rags", built.slice(1).flatMap((b) => b.rags), 8.7)];
 
-const rigging = lines("tithe_rigging", built.flatMap((b) => b.ropes), { width: 0.035, colour: INK.rope });
-const chains = lines("tithe_chains", built.flatMap((b) => b.chains), { width: 0.05, colour: INK.chain });
+const rigging = ropes("tithe_rigging", built.flatMap((b) => b.ropes), { width: 0.035, colour: INK.rope });
+const chains = ropes("tithe_chains", built.flatMap((b) => b.chains), { width: 0.05, colour: INK.chain });
 
 /** The flagship's pennant: a long red strip streaming downwind from its tallest standing masthead. */
 function pennant(): Drawable {
@@ -556,7 +557,7 @@ function volley(): { readonly balls: Drawable; readonly trails: Drawable; readon
     balls: draw.surface("tithe_volley", unitPart(ballPoint(), { u: ["pole", "pole"], v: "periodic" }), {
       paint: () => rgb(INK.bone), grid: { u: spacing.even(10), v: spacing.even(14) }, sides: "one", outline: "hull",
     }).posed("tithe_volley", posedList("volley", list)),
-    trails: lines("tithe_trails", trails, { width: 0.2, colour: WOODBLOCK_PALETTE.cream }),
+    trails: ropes("tithe_trails", trails, { width: 0.2, colour: WOODBLOCK_PALETTE.cream }),
     foam: ([1, -1] as const).map((side) => impactFoam(`tithe_splash_${side > 0 ? "starboard" : "port"}`, water, {
       area: lane(side), pad: 1.5, splashes: splashes[side]!, reach: 2.2, seconds: 1.2,
       foam: WOODBLOCK_PALETTE.cream, line: WOODBLOCK_PALETTE.black, paint: impactPaint.ridge(),

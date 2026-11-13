@@ -178,7 +178,35 @@ function wakeTable(name: string, slices: readonly Skeleton[], joints: number, dt
   return { name, lanes: ENTRY, entries: slices.length * segs, role: "data", program: { kind: "map", runs } };
 }
 
-/** Foam on the water where the body crossed the surface over the last `over` seconds, fading with age. */
+/**
+ * Foam on the water where the body crossed the surface over the last `over` seconds, fading with age. Read from the
+ * body at earlier times, never from state kept between frames.
+ *
+ * The law. Past slice k (1 to `samples`, dt = over / samples) is the body's skeleton at time - k dt, every third
+ * station. Where a joint's sphere (radius r, centre h above the sea at that slice's time) cuts the water its waterline
+ * is a disc of radius sqrt(r^2 - h^2); consecutive joints make a tapered capsule, widened by `spread` times its age. A
+ * pixel is foamed by the youngest slice that covers it and nowhere a younger one does, so the trail fades with age and
+ * foam never stacks: lace from value noise against a threshold that rises with age, and a brighter rim where the
+ * waterline was.
+ *
+ * Parameters: `over`, `samples` (default 10), `spread` (default 0.35 units a second) and `colour` are fixed; the body
+ * is any `Body` and moves as it moves.
+ *
+ * What it cannot do, because of the law:
+ * - exist without a sea: it reads the sea's height at past times (a plane or nothing is refused).
+ * - move the water: it is foam only, no wave and no displacement.
+ * - drift: the foam is fixed where the body crossed, not carried by the swell or a current.
+ * - show the body's present waterline: the live slice is left to the sea's contact foam, so a body that holds still
+ *   leaves no trail.
+ * - follow detail finer than every third station, or remember longer than `over`.
+ *
+ * Going past it: `body.skeletonAt(t, stations)` is the body's skeleton at any past time, which any drawable of yours
+ * can read. Relatives worth trying:
+ * - a Kelvin wake: the V of waves behind a moving point, its arms at 19.5 degrees to the path whatever the speed, as
+ *   a `SeaDeform` summing crests along the past path.
+ * - a dust trail on a plane: the same capsules, cut by the ground at height 0 instead of the sea.
+ * - a ring per touchdown: a `ringWave` started at each moment a joint first cuts the water.
+ */
 export function wake(body: Body, spec: WakeSpec): Drawable {
   const full: Required<WakeSpec> = { over: spec.over, samples: spec.samples ?? 10, spread: spec.spread ?? 0.35, colour: spec.colour ?? [0.95, 0.98, 0.97] };
   if (!(full.over > 0)) throw new Error(`wake: over must be positive, got ${full.over}`);

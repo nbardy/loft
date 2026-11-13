@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL } from "../src/artefact.ts";
 import stormwing from "../examples/stormwing.ts";
 import islandback from "../examples/islandback.ts";
-import { compileScene } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { FRAGMENT, gpu, layouts, VERTEX } from "./compile.harness.ts";
 
 // Catches: WGSL from the parts library that Dawn rejects (a select chain of vec3s across fan cells, nested polylines,

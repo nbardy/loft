@@ -22,7 +22,7 @@
 // by the style from the whirlpool's own foam, and its eye in the key black (`water.eye`).
 
 import { foam,
-  abs, add, clamp, cos, crest, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, mix,
+  abs, add, clamp, cos, sheetOn, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, mix,
   mod, mul, normalize, on, pick, place, points, pow, print, scene, sea, select, sin, smoothstep, spacing, step, strand, sub, TAU, through,
   time, vec2, vec3, whirlpool, length, woodblock, beats, dragged, slowInOut, swing, uneven, type Chart, type F, type Frame, type In, type P3,
 } from "../../src/index.ts";
@@ -275,7 +275,7 @@ const body = restAnimated.parts.coil!.body;
 const ridgeProfile = keys([[0, 0], [0.05, 0.55], [0.9, 0.4], [1, 0]]);
 
 /** A low dark fin down the back, along the arches. */
-const ridge = crest({
+const ridge = sheetOn({
   on: body, from: 0.06, to: 0.9, name: "wyrmRidge",
   height: (x: In<"f32">) => ridgeProfile(x).x,
   paint: K("black"), rays: 90, sag: 0.6, rake: 0.5, rows: 360,

@@ -4,9 +4,10 @@
 // same chart; the serpent's spine is given in whirlpool coordinates (the serpent as authored, set along a radius), so
 // the whirlpool's steady spiral winds its skeleton into a coil while its cross-sections keep their shape.
 import {
-  add, compose, cos, draw, floor, mod, mul, place, points, rigid, scene, sea, ship, sin, strand, through, toon, vec3, whirlpool,
+  add, compose, cos, draw, floor, mod, mul, place, points, rigid, scene, sea, sin, strand, through, toon, vec3, whirlpool,
   Strand, SurfaceDrawable, type Chart, type Drawable, type F,
 } from "../src/index.ts";
+import { ship } from "./recipes/ship.ts";
 import serpent, { bodySpec } from "./serpent.ts";
 import { brigSpec } from "./brig.ts";
 import { sloopSpec } from "./fleet.ts";

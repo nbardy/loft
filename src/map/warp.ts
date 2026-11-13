@@ -7,6 +7,11 @@ import { vec2 } from "../expr.ts";
 import type { Folded } from "../lib/fold.ts";
 import type { Curve, F, Field, P3, Paint, Placed, Points, Surface, Warp } from "./types.ts";
 
+/**
+ * Applies a fold (a `Warp`: a map from a point to its folded point, with the cell it fell in) to something that is a
+ * function of position, so that thing repeats or mirrors wherever the fold sends points onto it. One member per kind
+ * of thing: `paint`, `field`, `surface`, `curve`, `points`.
+ */
 export const warp = {
   /** The paint at the folded coordinate: the motif repeats wherever the fold sends points onto it. */
   paint: (paint: Paint, w: Warp<"vec2">): Paint => (u, v, at) => { const x = w(vec2(u, v)).x; return paint(x.x, x.y, at); },

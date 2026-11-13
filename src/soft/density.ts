@@ -67,6 +67,10 @@ const PIECES = 8;
 const f = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(f).join(", ")})`;
 
+/**
+ * The `Drawable` that `draw.density` returns: a medium (puffs, fog banks) integrated along each view ray and lit by
+ * the sun and sky. A scene author gets it from `draw.density`, not by constructing it.
+ */
 export class DensityDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
   readonly surfaces = [];

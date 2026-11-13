@@ -32,6 +32,11 @@ function glowOf(base: Expr<"vec3">): Expr<"vec3"> {
   return mul(mix(rgb(C.cyan), rgb(C.magenta), purple), strength);
 }
 
+/**
+ * The night style: near-black sky, water and bodies, where the bright, saturated parts of a body's paint become light
+ * (cyan or magenta by hue), a cold rim of light on every silhouette, and glowing foam where bodies break the water.
+ * Composed of the `reflection` and `bloom` post passes.
+ */
 export function biolume(): Style {
   const outline = param("biolume.outline", 0.02, { min: 0, max: 0.1 });
   const fog = (d: Expr<"f32">): Expr<"f32"> => saturate(sub(1, exp(mul(d, -0.012))));

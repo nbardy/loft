@@ -11,7 +11,7 @@ export type ChainSpec = {
   readonly target: In<"vec3">;
   /** Segment lengths, root first: two (upper, lower) or three (upper, lower, foot). */
   readonly lengths: readonly [In<"f32">, In<"f32">] | readonly [In<"f32">, In<"f32">, In<"f32">];
-  /** The side the middle joint bends toward (a knee forward, a crab's knee up and out). Need not be unit. */
+  /** The side the middle joint bends toward (a knee forward, or up and out). Need not be unit. */
   readonly bend: In<"vec3">;
   /** Three segments only: the direction the last segment points along, toward the target. Default straight down. */
   readonly foot?: In<"vec3">;
@@ -26,7 +26,11 @@ export type Chain = {
   spine(m: F): P3;
 };
 
-/** A unit vector along v; a zero vector stays (nearly) zero instead of becoming NaN. */
+/**
+ * The unit vector along v, v / max(|v|, 1e-6): a zero vector stays (nearly) zero instead of becoming NaN. It cannot
+ * give a direction for a vector shorter than 1e-6: such a vector comes back shorter than 1, so a caller that needs a
+ * true direction there must choose one itself.
+ */
 export const unit = (v: P3): P3 => div(v, max(length(v), 1e-6));
 
 /**
@@ -98,7 +102,24 @@ function threeLimb(root: P3, target: P3, a: F, b: F, c: F, bend: P3, foot: P3): 
   return [root, knee, ankle, add(ankle, mul(unit(sub(target, ankle)), c))];
 }
 
-/** Piecewise-linear through points at arc fractions `knots` (increasing, 0 to 1). */
+/**
+ * The point at m (0 to 1, clamped) on the broken line through `points`, point j sitting at m = knots[j]: straight
+ * between neighbours, linear in m within each piece. `chain`'s spine is this through its joints; pass any joints (and
+ * their arc fractions) to draw your own jointed spine.
+ *
+ * Parameters: `m`, the points and the knots are all expressions (the points can move); the number of points is fixed.
+ *
+ * What it cannot do, because it is piecewise linear:
+ * - turn smoothly: the heading jumps at every point, so a strand swept along it shows a crease at each joint.
+ * - check its knots: they must be as many as the points, start at 0, end at 1 and increase; anything else is not
+ *   caught and gives a wrong line, not an error.
+ * - keep speed: m runs at a constant rate within a piece, so equal steps in m are equal lengths only if the knots are
+ *   the true arc fractions.
+ *
+ * Relatives, through the same points by a smoother law:
+ * - `through`: a Catmull-Rom cubic through the points, with a continuous heading (a curved bone, a tail).
+ * - corners rounded by a circular arc of radius r at each inner point: a bent pipe, a jointed limb with fleshy joints.
+ */
 export function polyline(m: F, points: readonly P3[], knots: readonly F[]): P3 {
   const x = clamp(m, 0, 1);
   const seg = (j: number): P3 => mix(points[j], points[j + 1], clamp(div(sub(x, knots[j]), max(sub(knots[j + 1], knots[j]), 1e-6)), 0, 1));
@@ -107,9 +128,3 @@ export function polyline(m: F, points: readonly P3[], knots: readonly F[]): P3 {
   return out;
 }
 
-/** @deprecated Use `ChainSpec`. Removed at integration. */
-export type LimbSpec = ChainSpec;
-/** @deprecated Use `Chain`. Removed at integration. */
-export type Limb = Chain;
-/** @deprecated Use `chain`. Removed at integration. */
-export const limb = chain;

@@ -23,7 +23,7 @@ export type RopesSpec = {
 };
 
 /**
- * Many ropes as one stroke, so a ship's rigging is one draw call however many ropes it has.
+ * Many ropes as one stroke, so a rig of any number of ropes is one draw call however many ropes it has.
  *
  * The shape and its law. Each rope runs from `a` to `b` and hangs below the straight line by a parabola, `sag` at its
  * middle; it is at least about half a pixel wide on screen. The end points are evaluated once per frame into a table
@@ -71,8 +71,3 @@ export function ropes(given: string, ropes: readonly Rope[], spec: RopesSpec): D
   const [r, g, b] = spec.colour;
   return draw.curve(name, curve, { width, paint: () => vec3(r, g, b), segments: cells });
 }
-
-/** @deprecated Use `RopesSpec`. Removed at integration. */
-export type LinesSpec = RopesSpec;
-/** @deprecated Use `ropes`. Removed at integration. */
-export const lines = ropes;

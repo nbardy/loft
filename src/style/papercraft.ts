@@ -151,6 +151,10 @@ const card = (c: Expr<"vec3">): Expr<"vec3"> => {
 /** The studio backdrop: graded to a cooler top over the view's height 0..0.6; the deep sheet below the horizon. */
 const SKY: Sky = { horizon: C.backdrop, washes: [{ ink: C.backdropTop, from: 0, to: 0.6 }], below: C.sheetDeep, sun: { kind: "none" }, clouds: { kind: "none" } };
 
+/**
+ * The folded-paper style: bodies cut into flat facets lit as separate planes, the water as layered cut-paper sheets
+ * with scalloped edges and small shadows, soft studio light, and a post pass of crease occlusion and paper fibre.
+ */
 export function papercraft(): Style {
   const outline = param("papercraft.outline", 0.0, { min: 0, max: 0.1 });
   /** Sheet k's colour: one of the blues between deep and light, by a golden-ratio walk so neighbours differ. */

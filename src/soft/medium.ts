@@ -52,7 +52,33 @@ export type BlobSpec = {
   readonly colour: In<"vec3">;
 };
 
-/** A Gaussian blob. */
+/**
+ * One soft puff of a volume: a Gaussian density about a centre, the brick every cloud, plume and puff of smoke in a
+ * `medium` is built from.
+ *
+ * The shape and its law: density(p) = density exp(-|K (p - centre)|^2), K = (1 / rx, 1 / ry, 1 / rz) the inverse radii,
+ * so it is e^-1 of its peak one radius out and e^-9 at three. Its optical depth along any ray is closed form (an erf),
+ * so a ray through it is integrated exactly, not marched.
+ *
+ * Parameters: `centre`, `radii`, `density` and `colour` (the albedo) all take expressions, so a blob drifts, breathes,
+ * builds and fades.
+ *
+ * What it cannot do, because of the law:
+ * - turn: the radii lie along the world axes, so an ellipsoid tilted off them (a leaning plume) is not one blob.
+ * - have an edge: it fades smoothly for ever (cut at 3.6 radii for culling); a crisp silhouette comes only from many
+ *   small dense blobs together, or from the drawable's noise detail.
+ * - be anything but convex and single-peaked: a hollow, a ring or a long thin streak is many blobs.
+ * - shade itself in full: the light it gets from the sun through the other blobs is computed at two points on the CPU
+ *   each frame (one radius either side of its centre), so shading within one large blob is approximate.
+ *
+ * Going past it: a list of blobs is the shape, so `billows` (boiling and drift for blobs you place) and `cloud` (a
+ * shape of revolution filled with tiers of them) are the next steps up; `medium` takes any list. Relatives, other
+ * Gaussians whose ray integral is still closed form:
+ * - a Gaussian in one coordinate only, unbounded in the others: `layer` (fog in height).
+ * - the same, cut off past a plane by a second Gaussian factor: `bank`.
+ * - a Gaussian tube along a segment (exp of the squared distance to a line, times a Gaussian along it): a streak of
+ *   smoke or a contrail, whose ray integral is a two-dimensional Gaussian and so still closed form; not built here.
+ */
 export function blob(b: BlobSpec): Blob {
   return { kind: "blob", centre: lift<"vec3">(b.centre), inv: div(vec3(1, 1, 1), lift<"vec3">(b.radii)), density: lift<"f32">(b.density), colour: lift<"vec3">(b.colour) };
 }
@@ -66,7 +92,26 @@ export type LayerSpec = {
   readonly colour: In<"vec3">;
 };
 
-/** A horizontal fog layer: a Gaussian in height, unbounded across (ground fog, haze). */
+/**
+ * A horizontal fog layer: a density that depends on height alone, unbounded across. Ground fog, haze, a sea of cloud
+ * seen from above.
+ *
+ * The shape and its law: density(p) = density exp(-((p.y - height) / thickness)^2), the same at every x and z; its
+ * optical depth along a ray is closed form, so the layer is drawn exactly, from any height, looking up or down.
+ *
+ * Parameters: `height`, `density` and `colour` take expressions (a fog that rises, thickens, clears); `thickness` is a
+ * fixed number.
+ *
+ * What it cannot do, because of the law:
+ * - stop anywhere across: it is the same at every x and z out to the medium's bounds; for an edge use `bank`.
+ * - lie on a slope or follow the ground: it is level, a Gaussian in world height.
+ * - have structure inside it (wisps, holes): only the drawable's noise detail breaks it up.
+ *
+ * Relatives:
+ * - a layer that stops at a soft vertical wall: `bank`.
+ * - a layer whose height is a function of x and z (fog lying in a valley): the exponent is then not quadratic along a
+ *   ray, so no longer closed form; approximate with many blobs.
+ */
 export function layer(l: LayerSpec): Layer {
   if (!(l.thickness > 0)) throw new Error(`layer: thickness must be positive, got ${l.thickness}`);
   return { kind: "layer", height: lift<"f32">(l.height), inv: 1 / l.thickness, density: lift<"f32">(l.density), colour: lift<"vec3">(l.colour) };
@@ -77,7 +122,25 @@ export type BankSpec = LayerSpec & {
   readonly edge: { readonly through: readonly [number, number]; readonly clear: readonly [number, number]; readonly softness: number };
 };
 
-/** A fog bank: a layer that ends at a soft vertical wall. */
+/**
+ * A fog bank: a horizontal `layer` that ends at a soft vertical wall, clear air on one side.
+ *
+ * The shape and its law: the layer's density times exp(-(max(0, s) / softness)^2), s = clear . (p - through) the
+ * signed distance (in xz) into the clear air. On each side of the wall the exponent is quadratic along a ray, so the
+ * bank is integrated exactly in two pieces.
+ *
+ * Parameters: the layer's (`height`, `density`, `colour` take expressions; `thickness` fixed) and the edge, `through`,
+ * `clear` and `softness`, fixed numbers.
+ *
+ * What it cannot do, because of the law:
+ * - move or bend its edge: the wall is a fixed straight vertical plane.
+ * - have more than one edge: a strip or a patch of fog is several banks (each a separate wall), or blobs.
+ * - lean: the wall is vertical, a fog that rolls over a cliff edge is not one.
+ *
+ * Relatives: two banks with opposite `clear` directions overlapping make a strip of fog; a bank whose s is the distance
+ * to a circle (radial instead of planar) would be a round patch, but s is then not linear along a ray and the closed
+ * form is lost.
+ */
 export function bank(b: BankSpec): Bank {
   const l = Math.hypot(b.edge.clear[0], b.edge.clear[1]);
   if (!(l > 0)) throw new Error("bank: edge.clear must be a nonzero xz direction");
@@ -85,7 +148,25 @@ export function bank(b: BankSpec): Bank {
   return { layer: layer(b), normal: [b.edge.clear[0] / l, b.edge.clear[1] / l], through: b.edge.through, softness: b.edge.softness };
 }
 
-/** A flash inside the medium. */
+/**
+ * A light inside a medium: a point that lights the puffs around it, as a lightning stroke lights a cloud from within.
+ *
+ * The law: each blob's centre receives power * colour * reach^2 / (reach^2 + d^2) * (1 - x^2)^2 (d its distance from
+ * the light, x = d / (4 reach)), times the light's transmission through the medium on the way (the same extinction
+ * octaves as sunlight, so it glows through thick cloud); nothing past 4 reaches; and 4% of the power lights the whole
+ * medium evenly (light scattered many times).
+ *
+ * Parameters: `at` and `power` take expressions (power 0 is off; drive it with a flicker); `colour` and `reach` are
+ * fixed.
+ *
+ * What it cannot do, because the light is reckoned per blob:
+ * - light within a blob: each blob gets one light value, at its centre, so a large blob is lit evenly by a flash
+ *   touching its edge.
+ * - shine on anything but its medium: bodies, the ground and the water are not lit by it (a `skyFlash` or a
+ *   `glow` does that part).
+ * - be a line: a lightning channel is one point here; several flashes along a `bolt` stand in for a line.
+ * - cost nothing: each frame the CPU traces from every blob to every flash.
+ */
 export function flash(f: { readonly at: In<"vec3">; readonly power: In<"f32">; readonly colour: readonly [number, number, number]; readonly reach: number }): Flash {
   if (!(f.reach > 0)) throw new Error(`flash: reach must be positive, got ${f.reach}`);
   return { at: lift<"vec3">(f.at), power: lift<"f32">(f.power), colour: f.colour, reach: f.reach };
@@ -161,7 +242,31 @@ export class Medium {
   }
 }
 
-/** Build a medium. */
+/**
+ * A soft volume: blobs, fog layers and fog banks summed into one density, lit by the sun, the sky and flashes inside
+ * it, drawn by `draw.density`; glows behind or inside it name it as their veil and are dimmed by it.
+ *
+ * The shape and its law: density(p) = sum of the puffs' and banks' Gaussians, so the optical depth along any ray is a
+ * sum of closed forms (erf), integrated per pixel without marching. Lighting: each blob gets the other blobs' depth
+ * toward the sun and the zenith, and its light from each flash, from a CPU pass each frame; per pixel the depth is
+ * deposited into depth bins and composited front to back. `density(p)` gives the same sum as an expression.
+ *
+ * Parameters: `name` (an identifier: it names tables), the `puffs` (blobs and layers), `banks` and `flashes`, each with
+ * the expressions it takes. The list itself is fixed at build: blobs can move, not appear.
+ *
+ * What it cannot do, because of the law and the light pass:
+ * - be empty of blobs: fog alone needs one blob (of density 0).
+ * - have blobs appear, split or vanish: the count is fixed; fade one in or out by its density.
+ * - be cheap in large numbers: the light pass is O(N^2) on the CPU every frame, and each pixel loops over the blob
+ *   clusters its ray meets; hundreds of blobs, not tens of thousands.
+ * - cast shadows on bodies or the ground, or be lit by anything but the sun, the sky and its own flashes.
+ * - draw outside its box: `draw.density` integrates only within `bounds` (keep it 3 radii past every puff; `cloud`
+ *   and `billows` return one, and `unionBox` joins several).
+ *
+ * Going past it: the puffs are the open slot; `cloud` and `billows` build lists of them. Relatives: any density whose
+ * line integral is closed form (a Gaussian in one, two or three coordinates, cut by planes) can join the sum; a density
+ * that is not (noise, a function of your own) would need a marched drawable instead.
+ */
 export function medium(name: string, parts: { readonly puffs?: readonly Puff[]; readonly banks?: readonly Bank[]; readonly flashes?: readonly Flash[] }): Medium {
   return new Medium(name, parts.puffs ?? [], parts.banks ?? [], parts.flashes ?? []);
 }
@@ -423,7 +528,11 @@ fn ${fn}(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32) -> f32 {
   return { code, libs: acc.banks.kind === "some" ? [GAUSS_LIB, BANK_LIB] : [GAUSS_LIB] };
 }
 
-/** The union of boxes. */
+/**
+ * The smallest axis-aligned box holding all of `boxes`: the bounds of a medium made of several clouds, each with its
+ * own box. It cannot take an empty list (it throws), and it holds the boxes, not what is in them: two far-apart clouds
+ * give one large box, every pixel of which runs the medium's shader.
+ */
 export function unionBox(boxes: readonly Box[]): Box {
   if (boxes.length === 0) throw new Error("unionBox: no boxes");
   const min = [0, 1, 2].map((a) => Math.min(...boxes.map((b) => b.min[a]))) as [number, number, number];

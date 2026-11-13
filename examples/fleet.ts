@@ -1,6 +1,7 @@
 // Three ships made by changing numbers, sailing in formation on one swell: a cutter-rigged sloop, the brig of
 // examples/brig.ts, and a heavy galleon. Nothing but the specs differs; every part is assembled by `ship`.
-import { scene, sea, ship, toon, type ShipSpec } from "../src/index.ts";
+import { scene, sea, toon } from "../src/index.ts";
+import { ship, type ShipSpec } from "./recipes/ship.ts";
 import { brigSpec } from "./brig.ts";
 
 export const sloopSpec: ShipSpec = {

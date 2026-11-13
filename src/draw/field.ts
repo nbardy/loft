@@ -106,6 +106,11 @@ export class FieldScheduleError extends Error {
   }
 }
 
+/**
+ * Raised at compile time when a `draw.field` field cannot be certified for sphere tracing: its measured Lipschitz
+ * constant is above 1 (steps could pass through the surface), or it calls a GPU-only function the CPU cannot sample.
+ * Carries the field's name and `reason` (a `FieldSafetyFailure`, with the measured constant and a suggested `safety`).
+ */
 export class FieldSafetyError extends Error {
   override readonly name = "FieldSafetyError";
   constructor(readonly field: string, readonly reason: FieldSafetyFailure) {
@@ -213,6 +218,10 @@ function unionOf(e: Expr<"f32">): Expr<"f32">[] {
   return n.op === "call" && n.fn === "min" && n.ty === "f32" ? n.args.flatMap((a) => unionOf(a as Expr<"f32">)) : [e];
 }
 
+/**
+ * The `Drawable` that `draw.field` returns: a signed distance field sphere-traced per pixel inside its bounding box. A
+ * scene author gets it from `draw.field`, not by constructing it.
+ */
 export class FieldDrawable implements Drawable {
   private shadow: Skeleton[] | undefined;
   private planned: Plan | undefined;

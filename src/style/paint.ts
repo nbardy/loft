@@ -61,6 +61,11 @@ const positive = (what: string, x: number): number => {
   return x;
 };
 
+/**
+ * Builders for how a style treats a body's paint before lighting it: `hotter` (warm reds pushed warmer), `mottle`
+ * (darker blotches on red paints), and the weight of the line inside the hull, `swelling` or `wandering`. Each returns
+ * a plain value for a style's spec.
+ */
 export const paint = {
   hotter: (o: { readonly margin?: number; readonly gain?: Rgb } = {}): Warm => ({ kind: "hotter", margin: o.margin ?? 0.33, gain: o.gain ?? [1.27, 1.18, 1] }),
   mottle: (o: { readonly size?: number; readonly cut?: number; readonly value?: number; readonly margin?: number } = {}): Mottle =>

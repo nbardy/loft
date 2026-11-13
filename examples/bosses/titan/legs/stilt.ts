@@ -10,7 +10,7 @@
 // (world 9.4, above the body's top at 8.9) and 4.6 out.
 
 import {
-  abs, add, draw, floor, fract, hit, length, lift, limb, max, min, mix, mul, saturate, sin, smoothstep, spacing, sqrt, strand, sub, time, unit,
+  abs, add, draw, floor, fract, hit, length, lift, chain, max, min, mix, mul, saturate, sin, smoothstep, spacing, sqrt, strand, sub, time, unit,
   vec2, vec3, vec4, type Drawable, type F, type Sea,
 } from "../../../../src/index.ts";
 import { noise2 } from "../../../../src/lib/index.ts";
@@ -94,7 +94,7 @@ export const stilt: LegsOption = {
       // The foot pole leans out along the leg's own bearing (world, horizontal).
       const out = vec3(Math.cos(angle), 0, s * Math.sin(angle));
       const spec = { root, target: walk.foot(k), lengths: n.legLengths, bend: body.y, foot: unit(add(vec3(0, -1, 0), mul(out, SPLAY))) };
-      const leg = limb(spec);
+      const leg = chain(spec);
       limbs.push({ name: `leg${s < 0 ? "L" : "R"}${i}`, limb: spec, outward: out });
       const knee1 = leg.knots[1]!, knee2 = leg.knots[2]!;
       const nearKnot = (m: F): F => min(abs(sub(m, knee1)), abs(sub(m, knee2)));

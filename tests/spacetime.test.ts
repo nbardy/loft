@@ -5,9 +5,10 @@ import { expect, test } from "bun:test";
 import strike, { checks, strikes } from "../examples/strike.ts";
 import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
 import {
-  attack, compile, compileScene, f, fetch, hit, hitSdf, landsInside, Probe, runChecks, scene, sea, staysClear, stopsAt, sub, telegraph, time, toon, vec2,
+  attack, compile, f, fetch, hit, hitSdf, landsInside, Probe, runChecks, scene, sea, staysClear, stopsAt, sub, telegraph, time, toon, vec2,
   type Check, type Hit, type Target,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { cameraMatrices, createHost, project } from "../src/host/index.ts";
 import { FRAGMENT, gpu, layouts, VERTEX } from "./compile.harness.ts";
 
@@ -77,7 +78,7 @@ test("checks pass the example's attacks and fail a bad one", () => {
   const inTheWay: Target = { kind: "disc", centre: vec2(10.2, 0.75), radius: f(0.4) };
   const early: Check[] = [staysClear(strikes.bite.part, inTheWay, { until: strikes.bite.attack.arm }), stopsAt(strikes.bite, inTheWay)];
   for (const v of runChecks(strike, early, { compiled })) expect(v.pass).toBe(false);
-}, 120000); // the hull targets (src/geom/hull_distance.ts) take 3-10 s of CPU on a loaded machine
+}, 120000); // the skin targets (src/geom/skin_distance.ts) take 3-10 s of CPU on a loaded machine
 
 // ---- the telegraph against the analytic shape, on a real render ---------------------------------------------------
 

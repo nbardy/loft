@@ -193,6 +193,13 @@ export type Num = Expr<NumTy> | number | readonly number[];
 const interned = new Map<string, Expr>();
 const params = new Map<string, ParamSpec>();
 
+/**
+ * A node in a typed expression graph: a number, a vec2, vec3, vec4 or a bool (the type parameter), built by the
+ * functions of this file (`add`, `mix`, `vec3`, ...) from constants and named inputs. It is a description, not a
+ * value: the GPU evaluates it per vertex or per pixel, and `evaluate` computes it once on the CPU. Equal expressions
+ * are one shared node. The fluent forms `.add(b)`, `.sub(b)`, `.mul(b)`, `.div(b)` equal the functions of the same
+ * name, and `.x`, `.y`, `.z`, `.w`, `.xy`, `.xz`, `.xyz` select components of a vector.
+ */
 export class Expr<T extends Ty = Ty> {
   private constructor(readonly id: number, readonly node: Node) {}
   get ty(): T { return this.node.ty as T; }
@@ -252,6 +259,7 @@ export function lift<T extends Ty>(x: In<T>): Expr<T> {
   return constant(TY_OF_SIZE[arr.length], arr) as Expr<T>;
 }
 
+/** `f(x)`: the constant expression for the number x (an f32); the same as passing x where an expression is expected. */
 export const f = (x: number): Expr<"f32"> => lift<"f32">(x);
 
 /** A free variable, bound by whoever consumes the expression (u, v, rho, a world point). */
@@ -395,8 +403,11 @@ function vecOf(ty: VecTy, parts: readonly Num[]): Expr {
   }
   return Expr.make({ op: "vec", ty, args }, `V:${ty}:${args.map((a) => a.id).join(",")}`);
 }
+/** `vec2(...parts)`: a vec2 from numbers or expressions (`vec2(x, y)`), or one scalar repeated into both components. */
 export const vec2 = (...p: Num[]): Expr<"vec2"> => vecOf("vec2", p) as Expr<"vec2">;
+/** `vec3(...parts)`: a vec3 from numbers, expressions or smaller vectors (`vec3(p.xy, 0)`), or one scalar repeated. */
 export const vec3 = (...p: Num[]): Expr<"vec3"> => vecOf("vec3", p) as Expr<"vec3">;
+/** `vec4(...parts)`: a vec4 from numbers, expressions or smaller vectors (`vec4(rgb, 1)`), or one scalar repeated. */
 export const vec4 = (...p: Num[]): Expr<"vec4"> => vecOf("vec4", p) as Expr<"vec4">;
 
 function get<T extends NumTy>(a: Expr, sel: string): Expr<T> {
@@ -453,21 +464,57 @@ interface Unary {
 const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b])) as Binary;
 const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
-export const add = binary("add"), sub = binary("sub"), mul = binary("mul"), div = binary("div");
-export const min = binary("min"), max = binary("max"), pow = binary("pow");
+/** `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one. */
+export const add = binary("add");
+/** `sub(a, b)`: a - b, componentwise; a scalar operand is applied to every component of a vector one. */
+export const sub = binary("sub");
+/** `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component. */
+export const mul = binary("mul");
+/** `div(a, b)`: a / b, componentwise; a scalar operand is applied to every component of a vector one. */
+export const div = binary("div");
+/** `min(a, b)`: the smaller of a and b, componentwise; a scalar operand is applied to every component. */
+export const min = binary("min");
+/** `max(a, b)`: the larger of a and b, componentwise; a scalar operand is applied to every component. */
+export const max = binary("max");
+/** `pow(a, b)`: a raised to the power b, componentwise; as in WGSL, a negative base gives an undefined result. */
+export const pow = binary("pow");
 /** Floored modulo (the result has the sign of the divisor), unlike WGSL's `%`. */
 export const mod = binary("mod");
 /** atan2(y, x). */
 export const atan2 = binary("atan2");
 /** step(edge, x): 0 below the edge, 1 at or above it. */
 export const step = binary("step");
-export const neg = unary("neg"), abs = unary("abs"), sign = unary("sign"), floor = unary("floor"), fract = unary("fract");
-export const sqrt = unary("sqrt"), exp = unary("exp"), log = unary("log");
-export const sin = unary("sin"), cos = unary("cos"), tan = unary("tan");
+/** `neg(a)`: -a, componentwise. */
+export const neg = unary("neg");
+/** `abs(a)`: the absolute value, componentwise. */
+export const abs = unary("abs");
+/** `sign(a)`: -1, 0 or 1 by the sign of a, componentwise. */
+export const sign = unary("sign");
+/** `floor(a)`: the largest whole number not above a, componentwise. */
+export const floor = unary("floor");
+/** `fract(a)`: a - floor(a), the part after the point, componentwise (always in [0, 1)). */
+export const fract = unary("fract");
+/** `sqrt(a)`: the square root, componentwise; undefined for a negative a. */
+export const sqrt = unary("sqrt");
+/** `exp(a)`: e raised to a, componentwise. */
+export const exp = unary("exp");
+/** `log(a)`: the natural logarithm, componentwise; undefined for a not above 0. */
+export const log = unary("log");
+/** `sin(a)`: the sine of an angle in radians, componentwise. */
+export const sin = unary("sin");
+/** `cos(a)`: the cosine of an angle in radians, componentwise. */
+export const cos = unary("cos");
+/** `tan(a)`: the tangent of an angle in radians, componentwise. */
+export const tan = unary("tan");
 /** Clamp to [0, 1]. */
 export const saturate = unary("saturate");
+/** `normalize(v)`: v scaled to length 1 (WGSL `normalize`); v must be a vec2, vec3 or vec4 that is not zero. */
 export const normalize = unary("normalize");
 
+/**
+ * `mix(a, b, t)`: a + (b - a) t, the linear blend from a (t = 0) to b (t = 1), componentwise; t may be a scalar or the
+ * same vector type, and it is not clamped.
+ */
 export function mix(a: number, b: number, t: In<NumTy>): Expr<"f32">;
 export function mix<A extends NumTy, B extends NumTy>(a: Expr<A>, b: Expr<B>, t: In<NumTy>): Expr<Wider<A, B>>;
 export function mix<A extends NumTy>(a: Expr<A>, b: number, t: In<NumTy>): Expr<A>;
@@ -480,6 +527,7 @@ export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
   // The blend factor may be the only vector: the result is then a vector too.
   return call("mix", wider("mix", lift(a).ty, lift(b).ty, lift(t).ty), [a, b, t]);
 }
+/** `clamp(x, lo, hi)`: x limited to the range from lo to hi, componentwise; lo and hi may be scalars. */
 export function clamp(x: number, lo: number, hi: number): Expr<"f32">;
 export function clamp<A extends NumTy>(x: Expr<A>, lo: In<NumTy>, hi: In<NumTy>): Expr<A>;
 export function clamp(x: Lit, lo: In<NumTy>, hi: In<NumTy>): Expr<VecTy>;
@@ -487,19 +535,34 @@ export function clamp<A extends NumTy = "f32">(x: Expr<A> | number | Lit, lo: In
 export function clamp(x: In<NumTy>, lo: In<NumTy>, hi: In<NumTy>): Expr {
   return call("clamp", lift(x).ty, [x, lo, hi]);
 }
+/**
+ * `smoothstep(lo, hi, x)`: 0 below lo, 1 above hi, and the smooth cubic 3t^2 - 2t^3 of t = (x - lo) / (hi - lo) between;
+ * componentwise in x, with scalar edges. lo must be below hi.
+ */
 export function smoothstep(lo: number, hi: number, x: number): Expr<"f32">;
 export function smoothstep<A extends NumTy>(lo: In<NumTy>, hi: In<NumTy>, x: Expr<A>): Expr<A>;
 export function smoothstep<A extends NumTy = "f32">(lo: In<NumTy>, hi: In<NumTy>, x: Expr<A> | number | Lit): Expr<A>;
 export function smoothstep(lo: In<NumTy>, hi: In<NumTy>, x: In<NumTy>): Expr {
   return call("smoothstep", wider("smoothstep", lift(lo).ty, lift(hi).ty, lift(x).ty), [lo, hi, x]);
 }
+/** `length(v)`: the Euclidean length of a vector (the absolute value of a scalar), as an f32. */
 export const length = (a: In<NumTy>): Expr<"f32"> => call("length", "f32", [a]) as Expr<"f32">;
+/** `distance(a, b)`: the Euclidean distance between two points of the same vector type, as an f32. */
 export const distance = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> => call("distance", "f32", [a, b]) as Expr<"f32">;
+/** `dot(a, b)`: the dot product of two vectors of the same type, as an f32. */
 export const dot = (a: In<NumTy>, b: In<NumTy>): Expr<"f32"> => call("dot", "f32", [a, b]) as Expr<"f32">;
+/** `cross(a, b)`: the cross product of two vec3, a vec3 perpendicular to both. */
 export const cross = (a: In<"vec3">, b: In<"vec3">): Expr<"vec3"> => call("cross", "vec3", [a, b]) as Expr<"vec3">;
 
 const compare = (fn: Fn) => (a: In<"f32">, b: In<"f32">): Expr<"bool"> => call(fn, "bool", [a, b]) as Expr<"bool">;
-export const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = compare("ge");
+/** `lt(a, b)`: whether a < b, for two f32 values; a bool. */
+export const lt = compare("lt");
+/** `gt(a, b)`: whether a > b, for two f32 values; a bool. */
+export const gt = compare("gt");
+/** `le(a, b)`: whether a <= b, for two f32 values; a bool. */
+export const le = compare("le");
+/** `ge(a, b)`: whether a >= b, for two f32 values; a bool. */
+export const ge = compare("ge");
 /**
  * Exact equality and inequality of two f32 values. Both backends compare the values they computed, so they agree
  * whenever the operands are exact in f32 on both (whole numbers below 2^24: copy indices, cycle numbers, hashed cell
@@ -507,8 +570,11 @@ export const lt = compare("lt"), gt = compare("gt"), le = compare("le"), ge = co
  * measurements.
  */
 export const eq = compare("eq"), ne = compare("ne");
+/** `and(a, b)`: whether both bools hold (WGSL `&&`; both sides are always evaluated). */
 export const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> => call("and", "bool", [a, b]) as Expr<"bool">;
+/** `or(a, b)`: whether either bool holds (WGSL `||`; both sides are always evaluated). */
 export const or = (a: In<"bool">, b: In<"bool">): Expr<"bool"> => call("or", "bool", [a, b]) as Expr<"bool">;
+/** `not(a)`: the opposite of a bool. */
 export const not = (a: In<"bool">): Expr<"bool"> => call("not", "bool", [a]) as Expr<"bool">;
 /** `yes` where the condition holds, otherwise `no`. Both sides are always evaluated. */
 export function select(cond: In<"bool">, yes: number, no: number): Expr<"f32">;
@@ -541,6 +607,7 @@ export function round<A extends NumTy = "f32">(x: Expr<A> | number | Lit): Expr<
 /** Any component selection, for example `swizzle(p, "zyx")`. The getters (`.x`, `.xy`, `.xyz`, ...) cover the common ones. */
 export function swizzle<T extends NumTy>(a: Expr<VecTy>, sel: string): Expr<T> { return get<T>(a, sel); }
 
+/** 2 pi, the angle of a full turn in radians, as a plain number. */
 export const TAU = Math.PI * 2;
 
 // ---- walking the graph --------------------------------------------------------------------------------------------

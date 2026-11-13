@@ -3,7 +3,8 @@
 // body and 2.3e-7 on the placed part (f32 storage of the posed tables): anything past 1e-5 is a changed body.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { compileScene, on, place, scene, sea, strand, toon, variable } from "../src/index.ts";
+import { on, place, scene, sea, strand, toon, variable } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
 import { stateAt } from "./compile.harness.ts";
 import { probe, SAMPLES, stub, TIMES } from "./sweep.fixture.ts";
 

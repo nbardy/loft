@@ -78,7 +78,16 @@ export function sheetOn(spec: SheetOnSpec): SurfaceDrawable {
   });
 }
 
-/** `sheetOn`'s root and free edge over x in [0, 1], as `sheet(root, edge)` takes them (see `sheetOn`). */
+/**
+ * `sheetOn`'s root and free edge over x in [0, 1], as `sheet(root, edge)` takes them: the mechanism one step down, so
+ * a sheet that stands on a body is never a dead end (see `sheetOn` for the law, its limits and its relatives). Keep the
+ * root and write your own edge (a sawtooth, spines past the membrane), or keep the edge and move it; then
+ * `drawSurface(name, sheet(root, edge), ...)` as `sheetOn` does.
+ *
+ * What it cannot do is what `sheetOn` cannot (it is the same law without the paint):
+ * - curve between root and edge: `sheet` is ruled, straight from each root point to its edge point.
+ * - stand anywhere but on a body's chart in coordinates (m, v, rho), with 0 <= from < to <= 1.
+ */
 export function sheetOnEdges(spec: Omit<SheetOnSpec, "paint" | "name" | "rows"> & { readonly name?: string }): { readonly root: Curve; readonly edge: Curve } {
   const name = spec.name ?? "sheetOn";
   if (!(spec.from >= 0 && spec.to <= 1 && spec.from < spec.to)) throw new Error(`sheetOn "${name}": need 0 <= from < to <= 1, got ${spec.from}..${spec.to}`);
@@ -103,11 +112,6 @@ export function sheetOnEdges(spec: Omit<SheetOnSpec, "paint" | "name" | "rows"> 
   };
   return { root, edge };
 }
-
-/** @deprecated Use `SheetOnSpec`. Removed at integration. */
-export type CrestSpec = SheetOnSpec;
-/** @deprecated Use `sheetOn`. Removed at integration. */
-export const crest = sheetOn;
 
 /** The default membrane: darker toward the root, with darker rays (as in `strand_kit::crest`). */
 function membrane(c: Rgb, rays: number): Paint {

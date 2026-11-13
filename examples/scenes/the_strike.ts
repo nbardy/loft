@@ -5,9 +5,10 @@
 // arming time, a warning) and the pose, marker, smear, wake and the checks below are all derived from it.
 // `pnpm loft check examples/scenes/the_strike.ts` runs the checks.
 import {
-  add, atan2, budget, input, landsInside, lift, minScreenSize, mul, normalize, scene, sea, ship, smoothstep,
+  add, atan2, budget, input, landsInside, lift, minScreenSize, mul, normalize, scene, sea, smoothstep,
   staysClear, stopsAt, strand, sub, through, time, toon, vec2, vec3,
 } from "../../src/index.ts";
+import { ship } from "../recipes/ship.ts";
 import { animate, attack, hit, part, smear, telegraph, wake, type Target } from "../../src/spacetime/index.ts";
 import { restGape, restSpine, S, serpent } from "../serpent.ts";
 import { brig, PLAYER } from "./lib/fleet.ts";

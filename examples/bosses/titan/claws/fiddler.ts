@@ -28,7 +28,7 @@
 //   has its own dimensions).
 
 import {
-  abs, add, alive, animate, cos, cross, div, spiralTube, impact, keys, lift, limb, max, mix, mul, normalize, part, place, pow, rigid, sin, smoothstep, strand, sub, time,
+  abs, add, alive, animate, cos, cross, div, spiralTube, impact, keys, lift, chain, max, mix, mul, normalize, part, place, pow, rigid, sin, smoothstep, strand, sub, time,
   unit, vec3, type F, type Frame, type P3,
 } from "../../../../src/index.ts";
 import { cut, perFrame, TAU } from "../ink.ts";
@@ -147,7 +147,7 @@ export const fiddlerWith = (banner: Banner): ClawsOption => ({
       const g = keys(GIRTH.map(([m, v]) => [m, v] as const)), sideK = keys(SIDE.map(([m, v]) => [m, v] as const));
       const L = mul(lenK, h.len), R = mul(widthK, h.fat);
 
-      const arm = limb({ root: local(shoulder(1)), target: w, lengths: h.arm, bend: add(body.z, mul(body.y, 0.6)) });
+      const arm = chain({ root: local(shoulder(1)), target: w, lengths: h.arm, bend: add(body.z, mul(body.y, 0.6)) });
       const armStrand = strand({
         name: "crusherArm", spine: arm.spine, stations: 16, girth: (m) => mul(h.fat, sub(0.4, mul(m, 0.12))), tips: ["round", "round"], up: body.y,
         paint: (m, v) => {

@@ -8,7 +8,8 @@ import { expect, test } from "bun:test";
 import type { Camera } from "../src/artefact.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost } from "../src/host/index.ts";
-import { blob, compile, draw, medium, scene, sea, thunderhead, toon } from "../src/index.ts";
+import { blob, compile, draw, medium, scene, sea, toon } from "../src/index.ts";
+import { thunderhead } from "../examples/recipes/thunderhead.ts";
 
 const W = 200, H = 125;
 const cameras: Camera[] = [

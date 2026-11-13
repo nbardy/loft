@@ -65,7 +65,8 @@ All **library**.
 | Chain (was limb: two or three segments by closed-form inverse kinematics) | `src/geom/limb.ts` | library |
 | Coil (was shell), spiral tube (was horn), whorl (one family on a logarithmic spiral) | `src/geom/spiral.ts` | library |
 | Symmetry: mirror, array, reflect | `src/geom/symmetry.ts` | library |
-| Hull from a lines plan; a sailing ship from named numbers; rigging lines | `src/geom/hull.ts`, `ship.ts`, `lines.ts`, `hull_distance.ts` | library |
+| Hull from a lines plan; a sailing ship from named numbers | `examples/recipes/hull.ts`, `ship.ts` | recipe |
+| Ropes; the signed distance of a closed skin (an attack's `skin` target) | `src/geom/lines.ts`, `skin_distance.ts` | library |
 | Sea with swells; whirlpool; a body afloat | `src/geom/sea.ts`, `whirlpool.ts`, `afloat.ts` | library |
 | Distance functions (2D, 3D), folds, similarity folds, iterated folds, noise | `src/lib/` | library |
 | Height layers, sculpt tables, displacement | `src/relief/` | library |
@@ -216,7 +217,8 @@ component's own call changes; the picture is byte-identical (the base crab's thr
 #### Plan for opening the rest (written before building, 2026-11-12)
 
 Each row: the law (what is tied to what), the mechanism one step down, the new name, the relatives its comment names.
-Old names stay as one-line aliases until integration renames the callers.
+Old names stayed as one-line aliases until the callers were renamed; they are gone now (`bun tools/rename_exports.ts
+<paths>` renames a branch's callers).
 
 | Today | Law | Mechanism (signature) | New name | Relatives the comment names |
 |---|---|---|---|---|
@@ -234,7 +236,7 @@ Old names stay as one-line aliases until integration renames the callers.
 What changed from the plan when built: `hull` got no new code, because the general mechanism (`loft`) already existed
 in the map algebra and the hull's skin is that loft with u and v swapped; `ship` was commented, not opened, and is
 recommended for the examples. `coilPlan` takes an `aspect` (the plain-number twin knows only elliptical sections).
-`thunderhead` is a preset of `cloud` and by the naming rule belongs in the examples; left in place. The one-step-down
+`thunderhead` is a preset of `cloud` and by the naming rule belongs in the examples; moved to `examples/recipes/`. The one-step-down
 uses are in `examples/open.ts`.
 
 ### Names: geometry in the library, subjects in the examples (2026-11-12, the owner's rule)
@@ -248,14 +250,14 @@ Proposed, not yet done (each is a rename across callers, to be made when no bran
 | Today | Shape | Proposed |
 |---|---|---|
 | `horn`, `hornLine` | a tapered tube on an equiangular spiral | `spiralTube`, `spiralLine` (done) |
-| `shell` | a section swept on a growing spiral round an axis | `coil` (done, alias kept) |
-| `crest` | a sheet standing on a curve of a surface | `sheetOn` (done, alias kept) |
-| `limb` | a chain of straight segments reaching a target | `chain` (done, alias kept) |
-| `lines` | ropes between moving end points, one stroke | `ropes` (done, alias kept) |
+| `shell` | a section swept on a growing spiral round an axis | `coil` (done; alias removed) |
+| `crest` | a sheet standing on a curve of a surface | `sheetOn` (done; alias removed) |
+| `limb` | a chain of straight segments reaching a target | `chain` (done; alias removed) |
+| `lines` | ropes between moving end points, one stroke | `ropes` (done; alias removed) |
 | `tusk` (example side) | a flat plate between two points | `plate` |
 | `dome` (example side) | a superellipsoid with relief on its front | `reliefDome` |
 | `strand`, `fan`, `whorl`, `gripper`, `bent`, `gait`, `pendulum`, `cloud` | already say a shape or a mechanism | keep |
-| `hull`, `ship` | these are their subject (a lines plan is a hull's); the rule sends them toward the examples, with what is general under them (a surface lofted through stations) named for its shape | `hull` kept (the general part, `loft`, already existed in the map algebra); `ship` to examples, recommended |
+| `hull`, `ship` | these are their subject (a lines plan is a hull's) | done: both are recipes (`examples/recipes/hull.ts`, `ship.ts`); the library keeps only a `skin` attack target, the closed solid any lofted surface bounds (`src/geom/skin_distance.ts`); `thunderhead` likewise (`examples/recipes/thunderhead.ts`) |
 
 ### What a component's comment must say (2026-11-12, the owner's rule)
 

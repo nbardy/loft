@@ -36,6 +36,11 @@ const edgeOf = (x: Expr<"f32">, edge: number, soft: number): Expr<"f32"> => {
   return smoothstep(sub(edge, w), add(edge, w), x);
 };
 
+/**
+ * The cartoon style: sun light in a few flat bands with coloured (not grey) shadows, a rim light, a small gloss, an ink
+ * outline hull, and a translucent blue sea with foam. Every colour, the band count and the outline width can be set in
+ * `ToonSpec`; a lighting recipe can be laid over it.
+ */
 export function toon(spec: ToonSpec = {}): Style {
   const bands = spec.bands ?? 3;
   if (!(Number.isInteger(bands) && bands >= 2)) throw new Error(`toon: bands must be an integer >= 2, got ${bands}`);

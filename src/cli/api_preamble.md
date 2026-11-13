@@ -10,7 +10,7 @@ functions, folds, noise, raw WGSL). `loft` is `bun src/cli/main.ts`.
 **The layers** (the sections below, in this order). Each is written in the one below, so leaving a component is a step
 down, not a rewrite. Core: expressions (`time`, `input`, `param`), curves, maps (a shape is a function:
 `surface((u, v) => point)`, `sweep`, `lathe`), drawables (`draw.*`), the scene and the compiler. Shapes: `strand`,
-`spiralTube`, `shell`, `limb`, `fan`, `crest`, `hull`, `ship`, soft media. Motion: the animation principles as
+`spiralTube`, `coil`, `chain`, `fan`, `sheetOn`, `ropes`, soft media. Motion: the animation principles as
 formulas, gaits, struck poses. Actions: `attack` and its warning, grabs and throws, `design` with slots and variants,
 group routines. Checks: measured on the CPU from the same expressions (`loft check`). Styles: `Style` values and the
 named ones. A module marked "unproven" has had one user so far; expect to cut it down when your subject fights it.
@@ -35,8 +35,8 @@ from another. A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/` (`doc
 - No simulation: everything is a closed form of time and inputs; nothing carries state from frame to frame.
 - No meshes in: shapes are functions (`loft bake` writes glTF out).
 - Headless rendering needs bun; the package is not published; a large subject is megabytes of WGSL and seconds to load.
-- Several components take only numbers, so their family is fixed (`shell`, `ship`, `whirlpool`, `cloud`, `pendulum`,
-  `sea`): leave them by writing the map yourself one level down.
+- Several components take only numbers, so their family is fixed (`whirlpool`, `sea`): leave them by
+  writing the map yourself one level down.
 
 **Reading the entries below.** Each value has the first sentence of its comment; `cannot:` and `relatives:` lists
 where its comment states them. A component with no `cannot:` list has not said where its family ends: assume it ends

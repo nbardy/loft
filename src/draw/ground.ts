@@ -90,6 +90,10 @@ struct GOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
   return out;
 }`;
 
+/**
+ * The ground choice for a flat floor at y = 0 that runs to the horizon, in the style's ground colour and receiving
+ * cast shadows; `scene({ ground: plane })`.
+ */
 export const plane: Plane = {
   kind: "plane",
   name: "ground",
@@ -101,6 +105,10 @@ export const plane: Plane = {
   }),
 };
 
+/**
+ * The ground choice for no floor at all: things hang in the style's sky and cast no shadows; `scene({ ground: nothing
+ * })`.
+ */
 export const nothing: Nothing = {
   kind: "nothing",
   name: "ground",

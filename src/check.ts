@@ -15,10 +15,10 @@ import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
 import type { Arming, Attack, Effect, Hold, Motion, Part, Ring, Strike, Target } from "./spacetime/attack.ts";
 import type { Thrown } from "./geom/grab.ts";
-import type { LimbSpec } from "./geom/limb.ts";
+import type { ChainSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
+import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_distance.ts";
 import { RingWave } from "./geom/ring.ts";
-import { hullBoxDistance, hullDistance, type HullDistance } from "./geom/hull_distance.ts";
 
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
@@ -165,21 +165,21 @@ function gap(probe: Probe, chain: readonly Joint[], target: Target, t: number): 
       const b = chainOf(target.body);
       return chainGap(chain, probe.joints(b.skeleton, b.range, t));
     }
-    case "hull": {
+    case "skin": {
       const f = target.frame;
       const [o, x, y, z] = probe.eval([f.o, f.x, f.y, f.z], t) as unknown as V3[];
       const local = (p: V3): V3 => { const d = subV(p, o!); return [dotV(d, x!), dotV(d, y!), dotV(d, z!)]; };
-      return hullGap(chain.map((j) => ({ p: local(j.p), r: j.r })), hullDistance(target.hull));
+      return skinGap(chain.map((j) => ({ p: local(j.p), r: j.r })), skinDistance(target.skin));
     }
   }
 }
 
 /**
- * Least distance from a chain of tapered capsules to a hull (negative: inside it): the hull's signed distance at points
+ * Least distance from a chain of tapered capsules to a closed skin (negative: inside it): its signed distance at points
  * along each capsule's axis, no farther apart than half the smaller radius, less the radius there. Exact to that
  * spacing (the distance is 1-Lipschitz, so between samples it can dip by at most a quarter radius below them).
  */
-function hullGap(a: readonly Joint[], h: HullDistance): number {
+function skinGap(a: readonly Joint[], h: SkinDistance): number {
   let best = Infinity;
   for (let i = 0; i + 1 < a.length; i++) {
     const p0 = a[i]!.p, p1 = a[i + 1]!.p, r0 = a[i]!.r, r1 = a[i + 1]!.r;
@@ -187,7 +187,7 @@ function hullGap(a: readonly Joint[], h: HullDistance): number {
     for (let k = 0; k <= n; k++) {
       const s = k / n, p = lerp(p0, p1, s), r = r0 + (r1 - r0) * s;
       // The box is a lower bound: a sample that cannot beat the best so far is not measured.
-      if (hullBoxDistance(h, p) - r >= best) continue;
+      if (skinBoxDistance(h, p) - r >= best) continue;
       best = Math.min(best, h.distance(p) - r);
     }
   }
@@ -483,6 +483,11 @@ export function staysInView(points: Readonly<Record<string, In<"vec3">>>, blocke
  * check taking it names (for `gripReaches`, the held thing's width). A value, so a check never takes a bare number.
  */
 export type Tolerance = { readonly kind: "units"; readonly units: number } | { readonly kind: "share"; readonly share: number };
+/**
+ * Makes a `Tolerance` for a check that takes one: `tolerance.units(d)` for a distance in world units, or
+ * `tolerance.share(s)` for a share of a reference the check names. Both throw unless the number is finite and not
+ * negative.
+ */
 export const tolerance = {
   units: (units: number): Tolerance => {
     if (!(units >= 0 && Number.isFinite(units))) throw new Error(`tolerance.units: need a finite distance >= 0, got ${units}`);
@@ -521,7 +526,7 @@ function nearestSurface(chain: readonly Joint[], p: V3): { readonly at: V3; read
 
 /** A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of
  * (outboard of the root: a knee that crosses inward has folded under the body). */
-export type Reaching = { readonly name: string; readonly limb: LimbSpec; readonly outward: In<"vec3"> };
+export type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> };
 
 /**
  * Every limb stays inside its reach over [0, `period`): the distance from the root to the middle segments' target (the
@@ -571,7 +576,7 @@ export function limbsReach(limbs: readonly Reaching[], o: { readonly period: num
 }
 
 /**
- * A two-sided gripper (a claw's fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing
+ * A two-sided gripper (two fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing
  * instant (the arming time) and at every sampled instant of the hold, the point of each drawn finger's surface nearest
  * the thing's middle is found. The grip's middle (halfway between those points) must be within `middle` of the thing's
  * middle, and their distance apart within `gap` of the thing's width times its crush. Shares are of the thing's width.
@@ -744,15 +749,15 @@ export function fliesClear(attack: Attack<Motion, Hold<Thrown>>, targets: readon
 }
 
 /**
- * A gripper lets go cleanly: from the release its drawn fingers come out of the thing they threw and stay out. `hull`
- * is the thing as it is drawn (a ship's hull in its own frame: `Ship.target` of the chart it is placed in), so this
- * measures the fingers' capsules against the hull's own shape as it leaves. While they hold it the fingers overlap it
- * by this measure (a curled finger's capsules are fatter than its skin and wrap the hull), so the grip's own overlap
- * at the release is the reference: afterwards no finger may be more than `depth` deeper than that (a share is of the
- * thing's width), and all must be clear of the hull within `seconds` and stay clear to twice that. It catches a throw
+ * A gripper lets go cleanly: from the release its drawn fingers come out of the thing they threw and stay out. `thing`
+ * is the thrown thing as it is drawn (a `skin` target placed in the chart the throw carries), so this measures the
+ * fingers' capsules against its own shape as it leaves. While they hold it the fingers overlap it by this measure (a
+ * curled finger's capsules are fatter than its skin and wrap the thing), so the grip's own overlap at the release is the
+ * reference: afterwards no finger may be more than `depth` deeper than that (a share is of the thing's width), and all
+ * must be clear of it within `seconds` and stay clear to twice that. It catches a throw
  * that leaves across the gripper's own axis, through a finger.
  */
-export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: readonly Measured[], hull: Target, o: { readonly seconds: number; readonly depth: Tolerance; readonly rate?: number }): Check {
+export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: readonly Measured[], thing: Target, o: { readonly seconds: number; readonly depth: Tolerance; readonly rate?: number }): Check {
   const rate = o.rate ?? 120, e = attack.effect, chains = fingers.map(chainOf), width = [e.radius];
   if (chains.length < 1) throw new Error(`letsGoClean "${attack.name}": no fingers`);
   return {
@@ -760,7 +765,7 @@ export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: reado
     run(probe) {
       const released = probe.scalar(attack.first) + e.seconds;
       const ok = allowance(o.depth, 2 * (probe.eval(width, released)[0] as number));
-      const least = (t: number) => chains.reduce((m, c) => { const g = gap(probe, probe.joints(c.skeleton, c.range, t), hull, t); return g < m.g ? { g, name: c.name } : m; }, { g: Infinity, name: chains[0]!.name });
+      const least = (t: number) => chains.reduce((m, c) => { const g = gap(probe, probe.joints(c.skeleton, c.range, t), thing, t); return g < m.g ? { g, name: c.name } : m; }, { g: Infinity, name: chains[0]!.name });
       // The grip's own overlap, a frame before the release (at the instant itself the thing is already its placer's).
       const grip = least(released - 1 / rate).g;
       let worst = { g: Infinity, name: chains[0]!.name }, when = released, clearAt = released;
@@ -772,7 +777,7 @@ export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: reado
       const deeper = Math.max(grip - worst.g, 0), cleared = clearAt - released;
       return {
         name: this.name, pass: deeper <= ok && cleared <= o.seconds, value: deeper,
-        measured: `holding, ${fmt(-grip)} of overlap; after the release at most ${fmt(deeper)} deeper (${worst.name}, ${fmt(when - released, 2)} s after); clear of the hull from ${fmt(cleared, 2)} s`,
+        measured: `holding, ${fmt(-grip)} of overlap; after the release at most ${fmt(deeper)} deeper (${worst.name}, ${fmt(when - released, 2)} s after); clear of the thing from ${fmt(cleared, 2)} s`,
         limit: `no more than ${describe(o.depth, ok, "width")} deeper; clear within ${fmt(o.seconds, 2)} s`,
       };
     },

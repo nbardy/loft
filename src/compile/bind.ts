@@ -151,14 +151,20 @@ function fnSource(slots: Slots, f: FnSpec): { code: string; libs: LibFn[] } {
   return { code: [`fn ${f.name}(${sig}) -> ${f.out} {`, ...lines.map((l) => `  ${l}`), `  return ${f.ret(values)};`, `}`].join("\n"), libs };
 }
 
-/** A WGSL function for `sceneWgsl` (shared by every shader): its library functions go there too. */
+/**
+ * Emits a WGSL function from expressions and returns its source, to be shared by every shader in the scene (its library
+ * functions go to the shared scene code). For authors of their own drawable or style; a scene author does not need it.
+ */
 export function emitFn(slots: Slots, name: string, args: FnSpec["args"], out: string, roots: readonly Expr[], ret: FnSpec["ret"]): string {
   const s = fnSource(slots, { name, args, out, roots, ret });
   slots.lib(s.libs);
   return s.code;
 }
 
-/** A WGSL function for one shader module: the code, and the library functions it calls (for that module's `Shader`). */
+/**
+ * Emits a WGSL function from expressions for one shader module and returns its code and the library functions it
+ * calls (a `Shader`). For authors of their own drawable; a scene author does not need it.
+ */
 export function emitShaderFn(slots: Slots, f: FnSpec): Shader {
   return fnSource(slots, f);
 }

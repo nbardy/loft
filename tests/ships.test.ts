@@ -1,11 +1,13 @@
-// Ships and whirlpools (src/geom/hull.ts, afloat.ts, whirlpool.ts, ship.ts): the hull against its lines, a ship afloat
+// Ships and whirlpools (examples/recipes/hull.ts and ship.ts, src/geom/afloat.ts and whirlpool.ts): the hull against its lines, a ship afloat
 // against the swell's formula, the whirlpool's map (identity outside, a round trip inside, no edge at the rim), a point
 // advected by the whirlpool's velocity against the map itself, and a body coiled by the whirlpool against its radii.
 import { expect, test } from "bun:test";
 import {
-  afloatFrame, compileJs, compileScene, hull, lift, place, scene, sea, strand, through, toon, variable, vec3, whirlpool,
+  afloatFrame, compileJs, lift, place, scene, sea, strand, through, toon, variable, vec3, whirlpool,
   type Env, type Expr,
 } from "../src/index.ts";
+import { compileScene } from "../src/compile/index.ts";
+import { hull } from "../examples/recipes/hull.ts";
 import { STATION_VEC4S } from "../src/map/transport.ts";
 import { stateAt } from "./compile.harness.ts";
 

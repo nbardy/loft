@@ -6,7 +6,7 @@
 // and placed on it (`rigid`), so the left side is the mirror of the right.
 
 import {
-  add, max, min, fract, beat, breathe, cos, draw, fan, spiralTube, input, keys, lift, limb, mirror, mix, mul, on, palette, param, place, polyline, rotateAbout,
+  add, max, min, fract, beat, breathe, cos, draw, fan, spiralTube, input, keys, lift, chain, mirror, mix, mul, on, palette, param, place, polyline, rotateAbout,
   scene, sea, sin, smoothstep, spacing, strike, strand, sub, through, time, toon, vec3, abs, framed, surface, retarded,
   type Expr, type F, type Frame, type P3,
 } from "../src/index.ts";
