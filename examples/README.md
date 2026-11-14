@@ -48,6 +48,17 @@ No file yet shows one scene in every style (`withStyle`); the nearest are whole 
 `scenes/night_hunt.ts` (biolume), `scenes/island_tide.ts` and `scenes/the_strike.ts` (toon), `scenes/maelstrom.ts` and
 every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches between five looks of one style.
 
+## Light and materials
+
+| File | Lines | Shows |
+|---|---:|---|
+| `light/lantern_night.ts` | 27 | a lamp inside a paper lantern at night: the flame lights the floor (`lamp`, `scene({ lights })`), the paper glows (`emits`), the sun dimmed to a moon |
+| `light/lure.ts` | 37 | a creature lit only by its own lure: one `const` for the flare and the lamp, a check that the head is lit (`litBy`) |
+| `light/road.ts` | 34 | a road of patterned lamps as one function, by repetition (a `Light` written by hand) |
+| `materials/lacquer.ts` | 30 | wet lacquer: `gloss` and a darker `base`, words every glossy style reads |
+| `materials/beetle.ts` | 40 | a thin-film shell: the surface's own answer to each light (`scatter`) |
+| `materials/poker.ts` | 45 | a word you invent (`kelvin`) and the style part that reads it |
+
 ## Soft things
 
 | File | Lines | Shows |

@@ -1,7 +1,7 @@
-// The first lantern at night: the flame inside lights the floor round it; the paper glows. One `const` says where the
-// flame is, and the lamp lights from it. Draw it with
+// The first lantern at night: the flame inside lights the floor round it; the paper glows (`emits`, how the surface
+// looks; not a light). One `const` says where the flame is, and the lamp lights from it. Draw it with
 //   bun src/cli/main.ts render examples/light/lantern_night.ts --views three,low --out out/light/lantern.webp
-import { lamp, plane, scene, strand, toon, vec3 } from "../../src/index.ts";
+import { lamp, mul, plane, scene, strand, toon, vec3 } from "../../src/index.ts";
 import { cameras, paper, radius } from "../first/lantern.ts";
 
 const FLAME = vec3(0, 0.9, 0); // inside the paper, half way up
@@ -11,7 +11,7 @@ const lantern = strand({
   spine: (m) => vec3(0, m.mul(1.8).add(0.04), 0),
   girth: radius,
   tips: "open",
-  paint: (m) => paper(m),
+  paint: (m) => ({ base: paper(m), emits: mul(paper(m), 0.9) }), // lit from inside: the paper's own light, not a light
 });
 
 export const flame = lamp(FLAME, { colour: [1.6, 1.0, 0.5], reach: 0.9 });
