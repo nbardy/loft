@@ -29,38 +29,19 @@ import type { Artefact } from "../artefact.ts";
 /** How a draw's shader is compiled and drawn after sharing. */
 export type Sharing = {
   /** The key the module of `shader` is known by (shared shaders: their group's) and its WGSL. */
-  readonly moduleOf: (shader: string) => Module;
-  /** Draw `k`'s pipeline constants (the per-draw ones removed), what it adds to every first instance, its pipeline's cull. */
-  readonly drawOf: (k: number) => { readonly constants: Readonly<Record<string, number>>; readonly instanceBase: number; readonly cull: GPUCullMode };
+  readonly moduleOf: (shader: string) => { readonly key: string; readonly wgsl: string };
+  /** Draw `k`'s pipeline constants (the per-draw ones removed) and what it adds to every first instance. */
+  readonly drawOf: (k: number) => { readonly constants: Readonly<Record<string, number>>; readonly instanceBase: number };
   /** Every group's rows, one float per hole; empty when nothing is shared (and then nothing is bound). */
   readonly rows: Float32Array;
 };
-
-/**
- * A draw shader's module: its key, its WGSL, and a directive that must open the module (WGSL directives precede every
- * declaration, so lower puts it before the prelude): "" or UNIFORM_PER_DRAW.
- */
-export type Module = { readonly key: string; readonly wgsl: string; readonly directive: string };
-/**
- * For a shared shader whose fragment stage branches on a row value (INK, the cull code). The analysis calls a value from
- * a flat varying non-uniform, and reports the derivatives the style's shading takes under that branch where they are
- * taken (deep in the scene WGSL, so an attribute on fs does not reach them). The value is one per draw, and a 2 x 2 quad
- * never spans two draws (it is one triangle's), so the derivatives stay defined. Every other line of such a module
- * passed the analysis unshared.
- */
-export const UNIFORM_PER_DRAW = "diagnostic(off, derivative_uniformity);\n";
 
 /** The group 0 binding of `rows` (PRELUDE_WGSL holds bindings 0 to 4). */
 export const ROWS_BINDING = 5;
 /** Instance bits for the copy; the row is above them. */
 const COPY_BITS = 16;
-/**
- * Overrides that are per draw, not per pipeline, so they become row values: the level-of-detail slot (compile/index.ts
- * sets it) and INK, which tells a surface's outline draw from its fill (draw/surface.ts hullOutline).
- */
-const PER_DRAW = new Set(["LOFT_DETAIL_SLOT", "INK"]);
-/** A draw's culling as a row value; a group whose draws cull differently draws with none and discards in fs. */
-const CULL: Record<GPUCullMode, number> = { none: 0, back: 1, front: 2 };
+/** The override that names a draw's level-of-detail slot: per draw, so it becomes a hole (compile/index.ts sets it). */
+const PER_DRAW = "LOFT_DETAIL_SLOT";
 /** Larger u32 values would not survive the row's f32. */
 const EXACT = 1 << 24;
 
@@ -121,12 +102,7 @@ type Slot =
   | { readonly kind: "const"; readonly at: number; readonly type: Kind; readonly name: string; readonly from: number; readonly to: number };
 
 /** One shader, read: its tokens, the key it shares by, and its slots' values (in slot order, the same in a group). */
-type Read = { readonly toks: readonly Tok[]; readonly key: string; readonly slots: readonly Slot[]; readonly values: readonly number[];
-  /** The per-draw overrides it declares, with their declarations' token ranges. */
-  readonly overrides: readonly Override[];
-  /** The name of fs's `@builtin(front_facing)` parameter, if it has one. */
-  readonly front: string | undefined };
-type Override = { readonly name: string; readonly type: Kind; readonly def: number; readonly from: number; readonly to: number };
+type Read = { readonly toks: readonly Tok[]; readonly key: string; readonly slots: readonly Slot[]; readonly values: readonly number[]; readonly perDraw: { readonly from: number; readonly to: number } | undefined };
 
 /**
  * The shader's sharing key, or why it cannot be shared. Shareable shaders are draw shaders with a `vs` taking
@@ -203,7 +179,7 @@ function read(wgsl: string, tables: ReadonlyMap<string, Accessor>): Read | strin
     if (c !== undefined && k !== c.from + 1 && (fixed[k] || branchy(k))) consts.delete(at(k));
   }
 
-  const overrides: Override[] = [];
+  let perDraw: Read["perDraw"];
   const keyParts: string[] = [], slots: Slot[] = [], values: number[] = [];
   for (let k = 0; k < code.length; k++) {
     const t = at(k);
@@ -223,25 +199,19 @@ function read(wgsl: string, tables: ReadonlyMap<string, Accessor>): Read | strin
       keyParts.push(`T:${table.buffer}`); slots.push({ kind: "base", at: code[k]!, buffer: table.buffer }); values.push(table.base);
       continue;
     }
-    // `override NAME: TYPE = LITERAL;`
-    if (t === "override" && PER_DRAW.has(at(k + 1)) && at(k + 6) === ";" && numberKind(at(k + 5)) === at(k + 3)) {
-      const type = at(k + 3) as Kind;
-      overrides.push({ name: at(k + 1), type, def: numberValue(at(k + 5), type), from: code[k]!, to: code[k + 6]! });
+    if (t === "override" && at(k + 1) === PER_DRAW) {
+      let end = k;
+      while (at(end) !== ";") end++;
+      perDraw = { from: code[k]!, to: code[end]! };
     }
     const local = declared.get(t);
     keyParts.push(local !== undefined && !consts.has(t) ? `L${local}` : t);
   }
-  const front = /@fragment fn fs\([^)]*@builtin\(front_facing\) (\w+): bool/.exec(wgsl)?.[1];
-  return { toks, key: keyParts.join(" "), slots, values, overrides, front };
+  return { toks, key: keyParts.join(" "), slots, values, perDraw };
 }
 
-/** A group's row layout: its holes (slot indices), then its per-draw overrides, then the cull code when it has one. */
-type Columns = { readonly holes: readonly number[]; readonly overrides: readonly Override[]; readonly cull: boolean };
-const width = (c: Columns): number => c.holes.length + c.overrides.length + (c.cull ? 1 : 0);
-
 /** The group's WGSL: the first member's, with each hole read from the draw's row (`loft_row`, set by both stages). */
-function groupWgsl(first: Read, columns: Columns, start: number): string {
-  const { holes } = columns;
+function groupWgsl(first: Read, holes: readonly number[], perDrawHole: number | undefined, start: number, width: number): string {
   const read = (j: number, type: Kind): string => (type === "f32" ? `loft_k(${j}u)` : `${type}(loft_k(${j}u))`);
   const toks = first.toks;
   const nextCode = (i: number): number => { let n = i + 1; while (!toks[n]!.code) n++; return n; };
@@ -256,25 +226,24 @@ function groupWgsl(first: Read, columns: Columns, start: number): string {
       case "const": drop(slot.from, slot.to); rename.set(slot.name, read(j, slot.type)); break;
     }
   });
-  columns.overrides.forEach((o, i) => { drop(o.from, o.to); rename.set(o.name, read(holes.length + i, o.type)); });
+  if (perDrawHole !== undefined) {
+    drop(first.perDraw!.from, first.perDraw!.to);
+    rename.set(PER_DRAW, read(perDrawHole, "u32"));
+  }
   const body = toks.map((t, i) => replace.get(i) ?? (t.code ? rename.get(t.text) ?? t.text : t.text)).join("");
   const buffers = [...new Set(holes.map((s) => first.slots[s]!).flatMap((s) => (s.kind === "base" ? [s.buffer] : [])))];
   return [
-    `\n@group(0) @binding(${ROWS_BINDING}) var<storage, read> loft_rows: array<f32>;`,
+    `@group(0) @binding(${ROWS_BINDING}) var<storage, read> loft_rows: array<f32>;`,
     // This draw's row: set from the instance index by the vertex stage, from the flat varying by the fragment stage.
     "var<private> loft_row: u32;",
     "fn loft_k(j: u32) -> f32 { return loft_rows[loft_row + j]; }",
     ...buffers.map((b) => `fn loft_tab_${b}(base: u32, i: u32) -> vec4<f32> { return ${b}[base + i]; }`),
-    plumb(body, start, width(columns), columns.cull ? { column: width(columns) - 1, front: first.front! } : undefined),
+    plumb(body, start, width),
   ].join("\n");
 }
 
-/**
- * Carries the row: vs computes it from its instance index (high bits) and passes it on, fs reads it back. With `cull`,
- * fs discards the faces the draw's own cull mode would have culled (the pipeline culls none): the same fragments survive,
- * and a discarded fragment writes neither colour nor depth, as a culled one.
- */
-function plumb(wgsl: string, start: number, width: number, cull: { column: number; front: string } | undefined): string {
+/** Carries the row: vs computes it from its instance index (high bits) and passes it on, fs reads it back. */
+function plumb(wgsl: string, start: number, width: number): string {
   const [vsHead, params, outType] = VS.exec(wgsl)!;
   const ii = INSTANCE.exec(params!)![1]!;
   const struct = new RegExp(`struct ${outType} \\{([^}]*)\\}`).exec(wgsl)!;
@@ -288,10 +257,7 @@ function plumb(wgsl: string, start: number, width: number, cull: { column: numbe
   const vs = out.slice(from, end).replace(/return (\w+);/g, (_, v: string) => `${v}.loft_row = loft_row;\n  return ${v};`);
   out = out.slice(0, from) + vs + out.slice(end);
   const fs = fsOf(outType!).exec(out)!;
-  const discard = cull === undefined ? "" : `
-  let loft_cull = loft_k(${cull.column}u);
-  if ((loft_cull == ${CULL.back}.0 && !${cull.front}) || (loft_cull == ${CULL.front}.0 && ${cull.front})) { discard; }`;
-  return out.replace(fs[0], `${fs[0]}\n  loft_row = ${fs[1]}.loft_row;${discard}`);
+  return out.replace(fs[0], `${fs[0]}\n  loft_row = ${fs[1]}.loft_row;`);
 }
 
 export function share(a: Artefact): Sharing {
@@ -308,39 +274,35 @@ export function share(a: Artefact): Sharing {
   const byKey = new Map<string, string[]>();
   for (const [s, r] of reads) byKey.set(r.key, [...(byKey.get(r.key) ?? []), s]);
 
-  const module = new Map<string, Module>();
-  const draws = a.draws.map((d) => ({ constants: d.constants, instanceBase: 0, cull: d.cull }));
+  const module = new Map<string, { key: string; wgsl: string }>();
+  const draws = a.draws.map((d) => ({ constants: d.constants, instanceBase: 0 }));
   const rows: number[] = [];
   let group = 0;
   for (const members of byKey.values()) {
-    const mine = a.draws.flatMap((d, k) => (members.includes(d.shader) ? [k] : []));
-    // One draw alone gains nothing; two draws of one shader (a fill and its outline) become one pipeline.
-    if (mine.length < 2) continue;
+    if (members.length < 2) continue;
     const first = reads.get(members[0]!)!;
-    const columns: Columns = {
-      holes: first.slots.map((_, j) => j).filter((j) => members.some((s) => reads.get(s)!.values[j] !== first.values[j])),
-      overrides: first.overrides,
-      cull: first.front !== undefined && new Set(mine.map((k) => a.draws[k]!.cull)).size > 1,
-    };
+    const holes = first.slots.map((_, j) => j).filter((j) => members.some((s) => reads.get(s)!.values[j] !== first.values[j]));
+    const perDrawHole = first.perDraw ? holes.length : undefined;
+    const width = holes.length + (first.perDraw ? 1 : 0);
     const start = rows.length;
     const rowOf = new Map<string, number>();
-    for (const k of mine) {
-      const d = a.draws[k]!, values = reads.get(d.shader)!.values;
-      // A draw that does not set an override gets its declared default, as the pipeline would have.
-      const row = [...columns.holes.map((j) => values[j]!), ...columns.overrides.map((o) => d.constants[o.name] ?? o.def), ...(columns.cull ? [CULL[d.cull]] : [])];
+    a.draws.forEach((d, k) => {
+      if (!members.includes(d.shader)) return;
+      const values = reads.get(d.shader)!.values;
+      // A draw that does not set the slot gets the override's declared default, `0u` (cellsWgsl), as before.
+      const row = [...holes.map((j) => values[j]!), ...(first.perDraw ? [d.constants[PER_DRAW] ?? 0] : [])];
       const id = JSON.stringify(row);
       if (!rowOf.has(id)) { rowOf.set(id, rowOf.size); rows.push(...row); }
-      const constants = Object.fromEntries(Object.entries(d.constants).filter(([n]) => !columns.overrides.some((o) => o.name === n)));
-      draws[k] = { constants, instanceBase: rowOf.get(id)! * 2 ** COPY_BITS, cull: columns.cull ? "none" : d.cull };
-    }
+      const { [PER_DRAW]: _, ...constants } = d.constants;
+      draws[k] = { constants: first.perDraw ? constants : d.constants, instanceBase: rowOf.get(id)! * 2 ** COPY_BITS };
+    });
     if (rowOf.size > 2 ** (32 - COPY_BITS)) throw new Error(`share: ${rowOf.size} rows in one group overflow the instance index`);
     const key = `shared ${group++} (${members.join(", ")})`;
-    const wgsl = groupWgsl(first, columns, start);
-    const directive = columns.cull || columns.overrides.some((o) => o.name === "INK") ? UNIFORM_PER_DRAW : "";
-    for (const s of members) module.set(s, { key, wgsl, directive });
+    const wgsl = groupWgsl(first, holes, perDrawHole, start, width);
+    for (const s of members) module.set(s, { key, wgsl });
   }
   return {
-    moduleOf: (shader) => module.get(shader) ?? { key: shader, wgsl: a.shaders[shader]!, directive: "" },
+    moduleOf: (shader) => module.get(shader) ?? { key: shader, wgsl: a.shaders[shader]! },
     drawOf: (k) => draws[k]!,
     rows: new Float32Array(rows),
   };
