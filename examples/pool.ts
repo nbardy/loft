@@ -2,7 +2,7 @@
 // origin the ground is a dark mirror, rippled by a closed form of time; the mirrored picture is the view's own camera
 // reflected in y = 0, half the view's size, drawn with the scene's own style. The ground reads the picture, so the
 // ground is left out of it (a pass never draws a reader of itself): the pool does not show the pool.
-import { add, bound, cos, draw, length, lt, mix, mul, pass, plane, scene, select, sin, strand, sub, time, toon, vec2, vec3, type F, type P3, type Style } from "../src/index.ts";
+import { add, bound, cos, div, draw, length, lt, max, mix, mul, pass, plane, scene, select, sin, strand, sub, time, toon, vec2, vec3, type F, type P3, type Style } from "../src/index.ts";
 
 const mirrored = pass({ name: "mirrored", size: { scale: 0.5 }, camera: { kind: "mirror", normal: [0, 1, 0], offset: 0 } });
 
@@ -12,8 +12,13 @@ const pooled: Style = {
   name: "pooled",
   ground: (ctx) => {
     const r = length(vec2(ctx.world.x, ctx.world.z));
-    const ripple = mul(vec2(sin(add(mul(r, 9), mul(time, 2))), 0), 0.004);
-    const seen = mirrored.at(add(mirrored.project(ctx.world).xy, ripple)).xyz;
+    // Rings running outward, h = a sin(9 r - 2 t). The water tilts by the slope dh/dr, and a tilted mirror moves the
+    // image along the rings, so the point looked up is moved along the radius by the slope times a reach (world
+    // units, so the ripple stays the same size on the water at any distance). A sideways shift in screen units would
+    // drag round reflections into boxes wherever it changes sign from one row to the next.
+    const slope = mul(cos(sub(mul(r, 9), mul(time, 2))), 0.05);
+    const outward = div(vec3(ctx.world.x, 0, ctx.world.z), max(r, 1e-3));
+    const seen = mirrored.at(mirrored.project(add(ctx.world, mul(outward, slope))).xy).xyz;
     return select(lt(r, 2), mix([0.05, 0.08, 0.1], seen, 0.85), base.ground(ctx));
   },
 };
