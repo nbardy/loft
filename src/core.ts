@@ -14,7 +14,7 @@ export { NO_SKELETON, type F, type P3, type Frame, type Placed, type Points, typ
 export { carry, compose, on, place, points, posed, posedList, shifted, size, sized, sizeLengths, turn, inFrame, world, type PointSpec, type PoseSpec, type Turn } from "./map/index.ts";
 export { warp, tile, tabulate, type Schedule, extrude, framed, framedPose, lathe, loft, mapNormal, sheet, surface, thicken } from "./map/index.ts";
 export { Body, rotateAbout, sweep, type FrameSample, type Section, type Tip, type Transport } from "./map/index.ts";
-export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type MeshData, type MeshDrawable, type MeshOptions, type Poseable, type ReliefOptions } from "./draw/index.ts";
+export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type MeshData, type MeshDrawable, type MeshOptions, type Poseable, type Ray, type ReliefOptions, type Traced, type TracedDrawable, type TracedOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { scene, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { plane, nothing, GroundError, type Ground, type Plane, type Nothing } from "./draw/ground.ts";
@@ -25,6 +25,7 @@ export { TableBudgetError } from "./compile/tables.ts";
 export type { Artefact } from "./artefact.ts";
 export { bound, type TraceBound, type TraceOutline } from "./draw/trace.ts";
 export { type FieldDrawable, fieldPixel, FieldSafetyError, type FieldHit, type FieldSafetyFailure } from "./draw/field.ts";
+export { march } from "./draw/march.ts";
 export { impostors, type Impostors, type Cell, type ImpostorHit, type ImpostorOptions, type ImpostorShape } from "./draw/impostors.ts";
 export { type Copies, type CopiesHit, type CopiesOptions } from "./draw/copies.ts";
 // Form finer than the curves: height functions and stamps, sculpt layers, displacement. The shell tracer `draw.relief`
