@@ -57,9 +57,11 @@ const DEPTH_RESOLVE_WGSL = /* wgsl */ `
 `;
 
 /**
- * The clearance map's passes (SCENE_CLEARANCE_WGSL), one module with entry points per pass. Each draws a rectangle
- * at the top left of its view-sized target (two triangles, sized from the input texture, which is view-sized too), one
- * fragment per cell of the pass's grid:
+ * The clearance map's passes (SCENE_CLEARANCE_WGSL), one module with entry points per pass. Each covers a rectangle
+ * at the top left of its view-sized target (sized from the input texture, which is view-sized too), one fragment per
+ * cell of the pass's grid; the rest of the target keeps its clear value. The rectangle is a full-screen triangle whose
+ * fragments past the grid are discarded, not two triangles sized in the vertex stage: the same fragments, and a
+ * texture query in a vertex stage cost Metal about 70 ms per pipeline to compile (measured 2026-11-15, three per load).
  *   quads: per 4 x 4 pixels, 1 where any of the 16 depths is an opaque surface (r8unorm)
  *   rows:  per 8 x 8 tile, along its row, the offset in tiles to the nearest tile holding an opaque pixel within 7, 8
  *          for none (r8unorm, k / 255; one gather of a tile's four quads per tile looked at)
@@ -83,14 +85,12 @@ fn view() -> vec2<i32> { return vec2<i32>(textureDimensions(src)); }
 fn cells(side: i32) -> vec2<i32> { return (view() + side - 1) / side; }
 fn tiles() -> vec2<i32> { return cells(TILE); }
 fn gap(d: i32) -> f32 { return max(0.0, f32(TILE * abs(d) - (TILE - 1))); }
-fn cover(vi: u32, n: vec2<i32>) -> vec4<f32> {
-  let c = vec2<f32>(select(0.0, 1.0, vi == 1u || vi == 2u || vi == 4u), select(0.0, 1.0, vi == 2u || vi == 4u || vi == 5u));
-  let px = c * vec2<f32>(n) / vec2<f32>(view());
-  return vec4<f32>(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0, 0.0, 1.0);
+@vertex fn cover_vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+  return vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
 }
-@vertex fn quads_vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return cover(vi, cells(QUAD)); }
-@vertex fn tiles_vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> { return cover(vi, tiles()); }
 @fragment fn quads_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+  if (any(vec2<i32>(floor(p.xy)) >= cells(QUAD))) { discard; }
   // Four gathers of 2 x 2 depths, at the corners between them; clamp-to-edge repeats the image's last texels.
   let o = floor(p.xy) * f32(QUAD);
   let size = vec2<f32>(view());
@@ -100,6 +100,7 @@ fn cover(vi: u32, n: vec2<i32>) -> vec4<f32> {
 }
 @fragment fn rows_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
   let t = vec2<i32>(floor(p.xy));
+  if (any(t >= tiles())) { discard; }
   let last = tiles() - 1;
   let size = vec2<f32>(view());
   var k = REACH + 1;
@@ -115,6 +116,7 @@ fn cover(vi: u32, n: vec2<i32>) -> vec4<f32> {
 }
 @fragment fn clear_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
   let t = vec2<i32>(floor(p.xy));
+  if (any(t >= tiles())) { discard; }
   let last = tiles() - 1;
   var d2 = 1e8;
   for (var dy = -REACH; dy <= REACH; dy++) {
@@ -417,7 +419,7 @@ export function lower(a: Artefact): Bundle {
     const nearest = samplers.add({ label: "loft clearance", magFilter: "nearest", minFilter: "nearest", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
     const clearanceLayout = pls.add({ label: "loft clearance", bindGroupLayouts: [clearanceInput] });
     const clearanceModule = modules.add({ label: "loft clearance", chunks: [chunk(CLEARANCE_WGSL)] });
-    const clearanceSteps = ([["quads", "quads_vs"], ["rows", "tiles_vs"], ["clear", "tiles_vs"]] as const).map(([step, vs]) => ({
+    const clearanceSteps = ([["quads", "cover_vs"], ["rows", "cover_vs"], ["clear", "cover_vs"]] as const).map(([step, vs]) => ({
       step,
       texture: textures.add({ label: `loft clearance ${step}`, format: "r8unorm", sampleCount: 1, usage: [RA, TB] }),
       pipeline: fullScreen(`loft clearance ${step}`, clearanceLayout, clearanceModule, vs, "r8unorm", `${step}_fs`),
@@ -448,7 +450,7 @@ export function lower(a: Artefact): Bundle {
       label: `loft clearance ${s.step}`,
       color: { view: { kind: "texture", texture: s.texture }, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] },
       bindGroups: [groups.add({ label: `loft clearance ${s.step} input`, layout: clearanceInput, entries: [{ binding: 0, texture: i === 0 ? sceneDepth : clearanceSteps[i - 1]!.texture }, { binding: 1, sampler: nearest }] })],
-      commands: [{ kind: "fixed", pipeline: s.pipeline, vertices: 6, instances: 1 }],
+      commands: [{ kind: "fixed", pipeline: s.pipeline, vertices: 3, instances: 1 }],
     })), {
       label: "loft scene transparent",
       color: { view: { kind: "texture", texture: colour }, resolveTarget: outputOf(0), loadOp: "load", storeOp: "discard" },
