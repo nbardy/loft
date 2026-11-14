@@ -40,11 +40,13 @@ import { lit } from "../compile/scene_wgsl.ts";
 import { compileJs, f, leaves, libsOf, mul, topo, substitute, variable, type Expr, type LibFn, type TableSource } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import { emitMesh, fromNets } from "./mesh.ts";
+import { pixelWorld } from "../lib/wgsl.ts";
 import { lipschitz } from "../lib/sdf3.ts";
 import { fieldShadow, shadowSkeleton } from "./field_shadow.ts";
 import type { F, Field, P3, Painted, Skeleton } from "../map/types.ts";
-import { aabbOf, outlineWgsl, PROXY_VERTICES, traceShadeWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
+import { aabbOf, outlineWgsl, PROXY_VERTICES, TRACE_DEPTH, TRACE_DEPTH_OUT, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 import { bakeBrick, varianceOf, type Brick, type Variance } from "../map/brick.ts";
 import { surfaceNets, type TriangleMesh } from "../map/nets.ts";
 
@@ -231,14 +233,9 @@ export class FieldDrawable implements Drawable {
     this.shadow ??= [shadowSkeleton(fieldShadow(this.field, this.o.bounds, fieldPixel))];
     return this.shadow;
   }
-  /** A field drawn as a mesh bakes as that mesh (paint evaluated at its vertices); a traced one has nothing to bake. */
-  get surfaces(): readonly Bakeable[] {
-    const p = this.plan();
-    switch (p.kind) {
-      case "trace": case "brick": return [];
-      // At full detail: the baker has no pixel size.
-      case "mesh": case "switch": return [{ name: this.name, mesh: p.mesh, paint: (hit: FieldHit) => substitute([classify(this.name, this.o.paint(hit)).base], fieldPixel, f(0))[0] as P3 }];
-    }
+  /** What it is for other readers: the field, whatever its schedule (a baker meshes it by surface nets, `fieldMesh`). */
+  get forms(): readonly Form[] {
+    return [{ kind: "field", name: this.name, field: this.field, bound: this.o.bounds, paint: this.o.paint }];
   }
 
   constructor(readonly name: string, readonly field: Field, readonly o: FieldOptions) {
@@ -275,18 +272,7 @@ export class FieldDrawable implements Drawable {
     const sampled = (): Sampled & { mesh: () => TriangleMesh } => {
       if (v.kind !== "static") throw new FieldScheduleError(this.name, this.o.schedule, v);
       const safety = this.stepScale();
-      const box = aabbOf(this.o.bounds);
-      const diag = Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]);
-      const cell = diag / BRICK_CELLS;
-      const d = mul(this.full(), safety);
-      const members = unionOf(this.field(P));
-      const union = members.length >= 2 && members.length <= UNION_MAX ? members : [this.field(P)];
-      const brick = bakeBrick(`${this.name}_brick`, d, "p", { tag: unionMask(union, safety, diag), box, cell, band: BRICK_BAND * cell });
-      const run = compileJs([d]);
-      const vars = { p: [0, 0, 0] };
-      const env = { vars, inputs: {}, params: {} };
-      const cpu = (x: number, y: number, z: number): number => { vars.p = [x, y, z]; return run(env)[0] as number; };
-      return { brick, union, mesh: () => surfaceNets(brick, cpu) };
+      return sampleField(this.name, this.field, this.o.bounds, safety);
     };
     const made = ((): Plan => {
       switch (this.o.schedule) {
@@ -339,25 +325,19 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
     // The proxy and its march: the field's formula at every step, or steps by its brick.
     const traced = (skip: string, show: string): Emitted => {
       const key = `field.${this.name}`;
-      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety, shading)].join("\n");
+      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety, shading, (mark) => ctx.markOut(mark, false))].join("\n");
       return {
-        shaders: { [key]: { code, libs } },
-        draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
+        shaders: { [key]: { code, libs, depthEntry: depthFragmentWgsl(safety) } },
+        draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps }, depth: TRACE_DEPTH })],
       };
     };
     /** `show`: a WGSL bool per vertex; `gate`: the code it calls. */
-    const meshed = (mesh: TriangleMesh, show: string, gate: string): Emitted => {
-      const vertices = ctx.table(meshTable(`${this.name}_mesh`, mesh));
-      const tris = ctx.table(indexTable(`${this.name}_tris`, mesh));
-      const key = `field.${this.name}.mesh`;
-      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, gate, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show, shading)].join("\n");
-      const n = mesh.indices.length;
-      const ink: DrawSpec[] = this.o.outline === "silhouette" ? [drawSpec({ label: `${this.name}_ink`, shader: key, vertices: n, cull: "front", constants: { INK_HULL: 1 } })] : [];
-      return {
-        shaders: { [key]: { code, libs: paint.libs } },
-        draws: [drawSpec({ label: this.name, shader: key, vertices: n, cull: "back", constants: { INK_HULL: 0 } }), ...ink],
-      };
-    };
+    // A composition: the mesh drawn by draw.mesh's own emitter, at rest, painted by the field's paint with the pixel
+    // size it would have had (`fieldPixel` is the world size of a pixel at the point).
+    const meshed = (mesh: TriangleMesh, show: string, gate: string): Emitted => emitMesh(ctx, this.name, fromNets(mesh), { kind: "rest" }, { kind: "one" }, {
+      paint: (_row, at) => substitute([classify(this.name, this.o.paint({ p: at.world, normal: at.normal })).base], fieldPixel, pixelWorld(at.world))[0] as P3,
+      sides: "one", outline: this.o.outline === "silhouette" ? "hull" : "none",
+    }, { key: `field.${this.name}.mesh`, show, gate });
     const both = (a: Emitted, b: Emitted): Emitted => ({ shaders: { ...a.shaders, ...b.shaders }, draws: [...a.draws, ...b.draws] });
     switch (p.kind) {
       case "trace": return traced(TRACE_SKIP, "true");
@@ -409,6 +389,37 @@ function unionMask(union: readonly Expr<"f32">[], safety: number, diag: number):
     for (let k = 0; k < n; k++) if (v[k]! - r <= coarsest + r + 1e-5 * (1 + Math.abs(coarsest))) mask |= 1 << k;
     return mask;
   };
+}
+
+/**
+ * A static field sampled once into its brick (scaled by `safety`, so the brick's cones are those of a 1-Lipschitz
+ * function), the members of its union, and its surface-nets mesh on demand. Throws `FieldScheduleError` for a field
+ * that can change or that the CPU cannot sample.
+ */
+function sampleField(name: string, field: Field, b: TraceBound, safety: number): Sampled & { readonly mesh: () => TriangleMesh } {
+  const full = substitute([field(P)], fieldPixel, f(0))[0] as Expr<"f32">;
+  const v = varianceOf(full);
+  if (v.kind !== "static") throw new FieldScheduleError(name, "mesh", v);
+  const box = aabbOf(b);
+  const diag = Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1], box.max[2] - box.min[2]);
+  const cell = diag / BRICK_CELLS;
+  const d = mul(full, safety);
+  const members = unionOf(field(P));
+  const union = members.length >= 2 && members.length <= UNION_MAX ? members : [field(P)];
+  const brick = bakeBrick(`${name}_brick`, d, "p", { tag: unionMask(union, safety, diag), box, cell, band: BRICK_BAND * cell });
+  const run = compileJs([d]);
+  const vars = { p: [0, 0, 0] };
+  const env = { vars, inputs: {}, params: {} };
+  const cpu = (x: number, y: number, z: number): number => { vars.p = [x, y, z]; return run(env)[0] as number; };
+  return { brick, union, mesh: () => surfaceNets(brick, cpu) };
+}
+
+/**
+ * A field form's triangles for a reader that wants a mesh (the baker): its surface nets at full detail, as the `mesh`
+ * schedule draws them (steps unscaled: meshing does not march). Throws `FieldScheduleError` for a field that changes.
+ */
+export function fieldMesh(name: string, field: Field, b: TraceBound): TriangleMesh {
+  return sampleField(name, field, b, 1).mesh();
 }
 
 /** The trace schedule's skip: none (every step is the field's own). */
@@ -474,60 +485,11 @@ fn field_use_mesh() -> bool {
 }`;
 }
 
-/** A static table of the mesh's vertices: position then normal, one vec4 each. */
-function meshTable(name: string, m: TriangleMesh): TableSource {
-  const n = m.positions.length / 3;
-  const data = new Float32Array(n * 8);
-  for (let i = 0; i < n; i++) {
-    data.set(m.positions.subarray(i * 3, i * 3 + 3), i * 8);
-    data.set(m.normals.subarray(i * 3, i * 3 + 3), i * 8 + 4);
-  }
-  return { name, lanes: 2, entries: Math.max(1, n), role: "static", prepare: () => (_frame, out) => out.set(data) };
-}
-
-/** A static table of the mesh's triangle corners, four vertex indices per vec4 (exact as f32 below 2^24). */
-function indexTable(name: string, m: TriangleMesh): TableSource {
-  if (m.positions.length / 3 >= 2 ** 24) throw new Error(`mesh "${name}": ${m.positions.length / 3} vertices; indices are stored as f32, exact below 2^24`);
-  const data = new Float32Array(Math.max(4, Math.ceil(m.indices.length / 4) * 4));
-  data.set(m.indices);
-  return { name, lanes: 1, entries: data.length / 4, role: "static", prepare: () => (_frame, out) => out.set(data) };
-}
-
-/**
- * The mesh's module: the vertex stage reads a triangle corner's index and its vertex from the static tables; the fragment
- * stage paints per pixel at the interpolated world point and normal and lights it as a traced point would be. With
- * INK_HULL the same triangles are pushed out along their normals by the traced ink width and drawn back faces only, in
- * ink: the inverted hull a triangle body's outline is (there is no near miss to measure on a raster).
- */
 const FIELD_PAINT_ARGS: FnSpec["args"] = [["p", "vec3"], ["n", "vec3"], ["loft_field_px", "f32"]];
-
-function meshWgsl(vertices: string, tris: string, show: string, s: Shading): string {
-  const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "in.world", "d", "FIELD_ID", "in.world, n, fp");
-  return /* wgsl */ `
-override INK_HULL: u32 = 0u;
-struct MeshIn { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32>, @location(1) normal: vec3<f32> };
-@vertex fn vs(@builtin(vertex_index) vi: u32) -> MeshIn {
-  let k = u32(${tris}(vi >> 2u)[vi & 3u]);
-  let n = ${vertices}(k * 2u + 1u).xyz;
-  var p = ${vertices}(k * 2u).xyz;
-  if (INK_HULL == 1u) { let fp = pixel_world(p); p += n * ink_px(fp) * fp; }
-  return MeshIn(select(HIDDEN_VERTEX, frame.view_proj * vec4<f32>(p, 1.0), ${show}), p, n);
-}
-// The paint may run a loop whose length differs per pixel (a fold's level of detail) before the style's derivatives.
-@diagnostic(off, derivative_uniformity)
-@fragment fn fs(in: MeshIn) -> @location(0) vec4<f32> {
-  let n = normalize(in.normal);
-  let d = view_dir(in.world);
-  let fp = pixel_world(in.world);
-  let base = field_paint(in.world, n, fp);
-  let colour = select(${call("shade")}, ${call("ink")}, INK_HULL == 1u);
-  return vec4<f32>(colour, ${call("mark")});
-}`;
-}
 
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 
-function fragmentWgsl(safety: number, s: Shading): string {
+function fragmentWgsl(safety: number, s: Shading, markOut: (mark: string) => string): string {
   const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "p", "d", "FIELD_ID", "p, n, fp");
   return /* wgsl */ `
 override STEPS: u32 = 64u;
@@ -635,7 +597,60 @@ fn march_band(fp: f32) -> f32 {
   let colour = select(${call("shade")}, ${call("ink")}, useInk);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, ${call("mark")}), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut(call("mark"))}), trace_depth(p), mask);
+}`;
+}
+
+/**
+ * The depth-only entry (trace.ts `TRACE_DEPTH`): `fs`'s march with the ink and the shading taken out. A ray that hits
+ * (or runs out of steps inside the bound, as `fs` takes it) writes its secant-refined depth; any other ray is discarded.
+ */
+function depthFragmentWgsl(safety: number): string {
+  return /* wgsl */ `
+${TRACE_DEPTH_OUT}
+@diagnostic(off, derivative_uniformity)
+@fragment fn fs_depth(in: TraceIn) -> TraceDepthOut {
+  let d = view_dir(in.world);
+  let o = trace_origin(in.world, d);
+  let span = bound_span(o, d);
+  let t0 = max(span.x, 0.0);
+  let t1 = span.y;
+  if (t0 > t1) { discard; }
+  let fp0 = pixel_world(o + d * t0);
+  let fpk = (pixel_world(o + d * max(t1, t0 + 1e-3)) - fp0) / max(t1 - t0, 1e-3);
+  var t = t0;
+  var hit = false;
+  var exhausted = true;
+  var prevDist = 0.0;
+  var prevT = t0;
+  var prevExact = false;
+  var hitDist = 0.0;
+  for (var i = 0u; i < STEPS; i++) {
+    let skip = march_skip(o, d, t, t1, fp0, fpk, t0);
+    if (skip.y > 0.0) { t = skip.x; prevExact = false; if (t > t1) { exhausted = false; break; } }
+    let dist = field_d(o + d * t, fp0 + fpk * (t - t0));
+    if (dist < HIT * (fp0 + fpk * (t - t0))) { hit = true; hitDist = dist; exhausted = false; break; }
+    prevDist = dist;
+    prevT = t;
+    prevExact = true;
+    t += dist * SAFETY;
+    if (t > t1) { exhausted = false; break; }
+  }
+  if (!(hit || exhausted)) { discard; }
+  var ta = prevT;
+  var da = prevDist;
+  var db = hitDist;
+  var pairExact = prevExact;
+  for (var r = 0u; r < ${REFINE}u; r++) {
+    let slope = (db - da) / (t - ta);
+    let tn = select(t + db * SAFETY, t - db / slope, pairExact && slope < -1e-6 && t > ta);
+    ta = t;
+    da = db;
+    t = tn;
+    if (r + 1u < ${REFINE}u) { db = field_d(o + d * t, fp0 + fpk * (t - t0)); }
+    pairExact = true;
+  }
+  return TraceDepthOut(trace_depth(o + d * t));
 }`;
 }
 

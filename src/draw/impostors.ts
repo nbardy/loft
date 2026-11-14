@@ -14,7 +14,7 @@ import { lit } from "../compile/scene_wgsl.ts";
 import { add, mul, variable, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
 import { hash33 } from "../lib/noise.ts";
 import type { F, P3, Painted, Skeleton } from "../map/types.ts";
 import type { Bounds } from "./index.ts";
@@ -196,7 +196,7 @@ const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(num).join(", ")}
  */
 export class Impostors implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces: readonly Bakeable[] = [];
+  readonly forms: readonly Form[] = [];
   /** First and last cell index per axis. */
   private readonly lo: V3;
   private readonly hi: V3;
@@ -223,7 +223,7 @@ export class Impostors implements Drawable {
     const paint = withShading(emitShaderFn(ctx.slots, { name: "imp_paint", args: IMP_PAINT_ARGS, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0] }), shading);
     const box = bound.box(this.lo.map((l, i) => (l - 0.5) * c[i]) as unknown as V3, this.hi.map((h, i) => (h + 0.5) * c[i]) as unknown as V3);
     const key = `impostors.${this.name}`;
-    const code = [traceWgsl(box, "true"), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi, shading)].join("\n");
+    const code = [traceWgsl(box, "true"), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi, shading, (mark) => ctx.markOut(mark, false))].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...shapeFn.libs, ...paint.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { CELLS: this.o.cells } })],
@@ -233,7 +233,7 @@ export class Impostors implements Drawable {
 
 const IMP_PAINT_ARGS: FnSpec["args"] = [["p", "vec3"], ["n", "vec3"], ["cell_id", "vec3"]];
 
-function walkWgsl(c: V3, lo: V3, hi: V3, s: Shading): string {
+function walkWgsl(c: V3, lo: V3, hi: V3, s: Shading, markOut: (mark: string) => string): string {
   const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "p", "d", "id", "p, n, ck");
   return /* wgsl */ `
 override CELLS: u32 = 64u;
@@ -300,7 +300,7 @@ ${CLOSEST_WGSL}
   let colour = select(${call("shade")}, ${call("ink")}, INK_ON && !hit);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, ${call("mark")}), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut(call("mark"))}), trace_depth(p), mask);
 }`;
 }
 

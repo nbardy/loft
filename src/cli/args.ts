@@ -5,6 +5,7 @@ import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
 import { DesignError, parseVariantAsk, type VariantAsk } from "../design.ts";
 import type { OutlineMethod } from "../scene.ts";
 import { parseInputs, parseSweep, type InputValues, type Sweep } from "./inputs.ts";
+import type { StillSpec } from "../host/still.ts";
 
 export class UsageError extends Error {}
 
@@ -25,7 +26,7 @@ export type SceneSource = Exclude<Source, { kind: "artefact" }>;
 export type Size = { readonly width: number; readonly height: number };
 export type ViewName = string;
 
-type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues };
+type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly still: StillSpec };
 
 export type Command =
   | GalleryCommand
@@ -71,6 +72,8 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   --light name        (render, clip, frames, profile, build, variants) draws the scene's style in one of its named lightings
                       (woodblock: flat, twoTone, threeTone, bokashi, hatched, contact, rim, cel; docs/lighting.md)
   --input name=value  (render, clip, frames; repeatable) sets a host input: a scalar, or x,y,z for a vector
+  --samples N [--shutter s] [--aperture r]   (render, clip, frames) a still: N samples of each frame averaged, over s
+                      seconds after its time (exact motion blur), through a lens of radius r focused on the camera's target
   --sweep name=a..b   (clip, frames) moves one input evenly from a to b across the frames; with one --times value,
                       frames draws --count frames (default 6) at that time
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
@@ -85,6 +88,9 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--param": { value: true, commands: ["render", "clip", "frames"] },
   "--input": { value: true, commands: ["render", "clip", "frames"] },
   "--sweep": { value: true, commands: ["clip", "frames"] },
+  "--samples": { value: true, commands: ["render", "clip", "frames"] },
+  "--shutter": { value: true, commands: ["render", "clip", "frames"] },
+  "--aperture": { value: true, commands: ["render", "clip", "frames"] },
   "--count": { value: true, commands: ["frames"] },
   "--views": { value: true, commands: ["render", "variants"] },
   "--time": { value: true, commands: ["render", "bake", "profile", "variants"] },
@@ -248,6 +254,7 @@ export function parseArgs(argv: readonly string[]): Command {
     size: parseSize(one("--size") ?? "1280x800"),
     params: Object.fromEntries((flags.get("--param") ?? []).map(parseParam)),
     inputs: parseInputs(flags.get("--input") ?? []),
+    still: stillOf(one("--samples"), one("--shutter"), one("--aperture")),
   };
   const sweep = parseSweep(one("--sweep"));
 
@@ -275,6 +282,17 @@ export function parseArgs(argv: readonly string[]): Command {
     default:
       throw new UsageError(`unhandled command "${name}"`);
   }
+}
+
+/** Still mode's flags, classified once: today's frame (no flags, or --samples 1), or a still. */
+function stillOf(samples: string | undefined, shutter: string | undefined, aperture: string | undefined): StillSpec {
+  const n = samples === undefined ? 1 : positive("--samples", samples);
+  if (!Number.isInteger(n) || n > 4096) throw new UsageError(`--samples: ${samples} must be a whole number from 1 to 4096`);
+  const s = shutter === undefined ? 0 : num("--shutter", shutter), r = aperture === undefined ? 0 : num("--aperture", aperture);
+  if (s < 0) throw new UsageError(`--shutter: ${shutter} must not be negative`);
+  if (r < 0) throw new UsageError(`--aperture: ${aperture} must not be negative`);
+  if (n === 1 && (s > 0 || r > 0)) throw new UsageError("--shutter and --aperture spread samples: give --samples N with N > 1 (one sample is today's frame)");
+  return n === 1 ? { kind: "frame" } : { kind: "still", samples: n, shutter: s, aperture: r };
 }
 
 /** A sweep at one time draws `--count` frames there; otherwise one frame per listed time (and no `--count`). */

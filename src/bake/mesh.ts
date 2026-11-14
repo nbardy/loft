@@ -2,14 +2,17 @@
 //
 // Any `Surface` bakes the same way: its expressions (point, normal, paint) are sampled on the CPU on the grid its
 // drawable draws it on (the same spacing, so baked rings sit where drawn ones do), over the tables the pose pass
-// fills at that time. The surfaces are found through the scene's own structure (`Drawable.surfaces`); the surface's
+// fills at that time. What to bake is found through the scene's own structure (`Drawable.forms`, one switch); the surface's
 // topology says how the grid closes: periodic edges are seams, poles collapse a row to a point, caps get a flat disc.
 // Triangles wind counter-clockwise seen from the side d/du x d/dv points to, which is the side its normal faces.
 
 import { classify } from "../draw/painted.ts";
 import { compileScene, type CpuFn } from "../compile/index.ts";
-import type { MeshBakeable, SurfaceBakeable } from "../compile/context.ts";
+import type { Form } from "../compile/context.ts";
 import { f, variable, type Expr } from "../expr.ts";
+import { fieldMesh, FieldScheduleError } from "../draw/field.ts";
+import { fromNets, meshPoint, MESH_PAINT_VARS, type Mesh, type MeshOptions, type MeshPaint } from "../draw/mesh.ts";
+import type { Poses } from "../map/types.ts";
 import type { End, Topology } from "../map/types.ts";
 import type { Scene } from "../scene.ts";
 
@@ -74,7 +77,7 @@ const endsOf = (t: Topology): readonly [End, End] => (t.u === "periodic" ? ["fre
 const U = variable("u", "f32"), W = variable("v", "f32");
 
 /** One surface: a (rows + 1) x (cols + 1) grid of samples, its pole rows collapsed and its cap ends closed. */
-function bakeSurface(s: SurfaceBakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh {
+function bakeSurface(s: Extract<Form, { kind: "surface" }>, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh {
   const p = s.surface.point(U, W), n = s.surface.normal(U, W);
   // glTF takes the colour; channels and a thing's own answers are a style's to print.
   const run = cpu([p, n, classify(s.name, s.paint(U, W, { world: p, normal: n, copy: f(s.copy) })).base]);
@@ -128,21 +131,61 @@ function bakeSurface(s: SurfaceBakeable, cpu: (roots: readonly Expr[]) => CpuFn,
   return b.finish(isClosed(s.surface.topology), s.sides === "two");
 }
 
-const MP = variable("bake_p", "vec3"), MN = variable("bake_n", "vec3");
+/**
+ * A mesh form: each point moved by `at` (and its copy's pose) at the bake's time, with its carried normal and its paint
+ * evaluated there. A mesh whose normals are its faces' (a count, or an `at` that does not read the rest position) is
+ * written unshared, one normal per triangle, as it draws.
+ */
+function bakeMesh(name: string, mesh: Mesh, at: MeshOptions["at"], copies: Poses | undefined, paint: MeshPaint, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0]): BodyMesh[] {
+  const placed = meshPoint(mesh, at, copies);
+  const move = cpu([placed.world, placed.normal]);
+  const colour = cpu([classify(name, paint(MESH_PAINT_VARS.row(mesh.width), MESH_PAINT_VARS.at())).base]);
+  const lanes = (vars: Record<string, number | number[]>) => Object.fromEntries(Object.entries(vars).filter(([k]) => /^mesh_r\d+$/.test(k)));
+  const one = (copy: number, label: string): BodyMesh => {
+    const b = new Builder(label);
+    const pts = Array.from({ length: mesh.count }, (_, i) => {
+      const vars: Record<string, number | number[]> = { ...placed.rowVars(i), mesh_i: i, mesh_copy: copy };
+      const [pos, n] = move(frame, vars) as number[][];
+      return { pos: pos!, n: n!, vars };
+    });
+    const paintAt = (k: number, normal: readonly number[]) => colour(frame, { ...lanes(pts[k]!.vars), p_world: pts[k]!.pos, p_normal: [...normal], p_copy: copy })[0] as number[];
+    const T = mesh.triangles;
+    switch (mesh.normals.kind) {
+      case "carried": {
+        const ids = pts.map((q, k) => { const l = Math.hypot(...q.n) || 1; const normal = q.n.map((x) => x / l); return b.vertex({ pos: q.pos, normal, uv: [0, 0], colour: paintAt(k, normal) }); });
+        for (let t = 0; t < T.length; t += 3) b.triangle(ids[T[t]!]!, ids[T[t + 1]!]!, ids[T[t + 2]!]!);
+        break;
+      }
+      case "faces":
+        for (let t = 0; t < T.length; t += 3) {
+          const [a, c, d] = [T[t]!, T[t + 1]!, T[t + 2]!].map((k) => pts[k]!.pos) as [number[], number[], number[]];
+          const u = [c[0]! - a[0]!, c[1]! - a[1]!, c[2]! - a[2]!], v = [d[0]! - a[0]!, d[1]! - a[1]!, d[2]! - a[2]!];
+          const nn = [u[1]! * v[2]! - u[2]! * v[1]!, u[2]! * v[0]! - u[0]! * v[2]!, u[0]! * v[1]! - u[1]! * v[0]!];
+          const l = Math.hypot(...nn) || 1, normal = nn.map((x) => x / l);
+          const ids = [T[t]!, T[t + 1]!, T[t + 2]!].map((k) => b.vertex({ pos: pts[k]!.pos, normal, uv: [0, 0], colour: paintAt(k, normal) }));
+          b.triangle(ids[0]!, ids[1]!, ids[2]!);
+        }
+        break;
+    }
+    return b.finish(false, false);
+  };
+  return copies === undefined ? [one(0, name)] : Array.from({ length: copies.count }, (_, i) => one(i, `${name}_${i}`));
+}
 
-/** A triangle mesh (a field's): its own vertices, normals and triangles, the paint evaluated at each vertex. */
-function bakeMesh(m: MeshBakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0]): BodyMesh {
-  const run = cpu([m.paint({ p: MP, normal: MN })]);
-  const b = new Builder(m.name);
-  const { positions: P, normals: N, indices } = m.mesh;
-  for (let i = 0; i < P.length / 3; i++) {
-    const pos = [P[i * 3]!, P[i * 3 + 1]!, P[i * 3 + 2]!], normal = [N[i * 3]!, N[i * 3 + 1]!, N[i * 3 + 2]!];
-    const colour = run(frame, { bake_p: pos, bake_n: normal })[0] as number[];
-    // A mesh has no surface coordinates; its uvs are 0.
-    b.vertex({ pos, normal, uv: [0, 0], colour });
+/** What the baker makes of each form: triangles, or the reason it cannot (reported by name, never dropped silently). */
+function bakeForm(form: Form, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh[] | string {
+  switch (form.kind) {
+    case "surface": return [bakeSurface(form, cpu, frame, d)];
+    case "mesh": return bakeMesh(form.name, form.mesh, form.at, form.copies, form.paint, cpu, frame);
+    case "field": {
+      // Meshed by surface nets at full detail, as the `mesh` schedule draws it; a field that changes cannot be sampled once.
+      const nets = (() => { try { return fieldMesh(form.name, form.field, form.bound); } catch (e) { if (e instanceof FieldScheduleError) return e.message; throw e; } })();
+      if (typeof nets === "string") return nets;
+      return bakeMesh(form.name, fromNets(nets), undefined, undefined, (_row, at) => classify(form.name, form.paint({ p: at.world, normal: at.normal })).base, cpu, frame).map((m) => ({ ...m, closed: true }));
+    }
+    case "medium": return "a medium has no surface to bake";
+    case "hit": return "a traced solid has no surface to bake (only its hit function)";
   }
-  for (let t = 0; t < indices.length; t += 3) b.triangle(indices[t]!, indices[t + 1]!, indices[t + 2]!);
-  return b.finish(true, false);
 }
 
 export function bakeScene(scene: Scene, options: BakeOptions): Baked {
@@ -156,8 +199,14 @@ export function bakeScene(scene: Scene, options: BakeOptions): Baked {
   const inputs = new Float32Array(Math.max(1, a.inputFloats));
   for (const s of a.inputs) inputs.set(s.name === "time" ? [time] : s.def, s.slot);
   const frame = c.frame({ time, inputs, params: Float32Array.from(a.params.map((p) => p.def)), curves: a.curves });
-  // The two kinds of bakeable are told apart by their `mesh` member (compile/context.ts).
-  const bodies = scene.things.flatMap((t) => t.surfaces.map((s) => ("mesh" in s ? bakeMesh(s, c.cpu, frame) : bakeSurface(s, c.cpu, frame, density))));
-  const skipped = scene.things.filter((t) => t.surfaces.length === 0).map((t) => ({ name: t.name, reason: "draws no surface that can be evaluated on the CPU" }));
+  const bodies: BodyMesh[] = [];
+  const skipped: Skipped[] = [];
+  for (const t of scene.things) {
+    if (t.forms.length === 0) skipped.push({ name: t.name, reason: "draws no form a reader can use" });
+    for (const form of t.forms) {
+      const made = bakeForm(form, c.cpu, frame, density);
+      if (typeof made === "string") skipped.push({ name: form.name, reason: made }); else bodies.push(...made);
+    }
+  }
   return { time, bodies, skipped };
 }

@@ -364,7 +364,7 @@ function loopTangents(l: Loop, p: Pass): readonly E[] {
       const inner = new Map(p.seeds);
       s.forEach((v, j) => inner.set(v.id, t[j]));
       return [...next, ...forward(next, inner)] as never;
-    }) as readonly E[]).slice(n);
+    }, l.until === undefined ? undefined : ((st: readonly E[]) => l.until!(st.slice(0, n))) as never) as readonly E[]).slice(n);
   p.loops.set(l.id, tangents);
   return tangents;
 }

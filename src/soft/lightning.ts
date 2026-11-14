@@ -216,7 +216,7 @@ export function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [num
  */
 export function skyFlash(name: string, brightness: In<"f32">, colour: readonly [number, number, number]): Drawable {
   return {
-    name, skeletons: [], surfaces: [],
+    name, skeletons: [], forms: [],
     draws(ctx: CompileContext): Emitted {
       const b = emitShaderFn(ctx.slots, { name: `flash_${name}`, args: [], out: "f32", roots: [lift<"f32">(brightness)], ret: (v) => v[0] });
       const code = /* wgsl */ `${b.code}

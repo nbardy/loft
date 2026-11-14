@@ -2,6 +2,7 @@
 import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
 import type { Artefact } from "../artefact.ts";
+import { baked } from "./state.ts";
 import type { GpuLoaded } from "../host/host.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
@@ -11,6 +12,8 @@ import { headlessHost, loadArtefact } from "./load.ts";
 import { openVideo } from "./video.ts";
 import { exitWith, headed, verdictOf } from "./verdict.ts";
 import { EnvironmentError } from "../errors.ts";
+import { passNotes } from "./pass_notes.ts";
+import { drawFrame } from "./still.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
@@ -33,9 +36,11 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       const artefact = await loadArtefact(cmd.source);
       checkInputs(artefact, cmd.inputs, sweep);
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
+      for (const line of passNotes(artefact)) console.log(line);
       t = performance.now();
       const loaded = await loadedWithRetries(artefact);
       console.log(`load     ${ms(t)}`);
+      for (const r of artefact.recurrences ?? []) console.log(baked(r));
       return { info: artefact, loaded };
     }
   }
@@ -70,10 +75,10 @@ function loopOf(info: object): Loop {
 }
 
 /** "n map, n scan, n cpu (not data)": how the per-frame tables are filled. */
-function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "scan" | "cpu" } }[]): string {
-  const n = { map: 0, scan: 0, cpu: 0 };
+function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "scan" | "cpu" | "replay" } }[]): string {
+  const n = { map: 0, scan: 0, cpu: 0, replay: 0 };
   for (const t of tables) n[t.fill.kind]++;
-  return `tables ${n.map} map, ${n.scan} scan, ${n.cpu} cpu (not data)`;
+  return `tables ${n.map} map, ${n.scan} scan, ${n.cpu} cpu (not data)${n.replay > 0 ? `, ${n.replay} replayed` : ""}`;
 }
 
 async function timed(label: string, draw: () => ReturnType<GpuLoaded["frameTimed"]>): Promise<Uint8Array> {
@@ -98,7 +103,7 @@ async function render(cmd: Extract<Command, { kind: "render" }>) {
   const frames: Frame[] = [];
   for (const name of cmd.views) {
     const camera = resolveCamera(artefact, name);
-    const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
+    const rgba = await timed(name, () => drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }, cmd.still));
     frames.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -115,7 +120,7 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
     const label = cmd.sweep.kind === "linear" ? `t=${time} ${cmd.sweep.name}=${inputs[cmd.sweep.name]!.map((x) => +x.toFixed(4)).join(",")}` : `t=${time}`;
-    const rgba = await timed(label, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }));
+    const rgba = await timed(label, () => drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }, cmd.still));
     out.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -125,14 +130,33 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
   await witness(cmd);
 }
 
+/**
+ * The shortest span a scene's baked state keeps, as (name, seconds it holds from): a compiled scene's recurrences, or a
+ * built directory's replays (one that keeps every state carries no record of it in the file). None for a loop: its
+ * clock comes round inside the span (the compiler refuses a looping scene whose state span does not cover it).
+ */
+function heldFrom(info: object): { readonly name: string; readonly until: number } | undefined {
+  if (loopOf(info).kind === "every") return undefined;
+  // A still state (kept from one step: settled before the scene) holds by design, never refuses.
+  const rs = (info as Partial<Artefact>).recurrences?.filter((r) => r.steps > 0).map((r) => ({ name: r.name, until: r.start + r.steps / r.rate }))
+    ?? (info as { readonly frame?: { readonly replay?: readonly { label: string; start: number; steps: number; rate: number }[] } }).frame?.replay?.map((r) => ({ name: r.label, until: r.start + r.steps / r.rate }))
+    ?? [];
+  return rs.reduce<{ name: string; until: number } | undefined>((m, r) => (m === undefined || r.until < m.until ? r : m), undefined);
+}
+
 async function clip(cmd: Extract<Command, { kind: "clip" }>) {
   const { info: artefact, loaded } = await open(cmd, cmd.sweep);
+  const held = heldFrom(artefact);
+  if (held !== undefined && cmd.seconds > held.until + 1e-9) {
+    loaded.destroy();
+    throw new UsageError(`clip: ${cmd.seconds} s, but the state "${held.name}" is kept only to ${held.until} s and holds still after it. Fix: --seconds ${held.until}, or a later \`until\` in its recur()`);
+  }
   const camera = resolveCamera(artefact, cmd.view);
   const count = Math.round(cmd.seconds * cmd.fps);
   const video = openVideo(cmd.out, cmd.size.width, cmd.size.height, cmd.fps);
   const t0 = performance.now();
   for (let i = 0; i < count; i++) {
-    const rgba = await loaded.frame({ camera, ...cmd.size, time: loopTime(loopOf(artefact), i / cmd.fps), params: cmd.params, inputs: viewInputs(cmd.inputs, cmd.sweep, i, count) });
+    const rgba = (await drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), i / cmd.fps), params: cmd.params, inputs: viewInputs(cmd.inputs, cmd.sweep, i, count) }, cmd.still)).pixels;
     await video.write(rgba);
   }
   await video.finish();
@@ -142,11 +166,18 @@ async function clip(cmd: Extract<Command, { kind: "clip" }>) {
   await witness(cmd);
 }
 
-/** `loft build`: compile, lower, write the directory (`writeBundle` refuses `cpu` tables by name). */
+/** `loft build`: compile, bake (a scene with `recur`, on this GPU), lower, write the directory (`writeBundle` refuses `cpu` tables by name). */
 async function build(cmd: Extract<Command, { kind: "build" }>) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   console.log(`compile  ${ms(t)}  ${fillCounts(artefact.tables)}`);
+  for (const line of passNotes(artefact)) console.log(line);
+  if (artefact.recurrences !== undefined) {
+    // The files carry baked states (a file loader never bakes): bake on this machine's GPU first.
+    const [{ headlessDevice }, { bakeRecurrences }] = await Promise.all([import("../host/headless.ts"), import("../host/bake.ts")]);
+    await bakeRecurrences(await headlessDevice(), artefact);
+    for (const r of artefact.recurrences) console.log(baked(r));
+  }
   t = performance.now();
   const [{ lower }, { writeBundle }] = await Promise.all([import("../host/lower.ts"), import("../host/files.ts")]);
   const bundle = lower(artefact);

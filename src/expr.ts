@@ -165,6 +165,9 @@ export type Loop = {
   readonly step: (state: readonly Expr[], i: Expr<"f32">) => readonly Expr[];
   /** The final state, one expression per component (the loop's results). */
   readonly results: readonly Expr[];
+  /** `until` as authored and applied to `next`: true ends the loop after that step. Absent: all `count` steps run. */
+  readonly until: ((state: readonly Expr[]) => Expr<"bool">) | undefined;
+  readonly stop: Expr<"bool"> | undefined;
 };
 
 /** The node kinds. Exported so other modules (differentiation, analysis) can walk the graph; build nodes only through the constructors below. */
@@ -351,8 +354,11 @@ let nextLoop = 0;
  * The state is a small tuple of numeric expressions; `step(state, i)` returns the next state (same types), with `i`
  * the iteration number 0, 1, ... as an f32. `count` may be an expression (it is truncated to an integer), so the depth
  * of a fold can depend on distance. Pure: the step is a function of the state and the index.
+ *
+ * `until(state)`, when given, is tested on the state each step makes: true ends the loop there (a `break` in WGSL and
+ * in the JavaScript twin), so a march stops at its hit instead of paying all its steps. `count` stays the cap.
  */
-export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S): S {
+export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S, until?: (state: S) => Expr<"bool">): S {
   const id = nextLoop++;
   // A bool state would type-check through `as` casts; the loop's locals are numbers.
   const state = init.map((e, j) => {
@@ -363,21 +369,24 @@ export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">
   const next = step(state as unknown as S, index);
   if (next.length !== init.length) throw new Error(`iterate: step returned ${next.length} components, the state has ${init.length}`);
   next.forEach((e, j) => { if (e.ty !== init[j].ty) throw new Error(`iterate: state component ${j} is ${init[j].ty} but the step returned ${e.ty}`); });
+  const stop = until === undefined ? undefined : until(next);
+  if (stop !== undefined && (stop.ty as Ty) !== "bool") throw new Error(`iterate: until must return a bool, got ${stop.ty}`);
+  const body: readonly Expr[] = stop === undefined ? next : [...next, stop];
   // Inner: depends (transitively) on this loop's variables. Outer: read by the body but computed before the loop.
   const own = new Set<number>([index.id, ...state.map((v) => v.id)]);
   const dependent = new Set<number>();
   const inner: Expr[] = [];
   const outer = new Map<number, Expr>();
-  for (const e of topo(next)) {
+  for (const e of topo(body)) {
     if (own.has(e.id)) continue;
     if (children(e).some((c) => own.has(c.id) || dependent.has(c.id))) { dependent.add(e.id); inner.push(e); }
   }
   for (const e of inner) for (const c of children(e)) if (!own.has(c.id) && !dependent.has(c.id)) outer.set(c.id, c);
-  for (const e of next) if (!own.has(e.id) && !dependent.has(e.id)) outer.set(e.id, e);
+  for (const e of body) if (!own.has(e.id) && !dependent.has(e.id)) outer.set(e.id, e);
   const results: Expr[] = [];
   const loop: Loop = {
     id, count: lift<"f32">(count), init, state, index, next, inner, outer: [...outer.values()],
-    step: step as unknown as Loop["step"], results,
+    step: step as unknown as Loop["step"], results, until: until as unknown as Loop["until"], stop,
   };
   init.forEach((e, k) => results.push(Expr.make({ op: "iterate", ty: e.ty as NumTy, loop, k }, `I:${id}:${k}`)));
   return results as unknown as S;
@@ -860,6 +869,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
     // Read every next value before assigning any: a step may return one state variable as another (a swap).
     l.next.forEach((e, j) => body.push(`let ${L}n${j}: ${WGSL_TY[e.ty]} = ${ref(e)};`));
     l.next.forEach((_, j) => body.push(`${L}s${j} = ${L}n${j};`));
+    if (l.stop !== undefined) body.push(`if (${ref(l.stop)}) { break; }`);
     lines.push(...body.map((b) => `  ${b}`), "}");
     // The body's names are scoped to the loop.
     for (const e of [...l.inner, ...l.state, l.index]) names.delete(e.id);
@@ -918,7 +928,8 @@ export function replace(roots: readonly Expr[], by: ReadonlyMap<number, Expr>): 
       let made = loops.get(n.loop.id);
       if (!made) {
         const l = n.loop;
-        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => replace(l.step(s, i), by) as Expr<NumTy>[]);
+        const u = l.until;
+        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => replace(l.step(s, i), by) as Expr<NumTy>[], u === undefined ? undefined : (s) => replace([u(s)], by)[0] as Expr<"bool">);
         loops.set(n.loop.id, made);
       }
       done.set(e.id, made[n.k]);
@@ -1105,6 +1116,7 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
     // Read every next value before assigning any (a step may swap state components).
     const nexts = l.next.map((e) => comps.get(e.id)!.map((c) => (typeof c === "string" ? local(c) : c)));
     l.next.forEach((e, j) => stateNames[j].forEach((name, k) => body.push(`${name} = ${src(at(nexts[j], k))};`)));
+    if (l.stop !== undefined) { const s = comps.get(l.stop.id)![0]!; body.push(`if (${src(s)}) break;`); }
     outer.push(...body.map((b) => `  ${b}`), "}");
     body = outer;
     for (const e of [...l.inner, ...l.state, l.index]) comps.delete(e.id);
@@ -1279,7 +1291,8 @@ export function fold(roots: readonly Expr[]): Expr[] {
       let made = foldedLoops.get(n.loop.id);
       if (!made) {
         const l = n.loop;
-        made = iterate(visit(l.count) as Expr<"f32">, l.init.map((x) => visit(x) as Expr<NumTy>), (st, i) => fold(l.step(st, i)) as Expr<NumTy>[]);
+        const u = l.until;
+        made = iterate(visit(l.count) as Expr<"f32">, l.init.map((x) => visit(x) as Expr<NumTy>), (st, i) => fold(l.step(st, i)) as Expr<NumTy>[], u === undefined ? undefined : (st) => fold([u(st)])[0] as Expr<"bool">);
         foldedLoops.set(n.loop.id, made);
       }
       out = made[n.k]!;

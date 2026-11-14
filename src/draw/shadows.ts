@@ -32,7 +32,7 @@ export const SHADOWS_TABLE = "shadows";
 export const shadows: Drawable = {
   name: "shadows",
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws(ctx: CompileContext): Emitted {
     switch (ctx.ground.kind) {
       case "sea": return patches(ctx, "sea_shadow(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s)", "alpha");

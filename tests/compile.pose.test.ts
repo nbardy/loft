@@ -39,7 +39,7 @@ const eel = strand({
 test("a strand at time + offset, or at an input's time, is the same strand at that time", () => {
   const arm = input("attack.arm", "f32", [0]);
   const slices = [eel, eel.at(add(time, 0.5)), eel.at(arm)];
-  const slicer: Drawable = { name: "slicer", skeletons: [], surfaces: [], draws: (ctx) => { for (const s of slices) ctx.table(s.table); return { shaders: {}, draws: [] }; } };
+  const slicer: Drawable = { name: "slicer", skeletons: [], forms: [], draws: (ctx) => { for (const s of slices) ctx.table(s.table); return { shaders: {}, draws: [] }; } };
   const c = compileScene(scene({ ground: flat, things: [slicer], style: toon(), sun: [0, 1, 0] }));
   const [now, later, armed] = slices.map((s) => s.table);
   expect(new Set([now, later, armed].map((t) => t.name)).size).toBe(3);
@@ -87,7 +87,7 @@ test("an edited curve table moves the CPU pose", () => {
 // Catches: tables that cannot fit the 5 storage buffers a stage has left being accepted, so the failure would come
 // later as an opaque pipeline error on the host.
 test("a scene whose tables exceed what a shader stage can bind fails by name", () => {
-  const hog: Drawable = { name: "hog", skeletons: [], surfaces: [], draws: (ctx) => {
+  const hog: Drawable = { name: "hog", skeletons: [], forms: [], draws: (ctx) => {
     for (let i = 0; i < 6; i++) ctx.table({ name: `hog${i}`, lanes: 1, entries: (128 * 1024 * 1024) / 16, role: "data", prepare: () => () => {} });
     return { shaders: {}, draws: [] };
   } };

@@ -98,7 +98,7 @@ export const plane: Plane = {
   kind: "plane",
   name: "ground",
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws: () => ({
     shaders: { ground: { code: PLANE_WGSL, libs: [] } },
     draws: [drawSpec({ label: "ground", shader: "ground", vertices: 3, phase: "water", cull: "none", depthWrite: false })],
@@ -113,6 +113,6 @@ export const nothing: Nothing = {
   kind: "nothing",
   name: "ground",
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws: () => ({ shaders: {}, draws: [] }),
 };

@@ -21,7 +21,7 @@ for (const spec of process.argv.length > 2 ? process.argv.slice(2) : POSE_SCENES
   const t = await loaded.poseTime(view, 40, 8), gpu = t.total;
   let cpu = Infinity;
   for (let i = 0; i < 30; i++) cpu = Math.min(cpu, (await loaded.frameTimed(view)).ms.pose);
-  const kinds = { map: 0, scan: 0, cpu: 0 };
+  const kinds = { map: 0, scan: 0, cpu: 0, replay: 0 };
   for (const t of a.tables) kinds[t.fill.kind]++;
   console.log(`${path.padEnd(40)} pose stages ${gpu.toFixed(3)} ms GPU in ${a.stages.length} levels; CPU pose ${cpu.toFixed(3)} ms; tables ${kinds.map} map ${kinds.scan} scan ${kinds.cpu} cpu`);
   if (process.env.POSE_LEVELS) a.stages.forEach((st, k) => console.log(`  ${t.stages[k]!.toFixed(3)}  ${st.invocations} inv  ${st.label.slice(0, 110)}`));

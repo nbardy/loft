@@ -12,7 +12,7 @@ import type { CarapaceOption } from "../slots.ts";
 const THORNS = 190, GOLDEN = 0.6180339887;
 
 /** A drawable that casts no shadow (`skeletons` empty is the Drawable contract's "none"). */
-const castsNone = (d: Drawable): Drawable => ({ name: d.name, draws: (ctx) => d.draws(ctx), skeletons: [], surfaces: d.surfaces });
+const castsNone = (d: Drawable): Drawable => ({ name: d.name, draws: (ctx) => d.draws(ctx), skeletons: [], forms: d.forms });
 
 export const thorny: CarapaceOption = {
   about: "a small round body, dark olive, bristling with thorns",

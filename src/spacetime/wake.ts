@@ -37,7 +37,7 @@ export type WakeSpec = {
 
 class Wake implements Drawable {
   readonly skeletons = [];
-  readonly surfaces = [];
+  readonly forms = [];
   constructor(readonly name: string, readonly body: Body, readonly spec: Required<WakeSpec>) {}
 
   draws(ctx: CompileContext): Emitted {

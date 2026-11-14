@@ -9,7 +9,9 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 pub const FORMAT: &str = "loft-artefact";
-pub const VERSION: u32 = 1;
+/// The versions this loader reads: 2 adds `frame.replay` (a scene whose state keeps checkpoints) and pictures drawn off
+/// screen (sized textures, depth-only passes, pipelines with no fragment stage, `frame.copies`; docs/artefact_format.md).
+pub const VERSIONS: [u32; 2] = [1, 2];
 
 pub type Id = usize;
 
@@ -165,9 +167,34 @@ impl<'de> Deserialize<'de> for Format {
 #[serde(rename_all = "camelCase")]
 pub struct TextureDesc {
     pub label: String,
+    /// Absent: the view's size (version 1's only size).
+    #[serde(default)]
+    pub size: Option<TextureSize>,
     pub format: Format,
     pub sample_count: u32,
     pub usage: Vec<TextureUsage>,
+}
+
+/// A texture's size: a share of the view's (each side rounded, at least 1), or fixed pixels.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TextureSize {
+    View { scale: f64 },
+    Fixed { width: u32, height: u32 },
+}
+
+impl TextureSize {
+    /// Pixels for a view of `view` pixels (src/host/host.ts `textureSize`, line for line).
+    pub fn pixels(s: Option<TextureSize>, view: (u32, u32)) -> (u32, u32) {
+        match s {
+            None => view,
+            Some(TextureSize::View { scale }) => (
+                ((view.0 as f64 * scale).round() as u32).max(1),
+                ((view.1 as f64 * scale).round() as u32).max(1),
+            ),
+            Some(TextureSize::Fixed { width, height }) => (width, height),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -396,7 +423,8 @@ pub struct RenderPipelineDesc {
     pub label: String,
     pub layout: Id,
     pub vertex: StageDesc,
-    pub fragment: FragmentDesc,
+    /// Absent: no fragment stage (depth from the rasterised triangles).
+    pub fragment: Option<FragmentDesc>,
     pub primitive: Primitive,
     pub depth_stencil: Option<DepthStencil>,
     pub multisample: Multisample,
@@ -504,7 +532,8 @@ pub enum DrawCommand {
 #[serde(rename_all = "camelCase")]
 pub struct RenderPassDesc {
     pub label: String,
-    pub color: ColorAttachment,
+    /// Absent: no colour attachment (a depth pass).
+    pub color: Option<ColorAttachment>,
     pub depth: Option<DepthAttachment>,
     pub bind_groups: Vec<Id>,
     pub commands: Vec<DrawCommand>,
@@ -516,13 +545,55 @@ pub struct DetailWrite {
     pub floats: usize,
 }
 
+/// A recurrence that keeps checkpoints (docs/artefact_format.md, "Replays"): per frame, the step n it replays to is
+/// written at float `slot` of the inputs, and `first` then k more alternating `ping` (odd) and `pong` (even) are
+/// recorded in the pose pass before its dispatches.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Replay {
+    pub label: String,
+    pub slot: usize,
+    pub rate: f64,
+    pub start: f64,
+    pub steps: u64,
+    pub every: u64,
+    pub first: Dispatch,
+    pub ping: Dispatch,
+    pub pong: Dispatch,
+}
+
+impl Replay {
+    /// (n, k) at time t: n = floor((t - start) rate) held in [0, steps - 1], computed in f64 as every host does; k = n
+    /// mod every, the dispatches after `first`.
+    pub fn step(&self, t: f64) -> (u64, u64) {
+        let n = ((t - self.start) * self.rate).floor().max(0.0).min(self.steps.saturating_sub(1) as f64) as u64;
+        (n, n % self.every)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Frame {
     pub writes: Vec<FrameWrite>,
     pub pose: Vec<Dispatch>,
+    /// Version 2; absent in version 1.
+    #[serde(default)]
+    pub replay: Vec<Replay>,
     pub bounds: BoundsRead,
     pub detail: DetailWrite,
     pub passes: Vec<RenderPassDesc>,
+    /// After the pose pass, in its encoder, in order: each pass's camera into its own frame uniform. Absent: none.
+    #[serde(default)]
+    pub copies: Vec<BufferCopy>,
+}
+
+/// `bytes` from `from` at `from_offset` to `to` at 0.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BufferCopy {
+    pub from: Id,
+    pub from_offset: u64,
+    pub to: Id,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
@@ -563,6 +634,7 @@ pub enum TableFill {
     Map,
     Scan,
     Cpu { why: String },
+    Replay { recurrence: String },
 }
 #[derive(Debug, Deserialize)]
 pub struct TableEntry {

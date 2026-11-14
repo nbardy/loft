@@ -13,7 +13,7 @@ import { f, variable, vec2, vec3 } from "../expr.ts";
 import { readsBody } from "../style.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import type { Folded } from "../lib/fold.ts";
 import type { F, P3, Painted, Skeleton, Surface, Warp } from "../map/types.ts";
@@ -81,7 +81,7 @@ const siteOf = (fold: Warp<"vec2">) => (u: F, v: F): ReliefSite => ({ u, v, cell
 /** The `Drawable` that `draw.relief` returns: a height function ray-marched in a thin shell over a surface. A scene author gets it from `draw.relief`, not by constructing it. */
 export class ReliefDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
-  readonly surfaces: readonly Bakeable[];
+  readonly forms: readonly Form[];
   /** The height as a function of (u, v), through the fold. */
   readonly heightOf: Height;
 
@@ -97,7 +97,7 @@ export class ReliefDrawable implements Drawable {
     this.skeletons = [surface.skeleton];
     // The baker gets the relief as displacement of the surface: the same height, sampled on the grid.
     const heightOf = this.heightOf;
-    this.surfaces = [{ name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
+    this.forms = [{ kind: "surface", name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
   }
 
   draws(ctx: CompileContext): Emitted {

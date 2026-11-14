@@ -236,7 +236,7 @@ ${FULL_VS}
 export const light: Drawable = {
   name: NAME,
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws(ctx: CompileContext): Emitted {
     const b = ctx.style.block;
     if (b === undefined) throw new Error(`${NAME}: the scene's style prints no shadow block (it is added by scene() for a style that has one)`);

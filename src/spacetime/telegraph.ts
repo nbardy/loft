@@ -68,7 +68,7 @@ function over(top: readonly [Expr<"vec3">, F], bottom: readonly [Expr<"vec3">, F
 
 class Telegraph implements Drawable {
   readonly skeletons = [];
-  readonly surfaces = [];
+  readonly forms = [];
   /** Seconds the flash lasts: one frame at the host's rate (an input, since only the host knows its rate). */
   readonly flash: F;
 

@@ -11,7 +11,7 @@ export function wgslBytes(dir: string): { unique: number; modules: number; pipel
   const mod = m.modules.map((x) => x.chunks.reduce((n, c) => n + size[c]!, 0));
   let pipelines = 0;
   for (const p of m.computePipelines) pipelines += mod[p.module]!;
-  for (const p of m.renderPipelines) pipelines += mod[p.vertex.module]! + mod[p.fragment.module]!;
+  for (const p of m.renderPipelines) pipelines += mod[p.vertex.module]! + (p.fragment === undefined ? 0 : mod[p.fragment.module]!);
   const k = mod.indexOf(Math.max(...mod));
   return {
     unique: size.reduce((a, b) => a + b, 0), modules: mod.reduce((a, b) => a + b, 0), pipelines,

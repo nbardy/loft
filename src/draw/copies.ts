@@ -26,7 +26,7 @@ import { add, lift, variable, type Expr, type TableSource } from "../expr.ts";
 import { scopedName } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Branch, Part } from "../lib/similar.ts";
 import { rotate } from "../map/chart.ts";
 import type { F, Frame, P3, Painted, Skeleton } from "../map/types.ts";
@@ -111,7 +111,7 @@ function copiesShadow(copies: readonly Branch[]): Skeleton {
  */
 export class Copies implements Drawable {
   readonly skeletons: readonly Skeleton[];
-  readonly surfaces: readonly Bakeable[] = [];
+  readonly forms: readonly Form[] = [];
 
   constructor(readonly name: string, readonly o: CopiesOptions) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.copies "${name}": names must be identifiers (they name shaders)`);
@@ -138,7 +138,7 @@ export class Copies implements Drawable {
     const key = `copies.${this.name}`;
     const code = [
       tracePlumbingWgsl(), outlineWgsl(this.o.outline), `const COPIES_ID: f32 = ${lit(nameId(this.name))};`,
-      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels, shading),
+      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels, shading, (mark) => ctx.markOut(mark, false)),
     ].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...paint.libs, ...carry.libs])] } },
@@ -149,7 +149,7 @@ export class Copies implements Drawable {
 
 const COPIES_PAINT_ARGS: FnSpec["args"] = [["p", "vec3"], ["n", "vec3"], ["copy_id", "vec3"], ["copy_level", "f32"]];
 
-function copiesWgsl(tab: string, minPixels: number, keepLevels: number, s: Shading): string {
+function copiesWgsl(tab: string, minPixels: number, keepLevels: number, s: Shading, markOut: (mark: string) => string): string {
   const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "p", "d", "COPIES_ID", "copies_to_local(in, p - in.fo), copies_to_local(in, n), in.k.xyz, in.k.w");
   return /* wgsl */ `
 struct CopyIn {
@@ -217,7 +217,7 @@ override INK_BACK: f32 = 2.0;
   // width in front of everything buried a dense crown of pixel-wide twigs under ink several times their width.
   let own = mix(in.a.w, in.b.w, clamp(dot(p - in.a.xyz, ba) / max(dot(ba, ba), 1e-20), 0.0, 1.0)) / fp;
   let back = select(edge * fp * INK_BACK, 0.0, hit || gap < clamp(own, 0.75, max(edge, 0.75)));
-  return TraceOut(vec4<f32>(colour, ${call("mark")}), trace_depth(p + d * back), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut(call("mark"))}), trace_depth(p + d * back), mask);
 }`;
 }
 

@@ -5,7 +5,7 @@
 // Skeletons are what is measured: a body's chain of capsules (the same chain that casts its shadow). Their radii are
 // the larger of the section's half-width and half-height, so distances are conservative for flattened sections.
 
-import type { Artefact, Camera, FrameState } from "./artefact.ts";
+import { replayClocks, replayStep, type Artefact, type Camera, type FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
 import { add, Expr, lift, time, variable, vec2, vec3, vec4, type In, type TableFrame } from "./expr.ts";
 import type { Light } from "./light.ts";
@@ -17,10 +17,12 @@ import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
 import type { Arming, Attack, Effect, Hold, Motion, Part, Ring, Strike, Target } from "./spacetime/attack.ts";
 import type { Thrown } from "./geom/grab.ts";
+import { castCpu } from "./draw/cast.ts";
 import type { ChainSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_distance.ts";
 import { RingWave } from "./geom/ring.ts";
+import { stateChecks } from "./check_state.ts";
 
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
@@ -47,6 +49,8 @@ export class Probe {
       inputs.set(v, s.slot);
     }
     for (const name of Object.keys(this.inputs)) if (!a.inputs.some((s) => s.name === name)) throw new Error(`check: the scene has no input "${name}"`);
+    // The step a checkpointed recurrence replays to, as a host sets it from the time.
+    for (const r of replayClocks(a.recurrences)) inputs[r.slot] = replayStep(r, t).n;
     return { time: t, inputs, params: Float32Array.from(a.params.map((p) => p.def)), curves: a.curves };
   }
 
@@ -446,14 +450,15 @@ export function spansOnScreen(what: string, mark: Mark, camera: string, pixels: 
   };
 }
 
-/** Whether the segment from p to q passes through a chain of tapered capsules. */
+/**
+ * Whether the segment from p to q passes through a chain of capsules: castRay's CPU twin (src/draw/cast.ts), its second
+ * user. Each segment is the rounded cone between two joints; a point inside one is behind it.
+ */
 function crosses(chain: readonly Joint[], p: V3, q: V3): boolean {
-  for (let i = 0; i + 1 < chain.length; i++) {
-    const [s, t] = closest(chain[i]!.p, chain[i + 1]!.p, p, q);
-    const a = lerp(chain[i]!.p, chain[i + 1]!.p, s), b = lerp(p, q, t);
-    if (Math.hypot(...subV(a, b)) < chain[i]!.r + (chain[i + 1]!.r - chain[i]!.r) * s) return true;
-  }
-  return false;
+  const v = subV(q, p), len = Math.hypot(...v);
+  if (len === 0) return false;
+  const d: V3 = [v[0] / len, v[1] / len, v[2] / len];
+  return castCpu(p, d, 0, len, 1e-9, 1e-9, [chain], false).gap === 0;
 }
 
 /**
@@ -920,10 +925,13 @@ export function budget(o: { readonly triangles: number }): Check {
 
 // ---- running ------------------------------------------------------------------------------------------------------
 
-/** Run checks over a scene with inputs held at the given values (defaults otherwise). */
+/**
+ * Run checks over a scene with inputs held at the given values (defaults otherwise). A scene with baked state also gets
+ * its seam and drift measured (src/check_state.ts); its artefact must be baked (`compiled`, loaded on a host first).
+ */
 export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[] {
   const probe = new Probe(o.compiled ?? compileScene(scene), o.inputs ?? {});
-  return checks.map((c) => c.run(probe));
+  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)];
 }
 
 /** The verdicts as a plain-text table. */

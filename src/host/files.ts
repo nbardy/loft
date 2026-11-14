@@ -10,7 +10,7 @@
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadBundle, NotDataError, type GpuLoaded } from "./host.ts";
-import { FORMAT, FORMAT_VERSION, type Bundle, type Manifest } from "./manifest.ts";
+import { FORMAT, FORMAT_VERSIONS, type Bundle, type Manifest } from "./manifest.ts";
 
 export const MANIFEST = "manifest.json";
 const chunkPath = (dir: string, name: string) => join(dir, "wgsl", `${name}.wgsl`);
@@ -53,7 +53,7 @@ export function writeBundle(dir: string, b: Bundle): FileSizes {
 export function readBundle(dir: string): Bundle {
   const manifest = JSON.parse(readFileSync(join(dir, MANIFEST), "utf8")) as Manifest;
   if (manifest.format !== FORMAT) throw new Error(`${dir}: not a Loft artefact (format "${String(manifest.format)}")`);
-  if (manifest.version !== FORMAT_VERSION) throw new Error(`${dir}: artefact format version ${manifest.version}; this loader reads version ${FORMAT_VERSION}`);
+  if (!(FORMAT_VERSIONS as readonly number[]).includes(manifest.version)) throw new Error(`${dir}: artefact format version ${manifest.version}; this loader reads versions ${FORMAT_VERSIONS.join(" and ")}`);
   const chunks = new Map(manifest.chunks.map((name) => [name, readFileSync(chunkPath(dir, name), "utf8")]));
   const blobs = new Map(manifest.blobs.map(({ name, bytes }) => {
     const data = new Uint8Array(readFileSync(blobPath(dir, name)));

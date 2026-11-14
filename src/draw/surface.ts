@@ -6,7 +6,7 @@
 import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
-import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
 import { carry, posesOf, rotate, sizeBound } from "../map/chart.ts";
 import { framedPose } from "../map/surface.ts";
@@ -17,6 +17,7 @@ import { fwidth } from "../lib/wgsl.ts";
 import { foldAt, sunDir, type LightFold } from "../light.ts";
 import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
+import type { DrawDepth } from "../artefact.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -83,7 +84,7 @@ const AT = { world: variable("p_world", "vec3"), normal: variable("p_normal", "v
  */
 export class SurfaceDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
-  readonly surfaces: readonly Bakeable[];
+  readonly forms: readonly Form[];
 
   constructor(
     readonly name: string,
@@ -98,7 +99,7 @@ export class SurfaceDrawable implements Drawable {
     refuseSurface(name, surface, grid, look, () => surface.point(U, V), look.kind === "glazed" ? undefined : () => look.paint(U, V, AT));
     if (look.kind === "lit" && look.sides === "two" && look.outline === "hull") throw new SceneError(`draw.surface "${name}"`, `sides "two" with outline "hull"`, "a hull outline only on a one-sided surface (it draws the back faces)", `outline: "border"`);
     this.skeletons = skeletonsOf(surface, copies);
-    this.surfaces = bakeablesOf(this, copies);
+    this.forms = formsOf(this, copies);
   }
 
   /** The same surface and look, one copy per point. */
@@ -244,7 +245,7 @@ function skeletonsOf(s: Surface, c: Copies): readonly Skeleton[] {
 }
 
 /** A joint of a copy's chain carried by its pose. A radius under a per-axis size takes the largest axis (conservative). */
-function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly p: P3; readonly r: F } {
+export function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly p: P3; readonly r: F } {
   const z = at.size;
   switch (z.kind) {
     case "even": return { p: add(at.frame.o, mul(rotate(at.frame, j.p), z.k)), r: mul(j.r, z.k) };
@@ -252,7 +253,7 @@ function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly
   }
 }
 
-function bakeablesOf(d: SurfaceDrawable, c: Copies): readonly Bakeable[] {
+function formsOf(d: SurfaceDrawable, c: Copies): readonly Form[] {
   const look = d.look;
   switch (look.kind) {
     case "glazed": return []; // its colour reads the camera and the scene's depth: there is nothing to bake
@@ -260,10 +261,10 @@ function bakeablesOf(d: SurfaceDrawable, c: Copies): readonly Bakeable[] {
     case "flat": return []; // flat surfaces are strokes facing the camera: they have no shape to bake
   }
 }
-function copiesOf(d: SurfaceDrawable, c: Copies, paint: Paint, sides: "one" | "two"): readonly Bakeable[] {
+function copiesOf(d: SurfaceDrawable, c: Copies, paint: Paint, sides: "one" | "two"): readonly Form[] {
   switch (c.kind) {
-    case "one": return [{ name: d.name, surface: d.surface, paint, grid: d.grid, sides, copy: 0 }];
-    case "poses": return Array.from({ length: c.poses.count }, (_, i) => ({ name: `${d.name}_${i}`, surface: framedPose(d.surface, c.poses.at(f(i))), paint, grid: d.grid, sides, copy: i }));
+    case "one": return [{ kind: "surface", name: d.name, surface: d.surface, paint, grid: d.grid, sides, copy: 0 }];
+    case "poses": return Array.from({ length: c.poses.count }, (_, i) => ({ kind: "surface", name: `${d.name}_${i}`, surface: framedPose(d.surface, c.poses.at(f(i))), paint, grid: d.grid, sides, copy: i }));
   }
 }
 
@@ -330,14 +331,14 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   let edge = 1.0 - smoothstep(fw * 1.0, fw * 2.2, 1.0 - in.uv.y);
   return vec4<f32>(mix(${call("shade")}, ${call("ink")}, edge), ${ctx.markOut(call("mark"), false)});
 }`,
-          draws: (b) => [drawSpec({ ...b, cull })],
+          draws: (b) => [drawSpec({ ...b, cull, depth: SURFACE_DEPTH })],
         };
         case "none": return {
           overrides: "", fns, push: "s.pos",
           main: `${head}
   return vec4<f32>(${call("shade")}, ${ctx.markOut(call("mark"), false)});
 }`,
-          draws: (b) => [drawSpec({ ...b, cull })],
+          draws: (b) => [drawSpec({ ...b, cull, depth: SURFACE_DEPTH })],
         };
       }
     }
@@ -418,6 +419,12 @@ function quadDerivatives(name: string, s: Shader): Shader {
 }
 
 /**
+ * How a lit surface writes depth alone (a depth pass, src/frame/pass.ts): its rasterised triangles are the depth. Its
+ * ink hull states none, so an outline does not thicken a shadow; flat strokes and glazed surfaces state none either.
+ */
+const SURFACE_DEPTH: DrawDepth = { kind: "vertex" };
+
+/**
  * A flat look's colour: its paint is the final colour, so there is no style to wrap or to read a channel. A wrap or a
  * scatter is refused; a channel is noted by nobody (nothing reads it).
  */
@@ -442,7 +449,7 @@ function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: Dra
   return vec4<f32>(${call("shade")}, mk);
 }`,
       draws: (b) => [
-        drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
+        drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 }, depth: SURFACE_DEPTH }),
         drawSpec({ ...b, label: `${b.label} outline`, cull: "front", constants: { ...b.constants, INK: 1 } }),
       ],
     };
@@ -451,7 +458,7 @@ function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: Dra
       main: `${head}
   return vec4<f32>(${call("shade")}, ${ctx.markOut(call("mark"), true)});
 }`,
-      draws: (b) => [drawSpec({ ...b, cull })],
+      draws: (b) => [drawSpec({ ...b, cull, depth: SURFACE_DEPTH })],
     };
   }
 }

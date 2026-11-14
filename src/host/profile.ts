@@ -105,7 +105,7 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
   const readback = device.createBuffer({ label: "profile readback", size: bytesPerRow * size.height, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   /** A pass's colour format and samples, and its depth format: what a noop draw in it must match. */
   const shapeOf = (q: RenderPassDesc) => {
-    const t = q.color.view;
+    const t = q.color!.view;
     const tex = t.kind === "texture" ? m.textures[t.texture]! : { format: COLOR_FORMAT, sampleCount: 1 };
     return { format: tex.format, samples: tex.sampleCount, depth: q.depth === undefined ? undefined : m.textures[q.depth.view]!.format };
   };
@@ -149,7 +149,8 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     for (const q of m.frame.passes) {
       const d = passDescriptor(q, s, outView);
       const groups = (pass: GPURenderPassEncoder) => q.bindGroups.forEach((g, i) => pass.setBindGroup(i, s.groups[g]!));
-      if (!q.commands.some((c) => c.kind === "planned")) {
+      // A pass of fixed draws only, or with no colour attachment (a depth pass), is timed whole.
+      if (!q.commands.some((c) => c.kind === "planned") || q.color === undefined) {
         const pass = encoder.beginRenderPass({ ...d, timestampWrites: timed(q.label, "stage") });
         groups(pass);
         for (const c of q.commands) command(pass, o, c, plan);

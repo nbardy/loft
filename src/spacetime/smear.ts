@@ -41,7 +41,7 @@ function tipOf(body: Strand, p: Part): Expr<"vec3"> {
 
 class Smear implements Drawable {
   readonly skeletons = [];
-  readonly surfaces = [];
+  readonly forms = [];
   constructor(readonly name: string, readonly strike: Strike, readonly spec: Required<SmearSpec>) {}
 
   draws(ctx: CompileContext): Emitted {

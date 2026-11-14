@@ -266,3 +266,12 @@ export function outlineWgsl(o: TraceOutline): string {
     case "none": return "const INK_ON: bool = false;";
   }
 }
+
+/**
+ * A tracer's depth-only entry (`DrawDepth` "entry", for a depth pass: src/frame/pass.ts): coverage and depth from the
+ * tracer's own march, with no paint and no style. Each tracer writes its `fs_depth(in) -> TraceDepthOut` from its march
+ * minus shading (field.ts), and appends it as `Shader.depthEntry`, so a scene without a depth pass never holds it.
+ * Single-sampled: a ray covers its pixel when it hits (a near miss covers nothing; no sample mask).
+ */
+export const TRACE_DEPTH: { readonly kind: "entry"; readonly entry: "fs_depth" } = { kind: "entry", entry: "fs_depth" };
+export const TRACE_DEPTH_OUT = "struct TraceDepthOut { @builtin(frag_depth) depth: f32 };";

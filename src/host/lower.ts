@@ -24,11 +24,11 @@
 //
 // Imports no bun-only module (the browser host uses it).
 
-import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw } from "../artefact.ts";
+import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, PASS_CAMERA_VEC4S, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Artefact, type ArtefactPass, type Draw, type DrawDepth, type TextureSize } from "../artefact.ts";
 import { gridBounds, slotsUsed } from "./detail.ts";
 import {
-  COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, SAMPLES, SCENE_DEPTH_FORMAT,
-  type BindGroupDesc, type BindGroupLayoutDesc, type BufferDesc, type Bundle, type ComputePipelineDesc, type DrawCommand, type Id, type LayoutEntry,
+  COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, LIGHT_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT,
+  type BindGroupDesc, type BindGroupLayoutDesc, type BufferCopy, type BufferDesc, type Bundle, type ComputePipelineDesc, type Dispatch, type DrawCommand, type FormatVersion, type Id, type LayoutEntry, type Replay,
   type Manifest, type ModuleDesc, type PipelineLayoutDesc, type RenderPassDesc, type RenderPipelineDesc, type SamplerDesc, type Stage, type TextureDesc,
 } from "./manifest.ts";
 
@@ -137,6 +137,17 @@ const BLEND: Record<Draw["blend"], GPUBlendState | undefined> = {
   "alpha-pull": { color: { srcFactor: "one-minus-dst-alpha", dstFactor: "dst-alpha" }, alpha: { srcFactor: "one", dstFactor: "zero" } },
 };
 
+/** How a pass's picture is held, and how group 3 binds it (src/artefact.ts `passBindingsWgsl`). */
+type PassTexture = "colour" | "depth" | "light" | "screen";
+const PASS_TEXTURE: Readonly<Record<PassTexture, { readonly format: GPUTextureFormat; readonly sampleType: "float" | "unfilterable-float" }>> = {
+  colour: { format: COLOR_FORMAT, sampleType: "float" },
+  light: { format: LIGHT_FORMAT, sampleType: "float" },
+  screen: { format: LIGHT_FORMAT, sampleType: "float" },
+  depth: { format: DEPTH_FORMAT, sampleType: "unfilterable-float" },
+};
+const keepOf = (p: ArtefactPass): PassTexture => (p.what.kind === "scene" ? p.what.keep : "screen");
+const ONE_PIXEL: TextureSize = { kind: "fixed", width: 1, height: 1 };
+
 /** Which host WGSL a shader module is compiled with. A shader used in two ways is compiled once per way. */
 type Variant = "draw" | "sceneDepth" | "post";
 const VARIANT: Record<Variant, { readonly wgsl: string; readonly named: string }> = {
@@ -204,7 +215,10 @@ export function checkArtefact(a: Artefact): { paramFloats: number } {
     }
   }
   for (const p of a.post ?? []) if (!(p.shader in a.shaders)) fail(`post pass "${p.label}" names unknown shader "${p.shader}"`);
+  // The baked states are the truth the files carry: an unbaked artefact would write zeros (src/host/bake.ts bakes).
+  for (const r of a.recurrences ?? []) if (r.baked.done === undefined) fail(`the recurrence "${r.name}" is not baked; bake it on a GPU first (bakeRecurrences, which createHost's load runs)`);
   for (const st of a.stages) if (!(Number.isInteger(st.invocations) && st.invocations >= 1)) fail(`pose stage "${st.label}" has ${st.invocations} invocations`);
+  checkPasses(a, fail);
   const sizes = new Map(a.dynamic.map((d) => [d.name, d.vec4s]));
   for (const t of a.tables) {
     const size = sizes.get(t.buffer);
@@ -212,6 +226,39 @@ export function checkArtefact(a: Artefact): { paramFloats: number } {
     if (t.offset < 0 || t.offset + t.vec4s > size!) fail(`table "${t.name}" overruns "${t.buffer}"`);
   }
   return { paramFloats };
+}
+
+/**
+ * The file's format version, decided here and nowhere else (docs/artefact_format.md, "Versions"): 2 when it carries what
+ * a version-1 loader would draw wrongly (a replay, a pass), else 1, so a file with neither is byte for byte what it was.
+ */
+export function formatVersion(has: { readonly replay: boolean; readonly passes: boolean }): FormatVersion {
+  return has.replay || has.passes ? 2 : FORMAT_VERSION;
+}
+
+/** The passes' structure: names, what each draws, where its camera lives, and that it reads only passes before it. */
+function checkPasses(a: Artefact, fail: (msg: string) => never): void {
+  const before = new Set<string>();
+  for (const p of a.passes ?? []) {
+    if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(p.name)) fail(`pass "${p.name}": a name must be letters, digits and _`);
+    if (before.has(p.name)) fail(`pass "${p.name}" listed twice`);
+    for (const r of p.reads) if (!before.has(r)) fail(`pass "${p.name}" reads "${r}", which is not drawn before it`);
+    const w = p.what;
+    switch (w.kind) {
+      case "screen": if (!(w.shader in a.shaders)) fail(`pass "${p.name}" names unknown shader "${w.shader}"`); break;
+      case "scene": {
+        const buf = a.dynamic.find((b) => b.name === w.camera.buffer);
+        if (!buf || w.camera.offset + PASS_CAMERA_VEC4S > buf.vec4s) fail(`pass "${p.name}": its camera is not a table of ${PASS_CAMERA_VEC4S} vec4s in a dynamic buffer`);
+        for (const k of w.draws) {
+          const d = a.draws[k];
+          if (d === undefined) fail(`pass "${p.name}" draws draw ${k}, which does not exist`);
+          if (w.keep === "depth" && (d!.depth === undefined || d!.pass !== "opaque")) fail(`pass "${p.name}" keeps depth but draw "${d!.label}" is not opaque with a depth entry`);
+        }
+        break;
+      }
+    }
+    before.add(p.name);
+  }
 }
 
 /**
@@ -307,11 +354,28 @@ export function lower(a: Artefact): Bundle {
       { binding: 2, visibility: DRAWN, sampler: { type: "filtering" } },
     ],
   }) : -1;
+  // A scene that reads passes binds them as group 3 of every draw and post pass (src/artefact.ts `passBindingsWgsl`).
+  // Pipeline layouts number their groups without gaps, so a draw with nothing in group 2 takes an empty layout there.
+  const passes = a.passes ?? []; // absent means none (artefact.ts)
+  const withPasses = passes.length > 0;
+  const passLayout = withPasses ? bgls.add({
+    label: "loft passes",
+    entries: [
+      { binding: 0, visibility: DRAWN, sampler: { type: "filtering" } },
+      ...passes.map((p, i): LayoutEntry => ({ binding: 1 + i, visibility: DRAWN, texture: { sampleType: PASS_TEXTURE[keepOf(p)].sampleType, viewDimension: "2d", multisampled: false } })),
+    ],
+  }) : -1;
+  // Group 2 of a pipeline that reads no scene depth, in a scene with passes: in a split frame the scene depth's layout
+  // (so the transparent pass, which binds the scene depth at 2, can draw it), else an empty one. Every pass binds a
+  // group of that layout at 2 (the view's scene depth, or an empty group), read by nothing that it draws.
+  const emptyLayout = withPasses && !split ? bgls.add({ label: "loft none", entries: [] }) : -1;
+  const plainGroup2 = split ? depthLayout : emptyLayout;
   const pipelineLayout = new Map<Variant, Id>();
   const layoutOf = (v: Variant): Id => {
     const known = pipelineLayout.get(v);
     if (known !== undefined) return known;
-    const third: Record<Variant, Id[]> = { draw: [], sceneDepth: [depthLayout], post: [postLayout] };
+    const g3 = withPasses ? [passLayout] : [];
+    const third: Record<Variant, Id[]> = { draw: withPasses ? [plainGroup2, passLayout] : [], sceneDepth: [depthLayout, ...g3], post: [postLayout, ...g3] };
     const id = pls.add({ label: `loft ${v}`, bindGroupLayouts: [layout0, layout1, ...third[v]] });
     pipelineLayout.set(v, id);
     return id;
@@ -319,30 +383,39 @@ export function lower(a: Artefact): Bundle {
 
   // ---- the pose stages ---------------------------------------------------------------------------------------------
   const preludeChunk = chunk(PRELUDE_WGSL);
-  const poseLayout = a.stages.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
-  const pose = a.stages.map((st) => {
-    const module = modules.add({ label: `pose stage "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
+  const replayed = (a.recurrences ?? []).flatMap((r) => (r.replay === undefined ? [] : [{ r, replay: r.replay }]));
+  const poseLayout = a.stages.length > 0 || replayed.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
+  const dispatch = (st: Artefact["stages"][number], what: string): Dispatch => {
+    const module = modules.add({ label: `${what} "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
     const pipeline = computes.add({ label: st.label, layout: poseLayout, module, entryPoint: "pose_main" });
     return { label: st.label, pipeline, bindGroups: [group0, poseGroup1], workgroups: Math.ceil(st.invocations / POSE_WORKGROUP) };
-  });
+  };
+  const pose = a.stages.map((st) => dispatch(st, "pose stage"));
+  // A checkpointed recurrence's replay: three more pose-stage modules, recorded by the loader before the stages.
+  const replay = replayed.map(({ r, replay: p }): Replay => ({
+    label: `replay ${r.name}`, slot: p.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.kind === "checkpoints" ? r.kept.every : 1,
+    first: dispatch(p.first, "replay stage"), ping: dispatch(p.ping, "replay stage"), pong: dispatch(p.pong, "replay stage"),
+  }));
 
   // ---- modules and render pipelines ---------------------------------------------------------------------------------
   // One module per (shader, way it is used). A shader nothing uses is not written: which host WGSL it expects depends on
   // its use (a post shader does not compile as a draw), so there is nothing sound to check it against.
   const sceneChunk = chunk(a.sceneWgsl);
   const moduleIds = new Map<string, Id>();
+  let passChunk: Id[] | undefined;
   const moduleOf = (shader: string, v: Variant): Id => {
     const key = `${shader}|${v}`;
     const known = moduleIds.get(key);
     if (known !== undefined) return known;
     const variant = VARIANT[v].wgsl === "" ? [] : [chunk(VARIANT[v].wgsl)];
-    const id = modules.add({ label: `shader "${shader}"${VARIANT[v].named}`, chunks: [preludeChunk, ...variant, sceneChunk, chunk(a.shaders[shader]!)] });
+    passChunk ??= withPasses ? [chunk(passBindingsWgsl(passes))] : [];
+    const id = modules.add({ label: `shader "${shader}"${VARIANT[v].named}`, chunks: [preludeChunk, ...passChunk, ...variant, sceneChunk, chunk(a.shaders[shader]!)] });
     moduleIds.set(key, id);
     return id;
   };
   // Equal descriptors are one pipeline.
   const pipelineIds = new Map<string, Id>();
-  const drawPipeline = (d: Draw): Id => {
+  const drawPipeline = (d: Draw, format: GPUTextureFormat = COLOR_FORMAT): Id => {
     const v = drawVariant(d);
     const module = moduleOf(d.shader, v);
     const blend = BLEND[d.blend];
@@ -350,16 +423,41 @@ export function lower(a: Artefact): Bundle {
       label: `${d.shader} (${d.label})`,
       layout: layoutOf(v),
       vertex: { module, entryPoint: "vs", constants: { ...d.constants } },
-      fragment: { module, entryPoint: "fs", constants: { ...d.constants }, targets: [blend ? { format: COLOR_FORMAT, blend } : { format: COLOR_FORMAT }] },
+      fragment: { module, entryPoint: "fs", constants: { ...d.constants }, targets: [blend ? { format, blend } : { format }] },
       primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: d.cull },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: d.depthWrite, depthCompare: "less" },
       multisample: { count: SAMPLES },
     };
     const constants = Object.keys(d.constants).sort().map((k) => `${k}=${d.constants[k]}`).join(",");
-    const key = `${d.shader}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}`;
+    const key = `${d.shader}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}${format === COLOR_FORMAT ? "" : `|${format}`}`;
     const known = pipelineIds.get(key);
     if (known !== undefined) return known;
     const id = renders.add(desc);
+    pipelineIds.set(key, id);
+    return id;
+  };
+  /** A draw's pipeline for a depth pass: no colour target, single-sampled, its depth drawn the way `depth` says. */
+  const depthPipeline = (d: Draw, depth: DrawDepth): Id => {
+    const module = moduleOf(d.shader, "draw");
+    const constants = Object.keys(d.constants).sort().map((k) => `${k}=${d.constants[k]}`).join(",");
+    const fragment = ((): RenderPipelineDesc["fragment"] => {
+      switch (depth.kind) {
+        case "vertex": return undefined;
+        case "entry": return { module, entryPoint: depth.entry, constants: { ...d.constants }, targets: [] };
+      }
+    })();
+    const key = `depth|${d.shader}|${d.cull}|${depth.kind === "entry" ? depth.entry : "vertex"}|${constants}`;
+    const known = pipelineIds.get(key);
+    if (known !== undefined) return known;
+    const id = renders.add({
+      label: `${d.shader} (${d.label}, depth)`,
+      layout: layoutOf("draw"),
+      vertex: { module, entryPoint: "vs", constants: { ...d.constants } },
+      ...(fragment === undefined ? {} : { fragment }),
+      primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: d.cull },
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: "less" },
+      multisample: { count: 1 },
+    });
     pipelineIds.set(key, id);
     return id;
   };
@@ -370,51 +468,74 @@ export function lower(a: Artefact): Bundle {
 
   // ---- the passes ---------------------------------------------------------------------------------------------------
   const RA = "RENDER_ATTACHMENT", TB = "TEXTURE_BINDING";
+  const fullScreen = (label: string, layout: Id, module: Id, vs: string, format: GPUTextureFormat, fs = "fs"): Id => renders.add({
+    label, layout,
+    vertex: { module, entryPoint: vs, constants: {} },
+    fragment: { module, entryPoint: fs, constants: {}, targets: [{ format }] },
+    primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: "none" },
+    multisample: { count: 1 },
+  });
+  // The depth resolve's and the clearance map's shared objects, made once, by the first frame structure that needs
+  // them (the view's, in the same order as before passes existed, so a scene without passes keeps its ids).
+  let resolveShared: { readonly layout: Id; readonly pipeline: Id } | undefined;
+  const depthResolve = () => resolveShared ??= (() => {
+    const layout = bgls.add({
+      label: "loft depth resolve",
+      entries: [{ binding: 0, visibility: ["FRAGMENT"], texture: { sampleType: "depth", viewDimension: "2d", multisampled: true } }],
+    });
+    const module = modules.add({ label: "loft depth resolve", chunks: [chunk(DEPTH_RESOLVE_WGSL)] });
+    return { layout, pipeline: fullScreen("loft depth resolve", pls.add({ label: "loft depth resolve", bindGroupLayouts: [layout] }), module, "vs", SCENE_DEPTH_FORMAT) };
+  })();
+  let clearanceShared: { readonly input: Id; readonly nearest: Id; readonly steps: readonly { readonly step: string; readonly pipeline: Id }[] } | undefined;
+  const clearance = () => clearanceShared ??= (() => {
+    // The clearance map: three passes, each reading the previous one's texture (CLEARANCE_WGSL).
+    const input = bgls.add({
+      label: "loft clearance input",
+      entries: [{ binding: 0, visibility: DRAWN, texture: { sampleType: "unfilterable-float", viewDimension: "2d", multisampled: false } }, { binding: 1, visibility: DRAWN, sampler: { type: "non-filtering" } }],
+    });
+    const nearest = samplers.add({ label: "loft clearance", magFilter: "nearest", minFilter: "nearest", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+    const layout = pls.add({ label: "loft clearance", bindGroupLayouts: [input] });
+    const module = modules.add({ label: "loft clearance", chunks: [chunk(CLEARANCE_WGSL)] });
+    const steps = ([["quads", "quads_vs"], ["rows", "tiles_vs"], ["clear", "tiles_vs"]] as const).map(([step, vs]) => ({ step, pipeline: fullScreen(`loft clearance ${step}`, layout, module, vs, "r8unorm", `${step}_fs`) }));
+    return { input, nearest, steps };
+  })();
+
+  // Passes' own objects, made before the view's so the view's group 3 can name every pass's picture.
+  const offscreen = withPasses ? lowerPassObjects() : undefined;
+  /** Group 3 a view pass adds in a scene with passes; nothing in one without. */
+  const g3 = offscreen === undefined ? [] : [offscreen.viewGroup];
+  /** Groups 2 and 3 of a pass whose draws read no scene depth: `filler` is a group of `plainGroup2`'s layout. */
+  const g23 = (filler: Id): Id[] => (offscreen === undefined ? [] : [filler, offscreen.viewGroup]);
+  let filler = -1;
+
   const colour = textures.add({ label: "loft colour x4", format: COLOR_FORMAT, sampleCount: SAMPLES, usage: [RA] });
-  const passes: RenderPassDesc[] = [];
+  const viewPasses: RenderPassDesc[] = [];
   if (!split) {
     const depth = textures.add({ label: "loft depth x4", format: DEPTH_FORMAT, sampleCount: SAMPLES, usage: [RA] });
-    passes.push({
+    if (withPasses) filler = groups.add({ label: "loft none", layout: emptyLayout, entries: [] });
+    viewPasses.push({
       label: "loft scene",
       color: { view: { kind: "texture", texture: colour }, resolveTarget: { kind: "output" }, loadOp: "clear", storeOp: "discard", clearValue },
       depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "discard" },
-      bindGroups: [group0, group1],
+      bindGroups: [group0, group1, ...g23(filler)],
       commands: [...opaque, ...transparent],
     });
   } else {
     const depth = textures.add({ label: "loft depth x4", format: DEPTH_FORMAT, sampleCount: SAMPLES, usage: [RA, TB] });
     const sceneDepth = textures.add({ label: "loft scene depth", format: SCENE_DEPTH_FORMAT, sampleCount: 1, usage: [RA, TB] });
-    const resolveLayout = bgls.add({
-      label: "loft depth resolve",
-      entries: [{ binding: 0, visibility: ["FRAGMENT"], texture: { sampleType: "depth", viewDimension: "2d", multisampled: true } }],
-    });
-    const resolveModule = modules.add({ label: "loft depth resolve", chunks: [chunk(DEPTH_RESOLVE_WGSL)] });
-    const fullScreen = (label: string, layout: Id, module: Id, vs: string, format: GPUTextureFormat, fs = "fs"): Id => renders.add({
-      label, layout,
-      vertex: { module, entryPoint: vs, constants: {} },
-      fragment: { module, entryPoint: fs, constants: {}, targets: [{ format }] },
-      primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: "none" },
-      multisample: { count: 1 },
-    });
-    const resolve = fullScreen("loft depth resolve", pls.add({ label: "loft depth resolve", bindGroupLayouts: [resolveLayout] }), resolveModule, "vs", SCENE_DEPTH_FORMAT);
+    const resolve = depthResolve();
     const postPipelines = post.map((p) => fullScreen(`${p.shader} (${p.label})`, layoutOf("post"), moduleOf(p.shader, "post"), "post_vs", COLOR_FORMAT));
     const sampler = samplers.add({ label: "loft post", magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
-    const resolveGroup = groups.add({ label: "loft depth resolve", layout: resolveLayout, entries: [{ binding: 0, texture: depth }] });
-    // The clearance map: three passes, each reading the previous one's texture (CLEARANCE_WGSL).
-    const clearanceInput = bgls.add({
-      label: "loft clearance input",
-      entries: [{ binding: 0, visibility: DRAWN, texture: { sampleType: "unfilterable-float", viewDimension: "2d", multisampled: false } }, { binding: 1, visibility: DRAWN, sampler: { type: "non-filtering" } }],
-    });
-    const nearest = samplers.add({ label: "loft clearance", magFilter: "nearest", minFilter: "nearest", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
-    const clearanceLayout = pls.add({ label: "loft clearance", bindGroupLayouts: [clearanceInput] });
-    const clearanceModule = modules.add({ label: "loft clearance", chunks: [chunk(CLEARANCE_WGSL)] });
-    const clearanceSteps = ([["quads", "quads_vs"], ["rows", "tiles_vs"], ["clear", "tiles_vs"]] as const).map(([step, vs]) => ({
+    const resolveGroup = groups.add({ label: "loft depth resolve", layout: resolve.layout, entries: [{ binding: 0, texture: depth }] });
+    const cl = clearance();
+    const clearanceSteps = cl.steps.map(({ step, pipeline }) => ({
       step,
       texture: textures.add({ label: `loft clearance ${step}`, format: "r8unorm", sampleCount: 1, usage: [RA, TB] }),
-      pipeline: fullScreen(`loft clearance ${step}`, clearanceLayout, clearanceModule, vs, "r8unorm", `${step}_fs`),
+      pipeline,
     }));
-    const clearance = clearanceSteps[2]!.texture;
-    const depthGroup = groups.add({ label: "loft scene depth", layout: depthLayout, entries: [{ binding: 0, texture: sceneDepth }, { binding: 1, texture: clearance }] });
+    const clearanceMap = clearanceSteps[2]!.texture;
+    const depthGroup = groups.add({ label: "loft scene depth", layout: depthLayout, entries: [{ binding: 0, texture: sceneDepth }, { binding: 1, texture: clearanceMap }] });
+    filler = depthGroup;
     // Ping-pong: pass k reads intermediate (k - 1) % 2 and writes k % 2; one post pass needs one intermediate.
     const n = post.length;
     const intermediates = Array.from({ length: Math.min(n, 2) }, (_, i) => {
@@ -424,38 +545,152 @@ export function lower(a: Artefact): Bundle {
     });
     /** Stage 0 is the scene; stage k >= 1 is post pass k - 1. The last stage writes the output. */
     const outputOf = (k: number) => (k === n ? { kind: "output" as const } : { kind: "texture" as const, texture: intermediates[k % 2]!.texture });
-    passes.push({
+    viewPasses.push({
       label: "loft scene opaque",
       color: { view: { kind: "texture", texture: colour }, loadOp: "clear", storeOp: "store", clearValue },
       depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "store" },
-      bindGroups: [group0, group1],
+      bindGroups: [group0, group1, ...g23(filler)],
       commands: opaque,
     }, {
       label: "loft depth resolve",
       color: { view: { kind: "texture", texture: sceneDepth }, loadOp: "clear", storeOp: "store", clearValue: [1, 0, 0, 1] },
       bindGroups: [resolveGroup],
-      commands: [{ kind: "fixed", pipeline: resolve, vertices: 3, instances: 1 }],
+      commands: [{ kind: "fixed", pipeline: resolve.pipeline, vertices: 3, instances: 1 }],
     }, ...clearanceSteps.map((s, i): RenderPassDesc => ({
       label: `loft clearance ${s.step}`,
       color: { view: { kind: "texture", texture: s.texture }, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] },
-      bindGroups: [groups.add({ label: `loft clearance ${s.step} input`, layout: clearanceInput, entries: [{ binding: 0, texture: i === 0 ? sceneDepth : clearanceSteps[i - 1]!.texture }, { binding: 1, sampler: nearest }] })],
+      bindGroups: [groups.add({ label: `loft clearance ${s.step} input`, layout: cl.input, entries: [{ binding: 0, texture: i === 0 ? sceneDepth : clearanceSteps[i - 1]!.texture }, { binding: 1, sampler: cl.nearest }] })],
       commands: [{ kind: "fixed", pipeline: s.pipeline, vertices: 6, instances: 1 }],
     })), {
       label: "loft scene transparent",
       color: { view: { kind: "texture", texture: colour }, resolveTarget: outputOf(0), loadOp: "load", storeOp: "discard" },
       depth: { view: depth, depthLoadOp: "load", depthStoreOp: "discard" },
       // Group 2 is ignored by pipelines whose layout stops at group 1.
-      bindGroups: [group0, group1, depthGroup],
+      bindGroups: [group0, group1, depthGroup, ...g3],
       commands: transparent,
     }, ...postPipelines.map((pipeline, i): RenderPassDesc => {
       const k = i + 1;
       return {
         label: `loft post ${i}`,
         color: { view: outputOf(k), loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 1] },
-        bindGroups: [group0, group1, intermediates[(k - 1) % 2]!.group],
+        bindGroups: [group0, group1, intermediates[(k - 1) % 2]!.group, ...g3],
         commands: [{ kind: "fixed", pipeline, vertices: 3, instances: 1 }],
       };
     }));
+  }
+  // Every pass is drawn before the view, in the artefact's order (each after the passes it reads).
+  const renderPasses: RenderPassDesc[] = [...(offscreen?.record(filler) ?? []), ...viewPasses];
+
+  /**
+   * The passes' textures, stand-ins, camera buffers and bind groups, and a function that records their render passes
+   * (called after the view's pipelines exist, which a colour pass reuses).
+   */
+  function lowerPassObjects() {
+    const sampler = samplers.add({ label: "loft pass", magFilter: "linear", minFilter: "linear", addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" });
+    const pictures = passes.map((p) => textures.add({ label: `loft pass ${p.name}`, size: p.size, format: PASS_TEXTURE[keepOf(p)].format, sampleCount: 1, usage: [RA, TB] }));
+    const standIn = {
+      float: textures.add({ label: "loft pass stand-in", size: ONE_PIXEL, format: COLOR_FORMAT, sampleCount: 1, usage: [TB] }),
+      "unfilterable-float": textures.add({ label: "loft pass stand-in (depth)", size: ONE_PIXEL, format: SCENE_DEPTH_FORMAT, sampleCount: 1, usage: [TB] }),
+    };
+    /** Group 3 inside pass `upTo` (its index), or the view's (every picture): a stand-in for the pass itself and those after it. */
+    const group3 = (label: string, upTo: number): Id => groups.add({
+      label, layout: passLayout,
+      entries: [{ binding: 0, sampler }, ...passes.map((p, i) => ({ binding: 1 + i, texture: i < upTo ? pictures[i]! : standIn[PASS_TEXTURE[keepOf(p)].sampleType] }))],
+    });
+    const viewGroup = group3("loft passes (view)", passes.length);
+    const copies: BufferCopy[] = [];
+    const lowered = passes.map((p, i) => {
+      const own = group3(`loft passes (in ${p.name})`, i);
+      const w = p.what;
+      switch (w.kind) {
+        case "screen": return { p, i, own, frame: group0 };
+        case "scene": {
+          // The pass's own `frame`: its camera table, copied after the pose stages (Manifest.frame.copies).
+          const buf = buffer(`loft pass ${p.name} frame`, FRAME_FLOATS * 4, ["UNIFORM", "COPY_DST"]);
+          copies.push({ from: bufferOf.get(w.camera.buffer)!, fromOffset: w.camera.offset * 16, to: buf, bytes: FRAME_FLOATS * 4 });
+          const frame = groups.add({ label: `loft pass ${p.name} frame`, layout: layout0, entries: [buf, inputBuf, paramBuf, curveBuf, detailBuf].map((b, binding) => ({ binding, buffer: b })) });
+          return { p, i, own, frame };
+        }
+      }
+    });
+    /** `empty`: a group of the plain draws' group 2 layout (the view's scene depth in a split frame, else empty). */
+    const record = (empty: Id): RenderPassDesc[] => lowered.flatMap(({ p, i, own, frame }): RenderPassDesc[] => {
+      const picture = pictures[i]!;
+      const w = p.what;
+      switch (w.kind) {
+        case "screen": {
+          const pipeline = fullScreen(`${w.shader} (pass ${p.name})`, layoutOf("draw"), moduleOf(w.shader, "draw"), "vs", LIGHT_FORMAT);
+          return [{
+            label: `loft pass ${p.name}`,
+            color: { view: { kind: "texture", texture: picture }, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] },
+            bindGroups: [frame, group1, empty, own],
+            commands: [{ kind: "fixed", pipeline, vertices: 3, instances: 1 }],
+          }];
+        }
+        case "scene": {
+          const drawn = w.draws.map((k) => ({ d: a.draws[k]!, k }));
+          switch (w.keep) {
+            case "depth": return [{
+              label: `loft pass ${p.name}`,
+              depth: { view: picture, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "store" },
+              bindGroups: [frame, group1, empty, own],
+              commands: drawn.map(({ d, k }) => ({ kind: "planned" as const, pipeline: depthPipeline(d, d.depth!), draw: k })),
+            }];
+            case "colour": case "light": {
+              const format = PASS_TEXTURE[w.keep].format;
+              const cmds = (pass: Draw["pass"]): DrawCommand[] => drawn.filter(({ d }) => d.pass === pass).map(({ d, k }) => ({ kind: "planned" as const, pipeline: drawPipeline(d, format), draw: k }));
+              return colourPass(p, picture, format, frame, own, empty, cmds("opaque"), cmds("transparent"), drawn.some(({ d }) => d.sceneDepth === true));
+            }
+          }
+        }
+      }
+    });
+    return { viewGroup, copies, record };
+  }
+
+  /**
+   * A colour pass: the view's frame structure at the pass's size, resolved into its picture. One multisampled pass;
+   * or, when a transparent draw it holds reads scene depth, opaque, the depth resolve and the clearance map, then
+   * transparent, as the view's split frame (with no post passes).
+   */
+  function colourPass(p: ArtefactPass, picture: Id, format: GPUTextureFormat, frame: Id, own: Id, empty: Id, opaqueCmds: DrawCommand[], transparentCmds: DrawCommand[], split: boolean): RenderPassDesc[] {
+    const label = `loft pass ${p.name}`;
+    const x4 = textures.add({ label: `${label} colour x4`, size: p.size, format, sampleCount: SAMPLES, usage: [RA] });
+    const depth = textures.add({ label: `${label} depth x4`, size: p.size, format: DEPTH_FORMAT, sampleCount: SAMPLES, usage: split ? [RA, TB] : [RA] });
+    if (!split) return [{
+      label,
+      color: { view: { kind: "texture", texture: x4 }, resolveTarget: { kind: "texture", texture: picture }, loadOp: "clear", storeOp: "discard", clearValue },
+      depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "discard" },
+      bindGroups: [frame, group1, empty, own],
+      commands: [...opaqueCmds, ...transparentCmds],
+    }];
+    const sceneDepth = textures.add({ label: `${label} scene depth`, size: p.size, format: SCENE_DEPTH_FORMAT, sampleCount: 1, usage: [RA, TB] });
+    const resolve = depthResolve(), cl = clearance();
+    const steps = cl.steps.map(({ step, pipeline }) => ({ step, pipeline, texture: textures.add({ label: `${label} clearance ${step}`, size: p.size, format: "r8unorm", sampleCount: 1, usage: [RA, TB] }) }));
+    const depthGroup = groups.add({ label: `${label} scene depth`, layout: depthLayout, entries: [{ binding: 0, texture: sceneDepth }, { binding: 1, texture: steps[2]!.texture }] });
+    return [{
+      label: `${label} opaque`,
+      color: { view: { kind: "texture", texture: x4 }, loadOp: "clear", storeOp: "store", clearValue },
+      depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "store" },
+      bindGroups: [frame, group1, empty, own],
+      commands: opaqueCmds,
+    }, {
+      label: `${label} depth resolve`,
+      color: { view: { kind: "texture", texture: sceneDepth }, loadOp: "clear", storeOp: "store", clearValue: [1, 0, 0, 1] },
+      bindGroups: [groups.add({ label: `${label} depth resolve`, layout: resolve.layout, entries: [{ binding: 0, texture: depth }] })],
+      commands: [{ kind: "fixed", pipeline: resolve.pipeline, vertices: 3, instances: 1 }],
+    }, ...steps.map((s, i): RenderPassDesc => ({
+      label: `${label} clearance ${s.step}`,
+      color: { view: { kind: "texture", texture: s.texture }, loadOp: "clear", storeOp: "store", clearValue: [0, 0, 0, 0] },
+      bindGroups: [groups.add({ label: `${label} clearance ${s.step} input`, layout: cl.input, entries: [{ binding: 0, texture: i === 0 ? sceneDepth : steps[i - 1]!.texture }, { binding: 1, sampler: cl.nearest }] })],
+      commands: [{ kind: "fixed", pipeline: s.pipeline, vertices: 6, instances: 1 }],
+    })), {
+      label: `${label} transparent`,
+      color: { view: { kind: "texture", texture: x4 }, resolveTarget: { kind: "texture", texture: picture }, loadOp: "load", storeOp: "discard" },
+      depth: { view: depth, depthLoadOp: "load", depthStoreOp: "discard" },
+      bindGroups: [frame, group1, depthGroup, own],
+      commands: transparentCmds,
+    }];
   }
 
   // ---- level-of-detail bounds ---------------------------------------------------------------------------------------
@@ -472,7 +707,7 @@ export function lower(a: Artefact): Bundle {
 
   const manifest: Manifest = {
     format: FORMAT,
-    version: FORMAT_VERSION,
+    version: formatVersion({ replay: replay.length > 0, passes: withPasses }),
     chunks: chunkNames,
     blobs: [...blobs].map(([name, b]) => ({ name, bytes: b.byteLength })),
     inputs: a.inputs,
@@ -496,7 +731,9 @@ export function lower(a: Artefact): Bundle {
       bounds,
       // Only the slots the artefact uses are written each frame (the rest of the 64 KiB array is never read).
       detail: { buffer: detailBuf, floats: Math.max(4, slotsUsed(a.draws) * 4) },
-      passes,
+      passes: renderPasses,
+      ...(replay.length > 0 ? { replay } : {}),
+      ...(offscreen === undefined ? {} : { copies: offscreen.copies }),
     },
     dynamic: dynamic.map((d) => d.id),
     plan: a.draws.map((d) => ({ label: d.label, layer: d.layer, vertices: d.vertices, instances: d.instances, detail: d.detail })),
