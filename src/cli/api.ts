@@ -190,7 +190,7 @@ function writtenTypes(all: ReadonlyMap<string, Entry>): string[] {
  * leaves their entries to `loft api` and `loft api <name>`; the full reference prints them all. A scene author reaches
  * for them in the scenes about that subject, so the context does not pay for their words in every scene.
  */
-const DOMAIN_MODULES = ["src/soft/lightning.ts", "src/soft/rain.ts", "src/soft/cloud.ts", "src/style/whitewater.ts", "src/style/foam.ts", "src/geom/crest.ts", "src/geom/grab.ts"] as const;
+const DOMAIN_MODULES = ["src/soft/lightning.ts", "src/soft/rain.ts", "src/soft/cloud.ts", "src/style/whitewater.ts", "src/style/foam.ts", "src/geom/grab.ts"] as const;
 
 /** Names a map entry's reader cannot guess, glossed in two or three words where the map prints them. */
 const GLOSS: Readonly<Record<string, string>> = { retarded: "signal delay", kifs: "folded fractal", whorl: "coil turn" };
