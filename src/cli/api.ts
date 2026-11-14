@@ -157,7 +157,8 @@ function call(e: { name: string; signature: string }, types: ReadonlyMap<string,
   if (alias) return `${e.name} = ${alias[1]}`;
   const ann = /^const\s+[\w$]+:\s*(.+)$/.exec(e.signature);
   const ps = ann ? (/=>/.test(ann[1]!) ? fnParams(ann[1]!, types) : null) : paramsOf(e.signature);
-  return ps === null ? e.name : `${e.name}(${ps.map((p) => param(p, types, shown)).join(", ")})`;
+  const text = ps === null ? e.name : `${e.name}(${ps.map((p) => param(p, types, shown)).join(", ")})`;
+  return GLOSS[e.name] === undefined ? text : `${text} [${GLOSS[e.name]}]`;
 }
 
 const builtOp = (e: Entry) => /=\s*(binary|unary|compare)\(/.test(e.signature);
@@ -184,6 +185,16 @@ function writtenTypes(all: ReadonlyMap<string, Entry>): string[] {
   return [...seen].sort((a, b) => b[1] - a[1]).map(([k]) => k);
 }
 
+/**
+ * The domain modules: subject matter (weather, sea foam, throwing), not mechanism. The map names them in one line and
+ * leaves their entries to `loft api` and `loft api <name>`; the full reference prints them all. A scene author reaches
+ * for them in the scenes about that subject, so the context does not pay for their words in every scene.
+ */
+const DOMAIN_MODULES = ["src/soft/lightning.ts", "src/soft/rain.ts", "src/soft/cloud.ts", "src/style/whitewater.ts", "src/style/foam.ts", "src/geom/crest.ts", "src/geom/grab.ts"] as const;
+
+/** Names a map entry's reader cannot guess, glossed in two or three words where the map prints them. */
+const GLOSS: Readonly<Record<string, string>> = { retarded: "signal delay", kifs: "folded fractal", whorl: "coil turn" };
+
 /** Every value a scene author calls, by layer and module, as `name(args)`. */
 export function apiMap(): string {
   const gs = groups();
@@ -209,11 +220,14 @@ export function apiMap(): string {
     const ops = layer.name === "Core" ? here.flatMap((g) => g.values.filter((e) => isOperator(e, g))) : [];
     if (ops.length > 0) out.push(`operators: ${ops.map((e) => e.name).join(", ")}`);
     for (const g of here) {
+      if ((DOMAIN_MODULES as readonly string[]).includes(g.file)) continue;
       const items = g.values.filter((e) => !ops.includes(e) && !partSigs.has(e.signature)).flatMap((e) => (e.members.length > 0 && !/^const\s+[\w$]+\s*:/.test(e.signature) ? parts(e) : [call(e, types, shown)])).filter((x): x is string => x !== null);
       if (items.length > 0) out.push(`${g.unproven ? "~" : ""}${label(g.file)}: ${items.join("; ")}`);
     }
     out.push("");
   }
+  const domain = DOMAIN_MODULES.map((f) => base(f));
+  out.push(`Domain modules, left out of this map (weather, sea and throwing): \`loft api <name>\` prints each: ${domain.join(", ")}.`, "");
   out.push(`Types you write: ${writtenTypes(all).join(", ")}.`);
   return out.join("\n");
 }
