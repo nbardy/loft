@@ -258,7 +258,9 @@ table lives and how it is filled (`map` or `scan` at a level, or `cpu` with why)
 the host uploads before the stages (empty when every table is a program: then a host runs no JavaScript per frame);
 and `pose(state)`, the CPU reading of every table, derived from the same programs, for tools and tests only.
 `FrameState.curves` is the curve table the host holds now, so a `setCurves` edit moves the CPU fills exactly as it
-moves the GPU.
+moves the GPU. Since 2026-11-14 (section 15): `recurrences`, states stepped by the scene's own functions, baked by the
+first host to load the artefact into static tables, and the fill `replay` for the two tables a checkpointed one's
+frame replays into.
 
 Per-frame tables are `TableSource`s (`src/expr.ts`): `entries` entries of `lanes` vec4s, a `role`, and a `program`:
 a `map` (runs of entries, each a closed form in its index; `mapOf`, `listOf`), a `scan` (entries in order carrying a
@@ -1295,3 +1297,95 @@ Proposal: `docs/proposals/geometry_and_rays.md`, with the rulings of `docs/propo
   own fragment stages.
 - **The screen-outline fault** was real but latent: traced solids wrote their raw mark, which agreed with `markOut`
   only for mark 1. Fixed through `ctx.markOut`; no existing picture changed.
+
+## 15. State: a step baked into the scene's files (`recur`; as built, 2026-11-14)
+
+The design is `docs/proposals/state.md` with the rulings of `docs/proposals/README.md`. One export, `recur` (src/map/recur.ts):
+
+```ts
+const flock = recur({ name: "flock", size: 200, rate: 30, until: 30,
+  start: (i) => [vec4(...position), vec4(0)],
+  step: (prev, i) => { const [p, v] = prev(i); /* gather from prev(j) */ return [vec4(...), vec4(...)]; } });
+draw.points("motes", points(200, (i) => ({ at: flock.at(i)[0]!.xyz, scale: 1 })), mote);
+```
+
+**The law.** S(n + 1) = step(S(n), t_n), t_n = from + n / rate, run once on the GPU, read as a function of time:
+linear between steps; `at(i, when)` an entry, `on(u, when)` linear along a list or bilinear and wrapping on a grid.
+Inside `step`, `time` is the step's own time (the step's expressions have `time` replaced by a variable bound to it),
+so a step reads the scene's closed forms where they were then, and other recurrences at that time.
+
+**What is kept** (`Kept`, chosen from the size alone): every state when the history fits 64 MiB, else every K-th,
+K = ceil(history / 64 MiB) up to 120 (above: a refusal with the bytes and the fix). States before the scene's clock
+starts are run but not kept (`first`); `until <= 0` keeps one still state. Each kept state carries a clock entry (its
+step number), which is how each dispatch of the bake knows its step: a `writeBuffer` between dispatches would land
+before all of them.
+
+**Where it runs.** `compile` stays synchronous: an artefact carries its recurrences unbaked (`Artefact.recurrences`,
+`Baked`). `createHost(...).load` bakes first (src/host/bake.ts: one compute pass, ping-pong bind groups, the steps write
+the states to keep themselves, one readback into the static data), then lowers; `lower` refuses an unbaked artefact;
+`loft build` bakes and writes the states as static blobs, so a file loader never bakes. Every-state keeping needs no
+format change (a static table and a closed form; the file stays version 1). Checkpoints add `frame.replay`
+(docs/artefact_format.md, "Replays", version 2): the host writes the step n from the time into a hidden input
+(`loft_step.<name>`) and records `first` plus k alternating `ping`/`pong` dispatches before the pose stages; the frame
+reads n and n + 1 from two per-frame tables by the parity of k. The step's WGSL is emitted once (src/compile/recur.ts)
+and placed unchanged in the bake's module and the replay's three, with only the reads of the previous state and the
+writes defined per module.
+
+**What a step may read**, classified once at `recur` (one sum type, one refusal site, `refusal` in src/map/recur.ts):
+constants, `time`, static tables, `prev`, recurrences that keep every state (baked first: `Artefact.recurrences` is in
+dependency order), `lib` functions. Refused with a `SceneError`: host inputs, params (a re-bake on edit is not built),
+curve rows, per-frame tables, free variables from outside, and checkpointed recurrences (lockstep replay of two
+checkpointed states is not built). A checkpointed state read at any time but `time` is refused with the bytes keeping
+every state would need (a per-frame `when` other than `time` would need one replay each; not built).
+
+**Checks.** The CPU reads the baked table (K = 1) or replays at most K steps from a checkpoint with the JavaScript twin
+(`replayFill` in src/compile/tables.ts), to the same n as the GPU (the hidden input). A CPU reading of an unbaked state
+throws; the one exception is the compiler's rest frame (shape measurement for level of detail), which reads the start
+state (`Unbaked = "start"`). `loft check` bakes on the GPU (exit 6 without one) and adds, with or without the scene's own
+checks (src/check_state.ts): the seam of a looping scene, max |S(P) - S(0)| per lane component relative to its range
+over the loop, at most 1e-3; and for checkpoints, the drift certificate, the CPU twin replaying K steps from three
+checkpoints against the next one the GPU kept, at most 1e-3. A looping scene whose state changes during the loop
+without being kept over all of it is refused at compile. `loft clip` refuses a clip past the shortest `until` of a scene
+that does not loop. `loft render`, `build` and `profile` print a bake line; `profile` prints the replay at k = K - 1.
+
+### 14.1 The predictions scored (GPU shared with three other workers, load average 40 to 170)
+
+| Prediction (state.md 9) | Measured | |
+|---|---|---|
+| Rope: 2.5 MB kept, bake 30 to 60 ms | 2.52 MB (1,921 states, the clock entries add 1/40); 35 to 48 ms wall at load 40, GPU 26 to 41 ms by timestamps at load 80 to 160 | held |
+| Rope: seam under 1e-5 relative | positions 8e-7; velocities 1.6e-4 | missed for velocities, see below |
+| Rope: frame time unchanged within one tick | 0.459 ms against 0.459 ms with a closed-form spine | held |
+| Flock: 5.8 MB, bake 20 to 50 ms, draw unchanged | 5.80 MB; 36 ms wall at load 40, GPU 18 to 35 ms; +0.065 ms, one tick (two fetches and a mix per vertex) | held, the draw at the edge |
+| Grid 128 x 128 x 9,000: 256 KiB, bake 40 to 100 ms, CPU twin about 6 s | 0.26 MB; 66 ms wall at load 40, GPU 48 to 55 ms; CPU twin 3.2 ms a step, 28.7 s | held; the twin missed 5x |
+| Grid 256 x 256, 30 s at 30: K = 15, 64 MB, worst replay 0.1 to 0.25 ms, load +30 to 80 ms | K = 15, 63.96 MB; worst replay 0.52 ms in `loft profile` (load 164); load +67 ms (read 18, upload and objects 56, against the rope's 7) | missed the replay, see below |
+| Replay on the baking GPU bitwise the bake | equal in every bit at every k of K = 4, and every checkpoint equal to an every-state bake (tests/recur.gpu.test.ts) | held |
+| Drift of the CPU twin over K = 15 Gray-Scott steps under 1e-5 | 6.6e-7 | held |
+| About 600 lines of TypeScript and 40 of Rust; wrong over 900 | 828 code lines and 278 comment lines of TypeScript, 51 and 11 of Rust | missed with the comments (1,106), held without |
+| 1 export | `recur` | held |
+| Existing scenes byte-identical | the six proof scenes and the stilt crab build byte-identical files; the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9` | held |
+
+Corrections to the theory:
+
+1. **The seam's floor is rounding, amplified by stiffness.** The damping does kill the transient (e^-29 over 24 s),
+   but each step turns the f32 rounding of positions back into velocity through the springs: W^2 ulp(|p|) dt per step
+   (4.5e-5 at |p| about 5), a random walk over the damping time (200 steps), about 4.5e-4. Measured 4.6e-4 and
+   5.9e-4 in the two moving velocity components. The positions close to 8 ulps. A stiff explicit step has a seam floor
+   of W^2 ulp dt sqrt(tau rate / 2), not zero; the 1e-3 tolerance covers it here.
+2. **A step's cost depends on the GPU's clock, not the module.** The same step costs 33 us in a pass of 112 dispatches,
+   13 us in 1,120 and 8.5 us in 7,200, the bake's module and the replay's equal at every length (out/state/ab_replay.ts,
+   not committed). The bake is one long pass (warm); a frame's replay is a short burst (cold). Against a hand-written
+   Gray-Scott step in the same process the compiled step costs the same (12.2 against 12.4 us), so the generated code
+   adds nothing. The proposal's 5.6 us was at load 4 to 7; here the hand-written step alone costs 12.4 us at load 170.
+3. **The CPU twin allocates per cell** (a grid index array and a result array per call): 5x slower than the proposal's
+   hand-written figure at a CPU load of 166. It serves checks and the certificate (at most K steps), so this was left.
+
+**The stop rule tripped once**: after stage 3, worst replay at K = 113 (256 x 256, 120 s at 60 steps a second) was
+3.80 ms against a limit of 2 ms, at load 80 to 95; the same bake's 7,200 steps took 85 ms of GPU (limit 1 s: held).
+112 steps warm cost 0.95 ms (correction 2), so the per-step model holds and the trip is the cold short pass. Not built:
+resume (a host keeping its last replayed state, 1 or 2 steps a frame while playing forward), which removes the cold
+burst for playback; the owner decides whether the trip stops the design.
+
+Not built: resume; re-baking params in `loft dev`; a per-frame `when` other than `time` on a checkpointed state;
+lockstep replay of two checkpointed recurrences; the input-log hybrid (live inputs stay refused). A built directory
+that keeps every state carries no record of its recurrence, so `loft clip --artefact` cannot refuse a clip past its
+`until` (one that keeps checkpoints can).

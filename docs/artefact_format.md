@@ -1,4 +1,4 @@
-# The Loft artefact as files (format version 1)
+# The Loft artefact as files (format versions 1 and 2)
 
 A built Loft scene is a directory that a client draws with no JavaScript from the compiler and no scene module. It is
 the host, lowered: every WebGPU object a loader creates is an entry in a list of `manifest.json`, described with
@@ -39,10 +39,11 @@ Nothing else. A chunk's name is a 64-bit hash of its text in hex; a loader never
 
 ## Load, call by call
 
-1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version == 1`. Read each
+1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1 or 2. Read each
    `wgsl/<chunks[i]>.wgsl` and each `bin/<blobs[i].name>.bin` (check its length against `blobs[i].bytes`).
 2. **Refuse JavaScript.** If any `tables[i].fill.kind == "cpu"`, refuse to load and name the tables (`loft build`
-   never writes such a file; this guards hand-made ones).
+   never writes such a file; this guards hand-made ones). (`fill.kind` is `map`, `scan`, `cpu` or, in version 2,
+   `replay`: a table the frame's replays write.)
 3. **Buffers.** For each `buffers[i]`: `createBuffer({ label, size, usage })`. If it has `init`, and that blob is not
    empty: `queue.writeBuffer(buffer, 0, blob bytes)`.
 4. **Samplers.** For each `samplers[i]`: `createSampler(descriptor)` (no mipmaps; `mipmapFilter` default).
@@ -76,10 +77,12 @@ Given a view: camera, width, height, time, input and param values, `construction
    - `frame`: 48 f32 (below).
    - `inputs`: `inputFloats` f32. Each input's `def` at its `slot`; the view's value over it (a scalar, or as many
      floats as the input's type: f32 1, vec2 2, vec3 3, vec4 4); then, if an input is named `time`, the view's time
-     at its slot. A view naming an unknown input or param is an error, not ignored.
+     at its slot; then, for each `frame.replay[i]` (version 2), its step n at its `slot` (Replays, below). A view
+     naming an unknown input or param is an error, not ignored, and so is a view setting a replay's slot.
    - `params`: `paramFloats` f32. Each param's `def` at its `slot`, the view's value over it. `min` and `max` are
      for editors; a loader does not clamp.
-2. **Pose.** One command encoder. If `frame.pose` is not empty: one compute pass; for each dispatch: `setPipeline`,
+2. **Pose.** One command encoder. If `frame.pose` or `frame.replay` is not empty: one compute pass; first each
+   replay's dispatches (Replays, below), then for each dispatch of `frame.pose`: `setPipeline`,
    `setBindGroup(k, bindGroups[k])` for each listed group, `dispatchWorkgroups(workgroups)`. Dispatches run in order
    and each sees what the earlier ones wrote.
 3. **Bounds.** If `frame.bounds.kind == "read"`: for each grid, `copyBufferToBuffer(buffers[from], fromOffset,
@@ -105,6 +108,28 @@ loader does nothing different for it.
 
 All writes of a frame are issued before the submit that reads them. (A `writeBuffer` is ordered with submits, not with
 passes inside one encoder: a write between two passes of one encoder lands before both.)
+
+### Replays (version 2)
+
+A scene may hold state stepped by its own function (`recur`), baked on a GPU by `loft build`. Its baked states are
+ordinary static blobs (a buffer's `init`): a loader never bakes. When every state is kept that is all there is, and
+the file is version 1. When the history is too large, every `every`-th state is kept (a checkpoint), and the frame
+rebuilds the two states it reads from the nearest checkpoint: that is `frame.replay`, and the file is version 2.
+
+Each `frame.replay[i]` has `slot`, `rate`, `start`, `steps`, `every` and three dispatches, `first`, `ping`, `pong`
+(each like a pose dispatch: `pipeline`, `bindGroups`, `workgroups`). For a frame at time t (the view's time, the one
+written into `time`):
+
+- `n = min(max(floor((t - start) * rate), 0), max(steps - 1, 0))`, in f64, and `k = n mod every`.
+- Write n as an f32 at float `slot` of the inputs (step 1 above). The shaders read it there, so every host replays to
+  exactly the n the CPU computed.
+- In the pose pass, before `frame.pose`: dispatch `first`, then for j = 1 .. k, `ping` when j is odd and `pong` when j
+  is even: k + 1 dispatches.
+
+(What they do, for a reader: `first` reads checkpoint floor(n / every) from the static buffer, copies it into one
+per-frame table and writes the next state into another; `ping` and `pong` each step one table into the other. The
+shaders read states n and n + 1 from the two tables by the parity of k. On the GPU that baked, the replay repeats the
+bake's own arithmetic, so it is bitwise the baked states; on another, within k steps of rounding.)
 
 ### The frame uniform (`frame` write)
 
@@ -159,13 +184,17 @@ The plan is the one per-frame procedure a loader runs on the CPU; phase 4 moves 
 - **Curves.** `curves.buffer` holds `curves.floats` f32 (rows of 64 vec4 samples). A client may replace the whole
   contents with `writeBuffer` (an editor moving a curve); the length must not change.
 - **Reading tables back** (tools): `dynamic` lists the per-frame table buffers (their labels are their names);
-  `tables` says where each table lives (byte offset `offset * 16`) and how it is filled (`map` or `scan` at a level).
+  `tables` says where each table lives (byte offset `offset * 16`) and how it is filled (`map` or `scan` at a level,
+  or `replay` naming its recurrence).
 
 ## What is not in the file, and why
 
 - JavaScript of any kind. A table filled by JavaScript (`cpu`) is refused by `loft build` by name, and counted by
   `loft build` and `loft render --artefact` ("n cpu (not data)").
 - The CPU reading of the pose (`Artefact.pose`): for checks, baking and tests only.
+- A bake. A scene's recurrences are baked once, on the GPU of the machine that runs `loft build`, and their states are
+  static blobs; the step's bake module is not in the file. A file that keeps checkpoints carries the step only as the
+  replay's three modules.
 - A scene graph, meshes, materials, animation channels: there are none. Geometry is made in vertex shaders from
   tables; motion is compute stages; paint is fragment functions.
 
@@ -174,3 +203,7 @@ The plan is the one per-frame procedure a loader runs on the CPU; phase 4 moves 
 `version` changes whenever a loader written for the previous one would draw a file wrongly or fail on it: a new field a
 loader must act on, a changed meaning, a new `FrameWrite` or command kind. A field a loader may ignore does not
 change it. The preludes are chunks, so changing them does not change the format.
+
+- 1: the format above without `frame.replay`.
+- 2 (2026-11-14): `frame.replay` and the table fill `replay`. Optional: a file that does not need them is written as
+  version 1, byte for byte as before. A loader for 2 reads 1.

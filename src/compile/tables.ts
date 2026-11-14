@@ -24,13 +24,15 @@
 // (`Artefact.statics`), so a brick of megabytes costs nothing per frame. They share the binding budget with the
 // per-frame buffers.
 
-import { POSE_WORKGROUP, type CpuUpload, type DynamicBuffer, type FrameState, type PoseStage, type StaticBuffer, type TableFillKind, type TableInfo } from "../artefact.ts";
+import { Baked, POSE_WORKGROUP, type CpuUpload, type DynamicBuffer, type FrameState, type PoseStage, type Recurrence, type StaticBuffer, type TableFillKind, type TableInfo } from "../artefact.ts";
 import {
-  children, emitWgsl, fetch, fold, leaves, listOf, replace, splitOn, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type LibFn, type NumTy,
+  children, emitWgsl, fetch, fold, leaves, listOf, replace, splitOn, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy,
   type ProgramTable, type TableFill, type TableFrame, type TablePrep, type TableProgram, type TableSource, type V,
 } from "../expr.ts";
+import { recurTable, type RecurState } from "../map/recur.ts";
 import type { TableRef } from "./context.ts";
 import { plan, type Program, type Rate } from "./rates.ts";
+import { bakeWgsl, cpuStart, cpuStep, replayWgsl, stepCode, type StaticRead } from "./recur.ts";
 
 /** WebGPU's default limits, which every adapter supports. */
 export const STORAGE_BUFFERS_PER_STAGE = 8;
@@ -52,6 +54,8 @@ export type TableCompiler = {
   cpu(roots: readonly Expr[]): (env: Env) => (V | boolean)[];
   /** The WGSL binding of leaves, free variables mapped through `vars`. */
   wgsl(vars: Readonly<Record<string, string>>): Bind;
+  /** An input's float offset in `inputs` (a recurrence's replay writes its step number there). */
+  input(spec: InputSpec): number;
 };
 
 /** A map run expanded: entries `start .. start + count - 1`, each `lanes` at the run index `i`. */
@@ -69,7 +73,11 @@ type Canon =
     readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[];
   }
   /** `reads`: the tables its fill compiles expressions over (a fill may also read others through `frame.table`). */
-  | { readonly kind: "cpu"; readonly why: string; readonly fill: TableFill; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] };
+  | { readonly kind: "cpu"; readonly why: string; readonly fill: TableFill; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] }
+  /** A recurrence's kept states (static): filled by its bake, on a host's GPU (src/map/recur.ts). */
+  | { readonly kind: "kept"; readonly state: RecurState; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] }
+  /** One of the two tables a checkpointed recurrence's frame replays into, before every pose stage. */
+  | { readonly kind: "replay"; readonly state: RecurState; readonly half: "even" | "odd"; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] };
 
 /**
  * A declared table: one the scene (or a drawable) declared, classified when declared; or a frame-values table the
@@ -124,7 +132,12 @@ export type TableLayout = {
   readonly stages: readonly PoseStage[];
   /** Every dynamic table: where it is and how it is filled. */
   readonly info: readonly TableInfo[];
+  /** The recurrences, in the order they bake (each after those it reads), and each kept table's entry. */
+  readonly recurrences: readonly Recurrence[];
+  readonly kept: ReadonlyMap<TableSource, KeptPlace>;
 };
+/** A kept table's bake state, and whether its rest stand-in (every state the start) has been written. */
+type KeptPlace = { readonly state: RecurState; readonly baked: Baked; standIn: boolean };
 
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 const accessor = (name: string): string => `t_${name}`;
@@ -161,6 +174,20 @@ const STATIC: TableFillKind = { kind: "cpu", why: "filled once, at build" };
  * `prep` is the compiler's, for hand-written fills; `c` registers a program's expressions.
  */
 function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: Program) => readonly Expr[], record: (g: readonly Program[]) => void): Canon {
+  const r = recurTable(t);
+  if (r !== undefined) {
+    switch (r.part) {
+      case "kept":
+        // Declares what the step reads (static tables, other recurrences); `prev` is bound where the step is emitted.
+        c.register([...r.state.startLanes, ...r.state.stepLanes]);
+        return { kind: "kept", state: r.state, reads: [], authored: [] };
+      case "even": case "odd":
+        // The replay reads the kept checkpoints and the host's step number.
+        c.register([fetch(r.state.table, 0, 0), r.state.replay!.step]);
+        return { kind: "replay", state: r.state, half: r.part, reads: [], authored: [] };
+      case "prev": throw new Error(`internal: recurrence "${r.state.name}": prev is never declared`);
+    }
+  }
   if (!("program" in t)) {
     const reads: TableSource[] = [];
     const fill = t.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
@@ -257,6 +284,9 @@ const unpadded = (ty: NumTy, e: Expr<"vec4">): Expr => {
 function cpuFill(t: TableSource, canon: Canon, c: TableCompiler): TableFill {
   switch (canon.kind) {
     case "cpu": return canon.fill;
+    // Read from the static data its bake wrote (`poseFrame`), never filled here.
+    case "kept": return () => {};
+    case "replay": return replayFill(canon.state, canon.half);
     case "map": {
       const L = t.lanes * 4;
       let runs: ((env: Env) => (V | boolean)[])[] | undefined;
@@ -295,6 +325,36 @@ function cpuFill(t: TableSource, canon: Canon, c: TableCompiler): TableFill {
   }
 }
 
+/**
+ * The CPU twin of a frame's replay (src/compile/recur.ts `replayWgsl`): from checkpoint floor(n / K), the step run
+ * k + 1 times, the two tables left as the GPU leaves them (which holds n by the parity of k). n is the host's step
+ * number (the hidden input), so the CPU replays to exactly the step the GPU does; both halves are made once per frame.
+ */
+function replayFill(s: RecurState, half: "even" | "odd"): TableFill {
+  const made = new WeakMap<TableFrame, { even: Float32Array; odd: Float32Array }>();
+  const name = (s.replay!.step.node as { spec: InputSpec }).spec.name;
+  const K = (s.kept as { every: number }).every, S4 = (s.entries + 1) * s.lanes * 4;
+  let step: ReturnType<typeof cpuStep> | undefined;
+  return (frame, out) => {
+    let pair = made.get(frame);
+    if (pair === undefined) {
+      step ??= cpuStep(s);
+      const n = frame.env.inputs[name] as number;
+      const c = Math.floor(n / K), k = n - c * K;
+      const kept = frame.table(s.table);
+      const even = kept.slice(c * S4, (c + 1) * S4), odd = new Float32Array(S4);
+      step(even, odd, (t) => frame.table(t));
+      for (let j = 1; j <= k; j++) {
+        if (j % 2 === 1) step(odd, even, (t) => frame.table(t));
+        else step(even, odd, (t) => frame.table(t));
+      }
+      pair = { even, odd };
+      made.set(frame, pair);
+    }
+    out.set(pair[half]);
+  };
+}
+
 export class Tables {
   private readonly declared = new Map<TableSource, Declared>();
   private readonly names = new Map<string, TableSource>();
@@ -306,6 +366,8 @@ export class Tables {
   declare(t: TableSource, prep: TablePrep): TableRef {
     const ref = { name: t.name, wgsl: accessor(t.name) };
     if (this.declared.has(t)) return ref;
+    // A recurrence's previous state is read only inside its step, which binds it itself (src/compile/recur.ts).
+    if (recurTable(t)?.part === "prev") return ref;
     if (this.sealed) throw new Error(`table "${t.name}" was first used after the artefact was laid out`);
     if (!IDENT.test(t.name)) throw new Error(`table "${t.name}": names must be identifiers (they name WGSL functions)`);
     if (this.names.has(t.name)) throw new Error(`two different tables are named "${t.name}" (two things with one name?)`);
@@ -410,7 +472,7 @@ export class Tables {
       switch (c.kind) {
         case "map": c.runs.forEach((r, k) => { if (r.count === 1) sites.push({ d, program: runProgram(`${d.table.name}_${k}`, r), run: k }); }); break;
         case "scan": sites.push({ d, program: scanProgram(d.table.name, c), run: -1 }); break;
-        case "cpu": break;
+        case "cpu": case "kept": case "replay": break;
       }
     }
     const lifted = plan(sites.map((s) => s.program), this.rateMemo).lifted;
@@ -426,7 +488,7 @@ export class Tables {
           break;
         }
         case "scan": s.d.canon = withScanRoots(c, roots); break;
-        case "cpu": throw new Error("internal: a cpu table has no program to lower");
+        case "cpu": case "kept": case "replay": throw new Error("internal: a cpu or recurrence table has no program to lower");
       }
     });
     for (const d of this.declared.values()) {
@@ -466,9 +528,55 @@ export class Tables {
     const wgsl = groupWgsl(dynamic, statics, placed, "read");
     const stations = [...placed.keys()].filter((t) => t.role === "stations").reduce((n, t) => n + t.entries, 0);
     const info = [...placed.values()].filter((p) => p.kind === "dynamic").map((p): TableInfo => ({ name: p.table.name, buffer: bufferName(p.buffer), offset: p.offset, vec4s: vec4sOf(p.table), lanes: p.table.lanes, fill: p.fill }));
-    const stages = poseStages(placed, groupWgsl(dynamic, statics, placed, "read_write"), this.c);
-    return { dynamic, statics, wgsl, placed, stations, stages, info };
+    const group1 = groupWgsl(dynamic, statics, placed, "read_write");
+    const stages = poseStages(placed, group1, this.c);
+    return { dynamic, statics, wgsl, placed, stations, stages, info, ...recurrencesOf(placed, statics, group1, this.c) };
   }
+}
+
+/**
+ * Each recurrence as a host bakes it (src/artefact.ts `Recurrence`), in an order where each comes after the ones its step
+ * reads: the bake's module, and for a checkpointed one the frame's replay stages.
+ */
+function recurrencesOf(placed: ReadonlyMap<TableSource, Placed>, statics: readonly StaticBuffer[], group1: string, c: TableCompiler): Pick<TableLayout, "recurrences" | "kept"> {
+  const keptOf = new Map<RecurState, Placed>();
+  for (const p of placed.values()) if (p.canon.kind === "kept") keptOf.set(p.canon.state, p);
+  const order: RecurState[] = [];
+  const visit = (s: RecurState): void => {
+    if (order.includes(s)) return;
+    for (const a of s.after) visit(a);
+    order.push(s);
+  };
+  for (const s of keptOf.keys()) visit(s);
+  const kept = new Map<TableSource, KeptPlace>();
+  const recurrences = order.map((s): Recurrence => {
+    const p = keptOf.get(s)!;
+    const code = stepCode(s, (vars) => c.wgsl(vars));
+    const reads: StaticRead[] = leaves([...s.startLanes, ...s.stepLanes]).tables.filter((t) => t !== s.prev).map((t) => {
+      const q = placed.get(t)!;
+      if (q.kind !== "static") throw new Error(`internal: recurrence "${s.name}" reads the per-frame table "${t.name}" (refused at recur)`);
+      return { table: t, buffer: staticName(q.buffer), offset: q.offset };
+    });
+    const bake = bakeWgsl(s, code, reads);
+    const even = s.replay && placed.get(s.replay.even), odd = s.replay && placed.get(s.replay.odd);
+    let replay: Recurrence["replay"];
+    if (s.replay !== undefined && even !== undefined && odd !== undefined) {
+      const slot = c.input((s.replay.step.node as { spec: InputSpec }).spec);
+      const at = { even: { buffer: bufferName(even.buffer), offset: even.offset }, odd: { buffer: bufferName(odd.buffer), offset: odd.offset }, kept: { buffer: staticName(p.buffer), offset: p.offset }, step: `inputs[${slot}]` };
+      const w = replayWgsl(s, code, group1, at);
+      const stage = (what: string, wgsl: string): PoseStage => ({ label: `replay ${s.name} ${what}`, wgsl, invocations: s.entries });
+      replay = { slot, first: stage("first", w.first), ping: stage("ping", w.ping), pong: stage("pong", w.pong) };
+    }
+    const baked = new Baked();
+    kept.set(s.table, { state: s, baked, standIn: false });
+    return {
+      name: s.name, entries: s.entries, lanes: s.lanes, rate: s.rate, from: s.from, total: s.total, first: s.first, steps: s.steps, start: s.start,
+      kept: s.kept, states: s.states,
+      data: statics[p.buffer]!.data.subarray(p.offset * 4, (p.offset + vec4sOf(s.table)) * 4),
+      bake: { wgsl: bake.wgsl, statics: bake.statics }, ...(replay === undefined ? {} : { replay }), baked,
+    };
+  });
+  return { recurrences, kept };
 }
 
 /** Bind group 1 declarations and one accessor per table; `access` is how the dynamic buffers are bound. */
@@ -491,6 +599,8 @@ function schedule(all: readonly { table: TableSource; canon: Canon }[]): Map<Tab
   const force = (t: TableSource, by: string): void => {
     if (t.role === "static" || out.has(t)) return;
     const c = canonOf.get(t)!;
+    // Only the GPU replays a recurrence: a CPU table reading one would draw a second engine's trajectory.
+    if (c.kind === "replay") throw new Error(`table "${by}" is filled on the CPU but reads the recurrence "${c.state.name}", which only the GPU replays; read it from a map (an expression), not a hand-written fill`);
     out.set(t, { kind: "cpu", why: c.kind === "cpu" ? c.why : `read by ${by}, which is filled on the CPU` });
     for (const r of c.reads) force(r, t.name);
   };
@@ -501,6 +611,8 @@ function schedule(all: readonly { table: TableSource; canon: Canon }[]): Map<Tab
     const known = level.get(t);
     if (known !== undefined) return known;
     if (visiting.includes(t)) throw new Error(`pose: table "${t.name}" depends on itself (through ${[...visiting, t].map((x) => x.name).join(" -> ")})`);
+    // Replays run before every pose stage: a table reading one can be at level 0.
+    if (canonOf.get(t)!.kind === "replay") return -1;
     visiting.push(t);
     const deps = canonOf.get(t)!.reads.filter((r) => r.role !== "static" && out.get(r)?.kind !== "cpu");
     const l = deps.reduce((m, r) => Math.max(m, levelOf(r) + 1), 0);
@@ -513,7 +625,9 @@ function schedule(all: readonly { table: TableSource; canon: Canon }[]): Map<Tab
     switch (canon.kind) {
       case "map": out.set(table, { kind: "map", level: levelOf(table) }); break;
       case "scan": out.set(table, { kind: "scan", level: levelOf(table) }); break;
+      case "replay": out.set(table, { kind: "replay", recurrence: canon.state.name }); break;
       case "cpu": throw new Error("internal: a cpu table was not scheduled on the CPU");
+      case "kept": throw new Error("internal: a kept table is static");
     }
   }
   return out;
@@ -601,7 +715,7 @@ function tableCode(p: Placed, c: TableCompiler, fn: string): TableCode {
   switch (canon.kind) {
     case "map": return mapCode(p, canon, c, fn);
     case "scan": return scanCode(p, canon, c, fn);
-    case "cpu": throw new Error(`internal: table "${p.table.name}" is filled on the CPU and has no stage code`);
+    case "cpu": case "kept": case "replay": throw new Error(`internal: table "${p.table.name}" is filled on the CPU, by a bake or by a replay, and has no stage code`);
   }
 }
 
@@ -612,7 +726,7 @@ function poseStages(placed: ReadonlyMap<TableSource, Placed>, group1: string, c:
     if (p.kind !== "dynamic") continue;
     const f = p.fill;
     switch (f.kind) {
-      case "cpu": break;
+      case "cpu": case "replay": break;
       case "map": case "scan": (byLevel[f.level] ??= []).push(p); break;
     }
   }
@@ -637,15 +751,41 @@ function poseStages(placed: ReadonlyMap<TableSource, Placed>, group1: string, c:
 
 // ---- the CPU reading ------------------------------------------------------------------------------------------------
 
+/**
+ * What a CPU reading does with a recurrence no host has baked yet: refuse (every reading of the scene), or read its
+ * start state at every time (`start`: only the compiler's rest frame, which measures shapes at compile, before any bake).
+ */
+export type Unbaked = "refuse" | "start";
+
+/** A static table's data, as a CPU reading may see it (a recurrence's kept states only once baked: `Unbaked`). */
+function staticData(layout: TableLayout, p: Placed, unbaked: Unbaked): Float32Array {
+  const data = layout.statics[p.buffer]!.data.subarray(p.offset * 4, (p.offset + vec4sOf(p.table)) * 4);
+  const k = layout.kept.get(p.table);
+  if (k === undefined || k.baked.done !== undefined) return data;
+  switch (unbaked) {
+    case "refuse":
+      throw new Error(`the recurrence "${k.state.name}" is not baked: a CPU reading of a scene with baked state needs its states from a GPU. Fix: load the artefact on a host first (createHost(device).load(artefact) bakes it); \`loft check\` does this for you`);
+    case "start": {
+      // Written once, and overwritten by the bake (a host's load), which is the only other writer.
+      if (!k.standIn) {
+        const s = cpuStart(k.state, (t) => staticData(layout, layout.placed.get(t)!, unbaked));
+        for (let j = 0; j < k.state.states; j++) data.set(s, j * s.length);
+        k.standIn = true;
+      }
+      return data;
+    }
+  }
+}
+
 /** One frame's buffers, with every table filled on first read (so a table may read another; a cycle throws). */
-export function poseFrame(layout: TableLayout, env: (state: FrameState) => Omit<Env, "tables">, state: FrameState, clock?: Map<string, number>): { frame: TableFrame; buffers: Float32Array[] } {
+export function poseFrame(layout: TableLayout, env: (state: FrameState) => Omit<Env, "tables">, state: FrameState, clock?: Map<string, number>, unbaked: Unbaked = "refuse"): { frame: TableFrame; buffers: Float32Array[] } {
   const buffers = layout.dynamic.map((d) => new Float32Array(d.vec4s * 4));
   const filled = new Set<TableSource>(), filling: TableSource[] = [];
   const children: number[] = [];
   const table = (t: TableSource): Float32Array => {
     const p = layout.placed.get(t);
     if (!p) throw new Error(`pose: the table "${t.name}" is not in this artefact (nothing drawn reads it)`);
-    if (p.kind === "static") return layout.statics[p.buffer]!.data.subarray(p.offset * 4, (p.offset + vec4sOf(t)) * 4);
+    if (p.kind === "static") return staticData(layout, p, unbaked);
     const view = buffers[p.buffer].subarray(p.offset * 4, (p.offset + vec4sOf(t)) * 4);
     if (filled.has(t)) return view;
     if (filling.includes(t)) throw new Error(`pose: table "${t.name}" depends on itself (through ${[...filling, t].map((x) => x.name).join(" -> ")})`);
@@ -689,7 +829,7 @@ export function cpuPoseFunction(layout: TableLayout, env: (state: FrameState) =>
     const table = (t: TableSource): Float32Array => {
       const p = layout.placed.get(t);
       if (!p) throw new Error(`pose: the table "${t.name}" is not in this artefact (nothing drawn reads it)`);
-      if (p.kind === "static") return layout.statics[p.buffer]!.data.subarray(p.offset * 4, (p.offset + vec4sOf(t)) * 4);
+      if (p.kind === "static") return staticData(layout, p, "refuse");
       if (!onCpu(p)) throw new Error(`pose: a CPU fill read table "${t.name}", which the GPU fills; read it through an expression (so the scheduler sees it) or port the reader`);
       const seen = data.get(t);
       if (seen) return seen;

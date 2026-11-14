@@ -5,7 +5,7 @@
 // Skeletons are what is measured: a body's chain of capsules (the same chain that casts its shadow). Their radii are
 // the larger of the section's half-width and half-height, so distances are conservative for flattened sections.
 
-import type { Artefact, Camera, FrameState } from "./artefact.ts";
+import { replayClocks, replayStep, type Artefact, type Camera, type FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
 import { add, Expr, lift, time, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
 import type { Score } from "./geom/expression.ts";
@@ -20,6 +20,7 @@ import type { ChainSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_distance.ts";
 import { RingWave } from "./geom/ring.ts";
+import { stateChecks } from "./check_state.ts";
 
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
@@ -46,6 +47,8 @@ export class Probe {
       inputs.set(v, s.slot);
     }
     for (const name of Object.keys(this.inputs)) if (!a.inputs.some((s) => s.name === name)) throw new Error(`check: the scene has no input "${name}"`);
+    // The step a checkpointed recurrence replays to, as a host sets it from the time.
+    for (const r of replayClocks(a.recurrences)) inputs[r.slot] = replayStep(r, t).n;
     return { time: t, inputs, params: Float32Array.from(a.params.map((p) => p.def)), curves: a.curves };
   }
 
@@ -891,10 +894,13 @@ export function budget(o: { readonly triangles: number }): Check {
 
 // ---- running ------------------------------------------------------------------------------------------------------
 
-/** Run checks over a scene with inputs held at the given values (defaults otherwise). */
+/**
+ * Run checks over a scene with inputs held at the given values (defaults otherwise). A scene with baked state also gets
+ * its seam and drift measured (src/check_state.ts); its artefact must be baked (`compiled`, loaded on a host first).
+ */
 export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[] {
   const probe = new Probe(o.compiled ?? compileScene(scene), o.inputs ?? {});
-  return checks.map((c) => c.run(probe));
+  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)];
 }
 
 /** The verdicts as a plain-text table. */
