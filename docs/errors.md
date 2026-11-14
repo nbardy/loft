@@ -70,3 +70,4 @@ and last line.
 | 21 | `load: ...: the default export is a design` | a design exported as default | `export const design = design({...})` |
 | 22 | `scene(): given sea: ... (the old key) and no ground` | the key before 2026-11 | `ground: sea({...})` |
 | 23 | `load: ... Export named 'spiralTub' not found` | a misspelt import | `spiralTube` (suggested) |
+| 24 | `scene(): given lights: 8 lights; expected at most 7 besides the sun` | each light is a term in every lit fragment | one function for many sources (a row by repetition) |

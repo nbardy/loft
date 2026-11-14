@@ -91,7 +91,7 @@ test("a medium's optical depth on the GPU is the sum of its parts, as numericall
     banks: [bank({ height: 1, thickness: 2, density: 0.2, colour: [1, 1, 1], edge: { through: [3, 0], clear: [1, 0.2], softness: 1.5 } })],
   });
   const c = compileScene(scene({ ground: swell, things: [draw.density("paircloud", m, OPTS)], style: toon(), sun: [0.3, 1, 0.2] }));
-  const tau = tauFunction(m, "probe_tau", accessMedium(m, [0, 1, 0], (t) => ({ wgsl: `t_${t.name}` })));
+  const tau = tauFunction(m, "probe_tau", accessMedium(m, [0, 1, 0], [], (t) => ({ wgsl: `t_${t.name}` })));
   const rays: { o: number[]; d: number[]; t0: number; t1: number }[] = [
     { o: [-12, 4.2, 0.1], d: [1, 0, 0], t0: 0, t1: 30 },          // through both blobs
     { o: [-10, 0.8, -3], d: norm([1, 0.02, 0.15]), t0: 0, t1: 25 }, // along the fog, across the bank's edge

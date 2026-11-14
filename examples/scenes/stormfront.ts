@@ -54,7 +54,6 @@ const shaft = [0, 1, 2].map((k) => blob({
 const storm = medium("front", {
   puffs: [...head.puffs, ...shaft],
   banks: [],
-  flashes: [boltFlash(strike, { power: 6, colour: FLASH, reach: 14, lift: 3 }), sheet.flash],
 });
 const cloud = draw.density("front", storm, {
   bounds: unionBox([head.bounds, { min: [-120, -1, -120], max: [120, 8, 120] }]),
@@ -95,6 +94,8 @@ export default scene({
     shadow: [0.4, 0.42, 0.62],
   }),
   sun: [0.3, 0.7, 0.65],
+  // The bolt and the sheet lightning light the cloud, the flier, the ship and the sea.
+  lights: [boltFlash(strike, { power: 6, colour: FLASH, reach: 14, lift: 3 }), sheet.flash],
   cameras: {
     game: { kind: "perspective", eye: [18, 30, 25], target: [2.5, 3, 0], fovY: 0.7 },
     hero: { kind: "perspective", eye: [17, 2.5, -14], target: [2, 6, 0], fovY: 0.95 },

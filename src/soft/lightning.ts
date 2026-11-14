@@ -13,7 +13,7 @@ import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../c
 import { hash33 } from "../lib/noise.ts";
 import type { F, P3 } from "../map/types.ts";
 import { strokes, type Strokes } from "./glow.ts";
-import { flash, type Flash } from "./medium.ts";
+import { lamp, type Light } from "../light.ts";
 
 /** When strikes happen: one every `every` seconds from `first`, each moved later by up to `jitter` of a period. */
 export type StrikeSchedule = { readonly first: number; readonly every: number; readonly jitter: number; readonly seed: number };
@@ -185,26 +185,27 @@ export function bolt(spec: BoltSpec): Bolt {
 }
 
 /**
- * The light a bolt casts into a medium: a `flash` at the bolt's top, `lift` above it (inside the cloud), whose power is
- * `power` times the strike's flicker. It cannot light along the channel: it is one point, so the cloud glows round the
- * top and not where the channel runs below the cloud's base; for that add flashes at points of the channel.
+ * The light a bolt casts: a `lamp` at the bolt's top, `lift` above it (inside the cloud), its colour `colour` times
+ * `power` times the strike's flicker. Put it in the scene's `lights`: it lights the cloud, bodies, the ground and the
+ * sea. It cannot light along the channel: it is one point, so the cloud glows round the top and not where the channel
+ * runs below the cloud's base; for that add lamps at points of the channel.
  */
-export function boltFlash(b: Bolt, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number; readonly lift: number }): Flash {
-  return flash({ at: add(b.top, vec3(0, o.lift, 0)), power: mul(b.flash, o.power), colour: o.colour, reach: o.reach });
+export function boltFlash(b: Bolt, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number; readonly lift: number }): Light {
+  return lamp(add(b.top, vec3(0, o.lift, 0)), { colour: mul(vec3(...o.colour), mul(b.flash, o.power)), reach: o.reach });
 }
 
 /**
- * Lightning hidden inside a cloud, with no channel to the ground: for each strike of the schedule, a `flash` at a
- * point of `box` hashed from the strike's index, its brightness the flicker (capped at 1.2). Returns the flash for the
- * medium, the brightness (to drive a `skyFlash`) and where it is. It cannot place the light where the cloud is dense:
+ * Lightning hidden inside a cloud, with no channel to the ground: for each strike of the schedule, a `lamp` at a
+ * point of `box` hashed from the strike's index, its brightness the flicker (capped at 1.2). Returns the light (for the
+ * scene's `lights`), the brightness (to drive a `skyFlash`) and where it is. It cannot place the light where the cloud is dense:
  * the point is uniform in the box, so in a sparse corner the flash lights little.
  */
-export function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number }): { readonly flash: Flash; readonly brightness: F; readonly at: P3 } {
+export function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number }): { readonly flash: Light; readonly brightness: F; readonly at: P3 } {
   const { index, since } = strikeAt(s);
   const h = hash33(vec3(index, s.seed, 11));
   const at = vec3(mix(box.min[0], box.max[0], h.x), mix(box.min[1], box.max[1], h.y), mix(box.min[2], box.max[2], h.z));
   const brightness = min(flicker(since), 1.2);
-  return { flash: flash({ at, power: mul(brightness, o.power), colour: o.colour, reach: o.reach }), brightness, at };
+  return { flash: lamp(at, { colour: mul(vec3(...o.colour), mul(brightness, o.power)), reach: o.reach }), brightness, at };
 }
 
 /**

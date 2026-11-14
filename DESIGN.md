@@ -961,17 +961,17 @@ WGSL and a JavaScript twin; both are tested against numerical integration to 1e-
 ### 8.2 Media and `draw.density` (`medium.ts`, `density.ts`, `cloud.ts`)
 
 ```ts
-const m = medium("storm", { puffs: [...thunderhead({...}).puffs, layer({...})], banks: [bank({...})], flashes: [...] });
+const m = medium("storm", { puffs: [...thunderhead({...}).puffs, layer({...})], banks: [bank({...})] });   // lit by scene({ lights })
 draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.3, shadowing: 0.8, detail: { kind: "noise", amount: 1, scale: 2.5 }, haze: 0.004 })
 ```
 
 - Kinds: `blob` (bounded Gaussian), `layer` (Gaussian in height: haze, ground fog), `bank` (a layer ending at a soft
-  vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D), `flash` (a point light
-  whose power is an expression of time). Every number may follow time. `Medium.density(p)` is the same sum as an
+  vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D). The scene's `lights`
+  (src/light.ts; lightning is `boltFlash`/`sheetFlash`, each a `lamp`) light it from inside. Every number may follow time. `Medium.density(p)` is the same sum as an
   expression (the 7.1 `Density` signature).
 - Per frame on the CPU (the one library table still `cpu` after phase 1 of docs/gpu_native.md): blobs are evaluated, sorted on a Morton curve and grouped 8 to a bounding
   sphere (`<name>_clusters`); the light pass computes each blob's optical depth through the *other* blobs toward the sun
-  and the zenith, one radius behind and in front of its centre, and the flash light reaching it through the medium.
+  and the zenith, one radius behind and in front of its centre, and each light's arrival at its centre through the medium.
   O(N^2), culled by cluster spheres and closest approach.
 - Per pixel: the bound's back faces are drawn at depth 0 (so the camera may be inside), the ray is clipped to the box,
   to `scene_position` (bodies inside a cloud are veiled by exactly what is in front of them and the cloud has a soft
@@ -980,7 +980,7 @@ draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.
   and banks go in 8 pieces into those bins or 8 fixed bins over the whole ray; bins are merged by depth and composited
   front to back. Nothing is sorted; nothing is dropped; alpha is exact.
 - Light: octaves of extinction (single plus softer multiple-scattering lobes), a Henyey-Greenstein forward lobe, sky
-  light = the style's `sky` at the zenith, flashes per blob. `shadowing` scales depths toward lights (stylised: < 1
+  light = the style's `sky` at the zenith, the scene's lights per blob. `shadowing` scales depths toward lights (stylised: < 1
   keeps sunlit faces white); a blob's own shadow counts a third (at full strength every lump drew as its own sphere).
 - `cloud({ at, size, profile, blobs, turbulence, billow, drift, density, colour, seed, seconds })`: three tiers of puffs
   (few large core, medium lobes, many small dense surface puffs: a Gaussian's edge is crisper the denser it is), a
@@ -1054,8 +1054,7 @@ purity); fewer blobs with detail noise is done (above).
 ### 8.5 Known limits
 
 - Close up (inside a cloud's edge) the Gaussians read as soft blur; the detail noise thins edges but does not add
-  sharp structure. Clouds do not shadow layers, banks, the sea or bodies; the flash does not light bodies except
-  through `skyFlash`. Order inside one depth bin is lost (a bin is ~1/24 of the blobs' depth range).
+  sharp structure. Clouds do not shadow layers, banks, the sea or bodies; a light lights a cloud only at its blobs' centres. Order inside one depth bin is lost (a bin is ~1/24 of the blobs' depth range).
 
 ## 12. Level of detail, the sea's grid, outlines and profiling (as built, 2026-11-11)
 

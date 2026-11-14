@@ -11,7 +11,7 @@ export { afloat, afloatFrame, type AfloatSpec, type Waters } from "./geom/afloat
 export { rigid } from "./geom/rig.ts";
 // Soft things, evaluated per pixel: volumes integrated in closed form, glows, lightning, rain. Their Gaussian
 // integrals and WGSL libraries are internal (src/soft/gauss.ts, medium.ts).
-export { bank, blob, flash, layer, medium, unionBox, type Medium, type Bank, type BankSpec, type BlobSpec, type Box, type Flash, type LayerSpec, type Puff } from "./soft/medium.ts";
+export { bank, blob, layer, medium, unionBox, type Medium, type Bank, type BankSpec, type BlobSpec, type Box, type LayerSpec, type Puff } from "./soft/medium.ts";
 export { type DensityDrawable, type DensityOptions } from "./soft/density.ts";
 export { cloud, type Cloud, type CloudSpec } from "./soft/cloud.ts";
 export { flare, glow, glows, strokes, type GlowDrawable, type FlareOptions, type GlowOptions, type Shape, type Strokes, type Veil } from "./soft/glow.ts";

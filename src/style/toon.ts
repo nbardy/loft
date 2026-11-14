@@ -5,8 +5,8 @@
 //
 // Lights (src/light.ts): everything the sun gives (bands, rim, gloss) times its amount; each local light the paint in
 // its hue, banded by N.L times the luminance arriving (rings where 0.1 and 0.3 arrive), with a gloss at its half
-// vector. The plane takes the same rings. The sky, the fog and the sea are daylight scaled by the sun's amount: a local
-// light does not reach the sea.
+// vector. The plane takes the same rings. The sky, the fog and the sea are daylight scaled by the sun's amount; on the
+// sea a local light lays a wash of its colour and a glint at its half vector.
 
 import { add, div, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
@@ -157,6 +157,15 @@ export function toon(spec: ToonSpec = {}): Style {
       c = mix(c, foam, mul(glint, 0.8));
       c = mix(c, foam, ctx.foam);
       c = skyLit(ctx, mix(c, horizon, fogOf(ctx.distance)));
+      // Each local light: a wash of its colour where it falls on the water, and the sea's banded glint at its half
+      // vector (a lightning flash across the swell).
+      const sunlit = c;
+      c = ctx.lights("sum", (l, which) => {
+        switch (which) {
+          case "sun": return sunlit;
+          case "local": return mul(l.amount, add(mul(saturate(l.toward.y), 0.15), mul(smoothstep(0.985, 0.99, dot(ctx.normal, normalize(add(l.toward, ctx.view)))), 0.8)));
+        }
+      });
       // Opaque where foam or grazing; see-through looking down, where submerged bodies show (already tinted).
       const alpha = saturate(max(add(0.55, mul(grazing, 0.45)), ctx.foam));
       return vec4(c, alpha);

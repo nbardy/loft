@@ -98,7 +98,7 @@ export const draw = {
   copies: drawCopies,
   /**
    * A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to
-   * the opaque scene, lit by the sun, the sky and flashes inside it (`src/soft/density.ts`).
+   * the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
    */
   density(name: string, medium: Medium, o: DensityOptions): Drawable {
     return new DensityDrawable(name, medium, o);

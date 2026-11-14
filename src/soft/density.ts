@@ -21,7 +21,7 @@
 // (the CPU light pass, interpolated through the blob), plus a third of the blob's own depth from that point (its own
 // shadow at full strength drew every lump as a separate sphere). Sun light goes through octaves of extinction (single
 // scattering, plus softer lobes standing in for multiple scattering, so shadowed interiors are dark, not black) and a
-// forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. Flash light is
+// forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. The scene's lights are
 // per blob (CPU, through the medium) plus a small even share.
 
 import { exp, mul, variable } from "../expr.ts";
@@ -83,7 +83,7 @@ export class DensityDrawable implements Drawable {
   }
 
   draws(ctx: CompileContext): Emitted {
-    const acc = accessMedium(this.medium, ctx.sun, (t) => ctx.table(t));
+    const acc = accessMedium(this.medium, ctx.sun, ctx.lighting.lights, (t) => ctx.table(t));
     const key = `density.${this.name}`;
     const detail = detailFn(ctx, this.o.detail);
     const code = [detail.code, densityWgsl(this.medium, acc, this.o, ctx.sun)].join("\n");
@@ -248,7 +248,7 @@ fn soft_deposit(t: f32, tau: f32, light: vec3<f32>) {
   soft_bin[i0] += e * (1.0 - fr);
   soft_bin[min(i0 + 1u, BINS - 1u)] += e * fr;
 }
-/// The light a piece sends toward the eye: sun (through the others and itself), sky, flashes.
+/// The light a piece sends toward the eye: sun (through the others and itself), sky, the scene's lights.
 fn soft_light(albedo: vec3<f32>, tauSun: f32, tauUp: f32, flash: vec3<f32>, cosv: f32) -> vec3<f32> {
   // Octaves of extinction (Wrenninge's multiple-scattering approximation): each octave half as strong and a third as
   // extinguished, so thick cloud stays luminous a long way in and only the deepest parts go dark.
