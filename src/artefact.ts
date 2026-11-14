@@ -197,10 +197,15 @@ export type TableFillKind =
   | { readonly kind: "replay"; readonly recurrence: string };
 
 /**
- * What a bake took: `ms`, wall time from encoding the dispatches to the kept states read back (GPU time with submission
- * and readback); `setup`, the module and pipelines; steps dispatched; bytes kept.
+ * What a bake took, wall times: `ms`, from encoding the steps to the GPU finishing them (GPU time with submission);
+ * `readback`, copying the kept states out and reading them on the CPU; `setup`, the module and pipelines. And the
+ * steps dispatched and the bytes kept.
  */
-export type BakeRecord = { readonly ms: number; readonly setup: number; readonly steps: number; readonly bytes: number };
+export type BakeRecord = {
+  readonly ms: number; readonly readback: number; readonly setup: number; readonly steps: number; readonly bytes: number;
+  /** The steps' compute pass alone, by GPU timestamps, when the device has them (`timestamp-query`). */
+  readonly gpu: { readonly kind: "timed"; readonly ms: number } | { readonly kind: "untimed" };
+};
 
 /**
  * Whether a recurrence's states are baked: the one fact about an artefact that changes after compile. `compile` stays
@@ -257,6 +262,11 @@ export type Recurrence = {
 
 /** What a frame's replay of one recurrence needs from the host (a manifest's `frame.replay` entry has these too). */
 export type ReplayClock = { readonly slot: number; readonly rate: number; readonly start: number; readonly steps: number; readonly every: number };
+
+/** The replay clocks of an artefact's checkpointed recurrences (what a manifest's `frame.replay` entries carry). */
+export function replayClocks(rs: readonly Recurrence[] | undefined): ReplayClock[] {
+  return (rs ?? []).flatMap((r) => (r.replay === undefined || r.kept.kind !== "checkpoints" ? [] : [{ slot: r.replay.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.every }]));
+}
 
 /**
  * The step n a frame at time t replays to: floor((t - start) rate), held within [0, steps - 1] (a read past the end is

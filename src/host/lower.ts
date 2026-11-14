@@ -28,7 +28,7 @@ import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, 
 import { gridBounds, slotsUsed } from "./detail.ts";
 import {
   COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, SAMPLES, SCENE_DEPTH_FORMAT,
-  type BindGroupDesc, type BindGroupLayoutDesc, type BufferDesc, type Bundle, type ComputePipelineDesc, type DrawCommand, type Id, type LayoutEntry,
+  type BindGroupDesc, type BindGroupLayoutDesc, type BufferDesc, type Bundle, type ComputePipelineDesc, type Dispatch, type DrawCommand, type Id, type LayoutEntry, type Replay,
   type Manifest, type ModuleDesc, type PipelineLayoutDesc, type RenderPassDesc, type RenderPipelineDesc, type SamplerDesc, type Stage, type TextureDesc,
 } from "./manifest.ts";
 
@@ -321,12 +321,19 @@ export function lower(a: Artefact): Bundle {
 
   // ---- the pose stages ---------------------------------------------------------------------------------------------
   const preludeChunk = chunk(PRELUDE_WGSL);
-  const poseLayout = a.stages.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
-  const pose = a.stages.map((st) => {
-    const module = modules.add({ label: `pose stage "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
+  const replayed = (a.recurrences ?? []).flatMap((r) => (r.replay === undefined ? [] : [{ r, replay: r.replay }]));
+  const poseLayout = a.stages.length > 0 || replayed.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
+  const dispatch = (st: Artefact["stages"][number], what: string): Dispatch => {
+    const module = modules.add({ label: `${what} "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
     const pipeline = computes.add({ label: st.label, layout: poseLayout, module, entryPoint: "pose_main" });
     return { label: st.label, pipeline, bindGroups: [group0, poseGroup1], workgroups: Math.ceil(st.invocations / POSE_WORKGROUP) };
-  });
+  };
+  const pose = a.stages.map((st) => dispatch(st, "pose stage"));
+  // A checkpointed recurrence's replay: three more pose-stage modules, recorded by the loader before the stages.
+  const replay = replayed.map(({ r, replay: p }): Replay => ({
+    label: `replay ${r.name}`, slot: p.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.kind === "checkpoints" ? r.kept.every : 1,
+    first: dispatch(p.first, "replay stage"), ping: dispatch(p.ping, "replay stage"), pong: dispatch(p.pong, "replay stage"),
+  }));
 
   // ---- modules and render pipelines ---------------------------------------------------------------------------------
   // One module per (shader, way it is used). A shader nothing uses is not written: which host WGSL it expects depends on
@@ -474,7 +481,8 @@ export function lower(a: Artefact): Bundle {
 
   const manifest: Manifest = {
     format: FORMAT,
-    version: FORMAT_VERSION,
+    // Version 2 only when the file needs what version 1 lacks: a file without replays is byte for byte version 1.
+    version: replay.length > 0 ? 2 : FORMAT_VERSION,
     chunks: chunkNames,
     blobs: [...blobs].map(([name, b]) => ({ name, bytes: b.byteLength })),
     inputs: a.inputs,
@@ -499,6 +507,7 @@ export function lower(a: Artefact): Bundle {
       // Only the slots the artefact uses are written each frame (the rest of the 64 KiB array is never read).
       detail: { buffer: detailBuf, floats: Math.max(4, slotsUsed(a.draws) * 4) },
       passes,
+      ...(replay.length > 0 ? { replay } : {}),
     },
     dynamic: dynamic.map((d) => d.id),
     plan: a.draws.map((d) => ({ label: d.label, layer: d.layer, vertices: d.vertices, instances: d.instances, detail: d.detail })),

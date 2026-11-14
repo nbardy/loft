@@ -9,6 +9,13 @@ import type { Camera, Detail, InputSlot, ParamSlot, TableFillKind } from "../art
 
 export const FORMAT = "loft-artefact";
 export const FORMAT_VERSION = 1;
+/**
+ * The versions a loader of this file reads. 2 adds `frame.replay` (a scene whose state keeps checkpoints); a file without
+ * it is written as version 1, byte for byte what it was. A version-2 field is optional: a newer field decides the
+ * version only by being present.
+ */
+export const FORMAT_VERSIONS = [1, 2] as const;
+export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 
 /** Index into the list of its kind (`Manifest.buffers`, `Manifest.textures`, ...). */
 export type Id = number;
@@ -71,6 +78,18 @@ export type FrameWrite =
 /** A dispatch of the pose pass: x workgroups of POSE_WORKGROUP invocations, bind groups set at 0, 1, ... */
 export type Dispatch = { readonly label: string; readonly pipeline: Id; readonly bindGroups: readonly Id[]; readonly workgroups: number };
 
+/**
+ * A recurrence that keeps checkpoints (docs/artefact_format.md, "Replays"): each frame, from the view's time t, the
+ * loader computes n = floor((t - start) rate) held in [0, steps - 1] (in f64) and k = n mod every, writes n as an f32 at
+ * float `slot` of the inputs, and records `first` then k more dispatches alternating `ping` (odd) and `pong` (even) in
+ * the pose pass, before its dispatches.
+ */
+export type Replay = {
+  readonly label: string; readonly slot: number;
+  readonly rate: number; readonly start: number; readonly steps: number; readonly every: number;
+  readonly first: Dispatch; readonly ping: Dispatch; readonly pong: Dispatch;
+};
+
 /** Where the level-of-detail bounds come from: none (no grid draws), or copies into a buffer mapped after the pose. */
 export type BoundsRead =
   | { readonly kind: "none" }
@@ -114,7 +133,7 @@ export type TableEntry = { readonly name: string; readonly buffer: Id; readonly 
 
 export type Manifest = {
   readonly format: typeof FORMAT;
-  readonly version: typeof FORMAT_VERSION;
+  readonly version: FormatVersion;
   /** Chunk names (a hash of the text); a file loader reads `wgsl/<name>.wgsl`. */
   readonly chunks: readonly string[];
   /** Blob names; a file loader reads `bin/<name>.bin` (little-endian f32). */
@@ -142,6 +161,8 @@ export type Manifest = {
     readonly writes: readonly FrameWrite[];
     /** One compute pass, in order; empty: no pass. */
     readonly pose: readonly Dispatch[];
+    /** Version 2: replays recorded in the pose pass before `pose`. Absent means none. */
+    readonly replay?: readonly Replay[];
     readonly bounds: BoundsRead;
     /** `loft_detail`: the plan's slots, `floats` of them written after the plan. */
     readonly detail: { readonly buffer: Id; readonly floats: number };

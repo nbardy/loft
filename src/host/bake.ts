@@ -5,7 +5,7 @@
 //
 // Imports no compiler module and no bun-only one (the browser host uses it).
 
-import { POSE_WORKGROUP, type Artefact, type Recurrence } from "../artefact.ts";
+import { POSE_WORKGROUP, type Artefact, type BakeRecord, type Recurrence } from "../artefact.ts";
 import { EnvironmentError } from "../errors.ts";
 
 /** Bake every recurrence of `a` not yet baked, in the artefact's order (each after those it reads). */
@@ -61,7 +61,11 @@ async function bakeOne(device: GPUDevice, a: Artefact, r: Recurrence): Promise<v
     const t1 = performance.now();
     const workgroups = Math.ceil(r.entries / POSE_WORKGROUP);
     const encoder = device.createCommandEncoder({ label: `bake ${r.name}` });
-    const pass = encoder.beginComputePass({ label: `bake ${r.name}` });
+    const timed = device.features.has("timestamp-query");
+    const stamps = timed ? device.createQuerySet({ type: "timestamp", count: 2 }) : undefined;
+    const stampBuf = timed ? buffer(`bake ${r.name} stamps`, 16, 0x200 | COPY_SRC) : undefined; // QUERY_RESOLVE
+    const stampRead = timed ? buffer(`bake ${r.name} stamps read`, 16, MAP_READ | COPY_DST) : undefined;
+    const pass = encoder.beginComputePass({ label: `bake ${r.name}`, ...(stamps === undefined ? {} : { timestampWrites: { querySet: stamps, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } }) });
     pass.setPipeline(start);
     pass.setBindGroup(0, intoA);
     pass.dispatchWorkgroups(workgroups);
@@ -73,13 +77,28 @@ async function bakeOne(device: GPUDevice, a: Artefact, r: Recurrence): Promise<v
       pass.dispatchWorkgroups(workgroups);
     }
     pass.end();
-    encoder.copyBufferToBuffer(kept, 0, read, 0, r.data.byteLength);
+    if (stamps !== undefined) { encoder.resolveQuerySet(stamps, 0, 2, stampBuf!, 0); encoder.copyBufferToBuffer(stampBuf!, 0, stampRead!, 0, 16); }
     device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    const ms = performance.now() - t1;
+    const t2 = performance.now();
+    const copy = device.createCommandEncoder({ label: `bake ${r.name} readback` });
+    copy.copyBufferToBuffer(kept, 0, read, 0, r.data.byteLength);
+    device.queue.submit([copy.finish()]);
     await refused();
     await read.mapAsync(GPUMapMode.READ);
     r.data.set(new Float32Array(read.getMappedRange()));
     read.unmap();
-    r.baked.mark({ ms: performance.now() - t1, setup, steps: r.total, bytes: r.data.byteLength });
+    const readback = performance.now() - t2;
+    let gpu: BakeRecord["gpu"] = { kind: "untimed" };
+    if (stampRead !== undefined) {
+      await stampRead.mapAsync(GPUMapMode.READ);
+      const ts = new BigUint64Array(stampRead.getMappedRange().slice(0));
+      stampRead.unmap();
+      gpu = { kind: "timed", ms: Number(ts[1]! - ts[0]!) / 1e6 };
+      stamps!.destroy();
+    }
+    r.baked.mark({ ms, readback, setup, steps: r.total, bytes: r.data.byteLength, gpu });
   } catch (e) {
     // A validation error the GPU raised says more than what it made fail.
     if (scoped) await refused();

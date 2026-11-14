@@ -10,6 +10,7 @@ import type { Scene } from "../scene.ts";
 import type { Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { styled } from "./load.ts";
+import { baked } from "./state.ts";
 import { chosenAt } from "./variant.ts";
 
 /** The thing a draw belongs to: its label up to the first "_" or space (the library names parts `<thing>_<part>`). */
@@ -27,6 +28,16 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
   await loaded.frame(view); // warm up: first-use costs are not the draw's
   const p = await loaded.profile(view, cmd.frames);
   const normal = await loaded.frameGpu(view, cmd.frames);
+  // A checkpointed state's replay: the pose pass where a frame replays the most steps (k = K - 1) and the fewest
+  // (k = 0, one step after the checkpoint's copy); the difference is K - 1 steps.
+  const replays: string[] = [];
+  for (const r of a.recurrences ?? []) {
+    replays.push(baked(r));
+    if (r.kept.kind !== "checkpoints") continue;
+    const K = r.kept.every, at = (n: number) => ({ ...view, time: r.start + (n + 0.5) / r.rate });
+    const most = await loaded.frameGpu(at(K - 1), cmd.frames), least = await loaded.frameGpu(at(K), cmd.frames);
+    replays.push(`replay   ${r.name}  pose pass ${most.pose.toFixed(3)} ms at k = ${K - 1} (the most), ${least.pose.toFixed(3)} ms at k = 0: ${((most.pose - least.pose) / (K - 1) * 1000).toFixed(1)} us a step, ${(r.data.byteLength / 1e6).toFixed(1)} MB of checkpoints`);
+  }
   loaded.destroy();
 
   // CPU pose per table, best of the same number of frames.
@@ -39,6 +50,7 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
   out.push(`${cmd.path}  view ${cmd.view}  ${cmd.size.width}x${cmd.size.height}  t=${cmd.time}  best block mean over ${p.frames} frames  ${a.draws.length} draws declared`);
   out.push(`normal frame: ${normal.ms.toFixed(2)} ms GPU (pose stages ${normal.pose.toFixed(3)}, draws and passes ${normal.draws.toFixed(2)}; least of ${cmd.frames} frames; timer tick ${normal.tick.toFixed(4)} ms as observed)`);
   out.push(`GPU total ${p.total.toFixed(2)} ms (profiling frame: one pass per stage, for attribution)   pass overhead ${p.passOverhead.toFixed(3)} ms per pass (subtracted in "net")`);
+  out.push(...replays);
   out.push("", "draw                              ms      net   triangles  instances  calls");
   for (const d of [...p.draws].sort((x, y) => y.net - x.net)) {
     out.push(`${d.label.padEnd(28).slice(0, 28)}${f2(d.ms)} ${f2(d.net)} ${String(d.triangles).padStart(11)} ${String(d.instances).padStart(10)} ${String(d.calls).padStart(6)}`);

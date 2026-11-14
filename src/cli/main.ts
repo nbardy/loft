@@ -1,7 +1,8 @@
 // loft CLI. Dispatch only: each command is one function below.
 import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
-import type { Artefact, Recurrence } from "../artefact.ts";
+import type { Artefact } from "../artefact.ts";
+import { baked } from "./state.ts";
 import type { GpuLoaded } from "../host/host.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
@@ -70,13 +71,6 @@ function loopOf(info: object): Loop {
   return l === undefined ? OPEN : l;
 }
 
-/** What a recurrence's bake took (src/host/bake.ts): the line `render`, `build` and `profile` print. */
-export function baked(r: Recurrence): string {
-  const b = r.baked.done;
-  const kept = r.kept.kind === "every" ? "every state" : `every ${r.kept.every}th state`;
-  return b === undefined ? `bake     ${r.name}: not baked` : `bake     ${r.name}  ${b.steps} steps in ${b.ms.toFixed(1)} ms (+ ${b.setup.toFixed(1)} ms setup); ${kept}, ${r.states} kept, ${(b.bytes / 1e6).toFixed(2)} MB`;
-}
-
 /** "n map, n scan, n cpu (not data)": how the per-frame tables are filled. */
 function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "scan" | "cpu" | "replay" } }[]): string {
   const n = { map: 0, scan: 0, cpu: 0, replay: 0 };
@@ -133,8 +127,27 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
   await witness(cmd);
 }
 
+/**
+ * The shortest span a scene's baked state keeps, as (name, seconds it holds from): a compiled scene's recurrences, or a
+ * built directory's replays (one that keeps every state carries no record of it in the file). None for a loop: its
+ * clock comes round inside the span (the compiler refuses a looping scene whose state span does not cover it).
+ */
+function heldFrom(info: object): { readonly name: string; readonly until: number } | undefined {
+  if (loopOf(info).kind === "every") return undefined;
+  // A still state (kept from one step: settled before the scene) holds by design, never refuses.
+  const rs = (info as Partial<Artefact>).recurrences?.filter((r) => r.steps > 0).map((r) => ({ name: r.name, until: r.start + r.steps / r.rate }))
+    ?? (info as { readonly frame?: { readonly replay?: readonly { label: string; start: number; steps: number; rate: number }[] } }).frame?.replay?.map((r) => ({ name: r.label, until: r.start + r.steps / r.rate }))
+    ?? [];
+  return rs.reduce<{ name: string; until: number } | undefined>((m, r) => (m === undefined || r.until < m.until ? r : m), undefined);
+}
+
 async function clip(cmd: Extract<Command, { kind: "clip" }>) {
   const { info: artefact, loaded } = await open(cmd, cmd.sweep);
+  const held = heldFrom(artefact);
+  if (held !== undefined && cmd.seconds > held.until + 1e-9) {
+    loaded.destroy();
+    throw new UsageError(`clip: ${cmd.seconds} s, but the state "${held.name}" is kept only to ${held.until} s and holds still after it. Fix: --seconds ${held.until}, or a later \`until\` in its recur()`);
+  }
   const camera = resolveCamera(artefact, cmd.view);
   const count = Math.round(cmd.seconds * cmd.fps);
   const video = openVideo(cmd.out, cmd.size.width, cmd.size.height, cmd.fps);
