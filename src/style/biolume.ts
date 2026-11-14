@@ -2,6 +2,10 @@
 // turned into light, cyan or magenta by hue; a rim of cold light on every silhouette; foam and the waterline glowing
 // faintly where bodies break the water. Two post passes (`reflection`, `bloom`): the glow smeared down the water, then
 // bloom, which glows whatever is bright (in this picture, only what emits).
+//
+// Lights (src/light.ts): the sun is a faint moon, its term times its amount; each local light adds the paint in its
+// colour times N.L, falling off softly (the one style where it does: the picture is about light), a road of light on
+// the water from its half vector, and a soft pool on a plane.
 
 import { abs, add, dot, exp, fract, length, lift, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
 import { hash22, luminance, noise2 } from "../lib/index.ts";
@@ -46,10 +50,16 @@ export function biolume(): Style {
     clear: C.night,
     post: [reflection(), bloom()],
     shade: (ctx) => {
+      // Dark skin under a faint moon (times the sun's amount), the paint's own hue barely kept; each local light adds
+      // the paint in its colour, falling off softly (the one style where it does: the picture is about light).
       const ndl = dot(ctx.normal, ctx.sun);
       const facing = saturate(dot(ctx.normal, ctx.view));
-      // Dark skin under a faint moon, the paint's own hue barely kept.
-      const skin = mul(mix(rgb(C.body), mul(ctx.base, 0.08), 0.5), add(0.5, mul(saturate(ndl), 0.8)));
+      const skin = ctx.lights("sum", (l, which) => {
+        switch (which) {
+          case "sun": return mul(mul(mix(rgb(C.body), mul(ctx.base, 0.08), 0.5), add(0.5, mul(saturate(ndl), 0.8))), l.amount);
+          case "local": return mul(mul(ctx.base, l.amount), saturate(dot(ctx.normal, l.toward)));
+        }
+      });
       // Emission is brightest where the surface faces the eye and falls toward the silhouette, as light through
       // translucent tissue does; the rim, not the pattern, draws the outline.
       const glow = mul(glowOf(ctx.base), mul(0.8, add(0.2, mul(mul(facing, facing), 0.8))));
@@ -86,6 +96,13 @@ export function biolume(): Style {
       const flicker = add(0.65, mul(noise2(mul(xz, 3.0)), 0.35));
       c = add(c, mul(rgb(C.cyan), add(halo(ctx.contact), mul(ctx.foam, mul(flicker, 0.75)))));
       c = mix(c, rgb(C.horizon), fog(ctx.distance));
+      // A road of light on the water under each local light, from its half vector; `reflection` smears it, bloom finds it.
+      c = ctx.lights("sum", (l, which) => {
+        switch (which) {
+          case "sun": return c;
+          case "local": return mul(l.amount, mul(smoothstep(0.85, 1.0, dot(ctx.normal, normalize(add(l.toward, ctx.view)))), 0.6));
+        }
+      });
       // Translucent looking down, so light under the surface shows; opaque toward grazing angles.
       const alpha = saturate(max(add(0.6, mul(pow(sub(1, facing), 3), 0.4)), ctx.foam));
       return vec4(c, alpha);
@@ -93,7 +110,13 @@ export function biolume(): Style {
     shadow: (ctx) => vec4(vec3(0, 0, 0), mul(ctx.amount, 0.3)),
     // A plane: a moonlit floor twice the water's tone (so a shadow reads on it), shadows near the night, fogged as the
     // water is.
-    ground: (ctx) => mix(mul(rgb(C.water), sub(2.2, mul(ctx.shadow, 1.7))), rgb(C.horizon), fog(ctx.distance)),
+    // A local light lays a soft pool of its colour on it.
+    ground: (ctx) => ctx.lights("sum", (l, which) => {
+      switch (which) {
+        case "sun": return mix(mul(rgb(C.water), sub(2.2, mul(ctx.shadow, 1.7))), rgb(C.horizon), fog(ctx.distance));
+        case "local": return mul(l.amount, mul(saturate(l.toward.y), 0.35));
+      }
+    }),
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(rgb(C.horizon), rgb(C.night), pow(saturate(up), 0.5));

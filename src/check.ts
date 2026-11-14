@@ -7,7 +7,9 @@
 
 import type { Artefact, Camera, FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
-import { add, Expr, lift, time, variable, vec2, vec4, type In, type TableFrame } from "./expr.ts";
+import { add, Expr, lift, time, variable, vec2, vec3, vec4, type In, type TableFrame } from "./expr.ts";
+import type { Light } from "./light.ts";
+import { luminance } from "./lib/index.ts";
 import type { Score } from "./geom/expression.ts";
 import { cameraMatrices, project } from "./host/camera.ts";
 import type { Body } from "./map/sweep.ts";
@@ -288,6 +290,35 @@ export function stopsAt(strike: Strike, target: Target, o: { readonly contact?: 
       return {
         name: this.name, pass: at <= contact && least >= -tol, value: least,
         measured: `gap ${fmt(at)} at arming, least ${fmt(least)}`, limit: `gap <= ${fmt(contact)}, least >= ${fmt(-tol)}`,
+      };
+    },
+  };
+}
+
+/**
+ * The light reaching a stretch of a body (m from `from` to `to`, default the whole) at time `at` (default 0) is at
+ * least `least` in luminance, on average over its joints. Fails naming the body, the light's value and where it fell
+ * short. Measures what arrives, not what faces it: a joint has no normal.
+ */
+export function litBy(light: Light, feature: Measured, o: { readonly least: number; readonly from?: number; readonly to?: number; readonly at?: CheckTime }): Check {
+  const c = chainOf(feature), from = o.from ?? 0, to = o.to ?? 1;
+  if (!(from >= 0 && to <= 1 && from <= to)) throw new Error(`litBy: from and to are m on the body, 0 <= from <= to <= 1; got ${from}, ${to}`);
+  const p = vec3(variable("check_x", "f32"), variable("check_y", "f32"), variable("check_z", "f32"));
+  const roots = [luminance(light(p).amount)];
+  return {
+    name: `${c.name} (m ${fmt(from, 2)}..${fmt(to, 2)}) is lit`,
+    run(probe) {
+      const t = o.at === undefined ? 0 : timeOf(probe, o.at);
+      const n = c.skeleton.joints - 1;
+      const lo = c.range[0] + Math.floor(from * (c.range[1] - c.range[0])), hi = c.range[0] + Math.ceil(to * (c.range[1] - c.range[0]));
+      const joints = probe.joints(c.skeleton, [lo, Math.min(Math.max(hi, lo), n)], t);
+      const each = joints.map((j) => ({ at: j.p, lum: probe.eval(roots, t, { check_x: j.p[0], check_y: j.p[1], check_z: j.p[2] })[0] as number }));
+      const mean = each.reduce((a, e) => a + e.lum, 0) / each.length;
+      const dark = each.reduce((a, e) => (e.lum < a.lum ? e : a), each[0]!);
+      return {
+        name: this.name, pass: mean >= o.least, value: mean,
+        measured: `${fmt(mean)} on average over ${each.length} joints at t=${fmt(t, 2)}; least ${fmt(dark.lum)} at [${dark.at.map((x) => fmt(x, 2)).join(", ")}]`,
+        limit: `>= ${fmt(o.least)}`,
       };
     },
   };

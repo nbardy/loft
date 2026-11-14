@@ -2,6 +2,11 @@
 // grey: this look was criticised as muddy against the water, so every term keeps chroma. Given a lighting recipe
 // (`light`, or `--light name` from `LIGHT`), the recipe's treatments are laid over toon's own colour by `litBodies`:
 // hatching in its shadows, a printed rim, cast shadows.
+//
+// Lights (src/light.ts): everything the sun gives (bands, rim, gloss) times its amount; each local light the paint in
+// its hue, banded by N.L times the luminance arriving (rings where 0.1 and 0.3 arrive), with a gloss at its half
+// vector. The plane takes the same rings. The sky, the fog and the sea are daylight scaled by the sun's amount: a local
+// light does not reach the sea.
 
 import { add, div, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
@@ -83,12 +88,12 @@ export function toon(spec: ToonSpec = {}): Style {
   };
 
   /**
-   * Bands of a local light from how much arrives, x = N.L times its luminance, 0 up: x is laid over the stretch of N.L
-   * the bands are cut from (-0.2 to 0.5), so nothing arriving is the darkest band and the rings fall at evenly spaced
-   * amounts (0.25 and 0.75 with three bands). Banded on x itself, x = 0 printed the middle band everywhere: N.L's first
-   * edge is at -0.025.
+   * Bands of a local light from how much arrives, x = N.L times its luminance, 0 up. x from 0 to 0.4 is laid over the
+   * stretch of N.L the bands are cut from (-0.2 to 0.5), so nothing arriving is the darkest band and, with three
+   * bands, the rings fall where 0.1 arrives (the lighting recipes' `pool`) and 0.3. Banded on x itself, x = 0 printed
+   * the middle band everywhere (N.L's first edge is at -0.025); laid over 0 to 1, a lure's 0.31 on a face lit nothing.
    */
-  const lampBands = (x: Expr<"f32">): Expr<"f32"> => banded(add(mul(x, 0.7), -0.2));
+  const lampBands = (x: Expr<"f32">): Expr<"f32"> => banded(add(mul(x, 0.7 / 0.4), -0.2));
 
   const fogOf = (distance: Expr<"f32">): Expr<"f32"> => { const f = sub(1, exp(mul(distance, -0.008))); return saturate(mul(f, f)); };
 

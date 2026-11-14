@@ -4,6 +4,9 @@
 // that touches the surface there), tilted a little per cell as a fold would. Fold lines run along the cell walls.
 // The sea is layered cut-paper sheets with scalloped edges, each casting a small shadow on the one below. A post
 // pass adds ambient occlusion in creases (from the opaque scene's depth) and paper fibre.
+//
+// Lights (src/light.ts): the studio key times the sun's amount; each local light a wrapped term on the facet normal,
+// so a lamp lights a folded model one facet at a time. The fill, the sea and the plane do not read lights.
 
 import { add, dot, fract, lift, max, mix, mul, normalize, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
@@ -170,10 +173,17 @@ export function papercraft(): Style {
       // Soft studio light: a wrapped warm key from the sun's side, a cool fill from above.
       // The key comes from the sun's side but leans toward the camera and up, as a studio key over a model does,
       // so the side a high game camera sees is lit.
+      // The key times the sun's amount; each local light a wrapped term on the facet normal, so a lamp lights a folded
+      // model one facet at a time, as a candle lights paper. The fill is unchanged.
       const keyDir = normalize(add(add(ctx.sun, mul(ctx.view, 0.7)), vec3(0, 0.4, 0)));
       const key = saturate(mul(add(dot(n, keyDir), 0.1), 1 / 1.1));
       const fill = add(0.5, mul(n.y, 0.12));
-      const light = add(mul(rgb(C.fill), fill), mul(rgb(C.key), mul(key, 0.68)));
+      const light = add(mul(rgb(C.fill), fill), ctx.lights("sum", (l, which) => {
+        switch (which) {
+          case "sun": return mul(mul(rgb(C.key), mul(key, 0.68)), l.amount);
+          case "local": return mul(l.amount, saturate(mul(add(dot(n, l.toward), 0.1), 1 / 1.1)));
+        }
+      }));
       // Fold lines along the cell walls: a pixel or so wide at any distance.
       const fw = max(fwidth(f.w), 1e-5);
       const fold = sub(1, smoothstep(mul(fw, 0.6), mul(fw, 1.6), f.w));
