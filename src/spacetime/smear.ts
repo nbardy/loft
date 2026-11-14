@@ -4,6 +4,8 @@
 // the speed of the part's tip between that copy and the next younger one. Back faces are dropped so each copy is one
 // layer of translucency, not two.
 
+import { answered, classify } from "../draw/painted.ts";
+import { shadeContext } from "../style.ts";
 import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, vec4, type Expr } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, nameId, spacing, type Fragment } from "../draw/surface.ts";
@@ -58,10 +60,13 @@ class Smear implements Drawable {
         const normal = body.normal(m, fr.v);
         const view = mul(viewDir(fr.world), -1);
         // The copy is the part itself an instant ago: its own coordinates, anchor and identity, so its pattern matches.
-        const lit = fr.style.shade({
-          base: part.body.look.paint(m, fr.v, { world: fr.world, normal, copy: f(0) }), normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(levelOf(ctx.ground)(fr.world.xz), fr.world.y),
-          uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)), lights: fr.lights,
-        });
+        // The style's whole colour, with the part's channels and its own answers, as the part itself is drawn.
+        const said = classify(part.body.name, part.body.look.paint(m, fr.v, { world: fr.world, normal, copy: f(0) }));
+        const sctx = shadeContext({
+          base: said.base, normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(levelOf(ctx.ground)(fr.world.xz), fr.world.y),
+          uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)),
+        }, ctx.lighting, fr.style, { thing: part.body.name, ...said.said });
+        const lit = answered(said.answer, sctx, fr.style.shade(sctx));
         return vec4(lit, mul(show, step(0, dot(normal, view))));
       };
       emitted.push(drawGlazed(`${this.name}_${k}`, partSurface(body, part), {

@@ -297,6 +297,12 @@ export type Artefact = {
   readonly statics?: readonly StaticBuffer[];
   /** Bind group 1 declarations plus generated functions shared by every shader. */
   readonly sceneWgsl: string;
+  /**
+   * What the compiler noticed and did not refuse, one line each (`note: bar gives "gloss", which no part of papercraft
+   * reads`): channels no part of the style reads, a thing's own `shade` that ignores the style's answer. Absent on an
+   * artefact loaded from files, and where there is nothing to note.
+   */
+  readonly notes?: readonly string[];
   readonly shaders: Readonly<Record<string, string>>;
   readonly draws: readonly Draw[];
   /** Full-screen passes after the scene. Absent means none. */

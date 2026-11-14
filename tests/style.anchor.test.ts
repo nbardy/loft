@@ -8,7 +8,7 @@ import { f, lift, vec2, vec3, type Expr } from "../src/index.ts";
 import type { Body } from "../src/map/sweep.ts";
 import { withStyle, woodblock } from "../src/style/index.ts";
 import { stateAt } from "./compile.harness.ts";
-import { foldAt } from "../src/light.ts";
+import { shadeContext } from "../src/style.ts";
 
 test("woodblock's line weight is the same at the same body coordinates while the serpent swims", () => {
   const scene = withStyle(serpent, woodblock());
@@ -18,7 +18,7 @@ test("woodblock's line weight is the same at the same body coordinates while the
   const sites: [number, number][] = [[0.2, 0.25], [0.45, 0.1], [0.6, 0.75], [0.85, 0.4]];
   const roots: Expr[] = sites.flatMap(([m, v]) => {
     const anchor = body.anchor(f(m), f(v)), world = body.point(f(m), f(v));
-    const ctx = { base: vec3(0.5, 0.4, 0.6), normal: vec3(0, 1, 0), sun: lift<"vec3">([0, 1, 0]), view: vec3(0, 1, 0), world, depth: f(0), uv: vec2(m, v), anchor, id: f(0.3), lights: foldAt(scene.lighting, world) };
+    const ctx = shadeContext({ base: vec3(0.5, 0.4, 0.6), normal: vec3(0, 1, 0), sun: lift<"vec3">([0, 1, 0]), view: vec3(0, 1, 0), world, depth: f(0), uv: vec2(m, v), anchor, id: f(0.3) }, scene.lighting, style);
     return [style.mark(ctx), anchor, world];
   });
   const run = c.cpu(roots);

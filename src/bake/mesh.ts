@@ -6,6 +6,7 @@
 // topology says how the grid closes: periodic edges are seams, poles collapse a row to a point, caps get a flat disc.
 // Triangles wind counter-clockwise seen from the side d/du x d/dv points to, which is the side its normal faces.
 
+import { classify } from "../draw/painted.ts";
 import { compileScene, type CpuFn } from "../compile/index.ts";
 import type { MeshBakeable, SurfaceBakeable } from "../compile/context.ts";
 import { f, variable, type Expr } from "../expr.ts";
@@ -75,7 +76,8 @@ const U = variable("u", "f32"), W = variable("v", "f32");
 /** One surface: a (rows + 1) x (cols + 1) grid of samples, its pole rows collapsed and its cap ends closed. */
 function bakeSurface(s: SurfaceBakeable, cpu: (roots: readonly Expr[]) => CpuFn, frame: Parameters<CpuFn>[0], d: Density): BodyMesh {
   const p = s.surface.point(U, W), n = s.surface.normal(U, W);
-  const run = cpu([p, n, s.paint(U, W, { world: p, normal: n, copy: f(s.copy) })]);
+  // glTF takes the colour; channels and a thing's own answers are a style's to print.
+  const run = cpu([p, n, classify(s.name, s.paint(U, W, { world: p, normal: n, copy: f(s.copy) })).base]);
   const uAt = cpu([s.grid.u.at(U)]), vAt = cpu([s.grid.v.at(W)]);
   const rows = d.along, cols = d.around;
   const us = Array.from({ length: rows + 1 }, (_, i) => uAt(frame, { u: i / rows })[0] as number);

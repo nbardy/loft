@@ -96,6 +96,8 @@ export interface CompileContext {
    * screen outlines, the mark and whether this surface is outlined (src/draw/ink.ts), and asking for the ink pass.
    */
   markOut(mark: string, inked: boolean): string;
+  /** Record a line for the artefact's `notes` (a channel no part of the style reads; a wrap that ignores the style). */
+  note(line: string): void;
 }
 
 /** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */

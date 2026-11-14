@@ -14,7 +14,7 @@ export const vec3Lit = (v: readonly number[]): string => `vec3<f32>(${v.map(lit)
 export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: readonly [number, number, number], lighting: Lighting): string {
   const at = lighting.sun;
   const c = <T extends "f32" | "vec3">(name: string, ty: T) => variable(`c_${name}`, ty);
-  const shadeCtx = shadeVariables(lighting);
+  const shadeCtx = shadeVariables(lighting, style);
   // A style that prints its shadow as a block afterwards (`Style.block`) gives the bodies its colour before the block;
   // `style.shade` stays the whole colour for whatever shades a fragment on its own (a smear).
   const body = style.block === undefined ? style.shade(shadeCtx) : style.block.body(shadeCtx);

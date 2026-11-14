@@ -4,12 +4,13 @@
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
 import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
-import { emitShaderFn } from "../compile/bind.ts";
+import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
+import { classify, lookFns, type Shading } from "./painted.ts";
 import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
 import { carry, posesOf, rotate, sizeBound } from "../map/chart.ts";
 import { framedPose } from "../map/surface.ts";
-import type { Chart, F, P3, Paint, Points, Posed, Poses, Skeleton, Surface } from "../map/types.ts";
+import type { Chart, F, P3, Paint, Painted, Points, Posed, Poses, Skeleton, Surface } from "../map/types.ts";
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { fwidth } from "../lib/wgsl.ts";
@@ -301,41 +302,47 @@ const LIT_PRE = /* wgsl */ `
   let eye = -view_dir(in.world);
   let depth = sea_height(in.world.xz) - in.world.y;`;
 
+const PAINT_ARGS: FnSpec["args"] = [["u", "f32"], ["v", "f32"], ["p_world", "vec3"], ["p_normal", "vec3"], ["p_copy", "f32"]];
+/** The call site's values for PAINT_ARGS in a lit fragment. */
+const PAINT_CALL = "in.uv.x, in.uv.y, in.world, n, in.copy";
+
 function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   const look = d.look;
-  const paintFn = (paint: Paint): Shader => emitShaderFn(ctx.slots, {
-    name: `paint_${d.name}`, args: [["u", "f32"], ["v", "f32"], ["p_world", "vec3"], ["p_normal", "vec3"], ["p_copy", "f32"]], out: "vec3<f32>", roots: [paint(U, V, AT)], ret: (o) => o[0],
-  });
+  const paintFn = (base: P3): Shader => emitShaderFn(ctx.slots, { name: `paint_${d.name}`, args: PAINT_ARGS, out: "vec3<f32>", roots: [base], ret: (o) => o[0] });
   switch (look.kind) {
     case "lit": {
+      const said = classify(d.name, look.paint(U, V, AT));
+      const own = lookFns(ctx, d.name, said, PAINT_ARGS, PAINT_CALL);
+      const fns = withLook(paintFn(said.base), own);
+      const call = (fn: "shade" | "ink" | "mark") => own.call(fn, "base, n, eye, in.world, depth, in.uv, in.anchor, in.id");
       const face = look.sides === "one" ? "1.0" : "select(-1.0, 1.0, front)";
       const head = `@fragment fn fs(in: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
   let n = ${face} * normalize(in.normal);${LIT_PRE}
   let base = paint_${d.name}(in.uv.x, in.uv.y, in.world, n, in.copy);`;
       const cull = look.sides === "one" ? "back" : "none";
       switch (look.outline) {
-        case "hull": return hullOutline(ctx, head, paintFn(look.paint), cull);
+        case "hull": return hullOutline(ctx, head, fns, cull, call);
         case "border": return {
-          overrides: "", fns: paintFn(look.paint), push: "s.pos",
+          overrides: "", fns, push: "s.pos",
           // Ink along the v = 1 edge, in the surface's own coordinates: about two pixels wide at any distance.
           main: `${head}
   let fw = fwidth(in.uv.y);
   let edge = 1.0 - smoothstep(fw * 1.0, fw * 2.2, 1.0 - in.uv.y);
-  return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
+  return vec4<f32>(mix(${call("shade")}, ${call("ink")}, edge), ${ctx.markOut(call("mark"), false)});
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
         case "none": return {
-          overrides: "", fns: paintFn(look.paint), push: "s.pos",
+          overrides: "", fns, push: "s.pos",
           main: `${head}
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
+  return vec4<f32>(${call("shade")}, ${ctx.markOut(call("mark"), false)});
 }`,
           draws: (b) => [drawSpec({ ...b, cull })],
         };
       }
     }
     case "flat": return {
-      overrides: "", fns: paintFn(look.paint), push: "s.pos",
+      overrides: "", fns: paintFn(flatColour(d.name, look.paint(U, V, AT))), push: "s.pos",
       main: `@fragment fn fs(in: VOut) -> @location(0) vec4<f32> { return vec4<f32>(paint_${d.name}(in.uv.x, in.uv.y, in.world, normalize(in.normal), in.copy), 1.0); }`,
       draws: (b) => [drawSpec({ ...b, cull: "none" })],
     };
@@ -410,17 +417,34 @@ function quadDerivatives(name: string, s: Shader): Shader {
   return s;
 }
 
+/** A paint's shader with the thing's own shade functions after it, when it has them. */
+function withLook(paint: Shader, look: Shading): Shader {
+  return look.shader === undefined ? paint : { code: `${paint.code}\n${look.shader.code}`, libs: [...new Set([...paint.libs, ...look.shader.libs])] };
+}
+
+/**
+ * A flat look's colour: its paint is the final colour, so there is no style to wrap or to read a channel. A wrap or a
+ * scatter is refused; a channel is noted by nobody (nothing reads it).
+ */
+function flatColour(thing: string, x: P3 | Painted): P3 {
+  const c = classify(thing, x);
+  if (c.answer.kind === "wrapped" || c.said.scatter !== undefined) {
+    throw new SceneError(`"${thing}"`, "a paint with its own shade or scatter on a flat look", "a colour: a flat look's paint is the final colour; there is nothing to wrap", "return the colour, or draw a lit surface");
+  }
+  return c.base;
+}
+
 /** A closed surface's ink: a second draw pushed out along the normal (hull), or a flag for the screen pass. */
-function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: DrawSpec["cull"]): Frag {
+function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: DrawSpec["cull"], call: (fn: "shade" | "ink" | "mark") => string): Frag {
   switch (ctx.outline) {
     case "hull": return {
       overrides: "override INK: f32 = 0.0;", fns: paint, push: "s.pos + s.normal * (INK * ink_width(s.pos))",
       // INK is an override, so this branch is uniform (the style's shading takes screen-space derivatives), and the
       // outline pass does not pay for the shading it would throw away.
       main: `${head}
-  let mk = mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id);
-  if (INK > 0.5) { return vec4<f32>(ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk); }
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
+  let mk = ${call("mark")};
+  if (INK > 0.5) { return vec4<f32>(${call("ink")}, mk); }
+  return vec4<f32>(${call("shade")}, mk);
 }`,
       draws: (b) => [
         drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
@@ -430,7 +454,7 @@ function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: Dra
     case "screen": return {
       overrides: "", fns: paint, push: "s.pos",
       main: `${head}
-  return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", true)});
+  return vec4<f32>(${call("shade")}, ${ctx.markOut(call("mark"), true)});
 }`,
       draws: (b) => [drawSpec({ ...b, cull })],
     };

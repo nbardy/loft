@@ -55,6 +55,7 @@ export function compileScene(scene: Scene): Compiled {
   const prep: TablePrep = { compile: cpu };
   const posts: PostSpec[] = [...scene.style.post];
   let screenInk = false;
+  const notes: string[] = [];
   const markOut = (mark: string, inked: boolean): string => {
     switch (scene.outline) {
       case "hull": return mark;
@@ -67,6 +68,7 @@ export function compileScene(scene: Scene): Compiled {
     table: (t) => tables.declare(t, prep),
     post: (p) => { posts.push(p); },
     outline: scene.outline, markOut,
+    note: (line) => { if (!notes.includes(line)) notes.push(line); },
   };
 
   const modules: Record<string, Shader> = {};
@@ -132,6 +134,7 @@ export function compileScene(scene: Scene): Compiled {
     dynamic: layout.dynamic,
     ...(layout.statics.length > 0 ? { statics: layout.statics } : {}),
     sceneWgsl,
+    ...(notes.length > 0 ? { notes } : {}),
     shaders,
     draws,
     ...(post.length > 0 ? { post } : {}),

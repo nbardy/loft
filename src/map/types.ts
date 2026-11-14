@@ -1,7 +1,8 @@
 // The signatures (DESIGN.md 7.1): a shape is a function, and its signature says how it can be drawn. All of them are
 // closures over `Expr`, so they are pure, may read `time` and inputs, and compile to both backends.
 
-import type { Expr } from "../expr.ts";
+import type { Expr, In, NumTy } from "../expr.ts";
+import type { ShadeCtx } from "../style.ts";
 import type { Curve as CurveOf } from "../curve.ts";
 import type { Fold } from "../lib/fold.ts";
 
@@ -113,8 +114,32 @@ export type Density = (p: P3) => F;
  */
 export type PaintAt = { readonly world: P3; readonly normal: P3; readonly copy: F };
 
-/** Surface coordinates -> base colour (display-referred rgb), lit by the scene's style in the fragment stage. */
-export type Paint = (u: F, v: F, at: PaintAt) => P3;
+/**
+ * Surface coordinates -> what a thing says about its surface: a colour (display-referred rgb, sRGB as written), or a
+ * colour with channels and its own answers (`Painted`). Lit by the scene's style in the fragment stage.
+ */
+export type Paint = (u: F, v: F, at: PaintAt) => P3 | Painted;
+
+/**
+ * A colour with more to say.
+ * - `base`: the colour, sRGB as written, as a bare paint returns it.
+ * - Every other key but `shade` and `scatter` is a channel: a number or vector under a name you choose. A style reads it
+ *   with `ctx.channel(name, otherwise)` if it knows the name. The built-in styles read `gloss` (0 matte to 1 mirror),
+ *   `metal` (0 or 1) and `emits` (linear light the surface gives off, may exceed 1), each listed in its style's comment.
+ *   A name no part of the scene's style reads is noted (`loft` prints a note), not refused, so restyling never breaks.
+ * - `scatter`: how this surface answers light from `toward` (unit, toward the light): the share that leaves toward the
+ *   eye, cosine included, per colour channel. A style calls it once per light (`ctx.scatter`) and prints the result in
+ *   its own medium. Prefer it to `shade` for anything that is a property of the surface (a film, a sheen).
+ * - `shade`: a change to the finished picture. `styled` is the style's whole colour for this fragment as it would be
+ *   drawn (lit, reflected, sunk under water); the outline and the alpha mark never reach it. A wrap that does not read
+ *   `styled` no longer follows `--style`, and `loft` notes that too.
+ */
+export type Painted = {
+  readonly base: In<"vec3">;
+  readonly shade?: (ctx: ShadeCtx, styled: P3) => P3;
+  readonly scatter?: (ctx: ShadeCtx, toward: Expr<"vec3">) => P3;
+  readonly [channel: string]: In<NumTy> | ((ctx: ShadeCtx, x: P3) => P3) | undefined;
+};
 
 /**
  * A domain map: the mapped coordinate, the cell it came from and the local change of length (`src/lib/fold.ts`, whose
