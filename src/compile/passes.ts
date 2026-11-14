@@ -195,7 +195,7 @@ function ordered(passes: readonly ArtefactPass[]): ArtefactPass[] {
     const k = left.findIndex((q) => q.reads.every((r) => placed.has(r)));
     if (k < 0) {
       const names = left.map((q) => `"${q.name}" reads ${q.reads.filter((r) => !placed.has(r)).map((r) => `"${r}"`).join(", ")}`);
-      throw new SceneError("passes", `a cycle: ${names.join("; ")}`, "passes that read each other in one direction only", "draw one of them without reading the other (a reader of a pass is left out of it, so the cycle is through what each pass draws)");
+      throw new SceneError("passes", `a cycle: ${names.join("; ")}`, "passes that read each other in one direction only (each picture holds the draws that read the other)", "let one of those draws stop reading its pass, so one picture can be drawn first (of two mirrors that face each other, make one plain)");
     }
     const [q] = left.splice(k, 1);
     out.push(q!);

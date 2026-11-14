@@ -355,13 +355,17 @@ export function lower(a: Artefact): Bundle {
       ...passes.map((p, i): LayoutEntry => ({ binding: 1 + i, visibility: DRAWN, texture: { sampleType: PASS_TEXTURE[keepOf(p)].sampleType, viewDimension: "2d", multisampled: false } })),
     ],
   }) : -1;
-  const emptyLayout = withPasses ? bgls.add({ label: "loft none", entries: [] }) : -1;
+  // Group 2 of a pipeline that reads no scene depth, in a scene with passes: in a split frame the scene depth's layout
+  // (so the transparent pass, which binds the scene depth at 2, can draw it), else an empty one. Every pass binds a
+  // group of that layout at 2 (the view's scene depth, or an empty group), read by nothing that it draws.
+  const emptyLayout = withPasses && !split ? bgls.add({ label: "loft none", entries: [] }) : -1;
+  const plainGroup2 = split ? depthLayout : emptyLayout;
   const pipelineLayout = new Map<Variant, Id>();
   const layoutOf = (v: Variant): Id => {
     const known = pipelineLayout.get(v);
     if (known !== undefined) return known;
     const g3 = withPasses ? [passLayout] : [];
-    const third: Record<Variant, Id[]> = { draw: withPasses ? [emptyLayout, passLayout] : [], sceneDepth: [depthLayout, ...g3], post: [postLayout, ...g3] };
+    const third: Record<Variant, Id[]> = { draw: withPasses ? [plainGroup2, passLayout] : [], sceneDepth: [depthLayout, ...g3], post: [postLayout, ...g3] };
     const id = pls.add({ label: `loft ${v}`, bindGroupLayouts: [layout0, layout1, ...third[v]] });
     pipelineLayout.set(v, id);
     return id;
@@ -481,19 +485,22 @@ export function lower(a: Artefact): Bundle {
 
   // Passes' own objects, made before the view's so the view's group 3 can name every pass's picture.
   const offscreen = withPasses ? lowerPassObjects() : undefined;
-  /** Group 3 and the empty group 2 a view pass adds in a scene with passes; nothing in one without. */
+  /** Group 3 a view pass adds in a scene with passes; nothing in one without. */
   const g3 = offscreen === undefined ? [] : [offscreen.viewGroup];
-  const g23 = offscreen === undefined ? [] : [offscreen.empty, offscreen.viewGroup];
+  /** Groups 2 and 3 of a pass whose draws read no scene depth: `filler` is a group of `plainGroup2`'s layout. */
+  const g23 = (filler: Id): Id[] => (offscreen === undefined ? [] : [filler, offscreen.viewGroup]);
+  let filler = -1;
 
   const colour = textures.add({ label: "loft colour x4", format: COLOR_FORMAT, sampleCount: SAMPLES, usage: [RA] });
   const viewPasses: RenderPassDesc[] = [];
   if (!split) {
     const depth = textures.add({ label: "loft depth x4", format: DEPTH_FORMAT, sampleCount: SAMPLES, usage: [RA] });
+    if (withPasses) filler = groups.add({ label: "loft none", layout: emptyLayout, entries: [] });
     viewPasses.push({
       label: "loft scene",
       color: { view: { kind: "texture", texture: colour }, resolveTarget: { kind: "output" }, loadOp: "clear", storeOp: "discard", clearValue },
       depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "discard" },
-      bindGroups: [group0, group1, ...g23],
+      bindGroups: [group0, group1, ...g23(filler)],
       commands: [...opaque, ...transparent],
     });
   } else {
@@ -511,6 +518,7 @@ export function lower(a: Artefact): Bundle {
     }));
     const clearanceMap = clearanceSteps[2]!.texture;
     const depthGroup = groups.add({ label: "loft scene depth", layout: depthLayout, entries: [{ binding: 0, texture: sceneDepth }, { binding: 1, texture: clearanceMap }] });
+    filler = depthGroup;
     // Ping-pong: pass k reads intermediate (k - 1) % 2 and writes k % 2; one post pass needs one intermediate.
     const n = post.length;
     const intermediates = Array.from({ length: Math.min(n, 2) }, (_, i) => {
@@ -524,7 +532,7 @@ export function lower(a: Artefact): Bundle {
       label: "loft scene opaque",
       color: { view: { kind: "texture", texture: colour }, loadOp: "clear", storeOp: "store", clearValue },
       depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "store" },
-      bindGroups: [group0, group1, ...g23],
+      bindGroups: [group0, group1, ...g23(filler)],
       commands: opaque,
     }, {
       label: "loft depth resolve",
@@ -554,7 +562,7 @@ export function lower(a: Artefact): Bundle {
     }));
   }
   // Every pass is drawn before the view, in the artefact's order (each after the passes it reads).
-  const renderPasses: RenderPassDesc[] = [...(offscreen?.record() ?? []), ...viewPasses];
+  const renderPasses: RenderPassDesc[] = [...(offscreen?.record(filler) ?? []), ...viewPasses];
 
   /**
    * The passes' textures, stand-ins, camera buffers and bind groups, and a function that records their render passes
@@ -573,7 +581,6 @@ export function lower(a: Artefact): Bundle {
       entries: [{ binding: 0, sampler }, ...passes.map((p, i) => ({ binding: 1 + i, texture: i < upTo ? pictures[i]! : standIn[PASS_TEXTURE[keepOf(p)].sampleType] }))],
     });
     const viewGroup = group3("loft passes (view)", passes.length);
-    const empty = groups.add({ label: "loft none", layout: emptyLayout, entries: [] });
     const copies: BufferCopy[] = [];
     const lowered = passes.map((p, i) => {
       const own = group3(`loft passes (in ${p.name})`, i);
@@ -589,7 +596,8 @@ export function lower(a: Artefact): Bundle {
         }
       }
     });
-    const record = (): RenderPassDesc[] => lowered.flatMap(({ p, i, own, frame }): RenderPassDesc[] => {
+    /** `empty`: a group of the plain draws' group 2 layout (the view's scene depth in a split frame, else empty). */
+    const record = (empty: Id): RenderPassDesc[] => lowered.flatMap(({ p, i, own, frame }): RenderPassDesc[] => {
       const picture = pictures[i]!;
       const w = p.what;
       switch (w.kind) {
@@ -614,13 +622,13 @@ export function lower(a: Artefact): Bundle {
             case "colour": case "light": {
               const format = PASS_TEXTURE[w.keep].format;
               const cmds = (pass: Draw["pass"]): DrawCommand[] => drawn.filter(({ d }) => d.pass === pass).map(({ d, k }) => ({ kind: "planned" as const, pipeline: drawPipeline(d, format), draw: k }));
-              return colourPass(p, picture, format, frame, own, cmds("opaque"), cmds("transparent"), drawn.some(({ d }) => d.sceneDepth === true));
+              return colourPass(p, picture, format, frame, own, empty, cmds("opaque"), cmds("transparent"), drawn.some(({ d }) => d.sceneDepth === true));
             }
           }
         }
       }
     });
-    return { viewGroup, empty, copies, record };
+    return { viewGroup, copies, record };
   }
 
   /**
@@ -628,7 +636,7 @@ export function lower(a: Artefact): Bundle {
    * or, when a transparent draw it holds reads scene depth, opaque, the depth resolve and the clearance map, then
    * transparent, as the view's split frame (with no post passes).
    */
-  function colourPass(p: ArtefactPass, picture: Id, format: GPUTextureFormat, frame: Id, own: Id, opaqueCmds: DrawCommand[], transparentCmds: DrawCommand[], split: boolean): RenderPassDesc[] {
+  function colourPass(p: ArtefactPass, picture: Id, format: GPUTextureFormat, frame: Id, own: Id, empty: Id, opaqueCmds: DrawCommand[], transparentCmds: DrawCommand[], split: boolean): RenderPassDesc[] {
     const label = `loft pass ${p.name}`;
     const x4 = textures.add({ label: `${label} colour x4`, size: p.size, format, sampleCount: SAMPLES, usage: [RA] });
     const depth = textures.add({ label: `${label} depth x4`, size: p.size, format: DEPTH_FORMAT, sampleCount: SAMPLES, usage: split ? [RA, TB] : [RA] });
@@ -636,7 +644,7 @@ export function lower(a: Artefact): Bundle {
       label,
       color: { view: { kind: "texture", texture: x4 }, resolveTarget: { kind: "texture", texture: picture }, loadOp: "clear", storeOp: "discard", clearValue },
       depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "discard" },
-      bindGroups: [frame, group1, groups.add({ label: "loft none", layout: emptyLayout, entries: [] }), own],
+      bindGroups: [frame, group1, empty, own],
       commands: [...opaqueCmds, ...transparentCmds],
     }];
     const sceneDepth = textures.add({ label: `${label} scene depth`, size: p.size, format: SCENE_DEPTH_FORMAT, sampleCount: 1, usage: [RA, TB] });
@@ -647,7 +655,7 @@ export function lower(a: Artefact): Bundle {
       label: `${label} opaque`,
       color: { view: { kind: "texture", texture: x4 }, loadOp: "clear", storeOp: "store", clearValue },
       depth: { view: depth, depthClearValue: 1, depthLoadOp: "clear", depthStoreOp: "store" },
-      bindGroups: [frame, group1, groups.add({ label: "loft none", layout: emptyLayout, entries: [] }), own],
+      bindGroups: [frame, group1, empty, own],
       commands: opaqueCmds,
     }, {
       label: `${label} depth resolve`,

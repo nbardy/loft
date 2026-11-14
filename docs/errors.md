@@ -70,3 +70,4 @@ and last line.
 | 21 | `load: ...: the default export is a design` | a design exported as default | `export const design = design({...})` |
 | 22 | `scene(): given sea: ... (the old key) and no ground` | the key before 2026-11 | `ground: sea({...})` |
 | 23 | `load: ... Export named 'spiralTub' not found` | a misspelt import | `spiralTube` (suggested) |
+| 24 | `passes: given a cycle: "mirrorLeft" reads "mirrorRight"; ...` | two passes each hold a draw that reads the other (two mirrors facing) | let one of those draws stop reading its pass |

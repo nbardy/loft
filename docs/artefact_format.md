@@ -1,4 +1,4 @@
-# The Loft artefact as files (format version 1)
+# The Loft artefact as files (format versions 1 and 2)
 
 A built Loft scene is a directory that a client draws with no JavaScript from the compiler and no scene module. It is
 the host, lowered: every WebGPU object a loader creates is an entry in a list of `manifest.json`, described with
@@ -37,9 +37,24 @@ Nothing else. A chunk's name is a 64-bit hash of its text in hex; a loader never
   no conversion anywhere. A canvas must be configured `rgba8unorm`.
 - **Coordinates.** World y is up. Clip space is WebGPU's (depth 0 near, 1 far); front faces wind counter-clockwise.
 
+## Versions 1 and 2
+
+A scene that draws no picture off screen (no `pass`, src/frame/pass.ts) is written as version 1, exactly as before
+passes existed. A scene with a pass is version 2, which adds four things a loader must act on, all optional fields:
+
+- `textures[i].size`: absent is the view's size (version 1's only size); `{ "kind": "view", "scale": s }` is
+  `max(1, round(width s))` by `max(1, round(height s))`; `{ "kind": "fixed", "width": w, "height": h }` is that.
+- `frame.passes[i].color` may be absent: a pass with only a depth attachment (a depth pass).
+- `renderPipelines[i].fragment` may be absent: a pipeline with no fragment stage (depth from the rasterised triangle).
+- `frame.copies`: buffer copies run after the pose pass (below), each pass's camera into its own frame uniform.
+
+Everything else a pass needs is objects version 1 already has: more textures, bind groups, pipelines and render
+passes, listed in drawing order (each pass before the view, after the passes it reads). The group 3 binding layout
+of every draw and post module in such a file is `passBindingsWgsl` in `src/artefact.ts`, a chunk the file carries.
+
 ## Load, call by call
 
-1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version == 1`. Read each
+1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1 or 2. Read each
    `wgsl/<chunks[i]>.wgsl` and each `bin/<blobs[i].name>.bin` (check its length against `blobs[i].bytes`).
 2. **Refuse JavaScript.** If any `tables[i].fill.kind == "cpu"`, refuse to load and name the tables (`loft build`
    never writes such a file; this guards hand-made ones).
@@ -64,8 +79,11 @@ Nothing else. A chunk's name is a 64-bit hash of its text in hex; a loader never
 Pipelines are created at load, eagerly, so no frame stalls on compilation.
 
 **Per view size** (at the first frame and whenever the width or height changes): destroy the previous set, then for
-each `textures[i]`: `createTexture({ label, size: view, format, sampleCount, usage })` and its default view; then for
-each bind group that names a texture, `createBindGroup` with `{ binding, texture }` as that texture's default view.
+each `textures[i]`: `createTexture({ label, size, format, sampleCount, usage })` with `size` from its `size` field
+(absent: the view's; version 2 above) and its default view; then for each bind group that names a texture,
+`createBindGroup` with `{ binding, texture }` as that texture's default view.
+
+A render pipeline with no `fragment` is created with none (it draws depth only).
 
 ## A frame, call by call
 
@@ -82,22 +100,28 @@ Given a view: camera, width, height, time, input and param values, `construction
 2. **Pose.** One command encoder. If `frame.pose` is not empty: one compute pass; for each dispatch: `setPipeline`,
    `setBindGroup(k, bindGroups[k])` for each listed group, `dispatchWorkgroups(workgroups)`. Dispatches run in order
    and each sees what the earlier ones wrote.
-3. **Bounds.** If `frame.bounds.kind == "read"`: for each grid, `copyBufferToBuffer(buffers[from], fromOffset,
+3. **Copies** (version 2). For each `frame.copies[i]`: `copyBufferToBuffer(buffers[from], fromOffset, buffers[to], 0,
+   bytes)` in the same encoder, after the pass, in order.
+   **Bounds.** If `frame.bounds.kind == "read"`: for each grid, `copyBufferToBuffer(buffers[from], fromOffset,
    buffers[bounds.buffer], at * 16, instances * 16)` in the same encoder, after the pass. Submit the encoder.
 4. **Read the bounds** (when "read"): map `bounds.buffer` for reading. A headless frame waits for this frame's map. An
    interactive frame does not wait: it plans with the last bounds it read (one or two frames old), or with none
    before the first read completes, and starts a new read only when none is in flight.
 5. **Plan** (below): for each `plan[k]`, a list of runs `(vertices, instances, first)`, and the `loft_detail` slots.
    `queue.writeBuffer(buffers[frame.detail.buffer], 0, first frame.detail.floats floats of the slots)`.
-6. **Passes.** One command encoder. For each `frame.passes[i]`: `beginRenderPass` with one colour attachment (its
-   `view` and `resolveTarget`, each a view-sized texture's default view or the output; `loadOp`, `storeOp`,
-   `clearValue` as r, g, b, a) and, when `depth` is present, a depth attachment (`view` is a texture id;
+6. **Passes.** One command encoder. For each `frame.passes[i]`: `beginRenderPass` with one colour attachment when
+   `color` is present (its `view` and `resolveTarget`, each a texture's default view or the output; `loadOp`, `storeOp`,
+   `clearValue` as r, g, b, a), none when it is absent (version 2), and, when `depth` is present, a depth attachment (`view` is a texture id;
    `depthLoadOp`, `depthStoreOp`, `depthClearValue`; no stencil). `setBindGroup(k, bindGroups[k])` for each listed
    group, in order. Then each command:
    - `fixed`: `setPipeline`, `draw(vertices, instances)`.
    - `planned`: if the plan for `plan[draw]` has no run, nothing (not even `setPipeline`); else `setPipeline`, then
      for each run `draw(run.vertices, run.instances, 0, run.first)`.
    End the pass. Submit.
+
+A pass that draws a picture off screen (version 2) is executed exactly like the others: its textures, its bind
+groups (its own group 0, whose `frame` uniform the copies filled; group 3, the pictures drawn before it) and its draws
+(planned draws use the view's plan: the same runs and level-of-detail slots) are all in the lists.
 
 A pass may draw into only part of its view-sized target (the clearance passes after the depth resolve draw one
 fragment per 4 x 4 or 8 x 8 pixels into the top left, sized in their vertex shaders from the textures they read); the
@@ -170,6 +194,9 @@ The plan is the one per-frame procedure a loader runs on the CPU; phase 4 moves 
   tables; motion is compute stages; paint is fragment functions.
 
 ## Versions
+
+Version 2 (2026-11-14): textures of a scaled or fixed size, render passes with no colour attachment, pipelines with
+no fragment stage, `frame.copies`. A file uses it only when it holds a pass; every other file is still version 1.
 
 `version` changes whenever a loader written for the previous one would draw a file wrongly or fail on it: a new field a
 loader must act on, a changed meaning, a new `FrameWrite` or command kind. A field a loader may ignore does not

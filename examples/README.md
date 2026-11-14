@@ -63,6 +63,16 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `nest.ts` | 86 | one shape repeated at shrinking scales through a fold (`repeatScale`) |
 | `pearls.ts` | 53 | a lattice of shapes, ray-cast by walking the cells a ray crosses |
 
+## Pictures drawn off screen (`pass`) and stills
+
+| File | Lines | Shows |
+|---|---:|---|
+| `reeds_shadow.ts` | 71 | shadows from every shape the sun sees: a depth picture from the sun read by a style part; a CPU check that every caster lands inside it |
+| `pool.ts` | 51 | a pool that mirrors what stands round it: the view's camera reflected, half size, read by the ground |
+
+A still needs no new name in a scene: `loft render <scene> --samples 64 --shutter 0.05 --aperture 0.08` averages 64
+samples of one instant (motion blur over the shutter, depth of field focused on the camera's target).
+
 ## Whole scenes
 
 | File | Lines | Shows |
