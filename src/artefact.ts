@@ -266,7 +266,72 @@ export type Draw = {
    * soft volume edges and depth fades.
    */
   readonly sceneDepth?: boolean;
+  /**
+   * How this draw writes depth alone, for a depth pass (`ArtefactPass`). Absent: it is left out of depth passes (the
+   * pass's `leftOut` names it). Set by the compiler only in a scene that has a depth pass, so a scene without one keeps
+   * its shaders as they were.
+   */
+  readonly depth?: DrawDepth;
 };
+
+/** How a draw writes depth alone: one handler per kind in src/host/lower.ts. */
+export type DrawDepth =
+  /** No fragment stage: the rasterised triangle is the depth (surfaces, meshes). */
+  | { readonly kind: "vertex" }
+  /** A fragment entry of the draw's module that computes coverage and depth and discards, without shading (tracers). */
+  | { readonly kind: "entry"; readonly entry: string };
+
+/** A texture's size: a share of the view's (rounded, at least 1 pixel), or fixed pixels. */
+export type TextureSize = { readonly kind: "view"; readonly scale: number } | { readonly kind: "fixed"; readonly width: number; readonly height: number };
+
+/**
+ * A picture drawn off screen before the view (src/frame/pass.ts), in `Artefact.passes` order: each pass is drawn after
+ * every pass it reads. Its texture is bound in group 3 (`passBindingsWgsl`) of every draw, post pass and other pass.
+ *
+ * scene   the draws listed (indices into `Artefact.draws`, in their order), from the camera held in the 12-vec4 table at
+ *         `camera` (a `struct Frame`, copied into the pass's own group 0 uniform after the pose stages). keep: colour
+ *         (rgba8unorm, through the view's pipelines), light (rgba16float), depth (depth32float, single-sampled, each
+ *         draw's `depth` way).
+ * screen  one full-screen triangle of `shader` (entry points `vs` and `fs`) into rgba16float.
+ */
+export type ArtefactPass = {
+  readonly name: string;
+  readonly size: TextureSize;
+  /** The passes its draws read (all ordered before it). */
+  readonly reads: readonly string[];
+  readonly what:
+    | {
+      readonly kind: "scene";
+      readonly keep: "colour" | "depth" | "light";
+      readonly camera: { readonly buffer: string; readonly offset: number };
+      readonly draws: readonly number[];
+      /** Draws of the scene not drawn into this pass, and why (a reader of the pass, no depth entry, the sea's grid). */
+      readonly leftOut: readonly { readonly label: string; readonly why: string }[];
+    }
+    | { readonly kind: "screen"; readonly shader: string };
+};
+
+/** The vec4s of a pass's camera table: a `struct Frame` (PRELUDE_WGSL). */
+export const PASS_CAMERA_VEC4S = 12;
+
+/**
+ * Prepended by the host to every draw's and post pass's module of an artefact with passes, right after PRELUDE_WGSL.
+ *
+ * Binding layout (a second host must match it exactly), all visible to vertex and fragment stages:
+ *   @group(3) @binding(0)      sampler, filtering: linear min/mag, clamp-to-edge on u and v, no mipmaps
+ *   @group(3) @binding(1 + i)  texture_2d<f32>, single-sampled: pass i's picture; sample type float (colour, light,
+ *                              screen) or unfilterable-float (depth). Inside pass i itself, and in any pass drawn
+ *                              before pass k, binding 1 + k holds a 1 x 1 stand-in instead (a texture may not be an
+ *                              attachment and bound in one pass, and nothing drawn later may be read).
+ */
+export function passBindingsWgsl(passes: readonly ArtefactPass[]): string {
+  return [
+    "",
+    "@group(3) @binding(0) var loft_pass_sampler: sampler;",
+    ...passes.map((p, i) => `@group(3) @binding(${1 + i}) var loft_passtex_${p.name}: texture_2d<f32>;`),
+    "",
+  ].join("\n");
+}
 
 /**
  * A full-screen pass run after the scene is drawn and resolved, in list order. The module has one entry point, `fs`;
@@ -301,6 +366,8 @@ export type Artefact = {
   readonly draws: readonly Draw[];
   /** Full-screen passes after the scene. Absent means none. */
   readonly post?: readonly PostPass[];
+  /** Pictures drawn off screen before the view, in drawing order. Absent means none. */
+  readonly passes?: readonly ArtefactPass[];
   /** The pose pass: compute dispatches that fill every map and scan table, in order (docs/gpu_native.md). */
   readonly stages: readonly PoseStage[];
   /** Every per-frame table: where it lives and how it is filled. */

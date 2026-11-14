@@ -20,7 +20,7 @@ import type { Artefact, CpuUpload, FrameState, FrameStats, Host, Loaded, View } 
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
-import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Target } from "./manifest.ts";
+import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Target, type TextureSize } from "./manifest.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 export { COLOR_FORMAT, DEPTH_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT } from "./manifest.ts";
@@ -220,7 +220,7 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
       label: p.label,
       layout: pipelineLayouts[p.layout]!,
       vertex: { module: modules[p.vertex.module]!, entryPoint: p.vertex.entryPoint, constants: p.vertex.constants },
-      fragment: { module: modules[p.fragment.module]!, entryPoint: p.fragment.entryPoint, constants: p.fragment.constants, targets: p.fragment.targets.map((t) => ({ ...t })) },
+      ...(p.fragment === undefined ? {} : { fragment: { module: modules[p.fragment.module]!, entryPoint: p.fragment.entryPoint, constants: p.fragment.constants, targets: p.fragment.targets.map((t) => ({ ...t })) } }),
       primitive: p.primitive,
       ...(p.depthStencil === undefined ? {} : { depthStencil: p.depthStencil }),
       multisample: p.multisample,
@@ -242,12 +242,21 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
   return {
     manifest: m, buffers, computePipelines, renderPipelines, fixedGroups,
     sized: (size) => {
-      const textures = m.textures.map((t) => device.createTexture({ label: t.label, size, format: t.format, sampleCount: t.sampleCount, usage: bits(TEXTURE_USAGE, t.usage) }));
+      const textures = m.textures.map((t) => device.createTexture({ label: t.label, size: textureSize(t.size, size), format: t.format, sampleCount: t.sampleCount, usage: bits(TEXTURE_USAGE, t.usage) }));
       const views = textures.map((t) => t.createView());
       const groups = m.bindGroups.map((g, k) => fixedGroups[k] ?? group(k, views));
       return { ...size, textures, views, groups };
     },
   };
+}
+
+/** A texture's pixels for a view of this size (TextureDesc.size: absent is the view's). */
+export function textureSize(t: TextureSize | undefined, view: { readonly width: number; readonly height: number }): { width: number; height: number } {
+  if (t === undefined) return { width: view.width, height: view.height };
+  switch (t.kind) {
+    case "view": return { width: Math.max(1, Math.round(view.width * t.scale)), height: Math.max(1, Math.round(view.height * t.scale)) };
+    case "fixed": return { width: t.width, height: t.height };
+  }
 }
 
 // ---- recording -------------------------------------------------------------------------------------------------
@@ -292,7 +301,7 @@ export function passDescriptor(p: RenderPassDesc, s: Sized, out: GPUTextureView)
   const c = p.color, d = p.depth;
   return {
     label: p.label,
-    colorAttachments: [{
+    colorAttachments: c === undefined ? [] : [{
       view: targetView(s, c.view, out),
       ...(c.resolveTarget === undefined ? {} : { resolveTarget: targetView(s, c.resolveTarget, out) }),
       loadOp: c.loadOp, storeOp: c.storeOp,
@@ -429,6 +438,8 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       dispatchAll(pass, o, m.frame.pose);
       pass.end();
     }
+    // Each pass's camera, from its table into its frame uniform (Manifest.frame.copies), before any pass draws.
+    for (const c of m.frame.copies ?? []) encoder.copyBufferToBuffer(o.buffers[c.from]!, c.fromOffset, o.buffers[c.to]!, 0, c.bytes);
     if (copyBounds && bounds.kind === "read") {
       for (const g of bounds.grids) encoder.copyBufferToBuffer(o.buffers[g.from]!, g.fromOffset, o.buffers[bounds.buffer]!, g.at * 16, g.instances * 16);
     }

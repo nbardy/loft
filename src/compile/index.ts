@@ -3,7 +3,7 @@
 // the first time anything reads it); then the tables are packed, the shared WGSL is assembled, each shader module gets
 // the library functions `sceneWgsl` does not already hold, the draws are ordered by phase and the pose function built.
 
-import { DETAIL_SLOTS, type Artefact, type Detail, type Draw, type FrameState, type PostPass } from "../artefact.ts";
+import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type ArtefactPass, type Detail, type Draw, type FrameState, type PostPass } from "../artefact.ts";
 import { compileJs, type Env, type Expr, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
 import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
@@ -13,6 +13,8 @@ import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
 import { measureRest } from "../draw/grid_detail.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
+import { discover, planPasses } from "./passes.ts";
+import { SceneError } from "../errors.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
 export type CpuFn = (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
@@ -86,15 +88,27 @@ export function compileScene(scene: Scene): Compiled {
   // The ink pass runs first: it restores the plain mark in alpha for the style's own passes.
   if (screenInk) posts.unshift({ label: "ink outline", wgsl: INK_POST });
   const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, scene.sunAt);
+  // Passes are found from what the shaders call (src/compile/passes.ts); a scene that reads none finds none here, and
+  // every step below that is about passes then does nothing.
+  const found = discover(slots, [...slots.libs(), ...Object.values(modules).flatMap((m) => m.libs)]);
+  for (const d of found.defs) if (d.what.kind === "scene") tables.declare(d.what.camera, prep);
+  const depthPasses = found.defs.some((d) => d.what.kind === "scene" && d.what.keep === "depth");
   const layout = tables.layout();
+  if (found.defs.length > 0) {
+    const reader = layout.stages.find((st) => /\bloft_passtex_/.test(st.wgsl));
+    if (reader !== undefined) throw new SceneError(`table stage "${reader.label}"`, "a table that reads a pass", "tables that are closed forms of the frame (a table filled from a picture would carry pictures from frame to frame)", "read the pass in a shader's paint or style, not in a table");
+  }
   slots.seal();
   const shared = slots.libs();
   const sceneWgsl = [layout.wgsl, CORE_WGSL, MARK_WGSL, style, ...shared.map((l) => l.wgsl)].join("\n");
   const shaders: Record<string, string> = {};
-  for (const [k, m] of Object.entries(modules)) {
+  const moduleOf = (m: Shader, depth: boolean): string => {
     const own = m.libs.filter((l) => !shared.includes(l));
-    shaders[k] = [...own.map((l) => l.wgsl), m.code].join("\n");
-  }
+    // A depth entry is written only into a scene with a depth pass (Shader.depthEntry), so others keep their bytes.
+    return [...own.map((l) => l.wgsl), m.code, ...(depth && m.depthEntry !== undefined ? [m.depthEntry] : [])].join("\n");
+  };
+  for (const [k, m] of Object.entries(modules)) shaders[k] = moduleOf(m, depthPasses);
+  for (const [name, m] of found.screens) shaders[`pass.${name}`] = moduleOf(m, false);
   const post: PostPass[] = posts.map((p, i) => {
     const key = `post.${i}`;
     shaders[key] = p.wgsl;
@@ -114,12 +128,22 @@ export function compileScene(scene: Scene): Compiled {
   };
   const restFrame = poseFrame(layout, envOf, restState).frame;
   const detailOf = detailSlots(layout.placed, (roots) => cpu(roots)(restFrame));
-  const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, ...d }) => {
+  const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, depth, ...d }) => {
     const resolved = detailOf(detail, d);
     // The shader reads its level from `loft_detail[LOFT_DETAIL_SLOT + instance]` (an override, so one module serves
     // every slot it is drawn with).
     const constants = resolved.kind === "fixed" ? d.constants : { ...d.constants, LOFT_DETAIL_SLOT: resolved.slot };
-    return { ...d, constants, detail: resolved, pass: PASS_OF[phase] };
+    return { ...d, constants, detail: resolved, pass: PASS_OF[phase], ...(depthPasses && depth !== undefined ? { depth } : {}) };
+  });
+  const passes: readonly ArtefactPass[] = found.defs.length === 0 ? [] : planPasses({
+    defs: found.defs,
+    shared: [PRELUDE_WGSL, SCENE_DEPTH_WGSL, SCENE_CLEARANCE_WGSL, POST_WGSL, sceneWgsl].join("\n"),
+    shaders, draws,
+    camera: (def) => {
+      if (def.what.kind !== "scene") throw new Error(`compile: pass "${def.name}" has no camera`);
+      const placed = layout.placed.get(def.what.camera)!;
+      return { buffer: bufferName(placed.buffer), offset: placed.offset };
+    },
   });
   const triangles = draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0);
   const artefact: Artefact = {
@@ -135,6 +159,7 @@ export function compileScene(scene: Scene): Compiled {
     shaders,
     draws,
     ...(post.length > 0 ? { post } : {}),
+    ...(passes.length > 0 ? { passes } : {}),
     stages: layout.stages,
     tables: layout.info,
     cpuPose: cpuPoseFunction(layout, envOf),

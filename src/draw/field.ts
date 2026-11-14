@@ -43,7 +43,7 @@ import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawS
 import { lipschitz } from "../lib/sdf3.ts";
 import { fieldShadow, shadowSkeleton } from "./field_shadow.ts";
 import type { F, Field, P3, Skeleton } from "../map/types.ts";
-import { aabbOf, outlineWgsl, PROXY_VERTICES, traceShadeWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
+import { aabbOf, outlineWgsl, PROXY_VERTICES, TRACE_DEPTH, TRACE_DEPTH_OUT, traceShadeWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 import { bakeBrick, varianceOf, type Brick, type Variance } from "../map/brick.ts";
 import { surfaceNets, type TriangleMesh } from "../map/nets.ts";
 
@@ -341,8 +341,8 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
       const key = `field.${this.name}`;
       const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety)].join("\n");
       return {
-        shaders: { [key]: { code, libs } },
-        draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
+        shaders: { [key]: { code, libs, depthEntry: depthFragmentWgsl(safety) } },
+        draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps }, depth: TRACE_DEPTH })],
       };
     };
     /** `show`: a WGSL bool per vertex; `gate`: the code it calls. */
@@ -355,7 +355,7 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
       const ink: DrawSpec[] = this.o.outline === "silhouette" ? [drawSpec({ label: `${this.name}_ink`, shader: key, vertices: n, cull: "front", constants: { INK_HULL: 1 } })] : [];
       return {
         shaders: { [key]: { code, libs: paint.libs } },
-        draws: [drawSpec({ label: this.name, shader: key, vertices: n, cull: "back", constants: { INK_HULL: 0 } }), ...ink],
+        draws: [drawSpec({ label: this.name, shader: key, vertices: n, cull: "back", constants: { INK_HULL: 0 }, depth: { kind: "vertex" } }), ...ink],
       };
     };
     const both = (a: Emitted, b: Emitted): Emitted => ({ shaders: { ...a.shaders, ...b.shaders }, draws: [...a.draws, ...b.draws] });
@@ -632,6 +632,59 @@ fn march_band(fp: f32) -> f32 {
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
   return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, FIELD_ID)), trace_depth(p), mask);
+}`;
+}
+
+/**
+ * The depth-only entry (trace.ts `TRACE_DEPTH`): `fs`'s march with the ink and the shading taken out. A ray that hits
+ * (or runs out of steps inside the bound, as `fs` takes it) writes its secant-refined depth; any other ray is discarded.
+ */
+function depthFragmentWgsl(safety: number): string {
+  return /* wgsl */ `
+${TRACE_DEPTH_OUT}
+@diagnostic(off, derivative_uniformity)
+@fragment fn fs_depth(in: TraceIn) -> TraceDepthOut {
+  let d = view_dir(in.world);
+  let o = trace_origin(in.world, d);
+  let span = bound_span(o, d);
+  let t0 = max(span.x, 0.0);
+  let t1 = span.y;
+  if (t0 > t1) { discard; }
+  let fp0 = pixel_world(o + d * t0);
+  let fpk = (pixel_world(o + d * max(t1, t0 + 1e-3)) - fp0) / max(t1 - t0, 1e-3);
+  var t = t0;
+  var hit = false;
+  var exhausted = true;
+  var prevDist = 0.0;
+  var prevT = t0;
+  var prevExact = false;
+  var hitDist = 0.0;
+  for (var i = 0u; i < STEPS; i++) {
+    let skip = march_skip(o, d, t, t1, fp0, fpk, t0);
+    if (skip.y > 0.0) { t = skip.x; prevExact = false; if (t > t1) { exhausted = false; break; } }
+    let dist = field_d(o + d * t, fp0 + fpk * (t - t0));
+    if (dist < HIT * (fp0 + fpk * (t - t0))) { hit = true; hitDist = dist; exhausted = false; break; }
+    prevDist = dist;
+    prevT = t;
+    prevExact = true;
+    t += dist * SAFETY;
+    if (t > t1) { exhausted = false; break; }
+  }
+  if (!(hit || exhausted)) { discard; }
+  var ta = prevT;
+  var da = prevDist;
+  var db = hitDist;
+  var pairExact = prevExact;
+  for (var r = 0u; r < ${REFINE}u; r++) {
+    let slope = (db - da) / (t - ta);
+    let tn = select(t + db * SAFETY, t - db / slope, pairExact && slope < -1e-6 && t > ta);
+    ta = t;
+    da = db;
+    t = tn;
+    if (r + 1u < ${REFINE}u) { db = field_d(o + d * t, fp0 + fpk * (t - t0)); }
+    pairExact = true;
+  }
+  return TraceDepthOut(trace_depth(o + d * t));
 }`;
 }
 

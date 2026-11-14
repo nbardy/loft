@@ -11,6 +11,7 @@ import { headlessHost, loadArtefact } from "./load.ts";
 import { openVideo } from "./video.ts";
 import { exitWith, headed, verdictOf } from "./verdict.ts";
 import { EnvironmentError } from "../errors.ts";
+import { passNotes } from "./pass_notes.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
@@ -33,6 +34,7 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       const artefact = await loadArtefact(cmd.source);
       checkInputs(artefact, cmd.inputs, sweep);
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
+      for (const line of passNotes(artefact)) console.log(line);
       t = performance.now();
       const loaded = await loadedWithRetries(artefact);
       console.log(`load     ${ms(t)}`);
@@ -147,6 +149,7 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   console.log(`compile  ${ms(t)}  ${fillCounts(artefact.tables)}`);
+  for (const line of passNotes(artefact)) console.log(line);
   t = performance.now();
   const [{ lower }, { writeBundle }] = await Promise.all([import("../host/lower.ts"), import("../host/files.ts")]);
   const bundle = lower(artefact);

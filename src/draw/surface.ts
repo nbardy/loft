@@ -16,6 +16,7 @@ import { fwidth } from "../lib/wgsl.ts";
 import { sunDir } from "../sun.ts";
 import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
+import type { DrawDepth } from "../artefact.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -321,14 +322,14 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   let edge = 1.0 - smoothstep(fw * 1.0, fw * 2.2, 1.0 - in.uv.y);
   return vec4<f32>(mix(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ink(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), edge), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
 }`,
-          draws: (b) => [drawSpec({ ...b, cull })],
+          draws: (b) => [drawSpec({ ...b, cull, depth: SURFACE_DEPTH })],
         };
         case "none": return {
           overrides: "", fns: paintFn(look.paint), push: "s.pos",
           main: `${head}
   return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", false)});
 }`,
-          draws: (b) => [drawSpec({ ...b, cull })],
+          draws: (b) => [drawSpec({ ...b, cull, depth: SURFACE_DEPTH })],
         };
       }
     }
@@ -408,6 +409,12 @@ function quadDerivatives(name: string, s: Shader): Shader {
   return s;
 }
 
+/**
+ * How a lit surface writes depth alone (a depth pass, src/frame/pass.ts): its rasterised triangles are the depth. Its
+ * ink hull states none, so an outline does not thicken a shadow; flat strokes and glazed surfaces state none either.
+ */
+const SURFACE_DEPTH: DrawDepth = { kind: "vertex" };
+
 /** A closed surface's ink: a second draw pushed out along the normal (hull), or a flag for the screen pass. */
 function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: DrawSpec["cull"]): Frag {
   switch (ctx.outline) {
@@ -421,7 +428,7 @@ function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: Dra
   return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), mk);
 }`,
       draws: (b) => [
-        drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 } }),
+        drawSpec({ ...b, cull, constants: { ...b.constants, INK: 0 }, depth: SURFACE_DEPTH }),
         drawSpec({ ...b, label: `${b.label} outline`, cull: "front", constants: { ...b.constants, INK: 1 } }),
       ],
     };
@@ -430,7 +437,7 @@ function hullOutline(ctx: CompileContext, head: string, paint: Shader, cull: Dra
       main: `${head}
   return vec4<f32>(shade(base, n, eye, in.world, depth, in.uv, in.anchor, in.id), ${ctx.markOut("mark(base, n, eye, in.world, depth, in.uv, in.anchor, in.id)", true)});
 }`,
-      draws: (b) => [drawSpec({ ...b, cull })],
+      draws: (b) => [drawSpec({ ...b, cull, depth: SURFACE_DEPTH })],
     };
   }
 }

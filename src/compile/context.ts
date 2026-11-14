@@ -59,7 +59,15 @@ export type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; 
  * each library function either in `sceneWgsl` (when the shared functions call it too) or in the module, never both, so
  * a function that needs scene depth stays out of shaders that cannot read it.
  */
-export type Shader = { readonly code: string; readonly libs: readonly LibFn[] };
+export type Shader = {
+  readonly code: string;
+  readonly libs: readonly LibFn[];
+  /**
+   * WGSL defining a depth-only fragment entry (`DrawDepth` "entry"), appended to the module only when the scene has a
+   * depth pass, so a scene without one keeps its shaders byte for byte. Its draws say `depth: { kind: "entry", entry }`.
+   */
+  readonly depthEntry?: string;
+};
 
 export type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] };
 

@@ -33,6 +33,7 @@ export * from "./relief/height.ts";
 export { sculptLayer, displace } from "./relief/index.ts";
 export { type ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
 export { movable, type Sun } from "./sun.ts";
+export { pass, type Pass, type PassCamera, type PassSpec } from "./frame/pass.ts";
 
 // What recipes under examples/ need of the core (examples/README.md).
 export { noise2, type Branch } from "./lib/index.ts";
