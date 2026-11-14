@@ -10,7 +10,7 @@ import { SceneError } from "../errors.ts";
 import type { F, P3, Skeleton } from "../map/types.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
 import { nameId } from "./surface.ts";
-import { aabbOf, outlineWgsl, PROXY_VERTICES, tracePlumbingWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
+import { aabbOf, outlineWgsl, PROXY_VERTICES, TRACE_DEPTH, TRACE_DEPTH_OUT, tracePlumbingWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 
 /**
  * A ray, or a thin cone: from `o` along unit `d`, searched for t in [t0, t1]. `width(t)` is how wide the ray is at t.
@@ -106,8 +106,8 @@ export class TracedDrawable implements Drawable {
     const code = [head.code, outlineWgsl(this.o.outline), `const TRACED_ID: f32 = ${lit(nameId(this.name))};`, hitFn.code, normalFn.code, paintFn.code, fragmentWgsl(ctx.markOut("trace_mark(base, n, p, d, id)", false))].join("\n");
     const libs = [...new Set([...head.libs, ...hitFn.libs, ...normalFn.libs, ...paintFn.libs])];
     return {
-      shaders: { [key]: { code, libs } },
-      draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, instances: this.proxy.kind === "copies" ? this.proxy.count : 1, cull: "front" })],
+      shaders: { [key]: { code, libs, depthEntry: DEPTH_ENTRY_WGSL } },
+      draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, instances: this.proxy.kind === "copies" ? this.proxy.count : 1, cull: "front", depth: TRACE_DEPTH })],
     };
   }
 }
@@ -181,6 +181,27 @@ const HIT: f32 = ${HIT};
   return TraceOut(vec4<f32>(colour, ${markOut}), trace_depth(p), mask);
 }`;
 }
+
+/**
+ * The depth-only entry (trace.ts `TRACE_DEPTH`, for a depth pass): `fs` up to the author's hit, with no normal, paint,
+ * ink or light. A ray that hits (gap 0 or less) writes its depth; a near miss covers nothing.
+ */
+const DEPTH_ENTRY_WGSL = /* wgsl */ `
+${TRACE_DEPTH_OUT}
+@diagnostic(off, derivative_uniformity)
+@fragment fn fs_depth(in: TraceIn) -> TraceDepthOut {
+  let d = view_dir(in.world);
+  let o = trace_origin(in.world, d);
+  let span = traced_span(in, o, d);
+  let t0 = max(span.x, 0.0);
+  let t1 = span.y;
+  if (t0 > t1) { discard; }
+  let fp0 = pixel_world(o + d * t0);
+  let fpk = (pixel_world(o + d * max(t1, t0 + 1e-3)) - fp0) / max(t1 - t0, 1e-3);
+  let h = traced_hit(o, d, t0, t1, fp0, fpk, traced_copy(in));
+  if (h.y > 0.0) { discard; }
+  return TraceDepthOut(trace_depth(o + d * h.x));
+}`;
 
 /** Rays cast down through a static bound per side of this grid, for the default shadow. */
 const SHADOW_GRID = 24;

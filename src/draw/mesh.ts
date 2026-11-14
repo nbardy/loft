@@ -308,7 +308,8 @@ ${lanes.map((j) => `  let r${j} = ${fetchLane(j)};`).join("\n")}
   const ink: DrawSpec[] = o.outline === "hull" && ctx.outline === "hull" ? [drawSpec({ label: `${name}_ink`, shader: e.key, vertices: n, instances, cull: "front", constants: { INK_HULL: 1 } })] : [];
   return {
     shaders: { [e.key]: { code, libs: [...new Set([...atFn.libs, ...paint.libs])] } },
-    draws: [drawSpec({ label: name, shader: e.key, vertices: n, instances, cull: o.sides === "two" ? "none" : "back", constants: { INK_HULL: 0 } }), ...ink],
+    // Depth alone is the rasterised triangles (a depth pass, src/frame/pass.ts); the ink hull states none.
+    draws: [drawSpec({ label: name, shader: e.key, vertices: n, instances, cull: o.sides === "two" ? "none" : "back", constants: { INK_HULL: 0 }, depth: { kind: "vertex" } }), ...ink],
   };
 }
 

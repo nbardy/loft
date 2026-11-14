@@ -72,6 +72,7 @@ and last line.
 | 23 | `load: ... Export named 'spiralTub' not found` | a misspelt import | `spiralTube` (suggested) |
 | 24 | `recur "drift": given a read of the host input "push"` | a baked state's step reads what a game changes | a constant, or a closed form that looks like state (`jolt`) |
 | 25 | `passes: given a cycle: "mirrorLeft" reads "mirrorRight"; ...` | two passes each hold a draw that reads the other (two mirrors facing) | let one of those draws stop reading its pass |
+| 26 | `recur "drift": given a read of the pass "above"` | a baked state's step reads a picture drawn this frame | compute it from closed forms (`project` is arithmetic) |
 
 Refused the same way, without a fixture each: a step reading a param, a curve row, a per-frame table or a checkpointed
 recurrence; a span that is not a whole number of steps; a history over 120 x 64 MiB; a checkpointed state read at a time

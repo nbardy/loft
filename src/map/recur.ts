@@ -6,6 +6,7 @@
 // `mix`. The compiler (src/compile/tables.ts, src/compile/recur.ts) emits the step's code; a host bakes it
 // (src/host/bake.ts); the baked states travel in the artefact's static tables, so any frame still draws alone.
 
+import { passOf, passOfTable } from "../frame/pass.ts";
 import { SceneError } from "../errors.ts";
 import {
   add, clamp, eq, Expr, f, fetch, floor, input, leaves, lift, min, mix, mod, mul, replace, saturate, scopedName, select, sub, time, variable, vec2,
@@ -120,7 +121,9 @@ type Read =
   | { readonly kind: "input"; readonly name: string }
   | { readonly kind: "param"; readonly name: string }
   | { readonly kind: "curve row"; readonly label: string }
-  | { readonly kind: "free variable"; readonly name: string };
+  | { readonly kind: "free variable"; readonly name: string }
+  /** A picture drawn off screen (src/frame/pass.ts): its `at`, or its camera through `project`. */
+  | { readonly kind: "pass"; readonly name: string };
 
 /** Why a read cannot be baked, and the fix; undefined when it can. */
 function refusal(r: Read): { readonly given: string; readonly fix: string } | undefined {
@@ -138,6 +141,10 @@ function refusal(r: Read): { readonly given: string; readonly fix: string } | un
       return { given: `a read of the curve row "${r.label}" (it can be edited after the bake)`, fix: "`tabulate` the curve as \"static\" and read that" };
     case "free variable":
       return { given: `a free variable "${r.name}" from outside the step`, fix: "a step is a function of its entry, `prev` and `time` only: pass constants, or the closed form" };
+    // A state stepped from a rendered picture would depend on the baking GPU's rasterisation and carry pictures from
+    // frame to frame (headroom A4): history by the back door.
+    case "pass":
+      return { given: `a read of the pass "${r.name}" (a picture drawn this frame)`, fix: "a step is baked before anything is drawn: compute what it needs from closed forms (a pass's `project` is arithmetic: write the same projection from the camera's numbers)" };
   }
 }
 
@@ -150,8 +157,9 @@ function classifyReads(roots: readonly Expr[], own: { readonly prev: TableSource
   const reads: Read[] = [];
   // Tables first: a checkpointed recurrence also reads a hidden input, and its table names it better.
   for (const t of l.tables) {
-    const r = recurOf.get(t);
+    const r = recurOf.get(t), camera = passOfTable(t);
     if (t === own.prev) reads.push({ kind: "prev" });
+    else if (camera !== undefined) reads.push({ kind: "pass", name: camera.name });
     else if (r !== undefined) {
       switch (r.part) {
         case "kept": reads.push(r.state.kept.kind === "every" ? { kind: "recurrence", of: r.state } : { kind: "checkpointed recurrence", name: r.state.name }); break;
@@ -164,6 +172,7 @@ function classifyReads(roots: readonly Expr[], own: { readonly prev: TableSource
   for (const s of l.inputs) reads.push({ kind: "input", name: s.name });
   for (const p of l.params) reads.push({ kind: "param", name: p.name });
   for (const r of l.rows) reads.push({ kind: "curve row", label: r.label });
+  for (const fn of l.libs) { const p = passOf(fn); if (p !== undefined) reads.push({ kind: "pass", name: p.name }); }
   return reads;
 }
 

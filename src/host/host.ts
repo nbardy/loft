@@ -637,11 +637,15 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
         const rb = readbackFor(view), sz = sizedFor(view);
         const drawn = await stillFrame({
           device, passes: m.frame.passes, views: sz.views, textures: sz.textures, out: rb.texture,
-          // Each sample waits for its own bounds and plans with no memory: a still depends on no frame before it.
-          sample: async (v, frame) => {
+          // One bounds read (sample 0's); each sample plans from it with no memory: a still depends on no frame before it.
+          bounds: async (v, frame) => {
             const copy = bounds.kind === "read";
             await validated("still", () => pose(v, copy, undefined, frame));
-            return plan(v, copy ? await readBounds() : lastBounds, new Map());
+            return copy ? await readBounds() : lastBounds;
+          },
+          sample: (v, frame, read) => {
+            pose(v, false, undefined, frame);
+            return plan(v, read, new Map());
           },
           record: (encoder, out, p, from, to) => recordPasses(encoder, o, sz, out, p, undefined, [from, to]),
         }, view, still);

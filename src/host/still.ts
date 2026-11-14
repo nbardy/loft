@@ -12,11 +12,12 @@
 // Each sample is resolved as today (rgba8unorm, display sRGB, as the 4x multisample resolve averages) and added into
 // an f32 accumulator by a compute pass; the average is written where the scene's picture goes and the style's post
 // passes run once over it. Samples are drawn N - 1 down to 0, so the post passes read sample 0's depth.
-// Each sample plans its level of detail afresh (no hysteresis memory), so a still does not depend on frames before it.
+// Every sample plans its level of detail from sample 0's bounds, read once, with no hysteresis memory: a still depends
+// on no frame before it, and no sample waits on the GPU.
 
 import type { Camera, FrameStats, View } from "../artefact.ts";
 import { cameraMatrices, invert, type Mat4 } from "./camera.ts";
-import type { Plan } from "./detail.ts";
+import type { Bounds, Plan } from "./detail.ts";
 import { FRAME_FLOATS } from "./lower.ts";
 import { COLOR_FORMAT, type RenderPassDesc } from "./manifest.ts";
 
@@ -106,8 +107,10 @@ export type StillKit = {
   readonly textures: readonly GPUTexture[];
   /** The frame's output (the readback texture). */
   readonly out: GPUTexture;
-  /** Pose the view with this frame uniform, wait for its level-of-detail bounds, plan with no memory. */
-  sample(view: View, frame: Float32Array<ArrayBuffer>): Promise<Plan>;
+  /** Pose the view with this frame uniform and read back its level-of-detail bounds (once a still: sample 0's). */
+  bounds(view: View, frame: Float32Array<ArrayBuffer>): Promise<Bounds>;
+  /** Pose the view with this frame uniform and plan it from these bounds with no memory; nothing waits on the GPU. */
+  sample(view: View, frame: Float32Array<ArrayBuffer>, bounds: Bounds): Plan;
   /** Record passes [from, to) of the frame into the encoder. */
   record(encoder: GPUCommandEncoder, out: GPUTextureView, plan: Plan, from: number, to: number): void;
 };
@@ -175,12 +178,16 @@ export async function stillFrame(kit: StillKit, view: View, s: Extract<StillSpec
   const accumulate = device.createBindGroup({ layout: p.accumulate.getBindGroupLayout(0), entries: [{ binding: 0, resource: picture.createView() }, { binding: 1, resource: { buffer: sum } }] });
   const average = device.createBindGroup({ layout: p.average.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: sum } }, { binding: 1, resource: { buffer: shape } }] });
   let first: Plan | undefined;
+  // Every sample plans its level of detail from sample 0's bounds, read back once: the samples then go to the GPU
+  // without waiting on it (a readback per sample cost about 6 ms each, most of a 64-sample still).
+  const zero: View = { ...view, time: view.time + sampleOf(0, s.samples, s).dt };
+  const bounds = await kit.bounds(zero, sampleUniform(zero, 0, s.samples, s));
   try {
     for (let k = s.samples - 1; k >= 0; k--) {
       const { dt } = sampleOf(k, s.samples, s);
       // MERGE(light): the sample's light point, r2(k), joins the view here as an input once lights take `xi`.
       const sampled: View = { ...view, time: view.time + dt };
-      const plan = await kit.sample(sampled, sampleUniform(sampled, k, s.samples, s));
+      const plan = kit.sample(sampled, sampleUniform(sampled, k, s.samples, s), bounds);
       if (k === 0) first = plan;
       const encoder = device.createCommandEncoder({ label: `loft still sample ${k}` });
       if (k === s.samples - 1) encoder.clearBuffer(sum);

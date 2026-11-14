@@ -13,7 +13,7 @@
 import { SceneError, shown } from "../errors.ts";
 import {
   abs, add, cross, div, dot, f, fetch, gt, length, lib, lift, listOf, mul, neg, normalize, round, select, sign, sub, tan, time, variable, vec3, vec4,
-  type Expr, type In, type LibFn, type ProgramTable,
+  type Expr, type In, type LibFn, type ProgramTable, type TableSource,
 } from "../expr.ts";
 import type { TextureSize } from "../artefact.ts";
 
@@ -77,6 +77,12 @@ const byName = new Map<string, PassDef>();
 /** The pass a library function reads, if it is a pass's `at`. */
 export function passOf(fn: LibFn): PassDef | undefined {
   return byLib.get(fn);
+}
+
+const byCamera = new WeakMap<TableSource, PassDef>();
+/** The pass whose camera a table is (what `project` reads), if it is one. */
+export function passOfTable(t: TableSource): PassDef | undefined {
+  return byCamera.get(t);
 }
 
 /** Lanes of the camera table: the prelude's `struct Frame`, as 12 vec4s. */
@@ -341,6 +347,7 @@ export function pass(spec: PassSpec): Pass {
     : /* wgsl */ `fn loft_pass_${spec.name}_at(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(${texture}, loft_pass_sampler, uv, 0.0); }`;
   const at: LibFn = { name: `loft_pass_${spec.name}_at`, ret: "vec4", wgsl: reads, js: "gpu-only" };
   byLib.set(at, def);
+  if (def.what.kind === "scene") byCamera.set(def.what.camera, def);
   byName.set(spec.name, def);
   const camera = def.what.kind === "scene" ? def.what.camera : undefined;
   return {
