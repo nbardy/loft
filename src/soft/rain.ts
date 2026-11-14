@@ -85,7 +85,7 @@ fn ${prefix}_land(i: u32, c: f32) -> vec3<f32> {
 
 class RainDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces = [];
+  readonly forms = [];
   constructor(readonly name: string, readonly r: RainSpec) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`rain "${name}": names must be identifiers`);
     if (!(Number.isInteger(r.count) && r.count >= 1)) throw new Error(`rain "${name}": count must be a positive integer`);
@@ -148,7 +148,7 @@ struct VOut {
 
 class SplashDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces = [];
+  readonly forms = [];
   constructor(readonly name: string, readonly r: RainSpec, readonly s: SplashSpec) {
     if (!(Number.isInteger(s.count) && s.count >= 1 && s.count <= r.count)) throw new Error(`splashes "${name}": count must be an integer in [1, rain count]`);
     if (!(s.radius > 0 && s.life > 0)) throw new Error(`splashes "${name}": radius and life must be positive`);

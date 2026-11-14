@@ -19,7 +19,7 @@ mod read;
 pub use manifest::Camera;
 pub use read::{read_dir, Artefact, Error};
 
-use manifest::{BoundsRead, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
+use manifest::{BoundsRead, Dispatch, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
 use plan::{Memory, Run};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -425,6 +425,9 @@ impl Loft {
             return Err(Error::TimeInput);
         }
         let i = self.m.inputs.iter().find(|i| i.name == name).ok_or_else(|| Error::UnknownName { kind: "input", name: name.into() })?;
+        if self.m.frame.replay.iter().any(|r| r.slot == i.slot) {
+            return Err(Error::Invalid(format!("view input \"{name}\": a replay's step number, which the loader sets from the time")));
+        }
         if value.len() != i.ty.floats() {
             return Err(Error::InputFloats { name: name.into(), want: i.ty.floats(), got: value.len() });
         }
@@ -478,6 +481,10 @@ impl Loft {
         if let Some(t) = self.m.inputs.iter().find(|i| i.name == "time") {
             self.inputs[t.slot] = self.time as f32;
         }
+        // The step each replay replays to, from the time, so the GPU and every other host agree on it exactly.
+        for r in &self.m.frame.replay {
+            self.inputs[r.slot] = r.step(self.time).0 as f32;
+        }
         for w in &self.m.frame.writes {
             let (buffer, data) = match *w {
                 FrameWrite::Frame { buffer } => (buffer, bytes(&camera::frame_uniform(&mats, width, height, self.time))),
@@ -499,7 +506,7 @@ impl Loft {
             (BoundsRead::Read { .. }, Read::InFlight(_)) | (BoundsRead::None, _) => false,
         };
         let mut pose = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft pose") });
-        if !self.m.frame.pose.is_empty() {
+        if !self.m.frame.pose.is_empty() || !self.m.frame.replay.is_empty() {
             let timestamp_writes = self.timestamps.as_ref().map(|t| wgpu::ComputePassTimestampWrites {
                 query_set: &t.set,
                 beginning_of_pass_write_index: Some(0),
@@ -545,16 +552,28 @@ impl Loft {
         Ok(FrameStats { triangles, draws, gpu_wait })
     }
 
-    /// The pose dispatches, in order, into an open compute pass (the frame's state must have been written).
+    /// The replays and then the pose dispatches, in order, into an open compute pass (the frame's state must have been
+    /// written: the replays' step numbers with it).
     pub fn encode_pose(&self, pass: &mut wgpu::ComputePass) {
-        for d in &self.m.frame.pose {
-            pass.set_pipeline(&self.compute[d.pipeline]);
-            for (i, &g) in d.bind_groups.iter().enumerate() {
-                // Pose groups name no texture (checked at load).
-                pass.set_bind_group(i as u32, self.fixed_groups[g].as_ref(), &[]);
+        for r in &self.m.frame.replay {
+            let (_, k) = r.step(self.time);
+            self.dispatch(pass, &r.first);
+            for j in 1..=k {
+                self.dispatch(pass, if j % 2 == 1 { &r.ping } else { &r.pong });
             }
-            pass.dispatch_workgroups(d.workgroups, 1, 1);
         }
+        for d in &self.m.frame.pose {
+            self.dispatch(pass, d);
+        }
+    }
+
+    fn dispatch(&self, pass: &mut wgpu::ComputePass, d: &Dispatch) {
+        pass.set_pipeline(&self.compute[d.pipeline]);
+        for (i, &g) in d.bind_groups.iter().enumerate() {
+            // Pose groups name no texture (checked at load).
+            pass.set_bind_group(i as u32, self.fixed_groups[g].as_ref(), &[]);
+        }
+        pass.dispatch_workgroups(d.workgroups, 1, 1);
     }
 
     /// Completes the bounds read in flight: waiting for it (`wait`), or only if it is done. Returns the time waited.
@@ -678,7 +697,7 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
         let (FrameWrite::Frame { buffer } | FrameWrite::Inputs { buffer } | FrameWrite::Params { buffer }) = *w;
         id("frame write", "buffer", buffer, m.buffers.len())?;
     }
-    for d in &m.frame.pose {
+    for d in m.frame.pose.iter().chain(m.frame.replay.iter().flat_map(|r| [&r.first, &r.ping, &r.pong])) {
         id(&d.label, "compute pipeline", d.pipeline, m.compute_pipelines.len())?;
         for &g in &d.bind_groups {
             id(&d.label, "bind group", g, m.bind_groups.len())?;

@@ -16,7 +16,7 @@ import {
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
 import { CELL_PIXELS } from "../artefact.ts";
-import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
+import type { Form, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
 import type { Contact } from "../style.ts";
 import { eyePosition, viewDir, wgslFn } from "../lib/wgsl.ts";
@@ -317,7 +317,7 @@ export class Sea implements Chart, Drawable {
   readonly name = "sea";
   readonly skeletons: readonly Skeleton[] = [];
   /** The water follows the camera and reads the scene's depth: nothing to bake. */
-  readonly surfaces: readonly Bakeable[] = [];
+  readonly forms: readonly Form[] = [];
   private readonly drawn: SurfaceDrawable;
 
   constructor(readonly waves: readonly Wave[], readonly reach: number, readonly foam: number, readonly deforms: readonly SeaDeform[] = []) {

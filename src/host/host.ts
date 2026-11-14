@@ -16,11 +16,12 @@
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts and files.ts) stays clean.
 
 import { EnvironmentError } from "../errors.ts";
-import type { Artefact, CpuUpload, FrameState, FrameStats, Host, Loaded, View } from "../artefact.ts";
+import { replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
+import { bakeRecurrences } from "./bake.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
-import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Target, type TextureSize } from "./manifest.ts";
+import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 import { stillFrame, type StillSpec } from "./still.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
@@ -86,13 +87,19 @@ export class NotDataError extends Error {
 
 export function createHost(device: GPUDevice): GpuHost {
   // async: an artefact that fails lower's checks rejects the returned promise, as every load error does, never throws.
-  return { load: async (artefact) => loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) }) };
+  // The first host to load an artefact bakes its recurrences (src/host/bake.ts); lower then writes the baked states.
+  return {
+    load: async (artefact) => {
+      await bakeRecurrences(device, artefact);
+      return loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) });
+    },
+  };
 }
 
 // ---- per-frame state -------------------------------------------------------------------------------------------
 
 const FLOATS = { f32: 1, vec2: 2, vec3: 3, vec4: 4 } as const;
-type StateSpec = Pick<Manifest, "inputs" | "inputFloats" | "params" | "paramFloats">;
+type StateSpec = Pick<Manifest, "inputs" | "inputFloats" | "params" | "paramFloats"> & { readonly frame?: { readonly replay?: readonly ReplayClock[] } };
 
 function asFloats(name: string, value: number | readonly number[], floats: number): readonly number[] {
   const v = typeof value === "number" ? [value] : value;
@@ -104,14 +111,18 @@ function asFloats(name: string, value: number | readonly number[], floats: numbe
 function frameState(s: StateSpec, curves: Float32Array, view: View): FrameState {
   const inputs = new Float32Array(s.inputFloats);
   for (const i of s.inputs) inputs.set(i.def, i.slot);
+  const replays = s.frame?.replay ?? [];
   for (const [name, value] of Object.entries(view.inputs ?? {})) {
     if (name === "time") throw new Error(`view input "time": set View.time instead`);
+    if (replays.some((r) => s.inputs.find((x) => x.slot === r.slot)?.name === name)) throw new Error(`view input "${name}": a replay's step number, which the host sets from View.time`);
     const i = s.inputs.find((x) => x.name === name);
     if (!i) throw new Error(`view input "${name}": the artefact declares no such input`);
     inputs.set(asFloats(name, value, FLOATS[i.ty]), i.slot);
   }
   const time = s.inputs.find((x) => x.name === "time");
   if (time) inputs[time.slot] = view.time;
+  // The step each replay replays to, from the time, so the GPU and the CPU agree on it exactly.
+  for (const r of replays) inputs[r.slot] = replayStep(r, view.time).n;
   const params = new Float32Array(s.paramFloats);
   for (const p of s.params) params[p.slot] = p.def;
   for (const [name, value] of Object.entries(view.params ?? {})) {
@@ -123,8 +134,8 @@ function frameState(s: StateSpec, curves: Float32Array, view: View): FrameState 
 }
 
 /** The `FrameState` a host hands the pose pass for a view: the same mapping `frame` and `draw` use. */
-export function viewState(a: Pick<Artefact, "inputs" | "inputFloats" | "params" | "curves">, view: View, curves: Float32Array = a.curves): FrameState {
-  return frameState({ ...a, paramFloats: a.params.reduce((n, p) => Math.max(n, p.slot + 1), 0) }, curves, view);
+export function viewState(a: Pick<Artefact, "inputs" | "inputFloats" | "params" | "curves" | "recurrences">, view: View, curves: Float32Array = a.curves): FrameState {
+  return frameState({ ...a, paramFloats: a.params.reduce((n, p) => Math.max(n, p.slot + 1), 0), frame: { replay: replayClocks(a.recurrences) } }, curves, view);
 }
 
 export function frameUniform(view: View): Float32Array<ArrayBuffer> {
@@ -263,6 +274,18 @@ export function textureSize(t: TextureSize | undefined, view: { readonly width: 
 }
 
 // ---- recording -------------------------------------------------------------------------------------------------
+
+/**
+ * The replays of a frame at time t, into an open compute pass before its dispatches: per replay, `first` and then k more
+ * alternating ping (odd) and pong (even), k from `replayStep` (docs/artefact_format.md, "Replays").
+ */
+export function dispatchReplays(pass: GPUComputePassEncoder, o: Objects, replays: readonly Replay[], t: number): void {
+  for (const r of replays) {
+    const { k } = replayStep(r, t);
+    dispatchAll(pass, o, [r.first]);
+    for (let j = 1; j <= k; j++) dispatchAll(pass, o, [j % 2 === 1 ? r.ping : r.pong]);
+  }
+}
 
 /** The pose pass's dispatches, into an open compute pass. */
 export function dispatchAll(pass: GPUComputePassEncoder, o: Objects, list: readonly Dispatch[]): void {
@@ -437,8 +460,10 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       if (data.length > 0) device.queue.writeBuffer(o.buffers[w.buffer]!, 0, data);
     }
     const encoder = device.createCommandEncoder({ label: "loft pose" });
-    if (m.frame.pose.length > 0) {
+    const replays = m.frame.replay ?? [];
+    if (m.frame.pose.length > 0 || replays.length > 0) {
       const pass = encoder.beginComputePass({ label: "loft pose", ...(stamps === undefined ? {} : { timestampWrites: { querySet: stamps.querySet, beginningOfPassWriteIndex: stamps.begin, endOfPassWriteIndex: stamps.end } }) });
+      dispatchReplays(pass, o, replays, view.time);
       dispatchAll(pass, o, m.frame.pose);
       pass.end();
     }

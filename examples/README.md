@@ -35,6 +35,18 @@ Sizes are lines. Run any scene with `pnpm loft render <file> --out out/x.webp` o
 | `islandback.ts` | 162 | a walk: a legged body with a gait through shallow water, a shell carried on its back |
 | `maelstrom.ts` | 94 | a deformation of the sea (`whirlpool`) and things riding it (`afloat`) |
 
+## State (a step, baked)
+
+Closed forms first (a kick is a `jolt`, a trail is the thing at earlier times); these are for what truly steps. Each is
+a `recur`: the step runs once on the GPU and the scene reads it as a function of time.
+
+| File | Lines | Shows |
+|---|---:|---|
+| `skin.ts` | 35 | a grid settled before the scene starts: reaction and diffusion, kept as one still state, read as paint |
+| `flock.ts` | 40 | a list with every state kept: 200 motes chasing a lure that is a closed form of time |
+| `rope.ts` | 46 | a loop closed by physics: a rope settles into its anchor's swing, and `loft check` measures the seam |
+| `creep.ts` | 39 | a grid too large to keep every state: checkpoints, each frame replaying at most 15 steps |
+
 ## Actions
 
 | File | Lines | Shows |
@@ -63,6 +75,13 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `nest.ts` | 86 | one shape repeated at shrinking scales through a fold (`repeatScale`) |
 | `pearls.ts` | 53 | a lattice of shapes, ray-cast by walking the cells a ray crosses |
 
+## Your own geometry and rays
+
+| File | Lines | Shows |
+|---|---:|---|
+| `shatter.ts` | 75 | triangles from your own algorithm (a Voronoi shatter) moved by an expression of time (`draw.mesh`) |
+| `bead.ts` | 38 | a solid you intersect yourself, here by intervals, drawn per pixel (`draw.traced`) |
+| `mirror.ts` | 29 | a reflected ray cast from a paint at another thing's field (`march`) and at everything's stand-in (`castRay`) |
 ## Pictures drawn off screen (`pass`) and stills
 
 | File | Lines | Shows |

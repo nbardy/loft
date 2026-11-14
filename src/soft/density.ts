@@ -24,11 +24,11 @@
 // forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. Flash light is
 // per blob (CPU, through the medium) plus a small even share.
 
-import { exp, mul, variable } from "../expr.ts";
+import { add, div, dot, exp, lift, max, mul, sub, variable, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type CompileContext, type Drawable, type Emitted, type Shader, type V3 } from "../compile/context.ts";
+import { drawSpec, type CompileContext, type Drawable, type Emitted, type Form, type Shader, type V3 } from "../compile/context.ts";
 import { fbm3 } from "../lib/noise.ts";
-import type { Skeleton } from "../map/types.ts";
+import type { F, P3, Skeleton } from "../map/types.ts";
 import { accessMedium, BANK_LIB, clusterLoop, EXTENT, GAUSS_LIB, type Box, type Medium, type MediumAccess } from "./medium.ts";
 
 export type Rgb = readonly [number, number, number];
@@ -73,7 +73,10 @@ const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(f).join(", ")})`
  */
 export class DensityDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces = [];
+  /** A medium: its density as an expression, coloured by the density-weighted albedo of its puffs, in its box. */
+  get forms(): readonly Form[] {
+    return [{ kind: "medium", name: this.name, bound: { kind: "box", min: [...this.o.bounds.min], max: [...this.o.bounds.max] }, density: (p) => this.medium.density(p), colour: (p) => albedoAt(this.medium, p) }];
+  }
 
   constructor(readonly name: string, readonly medium: Medium, readonly o: DensityOptions) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.density "${name}": names must be identifiers (they name shaders)`);
@@ -92,6 +95,17 @@ export class DensityDrawable implements Drawable {
       draws: [drawSpec({ label: this.name, shader: key, vertices: 36, phase: "transparent", cull: "front", depthWrite: false, blend: "alpha", sceneDepth: true })],
     };
   }
+}
+
+/** A medium's colour at p for a reader of its form: its blobs' and layers' albedos weighted by their density there. */
+function albedoAt(m: Medium, p: P3): P3 {
+  const parts: { d: F; c: P3 }[] = [
+    ...m.blobs.map((b) => { const x = mul(b.inv, sub(p, b.centre)); return { d: mul(b.density, exp(mul(dot(x, x), -1))), c: b.colour }; }),
+    ...m.layers.map((l) => { const y = mul(sub(p.y, l.height), l.inv); return { d: mul(l.density, exp(mul(mul(y, y), -1))), c: l.colour }; }),
+  ];
+  const sum = parts.reduce((a, q) => add(a, q.d), lift<"f32">(0));
+  const col = parts.reduce((a, q) => add(a, mul(q.c, q.d)), lift<"vec3">([0, 0, 0]) as Expr<"vec3">);
+  return div(col, max(sum, 1e-12));
 }
 
 const DP = variable("p", "vec3");

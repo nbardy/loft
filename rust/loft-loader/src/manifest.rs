@@ -9,8 +9,8 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 
 pub const FORMAT: &str = "loft-artefact";
-/// Version 1, and version 2: a file with pictures drawn off screen (sized textures, depth-only passes, pipelines with
-/// no fragment stage, `frame.copies`; docs/artefact_format.md). A file without a pass is still version 1.
+/// The versions this loader reads: 2 adds `frame.replay` (a scene whose state keeps checkpoints) and pictures drawn off
+/// screen (sized textures, depth-only passes, pipelines with no fragment stage, `frame.copies`; docs/artefact_format.md).
 pub const VERSIONS: [u32; 2] = [1, 2];
 
 pub type Id = usize;
@@ -545,10 +545,39 @@ pub struct DetailWrite {
     pub floats: usize,
 }
 
+/// A recurrence that keeps checkpoints (docs/artefact_format.md, "Replays"): per frame, the step n it replays to is
+/// written at float `slot` of the inputs, and `first` then k more alternating `ping` (odd) and `pong` (even) are
+/// recorded in the pose pass before its dispatches.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Replay {
+    pub label: String,
+    pub slot: usize,
+    pub rate: f64,
+    pub start: f64,
+    pub steps: u64,
+    pub every: u64,
+    pub first: Dispatch,
+    pub ping: Dispatch,
+    pub pong: Dispatch,
+}
+
+impl Replay {
+    /// (n, k) at time t: n = floor((t - start) rate) held in [0, steps - 1], computed in f64 as every host does; k = n
+    /// mod every, the dispatches after `first`.
+    pub fn step(&self, t: f64) -> (u64, u64) {
+        let n = ((t - self.start) * self.rate).floor().max(0.0).min(self.steps.saturating_sub(1) as f64) as u64;
+        (n, n % self.every)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Frame {
     pub writes: Vec<FrameWrite>,
     pub pose: Vec<Dispatch>,
+    /// Version 2; absent in version 1.
+    #[serde(default)]
+    pub replay: Vec<Replay>,
     pub bounds: BoundsRead,
     pub detail: DetailWrite,
     pub passes: Vec<RenderPassDesc>,
@@ -605,6 +634,7 @@ pub enum TableFill {
     Map,
     Scan,
     Cpu { why: String },
+    Replay { recurrence: String },
 }
 #[derive(Debug, Deserialize)]
 pub struct TableEntry {

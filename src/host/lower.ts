@@ -27,8 +27,8 @@
 import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, PASS_CAMERA_VEC4S, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Artefact, type ArtefactPass, type Draw, type DrawDepth, type TextureSize } from "../artefact.ts";
 import { gridBounds, slotsUsed } from "./detail.ts";
 import {
-  COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, LIGHT_FORMAT, PASS_FORMAT_VERSION, SAMPLES, SCENE_DEPTH_FORMAT,
-  type BindGroupDesc, type BufferCopy, type BindGroupLayoutDesc, type BufferDesc, type Bundle, type ComputePipelineDesc, type DrawCommand, type Id, type LayoutEntry,
+  COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, LIGHT_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT,
+  type BindGroupDesc, type BindGroupLayoutDesc, type BufferCopy, type BufferDesc, type Bundle, type ComputePipelineDesc, type Dispatch, type DrawCommand, type FormatVersion, type Id, type LayoutEntry, type Replay,
   type Manifest, type ModuleDesc, type PipelineLayoutDesc, type RenderPassDesc, type RenderPipelineDesc, type SamplerDesc, type Stage, type TextureDesc,
 } from "./manifest.ts";
 
@@ -215,6 +215,8 @@ export function checkArtefact(a: Artefact): { paramFloats: number } {
     }
   }
   for (const p of a.post ?? []) if (!(p.shader in a.shaders)) fail(`post pass "${p.label}" names unknown shader "${p.shader}"`);
+  // The baked states are the truth the files carry: an unbaked artefact would write zeros (src/host/bake.ts bakes).
+  for (const r of a.recurrences ?? []) if (r.baked.done === undefined) fail(`the recurrence "${r.name}" is not baked; bake it on a GPU first (bakeRecurrences, which createHost's load runs)`);
   for (const st of a.stages) if (!(Number.isInteger(st.invocations) && st.invocations >= 1)) fail(`pose stage "${st.label}" has ${st.invocations} invocations`);
   checkPasses(a, fail);
   const sizes = new Map(a.dynamic.map((d) => [d.name, d.vec4s]));
@@ -224,6 +226,14 @@ export function checkArtefact(a: Artefact): { paramFloats: number } {
     if (t.offset < 0 || t.offset + t.vec4s > size!) fail(`table "${t.name}" overruns "${t.buffer}"`);
   }
   return { paramFloats };
+}
+
+/**
+ * The file's format version, decided here and nowhere else (docs/artefact_format.md, "Versions"): 2 when it carries what
+ * a version-1 loader would draw wrongly (a replay, a pass), else 1, so a file with neither is byte for byte what it was.
+ */
+export function formatVersion(has: { readonly replay: boolean; readonly passes: boolean }): FormatVersion {
+  return has.replay || has.passes ? 2 : FORMAT_VERSION;
 }
 
 /** The passes' structure: names, what each draws, where its camera lives, and that it reads only passes before it. */
@@ -373,12 +383,19 @@ export function lower(a: Artefact): Bundle {
 
   // ---- the pose stages ---------------------------------------------------------------------------------------------
   const preludeChunk = chunk(PRELUDE_WGSL);
-  const poseLayout = a.stages.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
-  const pose = a.stages.map((st) => {
-    const module = modules.add({ label: `pose stage "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
+  const replayed = (a.recurrences ?? []).flatMap((r) => (r.replay === undefined ? [] : [{ r, replay: r.replay }]));
+  const poseLayout = a.stages.length > 0 || replayed.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
+  const dispatch = (st: Artefact["stages"][number], what: string): Dispatch => {
+    const module = modules.add({ label: `${what} "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
     const pipeline = computes.add({ label: st.label, layout: poseLayout, module, entryPoint: "pose_main" });
     return { label: st.label, pipeline, bindGroups: [group0, poseGroup1], workgroups: Math.ceil(st.invocations / POSE_WORKGROUP) };
-  });
+  };
+  const pose = a.stages.map((st) => dispatch(st, "pose stage"));
+  // A checkpointed recurrence's replay: three more pose-stage modules, recorded by the loader before the stages.
+  const replay = replayed.map(({ r, replay: p }): Replay => ({
+    label: `replay ${r.name}`, slot: p.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.kind === "checkpoints" ? r.kept.every : 1,
+    first: dispatch(p.first, "replay stage"), ping: dispatch(p.ping, "replay stage"), pong: dispatch(p.pong, "replay stage"),
+  }));
 
   // ---- modules and render pipelines ---------------------------------------------------------------------------------
   // One module per (shader, way it is used). A shader nothing uses is not written: which host WGSL it expects depends on
@@ -690,8 +707,7 @@ export function lower(a: Artefact): Bundle {
 
   const manifest: Manifest = {
     format: FORMAT,
-    // Version 2 only where a loader must act on something new: a scene without passes keeps a version 1 file.
-    version: withPasses ? PASS_FORMAT_VERSION : FORMAT_VERSION,
+    version: formatVersion({ replay: replay.length > 0, passes: withPasses }),
     chunks: chunkNames,
     blobs: [...blobs].map(([name, b]) => ({ name, bytes: b.byteLength })),
     inputs: a.inputs,
@@ -716,6 +732,7 @@ export function lower(a: Artefact): Bundle {
       // Only the slots the artefact uses are written each frame (the rest of the 64 KiB array is never read).
       detail: { buffer: detailBuf, floats: Math.max(4, slotsUsed(a.draws) * 4) },
       passes: renderPasses,
+      ...(replay.length > 0 ? { replay } : {}),
       ...(offscreen === undefined ? {} : { copies: offscreen.copies }),
     },
     dynamic: dynamic.map((d) => d.id),
