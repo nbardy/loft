@@ -143,7 +143,7 @@ test("a table a drawable declares reaches the shader with the values its fill wr
     out.set([1, 2, 3, 4], 4);
   } };
   const refs: { wgsl: string }[] = [];
-  const thing: Drawable = { name: "tabled", skeletons: [], surfaces: [], draws(ctx) { refs.push(ctx.table(first), ctx.table(second)); return { shaders: {}, draws: [] }; } };
+  const thing: Drawable = { name: "tabled", skeletons: [], forms: [], draws(ctx) { refs.push(ctx.table(first), ctx.table(second)); return { shaders: {}, draws: [] }; } };
   const c = compileScene(scene({ ground: swell, things: [body, thing], style: toon(), sun: [0, 1, 0] }));
   const state = stateAt(c.artefact, 2.5, { params: { "probe.lift": 1.25 } });
   const code = `fn probe(i: u32, x: vec4<f32>) -> vec4<f32> { return select(${refs[1].wgsl}(i - 3u), ${refs[0].wgsl}(i), i < 3u); }`;
@@ -157,7 +157,7 @@ test("a table a drawable declares reaches the shader with the values its fill wr
 test("post passes from a style and a drawable run in order on the host", async () => {
   const { createHost } = await import("../src/host/index.ts");
   const style = { ...toon(), post: [{ label: "magenta", wgsl: "@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> { return vec4<f32>(1.0, 0.0, 1.0, 1.0); }" }] };
-  const redOnly: Drawable = { name: "redOnly", skeletons: [], surfaces: [], draws: (ctx) => {
+  const redOnly: Drawable = { name: "redOnly", skeletons: [], forms: [], draws: (ctx) => {
     ctx.post({ label: "red", wgsl: "@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> { return vec4<f32>(post_color(in.uv).r, 0.0, 0.0, 1.0); }" });
     return { shaders: {}, draws: [] };
   } };

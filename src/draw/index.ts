@@ -11,6 +11,7 @@ import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface
 import { drawField } from "./field.ts";
 import { drawRelief } from "./relief.ts";
 import { drawCopies } from "./copies.ts";
+import { drawMesh } from "./mesh.ts";
 import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
 export type { DensityOptions };
@@ -31,6 +32,7 @@ export type Bounds = { readonly min: readonly [number, number, number]; readonly
 export type { FieldOptions } from "./field.ts";
 export type { ReliefOptions } from "./relief.ts";
 export type { CopiesHit, CopiesOptions } from "./copies.ts";
+export type { MeshData, MeshDrawable, MeshOptions } from "./mesh.ts";
 
 export type CurveOptions = {
   /** Half-width of the stroke at u, world units. */
@@ -68,6 +70,7 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
  * - `relief`: bumps, scales or spikes ray-marched on top of a surface, in its own coordinates.
  * - `copies`: a list of spheres, capsules or rounded cones, each intersected exactly per pixel.
  * - `density`: a cloud or fog (a `Medium`) integrated along each view ray.
+ * - `mesh`: triangles made by your own code (a hull, a shatter, a growth), moved by an expression.
  */
 export const draw = {
   /** A parametric surface (u, v) -> point, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked. */
@@ -94,6 +97,11 @@ export const draw = {
   field: drawField,
   /** Height detail (scales, spikes, bumps) ray-marched in a thin shell over a surface, in the surface's own (u, v) coordinates. */
   relief: drawRelief,
+  /**
+   * Triangles made by your own code at build: a row of numbers per point (its rest position first), three indices per
+   * triangle, each point moved by `at` (an expression of its row, index and `time`) and painted over its row.
+   */
+  mesh: drawMesh,
   /** A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms. */
   copies: drawCopies,
   /**

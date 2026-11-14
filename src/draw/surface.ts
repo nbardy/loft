@@ -5,7 +5,7 @@
 
 import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
 import { carry, posesOf, rotate, sizeBound } from "../map/chart.ts";
 import { framedPose } from "../map/surface.ts";
@@ -80,7 +80,7 @@ const AT = { world: variable("p_world", "vec3"), normal: variable("p_normal", "v
  */
 export class SurfaceDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
-  readonly surfaces: readonly Bakeable[];
+  readonly forms: readonly Form[];
 
   constructor(
     readonly name: string,
@@ -95,7 +95,7 @@ export class SurfaceDrawable implements Drawable {
     refuseSurface(name, surface, grid, look, () => surface.point(U, V), look.kind === "glazed" ? undefined : () => look.paint(U, V, AT));
     if (look.kind === "lit" && look.sides === "two" && look.outline === "hull") throw new SceneError(`draw.surface "${name}"`, `sides "two" with outline "hull"`, "a hull outline only on a one-sided surface (it draws the back faces)", `outline: "border"`);
     this.skeletons = skeletonsOf(surface, copies);
-    this.surfaces = bakeablesOf(this, copies);
+    this.forms = formsOf(this, copies);
   }
 
   /** The same surface and look, one copy per point. */
@@ -241,7 +241,7 @@ function skeletonsOf(s: Surface, c: Copies): readonly Skeleton[] {
 }
 
 /** A joint of a copy's chain carried by its pose. A radius under a per-axis size takes the largest axis (conservative). */
-function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly p: P3; readonly r: F } {
+export function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly p: P3; readonly r: F } {
   const z = at.size;
   switch (z.kind) {
     case "even": return { p: add(at.frame.o, mul(rotate(at.frame, j.p), z.k)), r: mul(j.r, z.k) };
@@ -249,7 +249,7 @@ function posedJoint(j: { readonly p: P3; readonly r: F }, at: Posed): { readonly
   }
 }
 
-function bakeablesOf(d: SurfaceDrawable, c: Copies): readonly Bakeable[] {
+function formsOf(d: SurfaceDrawable, c: Copies): readonly Form[] {
   const look = d.look;
   switch (look.kind) {
     case "glazed": return []; // its colour reads the camera and the scene's depth: there is nothing to bake
@@ -257,10 +257,10 @@ function bakeablesOf(d: SurfaceDrawable, c: Copies): readonly Bakeable[] {
     case "flat": return []; // flat surfaces are strokes facing the camera: they have no shape to bake
   }
 }
-function copiesOf(d: SurfaceDrawable, c: Copies, paint: Paint, sides: "one" | "two"): readonly Bakeable[] {
+function copiesOf(d: SurfaceDrawable, c: Copies, paint: Paint, sides: "one" | "two"): readonly Form[] {
   switch (c.kind) {
-    case "one": return [{ name: d.name, surface: d.surface, paint, grid: d.grid, sides, copy: 0 }];
-    case "poses": return Array.from({ length: c.poses.count }, (_, i) => ({ name: `${d.name}_${i}`, surface: framedPose(d.surface, c.poses.at(f(i))), paint, grid: d.grid, sides, copy: i }));
+    case "one": return [{ kind: "surface", name: d.name, surface: d.surface, paint, grid: d.grid, sides, copy: 0 }];
+    case "poses": return Array.from({ length: c.poses.count }, (_, i) => ({ kind: "surface", name: `${d.name}_${i}`, surface: framedPose(d.surface, c.poses.at(f(i))), paint, grid: d.grid, sides, copy: i }));
   }
 }
 

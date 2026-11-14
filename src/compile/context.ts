@@ -9,8 +9,11 @@ import type { Detail, Draw } from "../artefact.ts";
 import type { Expr, LibFn, TableSource } from "../expr.ts";
 import type { Ground } from "../draw/ground.ts";
 import type { Grid } from "../draw/surface.ts";
-import type { P3, Paint, Skeleton, Surface } from "../map/types.ts";
-import type { TriangleMesh } from "../map/nets.ts";
+import type { F, Field, P3, Paint, Poses, Skeleton, Surface } from "../map/types.ts";
+import type { Mesh, MeshOptions, MeshPaint } from "../draw/mesh.ts";
+import type { FieldHit } from "../draw/field.ts";
+import type { TraceBound } from "../draw/trace.ts";
+import type { Ray, Traced, TracedBound, TracedPaint } from "../draw/traced.ts";
 import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
@@ -96,20 +99,29 @@ export interface CompileContext {
   markOut(mark: string, inked: boolean): string;
 }
 
-/** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */
-/** `copy` is the copy's index (0 for a surface drawn once): what paint is told it is (`PaintAt.copy`). */
-export type SurfaceBakeable = { readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number };
-/** A closed triangle mesh a drawable draws (a field's, src/map/nets.ts), with the paint of a point and its normal. */
-export type MeshBakeable = { readonly name: string; readonly mesh: TriangleMesh; readonly paint: (hit: { readonly p: P3; readonly normal: P3 }) => P3 };
 /**
- * What the baker can evaluate. The two are told apart by their `mesh` member (bake/mesh.ts), so the surface drawables
- * that build the first kind did not change when the second was added.
+ * What a thing is, for any reader other than this renderer (the baker, the checks, another renderer): one variant per
+ * kind of geometry, every reader dispatching on `kind` exhaustively. A reader that meets a variant it does not handle
+ * reports it by name, never falls back silently (the baker's `skipped` list). `hit` is the author's own: every other
+ * kind can be lowered to it by a reader that wants to (docs/proposals/headroom.md A3 and section 9).
+ *
+ * - surface: a (u, v) map, its paint, the grid it is drawn on, its sides; `copy` is the copy's index (0 for one).
+ * - mesh: triangles made by code (`draw.mesh`, or a field's surface nets): rows, moved by `at` (absent: at rest) and
+ *   placed by `copies` (absent: one), painted over rows.
+ * - field: a signed distance field inside its bound, painted at a hit.
+ * - medium: a density inside a box and its colour (`draw.density`).
+ * - hit: any solid the author can intersect (`draw.traced`): `count` copies, each searched in its bound.
  */
-export type Bakeable = SurfaceBakeable | MeshBakeable;
+export type Form =
+  | { readonly kind: "surface"; readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number }
+  | { readonly kind: "mesh"; readonly name: string; readonly mesh: Mesh; readonly at: MeshOptions["at"]; readonly copies: Poses | undefined; readonly paint: MeshPaint }
+  | { readonly kind: "field"; readonly name: string; readonly field: Field; readonly bound: TraceBound; readonly paint: (hit: FieldHit) => P3 }
+  | { readonly kind: "medium"; readonly name: string; readonly bound: TraceBound; readonly density: (p: P3) => F; readonly colour: (p: P3) => P3 }
+  | { readonly kind: "hit"; readonly name: string; readonly count: number; readonly bound: TracedBound; readonly hit: (ray: Ray, copy: F) => Traced; readonly paint: TracedPaint };
 
 /**
  * Anything a scene can draw: a name, the shaders and draw calls it emits for a `CompileContext`, the shadow-casting
- * chains it has, and the surfaces it offers for baking. The `draw` members, `glow` and `flare` make Drawables. For
+ * chains it has, and what it is for other readers (`forms`). The `draw` members, `glow` and `flare` make Drawables. For
  * authors of their own drawable; a scene author builds Drawables with those and does not need this interface.
  */
 export interface Drawable {
@@ -117,8 +129,8 @@ export interface Drawable {
   draws(ctx: CompileContext): Emitted;
   /** The chains this thing casts shadows with (empty for none). */
   readonly skeletons: readonly Skeleton[];
-  /** The surfaces this thing draws, for baking (empty when it draws none that can be evaluated on the CPU). */
-  readonly surfaces: readonly Bakeable[];
+  /** What it is, for any other reader (the baker, the checks, another renderer). Empty: nothing a reader can use. */
+  readonly forms: readonly Form[];
 }
 
 /**

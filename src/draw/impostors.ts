@@ -13,7 +13,7 @@ import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { add, mul, variable, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted, type V3 } from "../compile/context.ts";
 import { hash33 } from "../lib/noise.ts";
 import type { F, P3, Skeleton } from "../map/types.ts";
 import type { Bounds } from "./index.ts";
@@ -195,7 +195,7 @@ const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(num).join(", ")}
  */
 export class Impostors implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces: readonly Bakeable[] = [];
+  readonly forms: readonly Form[] = [];
   /** First and last cell index per axis. */
   private readonly lo: V3;
   private readonly hi: V3;

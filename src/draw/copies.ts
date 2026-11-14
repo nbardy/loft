@@ -25,7 +25,7 @@ import { lit } from "../compile/scene_wgsl.ts";
 import { add, lift, variable, type Expr, type TableSource } from "../expr.ts";
 import { scopedName } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Branch, Part } from "../lib/similar.ts";
 import { rotate } from "../map/chart.ts";
 import type { F, Frame, P3, Skeleton } from "../map/types.ts";
@@ -110,7 +110,7 @@ function copiesShadow(copies: readonly Branch[]): Skeleton {
  */
 export class Copies implements Drawable {
   readonly skeletons: readonly Skeleton[];
-  readonly surfaces: readonly Bakeable[] = [];
+  readonly forms: readonly Form[] = [];
 
   constructor(readonly name: string, readonly o: CopiesOptions) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.copies "${name}": names must be identifiers (they name shaders)`);
