@@ -58,7 +58,7 @@ Loft L0: symbolic maths.
 - **abs**: `abs(a)`: the absolute value, componentwise.
   `const abs = unary("abs")`
 - **add**: `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one.
-  `const add = binary("add")`
+  `const add: Binary`
 - **and**: `and(a, b)`: whether both bools hold (WGSL `&&`; both sides are always evaluated).
   `const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> =>`
 - **atan2**: atan2(y, x).
@@ -98,7 +98,7 @@ Loft L0: symbolic maths.
 - **input**: A value the host supplies every frame (time, game state, a target position).
   `function input<T extends NumTy>(given: string, ty: T, def: readonly number[]): Expr<T>`
 - **iterate**: Repeat `step` `count` times from `init`: a real loop in both backends (the body is emitted once, whatever the count).
-  `function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S): S`
+  `function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S, until?: (state: S) => Expr<"bool">): S`
 - **le**: `le(a, b)`: whether a <= b, for two f32 values; a bool.
   `const le = compare("le")`
 - **length**: `length(v)`: the Euclidean length of a vector (the absolute value of a scalar), as an f32.
@@ -120,7 +120,7 @@ Loft L0: symbolic maths.
 - **mod**: Floored modulo (the result has the sign of the divisor), unlike WGSL's `%`.
   `const mod = binary("mod")`
 - **mul**: `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component.
-  `const mul = binary("mul")`
+  `const mul: Binary`
 - **namespaceSeed**: A number that differs from one namespace to the next and is 0 outside any: what makes instances built by the same code differ where their code asks for a seed (each crab of a line its own idle, not four copies of one puppet).
   `function namespaceSeed(): number`
 - **ne**: Exact equality and inequality of two f32 values.
@@ -240,7 +240,8 @@ Types:
 - **Field**: point -> signed distance. `type Field = (p: P3) => F`
 - **Density**: point -> density. `type Density = (p: P3) => F`
 - **PaintAt**: What paint knows of where it is besides the surface's own coordinates (u, v): the world point, the unit normal in the world (toward the side drawn: flipped on the back of a two-sided sheet), and which copy this is (its index, 0 .. count - 1, as an f32; 0 for a surface drawn once). `type PaintAt = { readonly world: P3; readonly normal: P3; readonly copy: F }`
-- **Paint**: Surface coordinates -> base colour (display-referred rgb), lit by the scene's style in the fragment stage. `type Paint = (u: F, v: F, at: PaintAt) => P3`
+- **Paint**: Surface coordinates -> what a thing says about its surface: a colour (display-referred rgb, sRGB as written), or a colour with channels and its own answers (`Painted`). `type Paint = (u: F, v: F, at: PaintAt) => P3 | Painted`
+- **Painted**: A colour with more to say. - `base`: the colour, sRGB as written, as a bare paint returns it. - Every other key but `shade` and `scatter` is a channel: a number or vector under a name you choose. `type Painted = { base, shade?, scatter? }`
 - **Warp**: A domain map: the mapped coordinate, the cell it came from and the local change of length (`src/lib/fold.ts`, whose folds are warps). `type Warp<V extends "vec2" | "vec3"> = Fold<V>`
 - **Placeable**: Something `place` can put in a coordinate system. `interface Placeable<T> { placed }`
 
@@ -286,6 +287,15 @@ Types:
 - **PointSpec**: `type PointSpec = { readonly at: In<"vec3">; readonly scale: In<"f32"> }`
 - **PoseSpec**: Where one posed copy goes, in the coordinates of the set it belongs to: a point, a turn and a size. `type PoseSpec = { readonly at: In<"vec3">; readonly turn: Turn; readonly size: Size }`
 - **Turn**: How a copy is turned in the coordinates it is placed in: not at all, by an angle about a unit axis (a bell swinging on its hook), or to given axes (unit and perpendicular: `x` and `y`, with z = x cross y; a spar along its direction). `type Turn = | { readonly kind: "none" } | { readonly kind: "about"; readonly axis: P3; readonly angle: F } | { readonly kind: "axes"; readonly x: P3; readonly y: P3 }`
+
+### src/map/recur.ts
+
+`recur`: state that is stepped, baked once on the GPU, and read as a function of time (docs/proposals/state.md).
+
+- **recur**: A state stepped by your own function, baked once on the GPU and read as a function of time.
+  `function recur<const C extends Cells>(spec: RecurSpec<C>): Recurrence<C>`
+  cannot:
+  - What it cannot do: read a host input, a param, a curve row or a per-frame table (the trajectory exists before the game does); scatter (a step writes only its own entry: a particle depositing into a grid is the grid gathering from the particles); go past `until` (the state holds); read a checkpointed state at any time but `time`; couple two recurrences both ways (one reads the other, or one recurrence holds both); grow (a fixed capacity with birth times); let substeps see each other within a step (Jacobi at a higher rate, not Gauss-Seidel); stay within 64 MiB at any size and rate (a 256 x 256 grid for 120 s at 60 steps a second already replays up to 113 steps a frame).
 
 ### src/map/warp.ts
 
@@ -369,8 +379,10 @@ One generic drawable per signature (DESIGN.md 7.4): `draw.surface`, `draw.curve`
   - `draw.posed`: One copy of `thing` per pose (`posed`, `posedList`): each turned by its own frame and scaled along each of its axes, normals turned with it; paint is told the copy's index and its world normal (`PaintAt`).
   - `draw.field`: A solid given as a signed distance field, sphere-traced per pixel inside its bounds; suits folded and recursive solids.
   - `draw.relief`: Height detail (scales, spikes, bumps) ray-marched in a thin shell over a surface, in the surface's own (u, v) coordinates.
+  - `draw.mesh`: Triangles made by your own code at build: a row of numbers per point (its rest position first), three indices per triangle, each point moved by `at` (an expression of its row, index and `time`) and painted over its row.
+  - `draw.traced`: Any solid you can intersect, drawn per pixel in a bound: you write `hit(ray, copy) => { t, gap, normal }` as expressions; depth, coverage, ink, light and the CPU twin come from Loft.
   - `draw.copies`: A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms.
-  - `draw.density`: A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to the opaque scene, lit by the sun, the sky and flashes inside it (`src/soft/density.ts`).
+  - `draw.density`: A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
 
 Types:
 - **Bounds**: An axis-aligned box: the proxy a tracer starts and ends its march in. `type Bounds = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }`
@@ -404,6 +416,29 @@ Types:
 - **FieldHit**: What `paint` sees at a hit: the world point and the unit outward normal. `type FieldHit = { readonly p: P3; readonly normal: P3 }`
 - **FieldSafetyFailure**: Why a field was refused at compile time. `type FieldSafetyFailure = /** Sampled Lipschitz constant above 1: steps by this distance can pass through the surface (holes). */ | { readonly kind: "overshoots"; readonly measured: number; readonly suggested: number } /** The field calls a GPU-only function, so the CPU cannot check it. */ | { re...`
 
+### src/draw/mesh.ts
+
+draw.mesh: triangles made by the author's own code (a hull, a shatter, a subdivision, a growth), drawn and lit like any body (docs/proposals/geometry_and_rays.md section 4.1).
+
+- **MeshDrawable**: The `Drawable` that `draw.mesh` returns: the author's triangles, moved by `at`, painted over rows, lit by the style.
+  `class MeshDrawable implements Drawable`
+
+Types:
+- **MeshData**: Triangles made by the author's code. `type MeshData = { points, triangles }`
+- **MeshOptions**: `type MeshOptions = { at?, paint, sides, outline, skeletons? }`
+
+### src/draw/traced.ts
+
+draw.traced: any solid the author can intersect, drawn per pixel inside a bound (docs/proposals/geometry_and_rays.md section 4.2).
+
+- **TracedDrawable**: The `Drawable` that `draw.traced` returns: the author's own intersection, drawn per pixel in a bound with depth, coverage, ink and the style's light.
+  `class TracedDrawable implements Drawable`
+
+Types:
+- **Ray**: A ray, or a thin cone: from `o` along unit `d`, searched for t in [t0, t1]. `type Ray = { readonly o: P3; readonly d: P3; readonly t0: F; readonly t1: F; readonly width: (t: F) => F }`
+- **Traced**: Where a ray meets a solid, or passes nearest it. `type Traced = { readonly t: F; readonly gap: F; readonly normal: P3 }`
+- **TracedOptions**: `type TracedOptions = { bound, hit, paint, outline, skeletons? }`
+
 ### src/draw/relief.ts
 
 draw.relief: relief shell-traced on a surface, in the surface's own coordinates (docs/folding_and_tracing.md 3.3).
@@ -429,7 +464,7 @@ draw.surface: one drawable for every `Surface` (DESIGN.md 7.4).
   `class SurfaceDrawable implements Drawable`
 
 Types:
-- **Fragment**: What a glazed surface's colour may read in the fragment stage. `type Fragment = { world, px, u, v, style, sun }`
+- **Fragment**: What a glazed surface's colour may read in the fragment stage. `type Fragment = { world, px, u, v, style, sun, lights }`
 - **Grid**: `type Grid = { readonly u: Sampling; readonly v: Sampling }`
 - **Look**: `type Look = /** Base colour from `paint`, lit by the scene's style (with underwater tint), opaque. */ | { readonly kind: "lit"; readonly paint: Paint; readonly sides: "one" | "two"; readonly outline: Outline } /** `paint` as the final colour, unlit, opaque: strokes and ink lines. */ | { readonly ...`
 - **Outline**: Ink: the surface pushed out along its normal and drawn back faces only (`hull`), ink along its v = 1 edge (`border`, for sheets), or none. `type Outline = "hull" | "border" | "none"`
@@ -444,9 +479,9 @@ A scene says what things are; `compile` decides where each part is evaluated.
   `function scene(spec: SceneSpec): Scene`
 
 Types:
-- **OutlineMethod**: hull: every outlined surface drawn a second time, pushed out along its normal, front faces culled. screen: one full-screen pass after the scene finds the outlined surfaces' silhouettes in the depth (src/draw/ink.ts). `type OutlineMethod = "hull" | "screen"`
-- **Scene**: `type Scene = { ground, things, style, sun, sunAt, cameras, outline, loop }`
-- **SceneSpec**: `type SceneSpec = { ground, things, style, sun, cameras?, outline?, period? }`
+- **OutlineMethod**: `type OutlineMethod = "hull" | "screen"`
+- **Scene**: `type Scene = { ground, things, style, sun, sunAt, lighting, cameras, outline, loop }`
+- **SceneSpec**: `type SceneSpec = { ground, things, style, sun, lights?, cameras?, outline?, period? }`
 
 ### src/draw/ground.ts
 
@@ -457,14 +492,14 @@ What a scene stands on (DESIGN.md 13): a sea, a plane, or nothing.
   - `plane.kind`: (undocumented)
   - `plane.name`: (undocumented)
   - `plane.skeletons`: (undocumented)
-  - `plane.surfaces`: (undocumented)
+  - `plane.forms`: (undocumented)
   - `plane.draws`: (undocumented)
 - **nothing**: The ground choice for no floor at all: things hang in the style's sky and cast no shadows; `scene({ ground: nothing })`.
   `const nothing: Nothing`
   - `nothing.kind`: (undocumented)
   - `nothing.name`: (undocumented)
   - `nothing.skeletons`: (undocumented)
-  - `nothing.surfaces`: (undocumented)
+  - `nothing.forms`: (undocumented)
   - `nothing.draws`: (undocumented)
 - **GroundError**: A thing that needs a particular ground, in a scene that stands on another.
   `class GroundError extends Error`
@@ -493,14 +528,14 @@ The compiler's extension interface (DESIGN.md section 4).
   `function drawSpec(d: Pick<DrawSpec, "label" | "shader" | "vertices"> & Partial<DrawSpec>): DrawSpec`
 
 Types:
-- **Bakeable**: What the baker can evaluate. `type Bakeable = SurfaceBakeable | MeshBakeable`
-- **CompileContext**: What a `Drawable` is handed when it emits its shaders: the slots for inputs, params and tables, the scene's style, ground and sun, and every other thing in the scene. `interface CompileContext { slots, style, ground, sun, sunAt, things, table, post, outline, markOut }`
-- **Drawable**: Anything a scene can draw: a name, the shaders and draw calls it emits for a `CompileContext`, the shadow-casting chains it has, and the surfaces it offers for baking. `interface Drawable { name, draws, skeletons, surfaces }`
+- **CompileContext**: What a `Drawable` is handed when it emits its shaders: the slots for inputs, params and tables, the scene's style, ground and sun, and every other thing in the scene. `interface CompileContext { slots, style, ground, sun, sunAt, lighting, things, table, post, outline, markOut, note }`
+- **Form**: What a thing is, for any reader other than this renderer (the baker, the checks, another renderer): one variant per kind of geometry, every reader dispatching on `kind` exhaustively. `type Form = | { readonly kind: "surface"; readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number } | { readonly kind: "mesh"; readonly name: string; readonly mesh: Mesh; readonly at: MeshOptions["at"]; rea...`
+- **Drawable**: Anything a scene can draw: a name, the shaders and draw calls it emits for a `CompileContext`, the shadow-casting chains it has, and what it is for other readers (`forms`). `interface Drawable { name, draws, skeletons, forms }`
 - **DrawSpec**: A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. `type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; readonly detail: DetailSpec }`
 - **Emitted**: `type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] }`
 - **Phase**: When a draw runs. `type Phase = "background" | "opaque" | "on-bodies" | "water" | "on-water" | "transparent"`
 - **PostSpec**: A full-screen pass after the scene: `wgsl` defines `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`. `type PostSpec = { readonly label: string; readonly wgsl: string }`
-- **Shader**: A shader module: its code (entry points `vs` and `fs`) and the library functions that code calls. `type Shader = { readonly code: string; readonly libs: readonly LibFn[] }`
+- **Shader**: A shader module: its code (entry points `vs` and `fs`) and the library functions that code calls. `type Shader = { code, libs, depthEntry? }`
 - **TableRef**: What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). `type TableRef = { readonly name: string; readonly wgsl: string }`
 
 ### src/compile/bind.ts
@@ -525,7 +560,7 @@ The contract between the compiler and a host.
 
 
 Types:
-- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, shaders, draws, post?, stages, tables, cpuPose, pose, cameras, loop?, stats }`
+- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, notes?, shaders, draws, post?, passes?, stages, tables, cpuPose, pose, cameras, loop?, recurrences?, stats }`
 - **Camera**: `type Camera = | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number } | { readonly kind: "orthographic"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, numbe...`
 
 ### src/draw/trace.ts
@@ -541,6 +576,24 @@ What the per-pixel tracers share (docs/folding_and_tracing.md section 3): the bo
 Types:
 - **TraceBound**: Where a tracer marches: a box, a sphere or a capsule, in world units. `type TraceBound = | { readonly kind: "box"; readonly min: V3; readonly max: V3 } | { readonly kind: "sphere"; readonly centre: V3; readonly radius: number } | { readonly kind: "capsule"; readonly a: V3; readonly b: V3; readonly radius: number }`
 - **TraceOutline**: Ink along a traced solid's silhouettes (the hull outline of a triangle body has no equivalent inside a bound), or none. `type TraceOutline = "silhouette" | "none"`
+
+### src/draw/march.ts
+
+march: a field's sphere trace as a hit function (docs/proposals/geometry_and_rays.md section 4.3), written in expressions with `iterate(..., until)`, so it runs in any shader that calls it (a reflected ray in a paint, a shadow ray in a light) and on the CPU unchanged.
+
+- **march**: A field's sphere trace as a hit function: steps by the field's distance from the ray's t0, clipped to `within`, stopping at a hit (distance below a share of the ray's width), at t1, or after `steps` evaluations.
+  `function march(field: Field, o: { readonly within: TraceBound; readonly steps: number; readonly safety?: number }): (ray: Ray) => Traced`
+  cannot:
+  - Cannot: march a field that overshoots without `safety`; stop before `steps` on a grazing ray (it takes the point reached); be cheap when the field is expensive (a second ray costs another march); ink an inner silhouette (draw.field's own march does).
+
+### src/draw/cast.ts
+
+castRay: a ray against every thing's stand-in, the capsules of its skeleton as posed this frame, and a plane ground (docs/proposals/geometry_and_rays.md section 4.5, with the id and m of docs/proposals/headroom.md A3).
+
+- **castRay**: A ray against every thing's stand-in (the capsules of its skeleton as posed this frame) and a plane ground: the nearest hit, or the nearest miss weighed by the ray's width (`Traced`; a miss by more than a width is reported as a clean one, gap = width at t1, at t1, with nothing met), with the colour there, the thing's id (its shading id, varied per copy) and m (where along the chain, 0 root to 1 tip).
+  `function castRay(ray: Ray): Traced & { readonly colour: P3; readonly id: Expr<"f32">; readonly m: Expr<"f32"> }`
+  cannot:
+  - Cannot: see exact surfaces (a wide flat part, a carapace or a sail, is its round chain); see things with no skeleton; see the sea's swell; return a hit's real paint (a thing's mean paint, or the style's ink where none can be sampled); run on the CPU inside an expression (the twin is `castCpu`, for checks).
 
 ### src/draw/impostors.ts
 
@@ -628,15 +681,34 @@ Displacement in the vertex stage, and the local frame a shell tracer needs: both
 - **displace**: The surface moved along its normal by `height(u, v)` (world units; negative goes in).
   `function displace(s: Surface, height: Height): Surface`
 
-### src/sun.ts
+### src/light.ts
 
-The sun's direction: fixed when the scene is written, or a host input a game or a clip moves.
+Light: the sun, and any light an author writes as a function of a world point (docs/lighting.md, "Lights").
 
+- **lamp**: A point light: `colour` x reach^2 / (reach^2 + d^2) x (1 - x^2)^2, x = d / (4 reach), nothing past 4 reaches.
+  `function lamp(at: In<"vec3">, o: { readonly colour: In<"vec3">; readonly reach: number; readonly size?: number }): Light`
+  cannot:
+  - Cannot: cast shadows (the floor under a body standing in its pool is lit; light passes through every thing); light the outside of a thing it is inside (the paper of a lantern: give the paper `emits`); be soft in a frame (its size is sampled only in a still).
 - **movable**: A sun a host can move: the input `name` (default "sun"), starting at `dir`.
   `function movable(dir: V3, name = "sun"): { readonly kind: "input"; readonly name: string; readonly dir: V3 }`
 
 Types:
+- **Light**: A light: for a world point, what arrives there (`Arrival`). `type Light = ((p: Expr<"vec3">, xi?: Expr<"vec2">) => Arrival) & { readonly bound?: TraceBound`
 - **Sun**: `type Sun = | { readonly kind: "fixed"; readonly dir: V3 } /** `dir` is the input's default, a unit vector. */ | { readonly kind: "input"; readonly name: string; readonly dir: V3 }`
+
+### src/frame/pass.ts
+
+`pass`: a picture drawn off screen this frame (docs/proposals/headroom.md section 5).
+
+- **pass**: A picture drawn off screen this frame.
+  `function pass(spec: PassSpec): Pass`
+  cannot:
+  - Cannot: read the previous frame (nothing carries over); scatter; draw a list of things other than the scene's; be read on the CPU (`at` is GPU-only; `project` is not); be read by a table, a camera or a baked step.
+
+Types:
+- **Pass**: `type Pass = { name, at, project }`
+- **PassCamera**: How a pass looks at the world. `type PassCamera = | { readonly kind: "look"; readonly eye: In<"vec3">; readonly target: In<"vec3">; readonly up?: In<"vec3">`
+- **PassSpec**: `type PassSpec = { name, size }`
 
 ### src/lib/noise.ts
 
@@ -892,7 +964,7 @@ A closed-form frame as a rigid chart: a creature's root (hovering, walking a cou
 
 ### src/soft/medium.ts
 
-A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by the sun, the sky and any flashes inside it.
+A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by the sun, the sky and the scene's lights (`scene({ lights })`, src/light.ts).
 
 - **bank**: A fog bank: a horizontal `layer` that ends at a soft vertical wall, clear air on one side.
   `function bank(b: BankSpec): Bank`
@@ -911,13 +983,6 @@ A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by
   - a Gaussian in one coordinate only, unbounded in the others: `layer` (fog in height).
   - the same, cut off past a plane by a second Gaussian factor: `bank`.
   - a Gaussian tube along a segment (exp of the squared distance to a line, times a Gaussian along it): a streak of smoke or a contrail, whose ray integral is a two-dimensional Gaussian and so still closed form; not built here.
-- **flash**: A light inside a medium: a point that lights the puffs around it, as a lightning stroke lights a cloud from within.
-  `function flash(f: { readonly at: In<"vec3">; readonly power: In<"f32">; readonly colour: readonly [number, number, number]; readonly reach: number }): Flash`
-  cannot:
-  - light within a blob: each blob gets one light value, at its centre, so a large blob is lit evenly by a flash touching its edge.
-  - shine on anything but its medium: bodies, the ground and the water are not lit by it (a `skyFlash` or a `glow` does that part).
-  - be a line: a lightning channel is one point here; several flashes along a `bolt` stand in for a line.
-  - cost nothing: each frame the CPU traces from every blob to every flash.
 - **layer**: A horizontal fog layer: a density that depends on height alone, unbounded across.
   `function layer(l: LayerSpec): Layer`
   cannot:
@@ -927,13 +992,14 @@ A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by
   relatives:
   - a layer that stops at a soft vertical wall: `bank`.
   - a layer whose height is a function of x and z (fog lying in a valley): the exponent is then not quadratic along a ray, so no longer closed form; approximate with many blobs.
-- **medium**: A soft volume: blobs, fog layers and fog banks summed into one density, lit by the sun, the sky and flashes inside it, drawn by `draw.density`; glows behind or inside it name it as their veil and are dimmed by it.
-  `function medium(name: string, parts: { readonly puffs?: readonly Puff[]; readonly banks?: readonly Bank[]; readonly flashes?: readonly Flash[] }): Medium`
+- **medium**: A soft volume: blobs, fog layers and fog banks summed into one density, lit by the sun, the sky and the scene's lights, drawn by `draw.density`; glows behind or inside it name it as their veil and are dimmed by it.
+  `function medium(name: string, parts: { readonly puffs?: readonly Puff[]; readonly banks?: readonly Bank[] }): Medium`
   cannot:
   - be empty of blobs: fog alone needs one blob (of density 0).
   - have blobs appear, split or vanish: the count is fixed; fade one in or out by its density.
   - be cheap in large numbers: the light pass is O(N^2) on the CPU every frame, and each pixel loops over the blob clusters its ray meets; hundreds of blobs, not tens of thousands.
-  - cast shadows on bodies or the ground, or be lit by anything but the sun, the sky and its own flashes.
+  - cast shadows on bodies or the ground.
+  - be lit by a light within a blob: each blob gets one light value from each light, at its centre (a large blob is lit evenly by a light touching its edge), with the light's transmission through the medium on the way (the same extinction octaves as sunlight, so a flash glows through thick cloud); 4% of the most of each light reaching any blob lights the whole medium evenly. Each frame the CPU traces from every blob to every light.
   - draw outside its box: `draw.density` integrates only within `bounds` (keep it 3 radii past every puff; `cloud` and `billows` return one, and `unionBox` joins several).
 - **unionBox**: The smallest axis-aligned box holding all of `boxes`: the bounds of a medium made of several clouds, each with its own box.
   `function unionBox(boxes: readonly Box[]): Box`
@@ -947,7 +1013,6 @@ Types:
 - **BankSpec**: `type BankSpec = LayerSpec & { /** The edge: a vertical plane through `through` (x, z), with clear air toward `clear` (an xz direction). */ readonly edge: { readonly through: readonly [number, number]; readonly clear: readonly [number, number]; readonly softness: number }`
 - **BlobSpec**: `type BlobSpec = { centre, radii, density, colour }`
 - **Box**: The axis-aligned box a volume is drawn in (and integrated over). `type Box = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }`
-- **Flash**: A light inside the medium: where, how bright (an expression of time; 0 is off), its colour and reach. `type Flash = { readonly at: P3; readonly power: F; readonly colour: readonly [number, number, number]; readonly reach: number }`
 - **LayerSpec**: `type LayerSpec = { height, thickness, density, colour }`
 - **Puff**: `type Puff = Blob | Layer`
 
@@ -1054,10 +1119,10 @@ Lightning: strikes scheduled as a pure function of time, each a branching bolt m
   - branches from branches: call `displaced` from a point of a branch, keyed by both indices: a tree of discharges.
   - the same displacement laid on a surface instead of across a chord: cracks in ice, rivers on a map, roots.
   - `from` and `to` both on moving bodies, with a short `every`: an arc between two electrodes.
-- **boltFlash**: The light a bolt casts into a medium: a `flash` at the bolt's top, `lift` above it (inside the cloud), whose power is `power` times the strike's flicker.
-  `function boltFlash(b: Bolt, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number; readonly lift: number }): Flash`
+- **boltFlash**: The light a bolt casts: a `lamp` at the bolt's top, `lift` above it (inside the cloud), its colour `colour` times `power` times the strike's flicker.
+  `function boltFlash(b: Bolt, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number; readonly lift: number }): Light`
   cannot:
-  - It cannot light along the channel: it is one point, so the cloud glows round the top and not where the channel runs below the cloud's base; for that add flashes at points of the channel.
+  - It cannot light along the channel: it is one point, so the cloud glows round the top and not where the channel runs below the cloud's base; for that add lamps at points of the channel.
 - **displaced**: A jagged curve from a to b at u in [0, 1]: midpoint displacement in closed form.
   `function displaced(u: F, a: P3, b: P3, levels: number, rough: number, key: F): P3`
   cannot:
@@ -1066,8 +1131,8 @@ Lightning: strikes scheduled as a pure function of time, each a branching bolt m
   `function flicker(since: F): F`
   cannot:
   - It cannot vary from strike to strike: the stroke times and strengths are fixed, so every strike flickers alike (offset `since` by a hash of the index for variety).
-- **sheetFlash**: Lightning hidden inside a cloud, with no channel to the ground: for each strike of the schedule, a `flash` at a point of `box` hashed from the strike's index, its brightness the flicker (capped at 1.2).
-  `function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number }): { readonly flash: Flash; readonly brightnes...`
+- **sheetFlash**: Lightning hidden inside a cloud, with no channel to the ground: for each strike of the schedule, a `lamp` at a point of `box` hashed from the strike's index, its brightness the flicker (capped at 1.2).
+  `function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }, o: { readonly power: number; readonly colour: readonly [number, number, number]; readonly reach: number }): { readonly flash: Light; readonly brightnes...`
   cannot:
   - It cannot place the light where the cloud is dense: the point is uniform in the box, so in a sparse corner the flash lights little.
 - **skyFlash**: The whole sky lighting up: a full-screen additive wash of `colour` times `brightness` (an expression: give it a strike's flicker), at full strength where the scene's depth is far (the sky, distant water) and half on near bodies, which the flash reaches but does not drown.
@@ -2248,6 +2313,8 @@ Checks: arithmetic on the CPU from the same description the GPU draws (DESIGN.md
   - `tolerance.share`: (undocumented)
 - **minScreenSize**: A feature (an eye) is at least `pixels` across, in its narrower direction, from a named camera at time `at`.
   `function minScreenSize(feature: Measured, camera: string, pixels: number, o: { readonly at?: CheckTime; readonly size?: readonly [number, number] } = {}): Check`
+- **litBy**: The light reaching a stretch of a body (m from `from` to `to`, default the whole) at time `at` (default 0) is at least `least` in luminance, on average over its joints.
+  `function litBy(light: Light, feature: Measured, o: { readonly least: number; readonly from?: number; readonly to?: number; readonly at?: CheckTime }): Check`
 - **budget**: The compiled scene draws at most `triangles` triangles.
   `function budget(o: { readonly triangles: number }): Check`
 - **runChecks**: Run checks over a scene with inputs held at the given values (defaults otherwise).
@@ -2293,12 +2360,12 @@ A style is a program in the same expression language (DESIGN.md 2.6): it maps a 
 
 Types:
 - **Style**: `type Style = { name, shade, ink, mark, outline, water, shadow, post, ground, sky, clear, block?, lights? }`
-- **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, depth, uv, anchor, id }`
-- **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, swell, phase }`
+- **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, depth, uv, anchor, id, lights, sky, scatter }`
+- **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, lights, swell, phase }`
 - **Contact**: How near a body is to a pixel of water. `type Contact = /** * No opaque surface lies within the sea's search of this pixel (or of the other pixels of its 2 x 2 quad): the * band would be below -800 here, where every contact term of every style is exactly 0. `foam` holds only the * deformations' marks. A style prints no contact foam. */ ...`
 - **LayerCtx**: A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. `type LayerCtx = { world, view, distance, amount }`
-- **SkyCtx**: `type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> }`
-- **GroundCtx**: What a fragment of a plane ground knows (src/draw/ground.ts): where it is, and how much of a cast shadow covers it. `type GroundCtx = { world, view, sun, distance, shadow }`
+- **SkyCtx**: `type SkyCtx = { dir, sun, lights }`
+- **GroundCtx**: What a fragment of a plane ground knows (src/draw/ground.ts): where it is, and how much of a cast shadow covers it. `type GroundCtx = { world, view, sun, distance, shadow, lights }`
 - **BlockCast**: `type BlockCast = | { readonly kind: "none" } /** From the capsules of every thing's skeleton, as the shadows on the water are, onto bodies up to `reach` behind; none from a capsule thinner than `thin`. */ | { readonly kind: "capsules"; readonly reach: number; readonly thin: number }`
 - **BlockOverlap**: `type BlockOverlap = | { readonly kind: "none" } /** `width` wide (world units) round a part that stands less than `gap` in front; `amount` of the block (0..1). */ | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number }`
 - **ShadowBlock**: A shadow printed as a block after the bodies are drawn (docs/lighting.md). `type ShadowBlock = { body, ink, floor, cast, overlap }`
@@ -2384,7 +2451,7 @@ Types:
 - **Highlight**: A third, lighter tone: `amount` of `ink` over the lit ink, hard-edged, where the surface faces half way between the key and the eye within `size` degrees: a patch of sin^2(size) of a ball's disc, a stripe along a limb that lies across that direction. `type Highlight = { readonly kind: "off" } | { readonly kind: "shoulder"; readonly size: number; readonly ink: Rgb; readonly amount: number; readonly key: Key }`
 - **LightKey**: Where the light that turns the forms comes from. - `sun`: the scene's sun. - `offLens`: the sun, but never nearer the lens than `least` degrees: when the camera looks down the sun (the game camera is 23 degrees off it, and a ball then shows 4% of itself in shadow) the form light is the sun swung away from the view axis, in the plane of the two, until it is `least` off. `type Key = { readonly kind: "sun" } | { readonly kind: "offLens"; readonly least: number } | { readonly kind: "camera"; readonly side: number; readonly up: number }`
 - **LightName**: `type LightName = keyof typeof LIGHT`
-- **LightRecipe**: `type LightRecipe = { core, hatch, waterline, bokashi, rim, highlight, cast, overlap, block }`
+- **LightRecipe**: `type LightRecipe = { core, hatch, waterline, bokashi, rim, highlight, cast, overlap, block, pool }`
 - **Overlap**: A flat band on whatever lies less than `gap` behind a nearer part, `width` wide round that part's outline. `type Overlap = { readonly kind: "off" } | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number }`
 - **Pull**: How a block prints, as the two numbers a blend needs: where the tone is t the picture is colour * m + `add` * (1 - m) with m = mix(`floor`, 1, t). `type Pull = { readonly floor: number; readonly add: Rgb }`
 - **Rim**: A light edge inside the key line where the surface turns from the eye on the key's side: `width` world units (never under 1.5 pixels), `amount` of `ink`, cut out of the block. `type Rim = { readonly kind: "off" } | { readonly kind: "edge"; readonly width: number; readonly ink: Rgb; readonly amount: number; readonly key: Key }`
@@ -2526,6 +2593,15 @@ Pieces every style and part shares: an antialiased edge, colour helpers, the dis
   `const wgslRgb = (c: Rgb): string =>`
 - **POST_COMMON**: WGSL helpers for post passes: a hash of a pixel index, value noise fixed to the screen, the view depth of the opaque scene, and whether a pixel shows the sea in front of whatever opaque thing is behind it.
   `const POST_COMMON = /* wgsl */ ``
+
+### src/style/gloss.ts
+
+A body reflecting the scene's sky: four taps of the sky round the reflected view ray, mixed over the colour by a Fresnel weight.
+
+- **glossed**: The sky and sun mirrored in a body, blurred as gloss falls, Fresnel-weighted.
+  `function glossed(colour: V, ctx: ShadeCtx, o: { readonly gloss: In<"f32">; readonly metal?: In<"f32">; readonly seen?: (dir: V) => V }): V`
+  cannot:
+  - Cannot: reflect the ground as itself (a ray below the horizon sees the sky's own colour below the horizon), other bodies, or the body itself (a cavity reflects open sky); a blur wider than four taps can hold (near gloss 0 the four taps show as faint ghosts of a sharp sky feature); antialias a sharp feature reflected by a curved body near gloss 1 (a sun disc sparkles: keep gloss under 0.95, or give the sky no sharp feature).
 
 ### src/style/toon.ts
 
@@ -2854,7 +2930,7 @@ Types:
 
 ## Coverage
 
-773 exports (440 values, 333 types) from src/index.ts and src/lib/index.ts.
+790 exports (448 values, 342 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 
