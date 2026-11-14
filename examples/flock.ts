@@ -20,7 +20,8 @@ export const flock = recur({
       return [sub(s, mul(d, div(mul(near, 0.3), d2))), add(c, mul(d, near)), add(a, mul(w!.xyz, near)), add(m, near)] as const;
     });
     const k1 = max(k, 1);
-    const acc = add(add(sep, mul(div(mid, k1), 0.4)), add(mul(sub(div(vel, k1), v!.xyz), 0.6), mul(sub(lure, p!.xyz), 0.15)));
+    // Apart, together, along with the neighbours, toward the lure, and a little drag so the chase does not overshoot.
+    const acc = add(add(sep, mul(div(mid, k1), 0.4)), add(add(mul(sub(div(vel, k1), v!.xyz), 0.6), mul(sub(lure, p!.xyz), 0.6)), mul(v!.xyz, -0.4)));
     const v2 = add(v!.xyz, mul(acc, dt));
     return [vec4(add(p!.xyz, mul(v2, dt)), 0), vec4(v2, 0)];
   },

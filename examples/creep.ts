@@ -1,16 +1,18 @@
-// A pattern that creeps: reaction and diffusion (Gray-Scott) on a 256 x 256 grid, seeded in a patch at the centre, grows
+// A pattern that creeps: reaction and diffusion (Gray-Scott) on a 256 x 256 grid, seeded in a few patches, grows
 // across a mat for 30 s. Every state would be 944 MB, so the compiler keeps every 15th (64 MB of checkpoints) and each
 // frame replays at most 15 steps from the nearest: exact on the GPU that baked. The mat's height and paint read it.
 //   bun src/cli/main.ts clip examples/creep.ts --view whole --seconds 30 --out out/state/creep.mp4
-import { add, dot, draw, lt, mix, mul, plane, recur, saturate, scene, select, smoothstep, spacing, sub, surface, toon, vec2, vec3, vec4, type F } from "../src/index.ts";
+import { add, and, div, dot, draw, floor, lt, mix, mul, plane, recur, saturate, scene, select, smoothstep, spacing, sub, surface, toon, vec2, vec3, vec4, type F } from "../src/index.ts";
 import { hash2 } from "../src/lib/index.ts";
 
 const N = 256, SIDE = 8;
 export const creep = recur({
   name: "creep", size: [N, N], rate: 30, until: 30,
   start: (c) => {
-    // A patch of radius 10 cells at the centre, u = 1/2 and v = 1/4 there, with a little noise (Pearson's seed).
-    const d = sub(c, [N / 2, N / 2]), seeded = lt(dot(d, d), 100), wobble = mul(sub(hash2(c), 0.5), 0.1);
+    // Patches of radius 6 cells at the centres of a fifth of the 32-cell blocks, u = 1/2 and v = 1/4 there, with a
+    // little noise (Pearson's seed).
+    const block = floor(div(c, 32)), d = sub(c, add(mul(block, 32), 16));
+    const seeded = and(lt(hash2(block), 0.2), lt(dot(d, d), 36)), wobble = mul(sub(hash2(c), 0.5), 0.1);
     return [vec4(select(seeded, add(0.5, wobble), 1), select(seeded, add(0.25, wobble), 0), 0, 0)];
   },
   step: (prev, c) => {
