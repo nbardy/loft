@@ -108,9 +108,17 @@ surface's level of detail from the previous frame. So: one scene per process, ti
 - **Styles**: `toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`, or a `Style` value the scene composes
   from the exported parts. `--style <name>` redraws any scene in another style without editing it, and `--light <name>`
   relights a style that has named lightings: useful for a judge that scores form apart from look.
-- **Not there**: mirror reflections on bodies and bounced light (it is not a path tracer; water can mirror what stands
-  on it through the `reflection` post pass that `biolume` and `neon` use), any light on bodies but the one sun (soft
-  media take point flashes), imported meshes (meshes come out, through `loft bake`), physics.
+- **Since `train-1`** (main after 2026-11-15; the first run used the tag `train-1`, without these):
+  - lights as functions of a world point, `lamp`, up to seven besides the sun;
+  - paint words (gloss, metal, emits, or the author's own), `scatter` and `shade`, and `glossed` (bodies mirror the sky);
+  - `draw.mesh` (triangles from code), `draw.traced` and `march` (the author's own tracer), `castRay`;
+  - `recur` (a step baked on the GPU into the files);
+  - `pass` (another camera's picture: shadow maps, mirrors);
+  - still mode (`--samples`, `--shutter`, `--aperture`).
+  Regenerate `loft context` (now about 2,400 words) for any run on main.
+- **Not there**: bounced light and reflection of one body in another inside a normal frame (it is not a path tracer: a
+  mirror is a `pass`, a ray is `castRay` against stand-in capsules), imported meshes (meshes come out, through
+  `loft bake`), live state that a game's input changes.
 
 ## What we know is weak
 
