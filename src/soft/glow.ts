@@ -100,7 +100,7 @@ const rgb = (c: Rgb): string => `vec3<f32>(${c.map(fl).join(", ")})`;
  */
 export class GlowDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces = [];
+  readonly forms = [];
   constructor(readonly name: string, readonly strokes: Strokes, readonly o: GlowOptions, readonly shape: Shape) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`glow "${name}": names must be identifiers (they name shaders)`);
     if (!(o.halo >= 1)) throw new Error(`glow "${name}": halo must be at least 1 (a multiple of the core width)`);

@@ -4,7 +4,7 @@
 // the library functions `sceneWgsl` does not already hold, the draws are ordered by phase and the pose function built.
 
 import { DETAIL_SLOTS, type Artefact, type Detail, type Draw, type FrameState, type PostPass } from "../artefact.ts";
-import { compileJs, type Env, type Expr, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
+import { compileJs, type Env, type Expr, type LibFn, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
 import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
 import type { Program } from "./rates.ts";
@@ -12,6 +12,7 @@ import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, t
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
 import { measureRest } from "../draw/grid_detail.ts";
+import { castPlan } from "../draw/cast.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
@@ -86,26 +87,14 @@ export function compileScene(scene: Scene): Compiled {
   // The ink pass runs first: it restores the plain mark in alpha for the style's own passes.
   if (screenInk) posts.unshift({ label: "ink outline", wgsl: INK_POST });
   const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, scene.sunAt);
+  // castRay: its tables and functions exist only in a scene whose code calls it (src/draw/cast.ts).
+  const casting = castPlan(ctx, [...Object.values(modules).flatMap((m) => m.libs), ...slots.libs()]);
   const layout = tables.layout();
   slots.seal();
   const shared = slots.libs();
-  const sceneWgsl = [layout.wgsl, CORE_WGSL, MARK_WGSL, style, ...shared.map((l) => l.wgsl)].join("\n");
-  const shaders: Record<string, string> = {};
-  for (const [k, m] of Object.entries(modules)) {
-    const own = m.libs.filter((l) => !shared.includes(l));
-    shaders[k] = [...own.map((l) => l.wgsl), m.code].join("\n");
-  }
-  const post: PostPass[] = posts.map((p, i) => {
-    const key = `post.${i}`;
-    shaders[key] = p.wgsl;
-    return { label: p.label, shader: key };
-  });
-
   const leaves = slots.tables();
   const readEnv = slots.envReader();
   const envOf = (state: FrameState): Omit<Env, "tables"> => ({ vars: {}, ...readEnv(state.inputs, state.params), curves: state.curves });
-
-  // Stable sort by phase: within a phase, the order drawables emitted.
   // Rest: time 0, every input and param at its default (as a static `tabulate` is filled).
   const restState: FrameState = {
     time: 0, curves: leaves.curves,
@@ -113,6 +102,22 @@ export function compileScene(scene: Scene): Compiled {
     params: (() => { const x = new Float32Array(leaves.params.reduce((n, q) => Math.max(n, q.slot + 1), 0)); for (const q of leaves.params) x[q.slot] = q.def; return x; })(),
   };
   const restFrame = poseFrame(layout, envOf, restState).frame;
+  const castText = casting === undefined ? "" : casting.wgsl(cpu, restFrame);
+  /** A library function's text: its own, or for the cast functions the scene's (written once, with the first of them). */
+  const textOf = (l: LibFn): string => (casting !== undefined && casting.libs.includes(l) ? (l === casting.libs[0] ? castText : "") : l.wgsl);
+  const sceneWgsl = [layout.wgsl, CORE_WGSL, MARK_WGSL, style, ...shared.map(textOf)].join("\n");
+  const shaders: Record<string, string> = {};
+  for (const [k, m] of Object.entries(modules)) {
+    const own = m.libs.filter((l) => !shared.includes(l));
+    shaders[k] = [...own.map(textOf), m.code].join("\n");
+  }
+  const post: PostPass[] = posts.map((p, i) => {
+    const key = `post.${i}`;
+    shaders[key] = p.wgsl;
+    return { label: p.label, shader: key };
+  });
+
+  // Stable sort by phase: within a phase, the order drawables emitted.
   const detailOf = detailSlots(layout.placed, (roots) => cpu(roots)(restFrame));
   const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, ...d }) => {
     const resolved = detailOf(detail, d);

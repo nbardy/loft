@@ -332,7 +332,7 @@ struct VOut { @builtin(position) clip: vec4<f32>, @location(0) y: f32 };
 export const backdrop: Drawable = {
   name: "backdrop",
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws: () => ({ shaders: { backdrop: { code: WGSL, libs: [] } }, draws: [drawSpec({ label: "backdrop", shader: "backdrop", vertices: 3, phase: "background", cull: "none", depthWrite: false })] }),
 };
 ```

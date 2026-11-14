@@ -3,7 +3,7 @@
 // crowded toward the tips, a vertex on the dorsal line at every density, lit by the style with an ink hull.
 
 import { lift, vec3, type Expr, type In } from "../expr.ts";
-import type { Bakeable, CompileContext, Drawable, Emitted } from "../compile/context.ts";
+import type { Form, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
 import { Body, sweepArgs, type Posted, type Section, type Slices, type Tip } from "../map/sweep.ts";
 import type { Chart, F, P3, Paint, Points, Poses, Skeleton } from "../map/types.ts";
@@ -90,7 +90,7 @@ export class Strand extends Body implements Drawable {
   }
 
   get skeletons(): readonly Skeleton[] { return this.drawn.skeletons; }
-  get surfaces(): readonly Bakeable[] { return this.drawn.surfaces; }
+  get forms(): readonly Form[] { return this.drawn.forms; }
   draws(ctx: CompileContext): Emitted { return this.drawn.draws(ctx); }
   /** Copies of this strand, one per point, in each point's frame (teeth, spikes). Drawn by `draw.points`. */
   instanced(name: string, points: Points): Drawable { return this.drawn.instanced(name, points); }

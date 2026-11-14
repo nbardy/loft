@@ -305,8 +305,9 @@ interface Drawable {
   readonly name: string;
   draws(ctx: CompileContext): Emitted;          // { shaders: { key: { code, libs } }, draws: DrawSpec[] }
   readonly skeletons: readonly Skeleton[];      // what it casts shadows with (empty for none)
-  readonly surfaces: readonly Bakeable[];       // what it draws that the baker can evaluate (empty for none): a surface
-                                                // on its grid, or a triangle mesh (a field drawn as one)
+  readonly forms: readonly Form[];              // what it is, for any other reader (the baker, the checks, another
+                                                // renderer): a surface, a mesh, a field, a medium, or the author's own
+                                                // `hit`; every reader switches over `kind` (empty: nothing to read)
 }
 interface CompileContext {
   readonly slots: Slots;                        // emit expressions: emitShaderFn(ctx.slots, { name, args, out, roots, ret })
@@ -457,7 +458,7 @@ area with the axis is refused by name. Before, a rising profile was drawn inside
 | `src/draw/` | `draw.surface`, `draw.glazed`, `draw.curve`, `draw.points` (implemented); `draw.field`, `draw.relief`, `draw.density` (specified: options types, throw `NotImplementedError`); the sky and shadows |
 | `src/geom/` | `strand`, `crest`, `sea` as library functions; `scatter`, `attach`, the chart WGSL and its CPU twin, the station reader in WGSL and its JS mirror, and every per-kind shader template are gone |
 | `src/compile/` | slots, the table registry and packing, shared WGSL, the pose function; no kind of thing appears in it |
-| `src/bake/` | bakes every `Drawable.surfaces` entry by sampling its expressions; colours converted to linear |
+| `src/bake/` | bakes every `Drawable.forms` entry it can (one switch: surfaces and meshes sampled, fields meshed by surface nets, media and hits reported as skipped by name); colours converted to linear |
 | contract, host, CLI, viewer | unchanged |
 
 ### 7.6 Where the first version of this section was wrong or awkward
@@ -527,7 +528,8 @@ grow({ count, motif, step }), kifs({ count, fold, scale, offset })   // src/lib/
   plus a pixel, times 1.2); the formula also gives the refinement and the normal, so the surface is as crisp as
   traced. `mesh`: a closed triangle mesh extracted from the brick's samples (surface nets, `src/map/nets.ts`), normals
   from the field's gradient, paint per pixel at the interpolated point, ink as an inverted hull of the traced ink
-  width; bakeable to glTF (`Bakeable` is a surface or a mesh). `auto`: a field whose leaves read time, an input, a
+  width; drawn by `draw.mesh`'s emitter since 2026-11-14 (byte-identical pixels). Every schedule bakes to glTF: its
+  `field` form is meshed by surface nets at bake time. `auto`: a field whose leaves read time, an input, a
   param, a curve row or a per-frame table (`varianceOf`), or a GPU-only function, is traced; a static one whose
   formula is cheap (`evaluationCost` below `BRICK_WORTH` = 1000 nodes: the nest is 215, the coral 2612) is traced
   too, because a brick lookup (scattered loads) costs more than its formula; a static expensive one that reads
@@ -1269,3 +1271,27 @@ function; a backdrop function for nothing (the levelled sky is the style's own c
    phase-1 host's stored hashes (`tools/files_cases.ts`, last changed when the files format landed) reports all six
    different; the artefacts of this change are byte-identical to the base's, so that is older drift of the stored
    hashes, not this change.
+
+## 14. Geometry an author makes, and rays an author casts (as built, 2026-11-14)
+
+Proposal: `docs/proposals/geometry_and_rays.md`, with the rulings of `docs/proposals/README.md` and headroom A3.
+
+- **`Drawable.forms`** replaces `surfaces`: `surface | mesh | field | medium | hit`. The baker switches over it and
+  reports what it cannot bake by name; a traced field now bakes by surface nets. Surface bakes are byte-identical.
+- **`draw.mesh`** (`src/draw/mesh.ts`): rows and triangles from the author's code, moved by `at(row, i)`. Normals are
+  classified once: `carried` (rest and welded normals carried by the cofactor of `at`'s symbolic Jacobian) or `faces`
+  (the moved triangle's own, per pixel). The field's `mesh` schedule is drawn by its emitter, pixels byte-identical.
+- **`draw.traced`** (`src/draw/traced.ts`): `hit(ray, copy) => { t, gap, normal }`, one shared fragment stage. The
+  paint runs in uniform control flow (a reflected ray's ground colour takes screen derivatives); the normal only on
+  covered pixels, by substituting the found t into its expression, so a march is not run twice.
+- **`march`** (`src/draw/march.ts`): draw.field's sphere trace in expressions over `iterate(..., until)`.
+- **`castRay`** (`src/draw/cast.ts`): library functions whose WGSL the compiler writes only when emitted code calls
+  them (`castPlan` in `src/compile/index.ts`); a chain-bounds map table over the shadows' joints. A miss by more than
+  the ray's width is a clean miss: without that cap no chain could be culled. `staysInView` runs on its CPU twin
+  (`castCpu`); the crab's checks give the same lines.
+- **Not ported (stop rules):** `draw.copies` (per-copy LOD, the `inkBack` depth offset, exact pixel size and the
+  oriented box are not in the shared fragment) and `draw.field` (over `march` the nest differs on 4.8% of pixels,
+  the inner silhouettes `march` does not ink, and its draw read 8.6 to 9.1 ms against 6.4 to 6.6). Both keep their
+  own fragment stages.
+- **The screen-outline fault** was real but latent: traced solids wrote their raw mark, which agreed with `markOut`
+  only for mark 1. Fixed through `ctx.markOut`; no existing picture changed.
