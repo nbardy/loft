@@ -342,7 +342,8 @@ export function lower(a: Artefact): Bundle {
     const known = moduleIds.get(key);
     if (known !== undefined) return known;
     const variant = VARIANT[v].wgsl === "" ? [] : [chunk(VARIANT[v].wgsl)];
-    const id = modules.add({ label: `shader "${shared.key}"${VARIANT[v].named}`, chunks: [preludeChunk, ...variant, sceneChunk, chunk(shared.wgsl)] });
+    const directive = shared.directive === "" ? [] : [chunk(shared.directive)];
+    const id = modules.add({ label: `shader "${shared.key}"${VARIANT[v].named}`, chunks: [...directive, preludeChunk, ...variant, sceneChunk, chunk(shared.wgsl)] });
     moduleIds.set(key, id);
     return id;
   };
@@ -352,19 +353,19 @@ export function lower(a: Artefact): Bundle {
     const v = drawVariant(d);
     const module = moduleOf(d.shader, v);
     const shaderKey = sharing.moduleOf(d.shader).key;
-    const { constants: c } = sharing.drawOf(k);
+    const { constants: c, cull } = sharing.drawOf(k);
     const blend = BLEND[d.blend];
     const desc: RenderPipelineDesc = {
       label: `${d.shader} (${d.label})`,
       layout: layoutOf(v),
       vertex: { module, entryPoint: "vs", constants: { ...c } },
       fragment: { module, entryPoint: "fs", constants: { ...c }, targets: [blend ? { format: COLOR_FORMAT, blend } : { format: COLOR_FORMAT }] },
-      primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: d.cull },
+      primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: cull },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: d.depthWrite, depthCompare: "less" },
       multisample: { count: SAMPLES },
     };
     const constants = Object.keys(c).sort().map((n) => `${n}=${c[n]}`).join(",");
-    const key = `${shaderKey}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}`;
+    const key = `${shaderKey}|${v}|${cull}|${d.blend}|${d.depthWrite}|${constants}`;
     const known = pipelineIds.get(key);
     if (known !== undefined) return known;
     const id = renders.add(desc);
