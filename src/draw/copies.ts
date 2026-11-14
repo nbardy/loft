@@ -138,7 +138,7 @@ export class Copies implements Drawable {
     const key = `copies.${this.name}`;
     const code = [
       tracePlumbingWgsl(), outlineWgsl(this.o.outline), `const COPIES_ID: f32 = ${lit(nameId(this.name))};`,
-      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels),
+      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels, ctx.markOut("trace_mark(base, n, p, d, COPIES_ID)", false)),
     ].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...paint.libs, ...carry.libs])] } },
@@ -147,7 +147,7 @@ export class Copies implements Drawable {
   }
 }
 
-function copiesWgsl(tab: string, minPixels: number, keepLevels: number): string {
+function copiesWgsl(tab: string, minPixels: number, keepLevels: number, markOut: string): string {
   return /* wgsl */ `
 struct CopyIn {
   @builtin(position) clip: vec4<f32>,
@@ -214,7 +214,7 @@ override INK_BACK: f32 = 2.0;
   // width in front of everything buried a dense crown of pixel-wide twigs under ink several times their width.
   let own = mix(in.a.w, in.b.w, clamp(dot(p - in.a.xyz, ba) / max(dot(ba, ba), 1e-20), 0.0, 1.0)) / fp;
   let back = select(edge * fp * INK_BACK, 0.0, hit || gap < clamp(own, 0.75, max(edge, 0.75)));
-  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, COPIES_ID)), trace_depth(p + d * back), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut}), trace_depth(p + d * back), mask);
 }`;
 }
 

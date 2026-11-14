@@ -339,7 +339,7 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
     // The proxy and its march: the field's formula at every step, or steps by its brick.
     const traced = (skip: string, show: string): Emitted => {
       const key = `field.${this.name}`;
-      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety)].join("\n");
+      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety, ctx.markOut("trace_mark(base, n, p, d, FIELD_ID)", false))].join("\n");
       return {
         shaders: { [key]: { code, libs } },
         draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
@@ -350,7 +350,7 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
       const vertices = ctx.table(meshTable(`${this.name}_mesh`, mesh));
       const tris = ctx.table(indexTable(`${this.name}_tris`, mesh));
       const key = `field.${this.name}.mesh`;
-      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, gate, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show)].join("\n");
+      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, gate, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show, ctx.markOut("trace_mark(base, n, in.world, d, FIELD_ID)", false))].join("\n");
       const n = mesh.indices.length;
       const ink: DrawSpec[] = this.o.outline === "silhouette" ? [drawSpec({ label: `${this.name}_ink`, shader: key, vertices: n, cull: "front", constants: { INK_HULL: 1 } })] : [];
       return {
@@ -499,7 +499,7 @@ function indexTable(name: string, m: TriangleMesh): TableSource {
  * INK_HULL the same triangles are pushed out along their normals by the traced ink width and drawn back faces only, in
  * ink: the inverted hull a triangle body's outline is (there is no near miss to measure on a raster).
  */
-function meshWgsl(vertices: string, tris: string, show: string): string {
+function meshWgsl(vertices: string, tris: string, show: string, markOut: string): string {
   return /* wgsl */ `
 override INK_HULL: u32 = 0u;
 struct MeshIn { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32>, @location(1) normal: vec3<f32> };
@@ -518,13 +518,13 @@ struct MeshIn { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32
   let fp = pixel_world(in.world);
   let base = field_paint(in.world, n, fp);
   let colour = select(trace_shade(base, n, in.world, d, FIELD_ID), trace_ink(base, n, in.world, d, FIELD_ID), INK_HULL == 1u);
-  return vec4<f32>(colour, trace_mark(base, n, in.world, d, FIELD_ID));
+  return vec4<f32>(colour, ${markOut});
 }`;
 }
 
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 
-function fragmentWgsl(safety: number): string {
+function fragmentWgsl(safety: number, markOut: string): string {
   return /* wgsl */ `
 override STEPS: u32 = 64u;
 const SAFETY: f32 = ${num(safety)};
@@ -631,7 +631,7 @@ fn march_band(fp: f32) -> f32 {
   let colour = select(trace_shade(base, n, p, d, FIELD_ID), trace_ink(base, n, p, d, FIELD_ID), useInk);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, FIELD_ID)), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut}), trace_depth(p), mask);
 }`;
 }
 

@@ -223,7 +223,7 @@ export class Impostors implements Drawable {
     });
     const box = bound.box(this.lo.map((l, i) => (l - 0.5) * c[i]) as unknown as V3, this.hi.map((h, i) => (h + 0.5) * c[i]) as unknown as V3);
     const key = `impostors.${this.name}`;
-    const code = [traceWgsl(box, "true"), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi)].join("\n");
+    const code = [traceWgsl(box, "true"), outlineWgsl(this.o.outline), `const IMP_ID: f32 = ${lit(nameId(this.name))};`, shape.wgsl, shapeFn.code, paint.code, walkWgsl(c, this.lo, this.hi, ctx.markOut("trace_mark(base, n, p, d, id)", false))].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...shapeFn.libs, ...paint.libs])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { CELLS: this.o.cells } })],
@@ -231,7 +231,7 @@ export class Impostors implements Drawable {
   }
 }
 
-function walkWgsl(c: V3, lo: V3, hi: V3): string {
+function walkWgsl(c: V3, lo: V3, hi: V3, markOut: string): string {
   return /* wgsl */ `
 override CELLS: u32 = 64u;
 const CELL: vec3<f32> = ${v3(c)};
@@ -297,7 +297,7 @@ ${CLOSEST_WGSL}
   let colour = select(trace_shade(base, n, p, d, id), trace_ink(base, n, p, d, id), INK_ON && !hit);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, id)), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut}), trace_depth(p), mask);
 }`;
 }
 
