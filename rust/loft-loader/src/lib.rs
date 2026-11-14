@@ -95,7 +95,8 @@ pub struct Loft {
 }
 
 struct PassOps {
-    color: wgpu::Operations<wgpu::Color>,
+    /// None: a pass with no colour attachment (version 2's depth passes).
+    color: Option<wgpu::Operations<wgpu::Color>>,
     depth: Option<wgpu::Operations<f32>>,
 }
 
@@ -245,11 +246,12 @@ impl Loft {
             .into_iter()
             .collect::<Result<_, _>>()?;
         let render = par_map(&m.render_pipelines, |p| {
-                let (vc, fc) = (constants(&p.vertex.constants), constants(&p.fragment.stage.constants));
+                let vc = constants(&p.vertex.constants);
+                let fc = p.fragment.as_ref().map(|f| constants(&f.stage.constants)).unwrap_or_default();
                 let targets: Vec<Option<wgpu::ColorTargetState>> = p
                     .fragment
-                    .targets
                     .iter()
+                    .flat_map(|f| &f.targets)
                     .map(|t| {
                         Some(wgpu::ColorTargetState {
                             format: t.format.wgpu(),
@@ -268,9 +270,10 @@ impl Loft {
                             compilation_options: wgpu::PipelineCompilationOptions { constants: &vc, ..Default::default() },
                             buffers: &[],
                         },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &modules[p.fragment.stage.module],
-                            entry_point: Some(&p.fragment.stage.entry_point),
+                        // No fragment stage: a depth pass's pipeline draws depth from its triangles alone (version 2).
+                        fragment: p.fragment.as_ref().map(|f| wgpu::FragmentState {
+                            module: &modules[f.stage.module],
+                            entry_point: Some(&f.stage.entry_point),
                             compilation_options: wgpu::PipelineCompilationOptions { constants: &fc, ..Default::default() },
                             targets: &targets,
                         }),
@@ -383,7 +386,8 @@ impl Loft {
             .iter()
             .zip(&self.m.textures)
             .map(|(d, t)| {
-                let extent = wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 };
+                let (width, height) = manifest::TextureSize::pixels(t.size, size);
+                let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
                 device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), size: extent, ..d.clone() }).create_view(&Default::default())
             })
             .collect();
@@ -504,6 +508,10 @@ impl Loft {
             let mut pass = pose.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft pose"), timestamp_writes });
             self.encode_pose(&mut pass);
         }
+        // Each pass's camera, from its table into its frame uniform, before any pass draws (version 2).
+        for c in &self.m.frame.copies {
+            pose.copy_buffer_to_buffer(&self.buffers[c.from], c.from_offset, &self.buffers[c.to], 0, Some(c.bytes));
+        }
         if let (true, BoundsRead::Read { buffer, grids }) = (copy, &self.m.frame.bounds) {
             for g in grids {
                 pose.copy_buffer_to_buffer(&self.buffers[g.from], g.from_offset, &self.buffers[*buffer], g.at as u64 * 16, Some(g.instances as u64 * 16));
@@ -584,15 +592,16 @@ impl Loft {
                 beginning_of_pass_write_index: Some(2 + 2 * k as u32),
                 end_of_pass_write_index: Some(3 + 2 * k as u32),
             });
-            let color = wgpu::RenderPassColorAttachment {
-                view: view(p.color.view),
+            let color = p.color.as_ref().zip(ops.color).map(|(c, ops)| wgpu::RenderPassColorAttachment {
+                view: view(c.view),
                 depth_slice: None,
-                resolve_target: p.color.resolve_target.map(view),
-                ops: ops.color,
-            };
+                resolve_target: c.resolve_target.map(view),
+                ops,
+            });
+            let colors: &[Option<wgpu::RenderPassColorAttachment>] = match &color { Some(_) => std::slice::from_ref(&color), None => &[] };
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&p.label),
-                color_attachments: &[Some(color)],
+                color_attachments: colors,
                 depth_stencil_attachment: p.depth.as_ref().map(|d| wgpu::RenderPassDepthStencilAttachment {
                     view: &sized.views[d.view],
                     depth_ops: ops.depth,
@@ -659,7 +668,9 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     for p in &m.render_pipelines {
         id(&p.label, "pipeline layout", p.layout, m.pipeline_layouts.len())?;
         id(&p.label, "module", p.vertex.module, m.modules.len())?;
-        id(&p.label, "module", p.fragment.stage.module, m.modules.len())?;
+        if let Some(f) = &p.fragment {
+            id(&p.label, "module", f.stage.module, m.modules.len())?;
+        }
     }
     id("curves", "buffer", m.curves.buffer, m.buffers.len())?;
     id("loft_detail", "buffer", m.frame.detail.buffer, m.buffers.len())?;
@@ -675,6 +686,10 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
                 return Err(Error::BadId { what: format!("{} (a pose group must name no texture)", d.label), kind: "bind group", id: g });
             }
         }
+    }
+    for c in &m.frame.copies {
+        id("frame copy", "buffer", c.from, m.buffers.len())?;
+        id("frame copy", "buffer", c.to, m.buffers.len())?;
     }
     if let BoundsRead::Read { buffer, grids } = &m.frame.bounds {
         id("bounds", "buffer", *buffer, m.buffers.len())?;
@@ -718,8 +733,10 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
         .passes
         .iter()
         .map(|p| {
-            target(&p.label, p.color.view)?;
-            p.color.resolve_target.map_or(Ok(()), |t| target(&p.label, t))?;
+            if let Some(c) = &p.color {
+                target(&p.label, c.view)?;
+                c.resolve_target.map_or(Ok(()), |t| target(&p.label, t))?;
+            }
             for &g in &p.bind_groups {
                 id(&p.label, "bind group", g, m.bind_groups.len())?;
             }
@@ -732,14 +749,16 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
                     }
                 }
             }
-            let c = &p.color;
-            let color = wgpu::Operations {
-                load: match (c.load_op, c.clear_value) {
-                    (LoadOp::Load, _) => wgpu::LoadOp::Load,
-                    (LoadOp::Clear, Some([r, g, b, a])) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-                    (LoadOp::Clear, None) => return Err(Error::ClearWithoutValue(p.label.clone(), "clearValue")),
-                },
-                store: c.store_op.wgpu(),
+            let color = match &p.color {
+                None => None,
+                Some(c) => Some(wgpu::Operations {
+                    load: match (c.load_op, c.clear_value) {
+                        (LoadOp::Load, _) => wgpu::LoadOp::Load,
+                        (LoadOp::Clear, Some([r, g, b, a])) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
+                        (LoadOp::Clear, None) => return Err(Error::ClearWithoutValue(p.label.clone(), "clearValue")),
+                    },
+                    store: c.store_op.wgpu(),
+                }),
             };
             let depth = match &p.depth {
                 None => None,
