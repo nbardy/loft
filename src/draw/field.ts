@@ -38,11 +38,12 @@
 import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { compileJs, f, leaves, libsOf, mul, topo, substitute, variable, type Expr, type LibFn, type TableSource } from "../expr.ts";
-import { emitShaderFn } from "../compile/bind.ts";
+import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
+import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type DrawSpec, type Emitted } from "../compile/context.ts";
 import { lipschitz } from "../lib/sdf3.ts";
 import { fieldShadow, shadowSkeleton } from "./field_shadow.ts";
-import type { F, Field, P3, Skeleton } from "../map/types.ts";
+import type { F, Field, P3, Painted, Skeleton } from "../map/types.ts";
 import { aabbOf, outlineWgsl, PROXY_VERTICES, traceShadeWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 import { bakeBrick, varianceOf, type Brick, type Variance } from "../map/brick.ts";
 import { surfaceNets, type TriangleMesh } from "../map/nets.ts";
@@ -70,7 +71,7 @@ export type FieldOptions = {
   /** Where the field is marched: its proxy triangles and the ray's span. The solid must lie inside it. */
   readonly bounds: TraceBound;
   /** Base colour at a hit (lit by the style). To vary per copy, evaluate the fold at `hit.p` and use its `id`. */
-  readonly paint: (hit: FieldHit) => P3;
+  readonly paint: (hit: FieldHit) => P3 | Painted;
   /** Most samples of the field per pixel (steps by a brick's bound are not counted). */
   readonly steps: number;
   /** Ink on silhouettes (the toon outline of a traced solid), or none. */
@@ -236,7 +237,7 @@ export class FieldDrawable implements Drawable {
     switch (p.kind) {
       case "trace": case "brick": return [];
       // At full detail: the baker has no pixel size.
-      case "mesh": case "switch": return [{ name: this.name, mesh: p.mesh, paint: (hit: FieldHit) => substitute([this.o.paint(hit)], fieldPixel, f(0))[0] as P3 }];
+      case "mesh": case "switch": return [{ name: this.name, mesh: p.mesh, paint: (hit: FieldHit) => substitute([classify(this.name, this.o.paint(hit)).base], fieldPixel, f(0))[0] as P3 }];
     }
   }
 
@@ -330,16 +331,15 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
       return { code, libs: [...new Set(members.flatMap((m) => m.libs))] };
     };
     const field = p.kind === "brick" || p.kind === "switch" ? fieldOf(p.sampled.union) : fieldOf([d]);
-    const paint = emitShaderFn(ctx.slots, {
-      name: "field_paint", args: [["p", "vec3"], ["n", "vec3"], ["loft_field_px", "f32"]], out: "vec3<f32>",
-      roots: [this.o.paint({ p: P, normal: N as Expr<"vec3"> })], ret: (v) => v[0],
-    });
+    const said = classify(this.name, this.o.paint({ p: P, normal: N as Expr<"vec3"> }));
+    const shading = lookFns(ctx, this.name, said, FIELD_PAINT_ARGS);
+    const paint = withShading(emitShaderFn(ctx.slots, { name: "field_paint", args: FIELD_PAINT_ARGS, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0] }), shading);
     const id = `const FIELD_ID: f32 = ${lit(nameId(this.name))};`;
     const libs = [...new Set([...field.libs, ...paint.libs])];
     // The proxy and its march: the field's formula at every step, or steps by its brick.
     const traced = (skip: string, show: string): Emitted => {
       const key = `field.${this.name}`;
-      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety)].join("\n");
+      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety, shading)].join("\n");
       return {
         shaders: { [key]: { code, libs } },
         draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps } })],
@@ -350,7 +350,7 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
       const vertices = ctx.table(meshTable(`${this.name}_mesh`, mesh));
       const tris = ctx.table(indexTable(`${this.name}_tris`, mesh));
       const key = `field.${this.name}.mesh`;
-      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, gate, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show)].join("\n");
+      const code = [traceShadeWgsl(), outlineWgsl(this.o.outline), id, gate, paint.code, meshWgsl(vertices.wgsl, tris.wgsl, show, shading)].join("\n");
       const n = mesh.indices.length;
       const ink: DrawSpec[] = this.o.outline === "silhouette" ? [drawSpec({ label: `${this.name}_ink`, shader: key, vertices: n, cull: "front", constants: { INK_HULL: 1 } })] : [];
       return {
@@ -499,7 +499,10 @@ function indexTable(name: string, m: TriangleMesh): TableSource {
  * INK_HULL the same triangles are pushed out along their normals by the traced ink width and drawn back faces only, in
  * ink: the inverted hull a triangle body's outline is (there is no near miss to measure on a raster).
  */
-function meshWgsl(vertices: string, tris: string, show: string): string {
+const FIELD_PAINT_ARGS: FnSpec["args"] = [["p", "vec3"], ["n", "vec3"], ["loft_field_px", "f32"]];
+
+function meshWgsl(vertices: string, tris: string, show: string, s: Shading): string {
+  const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "in.world", "d", "FIELD_ID", "in.world, n, fp");
   return /* wgsl */ `
 override INK_HULL: u32 = 0u;
 struct MeshIn { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32>, @location(1) normal: vec3<f32> };
@@ -517,14 +520,15 @@ struct MeshIn { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32
   let d = view_dir(in.world);
   let fp = pixel_world(in.world);
   let base = field_paint(in.world, n, fp);
-  let colour = select(trace_shade(base, n, in.world, d, FIELD_ID), trace_ink(base, n, in.world, d, FIELD_ID), INK_HULL == 1u);
-  return vec4<f32>(colour, trace_mark(base, n, in.world, d, FIELD_ID));
+  let colour = select(${call("shade")}, ${call("ink")}, INK_HULL == 1u);
+  return vec4<f32>(colour, ${call("mark")});
 }`;
 }
 
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 
-function fragmentWgsl(safety: number): string {
+function fragmentWgsl(safety: number, s: Shading): string {
+  const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "p", "d", "FIELD_ID", "p, n, fp");
   return /* wgsl */ `
 override STEPS: u32 = 64u;
 const SAFETY: f32 = ${num(safety)};
@@ -628,10 +632,10 @@ fn march_band(fp: f32) -> f32 {
     base = field_paint(p, n, fp);
   }
   let useInk = INK_ON && !hit;
-  let colour = select(trace_shade(base, n, p, d, FIELD_ID), trace_ink(base, n, p, d, FIELD_ID), useInk);
+  let colour = select(${call("shade")}, ${call("ink")}, useInk);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, FIELD_ID)), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, ${call("mark")}), trace_depth(p), mask);
 }`;
 }
 

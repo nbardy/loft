@@ -5,7 +5,7 @@
 
 import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
-import { classify, lookFns, type Shading } from "./painted.ts";
+import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
 import { drawSpec, type Bakeable, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
 import { carry, posesOf, rotate, sizeBound } from "../map/chart.ts";
@@ -312,9 +312,9 @@ function fragment(ctx: CompileContext, d: SurfaceDrawable): Frag {
   switch (look.kind) {
     case "lit": {
       const said = classify(d.name, look.paint(U, V, AT));
-      const own = lookFns(ctx, d.name, said, PAINT_ARGS, PAINT_CALL);
-      const fns = withLook(paintFn(said.base), own);
-      const call = (fn: "shade" | "ink" | "mark") => own.call(fn, "base, n, eye, in.world, depth, in.uv, in.anchor, in.id");
+      const own = lookFns(ctx, d.name, said, PAINT_ARGS);
+      const fns = withShading(paintFn(said.base), own);
+      const call = (fn: "shade" | "ink" | "mark") => shadeCall(own, fn, "base, n, eye, in.world, depth, in.uv, in.anchor, in.id", PAINT_CALL);
       const face = look.sides === "one" ? "1.0" : "select(-1.0, 1.0, front)";
       const head = `@fragment fn fs(in: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
   let n = ${face} * normalize(in.normal);${LIT_PRE}
@@ -415,11 +415,6 @@ function quadDerivatives(name: string, s: Shader): Shader {
   const bad = s.libs.filter(reaches).map((l) => l.name);
   if (bad.length > 0 || /\bloft_fwidth\(/.test(s.code)) throw new Error(`draw.surface: case function "${name}" takes a derivative quadSafe does not cover (${bad.join(", ") || "loft_fwidth in a loop"}); give it a quad-safe twin`);
   return s;
-}
-
-/** A paint's shader with the thing's own shade functions after it, when it has them. */
-function withLook(paint: Shader, look: Shading): Shader {
-  return look.shader === undefined ? paint : { code: `${paint.code}\n${look.shader.code}`, libs: [...new Set([...paint.libs, ...look.shader.libs])] };
 }
 
 /**

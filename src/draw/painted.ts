@@ -50,40 +50,67 @@ export function classify(thing: string, x: P3 | Painted): Classified {
 /** The shared shade functions' arguments, in the order every call site passes them. */
 const SHADE_ARGS: FnSpec["args"] = [["c_base", "vec3"], ["c_normal", "vec3"], ["c_view", "vec3"], ["c_world", "vec3"], ["c_depth", "f32"], ["c_uv", "vec2"], ["c_anchor", "vec3"], ["c_id", "f32"]];
 
-/** The functions a lit fragment calls: their names, the module code they need (none for the shared ones), and how to call one. */
-export type Shading = {
-  readonly shader: Shader | undefined;
-  /** `call("shade", "base, n, eye, ...")`: the call for this thing, its paint's arguments appended when it has its own copies. */
-  call(fn: "shade" | "ink" | "mark", shared: string): string;
-};
+/**
+ * The functions a lit fragment calls for a thing: the shared `shade`, `ink` and `mark` (and `trace_*` over them), or
+ * its own copies, `look_<thing>`, `ink_<thing>` and `mark_<thing>`, in its module (`shader`), which take the paint's
+ * arguments after the shared ones.
+ */
+export type Shading = { readonly kind: "shared" } | { readonly kind: "own"; readonly thing: string; readonly shader: Shader };
 
 /** What the scene reports about what a thing said: channels no part of the style reads, a wrap that ignores the style. */
 export type Notes = { readonly unread: readonly string[]; readonly ignoresStyle: boolean };
 
-const SHARED: Shading = { shader: undefined, call: (fn, shared) => `${fn}(${shared})` };
+const OWN = { shade: "look", ink: "ink", mark: "mark" } as const;
+
+/** The call of `fn` for a surface's fragment: `shared` the shared functions' arguments, `paintCall` the paint's. */
+export function shadeCall(s: Shading, fn: "shade" | "ink" | "mark", shared: string, paintCall: string): string {
+  switch (s.kind) {
+    case "shared": return `${fn}(${shared})`;
+    case "own": return `${OWN[fn]}_${s.thing}(${shared}, ${paintCall})`;
+  }
+}
 
 /**
- * The functions a lit fragment calls for this thing: the shared `shade`, `ink` and `mark` when it gives nothing the
- * style reads and no wrap (byte-identical to before channels); otherwise its own copies, emitted into its own module.
- * `paintArgs` are the paint function's arguments (the channels are expressions of them) and `paintCall` the call
- * site's values for them.
+ * The call of `fn` for a traced point (src/draw/trace.ts, `trace_shade`): no surface coordinates, the anchor the world
+ * point, the depth below the sea from it.
  */
-export function lookFns(ctx: CompileContext, thing: string, c: Classified, paintArgs: FnSpec["args"], paintCall: string): Shading {
+export function tracedCall(s: Shading, fn: "shade" | "ink" | "mark", base: string, n: string, p: string, d: string, id: string, paintCall: string): string {
+  switch (s.kind) {
+    case "shared": return `trace_${fn}(${base}, ${n}, ${p}, ${d}, ${id})`;
+    case "own": return shadeCall(s, fn, `${base}, ${n}, -${d}, ${p}, sea_height(${p}.xz) - ${p}.y, vec2<f32>(0.0), ${p}, ${id}`, paintCall);
+  }
+}
+
+/** A paint's shader with the thing's own shade functions after it, when it has them. */
+export function withShading(paint: Shader, s: Shading): Shader {
+  switch (s.kind) {
+    case "shared": return paint;
+    case "own": return { code: `${paint.code}\n${s.shader.code}`, libs: [...new Set([...paint.libs, ...s.shader.libs])] };
+  }
+}
+
+/**
+ * The functions a lit fragment calls for this thing: shared when it gives no channel the style reads, no scatter the
+ * style asks for and no wrap (byte-identical to before channels); otherwise its own copies, emitted into its own module.
+ * `paintArgs` are the paint function's arguments (the channels are expressions of them).
+ */
+export function lookFns(ctx: CompileContext, thing: string, c: Classified, paintArgs: FnSpec["args"]): Shading {
+  // A bare colour asks nothing of the style: the style is not evaluated here (its expressions would be made earlier
+  // than before, and every later name in the shader text would move).
+  if (c.said.channels.size === 0 && c.said.scatter === undefined && c.answer.kind === "styled") return { kind: "shared" };
   const notes = notesOf(ctx, thing, c);
   for (const n of notes.unread) ctx.note(`${thing} gives "${n}", which no part of ${ctx.style.name} reads`);
   if (notes.ignoresStyle) ctx.note(`${thing}'s own shade never reads the style's answer: it no longer follows --style`);
   const reads = styleReads(ctx.style);
   const readChannel = [...c.said.channels.keys()].some((n) => reads.channels.has(n));
   const readScatter = c.said.scatter !== undefined && reads.scatter;
-  if (!readChannel && !readScatter && c.answer.kind === "styled") return SHARED;
+  if (!readChannel && !readScatter && c.answer.kind === "styled") return { kind: "shared" };
   const look = shadeVariables(ctx.lighting, ctx.style, { thing, ...c.said });
   const answer = withIdentities(() => answered(c.answer, look, ctx.style.block === undefined ? ctx.style.shade(look) : ctx.style.block.body(look)));
   const args = [...SHADE_ARGS, ...paintArgs];
   const fn = (name: string, out: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name, args, out, roots: [root], ret: (o) => o[0]! });
   const shaders = [fn(`look_${thing}`, "vec3<f32>", answer), fn(`ink_${thing}`, "vec3<f32>", withIdentities(() => ctx.style.ink(look))), fn(`mark_${thing}`, "f32", withIdentities(() => ctx.style.mark(look)))];
-  const shader: Shader = { code: shaders.map((s) => s.code).join("\n"), libs: [...new Set(shaders.flatMap((s) => s.libs))] };
-  const own = { shade: `look_${thing}`, ink: `ink_${thing}`, mark: `mark_${thing}` } as const;
-  return { shader, call: (f, shared) => `${own[f]}(${shared}, ${paintCall})` };
+  return { kind: "own", thing, shader: { code: shaders.map((s) => s.code).join("\n"), libs: [...new Set(shaders.flatMap((s) => s.libs))] } };
 }
 
 /** The colour a thing shows: the style's, or the style's through the thing's own `shade`. */

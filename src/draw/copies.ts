@@ -24,11 +24,12 @@ import { nameId } from "./surface.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { add, lift, variable, type Expr, type TableSource } from "../expr.ts";
 import { scopedName } from "../expr.ts";
-import { emitShaderFn } from "../compile/bind.ts";
+import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
+import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
 import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { Branch, Part } from "../lib/similar.ts";
 import { rotate } from "../map/chart.ts";
-import type { F, Frame, P3, Skeleton } from "../map/types.ts";
+import type { F, Frame, P3, Painted, Skeleton } from "../map/types.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
 import { CLOSEST_WGSL, shapeWgsl } from "./impostors.ts";
 import { outlineWgsl, PROXY_VERTICES, tracePlumbingWgsl, type TraceOutline } from "./trace.ts";
@@ -44,7 +45,7 @@ export type CopiesOptions = {
   readonly kind: Part["kind"];
   /** The copies, placed in the world. Static: they are uploaded once. */
   readonly copies: readonly Branch[];
-  readonly paint: (hit: CopiesHit) => P3;
+  readonly paint: (hit: CopiesHit) => P3 | Painted;
   readonly outline: TraceOutline;
   /** A copy whose diameter is under this many pixels is not drawn. */
   readonly minPixels: number;
@@ -126,10 +127,9 @@ export class Copies implements Drawable {
 
   draws(ctx: CompileContext): Emitted {
     const table = ctx.table(copiesTable(`${this.name}_copies`, this.o.copies));
-    const paint = emitShaderFn(ctx.slots, {
-      name: "copies_paint", args: [["p", "vec3"], ["n", "vec3"], ["copy_id", "vec3"], ["copy_level", "f32"]], out: "vec3<f32>",
-      roots: [this.o.paint({ p: P, normal: N, level: LEVEL, id: ID })], ret: (v) => v[0],
-    });
+    const said = classify(this.name, this.o.paint({ p: P, normal: N, level: LEVEL, id: ID }));
+    const shading = lookFns(ctx, this.name, said, COPIES_PAINT_ARGS);
+    const paint = withShading(emitShaderFn(ctx.slots, { name: "copies_paint", args: COPIES_PAINT_ARGS, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0] }), shading);
     const c = this.o.carry ?? WORLD_FRAME;
     const carry = emitShaderFn(ctx.slots, {
       name: "copies_carry", args: [], out: "array<vec3<f32>, 4>", roots: [c.o, c.x, c.y, c.z],
@@ -138,7 +138,7 @@ export class Copies implements Drawable {
     const key = `copies.${this.name}`;
     const code = [
       tracePlumbingWgsl(), outlineWgsl(this.o.outline), `const COPIES_ID: f32 = ${lit(nameId(this.name))};`,
-      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels),
+      shapeWgsl(this.o.kind), CLOSEST_WGSL, paint.code, carry.code, copiesWgsl(table.wgsl, this.o.minPixels, this.o.keepLevels, shading),
     ].join("\n");
     return {
       shaders: { [key]: { code, libs: [...new Set([...paint.libs, ...carry.libs])] } },
@@ -147,7 +147,10 @@ export class Copies implements Drawable {
   }
 }
 
-function copiesWgsl(tab: string, minPixels: number, keepLevels: number): string {
+const COPIES_PAINT_ARGS: FnSpec["args"] = [["p", "vec3"], ["n", "vec3"], ["copy_id", "vec3"], ["copy_level", "f32"]];
+
+function copiesWgsl(tab: string, minPixels: number, keepLevels: number, s: Shading): string {
+  const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "p", "d", "COPIES_ID", "copies_to_local(in, p - in.fo), copies_to_local(in, n), in.k.xyz, in.k.w");
   return /* wgsl */ `
 struct CopyIn {
   @builtin(position) clip: vec4<f32>,
@@ -207,14 +210,14 @@ override INK_BACK: f32 = 2.0;
   let nm = normalize(p - (in.a.xyz + ba * clamp(dot(p - in.a.xyz, ba) / max(dot(ba, ba), 1e-20), 0.0, 1.0)));
   let n = select(nm, h.yzw, hit);
   let base = copies_paint(copies_to_local(in, p - in.fo), copies_to_local(in, n), in.k.xyz, in.k.w);
-  let colour = select(trace_shade(base, n, p, d, COPIES_ID), trace_ink(base, n, p, d, COPIES_ID), INK_ON && !hit);
+  let colour = select(${call("shade")}, ${call("ink")}, INK_ON && !hit);
   // Ink in two bands. Within the copy's own radius of it (at least 0.75 px) the ink sits at the near miss, in front of
   // whatever is behind: a thin line round every copy. The rest of the style's width is written INK_BACK ink widths
   // further back, so it shows against the far background and gives way to a neighbour close behind. An outline at full
   // width in front of everything buried a dense crown of pixel-wide twigs under ink several times their width.
   let own = mix(in.a.w, in.b.w, clamp(dot(p - in.a.xyz, ba) / max(dot(ba, ba), 1e-20), 0.0, 1.0)) / fp;
   let back = select(edge * fp * INK_BACK, 0.0, hit || gap < clamp(own, 0.75, max(edge, 0.75)));
-  return TraceOut(vec4<f32>(colour, trace_mark(base, n, p, d, COPIES_ID)), trace_depth(p + d * back), mask);
+  return TraceOut(vec4<f32>(colour, ${call("mark")}), trace_depth(p + d * back), mask);
 }`;
 }
 
