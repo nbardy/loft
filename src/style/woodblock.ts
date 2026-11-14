@@ -10,12 +10,15 @@
 // treatments (`warmed`, `mottled`, `weighted`), the sky (`skyOf`), the swell's lines (`swellLines`), foam
 // (`contactFoam`, `marksFoam`) and paper (`paperGrain`).
 //
+// Words a paint may say (`Painted`): `gloss` prints a flat cream shape about the half vector (`glinted`); `metal`,
+// `emits` and `scatter` are not read.
+//
 // Lights (src/light.ts): the print rule splits at the union of the lit sides (the sun's, and each local light's where
 // at least the pool, 0.1, arrives; the sun is cut too when its amount is stated); under a recipe the recipe's own union.
 // The sea and the plane go into the block under a stated sun dimmer than the pool, and each local light's pool is cut
 // out of them in the cream line ink: a hard pool, as a printer cuts it, not a falloff.
 
-import { distance, dot, f, lt, min, mix, mul, param, select, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
+import { add, distance, dot, f, lt, min, mix, mul, normalize, param, select, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
 import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { contactFoam, foam, marksAs, marksFoam, printLayers, type ContactFoam, type FoamInk, type MarksPrint } from "./foam.ts";
@@ -279,12 +282,28 @@ function seaInks(p: SeaPalette): SeaInks {
 
 /** The print as it was: the rule's two tones, split at N.L = 0. No post pass reads a mark. */
 function asPrinted(inks: WoodblockInks, rule: Print, pt: Painting): Bodies {
-  return { shade: (raw) => { const ctx = pt.base(raw); return pt.line(printed(inks, rule, ctx, () => litSide(ctx)), ctx); }, mark: () => f(1) };
+  return { shade: (raw) => { const ctx = pt.base(raw); return pt.line(glinted(inks, printed(inks, rule, ctx, () => litSide(ctx)), ctx), ctx); }, mark: () => f(1) };
 }
 
 /** Under a recipe: the rule's lit inks, the line on them before the block (the block over black is black). */
 function underRecipe(inks: WoodblockInks, rule: Print, recipe: LightRecipe, pt: Painting): Bodies {
-  return litBodies(recipe, ownBlock(inks, rule), (raw) => printed(inks, rule, pt.base(raw), () => f(1)), (c, raw) => pt.line(c, pt.base(raw)));
+  return litBodies(recipe, ownBlock(inks, rule), (raw) => { const ctx = pt.base(raw); return glinted(inks, printed(inks, rule, ctx, () => f(1)), ctx); }, (c, raw) => pt.line(c, pt.base(raw)));
+}
+
+/**
+ * A glossy surface printed as a printer would: a flat cream shape, a cone of 6 degrees about the half vector of the
+ * light that lights most here, at 0.9 x `gloss` of the cream ink (paper left for a light). Nothing where no paint
+ * gives `gloss`.
+ */
+function glinted(inks: WoodblockInks, c: Expr<"vec3">, ctx: ShadeCtx): Expr<"vec3"> {
+  const cone = Math.cos((6 * Math.PI) / 180);
+  const facing = ctx.lights("largest", (l, which) => {
+    switch (which) {
+      case "sun": return dot(ctx.normal, normalize(add(l.toward, ctx.view)));
+      case "local": return min(dot(ctx.normal, normalize(add(l.toward, ctx.view))), add(inPool(l.amount), cone));
+    }
+  });
+  return mix(c, rgb(inks.cream), mul(edgeOf(facing, cone, 1e-5), mul(ctx.channel<"f32">("gloss", 0), 0.9)));
 }
 
 /** The whirlpool's eye printed black over the water, or nothing. */

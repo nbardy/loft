@@ -3,6 +3,9 @@
 // faintly where bodies break the water. Two post passes (`reflection`, `bloom`): the glow smeared down the water, then
 // bloom, which glows whatever is bright (in this picture, only what emits).
 //
+// Words a paint may say (`Painted`): `emits` IS the glow (default: today's guess from the paint, `glowOf`), so
+// `emits: [0, 0, 0]` means nothing here glows; a `scatter` answers each local light. `gloss` and `metal` are not read.
+//
 // Lights (src/light.ts): the sun is a faint moon, its term times its amount; each local light adds the paint in its
 // colour times N.L, falling off softly (the one style where it does: the picture is about light), a road of light on
 // the water from its half vector, and a soft pool on a plane.
@@ -57,12 +60,12 @@ export function biolume(): Style {
       const skin = ctx.lights("sum", (l, which) => {
         switch (which) {
           case "sun": return mul(mul(mix(rgb(C.body), mul(ctx.base, 0.08), 0.5), add(0.5, mul(saturate(ndl), 0.8))), l.amount);
-          case "local": return mul(mul(ctx.base, l.amount), saturate(dot(ctx.normal, l.toward)));
+          case "local": return mul(ctx.scatter(l.toward, mul(ctx.base, saturate(dot(ctx.normal, l.toward)))), l.amount);
         }
       });
       // Emission is brightest where the surface faces the eye and falls toward the silhouette, as light through
       // translucent tissue does; the rim, not the pattern, draws the outline.
-      const glow = mul(glowOf(ctx.base), mul(0.8, add(0.2, mul(mul(facing, facing), 0.8))));
+      const glow = mul(ctx.channel("emits", glowOf(ctx.base)), mul(0.8, add(0.2, mul(mul(facing, facing), 0.8))));
       const rim = mul(rgb(C.cyan), mul(pow(sub(1, facing), 3), 0.55));
       const c = add(add(skin, glow), rim);
       // Under water the body sinks into the dark, its light lasting longer than its skin.

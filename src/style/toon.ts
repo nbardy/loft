@@ -3,6 +3,12 @@
 // (`light`, or `--light name` from `LIGHT`), the recipe's treatments are laid over toon's own colour by `litBodies`:
 // hatching in its shadows, a printed rim, cast shadows.
 //
+// Words a paint may say (`Painted`): `gloss` (0 matte to 1 mirror) mirrors toon's sky in the body (`glossed`) and
+// strengthens the glint, 0.16 up to 0.66; `metal` (0 or 1) tints that mirror by the paint; `emits` (linear, may exceed
+// 1) is added after the bands, before the water sinks it, compressed by e / (1 + lum e); a `scatter` takes the place of
+// the paint in each light's term (toon still bands that light by N.L, so a scatter's own cosine darkens toward the
+// terminator twice).
+//
 // Lights (src/light.ts): everything the sun gives (bands, rim, gloss) times its amount; each local light the paint in
 // its hue, banded by N.L times the luminance arriving (rings where 0.1 and 0.3 arrive), with a gloss at its half
 // vector. The plane takes the same rings. The sky, the fog and the sea are daylight scaled by the sun's amount; on the
@@ -13,6 +19,7 @@ import { luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { LIGHT, litBodies, type Bodies, type LightRecipe } from "./light.ts";
+import { glossed } from "./gloss.ts";
 import { rgb } from "./shared.ts";
 
 export type ToonSpec = {
@@ -41,6 +48,9 @@ const edgeOf = (x: Expr<"f32">, edge: number, soft: number): Expr<"f32"> => {
   const w = max(mul(fwidth(x), 0.75), soft);
   return smoothstep(sub(edge, w), add(edge, w), x);
 };
+
+/** The glint's strength: 0.16, and up to 0.66 as the paint's `gloss` rises to 1. */
+const glint = (ctx: ShadeCtx): Expr<"f32"> => add(0.16, mul(ctx.channel<"f32">("gloss", 0), 0.5));
 
 /** A light's hue: its amount over its largest channel (so a lamp of [1.6, 1.0, 0.5] tints by [1, 0.63, 0.31]). */
 const hueOf = (amount: In<"vec3">): Expr<"vec3"> => {
@@ -109,8 +119,8 @@ export function toon(spec: ToonSpec = {}): Style {
     const facing = saturate(dot(ctx.normal, ctx.view));
     const rim = mul(edgeOf(sub(1, facing), 0.65, 0.01), mul(0.45, add(0.35, mul(lit, 0.65))));
     const half = normalize(add(sun, ctx.view));
-    const gloss = mul(edgeOf(dot(ctx.normal, half), 0.9785, 0.0015), 0.16);
-    return add(add(mul(ctx.base, lightC), mul(rimColour, rim)), vec3(gloss, gloss, gloss));
+    const gloss = mul(edgeOf(dot(ctx.normal, half), 0.9785, 0.0015), glint(ctx));
+    return add(add(mul(ctx.scatter(sun, ctx.base), lightC), mul(rimColour, rim)), vec3(gloss, gloss, gloss));
   };
   /**
    * A local light on a body: the paint in the light's hue, banded by how much arrives (N.L times its luminance), so a
@@ -119,16 +129,24 @@ export function toon(spec: ToonSpec = {}): Style {
   const lamplit = (ctx: ShadeCtx, l: { readonly toward: Expr<"vec3">; readonly amount: In<"vec3"> }): Expr<"vec3"> => {
     const lum = luminance(l.amount);
     const band = lampBands(mul(saturate(dot(ctx.normal, l.toward)), lum));
-    const gloss = mul(edgeOf(dot(ctx.normal, normalize(add(l.toward, ctx.view))), 0.9785, 0.0015), mul(saturate(lum), 0.16));
-    return mul(add(mul(ctx.base, band), gloss), hueOf(l.amount));
+    const gloss = mul(edgeOf(dot(ctx.normal, normalize(add(l.toward, ctx.view))), 0.9785, 0.0015), mul(saturate(lum), glint(ctx)));
+    return mul(add(mul(ctx.scatter(l.toward, ctx.base), band), gloss), hueOf(l.amount));
   };
-  /** Toon's colour of a body before it sinks: the sun's bands, rim and gloss times its amount, and each local light's. */
-  const colour = (ctx: ShadeCtx): Expr<"vec3"> => ctx.lights("sum", (l, which) => {
-    switch (which) {
-      case "sun": return mul(sunlit(ctx, l.toward), l.amount);
-      case "local": return lamplit(ctx, l);
-    }
-  });
+  /**
+   * Toon's colour of a body before it sinks: the sun's bands, rim and gloss times its amount, and each local light's;
+   * the sky mirrored by the paint's `gloss` and `metal` (`glossed`); then the paint's `emits`, compressed into the
+   * picture's range (e / (1 + lum e)), untouched by light.
+   */
+  const colour = (ctx: ShadeCtx): Expr<"vec3"> => {
+    const lit = ctx.lights("sum", (l, which) => {
+      switch (which) {
+        case "sun": return mul(sunlit(ctx, l.toward), l.amount);
+        case "local": return lamplit(ctx, l);
+      }
+    });
+    const emits = ctx.channel<"vec3">("emits", [0, 0, 0]);
+    return add(glossed(lit, ctx, { gloss: ctx.channel<"f32">("gloss", 0), metal: ctx.channel<"f32">("metal", 0) }), mul(emits, div(1, add(luminance(emits), 1))));
+  };
   const own: Bodies = spec.light === undefined
     ? { shade: colour, mark: () => lift<"f32">(1) }
     : litBodies(spec.light, { ink: inkC, amount: 0.5, value: 0.8 }, colour);

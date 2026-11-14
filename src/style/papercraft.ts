@@ -5,6 +5,8 @@
 // The sea is layered cut-paper sheets with scalloped edges, each casting a small shadow on the one below. A post
 // pass adds ambient occlusion in creases (from the opaque scene's depth) and paper fibre.
 //
+// Words a paint may say (`Painted`): none are read (card has no gloss and gives no light).
+//
 // Lights (src/light.ts): the studio key times the sun's amount; each local light a wrapped term on the facet normal,
 // so a lamp lights a folded model one facet at a time. The fill, the sea and the plane do not read lights.
 

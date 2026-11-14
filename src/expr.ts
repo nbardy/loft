@@ -468,15 +468,46 @@ const tyOf = (x: In<NumTy>): Ty => (x instanceof Expr ? x.ty : typeof x === "num
  * and folding them would change every scene's text).
  */
 const isOne = (x: In<NumTy>): boolean => Array.isArray(x) && x.every((c) => c === 1);
+/** A constant `k` in every component: a number, an array, or a constant expression. */
+const isConst = (x: In<NumTy>, k: number): boolean =>
+  x instanceof Expr ? x.node.op === "const" && x.node.v.every((c) => c === k) : typeof x === "number" ? x === k : (x as readonly number[]).every((c) => c === k);
+const isZero = (x: In<NumTy>): boolean => isConst(x, 0) && identities > 0;
+
+/**
+ * How many `withIdentities` calls are open. The three identities (mul by 0, add of 0, mix at 0 or 1) are exact for
+ * finite operands, but applied library-wide they removed nodes in geometry (crest.ts, map/surface.ts, grid_detail.ts)
+ * whose absence changed the GPU's rounding of vertex positions: serpent in papercraft, sketch and neon moved by up to
+ * 10 levels in a few hundred pixels (2026-11-14). So they hold only while a style's body functions are built, which
+ * is where "a channel no paint gives costs nothing" needs them (materials.md section 7's stated fallback).
+ */
+let identities = 0;
+/** `f`, built with the identities on (src/compile/scene_wgsl.ts, src/draw/painted.ts and the style's one recorded evaluation). */
+export function withIdentities<T>(f: () => T): T {
+  identities++;
+  try { return f(); } finally { identities--; }
+}
+/** The zero of a numeric type. */
+const zeroOf = (ty: NumTy): Expr => constant(ty, Array(SIZE[ty]).fill(0));
 const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b])) as Binary;
 const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
-/** `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one. */
-export const add = binary("add");
+/**
+ * `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one. Adding a constant
+ * 0 returns the other operand when that already has the sum's type (x + 0 = x exactly).
+ */
+export const add: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+  if (isZero(b) && tyOf(a) === wider("add", tyOf(a), tyOf(b))) return lift(a);
+  if (isZero(a) && tyOf(b) === wider("add", tyOf(a), tyOf(b))) return lift(b);
+  return addCall(a, b);
+}) as Binary;
+const addCall = binary("add");
 /** `sub(a, b)`: a - b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const sub = binary("sub");
 /** `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component. */
 export const mul: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+  // x * 0 = 0 for finite x (materials.md section 4): the zero of the product's type, so a channel no paint gives (a
+  // default of 0) removes its whole term before anything is emitted.
+  if (isZero(a) || isZero(b)) return zeroOf(wider("mul", tyOf(a), tyOf(b)));
   // x * [1, 1, 1] = x exactly (NaN and infinities included): return the other operand when it already has the
   // product's type. Checked before anything is lifted, so a multiply by the full sun's amount (src/light.ts) creates no
   // node and every shader written before that amount existed keeps its text.
@@ -540,7 +571,12 @@ export function mix(a: Lit, b: Lit, t: In<NumTy>): Expr<VecTy>;
 export function mix<A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, t: In<NumTy>): Expr<Wider<A, B>>;
 export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
   // The blend factor may be the only vector: the result is then a vector too.
-  return call("mix", wider("mix", lift(a).ty, lift(b).ty, lift(t).ty), [a, b, t]);
+  const ty = wider("mix", tyOf(a), tyOf(b), tyOf(t));
+  // a (1 - 0) + b 0 = a and a 0 + b 1 = b for finite operands: the end the constant factor picks, when it already has
+  // the result's type (a default of 0 or 1 costs nothing).
+  if (isZero(t) && tyOf(a) === ty) return lift(a);
+  if (isConst(t, 1) && identities > 0 && tyOf(b) === ty) return lift(b);
+  return call("mix", ty, [a, b, t]);
 }
 /** `clamp(x, lo, hi)`: x limited to the range from lo to hi, componentwise; lo and hi may be scalars. */
 export function clamp(x: number, lo: number, hi: number): Expr<"f32">;
@@ -1229,8 +1265,11 @@ export function fold(roots: readonly Expr[]): Expr[] {
     let v: Known;
     try { v = foldNode(e, (x) => foldedValue.get(x.id)); } catch { v = undefined; }
     let out: Expr;
+    // A value that overflows f32 is still known (a parent may be finite: x / inf = 0, as the GPU computes it), but it
+    // is never emitted: WGSL has no literal for it, and a const-expression that overflows is refused when the shader is
+    // created (Planck's law at 300 K, examples/materials/poker.ts, 2026-11-14).
+    if (v !== undefined) foldedValue.set(e.id, v);
     if (v !== undefined && v.every((x) => typeof x === "boolean" || Number.isFinite(x))) {
-      foldedValue.set(e.id, v);
       out = e.node.op === "const" ? e : constant(e.ty, v.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)));
       foldedValue.set(out.id, v);
     } else if (to.every((k, i) => k === kids[i])) {

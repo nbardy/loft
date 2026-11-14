@@ -2,7 +2,7 @@
 // compiler emits `shade`, `ink`, `water` and `sky` once into `sceneWgsl` as functions shared by every shader, so a
 // style is swappable without touching a scene. The styles and the parts they are built from: src/style/, docs/styles.md.
 
-import { add, clamp, fract, leaves, lift, mix, mul, sin, smoothstep, sub, abs, TAU, variable, type Expr, type In, type NumTy } from "./expr.ts";
+import { add, clamp, fract, leaves, lift, mix, mul, sin, smoothstep, sub, abs, TAU, variable, withIdentities, type Expr, type In, type NumTy } from "./expr.ts";
 import type { PostSpec } from "./compile/context.ts";
 import { foldAt, sunDir, sunOnly, type LightFold, type Lighting } from "./light.ts";
 import { SceneError } from "./errors.ts";
@@ -289,7 +289,7 @@ export function styleReads(style: Style): Reads {
     scatter: () => { scatter = true; },
   };
   const ctx = shadeContext(variablesAt(SUN_UP), SUN_UP, style, NOTHING_SAID, record);
-  const vars = leaves([style.shade(ctx), style.ink(ctx), style.mark(ctx)]).vars;
+  const vars = leaves(withIdentities(() => [style.shade(ctx), style.ink(ctx), style.mark(ctx)])).vars;
   const reads: Reads = { body: BODY_VARS.some((n) => vars.has(n)), channels, scatter };
   readsCache.set(style, reads);
   return reads;

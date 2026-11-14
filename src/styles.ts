@@ -14,6 +14,7 @@ export {
   paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight, type Mottle, type Warm,
   paperGrain, bloom, reflection,
   edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON,
+  glossed,
   toon, type ToonSpec,
   woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec,
   biolume, papercraft, sketch, neon,

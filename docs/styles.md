@@ -19,7 +19,7 @@ each function once, shared by every shader.
 
 | Member | What it returns | Called for |
 |---|---|---|
-| `shade(ctx)` | a body's colour | every opaque fragment (`ShadeCtx`: paint, normal, sun, view, world point, depth below the sea, the surface's coordinates, anchor and identity) |
+| `shade(ctx)` | a body's colour | every opaque fragment (`ShadeCtx`: paint, normal, sun, view, world point, depth below the sea, the surface's coordinates, anchor and identity; `lights(combine, term)`, the fold over every light; `channel(name, otherwise)`, a word the thing's paint says; `scatter(toward, otherwise)`, the thing's own answer to one light; `sky(dir)`, the style's sky in any direction) |
 | `ink(ctx)` | the outline hull's colour | the hull, `outline` world units wide, never under 1.5 px |
 | `mark(ctx)` | a number written to the picture's alpha | read back by the style's post passes; 1 for none |
 | `water(ctx)` | the sea's colour and alpha | the sea's fragments (`WaterCtx`: normal, crest, the swell's phase, how near a body is) |
@@ -29,6 +29,29 @@ each function once, shared by every shader.
 | `block`, `lights` | the shadow printed after the bodies; other lightings by name | optional |
 
 A style that draws no water still returns something from `water`; a scene without a sea never calls it.
+
+**Lights.** `ShadeCtx`, `GroundCtx` and `WaterCtx` fold every light at their point (`ctx.lights("sum" | "largest",
+(lit, which) => term)`); `SkyCtx` holds the sun alone. A style never sees a list. With no lights the fold is the sun's
+term itself, so a style written this way is unchanged on a scene without them (`docs/lighting.md`, "Lights").
+
+**Words a paint says.** A paint may return `{ base, gloss: 0.8, ... }` (`Painted`, `src/map/types.ts`). A style reads
+a word with `ctx.channel(name, otherwise)`; the words it reads are recorded on its one evaluation (`styleReads`), and a
+thing that gives one gets its own copy of the style's functions in its own module (`src/draw/painted.ts`), so a scene
+whose paints say nothing more than a colour keeps every shader's text. The three identities that make a default free
+(`mul` by a constant 0, `add` of a constant 0, `mix` at a constant 0 or 1) hold while a style's body functions are built
+(`withIdentities`): applied library-wide they moved geometry's rounding. A word no part of the style reads prints
+`note: <thing> gives "<word>", which no part of <style> reads`.
+
+| Style | `gloss` (f32, default 0) | `metal` (f32, default 0) | `emits` (vec3, linear) | `scatter` |
+|---|---|---|---|---|
+| toon | `glossed` over its colour; glint 0.16 + 0.5 gloss | tints the mirror by the paint | added after the bands, e / (1 + lum e) | in place of the paint in each light's term |
+| woodblock | a flat cream shape, 6 degrees about the half vector, 0.9 x gloss | not read | not read | not read |
+| biolume | not read | not read | **is** the glow (default: the guess `glowOf`) | each local light |
+| neon | not read | not read | **is** the tube's light in `shade` and `ink` (default `tubeOf`) | each local light |
+| papercraft, sketch | not read | not read | not read | not read |
+
+`glossed(colour, ctx, { gloss, metal?, seen? })` (`src/style/gloss.ts`) is the part: the sky mirrored in a body, four
+taps on a cone of half-angle 0.02 + 0.5 max(0.02, (1 - gloss)^2), Fresnel-weighted (Schlick); `seen` replaces the sky.
 
 ## The parts
 

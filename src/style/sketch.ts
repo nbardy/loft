@@ -5,6 +5,8 @@
 //
 // Composed of: litBodies, light.hatch, weighted, swellLines, contactFoam, marksFoam, printLayers, paperGrain.
 //
+// Words a paint may say (`Painted`): none are read (graphite on paper).
+//
 // Lights (src/light.ts): through `litBodies`, a lamp's pool is paper left among the hatching. The plane takes a light
 // graphite tone under a stated sun dimmer than the pool, and each local light's pool is left as paper. The water does
 // not read lights.

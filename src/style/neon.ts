@@ -5,6 +5,9 @@
 //
 // Composed of: pixelsInside, swellLines, contactFoam, printLayers, skyOf, reflection, bloom.
 //
+// Words a paint may say (`Painted`): `emits` IS the tube's light in `shade` and `ink` (default: today's `tubeOf` the
+// paint); a `scatter` answers each local light. `gloss` and `metal` are not read.
+//
 // Lights (src/light.ts): the light is the paint, and stays so; the sun is not read. A local light lifts the near-black
 // body by 0.35 of its colour times N.L, and lays a soft pool of its colour on the dark floor and the black glass, which
 // bloom carries.
@@ -52,7 +55,7 @@ export function neon(): Style {
     clear: NIGHT,
     post: [reflection({ gain: 0.12 }), bloom({ radius: 24, gain: 1.4, from: 0.25, to: 0.7 })],
     shade: (ctx) => {
-      const glow = tubeOf(ctx.base);
+      const glow = ctx.channel("emits", tubeOf(ctx.base));
       const tube = sub(1, smoothstep(1.5, 6, pixelsInside(ctx)));
       const fresnel = pow(sub(1, saturate(dot(ctx.normal, ctx.view))), 3);
       const own = add(mul(ctx.base, 0.035), mul(glow, add(mul(tube, 0.7), mul(fresnel, 0.3))));
@@ -60,13 +63,13 @@ export function neon(): Style {
       const lifted = ctx.lights("sum", (l, which) => {
         switch (which) {
           case "sun": return own;
-          case "local": return mul(mul(ctx.base, l.amount), mul(saturate(dot(ctx.normal, l.toward)), 0.35));
+          case "local": return mul(mul(ctx.scatter(l.toward, mul(ctx.base, saturate(dot(ctx.normal, l.toward)))), l.amount), 0.35);
         }
       });
       return mul(lifted, sunk(ctx.depth));
     },
     mark: () => f(1),
-    ink: (ctx) => mul(tubeOf(ctx.base), sunk(ctx.depth)),
+    ink: (ctx) => mul(ctx.channel("emits", tubeOf(ctx.base)), sunk(ctx.depth)),
     water: (ctx) => {
       const lines = swellLines(ctx, { perWave: 4, width: [0.01, 0.03] });
       let c = add(rgb(WATER), mul(rgb(VIOLET), mul(lines.cover, 0.3)));

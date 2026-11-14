@@ -44,7 +44,9 @@ export function refuseSurface(name: string, surface: unknown, grid: unknown, loo
       p === "f32" ? "return vec3(x, y, z) from the surface's function, not one number" : "return vec3(x, y, z) from the surface's function");
   }
   if (paint !== undefined) {
-    const c = tyOf(paint());
+    // A paint that says more than a colour (`Painted`) is judged by its `base`.
+    const said = paint();
+    const c = tyOf(typeof said === "object" && said !== null && !(said instanceof Expr) && !Array.isArray(said) && "base" in said ? (said as { base: unknown }).base : said);
     if (c !== "vec3") {
       throw new SceneError(at, `paint that returns ${article(c)}`, "a vec3 colour (r, g, b in 0..1)",
         c === "f32" ? "return vec3(g, g, g) for a grey, or vec3(r, g, b)" : c === "vec4" ? "return its .xyz (a lit surface is opaque; draw.glazed takes alpha)" : "return vec3(r, g, b)");

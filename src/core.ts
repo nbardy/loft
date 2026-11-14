@@ -10,7 +10,7 @@ export {
   type Fn, type LibFn, type TableSource, type In, type Num, type Lit, type V, type Env,
 } from "./expr.ts";
 export { keys, ramp, through, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";
-export { NO_SKELETON, type F, type P3, type Frame, type Placed, type Points, type Size, type Poses, type Curve, type End, type Topology, type Skeleton, type Surface, type Chart, type Field, type Density, type PaintAt, type Paint, type Warp, type Placeable } from "./map/types.ts";
+export { NO_SKELETON, type F, type P3, type Frame, type Placed, type Points, type Size, type Poses, type Curve, type End, type Topology, type Skeleton, type Surface, type Chart, type Field, type Density, type PaintAt, type Paint, type Painted, type Warp, type Placeable } from "./map/types.ts";
 export { carry, compose, on, place, points, posed, posedList, shifted, size, sized, sizeLengths, turn, inFrame, world, type PointSpec, type PoseSpec, type Turn } from "./map/index.ts";
 export { warp, tile, tabulate, type Schedule, extrude, framed, framedPose, lathe, loft, mapNormal, sheet, surface, thicken } from "./map/index.ts";
 export { Body, rotateAbout, sweep, type FrameSample, type Section, type Tip, type Transport } from "./map/index.ts";

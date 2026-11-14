@@ -14,6 +14,7 @@ type Outcome = { readonly label: string; readonly about: string; readonly result
 export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<void> {
   const subject = await subjectAt(cmd.path);
   const { runChecks, formatChecks } = await import("../check.ts");
+  const { compileScene } = await import("../compile/index.ts");
 
   /** One variant's table; a variant that throws while it is built or compiled is a failure with its reason, and the rest go on. */
   const run = (label: string, about: string, pick: () => Chosen): Outcome => {
@@ -21,7 +22,9 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
     try {
       const c = pick();
       if (c.checks.kind === "absent") throw new LoadError(`${cmd.path} exports no \`checks\` array. Fix: export const checks = [...] beside the default export, e.g. export const checks = [budget({ triangles: 100_000 })]`);
-      const verdicts = runChecks(c.scene, c.checks.list);
+      const compiled = compileScene(c.scene);
+      for (const n of compiled.artefact.notes ?? []) console.error(`note: ${n}`);
+      const verdicts = runChecks(c.scene, c.checks.list, { compiled });
       const failed = verdicts.filter((v) => !v.pass).length;
       console.log(`${formatChecks(verdicts)}\n\n${verdicts.length - failed} passed, ${failed} failed  (${(performance.now() - t).toFixed(0)} ms, including compile)`);
       return { label: c.label, about, result: { kind: "built", failed, total: verdicts.length, failing: verdicts.filter((v) => !v.pass).map((v) => v.name) } };

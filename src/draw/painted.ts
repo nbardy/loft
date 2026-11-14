@@ -8,7 +8,7 @@
 // defaults. Every other thing calls the shared `shade`, `ink` and `mark`, so a scene that says nothing more than a colour
 // emits the same shader text as before channels existed.
 
-import { Expr, leaves, lift, variable, type NumTy } from "../expr.ts";
+import { Expr, leaves, lift, variable, withIdentities, type NumTy } from "../expr.ts";
 import type { CompileContext, Shader } from "../compile/context.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { SceneError } from "../errors.ts";
@@ -77,11 +77,10 @@ export function lookFns(ctx: CompileContext, thing: string, c: Classified, paint
   const readScatter = c.said.scatter !== undefined && reads.scatter;
   if (!readChannel && !readScatter && c.answer.kind === "styled") return SHARED;
   const look = shadeVariables(ctx.lighting, ctx.style, { thing, ...c.said });
-  const body = ctx.style.block === undefined ? ctx.style.shade(look) : ctx.style.block.body(look);
-  const answer = answered(c.answer, look, body);
+  const answer = withIdentities(() => answered(c.answer, look, ctx.style.block === undefined ? ctx.style.shade(look) : ctx.style.block.body(look)));
   const args = [...SHADE_ARGS, ...paintArgs];
   const fn = (name: string, out: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name, args, out, roots: [root], ret: (o) => o[0]! });
-  const shaders = [fn(`look_${thing}`, "vec3<f32>", answer), fn(`ink_${thing}`, "vec3<f32>", ctx.style.ink(look)), fn(`mark_${thing}`, "f32", ctx.style.mark(look))];
+  const shaders = [fn(`look_${thing}`, "vec3<f32>", answer), fn(`ink_${thing}`, "vec3<f32>", withIdentities(() => ctx.style.ink(look))), fn(`mark_${thing}`, "f32", withIdentities(() => ctx.style.mark(look)))];
   const shader: Shader = { code: shaders.map((s) => s.code).join("\n"), libs: [...new Set(shaders.flatMap((s) => s.libs))] };
   const own = { shade: `look_${thing}`, ink: `ink_${thing}`, mark: `mark_${thing}` } as const;
   return { shader, call: (f, shared) => `${own[f]}(${shared}, ${paintCall})` };

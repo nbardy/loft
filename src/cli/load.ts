@@ -26,7 +26,10 @@ export async function loadArtefact(source: SceneSource): Promise<Artefact> {
       const { chosenAt } = await import("./variant.ts");
       const { scene } = await chosenAt(source.path, source.variant);
       const index = await importFrom<Record<string, unknown>>("../index.ts");
-      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style, source.light));
+      const artefact = need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style, source.light));
+      // What the compiler noticed and did not refuse (a channel no part of the style reads), before any final line.
+      for (const n of artefact.notes ?? []) console.error(`note: ${n}`);
+      return artefact;
     }
   }
 }

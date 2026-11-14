@@ -6,7 +6,7 @@
 
 import { answered, classify } from "../draw/painted.ts";
 import { shadeContext } from "../style.ts";
-import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, vec4, type Expr } from "../expr.ts";
+import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, vec4, withIdentities, type Expr } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, nameId, spacing, type Fragment } from "../draw/surface.ts";
 import { levelOf } from "../draw/ground.ts";
@@ -66,7 +66,7 @@ class Smear implements Drawable {
           base: said.base, normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(levelOf(ctx.ground)(fr.world.xz), fr.world.y),
           uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)),
         }, ctx.lighting, fr.style, { thing: part.body.name, ...said.said });
-        const lit = answered(said.answer, sctx, fr.style.shade(sctx));
+        const lit = withIdentities(() => answered(said.answer, sctx, fr.style.shade(sctx)));
         return vec4(lit, mul(show, step(0, dot(normal, view))));
       };
       emitted.push(drawGlazed(`${this.name}_${k}`, partSurface(body, part), {
