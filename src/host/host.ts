@@ -16,7 +16,7 @@
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts and files.ts) stays clean.
 
 import { EnvironmentError } from "../errors.ts";
-import { replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
+import { LIGHT_SAMPLE_INPUT, replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
 import { bakeRecurrences } from "./bake.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
@@ -637,6 +637,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
         const rb = readbackFor(view), sz = sizedFor(view);
         const drawn = await stillFrame({
           device, passes: m.frame.passes, views: sz.views, textures: sz.textures, out: rb.texture,
+          lightSampled: m.inputs.some((i) => i.name === LIGHT_SAMPLE_INPUT),
           // One bounds read (sample 0's); each sample plans from it with no memory: a still depends on no frame before it.
           bounds: async (v, frame) => {
             const copy = bounds.kind === "read";

@@ -10,7 +10,9 @@
 // context offers one fold, `ctx.lights(combine, term)`, in which the style says what one light does and the compiler
 // does the loop (so it stays free to unroll it, cull it or defer it later).
 
-import { add, div, dot, input, lift, max, mul, normalize, saturate, sqrt, sub, type Expr, type In, type NumTy } from "./expr.ts";
+import { LIGHT_SAMPLE_INPUT } from "./artefact.ts";
+import { hash22 } from "./lib/noise.ts";
+import { add, cos, cross, div, dot, fract, input, lift, max, mul, normalize, saturate, select, sin, sqrt, sub, vec2, vec3, abs, lt, type Expr, type In, type NumTy } from "./expr.ts";
 import type { TraceBound } from "./draw/trace.ts";
 
 export type V3 = readonly [number, number, number];
@@ -84,35 +86,59 @@ export type Light = ((p: Expr<"vec3">, xi?: Expr<"vec2">) => Arrival) & {
  * `colour` arrives at `reach`. `colour` 1 is the sun at noon; it may exceed 1.
  *
  * Parameters: `at` and `colour` take expressions (it moves; it flickers: mul(colour, flicker)); `reach` is a positive
- * number of world units. It carries `bound` (a sphere of 4 reaches, when `at` is a constant) and `source` (the point).
+ * number of world units; `size` (default 0) the radius of a disc it shines from, facing the lit point: a frame lights
+ * from the disc's centre, a still (`--samples`) from a point on the disc per sample (`xi`), so a shadow the light
+ * function casts and the edge of its pool come out soft. It carries `bound` (a sphere of 4 reaches, when `at` is a
+ * constant) and `source` (the point).
  * Cannot: cast shadows (the floor under a body standing in its pool is lit; light passes through every thing); light
- * the outside of a thing it is inside (the paper of a lantern: give the paper `emits`); have size (its highlights are
- * points).
+ * the outside of a thing it is inside (the paper of a lantern: give the paper `emits`); be soft in a frame (its size is
+ * sampled only in a still).
  * Relatives: a spot is this times smoothstep over dot(-toward, axis); a gobo is this times a pattern of -toward; a tube
  * is this from the closest point on a segment; a pool from a table is `fetch` of a baked grid at p; a row of lamps is
  * one function that picks the nearest by `floor` (a seam where it changes: fade each pool before the midpoint).
  */
-export function lamp(at: In<"vec3">, o: { readonly colour: In<"vec3">; readonly reach: number }): Light {
+export function lamp(at: In<"vec3">, o: { readonly colour: In<"vec3">; readonly reach: number; readonly size?: number }): Light {
   if (!(o.reach > 0 && Number.isFinite(o.reach))) throw new Error(`lamp: reach must be a positive number of world units, got ${o.reach}`);
+  const size = o.size ?? 0;
+  if (!(size >= 0 && Number.isFinite(size))) throw new Error(`lamp: size must be a radius of zero or more world units, got ${o.size}`);
   const centre = lift<"vec3">(at);
   const r2 = o.reach * o.reach, edge = 4 * o.reach;
-  const light = (p: Expr<"vec3">): Arrival => {
-    const v = sub(centre, p);
+  const light = (p: Expr<"vec3">, xi?: Expr<"vec2">): Arrival => {
+    const from = xi === undefined || size === 0 ? centre : onDisc(centre, p, size, xi);
+    const v = sub(from, p);
     const d2 = dot(v, v);
     const d = sqrt(d2);
     const x2 = saturate(mul(d2, 1 / (edge * edge)));
     const window = mul(sub(1, x2), sub(1, x2));
-    return { toward: normalize(v), amount: mul(o.colour, mul(window, div(r2, add(d2, r2)))), distance: d };
+    const arrival = { toward: normalize(v), amount: mul(o.colour, mul(window, div(r2, add(d2, r2)))), distance: d };
+    return size === 0 ? arrival : { ...arrival, size: div(size, max(d, size)) };
   };
   const bound: TraceBound | undefined = Array.isArray(at) ? { kind: "sphere", centre: [at[0]!, at[1]!, at[2]!], radius: edge } : undefined;
   return Object.assign(light, { source: { kind: "point", at: centre } as const, ...(bound === undefined ? {} : { bound }) });
 }
 
+/** A point on the disc of radius `r` about `c` facing `p`, uniform in area over xi in the unit square. */
+function onDisc(c: Expr<"vec3">, p: Expr<"vec3">, r: number, xi: Expr<"vec2">): Expr<"vec3"> {
+  const axis = normalize(sub(p, c));
+  const side = select(lt(abs(axis.y), 0.9), vec3(0, 1, 0), vec3(1, 0, 0));
+  const t1 = normalize(cross(axis, side)), t2 = cross(axis, t1);
+  const rho = mul(sqrt(xi.x), r), phi = mul(xi.y, 2 * Math.PI);
+  return add(c, add(mul(t1, mul(rho, cos(phi))), mul(t2, mul(rho, sin(phi)))));
+}
+
 /** The sun's amount: full unless the scene states one. */
 export type SunAmount = { readonly kind: "full" } | { readonly kind: "given"; readonly amount: In<"vec3"> };
 
+/**
+ * How lights are evaluated: at their representative point (a frame: `xi` is not given), or sampled (a still: each light
+ * gets `xi`, the sample's point r2(k) from the host input `LIGHT_SAMPLE_INPUT`, rotated per pixel by a hash of the
+ * point and per light by the golden ratio (Cranley-Patterson), so the average over a still's samples covers each
+ * light's extent).
+ */
+export type Sampling = { readonly kind: "point" } | { readonly kind: "sampled" };
+
 /** Everything that lights a scene, as `scene()` classified it. */
-export type Lighting = { readonly sun: Sun; readonly amount: SunAmount; readonly lights: readonly Light[] };
+export type Lighting = { readonly sun: Sun; readonly amount: SunAmount; readonly lights: readonly Light[]; readonly sampling: Sampling };
 
 /**
  * The full sun's amount: this literal, so a style that multiplies by it adds no node (`mul` returns its other operand
@@ -147,12 +173,25 @@ export function sunArrival(l: Lighting): Arrival {
 export function foldAt(l: Lighting, p: Expr<"vec3">): LightFold {
   return <T extends NumTy>(combine: Combine, term: (lit: Arrival, which: Which) => Expr<T>): Expr<T> => {
     let acc = term(sunArrival(l), "sun");
-    for (const light of l.lights) {
-      const t = term(light(p), "local");
+    for (const [i, light] of l.lights.entries()) {
+      const t = term(arriving(light, p, l.sampling, i), "local");
       acc = (combine === "sum" ? add(acc as Expr<NumTy>, t as Expr<NumTy>) : max(acc as Expr<NumTy>, t as Expr<NumTy>)) as Expr<T>;
     }
     return acc;
   };
+}
+
+/** Light `i` at p: at its point, or at the still's sample (see `Sampling`). */
+function arriving(light: Light, p: Expr<"vec3">, s: Sampling, i: number): Arrival {
+  switch (s.kind) {
+    case "point": return light(p);
+    case "sampled": {
+      // A hash of the point at about 2 mm (a pixel's rotation, fixed across the samples of a still), and the light's
+      // own golden-ratio offset, so two lights do not share their samples.
+      const cell = hash22(vec2(dot(p, [512, 0, 911]), dot(p, [0, 512, 0])));
+      return light(p, fract(add(add(input(LIGHT_SAMPLE_INPUT, "vec2", [0.5, 0.5]), cell), [0.618034 * i, 0.754878 * i])));
+    }
+  }
 }
 
 /** The same lighting with the sun alone: what the sky sees (a local light has no meaning at infinity). */

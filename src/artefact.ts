@@ -487,6 +487,12 @@ export type Artefact = {
 };
 
 /** One frame to draw. Missing inputs and params take the artefact's defaults; `time` also fills the `time` input. */
+/**
+ * The host input a still sets per sample to the sample's point in the unit square (`r2(k)`, src/host/still.ts), which
+ * lights with extent read as `xi` (src/light.ts). Declared only by an artefact compiled for a still.
+ */
+export const LIGHT_SAMPLE_INPUT = "loft_xi";
+
 export type View = {
   readonly camera: Camera;
   readonly width: number;

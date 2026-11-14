@@ -21,12 +21,13 @@
 
 import { add, cross, f, leaves, libsOf, mul, swizzle, variable, vec3, compileJs, type Expr, scopedName } from "../expr.ts";
 import { jacobian } from "../grad.ts";
-import { emitShaderFn } from "../compile/bind.ts";
+import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
+import { classify, lookFns, tracedCall, withShading } from "./painted.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { drawSpec, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Form, type TableRef } from "../compile/context.ts";
 import type { TableSource } from "../expr.ts";
 import { posesOf, rotate } from "../map/chart.ts";
-import type { F, P3, PaintAt, Points, Posed, Poses, Skeleton } from "../map/types.ts";
+import type { F, P3, PaintAt, Painted, Points, Posed, Poses, Skeleton } from "../map/types.ts";
 import { SceneError } from "../errors.ts";
 import { nameId, posedJoint } from "./surface.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
@@ -83,7 +84,7 @@ type Motion = { readonly kind: "rest" } | { readonly kind: "moved"; readonly at:
 type Copies = { readonly kind: "one" } | { readonly kind: "poses"; readonly poses: Poses };
 
 /** The fragment's paint as the drawable states it (the internal field mesh binds the pixel size; see field.ts). */
-export type MeshPaint = (row: readonly F[], at: PaintAt) => P3;
+export type MeshPaint = (row: readonly F[], at: PaintAt) => P3 | Painted;
 
 /** Exactly representable as f32 indices. */
 const MAX_POINTS = 2 ** 24;
@@ -261,10 +262,12 @@ export function emitMesh(ctx: CompileContext, name: string, mesh: Mesh, motion: 
     args: [["mesh_rest", "vec3"], ...lanes.map((k) => [`mesh_r${k}`, "vec4"] as const), ["mesh_i", "f32"], ["mesh_copy", "f32"], ["mesh_n0", "vec3"], ["mesh_w0", "vec3"]],
     out: "MeshV", roots: [placed.world, placed.n, placed.w], ret: (v) => `MeshV(${v.join(", ")})`,
   });
-  const paint = emitShaderFn(ctx.slots, {
-    name: "mesh_paint", args: [...lanes.map((k) => [`mesh_r${k}`, "vec4"] as const), ["p_world", "vec3"], ["p_normal", "vec3"], ["p_copy", "f32"]], out: "vec3<f32>",
-    roots: [o.paint(paintRowOf(mesh.width), vars().AT)], ret: (v) => v[0]!,
-  });
+  const paintArgs: FnSpec["args"] = [...lanes.map((k) => [`mesh_r${k}`, "vec4"] as const), ["p_world", "vec3"], ["p_normal", "vec3"], ["p_copy", "f32"]];
+  const said = classify(name, o.paint(paintRowOf(mesh.width), vars().AT));
+  const shading = lookFns(ctx, name, said, paintArgs);
+  const paint = withShading(emitShaderFn(ctx.slots, { name: "mesh_paint", args: paintArgs, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0]! }), shading);
+  const paintCall = [...lanes.map((j) => `in.r${j}`), "in.world", "n", "in.copy"].join(", ");
+  const call = (fn: "shade" | "ink" | "mark") => tracedCall(shading, fn, "base", "n", "in.world", "d", "id", paintCall);
   const fetchLane = (k: number) => `${rows!.wgsl}(k * ${S}u + ${k}u)`;
   const rest = mesh.width > 0 ? "r0.xyz" : "vec3<f32>(0.0)";
   const n0 = mesh.normals.kind === "carried" ? `${fetchLane(L)}.xyz` : "vec3<f32>(0.0)";
@@ -299,9 +302,9 @@ ${lanes.map((j) => `  let r${j} = ${fetchLane(j)};`).join("\n")}
   ${faceN}
   let d = view_dir(in.world);
   let id = copy_id(MESH_ID, u32(in.copy));
-  let base = mesh_paint(${[...lanes.map((j) => `in.r${j}`), "in.world", "n", "in.copy"].join(", ")});
-  let colour = select(trace_shade(base, n, in.world, d, id), trace_ink(base, n, in.world, d, id), INK_HULL == 1u);
-  return vec4<f32>(colour, ${ctx.markOut("trace_mark(base, n, in.world, d, id)", o.outline === "hull")});
+  let base = mesh_paint(${paintCall});
+  let colour = select(${call("shade")}, ${call("ink")}, INK_HULL == 1u);
+  return vec4<f32>(colour, ${ctx.markOut(call("mark"), o.outline === "hull")});
 }`].join("\n");
   const instances = copies.kind === "poses" ? copies.poses.count : 1;
   const n = mesh.triangles.length;

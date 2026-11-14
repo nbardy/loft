@@ -303,7 +303,7 @@ export function readsBody(style: Style): boolean {
   return styleReads(style).body;
 }
 
-const SUN_UP: Lighting = { sun: { kind: "fixed", dir: [0, 1, 0] }, amount: { kind: "full" }, lights: [] };
+const SUN_UP: Lighting = { sun: { kind: "fixed", dir: [0, 1, 0] }, amount: { kind: "full" }, lights: [], sampling: { kind: "point" } };
 const NOTHING_SAID: Said = { channels: new Map(), scatter: undefined };
 /** Where a context's reads are recorded (only on `styleReads`' evaluation). */
 type Recorder = { readonly channel: (name: string, ty: NumTy) => void; readonly scatter: () => void };

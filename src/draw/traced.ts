@@ -3,11 +3,12 @@
 // style's light and the CPU twin.
 
 import { add, compileJs, f, leaves, libsOf, lift, mul, sub, substitute, variable, vec2, vec3, type Expr } from "../expr.ts";
-import { emitShaderFn } from "../compile/bind.ts";
+import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
+import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Form, type Shader } from "../compile/context.ts";
 import { SceneError } from "../errors.ts";
-import type { F, P3, Skeleton } from "../map/types.ts";
+import type { F, P3, Painted, Skeleton } from "../map/types.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
 import { nameId } from "./surface.ts";
 import { aabbOf, outlineWgsl, PROXY_VERTICES, TRACE_DEPTH, TRACE_DEPTH_OUT, tracePlumbingWgsl, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
@@ -30,7 +31,7 @@ export type TracedBound = TraceBound | { readonly kind: "copies"; readonly count
 
 /** What a traced solid's paint sees at a hit: the point, the normal, the ray's direction and the copy's index. */
 export type TracedHit = { readonly p: P3; readonly normal: P3; readonly d: P3; readonly copy: F };
-export type TracedPaint = (hit: TracedHit) => P3;
+export type TracedPaint = (hit: TracedHit) => P3 | Painted;
 
 export type TracedOptions = {
   /**
@@ -95,15 +96,14 @@ export class TracedDrawable implements Drawable {
     // a march is not run twice (the rest of its expression is recomputed there).
     const normalFn = emitShaderFn(ctx.slots, { name: "traced_normal", args: [...rayArgs, ["tr_t", "f32"]], out: "vec3<f32>", roots: [substitute([h.normal], h.t, T)[0]!], ret: (v) => v[0]! });
     const P = variable("tr_p", "vec3"), N = variable("tr_n", "vec3");
-    const paintFn = emitShaderFn(ctx.slots, {
-      name: "traced_paint", args: [["tr_p", "vec3"], ["tr_n", "vec3"], ["tr_d", "vec3"], ["tr_copy", "f32"], ["loft_field_px", "f32"]], out: "vec3<f32>",
-      roots: [this.o.paint({ p: P, normal: N, d: D, copy: COPY })], ret: (v) => v[0]!,
-    });
+    const said = classify(this.name, this.o.paint({ p: P, normal: N, d: D, copy: COPY }));
+    const shading = lookFns(ctx, this.name, said, TRACED_PAINT_ARGS);
+    const paintFn = withShading(emitShaderFn(ctx.slots, { name: "traced_paint", args: TRACED_PAINT_ARGS, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0]! }), shading);
     const key = `traced.${this.name}`;
     const head = this.proxy.kind === "one"
       ? { code: `${traceWgsl(this.proxy.bound, "true")}\nfn traced_span(in: TraceIn, o: vec3<f32>, d: vec3<f32>) -> vec2<f32> { return bound_span(o, d); }\nfn traced_copy(in: TraceIn) -> f32 { return 0.0; }`, libs: [] }
       : copiesProxy(ctx, this.proxy);
-    const code = [head.code, outlineWgsl(this.o.outline), `const TRACED_ID: f32 = ${lit(nameId(this.name))};`, hitFn.code, normalFn.code, paintFn.code, fragmentWgsl(ctx.markOut("trace_mark(base, n, p, d, id)", false))].join("\n");
+    const code = [head.code, outlineWgsl(this.o.outline), `const TRACED_ID: f32 = ${lit(nameId(this.name))};`, hitFn.code, normalFn.code, paintFn.code, fragmentWgsl(shading, (mark) => ctx.markOut(mark, false))].join("\n");
     const libs = [...new Set([...head.libs, ...hitFn.libs, ...normalFn.libs, ...paintFn.libs])];
     return {
       shaders: { [key]: { code, libs, depthEntry: DEPTH_ENTRY_WGSL } },
@@ -140,7 +140,11 @@ fn traced_copy(in: TraceIn) -> f32 { return in.copy; }` };
  * The fragment stage every traced solid shares: the view ray and its span, the author's hit, then coverage, ink and
  * light from { t, gap, normal } (one gap serves all three: coverage is 1 - gap / width over a pixel, ink a near miss).
  */
-function fragmentWgsl(markOut: string): string {
+/** The paint function's arguments: the hit point, its normal, the ray's direction, the copy, the pixel's world size. */
+const TRACED_PAINT_ARGS: FnSpec["args"] = [["tr_p", "vec3"], ["tr_n", "vec3"], ["tr_d", "vec3"], ["tr_copy", "f32"], ["loft_field_px", "f32"]];
+
+function fragmentWgsl(s: Shading, markOut: (mark: string) => string): string {
+  const call = (fn: "shade" | "ink" | "mark") => tracedCall(s, fn, "base", "n", "p", "d", "id", "p, n, d, copy, fp");
   return /* wgsl */ `
 const HIT: f32 = ${HIT};
 // The author's hit may run a loop whose exit differs per pixel before the style's derivatives (see field.ts).
@@ -175,10 +179,10 @@ const HIT: f32 = ${HIT};
   let base = traced_paint(p, n, d, copy, fp);
   let id = copy_id(TRACED_ID, u32(copy));
   let useInk = INK_ON && !hit;
-  let colour = select(trace_shade(base, n, p, d, id), trace_ink(base, n, p, d, id), useInk);
+  let colour = select(${call("shade")}, ${call("ink")}, useInk);
   let mask = trace_mask(cover, in.clip.xy);
   if (mask == 0u) { discard; }
-  return TraceOut(vec4<f32>(colour, ${markOut}), trace_depth(p), mask);
+  return TraceOut(vec4<f32>(colour, ${markOut(call("mark"))}), trace_depth(p), mask);
 }`;
 }
 

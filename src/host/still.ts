@@ -15,7 +15,7 @@
 // Every sample plans its level of detail from sample 0's bounds, read once, with no hysteresis memory: a still depends
 // on no frame before it, and no sample waits on the GPU.
 
-import type { Camera, FrameStats, View } from "../artefact.ts";
+import { LIGHT_SAMPLE_INPUT, type Camera, type FrameStats, type View } from "../artefact.ts";
 import { cameraMatrices, invert, type Mat4 } from "./camera.ts";
 import type { Bounds, Plan } from "./detail.ts";
 import { FRAME_FLOATS } from "./lower.ts";
@@ -46,10 +46,10 @@ export function sampleOf(k: number, n: number, s: Extract<StillSpec, { kind: "st
 }
 
 /**
- * The k-th point of the R2 sequence (Roberts 2018), the sample a light's `xi` takes in a still. MERGE(light): when the
- * light proposal lands, a still compiles the scene with `xi` given to lights as this point (a host input, say
- * `loft_xi`, set per sample in `stillFrame` below where the sample's view is made), rotated per pixel in the shader by a
- * hash of the pixel (Cranley-Patterson: fract(r2(k) + hash2(pixel))). A normal frame never holds that branch.
+ * The k-th point of the R2 sequence (Roberts 2018), the sample a light's `xi` takes in a still: a still compiles the
+ * scene with its lights sampled (src/cli/load.ts, src/light.ts `Sampling`), and `stillFrame` sets this point as the host
+ * input `LIGHT_SAMPLE_INPUT` where each sample's view is made; the shader rotates it per pixel by a hash of the lit
+ * point (Cranley-Patterson). A normal frame never holds that branch.
  */
 export function r2(k: number): readonly [number, number] {
   const g = 1.32471795724474602596;
@@ -111,6 +111,8 @@ export type StillKit = {
   bounds(view: View, frame: Float32Array<ArrayBuffer>): Promise<Bounds>;
   /** Pose the view with this frame uniform and plan it from these bounds with no memory; nothing waits on the GPU. */
   sample(view: View, frame: Float32Array<ArrayBuffer>, bounds: Bounds): Plan;
+  /** Whether the artefact declares `LIGHT_SAMPLE_INPUT` (it was compiled for a still with lights). */
+  readonly lightSampled: boolean;
   /** Record passes [from, to) of the frame into the encoder. */
   record(encoder: GPUCommandEncoder, out: GPUTextureView, plan: Plan, from: number, to: number): void;
 };
@@ -185,8 +187,8 @@ export async function stillFrame(kit: StillKit, view: View, s: Extract<StillSpec
   try {
     for (let k = s.samples - 1; k >= 0; k--) {
       const { dt } = sampleOf(k, s.samples, s);
-      // MERGE(light): the sample's light point, r2(k), joins the view here as an input once lights take `xi`.
-      const sampled: View = { ...view, time: view.time + dt };
+      // The sample's light point, r2(k), for lights compiled sampled (rotated per pixel in the shader, src/light.ts).
+      const sampled: View = { ...view, time: view.time + dt, ...(kit.lightSampled ? { inputs: { ...view.inputs, [LIGHT_SAMPLE_INPUT]: r2(k) } } : {}) };
       const plan = kit.sample(sampled, sampleUniform(sampled, k, s.samples, s), bounds);
       if (k === 0) first = plan;
       const encoder = device.createCommandEncoder({ label: `loft still sample ${k}` });

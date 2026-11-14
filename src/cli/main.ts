@@ -33,7 +33,7 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       return { info: m, loaded };
     }
     case "file": case "fixture": {
-      const artefact = await loadArtefact(cmd.source);
+      const artefact = await loadArtefact(cmd.source, cmd.still);
       checkInputs(artefact, cmd.inputs, sweep);
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
       for (const line of passNotes(artefact)) console.log(line);

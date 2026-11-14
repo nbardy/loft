@@ -335,7 +335,7 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
     // A composition: the mesh drawn by draw.mesh's own emitter, at rest, painted by the field's paint with the pixel
     // size it would have had (`fieldPixel` is the world size of a pixel at the point).
     const meshed = (mesh: TriangleMesh, show: string, gate: string): Emitted => emitMesh(ctx, this.name, fromNets(mesh), { kind: "rest" }, { kind: "one" }, {
-      paint: (_row, at) => substitute([classify(this.name, this.o.paint({ p: at.world, normal: at.normal })).base], fieldPixel, pixelWorld(at.world))[0] as P3,
+      paint: (_row, at) => atPixel(this.o.paint({ p: at.world, normal: at.normal }), pixelWorld(at.world)),
       sides: "one", outline: this.o.outline === "silhouette" ? "hull" : "none",
     }, { key: `field.${this.name}.mesh`, show, gate });
     const both = (a: Emitted, b: Emitted): Emitted => ({ shaders: { ...a.shaders, ...b.shaders }, draws: [...a.draws, ...b.draws] });
@@ -486,6 +486,24 @@ fn field_use_mesh() -> bool {
 }
 
 const FIELD_PAINT_ARGS: FnSpec["args"] = [["p", "vec3"], ["n", "vec3"], ["loft_field_px", "f32"]];
+
+/**
+ * A field paint's answer at a pixel size: `fieldPixel` replaced by `px` in its colour, its channels and its own answers
+ * (the mesh path has no per-pixel march to supply it).
+ */
+function atPixel(x: P3 | Painted, px: F): P3 | Painted {
+  const at = <E extends Expr>(e: E): E => substitute([e], fieldPixel, px)[0] as E;
+  const c = classify("field", x);
+  if (c.said.channels.size === 0 && c.said.scatter === undefined && c.answer.kind === "styled") return at(c.base);
+  const scatter = c.said.scatter;
+  const wrap = c.answer.kind === "wrapped" ? c.answer.wrap : undefined;
+  return {
+    ...Object.fromEntries([...c.said.channels].map(([n, e]) => [n, at(e)])),
+    base: at(c.base),
+    ...(scatter === undefined ? {} : { scatter: (ctx, toward) => at(scatter(ctx, toward)) }),
+    ...(wrap === undefined ? {} : { shade: (ctx, styled) => at(wrap(ctx, styled)) }),
+  } as Painted;
+}
 
 const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 
