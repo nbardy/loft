@@ -15,6 +15,7 @@ import type { Skeleton } from "./map/types.ts";
 import type { Scene } from "./scene.ts";
 import type { Arming, Attack, Effect, Hold, Motion, Part, Ring, Strike, Target } from "./spacetime/attack.ts";
 import type { Thrown } from "./geom/grab.ts";
+import { castCpu } from "./draw/cast.ts";
 import type { ChainSpec } from "./geom/limb.ts";
 import { hitSdf } from "./spacetime/hit.ts";
 import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_distance.ts";
@@ -415,14 +416,15 @@ export function spansOnScreen(what: string, mark: Mark, camera: string, pixels: 
   };
 }
 
-/** Whether the segment from p to q passes through a chain of tapered capsules. */
+/**
+ * Whether the segment from p to q passes through a chain of capsules: castRay's CPU twin (src/draw/cast.ts), its second
+ * user. Each segment is the rounded cone between two joints; a point inside one is behind it.
+ */
 function crosses(chain: readonly Joint[], p: V3, q: V3): boolean {
-  for (let i = 0; i + 1 < chain.length; i++) {
-    const [s, t] = closest(chain[i]!.p, chain[i + 1]!.p, p, q);
-    const a = lerp(chain[i]!.p, chain[i + 1]!.p, s), b = lerp(p, q, t);
-    if (Math.hypot(...subV(a, b)) < chain[i]!.r + (chain[i + 1]!.r - chain[i]!.r) * s) return true;
-  }
-  return false;
+  const v = subV(q, p), len = Math.hypot(...v);
+  if (len === 0) return false;
+  const d: V3 = [v[0] / len, v[1] / len, v[2] / len];
+  return castCpu(p, d, 0, len, 1e-9, 1e-9, [chain], false).gap === 0;
 }
 
 /**

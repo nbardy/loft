@@ -165,13 +165,14 @@ const HIT: f32 = ${HIT};
   let hit = h.y <= 0.0;
   let edge = select(HIT, inkPx, INK_ON);
   let cover = select(clamp(1.0 + edge - gapPx, 0.0, 1.0), 1.0, hit || gapPx < edge);
-  // The normal and paint are asked only of covered pixels (most of a bound's pixels are clean misses).
+  // The normal is asked only of covered pixels (most of a bound's pixels are clean misses). The paint is asked of
+  // every pixel, in uniform control flow: a paint may take screen derivatives (a reflected ray's ground colour does),
+  // which a branch would forbid. A miss is painted with its stand-in normal and then discarded.
   var n = -d;
-  var base = vec3<f32>(0.0);
   if (cover > 0.0) {
     n = traced_normal(o, d, t0, t1, fp0, fpk, copy, tq);
-    base = traced_paint(p, n, d, copy, fp);
   }
+  let base = traced_paint(p, n, d, copy, fp);
   let id = copy_id(TRACED_ID, u32(copy));
   let useInk = INK_ON && !hit;
   let colour = select(trace_shade(base, n, p, d, id), trace_ink(base, n, p, d, id), useInk);

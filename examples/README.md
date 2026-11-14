@@ -63,6 +63,14 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `nest.ts` | 86 | one shape repeated at shrinking scales through a fold (`repeatScale`) |
 | `pearls.ts` | 53 | a lattice of shapes, ray-cast by walking the cells a ray crosses |
 
+## Your own geometry and rays
+
+| File | Lines | Shows |
+|---|---:|---|
+| `shatter.ts` | 75 | triangles from your own algorithm (a Voronoi shatter) moved by an expression of time (`draw.mesh`) |
+| `bead.ts` | 38 | a solid you intersect yourself, here by intervals, drawn per pixel (`draw.traced`) |
+| `mirror.ts` | 29 | a reflected ray cast from a paint at another thing's field (`march`) and at everything's stand-in (`castRay`) |
+
 ## Whole scenes
 
 | File | Lines | Shows |

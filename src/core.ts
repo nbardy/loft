@@ -26,6 +26,7 @@ export type { Artefact } from "./artefact.ts";
 export { bound, type TraceBound, type TraceOutline } from "./draw/trace.ts";
 export { type FieldDrawable, fieldPixel, FieldSafetyError, type FieldHit, type FieldSafetyFailure } from "./draw/field.ts";
 export { march } from "./draw/march.ts";
+export { castRay } from "./draw/cast.ts";
 export { impostors, type Impostors, type Cell, type ImpostorHit, type ImpostorOptions, type ImpostorShape } from "./draw/impostors.ts";
 export { type Copies, type CopiesHit, type CopiesOptions } from "./draw/copies.ts";
 // Form finer than the curves: height functions and stamps, sculpt layers, displacement. The shell tracer `draw.relief`
