@@ -22,6 +22,7 @@ import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
 import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Target, type TextureSize } from "./manifest.ts";
 import { profileFrames, type Profile } from "./profile.ts";
+import { stillFrame, type StillSpec } from "./still.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 export { COLOR_FORMAT, DEPTH_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT } from "./manifest.ts";
 
@@ -62,6 +63,8 @@ export interface GpuLoaded extends Loaded {
   frameGpu(view: View, frames: number): Promise<{ readonly ms: number; readonly pose: number; readonly draws: number; readonly tick: number }>;
   /** Every dynamic buffer as the pose stages (and `cpu` uploads) left it for this view, by name: for checks against `pose`. */
   readTables(view: View): Promise<Readonly<Record<string, Float32Array>>>;
+  /** A still of this view: many samples of the instant averaged (src/host/still.ts), read back as `frameTimed` reads a frame. */
+  stillTimed(view: View, still: Extract<StillSpec, { kind: "still" }>): Promise<{ readonly pixels: Uint8Array; readonly ms: FrameTimings; readonly drawn: FrameStats }>;
 }
 /** Timestamp indices a timed frame writes at the start and end of a submit's passes (frame timing). */
 type Stamps = { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number };
@@ -136,10 +139,10 @@ export function frameUniform(view: View): Float32Array<ArrayBuffer> {
   return u;
 }
 
-/** One frame write's contents (FrameWrite: the closed list of per-frame CPU blocks). */
-function writeData(w: FrameWrite, view: View, state: FrameState): Float32Array<ArrayBuffer> {
+/** One frame write's contents (FrameWrite: the closed list of per-frame CPU blocks); `frame`: a still sample's own uniform. */
+function writeData(w: FrameWrite, view: View, state: FrameState, frame?: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
   switch (w.kind) {
-    case "frame": return frameUniform(view);
+    case "frame": return frame ?? frameUniform(view);
     case "inputs": return state.inputs as Float32Array<ArrayBuffer>;
     case "params": return state.params as Float32Array<ArrayBuffer>;
   }
@@ -320,9 +323,10 @@ export function passDescriptor(p: RenderPassDesc, s: Sized, out: GPUTextureView)
  * The frame's render passes. `stamps` (frame timing): timestamp `begin` at the start of the first pass and `end` at the
  * end of the last (on the real passes: Dawn on Metal writes no timestamps for an empty pass).
  */
-function recordPasses(encoder: GPUCommandEncoder, o: Objects, s: Sized, out: GPUTextureView, plan: Plan, stamps?: { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number }): void {
+function recordPasses(encoder: GPUCommandEncoder, o: Objects, s: Sized, out: GPUTextureView, plan: Plan, stamps?: { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number }, range?: readonly [number, number]): void {
   const passes = o.manifest.frame.passes;
   for (const [k, p] of passes.entries()) {
+    if (range !== undefined && (k < range[0] || k >= range[1])) continue;
     const writes = stamps === undefined ? undefined : {
       querySet: stamps.querySet,
       ...(k === 0 ? { beginningOfPassWriteIndex: stamps.begin } : {}),
@@ -414,7 +418,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
   const bufferNamed = new Map(m.dynamic.map((k) => [m.buffers[k]!.label, o.buffers[k]!]));
 
   /** Write the frame's state and `cpu` tables, then submit the pose pass (and, when `copyBounds`, the copy of the bounds). */
-  const pose = (view: View, copyBounds: boolean, stamps?: Stamps): number => {
+  const pose = (view: View, copyBounds: boolean, stamps?: Stamps, frame?: Float32Array<ArrayBuffer>): number => {
     const t0 = performance.now();
     const state = frameState(m, curves, view);
     const uploads = cpuUploads(state);
@@ -429,7 +433,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       throw new Error(`cpuPose did not return cpu table${[...cpuTables].filter(([k]) => !given.has(k)).map(([, t]) => ` "${t.name}"`).join(",")}`);
     }
     for (const w of m.frame.writes) {
-      const data = writeData(w, view, state);
+      const data = writeData(w, view, state, frame);
       if (data.length > 0) device.queue.writeBuffer(o.buffers[w.buffer]!, 0, data);
     }
     const encoder = device.createCommandEncoder({ label: "loft pose" });
@@ -447,8 +451,8 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     return performance.now() - t0;
   };
   /** This frame's plan from these bounds, its level-of-detail slots written (before the draws' submit). */
-  const plan = (view: View, read: Bounds): Plan => {
-    const p = planFrame(m.plan, view, read, memory, detail);
+  const plan = (view: View, read: Bounds, levels: Memory = memory): Plan => {
+    const p = planFrame(m.plan, view, read, levels, detail);
     device.queue.writeBuffer(o.buffers[m.frame.detail.buffer]!, 0, detail);
     return p;
   };
@@ -597,6 +601,39 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       }
       query.destroy(); resolve.destroy(); read.destroy();
       return { ...best, tick: tick / 1e6 };
+    },
+    stillTimed: async (view, still) => {
+      if (reading) throw new Error("still: called again before the previous frame resolved");
+      checkView(view);
+      reading = true;
+      try {
+        if (boundsPending) await boundsPending;
+        const t0 = performance.now();
+        const rb = readbackFor(view), sz = sizedFor(view);
+        const drawn = await stillFrame({
+          device, passes: m.frame.passes, views: sz.views, textures: sz.textures, out: rb.texture,
+          // Each sample waits for its own bounds and plans with no memory: a still depends on no frame before it.
+          sample: async (v, frame) => {
+            const copy = bounds.kind === "read";
+            await validated("still", () => pose(v, copy, undefined, frame));
+            return plan(v, copy ? await readBounds() : lastBounds, new Map());
+          },
+          record: (encoder, out, p, from, to) => recordPasses(encoder, o, sz, out, p, undefined, [from, to]),
+        }, view, still);
+        const t1 = performance.now();
+        const encoder = device.createCommandEncoder({ label: "loft still readback" });
+        encoder.copyTextureToBuffer({ texture: rb.texture }, { buffer: rb.buffer, bytesPerRow: rb.bytesPerRow, rowsPerImage: view.height }, { width: view.width, height: view.height });
+        device.queue.submit([encoder.finish()]);
+        await rb.buffer.mapAsync(GPUMapMode.READ);
+        const mapped = new Uint8Array(rb.buffer.getMappedRange());
+        const row = view.width * 4;
+        const pixels = new Uint8Array(row * view.height);
+        for (let y = 0; y < view.height; y++) pixels.set(mapped.subarray(y * rb.bytesPerRow, y * rb.bytesPerRow + row), y * row);
+        rb.buffer.unmap();
+        return { pixels, ms: { pose: t1 - t0, encode: 0, readback: performance.now() - t1 }, drawn };
+      } finally {
+        reading = false;
+      }
     },
     readTables: async (view) => {
       checkView(view);

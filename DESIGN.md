@@ -298,6 +298,23 @@ level, for hysteresis.
 Foam where the water meets a body is not a table: the sea reads the opaque scene's depth and foams where an opaque
 surface lies within the foam width in 3D. It needs no per-kind code and follows the drawn surface exactly.
 
+Pictures drawn off screen (`pass`, src/frame/pass.ts; 2026-11-14, docs/proposals/headroom.md section 5) added
+`Artefact.passes` (absent means none), `Draw.depth` (how a draw writes depth alone: `vertex` or a fragment `entry`),
+`Shader.depthEntry` and `passBindingsWgsl` (group 3: a filtering sampler, then one texture per pass). Nothing
+registers a pass: the compiler collects the passes named by the library functions its shaders call
+(src/compile/passes.ts), decides which draws read which pass by static use in the final WGSL (an entry point reaching
+the pass's texture through the functions it calls), leaves every reader of a pass out of it, orders passes by what
+they read and refuses a cycle by name. A pass's camera is a 12-vec4 table (`struct Frame`) filled by the pose pass and
+copied into the pass's own group 0 uniform, so every drawable draws into a pass with the pipelines and shaders it
+draws the view with; a depth pass uses each draw's depth way (no colour target, single-sampled). A scene that reads
+no pass compiles to the same bytes as before (its depth entries are not written) and lowers to a version 1 file.
+
+Still mode (`--samples N`, `--shutter s`, `--aperture r`; src/host/still.ts) is the TypeScript host's and the command
+line's only: N samples of one instant, each today's frame at time t + s (k + 0.5) / N, moved inside the pixel by a
+Halton (2, 3) point and through a lens disc point with the frustum sheared to keep the target's plane; summed in f32
+by a compute pass and averaged before the style's post passes run once. Each sample plans its level of detail with no
+memory, so a still is a function of (t, k, pixel) only. Nothing in the file format or the loader changes for it.
+
 ## 4. Drawables (`src/compile/context.ts`)
 
 ```ts

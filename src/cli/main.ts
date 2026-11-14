@@ -12,6 +12,7 @@ import { openVideo } from "./video.ts";
 import { exitWith, headed, verdictOf } from "./verdict.ts";
 import { EnvironmentError } from "../errors.ts";
 import { passNotes } from "./pass_notes.ts";
+import { drawFrame } from "./still.ts";
 
 const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 
@@ -100,7 +101,7 @@ async function render(cmd: Extract<Command, { kind: "render" }>) {
   const frames: Frame[] = [];
   for (const name of cmd.views) {
     const camera = resolveCamera(artefact, name);
-    const rgba = await timed(name, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }));
+    const rgba = await timed(name, () => drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }, cmd.still));
     frames.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -117,7 +118,7 @@ async function frames(cmd: Extract<Command, { kind: "frames" }>) {
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
     const label = cmd.sweep.kind === "linear" ? `t=${time} ${cmd.sweep.name}=${inputs[cmd.sweep.name]!.map((x) => +x.toFixed(4)).join(",")}` : `t=${time}`;
-    const rgba = await timed(label, () => loaded.frameTimed({ camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }));
+    const rgba = await timed(label, () => drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }, cmd.still));
     out.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -134,7 +135,7 @@ async function clip(cmd: Extract<Command, { kind: "clip" }>) {
   const video = openVideo(cmd.out, cmd.size.width, cmd.size.height, cmd.fps);
   const t0 = performance.now();
   for (let i = 0; i < count; i++) {
-    const rgba = await loaded.frame({ camera, ...cmd.size, time: loopTime(loopOf(artefact), i / cmd.fps), params: cmd.params, inputs: viewInputs(cmd.inputs, cmd.sweep, i, count) });
+    const rgba = (await drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), i / cmd.fps), params: cmd.params, inputs: viewInputs(cmd.inputs, cmd.sweep, i, count) }, cmd.still)).pixels;
     await video.write(rgba);
   }
   await video.finish();
