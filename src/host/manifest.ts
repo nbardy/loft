@@ -94,8 +94,11 @@ export type DepthAttachment = { readonly view: Id; readonly depthLoadOp: GPULoad
 /** A draw in a render pass: fixed counts, or the counts the level-of-detail plan chose for `Manifest.plan[draw]`. */
 export type DrawCommand =
   | { readonly kind: "fixed"; readonly pipeline: Id; readonly vertices: number; readonly instances: number }
-  /** For each run of the plan for that draw: draw(run.vertices, run.instances, 0, run.first). No run: nothing, not even setPipeline. */
-  | { readonly kind: "planned"; readonly pipeline: Id; readonly draw: number };
+  /**
+   * For each run of the plan for that draw: draw(run.vertices, run.instances, 0, instanceBase + run.first). No run:
+   * nothing, not even setPipeline. `instanceBase` picks a shared shader's row for this draw (src/host/share.ts); 0 else.
+   */
+  | { readonly kind: "planned"; readonly pipeline: Id; readonly draw: number; readonly instanceBase: number };
 
 export type RenderPassDesc = {
   readonly label: string;

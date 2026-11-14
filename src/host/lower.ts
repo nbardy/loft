@@ -26,6 +26,7 @@
 
 import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type Draw } from "../artefact.ts";
 import { gridBounds, slotsUsed } from "./detail.ts";
+import { ROWS_BINDING, share } from "./share.ts";
 import {
   COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, SAMPLES, SCENE_DEPTH_FORMAT,
   type BindGroupDesc, type BindGroupLayoutDesc, type BufferDesc, type Bundle, type ComputePipelineDesc, type DrawCommand, type Id, type LayoutEntry,
@@ -237,6 +238,7 @@ class List<T> {
 export function lower(a: Artefact): Bundle {
   const { paramFloats } = checkArtefact(a);
   const post = a.post ?? []; // absent means none (artefact.ts)
+  const sharing = share(a);
   const statics = a.statics ?? [];
 
   const chunkNames: string[] = [], chunkIds = new Map<string, Id>(), chunkText = new Map<string, string>();
@@ -274,6 +276,8 @@ export function lower(a: Artefact): Bundle {
   const dynamic = a.dynamic.map((d) => ({ binding: d.binding, name: d.name, id: buffer(d.name, d.vec4s * 16, ["STORAGE", "COPY_DST", "COPY_SRC"]) }));
   const staticBufs = statics.map((d) => ({ binding: d.binding, id: buffer(d.name, d.data.byteLength, STORAGE, blob(d.name, d.data)) }));
   const group1Buffers = [...dynamic, ...staticBufs];
+  // Shared shaders' rows (src/host/share.ts): bound at group 0 only when some shader is shared.
+  const rowsBuf = sharing.rows.length > 0 ? [buffer("loft rows", sharing.rows.byteLength, STORAGE, blob("loft rows", sharing.rows))] : [];
   const bufferOf = new Map(dynamic.map((d) => [d.name, d.id]));
 
   // ---- layouts ----------------------------------------------------------------------------------------------------
@@ -282,7 +286,8 @@ export function lower(a: Artefact): Bundle {
   const storage = (binding: number, visibility: readonly Stage[]): LayoutEntry => ({ binding, visibility, buffer: { type: "read-only-storage" } });
   const layout0 = bgls.add({
     label: "loft prelude",
-    entries: [{ binding: 0, visibility: ALL, buffer: { type: "uniform" } }, storage(1, ALL), storage(2, ALL), storage(3, ALL), { binding: 4, visibility: ALL, buffer: { type: "uniform" } }],
+    entries: [{ binding: 0, visibility: ALL, buffer: { type: "uniform" } }, storage(1, ALL), storage(2, ALL), storage(3, ALL), { binding: 4, visibility: ALL, buffer: { type: "uniform" } },
+      ...rowsBuf.map(() => storage(ROWS_BINDING, ALL))],
   });
   const layout1 = bgls.add({ label: "loft scene tables", entries: group1Buffers.map((d) => storage(d.binding, DRAWN)) });
   // The pose stages' group 1: the dynamic buffers writable, the static ones read-only (PoseStage).
@@ -290,7 +295,7 @@ export function lower(a: Artefact): Bundle {
     label: "loft pose tables",
     entries: [...dynamic.map((d): LayoutEntry => ({ binding: d.binding, visibility: ["COMPUTE"], buffer: { type: "storage" } })), ...staticBufs.map((d) => storage(d.binding, ["COMPUTE"]))],
   });
-  const group0 = groups.add({ label: "loft prelude", layout: layout0, entries: [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf].map((b, binding) => ({ binding, buffer: b })) });
+  const group0 = groups.add({ label: "loft prelude", layout: layout0, entries: [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf, ...rowsBuf].map((b, binding) => ({ binding, buffer: b })) });
   const group1 = groups.add({ label: "loft scene tables", layout: layout1, entries: group1Buffers.map((d) => ({ binding: d.binding, buffer: d.id })) });
   const poseGroup1 = groups.add({ label: "loft pose tables", layout: poseLayout1, entries: group1Buffers.map((d) => ({ binding: d.binding, buffer: d.id })) });
 
@@ -332,31 +337,34 @@ export function lower(a: Artefact): Bundle {
   const sceneChunk = chunk(a.sceneWgsl);
   const moduleIds = new Map<string, Id>();
   const moduleOf = (shader: string, v: Variant): Id => {
-    const key = `${shader}|${v}`;
+    const shared = sharing.moduleOf(shader);
+    const key = `${shared.key}|${v}`;
     const known = moduleIds.get(key);
     if (known !== undefined) return known;
     const variant = VARIANT[v].wgsl === "" ? [] : [chunk(VARIANT[v].wgsl)];
-    const id = modules.add({ label: `shader "${shader}"${VARIANT[v].named}`, chunks: [preludeChunk, ...variant, sceneChunk, chunk(a.shaders[shader]!)] });
+    const id = modules.add({ label: `shader "${shared.key}"${VARIANT[v].named}`, chunks: [preludeChunk, ...variant, sceneChunk, chunk(shared.wgsl)] });
     moduleIds.set(key, id);
     return id;
   };
   // Equal descriptors are one pipeline.
   const pipelineIds = new Map<string, Id>();
-  const drawPipeline = (d: Draw): Id => {
+  const drawPipeline = (d: Draw, k: number): Id => {
     const v = drawVariant(d);
     const module = moduleOf(d.shader, v);
+    const shaderKey = sharing.moduleOf(d.shader).key;
+    const { constants: c } = sharing.drawOf(k);
     const blend = BLEND[d.blend];
     const desc: RenderPipelineDesc = {
       label: `${d.shader} (${d.label})`,
       layout: layoutOf(v),
-      vertex: { module, entryPoint: "vs", constants: { ...d.constants } },
-      fragment: { module, entryPoint: "fs", constants: { ...d.constants }, targets: [blend ? { format: COLOR_FORMAT, blend } : { format: COLOR_FORMAT }] },
+      vertex: { module, entryPoint: "vs", constants: { ...c } },
+      fragment: { module, entryPoint: "fs", constants: { ...c }, targets: [blend ? { format: COLOR_FORMAT, blend } : { format: COLOR_FORMAT }] },
       primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: d.cull },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: d.depthWrite, depthCompare: "less" },
       multisample: { count: SAMPLES },
     };
-    const constants = Object.keys(d.constants).sort().map((k) => `${k}=${d.constants[k]}`).join(",");
-    const key = `${d.shader}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}`;
+    const constants = Object.keys(c).sort().map((n) => `${n}=${c[n]}`).join(",");
+    const key = `${shaderKey}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}`;
     const known = pipelineIds.get(key);
     if (known !== undefined) return known;
     const id = renders.add(desc);
@@ -364,7 +372,7 @@ export function lower(a: Artefact): Bundle {
     return id;
   };
   const planned = (pass: Draw["pass"]): DrawCommand[] =>
-    a.draws.flatMap((d, draw) => (d.pass === pass ? [{ kind: "planned" as const, pipeline: drawPipeline(d), draw }] : []));
+    a.draws.flatMap((d, draw) => (d.pass === pass ? [{ kind: "planned" as const, pipeline: drawPipeline(d, draw), draw, instanceBase: sharing.drawOf(draw).instanceBase }] : []));
   const opaque = planned("opaque"), transparent = planned("transparent");
   const clearValue = [a.clear[0], a.clear[1], a.clear[2], 1] as const;
 

@@ -303,7 +303,7 @@ export function command(pass: GPURenderPassEncoder, o: Objects, c: RenderPassDes
       const runs = plan[c.draw]!;
       if (runs.length === 0) return;
       pass.setPipeline(o.renderPipelines[c.pipeline]!);
-      for (const r of runs) pass.draw(r.vertices, r.instances, 0, r.first);
+      for (const r of runs) pass.draw(r.vertices, r.instances, 0, c.instanceBase + r.first);
       return;
     }
   }
