@@ -461,6 +461,13 @@ interface Unary {
   (a: Lit): Expr<VecTy>;
   <A extends NumTy = "f32">(a: Expr<A> | number | Lit): Expr<A>;
 }
+/** The type an operand would lift to, without lifting it (lifting a plain array interns a node). */
+const tyOf = (x: In<NumTy>): Ty => (x instanceof Expr ? x.ty : typeof x === "number" ? "f32" : TY_OF_SIZE[(x as readonly number[]).length]!);
+/**
+ * A plain array of ones (not the number 1, not a constant expression: the library multiplies by those in many shaders,
+ * and folding them would change every scene's text).
+ */
+const isOne = (x: In<NumTy>): boolean => Array.isArray(x) && x.every((c) => c === 1);
 const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b])) as Binary;
 const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
@@ -469,7 +476,15 @@ export const add = binary("add");
 /** `sub(a, b)`: a - b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const sub = binary("sub");
 /** `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component. */
-export const mul = binary("mul");
+export const mul: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+  // x * [1, 1, 1] = x exactly (NaN and infinities included): return the other operand when it already has the
+  // product's type. Checked before anything is lifted, so a multiply by the full sun's amount (src/light.ts) creates no
+  // node and every shader written before that amount existed keeps its text.
+  if (isOne(b) && tyOf(a) === wider("mul", tyOf(a), tyOf(b))) return lift(a);
+  if (isOne(a) && tyOf(b) === wider("mul", tyOf(a), tyOf(b))) return lift(b);
+  return mulCall(a, b);
+}) as Binary;
+const mulCall = binary("mul");
 /** `div(a, b)`: a / b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const div = binary("div");
 /** `min(a, b)`: the smaller of a and b, componentwise; a scalar operand is applied to every component. */

@@ -60,7 +60,7 @@ class Smear implements Drawable {
         // The copy is the part itself an instant ago: its own coordinates, anchor and identity, so its pattern matches.
         const lit = fr.style.shade({
           base: part.body.look.paint(m, fr.v, { world: fr.world, normal, copy: f(0) }), normal, sun: lift<"vec3">(fr.sun), view, world: fr.world, depth: sub(levelOf(ctx.ground)(fr.world.xz), fr.world.y),
-          uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)),
+          uv: vec2(m, fr.v), anchor: body.anchor(m, fr.v), id: f(nameId(part.body.name)), lights: fr.lights,
         });
         return vec4(lit, mul(show, step(0, dot(normal, view))));
       };

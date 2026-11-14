@@ -4,6 +4,7 @@
 
 import { add, clamp, fract, leaves, lift, mix, mul, sin, smoothstep, sub, abs, TAU, variable, type Expr, type In } from "./expr.ts";
 import type { PostSpec } from "./compile/context.ts";
+import { foldAt, sunDir, type LightFold, type Lighting } from "./light.ts";
 
 export type Rgb = readonly [number, number, number];
 
@@ -26,6 +27,13 @@ export type ShadeCtx = {
   readonly anchor: Expr<"vec3">;
   /** A stable identity of the thing in [0, 1): a hash of the drawable's name, varied per copy of `draw.points`. */
   readonly id: Expr<"f32">;
+  /**
+   * Every light at this point, folded: `term(lit, which)` says what one light does, `combine` ("sum" or "largest") how
+   * their terms join. The sun's term first (`which` "sun"; its `toward` is `sun`), then each of the scene's lights
+   * ("local"). With no lights it returns the sun's term itself, so a style written this way is unchanged on a scene
+   * without them. The style never sees a list: the compiler owns the loop.
+   */
+  readonly lights: LightFold;
 };
 
 /** What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. */
@@ -56,6 +64,13 @@ export type WaterCtx = {
    * has a lean marks the water (a whirlpool has none).
    */
   readonly marksLean: Expr<"vec2">;
+  /**
+   * Every light at this point of water, folded: `term(lit, which)` says what one light does, `combine` ("sum" or "largest") how
+   * their terms join. The sun's term first (`which` "sun"; its `toward` is `sun`), then each of the scene's lights
+   * ("local"). With no lights it returns the sun's term itself, so a style written this way is unchanged on a scene
+   * without them. The style never sees a list: the compiler owns the loop.
+   */
+  readonly lights: LightFold;
   /** The direction the largest swell travels, a unit vector on the sea plane (x, z); zero on a sea without swell. */
   readonly swell: Expr<"vec2">;
   /**
@@ -99,7 +114,12 @@ export type LayerCtx = {
   readonly amount: Expr<"f32">;
 };
 
-export type SkyCtx = { readonly dir: Expr<"vec3">; readonly sun: Expr<"vec3"> };
+export type SkyCtx = {
+  readonly dir: Expr<"vec3">;
+  readonly sun: Expr<"vec3">;
+  /** The sun's arrival alone, folded as on a body (`ShadeCtx.lights`): a local light has no meaning at infinity. */
+  readonly lights: LightFold;
+};
 
 /** What a fragment of a plane ground knows (src/draw/ground.ts): where it is, and how much of a cast shadow covers it. */
 export type GroundCtx = {
@@ -109,6 +129,13 @@ export type GroundCtx = {
   readonly distance: Expr<"f32">;
   /** Cast shadow coverage, 0..1, antialiased: the shadow is drawn as the ground's own colour at this coverage. */
   readonly shadow: Expr<"f32">;
+  /**
+   * Every light at this point of the ground, folded: `term(lit, which)` says what one light does, `combine` ("sum" or "largest") how
+   * their terms join. The sun's term first (`which` "sun"; its `toward` is `sun`), then each of the scene's lights
+   * ("local"). With no lights it returns the sun's term itself, so a style written this way is unchanged on a scene
+   * without them. The style never sees a list: the compiler owns the loop.
+   */
+  readonly lights: LightFold;
 };
 
 /**
@@ -228,7 +255,7 @@ const readsCache = new WeakMap<Style, boolean>();
 export function readsBody(style: Style): boolean {
   const seen = readsCache.get(style);
   if (seen !== undefined) return seen;
-  const ctx = shadeVariables([0, 1, 0]);
+  const ctx = shadeVariables({ sun: { kind: "fixed", dir: [0, 1, 0] }, amount: { kind: "full" }, lights: [] });
   const vars = leaves([style.shade(ctx), style.ink(ctx), style.mark(ctx)]).vars;
   const reads = BODY_VARS.some((n) => vars.has(n));
   readsCache.set(style, reads);
@@ -236,10 +263,11 @@ export function readsBody(style: Style): boolean {
 }
 
 /** The shade context as the free variables the compiler emits `shade`, `ink` and `mark` over (src/compile/scene_wgsl.ts). */
-export function shadeVariables(sun: In<"vec3">): ShadeCtx {
+export function shadeVariables(lighting: Lighting): ShadeCtx {
+  const world = variable("c_world", "vec3");
   return {
-    base: variable("c_base", "vec3"), normal: variable("c_normal", "vec3"), sun: lift<"vec3">(sun), view: variable("c_view", "vec3"),
-    world: variable("c_world", "vec3"), depth: variable("c_depth", "f32"), uv: variable("c_uv", "vec2"), anchor: variable("c_anchor", "vec3"),
-    id: variable("c_id", "f32"),
+    base: variable("c_base", "vec3"), normal: variable("c_normal", "vec3"), sun: lift<"vec3">(sunDir(lighting.sun)), view: variable("c_view", "vec3"),
+    world, depth: variable("c_depth", "f32"), uv: variable("c_uv", "vec2"), anchor: variable("c_anchor", "vec3"),
+    id: variable("c_id", "f32"), lights: foldAt(lighting, world),
   };
 }

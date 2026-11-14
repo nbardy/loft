@@ -77,7 +77,8 @@ export function refuseScene(spec: { readonly ground?: unknown; readonly things?:
       : "put only drawables (draw.surface(...), draw.field(...), strand(...), ...) in things";
     throw new SceneError("scene()", `${what} at things[${k}]`, "a drawable", fix);
   });
-  const sun = (typeof spec.sun === "object" && spec.sun !== null && "dir" in spec.sun ? (spec.sun as { dir: unknown }).dir : spec.sun) as unknown;
+  const dirOf = (x: unknown): unknown => (typeof x === "object" && x !== null && "dir" in x ? (x as { dir: unknown }).dir : x);
+  const sun = dirOf(typeof spec.sun === "object" && spec.sun !== null && "toward" in spec.sun ? (spec.sun as { toward: unknown }).toward : spec.sun);
   if (!(Array.isArray(sun) && sun.length === 3 && sun.every((n) => Number.isFinite(n)))) {
     throw new SceneError("scene()", `sun ${shown(sun)}`, "a direction toward the sun: three finite numbers", "sun: [0.3, 0.8, 0.4]");
   }

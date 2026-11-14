@@ -63,7 +63,7 @@ export function compileScene(scene: Scene): Compiled {
   };
 
   const ctx: CompileContext = {
-    slots, style: scene.style, ground: scene.ground, sun: scene.sun, sunAt: scene.sunAt, things: scene.things,
+    slots, style: scene.style, ground: scene.ground, sun: scene.sun, sunAt: scene.sunAt, lighting: scene.lighting, things: scene.things,
     table: (t) => tables.declare(t, prep),
     post: (p) => { posts.push(p); },
     outline: scene.outline, markOut,
@@ -85,7 +85,7 @@ export function compileScene(scene: Scene): Compiled {
   }
   // The ink pass runs first: it restores the plain mark in alpha for the style's own passes.
   if (screenInk) posts.unshift({ label: "ink outline", wgsl: INK_POST });
-  const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, scene.sunAt);
+  const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, scene.lighting);
   const layout = tables.layout();
   slots.seal();
   const shared = slots.libs();

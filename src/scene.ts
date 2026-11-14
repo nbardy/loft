@@ -7,7 +7,8 @@ import { shadows } from "./draw/shadows.ts";
 import { sky } from "./draw/sky.ts";
 import type { Ground } from "./draw/ground.ts";
 import type { Style } from "./style.ts";
-import type { Sun } from "./sun.ts";
+import type { In } from "./expr.ts";
+import type { Light, Lighting, Sun, SunAmount } from "./light.ts";
 import { SceneError } from "./errors.ts";
 import { refuseScene } from "./mistakes.ts";
 
@@ -18,10 +19,13 @@ export type SceneSpec = {
   readonly things: readonly Drawable[];
   readonly style: Style;
   /**
-   * Direction toward the sun (normalised here): a vector, fixed, or `movable([x, y, z])` (src/sun.ts), which makes it the
-   * host input `sun` with that direction as its default.
+   * Direction toward the sun (normalised here): a vector, fixed, or `movable([x, y, z])` (src/light.ts), which makes it
+   * the host input `sun` with that direction as its default. Either is the sun at full strength. `{ toward, amount }`:
+   * a dimmer or coloured sun, a moon, or none (`amount: [0, 0, 0]`); `amount` is a linear colour, 1 the sun at noon.
    */
-  readonly sun: readonly [number, number, number] | Extract<Sun, { kind: "input" }>;
+  readonly sun: SunDirection | { readonly toward: SunDirection; readonly amount: In<"vec3"> };
+  /** Lights besides the sun, each a function of a world point (`Light`, `lamp`). At most 7. */
+  readonly lights?: readonly Light[];
   readonly cameras?: Readonly<Record<string, Camera>>;
   /** How ink outlines are drawn (`OutlineMethod`). Default `DEFAULT_OUTLINE`. */
   readonly outline?: OutlineMethod;
@@ -33,6 +37,12 @@ export type SceneSpec = {
  * hull: every outlined surface drawn a second time, pushed out along its normal, front faces culled.
  * screen: one full-screen pass after the scene finds the outlined surfaces' silhouettes in the depth (src/draw/ink.ts).
  */
+/** A direction toward the sun: a vector, or `movable(dir)`. */
+type SunDirection = readonly [number, number, number] | Extract<Sun, { kind: "input" }>;
+
+/** Lights besides the sun a scene may carry: each is a term in every lit fragment's shader (docs/lighting.md). */
+export const MOST_LIGHTS = 7;
+
 export type OutlineMethod = "hull" | "screen";
 export const DEFAULT_OUTLINE: OutlineMethod = "hull";
 
@@ -45,6 +55,8 @@ export type Scene = {
   readonly sun: V3;
   /** The sun as shaders read it: that literal, or a host input. */
   readonly sunAt: Sun;
+  /** The sun, its amount and the scene's lights, as styles receive them (src/light.ts). */
+  readonly lighting: Lighting;
   readonly cameras: Readonly<Record<string, Camera>>;
   readonly outline: OutlineMethod;
   readonly loop: Loop;
@@ -58,12 +70,22 @@ export type Scene = {
  */
 export function scene(spec: SceneSpec): Scene {
   refuseScene(spec);
-  // Classified once: a bare vector is a fixed sun.
-  const stated: readonly [number, number, number] = "kind" in spec.sun ? spec.sun.dir : spec.sun;
+  // Classified once: a direction alone is the sun at full strength; `{ toward, amount }` states its amount.
+  const given = "toward" in spec.sun ? spec.sun.toward : (spec.sun as SunDirection);
+  const amount: SunAmount = "toward" in spec.sun ? { kind: "given", amount: spec.sun.amount } : { kind: "full" };
+  const stated: readonly [number, number, number] = "kind" in given ? given.dir : given;
   const l = Math.hypot(...stated);
   if (!(stated[1] > 0.05 * l)) throw new Error(`scene: the sun must be above the horizon (sun.y > 0), got [${stated.join(", ")}]`);
   const sun: V3 = [stated[0] / l, stated[1] / l, stated[2] / l];
-  const sunAt: Sun = "kind" in spec.sun ? { kind: "input", name: spec.sun.name, dir: sun } : { kind: "fixed", dir: sun };
+  const sunAt: Sun = "kind" in given ? { kind: "input", name: given.name, dir: sun } : { kind: "fixed", dir: sun };
+  const lights = spec.lights ?? [];
+  if (lights.length > MOST_LIGHTS) {
+    throw new SceneError("scene()", `lights: ${lights.length} lights`, `at most ${MOST_LIGHTS} besides the sun (each is a term in every lit fragment)`,
+      "combine sources in one function, as a row by repetition: (p) => lamp(vec3(mul(floor(add(mul(p.x, 1 / 4), 0.5)), 4), 3, 0), o)(p)");
+  }
+  lights.forEach((l, k) => {
+    if (typeof l !== "function") throw new SceneError("scene()", `lights[${k}]: ${typeof l}`, "a Light: a function of a world point returning { toward, amount }", "lights: [lamp([0, 2, 0], { colour: [1, 0.8, 0.5], reach: 1.5 })]");
+  });
   const things: Drawable[] = [sky, spec.ground, shadows, ...blockOf(spec.style), ...spec.things];
   const names = new Set<string>();
   for (const t of things) {
@@ -75,7 +97,7 @@ export function scene(spec: SceneSpec): Scene {
   }
   if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);
   const loop: Loop = spec.period === undefined ? OPEN : { kind: "every", seconds: spec.period };
-  return { ground: spec.ground, things, style: spec.style, sun, sunAt, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
+  return { ground: spec.ground, things, style: spec.style, sun, sunAt, lighting: { sun: sunAt, amount, lights }, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
 }
 
 /** A style that prints its shadow as a block after the bodies (`Style.block`) has it drawn by `light` (src/draw/light.ts). */

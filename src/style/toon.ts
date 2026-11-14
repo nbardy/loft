@@ -3,7 +3,8 @@
 // (`light`, or `--light name` from `LIGHT`), the recipe's treatments are laid over toon's own colour by `litBodies`:
 // hatching in its shadows, a printed rim, cast shadows.
 
-import { add, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
+import { add, div, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr, type In } from "../expr.ts";
+import { luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { LIGHT, litBodies, type Bodies, type LightRecipe } from "./light.ts";
@@ -36,6 +37,23 @@ const edgeOf = (x: Expr<"f32">, edge: number, soft: number): Expr<"f32"> => {
   return smoothstep(sub(edge, w), add(edge, w), x);
 };
 
+/** A light's hue: its amount over its largest channel (so a lamp of [1.6, 1.0, 0.5] tints by [1, 0.63, 0.31]). */
+const hueOf = (amount: In<"vec3">): Expr<"vec3"> => {
+  const a = lift<"vec3">(amount);
+  return div(a, max(max(max(a.x, a.y), a.z), 1e-4));
+};
+
+/**
+ * A colour lit by the sun alone, times its amount (the sky, the sea and the fog are daylight colours): unchanged under
+ * a full sun. A local light adds nothing here.
+ */
+const skyLit = (ctx: Pick<ShadeCtx, "lights">, c: Expr<"vec3">): Expr<"vec3"> => ctx.lights("largest", (l, which) => {
+  switch (which) {
+    case "sun": return mul(c, l.amount);
+    case "local": return vec3(0, 0, 0);
+  }
+});
+
 /**
  * The cartoon style: sun light in a few flat bands with coloured (not grey) shadows, a rim light, a small gloss, an ink
  * outline hull, and a translucent blue sea with foam. Every colour, the band count and the outline width can be set in
@@ -64,23 +82,48 @@ export function toon(spec: ToonSpec = {}): Style {
     return mul(lit, 1 / (bands - 1));
   };
 
+  /**
+   * Bands of a local light from how much arrives, x = N.L times its luminance, 0 up: x is laid over the stretch of N.L
+   * the bands are cut from (-0.2 to 0.5), so nothing arriving is the darkest band and the rings fall at evenly spaced
+   * amounts (0.25 and 0.75 with three bands). Banded on x itself, x = 0 printed the middle band everywhere: N.L's first
+   * edge is at -0.025.
+   */
+  const lampBands = (x: Expr<"f32">): Expr<"f32"> => banded(add(mul(x, 0.7), -0.2));
+
   const fogOf = (distance: Expr<"f32">): Expr<"f32"> => { const f = sub(1, exp(mul(distance, -0.008))); return saturate(mul(f, f)); };
 
   /** Below the sea surface, colour sinks toward the deep water with depth. */
   const submerge = (c: Expr<"vec3">, depth: Expr<"f32">): Expr<"vec3"> =>
     mix(c, deep, mul(sub(1, exp(mul(max(depth, 0), -1.6))), 0.9));
 
-  /** Toon's colour of a body before it sinks: bands, rim, gloss. */
-  const colour = (ctx: ShadeCtx): Expr<"vec3"> => {
-    const ndl = dot(ctx.normal, ctx.sun);
+  /** Toon's colour of a body under the sun from `sun`: bands, rim, gloss. */
+  const sunlit = (ctx: ShadeCtx, sun: Expr<"vec3">): Expr<"vec3"> => {
+    const ndl = dot(ctx.normal, sun);
     const lit = banded(ndl);
     const lightC = mix(shadowTint, vec3(1.08, 1.04, 0.96), lit);
     const facing = saturate(dot(ctx.normal, ctx.view));
     const rim = mul(edgeOf(sub(1, facing), 0.65, 0.01), mul(0.45, add(0.35, mul(lit, 0.65))));
-    const half = normalize(add(ctx.sun, ctx.view));
+    const half = normalize(add(sun, ctx.view));
     const gloss = mul(edgeOf(dot(ctx.normal, half), 0.9785, 0.0015), 0.16);
     return add(add(mul(ctx.base, lightC), mul(rimColour, rim)), vec3(gloss, gloss, gloss));
   };
+  /**
+   * A local light on a body: the paint in the light's hue, banded by how much arrives (N.L times its luminance), so a
+   * lamp's falloff prints as flat rings; a gloss at its half vector. No rim and no shadow tint: those are the sun's.
+   */
+  const lamplit = (ctx: ShadeCtx, l: { readonly toward: Expr<"vec3">; readonly amount: In<"vec3"> }): Expr<"vec3"> => {
+    const lum = luminance(l.amount);
+    const band = lampBands(mul(saturate(dot(ctx.normal, l.toward)), lum));
+    const gloss = mul(edgeOf(dot(ctx.normal, normalize(add(l.toward, ctx.view))), 0.9785, 0.0015), mul(saturate(lum), 0.16));
+    return mul(add(mul(ctx.base, band), gloss), hueOf(l.amount));
+  };
+  /** Toon's colour of a body before it sinks: the sun's bands, rim and gloss times its amount, and each local light's. */
+  const colour = (ctx: ShadeCtx): Expr<"vec3"> => ctx.lights("sum", (l, which) => {
+    switch (which) {
+      case "sun": return mul(sunlit(ctx, l.toward), l.amount);
+      case "local": return lamplit(ctx, l);
+    }
+  });
   const own: Bodies = spec.light === undefined
     ? { shade: colour, mark: () => lift<"f32">(1) }
     : litBodies(spec.light, { ink: inkC, amount: 0.5, value: 0.8 }, colour);
@@ -108,7 +151,7 @@ export function toon(spec: ToonSpec = {}): Style {
       const glint = smoothstep(0.985, 0.99, dot(ctx.normal, half));
       c = mix(c, foam, mul(glint, 0.8));
       c = mix(c, foam, ctx.foam);
-      c = mix(c, horizon, fogOf(ctx.distance));
+      c = skyLit(ctx, mix(c, horizon, fogOf(ctx.distance)));
       // Opaque where foam or grazing; see-through looking down, where submerged bodies show (already tinted).
       const alpha = saturate(max(add(0.55, mul(grazing, 0.45)), ctx.foam));
       return vec4(c, alpha);
@@ -118,12 +161,23 @@ export function toon(spec: ToonSpec = {}): Style {
     shadow: (ctx) => vec4(mix(seaShadow, horizon, fogOf(ctx.distance)), mul(ctx.amount, 0.55)),
     // A plane: one flat colour under toon's light, its cast shadow in the shadow tint, fogged to the horizon. The colour is
     // made here and not when the style is built: an expression created eagerly renumbers every sea scene's shader text.
-    ground: (ctx) => mix(mul(rgb(spec.ground ?? [0.86, 0.8, 0.68]), mix(mix(shadowTint, vec3(1.08, 1.04, 0.96), banded(ctx.sun.y)), shadowTint, mul(ctx.shadow, 0.8))), horizon, fogOf(ctx.distance)),
+    // Each local light lays rings of its hue on the floor, banded by L.y times its luminance, over the sun's colour.
+    ground: (ctx) => {
+      const floor = rgb(spec.ground ?? [0.86, 0.8, 0.68]);
+      const light = ctx.lights("sum", (l, which) => {
+        switch (which) {
+          case "sun": return mul(mix(mix(shadowTint, vec3(1.08, 1.04, 0.96), banded(l.toward.y)), shadowTint, mul(ctx.shadow, 0.8)), l.amount);
+          case "local": return mul(hueOf(l.amount), lampBands(mul(saturate(l.toward.y), luminance(l.amount))));
+        }
+      });
+      return mix(mul(floor, light), skyLit(ctx, horizon), fogOf(ctx.distance));
+    },
+    // Daylight, scaled by the sun's amount: under a moon of 0.06 the same grade, dark and blue.
     sky: (ctx) => {
       const up = ctx.dir.y;
       const above = mix(horizon, zenith, pow(saturate(up), 0.6));
       // Below the horizon the "sky" is the deep water seen through the sea's translucency.
-      return mix(above, mix(horizon, deep, saturate(mul(up, -6))), sub(1, smoothstep(-0.002, 0.0, up)));
+      return skyLit(ctx, mix(above, mix(horizon, deep, saturate(mul(up, -6))), sub(1, smoothstep(-0.002, 0.0, up))));
     },
   };
 }

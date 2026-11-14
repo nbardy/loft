@@ -18,7 +18,7 @@ import {
 } from "../expr.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { F, Skeleton } from "../map/types.ts";
-import { sunParts } from "../sun.ts";
+import { sunParts } from "../light.ts";
 import { levelOf } from "./ground.ts";
 
 /** vec4s per capsule: (end a xz, end b xz), (radius a, radius b, strength, softness), (has previous, has next, valid, 0). */

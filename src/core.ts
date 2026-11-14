@@ -32,7 +32,7 @@ export { type Copies, type CopiesHit, type CopiesOptions } from "./draw/copies.t
 export * from "./relief/height.ts";
 export { sculptLayer, displace } from "./relief/index.ts";
 export { type ReliefDrawable, type ReliefPoint, type ReliefSite } from "./draw/relief.ts";
-export { movable, type Sun } from "./sun.ts";
+export { lamp, movable, type Light, type Sun } from "./light.ts";
 
 // What recipes under examples/ need of the core (examples/README.md).
 export { noise2, type Branch } from "./lib/index.ts";

@@ -13,7 +13,7 @@ import type { Chart, F, P3, Paint, Points, Posed, Poses, Skeleton, Surface } fro
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { fwidth } from "../lib/wgsl.ts";
-import { sunDir } from "../sun.ts";
+import { foldAt, sunDir, type LightFold } from "../light.ts";
 import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
 
@@ -40,6 +40,8 @@ export type Fragment = {
   readonly style: Style;
   /** Unit direction toward the sun: a literal, or an expression when the scene's sun is a host input. */
   readonly sun: In<"vec3">;
+  /** Every light at `world`, folded (`ShadeCtx.lights`), for a colour that builds a style's context by hand. */
+  readonly lights: LightFold;
 };
 
 /** Ink: the surface pushed out along its normal and drawn back faces only (`hull`), ink along its v = 1 edge (`border`, for sheets), or none. */
@@ -350,7 +352,7 @@ const GLAZED_CALL = "(in.world, in.clip.xy, in.uv.x, in.uv.y)";
 /** The fragment stage of a glazed surface: its colour function(s), and `fs`. */
 function glazedColour(ctx: CompileContext, name: string, colour: GlazedColour): Pick<Frag, "fns" | "main"> {
   const W = variable("f_world", "vec3"), PX = variable("f_px", "vec2");
-  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt) };
+  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt), lights: foldAt(ctx.lighting, W) };
   const fn = (fname: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name: fname, args: GLAZED_ARGS, out: root.ty === "f32" ? "f32" : "vec4<f32>", roots: [root], ret: (o) => o[0]! });
   switch (colour.kind) {
     case "one": return {

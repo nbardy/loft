@@ -469,6 +469,7 @@ export class Sea implements Chart, Drawable {
       marksLean: marks.reduce<Expr<"vec2">>((l, m) => (m.lean === undefined ? l : select(gt(m.foam, 0), m.lean, l)), vec2(0, 0)),
       swell: this.dominantDirection(),
       phase: this.dominantPhase(xz),
+      lights: fr.lights,
     });
   }
 

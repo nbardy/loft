@@ -15,7 +15,7 @@ import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
 import type { OutlineMethod } from "../scene.ts";
-import type { Sun } from "../sun.ts";
+import type { Lighting, Sun } from "../light.ts";
 import type { Slots } from "./bind.ts";
 
 /** What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). */
@@ -79,8 +79,10 @@ export interface CompileContext {
   readonly ground: Ground;
   /** Unit direction toward the sun as the scene states it (a movable sun's default). */
   readonly sun: V3;
-  /** The sun as shaders read it: that literal, or a host input (src/sun.ts). */
+  /** The sun as shaders read it: that literal, or a host input (src/light.ts). */
   readonly sunAt: Sun;
+  /** The sun, its amount and the scene's lights: what a context's `lights` fold is built from (`foldAt`, src/light.ts). */
+  readonly lighting: Lighting;
   /** Every thing in the scene (for drawables derived from others, such as shadows). */
   readonly things: readonly Drawable[];
   /** Declare a per-frame table that raw WGSL reads (tables that expressions `fetch` are found without this). */
