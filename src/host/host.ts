@@ -17,6 +17,7 @@
 
 import { EnvironmentError } from "../errors.ts";
 import type { Artefact, CpuUpload, FrameState, FrameStats, Host, Loaded, View } from "../artefact.ts";
+import { bakeRecurrences } from "./bake.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
@@ -83,7 +84,13 @@ export class NotDataError extends Error {
 
 export function createHost(device: GPUDevice): GpuHost {
   // async: an artefact that fails lower's checks rejects the returned promise, as every load error does, never throws.
-  return { load: async (artefact) => loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) }) };
+  // The first host to load an artefact bakes its recurrences (src/host/bake.ts); lower then writes the baked states.
+  return {
+    load: async (artefact) => {
+      await bakeRecurrences(device, artefact);
+      return loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) });
+    },
+  };
 }
 
 // ---- per-frame state -------------------------------------------------------------------------------------------

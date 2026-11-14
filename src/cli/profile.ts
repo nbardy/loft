@@ -57,9 +57,9 @@ export async function profile(cmd: Extract<Command, { kind: "profile" }>): Promi
   const whole = p.poseStages.find((s) => s.label === POSE_ONE_PASS), levels = p.poseStages.filter((s) => s !== whole);
   out.push("", `pose stages (GPU): ${whole === undefined ? "none" : `${whole.ms.toFixed(3)} ms in one pass`}; each level in a pass of its own (under 0.065 ms is unresolved):`);
   for (const s of levels) out.push(`  ${f2(s.ms)}  ${s.label.length > 100 ? `${s.label.slice(0, 100)}...` : s.label}`);
-  const kinds = { map: 0, scan: 0, cpu: 0 };
+  const kinds = { map: 0, scan: 0, cpu: 0, replay: 0 };
   for (const t of a.tables) kinds[t.fill.kind]++;
-  out.push(`tables: ${kinds.map} map, ${kinds.scan} scan, ${kinds.cpu} cpu`);
+  out.push(`tables: ${kinds.map} map, ${kinds.scan} scan, ${kinds.cpu} cpu${kinds.replay > 0 ? `, ${kinds.replay} replayed` : ""}`);
   const poseSum = [...tables.values()].reduce((x, y) => x + y, 0);
   out.push(`${"CPU pose and upload".padEnd(28)}${f2(p.pose)}`, "", `cpu tables (filled on the CPU every frame; sum of bests ${poseSum.toFixed(3)} ms)`);
   for (const t of a.tables) {

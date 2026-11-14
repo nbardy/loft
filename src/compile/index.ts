@@ -3,7 +3,8 @@
 // the first time anything reads it); then the tables are packed, the shared WGSL is assembled, each shader module gets
 // the library functions `sceneWgsl` does not already hold, the draws are ordered by phase and the pose function built.
 
-import { DETAIL_SLOTS, type Artefact, type Detail, type Draw, type FrameState, type PostPass } from "../artefact.ts";
+import { DETAIL_SLOTS, type Artefact, type Detail, type Draw, type FrameState, type Loop, type PostPass, type Recurrence } from "../artefact.ts";
+import { SceneError } from "../errors.ts";
 import { compileJs, type Env, type Expr, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
 import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
@@ -46,7 +47,7 @@ export function compileScene(scene: Scene): Compiled {
   // registers the leaves of its program (or compiles the CPU expressions of a hand-written fill).
   const slots: Slots = new Slots((t) => tables.declare(t, prep), (p) => tables.lower(p));
   const rows: RowSource = { kind: "table", slot: (r) => slots.row(r) };
-  const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars) });
+  const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars), input: (spec) => slots.input(spec).slot });
   const cpu = (roots: readonly Expr[]): CpuFn => {
     slots.register(roots);
     const run = compileJs(roots, rows);
@@ -112,7 +113,8 @@ export function compileScene(scene: Scene): Compiled {
     inputs: (() => { const x = new Float32Array(leaves.inputFloats); for (const s of leaves.inputs) x.set(s.def, s.slot); return x; })(),
     params: (() => { const x = new Float32Array(leaves.params.reduce((n, q) => Math.max(n, q.slot + 1), 0)); for (const q of leaves.params) x[q.slot] = q.def; return x; })(),
   };
-  const restFrame = poseFrame(layout, envOf, restState).frame;
+  // Before any bake: a recurrence reads as its start state here (`Unbaked`), the only reading that may.
+  const restFrame = poseFrame(layout, envOf, restState, undefined, "start").frame;
   const detailOf = detailSlots(layout.placed, (roots) => cpu(roots)(restFrame));
   const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, ...d }) => {
     const resolved = detailOf(detail, d);
@@ -141,6 +143,7 @@ export function compileScene(scene: Scene): Compiled {
     pose: poseFunction(layout, envOf),
     cameras: scene.cameras,
     loop: scene.loop,
+    ...(layout.recurrences.length > 0 ? { recurrences: refuseSpans(layout.recurrences, scene.loop) } : {}),
     stats: { maxTriangles: triangles, draws: draws.length, curveRows: leaves.rows, stations: layout.stations },
   };
   const byName = new Map([...layout.placed.keys()].map((t) => [t.name, t]));
@@ -150,6 +153,22 @@ export function compileScene(scene: Scene): Compiled {
     return t;
   };
   return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table, programs: tables.programs };
+}
+
+/**
+ * A scene that comes round every P seconds must keep each recurrence over all of [0, P], or keep it still there (until
+ * at or before 0): otherwise its seam is not a measurement but a jump (docs/proposals/state.md 4.5).
+ */
+function refuseSpans(rs: readonly Recurrence[], loop: Loop): readonly Recurrence[] {
+  if (loop.kind === "open") return rs;
+  const P = loop.seconds;
+  for (const r of rs) {
+    const until = r.from + r.total / r.rate;
+    if (r.from > 0 || (until > 0 && until < P)) {
+      throw new SceneError(`scene() with period ${P}`, `the recurrence "${r.name}" kept from ${Math.max(r.from, 0)} to ${until} s`, `a span covering [0, ${P}] (from at or before 0, until at or after ${P}), or one that is still by then (until at or before 0)`, until > 0 && until < P ? `until: ${P} (and settle before 0 with a negative from, so the loop closes by physics)` : "from: 0 or earlier");
+    }
+  }
+  return rs;
 }
 
 /**
@@ -197,7 +216,7 @@ function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[
 export function readTablesAlone(roots: readonly TableSource[]): (t: TableSource) => Float32Array {
   const slots: Slots = new Slots((t) => tables.declare(t, prep), (p) => tables.lower(p));
   const prep: TablePrep = { compile: (r) => { slots.register(r); const run = compileJs(r); return (frame, vars = {}) => run({ ...frame.env, vars }); } };
-  const tables = new Tables({ register: (r) => slots.register(r), cpu: (r) => compileJs(r), wgsl: (v) => slots.wgsl(v) });
+  const tables = new Tables({ register: (r) => slots.register(r), cpu: (r) => compileJs(r), wgsl: (v) => slots.wgsl(v), input: (spec) => slots.input(spec).slot });
   for (const t of roots) tables.declare(t, prep);
   const layout = tables.layout();
   const state: FrameState = { time: 0, inputs: new Float32Array(0), params: new Float32Array(0), curves: new Float32Array(0) };

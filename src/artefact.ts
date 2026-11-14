@@ -192,7 +192,81 @@ export type TableFillKind =
   | { readonly kind: "map"; readonly level: number }
   | { readonly kind: "scan"; readonly level: number }
   /** `why`: the table's own reason (a hand-written fill), or the GPU table that reads it ("read by ..."). */
-  | { readonly kind: "cpu"; readonly why: string };
+  | { readonly kind: "cpu"; readonly why: string }
+  /** Replayed from a checkpoint of `recurrence` before the pose stages (`Recurrence.replay`). */
+  | { readonly kind: "replay"; readonly recurrence: string };
+
+/**
+ * What a bake took: `ms`, wall time from encoding the dispatches to the kept states read back (GPU time with submission
+ * and readback); `setup`, the module and pipelines; steps dispatched; bytes kept.
+ */
+export type BakeRecord = { readonly ms: number; readonly setup: number; readonly steps: number; readonly bytes: number };
+
+/**
+ * Whether a recurrence's states are baked: the one fact about an artefact that changes after compile. `compile` stays
+ * synchronous and CPU-only, so a compiled artefact carries its recurrences unbaked; the first host to load it bakes
+ * them on its GPU (src/host/bake.ts), and `loft build` writes the baked states into the files, so a file loader never
+ * bakes. The CPU readings refuse an unbaked state rather than read zeros.
+ */
+export class Baked {
+  private record: BakeRecord | undefined;
+  get done(): BakeRecord | undefined { return this.record; }
+  mark(r: BakeRecord): void { this.record = r; }
+}
+
+/**
+ * A state stepped by the scene's own function (src/map/recur.ts), as a host bakes it. Steps are counted from `from`:
+ * state 0 is the start, state a is after a steps, at time `from + a / rate`. The kept table (`data`, a view into the
+ * static buffer that holds it) has `states` states of `(entries + 1) * lanes` vec4s each: the entries, then a clock
+ * entry whose first lane's x is the state's step number a. State k of the table is step `first + k * every` (every = 1
+ * when every state is kept).
+ *
+ * The bake (`bake.wgsl`, one module, its own bindings): group 0 binding 0 `recur_src`, 1 `recur_dst`, 2 `recur_kept`
+ * (read-write storage), then each static buffer named in `bake.statics` at bindings 3, 4, ... (read-only, its contents
+ * as the artefact holds them: so recurrences bake in list order, each after those it reads). Entry `recur_start` (one
+ * dispatch, src bound to anything, dst to buffer A) writes state 0; entry `recur_step`, dispatched `total` times
+ * alternating (src A, dst B) and (src B, dst A), writes each next state; both write the states to keep into
+ * `recur_kept` themselves. ceil(entries / POSE_WORKGROUP) workgroups each.
+ */
+export type Recurrence = {
+  readonly name: string;
+  readonly entries: number;
+  readonly lanes: number;
+  readonly rate: number;
+  readonly from: number;
+  /** Steps the bake takes. */
+  readonly total: number;
+  /** The first step kept. */
+  readonly first: number;
+  /** Steps from the first kept state to the last: reads clamp to it. */
+  readonly steps: number;
+  /** Seconds at the first kept state. */
+  readonly start: number;
+  readonly kept: { readonly kind: "every" } | { readonly kind: "checkpoints"; readonly every: number };
+  readonly states: number;
+  readonly data: Float32Array;
+  readonly bake: { readonly wgsl: string; readonly statics: readonly string[] };
+  /**
+   * Checkpoints only: the frame replays steps n and n + 1 into two per-frame tables before the pose stages. `slot` is
+   * the input (float offset in `inputs`) the host writes n into; `first` reads checkpoint floor(n / every) and steps
+   * it once, `ping` and `pong` each step once more (docs/artefact_format.md, "Replays").
+   */
+  readonly replay?: { readonly slot: number; readonly first: PoseStage; readonly ping: PoseStage; readonly pong: PoseStage };
+  readonly baked: Baked;
+};
+
+/** What a frame's replay of one recurrence needs from the host (a manifest's `frame.replay` entry has these too). */
+export type ReplayClock = { readonly slot: number; readonly rate: number; readonly start: number; readonly steps: number; readonly every: number };
+
+/**
+ * The step n a frame at time t replays to: floor((t - start) rate), held within [0, steps - 1] (a read past the end is
+ * state n + 1 = steps with weight 1), computed in f64 so every host agrees; and k = n mod every, the steps it replays
+ * after the checkpoint's first.
+ */
+export function replayStep(r: ReplayClock, t: number): { readonly n: number; readonly k: number } {
+  const n = Math.min(Math.max(Math.floor((t - r.start) * r.rate), 0), Math.max(r.steps - 1, 0));
+  return { n, k: n % r.every };
+}
 
 /** Where a per-frame table lives in the dynamic buffers (offset and size in vec4s, `lanes` vec4s per entry), and how it is filled. */
 export type TableInfo = { readonly name: string; readonly buffer: string; readonly offset: number; readonly vec4s: number; readonly lanes: number; readonly fill: TableFillKind };
@@ -320,6 +394,8 @@ export type Artefact = {
   readonly cameras: Readonly<Record<string, Camera>>;
   /** Whether the scene's clock comes round (`OPEN` when absent). A host that draws it may wrap its clock by `loopTime`. */
   readonly loop?: Loop;
+  /** States stepped by the scene's own functions, in the order they bake. Absent means none. */
+  readonly recurrences?: readonly Recurrence[];
   /**
    * `maxTriangles`: what the draw list declares (every draw's vertices / 3 x instances, scene layer), the most a frame
    * can draw; a host drawing at a coarser level of detail draws fewer (`FrameStats`). `draws`: draws declared.

@@ -1,7 +1,7 @@
 // loft CLI. Dispatch only: each command is one function below.
 import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
-import type { Artefact } from "../artefact.ts";
+import type { Artefact, Recurrence } from "../artefact.ts";
 import type { GpuLoaded } from "../host/host.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
@@ -36,6 +36,7 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       t = performance.now();
       const loaded = await loadedWithRetries(artefact);
       console.log(`load     ${ms(t)}`);
+      for (const r of artefact.recurrences ?? []) console.log(baked(r));
       return { info: artefact, loaded };
     }
   }
@@ -69,11 +70,18 @@ function loopOf(info: object): Loop {
   return l === undefined ? OPEN : l;
 }
 
+/** What a recurrence's bake took (src/host/bake.ts): the line `render`, `build` and `profile` print. */
+export function baked(r: Recurrence): string {
+  const b = r.baked.done;
+  const kept = r.kept.kind === "every" ? "every state" : `every ${r.kept.every}th state`;
+  return b === undefined ? `bake     ${r.name}: not baked` : `bake     ${r.name}  ${b.steps} steps in ${b.ms.toFixed(1)} ms (+ ${b.setup.toFixed(1)} ms setup); ${kept}, ${r.states} kept, ${(b.bytes / 1e6).toFixed(2)} MB`;
+}
+
 /** "n map, n scan, n cpu (not data)": how the per-frame tables are filled. */
-function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "scan" | "cpu" } }[]): string {
-  const n = { map: 0, scan: 0, cpu: 0 };
+function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "scan" | "cpu" | "replay" } }[]): string {
+  const n = { map: 0, scan: 0, cpu: 0, replay: 0 };
   for (const t of tables) n[t.fill.kind]++;
-  return `tables ${n.map} map, ${n.scan} scan, ${n.cpu} cpu (not data)`;
+  return `tables ${n.map} map, ${n.scan} scan, ${n.cpu} cpu (not data)${n.replay > 0 ? `, ${n.replay} replayed` : ""}`;
 }
 
 async function timed(label: string, draw: () => ReturnType<GpuLoaded["frameTimed"]>): Promise<Uint8Array> {
@@ -142,11 +150,17 @@ async function clip(cmd: Extract<Command, { kind: "clip" }>) {
   await witness(cmd);
 }
 
-/** `loft build`: compile, lower, write the directory (`writeBundle` refuses `cpu` tables by name). */
+/** `loft build`: compile, bake (a scene with `recur`, on this GPU), lower, write the directory (`writeBundle` refuses `cpu` tables by name). */
 async function build(cmd: Extract<Command, { kind: "build" }>) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   console.log(`compile  ${ms(t)}  ${fillCounts(artefact.tables)}`);
+  if (artefact.recurrences !== undefined) {
+    // The files carry baked states (a file loader never bakes): bake on this machine's GPU first.
+    const [{ headlessDevice }, { bakeRecurrences }] = await Promise.all([import("../host/headless.ts"), import("../host/bake.ts")]);
+    await bakeRecurrences(await headlessDevice(), artefact);
+    for (const r of artefact.recurrences) console.log(baked(r));
+  }
   t = performance.now();
   const [{ lower }, { writeBundle }] = await Promise.all([import("../host/lower.ts"), import("../host/files.ts")]);
   const bundle = lower(artefact);

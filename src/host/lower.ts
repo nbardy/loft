@@ -204,6 +204,8 @@ export function checkArtefact(a: Artefact): { paramFloats: number } {
     }
   }
   for (const p of a.post ?? []) if (!(p.shader in a.shaders)) fail(`post pass "${p.label}" names unknown shader "${p.shader}"`);
+  // The baked states are the truth the files carry: an unbaked artefact would write zeros (src/host/bake.ts bakes).
+  for (const r of a.recurrences ?? []) if (r.baked.done === undefined) fail(`the recurrence "${r.name}" is not baked; bake it on a GPU first (bakeRecurrences, which createHost's load runs)`);
   for (const st of a.stages) if (!(Number.isInteger(st.invocations) && st.invocations >= 1)) fail(`pose stage "${st.label}" has ${st.invocations} invocations`);
   const sizes = new Map(a.dynamic.map((d) => [d.name, d.vec4s]));
   for (const t of a.tables) {
