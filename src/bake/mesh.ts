@@ -85,7 +85,7 @@ class Builder {
   private fillNormals(): void {
     if (this.unnormal.length === 0) return;
     const key = (i: number) => `${this.pos[3 * i]},${this.pos[3 * i + 1]},${this.pos[3 * i + 2]}`;
-    const sums = new Map(this.unnormal.map((i) => [key(i), [0, 0, 0]] as const));
+    const sums = new Map(this.unnormal.map((i): [string, number[]] => [key(i), [0, 0, 0]]));
     for (let t = 0; t < this.idx.length; t += 3) {
       const [a, b, c] = [this.idx[t]!, this.idx[t + 1]!, this.idx[t + 2]!];
       const P = (i: number, k: number) => this.pos[3 * i + k]!;
