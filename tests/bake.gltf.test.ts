@@ -2,6 +2,9 @@
 import { expect, test } from "bun:test";
 import serpent from "../examples/serpent.ts";
 import { bakeScene, writeGlb } from "../src/bake/index.ts";
+import { bakeAnimated } from "../src/bake/motion.ts";
+import { pose, readGlb, structure } from "../tools/gltf_play.ts";
+import { bentScene } from "./bake.fixtures.ts";
 
 type Json = {
   asset: { version: string };
@@ -73,5 +76,25 @@ test("the serpent's .glb parses back with consistent counts, alignment and bound
     expect(idx.data).toEqual(Array.from(b.indices));
     expect(Math.max(...idx.data)).toBe(idx.a.max![0]);
     expect(idx.a.max![0]).toBeLessThan(pos.a.count);
+  });
+});
+
+// Catches: a skin or morph the file plays differently from the motion it was measured as (joint order, column-major
+// inverse binds, quaternion order, key times, one-hot weights), read back by tools/gltf_play.ts from the bytes alone,
+// and any count or weight sum a viewer would trip on.
+test("an animated bake plays back from the file within the tolerance of the scene's own surface", () => {
+  const density = { along: 24, around: 12 };
+  const a = bakeAnimated(bentScene, { density, seconds: 2 });
+  expect(a.motions.map((m) => m.kind)).toEqual(["skinned", "morphed"]);
+  const g = readGlb(writeGlb(a, a));
+  expect(structure(g)).toEqual([]);
+  const t = 0.77; // between keys for both bodies
+  const truth = bakeScene(bentScene, { time: t, density }).bodies;
+  pose(g, t).forEach((p, k) => {
+    const m = a.motions[k]!;
+    if (m.kind !== "skinned" && m.kind !== "morphed") throw new Error(`${a.bodies[k]!.name}: ${m.kind}`);
+    let worst = 0;
+    for (let v = 0; v < p.length; v += 3) worst = Math.max(worst, Math.hypot(p[v]! - truth[k]!.positions[v]!, p[v + 1]! - truth[k]!.positions[v + 1]!, p[v + 2]! - truth[k]!.positions[v + 2]!));
+    expect(worst).toBeLessThan(1e-3 * m.error.size);
   });
 });
