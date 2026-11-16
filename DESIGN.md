@@ -1454,3 +1454,54 @@ about 3.6, tolerance 3.6e-3. Spine term: x'' = 0.5 m^2 sin(t + k) changes by up 
 2.6e-4. Ring term: d theta about 0.57 / 31 = 0.018 rad, r = 0.2: 1e-5. Skin total about 3e-4 (1e-4 relative). Keys:
 tip acceleration 0.5, half budget 1.8e-3, N = ceil(2 pi sqrt(0.5 / 1.44e-2)) = 38 (above N0), mid-key error about
 1.7e-3. Expected: every reed `skinned`, measured 1.5e-3 to 2.5e-3 (4e-4 to 7e-4 relative); the stone `still`.
+
+### 16.1 As built, and what the runs showed
+
+`loft bake <scene> --out f.glb --animated [--seconds S]` (src/bake/motion.ts, the writer in src/bake/gltf.ts; the span
+is the scene's period, else `--seconds`, else a `SceneError`). It prints one line per body: its outcome, joints, keys,
+the measured error (world units, and as a share of its size), and the prediction. Three changes from the design, each
+forced by a run:
+
+- **Keys per thing.** One N for the whole scene let the crab's blinking lid (436 keys) key every leg too: 199 MB.
+  glTF samplers each take their own times, so each body has its own N (58 MB).
+- **Re-keyed once from the measurement.** The pilot's second differences average acceleration over two of its steps,
+  so a quick move reads low and a third of the crab's parts missed by 1.1 to 2 times. The keys' own midpoint error is
+  the bound measured (`a_eff = 8 e / dt^2`), so a thing over half the budget is re-keyed once with
+  `N' = N sqrt(e / (tol / 2))`. Motion that is not smooth is then visible in how the error fell: the heron's toes
+  (a footing that switches at 0.8 s) fell as dt^0.3, the original reeds as dt^0.
+- **Joints between stations.** At one joint per station the crab's legs missed (1.2e-2 against 7.7e-3; predicted
+  1.3e-2, so the theory was right and the joints too few). Joints are now the sweep sampled at J points
+  (`stationSample`: its own Catmull-Rom point, nlerped frame and stretch at any m), with
+  `J - 1 = (stations - 1) r`, `r = ceil(sqrt(e_stations / (tol / 2)))` (both skin terms go as the spacing squared),
+  at most 8. The legs take 47 joints and pass at 4.3e-4 to 6.1e-4 of their size.
+
+Results (CPU only: `compileJs` over the pose pass's tables; tolerance 1e-3 of size):
+
+| Scene | Body | Outcome | Error (units) | Share of size | Predicted |
+|---|---|---|---|---|---|
+| reeds_shadow, `up` [0,0,1] | reed0..5 | skinned, 32 joints, 37-38 keys | 1.74e-3 to 1.90e-3 | 4.9e-4 to 5.3e-4 | 1.83e-3 to 2.05e-3 (design: N = 38, 1.5e-3 to 2.5e-3) |
+| reeds_shadow | stone (a field) | still | - | - | - |
+| docs/context.md's reed, `up` [0,0,1] | reed | skinned, 32 joints, 39 keys | 1.99e-3 | 4.9e-4 | 2.10e-3 |
+| reefback_titan, 3.2 s (one gait) | 31 bodies | skinned (4 to 47 joints) | | 4.0e-4 to 9.4e-4 | |
+| | 31 bodies | morphed (52 to 761 targets) | | 4.7e-4 to 9.5e-4 | |
+| | 6 bodies | refused (cutter claw: a jump; maxillipeds: a kink) | | | |
+| heron, 1.6 s | torso, neck, bill, plume, legs, toes00/02 | skinned | | 4.8e-4 to 9.1e-4 | |
+| | toe01, toe10..12 | refused (the footing switches at 0.8 s) | | | |
+
+**The reeds as written are refused, and that is a finding about the sweep, not the export.** With `up` = +y along a
+vertical spine the start frame comes from `proj(up, tan0)`, whose length is about 5e-3 sin(t + k): when the bend
+changes sign the dorsal side flips half a turn in one key (measured: 3.14 rad between consecutive keys), so a vertex's
+place on the ring jumps by the diameter. Round and evenly painted, the GPU picture does not show it; any per-vertex
+consumer (a glTF, a texture, a sculpt layer) does. The export says so by name and writes the reed at rest. The fix
+belongs to `stationScan`'s seed (a seed that does not depend on the sign of a vanishing bend), not to the baker.
+
+Checks: Khronos glTF validator 2.0.0-dev.3.10 on every file above: 0 errors, 0 warnings (infos: the unused UV
+accessors). `tools/gltf_play.ts` reads a file back from its bytes and plays it (skin, weights, keys);
+tests/bake.gltf.test.ts compares that playback with the scene. `tools/gltf_skin_pictures.ts` draws the played file
+through a scene camera beside `loft frames`.
+
+Not exported: anything the static bake skips (the sea, the sky, shadows, sprays, impostor reefs, rigging strokes,
+telegraphs, media, traced solids); a field's motion (meshed once); a paint that reads a screen derivative (no
+COLOR_0, named); normals are the rest's, skinned by the viewer (non-uniform joint scale bends them slightly); a body
+taken at another time (a smear's slice) is morphed, not skinned. Rigid parts that are not bodies (a ship's hull) are
+morphed where one joint would do; a rigid fit per key is the next saving in file size.
