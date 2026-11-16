@@ -3,7 +3,7 @@
 // so tightly packed attribute views are aligned by construction. glTF is y-up, right-handed, counter-clockwise front
 // faces: the same as Loft's world, so positions go through unchanged.
 
-import { triangleCount, vertexCount, type Baked, type BodyMesh } from "./mesh.ts";
+import { triangleCount, vertexCount, type Baked, type BodyMesh, type Colours } from "./mesh.ts";
 
 const MAGIC = 0x46546c67, VERSION = 2, JSON_CHUNK = 0x4e4f534a, BIN_CHUNK = 0x004e4942;
 const ARRAY_BUFFER = 34962, ELEMENT_ARRAY_BUFFER = 34963, FLOAT = 5126, UNSIGNED_INT = 5125;
@@ -51,6 +51,13 @@ export function writeGlb(baked: Baked): Uint8Array {
     return accessors.length - 1;
   };
 
+  const colourAttribute = (c: Colours): Record<string, number> => {
+    switch (c.kind) {
+      case "rgb": return { COLOR_0: attribute(c.rgb, "VEC3", 3, false) };
+      case "none": return {}; // the material's white; `summary` says why
+    }
+  };
+
   const meshes: unknown[] = [], materials: unknown[] = [], nodes: unknown[] = [];
   baked.bodies.forEach((b, k) => {
     materials.push({
@@ -65,7 +72,7 @@ export function writeGlb(baked: Baked): Uint8Array {
           POSITION: attribute(b.positions, "VEC3", 3, true),
           NORMAL: attribute(b.normals, "VEC3", 3, false),
           TEXCOORD_0: attribute(b.uvs, "VEC2", 2, false),
-          COLOR_0: attribute(b.colors, "VEC3", 3, false),
+          ...colourAttribute(b.paint),
         },
         indices: indices(b),
         material: k,
@@ -99,5 +106,5 @@ export function writeGlb(baked: Baked): Uint8Array {
 
 /** One line per body: the counts the CLI prints. */
 export function summary(baked: Baked): string[] {
-  return baked.bodies.map((b) => `${b.name.padEnd(14)} ${(b.closed ? "solid" : "sheet").padEnd(7)} ${String(vertexCount(b)).padStart(7)} vertices ${String(triangleCount(b)).padStart(7)} triangles`);
+  return baked.bodies.map((b) => `${b.name.padEnd(14)} ${(b.closed ? "solid" : "sheet").padEnd(7)} ${String(vertexCount(b)).padStart(7)} vertices ${String(triangleCount(b)).padStart(7)} triangles${b.paint.kind === "none" ? `  unpainted: ${b.paint.why}` : ""}`);
 }

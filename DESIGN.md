@@ -1452,5 +1452,5 @@ miss the tolerance (N capped at 1024); written static at t = 0 and printed as re
 **Predictions (examples/reeds_shadow.ts, S = 2 pi, the period of `sin(time)`).** 32 stations over 3.5 units, size
 about 3.6, tolerance 3.6e-3. Spine term: x'' = 0.5 m^2 sin(t + k) changes by up to 2 per unit m^2, h = 1/31 of m:
 2.6e-4. Ring term: d theta about 0.57 / 31 = 0.018 rad, r = 0.2: 1e-5. Skin total about 3e-4 (1e-4 relative). Keys:
-tip acceleration 0.5, half budget 1.8e-3, N = ceil(2 pi sqrt(0.5 / 7.2e-3)) = 53 (above N0), mid-key error about
-1.8e-3. Expected: every reed `skinned`, measured 1.5e-3 to 2.5e-3 (4e-4 to 7e-4 relative); the stone `still`.
+tip acceleration 0.5, half budget 1.8e-3, N = ceil(2 pi sqrt(0.5 / 1.44e-2)) = 38 (above N0), mid-key error about
+1.7e-3. Expected: every reed `skinned`, measured 1.5e-3 to 2.5e-3 (4e-4 to 7e-4 relative); the stone `still`.

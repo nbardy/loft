@@ -67,7 +67,8 @@ test("the serpent's .glb parses back with consistent counts, alignment and bound
     }
     expect(read(prim.attributes.NORMAL).data).toEqual(Array.from(b.normals));
     expect(read(prim.attributes.TEXCOORD_0).data).toEqual(Array.from(b.uvs));
-    expect(read(prim.attributes.COLOR_0).data).toEqual(Array.from(b.colors));
+    if (b.paint.kind !== "rgb") throw new Error(`${b.name} is unpainted`);
+    expect(read(prim.attributes.COLOR_0).data).toEqual(Array.from(b.paint.rgb));
     const idx = read(prim.indices);
     expect(idx.data).toEqual(Array.from(b.indices));
     expect(Math.max(...idx.data)).toBe(idx.a.max![0]);
