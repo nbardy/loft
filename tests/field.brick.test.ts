@@ -118,8 +118,10 @@ test("a field drawn as a mesh bakes to a closed body painted at its vertices", (
   expect(body.closed).toBe(true);
   // Green is the paint's p.y / 2, converted to linear (glTF COLOR_0): the vertex's own height.
   const toLinear = (x: number) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4);
+  if (body.paint.kind !== "rgb") throw new Error(`ball is unpainted: ${body.paint.why}`);
+  const rgb = body.paint.rgb;
   let worst = 0;
-  for (let v = 0; v < body.positions.length / 3; v++) worst = Math.max(worst, Math.abs(body.colors[v * 3 + 1]! - toLinear(body.positions[v * 3 + 1]! * 0.5)));
+  for (let v = 0; v < body.positions.length / 3; v++) worst = Math.max(worst, Math.abs(rgb[v * 3 + 1]! - toLinear(body.positions[v * 3 + 1]! * 0.5)));
   expect(worst).toBeLessThan(1e-4);
   expect([...edgeUse({ positions: body.positions, normals: body.normals, indices: body.indices }).values()].every((n) => n === 2)).toBe(true);
   expect(writeGlb(baked).byteLength).toBeGreaterThan(body.positions.byteLength);
