@@ -108,8 +108,6 @@ const GRID_CELLS = 4096;
 /** Bits per mask word: an f32 holds a whole number below 2^24 exactly. */
 const WORD = 24;
 /** Header floats per cell (bit w of float q: word 24q + w is not empty); four, so at most 96 words of joints. */
-/** Segments a ray lists on its walk before it tests them (the crab's lamp rays list 3 to 6). */
-const LIST = 16;
 const HEADER = 4;
 
 /**
@@ -420,8 +418,6 @@ fn loft_cast_search(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32, w0: f32, wk: f
   let slack = 1e-3 * h;
   var prev = 0u;
   var prevHead = vec4<f32>(0.0);
-  var list: array<u32, ${LIST}>;
-  var count = 0u;
   loop {
     let exit = min(tMax.x, min(tMax.y, tMax.z));
     let base = u32(c.x + n.x * (c.y + n.y * c.z)) * ${lanes}u;
@@ -447,14 +443,7 @@ fn loft_cast_search(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32, w0: f32, wk: f
           let bf = max(ba, bb);
           let sa = max(t0, max(bn.x, max(bn.y, bn.z)));
           if (sa > min(t1, min(bf.x, min(bf.y, bf.z))) || sa > (*s).hitT) { continue; }
-          // Listed, not tested here: lanes reach their segments at different steps of their own walks, and a test
-          // called from inside them runs once per lane of a SIMD group. A full list is tested where it stands.
-          if (count == ${LIST}u) {
-            for (var i = 0u; i < ${LIST}u; i++) { loft_cast_seg(list[i], o, d, t0, t1, w0, wk, s); }
-            count = 0u;
-          }
-          list[count] = j;
-          count += 1u;
+          loft_cast_seg(j, o, d, t0, t1, w0, wk, s);
         }
       }
     }
@@ -472,8 +461,6 @@ fn loft_cast_search(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32, w0: f32, wk: f
       if (c.z < 0 || c.z >= n.z) { break; }
     }
   }
-  // The listed segments, tested in one loop every lane runs together: a group pays its longest list, not their sum.
-  for (var i = 0u; i < count; i++) { loft_cast_seg(list[i], o, d, t0, t1, w0, wk, s); }
 }`;
 }
 
