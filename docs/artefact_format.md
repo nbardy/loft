@@ -1,4 +1,4 @@
-# The Loft artefact as files (format versions 1 and 2)
+# The Loft artefact as files (format versions 1, 2 and 3)
 
 A built Loft scene is a directory that a client draws with no JavaScript from the compiler and no scene module. It is
 the host, lowered: every WebGPU object a loader creates is an entry in a list of `manifest.json`, described with
@@ -54,7 +54,7 @@ of every draw and post module in such a file is `passBindingsWgsl` in `src/artef
 
 ## Load, call by call
 
-1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1 or 2. Read each
+1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1, 2 or 3. Read each
    `wgsl/<chunks[i]>.wgsl` and each `bin/<blobs[i].name>.bin` (check its length against `blobs[i].bytes`).
 2. **Refuse JavaScript.** If any `tables[i].fill.kind == "cpu"`, refuse to load and name the tables (`loft build`
    never writes such a file; this guards hand-made ones). (`fill.kind` is `map`, `scan`, `cpu` or, in version 2,
@@ -119,7 +119,8 @@ Given a view: camera, width, height, time, input and param values, `construction
    group, in order. Then each command:
    - `fixed`: `setPipeline`, `draw(vertices, instances)`.
    - `planned`: if the plan for `plan[draw]` has no run, nothing (not even `setPipeline`); else `setPipeline`, then
-     for each run `draw(run.vertices, run.instances, 0, run.first)`.
+     for each run `draw(run.vertices, run.instances, 0, instanceBase + run.first)`, `instanceBase` 0 when absent
+     (version 3: a shared draw shader reads its draw's numbers from the row the high bits of the instance pick).
    End the pass. Submit.
 
 A pass that draws a picture off screen (version 2) is executed exactly like the others: its textures, its bind
@@ -127,8 +128,8 @@ groups (its own group 0, whose `frame` uniform the copies filled; group 3, the p
 (planned draws use the view's plan: the same runs and level-of-detail slots) are all in the lists.
 
 A pass may draw into only part of its view-sized target (the clearance passes after the depth resolve draw one
-fragment per 4 x 4 or 8 x 8 pixels into the top left, sized in their vertex shaders from the textures they read); the
-loader does nothing different for it.
+fragment per 4 x 4 or 8 x 8 pixels into the top left: a full-screen triangle whose fragments past the grid discard);
+the loader does nothing different for it.
 
 All writes of a frame are issued before the submit that reads them. (A `writeBuffer` is ordered with submits, not with
 passes inside one encoder: a write between two passes of one encoder lands before both.)
@@ -233,11 +234,14 @@ The plan is the one per-frame procedure a loader runs on the CPU; phase 4 moves 
 loader must act on, a changed meaning, a new `FrameWrite` or command kind. A field a loader may ignore does not
 change it. The preludes are chunks, so changing them does not change the format.
 
-**The rule: a file is version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
-It is decided in one place, `formatVersion` in src/host/lower.ts. A loader for 2 reads 1; the TypeScript loader and
-the Rust loader (rust/loft-loader) read both.
+**The rule: a file is version 3 when a draw command carries an `instanceBase`, else version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
+It is decided in one place, `formatVersion` in src/host/lower.ts. A loader for n reads every version before it; the TypeScript loader and
+the Rust loader (rust/loft-loader) read all three.
 
 - 1: the format above without `frame.replay` and without passes.
 - 2 (2026-11-14): `frame.replay` and the table fill `replay` (Replays); textures of a scaled or fixed size, render
   passes with no colour attachment, pipelines with no fragment stage, `frame.copies` (Pictures drawn off screen). Each
   is optional; a file holding either kind uses version 2.
+- 3 (2026-11-16): `instanceBase` on a `planned` command (shared draw shaders, src/host/share.ts; their rows are an
+  ordinary static buffer at group 0 binding 5). A loader for 2 would ignore it and draw a shared draw with another
+  draw's numbers. Written only when not 0; a file holding one uses version 3.

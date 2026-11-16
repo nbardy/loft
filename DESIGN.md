@@ -317,6 +317,48 @@ Halton (2, 3) point and through a lens disc point with the frustum sheared to ke
 by a compute pass and averaged before the style's post passes run once. Each sample plans its level of detail with no
 memory, so a still is a function of (t, k, pixel) only. Nothing in the file format or the loader changes for it.
 
+### 3.1 Shared draw shaders and concurrent pipelines (ported from creative, 16 Nov)
+
+From the creative repo's frozen library (its `FROZEN_DIFF.md` says why each change was made), merged with passes,
+replays and stills:
+
+- `src/host/share.ts`: draw shaders that differ only in fragment-stage numbers, table bases, surface IDs and the
+  detail slot compile as one module per group. The numbers that differ go in rows, a static buffer at group 0
+  binding 5 (`ROWS_BINDING`; the prelude holds 0 to 4, passes are group 3). Each planned draw command carries an
+  `instanceBase`, whose high bits pick the row. All planned commands are made by one helper in lower.ts (`plannedOf`):
+  the view, colour passes and depth passes. A pass's own group 0 binds the rows too. Vertex-stage literals stay in
+  the code, because the compiler folds constants it can see, so shared ones would change the geometry. A shader with
+  an entry point besides `vs` and `fs` (a tracer's `fs_depth`, in a scene with a depth pass) is not shared, because
+  only `vs` and `fs` set the row.
+- Pipelines are keyed by the shared module, the per-draw constants left after sharing, and the colour format (a
+  pass's `rgba16float`). `depthPipeline` is keyed by the same shared module and constants.
+- Pipelines are requested together and awaited as one batch (host.ts `scopedPipelines`). Modules get one validation
+  scope each.
+- The clearance passes draw one full-screen triangle (`cover_vs`, `CLEARANCE_VERTICES` = 3). Each fragment past its
+  grid discards. There is one copy, in the `clearance()` helper, which the view and colour passes share.
+- Compile interning (`src/expr.ts`, `src/compile/tables.ts`, `src/compile/bind.ts`); a strand's girth may be an `Expr`.
+- File format 3: `instanceBase` is written only when it is not 0, and such a file is version 3. A loader for version 2
+  would ignore the field and draw every shared draw with another draw's numbers. A scene that shares nothing writes
+  the same bytes as before. The Rust loader reads `instanceBase` (type-checked, not yet drawn against Dawn).
+
+Measured on the merge (Apple GPU shared with other workers, load average 23 to 57). Each run is one process. Main and
+the branch were interleaved, two rounds after warming the Metal cache. Load is `host.load`.
+
+| scene | modules main / branch | render pipelines main / branch | compile CPU ms main / branch | load ms main / branch |
+|---|---|---|---|---|
+| crab (reefback_titan) | 95 / 78 | 122 / 89 | 6032, 8089 / 3699, 3275 | 3974, 4625 / 2326, 2738 |
+| training s7 | 39 / 30 | 63 / 45 | 2048, 2056 / 1415, 1196 | 1165, (10761) / 653, 604 |
+| training s333 | 57 / 41 | 97 / 65 | 2307, 2078 / 1480, 1540 | 1833, (17476) / 868, 1121 |
+| training s840 | 59 / 46 | 102 / 76 | 2386, 2706 / 1694, 1640 | 2438, 3749 / 1373, 1517 |
+
+Times in parentheses are Metal cache misses. Both sides miss now and then, because the cache is shared with other
+workers' processes. Before the cache was warm, the branch's crab took 14 to 30 s on four loads. With pipelines made
+one at a time it took 3.2 to 3.7 s, and then concurrent loads took 2.3 to 2.8 s. These were cache misses, not
+concurrency. Pixels are byte-identical to main: the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b
+2315edeb83c975e9`, also drawn from the built files, and mirror, pool (a colour pass, 12 of 18 commands shared),
+area_lamp, flock, rope, shatter, skin and reeds_shadow (a depth pass, 5 of 7 shared). Pool and reeds_shadow also match
+as `--samples 4` stills. Six training programs agree on main, the branch and creative's library.
+
 ## 4. Drawables (`src/compile/context.ts`)
 
 ```ts

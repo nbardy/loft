@@ -166,16 +166,49 @@ const TEXTURE_USAGE = { COPY_SRC: 0x1, TEXTURE_BINDING: 0x4, RENDER_ATTACHMENT: 
 const STAGE = { VERTEX: 0x1, FRAGMENT: 0x2, COMPUTE: 0x4 } as const;
 const bits = <K extends string>(table: Record<K, number>, names: readonly K[]): number => names.reduce((n, k) => n | table[k], 0);
 
-/** Runs `create` inside a validation scope; `what` names the object in the error. */
-async function scoped<T>(device: GPUDevice, what: string, create: () => Promise<T>): Promise<T> {
+type Settled<T> = { readonly ok: true; readonly v: T } | { readonly ok: false; readonly message: string };
+const settle = <T>(create: () => Promise<T>): Promise<Settled<T>> =>
+  new Promise<T>((resolve) => resolve(create())).then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
+// The WGSL and descriptors are the compiler's, already accepted from the scene: a refusal here is the GPU stack's
+// (or a compiler bug), never the scene's, and a fresh device may pass (src/cli/main.ts retries).
+const refused = (what: string, message: string) => new EnvironmentError(`${what}:\n${message}`, true);
+
+/**
+ * Creates every shader module, each inside its own validation scope; `what` names the module in the error.
+ * createShaderModule is synchronous, so the scopes nest without overlap: module k's errors land in scope k, and
+ * popping in reverse order hands each module its own scope. Reports the first failure in array order.
+ */
+async function scopedModules(device: GPUDevice, creations: readonly { what: string; create: () => GPUShaderModule }[]): Promise<GPUShaderModule[]> {
+  const results = creations.map((c): Settled<GPUShaderModule> => {
+    device.pushErrorScope("validation");
+    try { return { ok: true, v: c.create() }; } catch (e) { return { ok: false, message: e instanceof Error ? e.message : String(e) }; }
+  });
+  const errors = (await Promise.all(creations.map(() => device.popErrorScope()))).reverse();
+  creations.forEach((c, k) => {
+    const r = results[k]!, error = errors[k];
+    if (!r.ok) throw refused(c.what, r.message);
+    if (error) throw refused(c.what, error.message);
+  });
+  return results.map((r) => (r as { v: GPUShaderModule }).v);
+}
+
+/**
+ * Requests every pipeline at once and awaits them together, so the GPU stack compiles them concurrently instead of
+ * one after another (16 s of a cold load was this queue). WebGPU error scopes are a stack per device: overlapping
+ * per-pipeline push/pop pairs would pop each other's scopes, so one scope covers the whole batch. A refused pipeline
+ * rejects its own promise, so it is still named by its `what`, the first in array order as the old loop reported;
+ * an error only the shared scope saw names the batch, and the GPU's message names the object.
+ */
+async function scopedPipelines<T>(device: GPUDevice, batch: string, creations: readonly { what: string; create: () => Promise<T> }[]): Promise<T[]> {
   device.pushErrorScope("validation");
-  const result = await create().then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
+  const results = await Promise.all(creations.map((c) => settle(c.create)));
   const error = await device.popErrorScope();
-  // The WGSL and descriptors are the compiler's, already accepted from the scene: a refusal here is the GPU stack's
-  // (or a compiler bug), never the scene's, and a fresh device may pass (src/cli/main.ts retries).
-  if (!result.ok) throw new EnvironmentError(`${what}:\n${result.message}`, true);
-  if (error) throw new EnvironmentError(`${what}:\n${error.message}`, true);
-  return result.v;
+  creations.forEach((c, k) => {
+    const r = results[k]!;
+    if (!r.ok) throw refused(c.what, r.message);
+  });
+  if (error) throw refused(batch, error.message);
+  return results.map((r) => (r as { v: T }).v);
 }
 
 /** The objects a manifest describes, created; textures and the bind groups that name them come per view size (`sized`). */
@@ -212,25 +245,21 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
     entries: l.entries.map((e): GPUBindGroupLayoutEntry => ({ ...e, visibility: bits(STAGE, e.visibility) })),
   }));
   const pipelineLayouts = m.pipelineLayouts.map((p) => device.createPipelineLayout({ label: p.label, bindGroupLayouts: p.bindGroupLayouts.map((i) => layouts[i]!) }));
-  const modules: GPUShaderModule[] = [];
-  for (const mod of m.modules) {
+  const modules = await scopedModules(device, m.modules.map((mod) => {
     const code = mod.chunks.map((c) => {
       const text = b.chunks.get(m.chunks[c]!);
       if (text === undefined) throw new Error(`artefact: module ${mod.label} names chunk ${m.chunks[c]}, which the bundle lacks`);
       return text;
     }).join("");
-    modules.push(await scoped(device, `${mod.label} failed to compile`, async () => device.createShaderModule({ label: mod.label, code })));
-  }
+    return { what: `${mod.label} failed to compile`, create: () => device.createShaderModule({ label: mod.label, code }) };
+  }));
   // Pipelines are built eagerly, so every error surfaces at load and a frame never stalls on compilation.
-  const computePipelines: GPUComputePipeline[] = [];
-  for (const p of m.computePipelines) {
-    computePipelines.push(await scoped(device, `pose stage "${p.label}": pipeline creation failed`, () => device.createComputePipelineAsync({
+  // Compute pipelines come first in the one batch, as they came first in the old loop.
+  const pipelines = await scopedPipelines<GPUComputePipeline | GPURenderPipeline>(device, `${m.computePipelines.length + m.renderPipelines.length} pipelines: creation failed`, [
+    ...m.computePipelines.map((p) => ({ what: `pose stage "${p.label}": pipeline creation failed`, create: () => device.createComputePipelineAsync({
       label: p.label, layout: pipelineLayouts[p.layout]!, compute: { module: modules[p.module]!, entryPoint: p.entryPoint },
-    })));
-  }
-  const renderPipelines: GPURenderPipeline[] = [];
-  for (const p of m.renderPipelines) {
-    renderPipelines.push(await scoped(device, `${p.label}: pipeline creation failed`, () => device.createRenderPipelineAsync({
+    }) })),
+    ...m.renderPipelines.map((p) => ({ what: `${p.label}: pipeline creation failed`, create: () => device.createRenderPipelineAsync({
       label: p.label,
       layout: pipelineLayouts[p.layout]!,
       vertex: { module: modules[p.vertex.module]!, entryPoint: p.vertex.entryPoint, constants: p.vertex.constants },
@@ -238,8 +267,10 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
       primitive: p.primitive,
       ...(p.depthStencil === undefined ? {} : { depthStencil: p.depthStencil }),
       multisample: p.multisample,
-    })));
-  }
+    }) })),
+  ]);
+  const computePipelines = pipelines.slice(0, m.computePipelines.length) as GPUComputePipeline[];
+  const renderPipelines = pipelines.slice(m.computePipelines.length) as GPURenderPipeline[];
   const named = (g: Manifest["bindGroups"][number]) => g.entries.some((e) => "texture" in e);
   const group = (k: number, views: readonly GPUTextureView[]): GPUBindGroup => {
     const g = m.bindGroups[k]!;
@@ -357,7 +388,7 @@ export function command(pass: GPURenderPassEncoder, o: Objects, c: RenderPassDes
       const runs = plan[c.draw]!;
       if (runs.length === 0) return;
       pass.setPipeline(o.renderPipelines[c.pipeline]!);
-      for (const r of runs) pass.draw(r.vertices, r.instances, 0, r.first);
+      for (const r of runs) pass.draw(r.vertices, r.instances, 0, (c.instanceBase ?? 0) + r.first);
       return;
     }
   }

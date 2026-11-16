@@ -71,13 +71,14 @@ export class Slots {
     return slot;
   }
 
-  /** Give every leaf of these (CPU-evaluated) expressions a slot. */
-  register(roots: readonly Expr[]): void {
+  /** Give every leaf of these (CPU-evaluated) expressions a slot. Returns `leaves(roots)`, for callers that need it too. */
+  register(roots: readonly Expr[]): ReturnType<typeof leaves> {
     const l = leaves(roots);
     for (const s of l.inputs) this.input(s);
     for (const p of l.params) this.param(p);
     for (const r of l.rows) this.row(r);
     for (const t of l.tables) this.table(t);
+    return l;
   }
 
   /** A WGSL binding of leaves; free variables map through `vars` (name -> WGSL source), and an unknown one throws. */

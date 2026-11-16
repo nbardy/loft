@@ -13,7 +13,7 @@ pub enum Error {
     Manifest { path: PathBuf, source: serde_json::Error },
     #[error("{0}: not a Loft artefact (format \"{1}\")")]
     NotLoft(PathBuf, String),
-    #[error("{0}: artefact format version {1}; this loader reads versions 1 and 2")]
+    #[error("{0}: artefact format version {1}; this loader reads versions 1, 2 and 3")]
     Version(PathBuf, u32),
     #[error("{path}: bin/{name}.bin has {got} bytes; the manifest says {want}")]
     BlobLength { path: PathBuf, name: String, got: usize, want: usize },

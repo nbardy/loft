@@ -10,8 +10,9 @@ use std::collections::BTreeMap;
 
 pub const FORMAT: &str = "loft-artefact";
 /// The versions this loader reads: 2 adds `frame.replay` (a scene whose state keeps checkpoints) and pictures drawn off
-/// screen (sized textures, depth-only passes, pipelines with no fragment stage, `frame.copies`; docs/artefact_format.md).
-pub const VERSIONS: [u32; 2] = [1, 2];
+/// screen (sized textures, depth-only passes, pipelines with no fragment stage, `frame.copies`; docs/artefact_format.md);
+/// 3 adds a planned draw's `instanceBase` (shared draw shaders).
+pub const VERSIONS: [u32; 3] = [1, 2, 3];
 
 pub type Id = usize;
 
@@ -525,7 +526,13 @@ pub struct DepthAttachment {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DrawCommand {
     Fixed { pipeline: Id, vertices: u32, instances: u32 },
-    Planned { pipeline: Id, draw: usize },
+    /// `instance_base` (version 3, absent 0): added to every run's first instance; it picks a shared shader's row.
+    Planned {
+        pipeline: Id,
+        draw: usize,
+        #[serde(default, rename = "instanceBase")]
+        instance_base: u32,
+    },
 }
 
 #[derive(Debug, Deserialize)]
