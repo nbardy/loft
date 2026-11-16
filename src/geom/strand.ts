@@ -120,6 +120,11 @@ export class Strand extends Body implements Drawable {
  * `bulge` times. Its ends close by `tips`. It draws itself and carries body coordinates (m along, v round) for paint, a
  * skeleton for shadows, and a chart other things stand on (`sheetOn`, `rayOf`).
  *
+ * Which way v faces: v = 0.25 is the dorsal side (toward `up` at m = 0, carried along), 0.75 the belly, and v = 0 the
+ * side tangent x dorsal (a strand running +x with up +y: v = 0 faces +z, 0.5 faces -z). A spine along `up` itself has
+ * no dorsal direction from it and takes tangent x +z instead: a strand rising straight up has v = 0.25 facing +x and
+ * v = 0 facing -z.
+ *
  * Parameters: spine, girth, aspect and twist are functions of m (and of time, inputs, params), so the body moves and
  * swells; squareness, tips, stations, detail and up are fixed.
  *
