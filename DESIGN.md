@@ -1324,6 +1324,15 @@ Proposal: `docs/proposals/geometry_and_rays.md`, with the rulings of `docs/propo
   per segment per frame; about 3 per front pixel survive either culling), and the chain walk with the segment sphere
   cull measures the same or better with no tables. A mechanism must buy something, so the grid went. GPU counters
   put the exact tests at about 1 ms for the front pixels alone; the rest of the cost is unexplained by them.
+- **Not hidden fragments (2026-11-16).** Counted in the picture (every casting fragment stage returns 1/255 and
+  adds; the host unchanged, the device wrapped; Dawn's occlusion queries on Metal answer only 0 or 1): the crab's 64
+  castRay-calling draws shade 0.993 fragments per frame pixel visible, 1.062 passing the depth test in draw order,
+  1.305 rasterised. Overdraw 1.07, and early depth testing is defeated for one of them only (the reef's traced
+  impostors, `frag_depth`, `discard` and `sample_mask`); the other 63 neither write depth nor discard, and none
+  blends. A depth prepass could save at most about 6% of castRay's cost (0.6 ms of +8.9), so none was built. The
+  gap between the front pixels' count and the measured cost is not overdraw; what it is remains open (a SIMD
+  group runs an exact test when any of its lanes needs it, so the union over a group's lanes, not one lane's
+  count, is what a group pays: the next thing to count).
 - **Not ported (stop rules):** `draw.copies` (per-copy LOD, the `inkBack` depth offset, exact pixel size and the
   oriented box are not in the shared fragment) and `draw.field` (over `march` the nest differs on 4.8% of pixels,
   the inner silhouettes `march` does not ink, and its draw read 8.6 to 9.1 ms against 6.4 to 6.6). Both keep their
