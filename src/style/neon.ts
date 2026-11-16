@@ -4,9 +4,16 @@
 // body stands in it; the bodies' light is smeared down the water (`reflection`) and everything bright blooms (`bloom`).
 //
 // Composed of: pixelsInside, swellLines, contactFoam, printLayers, skyOf, reflection, bloom.
+//
+// Words a paint may say (`Painted`): `emits` IS the tube's light in `shade` and `ink` (default: today's `tubeOf` the
+// paint); a `scatter` answers each local light. `gloss` and `metal` are not read.
+//
+// Lights (src/light.ts): the light is the paint, and stays so; the sun is not read. A local light lifts the near-black
+// body by 0.35 of its colour times N.L, and lays a soft pool of its colour on the dark floor and the black glass, which
+// bloom carries.
 
 import { add, div, dot, exp, f, max, min, mix, mul, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
-import type { Rgb, Style } from "../style.ts";
+import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { contactFoam, foam, printLayers } from "./foam.ts";
 import { bloom, reflection } from "./post.ts";
 import { swellLines } from "./sea.ts";
@@ -26,6 +33,14 @@ function tubeOf(c: Expr<"vec3">): Expr<"vec3"> {
   return mul(mix(vec3(0.75, 0.88, 1), hue, smoothstep(0.04, 0.18, sub(hi, lo))), 1.6);
 }
 
+/** A soft pool in each local light's colour on the dark floor and the black glass; bloom carries it. */
+const pools = (ctx: Pick<ShadeCtx, "lights">, c: Expr<"vec3">): Expr<"vec3"> => ctx.lights("sum", (l, which) => {
+  switch (which) {
+    case "sun": return c;
+    case "local": return mul(l.amount, mul(saturate(l.toward.y), 0.5));
+  }
+});
+
 /**
  * The neon-tube style: a dark ground where each body is near black and its paint becomes a saturated light, shown as
  * the outline, an inner glow and a sheen. The water is black glass with faint violet swell lines and cyan rings round
@@ -40,22 +55,30 @@ export function neon(): Style {
     clear: NIGHT,
     post: [reflection({ gain: 0.12 }), bloom({ radius: 24, gain: 1.4, from: 0.25, to: 0.7 })],
     shade: (ctx) => {
-      const glow = tubeOf(ctx.base);
+      const glow = ctx.channel("emits", tubeOf(ctx.base));
       const tube = sub(1, smoothstep(1.5, 6, pixelsInside(ctx)));
       const fresnel = pow(sub(1, saturate(dot(ctx.normal, ctx.view))), 3);
-      return mul(add(mul(ctx.base, 0.035), mul(glow, add(mul(tube, 0.7), mul(fresnel, 0.3)))), sunk(ctx.depth));
+      const own = add(mul(ctx.base, 0.035), mul(glow, add(mul(tube, 0.7), mul(fresnel, 0.3))));
+      // Its light is the paint; a local light only lifts the near-black body a little (the tube still dominates).
+      const lifted = ctx.lights("sum", (l, which) => {
+        switch (which) {
+          case "sun": return own;
+          case "local": return mul(mul(ctx.scatter(l.toward, mul(ctx.base, saturate(dot(ctx.normal, l.toward)))), l.amount), 0.35);
+        }
+      });
+      return mul(lifted, sunk(ctx.depth));
     },
     mark: () => f(1),
-    ink: (ctx) => mul(tubeOf(ctx.base), sunk(ctx.depth)),
+    ink: (ctx) => mul(ctx.channel("emits", tubeOf(ctx.base)), sunk(ctx.depth)),
     water: (ctx) => {
       const lines = swellLines(ctx, { perWave: 4, width: [0.01, 0.03] });
       let c = add(rgb(WATER), mul(rgb(VIOLET), mul(lines.cover, 0.3)));
       c = printLayers(c, contactFoam(foam.rings({ count: 4, drift: 0.5 }), ctx, lines), { fill: CYAN, line: CYAN, edge: CYAN });
-      return vec4(mix(c, rgb(NIGHT), smoothstep(40, 180, ctx.distance)), 1);
+      return vec4(pools(ctx, mix(c, rgb(NIGHT), smoothstep(40, 180, ctx.distance))), 1);
     },
     shadow: (ctx) => vec4(0, 0, 0, mul(ctx.amount, 0.5)),
     sky: (ctx) => skyOf(SKY, ctx),
     // A plane is the dark floor; a cast shadow darkens it further.
-    ground: (ctx) => mul(rgb(WATER), sub(1, mul(ctx.shadow, 0.6))),
+    ground: (ctx) => pools(ctx, mul(rgb(WATER), sub(1, mul(ctx.shadow, 0.6)))),
   };
 }

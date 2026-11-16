@@ -13,8 +13,17 @@ an argument, in seconds, so any frame draws alone; `period` says when every moti
 surface's u and v run 0 to 1; paint is a function of them. Give every scene two cameras: the whole with room round
 it, and the focus. `strand`, `spiralTube`, `sheetOn`, `ropes` and `impostors` return things: put them in `things`. `coil`, `fan`,
 `sheet`, `lathe`, `loft` and `extrude` return a bare surface: draw it first, `draw.surface(name, surface, { paint, grid })`.
-One sun lights bodies (no other lights on them); water can mirror what stands on it (`reflection`, a post pass), bodies
-mirror nothing; no simulation; meshes come out (the bake command writes glTF), none go in. `loft` is `bun src/cli/main.ts`.
+Light is the sun (`sun: { toward, amount }` dims or colours it; amount 0 is a moonless night) and up to seven `lights`,
+each a function of a world point returning `{ toward, amount, distance?, size? }`, such as `lamp(at, { colour, reach })`.
+A light casts no shadow unless its function does (`castRay`); a glow lights nothing by itself. Paint may return an
+object: `base` (the colour) and words of your own, of which the styles know gloss (0 to 1), metal and emits (linear
+light); a style notes the words it does not read. Its `scatter` answers light from a direction, its `shade` changes
+the finished colour.
+Triangles your own code makes draw with `draw.mesh`; a solid you can intersect, with `draw.traced` (`march` traces a
+field). `recur` bakes a step (a flock, a grid) on the GPU into the files; it still reads as a function of time. `pass`
+is another camera's picture (a shadow map, a mirror) for an expression to read. `--samples 64 --shutter 0.05
+--aperture 0.1` makes a still with motion blur and depth of field. Meshes come out (the bake command writes glTF, skinned and
+animated if asked), none go in. `loft` is `bun src/cli/main.ts`.
 
 ```ts run
 // examples/reed.ts
@@ -65,7 +74,9 @@ be scored against (a part's pixels from a named camera, what is in front of what
 **Range in style: compose parts, write a part.** Presets (`toon`, `woodblock`, `biolume`, `papercraft`) are four looks,
 not range. Paint in body coordinates (`palette.countershade`, `palette.bands`, `palette.spot`, `tile`), choose which
 parts carry ink, make sky and ground part of the picture. A `Style` is a plain value: spread one and replace `shade`;
-a `post` pass changes the whole frame.
+a `post` pass changes the whole frame. Say what a thing is with a word in its paint or a `scatter` before you wrap the
+style; a `shade` that ignores the style's colour drops out of every restyle. Light a night by what is in it: a dim sun, and a `lamp`
+at the same point as the glow that shows it; check the subject is lit (`litBy`).
 
 **Shapes that read.** Large forms first, judged in flat paint; silhouette before detail; proportion and carriage are
 identity; detail in clusters, not spread evenly; contrast with what is behind decides whether a feature exists.
@@ -74,7 +85,8 @@ identity; detail in clusters, not spread evenly; contrast with what is behind de
 after (`anticipated`, `overshot`, `response`); loose parts lag (`dragged`, `swing`); nothing still or in step (`alive`,
 `uneven`); a pose struck and held (`struck`); arcs and weight (`arc`, `squash`, `impact`, `footing`, `carriage`,
 `gait`); temperament is timing (`dart`, `pendulum`); a warning before an action (`attack`, `telegraph`); then push it
-(`exaggerated`).
+(`exaggerated`). State only for what truly steps: a kick is a `jolt`, a trail is the thing at earlier times; `recur`
+a grid, a flock, contact.
 
 **Predict, then look.** Expressions run on the CPU (`compileJs`), so predict sizes and positions first and keep them as
 exported `checks` (`minScreenSize`, `staysInView`). Look at your render small, from its camera, as a silhouette and

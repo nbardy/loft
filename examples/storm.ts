@@ -40,7 +40,6 @@ const storm = medium("storm", {
   puffs: [...head.puffs, ...shaft, layer({ height: 0, thickness: 1.6, density: 0.01, colour: [0.36, 0.4, 0.47] })],
     // A fog bank rolling in from the west: fog beyond x = -45, a soft wall a few units thick.
   banks: [bank({ height: 0, thickness: 5, density: 0.05, colour: [0.3, 0.33, 0.4], edge: { through: [-45, 0], clear: [1, 0.25], softness: 4 } })],
-  flashes: [boltFlash(strike, { power: 6, colour: S.flashColour, reach: 14, lift: 3 }), sheet.flash],
 });
 const cloud = draw.density("thunderhead", storm, {
   bounds: unionBox([head.bounds, { min: [-260, -1, -260], max: [260, 9, 260] }]),
@@ -94,6 +93,8 @@ export default scene({
     shadow: [0.36, 0.36, 0.6],
   }),
   sun: [-0.55, 0.5, 0.65],
+  // The bolt and the sheet lightning light the cloud, the serpent and the sea.
+  lights: [boltFlash(strike, { power: 6, colour: S.flashColour, reach: 14, lift: 3 }), sheet.flash],
   cameras: {
     three: { kind: "perspective", eye: [36, 7, 40], target: [-3, 14, -10], fovY: 0.9 },
     front: { kind: "perspective", eye: [48, 5, 2], target: [0, 13, -10], fovY: 0.85 },

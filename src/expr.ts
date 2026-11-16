@@ -165,6 +165,9 @@ export type Loop = {
   readonly step: (state: readonly Expr[], i: Expr<"f32">) => readonly Expr[];
   /** The final state, one expression per component (the loop's results). */
   readonly results: readonly Expr[];
+  /** `until` as authored and applied to `next`: true ends the loop after that step. Absent: all `count` steps run. */
+  readonly until: ((state: readonly Expr[]) => Expr<"bool">) | undefined;
+  readonly stop: Expr<"bool"> | undefined;
 };
 
 /** The node kinds. Exported so other modules (differentiation, analysis) can walk the graph; build nodes only through the constructors below. */
@@ -405,8 +408,11 @@ let nextLoop = 0;
  * The state is a small tuple of numeric expressions; `step(state, i)` returns the next state (same types), with `i`
  * the iteration number 0, 1, ... as an f32. `count` may be an expression (it is truncated to an integer), so the depth
  * of a fold can depend on distance. Pure: the step is a function of the state and the index.
+ *
+ * `until(state)`, when given, is tested on the state each step makes: true ends the loop there (a `break` in WGSL and
+ * in the JavaScript twin), so a march stops at its hit instead of paying all its steps. `count` stays the cap.
  */
-export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S): S {
+export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">, init: S, step: (state: S, i: Expr<"f32">) => S, until?: (state: S) => Expr<"bool">): S {
   const id = nextLoop++;
   // A bool state would type-check through `as` casts; the loop's locals are numbers.
   const state = init.map((e, j) => {
@@ -417,21 +423,24 @@ export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">
   const next = step(state as unknown as S, index);
   if (next.length !== init.length) throw new Error(`iterate: step returned ${next.length} components, the state has ${init.length}`);
   next.forEach((e, j) => { if (e.ty !== init[j].ty) throw new Error(`iterate: state component ${j} is ${init[j].ty} but the step returned ${e.ty}`); });
+  const stop = until === undefined ? undefined : until(next);
+  if (stop !== undefined && (stop.ty as Ty) !== "bool") throw new Error(`iterate: until must return a bool, got ${stop.ty}`);
+  const body: readonly Expr[] = stop === undefined ? next : [...next, stop];
   // Inner: depends (transitively) on this loop's variables. Outer: read by the body but computed before the loop.
   const own = new Set<number>([index.id, ...state.map((v) => v.id)]);
   const dependent = new Set<number>();
   const inner: Expr[] = [];
   const outer = new Map<number, Expr>();
-  for (const e of topo(next)) {
+  for (const e of topo(body)) {
     if (own.has(e.id)) continue;
     if (children(e).some((c) => own.has(c.id) || dependent.has(c.id))) { dependent.add(e.id); inner.push(e); }
   }
   for (const e of inner) for (const c of children(e)) if (!own.has(c.id) && !dependent.has(c.id)) outer.set(c.id, c);
-  for (const e of next) if (!own.has(e.id) && !dependent.has(e.id)) outer.set(e.id, e);
+  for (const e of body) if (!own.has(e.id) && !dependent.has(e.id)) outer.set(e.id, e);
   const results: Expr[] = [];
   const loop: Loop = {
     id, count: lift<"f32">(count), init, state, index, next, inner, outer: [...outer.values()],
-    step: step as unknown as Loop["step"], results,
+    step: step as unknown as Loop["step"], results, until: until as unknown as Loop["until"], stop,
   };
   init.forEach((e, k) => results.push(Expr.make({ op: "iterate", ty: e.ty as NumTy, loop, k }, `I:${id}:${k}`)));
   return results as unknown as S;
@@ -518,15 +527,61 @@ interface Unary {
   (a: Lit): Expr<VecTy>;
   <A extends NumTy = "f32">(a: Expr<A> | number | Lit): Expr<A>;
 }
+/** The type an operand would lift to, without lifting it (lifting a plain array interns a node). */
+const tyOf = (x: In<NumTy>): Ty => (x instanceof Expr ? x.ty : typeof x === "number" ? "f32" : TY_OF_SIZE[(x as readonly number[]).length]!);
+/**
+ * A plain array of ones (not the number 1, not a constant expression: the library multiplies by those in many shaders,
+ * and folding them would change every scene's text).
+ */
+const isOne = (x: In<NumTy>): boolean => Array.isArray(x) && x.every((c) => c === 1);
+/** A constant `k` in every component: a number, an array, or a constant expression. */
+const isConst = (x: In<NumTy>, k: number): boolean =>
+  x instanceof Expr ? x.node.op === "const" && x.node.v.every((c) => c === k) : typeof x === "number" ? x === k : (x as readonly number[]).every((c) => c === k);
+const isZero = (x: In<NumTy>): boolean => isConst(x, 0) && identities > 0;
+
+/**
+ * How many `withIdentities` calls are open. The three identities (mul by 0, add of 0, mix at 0 or 1) are exact for
+ * finite operands, but applied library-wide they removed nodes in geometry (crest.ts, map/surface.ts, grid_detail.ts)
+ * whose absence changed the GPU's rounding of vertex positions: serpent in papercraft, sketch and neon moved by up to
+ * 10 levels in a few hundred pixels (2026-11-14). So they hold only while a style's body functions are built, which
+ * is where "a channel no paint gives costs nothing" needs them (materials.md section 7's stated fallback).
+ */
+let identities = 0;
+/** `f`, built with the identities on (src/compile/scene_wgsl.ts, src/draw/painted.ts and the style's one recorded evaluation). */
+export function withIdentities<T>(f: () => T): T {
+  identities++;
+  try { return f(); } finally { identities--; }
+}
+/** The zero of a numeric type. */
+const zeroOf = (ty: NumTy): Expr => constant(ty, Array(SIZE[ty]).fill(0));
 const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b])) as Binary;
 const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
-/** `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one. */
-export const add = binary("add");
+/**
+ * `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one. Adding a constant
+ * 0 returns the other operand when that already has the sum's type (x + 0 = x exactly).
+ */
+export const add: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+  if (isZero(b) && tyOf(a) === wider("add", tyOf(a), tyOf(b))) return lift(a);
+  if (isZero(a) && tyOf(b) === wider("add", tyOf(a), tyOf(b))) return lift(b);
+  return addCall(a, b);
+}) as Binary;
+const addCall = binary("add");
 /** `sub(a, b)`: a - b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const sub = binary("sub");
 /** `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component. */
-export const mul = binary("mul");
+export const mul: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+  // x * 0 = 0 for finite x (materials.md section 4): the zero of the product's type, so a channel no paint gives (a
+  // default of 0) removes its whole term before anything is emitted.
+  if (isZero(a) || isZero(b)) return zeroOf(wider("mul", tyOf(a), tyOf(b)));
+  // x * [1, 1, 1] = x exactly (NaN and infinities included): return the other operand when it already has the
+  // product's type. Checked before anything is lifted, so a multiply by the full sun's amount (src/light.ts) creates no
+  // node and every shader written before that amount existed keeps its text.
+  if (isOne(b) && tyOf(a) === wider("mul", tyOf(a), tyOf(b))) return lift(a);
+  if (isOne(a) && tyOf(b) === wider("mul", tyOf(a), tyOf(b))) return lift(b);
+  return mulCall(a, b);
+}) as Binary;
+const mulCall = binary("mul");
 /** `div(a, b)`: a / b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const div = binary("div");
 /** `min(a, b)`: the smaller of a and b, componentwise; a scalar operand is applied to every component. */
@@ -582,7 +637,12 @@ export function mix(a: Lit, b: Lit, t: In<NumTy>): Expr<VecTy>;
 export function mix<A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, t: In<NumTy>): Expr<Wider<A, B>>;
 export function mix(a: In<NumTy>, b: In<NumTy>, t: In<NumTy>): Expr {
   // The blend factor may be the only vector: the result is then a vector too.
-  return call("mix", wider("mix", lift(a).ty, lift(b).ty, lift(t).ty), [a, b, t]);
+  const ty = wider("mix", tyOf(a), tyOf(b), tyOf(t));
+  // a (1 - 0) + b 0 = a and a 0 + b 1 = b for finite operands: the end the constant factor picks, when it already has
+  // the result's type (a default of 0 or 1 costs nothing).
+  if (isZero(t) && tyOf(a) === ty) return lift(a);
+  if (isConst(t, 1) && identities > 0 && tyOf(b) === ty) return lift(b);
+  return call("mix", ty, [a, b, t]);
 }
 /** `clamp(x, lo, hi)`: x limited to the range from lo to hi, componentwise; lo and hi may be scalars. */
 export function clamp(x: number, lo: number, hi: number): Expr<"f32">;
@@ -893,6 +953,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
     // Read every next value before assigning any: a step may return one state variable as another (a swap).
     l.next.forEach((e, j) => body.push(`let ${L}n${j}: ${WGSL_TY[e.ty]} = ${ref(e)};`));
     l.next.forEach((_, j) => body.push(`${L}s${j} = ${L}n${j};`));
+    if (l.stop !== undefined) body.push(`if (${ref(l.stop)}) { break; }`);
     lines.push(...body.map((b) => `  ${b}`), "}");
     // The body's names are scoped to the loop.
     for (const e of [...l.inner, ...l.state, l.index]) names.delete(e.id);
@@ -950,7 +1011,8 @@ export function replace(roots: readonly Expr[], by: ReadonlyMap<number, Expr>): 
       let made = loops.get(n.loop.id);
       if (!made) {
         const l = n.loop;
-        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => replace(l.step(s, i), by) as Expr<NumTy>[]);
+        const u = l.until;
+        made = iterate(done.get(l.count.id) as Expr<"f32">, l.init.map((x) => done.get(x.id)! as Expr<NumTy>), (s, i) => replace(l.step(s, i), by) as Expr<NumTy>[], u === undefined ? undefined : (s) => replace([u(s)], by)[0] as Expr<"bool">);
         loops.set(n.loop.id, made);
       }
       done.set(e.id, made[n.k]);
@@ -1137,6 +1199,7 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
     // Read every next value before assigning any (a step may swap state components).
     const nexts = l.next.map((e) => comps.get(e.id)!.map((c) => (typeof c === "string" ? local(c) : c)));
     l.next.forEach((e, j) => stateNames[j].forEach((name, k) => body.push(`${name} = ${src(at(nexts[j], k))};`)));
+    if (l.stop !== undefined) { const s = comps.get(l.stop.id)![0]!; body.push(`if (${src(s)}) break;`); }
     outer.push(...body.map((b) => `  ${b}`), "}");
     body = outer;
     for (const e of [...l.inner, ...l.state, l.index]) comps.delete(e.id);
@@ -1297,8 +1360,11 @@ export function fold(roots: readonly Expr[]): Expr[] {
     let v: Known;
     try { v = foldNode(e, (x) => foldedValue.get(x.id)); } catch { v = undefined; }
     let out: Expr;
+    // A value that overflows f32 is still known (a parent may be finite: x / inf = 0, as the GPU computes it), but it
+    // is never emitted: WGSL has no literal for it, and a const-expression that overflows is refused when the shader is
+    // created (Planck's law at 300 K, examples/materials/poker.ts, 2026-11-14).
+    if (v !== undefined) foldedValue.set(e.id, v);
     if (v !== undefined && v.every((x) => typeof x === "boolean" || Number.isFinite(x))) {
-      foldedValue.set(e.id, v);
       out = e.node.op === "const" ? e : constant(e.ty, v.map((x) => (typeof x === "boolean" ? (x ? 1 : 0) : x)));
       foldedValue.set(out.id, v);
     } else if (to.every((k, i) => k === kids[i])) {
@@ -1308,7 +1374,8 @@ export function fold(roots: readonly Expr[]): Expr[] {
       let made = foldedLoops.get(n.loop.id);
       if (!made) {
         const l = n.loop;
-        made = iterate(visit(l.count) as Expr<"f32">, l.init.map((x) => visit(x) as Expr<NumTy>), (st, i) => fold(l.step(st, i)) as Expr<NumTy>[]);
+        const u = l.until;
+        made = iterate(visit(l.count) as Expr<"f32">, l.init.map((x) => visit(x) as Expr<NumTy>), (st, i) => fold(l.step(st, i)) as Expr<NumTy>[], u === undefined ? undefined : (st) => fold([u(st)])[0] as Expr<"bool">);
         foldedLoops.set(n.loop.id, made);
       }
       out = made[n.k]!;

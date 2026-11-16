@@ -1,22 +1,23 @@
 // The WGSL every shader shares (`Artefact.sceneWgsl`): the tables' bindings and accessors, the ground's height field
 // (`sea_height`, whatever the ground: src/draw/ground.ts), the style's functions and small helpers. Module-scope WGSL is order-independent, so the parts are simply concatenated.
 
-import { lift, variable, vec2, type Expr } from "../expr.ts";
+import { lift, variable, vec2, withIdentities, type Expr } from "../expr.ts";
 import { levelOf, type Ground } from "../draw/ground.ts";
 import { shadeVariables, type Style } from "../style.ts";
-import { sunDir, type Sun } from "../sun.ts";
+import { foldAt, sunDir, sunOnly, type Lighting } from "../light.ts";
 import { emitFn, type Slots } from "./bind.ts";
 
 export const lit = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 export const vec3Lit = (v: readonly number[]): string => `vec3<f32>(${v.map(lit).join(", ")})`;
 
 /** The style's and the ground's functions. Emitted once, before the drawables' shared code is collected. */
-export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: readonly [number, number, number], at: Sun): string {
+export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: readonly [number, number, number], lighting: Lighting): string {
+  const at = lighting.sun;
   const c = <T extends "f32" | "vec3">(name: string, ty: T) => variable(`c_${name}`, ty);
-  const shadeCtx = shadeVariables(sunDir(at));
+  const shadeCtx = shadeVariables(lighting, style);
   // A style that prints its shadow as a block afterwards (`Style.block`) gives the bodies its colour before the block;
   // `style.shade` stays the whole colour for whatever shades a fragment on its own (a smear).
-  const body = style.block === undefined ? style.shade(shadeCtx) : style.block.body(shadeCtx);
+  const body = withIdentities(() => (style.block === undefined ? style.shade(shadeCtx) : style.block.body(shadeCtx)));
   const shadeArgs = [["c_base", "vec3"], ["c_normal", "vec3"], ["c_view", "vec3"], ["c_world", "vec3"], ["c_depth", "f32"], ["c_uv", "vec2"], ["c_anchor", "vec3"], ["c_id", "f32"]] as const;
   const layerCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), amount: c("amount", "f32") };
   const layerArgs = [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_amount", "f32"]] as const;
@@ -27,7 +28,7 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
     switch (ground.kind) {
       case "sea": return [emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0])];
       case "plane": {
-        const groundCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), sun: lift<"vec3">(sunDir(at)), shadow: c("shadow", "f32") };
+        const groundCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), sun: lift<"vec3">(sunDir(at)), shadow: c("shadow", "f32"), lights: foldAt(lighting, c("world", "vec3")) };
         return [emitFn(slots, "ground_colour", [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_shadow", "f32"]], "vec3<f32>", [style.ground(groundCtx)], (v) => v[0])];
       }
       case "nothing": return [];
@@ -44,10 +45,10 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
     emitFn(slots, "sea_height", [["xz", "vec2"]], "f32", [levelOf(ground)(xz)], (v) => v[0]),
     emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [gradient()], (v) => v[0]),
     emitFn(slots, "shade", shadeArgs, "vec3<f32>", [body], (v) => v[0]),
-    emitFn(slots, "ink", shadeArgs, "vec3<f32>", [style.ink(shadeCtx)], (v) => v[0]),
-    emitFn(slots, "mark", shadeArgs, "f32", [style.mark(shadeCtx)], (v) => v[0]),
+    emitFn(slots, "ink", shadeArgs, "vec3<f32>", [withIdentities(() => style.ink(shadeCtx))], (v) => v[0]),
+    emitFn(slots, "mark", shadeArgs, "f32", [withIdentities(() => style.mark(shadeCtx))], (v) => v[0]),
     ...onGround(),
-    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)) })], (v) => v[0]),
+    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)), lights: foldAt(sunOnly(lighting), c("dir", "vec3")) })], (v) => v[0]),
     emitFn(slots, "outline_world", [], "f32", [style.outline], (v) => v[0]),
   ].join("\n");
 }

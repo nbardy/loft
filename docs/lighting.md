@@ -126,11 +126,46 @@ loaders already read). No new pass, texture or uniform; `docs/artefact_format.md
 
 ## The sun
 
-`scene({ sun: movable([0.15, 0.8, 0.6]) })` (`src/sun.ts`) makes the sun the host input `sun`, that direction its
+`scene({ sun: movable([0.15, 0.8, 0.6]) })` (`src/light.ts`) makes the sun the host input `sun`, that direction its
 default: `--input sun=x,y,z`, `--sweep sun=a..b` on a clip, or a game writing the input. A bare vector is a fixed sun,
 a literal in every shader, as before. The crab and the lineup use a movable sun; their default pictures are the same
 to the bit. A cloud's own light tables (`src/soft/`) are made on the CPU from the stated direction and do not follow a
 moved sun.
+
+`sun: { toward, amount }` states the sun's strength: a linear colour, 1 the sun at noon. A moon is a dim blue amount
+(`[0.06, 0.07, 0.14]`); a night lit only by what is in it is `amount: [0, 0, 0]`, which keeps the key direction (the
+print's terminator, the sky's disc and the cast-shadow block are drawn from it) and adds no light. A bare vector or
+`movable` is the sun at full strength, and a scene that states nothing keeps its shader text byte for byte.
+
+## Lights
+
+A light is a function of a world point (`Light`, `src/light.ts`): `(p) => ({ toward, amount, distance?, size? })`,
+the unit direction toward the light, the light arriving as a linear colour, how far away it is (absent: at infinity),
+how wide it looks (only a still or a soft shadow reads it). `scene({ lights: [...] })` takes at most 7 besides the
+sun, each a term in every lit fragment's shader (about 0.05 ms a light on the crab's bodies in toon, measured
+2026-11-14), and refuses an eighth by name with the fix: one function for many sources, as a row by repetition
+(`examples/light/road.ts`). `lamp(at, { colour, reach })` is the common one: colour x reach^2 / (reach^2 + d^2) x
+(1 - x^2)^2, x = d / (4 reach), half of `colour` at `reach`, nothing past 4 reaches (the law `flash` had; `flash` is
+gone and `boltFlash`, `sheetFlash` return lamps). Lights cast no shadows unless their function computes one; a glow
+lights nothing by itself (write one `const` for where it is and hand it to both the glow and the lamp).
+
+A style never sees a list: each shading context offers one fold, `ctx.lights(combine, term)`, where `term(lit, which)`
+says what one light does (`which` is "sun" or "local", a fact of the build) and `combine` ("sum" or "largest") how the
+terms join. With no lights it returns the sun's term itself. The sky's context holds the sun alone. A medium (a cloud)
+is lit by the same lights on the CPU, at its blobs' centres.
+
+In a recipe every treatment that reads a key reads the union over lights, the distance-field algebra applied to "lit":
+
+    turn = max(turn_sun, max_i min(N.L_i - at, lum(amount_i) - pool))
+
+so a lamp prints as a hard pool whose edge is where the luminance arriving is `pool` (0.1 by default, a recipe
+number: two reaches from a lamp of colour 1), its ink tinted by the lamp's hue. The sun is cut the same way only when
+its amount is stated. The `offLens` and `camera` keys apply to the sun only. How each built-in style prints lights is
+the "Lights" paragraph at the top of its file; in short: toon in rings (where 0.1 and 0.3 arrive), woodblock and
+sketch in cut pools, biolume and neon softly, papercraft a facet at a time.
+
+`litBy(light, body, { least, from?, to?, at? })` checks on the CPU that a stretch of a body receives at least `least`
+in luminance: the subject in the dark is the night scene's commonest failure. Scenes: `examples/light/`.
 
 ## Limits
 

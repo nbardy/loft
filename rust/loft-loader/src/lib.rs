@@ -19,7 +19,7 @@ mod read;
 pub use manifest::Camera;
 pub use read::{read_dir, Artefact, Error};
 
-use manifest::{BoundsRead, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
+use manifest::{BoundsRead, Dispatch, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
 use plan::{Memory, Run};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -95,7 +95,8 @@ pub struct Loft {
 }
 
 struct PassOps {
-    color: wgpu::Operations<wgpu::Color>,
+    /// None: a pass with no colour attachment (version 2's depth passes).
+    color: Option<wgpu::Operations<wgpu::Color>>,
     depth: Option<wgpu::Operations<f32>>,
 }
 
@@ -245,11 +246,12 @@ impl Loft {
             .into_iter()
             .collect::<Result<_, _>>()?;
         let render = par_map(&m.render_pipelines, |p| {
-                let (vc, fc) = (constants(&p.vertex.constants), constants(&p.fragment.stage.constants));
+                let vc = constants(&p.vertex.constants);
+                let fc = p.fragment.as_ref().map(|f| constants(&f.stage.constants)).unwrap_or_default();
                 let targets: Vec<Option<wgpu::ColorTargetState>> = p
                     .fragment
-                    .targets
                     .iter()
+                    .flat_map(|f| &f.targets)
                     .map(|t| {
                         Some(wgpu::ColorTargetState {
                             format: t.format.wgpu(),
@@ -268,9 +270,10 @@ impl Loft {
                             compilation_options: wgpu::PipelineCompilationOptions { constants: &vc, ..Default::default() },
                             buffers: &[],
                         },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &modules[p.fragment.stage.module],
-                            entry_point: Some(&p.fragment.stage.entry_point),
+                        // No fragment stage: a depth pass's pipeline draws depth from its triangles alone (version 2).
+                        fragment: p.fragment.as_ref().map(|f| wgpu::FragmentState {
+                            module: &modules[f.stage.module],
+                            entry_point: Some(&f.stage.entry_point),
                             compilation_options: wgpu::PipelineCompilationOptions { constants: &fc, ..Default::default() },
                             targets: &targets,
                         }),
@@ -383,7 +386,8 @@ impl Loft {
             .iter()
             .zip(&self.m.textures)
             .map(|(d, t)| {
-                let extent = wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 };
+                let (width, height) = manifest::TextureSize::pixels(t.size, size);
+                let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
                 device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), size: extent, ..d.clone() }).create_view(&Default::default())
             })
             .collect();
@@ -421,6 +425,9 @@ impl Loft {
             return Err(Error::TimeInput);
         }
         let i = self.m.inputs.iter().find(|i| i.name == name).ok_or_else(|| Error::UnknownName { kind: "input", name: name.into() })?;
+        if self.m.frame.replay.iter().any(|r| r.slot == i.slot) {
+            return Err(Error::Invalid(format!("view input \"{name}\": a replay's step number, which the loader sets from the time")));
+        }
         if value.len() != i.ty.floats() {
             return Err(Error::InputFloats { name: name.into(), want: i.ty.floats(), got: value.len() });
         }
@@ -474,6 +481,10 @@ impl Loft {
         if let Some(t) = self.m.inputs.iter().find(|i| i.name == "time") {
             self.inputs[t.slot] = self.time as f32;
         }
+        // The step each replay replays to, from the time, so the GPU and every other host agree on it exactly.
+        for r in &self.m.frame.replay {
+            self.inputs[r.slot] = r.step(self.time).0 as f32;
+        }
         for w in &self.m.frame.writes {
             let (buffer, data) = match *w {
                 FrameWrite::Frame { buffer } => (buffer, bytes(&camera::frame_uniform(&mats, width, height, self.time))),
@@ -495,7 +506,7 @@ impl Loft {
             (BoundsRead::Read { .. }, Read::InFlight(_)) | (BoundsRead::None, _) => false,
         };
         let mut pose = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft pose") });
-        if !self.m.frame.pose.is_empty() {
+        if !self.m.frame.pose.is_empty() || !self.m.frame.replay.is_empty() {
             let timestamp_writes = self.timestamps.as_ref().map(|t| wgpu::ComputePassTimestampWrites {
                 query_set: &t.set,
                 beginning_of_pass_write_index: Some(0),
@@ -503,6 +514,10 @@ impl Loft {
             });
             let mut pass = pose.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft pose"), timestamp_writes });
             self.encode_pose(&mut pass);
+        }
+        // Each pass's camera, from its table into its frame uniform, before any pass draws (version 2).
+        for c in &self.m.frame.copies {
+            pose.copy_buffer_to_buffer(&self.buffers[c.from], c.from_offset, &self.buffers[c.to], 0, Some(c.bytes));
         }
         if let (true, BoundsRead::Read { buffer, grids }) = (copy, &self.m.frame.bounds) {
             for g in grids {
@@ -537,16 +552,28 @@ impl Loft {
         Ok(FrameStats { triangles, draws, gpu_wait })
     }
 
-    /// The pose dispatches, in order, into an open compute pass (the frame's state must have been written).
+    /// The replays and then the pose dispatches, in order, into an open compute pass (the frame's state must have been
+    /// written: the replays' step numbers with it).
     pub fn encode_pose(&self, pass: &mut wgpu::ComputePass) {
-        for d in &self.m.frame.pose {
-            pass.set_pipeline(&self.compute[d.pipeline]);
-            for (i, &g) in d.bind_groups.iter().enumerate() {
-                // Pose groups name no texture (checked at load).
-                pass.set_bind_group(i as u32, self.fixed_groups[g].as_ref(), &[]);
+        for r in &self.m.frame.replay {
+            let (_, k) = r.step(self.time);
+            self.dispatch(pass, &r.first);
+            for j in 1..=k {
+                self.dispatch(pass, if j % 2 == 1 { &r.ping } else { &r.pong });
             }
-            pass.dispatch_workgroups(d.workgroups, 1, 1);
         }
+        for d in &self.m.frame.pose {
+            self.dispatch(pass, d);
+        }
+    }
+
+    fn dispatch(&self, pass: &mut wgpu::ComputePass, d: &Dispatch) {
+        pass.set_pipeline(&self.compute[d.pipeline]);
+        for (i, &g) in d.bind_groups.iter().enumerate() {
+            // Pose groups name no texture (checked at load).
+            pass.set_bind_group(i as u32, self.fixed_groups[g].as_ref(), &[]);
+        }
+        pass.dispatch_workgroups(d.workgroups, 1, 1);
     }
 
     /// Completes the bounds read in flight: waiting for it (`wait`), or only if it is done. Returns the time waited.
@@ -584,15 +611,16 @@ impl Loft {
                 beginning_of_pass_write_index: Some(2 + 2 * k as u32),
                 end_of_pass_write_index: Some(3 + 2 * k as u32),
             });
-            let color = wgpu::RenderPassColorAttachment {
-                view: view(p.color.view),
+            let color = p.color.as_ref().zip(ops.color).map(|(c, ops)| wgpu::RenderPassColorAttachment {
+                view: view(c.view),
                 depth_slice: None,
-                resolve_target: p.color.resolve_target.map(view),
-                ops: ops.color,
-            };
+                resolve_target: c.resolve_target.map(view),
+                ops,
+            });
+            let colors: &[Option<wgpu::RenderPassColorAttachment>] = match &color { Some(_) => std::slice::from_ref(&color), None => &[] };
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&p.label),
-                color_attachments: &[Some(color)],
+                color_attachments: colors,
                 depth_stencil_attachment: p.depth.as_ref().map(|d| wgpu::RenderPassDepthStencilAttachment {
                     view: &sized.views[d.view],
                     depth_ops: ops.depth,
@@ -611,14 +639,14 @@ impl Loft {
                         rp.set_pipeline(&self.render[pipeline]);
                         rp.draw(0..vertices, 0..instances);
                     }
-                    DrawCommand::Planned { pipeline, draw } => {
+                    DrawCommand::Planned { pipeline, draw, instance_base } => {
                         let runs = &self.plan[draw];
                         if runs.is_empty() {
                             continue;
                         }
                         rp.set_pipeline(&self.render[pipeline]);
                         for r in runs {
-                            rp.draw(0..r.vertices, r.first..r.first + r.instances);
+                            rp.draw(0..r.vertices, instance_base + r.first..instance_base + r.first + r.instances);
                         }
                     }
                 }
@@ -659,7 +687,9 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     for p in &m.render_pipelines {
         id(&p.label, "pipeline layout", p.layout, m.pipeline_layouts.len())?;
         id(&p.label, "module", p.vertex.module, m.modules.len())?;
-        id(&p.label, "module", p.fragment.stage.module, m.modules.len())?;
+        if let Some(f) = &p.fragment {
+            id(&p.label, "module", f.stage.module, m.modules.len())?;
+        }
     }
     id("curves", "buffer", m.curves.buffer, m.buffers.len())?;
     id("loft_detail", "buffer", m.frame.detail.buffer, m.buffers.len())?;
@@ -667,7 +697,7 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
         let (FrameWrite::Frame { buffer } | FrameWrite::Inputs { buffer } | FrameWrite::Params { buffer }) = *w;
         id("frame write", "buffer", buffer, m.buffers.len())?;
     }
-    for d in &m.frame.pose {
+    for d in m.frame.pose.iter().chain(m.frame.replay.iter().flat_map(|r| [&r.first, &r.ping, &r.pong])) {
         id(&d.label, "compute pipeline", d.pipeline, m.compute_pipelines.len())?;
         for &g in &d.bind_groups {
             id(&d.label, "bind group", g, m.bind_groups.len())?;
@@ -675,6 +705,10 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
                 return Err(Error::BadId { what: format!("{} (a pose group must name no texture)", d.label), kind: "bind group", id: g });
             }
         }
+    }
+    for c in &m.frame.copies {
+        id("frame copy", "buffer", c.from, m.buffers.len())?;
+        id("frame copy", "buffer", c.to, m.buffers.len())?;
     }
     if let BoundsRead::Read { buffer, grids } = &m.frame.bounds {
         id("bounds", "buffer", *buffer, m.buffers.len())?;
@@ -718,28 +752,32 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
         .passes
         .iter()
         .map(|p| {
-            target(&p.label, p.color.view)?;
-            p.color.resolve_target.map_or(Ok(()), |t| target(&p.label, t))?;
+            if let Some(c) = &p.color {
+                target(&p.label, c.view)?;
+                c.resolve_target.map_or(Ok(()), |t| target(&p.label, t))?;
+            }
             for &g in &p.bind_groups {
                 id(&p.label, "bind group", g, m.bind_groups.len())?;
             }
             for c in &p.commands {
                 match *c {
                     DrawCommand::Fixed { pipeline, .. } => id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?,
-                    DrawCommand::Planned { pipeline, draw } => {
+                    DrawCommand::Planned { pipeline, draw, .. } => {
                         id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?;
                         id(&p.label, "planned draw", draw, m.plan.len())?;
                     }
                 }
             }
-            let c = &p.color;
-            let color = wgpu::Operations {
-                load: match (c.load_op, c.clear_value) {
-                    (LoadOp::Load, _) => wgpu::LoadOp::Load,
-                    (LoadOp::Clear, Some([r, g, b, a])) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
-                    (LoadOp::Clear, None) => return Err(Error::ClearWithoutValue(p.label.clone(), "clearValue")),
-                },
-                store: c.store_op.wgpu(),
+            let color = match &p.color {
+                None => None,
+                Some(c) => Some(wgpu::Operations {
+                    load: match (c.load_op, c.clear_value) {
+                        (LoadOp::Load, _) => wgpu::LoadOp::Load,
+                        (LoadOp::Clear, Some([r, g, b, a])) => wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }),
+                        (LoadOp::Clear, None) => return Err(Error::ClearWithoutValue(p.label.clone(), "clearValue")),
+                    },
+                    store: c.store_op.wgpu(),
+                }),
             };
             let depth = match &p.depth {
                 None => None,

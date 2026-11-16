@@ -24,7 +24,7 @@ import { add, fetch, gt, lift, listOf, lt, select, vec4, type Expr, type MapRun,
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Shader } from "../compile/context.ts";
 import type { BlockCast, BlockOverlap, ShadowBlock } from "../style.ts";
-import { sunDir } from "../sun.ts";
+import { sunDir } from "../light.ts";
 import { lit, vec3Lit } from "../compile/scene_wgsl.ts";
 import { casters } from "./shadows.ts";
 
@@ -236,7 +236,7 @@ ${FULL_VS}
 export const light: Drawable = {
   name: NAME,
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws(ctx: CompileContext): Emitted {
     const b = ctx.style.block;
     if (b === undefined) throw new Error(`${NAME}: the scene's style prints no shadow block (it is added by scene() for a style that has one)`);

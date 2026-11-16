@@ -4,8 +4,14 @@
 // swell's lines drawn across it, white water outlined, a cast shadow hatched; the sky is the bare sheet.
 //
 // Composed of: litBodies, light.hatch, weighted, swellLines, contactFoam, marksFoam, printLayers, paperGrain.
+//
+// Words a paint may say (`Painted`): none are read (graphite on paper).
+//
+// Lights (src/light.ts): through `litBodies`, a lamp's pool is paper left among the hatching. The plane takes a light
+// graphite tone under a stated sun dimmer than the pool, and each local light's pool is left as paper. The water does
+// not read lights.
 
-import { abs, add, fract, mix, mul, param, smoothstep, sub, vec4 } from "../expr.ts";
+import { abs, add, fract, min, mix, mul, param, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { Rgb, Style } from "../style.ts";
@@ -20,6 +26,11 @@ const PAPER: Rgb = [0.95, 0.93, 0.88];
 const GRAPHITE: Rgb = [0.17, 0.17, 0.2];
 /** White water is left as paper and outlined; ridge foam's softer edge is graphite too. */
 const FOAM: Record<FoamInk, Rgb> = { fill: PAPER, line: GRAPHITE, edge: GRAPHITE };
+
+/** Whether the scene states the sun's amount (the full sun's is the literal [1, 1, 1]: src/light.ts). */
+const stated = (amount: In<"vec3">): boolean => !(Array.isArray(amount) && amount.every((c) => c === 1));
+/** How much of a light arrives past the recipe's pool (0.1). */
+const inPool = (amount: In<"vec3">): Expr<"f32"> => sub(luminance(amount), 0.1);
 
 /**
  * The graphite-on-paper style: no flat colour, a body is bare paper with its form drawn by hatching, a thin outline
@@ -44,8 +55,14 @@ export function sketch(): Style {
     clear: PAPER,
     post: [paperGrain({ fibre: 0.05, tooth: 0.09 })],
     sky: () => rgb(PAPER),
-    // A plane is the bare sheet; a cast shadow is a graphite tone on it.
-    ground: (ctx) => mix(rgb(PAPER), rgb(GRAPHITE), mul(ctx.shadow, 0.35)),
+    // A plane is the bare sheet; a cast shadow is a graphite tone on it. Under a stated sun dimmer than the pool the
+    // sheet takes a light graphite tone, and each local light's pool is left as paper.
+    ground: (ctx) => ctx.lights("largest", (l, which) => {
+      switch (which) {
+        case "sun": return stated(l.amount) ? mix(mix(rgb(PAPER), rgb(GRAPHITE), mul(ctx.shadow, 0.35)), rgb(GRAPHITE), mul(sub(1, edgeOf(inPool(l.amount), 0, 1e-5)), 0.3)) : mix(rgb(PAPER), rgb(GRAPHITE), mul(ctx.shadow, 0.35));
+        case "local": return mul(rgb(PAPER), edgeOf(min(l.toward.y, inPool(l.amount)), 0, 1e-5));
+      }
+    }),
     water: (ctx) => {
       const lines = swellLines(ctx, { perWave: 3, width: [0.005, 0.015] });
       let c = mix(rgb(PAPER), rgb(GRAPHITE), mul(lines.cover, 0.4));

@@ -44,7 +44,9 @@ export function refuseSurface(name: string, surface: unknown, grid: unknown, loo
       p === "f32" ? "return vec3(x, y, z) from the surface's function, not one number" : "return vec3(x, y, z) from the surface's function");
   }
   if (paint !== undefined) {
-    const c = tyOf(paint());
+    // A paint that says more than a colour (`Painted`) is judged by its `base`.
+    const said = paint();
+    const c = tyOf(typeof said === "object" && said !== null && !(said instanceof Expr) && !Array.isArray(said) && "base" in said ? (said as { base: unknown }).base : said);
     if (c !== "vec3") {
       throw new SceneError(at, `paint that returns ${article(c)}`, "a vec3 colour (r, g, b in 0..1)",
         c === "f32" ? "return vec3(g, g, g) for a grey, or vec3(r, g, b)" : c === "vec4" ? "return its .xyz (a lit surface is opaque; draw.glazed takes alpha)" : "return vec3(r, g, b)");
@@ -77,7 +79,8 @@ export function refuseScene(spec: { readonly ground?: unknown; readonly things?:
       : "put only drawables (draw.surface(...), draw.field(...), strand(...), ...) in things";
     throw new SceneError("scene()", `${what} at things[${k}]`, "a drawable", fix);
   });
-  const sun = (typeof spec.sun === "object" && spec.sun !== null && "dir" in spec.sun ? (spec.sun as { dir: unknown }).dir : spec.sun) as unknown;
+  const dirOf = (x: unknown): unknown => (typeof x === "object" && x !== null && "dir" in x ? (x as { dir: unknown }).dir : x);
+  const sun = dirOf(typeof spec.sun === "object" && spec.sun !== null && "toward" in spec.sun ? (spec.sun as { toward: unknown }).toward : spec.sun);
   if (!(Array.isArray(sun) && sun.length === 3 && sun.every((n) => Number.isFinite(n)))) {
     throw new SceneError("scene()", `sun ${shown(sun)}`, "a direction toward the sun: three finite numbers", "sun: [0.3, 0.8, 0.4]");
   }

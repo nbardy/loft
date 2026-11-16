@@ -39,6 +39,6 @@ function code(ctx: CompileContext): string {
 export const sky: Drawable = {
   name: "sky",
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws: (ctx) => ({ shaders: { sky: { code: code(ctx), libs: [] } }, draws: [drawSpec({ label: "sky", shader: "sky", vertices: 3, phase: "background", cull: "none", depthWrite: false })] }),
 };

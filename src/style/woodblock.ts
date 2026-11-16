@@ -9,8 +9,16 @@
 // whirlpool's eye, and the looks. Everything else is a part (docs/styles.md): the lighting recipe (`litBodies`), paint
 // treatments (`warmed`, `mottled`, `weighted`), the sky (`skyOf`), the swell's lines (`swellLines`), foam
 // (`contactFoam`, `marksFoam`) and paper (`paperGrain`).
+//
+// Words a paint may say (`Painted`): `gloss` prints a flat cream shape about the half vector (`glinted`); `metal`,
+// `emits` and `scatter` are not read.
+//
+// Lights (src/light.ts): the print rule splits at the union of the lit sides (the sun's, and each local light's where
+// at least the pool, 0.1, arrives; the sun is cut too when its amount is stated); under a recipe the recipe's own union.
+// The sea and the plane go into the block under a stated sun dimmer than the pool, and each local light's pool is cut
+// out of them in the cream line ink: a hard pool, as a printer cuts it, not a falloff.
 
-import { distance, dot, f, lt, min, mix, mul, param, select, smoothstep, sub, vec4, type Expr } from "../expr.ts";
+import { add, distance, dot, f, lt, min, mix, mul, normalize, param, select, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
 import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { contactFoam, foam, marksAs, marksFoam, printLayers, type ContactFoam, type FoamInk, type MarksPrint } from "./foam.ts";
@@ -159,8 +167,35 @@ function accentInk(a: Accent, base: Expr<"vec3">): Expr<"vec3"> {
   return a.inks.slice(1).reduce<Expr<"vec3">>((c, k) => mix(c, rgb(k.ink), edgeOf(luminance(base), k.from, 1e-5)), rgb(a.inks[0]!.ink));
 }
 
-/** 0 on the shadow side of the terminator, 1 lit: two tones of light, a hard edge. */
-const litSide = (ctx: ShadeCtx): Expr<"f32"> => edgeOf(dot(ctx.normal, ctx.sun), 0.0, 1e-5);
+/** The print's pool (`LightRecipe.pool`) where no recipe states one. */
+const POOL = 0.1;
+/** Whether the scene states the sun's amount (the full sun's is the literal [1, 1, 1]: src/light.ts). */
+const stated = (amount: In<"vec3">): boolean => !(Array.isArray(amount) && amount.every((c) => c === 1));
+/** How much of a light arrives, past the pool: positive inside a lamp's pool (or under a stated sun bright enough). */
+const inPool = (amount: In<"vec3">): Expr<"f32"> => sub(luminance(amount), POOL);
+
+/**
+ * 0 on the shadow side of the terminator, 1 lit: two tones of light, a hard edge. Over every light: the union of the
+ * lit sides, each light's cut where it arrives at less than the pool (the sun's only when its amount is stated).
+ */
+const litSide = (ctx: ShadeCtx): Expr<"f32"> => edgeOf(ctx.lights("largest", (l, which) => {
+  switch (which) {
+    case "sun": return stated(l.amount) ? min(dot(ctx.normal, l.toward), inPool(l.amount)) : dot(ctx.normal, l.toward);
+    case "local": return min(dot(ctx.normal, l.toward), inPool(l.amount));
+  }
+}), 0.0, 1e-5);
+
+/**
+ * A flat colour of the sea or the plane under every light: under a stated sun dimmer than the pool, the block's
+ * indigo; inside a local light's pool (where it falls on an upward surface), the cream line ink cut out of it. The
+ * lighter ink wins (componentwise max), as a pool printed over the block.
+ */
+const pooledFlat = (ctx: Pick<ShadeCtx, "lights">, c: Expr<"vec3">, block: Rgb, lit: Rgb): Expr<"vec3"> => ctx.lights("largest", (l, which) => {
+  switch (which) {
+    case "sun": return stated(l.amount) ? mix(rgb(block), c, edgeOf(inPool(l.amount), 0, 1e-5)) : c;
+    case "local": return mul(rgb(lit), edgeOf(min(l.toward.y, inPool(l.amount)), 0, 1e-5));
+  }
+});
 /**
  * Which of a rule's two tones a fragment takes, asked for wherever the rule reads it: `litSide` for the print as it
  * was, all light under a recipe (whose block prints the shadow).
@@ -247,12 +282,28 @@ function seaInks(p: SeaPalette): SeaInks {
 
 /** The print as it was: the rule's two tones, split at N.L = 0. No post pass reads a mark. */
 function asPrinted(inks: WoodblockInks, rule: Print, pt: Painting): Bodies {
-  return { shade: (raw) => { const ctx = pt.base(raw); return pt.line(printed(inks, rule, ctx, () => litSide(ctx)), ctx); }, mark: () => f(1) };
+  return { shade: (raw) => { const ctx = pt.base(raw); return pt.line(glinted(inks, printed(inks, rule, ctx, () => litSide(ctx)), ctx), ctx); }, mark: () => f(1) };
 }
 
 /** Under a recipe: the rule's lit inks, the line on them before the block (the block over black is black). */
 function underRecipe(inks: WoodblockInks, rule: Print, recipe: LightRecipe, pt: Painting): Bodies {
-  return litBodies(recipe, ownBlock(inks, rule), (raw) => printed(inks, rule, pt.base(raw), () => f(1)), (c, raw) => pt.line(c, pt.base(raw)));
+  return litBodies(recipe, ownBlock(inks, rule), (raw) => { const ctx = pt.base(raw); return glinted(inks, printed(inks, rule, ctx, () => f(1)), ctx); }, (c, raw) => pt.line(c, pt.base(raw)));
+}
+
+/**
+ * A glossy surface printed as a printer would: a flat cream shape, a cone of 6 degrees about the half vector of the
+ * light that lights most here, at 0.9 x `gloss` of the cream ink (paper left for a light). Nothing where no paint
+ * gives `gloss`.
+ */
+function glinted(inks: WoodblockInks, c: Expr<"vec3">, ctx: ShadeCtx): Expr<"vec3"> {
+  const cone = Math.cos((6 * Math.PI) / 180);
+  const facing = ctx.lights("largest", (l, which) => {
+    switch (which) {
+      case "sun": return dot(ctx.normal, normalize(add(l.toward, ctx.view)));
+      case "local": return min(dot(ctx.normal, normalize(add(l.toward, ctx.view))), add(inPool(l.amount), cone));
+    }
+  });
+  return mix(c, rgb(inks.cream), mul(edgeOf(facing, cone, 1e-5), mul(ctx.channel<"f32">("gloss", 0), 0.9)));
 }
 
 /** The whirlpool's eye printed black over the water, or nothing. */
@@ -308,12 +359,12 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       // examples/bosses/maelstrom_wyrm.ts printed it back in by hand (2026-11-11). Zero without a deformation.
       c = printLayers(c, marksFoam(crestPrint, ctx), foamInks);
       // Opaque: a print shows nothing under its water.
-      return vec4(eyed(eye, inks, c, ctx.crest), 1);
+      return vec4(pooledFlat(ctx, eyed(eye, inks, c, ctx.crest), sea.deep, sea.line), 1);
     },
     shadow: (ctx) => vec4(rgb(inks.indigo), mul(edgeOf(ctx.amount, 0.3, 0.01), 0.5)),
     // A plane: the paper under a light wash, its shadow cut flat in indigo as on the water, hazed toward the sky's own
     // horizon (whatever its grade) as the far sea is.
-    ground: (ctx) => mix(mix(mul(rgb(inks.cream), 0.88), rgb(inks.indigo), mul(edgeOf(ctx.shadow, 0.3, 0.01), 0.5)), rgb(sky.horizon), mul(smoothstep(50, 220, ctx.distance), 0.85)),
+    ground: (ctx) => pooledFlat(ctx, mix(mix(mul(rgb(inks.cream), 0.88), rgb(inks.indigo), mul(edgeOf(ctx.shadow, 0.3, 0.01), 0.5)), rgb(sky.horizon), mul(smoothstep(50, 220, ctx.distance), 0.85)), inks.indigo, inks.cream),
     sky: (ctx) => skyOf(sky, ctx),
   };
 }

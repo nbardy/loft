@@ -43,7 +43,7 @@ const CASES: Readonly<Record<string, Proof>> = { ...PROOFS, reefback_stilt: PROO
 const scenes = Object.entries(CASES).filter(([name]) => only === undefined || only.includes(name));
 const dirOf = (name: string) => {
   const dir = `out/rust/files/${name}`;
-  if (!existsSync(`${dir}/manifest.json`)) throw new Error(`${dir} missing: bun src/cli/main.ts build ${CASES[name]!.path} --out ${dir}`);
+  if (!existsSync(`${dir}/manifest.json`)) throw new Error(`${dir} missing: bun src/cli/main.ts build ${CASES[name]!.path}${name === "reefback_stilt" ? " --variant stilt" : ""} --out ${dir}`);
   return dir;
 };
 

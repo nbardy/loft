@@ -130,7 +130,7 @@ export type { Env };
 
 const WGSL_TY: Record<string, string> = { f32: "f32", vec2: "vec2<f32>", vec3: "vec3<f32>", vec4: "vec4<f32>", bool: "bool" };
 
-type FnSpec = {
+export type FnSpec = {
   readonly name: string;
   /** (name, type) pairs, bound as free variables of the same name. */
   readonly args: readonly (readonly [string, NumTy])[];

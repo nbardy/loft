@@ -100,7 +100,7 @@ const rgb = (c: Rgb): string => `vec3<f32>(${c.map(fl).join(", ")})`;
  */
 export class GlowDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces = [];
+  readonly forms = [];
   constructor(readonly name: string, readonly strokes: Strokes, readonly o: GlowOptions, readonly shape: Shape) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`glow "${name}": names must be identifiers (they name shaders)`);
     if (!(o.halo >= 1)) throw new Error(`glow "${name}": halo must be at least 1 (a multiple of the core width)`);
@@ -126,7 +126,7 @@ function veilWgsl(ctx: CompileContext, v: Veil, fn: string): Shader {
   switch (v.kind) {
     case "clear": return { code: "fn glow_veil(o: vec3<f32>, d: vec3<f32>, t: f32) -> f32 { return 1.0; }", libs: [] };
     case "medium": {
-      const f = tauFunction(v.medium, fn, accessMedium(v.medium, ctx.sun, (t) => ctx.table(t)));
+      const f = tauFunction(v.medium, fn, accessMedium(v.medium, ctx.sun, ctx.lighting.lights, (t) => ctx.table(t)));
       return { code: `${f.code}\nfn glow_veil(o: vec3<f32>, d: vec3<f32>, t: f32) -> f32 { return exp(-${fn}(o, d, 0.0, t)); }`, libs: f.libs };
     }
   }

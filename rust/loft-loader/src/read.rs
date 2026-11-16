@@ -1,6 +1,6 @@
 //! Reading an artefact directory (docs/artefact_format.md, "Load, call by call" steps 1 and 2), and the loader's errors.
 
-use crate::manifest::{Header, Manifest, TableFill, FORMAT, VERSION};
+use crate::manifest::{Header, Manifest, TableFill, FORMAT, VERSIONS};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ pub enum Error {
     Manifest { path: PathBuf, source: serde_json::Error },
     #[error("{0}: not a Loft artefact (format \"{1}\")")]
     NotLoft(PathBuf, String),
-    #[error("{0}: artefact format version {1}; this loader reads version {VERSION}")]
+    #[error("{0}: artefact format version {1}; this loader reads versions 1, 2 and 3")]
     Version(PathBuf, u32),
     #[error("{path}: bin/{name}.bin has {got} bytes; the manifest says {want}")]
     BlobLength { path: PathBuf, name: String, got: usize, want: usize },
@@ -66,7 +66,7 @@ pub fn read_dir(dir: &Path) -> Result<Artefact, Error> {
     if header.format != FORMAT {
         return Err(Error::NotLoft(dir.into(), header.format));
     }
-    if header.version != VERSION {
+    if !VERSIONS.contains(&header.version) {
         return Err(Error::Version(dir.into(), header.version));
     }
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|source| Error::Manifest { path, source })?;
@@ -74,7 +74,7 @@ pub fn read_dir(dir: &Path) -> Result<Artefact, Error> {
         .tables
         .iter()
         .filter_map(|t| match &t.fill {
-            TableFill::Map | TableFill::Scan => None,
+            TableFill::Map | TableFill::Scan | TableFill::Replay { .. } => None,
             TableFill::Cpu { why } => Some(format!("\"{}\" ({why})", t.name)),
         })
         .collect();

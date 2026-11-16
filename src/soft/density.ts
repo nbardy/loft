@@ -21,14 +21,14 @@
 // (the CPU light pass, interpolated through the blob), plus a third of the blob's own depth from that point (its own
 // shadow at full strength drew every lump as a separate sphere). Sun light goes through octaves of extinction (single
 // scattering, plus softer lobes standing in for multiple scattering, so shadowed interiors are dark, not black) and a
-// forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. Flash light is
+// forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. The scene's lights are
 // per blob (CPU, through the medium) plus a small even share.
 
-import { exp, mul, variable } from "../expr.ts";
+import { add, div, dot, exp, lift, max, mul, sub, variable, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type CompileContext, type Drawable, type Emitted, type Shader, type V3 } from "../compile/context.ts";
+import { drawSpec, type CompileContext, type Drawable, type Emitted, type Form, type Shader, type V3 } from "../compile/context.ts";
 import { fbm3 } from "../lib/noise.ts";
-import type { Skeleton } from "../map/types.ts";
+import type { F, P3, Skeleton } from "../map/types.ts";
 import { accessMedium, BANK_LIB, clusterLoop, EXTENT, GAUSS_LIB, type Box, type Medium, type MediumAccess } from "./medium.ts";
 
 export type Rgb = readonly [number, number, number];
@@ -73,7 +73,10 @@ const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(f).join(", ")})`
  */
 export class DensityDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[] = [];
-  readonly surfaces = [];
+  /** A medium: its density as an expression, coloured by the density-weighted albedo of its puffs, in its box. */
+  get forms(): readonly Form[] {
+    return [{ kind: "medium", name: this.name, bound: { kind: "box", min: [...this.o.bounds.min], max: [...this.o.bounds.max] }, density: (p) => this.medium.density(p), colour: (p) => albedoAt(this.medium, p) }];
+  }
 
   constructor(readonly name: string, readonly medium: Medium, readonly o: DensityOptions) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.density "${name}": names must be identifiers (they name shaders)`);
@@ -83,7 +86,7 @@ export class DensityDrawable implements Drawable {
   }
 
   draws(ctx: CompileContext): Emitted {
-    const acc = accessMedium(this.medium, ctx.sun, (t) => ctx.table(t));
+    const acc = accessMedium(this.medium, ctx.sun, ctx.lighting.lights, (t) => ctx.table(t));
     const key = `density.${this.name}`;
     const detail = detailFn(ctx, this.o.detail);
     const code = [detail.code, densityWgsl(this.medium, acc, this.o, ctx.sun)].join("\n");
@@ -92,6 +95,17 @@ export class DensityDrawable implements Drawable {
       draws: [drawSpec({ label: this.name, shader: key, vertices: 36, phase: "transparent", cull: "front", depthWrite: false, blend: "alpha", sceneDepth: true })],
     };
   }
+}
+
+/** A medium's colour at p for a reader of its form: its blobs' and layers' albedos weighted by their density there. */
+function albedoAt(m: Medium, p: P3): P3 {
+  const parts: { d: F; c: P3 }[] = [
+    ...m.blobs.map((b) => { const x = mul(b.inv, sub(p, b.centre)); return { d: mul(b.density, exp(mul(dot(x, x), -1))), c: b.colour }; }),
+    ...m.layers.map((l) => { const y = mul(sub(p.y, l.height), l.inv); return { d: mul(l.density, exp(mul(mul(y, y), -1))), c: l.colour }; }),
+  ];
+  const sum = parts.reduce((a, q) => add(a, q.d), lift<"f32">(0));
+  const col = parts.reduce((a, q) => add(a, mul(q.c, q.d)), lift<"vec3">([0, 0, 0]) as Expr<"vec3">);
+  return div(col, max(sum, 1e-12));
 }
 
 const DP = variable("p", "vec3");
@@ -248,7 +262,7 @@ fn soft_deposit(t: f32, tau: f32, light: vec3<f32>) {
   soft_bin[i0] += e * (1.0 - fr);
   soft_bin[min(i0 + 1u, BINS - 1u)] += e * fr;
 }
-/// The light a piece sends toward the eye: sun (through the others and itself), sky, flashes.
+/// The light a piece sends toward the eye: sun (through the others and itself), sky, the scene's lights.
 fn soft_light(albedo: vec3<f32>, tauSun: f32, tauUp: f32, flash: vec3<f32>, cosv: f32) -> vec3<f32> {
   // Octaves of extinction (Wrenninge's multiple-scattering approximation): each octave half as strong and a third as
   // extinguished, so thick cloud stays luminous a long way in and only the deepest parts go dark.

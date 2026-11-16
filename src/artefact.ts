@@ -192,7 +192,91 @@ export type TableFillKind =
   | { readonly kind: "map"; readonly level: number }
   | { readonly kind: "scan"; readonly level: number }
   /** `why`: the table's own reason (a hand-written fill), or the GPU table that reads it ("read by ..."). */
-  | { readonly kind: "cpu"; readonly why: string };
+  | { readonly kind: "cpu"; readonly why: string }
+  /** Replayed from a checkpoint of `recurrence` before the pose stages (`Recurrence.replay`). */
+  | { readonly kind: "replay"; readonly recurrence: string };
+
+/**
+ * What a bake took, wall times: `ms`, from encoding the steps to the GPU finishing them (GPU time with submission);
+ * `readback`, copying the kept states out and reading them on the CPU; `setup`, the module and pipelines. And the
+ * steps dispatched and the bytes kept.
+ */
+export type BakeRecord = {
+  readonly ms: number; readonly readback: number; readonly setup: number; readonly steps: number; readonly bytes: number;
+  /** The steps' compute pass alone, by GPU timestamps, when the device has them (`timestamp-query`). */
+  readonly gpu: { readonly kind: "timed"; readonly ms: number } | { readonly kind: "untimed" };
+};
+
+/**
+ * Whether a recurrence's states are baked: the one fact about an artefact that changes after compile. `compile` stays
+ * synchronous and CPU-only, so a compiled artefact carries its recurrences unbaked; the first host to load it bakes
+ * them on its GPU (src/host/bake.ts), and `loft build` writes the baked states into the files, so a file loader never
+ * bakes. The CPU readings refuse an unbaked state rather than read zeros.
+ */
+export class Baked {
+  private record: BakeRecord | undefined;
+  get done(): BakeRecord | undefined { return this.record; }
+  mark(r: BakeRecord): void { this.record = r; }
+}
+
+/**
+ * A state stepped by the scene's own function (src/map/recur.ts), as a host bakes it. Steps are counted from `from`:
+ * state 0 is the start, state a is after a steps, at time `from + a / rate`. The kept table (`data`, a view into the
+ * static buffer that holds it) has `states` states of `(entries + 1) * lanes` vec4s each: the entries, then a clock
+ * entry whose first lane's x is the state's step number a. State k of the table is step `first + k * every` (every = 1
+ * when every state is kept).
+ *
+ * The bake (`bake.wgsl`, one module, its own bindings): group 0 binding 0 `recur_src`, 1 `recur_dst`, 2 `recur_kept`
+ * (read-write storage), then each static buffer named in `bake.statics` at bindings 3, 4, ... (read-only, its contents
+ * as the artefact holds them: so recurrences bake in list order, each after those it reads). Entry `recur_start` (one
+ * dispatch, src bound to anything, dst to buffer A) writes state 0; entry `recur_step`, dispatched `total` times
+ * alternating (src A, dst B) and (src B, dst A), writes each next state; both write the states to keep into
+ * `recur_kept` themselves. ceil(entries / POSE_WORKGROUP) workgroups each.
+ */
+export type Recurrence = {
+  readonly name: string;
+  readonly entries: number;
+  readonly lanes: number;
+  readonly rate: number;
+  readonly from: number;
+  /** Steps the bake takes. */
+  readonly total: number;
+  /** The first step kept. */
+  readonly first: number;
+  /** Steps from the first kept state to the last: reads clamp to it. */
+  readonly steps: number;
+  /** Seconds at the first kept state. */
+  readonly start: number;
+  readonly kept: { readonly kind: "every" } | { readonly kind: "checkpoints"; readonly every: number };
+  readonly states: number;
+  readonly data: Float32Array;
+  readonly bake: { readonly wgsl: string; readonly statics: readonly string[] };
+  /**
+   * Checkpoints only: the frame replays steps n and n + 1 into two per-frame tables before the pose stages. `slot` is
+   * the input (float offset in `inputs`) the host writes n into; `first` reads checkpoint floor(n / every) and steps
+   * it once, `ping` and `pong` each step once more (docs/artefact_format.md, "Replays").
+   */
+  readonly replay?: { readonly slot: number; readonly first: PoseStage; readonly ping: PoseStage; readonly pong: PoseStage };
+  readonly baked: Baked;
+};
+
+/** What a frame's replay of one recurrence needs from the host (a manifest's `frame.replay` entry has these too). */
+export type ReplayClock = { readonly slot: number; readonly rate: number; readonly start: number; readonly steps: number; readonly every: number };
+
+/** The replay clocks of an artefact's checkpointed recurrences (what a manifest's `frame.replay` entries carry). */
+export function replayClocks(rs: readonly Recurrence[] | undefined): ReplayClock[] {
+  return (rs ?? []).flatMap((r) => (r.replay === undefined || r.kept.kind !== "checkpoints" ? [] : [{ slot: r.replay.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.every }]));
+}
+
+/**
+ * The step n a frame at time t replays to: floor((t - start) rate), held within [0, steps - 1] (a read past the end is
+ * state n + 1 = steps with weight 1), computed in f64 so every host agrees; and k = n mod every, the steps it replays
+ * after the checkpoint's first.
+ */
+export function replayStep(r: ReplayClock, t: number): { readonly n: number; readonly k: number } {
+  const n = Math.min(Math.max(Math.floor((t - r.start) * r.rate), 0), Math.max(r.steps - 1, 0));
+  return { n, k: n % r.every };
+}
 
 /** Where a per-frame table lives in the dynamic buffers (offset and size in vec4s, `lanes` vec4s per entry), and how it is filled. */
 export type TableInfo = { readonly name: string; readonly buffer: string; readonly offset: number; readonly vec4s: number; readonly lanes: number; readonly fill: TableFillKind };
@@ -266,7 +350,72 @@ export type Draw = {
    * soft volume edges and depth fades.
    */
   readonly sceneDepth?: boolean;
+  /**
+   * How this draw writes depth alone, for a depth pass (`ArtefactPass`). Absent: it is left out of depth passes (the
+   * pass's `leftOut` names it). Set by the compiler only in a scene that has a depth pass, so a scene without one keeps
+   * its shaders as they were.
+   */
+  readonly depth?: DrawDepth;
 };
+
+/** How a draw writes depth alone: one handler per kind in src/host/lower.ts. */
+export type DrawDepth =
+  /** No fragment stage: the rasterised triangle is the depth (surfaces, meshes). */
+  | { readonly kind: "vertex" }
+  /** A fragment entry of the draw's module that computes coverage and depth and discards, without shading (tracers). */
+  | { readonly kind: "entry"; readonly entry: string };
+
+/** A texture's size: a share of the view's (rounded, at least 1 pixel), or fixed pixels. */
+export type TextureSize = { readonly kind: "view"; readonly scale: number } | { readonly kind: "fixed"; readonly width: number; readonly height: number };
+
+/**
+ * A picture drawn off screen before the view (src/frame/pass.ts), in `Artefact.passes` order: each pass is drawn after
+ * every pass it reads. Its texture is bound in group 3 (`passBindingsWgsl`) of every draw, post pass and other pass.
+ *
+ * scene   the draws listed (indices into `Artefact.draws`, in their order), from the camera held in the 12-vec4 table at
+ *         `camera` (a `struct Frame`, copied into the pass's own group 0 uniform after the pose stages). keep: colour
+ *         (rgba8unorm, through the view's pipelines), light (rgba16float), depth (depth32float, single-sampled, each
+ *         draw's `depth` way).
+ * screen  one full-screen triangle of `shader` (entry points `vs` and `fs`) into rgba16float.
+ */
+export type ArtefactPass = {
+  readonly name: string;
+  readonly size: TextureSize;
+  /** The passes its draws read (all ordered before it). */
+  readonly reads: readonly string[];
+  readonly what:
+    | {
+      readonly kind: "scene";
+      readonly keep: "colour" | "depth" | "light";
+      readonly camera: { readonly buffer: string; readonly offset: number };
+      readonly draws: readonly number[];
+      /** Draws of the scene not drawn into this pass, and why (a reader of the pass, no depth entry, the sea's grid). */
+      readonly leftOut: readonly { readonly label: string; readonly why: string }[];
+    }
+    | { readonly kind: "screen"; readonly shader: string };
+};
+
+/** The vec4s of a pass's camera table: a `struct Frame` (PRELUDE_WGSL). */
+export const PASS_CAMERA_VEC4S = 12;
+
+/**
+ * Prepended by the host to every draw's and post pass's module of an artefact with passes, right after PRELUDE_WGSL.
+ *
+ * Binding layout (a second host must match it exactly), all visible to vertex and fragment stages:
+ *   @group(3) @binding(0)      sampler, filtering: linear min/mag, clamp-to-edge on u and v, no mipmaps
+ *   @group(3) @binding(1 + i)  texture_2d<f32>, single-sampled: pass i's picture; sample type float (colour, light,
+ *                              screen) or unfilterable-float (depth). Inside pass i itself, and in any pass drawn
+ *                              before pass k, binding 1 + k holds a 1 x 1 stand-in instead (a texture may not be an
+ *                              attachment and bound in one pass, and nothing drawn later may be read).
+ */
+export function passBindingsWgsl(passes: readonly ArtefactPass[]): string {
+  return [
+    "",
+    "@group(3) @binding(0) var loft_pass_sampler: sampler;",
+    ...passes.map((p, i) => `@group(3) @binding(${1 + i}) var loft_passtex_${p.name}: texture_2d<f32>;`),
+    "",
+  ].join("\n");
+}
 
 /**
  * A full-screen pass run after the scene is drawn and resolved, in list order. The module has one entry point, `fs`;
@@ -297,10 +446,18 @@ export type Artefact = {
   readonly statics?: readonly StaticBuffer[];
   /** Bind group 1 declarations plus generated functions shared by every shader. */
   readonly sceneWgsl: string;
+  /**
+   * What the compiler noticed and did not refuse, one line each (`note: bar gives "gloss", which no part of papercraft
+   * reads`): channels no part of the style reads, a thing's own `shade` that ignores the style's answer. Absent on an
+   * artefact loaded from files, and where there is nothing to note.
+   */
+  readonly notes?: readonly string[];
   readonly shaders: Readonly<Record<string, string>>;
   readonly draws: readonly Draw[];
   /** Full-screen passes after the scene. Absent means none. */
   readonly post?: readonly PostPass[];
+  /** Pictures drawn off screen before the view, in drawing order. Absent means none. */
+  readonly passes?: readonly ArtefactPass[];
   /** The pose pass: compute dispatches that fill every map and scan table, in order (docs/gpu_native.md). */
   readonly stages: readonly PoseStage[];
   /** Every per-frame table: where it lives and how it is filled. */
@@ -320,6 +477,8 @@ export type Artefact = {
   readonly cameras: Readonly<Record<string, Camera>>;
   /** Whether the scene's clock comes round (`OPEN` when absent). A host that draws it may wrap its clock by `loopTime`. */
   readonly loop?: Loop;
+  /** States stepped by the scene's own functions, in the order they bake. Absent means none. */
+  readonly recurrences?: readonly Recurrence[];
   /**
    * `maxTriangles`: what the draw list declares (every draw's vertices / 3 x instances, scene layer), the most a frame
    * can draw; a host drawing at a coarser level of detail draws fewer (`FrameStats`). `draws`: draws declared.
@@ -328,6 +487,12 @@ export type Artefact = {
 };
 
 /** One frame to draw. Missing inputs and params take the artefact's defaults; `time` also fills the `time` input. */
+/**
+ * The host input a still sets per sample to the sample's point in the unit square (`r2(k)`, src/host/still.ts), which
+ * lights with extent read as `xi` (src/light.ts). Declared only by an artefact compiled for a still.
+ */
+export const LIGHT_SAMPLE_INPUT = "loft_xi";
+
 export type View = {
   readonly camera: Camera;
   readonly width: number;

@@ -11,6 +11,8 @@ import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface
 import { drawField } from "./field.ts";
 import { drawRelief } from "./relief.ts";
 import { drawCopies } from "./copies.ts";
+import { drawMesh } from "./mesh.ts";
+import { drawTraced } from "./traced.ts";
 import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
 export type { DensityOptions };
@@ -31,6 +33,8 @@ export type Bounds = { readonly min: readonly [number, number, number]; readonly
 export type { FieldOptions } from "./field.ts";
 export type { ReliefOptions } from "./relief.ts";
 export type { CopiesHit, CopiesOptions } from "./copies.ts";
+export type { MeshData, MeshDrawable, MeshOptions } from "./mesh.ts";
+export type { Ray, Traced, TracedDrawable, TracedOptions } from "./traced.ts";
 
 export type CurveOptions = {
   /** Half-width of the stroke at u, world units. */
@@ -68,6 +72,8 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
  * - `relief`: bumps, scales or spikes ray-marched on top of a surface, in its own coordinates.
  * - `copies`: a list of spheres, capsules or rounded cones, each intersected exactly per pixel.
  * - `density`: a cloud or fog (a `Medium`) integrated along each view ray.
+ * - `mesh`: triangles made by your own code (a hull, a shatter, a growth), moved by an expression.
+ * - `traced`: any solid you can intersect, written as one `hit` function.
  */
 export const draw = {
   /** A parametric surface (u, v) -> point, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked. */
@@ -94,11 +100,21 @@ export const draw = {
   field: drawField,
   /** Height detail (scales, spikes, bumps) ray-marched in a thin shell over a surface, in the surface's own (u, v) coordinates. */
   relief: drawRelief,
+  /**
+   * Triangles made by your own code at build: a row of numbers per point (its rest position first), three indices per
+   * triangle, each point moved by `at` (an expression of its row, index and `time`) and painted over its row.
+   */
+  mesh: drawMesh,
+  /**
+   * Any solid you can intersect, drawn per pixel in a bound: you write `hit(ray, copy) => { t, gap, normal }` as
+   * expressions; depth, coverage, ink, light and the CPU twin come from Loft. The same `hit` answers any ray you cast.
+   */
+  traced: drawTraced,
   /** A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms. */
   copies: drawCopies,
   /**
    * A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to
-   * the opaque scene, lit by the sun, the sky and flashes inside it (`src/soft/density.ts`).
+   * the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
    */
   density(name: string, medium: Medium, o: DensityOptions): Drawable {
     return new DensityDrawable(name, medium, o);

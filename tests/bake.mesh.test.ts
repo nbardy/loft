@@ -8,6 +8,7 @@ import { bent, bentScene, CYLINDER, cylinderScene, torusScene } from "./bake.fix
 import { toLinear } from "../src/bake/index.ts";
 
 const density = { along: 24, around: 24 };
+const rgbOf = (b: BodyMesh): Float32Array => { if (b.paint.kind !== "rgb") throw new Error(`${b.name} is unpainted: ${b.paint.why}`); return b.paint.rgb; };
 const at = (a: Float32Array, i: number): [number, number, number] => [a[3 * i], a[3 * i + 1], a[3 * i + 2]];
 
 /** Directed edges after welding vertices that coincide (the seam and the collapsed tips are duplicated vertices). */
@@ -120,7 +121,7 @@ test("crests are single two-sided sheets, rooted on the host, with their normal 
 
 // Catches: a drawable that draws no bakeable surface being dropped without a word.
 test("a drawable with no surface is reported as skipped by name", () => {
-  const custom: Drawable = { name: "mystery", draws: () => ({ shaders: {}, draws: [] }), skeletons: [], surfaces: [] };
+  const custom: Drawable = { name: "mystery", draws: () => ({ shaders: {}, draws: [] }), skeletons: [], forms: [] };
   const baked = bakeScene(scene({ ground: sea({ swell: [] }), style: toon(), sun: [0, 1, 0], things: [bent, custom] }), { time: 0, density });
   expect(baked.bodies.map((b) => b.name)).toEqual(["bent"]);
   expect(baked.skipped.map((s) => s.name)).toEqual(["sky", "sea", "shadows", "mystery"]);
@@ -133,5 +134,5 @@ test("vertex colours are the authored sRGB paint converted to linear", () => {
   const [tube] = bakeScene(cylinderScene, { time: 0, density }).bodies;
   const want = [0.2, 0.5, 0.8].map(toLinear);
   expect(want[1]).toBeCloseTo(0.214, 3); // sRGB 0.5 is linear 0.214
-  for (let i = 0; i < vertexCount(tube); i++) for (let c = 0; c < 3; c++) expect(tube.colors[3 * i + c]).toBeCloseTo(want[c], 6);
+  for (let i = 0; i < vertexCount(tube); i++) for (let c = 0; c < 3; c++) expect(rgbOf(tube)[3 * i + c]).toBeCloseTo(want[c], 6);
 });

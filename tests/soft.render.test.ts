@@ -3,7 +3,7 @@
 import { beforeAll, expect, test } from "bun:test";
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Camera } from "../src/artefact.ts";
+import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Camera } from "../src/artefact.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost, type GpuHost } from "../src/host/index.ts";
 import {
@@ -107,13 +107,23 @@ test("every example's shaders build pipelines under the contract's layouts", asy
     const a = compile(mod.default);
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
     const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
+    // A scene that reads passes binds them as group 3 (passBindingsWgsl), and its plain draws take group 2 as the
+    // scene depth's layout in a split frame, else an empty one (src/host/lower.ts).
+    const passes = a.passes ?? [];
+    const split = (a.post ?? []).length > 0 || a.draws.some((d) => d.sceneDepth === true);
+    const g3 = passes.length === 0 ? [] : [dev.createBindGroupLayout({ entries: [
+      { binding: 0, visibility: VERTEX | FRAGMENT, sampler: { type: "filtering" as const } },
+      ...passes.map((q, i) => ({ binding: 1 + i, visibility: VERTEX | FRAGMENT, texture: { sampleType: q.what.kind === "scene" && q.what.keep === "depth" ? "unfilterable-float" as const : "float" as const } })),
+    ] })];
+    const plain2 = passes.length === 0 ? [] : [split ? depth : dev.createBindGroupLayout({ entries: [] })];
+    const bindings = passes.length === 0 ? "" : passBindingsWgsl(passes);
     for (const d of a.draws) {
       dev.pushErrorScope("validation");
-      const module = dev.createShaderModule({ code: PRELUDE_WGSL + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
+      const module = dev.createShaderModule({ code: PRELUDE_WGSL + bindings + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
       const blend = d.blend === "none" ? undefined : { color: { srcFactor: "src-alpha", dstFactor: d.blend === "add" ? "one" : "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const;
       try {
         await dev.createRenderPipelineAsync({
-          layout: dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth] : [g0, g1] }),
+          layout: dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth, ...g3] : [g0, g1, ...plain2, ...g3] }),
           vertex: { module, entryPoint: "vs", constants: d.constants },
           fragment: { module, entryPoint: "fs", constants: d.constants, targets: [{ format: "rgba8unorm", blend }] },
           primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: d.cull },

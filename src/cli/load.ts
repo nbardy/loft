@@ -4,6 +4,8 @@ import { UsageError } from "./args.ts";
 import type { Artefact } from "../artefact.ts";
 import type { GpuHost } from "../host/host.ts";
 import type { LightChoice, SceneSource, StyleChoice } from "./args.ts";
+import type { Scene } from "../scene.ts";
+import type { StillSpec } from "../host/still.ts";
 
 async function importFrom<T>(rel: string): Promise<T> {
   return (await import(new URL(rel, import.meta.url).href)) as T;
@@ -15,7 +17,12 @@ function need<T>(mod: Record<string, unknown>, name: string, from: string): T {
   return v as T;
 }
 
-export async function loadArtefact(source: SceneSource): Promise<Artefact> {
+/**
+ * The scene's artefact. `still`: for a still (`--samples`), the scene's lights are compiled sampled (src/light.ts
+ * `Sampling`): a light with extent takes a point of itself per sample; a frame compiles them at their points, so a
+ * frame's shaders are what they were.
+ */
+export async function loadArtefact(source: SceneSource, still: StillSpec = { kind: "frame" }): Promise<Artefact> {
   switch (source.kind) {
     case "fixture": {
       const mod = await importFrom<Record<string, unknown>>("../host/fixture.ts");
@@ -26,8 +33,19 @@ export async function loadArtefact(source: SceneSource): Promise<Artefact> {
       const { chosenAt } = await import("./variant.ts");
       const { scene } = await chosenAt(source.path, source.variant);
       const index = await importFrom<Record<string, unknown>>("../index.ts");
-      return need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(await styled(scene, source.style, source.light));
+      const artefact = need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(sampledFor(await styled(scene, source.style, source.light), still));
+      // What the compiler noticed and did not refuse (a channel no part of the style reads), before any final line.
+      for (const n of artefact.notes ?? []) console.error(`note: ${n}`);
+      return artefact;
     }
+  }
+}
+
+/** The scene as a still compiles it: its lights sampled. One handler per kind of frame. */
+function sampledFor(scene: unknown, still: StillSpec): unknown {
+  switch (still.kind) {
+    case "frame": return scene;
+    case "still": { const s = scene as Scene; return { ...s, lighting: { ...s.lighting, sampling: { kind: "sampled" } } } satisfies Scene; }
   }
 }
 

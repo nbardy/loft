@@ -11,11 +11,12 @@
 
 import { f, variable, vec2, vec3 } from "../expr.ts";
 import { readsBody } from "../style.ts";
-import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type Bakeable, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
+import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
+import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
+import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import type { Folded } from "../lib/fold.ts";
-import type { F, P3, Skeleton, Surface, Warp } from "../map/types.ts";
+import type { F, P3, Painted, Skeleton, Surface, Warp } from "../map/types.ts";
 import { displace, shellFrame, type ShellFrame } from "../relief/displace.ts";
 import type { Height } from "../relief/height.ts";
 import { traceMarch, tracePlain, type Traced } from "../relief/trace.ts";
@@ -34,7 +35,7 @@ export type ReliefOptions = {
   /** A fold in (u, v) whose cell every site carries: one motif, any number of copies (`fold2.identity` for none). */
   readonly fold: Warp<"vec2">;
   /** Base colour of the relief at a point (lit by the style); by cell identity when the fold has cells. */
-  readonly paint: (at: ReliefPoint) => P3;
+  readonly paint: (at: ReliefPoint) => P3 | Painted;
   /** Most linear-search samples per pixel (near, grazing); fewer as the relief shrinks on screen. */
   readonly steps: number;
   /** The shell's grid in the vertex stage. */
@@ -47,6 +48,8 @@ export type ReliefOptions = {
 const REFINE = 5;
 /** Fewest linear-search samples while marching at all. */
 const MIN_STEPS = 6;
+/** The paint function's arguments: the surface's own (u, v) and the relief's height there. */
+const RELIEF_PAINT_ARGS: FnSpec["args"] = [["u", "f32"], ["v", "f32"], ["h", "f32"]];
 /** Samples per pixel of relief height on screen (divided by the cosine of the view to the surface, so grazing rays get more). */
 const DENSITY = 0.6;
 /** Below this many pixels of relief height the march is skipped; the relief's normal is fully used above DETAIL_FULL. */
@@ -78,7 +81,7 @@ const siteOf = (fold: Warp<"vec2">) => (u: F, v: F): ReliefSite => ({ u, v, cell
 /** The `Drawable` that `draw.relief` returns: a height function ray-marched in a thin shell over a surface. A scene author gets it from `draw.relief`, not by constructing it. */
 export class ReliefDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
-  readonly surfaces: readonly Bakeable[];
+  readonly forms: readonly Form[];
   /** The height as a function of (u, v), through the fold. */
   readonly heightOf: Height;
 
@@ -94,13 +97,19 @@ export class ReliefDrawable implements Drawable {
     this.skeletons = [surface.skeleton];
     // The baker gets the relief as displacement of the surface: the same height, sampled on the grid.
     const heightOf = this.heightOf;
-    this.surfaces = [{ name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
+    this.forms = [{ kind: "surface", name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
   }
 
   draws(ctx: CompileContext): Emitted {
     const n = this.name, key = `relief.${n}`;
     const NU = this.o.grid.u.count, NV = this.o.grid.v.count;
-    const fns = [this.vertexFn(ctx), this.traceFn(ctx, `march_${n}`, "march"), this.traceFn(ctx, `plain_${n}`, "plain"), this.paintFn(ctx), this.anchorFn(ctx)];
+    // In this order (the paint after the tracers, as before paint could say more than a colour): expressions are
+    // numbered as they are made, and the shader text of every relief stays as it was.
+    const vertex = this.vertexFn(ctx), march = this.traceFn(ctx, `march_${n}`, "march"), plain = this.traceFn(ctx, `plain_${n}`, "plain");
+    const said = classify(this.name, this.o.paint({ ...siteOf(this.o.fold)(U, V), h: H }));
+    const shading = lookFns(ctx, this.name, said, RELIEF_PAINT_ARGS);
+    const call = (fn: "shade" | "ink" | "mark") => shadeCall(shading, fn, "base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID", "r.uvh.x, r.uvh.y, r.uvh.z");
+    const fns = [vertex, march, plain, withShading(this.paintFn(ctx, said.base), shading), this.anchorFn(ctx)];
     const ink = INK_OF[this.o.outline];
     const code = [
       `override NU: u32 = ${NU}u;`,
@@ -161,11 +170,11 @@ struct FOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
   let base = paint_${n}(r.uvh.x, r.uvh.y, r.uvh.z);
   let anchor = anchor_${n}(r.uvh.x, r.uvh.y);
   // Both are evaluated (the style's shading takes screen-space derivatives, which need uniform control flow).
-  let lit_c = shade(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID);
-  let ink_c = ink(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID);
+  let lit_c = ${call("shade")};
+  let ink_c = ${call("ink")};
   let clip = frame.view_proj * vec4<f32>(r.world, 1.0);
   var out: FOut;
-  out.colour = vec4<f32>(select(lit_c, ink_c, r.kind < 0.75), ${ctx.markOut("mark(base, r.normal, eye, r.world, depth, r.uvh.xy, anchor, ID)", false)});
+  out.colour = vec4<f32>(select(lit_c, ink_c, r.kind < 0.75), ${ctx.markOut(call("mark"), false)});
   out.depth = clip.z / clip.w;
   return out;
 }`,
@@ -205,9 +214,9 @@ struct FOut { @location(0) colour: vec4<f32>, @builtin(frag_depth) depth: f32 };
     return emitShaderFn(ctx.slots, { name: `anchor_${this.name}`, args: [["u", "f32"], ["v", "f32"]], out: "vec3<f32>", roots: [anchor], ret: (x) => x[0] });
   }
 
-  /** `fn paint_<name>(u, v, h) -> vec3`. */
-  private paintFn(ctx: CompileContext): Shader {
-    return emitShaderFn(ctx.slots, { name: `paint_${this.name}`, args: [["u", "f32"], ["v", "f32"], ["h", "f32"]], out: "vec3<f32>", roots: [this.o.paint({ ...siteOf(this.o.fold)(U, V), h: H })], ret: (x) => x[0] });
+  /** `fn paint_<name>(u, v, h) -> vec3`: the paint's colour. */
+  private paintFn(ctx: CompileContext, base: P3): Shader {
+    return emitShaderFn(ctx.slots, { name: `paint_${this.name}`, args: RELIEF_PAINT_ARGS, out: "vec3<f32>", roots: [base], ret: (x) => x[0] });
   }
 }
 

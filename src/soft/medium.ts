@@ -1,5 +1,5 @@
-// A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by the sun, the sky and any flashes
-// inside it. It is a few per-frame tables plus the closed forms of `src/soft/gauss.ts`; `draw.density` draws it, and
+// A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by the sun, the sky and the scene's
+// lights (`scene({ lights })`, src/light.ts). It is a few per-frame tables plus the closed forms of `src/soft/gauss.ts`; `draw.density` draws it, and
 // other soft things (glows, flares) read the same tables to be seen *through* it (`veil`).
 //
 // The kinds (each reduces to the canonical Gaussian density d0 exp(-|K (p - c)|^2), K the inverse radii):
@@ -8,7 +8,6 @@
 //   bank:  a layer whose fog stops at a vertical plane with a soft edge: d0 exp(-|K (p - c)|^2 - (max(0, s(p)) / w)^2),
 //          s the signed distance into the clear air. Along a ray s is linear, so on either side of the plane the exponent
 //          is still one quadratic (written as a 4D one): two closed-form pieces per ray.
-//   flash: a point light inside the medium (lightning), with a power that is an expression of time.
 //
 // Every number may be an expression of time (centres drift, radii breathe, densities build). The pose pass evaluates
 // them and then, on the CPU:
@@ -16,13 +15,14 @@
 //     sphere, so a ray tests a sphere before the blobs in it (per pixel on the GPU, and in the light pass);
 //   - runs the light pass: for each blob, the optical depth of all the OTHER blobs toward the sun and toward the
 //     zenith, from one radius behind and one in front of its centre (the shader interpolates between them by where in
-//     the blob the eye sees it), and the light reaching its centre from each flash through the medium.
+//     the blob the eye sees it), and the light reaching its centre from each of the scene's lights through the medium.
 // The per-pixel shader adds each blob's own self-shadow at the point the ray sees, in closed form.
 
 import { div, dot, exp, lift, listOf, max, mul, sub, add, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
 import type { V3 } from "../compile/context.ts";
 import type { F, P3 } from "../map/types.ts";
 import { FAR, GAUSS_WGSL, gaussDepth, gaussTail } from "./gauss.ts";
+import type { Light } from "../light.ts";
 
 /** A bounded Gaussian: centre, inverse radii, peak extinction, albedo. */
 export type Blob = { readonly kind: "blob"; readonly centre: P3; readonly inv: P3; readonly density: F; readonly colour: P3 };
@@ -36,8 +36,6 @@ export type Bank = {
   readonly through: readonly [number, number];
   readonly softness: number;
 };
-/** A light inside the medium: where, how bright (an expression of time; 0 is off), its colour and reach. */
-export type Flash = { readonly at: P3; readonly power: F; readonly colour: readonly [number, number, number]; readonly reach: number };
 
 /** The axis-aligned box a volume is drawn in (and integrated over). */
 export type Box = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] };
@@ -148,38 +146,16 @@ export function bank(b: BankSpec): Bank {
   return { layer: layer(b), normal: [b.edge.clear[0] / l, b.edge.clear[1] / l], through: b.edge.through, softness: b.edge.softness };
 }
 
-/**
- * A light inside a medium: a point that lights the puffs around it, as a lightning stroke lights a cloud from within.
- *
- * The law: each blob's centre receives power * colour * reach^2 / (reach^2 + d^2) * (1 - x^2)^2 (d its distance from
- * the light, x = d / (4 reach)), times the light's transmission through the medium on the way (the same extinction
- * octaves as sunlight, so it glows through thick cloud); nothing past 4 reaches; and 4% of the power lights the whole
- * medium evenly (light scattered many times).
- *
- * Parameters: `at` and `power` take expressions (power 0 is off; drive it with a flicker); `colour` and `reach` are
- * fixed.
- *
- * What it cannot do, because the light is reckoned per blob:
- * - light within a blob: each blob gets one light value, at its centre, so a large blob is lit evenly by a flash
- *   touching its edge.
- * - shine on anything but its medium: bodies, the ground and the water are not lit by it (a `skyFlash` or a
- *   `glow` does that part).
- * - be a line: a lightning channel is one point here; several flashes along a `bolt` stand in for a line.
- * - cost nothing: each frame the CPU traces from every blob to every flash.
- */
-export function flash(f: { readonly at: In<"vec3">; readonly power: In<"f32">; readonly colour: readonly [number, number, number]; readonly reach: number }): Flash {
-  if (!(f.reach > 0)) throw new Error(`flash: reach must be positive, got ${f.reach}`);
-  return { at: lift<"vec3">(f.at), power: lift<"f32">(f.power), colour: f.colour, reach: f.reach };
-}
-
 /** Lanes per blob in the blob table. */
 export const BLOB_LANES = 5;
 /** Blobs per cluster (one bounding sphere). */
 export const CLUSTER = 8;
-/** The share of each flash's power that lights the whole medium evenly (light scattered many times). */
-const FLASH_AMBIENT = 0.04;
-/** Beyond this many reaches a flash lights nothing (its 1 / (1 + d^2) falloff is 6% there, faded smoothly to 0). */
-const FLASH_CUT = 4;
+/**
+ * The share of a light that lights the whole medium evenly (light scattered many times): of the most of it that
+ * reaches any blob's centre. (It was 4% of a flash's power at its source; a light function has no source to read, and
+ * the most that reaches a blob is that where a blob sits near the light.)
+ */
+const LIGHT_AMBIENT = 0.04;
 /** Extent of a blob for culling, in radii: e^-13 of its peak (q = 13). */
 export const EXTENT = 3.6;
 /**
@@ -192,7 +168,7 @@ const ZENITH: V3 = [0, 1, 0];
 
 /** The tables of a medium (for one sun direction). A kind with no members has no table and no loop in the shaders. */
 export type MediumTables = {
-  /** entries: one per blob (sorted per frame), then one global entry (flash light everywhere). */
+  /** entries: one per blob (sorted per frame), then one global entry (the lights' light everywhere). */
   readonly blobs: TableSource;
   /** One bounding sphere per CLUSTER blobs: (centre, radius). */
   readonly clusters: TableSource;
@@ -203,16 +179,17 @@ export type MediumTables = {
 export type Optional = { readonly kind: "none" } | { readonly kind: "some"; readonly table: TableSource; readonly count: number };
 
 /**
- * A soft volume. `blobs`, `layers` and `banks` are its density; `flashes` light it from inside. Build it once (its
- * tables are made per sun direction on first use) and hand it to `draw.density`; glows that should be seen through it
- * name it as their veil.
+ * A soft volume. `blobs`, `layers` and `banks` are its density; the scene's lights light it from inside. Build it once
+ * (its tables are made per sun direction and list of lights on first use) and hand it to `draw.density`; glows that
+ * should be seen through it name it as their veil.
  */
 export class Medium {
   private readonly made = new Map<string, MediumTables>();
+  private readonly lightIds = new WeakMap<readonly Light[], number>();
   readonly blobs: readonly Blob[];
   readonly layers: readonly Layer[];
 
-  constructor(readonly name: string, puffs: readonly Puff[], readonly banks: readonly Bank[], readonly flashes: readonly Flash[]) {
+  constructor(readonly name: string, puffs: readonly Puff[], readonly banks: readonly Bank[]) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`medium "${name}": names must be identifiers (they name tables)`);
     this.blobs = puffs.filter((p): p is Blob => p.kind === "blob");
     this.layers = puffs.filter((p): p is Layer => p.kind === "layer");
@@ -233,33 +210,39 @@ export class Medium {
     return [...this.blobs.map(ofBlob), ...this.layers.map(ofLayer), ...this.banks.map(ofBank)].reduce((a, b) => add(a, b), lift<"f32">(0));
   }
 
-  /** The tables for a sun direction (made once per direction). */
-  tables(sun: V3): MediumTables {
-    const key = sun.join(",");
+  /** The tables for a sun direction and the scene's lights (made once per pair). */
+  tables(sun: V3, lights: readonly Light[]): MediumTables {
+    let id = this.lightIds.get(lights);
+    if (id === undefined) this.lightIds.set(lights, (id = this.made.size));
+    const key = `${sun.join(",")}|${id}`;
     let t = this.made.get(key);
-    if (!t) this.made.set(key, (t = makeTables(this, sun)));
+    if (!t) this.made.set(key, (t = makeTables(this, sun, lights)));
     return t;
   }
 }
 
 /**
- * A soft volume: blobs, fog layers and fog banks summed into one density, lit by the sun, the sky and flashes inside
- * it, drawn by `draw.density`; glows behind or inside it name it as their veil and are dimmed by it.
+ * A soft volume: blobs, fog layers and fog banks summed into one density, lit by the sun, the sky and the scene's
+ * lights, drawn by `draw.density`; glows behind or inside it name it as their veil and are dimmed by it.
  *
  * The shape and its law: density(p) = sum of the puffs' and banks' Gaussians, so the optical depth along any ray is a
  * sum of closed forms (erf), integrated per pixel without marching. Lighting: each blob gets the other blobs' depth
- * toward the sun and the zenith, and its light from each flash, from a CPU pass each frame; per pixel the depth is
+ * toward the sun and the zenith, and its light from each of the scene's lights, from a CPU pass each frame; per pixel the depth is
  * deposited into depth bins and composited front to back. `density(p)` gives the same sum as an expression.
  *
- * Parameters: `name` (an identifier: it names tables), the `puffs` (blobs and layers), `banks` and `flashes`, each with
- * the expressions it takes. The list itself is fixed at build: blobs can move, not appear.
+ * Parameters: `name` (an identifier: it names tables), the `puffs` (blobs and layers) and `banks`, each with the
+ * expressions it takes. The list itself is fixed at build: blobs can move, not appear.
  *
  * What it cannot do, because of the law and the light pass:
  * - be empty of blobs: fog alone needs one blob (of density 0).
  * - have blobs appear, split or vanish: the count is fixed; fade one in or out by its density.
  * - be cheap in large numbers: the light pass is O(N^2) on the CPU every frame, and each pixel loops over the blob
  *   clusters its ray meets; hundreds of blobs, not tens of thousands.
- * - cast shadows on bodies or the ground, or be lit by anything but the sun, the sky and its own flashes.
+ * - cast shadows on bodies or the ground.
+ * - be lit by a light within a blob: each blob gets one light value from each light, at its centre (a large blob is lit
+ *   evenly by a light touching its edge), with the light's transmission through the medium on the way (the same
+ *   extinction octaves as sunlight, so a flash glows through thick cloud); 4% of the most of each light reaching any
+ *   blob lights the whole medium evenly. Each frame the CPU traces from every blob to every light.
  * - draw outside its box: `draw.density` integrates only within `bounds` (keep it 3 radii past every puff; `cloud`
  *   and `billows` return one, and `unionBox` joins several).
  *
@@ -267,8 +250,8 @@ export class Medium {
  * line integral is closed form (a Gaussian in one, two or three coordinates, cut by planes) can join the sum; a density
  * that is not (noise, a function of your own) would need a marched drawable instead.
  */
-export function medium(name: string, parts: { readonly puffs?: readonly Puff[]; readonly banks?: readonly Bank[]; readonly flashes?: readonly Flash[] }): Medium {
-  return new Medium(name, parts.puffs ?? [], parts.banks ?? [], parts.flashes ?? []);
+export function medium(name: string, parts: { readonly puffs?: readonly Puff[]; readonly banks?: readonly Bank[] }): Medium {
+  return new Medium(name, parts.puffs ?? [], parts.banks ?? []);
 }
 
 /**
@@ -277,18 +260,23 @@ export function medium(name: string, parts: { readonly puffs?: readonly Puff[]; 
  */
 type Frame = { n: number; c: Float64Array; k: Float64Array; d: Float64Array; col: Float64Array; seed: Float64Array; cc: Float64Array; cr: Float64Array };
 
-function makeTables(m: Medium, sun: V3): MediumTables {
+function makeTables(m: Medium, sun: V3, lights: readonly Light[]): MediumTables {
   const N = m.blobs.length, NC = Math.ceil(N / CLUSTER);
   const blobRoots = m.blobs.flatMap((q) => [vec4(q.centre, q.density), vec4(q.inv, 0), vec4(q.colour, 0)]);
-  const flashRoots = m.flashes.map((f) => vec4(f.at, f.power));
+  // Each light at each blob's centre, as authored (before the sort): (toward, distance) and the amount. A light at
+  // infinity has no distance: its ray runs to FAR.
+  const lightRoots = m.blobs.flatMap((q) => lights.flatMap((l) => {
+    const a = l(q.centre);
+    return [vec4(a.toward, a.distance ?? FAR), vec4(a.amount, 0)];
+  }));
   const blobs: TableSource = {
     name: `${m.name}_blobs`, lanes: BLOB_LANES, entries: N + 1, role: "data",
     program: { kind: "cpu", why: "sorts the blobs along a Morton curve and runs an O(N^2) light pass between them (a scan could; not ported in phase 1)", prepare: (p) => {
-      const run = p.compile([...blobRoots, ...flashRoots]);
+      const run = p.compile([...blobRoots, ...lightRoots]);
+      const L = lights.length;
       return (frame, out) => {
         const v = run(frame) as number[][];
-        const fl = m.flashes.map((f, j) => ({ at: v[3 * N + j].slice(0, 3), power: v[3 * N + j][3], colour: f.colour, reach: f.reach }));
-        lightPass(sortAndCluster(v, N), fl, sun, out);
+        lightPass(sortAndCluster(v, N), (i, j) => ({ ray: v[3 * N + 2 * (i * L + j)]!, amount: v[3 * N + 2 * (i * L + j) + 1]! }), L, sun, out);
       };
     } },
   };
@@ -399,10 +387,18 @@ function depthThrough(fr: Frame, skip: number, o: readonly number[], d: readonly
   return tau;
 }
 
-/** Fill the blob table: the evaluated blobs (sorted), the light reaching each from the sun, the sky and the flashes. */
-function lightPass(fr: Frame, flashes: readonly { at: number[]; power: number; colour: readonly number[]; reach: number }[], sun: V3, out: Float32Array): void {
+/**
+ * Fill the blob table: the evaluated blobs (sorted), the light reaching each from the sun, the sky and the scene's
+ * lights. `arrival(i, j)`: light j at blob i as authored, (toward, distance) and the amount.
+ */
+function lightPass(fr: Frame, arrival: (i: number, j: number) => { readonly ray: number[]; readonly amount: number[] }, lights: number, sun: V3, out: Float32Array): void {
+  // The ambient share: of the most of each light that reaches any blob.
   const ambient = [0, 0, 0];
-  for (const f of flashes) for (let a = 0; a < 3; a++) ambient[a] += FLASH_AMBIENT * Math.max(f.power, 0) * f.colour[a];
+  for (let j = 0; j < lights; j++) {
+    const most = [0, 0, 0];
+    for (let i = 0; i < fr.n; i++) { const a = arrival(i, j).amount; for (let k = 0; k < 3; k++) most[k] = Math.max(most[k]!, a[k]!); }
+    for (let k = 0; k < 3; k++) ambient[k] += LIGHT_AMBIENT * most[k]!;
+  }
   const c = [0, 0, 0], at = [0, 0, 0];
   for (let i = 0; i < fr.n; i++) {
     for (let a = 0; a < 3; a++) c[a] = fr.c[3 * i + a];
@@ -415,20 +411,16 @@ function lightPass(fr: Frame, flashes: readonly { at: number[]; power: number; c
     };
     const sunBack = toward(sun, -1), sunFront = toward(sun, 1), upBack = toward(ZENITH, -1), upFront = toward(ZENITH, 1);
     const light = [0, 0, 0];
-    for (const f of flashes) {
-      if (!(f.power > 1e-4)) continue;
-      const v = [f.at[0] - c[0], f.at[1] - c[1], f.at[2] - c[2]];
-      const dist = Math.hypot(v[0], v[1], v[2]);
-      if (dist > FLASH_CUT * f.reach) continue;
-      const u = dist > 1e-6 ? v.map((x) => x / dist) : [0, 1, 0];
-      // The path to the flash crosses this blob's own half too: count every blob.
+    for (let j = 0; j < lights; j++) {
+      const { ray, amount } = arrival(fr.seed[i]!, j);
+      if (!(Math.max(amount[0]!, amount[1]!, amount[2]!) > 1e-4)) continue;
+      const u = ray.slice(0, 3) as unknown as V3, dist = ray[3]!;
+      // The path to the light crosses this blob's own half too: count every blob.
       const tau = depthThrough(fr, -1, c, u, dist);
       // Through the same octaves of extinction the shader uses for sunlight (multiple scattering): a flash inside a
       // thick cloud lights it from within instead of only the few blobs in direct sight of the channel.
       const through = (Math.exp(-tau) + 0.5 * Math.exp(-0.3 * tau) + 0.25 * Math.exp(-0.09 * tau)) / 1.75;
-      const x = dist / (FLASH_CUT * f.reach);
-      const fall = ((f.reach * f.reach) / (f.reach * f.reach + dist * dist)) * (1 - x * x) * (1 - x * x);
-      for (let a = 0; a < 3; a++) light[a] += f.power * f.colour[a] * fall * through;
+      for (let a = 0; a < 3; a++) light[a] += amount[a]! * through;
     }
     out.set([c[0], c[1], c[2], fr.d[i], fr.k[3 * i], fr.k[3 * i + 1], fr.k[3 * i + 2], fr.seed[i], fr.col[3 * i], fr.col[3 * i + 1], fr.col[3 * i + 2], 0, light[0], light[1], light[2], 0, sunBack, sunFront, upBack, upFront], i * 20);
   }
@@ -464,8 +456,8 @@ export type MediumAccess = {
 };
 
 /** Accessors for a medium's tables, declaring them in this compilation. */
-export function accessMedium(m: Medium, sun: V3, table: (t: TableSource) => { readonly wgsl: string }): MediumAccess {
-  const t = m.tables(sun);
+export function accessMedium(m: Medium, sun: V3, lights: readonly Light[], table: (t: TableSource) => { readonly wgsl: string }): MediumAccess {
+  const t = m.tables(sun, lights);
   const opt = (o: Optional): MediumAccess["layers"] => (o.kind === "some" ? { kind: "some", wgsl: table(o.table).wgsl, count: o.count } : { kind: "none" });
   return { blobs: table(t.blobs).wgsl, clusters: table(t.clusters).wgsl, layers: opt(t.layers), banks: opt(t.banks) };
 }

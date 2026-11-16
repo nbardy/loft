@@ -5,10 +5,21 @@
 // This file is types and constants only, and imports nothing that evaluates: the file loader's import closure must not
 // reach the compiler (tools/check_loader_closure.ts).
 
-import type { Camera, Detail, InputSlot, ParamSlot, TableFillKind } from "../artefact.ts";
+import type { Camera, Detail, InputSlot, ParamSlot, TableFillKind, TextureSize } from "../artefact.ts";
+export type { TextureSize };
 
 export const FORMAT = "loft-artefact";
 export const FORMAT_VERSION = 1;
+/**
+ * The versions a loader of this file reads. 2 adds what a version-1 loader would draw wrongly: `frame.replay` (a scene
+ * whose state keeps checkpoints) and pictures drawn off screen (src/frame/pass.ts: textures of a fixed or scaled size,
+ * render passes with no colour attachment, pipelines with no fragment stage, `frame.copies`). A file with neither is
+ * written as version 1, byte for byte what it was. Each version-2 field is optional; `formatVersion` (src/host/lower.ts)
+ * is the one place the version is decided. 3 adds `instanceBase` on planned draws (shared draw shaders, src/host/share.ts):
+ * a version-1 or -2 loader would ignore it and draw every shared draw with another draw's numbers.
+ */
+export const FORMAT_VERSIONS = [1, 2, 3] as const;
+export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 
 /** Index into the list of its kind (`Manifest.buffers`, `Manifest.textures`, ...). */
 export type Id = number;
@@ -20,8 +31,11 @@ export type Stage = "VERTEX" | "FRAGMENT" | "COMPUTE";
 
 /** `init`: a blob uploaded once at load, at offset 0 (a blob of 0 bytes is not written). */
 export type BufferDesc = { readonly label: string; readonly size: number; readonly usage: readonly BufferUsage[]; readonly init?: string };
-/** Sized to the view: created at the first frame and again whenever the view's width or height changes. */
-export type TextureDesc = { readonly label: string; readonly format: GPUTextureFormat; readonly sampleCount: number; readonly usage: readonly TextureUsage[] };
+/**
+ * Created at the first frame and again whenever the view's width or height changes. `size` absent: the view's size;
+ * `view`: the view's size times `scale`, each side rounded to the nearest pixel and at least 1; `fixed`: those pixels.
+ */
+export type TextureDesc = { readonly label: string; readonly size?: TextureSize; readonly format: GPUTextureFormat; readonly sampleCount: number; readonly usage: readonly TextureUsage[] };
 export type SamplerDesc = {
   readonly label: string; readonly magFilter: GPUFilterMode; readonly minFilter: GPUFilterMode;
   readonly addressModeU: GPUAddressMode; readonly addressModeV: GPUAddressMode;
@@ -43,7 +57,8 @@ export type RenderPipelineDesc = {
   readonly label: string;
   readonly layout: Id;
   readonly vertex: ShaderStageDesc;
-  readonly fragment: ShaderStageDesc & { readonly targets: readonly { readonly format: GPUTextureFormat; readonly blend?: GPUBlendState }[] };
+  /** Absent: no fragment stage (a depth pass's surfaces, whose rasterised triangles are the depth). */
+  readonly fragment?: ShaderStageDesc & { readonly targets: readonly { readonly format: GPUTextureFormat; readonly blend?: GPUBlendState }[] };
   readonly primitive: { readonly topology: "triangle-list"; readonly frontFace: GPUFrontFace; readonly cullMode: GPUCullMode };
   readonly depthStencil?: { readonly format: GPUTextureFormat; readonly depthWriteEnabled: boolean; readonly depthCompare: GPUCompareFunction };
   readonly multisample: { readonly count: number };
@@ -71,6 +86,20 @@ export type FrameWrite =
 /** A dispatch of the pose pass: x workgroups of POSE_WORKGROUP invocations, bind groups set at 0, 1, ... */
 export type Dispatch = { readonly label: string; readonly pipeline: Id; readonly bindGroups: readonly Id[]; readonly workgroups: number };
 
+/** `bytes` copied from `from` at byte `fromOffset` to `to` at byte 0 (copyBufferToBuffer), after the pose pass. */
+export type BufferCopy = { readonly from: Id; readonly fromOffset: number; readonly to: Id; readonly bytes: number };
+/**
+ * A recurrence that keeps checkpoints (docs/artefact_format.md, "Replays"): each frame, from the view's time t, the
+ * loader computes n = floor((t - start) rate) held in [0, steps - 1] (in f64) and k = n mod every, writes n as an f32 at
+ * float `slot` of the inputs, and records `first` then k more dispatches alternating `ping` (odd) and `pong` (even) in
+ * the pose pass, before its dispatches.
+ */
+export type Replay = {
+  readonly label: string; readonly slot: number;
+  readonly rate: number; readonly start: number; readonly steps: number; readonly every: number;
+  readonly first: Dispatch; readonly ping: Dispatch; readonly pong: Dispatch;
+};
+
 /** Where the level-of-detail bounds come from: none (no grid draws), or copies into a buffer mapped after the pose. */
 export type BoundsRead =
   | { readonly kind: "none" }
@@ -82,7 +111,7 @@ export type BoundsRead =
     readonly grids: readonly { readonly slot: number; readonly from: Id; readonly fromOffset: number; readonly at: number; readonly instances: number }[];
   };
 
-/** An attachment: a view-sized texture of the manifest, or the frame's output (the caller's texture, COLOR_FORMAT). */
+/** An attachment: a texture of the manifest, or the frame's output (the caller's texture, COLOR_FORMAT). */
 export type Target = { readonly kind: "texture"; readonly texture: Id } | { readonly kind: "output" };
 
 export type ColorAttachment = {
@@ -96,13 +125,15 @@ export type DrawCommand =
   | { readonly kind: "fixed"; readonly pipeline: Id; readonly vertices: number; readonly instances: number }
   /**
    * For each run of the plan for that draw: draw(run.vertices, run.instances, 0, instanceBase + run.first). No run:
-   * nothing, not even setPipeline. `instanceBase` picks a shared shader's row for this draw (src/host/share.ts); 0 else.
+   * nothing, not even setPipeline. `instanceBase` (version 3) picks a shared shader's row for this draw
+   * (src/host/share.ts); absent means 0, so a file that shares nothing is written as it was.
    */
-  | { readonly kind: "planned"; readonly pipeline: Id; readonly draw: number; readonly instanceBase: number };
+  | { readonly kind: "planned"; readonly pipeline: Id; readonly draw: number; readonly instanceBase?: number };
 
 export type RenderPassDesc = {
   readonly label: string;
-  readonly color: ColorAttachment;
+  /** Absent: no colour attachment (a depth pass). */
+  readonly color?: ColorAttachment;
   readonly depth?: DepthAttachment;
   /** Set at group 0, 1, ... once, before the commands. */
   readonly bindGroups: readonly Id[];
@@ -117,7 +148,7 @@ export type TableEntry = { readonly name: string; readonly buffer: Id; readonly 
 
 export type Manifest = {
   readonly format: typeof FORMAT;
-  readonly version: typeof FORMAT_VERSION;
+  readonly version: FormatVersion;
   /** Chunk names (a hash of the text); a file loader reads `wgsl/<name>.wgsl`. */
   readonly chunks: readonly string[];
   /** Blob names; a file loader reads `bin/<name>.bin` (little-endian f32). */
@@ -145,10 +176,14 @@ export type Manifest = {
     readonly writes: readonly FrameWrite[];
     /** One compute pass, in order; empty: no pass. */
     readonly pose: readonly Dispatch[];
+    /** Version 2: replays recorded in the pose pass before `pose`. Absent means none. */
+    readonly replay?: readonly Replay[];
     readonly bounds: BoundsRead;
     /** `loft_detail`: the plan's slots, `floats` of them written after the plan. */
     readonly detail: { readonly buffer: Id; readonly floats: number };
     readonly passes: readonly RenderPassDesc[];
+    /** After the pose pass, in the same encoder, in order: each pass's camera into its own frame uniform. Absent: none. */
+    readonly copies?: readonly BufferCopy[];
   };
   /** One entry per planned draw (`DrawCommand` "planned" indexes it). */
   readonly plan: readonly PlanDraw[];
@@ -171,4 +206,6 @@ export const COLOR_FORMAT: GPUTextureFormat = "rgba8unorm";
 /** Formats and the sample count `lower` chooses (a loader reads them from the descriptors, not from here). */
 export const DEPTH_FORMAT: GPUTextureFormat = "depth32float";
 export const SCENE_DEPTH_FORMAT: GPUTextureFormat = "r32float";
+/** A pass that keeps light (values above 1), and a screen pass. */
+export const LIGHT_FORMAT: GPUTextureFormat = "rgba16float";
 export const SAMPLES = 4;

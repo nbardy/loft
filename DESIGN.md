@@ -258,7 +258,9 @@ table lives and how it is filled (`map` or `scan` at a level, or `cpu` with why)
 the host uploads before the stages (empty when every table is a program: then a host runs no JavaScript per frame);
 and `pose(state)`, the CPU reading of every table, derived from the same programs, for tools and tests only.
 `FrameState.curves` is the curve table the host holds now, so a `setCurves` edit moves the CPU fills exactly as it
-moves the GPU.
+moves the GPU. Since 2026-11-14 (section 15): `recurrences`, states stepped by the scene's own functions, baked by the
+first host to load the artefact into static tables, and the fill `replay` for the two tables a checkpointed one's
+frame replays into.
 
 Per-frame tables are `TableSource`s (`src/expr.ts`): `entries` entries of `lanes` vec4s, a `role`, and a `program`:
 a `map` (runs of entries, each a closed form in its index; `mapOf`, `listOf`), a `scan` (entries in order carrying a
@@ -298,6 +300,65 @@ level, for hysteresis.
 Foam where the water meets a body is not a table: the sea reads the opaque scene's depth and foams where an opaque
 surface lies within the foam width in 3D. It needs no per-kind code and follows the drawn surface exactly.
 
+Pictures drawn off screen (`pass`, src/frame/pass.ts; 2026-11-14, docs/proposals/headroom.md section 5) added
+`Artefact.passes` (absent means none), `Draw.depth` (how a draw writes depth alone: `vertex` or a fragment `entry`),
+`Shader.depthEntry` and `passBindingsWgsl` (group 3: a filtering sampler, then one texture per pass). Nothing
+registers a pass: the compiler collects the passes named by the library functions its shaders call
+(src/compile/passes.ts), decides which draws read which pass by static use in the final WGSL (an entry point reaching
+the pass's texture through the functions it calls), leaves every reader of a pass out of it, orders passes by what
+they read and refuses a cycle by name. A pass's camera is a 12-vec4 table (`struct Frame`) filled by the pose pass and
+copied into the pass's own group 0 uniform, so every drawable draws into a pass with the pipelines and shaders it
+draws the view with; a depth pass uses each draw's depth way (no colour target, single-sampled). A scene that reads
+no pass compiles to the same bytes as before (its depth entries are not written) and lowers to a version 1 file.
+
+Still mode (`--samples N`, `--shutter s`, `--aperture r`; src/host/still.ts) is the TypeScript host's and the command
+line's only: N samples of one instant, each today's frame at time t + s (k + 0.5) / N, moved inside the pixel by a
+Halton (2, 3) point and through a lens disc point with the frustum sheared to keep the target's plane; summed in f32
+by a compute pass and averaged before the style's post passes run once. Each sample plans its level of detail with no
+memory, so a still is a function of (t, k, pixel) only. Nothing in the file format or the loader changes for it.
+
+### 3.1 Shared draw shaders and concurrent pipelines (ported from creative, 16 Nov)
+
+From the creative repo's frozen library (its `FROZEN_DIFF.md` says why each change was made), merged with passes,
+replays and stills:
+
+- `src/host/share.ts`: draw shaders that differ only in fragment-stage numbers, table bases, surface IDs and the
+  detail slot compile as one module per group. The numbers that differ go in rows, a static buffer at group 0
+  binding 5 (`ROWS_BINDING`; the prelude holds 0 to 4, passes are group 3). Each planned draw command carries an
+  `instanceBase`, whose high bits pick the row. All planned commands are made by one helper in lower.ts (`plannedOf`):
+  the view, colour passes and depth passes. A pass's own group 0 binds the rows too. Vertex-stage literals stay in
+  the code, because the compiler folds constants it can see, so shared ones would change the geometry. A shader with
+  an entry point besides `vs` and `fs` (a tracer's `fs_depth`, in a scene with a depth pass) is not shared, because
+  only `vs` and `fs` set the row.
+- Pipelines are keyed by the shared module, the per-draw constants left after sharing, and the colour format (a
+  pass's `rgba16float`). `depthPipeline` is keyed by the same shared module and constants.
+- Pipelines are requested together and awaited as one batch (host.ts `scopedPipelines`). Modules get one validation
+  scope each.
+- The clearance passes draw one full-screen triangle (`cover_vs`, `CLEARANCE_VERTICES` = 3). Each fragment past its
+  grid discards. There is one copy, in the `clearance()` helper, which the view and colour passes share.
+- Compile interning (`src/expr.ts`, `src/compile/tables.ts`, `src/compile/bind.ts`); a strand's girth may be an `Expr`.
+- File format 3: `instanceBase` is written only when it is not 0, and such a file is version 3. A loader for version 2
+  would ignore the field and draw every shared draw with another draw's numbers. A scene that shares nothing writes
+  the same bytes as before. The Rust loader reads `instanceBase` (type-checked, not yet drawn against Dawn).
+
+Measured on the merge (Apple GPU shared with other workers, load average 23 to 57). Each run is one process. Main and
+the branch were interleaved, two rounds after warming the Metal cache. Load is `host.load`.
+
+| scene | modules main / branch | render pipelines main / branch | compile CPU ms main / branch | load ms main / branch |
+|---|---|---|---|---|
+| crab (reefback_titan) | 95 / 78 | 122 / 89 | 6032, 8089 / 3699, 3275 | 3974, 4625 / 2326, 2738 |
+| training s7 | 39 / 30 | 63 / 45 | 2048, 2056 / 1415, 1196 | 1165, (10761) / 653, 604 |
+| training s333 | 57 / 41 | 97 / 65 | 2307, 2078 / 1480, 1540 | 1833, (17476) / 868, 1121 |
+| training s840 | 59 / 46 | 102 / 76 | 2386, 2706 / 1694, 1640 | 2438, 3749 / 1373, 1517 |
+
+Times in parentheses are Metal cache misses. Both sides miss now and then, because the cache is shared with other
+workers' processes. Before the cache was warm, the branch's crab took 14 to 30 s on four loads. With pipelines made
+one at a time it took 3.2 to 3.7 s, and then concurrent loads took 2.3 to 2.8 s. These were cache misses, not
+concurrency. Pixels are byte-identical to main: the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b
+2315edeb83c975e9`, also drawn from the built files, and mirror, pool (a colour pass, 12 of 18 commands shared),
+area_lamp, flock, rope, shatter, skin and reeds_shadow (a depth pass, 5 of 7 shared). Pool and reeds_shadow also match
+as `--samples 4` stills. Six training programs agree on main, the branch and creative's library.
+
 ## 4. Drawables (`src/compile/context.ts`)
 
 ```ts
@@ -305,8 +366,9 @@ interface Drawable {
   readonly name: string;
   draws(ctx: CompileContext): Emitted;          // { shaders: { key: { code, libs } }, draws: DrawSpec[] }
   readonly skeletons: readonly Skeleton[];      // what it casts shadows with (empty for none)
-  readonly surfaces: readonly Bakeable[];       // what it draws that the baker can evaluate (empty for none): a surface
-                                                // on its grid, or a triangle mesh (a field drawn as one)
+  readonly forms: readonly Form[];              // what it is, for any other reader (the baker, the checks, another
+                                                // renderer): a surface, a mesh, a field, a medium, or the author's own
+                                                // `hit`; every reader switches over `kind` (empty: nothing to read)
 }
 interface CompileContext {
   readonly slots: Slots;                        // emit expressions: emitShaderFn(ctx.slots, { name, args, out, roots, ret })
@@ -457,7 +519,7 @@ area with the axis is refused by name. Before, a rising profile was drawn inside
 | `src/draw/` | `draw.surface`, `draw.glazed`, `draw.curve`, `draw.points` (implemented); `draw.field`, `draw.relief`, `draw.density` (specified: options types, throw `NotImplementedError`); the sky and shadows |
 | `src/geom/` | `strand`, `crest`, `sea` as library functions; `scatter`, `attach`, the chart WGSL and its CPU twin, the station reader in WGSL and its JS mirror, and every per-kind shader template are gone |
 | `src/compile/` | slots, the table registry and packing, shared WGSL, the pose function; no kind of thing appears in it |
-| `src/bake/` | bakes every `Drawable.surfaces` entry by sampling its expressions; colours converted to linear |
+| `src/bake/` | bakes every `Drawable.forms` entry it can (one switch: surfaces and meshes sampled, fields meshed by surface nets, media and hits reported as skipped by name); colours converted to linear |
 | contract, host, CLI, viewer | unchanged |
 
 ### 7.6 Where the first version of this section was wrong or awkward
@@ -527,7 +589,8 @@ grow({ count, motif, step }), kifs({ count, fold, scale, offset })   // src/lib/
   plus a pixel, times 1.2); the formula also gives the refinement and the normal, so the surface is as crisp as
   traced. `mesh`: a closed triangle mesh extracted from the brick's samples (surface nets, `src/map/nets.ts`), normals
   from the field's gradient, paint per pixel at the interpolated point, ink as an inverted hull of the traced ink
-  width; bakeable to glTF (`Bakeable` is a surface or a mesh). `auto`: a field whose leaves read time, an input, a
+  width; drawn by `draw.mesh`'s emitter since 2026-11-14 (byte-identical pixels). Every schedule bakes to glTF: its
+  `field` form is meshed by surface nets at bake time. `auto`: a field whose leaves read time, an input, a
   param, a curve row or a per-frame table (`varianceOf`), or a GPU-only function, is traced; a static one whose
   formula is cheap (`evaluationCost` below `BRICK_WORTH` = 1000 nodes: the nest is 215, the coral 2612) is traced
   too, because a brick lookup (scattered loads) costs more than its formula; a static expensive one that reads
@@ -961,17 +1024,17 @@ WGSL and a JavaScript twin; both are tested against numerical integration to 1e-
 ### 8.2 Media and `draw.density` (`medium.ts`, `density.ts`, `cloud.ts`)
 
 ```ts
-const m = medium("storm", { puffs: [...thunderhead({...}).puffs, layer({...})], banks: [bank({...})], flashes: [...] });
+const m = medium("storm", { puffs: [...thunderhead({...}).puffs, layer({...})], banks: [bank({...})] });   // lit by scene({ lights })
 draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.3, shadowing: 0.8, detail: { kind: "noise", amount: 1, scale: 2.5 }, haze: 0.004 })
 ```
 
 - Kinds: `blob` (bounded Gaussian), `layer` (Gaussian in height: haze, ground fog), `bank` (a layer ending at a soft
-  vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D), `flash` (a point light
-  whose power is an expression of time). Every number may follow time. `Medium.density(p)` is the same sum as an
+  vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D). The scene's `lights`
+  (src/light.ts; lightning is `boltFlash`/`sheetFlash`, each a `lamp`) light it from inside. Every number may follow time. `Medium.density(p)` is the same sum as an
   expression (the 7.1 `Density` signature).
 - Per frame on the CPU (the one library table still `cpu` after phase 1 of docs/gpu_native.md): blobs are evaluated, sorted on a Morton curve and grouped 8 to a bounding
   sphere (`<name>_clusters`); the light pass computes each blob's optical depth through the *other* blobs toward the sun
-  and the zenith, one radius behind and in front of its centre, and the flash light reaching it through the medium.
+  and the zenith, one radius behind and in front of its centre, and each light's arrival at its centre through the medium.
   O(N^2), culled by cluster spheres and closest approach.
 - Per pixel: the bound's back faces are drawn at depth 0 (so the camera may be inside), the ray is clipped to the box,
   to `scene_position` (bodies inside a cloud are veiled by exactly what is in front of them and the cloud has a soft
@@ -980,7 +1043,7 @@ draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.
   and banks go in 8 pieces into those bins or 8 fixed bins over the whole ray; bins are merged by depth and composited
   front to back. Nothing is sorted; nothing is dropped; alpha is exact.
 - Light: octaves of extinction (single plus softer multiple-scattering lobes), a Henyey-Greenstein forward lobe, sky
-  light = the style's `sky` at the zenith, flashes per blob. `shadowing` scales depths toward lights (stylised: < 1
+  light = the style's `sky` at the zenith, the scene's lights per blob. `shadowing` scales depths toward lights (stylised: < 1
   keeps sunlit faces white); a blob's own shadow counts a third (at full strength every lump drew as its own sphere).
 - `cloud({ at, size, profile, blobs, turbulence, billow, drift, density, colour, seed, seconds })`: three tiers of puffs
   (few large core, medium lobes, many small dense surface puffs: a Gaussian's edge is crisper the denser it is), a
@@ -1054,8 +1117,7 @@ purity); fewer blobs with detail noise is done (above).
 ### 8.5 Known limits
 
 - Close up (inside a cloud's edge) the Gaussians read as soft blur; the detail noise thins edges but does not add
-  sharp structure. Clouds do not shadow layers, banks, the sea or bodies; the flash does not light bodies except
-  through `skyFlash`. Order inside one depth bin is lost (a bin is ~1/24 of the blobs' depth range).
+  sharp structure. Clouds do not shadow layers, banks, the sea or bodies; a light lights a cloud only at its blobs' centres. Order inside one depth bin is lost (a bin is ~1/24 of the blobs' depth range).
 
 ## 12. Level of detail, the sea's grid, outlines and profiling (as built, 2026-11-11)
 
@@ -1269,3 +1331,237 @@ function; a backdrop function for nothing (the levelled sky is the style's own c
    phase-1 host's stored hashes (`tools/files_cases.ts`, last changed when the files format landed) reports all six
    different; the artefacts of this change are byte-identical to the base's, so that is older drift of the stored
    hashes, not this change.
+
+## 14. Geometry an author makes, and rays an author casts (as built, 2026-11-14)
+
+Proposal: `docs/proposals/geometry_and_rays.md`, with the rulings of `docs/proposals/README.md` and headroom A3.
+
+- **`Drawable.forms`** replaces `surfaces`: `surface | mesh | field | medium | hit`. The baker switches over it and
+  reports what it cannot bake by name; a traced field now bakes by surface nets. Surface bakes are byte-identical.
+- **`draw.mesh`** (`src/draw/mesh.ts`): rows and triangles from the author's code, moved by `at(row, i)`. Normals are
+  classified once: `carried` (rest and welded normals carried by the cofactor of `at`'s symbolic Jacobian) or `faces`
+  (the moved triangle's own, per pixel). The field's `mesh` schedule is drawn by its emitter, pixels byte-identical.
+- **`draw.traced`** (`src/draw/traced.ts`): `hit(ray, copy) => { t, gap, normal }`, one shared fragment stage. The
+  paint runs in uniform control flow (a reflected ray's ground colour takes screen derivatives); the normal only on
+  covered pixels, by substituting the found t into its expression, so a march is not run twice.
+- **`march`** (`src/draw/march.ts`): draw.field's sphere trace in expressions over `iterate(..., until)`.
+- **`castRay`** (`src/draw/cast.ts`): library functions whose WGSL the compiler writes only when emitted code calls
+  them (`castPlan` in `src/compile/index.ts`); a chain-bounds map table over the shadows' joints. A miss by more than
+  the ray's width is a clean miss: without that cap no chain could be culled. `staysInView` runs on its CPU twin
+  (`castCpu`); the crab's checks give the same lines.
+- **Not ported (stop rules):** `draw.copies` (per-copy LOD, the `inkBack` depth offset, exact pixel size and the
+  oriented box are not in the shared fragment) and `draw.field` (over `march` the nest differs on 4.8% of pixels,
+  the inner silhouettes `march` does not ink, and its draw read 8.6 to 9.1 ms against 6.4 to 6.6). Both keep their
+  own fragment stages.
+- **The screen-outline fault** was real but latent: traced solids wrote their raw mark, which agreed with `markOut`
+  only for mark 1. Fixed through `ctx.markOut`; no existing picture changed.
+
+## 15. State: a step baked into the scene's files (`recur`; as built, 2026-11-14)
+
+The design is `docs/proposals/state.md` with the rulings of `docs/proposals/README.md`. One export, `recur` (src/map/recur.ts):
+
+```ts
+const flock = recur({ name: "flock", size: 200, rate: 30, until: 30,
+  start: (i) => [vec4(...position), vec4(0)],
+  step: (prev, i) => { const [p, v] = prev(i); /* gather from prev(j) */ return [vec4(...), vec4(...)]; } });
+draw.points("motes", points(200, (i) => ({ at: flock.at(i)[0]!.xyz, scale: 1 })), mote);
+```
+
+**The law.** S(n + 1) = step(S(n), t_n), t_n = from + n / rate, run once on the GPU, read as a function of time:
+linear between steps; `at(i, when)` an entry, `on(u, when)` linear along a list or bilinear and wrapping on a grid.
+Inside `step`, `time` is the step's own time (the step's expressions have `time` replaced by a variable bound to it),
+so a step reads the scene's closed forms where they were then, and other recurrences at that time.
+
+**What is kept** (`Kept`, chosen from the size alone): every state when the history fits 64 MiB, else every K-th,
+K = ceil(history / 64 MiB) up to 120 (above: a refusal with the bytes and the fix). States before the scene's clock
+starts are run but not kept (`first`); `until <= 0` keeps one still state. Each kept state carries a clock entry (its
+step number), which is how each dispatch of the bake knows its step: a `writeBuffer` between dispatches would land
+before all of them.
+
+**Where it runs.** `compile` stays synchronous: an artefact carries its recurrences unbaked (`Artefact.recurrences`,
+`Baked`). `createHost(...).load` bakes first (src/host/bake.ts: one compute pass, ping-pong bind groups, the steps write
+the states to keep themselves, one readback into the static data), then lowers; `lower` refuses an unbaked artefact;
+`loft build` bakes and writes the states as static blobs, so a file loader never bakes. Every-state keeping needs no
+format change (a static table and a closed form; the file stays version 1). Checkpoints add `frame.replay`
+(docs/artefact_format.md, "Replays", version 2): the host writes the step n from the time into a hidden input
+(`loft_step.<name>`) and records `first` plus k alternating `ping`/`pong` dispatches before the pose stages; the frame
+reads n and n + 1 from two per-frame tables by the parity of k. The step's WGSL is emitted once (src/compile/recur.ts)
+and placed unchanged in the bake's module and the replay's three, with only the reads of the previous state and the
+writes defined per module.
+
+**What a step may read**, classified once at `recur` (one sum type, one refusal site, `refusal` in src/map/recur.ts):
+constants, `time`, static tables, `prev`, recurrences that keep every state (baked first: `Artefact.recurrences` is in
+dependency order), `lib` functions. Refused with a `SceneError`: host inputs, params (a re-bake on edit is not built),
+curve rows, per-frame tables, free variables from outside, and checkpointed recurrences (lockstep replay of two
+checkpointed states is not built). A checkpointed state read at any time but `time` is refused with the bytes keeping
+every state would need (a per-frame `when` other than `time` would need one replay each; not built).
+
+**Checks.** The CPU reads the baked table (K = 1) or replays at most K steps from a checkpoint with the JavaScript twin
+(`replayFill` in src/compile/tables.ts), to the same n as the GPU (the hidden input). A CPU reading of an unbaked state
+throws; the one exception is the compiler's rest frame (shape measurement for level of detail), which reads the start
+state (`Unbaked = "start"`). `loft check` bakes on the GPU (exit 6 without one) and adds, with or without the scene's own
+checks (src/check_state.ts): the seam of a looping scene, max |S(P) - S(0)| per lane component relative to its range
+over the loop, at most 1e-3; and for checkpoints, the drift certificate, the CPU twin replaying K steps from three
+checkpoints against the next one the GPU kept, at most 1e-3. A looping scene whose state changes during the loop
+without being kept over all of it is refused at compile. `loft clip` refuses a clip past the shortest `until` of a scene
+that does not loop. `loft render`, `build` and `profile` print a bake line; `profile` prints the replay at k = K - 1.
+
+### 14.1 The predictions scored (GPU shared with three other workers, load average 40 to 170)
+
+| Prediction (state.md 9) | Measured | |
+|---|---|---|
+| Rope: 2.5 MB kept, bake 30 to 60 ms | 2.52 MB (1,921 states, the clock entries add 1/40); 35 to 48 ms wall at load 40, GPU 26 to 41 ms by timestamps at load 80 to 160 | held |
+| Rope: seam under 1e-5 relative | positions 8e-7; velocities 1.6e-4 | missed for velocities, see below |
+| Rope: frame time unchanged within one tick | 0.459 ms against 0.459 ms with a closed-form spine | held |
+| Flock: 5.8 MB, bake 20 to 50 ms, draw unchanged | 5.80 MB; 36 ms wall at load 40, GPU 18 to 35 ms; +0.065 ms, one tick (two fetches and a mix per vertex) | held, the draw at the edge |
+| Grid 128 x 128 x 9,000: 256 KiB, bake 40 to 100 ms, CPU twin about 6 s | 0.26 MB; 66 ms wall at load 40, GPU 48 to 55 ms; CPU twin 3.2 ms a step, 28.7 s | held; the twin missed 5x |
+| Grid 256 x 256, 30 s at 30: K = 15, 64 MB, worst replay 0.1 to 0.25 ms, load +30 to 80 ms | K = 15, 63.96 MB; worst replay 0.52 ms in `loft profile` (load 164); load +67 ms (read 18, upload and objects 56, against the rope's 7) | missed the replay, see below |
+| Replay on the baking GPU bitwise the bake | equal in every bit at every k of K = 4, and every checkpoint equal to an every-state bake (tests/recur.gpu.test.ts) | held |
+| Drift of the CPU twin over K = 15 Gray-Scott steps under 1e-5 | 6.6e-7 | held |
+| About 600 lines of TypeScript and 40 of Rust; wrong over 900 | 828 code lines and 278 comment lines of TypeScript, 51 and 11 of Rust | missed with the comments (1,106), held without |
+| 1 export | `recur` | held |
+| Existing scenes byte-identical | the six proof scenes and the stilt crab build byte-identical files; the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9` | held |
+
+Corrections to the theory:
+
+1. **The seam's floor is rounding, amplified by stiffness.** The damping does kill the transient (e^-29 over 24 s),
+   but each step turns the f32 rounding of positions back into velocity through the springs: W^2 ulp(|p|) dt per step
+   (4.5e-5 at |p| about 5), a random walk over the damping time (200 steps), about 4.5e-4. Measured 4.6e-4 and
+   5.9e-4 in the two moving velocity components. The positions close to 8 ulps. A stiff explicit step has a seam floor
+   of W^2 ulp dt sqrt(tau rate / 2), not zero; the 1e-3 tolerance covers it here.
+2. **A step's cost depends on the GPU's clock, not the module.** The same step costs 33 us in a pass of 112 dispatches,
+   13 us in 1,120 and 8.5 us in 7,200, the bake's module and the replay's equal at every length (out/state/ab_replay.ts,
+   not committed). The bake is one long pass (warm); a frame's replay is a short burst (cold). Against a hand-written
+   Gray-Scott step in the same process the compiled step costs the same (12.2 against 12.4 us), so the generated code
+   adds nothing. The proposal's 5.6 us was at load 4 to 7; here the hand-written step alone costs 12.4 us at load 170.
+3. **The CPU twin allocates per cell** (a grid index array and a result array per call): 5x slower than the proposal's
+   hand-written figure at a CPU load of 166. It serves checks and the certificate (at most K steps), so this was left.
+
+**The stop rule tripped once**: after stage 3, worst replay at K = 113 (256 x 256, 120 s at 60 steps a second) was
+3.80 ms against a limit of 2 ms, at load 80 to 95; the same bake's 7,200 steps took 85 ms of GPU (limit 1 s: held).
+112 steps warm cost 0.95 ms (correction 2), so the per-step model holds and the trip is the cold short pass.
+
+**Resume (built, 2026-11-16).** The host keeps the step n_last its even and odd tables hold; `advance` (src/host/host.ts)
+returns `kept` (same step: no dispatch), `resume { from, steps }` (0 < d = n - n_last <= k = n mod K: d dispatches of
+ping or pong, no checkpoint read) or `replay { checkpoint, steps }` (the old path); one dispatcher, `dispatchReplay`.
+Resume is never more dispatches than the replay (d <= k against k + 1). It needs an even K, which the compiler now
+guarantees (113 became 114; odd K in an old file always replays): state j then lives in table j mod 2 however it was
+reached, so the next step depends on j alone. Exact because a step reads only its state and the clock in it, in the same
+module as the bake. Measuring frames (`profile`, `frameGpu`, `poseTime`) force a replay, as a seek does.
+*Any frame draws alone*: tests/recur.gpu.test.ts and tests/recur.resume.gpu.test.ts (20 frames: forward steps,
+a repeat, checkpoint crossings, a seek back, a jump past R, both clamps) compare each frame's rgba sha256 with a fresh
+`Loaded` drawing that time first: identical, all three `Advance` kinds exercised; swapping ping and pong in resume
+fails it. The (LOD) dependence on earlier frames is unchanged: resume changes no byte, only how the tables are reached.
+Measured (256 x 256, 120 s, 60 a second, K = 114; 16 x 16 view, wall per awaited frame so the readback sync is in every
+number; 100 repetitions interleaved forward window / reverse window in one process; load average 31 to 24 with a
+training run on the GPU): a frame that replays nothing (same step) 0.76 ms; forward playback by resume 0.81 ms median
+(p10 0.67, p90 1.72), 0.05 ms over that floor (predicted about 0.1); the same steps replayed, as before, 3.25 ms median
+(p10 1.39, p90 5.21), 2.49 ms over the floor, averaged over k = 0..112. Resume at the worst k = 113: 0.84 ms (0.08 over).
+The worst seek (k = 113 from far away) is unchanged by design: 5.04 ms median (p10 4.64, p90 6.52), 4.28 ms over the
+floor. So the stop rule's 2 ms holds for playback and still trips for a seek to the worst k; the owner's decision
+stands. Not on a quiet GPU: ratios are the claim, the absolute milliseconds are not.
+
+Not built: re-baking params in `loft dev`; a per-frame `when` other than `time` on a checkpointed state;
+lockstep replay of two checkpointed recurrences; the input-log hybrid (live inputs stay refused). A built directory
+that keeps every state carries no record of its recurrence, so `loft clip --artefact` cannot refuse a clip past its
+`until` (one that keeps checkpoints can).
+
+## 16. Animated glTF: `loft bake --animated` (2026-11-16, designed before building)
+
+glTF carries motion as keyed node transforms, skins and morph targets. A Loft body is a section swept along stations
+that the pose pass transports frames along (section 7), so its natural export is a skin with one joint per station.
+
+**Joints.** Station j of a body (m_j = j / (n - 1), n = `transport.stations`) is joint j. Its transform at time t is
+the station table's own row: translation `p_j(t)` (lane 0), rotation `q_j(t)` (lane 1, the transported frame with
+twist: x the tangent, y the dorsal side, z the other side), and a scale `(1, B_j(t) / B_j(0), A_j(t) / A_j(0))` in that
+frame, A the half-width and B the half-height after volume preservation (`girth * aspect^{0|1} / sqrt(stretch)`; the
+tip closure is a function of m alone and cancels). glTF allows non-uniform joint scale, so girth, aspect and stretch
+thinning all ride the joints; twist rides the rotation. The joints are children of one root node per body, so their
+local transforms are their world ones. Inverse bind matrices are `(T(p_j(0)) R(q_j(0)))^-1`.
+
+**Weights.** The skin's frame at m is the nlerp of q_j and q_{j+1} with fr = m (n - 1) - j, and its stretch the lerp.
+So a vertex at body coordinate m (its TEXCOORD_0.x) gets joints (j, j + 1), weights (1 - fr, fr): two joints, the
+sweep's own blend. Four joints with a smoother blend would not match the sweep at rest and buy nothing below.
+
+**Error of the skin (DERIVATION).** At rest the skinned mesh equals the bake exactly. At time t it differs by:
+1. the spine: the sweep draws Catmull-Rom through the stations; the skin moves the rest curve rigidly with the
+   joints. Mid-segment, Catmull-Rom sits `s_j = (p_j + p_{j+1} - p_{j-1} - p_{j+2}) / 16` off the chord, so the error
+   is `|s_j(t) - R s_j(0)|`, about `|delta x''| h^2 / 8` per segment of length h;
+2. the ring: linear blend of two rotations differing (relative to rest) by d theta shrinks an offset of radius r by
+   `r (1 - cos(d theta / 2)) ~ r d theta^2 / 8`; the sweep's nlerp does not shrink;
+3. the scale between stations: a lerp of ratios against the ratio of lerps, second order in the change per segment.
+
+**Keys.** N + 1 keys at t_i = i S / N over the span S (the scene's `period`; with none, `--seconds`), LINEAR
+translation and scale, LINEAR (slerp) rotation. Between keys a point with acceleration a is off by at most
+`a dt^2 / 8`. N is chosen so this is half the budget: a pilot of N0 = 32 keys measures each moving thing's largest
+vertex acceleration by second differences, and `N = max(N0, ceil(S sqrt(a / (4 tol size))))` over the things.
+
+**Tolerance and size.** `tol` is `tolerance.share(1e-3)` of the thing's size, the diagonal of its rest bounding box.
+The error is measured, not assumed: per thing, the largest vertex distance between the file's motion (CPU skinning
+of the keyed joints, or the morph blend) and Loft's own evaluated surface (`compileJs` over the pose pass's tables),
+at every key and every mid-key time.
+
+**Outcomes (one per baked body, a sum type).** `still`: no vertex moves more than the tolerance over the span (one
+static mesh; fields are always this, since the field baker refuses one that changes). `skinned`: a live, whole body
+whose skin is within tolerance. `morphed`: anything else whose triangles keep their topology (a mesh, a surface that
+is not a body, a body over tolerance): one morph target per key, weights keyed one-hot, so its error is the keys'
+alone. Morphing over refusing because the positions at every key are already evaluated to measure the error, so the
+exact data costs no evaluation, and a creature missing an arm is worse than a larger file. `refused`: the keys alone
+miss the tolerance (N capped at 1024); written static at t = 0 and printed as refused, never silently.
+
+**Predictions (examples/reeds_shadow.ts, S = 2 pi, the period of `sin(time)`).** 32 stations over 3.5 units, size
+about 3.6, tolerance 3.6e-3. Spine term: x'' = 0.5 m^2 sin(t + k) changes by up to 2 per unit m^2, h = 1/31 of m:
+2.6e-4. Ring term: d theta about 0.57 / 31 = 0.018 rad, r = 0.2: 1e-5. Skin total about 3e-4 (1e-4 relative). Keys:
+tip acceleration 0.5, half budget 1.8e-3, N = ceil(2 pi sqrt(0.5 / 1.44e-2)) = 38 (above N0), mid-key error about
+1.7e-3. Expected: every reed `skinned`, measured 1.5e-3 to 2.5e-3 (4e-4 to 7e-4 relative); the stone `still`.
+
+### 16.1 As built, and what the runs showed
+
+`loft bake <scene> --out f.glb --animated [--seconds S]` (src/bake/motion.ts, the writer in src/bake/gltf.ts; the span
+is the scene's period, else `--seconds`, else a `SceneError`). It prints one line per body: its outcome, joints, keys,
+the measured error (world units, and as a share of its size), and the prediction. Three changes from the design, each
+forced by a run:
+
+- **Keys per thing.** One N for the whole scene let the crab's blinking lid (436 keys) key every leg too: 199 MB.
+  glTF samplers each take their own times, so each body has its own N (58 MB).
+- **Re-keyed once from the measurement.** The pilot's second differences average acceleration over two of its steps,
+  so a quick move reads low and a third of the crab's parts missed by 1.1 to 2 times. The keys' own midpoint error is
+  the bound measured (`a_eff = 8 e / dt^2`), so a thing over half the budget is re-keyed once with
+  `N' = N sqrt(e / (tol / 2))`. Motion that is not smooth is then visible in how the error fell: the heron's toes
+  (a footing that switches at 0.8 s) fell as dt^0.3, the original reeds as dt^0.
+- **Joints between stations.** At one joint per station the crab's legs missed (1.2e-2 against 7.7e-3; predicted
+  1.3e-2, so the theory was right and the joints too few). Joints are now the sweep sampled at J points
+  (`stationSample`: its own Catmull-Rom point, nlerped frame and stretch at any m), with
+  `J - 1 = (stations - 1) r`, `r = ceil(sqrt(e_stations / (tol / 2)))` (both skin terms go as the spacing squared),
+  at most 8. The legs take 47 joints and pass at 4.3e-4 to 6.1e-4 of their size.
+
+Results (CPU only: `compileJs` over the pose pass's tables; tolerance 1e-3 of size):
+
+| Scene | Body | Outcome | Error (units) | Share of size | Predicted |
+|---|---|---|---|---|---|
+| reeds_shadow, `up` [0,0,1] | reed0..5 | skinned, 32 joints, 37-38 keys | 1.74e-3 to 1.90e-3 | 4.9e-4 to 5.3e-4 | 1.83e-3 to 2.05e-3 (design: N = 38, 1.5e-3 to 2.5e-3) |
+| reeds_shadow | stone (a field) | still | - | - | - |
+| docs/context.md's reed, `up` [0,0,1] | reed | skinned, 32 joints, 39 keys | 1.99e-3 | 4.9e-4 | 2.10e-3 |
+| reefback_titan, 3.2 s (one gait) | 31 bodies | skinned (4 to 47 joints) | | 1.3e-5 to 7.5e-4 | |
+| | 31 bodies | morphed (33 to 761 targets) | | 1.2e-5 to 9.5e-4 | |
+| | 6 bodies | refused (cutter claw: a jump; maxillipeds: a kink) | | | |
+| heron, 1.6 s | torso, neck, bill, plume, legs, toes00/02 | skinned | | 4.8e-4 to 9.1e-4 | |
+| | toe01, toe10..12 | refused (the footing switches at 0.8 s) | | | |
+
+**The reeds as written are refused, and that is a finding about the sweep, not the export.** With `up` = +y along a
+vertical spine the start frame comes from `proj(up, tan0)`, whose length is about 5e-3 sin(t + k): when the bend
+changes sign the dorsal side flips half a turn in one key (measured: 3.14 rad between consecutive keys), so a vertex's
+place on the ring jumps by the diameter. Round and evenly painted, the GPU picture does not show it; any per-vertex
+consumer (a glTF, a texture, a sculpt layer) does. The export says so by name and writes the reed at rest. The fix
+belongs to `stationScan`'s seed (a seed that does not depend on the sign of a vanishing bend), not to the baker.
+
+Checks: Khronos glTF validator 2.0.0-dev.3.10 on every file above: 0 errors, 0 warnings (infos: the unused UV
+accessors). `tools/gltf_play.ts` reads a file back from its bytes and plays it (skin, weights, keys);
+tests/bake.gltf.test.ts compares that playback with the scene. `tools/gltf_skin_pictures.ts` draws the played file
+through a scene camera beside `loft frames`.
+
+Not exported: anything the static bake skips (the sea, the sky, shadows, sprays, impostor reefs, rigging strokes,
+telegraphs, media, traced solids); a field's motion (meshed once); a paint that reads a screen derivative (no
+COLOR_0, named); normals are the rest's, skinned by the viewer (non-uniform joint scale bends them slightly); a body
+taken at another time (a smear's slice) is morphed, not skinned. Rigid parts that are not bodies (a ship's hull) are
+morphed where one joint would do; a rigid fit per key is the next saving in file size.

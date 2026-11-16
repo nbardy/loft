@@ -70,3 +70,15 @@ and last line.
 | 21 | `load: ...: the default export is a design` | a design exported as default | `export const design = design({...})` |
 | 22 | `scene(): given sea: ... (the old key) and no ground` | the key before 2026-11 | `ground: sea({...})` |
 | 23 | `load: ... Export named 'spiralTub' not found` | a misspelt import | `spiralTube` (suggested) |
+| 24 | `recur "drift": given a read of the host input "push"` | a baked state's step reads what a game changes | a constant, or a closed form that looks like state (`jolt`) |
+| 25 | `passes: given a cycle: "mirrorLeft" reads "mirrorRight"; ...` | two passes each hold a draw that reads the other (two mirrors facing) | let one of those draws stop reading its pass |
+| 26 | `recur "drift": given a read of the pass "above"` | a baked state's step reads a picture drawn this frame | compute it from closed forms (`project` is arithmetic) |
+| 27 | `scene(): given lights: 8 lights; expected at most 7 besides the sun` | each light is a term in every lit fragment | one function for many sources (a row by repetition) |
+| 28 | `ball: paint: given "gloss" as vec3; expected "gloss" as f32, as toon reads it` | a channel given as another type than the style reads it | give it as the style's comment says |
+| 29 | `"stroke": given a paint with its own shade or scatter on a flat look` | a flat look's paint is the final colour: nothing to wrap | return the colour, or draw a lit surface |
+
+Refused the same way, without a fixture each: a step reading a param, a curve row, a per-frame table or a checkpointed
+recurrence; a span that is not a whole number of steps; a history over 120 x 64 MiB; a checkpointed state read at a time
+other than `time`; a looping scene whose state span does not cover its loop (`scene() with period P`). A clip past the
+shortest `until` of a scene that does not loop is a usage error (exit 2). A scene with `recur` needs a GPU for `check`
+and `build` (exit 6 without one).

@@ -67,7 +67,7 @@ for (const g of lowered) {
 
 // The frame-values stages: every per-frame node under a distinct frontier value, once per stage. A value that reads
 // tables waits for them: its stage is one past the deepest (here, the level phase 1 scheduled each table at).
-const levelOf = new Map(compiled.artefact.tables.map((t) => [t.name, t.fill.kind === "cpu" ? -1 : t.fill.level]));
+const levelOf = new Map(compiled.artefact.tables.map((t) => [t.name, t.fill.kind === "cpu" || t.fill.kind === "replay" ? -1 : t.fill.level]));
 const stages = new Map<number, Set<number>>();
 const stage = new Set<number>();
 for (const x of frontier.values()) {

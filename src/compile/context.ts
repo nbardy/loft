@@ -9,13 +9,16 @@ import type { Detail, Draw } from "../artefact.ts";
 import type { Expr, LibFn, TableSource } from "../expr.ts";
 import type { Ground } from "../draw/ground.ts";
 import type { Grid } from "../draw/surface.ts";
-import type { P3, Paint, Skeleton, Surface } from "../map/types.ts";
-import type { TriangleMesh } from "../map/nets.ts";
+import type { F, Field, P3, Paint, Painted, Poses, Skeleton, Surface } from "../map/types.ts";
+import type { Mesh, MeshOptions, MeshPaint } from "../draw/mesh.ts";
+import type { FieldHit } from "../draw/field.ts";
+import type { TraceBound } from "../draw/trace.ts";
+import type { Ray, Traced, TracedBound, TracedPaint } from "../draw/traced.ts";
 import type { V3 } from "../map/transport.ts";
 export type { V3 };
 import type { Style } from "../style.ts";
 import type { OutlineMethod } from "../scene.ts";
-import type { Sun } from "../sun.ts";
+import type { Lighting, Sun } from "../light.ts";
 import type { Slots } from "./bind.ts";
 
 /** What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). */
@@ -59,7 +62,15 @@ export type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; 
  * each library function either in `sceneWgsl` (when the shared functions call it too) or in the module, never both, so
  * a function that needs scene depth stays out of shaders that cannot read it.
  */
-export type Shader = { readonly code: string; readonly libs: readonly LibFn[] };
+export type Shader = {
+  readonly code: string;
+  readonly libs: readonly LibFn[];
+  /**
+   * WGSL defining a depth-only fragment entry (`DrawDepth` "entry"), appended to the module only when the scene has a
+   * depth pass, so a scene without one keeps its shaders byte for byte. Its draws say `depth: { kind: "entry", entry }`.
+   */
+  readonly depthEntry?: string;
+};
 
 export type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] };
 
@@ -79,8 +90,10 @@ export interface CompileContext {
   readonly ground: Ground;
   /** Unit direction toward the sun as the scene states it (a movable sun's default). */
   readonly sun: V3;
-  /** The sun as shaders read it: that literal, or a host input (src/sun.ts). */
+  /** The sun as shaders read it: that literal, or a host input (src/light.ts). */
   readonly sunAt: Sun;
+  /** The sun, its amount and the scene's lights: what a context's `lights` fold is built from (`foldAt`, src/light.ts). */
+  readonly lighting: Lighting;
   /** Every thing in the scene (for drawables derived from others, such as shadows). */
   readonly things: readonly Drawable[];
   /** Declare a per-frame table that raw WGSL reads (tables that expressions `fetch` are found without this). */
@@ -94,22 +107,33 @@ export interface CompileContext {
    * screen outlines, the mark and whether this surface is outlined (src/draw/ink.ts), and asking for the ink pass.
    */
   markOut(mark: string, inked: boolean): string;
+  /** Record a line for the artefact's `notes` (a channel no part of the style reads; a wrap that ignores the style). */
+  note(line: string): void;
 }
 
-/** A surface a drawable draws, as the baker needs it: the map, its paint, the grid it is sampled on, its sides. */
-/** `copy` is the copy's index (0 for a surface drawn once): what paint is told it is (`PaintAt.copy`). */
-export type SurfaceBakeable = { readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number };
-/** A closed triangle mesh a drawable draws (a field's, src/map/nets.ts), with the paint of a point and its normal. */
-export type MeshBakeable = { readonly name: string; readonly mesh: TriangleMesh; readonly paint: (hit: { readonly p: P3; readonly normal: P3 }) => P3 };
 /**
- * What the baker can evaluate. The two are told apart by their `mesh` member (bake/mesh.ts), so the surface drawables
- * that build the first kind did not change when the second was added.
+ * What a thing is, for any reader other than this renderer (the baker, the checks, another renderer): one variant per
+ * kind of geometry, every reader dispatching on `kind` exhaustively. A reader that meets a variant it does not handle
+ * reports it by name, never falls back silently (the baker's `skipped` list). `hit` is the author's own: every other
+ * kind can be lowered to it by a reader that wants to (docs/proposals/headroom.md A3 and section 9).
+ *
+ * - surface: a (u, v) map, its paint, the grid it is drawn on, its sides; `copy` is the copy's index (0 for one).
+ * - mesh: triangles made by code (`draw.mesh`, or a field's surface nets): rows, moved by `at` (absent: at rest) and
+ *   placed by `copies` (absent: one), painted over rows.
+ * - field: a signed distance field inside its bound, painted at a hit.
+ * - medium: a density inside a box and its colour (`draw.density`).
+ * - hit: any solid the author can intersect (`draw.traced`): `count` copies, each searched in its bound.
  */
-export type Bakeable = SurfaceBakeable | MeshBakeable;
+export type Form =
+  | { readonly kind: "surface"; readonly name: string; readonly surface: Surface; readonly paint: Paint; readonly grid: Grid; readonly sides: "one" | "two"; readonly copy: number }
+  | { readonly kind: "mesh"; readonly name: string; readonly mesh: Mesh; readonly at: MeshOptions["at"]; readonly copies: Poses | undefined; readonly paint: MeshPaint }
+  | { readonly kind: "field"; readonly name: string; readonly field: Field; readonly bound: TraceBound; readonly paint: (hit: FieldHit) => P3 | Painted }
+  | { readonly kind: "medium"; readonly name: string; readonly bound: TraceBound; readonly density: (p: P3) => F; readonly colour: (p: P3) => P3 }
+  | { readonly kind: "hit"; readonly name: string; readonly count: number; readonly bound: TracedBound; readonly hit: (ray: Ray, copy: F) => Traced; readonly paint: TracedPaint };
 
 /**
  * Anything a scene can draw: a name, the shaders and draw calls it emits for a `CompileContext`, the shadow-casting
- * chains it has, and the surfaces it offers for baking. The `draw` members, `glow` and `flare` make Drawables. For
+ * chains it has, and what it is for other readers (`forms`). The `draw` members, `glow` and `flare` make Drawables. For
  * authors of their own drawable; a scene author builds Drawables with those and does not need this interface.
  */
 export interface Drawable {
@@ -117,8 +141,8 @@ export interface Drawable {
   draws(ctx: CompileContext): Emitted;
   /** The chains this thing casts shadows with (empty for none). */
   readonly skeletons: readonly Skeleton[];
-  /** The surfaces this thing draws, for baking (empty when it draws none that can be evaluated on the CPU). */
-  readonly surfaces: readonly Bakeable[];
+  /** What it is, for any other reader (the baker, the checks, another renderer). Empty: nothing a reader can use. */
+  readonly forms: readonly Form[];
 }
 
 /**

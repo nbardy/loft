@@ -1,5 +1,6 @@
 // `loft check <scene.ts>`: a scene's checks (src/check.ts), run on the CPU against the scene they were built with,
-// printed as a table. A plain module: its exported `checks` against its default export. A design (docs/variants.md):
+// printed as a table. A scene with baked state (`recur`) is baked on the GPU first and also gets its seam and drift
+// measured, with or without `checks` of its own; without a GPU it ends as an environment error (exit 6). A plain module: its exported `checks` against its default export. A design (docs/variants.md):
 // the variant given, or else every named variant, or with `--combinations` every combination of slot options; one
 // table per variant. Exits 5 when any check fails, or as the error of a variant that fails to build (README "Exit codes").
 import type { Command } from "./args.ts";
@@ -14,14 +15,25 @@ type Outcome = { readonly label: string; readonly about: string; readonly result
 export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<void> {
   const subject = await subjectAt(cmd.path);
   const { runChecks, formatChecks } = await import("../check.ts");
+  const { compileScene } = await import("../compile/index.ts");
+  let device: GPUDevice | undefined;
 
   /** One variant's table; a variant that throws while it is built or compiled is a failure with its reason, and the rest go on. */
-  const run = (label: string, about: string, pick: () => Chosen): Outcome => {
+  const run = async (label: string, about: string, pick: () => Chosen): Promise<Outcome> => {
     const t = performance.now();
     try {
       const c = pick();
-      if (c.checks.kind === "absent") throw new LoadError(`${cmd.path} exports no \`checks\` array. Fix: export const checks = [...] beside the default export, e.g. export const checks = [budget({ triangles: 100_000 })]`);
-      const verdicts = runChecks(c.scene, c.checks.list);
+      const compiled = compileScene(c.scene);
+      for (const n of compiled.artefact.notes ?? []) console.error(`note: ${n}`);
+      const state = compiled.artefact.recurrences !== undefined;
+      if (c.checks.kind === "absent" && !state) throw new LoadError(`${cmd.path} exports no \`checks\` array. Fix: export const checks = [...] beside the default export, e.g. export const checks = [budget({ triangles: 100_000 })]`);
+      // Baked state is measured where it is drawn: baked on the GPU (a CPU bake of a chaotic step is another run).
+      if (state) {
+        const [{ headlessDevice }, { bakeRecurrences }] = await Promise.all([import("../host/headless.ts"), import("../host/bake.ts")]);
+        device ??= await headlessDevice();
+        await bakeRecurrences(device, compiled.artefact);
+      }
+      const verdicts = runChecks(c.scene, c.checks.kind === "absent" ? [] : c.checks.list, { compiled });
       const failed = verdicts.filter((v) => !v.pass).length;
       console.log(`${formatChecks(verdicts)}\n\n${verdicts.length - failed} passed, ${failed} failed  (${(performance.now() - t).toFixed(0)} ms, including compile)`);
       return { label: c.label, about, result: { kind: "built", failed, total: verdicts.length, failing: verdicts.filter((v) => !v.pass).map((v) => v.name) } };
@@ -33,23 +45,23 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
   };
 
   const outcomes: Outcome[] = [];
-  const each = (asks: readonly { readonly label: string; readonly about: string; readonly ask: VariantAsk }[]) => {
+  const each = async (asks: readonly { readonly label: string; readonly about: string; readonly ask: VariantAsk }[]) => {
     for (const a of asks) {
       console.log(`\n== variant ${a.label}: ${a.about}`);
-      outcomes.push(run(a.label, a.about, () => choose(subject, cmd.path, { kind: "ask", ask: a.ask, text: a.label })));
+      outcomes.push(await run(a.label, a.about, () => choose(subject, cmd.path, { kind: "ask", ask: a.ask, text: a.label })));
     }
   };
   switch (subject.kind) {
     case "scene":
       if (cmd.combinations) throw new UsageError(`--combinations: ${cmd.path} exports a scene, not a design: it has no slot options to combine (drop --combinations)`);
-      outcomes.push(run("scene", "", () => choose(subject, cmd.path, cmd.variant)));
+      outcomes.push(await run("scene", "", () => choose(subject, cmd.path, cmd.variant)));
       break;
     case "design": {
       const d = subject.design;
       // Labelled from the picks, not resolved here: a combination whose options disagree on a number fails in its own row.
-      if (cmd.combinations) each(d.combinations().map((ask) => ({ label: ask.picks.length === 0 ? "base" : ask.picks.map(([s, o]) => `${s}=${o}`).join(","), about: "combination", ask })));
-      else if (cmd.variant.kind === "ask") each([{ label: cmd.variant.text, about: "as asked", ask: cmd.variant.ask }]);
-      else each(d.variants.map((v) => ({ label: v, about: d.about(v), ask: { variant: v, picks: [] } })));
+      if (cmd.combinations) await each(d.combinations().map((ask) => ({ label: ask.picks.length === 0 ? "base" : ask.picks.map(([s, o]) => `${s}=${o}`).join(","), about: "combination", ask })));
+      else if (cmd.variant.kind === "ask") await each([{ label: cmd.variant.text, about: "as asked", ask: cmd.variant.ask }]);
+      else await each(d.variants.map((v) => ({ label: v, about: d.about(v), ask: { variant: v, picks: [] } })));
       break;
     }
   }

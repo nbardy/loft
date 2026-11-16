@@ -60,6 +60,7 @@ export { rollingFoam, curledHeads, crown, behind, joined, rollOf, slopeOf, along
 export { paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight, type Mottle, type Warm } from "./paint.ts";
 export { paperGrain, bloom, reflection } from "./post.ts";
 export { edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON } from "./shared.ts";
+export { glossed } from "./gloss.ts";
 export { toon, type ToonSpec } from "./toon.ts";
 export { woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";

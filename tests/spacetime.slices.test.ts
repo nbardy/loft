@@ -21,7 +21,7 @@ const wakeOf = wake(body, { over: 0.35, samples: 1 }); // its one past sample is
 const full = body.at(whole);
 // The tables only (nothing drawn): a drawable that declares them.
 const reads = (name: string, tables: readonly TableSource[]): Drawable => ({
-  name, skeletons: [], surfaces: [], draws: (ctx) => { for (const t of tables) ctx.table(t); return { shaders: {}, draws: [] }; },
+  name, skeletons: [], forms: [], draws: (ctx) => { for (const t of tables) ctx.table(t); return { shaders: {}, draws: [] }; },
 });
 const c = compileScene(scene({ ground: sea({ swell: [] }), things: [reads("slices", [headCopy.table, tail.table, full.table]), wakeOf], style: toon({ outline: 0.04 }), sun: [0, 1, 0], cameras: {} }));
 const frame = c.frame(stateAt(c.artefact, 2.3));

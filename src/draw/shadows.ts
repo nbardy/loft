@@ -18,7 +18,7 @@ import {
 } from "../expr.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import type { F, Skeleton } from "../map/types.ts";
-import { sunParts } from "../sun.ts";
+import { sunParts } from "../light.ts";
 import { levelOf } from "./ground.ts";
 
 /** vec4s per capsule: (end a xz, end b xz), (radius a, radius b, strength, softness), (has previous, has next, valid, 0). */
@@ -32,7 +32,7 @@ export const SHADOWS_TABLE = "shadows";
 export const shadows: Drawable = {
   name: "shadows",
   skeletons: [],
-  surfaces: [],
+  forms: [],
   draws(ctx: CompileContext): Emitted {
     switch (ctx.ground.kind) {
       case "sea": return patches(ctx, "sea_shadow(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s)", "alpha");

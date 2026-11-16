@@ -35,6 +35,18 @@ Sizes are lines. Run any scene with `pnpm loft render <file> --out out/x.webp` o
 | `islandback.ts` | 162 | a walk: a legged body with a gait through shallow water, a shell carried on its back |
 | `maelstrom.ts` | 94 | a deformation of the sea (`whirlpool`) and things riding it (`afloat`) |
 
+## State (a step, baked)
+
+Closed forms first (a kick is a `jolt`, a trail is the thing at earlier times); these are for what truly steps. Each is
+a `recur`: the step runs once on the GPU and the scene reads it as a function of time.
+
+| File | Lines | Shows |
+|---|---:|---|
+| `skin.ts` | 35 | a grid settled before the scene starts: reaction and diffusion, kept as one still state, read as paint |
+| `flock.ts` | 40 | a list with every state kept: 200 motes chasing a lure that is a closed form of time |
+| `rope.ts` | 46 | a loop closed by physics: a rope settles into its anchor's swing, and `loft check` measures the seam |
+| `creep.ts` | 39 | a grid too large to keep every state: checkpoints, each frame replaying at most 15 steps |
+
 ## Actions
 
 | File | Lines | Shows |
@@ -47,6 +59,18 @@ Sizes are lines. Run any scene with `pnpm loft render <file> --out out/x.webp` o
 No file yet shows one scene in every style (`withStyle`); the nearest are whole scenes in one style each:
 `scenes/night_hunt.ts` (biolume), `scenes/island_tide.ts` and `scenes/the_strike.ts` (toon), `scenes/maelstrom.ts` and
 every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches between five looks of one style.
+
+## Light and materials
+
+| File | Lines | Shows |
+|---|---:|---|
+| `light/lantern_night.ts` | 26 | a lamp inside a paper lantern at night: the flame lights the floor (`lamp`, `scene({ lights })`), the paper glows (`emits`), the sun dimmed to a moon |
+| `light/lure.ts` | 36 | a creature lit only by its own lure: one `const` for the flare and the lamp, a check that the head is lit (`litBy`) |
+| `light/road.ts` | 30 | a road of patterned lamps as one function, by repetition (a `Light` written by hand) |
+| `light/area_lamp.ts` | 30 | a lamp with a size whose light function casts its own shadow (`castRay`): hard in a frame, soft in a still (`--samples 64`) |
+| `materials/lacquer.ts` | 28 | wet lacquer: `gloss` and a darker `base`, words every glossy style reads |
+| `materials/beetle.ts` | 36 | a thin-film shell: the surface's own answer to each light (`scatter`) |
+| `materials/poker.ts` | 37 | a word you invent (`kelvin`) and the style part that reads it |
 
 ## Soft things
 
@@ -62,6 +86,23 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `coral_list.ts` | 65 | the same form listed as copies instead of asked per pixel |
 | `nest.ts` | 86 | one shape repeated at shrinking scales through a fold (`repeatScale`) |
 | `pearls.ts` | 53 | a lattice of shapes, ray-cast by walking the cells a ray crosses |
+
+## Your own geometry and rays
+
+| File | Lines | Shows |
+|---|---:|---|
+| `shatter.ts` | 75 | triangles from your own algorithm (a Voronoi shatter) moved by an expression of time (`draw.mesh`) |
+| `bead.ts` | 38 | a solid you intersect yourself, here by intervals, drawn per pixel (`draw.traced`) |
+| `mirror.ts` | 29 | a reflected ray cast from a paint at another thing's field (`march`) and at everything's stand-in (`castRay`) |
+## Pictures drawn off screen (`pass`) and stills
+
+| File | Lines | Shows |
+|---|---:|---|
+| `reeds_shadow.ts` | 71 | shadows from every shape the sun sees: a depth picture from the sun read by a style part; a CPU check that every caster lands inside it |
+| `pool.ts` | 51 | a pool that mirrors what stands round it: the view's camera reflected, half size, read by the ground |
+
+A still needs no new name in a scene: `loft render <scene> --samples 64 --shutter 0.05 --aperture 0.08` averages 64
+samples of one instant (motion blur over the shutter, depth of field focused on the camera's target).
 
 ## Whole scenes
 

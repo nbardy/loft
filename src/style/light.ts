@@ -16,8 +16,11 @@
 // Any style lights its bodies by a recipe with `litBodies(recipe, ownBlock, ink, after)`: woodblock over its print rule,
 // toon over its bands, sketch over bare paper.
 //
-// Cannot: more than one of each treatment (one hatch direction, one rim, one key per treatment); light that is not one
-// direction for the whole picture (a lamp, a point light falling off); colour in the shadow other than one block ink
+// Lights: every treatment that reads a key reads the union over the scene's lights (`turn`): a lamp prints as a hard
+// pool, its edge where the luminance arriving is the recipe's `pool`, its ink tinted by the lamp's hue.
+//
+// Cannot: more than one of each treatment (one hatch direction, one rim, one key per treatment); a lamp's falloff as a
+// grade (a pool is cut, as a printer cuts it; the one soft treatment, bokashi, does not read lights); colour in the shadow other than one block ink
 // (a shadow that turns cooler on blue paint and warmer on red); hatching anywhere but rings along a body's length (or
 // level lines on a traced solid).
 // Going past it: `lit` returns the colour and the tone separately, so a style can combine two recipes' tones with `min`
@@ -26,7 +29,7 @@
 // anchor, their radius from the same terminator measure: the stipple foam's law moved onto the body); a hatch whose
 // spacing follows the paint's value (darker paints closer lines, which is how an etcher holds local colour without ink).
 
-import { abs, add, cross, div, dot, exp, f, floor, fract, gt, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec2, vec3, type Expr } from "../expr.ts";
+import { abs, add, cross, div, dot, exp, f, floor, fract, gt, lift, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec2, vec3, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
 import { hash2 } from "../lib/noise.ts";
 import { fwidth, pixelWorld, wgslFn } from "../lib/wgsl.ts";
@@ -125,11 +128,18 @@ export type LightRecipe = {
   readonly cast: Cast;
   readonly overlap: Overlap;
   readonly block: Block;
+  /**
+   * Where a local light's pool ends: the luminance arriving below which a lamp lights nothing in the print (default
+   * 0.1, two reaches from a lamp of colour 1). The sun is cut by it too when the scene states its amount.
+   */
+  readonly pool: number;
 };
 
 // ---- building one ---------------------------------------------------------------------------------------------------
 
 const OFF = { kind: "off" } as const;
+/** A recipe's default `pool`. */
+const POOL = 0.1;
 const CREAM: Rgb = [0.93, 0.88, 0.75];
 
 function within(what: string, x: number, lo: number, hi: number): number {
@@ -188,7 +198,7 @@ export const light = {
   block: (o: BlockInk): Block => ({ kind: "ink", ink: o.ink, amount: within("block amount", o.amount, 0, 1), value: within("block value", o.value, 0, 1) }),
   /** A recipe from the treatments given; every other one is off, and the block is the style's own ink. */
   recipe: (r: Partial<LightRecipe> = {}): LightRecipe =>
-    ({ core: OFF, hatch: OFF, waterline: OFF, bokashi: OFF, rim: OFF, highlight: OFF, cast: OFF, overlap: OFF, block: { kind: "rule" }, ...r }),
+    ({ core: OFF, hatch: OFF, waterline: OFF, bokashi: OFF, rim: OFF, highlight: OFF, cast: OFF, overlap: OFF, block: { kind: "rule" }, pool: POOL, ...r }),
 };
 
 // ---- the library ----------------------------------------------------------------------------------------------------
@@ -315,13 +325,44 @@ function across(dir: V, ctx: ShadeCtx): F {
   return select(gt(dot(ctx.uv, ctx.uv), 0), sqrt(max(sub(1, mul(d, d)), 0)), 1);
 }
 
-/** The terminator's measure: positive in the light. One handler per rule. */
-function turn(t: Terminator, ctx: ShadeCtx): F {
-  const key = keyOf(t.key, ctx);
+/** The terminator's measure toward `key`: positive in the light. One handler per rule. */
+function turnToward(t: Terminator, key: V, ctx: ShadeCtx): F {
   switch (t.kind) {
     case "sun": return sub(dot(ctx.normal, key), t.at);
     case "section": return sub(dot(ctx.normal, key), mul(across(key, ctx), t.at));
   }
+}
+
+/**
+ * Whether a scene states the sun's amount. The full sun's is the literal [1, 1, 1] (src/light.ts): a sun stated at
+ * full strength is that sun, so the two print alike and the full one keeps today's text.
+ */
+const stated = (amount: In<"vec3">): boolean => !(Array.isArray(amount) && amount.every((c) => c === 1));
+
+/**
+ * A measure positive where a light lights, cut by how much of it arrives: min(measure, lum(amount) - pool + at), the
+ * measure's own threshold `at` added back so the cut lands where lum(amount) = pool. The sun is cut only when its
+ * amount is stated.
+ */
+function pooled(measure: F, l: { readonly amount: In<"vec3"> }, which: "sun" | "local", pool: number, at: number): F {
+  switch (which) {
+    case "sun": return stated(l.amount) ? min(measure, add(sub(luminance(l.amount), pool), at)) : measure;
+    case "local": return min(measure, add(sub(luminance(l.amount), pool), at));
+  }
+}
+
+/**
+ * The terminator's measure over every light: the union of the lit regions, the largest of the lights' measures, each
+ * cut by its pool (`pooled`). The same algebra as `union` on distance fields, applied to "lit". The sun's key may be
+ * swung off the lens or fixed to the camera (`Key`); a local light's is its own direction, always.
+ */
+function turn(t: Terminator, ctx: ShadeCtx, pool: number): F {
+  return ctx.lights("largest", (l, which) => {
+    switch (which) {
+      case "sun": return pooled(turnToward(t, keyOf(t.key, ctx), ctx), l, which, pool, 0);
+      case "local": return pooled(turnToward(t, l.toward, ctx), l, which, pool, 0);
+    }
+  });
 }
 
 /** Height above the water. */
@@ -329,24 +370,24 @@ const above = (ctx: ShadeCtx): F => mul(ctx.depth, -1);
 
 // ---- one handler per treatment: each a tone, 1 where the block does not print ----------------------------------------
 
-function cored(c: Core, ctx: ShadeCtx): F {
+function cored(c: Core, ctx: ShadeCtx, pool: number): F {
   switch (c.kind) {
     case "off": return f(1);
-    case "flat": return edgeOf(turn(c.edge, ctx), 0, 1e-5);
+    case "flat": return edgeOf(turn(c.edge, ctx, pool), 0, 1e-5);
   }
 }
 
-function hatched(h: Hatch, ctx: ShadeCtx): F {
+function hatched(h: Hatch, ctx: ShadeCtx, pool: number): F {
   switch (h.kind) {
     case "off": return f(1);
-    case "cross": return sub(1, crossLines(h, ctx));
+    case "cross": return sub(1, crossLines(h, ctx, pool));
   }
 }
 
 /** The lines' coverage, 0..1. */
-function crossLines(h: Extract<Hatch, { kind: "cross" }>, ctx: ShadeCtx): F {
+function crossLines(h: Extract<Hatch, { kind: "cross" }>, ctx: ShadeCtx, pool: number): F {
   // The share of a period a line takes: nothing `over` above the terminator, `cap` at `deep` below it.
-  const measure = turn(h.edge, ctx);
+  const measure = turn(h.edge, ctx, pool);
   // Rings seen end on (a limb pointing at the eye, an eyelid) print as a bullseye: none where the form's long direction
   // is within about 20 degrees of the view.
   const sideOn = sub(1, smoothstep(0.8, 0.95, abs(dot(longDir(ctx.world, ctx.normal, ctx.anchor.x), ctx.view))));
@@ -402,28 +443,42 @@ function washed(b: Bokashi, ctx: ShadeCtx): F {
 }
 
 /** The rim: how much of its edge is here (0 for none), and its ink. */
-function rimmed(r: Rim, ctx: ShadeCtx): { readonly edge: F; readonly ink: Rgb } {
+function rimmed(r: Rim, ctx: ShadeCtx, pool: number): { readonly edge: F; readonly ink: Rgb } {
   switch (r.kind) {
     case "off": return { edge: f(0), ink: [0, 0, 0] };
     case "edge": {
       const away = pixelsInside(ctx);
       const wide = max(div(r.width, pixelWorld(ctx.world)), 1.5);
       const inside = sub(1, smoothstep(sub(wide, 0.75), add(wide, 0.75), away));
-      return { edge: mul(mul(inside, edgeOf(dot(ctx.normal, keyOf(r.key, ctx)), 0.12, 1e-5)), r.amount), ink: r.ink };
+      // Toward the light that lights most here: the sun's key, or a local light's direction, each cut by its pool.
+      const toward = ctx.lights("largest", (l, which) => {
+        switch (which) {
+          case "sun": return pooled(dot(ctx.normal, keyOf(r.key, ctx)), l, which, pool, 0.12);
+          case "local": return pooled(dot(ctx.normal, l.toward), l, which, pool, 0.12);
+        }
+      });
+      return { edge: mul(mul(inside, edgeOf(toward, 0.12, 1e-5)), r.amount), ink: r.ink };
     }
   }
 }
 
 /** The highlight on a colour the block has left `tone` unprinted. */
-function highlit(h: Highlight, c: V, tone: F, ctx: ShadeCtx): V {
+function highlit(h: Highlight, c: V, tone: F, ctx: ShadeCtx, pool: number): V {
   switch (h.kind) {
     case "off": return c;
     case "shoulder": {
-      const half = normalize(add(keyOf(h.key, ctx), towardEye()));
+      const cone = Math.cos((h.size * Math.PI) / 180);
       // A plain cone about the half vector, not measured round the section as the terminator is: where a face is
       // nearly flat the surface faces the half vector almost evenly, and the small steps of a section's measure from
-      // one triangle to the next moved this edge by many pixels (a palm's highlight came out in stairs).
-      const shape = edgeOf(dot(ctx.normal, half), Math.cos((h.size * Math.PI) / 180), 1e-5);
+      // one triangle to the next moved this edge by many pixels (a palm's highlight came out in stairs). One cone per
+      // light, the largest winning, each cut by its pool.
+      const facing = ctx.lights("largest", (l, which) => {
+        switch (which) {
+          case "sun": return pooled(dot(ctx.normal, normalize(add(keyOf(h.key, ctx), towardEye()))), l, which, pool, cone);
+          case "local": return pooled(dot(ctx.normal, normalize(add(l.toward, towardEye()))), l, which, pool, cone);
+        }
+      });
+      const shape = edgeOf(facing, cone, 1e-5);
       // Not on the key block's black (a painted line, a pupil): a light on black is grey.
       const inked = edgeOf(luminance(c), 0.12, 1e-5);
       return mix(c, rgb(h.ink), mul(mul(mul(shape, tone), inked), h.amount));
@@ -439,9 +494,26 @@ function highlit(h: Highlight, c: V, tone: F, ctx: ShadeCtx): V {
  * the block; the highlight on what the block left; the rim's ink.
  */
 export function lit(r: LightRecipe, ink: V, ctx: ShadeCtx): { readonly colour: V; readonly tone: F } {
-  const rim = rimmed(r.rim, ctx);
-  const tone = max(min(min(cored(r.core, ctx), hatched(r.hatch, ctx)), min(waterlined(r.waterline, ctx), washed(r.bokashi, ctx))), rim.edge);
-  return { colour: mix(highlit(r.highlight, ink, tone, ctx), rgb(rim.ink), rim.edge), tone };
+  const rim = rimmed(r.rim, ctx, r.pool);
+  const tone = max(min(min(cored(r.core, ctx, r.pool), hatched(r.hatch, ctx, r.pool)), min(waterlined(r.waterline, ctx), washed(r.bokashi, ctx))), rim.edge);
+  return { colour: mix(highlit(r.highlight, tinted(ink, ctx, r.pool), tone, ctx, r.pool), rgb(rim.ink), rim.edge), tone };
+}
+
+/**
+ * The lit ink in each local light's hue (its amount over its largest channel) inside that light's pool: one mix per
+ * light, the ink itself under the sun alone.
+ */
+function tinted(ink: V, ctx: ShadeCtx, pool: number): V {
+  return ctx.lights("sum", (l, which) => {
+    switch (which) {
+      case "sun": return ink;
+      case "local": {
+        const a = lift<"vec3">(l.amount);
+        const hue = div(a, max(max(max(a.x, a.y), a.z), 1e-4));
+        return mul(mul(ink, sub(hue, 1)), edgeOf(sub(luminance(a), pool), 0, 1e-5));
+      }
+    }
+  });
 }
 
 /** What a style's bodies are: their colour, their mark, and the shadow block if one is printed after them. */

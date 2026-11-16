@@ -151,6 +151,11 @@ function read(wgsl: string, tables: ReadonlyMap<string, Accessor>): Read | strin
   }
   const vs = VS.exec(wgsl);
   if (!vs || !INSTANCE.test(vs[1]!) || !fsOf(vs[2]!).test(wgsl) || !fns.has("vs") || !fns.has("fs")) return "not the vs(instance_index) and fs(VOut) template";
+  // Only vs and fs set `loft_row` (plumb), and holes are chosen by what vs and fs reach. Another entry point (a
+  // tracer's depth-only `fs_depth`, appended in a scene with a depth pass) would read row 0 through holes it reaches
+  // alone, so such a shader compiles on its own, as before sharing.
+  const entries = [...wgsl.matchAll(/@(?:vertex|fragment|compute)\s+fn\s+(\w+)/g)].map((m) => m[1]!);
+  if (entries.some((e) => e !== "vs" && e !== "fs")) return `has an entry point besides vs and fs (${entries.join(", ")})`;
   const reached = (entry: string): Set<string> => {
     const seen = new Set<string>(), stack = [entry];
     while (stack.length > 0) {

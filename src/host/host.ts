@@ -16,12 +16,14 @@
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts and files.ts) stays clean.
 
 import { EnvironmentError } from "../errors.ts";
-import type { Artefact, CpuUpload, FrameState, FrameStats, Host, Loaded, View } from "../artefact.ts";
+import { LIGHT_SAMPLE_INPUT, replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
+import { bakeRecurrences } from "./bake.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
-import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Target } from "./manifest.ts";
+import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
 import { profileFrames, type Profile } from "./profile.ts";
+import { stillFrame, type StillSpec } from "./still.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
 export { COLOR_FORMAT, DEPTH_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT } from "./manifest.ts";
 
@@ -62,6 +64,8 @@ export interface GpuLoaded extends Loaded {
   frameGpu(view: View, frames: number): Promise<{ readonly ms: number; readonly pose: number; readonly draws: number; readonly tick: number }>;
   /** Every dynamic buffer as the pose stages (and `cpu` uploads) left it for this view, by name: for checks against `pose`. */
   readTables(view: View): Promise<Readonly<Record<string, Float32Array>>>;
+  /** A still of this view: many samples of the instant averaged (src/host/still.ts), read back as `frameTimed` reads a frame. */
+  stillTimed(view: View, still: Extract<StillSpec, { kind: "still" }>): Promise<{ readonly pixels: Uint8Array; readonly ms: FrameTimings; readonly drawn: FrameStats }>;
 }
 /** Timestamp indices a timed frame writes at the start and end of a submit's passes (frame timing). */
 type Stamps = { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number };
@@ -83,13 +87,19 @@ export class NotDataError extends Error {
 
 export function createHost(device: GPUDevice): GpuHost {
   // async: an artefact that fails lower's checks rejects the returned promise, as every load error does, never throws.
-  return { load: async (artefact) => loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) }) };
+  // The first host to load an artefact bakes its recurrences (src/host/bake.ts); lower then writes the baked states.
+  return {
+    load: async (artefact) => {
+      await bakeRecurrences(device, artefact);
+      return loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) });
+    },
+  };
 }
 
 // ---- per-frame state -------------------------------------------------------------------------------------------
 
 const FLOATS = { f32: 1, vec2: 2, vec3: 3, vec4: 4 } as const;
-type StateSpec = Pick<Manifest, "inputs" | "inputFloats" | "params" | "paramFloats">;
+type StateSpec = Pick<Manifest, "inputs" | "inputFloats" | "params" | "paramFloats"> & { readonly frame?: { readonly replay?: readonly ReplayClock[] } };
 
 function asFloats(name: string, value: number | readonly number[], floats: number): readonly number[] {
   const v = typeof value === "number" ? [value] : value;
@@ -101,14 +111,18 @@ function asFloats(name: string, value: number | readonly number[], floats: numbe
 function frameState(s: StateSpec, curves: Float32Array, view: View): FrameState {
   const inputs = new Float32Array(s.inputFloats);
   for (const i of s.inputs) inputs.set(i.def, i.slot);
+  const replays = s.frame?.replay ?? [];
   for (const [name, value] of Object.entries(view.inputs ?? {})) {
     if (name === "time") throw new Error(`view input "time": set View.time instead`);
+    if (replays.some((r) => s.inputs.find((x) => x.slot === r.slot)?.name === name)) throw new Error(`view input "${name}": a replay's step number, which the host sets from View.time`);
     const i = s.inputs.find((x) => x.name === name);
     if (!i) throw new Error(`view input "${name}": the artefact declares no such input`);
     inputs.set(asFloats(name, value, FLOATS[i.ty]), i.slot);
   }
   const time = s.inputs.find((x) => x.name === "time");
   if (time) inputs[time.slot] = view.time;
+  // The step each replay replays to, from the time, so the GPU and the CPU agree on it exactly.
+  for (const r of replays) inputs[r.slot] = replayStep(r, view.time).n;
   const params = new Float32Array(s.paramFloats);
   for (const p of s.params) params[p.slot] = p.def;
   for (const [name, value] of Object.entries(view.params ?? {})) {
@@ -120,8 +134,8 @@ function frameState(s: StateSpec, curves: Float32Array, view: View): FrameState 
 }
 
 /** The `FrameState` a host hands the pose pass for a view: the same mapping `frame` and `draw` use. */
-export function viewState(a: Pick<Artefact, "inputs" | "inputFloats" | "params" | "curves">, view: View, curves: Float32Array = a.curves): FrameState {
-  return frameState({ ...a, paramFloats: a.params.reduce((n, p) => Math.max(n, p.slot + 1), 0) }, curves, view);
+export function viewState(a: Pick<Artefact, "inputs" | "inputFloats" | "params" | "curves" | "recurrences">, view: View, curves: Float32Array = a.curves): FrameState {
+  return frameState({ ...a, paramFloats: a.params.reduce((n, p) => Math.max(n, p.slot + 1), 0), frame: { replay: replayClocks(a.recurrences) } }, curves, view);
 }
 
 export function frameUniform(view: View): Float32Array<ArrayBuffer> {
@@ -136,10 +150,10 @@ export function frameUniform(view: View): Float32Array<ArrayBuffer> {
   return u;
 }
 
-/** One frame write's contents (FrameWrite: the closed list of per-frame CPU blocks). */
-function writeData(w: FrameWrite, view: View, state: FrameState): Float32Array<ArrayBuffer> {
+/** One frame write's contents (FrameWrite: the closed list of per-frame CPU blocks); `frame`: a still sample's own uniform. */
+function writeData(w: FrameWrite, view: View, state: FrameState, frame?: Float32Array<ArrayBuffer>): Float32Array<ArrayBuffer> {
   switch (w.kind) {
-    case "frame": return frameUniform(view);
+    case "frame": return frame ?? frameUniform(view);
     case "inputs": return state.inputs as Float32Array<ArrayBuffer>;
     case "params": return state.params as Float32Array<ArrayBuffer>;
   }
@@ -249,7 +263,7 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
       label: p.label,
       layout: pipelineLayouts[p.layout]!,
       vertex: { module: modules[p.vertex.module]!, entryPoint: p.vertex.entryPoint, constants: p.vertex.constants },
-      fragment: { module: modules[p.fragment.module]!, entryPoint: p.fragment.entryPoint, constants: p.fragment.constants, targets: p.fragment.targets.map((t) => ({ ...t })) },
+      ...(p.fragment === undefined ? {} : { fragment: { module: modules[p.fragment.module]!, entryPoint: p.fragment.entryPoint, constants: p.fragment.constants, targets: p.fragment.targets.map((t) => ({ ...t })) } }),
       primitive: p.primitive,
       ...(p.depthStencil === undefined ? {} : { depthStencil: p.depthStencil }),
       multisample: p.multisample,
@@ -273,7 +287,7 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
   return {
     manifest: m, buffers, computePipelines, renderPipelines, fixedGroups,
     sized: (size) => {
-      const textures = m.textures.map((t) => device.createTexture({ label: t.label, size, format: t.format, sampleCount: t.sampleCount, usage: bits(TEXTURE_USAGE, t.usage) }));
+      const textures = m.textures.map((t) => device.createTexture({ label: t.label, size: textureSize(t.size, size), format: t.format, sampleCount: t.sampleCount, usage: bits(TEXTURE_USAGE, t.usage) }));
       const views = textures.map((t) => t.createView());
       const groups = m.bindGroups.map((g, k) => fixedGroups[k] ?? group(k, views));
       return { ...size, textures, views, groups };
@@ -281,7 +295,78 @@ async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
   };
 }
 
+/** A texture's pixels for a view of this size (TextureDesc.size: absent is the view's). */
+export function textureSize(t: TextureSize | undefined, view: { readonly width: number; readonly height: number }): { width: number; height: number } {
+  if (t === undefined) return { width: view.width, height: view.height };
+  switch (t.kind) {
+    case "view": return { width: Math.max(1, Math.round(view.width * t.scale)), height: Math.max(1, Math.round(view.height * t.scale)) };
+    case "fixed": return { width: t.width, height: t.height };
+  }
+}
+
 // ---- recording -------------------------------------------------------------------------------------------------
+
+/**
+ * How a frame gets the two states n and n + 1 of one checkpointed recurrence into its even and odd tables. One decision,
+ * made once (`advance`), executed by one dispatcher (`dispatchReplay`).
+ *
+ * kept    the tables already hold n and n + 1 (the same step as the last frame: a pause, or a seek inside one step).
+ * resume  step `steps` times on from the last frame's pair (n_last, n_last + 1), no checkpoint read.
+ * replay  `first` from checkpoint `checkpoint`, then `steps` more (docs/artefact_format.md, "Replays").
+ */
+export type Advance =
+  | { readonly kind: "kept" }
+  | { readonly kind: "resume"; readonly from: number; readonly steps: number }
+  | { readonly kind: "replay"; readonly checkpoint: number; readonly steps: number };
+
+/**
+ * Choose how to reach step n (src/artefact.ts `replayStep`) given the step the tables hold from the last frame (`last`,
+ * undefined before the first frame or after anything that may have disturbed them).
+ *
+ * Resume when d = n - last satisfies 0 < d <= k = n mod every, i.e. when it costs no more dispatches than the replay
+ * (d against k + 1) and steps from the checkpoint no further than the replay would. Resume needs an even `every`: the
+ * two tables then hold state j in table j mod 2 whichever way they were reached (the compiler keeps `every` even), so
+ * the step to take next depends on j alone. An odd `every` (an older file) always replays.
+ *
+ * Why this is exact: a step reads only the state and its own clock entry, and writes only the other table, so state
+ * n_last + 1 stepped d times is the very computation the replay or the bake ran, in the same module: the same bytes.
+ */
+export function advance(r: ReplayClock, last: number | undefined, t: number): Advance {
+  const { n, k } = replayStep(r, t);
+  if (last === n) return { kind: "kept" };
+  const d = last === undefined ? 0 : n - last;
+  if (last !== undefined && d > 0 && d <= k && r.every % 2 === 0) return { kind: "resume", from: last, steps: d };
+  return { kind: "replay", checkpoint: Math.floor(n / r.every), steps: k };
+}
+
+/** One replay's dispatches for an `Advance`, into an open compute pass. */
+export function dispatchReplay(pass: GPUComputePassEncoder, o: Objects, r: Replay, a: Advance): void {
+  switch (a.kind) {
+    case "kept": return;
+    case "resume":
+      // The source of step j is state from + j, which lives in table (from + j) mod 2: ping reads odd, pong reads even.
+      for (let j = 1; j <= a.steps; j++) dispatchAll(pass, o, [(a.from + j) % 2 === 1 ? r.ping : r.pong]);
+      return;
+    case "replay":
+      dispatchAll(pass, o, [r.first]);
+      for (let j = 1; j <= a.steps; j++) dispatchAll(pass, o, [j % 2 === 1 ? r.ping : r.pong]);
+      return;
+  }
+}
+
+/**
+ * The replays of a frame at time t, into an open compute pass before its dispatches. `last` is the step each replay's
+ * tables hold; the steps this frame leaves them at are returned, for the caller to record once the frame is submitted.
+ */
+export function dispatchReplays(pass: GPUComputePassEncoder, o: Objects, replays: readonly Replay[], t: number, last: ReadonlyMap<Replay, number>): Map<Replay, number> {
+  const now = new Map<Replay, number>();
+  for (const r of replays) {
+    const a = advance(r, last.get(r), t);
+    dispatchReplay(pass, o, r, a);
+    now.set(r, replayStep(r, t).n);
+  }
+  return now;
+}
 
 /** The pose pass's dispatches, into an open compute pass. */
 export function dispatchAll(pass: GPUComputePassEncoder, o: Objects, list: readonly Dispatch[]): void {
@@ -303,7 +388,7 @@ export function command(pass: GPURenderPassEncoder, o: Objects, c: RenderPassDes
       const runs = plan[c.draw]!;
       if (runs.length === 0) return;
       pass.setPipeline(o.renderPipelines[c.pipeline]!);
-      for (const r of runs) pass.draw(r.vertices, r.instances, 0, c.instanceBase + r.first);
+      for (const r of runs) pass.draw(r.vertices, r.instances, 0, (c.instanceBase ?? 0) + r.first);
       return;
     }
   }
@@ -323,7 +408,7 @@ export function passDescriptor(p: RenderPassDesc, s: Sized, out: GPUTextureView)
   const c = p.color, d = p.depth;
   return {
     label: p.label,
-    colorAttachments: [{
+    colorAttachments: c === undefined ? [] : [{
       view: targetView(s, c.view, out),
       ...(c.resolveTarget === undefined ? {} : { resolveTarget: targetView(s, c.resolveTarget, out) }),
       loadOp: c.loadOp, storeOp: c.storeOp,
@@ -342,9 +427,10 @@ export function passDescriptor(p: RenderPassDesc, s: Sized, out: GPUTextureView)
  * The frame's render passes. `stamps` (frame timing): timestamp `begin` at the start of the first pass and `end` at the
  * end of the last (on the real passes: Dawn on Metal writes no timestamps for an empty pass).
  */
-function recordPasses(encoder: GPUCommandEncoder, o: Objects, s: Sized, out: GPUTextureView, plan: Plan, stamps?: { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number }): void {
+function recordPasses(encoder: GPUCommandEncoder, o: Objects, s: Sized, out: GPUTextureView, plan: Plan, stamps?: { readonly querySet: GPUQuerySet; readonly begin: number; readonly end: number }, range?: readonly [number, number]): void {
   const passes = o.manifest.frame.passes;
   for (const [k, p] of passes.entries()) {
+    if (range !== undefined && (k < range[0] || k >= range[1])) continue;
     const writes = stamps === undefined ? undefined : {
       querySet: stamps.querySet,
       ...(k === 0 ? { beginningOfPassWriteIndex: stamps.begin } : {}),
@@ -435,8 +521,12 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
   };
   const bufferNamed = new Map(m.dynamic.map((k) => [m.buffers[k]!.label, o.buffers[k]!]));
 
+  /** The step each checkpointed recurrence's even and odd tables hold (as the last submitted frame left them): what `advance` resumes from. */
+  const replayedAt = new Map<Replay, number>();
   /** Write the frame's state and `cpu` tables, then submit the pose pass (and, when `copyBounds`, the copy of the bounds). */
-  const pose = (view: View, copyBounds: boolean, stamps?: Stamps): number => {
+  const pose = (view: View, copyBounds: boolean, stamps?: Stamps, frame?: Float32Array<ArrayBuffer>, cold = false): number => {
+    // A measuring frame (profile, frameGpu) is repeated at one time to time it: replay it every time, as a seek does.
+    if (cold) replayedAt.clear();
     const t0 = performance.now();
     const state = frameState(m, curves, view);
     const uploads = cpuUploads(state);
@@ -451,32 +541,41 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       throw new Error(`cpuPose did not return cpu table${[...cpuTables].filter(([k]) => !given.has(k)).map(([, t]) => ` "${t.name}"`).join(",")}`);
     }
     for (const w of m.frame.writes) {
-      const data = writeData(w, view, state);
+      const data = writeData(w, view, state, frame);
       if (data.length > 0) device.queue.writeBuffer(o.buffers[w.buffer]!, 0, data);
     }
     const encoder = device.createCommandEncoder({ label: "loft pose" });
-    if (m.frame.pose.length > 0) {
+    let replayed: ReadonlyMap<Replay, number> | undefined;
+    const replays = m.frame.replay ?? [];
+    if (m.frame.pose.length > 0 || replays.length > 0) {
       const pass = encoder.beginComputePass({ label: "loft pose", ...(stamps === undefined ? {} : { timestampWrites: { querySet: stamps.querySet, beginningOfPassWriteIndex: stamps.begin, endOfPassWriteIndex: stamps.end } }) });
+      replayed = dispatchReplays(pass, o, replays, view.time, replayedAt);
       dispatchAll(pass, o, m.frame.pose);
       pass.end();
     }
+    // Each pass's camera, from its table into its frame uniform (Manifest.frame.copies), before any pass draws.
+    for (const c of m.frame.copies ?? []) encoder.copyBufferToBuffer(o.buffers[c.from]!, c.fromOffset, o.buffers[c.to]!, 0, c.bytes);
     if (copyBounds && bounds.kind === "read") {
       for (const g of bounds.grids) encoder.copyBufferToBuffer(o.buffers[g.from]!, g.fromOffset, o.buffers[bounds.buffer]!, g.at * 16, g.instances * 16);
     }
+    // Forget the kept pair first and record the new one only once this frame is submitted: a frame that throws before
+    // then (or fails validation) leaves the tables in an unknown state, and the next frame must replay from a checkpoint.
+    replayedAt.clear();
     device.queue.submit([encoder.finish()]);
+    for (const [r, n] of replayed ?? []) replayedAt.set(r, n);
     return performance.now() - t0;
   };
   /** This frame's plan from these bounds, its level-of-detail slots written (before the draws' submit). */
-  const plan = (view: View, read: Bounds): Plan => {
-    const p = planFrame(m.plan, view, read, memory, detail);
+  const plan = (view: View, read: Bounds, levels: Memory = memory): Plan => {
+    const p = planFrame(m.plan, view, read, levels, detail);
     device.queue.writeBuffer(o.buffers[m.frame.detail.buffer]!, 0, detail);
     return p;
   };
   /** A frame that waits for its own bounds (headless frames, profiling): pose, read the bounds, plan. */
-  const posedPlan = async (view: View, stamps?: Stamps): Promise<{ readonly plan: Plan; readonly poseMs: number }> => {
+  const posedPlan = async (view: View, stamps?: Stamps, cold = false): Promise<{ readonly plan: Plan; readonly poseMs: number }> => {
     if (boundsPending) await boundsPending;
     const copy = bounds.kind === "read";
-    const poseMs = await validated("pose", () => pose(view, copy, stamps));
+    const poseMs = await validated("pose", () => pose(view, copy, stamps, undefined, cold));
     const read = copy ? await readBounds() : lastBounds;
     const t0 = performance.now();
     const p = plan(view, read);
@@ -555,12 +654,12 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     profile: async (view, frames) => {
       checkView(view);
       if (!(Number.isInteger(frames) && frames >= 1)) throw new Error(`profile: frames must be a positive integer, got ${frames}`);
-      return profileFrames({ device, objects: o, size: { width: view.width, height: view.height }, frames, upload: () => posedPlan(view) });
+      return profileFrames({ device, objects: o, size: { width: view.width, height: view.height }, frames, upload: () => posedPlan(view, undefined, true) });
     },
     poseTime: async (view, repeats, rounds) => {
       checkView(view);
       if (!device.features.has("timestamp-query")) throw new Error("poseTime: the device was created without the \"timestamp-query\" feature");
-      await posedPlan(view);
+      await posedPlan(view, undefined, true);
       const query = device.createQuerySet({ type: "timestamp", count: 2 });
       const resolve = device.createBuffer({ size: 16, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
       const read = device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -600,7 +699,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       const gcd = (a: number, b: number): number => (a === 0 ? b : gcd(b % a, a));
       let best = { ms: Infinity, pose: 0, draws: 0 }, tick = 0;
       for (let f = 0; f < frames + 2; f++) {
-        const posed = await posedPlan(view, { querySet: query, begin: 0, end: 1 });
+        const posed = await posedPlan(view, { querySet: query, begin: 0, end: 1 }, true);
         const rb = readbackFor(view);
         const encoder = device.createCommandEncoder({ label: "loft frame (timed)" });
         recordPasses(encoder, o, sizedFor(view), rb.texture.createView(), posed.plan, { querySet: query, begin: 2, end: 3 });
@@ -617,6 +716,44 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       }
       query.destroy(); resolve.destroy(); read.destroy();
       return { ...best, tick: tick / 1e6 };
+    },
+    stillTimed: async (view, still) => {
+      if (reading) throw new Error("still: called again before the previous frame resolved");
+      checkView(view);
+      reading = true;
+      try {
+        if (boundsPending) await boundsPending;
+        const t0 = performance.now();
+        const rb = readbackFor(view), sz = sizedFor(view);
+        const drawn = await stillFrame({
+          device, passes: m.frame.passes, views: sz.views, textures: sz.textures, out: rb.texture,
+          lightSampled: m.inputs.some((i) => i.name === LIGHT_SAMPLE_INPUT),
+          // One bounds read (sample 0's); each sample plans from it with no memory: a still depends on no frame before it.
+          bounds: async (v, frame) => {
+            const copy = bounds.kind === "read";
+            await validated("still", () => pose(v, copy, undefined, frame));
+            return copy ? await readBounds() : lastBounds;
+          },
+          sample: (v, frame, read) => {
+            pose(v, false, undefined, frame);
+            return plan(v, read, new Map());
+          },
+          record: (encoder, out, p, from, to) => recordPasses(encoder, o, sz, out, p, undefined, [from, to]),
+        }, view, still);
+        const t1 = performance.now();
+        const encoder = device.createCommandEncoder({ label: "loft still readback" });
+        encoder.copyTextureToBuffer({ texture: rb.texture }, { buffer: rb.buffer, bytesPerRow: rb.bytesPerRow, rowsPerImage: view.height }, { width: view.width, height: view.height });
+        device.queue.submit([encoder.finish()]);
+        await rb.buffer.mapAsync(GPUMapMode.READ);
+        const mapped = new Uint8Array(rb.buffer.getMappedRange());
+        const row = view.width * 4;
+        const pixels = new Uint8Array(row * view.height);
+        for (let y = 0; y < view.height; y++) pixels.set(mapped.subarray(y * rb.bytesPerRow, y * rb.bytesPerRow + row), y * row);
+        rb.buffer.unmap();
+        return { pixels, ms: { pose: t1 - t0, encode: 0, readback: performance.now() - t1 }, drawn };
+      } finally {
+        reading = false;
+      }
     },
     readTables: async (view) => {
       checkView(view);
