@@ -49,8 +49,10 @@ const CAST_LIBS: readonly LibFn[] = [CAST_LIB, NORMAL_LIB, COLOUR_LIB, ID_LIB, M
  * closest-approach soft edges; `width` is read at t0 and t1 and taken as affine between. Parameters: the ray. Cannot:
  * see exact surfaces (a wide flat part, a carapace or a sail, is its round chain); see things with no skeleton; see
  * the sea's swell; return a hit's real paint (a thing's mean paint, or the style's ink where none can be sampled); run
- * on the CPU inside an expression (the twin is `castCpu`, for checks). Cost: about 0.045 ms per capsule tested per
- * million rays; chains are culled by bounding sphere first. Relatives: your own `hit` or `march(field)` for the one thing
+ * on the CPU inside an expression (the twin is `castCpu`, for checks). Cost: an exact capsule test is about 0.34 ms
+ * per segment for a ray from every fragment of the largest example; a per-frame grid (or, for rays wider than its
+ * cells, chain then segment spheres) leaves about 3 per pixel. A lamp shadow over the whole crab: +8 to 12 ms (DESIGN.md
+ * 14). Relatives: your own `hit` or `march(field)` for the one thing
  * that must be exact; closed-form occlusion of a sphere or capsule (Quilez) for ambient light; screen-space hits for
  * on-screen colour.
  */

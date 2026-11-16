@@ -1306,7 +1306,26 @@ Proposal: `docs/proposals/geometry_and_rays.md`, with the rulings of `docs/propo
 - **`castRay`** (`src/draw/cast.ts`): library functions whose WGSL the compiler writes only when emitted code calls
   them (`castPlan` in `src/compile/index.ts`); a chain-bounds map table over the shadows' joints. A miss by more than
   the ray's width is a clean miss: without that cap no chain could be culled. `staysInView` runs on its CPU twin
-  (`castCpu`); the crab's checks give the same lines.
+  (`castCpu`, brute force over every segment: the reference the GPU search must equal); the crab's checks give the
+  same lines. Since 2026-11-16 the search is classified once (`Search`): `grid`, a per-frame uniform grid of 4096
+  cells over the chains' spheres (three map tables: the grid's box and cell size, each segment's box, and per cell a
+  bitmask of the segments whose box grown by one cell touches it, under a header of non-empty words), walked nearest
+  first (Amanatides-Woo), each segment tested once (the bits of the cell before are masked off) and only if the ray
+  passes its box grown by the ray's widest width, stopping once a hit lies before the cell's exit; or `chains` (no
+  chain, or more than 2,304 joints). A ray wider than a cell, or a frame whose cells did not fit, walks the chains,
+  where each segment is now culled by its own bounding sphere first. Of equal t (or r) the lower joint wins, so the
+  answer is the old one in any order: mirror, area lamp (frame and 64-sample still) and the crab lit by a casting
+  lamp are byte-identical to before, and the crab's `game` hashes held. *Measured* (`tools/cast_bench.ts`: the crab,
+  lamp at [3, 14, 2.5] above it, one shadow ray per lit fragment, 1280 x 800, paired medians over 30 to 40 frames
+  interleaved in one process, load average 32 to 58): before +11.8 to 14.9 ms for a hard ray (width 0.002), +13.6 to
+  16.1 for a soft one (0.05 t); the grid +7.9 to 9.9 and +11.7 to 12.0. That is not the 1.7 ms first recorded: this
+  lamp sits over the crab and the sea's rays cross it. Predicted 3 to 5 and 5 to 7. The stop rule held: over 1 ms,
+  and one round of fixes (listing a ray's segments and testing them in one shared loop) measured worse (+10.3,
+  +16.5) and was reverted. What the numbers say: the build costs about 0.2 ms of pose stages, the walk without its
+  exact tests +0.3 to 0.7 ms, and the exact rounded-cone tests the rest; brute force costs 0.34 ms per segment per
+  frame, the chain walk's sphere culls 0.005 each. GPU counters give 3 exact tests per front pixel (hard), a bound of
+  about 1 ms before hidden fragments, so no culling structure reaches 1 ms on this light. The chain walk with the
+  segment sphere cull alone measured the same as the grid (+7.5 to 10 hard, exploratory), with no tables.
 - **Not ported (stop rules):** `draw.copies` (per-copy LOD, the `inkBack` depth offset, exact pixel size and the
   oriented box are not in the shared fragment) and `draw.field` (over `march` the nest differs on 4.8% of pixels,
   the inner silhouettes `march` does not ink, and its draw read 8.6 to 9.1 ms against 6.4 to 6.6). Both keep their

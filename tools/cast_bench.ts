@@ -1,8 +1,8 @@
-// castRay's cost on the largest example: the crab (examples/bosses/reefback_titan.ts, base variant) lit by a lamp over it,
-// [3, 14, 2.5], whose
-// light function casts one soft shadow ray per lit pixel, against the same crab unlit, and against another checkout's
-// castRay (`base`, e.g. `git archive <ref> | tar -x -C out/base_cast`, node_modules linked). Each scene is compiled by
-// its own checkout's modules, so the two castRay paths run in one process, interleaved frame by frame (`frameGpu`:
+// castRay's cost on the largest example: the crab (examples/bosses/reefback_titan.ts, base variant) lit by a lamp over
+// it at [3, 14, 2.5] whose light function casts one shadow ray per lit fragment, against the same crab unlit, and
+// against other checkouts' castRay (`base`, or a directory: e.g. `git archive <ref> | tar -x -C out/base_cast`,
+// node_modules linked). Each scene is compiled by its own checkout's modules, so several castRay versions run in one
+// process, interleaved frame by frame (`frameGpu`:
 // the pose stages, where a per-frame table is built, plus the draws). Prints each frame's rgba hash, then per scene
 // the median, quartiles and best of the per-frame GPU times, and the load average before and after.
 //
