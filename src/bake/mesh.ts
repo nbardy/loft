@@ -60,7 +60,7 @@ class Builder {
   private readonly idx: number[] = [];
   constructor(private readonly name: string, private readonly unpainted: string | undefined) {}
 
-  /** Vertices whose surface has no normal at that point (a degenerate point: a hull's stern closing to a line). */
+  /** Vertices whose surface has no normal at that point (a degenerate point: a hull's stern closing to a line, an atoll's rim). */
   private readonly unnormal: number[] = [];
 
   vertex(v: Vertex): number {
@@ -68,7 +68,8 @@ class Builder {
     // A NaN here would reach the file and fail in someone else's viewer; fail where the surface is known instead.
     if (all.some((x) => !Number.isFinite(x))) throw new Error(`bake: surface "${this.name}" evaluated to a non-finite vertex (${[...v.pos, ...v.normal, ...v.uv].join(", ")})`);
     const n = this.pos.length / 3;
-    if (!v.normal.every(Number.isFinite)) this.unnormal.push(n);
+    // Non-finite (0 / 0 in a finite difference) or zero (a map whose derivatives vanish there): no direction to write.
+    if (!v.normal.every(Number.isFinite) || !(Math.hypot(...v.normal) > 1e-6)) this.unnormal.push(n);
     this.pos.push(...v.pos);
     this.nrm.push(...v.normal);
     this.uv.push(...v.uv);
