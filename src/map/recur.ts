@@ -248,10 +248,13 @@ export function recur<const C extends Cells>(spec: RecurSpec<C>): Recurrence<C> 
   // The kept states: what the history costs, and K from that alone.
   const stateBytes = entries * lanes * 16;
   const history = (steps + 1) * stateBytes;
-  const every = history <= KEPT_BYTES ? 1 : Math.ceil(history / KEPT_BYTES);
-  if (every > MOST_REPLAY) {
+  const raw = history <= KEPT_BYTES ? 1 : Math.ceil(history / KEPT_BYTES);
+  // K is even whenever checkpoints are kept: then state j lives in table j mod 2 however the frame reached it (by replay or
+  // by resuming the last frame's pair, src/host/host.ts `advance`). MOST_REPLAY is even, so rounding up cannot pass it.
+  const every = raw === 1 ? 1 : raw + (raw % 2);
+  if (raw > MOST_REPLAY) {
     const mb = (n: number) => `${(n / 1e6).toFixed(0)} MB`;
-    throw new SceneError(where, `${steps + 1} states of ${mb(stateBytes)} (${mb(history)} in all), which would replay up to ${every - 1} steps a frame`, `a history of at most ${MOST_REPLAY} x ${KEPT_BYTES / 2 ** 20} MiB (${mb(MOST_REPLAY * KEPT_BYTES)})`, `a lower rate, a smaller size or a shorter span (now from ${from} to ${until} s): the history must shrink about ${(history / (MOST_REPLAY * KEPT_BYTES)).toFixed(1)}x`);
+    throw new SceneError(where, `${steps + 1} states of ${mb(stateBytes)} (${mb(history)} in all), which would replay up to ${raw - 1} steps a frame`, `a history of at most ${MOST_REPLAY} x ${KEPT_BYTES / 2 ** 20} MiB (${mb(MOST_REPLAY * KEPT_BYTES)})`, `a lower rate, a smaller size or a shorter span (now from ${from} to ${until} s): the history must shrink about ${(history / (MOST_REPLAY * KEPT_BYTES)).toFixed(1)}x`);
   }
   const kept: Kept = every === 1 ? { kind: "every" } : { kind: "checkpoints", every };
   const states = every === 1 ? steps + 1 : Math.floor(steps / every) + 1;

@@ -1397,11 +1397,29 @@ Corrections to the theory:
 
 **The stop rule tripped once**: after stage 3, worst replay at K = 113 (256 x 256, 120 s at 60 steps a second) was
 3.80 ms against a limit of 2 ms, at load 80 to 95; the same bake's 7,200 steps took 85 ms of GPU (limit 1 s: held).
-112 steps warm cost 0.95 ms (correction 2), so the per-step model holds and the trip is the cold short pass. Not built:
-resume (a host keeping its last replayed state, 1 or 2 steps a frame while playing forward), which removes the cold
-burst for playback; the owner decides whether the trip stops the design.
+112 steps warm cost 0.95 ms (correction 2), so the per-step model holds and the trip is the cold short pass.
 
-Not built: resume; re-baking params in `loft dev`; a per-frame `when` other than `time` on a checkpointed state;
+**Resume (built, 2026-11-16).** The host keeps the step n_last its even and odd tables hold; `advance` (src/host/host.ts)
+returns `kept` (same step: no dispatch), `resume { from, steps }` (0 < d = n - n_last <= k = n mod K: d dispatches of
+ping or pong, no checkpoint read) or `replay { checkpoint, steps }` (the old path); one dispatcher, `dispatchReplay`.
+Resume is never more dispatches than the replay (d <= k against k + 1). It needs an even K, which the compiler now
+guarantees (113 became 114; odd K in an old file always replays): state j then lives in table j mod 2 however it was
+reached, so the next step depends on j alone. Exact because a step reads only its state and the clock in it, in the same
+module as the bake. Measuring frames (`profile`, `frameGpu`, `poseTime`) force a replay, as a seek does.
+*Any frame draws alone*: tests/recur.gpu.test.ts and tests/recur.resume.gpu.test.ts (20 frames: forward steps,
+a repeat, checkpoint crossings, a seek back, a jump past R, both clamps) compare each frame's rgba sha256 with a fresh
+`Loaded` drawing that time first: identical, all three `Advance` kinds exercised; swapping ping and pong in resume
+fails it. The (LOD) dependence on earlier frames is unchanged: resume changes no byte, only how the tables are reached.
+Measured (256 x 256, 120 s, 60 a second, K = 114; 16 x 16 view, wall per awaited frame so the readback sync is in every
+number; 100 repetitions interleaved forward window / reverse window in one process; load average 31 to 24 with a
+training run on the GPU): a frame that replays nothing (same step) 0.76 ms; forward playback by resume 0.81 ms median
+(p10 0.67, p90 1.72), 0.05 ms over that floor (predicted about 0.1); the same steps replayed, as before, 3.25 ms median
+(p10 1.39, p90 5.21), 2.49 ms over the floor, averaged over k = 0..112. Resume at the worst k = 113: 0.84 ms (0.08 over).
+The worst seek (k = 113 from far away) is unchanged by design: 5.04 ms median (p10 4.64, p90 6.52), 4.28 ms over the
+floor. So the stop rule's 2 ms holds for playback and still trips for a seek to the worst k; the owner's decision
+stands. Not on a quiet GPU: ratios are the claim, the absolute milliseconds are not.
+
+Not built: re-baking params in `loft dev`; a per-frame `when` other than `time` on a checkpointed state;
 lockstep replay of two checkpointed recurrences; the input-log hybrid (live inputs stay refused). A built directory
 that keeps every state carries no record of its recurrence, so `loft clip --artefact` cannot refuse a clip past its
 `until` (one that keeps checkpoints can).
