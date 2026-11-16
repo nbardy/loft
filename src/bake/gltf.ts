@@ -25,11 +25,11 @@ const pad4 = (n: number): number => (n + 3) & ~3;
 
 /**
  * Writes the bodies, one node and one mesh each, named after the body (nodes 0 .. bodies - 1). With `motion` (from
- * `bakeAnimated`, whose bodies these are), one animation "loft" keys them: a skinned body's node takes a skin whose
+ * `bakeAnimated`, whose bodies these are), one animation "loft" keys them, each body on its own key times: a skinned body's node takes a skin whose
  * joints are a root node `<name>_rig` and its children `<name>_j<k>` (after the bodies' nodes), keyed in translation,
  * rotation and scale; a morphed body's mesh takes one target per key and its node's weights are keyed one-hot.
  */
-export function writeGlb(baked: Pick<Baked, "bodies">, motion?: Pick<Animated, "motions" | "times">): Uint8Array {
+export function writeGlb(baked: Pick<Baked, "bodies">, motion?: Pick<Animated, "motions">): Uint8Array {
   if (baked.bodies.length === 0) throw new Error("writeGlb: nothing to write (the scene has no bakeable body)");
   const chunks: Uint8Array[] = [];
   const bufferViews: Record<string, unknown>[] = [];
@@ -97,8 +97,7 @@ export function writeGlb(baked: Pick<Baked, "bodies">, motion?: Pick<Animated, "
   const skins: unknown[] = [], channels: unknown[] = [], samplers: unknown[] = [];
   if (motion !== undefined) {
     if (motion.motions.length !== baked.bodies.length) throw new Error(`writeGlb: ${motion.motions.length} motions for ${baked.bodies.length} bodies`);
-    const input = data(Float32Array.from(motion.times), "SCALAR", 1, true);
-    const keyed = (node: number, path: string, values: Float32Array, type: string, width: number): void => {
+    const keyed = (input: number, node: number, path: string, values: Float32Array, type: string, width: number): void => {
       samplers.push({ input, output: data(values, type, width, false), interpolation: "LINEAR" });
       channels.push({ sampler: samplers.length - 1, target: { node, path } });
     };
@@ -107,7 +106,7 @@ export function writeGlb(baked: Pick<Baked, "bodies">, motion?: Pick<Animated, "
       switch (m.kind) {
         case "still": case "refused": return;
         case "skinned": {
-          const n = m.keys[0]!.length, root = nodes.length;
+          const n = m.keys[0]!.length, root = nodes.length, input = data(Float32Array.from(m.times), "SCALAR", 1, true);
           nodes.push({ name: `${b.name}_rig`, children: Array.from({ length: n }, (_, j) => root + 1 + j) });
           // The joints sit at their t = 0 key: with the inverse binds, the skin at rest is the identity.
           m.keys[0]!.forEach((key, j) => nodes.push({ name: `${b.name}_j${j}`, translation: key.t, rotation: key.r, scale: key.s }));
@@ -118,9 +117,9 @@ export function writeGlb(baked: Pick<Baked, "bodies">, motion?: Pick<Animated, "
           accessors.push({ bufferView: jv, componentType: UNSIGNED_SHORT, count: m.joints.length / 4, type: "VEC4" });
           primitives[k]!.attributes = { ...(primitives[k]!.attributes as Record<string, number>), JOINTS_0: accessors.length - 1, WEIGHTS_0: attribute(m.weights, "VEC4", 4, false) };
           joints.forEach((node, j) => {
-            keyed(node, "translation", Float32Array.from(m.keys.flatMap((ks) => ks[j]!.t)), "VEC3", 3);
-            keyed(node, "rotation", Float32Array.from(m.keys.flatMap((ks) => ks[j]!.r)), "VEC4", 4);
-            keyed(node, "scale", Float32Array.from(m.keys.flatMap((ks) => ks[j]!.s)), "VEC3", 3);
+            keyed(input, node, "translation", Float32Array.from(m.keys.flatMap((ks) => ks[j]!.t)), "VEC3", 3);
+            keyed(input, node, "rotation", Float32Array.from(m.keys.flatMap((ks) => ks[j]!.r)), "VEC4", 4);
+            keyed(input, node, "scale", Float32Array.from(m.keys.flatMap((ks) => ks[j]!.s)), "VEC3", 3);
           });
           return;
         }
@@ -131,7 +130,7 @@ export function writeGlb(baked: Pick<Baked, "bodies">, motion?: Pick<Animated, "
           // Key i shows target i alone; LINEAR weights between keys blend two neighbouring targets.
           const w = new Float32Array(T * T);
           for (let i = 0; i < T; i++) w[i * T + i] = 1;
-          keyed(k, "weights", w, "SCALAR", 1);
+          keyed(data(Float32Array.from(m.times), "SCALAR", 1, true), k, "weights", w, "SCALAR", 1);
           return;
         }
       }

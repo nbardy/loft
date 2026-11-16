@@ -7,8 +7,8 @@
 
 import { tolerance, type Tolerance } from "../check.ts";
 import { SceneError } from "../errors.ts";
-import { fetch, f, time, type Expr } from "../expr.ts";
-import { Body } from "../map/sweep.ts";
+import { time, variable } from "../expr.ts";
+import { Body, stationSample } from "../map/sweep.ts";
 import type { Scene } from "../scene.ts";
 import { prepareBake, type BodyMesh, type Density, type Sampler, type Skipped } from "./mesh.ts";
 
@@ -18,6 +18,18 @@ export const MOTION_TOLERANCE: Tolerance = tolerance.share(1e-3);
 const PILOT_KEYS = 32;
 /** The most keys over a span: past this, a thing the keys cannot follow is refused, not thinned. */
 const MOST_KEYS = 1024;
+/** The most joints put between two stations: past this a body's skin is refused for morph targets. */
+const MOST_REFINE = 8;
+
+/** The largest turn of any joint from one key to the next, and the key it starts at. */
+function largestTurn(rows: readonly (readonly JointRow[])[], times: readonly number[]): { readonly turn: number; readonly at: number } {
+  let turn = 0, at = 0;
+  for (let i = 0; i + 1 < rows.length; i++) rows[i]!.forEach((s, j) => {
+    const d = qangle(qmul(rows[i + 1]![j]!.q, qconj(s.q)));
+    if (d > turn) { turn = d; at = times[i]!; }
+  });
+  return { turn, at };
+}
 
 export type V3 = [number, number, number];
 /** A unit quaternion (x, y, z, w), glTF's order and Loft's. */
@@ -42,6 +54,8 @@ export type Motion =
   | { readonly kind: "still"; readonly why: string; readonly moved: number; readonly size: number }
   | {
     readonly kind: "skinned";
+    /** The key times, 0 .. span (each thing has its own). */
+    readonly times: readonly number[];
     /** keys[i][j]: joint j at key i. */
     readonly keys: readonly (readonly JointKey[])[];
     /** Per vertex, two joints and their weights (DESIGN.md 16, "Weights"). */
@@ -52,7 +66,7 @@ export type Motion =
     readonly error: MotionError;
   }
   /** One target per key (positions minus the rest's), weights keyed one-hot. */
-  | { readonly kind: "morphed"; readonly why: string; readonly deltas: readonly Float32Array[]; readonly error: MotionError }
+  | { readonly kind: "morphed"; readonly why: string; readonly times: readonly number[]; readonly deltas: readonly Float32Array[]; readonly error: MotionError }
   /** Even the keys miss the tolerance: written at rest, and printed. */
   | { readonly kind: "refused"; readonly why: string; readonly error: MotionError };
 
@@ -61,8 +75,6 @@ export type Animated = {
   readonly bodies: readonly BodyMesh[];
   readonly motions: readonly Motion[];
   readonly skipped: readonly Skipped[];
-  /** The key times, 0 .. span. */
-  readonly times: readonly number[];
   readonly span: number;
   /** Where the span came from. */
   readonly spanFrom: "period" | "seconds";
@@ -164,9 +176,9 @@ function keyAt(keys: readonly (readonly JointKey[])[], times: readonly number[],
 }
 
 /** Linear blend skinning of rest positions at time t (the file's motion, evaluated on the CPU). */
-export function skin(rest: Float32Array, m: Extract<Motion, { kind: "skinned" }>, times: readonly number[], t: number): Float32Array {
+export function skin(rest: Float32Array, m: Omit<Extract<Motion, { kind: "skinned" }>, "error">, t: number): Float32Array {
   const n = m.keys[0]!.length;
-  const C = Array.from({ length: n }, (_, j) => mul4(trs(keyAt(m.keys, times, t, j)), Float64Array.from(m.inverseBind.subarray(16 * j, 16 * j + 16))));
+  const C = Array.from({ length: n }, (_, j) => mul4(trs(keyAt(m.keys, m.times, t, j)), Float64Array.from(m.inverseBind.subarray(16 * j, 16 * j + 16))));
   const out = new Float32Array(rest.length);
   for (let v = 0; v < rest.length / 3; v++) {
     const x = rest[3 * v]!, y = rest[3 * v + 1]!, z = rest[3 * v + 2]!;
@@ -197,27 +209,37 @@ const allowance = (size: number): number => {
   }
 };
 
-/** A body's stations as joints: their table rows and the section's girth and aspect at each station's m. */
-type Rig = { readonly n: number; readonly leastStretch: number; read(frame: ReturnType<ReturnType<typeof prepareBake>["frameAt"]>): StationRow[] };
-type StationRow = { readonly p: V3; readonly q: Quat; readonly a: number; readonly b: number; readonly stretch: number; readonly girth: number; readonly aspect: number };
+/**
+ * A body's spine as joints: at any J points m_j = j / (J - 1) along it, the sweep's own sample there (`stationSample`:
+ * the Catmull-Rom point, the nlerped frame, the lerped stretch; what the skin at m is built on), its half-width and
+ * the section's girth and aspect. J = stations reads the stations themselves; a finer J puts joints between them.
+ */
+type Rig = { readonly stations: number; readonly leastStretch: number; read(frame: Frame, joints: number): JointRow[] };
+type JointRow = { readonly p: V3; readonly q: Quat; readonly a: number; readonly b: number; readonly stretch: number; readonly girth: number; readonly aspect: number };
+type Frame = ReturnType<ReturnType<typeof prepareBake>["frameAt"]>;
+
+/** The rotation taking x, y, z to the columns t, d, s, as a unit quaternion (Shepperd's method: the largest pivot). */
+function quatOfAxes(t: readonly number[], d: readonly number[], s: readonly number[]): Quat {
+  const [m00, m10, m20] = t as [number, number, number], [m01, m11, m21] = d as [number, number, number], [m02, m12, m22] = s as [number, number, number];
+  const tr = m00 + m11 + m22;
+  if (tr > 0) { const k = 2 * Math.sqrt(1 + tr); return qnorm([(m21 - m12) / k, (m02 - m20) / k, (m10 - m01) / k, k / 4]); }
+  if (m00 > m11 && m00 > m22) { const k = 2 * Math.sqrt(1 + m00 - m11 - m22); return qnorm([k / 4, (m01 + m10) / k, (m02 + m20) / k, (m21 - m12) / k]); }
+  if (m11 > m22) { const k = 2 * Math.sqrt(1 + m11 - m00 - m22); return qnorm([(m01 + m10) / k, k / 4, (m12 + m21) / k, (m02 - m20) / k]); }
+  const k = 2 * Math.sqrt(1 + m22 - m00 - m11);
+  return qnorm([(m02 + m20) / k, (m12 + m21) / k, k / 4, (m10 - m01) / k]);
+}
 
 function rigOf(body: Body, cpu: ReturnType<typeof prepareBake>["compiled"]["cpu"]): Rig {
-  const n = body.transport.stations;
-  const roots: Expr[] = [];
-  for (let j = 0; j < n; j++) {
-    const m = f(j === n - 1 ? 1 : j / (n - 1));
-    roots.push(fetch(body.table, j, 0), fetch(body.table, j, 1), fetch(body.table, j, 2), body.section.girth(m), body.section.aspect(m));
-  }
-  const run = cpu(roots);
+  const M = variable("m", "f32"), st = stationSample(body.table, M);
+  const run = cpu([st.p, st.t, st.d, st.s, st.stretch, body.halfWidth(M), body.section.girth(M), body.section.aspect(M)]);
+  const least = body.section.leastStretch;
   return {
-    n, leastStretch: body.section.leastStretch,
-    read: (frame) => {
-      const v = run(frame) as (number | number[])[];
-      return Array.from({ length: n }, (_, j) => {
-        const [p, q, r, g, asp] = v.slice(5 * j, 5 * j + 5) as [number[], number[], number[], number, number];
-        return { p: [p[0]!, p[1]!, p[2]!], q: qnorm(q), a: r[0]!, b: r[1]!, stretch: r[2]!, girth: g, aspect: asp };
-      });
-    },
+    stations: body.transport.stations, leastStretch: least,
+    read: (frame, joints) => Array.from({ length: joints }, (_, j) => {
+      const [p, t, d, s, stretch, hw, girth, aspect] = run(frame, { m: j / (joints - 1) }) as [number[], number[], number[], number[], number, number, number, number];
+      const a = hw / Math.sqrt(Math.max(stretch, least));
+      return { p: [p[0]!, p[1]!, p[2]!], q: quatOfAxes(t, d, s), a, b: a * aspect, stretch, girth, aspect };
+    }),
   };
 }
 
@@ -227,7 +249,7 @@ function rigOf(body: Body, cpu: ReturnType<typeof prepareBake>["compiled"]["cpu"
  * A = girth * closure / sqrt(max(stretch, least)) and B = A * aspect; the closure is a function of m alone and cancels,
  * which keeps the ratio finite at a tip where A itself is 0.
  */
-function jointKey(now: StationRow, rest: StationRow, least: number): JointKey {
+function jointKey(now: JointRow, rest: JointRow, least: number): JointKey {
   const keep = Math.sqrt(Math.max(rest.stretch, least) / Math.max(now.stretch, least));
   const sa = (now.girth / rest.girth) * keep, sb = sa * (now.aspect / rest.aspect);
   return { t: now.p, r: now.q, s: [1, sb, sa] };
@@ -238,13 +260,13 @@ function jointKey(now: StationRow, rest: StationRow, least: number): JointKey {
  * change of the Catmull-Rom sagitta `(p_j + p_{j+1} - p_{j-1} - p_{j+2}) / 16` against the rest's carried rigidly, plus
  * the blend's shrink `r d theta^2 / 8` for the change d theta of the rotation between neighbours.
  */
-function predictSkin(now: readonly StationRow[], rest: readonly StationRow[]): number {
+function predictSkin(now: readonly JointRow[], rest: readonly JointRow[]): number {
   let worst = 0;
   for (let j = 1; j + 2 < now.length; j++) {
-    const sag = (s: readonly StationRow[]): V3 => sub3(sub3([s[j]!.p[0] + s[j + 1]!.p[0], s[j]!.p[1] + s[j + 1]!.p[1], s[j]!.p[2] + s[j + 1]!.p[2]], s[j - 1]!.p), s[j + 2]!.p).map((x) => x / 16) as V3;
+    const sag = (s: readonly JointRow[]): V3 => sub3(sub3([s[j]!.p[0] + s[j + 1]!.p[0], s[j]!.p[1] + s[j + 1]!.p[1], s[j]!.p[2] + s[j + 1]!.p[2]], s[j - 1]!.p), s[j + 2]!.p).map((x) => x / 16) as V3;
     const carry = qmul(now[j]!.q, qconj(rest[j]!.q));
     const e1 = len3(sub3(sag(now), qrot(carry, sag(rest))));
-    const rel = (s: readonly StationRow[]) => qmul(qconj(s[j]!.q), s[j + 1]!.q);
+    const rel = (s: readonly JointRow[]) => qmul(qconj(s[j]!.q), s[j + 1]!.q);
     const dth = qangle(qmul(rel(now), qconj(rel(rest))));
     const r = Math.max(now[j]!.a, now[j]!.b, now[j + 1]!.a, now[j + 1]!.b);
     worst = Math.max(worst, e1 + (r * dth * dth) / 8);
@@ -283,112 +305,106 @@ export function bakeAnimated(scene: Scene, options: AnimateOptions): Animated {
     }
     return worst / (dt0 * dt0);
   });
-  // Half the budget to the keys: a dt^2 / 8 <= tol size / 2.
-  const wanted = Math.max(PILOT_KEYS, ...accel.map((a, k) => (a > 0 ? Math.ceil(span * Math.sqrt(a / (4 * allowance(sizes[k]!)))) : 0)));
-  const N = Math.min(wanted, MOST_KEYS);
-  const dt = span / N;
-  const times = Array.from({ length: N + 1 }, (_, i) => (i === N ? span : i * dt));
-
   const rigs = kinds.map((k) => (k.kind === "chain" ? rigOf(k.body, prep.compiled.cpu) : undefined));
-  const restRows = rigs.map((r) => r?.read(frame0));
-  const keyPoints: Float32Array[][] = [];
-  const keyRows: (StationRow[] | undefined)[][] = [];
-  for (const t of times) {
-    const { frame, points } = t === 0 ? { frame: frame0, points: bodies.map((b) => b.positions) } : pointsAt(t);
-    keyPoints.push(points);
-    keyRows.push(rigs.map((r) => r?.read(frame)));
+  const motions = kinds.map((kind, k): Motion => {
+    const size = sizes[k]!;
+    switch (kind.kind) {
+      case "field": return { kind: "still", why: "a field, meshed once by surface nets (the field baker refuses one that changes)", moved: 0, size };
+      case "chain": return keyThing(k, size, rigs[k]!, undefined);
+      case "free": return keyThing(k, size, undefined, kind.why);
+    }
+  });
+  return { bodies, motions, skipped: prep.skipped, span, spanFrom };
+
+  /**
+   * One thing's keys and its measured error. Each thing has its own keys (glTF samplers each have their own times), so
+   * a blinking lid does not multiply the keys of a slow leg: N = max(PILOT_KEYS, the least that holds half the budget
+   * by `a dt^2 / 8 <= tol size / 2`), a its pilot acceleration; N = PILOT_KEYS reuses the pilot as the keys.
+   */
+  function keyThing(k: number, size: number, rig: Rig | undefined, unchained: string | undefined): Motion {
+    const allowed = allowance(size), a = accel[k]!, sampler = prep.samplers[k]!, rest = bodies[k]!.positions;
+    const wanted = a > 0 ? Math.ceil(span * Math.sqrt(a / (4 * allowed))) : PILOT_KEYS;
+    const sample = (N: number) => {
+      const dt = span / N;
+      const times = Array.from({ length: N + 1 }, (_, i) => (i === N ? span : i * dt));
+      const keys = times.map((t, i) => (i === 0 ? rest : N === PILOT_KEYS ? pilot[i]![k]! : sampler.positions(prep.frameAt(t))));
+      const mids = Array.from({ length: N }, (_, i) => sampler.positions(prep.frameAt((i + 0.5) * dt)));
+      // The keys' own error: a straight blend between neighbouring keys against the scene half way (the morph's error).
+      const misses = mids.map((p, i) => farthest(keys[i]!.map((x, v) => (x + keys[i + 1]![v]!) / 2), p));
+      const between = Math.max(...misses);
+      return { N, dt, times, keys, mids, between, worstAt: (misses.indexOf(between) + 0.5) * dt };
+    };
+    const first = sample(Math.min(Math.max(PILOT_KEYS, wanted), MOST_KEYS));
+    let s = first;
+    // The pilot's second differences average the acceleration over two of its steps, so a quick move (a blink, a
+    // snap) reads low. The keys' own midpoint error is that bound measured: a_eff = 8 e / dt^2. Once, re-key from it.
+    if (s.between > allowed / 2 && s.N < MOST_KEYS) s = sample(Math.min(MOST_KEYS, Math.ceil(s.N * Math.sqrt(s.between / (allowed / 2)))));
+    const { N, dt, times, keys: keyPoints, mids: midPoints } = s;
+    const moved = Math.max(...keyPoints.map((p) => farthest(p, rest)), ...midPoints.map((p) => farthest(p, rest)));
+    if (moved <= allowed) return { kind: "still", why: `moves at most ${moved.toExponential(2)} over the span`, moved, size };
+    const timeTerm = (a * dt * dt) / 8;
+
+    let why = unchained ?? "";
+    let turned: { readonly turn: number; readonly at: number } | undefined;
+    if (rig !== undefined) {
+      // Joints: the stations, or r - 1 more between each pair when the stations' predicted error is over half the
+      // budget (both terms of DESIGN.md 16 go as the joint spacing squared, so r = ceil(sqrt(e / (tol / 2)))).
+      const frames = times.map((t) => prep.frameAt(t));
+      const atStations = frames.map((fr) => rig.read(fr, rig.stations));
+      const coarse = Math.max(...atStations.map((rows) => predictSkin(rows, atStations[0]!)));
+      const r = Math.min(MOST_REFINE, Math.max(1, Math.ceil(Math.sqrt(coarse / (allowed / 2)))));
+      const keyRows = r === 1 ? atStations : frames.map((fr) => rig.read(fr, (rig.stations - 1) * r + 1));
+      turned = largestTurn(keyRows, times);
+      const skinned = skinOf(k, rig, keyRows, times);
+      if (typeof skinned === "object") {
+        const atKeys = Math.max(...keyPoints.map((p, i) => farthest(skin(rest, skinned, times[i]!), p)));
+        const betweenKeys = Math.max(...midPoints.map((p, i) => farthest(skin(rest, skinned, (i + 0.5) * dt), p)));
+        const predicted = Math.max(...keyRows.map((rows) => predictSkin(rows, keyRows[0]!))) + timeTerm;
+        const error: MotionError = { atKeys, betweenKeys, size, predicted };
+        if (Math.max(atKeys, betweenKeys) <= allowed) return { ...skinned, error };
+        why = `its skin (${keyRows[0]!.length} joints) misses by ${Math.max(atKeys, betweenKeys).toExponential(2)}, over ${allowed.toExponential(2)} (predicted ${predicted.toExponential(2)})`;
+      } else why = skinned;
+    }
+
+    // Morph targets: exact at the keys, a straight blend between them.
+    const error: MotionError = { atKeys: 0, betweenKeys: s.between, size, predicted: timeTerm };
+    if (s.between <= allowed) return { kind: "morphed", why, times, deltas: keyPoints.map((p) => p.map((x, v) => x - rest[v]!)), error };
+    // A sweep whose roll jumps (a seed `up` along the spine, so the frame's start is decided by rounding) turns half a
+    // turn in one key, and no number of keys follows it.
+    const rolled = turned !== undefined && turned.turn > Math.PI / 2 ? `; a joint turns ${turned.turn.toFixed(2)} rad between the keys at ${turned.at.toFixed(3)} s (the sweep's frame jumps there: is its \`up\` along the spine?)` : "";
+    // Smooth motion's midpoint error falls as dt^2; one that falls slower has a kink (as dt) or a jump (not at all).
+    const fell = s === first ? "" : ` (${first.N} keys missed by ${first.between.toExponential(2)}: the error falls as dt^${(Math.log(first.between / s.between) / Math.log(s.N / first.N)).toFixed(1)}, where smooth motion falls as dt^2)`;
+    return { kind: "refused", why: `${why}; and ${N} keys${wanted > MOST_KEYS ? ` (of ${wanted} wanted)` : ""} miss by ${s.between.toExponential(2)} between them, most at ${s.worstAt.toFixed(3)} s${fell}${rolled}`, error };
   }
 
-  // Joints and weights for every chain; a chain whose rest section has no width cannot be scaled from it.
-  const chains = kinds.map((k, i): Extract<Motion, { kind: "skinned" }> | string | undefined => {
-    if (k.kind !== "chain") return undefined;
-    const rig = rigs[i]!, rest = restRows[i]!;
+  /** Joints and weights for a chain, or why it has none: a chain whose rest section has no width cannot be scaled from it. */
+  function skinOf(k: number, rig: Rig, keyRows: readonly JointRow[][], times: readonly number[]): Omit<Extract<Motion, { kind: "skinned" }>, "error"> | string {
+    const rest = keyRows[0]!;
     const flat = rest.findIndex((s) => !(s.girth > 0 && s.aspect > 0));
     if (flat >= 0) return `station ${flat} has girth ${rest[flat]!.girth} and aspect ${rest[flat]!.aspect} at rest, so no joint scale reaches its width later`;
     const keys: JointKey[][] = [];
     for (const rows of keyRows) {
       const before = keys[keys.length - 1];
-      keys.push(rows[i]!.map((now, j) => {
+      keys.push(rows.map((now, j) => {
         const key = jointKey(now, rest[j]!, rig.leastStretch);
         // q and -q are one rotation; keep each key on the previous key's side so LINEAR rotation takes the short way.
         const p = before?.[j]!.r ?? rest[j]!.q, d = p[0] * key.r[0] + p[1] * key.r[1] + p[2] * key.r[2] + p[3] * key.r[3];
         return d < 0 ? { ...key, r: key.r.map((x) => -x) as Quat } : key;
       }));
     }
-    const inverseBind = new Float32Array(16 * rig.n);
+    const n = rest.length, inverseBind = new Float32Array(16 * n);
     rest.forEach((s, j) => inverseBind.set(inverseRigid(s.p, s.q), 16 * j));
-    const uv = bodies[i]!.uvs, count = uv.length / 2;
+    const uv = bodies[k]!.uvs, count = uv.length / 2;
     const joints = new Uint16Array(4 * count), weights = new Float32Array(4 * count);
     for (let v = 0; v < count; v++) {
-      // The sweep's own blend: stations j and j + 1 with fr = m (n - 1) - j (stationSample's nlerp and stretch lerp).
-      const x = Math.min(Math.max(uv[2 * v]!, 0), 1) * (rig.n - 1), j = Math.min(Math.floor(x), rig.n - 2), fr = x - j;
+      // Linear in m between joints j and j + 1, fr = m (n - 1) - j: at the stations, stationSample's own nlerp and
+      // stretch lerp; between them (finer joints), the same blend over a shorter span.
+      const x = Math.min(Math.max(uv[2 * v]!, 0), 1) * (n - 1), j = Math.min(Math.floor(x), n - 2), fr = x - j;
       // Only joints that weigh something are named (glTF: an unused slot is joint 0 with weight 0).
       ([[j, 1 - fr], [j + 1, fr]] as const).filter(([, w]) => w > 0).forEach(([jj, w], slot) => { joints[4 * v + slot] = jj; weights[4 * v + slot] = w; });
     }
-    return { kind: "skinned", keys, joints, weights, inverseBind, error: { atKeys: 0, betweenKeys: 0, size: sizes[i]!, predicted: undefined } };
-  });
-
-  // Measure: the rest's moves, the skin and the morph blend against the scene, at every key and half way between.
-  const moved = bodies.map(() => 0);
-  const skinErr = bodies.map(() => ({ atKeys: 0, betweenKeys: 0 }));
-  const morphErr = bodies.map(() => 0);
-  const predicted = bodies.map(() => 0);
-  keyPoints.forEach((points, i) => points.forEach((p, k) => {
-    moved[k] = Math.max(moved[k]!, farthest(p, bodies[k]!.positions));
-    const c = chains[k];
-    if (typeof c === "object") {
-      skinErr[k]!.atKeys = Math.max(skinErr[k]!.atKeys, farthest(skin(bodies[k]!.positions, c, times, times[i]!), p));
-      predicted[k] = Math.max(predicted[k]!, predictSkin(keyRows[i]![k]!, restRows[k]!));
-    }
-  }));
-  for (let i = 0; i < N; i++) {
-    const t = (i + 0.5) * dt;
-    const { points } = pointsAt(t);
-    points.forEach((p, k) => {
-      if (!sampled[k]) return;
-      moved[k] = Math.max(moved[k]!, farthest(p, bodies[k]!.positions));
-      const a = keyPoints[i]![k]!, b = keyPoints[i + 1]![k]!;
-      const blend = a.map((x, v) => (x + b[v]!) / 2);
-      morphErr[k] = Math.max(morphErr[k]!, farthest(Float32Array.from(blend), p));
-      const c = chains[k];
-      if (typeof c === "object") skinErr[k]!.betweenKeys = Math.max(skinErr[k]!.betweenKeys, farthest(skin(bodies[k]!.positions, c, times, t), p));
-    });
+    return { kind: "skinned", times, keys, joints, weights, inverseBind };
   }
-
-  // The largest turn of any joint from one key to the next, and when: a sweep whose roll jumps (a seed `up` along the
-  // spine, so the frame's start is decided by rounding) turns half a turn in one key, and no number of keys follows it.
-  const jump = (k: number): { readonly angle: number; readonly at: number } => {
-    let angle = 0, at = 0;
-    for (let i = 0; i + 1 < keyRows.length; i++) keyRows[i]![k]!.forEach((s, j) => {
-      const d = qangle(qmul(keyRows[i + 1]![k]![j]!.q, qconj(s.q)));
-      if (d > angle) { angle = d; at = times[i]!; }
-    });
-    return { angle, at };
-  };
-  const motions = kinds.map((kind, k): Motion => {
-    const size = sizes[k]!, allowed = allowance(size);
-    const timeTerm = (accel[k]! * dt * dt) / 8;
-    switch (kind.kind) {
-      case "field": return { kind: "still", why: "a field, meshed once by surface nets (the field baker refuses one that changes)", moved: 0, size };
-      case "chain": case "free": {
-        if (moved[k]! <= allowed) return { kind: "still", why: `moves at most ${moved[k]!.toExponential(2)} over the span`, moved: moved[k]!, size };
-        const c = chains[k];
-        if (typeof c === "object") {
-          const error: MotionError = { ...skinErr[k]!, size, predicted: predicted[k]! + timeTerm };
-          if (Math.max(error.atKeys, error.betweenKeys) <= allowed) return { ...c, error };
-        }
-        const why = kind.kind === "free" ? kind.why
-          : typeof c === "string" ? c
-          : `its skin misses by ${Math.max(skinErr[k]!.atKeys, skinErr[k]!.betweenKeys).toExponential(2)}, over ${allowed.toExponential(2)}`;
-        const error: MotionError = { atKeys: 0, betweenKeys: morphErr[k]!, size, predicted: timeTerm };
-        const j = kind.kind === "chain" ? jump(k) : undefined;
-        const rolled = j !== undefined && j.angle > Math.PI / 2 ? `; a joint turns ${j.angle.toFixed(2)} rad between the keys at ${j.at.toFixed(3)} s (the sweep's frame jumps there: is its \`up\` along the spine?)` : "";
-        if (morphErr[k]! > allowed) return { kind: "refused", why: `${why}; and ${N} keys${wanted > MOST_KEYS ? ` (capped from ${wanted})` : ""} miss by ${morphErr[k]!.toExponential(2)} between them${rolled}`, error };
-        return { kind: "morphed", why, deltas: keyPoints.map((pts) => pts[k]!.map((x, v) => x - bodies[k]!.positions[v]!)), error };
-      }
-    }
-  });
-  return { bodies, motions, skipped: prep.skipped, times, span, spanFrom };
 }
 
 /** One line per body: what it became and how far its motion is from the scene's. */
@@ -401,7 +417,7 @@ export function motionSummary(a: Animated): string[] {
     const name = a.bodies[k]!.name.padEnd(18);
     switch (m.kind) {
       case "still": return `${name} still     ${m.why}`;
-      case "skinned": return `${name} skinned   ${m.keys[0]!.length} joints, ${rel(m.error)} [keys ${m.error.atKeys.toExponential(2)}, between ${m.error.betweenKeys.toExponential(2)}]`;
+      case "skinned": return `${name} skinned   ${m.keys[0]!.length} joints, ${m.times.length - 1} keys, ${rel(m.error)} [keys ${m.error.atKeys.toExponential(2)}, between ${m.error.betweenKeys.toExponential(2)}]`;
       case "morphed": return `${name} morphed   ${m.deltas.length} targets, ${rel(m.error)}: ${m.why}`;
       case "refused": return `${name} REFUSED   written at rest, ${rel(m.error)}: ${m.why}`;
     }

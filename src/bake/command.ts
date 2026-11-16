@@ -32,7 +32,7 @@ export async function bake(cmd: Extract<Command, { kind: "bake" }>): Promise<voi
       for (const s of a.skipped) console.log(`skipped ${s.name}: ${s.reason}`);
       const count = (k: string) => a.motions.filter((m) => m.kind === k).length;
       write(writeGlb(a, a), a.bodies.length, a.bodies.reduce((n, b) => n + b.indices.length / 3, 0),
-        `${a.times.length - 1} keys over ${a.span.toFixed(3)} s (${a.spanFrom}): ${count("skinned")} skinned, ${count("morphed")} morphed, ${count("still")} still, ${count("refused")} refused`);
+        `keyed over ${a.span.toFixed(3)} s (${a.spanFrom}): ${count("skinned")} skinned, ${count("morphed")} morphed, ${count("still")} still, ${count("refused")} refused`);
       return;
     }
   }
