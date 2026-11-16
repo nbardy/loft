@@ -6,6 +6,7 @@
 // Loft's own evaluation at every key and between keys; nothing goes over the tolerance silently.
 
 import { tolerance, type Tolerance } from "../check.ts";
+import { SceneError } from "../errors.ts";
 import { fetch, f, time, type Expr } from "../expr.ts";
 import { Body } from "../map/sweep.ts";
 import type { Scene } from "../scene.ts";
@@ -66,9 +67,6 @@ export type Animated = {
   /** Where the span came from. */
   readonly spanFrom: "period" | "seconds";
 };
-
-/** The scene neither loops nor was given a span: there is nothing to key over. */
-export class NoSpanError extends Error {}
 
 /**
  * What a sampler can be keyed as, classified once. `chain`: a live, whole swept body (its stations are joints).
@@ -259,9 +257,9 @@ export type AnimateOptions = { readonly density: Density; readonly seconds: numb
 /** Bakes a scene at rest and keys every body's motion over its period (or `seconds`). */
 export function bakeAnimated(scene: Scene, options: AnimateOptions): Animated {
   const spanFrom = options.seconds !== undefined ? "seconds" : scene.loop.kind === "every" ? "period" : undefined;
-  if (spanFrom === undefined) throw new NoSpanError("bake --animated: the scene has no period; give the span to key with --seconds");
+  if (spanFrom === undefined) throw new SceneError("bake --animated", "a scene with no period and no --seconds", "a span to key over", "pass --seconds S (or give the scene a period)");
   const span = options.seconds ?? (scene.loop.kind === "every" ? scene.loop.seconds : NaN);
-  if (!(span > 0 && Number.isFinite(span))) throw new NoSpanError(`bake --animated: the span must be a positive number of seconds, got ${span}`);
+  if (!(span > 0 && Number.isFinite(span))) throw new SceneError("bake --animated", `a span of ${span} s`, "a positive number of seconds", "pass --seconds S > 0");
 
   const prep = prepareBake(scene, options.density);
   const kinds = prep.samplers.map(kindOf);
@@ -324,8 +322,8 @@ export function bakeAnimated(scene: Scene, options: AnimateOptions): Animated {
     for (let v = 0; v < count; v++) {
       // The sweep's own blend: stations j and j + 1 with fr = m (n - 1) - j (stationSample's nlerp and stretch lerp).
       const x = Math.min(Math.max(uv[2 * v]!, 0), 1) * (rig.n - 1), j = Math.min(Math.floor(x), rig.n - 2), fr = x - j;
-      joints[4 * v] = j; joints[4 * v + 1] = j + 1;
-      weights[4 * v] = 1 - fr; weights[4 * v + 1] = fr;
+      // Only joints that weigh something are named (glTF: an unused slot is joint 0 with weight 0).
+      ([[j, 1 - fr], [j + 1, fr]] as const).filter(([, w]) => w > 0).forEach(([jj, w], slot) => { joints[4 * v + slot] = jj; weights[4 * v + slot] = w; });
     }
     return { kind: "skinned", keys, joints, weights, inverseBind, error: { atKeys: 0, betweenKeys: 0, size: sizes[i]!, predicted: undefined } };
   });
