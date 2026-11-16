@@ -1482,8 +1482,8 @@ Results (CPU only: `compileJs` over the pose pass's tables; tolerance 1e-3 of si
 | reeds_shadow, `up` [0,0,1] | reed0..5 | skinned, 32 joints, 37-38 keys | 1.74e-3 to 1.90e-3 | 4.9e-4 to 5.3e-4 | 1.83e-3 to 2.05e-3 (design: N = 38, 1.5e-3 to 2.5e-3) |
 | reeds_shadow | stone (a field) | still | - | - | - |
 | docs/context.md's reed, `up` [0,0,1] | reed | skinned, 32 joints, 39 keys | 1.99e-3 | 4.9e-4 | 2.10e-3 |
-| reefback_titan, 3.2 s (one gait) | 31 bodies | skinned (4 to 47 joints) | | 4.0e-4 to 9.4e-4 | |
-| | 31 bodies | morphed (52 to 761 targets) | | 4.7e-4 to 9.5e-4 | |
+| reefback_titan, 3.2 s (one gait) | 31 bodies | skinned (4 to 47 joints) | | 1.3e-5 to 7.5e-4 | |
+| | 31 bodies | morphed (33 to 761 targets) | | 1.2e-5 to 9.5e-4 | |
 | | 6 bodies | refused (cutter claw: a jump; maxillipeds: a kink) | | | |
 | heron, 1.6 s | torso, neck, bill, plume, legs, toes00/02 | skinned | | 4.8e-4 to 9.1e-4 | |
 | | toe01, toe10..12 | refused (the footing switches at 0.8 s) | | | |
