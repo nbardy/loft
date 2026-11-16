@@ -150,6 +150,11 @@ written into `time`):
 - In the pose pass, before `frame.pose`: dispatch `first`, then for j = 1 .. k, `ping` when j is odd and `pong` when j
   is even: k + 1 dispatches.
 
+A loader may skip dispatches when it has kept the step n_last its tables hold from its last frame (an optimisation, not
+a format change: the pixels are the same bytes): same n, none; 0 < n - n_last <= k and `every` even, then n - n_last
+steps, step j reading state n_last + j (`ping` when that index is odd, `pong` when even; state j lives in table j mod 2
+when `every` is even). Anything else replays as above.
+
 (What they do, for a reader: `first` reads checkpoint floor(n / every) from the static buffer, copies it into one
 per-frame table and writes the next state into another; `ping` and `pong` each step one table into the other. The
 shaders read states n and n + 1 from the two tables by the parity of k. On the GPU that baked, the replay repeats the
