@@ -32,6 +32,13 @@ import type { WaterCtx } from "../style.ts";
 export type SwellLines = { readonly cover: Expr<"f32">; readonly off: Expr<"f32">; readonly live: Expr<"f32">; readonly swell: Expr<"f32">; readonly calm: boolean };
 
 /**
+ * Whether the sea has no swell: its phase is the constant 0 (`WaterCtx.phase`), a fact of the scene known when the
+ * style is built. A style that lays its water along the phase draws nothing from it there; anything it reads off the
+ * phase alone is a noise artefact (sketch's labyrinth, woodblock's disc, papercraft's white blobs: friction S3/S4).
+ */
+export const calmSea = (ctx: WaterCtx): boolean => ctx.phase.node.op === "const";
+
+/**
  * The printed lines of constant phase that follow the swell's crests, for a style that draws the water as lines.
  * Takes the water context, `perWave` (lines per wavelength) and `width` (half-width as a share of line spacing, in the
  * troughs and at the crests); returns the coverage and position of the lines (`SwellLines`).
@@ -45,7 +52,7 @@ export function swellLines(ctx: WaterCtx, o: { readonly perWave: number; readonl
   // were drawn anyway, and with the phase constant every point sat on line 0, bent off it only by the wobble, so the
   // noise's contours printed instead: sketch's grey labyrinth over the still sea, and woodblock's sea all in line ink
   // but for one noise peak, the "detached dark disc" in front of a body.
-  if (ctx.phase.node.op === "const") return { cover: lift<"f32">(0), off: lift<"f32">(0.5), live: smoothstep(-0.6, -0.1, h), swell: h, calm: true };
+  if (calmSea(ctx)) return { cover: lift<"f32">(0), off: lift<"f32">(0.5), live: smoothstep(-0.6, -0.1, h), swell: h, calm: true };
   const phase = add(mul(ctx.phase, o.perWave), mul(h, 0.7));
   const fw = max(fwidth(phase), 1e-4);
   const off = abs(sub(fract(add(phase, 0.5)), 0.5));

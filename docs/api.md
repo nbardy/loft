@@ -2497,7 +2497,7 @@ Lines printed along the swell: what a cut or printed sea follows.
   `function swellLines(ctx: WaterCtx, o: { readonly perWave: number; readonly width: readonly [number, number] }): SwellLines`
 
 Types:
-- **SwellLines**: The swell's printed lines here. `type SwellLines = { readonly cover: Expr<"f32">; readonly off: Expr<"f32">; readonly live: Expr<"f32">; readonly swell: Expr<"f32"> }`
+- **SwellLines**: The swell's printed lines here. `type SwellLines = { readonly cover: Expr<"f32">; readonly off: Expr<"f32">; readonly live: Expr<"f32">; readonly swell: Expr<"f32">; readonly calm: boolean }`
 
 ### src/style/foam.ts
 
