@@ -210,34 +210,38 @@ export function fbm3(p: In<"vec3">, spec: Fbm): Expr<"f32"> {
 // One jittered feature point per unit cell, found by searching the 3x3 (or 3x3x3) neighbourhood. That search can miss the
 // true second-nearest point when the jitter is extreme; both backends search identically, so they still agree.
 const CELLULAR2 = {
-  name: "loft_cellular2", ret: "vec2", deps: [H2, LAT, UNIT, PCG],
-  wgsl: `fn loft_cellular2(p: vec2<f32>) -> vec2<f32> {
+  name: "loft_cellular2", ret: "vec4", deps: [H2, LAT, UNIT, PCG],
+  wgsl: `fn loft_cellular2(p: vec2<f32>) -> vec4<f32> {
   let ix = loft_lat(p.x);
   let iy = loft_lat(p.y);
   let f = p - floor(p);
   var d1 = 8.0;
   var d2 = 8.0;
+  var near = vec2<f32>(0.0);
   for (var j = -1; j <= 1; j++) {
     for (var i = -1; i <= 1; i++) {
       let h = loft_h2(ix + bitcast<u32>(i), iy + bitcast<u32>(j));
-      let r = vec2<f32>(f32(i), f32(j)) + vec2<f32>(loft_unit(h), loft_unit(loft_pcg(h))) - f;
+      let site = vec2<f32>(f32(i), f32(j)) + vec2<f32>(loft_unit(h), loft_unit(loft_pcg(h)));
+      let r = site - f;
       let d = dot(r, r);
-      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
+      // floor(p) + site, not p + r: the same bits at every pixel of the cell, so a hash of it is one colour.
+      if (d < d1) { d2 = d1; d1 = d; near = floor(p) + site; } else if (d < d2) { d2 = d; }
     }
   }
-  return vec2<f32>(sqrt(d1), sqrt(d2));
+  return vec4<f32>(sqrt(d1), sqrt(d2), near);
 }`,
   js: (p: number[]) => {
     const ix = lat(p[0]), iy = lat(p[1]);
     const x = p[0] - Math.floor(p[0]), y = p[1] - Math.floor(p[1]);
-    let d1 = 8, d2 = 8;
+    let d1 = 8, d2 = 8, nx = 0, ny = 0;
     for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) {
       const h = h2u((ix + i) >>> 0, (iy + j) >>> 0);
-      const rx = i + unit(h) - x, ry = j + unit(pcg(h)) - y;
+      const sx = i + unit(h), sy = j + unit(pcg(h));
+      const rx = sx - x, ry = sy - y;
       const d = rx * rx + ry * ry;
-      if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+      if (d < d1) { d2 = d1; d1 = d; nx = Math.floor(p[0]) + sx; ny = Math.floor(p[1]) + sy; } else if (d < d2) d2 = d;
     }
-    return [Math.sqrt(d1), Math.sqrt(d2)];
+    return [Math.sqrt(d1), Math.sqrt(d2), nx, ny];
   },
 } satisfies LibFn;
 
@@ -277,7 +281,11 @@ const CELLULAR3 = {
   },
 } satisfies LibFn;
 
-/** Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cell: both in [0, ~1.5]. */
-export const cellular2 = (p: In<"vec2">): Expr<"vec2"> => lib<"vec2">(CELLULAR2, p);
+/**
+ * Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cell, both in [0, ~1.5];
+ * and the nearest point itself (zw, in p's coordinates), the same bits for every p in its cell: `hash22(c.zw)` is one
+ * random pair per cell, to colour each its own way. (zw added for friction S9, 2026-11-16; `.x` and `.y` are as before.)
+ */
+export const cellular2 = (p: In<"vec2">): Expr<"vec4"> => lib<"vec4">(CELLULAR2, p);
 /** Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cube: both in [0, ~1.7]. */
 export const cellular3 = (p: In<"vec3">): Expr<"vec2"> => lib<"vec2">(CELLULAR3, p);

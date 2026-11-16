@@ -2713,8 +2713,8 @@ Hashing and noise.
   `const hash2 = (p: In<"vec2">): Expr<"f32"> =>`
 - **hash22**: Two independent hashes of the integer cell containing p, each in [0, 1).
   `const hash22 = (p: In<"vec2">): Expr<"vec2"> =>`
-- **cellular2**: Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cell: both in [0, ~1.5].
-  `const cellular2 = (p: In<"vec2">): Expr<"vec2"> =>`
+- **cellular2**: Distance to the nearest (x) and second-nearest (y) jittered feature point, one per unit cell, both in [0, ~1.5]; and the nearest point itself (zw, in p's coordinates), the same bits for every p in its cell: `hash22(c.zw)` is one random pair per cell, to colour each its own way.
+  `const cellular2 = (p: In<"vec2">): Expr<"vec4"> =>`
 
 ### src/lib/util.ts
 

@@ -291,6 +291,7 @@ export class Expr<T extends Ty = Ty> {
   get w(): Expr<"f32"> { return get(this, "w"); }
   get xy(): Expr<"vec2"> { return get(this, "xy"); }
   get xz(): Expr<"vec2"> { return get(this, "xz"); }
+  get zw(): Expr<"vec2"> { return get(this, "zw"); }
   get xyz(): Expr<"vec3"> { return get(this, "xyz"); }
 }
 
