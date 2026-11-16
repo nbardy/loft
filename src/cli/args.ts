@@ -28,6 +28,9 @@ export type ViewName = string;
 
 type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly still: StillSpec };
 
+/** What `bake` writes: the bodies at one time, or keyed over a span (the scene's period, or `--seconds`). */
+export type BakeWhen = { readonly kind: "at"; readonly time: number } | { readonly kind: "animated"; readonly seconds: number | undefined };
+
 export type Command =
   | GalleryCommand
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
@@ -44,7 +47,7 @@ export type Command =
   }
   | { readonly kind: "build"; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
   | { readonly kind: "profile"; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
-  | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly time: number; readonly density: { readonly along: number; readonly around: number } }
+  | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
   | { readonly kind: "help" }
   | { readonly kind: "api"; readonly name: { readonly kind: "all" } | { readonly kind: "one"; readonly name: string } }
@@ -76,7 +79,8 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
                       seconds after its time (exact motion blur), through a lens of radius r focused on the camera's target
   --sweep name=a..b   (clip, frames) moves one input evenly from a to b across the frames; with one --times value,
                       frames draws --count frames (default 6) at that time
-  bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)`;
+  bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)
+         [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
   "--fixture": { value: false, commands: ["render", "clip", "frames", "dev"] },
@@ -99,7 +103,8 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--only": { value: true, commands: ["variants"] },
   "--density": { value: true, commands: ["bake"] },
   "--construction": { value: false, commands: ["render"] },
-  "--seconds": { value: true, commands: ["clip"] },
+  "--seconds": { value: true, commands: ["clip", "bake"] },
+  "--animated": { value: false, commands: ["bake"] },
   "--fps": { value: true, commands: ["clip"] },
   "--view": { value: true, commands: ["clip", "frames", "profile"] },
   "--times": { value: true, commands: ["frames"] },
@@ -244,10 +249,12 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind === "artefact") throw new UsageError("bake: needs a scene file");
     const d = /^(\d+)x(\d+)$/.exec(one("--density") ?? "48x16");
     if (!d || Number(d[1]) < 2 || Number(d[2]) < 3) throw new UsageError(`--density: "${one("--density")}" is not ALONGxAROUND (at least 2x3), e.g. 48x16`);
-    return {
-      kind: "bake", source, path: positional[0]!, out, density: { along: Number(d[1]), around: Number(d[2]) },
-      time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
-    };
+    if (flags.has("--animated") && one("--time") !== undefined) throw new UsageError("bake --animated: keys from t = 0 over the span; --time is for one still");
+    if (!flags.has("--animated") && one("--seconds") !== undefined) throw new UsageError("bake: --seconds is the span of --animated");
+    const when: BakeWhen = flags.has("--animated")
+      ? { kind: "animated", seconds: one("--seconds") === undefined ? undefined : positive("--seconds", one("--seconds")!) }
+      : { kind: "at", time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!) };
+    return { kind: "bake", source, path: positional[0]!, out, density: { along: Number(d[1]), around: Number(d[2]) }, when };
   }
   const shared: Shared = {
     source,

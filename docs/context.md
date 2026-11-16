@@ -22,8 +22,8 @@ the finished colour.
 Triangles your own code makes draw with `draw.mesh`; a solid you can intersect, with `draw.traced` (`march` traces a
 field). `recur` bakes a step (a flock, a grid) on the GPU into the files; it still reads as a function of time. `pass`
 is another camera's picture (a shadow map, a mirror) for an expression to read. `--samples 64 --shutter 0.05
---aperture 0.1` makes a still with motion blur and depth of field. Meshes come out (the bake command writes glTF), none
-go in. `loft` is `bun src/cli/main.ts`.
+--aperture 0.1` makes a still with motion blur and depth of field. Meshes come out (the bake command writes glTF, skinned and
+animated if asked), none go in. `loft` is `bun src/cli/main.ts`.
 
 ```ts run
 // examples/reed.ts

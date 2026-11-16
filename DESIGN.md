@@ -1423,11 +1423,129 @@ Corrections to the theory:
 
 **The stop rule tripped once**: after stage 3, worst replay at K = 113 (256 x 256, 120 s at 60 steps a second) was
 3.80 ms against a limit of 2 ms, at load 80 to 95; the same bake's 7,200 steps took 85 ms of GPU (limit 1 s: held).
-112 steps warm cost 0.95 ms (correction 2), so the per-step model holds and the trip is the cold short pass. Not built:
-resume (a host keeping its last replayed state, 1 or 2 steps a frame while playing forward), which removes the cold
-burst for playback; the owner decides whether the trip stops the design.
+112 steps warm cost 0.95 ms (correction 2), so the per-step model holds and the trip is the cold short pass.
 
-Not built: resume; re-baking params in `loft dev`; a per-frame `when` other than `time` on a checkpointed state;
+**Resume (built, 2026-11-16).** The host keeps the step n_last its even and odd tables hold; `advance` (src/host/host.ts)
+returns `kept` (same step: no dispatch), `resume { from, steps }` (0 < d = n - n_last <= k = n mod K: d dispatches of
+ping or pong, no checkpoint read) or `replay { checkpoint, steps }` (the old path); one dispatcher, `dispatchReplay`.
+Resume is never more dispatches than the replay (d <= k against k + 1). It needs an even K, which the compiler now
+guarantees (113 became 114; odd K in an old file always replays): state j then lives in table j mod 2 however it was
+reached, so the next step depends on j alone. Exact because a step reads only its state and the clock in it, in the same
+module as the bake. Measuring frames (`profile`, `frameGpu`, `poseTime`) force a replay, as a seek does.
+*Any frame draws alone*: tests/recur.gpu.test.ts and tests/recur.resume.gpu.test.ts (20 frames: forward steps,
+a repeat, checkpoint crossings, a seek back, a jump past R, both clamps) compare each frame's rgba sha256 with a fresh
+`Loaded` drawing that time first: identical, all three `Advance` kinds exercised; swapping ping and pong in resume
+fails it. The (LOD) dependence on earlier frames is unchanged: resume changes no byte, only how the tables are reached.
+Measured (256 x 256, 120 s, 60 a second, K = 114; 16 x 16 view, wall per awaited frame so the readback sync is in every
+number; 100 repetitions interleaved forward window / reverse window in one process; load average 31 to 24 with a
+training run on the GPU): a frame that replays nothing (same step) 0.76 ms; forward playback by resume 0.81 ms median
+(p10 0.67, p90 1.72), 0.05 ms over that floor (predicted about 0.1); the same steps replayed, as before, 3.25 ms median
+(p10 1.39, p90 5.21), 2.49 ms over the floor, averaged over k = 0..112. Resume at the worst k = 113: 0.84 ms (0.08 over).
+The worst seek (k = 113 from far away) is unchanged by design: 5.04 ms median (p10 4.64, p90 6.52), 4.28 ms over the
+floor. So the stop rule's 2 ms holds for playback and still trips for a seek to the worst k; the owner's decision
+stands. Not on a quiet GPU: ratios are the claim, the absolute milliseconds are not.
+
+Not built: re-baking params in `loft dev`; a per-frame `when` other than `time` on a checkpointed state;
 lockstep replay of two checkpointed recurrences; the input-log hybrid (live inputs stay refused). A built directory
 that keeps every state carries no record of its recurrence, so `loft clip --artefact` cannot refuse a clip past its
 `until` (one that keeps checkpoints can).
+
+## 16. Animated glTF: `loft bake --animated` (2026-11-16, designed before building)
+
+glTF carries motion as keyed node transforms, skins and morph targets. A Loft body is a section swept along stations
+that the pose pass transports frames along (section 7), so its natural export is a skin with one joint per station.
+
+**Joints.** Station j of a body (m_j = j / (n - 1), n = `transport.stations`) is joint j. Its transform at time t is
+the station table's own row: translation `p_j(t)` (lane 0), rotation `q_j(t)` (lane 1, the transported frame with
+twist: x the tangent, y the dorsal side, z the other side), and a scale `(1, B_j(t) / B_j(0), A_j(t) / A_j(0))` in that
+frame, A the half-width and B the half-height after volume preservation (`girth * aspect^{0|1} / sqrt(stretch)`; the
+tip closure is a function of m alone and cancels). glTF allows non-uniform joint scale, so girth, aspect and stretch
+thinning all ride the joints; twist rides the rotation. The joints are children of one root node per body, so their
+local transforms are their world ones. Inverse bind matrices are `(T(p_j(0)) R(q_j(0)))^-1`.
+
+**Weights.** The skin's frame at m is the nlerp of q_j and q_{j+1} with fr = m (n - 1) - j, and its stretch the lerp.
+So a vertex at body coordinate m (its TEXCOORD_0.x) gets joints (j, j + 1), weights (1 - fr, fr): two joints, the
+sweep's own blend. Four joints with a smoother blend would not match the sweep at rest and buy nothing below.
+
+**Error of the skin (DERIVATION).** At rest the skinned mesh equals the bake exactly. At time t it differs by:
+1. the spine: the sweep draws Catmull-Rom through the stations; the skin moves the rest curve rigidly with the
+   joints. Mid-segment, Catmull-Rom sits `s_j = (p_j + p_{j+1} - p_{j-1} - p_{j+2}) / 16` off the chord, so the error
+   is `|s_j(t) - R s_j(0)|`, about `|delta x''| h^2 / 8` per segment of length h;
+2. the ring: linear blend of two rotations differing (relative to rest) by d theta shrinks an offset of radius r by
+   `r (1 - cos(d theta / 2)) ~ r d theta^2 / 8`; the sweep's nlerp does not shrink;
+3. the scale between stations: a lerp of ratios against the ratio of lerps, second order in the change per segment.
+
+**Keys.** N + 1 keys at t_i = i S / N over the span S (the scene's `period`; with none, `--seconds`), LINEAR
+translation and scale, LINEAR (slerp) rotation. Between keys a point with acceleration a is off by at most
+`a dt^2 / 8`. N is chosen so this is half the budget: a pilot of N0 = 32 keys measures each moving thing's largest
+vertex acceleration by second differences, and `N = max(N0, ceil(S sqrt(a / (4 tol size))))` over the things.
+
+**Tolerance and size.** `tol` is `tolerance.share(1e-3)` of the thing's size, the diagonal of its rest bounding box.
+The error is measured, not assumed: per thing, the largest vertex distance between the file's motion (CPU skinning
+of the keyed joints, or the morph blend) and Loft's own evaluated surface (`compileJs` over the pose pass's tables),
+at every key and every mid-key time.
+
+**Outcomes (one per baked body, a sum type).** `still`: no vertex moves more than the tolerance over the span (one
+static mesh; fields are always this, since the field baker refuses one that changes). `skinned`: a live, whole body
+whose skin is within tolerance. `morphed`: anything else whose triangles keep their topology (a mesh, a surface that
+is not a body, a body over tolerance): one morph target per key, weights keyed one-hot, so its error is the keys'
+alone. Morphing over refusing because the positions at every key are already evaluated to measure the error, so the
+exact data costs no evaluation, and a creature missing an arm is worse than a larger file. `refused`: the keys alone
+miss the tolerance (N capped at 1024); written static at t = 0 and printed as refused, never silently.
+
+**Predictions (examples/reeds_shadow.ts, S = 2 pi, the period of `sin(time)`).** 32 stations over 3.5 units, size
+about 3.6, tolerance 3.6e-3. Spine term: x'' = 0.5 m^2 sin(t + k) changes by up to 2 per unit m^2, h = 1/31 of m:
+2.6e-4. Ring term: d theta about 0.57 / 31 = 0.018 rad, r = 0.2: 1e-5. Skin total about 3e-4 (1e-4 relative). Keys:
+tip acceleration 0.5, half budget 1.8e-3, N = ceil(2 pi sqrt(0.5 / 1.44e-2)) = 38 (above N0), mid-key error about
+1.7e-3. Expected: every reed `skinned`, measured 1.5e-3 to 2.5e-3 (4e-4 to 7e-4 relative); the stone `still`.
+
+### 16.1 As built, and what the runs showed
+
+`loft bake <scene> --out f.glb --animated [--seconds S]` (src/bake/motion.ts, the writer in src/bake/gltf.ts; the span
+is the scene's period, else `--seconds`, else a `SceneError`). It prints one line per body: its outcome, joints, keys,
+the measured error (world units, and as a share of its size), and the prediction. Three changes from the design, each
+forced by a run:
+
+- **Keys per thing.** One N for the whole scene let the crab's blinking lid (436 keys) key every leg too: 199 MB.
+  glTF samplers each take their own times, so each body has its own N (58 MB).
+- **Re-keyed once from the measurement.** The pilot's second differences average acceleration over two of its steps,
+  so a quick move reads low and a third of the crab's parts missed by 1.1 to 2 times. The keys' own midpoint error is
+  the bound measured (`a_eff = 8 e / dt^2`), so a thing over half the budget is re-keyed once with
+  `N' = N sqrt(e / (tol / 2))`. Motion that is not smooth is then visible in how the error fell: the heron's toes
+  (a footing that switches at 0.8 s) fell as dt^0.3, the original reeds as dt^0.
+- **Joints between stations.** At one joint per station the crab's legs missed (1.2e-2 against 7.7e-3; predicted
+  1.3e-2, so the theory was right and the joints too few). Joints are now the sweep sampled at J points
+  (`stationSample`: its own Catmull-Rom point, nlerped frame and stretch at any m), with
+  `J - 1 = (stations - 1) r`, `r = ceil(sqrt(e_stations / (tol / 2)))` (both skin terms go as the spacing squared),
+  at most 8. The legs take 47 joints and pass at 4.3e-4 to 6.1e-4 of their size.
+
+Results (CPU only: `compileJs` over the pose pass's tables; tolerance 1e-3 of size):
+
+| Scene | Body | Outcome | Error (units) | Share of size | Predicted |
+|---|---|---|---|---|---|
+| reeds_shadow, `up` [0,0,1] | reed0..5 | skinned, 32 joints, 37-38 keys | 1.74e-3 to 1.90e-3 | 4.9e-4 to 5.3e-4 | 1.83e-3 to 2.05e-3 (design: N = 38, 1.5e-3 to 2.5e-3) |
+| reeds_shadow | stone (a field) | still | - | - | - |
+| docs/context.md's reed, `up` [0,0,1] | reed | skinned, 32 joints, 39 keys | 1.99e-3 | 4.9e-4 | 2.10e-3 |
+| reefback_titan, 3.2 s (one gait) | 31 bodies | skinned (4 to 47 joints) | | 1.3e-5 to 7.5e-4 | |
+| | 31 bodies | morphed (33 to 761 targets) | | 1.2e-5 to 9.5e-4 | |
+| | 6 bodies | refused (cutter claw: a jump; maxillipeds: a kink) | | | |
+| heron, 1.6 s | torso, neck, bill, plume, legs, toes00/02 | skinned | | 4.8e-4 to 9.1e-4 | |
+| | toe01, toe10..12 | refused (the footing switches at 0.8 s) | | | |
+
+**The reeds as written are refused, and that is a finding about the sweep, not the export.** With `up` = +y along a
+vertical spine the start frame comes from `proj(up, tan0)`, whose length is about 5e-3 sin(t + k): when the bend
+changes sign the dorsal side flips half a turn in one key (measured: 3.14 rad between consecutive keys), so a vertex's
+place on the ring jumps by the diameter. Round and evenly painted, the GPU picture does not show it; any per-vertex
+consumer (a glTF, a texture, a sculpt layer) does. The export says so by name and writes the reed at rest. The fix
+belongs to `stationScan`'s seed (a seed that does not depend on the sign of a vanishing bend), not to the baker.
+
+Checks: Khronos glTF validator 2.0.0-dev.3.10 on every file above: 0 errors, 0 warnings (infos: the unused UV
+accessors). `tools/gltf_play.ts` reads a file back from its bytes and plays it (skin, weights, keys);
+tests/bake.gltf.test.ts compares that playback with the scene. `tools/gltf_skin_pictures.ts` draws the played file
+through a scene camera beside `loft frames`.
+
+Not exported: anything the static bake skips (the sea, the sky, shadows, sprays, impostor reefs, rigging strokes,
+telegraphs, media, traced solids); a field's motion (meshed once); a paint that reads a screen derivative (no
+COLOR_0, named); normals are the rest's, skinned by the viewer (non-uniform joint scale bends them slightly); a body
+taken at another time (a smear's slice) is morphed, not skinned. Rigid parts that are not bodies (a ship's hull) are
+morphed where one joint would do; a rigid fit per key is the next saving in file size.
