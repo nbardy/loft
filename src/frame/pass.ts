@@ -256,6 +256,8 @@ function cameraLanes(c: PassCamera, size: TextureSize): readonly Expr<"vec4">[] 
 }
 
 const NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+/** The prefix of the passes the compiler makes (`scenePass`); refused in an author's name. */
+const OWN = "loft_";
 /** WebGPU's default `maxTextureDimension2D`. */
 const MAX_SIDE = 8192;
 
@@ -323,6 +325,27 @@ export function pass(spec: PassSpec): Pass {
   const where = `pass "${spec.name}"`;
   if (typeof spec.name !== "string" || !NAME.test(spec.name)) throw new SceneError("pass", `name ${shown(spec.name)}`, "letters, digits and _, starting with a letter", `pass({ name: "fromSun", ... })`);
   if (byName.has(spec.name)) throw new SceneError(where, "a second pass with this name", "one pass per name in a process", "give it another name");
+  if (spec.name.startsWith(OWN)) throw new SceneError(where, `a name starting "${OWN}"`, "a name of your own (the compiler names its passes so)", "give it another name");
+  const made = build(spec, where);
+  byName.set(spec.name, made.def);
+  return made.pass;
+}
+
+/**
+ * A scene pass the compiler makes for one compile (a lamp's shadow, src/frame/lamp_shadow.ts), with its camera table
+ * (whose columns a reader may fetch beside `project`). Its name is
+ * `loft_<name>`, which no author's pass may take, and it is not registered by name: the same scene compiled twice in a
+ * process (`loft dev`, a bench) makes it twice, with the same bytes.
+ */
+export function scenePass(spec: PassSpec & { readonly camera: PassCamera }): { readonly pass: Pass; readonly camera: ProgramTable } {
+  if (!NAME.test(spec.name)) throw new Error(`scenePass: name "${spec.name}" is not letters, digits and _`);
+  const name = `${OWN}${spec.name}`;
+  const { pass, def } = build({ ...spec, name }, `pass "${name}"`);
+  if (def.what.kind !== "scene") throw new Error(`scenePass "${name}": not a scene pass`);
+  return { pass, camera: def.what.camera };
+}
+
+function build(spec: PassSpec, where: string): { readonly pass: Pass; readonly def: PassDef } {
   const size = sizeOf(where, spec.size);
   const texture = `loft_passtex_${spec.name}`;
   let def: PassDef;
@@ -348,9 +371,8 @@ export function pass(spec: PassSpec): Pass {
   const at: LibFn = { name: `loft_pass_${spec.name}_at`, ret: "vec4", wgsl: reads, js: "gpu-only" };
   byLib.set(at, def);
   if (def.what.kind === "scene") byCamera.set(def.what.camera, def);
-  byName.set(spec.name, def);
   const camera = def.what.kind === "scene" ? def.what.camera : undefined;
-  return {
+  return { def, pass: {
     name: spec.name,
     at: (uv) => lib<"vec4">(at, uv),
     project: (p) => {
@@ -361,5 +383,5 @@ export function pass(spec: PassSpec): Pass {
       const ndc = div(clip.xyz, clip.w);
       return vec3(add(mul(ndc.x, 0.5), 0.5), sub(0.5, mul(ndc.y, 0.5)), ndc.z);
     },
-  };
+  } };
 }

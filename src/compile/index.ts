@@ -13,6 +13,7 @@ import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
 import { measureRest } from "../draw/grid_detail.ts";
 import { castPlan } from "../draw/cast.ts";
+import { lampShadows, refuseSpread } from "../frame/lamp_shadow.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 import { discover, planPasses } from "./passes.ts";
 import { SceneError } from "../errors.ts";
@@ -66,8 +67,11 @@ export function compileScene(scene: Scene): Compiled {
     }
   };
 
+  // A lamp that asked for a shadow gets its depth pass and test here, before anything folds the lights (DESIGN.md 17).
+  const lamps = lampShadows(scene.lighting, scene.things);
+  const lighting = lamps.lighting;
   const ctx: CompileContext = {
-    slots, style: scene.style, ground: scene.ground, sun: scene.sun, sunAt: scene.sunAt, lighting: scene.lighting, things: scene.things,
+    slots, style: scene.style, ground: scene.ground, sun: scene.sun, sunAt: scene.sunAt, lighting, things: scene.things,
     table: (t) => tables.declare(t, prep),
     post: (p) => { posts.push(p); },
     outline: scene.outline, markOut,
@@ -90,7 +94,7 @@ export function compileScene(scene: Scene): Compiled {
   }
   // The ink pass runs first: it restores the plain mark in alpha for the style's own passes.
   if (screenInk) posts.unshift({ label: "ink outline", wgsl: INK_POST });
-  const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, scene.lighting);
+  const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, lighting);
   // Passes are found from what the shaders call (src/compile/passes.ts); a scene that reads none finds none here, and
   // every step below that is about passes then does nothing.
   const found = discover(slots, [...slots.libs(), ...Object.values(modules).flatMap((m) => m.libs)]);
@@ -116,6 +120,12 @@ export function compileScene(scene: Scene): Compiled {
   };
   // Before any bake: a recurrence reads as its start state here (`Unbaked`), the only reading that may.
   const restFrame = poseFrame(layout, envOf, restState, undefined, "start").frame;
+  // Only a map something reads is in the artefact (a style that never folds the lights reads none), and only its
+  // tables were laid out.
+  for (const s of lamps.spreads.filter((x) => found.defs.some((d) => d.name === x.pass))) {
+    const [at, half] = cpu([s.at, s.half])(restFrame) as [number[], number];
+    refuseSpread(s, at, half);
+  }
   const castText = casting === undefined ? "" : casting.wgsl(cpu, restFrame);
   /** A library function's text: its own, or for the cast functions the scene's (written once, with the first of them). */
   const textOf = (l: LibFn): string => (casting !== undefined && casting.libs.includes(l) ? (l === casting.libs[0] ? castText : "") : l.wgsl);

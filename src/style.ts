@@ -303,7 +303,7 @@ export function readsBody(style: Style): boolean {
   return styleReads(style).body;
 }
 
-const SUN_UP: Lighting = { sun: { kind: "fixed", dir: [0, 1, 0] }, amount: { kind: "full" }, lights: [], sampling: { kind: "point" } };
+const SUN_UP: Lighting = { sun: { kind: "fixed", dir: [0, 1, 0] }, amount: { kind: "full" }, lights: [], sampling: { kind: "point" }, shadows: new Map() };
 const NOTHING_SAID: Said = { channels: new Map(), scatter: undefined };
 /** Where a context's reads are recorded (only on `styleReads`' evaluation). */
 type Recorder = { readonly channel: (name: string, ty: NumTy) => void; readonly scatter: () => void };
@@ -329,7 +329,7 @@ function variablesAt(lighting: Lighting): ShadeFields {
 export function shadeContext(f: ShadeFields, lighting: Lighting, style: Style, about: Said & { readonly thing?: string } = NOTHING_SAID, record: Recorder = NO_RECORD): ShadeCtx {
   const ctx: ShadeCtx = {
     ...f,
-    lights: foldAt(lighting, f.world),
+    lights: foldAt(lighting, { kind: "surface", at: f.world, normal: f.normal }),
     channel: <T extends NumTy>(name: string, otherwise: In<T>): Expr<T> => {
       const fallback = lift<T>(otherwise);
       record.channel(name, fallback.ty as NumTy);
@@ -340,7 +340,7 @@ export function shadeContext(f: ShadeFields, lighting: Lighting, style: Style, a
       }
       return given as Expr<T>;
     },
-    sky: (dir) => style.sky({ dir, sun: lift<"vec3">(sunDir(lighting.sun)), lights: foldAt(sunOnly(lighting), dir) }),
+    sky: (dir) => style.sky({ dir, sun: lift<"vec3">(sunDir(lighting.sun)), lights: foldAt(sunOnly(lighting), { kind: "point", at: dir }) }),
     scatter: (toward, otherwise) => {
       record.scatter();
       return about.scatter === undefined ? lift<"vec3">(otherwise) : about.scatter(ctx, toward);
