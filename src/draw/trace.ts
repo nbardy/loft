@@ -28,16 +28,19 @@ const finite = (what: string, v: readonly number[]): void => {
 
 /** Constructors that check their numbers once, so the tracer never sees a degenerate bound. */
 export const bound = {
+  /** The axis-aligned box from corner `min` to corner `max` (world units; max above min on every axis). */
   box(min: V3, max: V3): TraceBound {
     finite("box", [...min, ...max]);
     if (!(max[0] > min[0] && max[1] > min[1] && max[2] > min[2])) throw new Error(`bound.box: max must exceed min on every axis, got [${min.join(", ")}] .. [${max.join(", ")}]`);
     return { kind: "box", min, max };
   },
+  /** The ball of `radius` round `centre`. */
   sphere(centre: V3, radius: number): TraceBound {
     finite("sphere", [...centre, radius]);
     if (!(radius > 0)) throw new Error(`bound.sphere: radius must be positive, got ${radius}`);
     return { kind: "sphere", centre, radius };
   },
+  /** Every point within `radius` of the segment from `a` to `b` (the ends must differ). */
   capsule(a: V3, b: V3, radius: number): TraceBound {
     finite("capsule", [...a, ...b, radius]);
     if (!(radius > 0)) throw new Error(`bound.capsule: radius must be positive, got ${radius}`);

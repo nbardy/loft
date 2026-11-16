@@ -81,8 +81,30 @@ export function apiFull(): string {
 
 export class ApiError extends Error {}
 
-/** One name, with everything its comment says. */
+/**
+ * A part of an exported object, written as it is called (`draw.mesh`, `bound.box`): its declaration, its comment, and
+ * the fields of each options or data type its declaration names. Friction F8 (2026-11-16): these answered "no export
+ * named", though `loft api draw` lists them.
+ */
+function apiMember(name: string): string {
+  const [head, part] = [name.slice(0, name.indexOf(".")), name.slice(name.indexOf(".") + 1)];
+  const owners = ENTRIES.flatMap((entry) => { const e = exportsOf(resolve(ROOT, entry)).get(head); return e ? [e] : []; });
+  if (owners.length === 0) throw new ApiError(`no export named "${head}" (from "${name}")`);
+  const owner = owners[0]!;
+  const m = owner.members.find((x) => x.name === part);
+  if (!m) throw new ApiError(`"${head}" has no part named "${part}"${owner.members.length > 0 ? ` (its parts: ${owner.members.map((x) => x.name).join(", ")})` : ""}`);
+  const types = new Map(ENTRIES.flatMap((entry) => [...exportsOf(resolve(ROOT, entry)).values()]).map((e) => [e.name, e] as const));
+  const named = [...new Set([...m.signature.matchAll(/\b([A-Z][\w$]*(?:Options|Spec|Data))\b/g)].map((x) => x[1]!))];
+  const fields = named.flatMap((t) => {
+    const e = types.get(t);
+    return e && e.fields.length > 0 ? ["", `${t}:`, ...e.fields.map((f) => `  ${f.name}${f.optional ? "?" : ""}: ${f.type}`)] : [];
+  });
+  return [`${name}  (part of ${head}, ${owner.file})`, "", m.signature, "", m.doc === "" ? "(no doc comment)" : m.doc, ...fields].join("\n");
+}
+
+/** One name, with everything its comment says; a dotted name is a part of an exported object (`draw.mesh`). */
 export function apiOne(name: string): string {
+  if (name.includes(".")) return apiMember(name);
   const hits = ENTRIES.flatMap((entry) => { const e = exportsOf(resolve(ROOT, entry)).get(name); return e ? [e] : []; })
     .filter((e, i, a) => a.findIndex((x) => x.file === e.file) === i);
   if (hits.length === 0) {

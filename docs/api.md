@@ -569,9 +569,9 @@ What the per-pixel tracers share (docs/folding_and_tracing.md section 3): the bo
 
 - **bound**: Constructors that check their numbers once, so the tracer never sees a degenerate bound.
   `const bound = { ... }`
-  - `bound.box`: (undocumented)
-  - `bound.sphere`: (undocumented)
-  - `bound.capsule`: (undocumented)
+  - `bound.box`: The axis-aligned box from corner `min` to corner `max` (world units; max above min on every axis).
+  - `bound.sphere`: The ball of `radius` round `centre`.
+  - `bound.capsule`: Every point within `radius` of the segment from `a` to `b` (the ends must differ).
 
 Types:
 - **TraceBound**: Where a tracer marches: a box, a sphere or a capsule, in world units. `type TraceBound = | { readonly kind: "box"; readonly min: V3; readonly max: V3 } | { readonly kind: "sphere"; readonly centre: V3; readonly radius: number } | { readonly kind: "capsule"; readonly a: V3; readonly b: V3; readonly radius: number }`
