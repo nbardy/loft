@@ -57,8 +57,8 @@ Loft L0: symbolic maths.
   `const TAU = Math.PI * 2`
 - **abs**: `abs(a)`: the absolute value, componentwise.
   `const abs = unary("abs")`
-- **add**: `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one.
-  `const add: Binary`
+- **add**: `add(a, b, ...more)`: a + b (+ more, left to right), componentwise; a scalar operand is applied to every component of a vector one.
+  `const add: Assoc`
 - **and**: `and(a, b)`: whether both bools hold (WGSL `&&`; both sides are always evaluated).
   `const and = (a: In<"bool">, b: In<"bool">): Expr<"bool"> =>`
 - **atan2**: atan2(y, x).
@@ -111,16 +111,16 @@ Loft L0: symbolic maths.
   `const log = unary("log")`
 - **lt**: `lt(a, b)`: whether a < b, for two f32 values; a bool.
   `const lt = compare("lt")`
-- **max**: `max(a, b)`: the larger of a and b, componentwise; a scalar operand is applied to every component.
-  `const max = binary("max")`
-- **min**: `min(a, b)`: the smaller of a and b, componentwise; a scalar operand is applied to every component.
-  `const min = binary("min")`
+- **max**: `max(a, b, ...more)`: the largest operand, componentwise; a scalar operand is applied to every component.
+  `const max: Assoc`
+- **min**: `min(a, b, ...more)`: the smallest operand, componentwise; a scalar operand is applied to every component.
+  `const min: Assoc`
 - **mix**: `mix(a, b, t)`: a + (b - a) t, the linear blend from a (t = 0) to b (t = 1), componentwise; t may be a scalar or the same vector type, and it is not clamped.
   `function mix(a: number, b: number, t: In<NumTy>): Expr<"f32">`
 - **mod**: Floored modulo (the result has the sign of the divisor), unlike WGSL's `%`.
   `const mod = binary("mod")`
-- **mul**: `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component.
-  `const mul: Binary`
+- **mul**: `mul(a, b, ...more)`: a * b (* more, left to right), componentwise (not a matrix or dot product); a scalar operand scales every component.
+  `const mul: Assoc`
 - **namespaceSeed**: A number that differs from one namespace to the next and is 0 outside any: what makes instances built by the same code differ where their code asks for a seed (each crab of a line its own idle, not four copies of one puppet).
   `function namespaceSeed(): number`
 - **ne**: Exact equality and inequality of two f32 values.
