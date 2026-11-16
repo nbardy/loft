@@ -149,6 +149,6 @@ export function strand(spec: StrandSpec): Strand {
   const paint = spec.paint;
   const paintFn: Paint = typeof paint === "function" ? paint : () => vec3(...(paint as Rgb));
   const transport = { stations: spec.stations ?? 32, twist: spec.twist ?? (() => lift<"f32">(0)), up: lift<"vec3">(spec.up ?? [0, 1, 0]), level: spec.level ?? 0 };
-  return new Strand(sweepArgs(name, spec.spine, section, transport), { paint: paintFn, along: Math.round(spec.detail?.along ?? 96), around: Math.round(spec.detail?.around ?? 24) });
+  return new Strand(sweepArgs(name, spec.spine, section, transport, "strand"), { paint: paintFn, along: Math.round(spec.detail?.along ?? 96), around: Math.round(spec.detail?.around ?? 24) });
 }
 
