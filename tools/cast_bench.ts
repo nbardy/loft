@@ -7,7 +7,7 @@
 // the median, quartiles and best of the per-frame GPU times, and the load average before and after.
 //
 //   bun tools/cast_bench.ts [reps] [base-dir] [view] [runs]
-// runs: comma-separated <checkout>:<light>, checkout here | base, light none | lamp | hard | soft
+// runs: comma-separated <checkout>:<light>, checkout here | base | a directory, light none | lamp | hard | soft
 // (default here:none,base:soft,here:soft,base:hard,here:hard). Paired differences are against the first run.
 import { createHash } from "node:crypto";
 import { loadavg } from "node:os";
@@ -15,7 +15,7 @@ import { loadavg } from "node:os";
 const reps = Number(process.argv[2] ?? 60);
 const baseDir = process.argv[3] ?? "out/base_cast";
 const viewName = process.argv[4] ?? "game";
-const which = (process.argv[5] ?? "here:none,base:soft,here:soft,base:hard,here:hard").split(",").map((r) => r.split(":") as ["here" | "base", Light]);
+const which = (process.argv[5] ?? "here:none,base:soft,here:soft,base:hard,here:hard").split(",").map((r) => r.split(":") as [string, Light]);
 const W = 1280, H = 800;
 
 type Mods = { cast: any; index: any; compile: any; variant: any; host: any; headless: any };
@@ -43,11 +43,13 @@ async function crab(m: Mods, root: string, light: Light): Promise<any> {
 }
 
 const here = process.cwd(), base = `${here}/${baseDir}`;
-const mHere = await mods(here), mBase = await mods(base);
-const device = await mHere.headless.headlessDevice();
+const rootOf = (where: string): string => (where === "here" ? here : where === "base" ? base : `${here}/${where}`);
+const loadedMods = new Map<string, Mods>();
+for (const [where] of which) if (!loadedMods.has(rootOf(where))) loadedMods.set(rootOf(where), await mods(rootOf(where)));
+const device = await (await mods(here)).headless.headlessDevice();
 const runs: { name: string; loaded: any }[] = [];
 for (const [where, light] of which) {
-  const name = `${where}:${light}`, m = where === "here" ? mHere : mBase, root = where === "here" ? here : base;
+  const name = `${where}:${light}`, root = rootOf(where), m = loadedMods.get(root)!;
   const t0 = performance.now();
   const a = m.compile.compileScene(await crab(m, root, light)).artefact;
   const loaded = await m.host.createHost(device).load(a);
