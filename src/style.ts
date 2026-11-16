@@ -45,7 +45,7 @@ export type ShadeCtx = {
   sky(dir: Expr<"vec3">): Expr<"vec3">;
   /**
    * This thing's `scatter` toward `toward` if its paint gives one, else `otherwise` (the style's own term for that
-   * light): free when absent.
+   * light, base colour included; a paint's scatter replaces all of it): free when absent.
    */
   scatter(toward: Expr<"vec3">, otherwise: In<"vec3">): Expr<"vec3">;
 };
