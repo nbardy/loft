@@ -1591,3 +1591,146 @@ telegraphs, media, traced solids); a field's motion (meshed once); a paint that 
 COLOR_0, named); normals are the rest's, skinned by the viewer (non-uniform joint scale bends them slightly); a body
 taken at another time (a smear's slice) is morphed, not skinned. Rigid parts that are not bodies (a ship's hull) are
 morphed where one joint would do; a rigid fit per key is the next saving in file size.
+
+## 17. A lamp's shadow from a depth picture (`lamp(..., { shadow: true })`; 2026-11-16, designed before building)
+
+Today a lamp casts nothing unless its light function calls `castRay` (one ray per lit fragment against every
+skeleton capsule): on the crab with a lamp at [3, 14, 2.5] that is +14.5 ms on main (+8.9 after the chain-walk cut on
+`build/cast-grid`, not merged). The sun has a splatted shadow; `examples/reeds_shadow.ts` builds a depth picture by
+hand. This section gives a lamp the same thing as one word.
+
+### 17.1 What an author writes
+
+```ts
+const bulb = lamp([0, 5.5, 0], { colour: [2.2, 1.6, 0.9], reach: 2.5, size: 0.25, shadow: true });
+export default scene({ ground: plane, things: [heron], style: toon(), sun: { toward: [-0.4, 0.8, 0.45], amount: [0.04, 0.05, 0.1] }, lights: [bulb] });
+```
+
+One option, a boolean. Rejected:
+- **On by default.** Every lamp example would change (lantern_night, lantern*, area_lamp, road, lure, the bosses'
+  lamps, the titan's faces, pearls, open, the reliefs, the recipes' ship lights), and several would go wrong rather than
+  better: a lantern's flame sits inside its own opaque paper (lantern_night), which a depth picture sees as a wall. A
+  light inside a thing must stay unshadowed, and only the author knows which lamps those are.
+- **A texel count** (`shadow: 2048`). A number the author cannot choose well without the theory below. 1024 squared
+  is fixed (17.3). If a scene needs more, the count becomes the option's value then, not now.
+- **A wrapper** `shadowed(light)`. A second name for what is a fact of one lamp, and a wrapper cannot see the lamp's
+  point or size (a `Light` is an opaque function).
+
+The function the lamp returns is unchanged (it carries a new fact, `shadow`, beside `source` and `bound`). The shadow
+is applied by the compiler's light fold where a fragment is lit, as docs/proposals/light.md planned ("multiplies the
+arrival's amount by the map's test before the style sees it"): styles and scenes do not change, and whatever runs a
+light on the CPU (a cloud lit at its blobs, `litBy`) sees it unshadowed, as before. An author who wraps the lamp in
+their own function drops the fact, and with it the shadow.
+
+### 17.2 The camera: one frustum, framed on the casters each frame
+
+A point light needs a picture over every direction something it shadows could lie in. What is special here: a
+frustum's apex is the lamp, so it is a cone, and a cone is star-shaped from its apex. If the cone holds every caster,
+it holds every shadow those casters throw (a receiver shadowed by caster C lies on the ray from the lamp through C).
+Receivers outside the cone are lit, correctly. So the frustum is framed on the casters, not the receivers or the view.
+
+- **The casters' bound per frame.** The chains castRay already bounds (one sphere per skeleton chain, a pose-stage map
+  over the joints the sea's shadows pose; `src/draw/cast.ts`), now shared by both. The camera is a `look` from the
+  lamp: axis the normalised sum of the unit directions to the chains' centres; half-angle
+  max_i [angle(axis, c_i - L) + asin(r_i / |c_i - L|)]. Forty-eight chains on the crab: one GPU thread, a pose-stage
+  table entry, computed before any pass. A pass camera is a closed form of the frame, which this is (it reads a pose
+  table, not a picture). On the crab at rest: axis (0.21, -0.93, -0.29), half-angle 62.7 degrees.
+- **The lamp inside.** When the casters surround the lamp (a lantern among reeds, a flame in its paper), the
+  half-angle passes 90 degrees and no frustum holds them. A cube (6 passes) costs six times the depth pass's vertex
+  work (17.5: 1.8 to 3.6 ms on the crab), over the target alone. A dual paraboloid needs a nonlinear vertex projection,
+  which a pass cannot have (a pass draws with the view's own pipelines and a 4x4 camera). So: **refused**, a
+  `SceneError` at compile when the half-angle at rest exceeds 70 degrees, naming the lamp, the angle and the fixes (a
+  lamp above the things, or `castRay` in the light's own function). Things that move into a wider spread later are
+  framed at 70 degrees about the axis: what falls outside casts nothing that frame (stated in `lamp`'s comment).
+- **Near and far** are numbers from the reach: far 4 reach (nothing arrives past it), near reach / 100. Depth is
+  depth32float: at 4 reach the depth step is about 4e-5 reach, far below a texel.
+
+### 17.3 Bias and softness
+
+Notation: L the lamp, a the axis, N = 1024 texels a side, h = tan(half-angle), D = a.(p - L) the depth along the axis,
+texel size at the receiver t = 2 D h / N, l the unit direction toward the lamp, n the receiver's normal.
+
+- **Depth compared linearly.** A texel's stored z (0 near, 1 far) is D_b = B / (z + A), A = far / (near - far),
+  B = near far / (near - far) (the inverse of `look`'s projection); 1 (outside the picture) reads as far: lit.
+- **Bias by the receiver's plane, not a slope guess.** For a tap at texel offset (dx, dy), the receiver's own plane
+  (through p, normal n) is met by the ray from L through the tap at depth D_tap = D n.(p - L) / n.(P_tap - L), with
+  P_tap = p + t (dx right - dy up) (right, up from the camera's rows). The tap is lit when D_tap - D_b < t (1 + 0.5
+  tan theta), cos theta = n.l clamped to 0.2, plus a normal offset of one texel against silhouette acne. Exact for
+  plane receivers at any tap distance, which a constant or slope-scaled bias is not once the kernel is many texels
+  wide. A receiver with no normal (a glazed surface, the sea's water through its glaze) is classified once as facing
+  the lamp (n = l).
+- **Hard (size 0): bilinear PCF**, 4 loads: the four texels round the point compared, weighted bilinearly: a one-texel
+  smooth edge.
+- **Soft (size s > 0): PCSS**, 8 + 16 loads. Blocker search over a Vogel disc of 8 taps, radius 2 s / t texels
+  clamped to [1, 16] (it covers blockers down to a third of the receiver's depth); the mean blocker depth D_avg; the
+  penumbra w = s (D - D_avg) / D_avg in world units, so w / t texels, clamped to [1, 16]; a Vogel disc of 16 taps over
+  it. No blockers found: lit, without the 16. No per-pixel rotation (no grain in a flat style); 16 taps give 17 levels.
+  A still (`--samples`) uses the same map from the lamp's centre: its xi moves `toward` but not the picture.
+- **Against castRay's soft term.** The bench's soft ray widens by 0.05 per unit of t: a light of angular radius 0.05
+  from the receiver, so s = 0.05 x 13 (the lamp's distance to the crab) = 0.65. Compared by eye and by the share of
+  pixels whose luminance differs by more than 0.1 (0..1) between the castRay frame and the map frame. *Predicted*:
+  3 to 8 percent, nearly all where the map is right and castRay is not (the carapace's and sails' real outlines against
+  their capsule stand-ins).
+
+### 17.4 What it sees
+
+Every opaque draw with a depth entry: bodies, carapaces, traced fields and impostors, meshes. Better than castRay,
+which meets capsules. It misses: transparent and soft things (clouds, glows, a glazed surface), the ground and the sea
+(receivers only), ink hulls, what the view leaves out (instances behind the eye or under a pixel: a caster behind the
+camera casts nothing into the view), things without a chain of two joints when they lie outside the frame of those
+that have one, and what lies outside the 70-degree cap.
+
+### 17.5 Cost, predicted before measuring
+
+- **The depth pass at 1024 squared.** Vertex work of the opaque draws once more, at one sample, depth only. From
+  `loft profile` on the crab (game view, load 66): the ~55 opaque body draws' vertex stages are at or under one timer
+  tick each, the reef's 143 impostors 0.17 ms with their fragment. Predicted 0.3 to 0.6 ms.
+- **The lookups.** About 1.0 M lit fragments at 1280 x 800 (overdraw 1.07, the sea everywhere), 24 loads each soft
+  (4 hard) plus about 300 ALU operations: 24 M texel loads at tens of G/s. Predicted 0.4 to 0.8 ms soft, 0.1 to 0.3 hard.
+- **Total** +0.7 to 1.4 ms on the crab with a soft lamp, against castRay's +14.5 (main). The target is under 2 ms; the
+  stop rule is 3 ms after one round of fixes.
+- **Unchanged.** A scene with no shadowed lamp emits no pass, no camera table, no depth entries: same bytes. The crab's
+  `game` frames keep `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9`; mirror, pool and area_lamp keep theirs.
+
+### 17.6 Shared with the sun's shadow?
+
+The sun's splatted capsules (`src/draw/shadows.ts`) and this both start from `casters`. They could share the depth
+picture (an orthographic map for the sun would replace the splats and see carapaces), but that changes every sunlit
+picture, so it is not done here.
+
+### 17.7 As built: the predictions scored (2026-11-16, GPU shared, load average 8 to 17 for the numbers below)
+
+`lamp(at, { colour, reach, size?, shadow: true })`; src/frame/lamp_shadow.ts (the framing, the pass, the test),
+`scenePass` in src/frame/pass.ts (the compiler's own passes, named `loft_lamp<n>`; `loft_` is refused in an author's
+pass name), `chainSpheres` in src/draw/cast.ts (shared with castRay, same table, same bytes), the fold's `Receiver`
+in src/light.ts. Bench: `bun tools/lamp_shadow_bench.ts 40 game <dir>` (crab, lamp [3, 14, 2.5], reach 12; 40
+frames per run interleaved in one process, `frameGpu`, paired medians).
+
+| Prediction | Measured | |
+|---|---|---|
+| Depth pass 0.3 to 0.6 ms; hard lookups 0.1 to 0.3 | hard map +0.39 ms over the unshadowed lamp (q25 0.33, q75 0.52): pass and four loads together | held |
+| Soft lookups 0.4 to 0.8; total +0.7 to 1.4 ms | first build +2.36 (load 17 to 33): the 16 filter taps were unrolled under a `select` and paid everywhere. One round of fixes (the filter a loop of count 0 unless the search is mixed) gave **+1.31** (q25 1.18, q75 1.57) | missed, then held after one fix; under the 2 ms target |
+| castRay soft for comparison | +8.85 ms in the same rounds (+12.2 at load 17 to 33) | the map costs 15% of castRay |
+| Pixels differing by > 0.1 in luminance, castRay against the map: 3 to 8% | 2.72% (castRay against no shadow 4.73%, the map against no shadow 3.43%; soft against hard map 0.39%) | held |
+| Existing pictures unchanged | the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9`; mirror, pool and area_lamp hashes as main | held |
+
+Where the 2.72% lies, by eye (out/lamp_shadow/crab_castRay.webp against crab_map.webp): the boats' sails throw their
+real triangles on the water where castRay throws capsules; the claws' and legs' shadows have their real outlines. The
+island casts nothing in the map: the reef is drawn as traced impostors with no depth entry, so the depth pass leaves it
+out, while castRay meets its capsule. A depth entry for impostors would close that; it is not built.
+
+Corrections found on the way:
+
+1. **A NaN bias, printed as speckle.** For a receiver with no normal (the sea's water through its glaze) the normal is
+   the light's own direction, so n.l rounds above 1 and sqrt(1 - cos^2) is NaN; every comparison then fails and the
+   hard map stippled the whole pool (17% of pixels against the soft map). The soft map hid it, because a NaN never
+   counts as a blocker. Clamped at the site. A 40-texel bias changing nothing was what said it was not depth.
+2. **A pass's library function is one per process.** Naming a lamp's pass by its index made two scenes in one process
+   (the bench; `loft dev` would too) define `loft_pass_loft_lamp0_at` twice. Maps are made once per (lamp, things) and
+   numbered in order made. tests/lamp_shadow.test.ts.
+3. **A map nothing reads has no tables.** The rest check of the spread now runs only for passes the shaders read (a
+   style that never folds the lights).
+
+The heron (examples/light/heron_lamp.ts, pictures under out/lamp_shadow/): half-angle 52 degrees at rest. Under toon
+the penumbra is printed as one of the pool's rings (toon bands light), so its edge reads hard; under biolume the same
+map shows the soft edge and the body shading itself underneath.

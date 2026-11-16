@@ -146,7 +146,7 @@ sun, each a term in every lit fragment's shader (about 0.05 ms a light on the cr
 2026-11-14), and refuses an eighth by name with the fix: one function for many sources, as a row by repetition
 (`examples/light/road.ts`). `lamp(at, { colour, reach })` is the common one: colour x reach^2 / (reach^2 + d^2) x
 (1 - x^2)^2, x = d / (4 reach), half of `colour` at `reach`, nothing past 4 reaches (the law `flash` had; `flash` is
-gone and `boltFlash`, `sheetFlash` return lamps). Lights cast no shadows unless their function computes one; a glow
+gone and `boltFlash`, `sheetFlash` return lamps). `lamp(at, { ..., shadow: true })` casts a shadow from a depth picture taken from the lamp each frame, soft by its `size` (DESIGN.md 17; a lamp the things surround is refused); other lights cast none unless their function computes one; a glow
 lights nothing by itself (write one `const` for where it is and hand it to both the glow and the lamp).
 
 A style never sees a list: each shading context offers one fold, `ctx.lights(combine, term)`, where `term(lit, which)`

@@ -54,7 +54,7 @@ export function castRay(ray: Ray): Traced & { readonly colour: P3; readonly id: 
 }
 
 /** What a chain is met as: its first joint in the joint table, its joints, and the thing and copy it came from. */
-type ChainInfo = { readonly first: number; readonly joints: number; readonly thing: number; readonly copy: number };
+export type ChainInfo = { readonly first: number; readonly joints: number; readonly thing: number; readonly copy: number };
 
 /** A thing's colour as a ray sees it, classified once: its mean paint, or mid grey (and why). */
 type Colour = { readonly kind: "mean"; readonly rgb: readonly [number, number, number] } | { readonly kind: "grey"; readonly why: string };
@@ -68,13 +68,9 @@ export type CastPlan = { readonly libs: readonly LibFn[]; wgsl(cpu: (roots: read
 /** Whether the emitted code casts rays, and if so the plan (the bounds table declared now, before the layout). */
 export function castPlan(ctx: CompileContext, used: readonly LibFn[]): CastPlan | undefined {
   if (!used.some((l) => CAST_LIBS.includes(l))) return undefined;
-  const { chains, at } = casters(ctx.things);
-  const infos: ChainInfo[] = [];
-  let first = 0;
-  ctx.things.forEach((t, thing) => t.skeletons.filter((s) => s.joints >= 2).forEach((s, copy) => { infos.push({ first, joints: s.joints, thing, copy }); first += s.joints; }));
-  if (infos.length !== chains.length) throw new Error(`castRay: ${infos.length} chains counted, ${chains.length} cast (casters' order changed?)`);
+  const { infos, at, table } = chainSpheres(ctx.things);
   const joints = ctx.table(at).wgsl;
-  const bounds = ctx.table(boundsTable(infos, at)).wgsl;
+  const bounds = ctx.table(table).wgsl;
   return {
     libs: CAST_LIBS,
     wgsl: (cpu, rest) => castWgsl(ctx, infos, joints, bounds, ctx.things.map((t) => colourOf(t, cpu, rest))),
@@ -82,6 +78,25 @@ export function castPlan(ctx: CompileContext, used: readonly LibFn[]): CastPlan 
 }
 
 /** One bounding sphere per chain (centre, radius), from its posed joints: a map over the joint table. */
+/**
+ * Every chain of the scene's casters (`casters`) and one per-frame map table of a bounding sphere per chain (centre,
+ * radius), one per scene (keyed by its list of things): castRay culls by it, and a lamp's shadow frames its picture on
+ * it (src/frame/lamp_shadow.ts), so a scene doing both builds it once.
+ */
+export function chainSpheres(things: readonly Drawable[]): { readonly infos: readonly ChainInfo[]; readonly at: TableSource; readonly table: TableSource } {
+  const seen = spheres.get(things);
+  if (seen !== undefined) return seen;
+  const { chains, at } = casters(things);
+  const infos: ChainInfo[] = [];
+  let first = 0;
+  things.forEach((t, thing) => t.skeletons.filter((s) => s.joints >= 2).forEach((s, copy) => { infos.push({ first, joints: s.joints, thing, copy }); first += s.joints; }));
+  if (infos.length !== chains.length) throw new Error(`castRay: ${infos.length} chains counted, ${chains.length} cast (casters' order changed?)`);
+  const made = { infos, at, table: boundsTable(infos, at) };
+  spheres.set(things, made);
+  return made;
+}
+const spheres = new WeakMap<readonly Drawable[], { readonly infos: readonly ChainInfo[]; readonly at: TableSource; readonly table: TableSource }>();
+
 function boundsTable(infos: readonly ChainInfo[], at: TableSource): TableSource {
   const runs = infos.map((c) => ({
     count: 1,

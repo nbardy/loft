@@ -29,7 +29,7 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
     switch (ground.kind) {
       case "sea": return [emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0])];
       case "plane": {
-        const groundCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), sun: lift<"vec3">(sunDir(at)), shadow: c("shadow", "f32"), lights: foldAt(lighting, c("world", "vec3")) };
+        const groundCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), sun: lift<"vec3">(sunDir(at)), shadow: c("shadow", "f32"), lights: foldAt(lighting, { kind: "surface", at: c("world", "vec3"), normal: lift<"vec3">([0, 1, 0]) }) };
         return [emitFn(slots, "ground_colour", [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_shadow", "f32"]], "vec3<f32>", [style.ground(groundCtx)], (v) => v[0])];
       }
       case "nothing": return [];
@@ -49,7 +49,7 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
     emitFn(slots, "ink", shadeArgs, "vec3<f32>", [withIdentities(() => style.ink(shadeCtx))], (v) => v[0]),
     emitFn(slots, "mark", shadeArgs, "f32", [withIdentities(() => style.mark(shadeCtx))], (v) => v[0]),
     ...onGround(),
-    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)), lights: foldAt(sunOnly(lighting), c("dir", "vec3")) })], (v) => v[0]),
+    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)), lights: foldAt(sunOnly(lighting), { kind: "point", at: c("dir", "vec3") }) })], (v) => v[0]),
     emitFn(slots, "outline_world", [], "f32", [outlineOf(style)], (v) => v[0]),
   ].join("\n");
 }
