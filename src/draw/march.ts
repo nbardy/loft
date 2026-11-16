@@ -55,7 +55,7 @@ function spanOf(b: TraceBound, o: P3, d: P3): readonly [F, F] {
 export function march(field: Field, o: { readonly within: TraceBound; readonly steps: number; readonly safety?: number }): (ray: Ray) => Traced {
   if (!(Number.isInteger(o.steps) && o.steps >= 1)) throw new SceneError("march", `steps ${o.steps}`, "a whole number of field samples, at least 1", "steps: 48");
   if (o.safety !== undefined && !(o.safety > 0 && o.safety <= 1)) throw new SceneError("march", `safety ${o.safety}`, "a step scale in (0, 1]", "leave it out to have the field checked");
-  const safety = o.safety ?? (checkField("march", field, o.within), 1);
+  const safety = o.safety ?? (checkField("march", field, o.within, "march"), 1);
   const at = (p: P3, fp: F): F => substitute([field(p)], fieldPixel, fp)[0] as F;
   return (ray: Ray): Traced => {
     const [enter, leave] = spanOf(o.within, ray.o, ray.d);

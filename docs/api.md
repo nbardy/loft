@@ -2833,7 +2833,7 @@ Types:
   `function sdRoundBox(p: In<"vec3">, halfSize: In<"vec3">, r: In<"f32">): Expr<"f32">`
 - **sdCapsule3**: Exact distance to the capsule of radius r around the segment a-b (the endpoints must differ): -r on the axis.
   `function sdCapsule3(p: In<"vec3">, a: In<"vec3">, b: In<"vec3">, r: In<"f32">): Expr<"f32">`
-- **sdRoundCone**: Exact distance to the rounded cone: the convex hull of the sphere of radius r1 at `a` and the sphere of radius r2 at `b` (iq's formulation).
+- **sdRoundCone**: Exact distance to the rounded cone, for spheres that do not contain one another (|r1 - r2| < |b - a|; otherwise the result is not a distance and `march` refuses it): the convex hull of the sphere of radius r1 at `a` and the sphere of radius r2 at `b` (iq's formulation).
   `function sdRoundCone(p: In<"vec3">, a: In<"vec3">, b: In<"vec3">, r1: In<"f32">, r2: In<"f32">): Expr<"f32">`
 - **sdTorus**: Exact distance to a torus around the z axis in the xy plane: ring radius `major`, tube radius `minor`.
   `function sdTorus(p: In<"vec3">, major: In<"f32">, minor: In<"f32">): Expr<"f32">`

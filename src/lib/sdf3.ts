@@ -42,8 +42,9 @@ export function sdCapsule3(p: In<"vec3">, a: In<"vec3">, b: In<"vec3">, r: In<"f
 }
 
 /**
- * Exact distance to the rounded cone: the convex hull of the sphere of radius r1 at `a` and the sphere of radius r2
- * at `b` (iq's formulation). The spheres must not contain one another: |r1 - r2| < |b - a|.
+ * Exact distance to the rounded cone, for spheres that do not contain one another (|r1 - r2| < |b - a|; otherwise the
+ * result is not a distance and `march` refuses it): the convex hull of the sphere of radius r1 at `a` and the sphere of
+ * radius r2 at `b` (iq's formulation).
  */
 export function sdRoundCone(p: In<"vec3">, a: In<"vec3">, b: In<"vec3">, r1: In<"f32">, r2: In<"f32">): Expr<"f32"> {
   const ba = sub(b, a);

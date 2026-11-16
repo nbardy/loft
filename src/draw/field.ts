@@ -94,10 +94,23 @@ export type FieldSafetyFailure =
   /** The field calls a GPU-only function, so the CPU cannot check it. */
   | { readonly kind: "unevaluable"; readonly fn: string };
 
-const describe = (field: string, r: FieldSafetyFailure): string => {
+/** Who checked the field: a named `draw.field`, or a `march` (which has no name; the error's line points at it). */
+export type FieldChecker = "draw.field" | "march";
+
+/**
+ * Past this measured constant the field is almost surely not a distance at all. Friction F7 (2026-11-16): a degenerate
+ * `sdRoundCone` (|r1 - r2| > |b - a|) measured far above 1, and the message offered `safety`, which would have marched
+ * the broken field slowly instead of saying it was broken. A missing fold stretch is usually a small factor.
+ */
+const NOT_A_DISTANCE = 2;
+
+const describe = (field: string, by: FieldChecker, r: FieldSafetyFailure): string => {
+  const where = by === "march" ? "march" : `draw.field "${field}"`;
   switch (r.kind) {
-    case "overshoots": return `draw.field "${field}": the field can overshoot: its measured Lipschitz constant is ${r.measured.toFixed(3)} (a distance must not change faster than 1 per unit). Fix the field (a fold's stretch factor missing?), or pass safety: ${r.suggested.toFixed(3)} to scale its steps.`;
-    case "unevaluable": return `draw.field "${field}": cannot check the field on the CPU: it calls the GPU-only function "${r.fn}". Pass an explicit safety factor to march it unchecked.`;
+    case "overshoots": return r.measured > NOT_A_DISTANCE
+      ? `${where}: the field is not a distance: its measured Lipschitz constant is ${r.measured.toFixed(3)} (a distance changes by at most 1 per unit; a constant this large usually means the field is not one). Look for a degenerate primitive (sdRoundCone with |r1 - r2| >= |b - a|, a negative radius) or a field multiplied up and not divided back. Fix the field; safety would only hide it.`
+      : `${where}: the field can overshoot: its measured Lipschitz constant is ${r.measured.toFixed(3)} (a distance must not change faster than 1 per unit). Fix the field (a fold's stretch factor missing?), or pass safety: ${r.suggested.toFixed(3)} to scale its steps.`;
+    case "unevaluable": return `${where}: cannot check the field on the CPU: it calls the GPU-only function "${r.fn}". Pass an explicit safety factor to march it unchecked.`;
   }
 };
 
@@ -116,8 +129,8 @@ export class FieldScheduleError extends Error {
  */
 export class FieldSafetyError extends Error {
   override readonly name = "FieldSafetyError";
-  constructor(readonly field: string, readonly reason: FieldSafetyFailure) {
-    super(describe(field, reason));
+  constructor(readonly field: string, readonly reason: FieldSafetyFailure, readonly by: FieldChecker = "draw.field") {
+    super(describe(field, by, reason));
   }
 }
 
@@ -152,11 +165,11 @@ export function measureField(field: Field, b: TraceBound): number {
 }
 
 /** Check a field the way compilation does: throws FieldSafetyError, or returns the measured constant. */
-export function checkField(name: string, field: Field, b: TraceBound): number {
+export function checkField(name: string, field: Field, b: TraceBound, by: FieldChecker = "draw.field"): number {
   const gpuOnly = libsOf([field(P)]).find((l) => l.js === "gpu-only");
-  if (gpuOnly) throw new FieldSafetyError(name, { kind: "unevaluable", fn: gpuOnly.name });
+  if (gpuOnly) throw new FieldSafetyError(name, { kind: "unevaluable", fn: gpuOnly.name }, by);
   const measured = measureField(field, b);
-  if (measured > LIPSCHITZ_LIMIT) throw new FieldSafetyError(name, { kind: "overshoots", measured, suggested: 0.95 / measured });
+  if (measured > LIPSCHITZ_LIMIT) throw new FieldSafetyError(name, { kind: "overshoots", measured, suggested: 0.95 / measured }, by);
   return measured;
 }
 
