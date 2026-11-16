@@ -247,9 +247,9 @@ fn trace_mark(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32
 }
 /// Ink width in pixels for a pixel of world size fp: the style's width (as a hull outline has it), at least 1.5 px,
 /// and at most 4 px. The cap is for traced solids only: their ink is measured as closest approach, so a branch at
-/// the lens would otherwise wear a band tens of pixels wide over everything behind it.
+/// the lens would otherwise wear a band tens of pixels wide over everything behind it. None at width 0, as ink_width.
 fn ink_px(fp: f32) -> f32 {
-  return clamp(outline_world() / fp, 1.5, 4.0);
+  return select(clamp(outline_world() / fp, 1.5, 4.0), 0.0, outline_world() <= 0.0);
 }
 fn trace_ink(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32) -> vec3<f32> {
   return ink(base, n, -d, p, sea_height(p.xz) - p.y, vec2<f32>(0.0), p, id);
