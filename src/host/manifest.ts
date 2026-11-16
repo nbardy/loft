@@ -15,9 +15,10 @@ export const FORMAT_VERSION = 1;
  * whose state keeps checkpoints) and pictures drawn off screen (src/frame/pass.ts: textures of a fixed or scaled size,
  * render passes with no colour attachment, pipelines with no fragment stage, `frame.copies`). A file with neither is
  * written as version 1, byte for byte what it was. Each version-2 field is optional; `formatVersion` (src/host/lower.ts)
- * is the one place the version is decided.
+ * is the one place the version is decided. 3 adds `instanceBase` on planned draws (shared draw shaders, src/host/share.ts):
+ * a version-1 or -2 loader would ignore it and draw every shared draw with another draw's numbers.
  */
-export const FORMAT_VERSIONS = [1, 2] as const;
+export const FORMAT_VERSIONS = [1, 2, 3] as const;
 export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 
 /** Index into the list of its kind (`Manifest.buffers`, `Manifest.textures`, ...). */
@@ -122,8 +123,12 @@ export type DepthAttachment = { readonly view: Id; readonly depthLoadOp: GPULoad
 /** A draw in a render pass: fixed counts, or the counts the level-of-detail plan chose for `Manifest.plan[draw]`. */
 export type DrawCommand =
   | { readonly kind: "fixed"; readonly pipeline: Id; readonly vertices: number; readonly instances: number }
-  /** For each run of the plan for that draw: draw(run.vertices, run.instances, 0, run.first). No run: nothing, not even setPipeline. */
-  | { readonly kind: "planned"; readonly pipeline: Id; readonly draw: number };
+  /**
+   * For each run of the plan for that draw: draw(run.vertices, run.instances, 0, instanceBase + run.first). No run:
+   * nothing, not even setPipeline. `instanceBase` (version 3) picks a shared shader's row for this draw
+   * (src/host/share.ts); absent means 0, so a file that shares nothing is written as it was.
+   */
+  | { readonly kind: "planned"; readonly pipeline: Id; readonly draw: number; readonly instanceBase?: number };
 
 export type RenderPassDesc = {
   readonly label: string;

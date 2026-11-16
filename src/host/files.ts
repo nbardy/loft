@@ -53,7 +53,7 @@ export function writeBundle(dir: string, b: Bundle): FileSizes {
 export function readBundle(dir: string): Bundle {
   const manifest = JSON.parse(readFileSync(join(dir, MANIFEST), "utf8")) as Manifest;
   if (manifest.format !== FORMAT) throw new Error(`${dir}: not a Loft artefact (format "${String(manifest.format)}")`);
-  if (!(FORMAT_VERSIONS as readonly number[]).includes(manifest.version)) throw new Error(`${dir}: artefact format version ${manifest.version}; this loader reads versions ${FORMAT_VERSIONS.join(" and ")}`);
+  if (!(FORMAT_VERSIONS as readonly number[]).includes(manifest.version)) throw new Error(`${dir}: artefact format version ${manifest.version}; this loader reads versions ${FORMAT_VERSIONS.join(", ")}`);
   const chunks = new Map(manifest.chunks.map((name) => [name, readFileSync(chunkPath(dir, name), "utf8")]));
   const blobs = new Map(manifest.blobs.map(({ name, bytes }) => {
     const data = new Uint8Array(readFileSync(blobPath(dir, name)));

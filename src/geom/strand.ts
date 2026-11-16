@@ -2,7 +2,7 @@
 // returns a `Strand`, which is a `Body` (Surface, Chart, Skeleton) that also draws itself with `draw.surface`: rings
 // crowded toward the tips, a vertex on the dorsal line at every density, lit by the style with an ink hull.
 
-import { lift, vec3, type Expr, type In } from "../expr.ts";
+import { Expr, lift, vec3, type In } from "../expr.ts";
 import type { Form, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
 import { Body, sweepArgs, type Posted, type Section, type Slices, type Tip } from "../map/sweep.ts";
@@ -22,7 +22,7 @@ export type StrandSpec = {
   /** How many frames the pose pass computes. Default 32. */
   readonly stations?: number;
   /** Half-width along the side direction. */
-  readonly girth: Fn1 | number;
+  readonly girth: Fn1 | number | F;
   /** `aspect` = half-height over half-width; `squareness` is the superellipse exponent (2 an ellipse, higher boxier). */
   readonly section?: { readonly aspect?: Fn1 | number; readonly squareness?: number };
   /** Roll about the tangent, radians, added to the rotation-minimising frame. */
@@ -68,7 +68,10 @@ function leastStretchOf(bulge: number | undefined, name: string): number {
 }
 const LEAST_STRETCH = 0.05;
 
-const fn1 = (x: Fn1 | number): Fn1 => (typeof x === "number" ? () => lift<"f32">(x) : x);
+// A constant may arrive as a number or as an expression (`girth: mul(.1, 1)`): both become the constant function.
+// Before 16 Nov an expression fell through as if it were a callback and crashed in sweep.ts ("girth is not a
+// function"), 32 times in the crab-actions run.
+const fn1 = (x: Fn1 | number | F): Fn1 => (typeof x === "number" ? () => lift<"f32">(x) : x instanceof Expr ? () => x : x);
 
 /** The look a strand is drawn with. */
 type StrandLook = { readonly paint: Paint; readonly along: number; readonly around: number };

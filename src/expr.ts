@@ -193,7 +193,51 @@ export type Lit = readonly number[];
 export type In<T extends Ty = Ty> = Expr<T> | (T extends "f32" ? number : T extends "bool" ? boolean : readonly number[]);
 export type Num = Expr<NumTy> | number | readonly number[];
 
+// Interning. Equal expressions are one node, found by a key that names the node's content. Most nodes are a call,
+// vec, lib or swizzle of other nodes, or a scalar constant; those are keyed by numbers (child ids, the constant's
+// value) in the tables below, because building and hashing a text key for every construction was the largest self
+// time of a compile (2026-11-16: 494k constructions, 61k distinct nodes for one crab; agent_notes/2026-11-16-render-fast).
+// Every other node keeps its text key in `interned`. A kind of node is keyed one way only, by its constructor and by
+// `rebuild` alike, so a node is found whichever path builds it. Ids count nodes in creation order, as
+// `interned.size` did when every node lived in `interned`: the same program gets the same ids.
 const interned = new Map<string, Expr>();
+let nextId = 0;
+/** Child ids to node: one trie per call function, per lib function name and per vector type. */
+type IdTrie = { e: Expr | undefined; next: Map<number, IdTrie> | undefined };
+const calls = new Map<string, IdTrie>(), libCalls = new Map<string, IdTrie>(), vecs = new Map<string, IdTrie>();
+/** Swizzle, child id to node, per selection ("x", "xyz"). */
+const gets = new Map<string, Map<number, Expr>>();
+/**
+ * Constants of one number, by type and value. A Map key is compared as SameValueZero, so -0 is 0, as it was when the
+ * key was the text `String(v)` ("0" for both); NaN and infinities are refused before they get here.
+ */
+const scalars = new Map<Ty, Map<number, Expr>>();
+
+function trieOf(tries: Map<string, IdTrie>, name: string): IdTrie {
+  let t = tries.get(name);
+  if (t === undefined) { t = { e: undefined, next: undefined }; tries.set(name, t); }
+  return t;
+}
+/** The trie leaf for these children, in order (a vec3 of one scalar and of three are different paths). */
+function leafOf(root: IdTrie, args: readonly Expr[]): IdTrie {
+  let t = root;
+  for (let i = 0; i < args.length; i++) {
+    const id = args[i]!.id;
+    let next = t.next;
+    if (next === undefined) next = t.next = new Map();
+    let child = next.get(id);
+    if (child === undefined) { child = { e: undefined, next: undefined }; next.set(id, child); }
+    t = child;
+  }
+  return t;
+}
+function internGet(a: Expr, sel: string, node: () => Node): Expr {
+  let bySel = gets.get(sel);
+  if (bySel === undefined) { bySel = new Map(); gets.set(sel, bySel); }
+  let e = bySel.get(a.id);
+  if (e === undefined) { e = Expr.fresh(node()); bySel.set(a.id, e); }
+  return e;
+}
 const params = new Map<string, ParamSpec>();
 
 /**
@@ -210,9 +254,14 @@ export class Expr<T extends Ty = Ty> {
   static make<T extends Ty>(node: Node, key: string): Expr<T> {
     const hit = interned.get(key);
     if (hit) return hit as Expr<T>;
-    const made = new Expr<T>(interned.size, node);
+    const made = new Expr<T>(nextId++, node);
     interned.set(key, made);
     return made;
+  }
+
+  /** A new node, for the numerically keyed tables above `Expr` (they look it up themselves). Not for other callers. */
+  static fresh<T extends Ty>(node: Node): Expr<T> {
+    return new Expr<T>(nextId++, node);
   }
 
   // Fluent forms of the common operators. `a.add(b)` is `add(a, b)`.
@@ -249,7 +298,12 @@ export class Expr<T extends Ty = Ty> {
 
 function constant(ty: Ty, v: readonly number[]): Expr {
   for (const n of v) if (!Number.isFinite(n)) throw new SceneError("a number in an expression", String(n), "a finite number", "look for a division by zero, or a value read before it was set, on the line named at the end");
-  return Expr.make({ op: "const", ty, v }, `c:${ty}:${v.join(",")}`);
+  if (v.length !== 1) return Expr.make({ op: "const", ty, v }, `c:${ty}:${v.join(",")}`);
+  let byValue = scalars.get(ty);
+  if (byValue === undefined) { byValue = new Map(); scalars.set(ty, byValue); }
+  let e = byValue.get(v[0]!);
+  if (e === undefined) { e = Expr.fresh({ op: "const", ty, v }); byValue.set(v[0]!, e); }
+  return e;
 }
 
 /** Lift a plain value to an expression. Numbers become f32, arrays become vectors, booleans become bool. */
@@ -399,7 +453,8 @@ export function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T> {
   if (seen && seen !== fn) throw new Error(`library function "${fn.name}" is defined twice`);
   libs.set(fn.name, fn);
   const xs = args.map((a) => lift(a));
-  return Expr.make({ op: "lib", ty: fn.ret, fn, args: xs }, `l:${fn.name}:${xs.map((a) => a.id).join(",")}`);
+  const leaf = leafOf(trieOf(libCalls, fn.name), xs);
+  return (leaf.e ??= Expr.fresh({ op: "lib", ty: fn.ret, fn, args: xs })) as Expr<T>;
 }
 
 // ---- constructors and access --------------------------------------------------------------------------------------
@@ -410,7 +465,8 @@ function vecOf(ty: VecTy, parts: readonly Num[]): Expr {
   if (total !== SIZE[ty] && !(args.length === 1 && args[0].ty === "f32")) {
     throw new SceneError(ty, `${total} components`, `${SIZE[ty]} (or one number for all of them)`, `${ty}(${[...Array(SIZE[ty]).keys()].map((k) => (k < total ? "xyzw"[k] : "0")).join(", ")}): give exactly ${SIZE[ty]}`);
   }
-  return Expr.make({ op: "vec", ty, args }, `V:${ty}:${args.map((a) => a.id).join(",")}`);
+  const leaf = leafOf(trieOf(vecs, ty), args);
+  return (leaf.e ??= Expr.fresh({ op: "vec", ty, args }));
 }
 /** `vec2(...parts)`: a vec2 from numbers or expressions (`vec2(x, y)`), or one scalar repeated into both components. */
 export const vec2 = (...p: Num[]): Expr<"vec2"> => vecOf("vec2", p) as Expr<"vec2">;
@@ -423,7 +479,7 @@ function get<T extends NumTy>(a: Expr, sel: string): Expr<T> {
   if (a.ty === "bool" || a.ty === "f32") throw new Error(`cannot take .${sel} of ${a.ty}`);
   const size = SIZE[a.ty as NumTy];
   for (const ch of sel) if ("xyzw".indexOf(ch) < 0 || "xyzw".indexOf(ch) >= size) throw new Error(`.${sel} is out of range for ${a.ty}`);
-  return Expr.make({ op: "get", ty: TY_OF_SIZE[sel.length], a, sel }, `g:${a.id}:${sel}`);
+  return internGet(a, sel, () => ({ op: "get", ty: TY_OF_SIZE[sel.length], a, sel })) as Expr<T>;
 }
 
 // ---- operators ----------------------------------------------------------------------------------------------------
@@ -444,7 +500,8 @@ function wider(op: string, ...tys: Ty[]): NumTy {
 
 function call(fn: Fn, ty: Ty, xs: readonly In[]): Expr {
   const args = xs.map((x) => lift(x));
-  return Expr.make({ op: "call", ty, fn, args }, `f:${fn}:${args.map((a) => a.id).join(",")}`);
+  const leaf = leafOf(trieOf(calls, fn), args);
+  return (leaf.e ??= Expr.fresh({ op: "call", ty, fn, args }));
 }
 
 // Overloads, not one generic signature: a type parameter cannot be inferred from a plain `number` argument, and with
@@ -686,30 +743,51 @@ export function children(e: Expr): readonly Expr[] {
   }
 }
 
+// Which nodes a walk has seen: node id -> the number of the walk that last saw it. One array for every walk instead of a
+// Set per walk (a compile walks its graphs thousands of times; the Sets were a tenth of its time). A walk takes the next
+// number and must finish before another starts: `topo` and `everything` call nothing that walks while they walk
+// (`everything` takes its number after its `topo` has returned).
+let stamps = new Int32Array(4096);
+let walks = 0;
+function startWalk(): number {
+  if (stamps.length < nextId) stamps = new Int32Array(Math.max(nextId, 2 * stamps.length));
+  return ++walks;
+}
+
 /** Every node reachable from the roots, including the bodies of loops (but not the loops' own variables). */
 export function everything(roots: readonly Expr[]): Expr[] {
   const out: Expr[] = [];
-  const seen = new Set<number>();
-  const walk = (list: readonly Expr[]): void => {
+  const list = topo(roots);
+  const walk = startWalk(), seen = stamps;
+  const add = (list: readonly Expr[]): void => {
     for (const e of list) {
-      if (seen.has(e.id)) continue;
-      seen.add(e.id);
+      if (seen[e.id] === walk) continue;
+      seen[e.id] = walk;
       out.push(e);
-      if (e.node.op === "iterate") walk(e.node.loop.inner);
+      if (e.node.op === "iterate") add(e.node.loop.inner);
     }
   };
-  walk(topo(roots));
+  add(list);
   return out;
 }
 
 /** Every node reachable from the roots, dependencies first. */
 export function topo(roots: readonly Expr[]): Expr[] {
-  const seen = new Set<number>();
+  const walk = startWalk(), seen = stamps;
   const out: Expr[] = [];
   const visit = (e: Expr): void => {
-    if (seen.has(e.id)) return;
-    seen.add(e.id);
-    for (const c of children(e)) visit(c);
+    if (seen[e.id] === walk) return;
+    seen[e.id] = walk;
+    // `children(e)` inline, without building an array for the kinds with one child.
+    const n = e.node;
+    switch (n.op) {
+      case "const": case "var": case "input": case "param": break;
+      case "row": visit(n.x); break;
+      case "call": case "vec": case "lib": for (const c of n.args) visit(c); break;
+      case "get": visit(n.a); break;
+      case "fetch": visit(n.index); break;
+      case "iterate": for (const c of children(e)) visit(c); break;
+    }
     out.push(e);
   };
   for (const r of roots) visit(r);
@@ -740,8 +818,9 @@ export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs:
   const vars = new Map<string, Ty>();
   const ins = new Map<string, InputSpec>(), ps = new Map<string, ParamSpec>(), rs = new Map<number, Row>();
   const ts = new Set<TableSource>();
+  const nodes = everything(roots);
   // Loop variables never reach here: `everything` walks a body's nodes, not the loop's own variables.
-  for (const e of everything(roots)) {
+  for (const e of nodes) {
     const n = e.node;
     if (n.op === "var") vars.set(n.name, n.ty);
     else if (n.op === "input") ins.set(n.spec.name, n.spec);
@@ -749,11 +828,16 @@ export function leaves(roots: readonly Expr[]): { vars: Map<string, Ty>; inputs:
     else if (n.op === "row") rs.set(n.row.id, n.row);
     else if (n.op === "fetch") ts.add(n.table);
   }
-  return { vars, inputs: [...ins.values()], params: [...ps.values()], rows: [...rs.values()], tables: [...ts], libs: libsOf(roots) };
+  return { vars, inputs: [...ins.values()], params: [...ps.values()], rows: [...rs.values()], tables: [...ts], libs: libsIn(nodes) };
 }
 
 /** The library functions a set of expressions uses, each after the functions it depends on. */
 export function libsOf(roots: readonly Expr[]): LibFn[] {
+  return libsIn(everything(roots));
+}
+
+/** `libsOf`, given `everything(roots)` (so `leaves` walks its roots once, not twice). */
+function libsIn(nodes: readonly Expr[]): LibFn[] {
   const out: LibFn[] = [];
   const seen = new Set<LibFn>();
   const byName = new Map<string, LibFn>();
@@ -768,7 +852,7 @@ export function libsOf(roots: readonly Expr[]): LibFn[] {
     for (const d of fn.deps ?? []) add(d);
     out.push(fn);
   };
-  for (const e of everything(roots)) if (e.node.op === "lib") add(e.node.fn);
+  for (const e of nodes) if (e.node.op === "lib") add(e.node.fn);
   return out;
 }
 
@@ -886,14 +970,13 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
 /** A node with new children, interned under the same key scheme its constructor uses. */
 function rebuild(e: Expr, kids: readonly Expr[]): Expr {
   const n = e.node;
-  const ids = kids.map((k) => k.id).join(",");
   switch (n.op) {
     case "const": case "var": case "input": case "param": return e;
     case "row": return Expr.make({ ...n, x: kids[0] as Expr<"f32"> }, `r:${n.row.id}:${kids[0].id}`);
-    case "lib": return Expr.make({ ...n, args: kids }, `l:${n.fn.name}:${ids}`);
-    case "call": return Expr.make({ ...n, args: kids }, `f:${n.fn}:${ids}`);
-    case "vec": return Expr.make({ ...n, args: kids }, `V:${n.ty}:${ids}`);
-    case "get": return Expr.make({ ...n, a: kids[0] }, `g:${kids[0].id}:${n.sel}`);
+    case "lib": { const leaf = leafOf(trieOf(libCalls, n.fn.name), kids); return (leaf.e ??= Expr.fresh({ ...n, args: kids })); }
+    case "call": { const leaf = leafOf(trieOf(calls, n.fn), kids); return (leaf.e ??= Expr.fresh({ ...n, args: kids })); }
+    case "vec": { const leaf = leafOf(trieOf(vecs, n.ty), kids); return (leaf.e ??= Expr.fresh({ ...n, args: kids })); }
+    case "get": return internGet(kids[0]!, n.sel, () => ({ ...n, a: kids[0]! }));
     case "fetch": return Expr.make({ ...n, index: kids[0] as Expr<"f32"> }, `F:${tableId(n.table)}:${n.lane}:${kids[0].id}`);
     case "iterate": throw new Error("internal: loops are rebuilt by `substitute`, not `rebuild`");
   }

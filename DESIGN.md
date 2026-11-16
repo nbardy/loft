@@ -317,6 +317,48 @@ Halton (2, 3) point and through a lens disc point with the frustum sheared to ke
 by a compute pass and averaged before the style's post passes run once. Each sample plans its level of detail with no
 memory, so a still is a function of (t, k, pixel) only. Nothing in the file format or the loader changes for it.
 
+### 3.1 Shared draw shaders and concurrent pipelines (ported from creative, 16 Nov)
+
+From the creative repo's frozen library (its `FROZEN_DIFF.md` says why each change was made), merged with passes,
+replays and stills:
+
+- `src/host/share.ts`: draw shaders that differ only in fragment-stage numbers, table bases, surface IDs and the
+  detail slot compile as one module per group. The numbers that differ go in rows, a static buffer at group 0
+  binding 5 (`ROWS_BINDING`; the prelude holds 0 to 4, passes are group 3). Each planned draw command carries an
+  `instanceBase`, whose high bits pick the row. All planned commands are made by one helper in lower.ts (`plannedOf`):
+  the view, colour passes and depth passes. A pass's own group 0 binds the rows too. Vertex-stage literals stay in
+  the code, because the compiler folds constants it can see, so shared ones would change the geometry. A shader with
+  an entry point besides `vs` and `fs` (a tracer's `fs_depth`, in a scene with a depth pass) is not shared, because
+  only `vs` and `fs` set the row.
+- Pipelines are keyed by the shared module, the per-draw constants left after sharing, and the colour format (a
+  pass's `rgba16float`). `depthPipeline` is keyed by the same shared module and constants.
+- Pipelines are requested together and awaited as one batch (host.ts `scopedPipelines`). Modules get one validation
+  scope each.
+- The clearance passes draw one full-screen triangle (`cover_vs`, `CLEARANCE_VERTICES` = 3). Each fragment past its
+  grid discards. There is one copy, in the `clearance()` helper, which the view and colour passes share.
+- Compile interning (`src/expr.ts`, `src/compile/tables.ts`, `src/compile/bind.ts`); a strand's girth may be an `Expr`.
+- File format 3: `instanceBase` is written only when it is not 0, and such a file is version 3. A loader for version 2
+  would ignore the field and draw every shared draw with another draw's numbers. A scene that shares nothing writes
+  the same bytes as before. The Rust loader reads `instanceBase` (type-checked, not yet drawn against Dawn).
+
+Measured on the merge (Apple GPU shared with other workers, load average 23 to 57). Each run is one process. Main and
+the branch were interleaved, two rounds after warming the Metal cache. Load is `host.load`.
+
+| scene | modules main / branch | render pipelines main / branch | compile CPU ms main / branch | load ms main / branch |
+|---|---|---|---|---|
+| crab (reefback_titan) | 95 / 78 | 122 / 89 | 6032, 8089 / 3699, 3275 | 3974, 4625 / 2326, 2738 |
+| training s7 | 39 / 30 | 63 / 45 | 2048, 2056 / 1415, 1196 | 1165, (10761) / 653, 604 |
+| training s333 | 57 / 41 | 97 / 65 | 2307, 2078 / 1480, 1540 | 1833, (17476) / 868, 1121 |
+| training s840 | 59 / 46 | 102 / 76 | 2386, 2706 / 1694, 1640 | 2438, 3749 / 1373, 1517 |
+
+Times in parentheses are Metal cache misses. Both sides miss now and then, because the cache is shared with other
+workers' processes. Before the cache was warm, the branch's crab took 14 to 30 s on four loads. With pipelines made
+one at a time it took 3.2 to 3.7 s, and then concurrent loads took 2.3 to 2.8 s. These were cache misses, not
+concurrency. Pixels are byte-identical to main: the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b
+2315edeb83c975e9`, also drawn from the built files, and mirror, pool (a colour pass, 12 of 18 commands shared),
+area_lamp, flock, rope, shatter, skin and reeds_shadow (a depth pass, 5 of 7 shared). Pool and reeds_shadow also match
+as `--samples 4` stills. Six training programs agree on main, the branch and creative's library.
+
 ## 4. Drawables (`src/compile/context.ts`)
 
 ```ts
@@ -1306,7 +1348,33 @@ Proposal: `docs/proposals/geometry_and_rays.md`, with the rulings of `docs/propo
 - **`castRay`** (`src/draw/cast.ts`): library functions whose WGSL the compiler writes only when emitted code calls
   them (`castPlan` in `src/compile/index.ts`); a chain-bounds map table over the shadows' joints. A miss by more than
   the ray's width is a clean miss: without that cap no chain could be culled. `staysInView` runs on its CPU twin
-  (`castCpu`); the crab's checks give the same lines.
+  (`castCpu`, brute force over every segment: the reference the GPU search must equal); the crab's checks give the
+  same lines. Since 2026-11-16 each segment of an opened chain is first culled by its own bounding sphere: a ray
+  that passes it by more than its widest width, or whose nearest hit lies before its front, cannot change the
+  answer. *Measured* (`tools/cast_bench.ts`: the crab, lamp at [3, 14, 2.5] above it, one shadow ray per lit
+  fragment, 1280 x 800, paired medians over 40 frames interleaved in one process, load average 26 to 39): before
+  +14.5 ms for a hard ray (width 0.002) and +14.4 for a soft one (0.05 t); now +8.9 and +9.4. Pictures byte-identical
+  (mirror, area lamp frame and 64-sample still, the crab lit by the casting lamp; the crab's `game` hashes held).
+  That is not the 1.7 ms first recorded: this lamp sits over the crab and the sea's rays cross it.
+- **castRay's grid, tried and removed (2026-11-16).** The proposal's stop rule asked for one per-frame grid of capsule
+  lists. Built (db813d3): 4096 cells over the chains' spheres, three map tables (box, segment boxes, per-cell segment
+  bitmasks under a header), an Amanatides-Woo walk testing each segment once with an early exit, the chains for rays
+  wider than a cell; byte-identical. Predicted +3 to 5 ms hard, +5 to 7 soft; measured +7.9 to 9.9 and +11.7 to 12.0
+  (main +11.8 to 14.9, +13.6 to 16.1). One round of fixes (bf1186b: list a ray's segments on its walk, test them in
+  one shared loop) measured worse (+10.3, +16.5) and was reverted. Why: the build costs about 0.2 ms of pose stages
+  and the walk without its exact tests +0.3 to 0.7 ms; the cost is the exact rounded-cone tests (brute force: 0.34 ms
+  per segment per frame; about 3 per front pixel survive either culling), and the chain walk with the segment sphere
+  cull measures the same or better with no tables. A mechanism must buy something, so the grid went. GPU counters
+  put the exact tests at about 1 ms for the front pixels alone; the rest of the cost is unexplained by them.
+- **Not hidden fragments (2026-11-16).** Counted in the picture (every casting fragment stage returns 1/255 and
+  adds; the host unchanged, the device wrapped; Dawn's occlusion queries on Metal answer only 0 or 1): the crab's 64
+  castRay-calling draws shade 0.993 fragments per frame pixel visible, 1.062 passing the depth test in draw order,
+  1.305 rasterised. Overdraw 1.07, and early depth testing is defeated for one of them only (the reef's traced
+  impostors, `frag_depth`, `discard` and `sample_mask`); the other 63 neither write depth nor discard, and none
+  blends. A depth prepass could save at most about 6% of castRay's cost (0.6 ms of +8.9), so none was built. The
+  gap between the front pixels' count and the measured cost is not overdraw; what it is remains open (a SIMD
+  group runs an exact test when any of its lanes needs it, so the union over a group's lanes, not one lane's
+  count, is what a group pays: the next thing to count).
 - **Not ported (stop rules):** `draw.copies` (per-copy LOD, the `inkBack` depth offset, exact pixel size and the
   oriented box are not in the shared fragment) and `draw.field` (over `march` the nest differs on 4.8% of pixels,
   the inner silhouettes `march` does not ink, and its draw read 8.6 to 9.1 ms against 6.4 to 6.6). Both keep their

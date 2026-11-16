@@ -639,14 +639,14 @@ impl Loft {
                         rp.set_pipeline(&self.render[pipeline]);
                         rp.draw(0..vertices, 0..instances);
                     }
-                    DrawCommand::Planned { pipeline, draw } => {
+                    DrawCommand::Planned { pipeline, draw, instance_base } => {
                         let runs = &self.plan[draw];
                         if runs.is_empty() {
                             continue;
                         }
                         rp.set_pipeline(&self.render[pipeline]);
                         for r in runs {
-                            rp.draw(0..r.vertices, r.first..r.first + r.instances);
+                            rp.draw(0..r.vertices, instance_base + r.first..instance_base + r.first + r.instances);
                         }
                     }
                 }
@@ -762,7 +762,7 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
             for c in &p.commands {
                 match *c {
                     DrawCommand::Fixed { pipeline, .. } => id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?,
-                    DrawCommand::Planned { pipeline, draw } => {
+                    DrawCommand::Planned { pipeline, draw, .. } => {
                         id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?;
                         id(&p.label, "planned draw", draw, m.plan.len())?;
                     }

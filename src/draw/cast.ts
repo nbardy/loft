@@ -41,8 +41,10 @@ const CAST_LIBS: readonly LibFn[] = [CAST_LIB, NORMAL_LIB, COLOUR_LIB, ID_LIB, M
  * closest-approach soft edges; `width` is read at t0 and t1 and taken as affine between. Parameters: the ray. Cannot:
  * see exact surfaces (a wide flat part, a carapace or a sail, is its round chain); see things with no skeleton; see
  * the sea's swell; return a hit's real paint (a thing's mean paint, or the style's ink where none can be sampled); run
- * on the CPU inside an expression (the twin is `castCpu`, for checks). Cost: about 0.045 ms per capsule tested per
- * million rays; chains are culled by bounding sphere first. Relatives: your own `hit` or `march(field)` for the one thing
+ * on the CPU inside an expression (the twin is `castCpu`, for checks). Cost: chains are culled by bounding sphere,
+ * then each segment by its own; an exact test costs about 0.34 ms per segment for a ray from every fragment of the
+ * largest example, and about 3 per pixel survive. A lamp shadow over the whole crab: +7 to 10 ms (DESIGN.md 14).
+ * Relatives: your own `hit` or `march(field)` for the one thing
  * that must be exact; closed-form occlusion of a sphere or capsule (Quilez) for ambient light; screen-space hits for
  * on-screen colour.
  */
@@ -200,6 +202,14 @@ fn loft_cast(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32, w0: f32, w1: f32) -> 
     for (var j = CAST_FIRST[c]; j < last; j++) {
       let a = ${J}(j);
       let b = ${J}(j + 1u);
+      // The segment's own sphere (the rounded cone lies inside it): a ray that passes it by more than its widest
+      // width can neither meet the segment nor miss it by less than a width, and one whose nearest hit lies before the
+      // sphere's front cannot be beaten by it, so its exact test cannot change the answer. This cut the crab's lamp
+      // shadow from +12.4 to +7.5 ms with the same pictures (DESIGN.md 14).
+      let cm = 0.5 * (a.xyz + b.xyz);
+      let R = 0.5 * length(b.xyz - a.xyz) + max(a.w, b.w);
+      let tm = dot(cm - o, d);
+      if (length(o + d * clamp(tm, t0, t1) - cm) - R > max(w0, w1) || tm - R > hitT) { continue; }
       // A ray that starts inside a capsule meets it where it starts.
       let hh = select(cast_imp_hit(o, d, a, b), vec4<f32>(t0, 0.0, 0.0, 0.0), cast_imp_sd(o + d * t0, a, b) < 0.0);
       if (hh.x >= t0 && hh.x <= t1) {
