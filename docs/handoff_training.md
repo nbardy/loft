@@ -115,7 +115,18 @@ surface's level of detail from the previous frame. So: one scene per process, ti
   - `recur` (a step baked on the GPU into the files);
   - `pass` (another camera's picture: shadow maps, mirrors);
   - still mode (`--samples`, `--shutter`, `--aperture`).
+  - `lamp(..., { shadow: true })`: a lamp's shadow from a depth picture taken from it (about +1.3 ms soft);
+  - `loft bake --animated` (a skinned, animated glb); `recur` resumes playback from the last state;
+  - creative's library speed work (shared draw shaders, concurrent pipelines, compile interning): pixel-identical,
+    and a built file whose draws share rows is format 3.
   Regenerate `loft context` (now about 2,400 words) for any run on main.
+- **Pixels that moved on purpose after `train-1`** (main `a46e697`; a host comparing stored renders will see them):
+  a sea with no swell no longer prints noise artefacts (sketch's grey labyrinth, woodblock's dark disc, papercraft's
+  white blobs; woodblock keeps its pale blue, about 1.4% of pixels move by more than 8/255), and a style with
+  outline 0 draws no ink at all (it drew 1.5 px rims; the training host's "smooth", `toon({ outline: 0 })`, changes).
+- **Refusals that were exit 1 and are now exit 4** (typed, with the fix): `stations` below 4, an unknown topology
+  word, a style `outline` that is not a number or expression, bad `bound` arguments, and a binary helper (`sub`,
+  `div`, ...) given other than two operands. `add`, `mul`, `min` and `max` take any number.
 - **Not there**: bounced light and reflection of one body in another inside a normal frame (it is not a path tracer: a
   mirror is a `pass`, a ray is `castRay` against stand-in capsules), imported meshes (meshes come out, through
   `loft bake`), live state that a game's input changes.
