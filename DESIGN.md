@@ -1629,3 +1629,40 @@ that have one, and what lies outside the 70-degree cap.
 The sun's splatted capsules (`src/draw/shadows.ts`) and this both start from `casters`. They could share the depth
 picture (an orthographic map for the sun would replace the splats and see carapaces), but that changes every sunlit
 picture, so it is not done here.
+
+### 17.7 As built: the predictions scored (2026-11-16, GPU shared, load average 8 to 17 for the numbers below)
+
+`lamp(at, { colour, reach, size?, shadow: true })`; src/frame/lamp_shadow.ts (the framing, the pass, the test),
+`scenePass` in src/frame/pass.ts (the compiler's own passes, named `loft_lamp<n>`; `loft_` is refused in an author's
+pass name), `chainSpheres` in src/draw/cast.ts (shared with castRay, same table, same bytes), the fold's `Receiver`
+in src/light.ts. Bench: `bun tools/lamp_shadow_bench.ts 40 game <dir>` (crab, lamp [3, 14, 2.5], reach 12; 40
+frames per run interleaved in one process, `frameGpu`, paired medians).
+
+| Prediction | Measured | |
+|---|---|---|
+| Depth pass 0.3 to 0.6 ms; hard lookups 0.1 to 0.3 | hard map +0.39 ms over the unshadowed lamp (q25 0.33, q75 0.52): pass and four loads together | held |
+| Soft lookups 0.4 to 0.8; total +0.7 to 1.4 ms | first build +2.36 (load 17 to 33): the 16 filter taps were unrolled under a `select` and paid everywhere. One round of fixes (the filter a loop of count 0 unless the search is mixed) gave **+1.31** (q25 1.18, q75 1.57) | missed, then held after one fix; under the 2 ms target |
+| castRay soft for comparison | +8.85 ms in the same rounds (+12.2 at load 17 to 33) | the map costs 15% of castRay |
+| Pixels differing by > 0.1 in luminance, castRay against the map: 3 to 8% | 2.72% (castRay against no shadow 4.73%, the map against no shadow 3.43%; soft against hard map 0.39%) | held |
+| Existing pictures unchanged | the crab's `game` frames `0c1b1e4368820ff8 0db3c25b4d11121b 2315edeb83c975e9`; mirror, pool and area_lamp hashes as main | held |
+
+Where the 2.72% lies, by eye (out/lamp_shadow/crab_castRay.webp against crab_map.webp): the boats' sails throw their
+real triangles on the water where castRay throws capsules; the claws' and legs' shadows have their real outlines. The
+island casts nothing in the map: the reef is drawn as traced impostors with no depth entry, so the depth pass leaves it
+out, while castRay meets its capsule. A depth entry for impostors would close that; it is not built.
+
+Corrections found on the way:
+
+1. **A NaN bias, printed as speckle.** For a receiver with no normal (the sea's water through its glaze) the normal is
+   the light's own direction, so n.l rounds above 1 and sqrt(1 - cos^2) is NaN; every comparison then fails and the
+   hard map stippled the whole pool (17% of pixels against the soft map). The soft map hid it, because a NaN never
+   counts as a blocker. Clamped at the site. A 40-texel bias changing nothing was what said it was not depth.
+2. **A pass's library function is one per process.** Naming a lamp's pass by its index made two scenes in one process
+   (the bench; `loft dev` would too) define `loft_pass_loft_lamp0_at` twice. Maps are made once per (lamp, things) and
+   numbered in order made. tests/lamp_shadow.test.ts.
+3. **A map nothing reads has no tables.** The rest check of the spread now runs only for passes the shaders read (a
+   style that never folds the lights).
+
+The heron (examples/light/heron_lamp.ts, pictures under out/lamp_shadow/): half-angle 52 degrees at rest. Under toon
+the penumbra is printed as one of the pool's rings (toon bands light), so its edge reads hard; under biolume the same
+map shows the soft edge and the body shading itself underneath.
