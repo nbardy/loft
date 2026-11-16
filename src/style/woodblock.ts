@@ -349,7 +349,10 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
       const lines = swellLines(ctx, { perWave: 5, width: sea.width });
       // Two flat blues, trough and crest, split along the lines' own contour; the lines over them.
       let c: Expr<"vec3"> = mix(rgb(sea.deep), rgb(sea.mid), edgeOf(lines.swell, 0.2, 0.01));
-      c = mix(c, rgb(sea.line), mul(lines.cover, 0.9));
+      // A calm sea (no swell, no lines) prints the line ink flat at the lines' own strength: the pale blue the still sea
+      // read as when the lines were drawn there by mistake (every point on line 0), without the noise peak that left
+      // a dark disc of trough ink (friction S4, 2026-11-16).
+      c = mix(c, rgb(sea.line), lines.calm ? 0.9 : mul(lines.cover, 0.9));
       c = printLayers(c, contactFoam(pattern, ctx, lines), foamInks);
       // The far sea fades toward the haze at the horizon as a bokashi (a graded wiping of the block, as the sky's): two
       // flat steps at 70 and 140 units printed hard pale bands across the far sea, the second straight across a
