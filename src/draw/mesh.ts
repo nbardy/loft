@@ -51,9 +51,10 @@ export type MeshOptions = {
   readonly at?: (row: readonly F[], i: F) => P3;
   /**
    * Base colour, lit by the style. `row` is interpolated across the triangle, as (u, v) is on a surface; numbers equal
-   * at a triangle's three corners stay exact. `at.copy` is the copy's index under `draw.posed`.
+   * at a triangle's three corners stay exact. `at.copy` is the copy's index under `draw.posed`. A colour, or paint
+   * words (`{ base, gloss, metal, ... }`) as on a surface.
    */
-  readonly paint: (row: readonly F[], at: PaintAt) => P3;
+  readonly paint: MeshPaint;
   readonly sides: "one" | "two";
   /** `hull`: the triangles pushed out along the welded normal and drawn back faces only, in ink. */
   readonly outline: "hull" | "none";
