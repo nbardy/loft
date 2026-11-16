@@ -93,6 +93,8 @@ export type WaterCtx = {
    * can print lines that follow the swell; 0 everywhere on a sea without swell.
    */
   readonly phase: Expr<"f32">;
+  /** The style's own sky along a direction, with this scene's sun, as `ShadeCtx.sky`: what the water reflects. */
+  sky(dir: Expr<"vec3">): Expr<"vec3">;
 };
 
 /**

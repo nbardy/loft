@@ -470,6 +470,7 @@ export class Sea implements Chart, Drawable {
       swell: this.dominantDirection(),
       phase: this.dominantPhase(xz),
       lights: fr.lights,
+      sky: fr.sky,
     });
   }
 

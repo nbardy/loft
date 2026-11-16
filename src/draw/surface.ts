@@ -3,7 +3,7 @@
 // of a set of `Points`; the fragment stage evaluates the look per pixel. The surface coordinates (u, v) reach the
 // fragment stage, so paint is a function of the surface's coordinates (body coordinates for a body).
 
-import { add, cos, f, lib, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
+import { add, cos, f, lib, lift, mix, mul, replace, topo, variable, vec2, vec3, vec4, type Expr, type In, type LibFn, scopedName } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
 import { drawSpec, type Form, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
@@ -14,7 +14,7 @@ import type { Chart, F, P3, Paint, Painted, Points, Posed, Poses, Skeleton, Surf
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { fwidth } from "../lib/wgsl.ts";
-import { foldAt, sunDir, type LightFold } from "../light.ts";
+import { foldAt, sunDir, sunOnly, type LightFold } from "../light.ts";
 import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
 import type { DrawDepth } from "../artefact.ts";
@@ -44,6 +44,8 @@ export type Fragment = {
   readonly sun: In<"vec3">;
   /** Every light at `world`, folded (`ShadeCtx.lights`), for a colour that builds a style's context by hand. */
   readonly lights: LightFold;
+  /** The style's own sky along a direction, with this scene's sun (`ShadeCtx.sky`). */
+  sky(dir: Expr<"vec3">): Expr<"vec3">;
 };
 
 /** Ink: the surface pushed out along its normal and drawn back faces only (`hull`), ink along its v = 1 edge (`border`, for sheets), or none. */
@@ -360,7 +362,10 @@ const GLAZED_CALL = "(in.world, in.clip.xy, in.uv.x, in.uv.y)";
 /** The fragment stage of a glazed surface: its colour function(s), and `fs`. */
 function glazedColour(ctx: CompileContext, name: string, colour: GlazedColour): Pick<Frag, "fns" | "main"> {
   const W = variable("f_world", "vec3"), PX = variable("f_px", "vec2");
-  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt), lights: foldAt(ctx.lighting, W) };
+  const fr: Fragment = {
+    world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt), lights: foldAt(ctx.lighting, W),
+    sky: (dir) => ctx.style.sky({ dir, sun: lift<"vec3">(sunDir(ctx.lighting.sun)), lights: foldAt(sunOnly(ctx.lighting), dir) }),
+  };
   const fn = (fname: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name: fname, args: GLAZED_ARGS, out: root.ty === "f32" ? "f32" : "vec4<f32>", roots: [root], ret: (o) => o[0]! });
   switch (colour.kind) {
     case "one": return {

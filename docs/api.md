@@ -482,7 +482,7 @@ draw.surface: one drawable for every `Surface` (DESIGN.md 7.4).
   `class SurfaceDrawable implements Drawable`
 
 Types:
-- **Fragment**: What a glazed surface's colour may read in the fragment stage. `type Fragment = { world, px, u, v, style, sun, lights }`
+- **Fragment**: What a glazed surface's colour may read in the fragment stage. `type Fragment = { world, px, u, v, style, sun, lights, sky }`
 - **Grid**: `type Grid = { readonly u: Sampling; readonly v: Sampling }`
 - **Look**: `type Look = /** Base colour from `paint`, lit by the scene's style (with underwater tint), opaque. */ | { readonly kind: "lit"; readonly paint: Paint; readonly sides: "one" | "two"; readonly outline: Outline } /** `paint` as the final colour, unlit, opaque: strokes and ink lines. */ | { readonly ...`
 - **Outline**: Ink: the surface pushed out along its normal and drawn back faces only (`hull`), ink along its v = 1 edge (`border`, for sheets), or none. `type Outline = "hull" | "border" | "none"`
@@ -2379,7 +2379,7 @@ A style is a program in the same expression language (DESIGN.md 2.6): it maps a 
 Types:
 - **Style**: `type Style = { name, shade, ink, mark, outline, water, shadow, post, ground, sky, clear, block?, lights? }`
 - **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, depth, uv, anchor, id, lights, sky, scatter }`
-- **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, lights, swell, phase }`
+- **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, lights, swell, phase, sky }`
 - **Contact**: How near a body is to a pixel of water. `type Contact = /** * No opaque surface lies within the sea's search of this pixel (or of the other pixels of its 2 x 2 quad): the * band would be below -800 here, where every contact term of every style is exactly 0. `foam` holds only the * deformations' marks. A style prints no contact foam. */ ...`
 - **LayerCtx**: A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. `type LayerCtx = { world, view, distance, amount }`
 - **SkyCtx**: `type SkyCtx = { dir, sun, lights }`
