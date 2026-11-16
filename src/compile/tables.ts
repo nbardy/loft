@@ -46,8 +46,8 @@ export class TableBudgetError extends Error {
 
 /** What the registry needs from the compiler: slots for leaves, CPU code, and the WGSL spelling of leaves. */
 export type TableCompiler = {
-  /** Give every leaf of these expressions a slot (declaring the tables they fetch). */
-  register(roots: readonly Expr[]): void;
+  /** Give every leaf of these expressions a slot (declaring the tables they fetch); returns `leaves(roots)`. */
+  register(roots: readonly Expr[]): ReturnType<typeof leaves>;
   /** CPU code for expressions (leaves read from an `Env`, free variables from `Env.vars`). */
   cpu(roots: readonly Expr[]): (env: Env) => (V | boolean)[];
   /** The WGSL binding of leaves, free variables mapped through `vars`. */
@@ -188,15 +188,16 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: 
       if (start !== t.entries) throw new Error(`table "${t.name}": its runs cover ${start} entries; the table has ${t.entries}`);
       const authored = runs.flatMap((r) => r.lanes);
       // Declares (and classifies) the tables this one reads before any of its values is placed by depth.
-      c.register(authored);
+      // `register` returns `leaves(authored)`, a function of the expressions alone: reused below, not walked again.
+      const authoredTables = c.register(authored).tables;
       const programs = runs.map((r, k) => runProgram(`${t.name}_${k}`, r));
       record(programs);
       // A run of several entries is lowered now; a run of one entry runs once per frame and is lowered with every
       // other such program, scene-wide, when the layout begins (only folded here).
       const lowered = runs.map((r, k): Run => ({ ...r, lanes: (r.count > 1 ? lower(programs[k]!) : fold(r.lanes)) as Expr<"vec4">[] }));
       const roots = lowered.flatMap((r) => r.lanes);
-      c.register(roots);
-      return { kind: "map", runs: lowered, reads: leaves(roots).tables, authored: leaves(authored).tables };
+      const reads = c.register(roots).tables;
+      return { kind: "map", runs: lowered, reads, authored: authoredTables };
     }
     case "scan": {
       if (!(Number.isInteger(p.first) && Number.isInteger(p.steps) && p.first >= 0 && p.steps >= 1 && p.first + p.steps <= t.entries)) {
@@ -209,8 +210,8 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: 
       next.forEach((e, j) => { if (e.ty !== p.init[j]!.ty) throw new Error(`table "${t.name}": state component ${j} is ${p.init[j]!.ty} but the step returned ${e.ty}`); });
       checkLanes(lanes, "the scan's step");
       const authored = [...p.init, ...next, ...lanes];
-      c.register(authored);
-      const canon = { kind: "scan" as const, first: p.first, steps: p.steps, init: p.init, state, i, next, lanes, reads: [], authored: leaves(authored).tables };
+      const authoredTables = c.register(authored).tables;
+      const canon = { kind: "scan" as const, first: p.first, steps: p.steps, init: p.init, state, i, next, lanes, reads: [], authored: authoredTables };
       record([scanProgram(t.name, canon)]);
       // Once per frame: folded here, lowered scene-wide when the layout begins.
       return withScanRoots(canon, fold(authored));
@@ -432,8 +433,7 @@ export class Tables {
     for (const d of this.declared.values()) {
       if (d.kind !== "frame") continue;
       const lanes = fold(d.table.values) as Expr<"vec4">[];
-      this.c.register(lanes);
-      const reads = leaves(lanes).tables;
+      const reads = this.c.register(lanes).tables;
       d.canon = { kind: "map", runs: [{ start: 0, count: 1, i: variable(`_F${d.table.depth}`, "f32"), lanes }], reads, authored: reads };
     }
   }
