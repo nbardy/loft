@@ -1405,3 +1405,52 @@ Not built: resume; re-baking params in `loft dev`; a per-frame `when` other than
 lockstep replay of two checkpointed recurrences; the input-log hybrid (live inputs stay refused). A built directory
 that keeps every state carries no record of its recurrence, so `loft clip --artefact` cannot refuse a clip past its
 `until` (one that keeps checkpoints can).
+
+## 16. Animated glTF: `loft bake --animated` (2026-11-16, designed before building)
+
+glTF carries motion as keyed node transforms, skins and morph targets. A Loft body is a section swept along stations
+that the pose pass transports frames along (section 7), so its natural export is a skin with one joint per station.
+
+**Joints.** Station j of a body (m_j = j / (n - 1), n = `transport.stations`) is joint j. Its transform at time t is
+the station table's own row: translation `p_j(t)` (lane 0), rotation `q_j(t)` (lane 1, the transported frame with
+twist: x the tangent, y the dorsal side, z the other side), and a scale `(1, B_j(t) / B_j(0), A_j(t) / A_j(0))` in that
+frame, A the half-width and B the half-height after volume preservation (`girth * aspect^{0|1} / sqrt(stretch)`; the
+tip closure is a function of m alone and cancels). glTF allows non-uniform joint scale, so girth, aspect and stretch
+thinning all ride the joints; twist rides the rotation. The joints are children of one root node per body, so their
+local transforms are their world ones. Inverse bind matrices are `(T(p_j(0)) R(q_j(0)))^-1`.
+
+**Weights.** The skin's frame at m is the nlerp of q_j and q_{j+1} with fr = m (n - 1) - j, and its stretch the lerp.
+So a vertex at body coordinate m (its TEXCOORD_0.x) gets joints (j, j + 1), weights (1 - fr, fr): two joints, the
+sweep's own blend. Four joints with a smoother blend would not match the sweep at rest and buy nothing below.
+
+**Error of the skin (DERIVATION).** At rest the skinned mesh equals the bake exactly. At time t it differs by:
+1. the spine: the sweep draws Catmull-Rom through the stations; the skin moves the rest curve rigidly with the
+   joints. Mid-segment, Catmull-Rom sits `s_j = (p_j + p_{j+1} - p_{j-1} - p_{j+2}) / 16` off the chord, so the error
+   is `|s_j(t) - R s_j(0)|`, about `|delta x''| h^2 / 8` per segment of length h;
+2. the ring: linear blend of two rotations differing (relative to rest) by d theta shrinks an offset of radius r by
+   `r (1 - cos(d theta / 2)) ~ r d theta^2 / 8`; the sweep's nlerp does not shrink;
+3. the scale between stations: a lerp of ratios against the ratio of lerps, second order in the change per segment.
+
+**Keys.** N + 1 keys at t_i = i S / N over the span S (the scene's `period`; with none, `--seconds`), LINEAR
+translation and scale, LINEAR (slerp) rotation. Between keys a point with acceleration a is off by at most
+`a dt^2 / 8`. N is chosen so this is half the budget: a pilot of N0 = 32 keys measures each moving thing's largest
+vertex acceleration by second differences, and `N = max(N0, ceil(S sqrt(a / (4 tol size))))` over the things.
+
+**Tolerance and size.** `tol` is `tolerance.share(1e-3)` of the thing's size, the diagonal of its rest bounding box.
+The error is measured, not assumed: per thing, the largest vertex distance between the file's motion (CPU skinning
+of the keyed joints, or the morph blend) and Loft's own evaluated surface (`compileJs` over the pose pass's tables),
+at every key and every mid-key time.
+
+**Outcomes (one per baked body, a sum type).** `still`: no vertex moves more than the tolerance over the span (one
+static mesh; fields are always this, since the field baker refuses one that changes). `skinned`: a live, whole body
+whose skin is within tolerance. `morphed`: anything else whose triangles keep their topology (a mesh, a surface that
+is not a body, a body over tolerance): one morph target per key, weights keyed one-hot, so its error is the keys'
+alone. Morphing over refusing because the positions at every key are already evaluated to measure the error, so the
+exact data costs no evaluation, and a creature missing an arm is worse than a larger file. `refused`: the keys alone
+miss the tolerance (N capped at 1024); written static at t = 0 and printed as refused, never silently.
+
+**Predictions (examples/reeds_shadow.ts, S = 2 pi, the period of `sin(time)`).** 32 stations over 3.5 units, size
+about 3.6, tolerance 3.6e-3. Spine term: x'' = 0.5 m^2 sin(t + k) changes by up to 2 per unit m^2, h = 1/31 of m:
+2.6e-4. Ring term: d theta about 0.57 / 31 = 0.018 rad, r = 0.2: 1e-5. Skin total about 3e-4 (1e-4 relative). Keys:
+tip acceleration 0.5, half budget 1.8e-3, N = ceil(2 pi sqrt(0.5 / 7.2e-3)) = 53 (above N0), mid-key error about
+1.8e-3. Expected: every reed `skinned`, measured 1.5e-3 to 2.5e-3 (4e-4 to 7e-4 relative); the stone `still`.
