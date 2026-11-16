@@ -291,6 +291,7 @@ export class Expr<T extends Ty = Ty> {
   get w(): Expr<"f32"> { return get(this, "w"); }
   get xy(): Expr<"vec2"> { return get(this, "xy"); }
   get xz(): Expr<"vec2"> { return get(this, "xz"); }
+  get zw(): Expr<"vec2"> { return get(this, "zw"); }
   get xyz(): Expr<"vec3"> { return get(this, "xyz"); }
 }
 
@@ -521,6 +522,16 @@ interface Binary {
   // to infer from, so it defaults to "f32" (what a number lifts to) instead of the whole constraint.
   <A extends NumTy = "f32", B extends NumTy = "f32">(a: Expr<A> | number | Lit, b: Expr<B> | number | Lit): Expr<Wider<A, B>>;
 }
+/**
+ * `add`, `mul`, `min` and `max` also take three or more operands, folded left: `add(a, b, c)` is `add(add(a, b), c)`,
+ * the same nodes and the same WGSL as the nested form. A further operand is an expression or a number (a plain array
+ * there would leave the result type unknown).
+ */
+interface Assoc extends Binary {
+  <A extends NumTy = "f32", B extends NumTy = "f32", C extends NumTy = "f32">(
+    a: Expr<A> | number | Lit, b: Expr<B> | number | Lit, c: Expr<C> | number, ...more: (Expr<Wider<Wider<A, B>, C>> | number)[]
+  ): Expr<Wider<Wider<A, B>, C>>;
+}
 interface Unary {
   (a: number): Expr<"f32">;
   <A extends NumTy>(a: Expr<A>): Expr<A>;
@@ -554,23 +565,52 @@ export function withIdentities<T>(f: () => T): T {
 }
 /** The zero of a numeric type. */
 const zeroOf = (ty: NumTy): Expr => constant(ty, Array(SIZE[ty]).fill(0));
-const binary = (fn: Fn): Binary => ((a: In<NumTy>, b: In<NumTy>) => call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b])) as Binary;
+/**
+ * Friction F2 (2026-11-16): a third operand used to be dropped without a word (`add(1, m, 5)` drew as `1 + m`, and the
+ * host does not type-check). The choice: the associative four (add, mul, min, max) fold any count left, which emits
+ * exactly the nested form's WGSL; every other binary refuses a count other than two, because `sub(a, b, c)` or
+ * `pow(a, b, c)` has no one obvious meaning. Each operand is classified here, so `xs.reduce(add)` (which passes the
+ * index and the array too) is refused by name instead of adding the index.
+ */
+function operands(fn: Fn, xs: readonly unknown[], exactly?: number): In<NumTy>[] {
+  if (exactly !== undefined ? xs.length !== exactly : xs.length < 2) {
+    throw new SceneError(fn, `${xs.length} operand${xs.length === 1 ? "" : "s"}`, exactly !== undefined ? `exactly ${exactly}` : "two or more",
+      exactly !== undefined ? `nest the calls, e.g. ${fn}(${fn}(a, b), c), saying which pair goes first` : `${fn}(a, b)`);
+  }
+  xs.forEach((x, i) => {
+    const ok = x instanceof Expr || typeof x === "number" || (Array.isArray(x) && x.length >= 2 && x.length <= 4 && x.every((c) => typeof c === "number"));
+    if (!ok) {
+      throw new SceneError(`${fn}, operand ${i + 1}`, Array.isArray(x) ? `an array of ${x.length} ${x.every((c) => typeof c === "number") ? "numbers" : "non-numbers"}` : typeof x,
+        "an expression, a number, or an array of 2 to 4 numbers", `write each operand out; for a list, xs.reduce((a, b) => ${fn}(a, b)) (reduce passes the index and the array as well)`);
+    }
+  });
+  return xs as In<NumTy>[];
+}
+const binary = (fn: Fn): Binary => ((...xs: unknown[]) => {
+  const [a, b] = operands(fn, xs, 2) as [In<NumTy>, In<NumTy>];
+  return call(fn, wider(fn, lift(a).ty, lift(b).ty), [a, b]);
+}) as Binary;
+/** `two` folded left over two or more operands (see `operands`). */
+const assoc = (fn: Fn, two: (a: In<NumTy>, b: In<NumTy>) => Expr): Assoc => ((...xs: unknown[]) => {
+  const [first, ...rest] = operands(fn, xs);
+  return rest.reduce<In<NumTy>>((acc, x) => two(acc, x) as Expr<NumTy>, first!) as Expr;
+}) as Assoc;
 const unary = (fn: Fn): Unary => ((a: In<NumTy>) => call(fn, lift(a).ty, [a])) as Unary;
 
 /**
- * `add(a, b)`: a + b, componentwise; a scalar operand is applied to every component of a vector one. Adding a constant
+ * `add(a, b, ...more)`: a + b (+ more, left to right), componentwise; a scalar operand is applied to every component of a vector one. Adding a constant
  * 0 returns the other operand when that already has the sum's type (x + 0 = x exactly).
  */
-export const add: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+export const add: Assoc = assoc("add", (a: In<NumTy>, b: In<NumTy>) => {
   if (isZero(b) && tyOf(a) === wider("add", tyOf(a), tyOf(b))) return lift(a);
   if (isZero(a) && tyOf(b) === wider("add", tyOf(a), tyOf(b))) return lift(b);
   return addCall(a, b);
-}) as Binary;
+});
 const addCall = binary("add");
 /** `sub(a, b)`: a - b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const sub = binary("sub");
-/** `mul(a, b)`: a * b, componentwise (not a matrix or dot product); a scalar operand scales every component. */
-export const mul: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
+/** `mul(a, b, ...more)`: a * b (* more, left to right), componentwise (not a matrix or dot product); a scalar operand scales every component. */
+export const mul: Assoc = assoc("mul", (a: In<NumTy>, b: In<NumTy>) => {
   // x * 0 = 0 for finite x (materials.md section 4): the zero of the product's type, so a channel no paint gives (a
   // default of 0) removes its whole term before anything is emitted.
   if (isZero(a) || isZero(b)) return zeroOf(wider("mul", tyOf(a), tyOf(b)));
@@ -580,14 +620,14 @@ export const mul: Binary = ((a: In<NumTy>, b: In<NumTy>) => {
   if (isOne(b) && tyOf(a) === wider("mul", tyOf(a), tyOf(b))) return lift(a);
   if (isOne(a) && tyOf(b) === wider("mul", tyOf(a), tyOf(b))) return lift(b);
   return mulCall(a, b);
-}) as Binary;
+});
 const mulCall = binary("mul");
 /** `div(a, b)`: a / b, componentwise; a scalar operand is applied to every component of a vector one. */
 export const div = binary("div");
-/** `min(a, b)`: the smaller of a and b, componentwise; a scalar operand is applied to every component. */
-export const min = binary("min");
-/** `max(a, b)`: the larger of a and b, componentwise; a scalar operand is applied to every component. */
-export const max = binary("max");
+/** `min(a, b, ...more)`: the smallest operand, componentwise; a scalar operand is applied to every component. */
+export const min: Assoc = assoc("min", binary("min"));
+/** `max(a, b, ...more)`: the largest operand, componentwise; a scalar operand is applied to every component. */
+export const max: Assoc = assoc("max", binary("max"));
 /** `pow(a, b)`: a raised to the power b, componentwise; as in WGSL, a negative base gives an undefined result. */
 export const pow = binary("pow");
 /** Floored modulo (the result has the sign of the divisor), unlike WGSL's `%`. */

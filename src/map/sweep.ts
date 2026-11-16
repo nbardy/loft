@@ -15,6 +15,7 @@ import {
   sin, sqrt, sub, substitute, TAU, time, length, vec3, vec4, type Expr, type ProgramTable, type TableProgram, type TableSource,
 } from "../expr.ts";
 import { scopedName } from "../expr.ts";
+import { SceneError } from "../errors.ts";
 import { compose, rotate, world } from "./chart.ts";
 import { rotateAbout, SAMPLE, SAMPLE_VEC4S, stationRadii, stationScan, STATION_VEC4S } from "./transport.ts";
 export { rotateAbout };
@@ -468,10 +469,14 @@ function postedRange(p: Posted, all: number): [number, number] {
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 
 /** A live body's constructor arguments, checked: in world coordinates, at `time`. Subclasses (`Strand`) build from it. */
-export function sweepArgs(given: string, spine: (m: F) => P3, section: Section, transport: Transport): ConstructorParameters<typeof Body> {
+export function sweepArgs(given: string, spine: (m: F) => P3, section: Section, transport: Transport, kind: "sweep" | "strand" = "sweep"): ConstructorParameters<typeof Body> {
   const name = scopedName(given);
   if (!IDENT.test(name)) throw new Error(`sweep "${name}": names must be identifiers (they name tables and shaders)`);
-  if (!(Number.isInteger(transport.stations) && transport.stations >= 4)) throw new Error(`sweep "${name}": stations must be an integer >= 4, got ${transport.stations}`);
+  // A scene's own mistake (32+ programs in one training run wrote stations: 2 or 3), so a typed refusal (exit 4), not
+  // an internal error (exit 1).
+  if (!(Number.isInteger(transport.stations) && transport.stations >= 4)) {
+    throw new SceneError(`${kind} "${name}" stations`, String(transport.stations), "an integer >= 4", "stations must be an integer >= 4; 4 to 12 is usual");
+  }
   if (!(section.squareness >= 1.2)) throw new Error(`sweep "${name}": squareness must be >= 1.2 (the normal needs |x|^(n-1)), got ${section.squareness}`);
   return [name, spine, section, transport, world, time, newSlices(), `body_${name}`, { kind: "all" }];
 }

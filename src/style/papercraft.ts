@@ -14,7 +14,8 @@ import { add, dot, fract, lift, max, mix, mul, normalize, param, round, saturate
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
 import { fwidth, wgslFn } from "../lib/wgsl.ts";
 import type { PostSpec } from "../compile/context.ts";
-import type { Contact, Rgb, Style } from "../style.ts";
+import type { Contact, Rgb, Style, WaterCtx } from "../style.ts";
+import { calmSea } from "./sea.ts";
 import { edgeOf, POST_COMMON, rgb } from "./shared.ts";
 import { skyOf, type Sky } from "./sky.ts";
 
@@ -163,7 +164,6 @@ const SKY: Sky = { horizon: C.backdrop, washes: [{ ink: C.backdropTop, from: 0, 
 export function papercraft(): Style {
   const outline = param("papercraft.outline", 0.0, { min: 0, max: 0.1 });
   /** Sheet k's colour: one of the blues between deep and light, by a golden-ratio walk so neighbours differ. */
-  const sheet = (k: Expr<"f32">): Expr<"vec3"> => mix(rgb(C.sheetDeep), rgb(C.sheetLight), add(mul(fract(mul(k, 0.618034)), 0.55), 0.25));
   return {
     name: "papercraft",
     outline,
@@ -198,19 +198,10 @@ export function papercraft(): Style {
       const xz = ctx.world.xz;
       // Sheets laid along the swell, two edges per wavelength of the largest swell, bent by the height field and
       // round scattered domes so each edge is a chain of arcs. Each sheet is one of a few blues.
-      const domes = cellular2(mul(xz, 0.3)).x;
-      const s = add(add(mul(ctx.phase, 2), mul(ctx.crest, 0.35)), mul(domes, 0.2));
-      const k = round(s);
-      const x = sub(s, k);
-      const fw = max(fwidth(s), 1e-4);
-      const cover = smoothstep(mul(fw, -1), fw, x);
-      let c: Expr<"vec3"> = mix(sheet(sub(k, 1)), sheet(k), cover);
-      // The sheet above shades the one below near its edge; the cut edge itself catches the light.
-      const shade = mul(mul(smoothstep(-0.35, 0, x), sub(1, cover)), 0.22);
-      const cut = mul(mul(sub(1, smoothstep(0, add(0.05, fw), x)), cover), 0.35);
-      c = mix(mul(c, sub(1, shade)), rgb(C.cut), cut);
-      // Far off, the sheets merge into one tone instead of shimmering.
-      c = mix(c, mix(rgb(C.sheetDeep), rgb(C.sheetLight), 0.52), smoothstep(0.12, 0.35, fw));
+      // A sea without swell is one flat sheet (sheet 0, as nearly all of it read before). Friction (2026-11-16): with
+      // the phase constant, the sheets' edges fell on the domes' own contours (s = 0.2 domes), and each feature point
+      // printed a white cut edge round it: white blobs scattered over the still sea.
+      let c: Expr<"vec3"> = calmSea(ctx) ? sheet(lift<"f32">(0)) : sheets(ctx, xz);
       c = collared(c, ctx.contact, xz);
       // Distance haze toward the backdrop.
       c = mix(c, rgb(C.backdrop), saturate(mul(sub(ctx.distance, 40), 1 / 120)));
@@ -221,6 +212,26 @@ export function papercraft(): Style {
     ground: (ctx) => mix(mix(mul(rgb(C.cut), 0.92), mul(rgb(C.sheetDeep), 0.55), mul(ctx.shadow, 0.35)), rgb(C.backdrop), saturate(mul(sub(ctx.distance, 40), 1 / 120))),
     sky: (ctx) => skyOf(SKY, ctx),
   };
+}
+
+/** Sheet k's blue: one of a few, by the golden ratio. */
+const sheet = (k: Expr<"f32">): Expr<"vec3"> => mix(rgb(C.sheetDeep), rgb(C.sheetLight), add(mul(fract(mul(k, 0.618034)), 0.55), 0.25));
+
+/** The cut-paper sheets laid along the swell (see `water`). */
+function sheets(ctx: WaterCtx, xz: Expr<"vec2">): Expr<"vec3"> {
+  const domes = cellular2(mul(xz, 0.3)).x;
+  const s = add(add(mul(ctx.phase, 2), mul(ctx.crest, 0.35)), mul(domes, 0.2));
+  const k = round(s);
+  const x = sub(s, k);
+  const fw = max(fwidth(s), 1e-4);
+  const cover = smoothstep(mul(fw, -1), fw, x);
+  let c: Expr<"vec3"> = mix(sheet(sub(k, 1)), sheet(k), cover);
+  // The sheet above shades the one below near its edge; the cut edge itself catches the light.
+  const shade = mul(mul(smoothstep(-0.35, 0, x), sub(1, cover)), 0.22);
+  const cut = mul(mul(sub(1, smoothstep(0, add(0.05, fw), x)), cover), 0.35);
+  c = mix(mul(c, sub(1, shade)), rgb(C.cut), cut);
+  // Far off, the sheets merge into one tone instead of shimmering.
+  return mix(c, mix(rgb(C.sheetDeep), rgb(C.sheetLight), 0.52), smoothstep(0.12, 0.35, fw));
 }
 
 /** Foam: a white cut-paper collar with scalloped edges and a shadow under it; none where no body is near. */

@@ -302,6 +302,10 @@ function cameraOf(where: string, c: PassCamera): PassCamera {
  * drawn into that pass (`loft` notes which were left out). `project` is the same camera as arithmetic, so a check can
  * ask where anything lands in the picture before anything is drawn.
  *
+ * Reading it: `at(uv)` and `project(p).xy` share one uv, 0..1 with v down: v = 0 is the picture's top row, as the
+ * camera saw it. A surface whose v runs upward (a screen with v = 1 at its top) reads `at(vec2(u, sub(1, v)))`;
+ * `at(vec2(u, v))` there shows the picture upside down.
+ *
  * - name: letters, digits and _; unique in a process.
  * - size: the view's size ("view"), a share of it ({ scale }), or fixed pixels ([w, h]).
  * - what: "scene" (the default when `camera` is given) draws the scene's things from `camera` (`PassCamera`); "screen"

@@ -129,7 +129,9 @@ export type Paint = (u: F, v: F, at: PaintAt) => P3 | Painted;
  *   A name no part of the scene's style reads is noted (`loft` prints a note), not refused, so restyling never breaks.
  * - `scatter`: how this surface answers light from `toward` (unit, toward the light): the share that leaves toward the
  *   eye, cosine included, per colour channel. A style calls it once per light (`ctx.scatter`) and prints the result in
- *   its own medium. Prefer it to `shade` for anything that is a property of the surface (a film, a sheen).
+ *   its own medium. It replaces the style's whole diffuse term for that light, `base` included: multiply by `ctx.base`
+ *   yourself (`mul(ctx.base, wrap)`), or the surface lights as white. Prefer it to `shade` for anything that is a
+ *   property of the surface (a film, a sheen).
  * - `shade`: a change to the finished picture. `styled` is the style's whole colour for this fragment as it would be
  *   drawn (lit, reflected, sunk under water); the outline and the alpha mark never reach it. A wrap that does not read
  *   `styled` no longer follows `--style`, and `loft` notes that too.

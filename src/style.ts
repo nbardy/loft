@@ -45,7 +45,7 @@ export type ShadeCtx = {
   sky(dir: Expr<"vec3">): Expr<"vec3">;
   /**
    * This thing's `scatter` toward `toward` if its paint gives one, else `otherwise` (the style's own term for that
-   * light): free when absent.
+   * light, base colour included; a paint's scatter replaces all of it): free when absent.
    */
   scatter(toward: Expr<"vec3">, otherwise: In<"vec3">): Expr<"vec3">;
 };
@@ -93,6 +93,8 @@ export type WaterCtx = {
    * can print lines that follow the swell; 0 everywhere on a sea without swell.
    */
   readonly phase: Expr<"f32">;
+  /** The style's own sky along a direction, with this scene's sun, as `ShadeCtx.sky`: what the water reflects. */
+  sky(dir: Expr<"vec3">): Expr<"vec3">;
 };
 
 /**
@@ -190,8 +192,8 @@ export type Style = {
    * (`post_color(uv).a`), so a post pass can follow the body (woodblock's line weight). 1 for a style that reads none.
    */
   mark(ctx: ShadeCtx): Expr<"f32">;
-  /** Outline width, world units (the host never sees it below a minimum in pixels). */
-  readonly outline: Expr<"f32">;
+  /** Outline width, world units (the host never sees it below a minimum in pixels): an expression or a plain number. */
+  readonly outline: In<"f32">;
   /** Sea colour and alpha (what shows through the water below it is already tinted by `shade`). */
   water(ctx: WaterCtx): Expr<"vec4">;
   /** A cast shadow on the water, as colour and alpha blended over the water already drawn. */

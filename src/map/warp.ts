@@ -4,7 +4,8 @@
 // run time.
 
 import { vec2 } from "../expr.ts";
-import type { Folded } from "../lib/fold.ts";
+import { SceneError } from "../errors.ts";
+import { compose as composeFolds, type Folded } from "../lib/fold.ts";
 import type { Curve, F, Field, P3, Paint, Placed, Points, Surface, Warp } from "./types.ts";
 
 /**
@@ -33,8 +34,13 @@ export const warp = {
 
 /**
  * Paint from a motif drawn in one cell of a fold: the motif sees the folded point, the cell's identity (for per-copy
- * variation) and the stretch (to turn widths in the cell into widths on the surface).
+ * variation) and the stretch (to turn widths in the cell into widths on the surface). A list of folds is applied in
+ * order (`tile([shear, fold2.repeat([1, 1])], motif)`), as `compose` from src/lib chains them.
  */
-export function tile(w: Warp<"vec2">, motif: (cell: Folded<"vec2">) => P3): Paint {
-  return (u, v) => motif(w(vec2(u, v)));
+export function tile(w: Warp<"vec2"> | readonly Warp<"vec2">[], motif: (cell: Folded<"vec2">) => P3): Paint {
+  // Friction S8 (2026-11-16): a chain needed lib's `compose`, which the main entry cannot export by that name (the
+  // chart `compose` has it), so tile takes the chain itself.
+  if (typeof w !== "function" && w.length === 0) throw new SceneError("tile", "an empty list of folds", "a fold, or a list of one or more", "tile(fold2.repeat([1, 1]), motif)");
+  const chain = typeof w === "function" ? w : w.reduce((a, b) => composeFolds(a, b));
+  return (u, v) => motif(chain(vec2(u, v)));
 }

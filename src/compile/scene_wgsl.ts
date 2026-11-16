@@ -1,7 +1,8 @@
 // The WGSL every shader shares (`Artefact.sceneWgsl`): the tables' bindings and accessors, the ground's height field
 // (`sea_height`, whatever the ground: src/draw/ground.ts), the style's functions and small helpers. Module-scope WGSL is order-independent, so the parts are simply concatenated.
 
-import { lift, variable, vec2, withIdentities, type Expr } from "../expr.ts";
+import { Expr, lift, variable, vec2, withIdentities } from "../expr.ts";
+import { SceneError } from "../errors.ts";
 import { levelOf, type Ground } from "../draw/ground.ts";
 import { shadeVariables, type Style } from "../style.ts";
 import { foldAt, sunDir, sunOnly, type Lighting } from "../light.ts";
@@ -49,8 +50,20 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
     emitFn(slots, "mark", shadeArgs, "f32", [withIdentities(() => style.mark(shadeCtx))], (v) => v[0]),
     ...onGround(),
     emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)), lights: foldAt(sunOnly(lighting), { kind: "point", at: c("dir", "vec3") }) })], (v) => v[0]),
-    emitFn(slots, "outline_world", [], "f32", [style.outline], (v) => v[0]),
+    emitFn(slots, "outline_world", [], "f32", [outlineOf(style)], (v) => v[0]),
   ].join("\n");
+}
+
+/**
+ * The style's outline width as an expression. Friction S1 (2026-11-16): `{ ...toon(), outline: 0.02 }` reached the
+ * emitter as a bare number and failed inside it (`n.op` of undefined), naming neither the style nor the field. A number
+ * is lifted (the type allows one); anything else is refused here by name.
+ */
+function outlineOf(style: Style): Expr<"f32"> {
+  const o: unknown = style.outline;
+  if (typeof o === "number" && Number.isFinite(o)) return lift<"f32">(o);
+  if (o instanceof Expr && o.ty === "f32") return o as Expr<"f32">;
+  throw new SceneError(`style "${style.name}" outline`, o instanceof Expr ? `an expression of type ${o.ty}` : typeof o === "number" ? String(o) : typeof o, "the ink width in world units: a finite number or an f32 expression", "outline: 0.02 (or 0 for no ink)");
 }
 
 /** Helpers with no scene content: a surface vertex, grid corners, pixel sizes, the outline width, sea footprints. */
@@ -71,9 +84,12 @@ fn pixel_world(p: vec3<f32>) -> f32 {
   let fy = length(vec3<f32>(frame.view_proj[0][1], frame.view_proj[1][1], frame.view_proj[2][1]));
   return 2.0 * clip.w / (frame.viewport.y * fy);
 }
-/// The outline's offset: the style's world width, but never thinner than 1.5 pixels (so far views keep their ink).
+/// The outline's offset: the style's world width, but never thinner than 1.5 pixels (so far views keep their ink); none
+/// for a style whose width is 0. Friction F12 (2026-11-16): the 1.5 px floor applied at width 0 too, so papercraft (and
+/// any spread with outline 0) put a 1.5 px rim on each side of every body, and a strand of 0.004 girth (under a pixel)
+/// was drawn as a rod three or four pixels wide.
 fn ink_width(p: vec3<f32>) -> f32 {
-  return max(outline_world(), 1.5 * pixel_world(p));
+  return select(max(outline_world(), 1.5 * pixel_world(p)), 0.0, outline_world() <= 0.0);
 }
 /// Longest extent of one pixel's footprint on the sea at p: a pixel stretched by the grazing angle. Analytic, so it is
 /// smooth across the sea grid's triangles. (It was fwidth of the interpolated position, which jumps from one large far

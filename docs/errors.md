@@ -36,7 +36,8 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `draw.surface "x": given sides "both"` (or `outline`) | an option misspelt | `sides: "one" \| "two"`, `outline: "hull" \| "border" \| "none"` |
 | `scene(): camera "c": given fovY 60` | degrees for radians | `fovY: 60 * Math.PI / 180` |
 | `scene(): given two things named "x"` | names key shaders | rename one |
-| `draw.field "x": the field can overshoot` | the field is not a distance | fix the field, or the `safety` it suggests |
+| `draw.field "x": the field can overshoot` (or `march: ...`) | the field changes a little faster than distance (a fold's stretch) | fix the field, or the `safety` it suggests |
+| `draw.field "x": the field is not a distance` (or `march: ...`) | measured above 2: a degenerate primitive or an unscaled field | fix the field; `safety` would hide it |
 | `X needs a sea; this scene's ground is a plane` | a wake or foam on dry ground | `ground: sea(...)`, or drop the thing |
 | `usage: --style "x": no such style` / `input "x": ... no such input` | the command names what is absent | a name from the list printed |
 
@@ -56,7 +57,7 @@ and last line.
 | 07 | `input "aim": given a default of 2 numbers for a vec3` | the default has the wrong size | `input("aim", "vec3", [0, 1, 0])` |
 | 08 | `usage: input "wind": the scene declares no such input` | `--input` names an undeclared input | drop it, or declare `input("wind", ...)` |
 | 09 | `usage: --style "inky": no such style (styles: ...)` | an unknown style | one of the styles listed |
-| 10 | `draw.field "blob": the field can overshoot` | the field changes faster than distance | fix the field, or `safety:` as printed |
+| 10 | `draw.field "blob": the field is not a distance` | the field changes ten times faster than distance | fix the field |
 | 11 | `tabulate "lift": given 10000000 samples` | a table larger than one GPU binding | a few thousand samples |
 | 12 | `a number in an expression: given Infinity` | a division by zero in a constant | the line named at the end |
 | 13 | `scene(): given things: undefined` | no `things` | `things: [draw.surface(...)]` |

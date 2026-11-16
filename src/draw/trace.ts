@@ -14,6 +14,7 @@
 // with no blending and keeps depth exact (every set sample gets the traced depth), so foam and other depth readers see
 // a real surface. The bits chosen turn from pixel to pixel so partial coverage does not draw a fixed pattern.
 
+import { SceneError } from "../errors.ts";
 import type { V3 } from "../compile/context.ts";
 
 /** Where a tracer marches: a box, a sphere or a capsule, in world units. Static numbers: the CPU check samples inside it. */
@@ -23,25 +24,28 @@ export type TraceBound =
   | { readonly kind: "capsule"; readonly a: V3; readonly b: V3; readonly radius: number };
 
 const finite = (what: string, v: readonly number[]): void => {
-  for (const x of v) if (!Number.isFinite(x)) throw new Error(`bound.${what}: every number must be finite, got [${v.join(", ")}]`);
+  for (const x of v) if (!Number.isFinite(x)) throw new SceneError(`bound.${what}`, `[${v.join(", ")}]`, "finite numbers", "look for a division by zero or an undefined value in the numbers given");
 };
 
 /** Constructors that check their numbers once, so the tracer never sees a degenerate bound. */
 export const bound = {
+  /** The axis-aligned box from corner `min` to corner `max` (world units; max above min on every axis). */
   box(min: V3, max: V3): TraceBound {
     finite("box", [...min, ...max]);
-    if (!(max[0] > min[0] && max[1] > min[1] && max[2] > min[2])) throw new Error(`bound.box: max must exceed min on every axis, got [${min.join(", ")}] .. [${max.join(", ")}]`);
+    if (!(max[0] > min[0] && max[1] > min[1] && max[2] > min[2])) throw new SceneError("bound.box", `min [${min.join(", ")}] and max [${max.join(", ")}]`, "max above min on every axis", `bound.box([${min.map((x, i) => Math.min(x, max[i]!)).join(", ")}], [${max.map((x, i) => Math.max(x, min[i]!)).join(", ")}]), with some thickness on any flat axis`);
     return { kind: "box", min, max };
   },
+  /** The ball of `radius` round `centre`. */
   sphere(centre: V3, radius: number): TraceBound {
     finite("sphere", [...centre, radius]);
-    if (!(radius > 0)) throw new Error(`bound.sphere: radius must be positive, got ${radius}`);
+    if (!(radius > 0)) throw new SceneError("bound.sphere", `radius ${radius}`, "a radius above 0", "the radius of a ball holding the whole solid, e.g. bound.sphere([0, 1, 0], 1.2)");
     return { kind: "sphere", centre, radius };
   },
+  /** Every point within `radius` of the segment from `a` to `b` (the ends must differ). */
   capsule(a: V3, b: V3, radius: number): TraceBound {
     finite("capsule", [...a, ...b, radius]);
-    if (!(radius > 0)) throw new Error(`bound.capsule: radius must be positive, got ${radius}`);
-    if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) === 0) throw new Error("bound.capsule: the ends must differ (use bound.sphere)");
+    if (!(radius > 0)) throw new SceneError("bound.capsule", `radius ${radius}`, "a radius above 0", "the largest distance of the solid from the segment a..b");
+    if (Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) === 0) throw new SceneError("bound.capsule", `two equal ends [${a.join(", ")}]`, "ends that differ", `bound.sphere([${a.join(", ")}], ${radius})`);
     return { kind: "capsule", a, b, radius };
   },
 };
@@ -244,9 +248,9 @@ fn trace_mark(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32
 }
 /// Ink width in pixels for a pixel of world size fp: the style's width (as a hull outline has it), at least 1.5 px,
 /// and at most 4 px. The cap is for traced solids only: their ink is measured as closest approach, so a branch at
-/// the lens would otherwise wear a band tens of pixels wide over everything behind it.
+/// the lens would otherwise wear a band tens of pixels wide over everything behind it. None at width 0, as ink_width.
 fn ink_px(fp: f32) -> f32 {
-  return clamp(outline_world() / fp, 1.5, 4.0);
+  return select(clamp(outline_world() / fp, 1.5, 4.0), 0.0, outline_world() <= 0.0);
 }
 fn trace_ink(base: vec3<f32>, n: vec3<f32>, p: vec3<f32>, d: vec3<f32>, id: f32) -> vec3<f32> {
   return ink(base, n, -d, p, sea_height(p.xz) - p.y, vec2<f32>(0.0), p, id);
