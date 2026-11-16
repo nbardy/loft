@@ -3,6 +3,7 @@
 
 import { add, clamp, compileJs, cos, cross, div, f, length, lift, max, mix, mul, normalize, sin, sub, substitute, TAU, time, variable, vec3, type In } from "../expr.ts";
 import { through } from "../curve.ts";
+import { SceneError } from "../errors.ts";
 import { rotate } from "./chart.ts";
 import { NO_SKELETON, type Curve, type End, type F, type Frame, type P3, type Placed, type Posed, type Surface, type Topology } from "./types.ts";
 
@@ -31,8 +32,26 @@ export function atRest(point: (u: F, v: F) => P3): (u: F, v: F) => P3 {
   return (u, v) => substitute([point(u, v)], time, f(0))[0] as P3;
 }
 
+const ENDS: readonly End[] = ["free", "pole", "cap"];
+/**
+ * Friction F3 (2026-11-16): `{ v: "wrap" }` used to be accepted and drawn as an open seam, because every later reader
+ * asks only `=== "periodic"`. The words are checked here, where a scene writes them.
+ */
+function checkTopology(t: Topology): void {
+  const said = (x: unknown) => (typeof x === "string" ? `"${x}"` : JSON.stringify(x) ?? String(x));
+  const u: unknown = t?.u, v: unknown = t?.v;
+  if (v !== "periodic" && v !== "free") {
+    throw new SceneError("surface topology v", said(v), `"periodic" or "free"`, `v: "periodic" for a closed loop around (a tube), "free" for an open sheet`);
+  }
+  const endOk = (e: unknown) => ENDS.includes(e as End);
+  if (u !== "periodic" && !(Array.isArray(u) && u.length === 2 && u.every(endOk))) {
+    throw new SceneError("surface topology u", said(u), `"periodic", or a pair of ends [start, end], each "free", "pole" or "cap"`, `e.g. u: ["pole", "pole"] for a ball, ["free", "free"] for an open strip`);
+  }
+}
+
 /** A surface written directly as a function of (u, v); its normal comes from the map itself. */
 export function surface(point: (u: F, v: F) => P3, topology: Topology): Surface {
+  checkTopology(topology);
   return { point, normal: mapNormal(point), anchor: atRest(point), topology, skeleton: NO_SKELETON };
 }
 
