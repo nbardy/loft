@@ -67,6 +67,7 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `light/lantern_night.ts` | 26 | a lamp inside a paper lantern at night: the flame lights the floor (`lamp`, `scene({ lights })`), the paper glows (`emits`), the sun dimmed to a moon |
 | `light/lure.ts` | 36 | a creature lit only by its own lure: one `const` for the flare and the lamp, a check that the head is lit (`litBy`) |
 | `light/road.ts` | 30 | a road of patterned lamps as one function, by repetition (a `Light` written by hand) |
+| `light/heron_lamp.ts` | 22 | a heron under one lamp at night casting its own soft shadow on the mud and itself (`lamp(..., { shadow: true })`); `--style biolume` shows the penumbra, toon prints it as a ring |
 | `light/area_lamp.ts` | 30 | a lamp with a size whose light function casts its own shadow (`castRay`): hard in a frame, soft in a still (`--samples 64`) |
 | `materials/lacquer.ts` | 28 | wet lacquer: `gloss` and a darker `base`, words every glossy style reads |
 | `materials/beetle.ts` | 36 | a thin-film shell: the surface's own answer to each light (`scatter`) |

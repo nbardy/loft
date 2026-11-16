@@ -360,7 +360,7 @@ const GLAZED_CALL = "(in.world, in.clip.xy, in.uv.x, in.uv.y)";
 /** The fragment stage of a glazed surface: its colour function(s), and `fs`. */
 function glazedColour(ctx: CompileContext, name: string, colour: GlazedColour): Pick<Frag, "fns" | "main"> {
   const W = variable("f_world", "vec3"), PX = variable("f_px", "vec2");
-  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt), lights: foldAt(ctx.lighting, W) };
+  const fr: Fragment = { world: W, px: PX, u: U, v: V, style: ctx.style, sun: sunDir(ctx.sunAt), lights: foldAt(ctx.lighting, { kind: "point", at: W }) };
   const fn = (fname: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name: fname, args: GLAZED_ARGS, out: root.ty === "f32" ? "f32" : "vec4<f32>", roots: [root], ret: (o) => o[0]! });
   switch (colour.kind) {
     case "one": return {

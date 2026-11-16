@@ -97,7 +97,7 @@ export function scene(spec: SceneSpec): Scene {
   }
   if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);
   const loop: Loop = spec.period === undefined ? OPEN : { kind: "every", seconds: spec.period };
-  return { ground: spec.ground, things, style: spec.style, sun, sunAt, lighting: { sun: sunAt, amount, lights, sampling: { kind: "point" } }, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
+  return { ground: spec.ground, things, style: spec.style, sun, sunAt, lighting: { sun: sunAt, amount, lights, sampling: { kind: "point" }, shadows: new Map() }, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
 }
 
 /** A style that prints its shadow as a block after the bodies (`Style.block`) has it drawn by `light` (src/draw/light.ts). */

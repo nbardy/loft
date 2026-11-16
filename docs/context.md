@@ -15,7 +15,7 @@ it, and the focus. `strand`, `spiralTube`, `sheetOn`, `ropes` and `impostors` re
 `sheet`, `lathe`, `loft` and `extrude` return a bare surface: draw it first, `draw.surface(name, surface, { paint, grid })`.
 Light is the sun (`sun: { toward, amount }` dims or colours it; amount 0 is a moonless night) and up to seven `lights`,
 each a function of a world point returning `{ toward, amount, distance?, size? }`, such as `lamp(at, { colour, reach })`.
-A light casts no shadow unless its function does (`castRay`); a glow lights nothing by itself. Paint may return an
+A lamp casts a shadow when given shadow: true (its `size` softens it); any other light casts none unless its function does (`castRay`); a glow lights nothing by itself. Paint may return an
 object: `base` (the colour) and words of your own, of which the styles know gloss (0 to 1), metal and emits (linear
 light); a style notes the words it does not read. Its `scatter` answers light from a direction, its `shade` changes
 the finished colour.
