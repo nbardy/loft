@@ -17,7 +17,7 @@
 // `perWave` laid at half weight gives the fine lines between the main ones; `off` under a threshold that a body's
 // contact level raises gives lines that thicken toward the body (the swell piling up).
 
-import { abs, add, fract, max, mix, mul, saturate, smoothstep, sub, type Expr } from "../expr.ts";
+import { abs, add, fract, lift, max, mix, mul, saturate, smoothstep, sub, type Expr } from "../expr.ts";
 import { noise2 } from "../lib/index.ts";
 import { fwidth } from "../lib/wgsl.ts";
 import type { WaterCtx } from "../style.ts";
@@ -39,6 +39,11 @@ export function swellLines(ctx: WaterCtx, o: { readonly perWave: number; readonl
   // A little wobble, no blobs: the lines must follow the swell, not a noise field.
   const wobble = mul(noise2(mul(ctx.world.xz, 0.6)), 0.08);
   const h = add(ctx.crest, wobble);
+  // A sea without swell has a constant phase (0): no lines, as the header says. Friction S3/S4 (2026-11-16): the lines
+  // were drawn anyway, and with the phase constant every point sat on line 0, bent off it only by the wobble, so the
+  // noise's contours printed instead: sketch's grey labyrinth over the still sea, and woodblock's sea all in line ink
+  // but for one noise peak, the "detached dark disc" in front of a body.
+  if (ctx.phase.node.op === "const") return { cover: lift<"f32">(0), off: lift<"f32">(0.5), live: smoothstep(-0.6, -0.1, h), swell: h };
   const phase = add(mul(ctx.phase, o.perWave), mul(h, 0.7));
   const fw = max(fwidth(phase), 1e-4);
   const off = abs(sub(fract(add(phase, 0.5)), 0.5));
