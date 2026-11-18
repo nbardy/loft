@@ -128,7 +128,7 @@ export interface CompileContext {
  * - mesh: triangles made by code (`draw.mesh`, or a field's surface nets): rows, moved by `at` (absent: at rest) and
  *   placed by `copies` (absent: one), painted over rows.
  * - field: a signed distance field inside its bound, painted at a hit.
- * - medium: a density inside a box and its colour (`draw.density`).
+ * - medium: a density inside a box and its colour (`draw.density`, `draw.volume`).
  * - hit: any solid the author can intersect (`draw.traced`): `count` copies, each searched in its bound.
  */
 export type Form =

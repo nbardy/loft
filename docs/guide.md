@@ -396,14 +396,41 @@ Loft is a rasteriser with per-pixel tracers inside bounds, not a path tracer. Wh
 - **Tracers inside a bound**, each drawn as its bounding box and solved per pixel: sphere-traced distance fields
   (`draw.field`), shell-traced relief on a surface (`draw.relief`), analytic impostors (one sphere, capsule or cone per
   lattice cell, `impostors`) and lists of solids (`drawCopies`).
-- **Soft effects**: clouds and mist (`draw.density`), glows, lightning, rain, and many small specks (`draw.specks`).
+- **Media integrated in closed form**: clouds and mist (`draw.density`), glows, lightning and rain (`src/soft/`).
+- **Raymarched media**: an authored extinction field (`draw.volume`), lit by the sun and lamps up to opaque depth.
+- **Many small specks** on your own paths (`draw.specks`).
 - **Derived layers**: the sky, cast shadows on the water (from capsules along each body's skeleton), contact foam, and
   the style's post passes.
 
-Lighting is one sun and the style's own shading. There are no reflections or refraction, no indirect light or global
-illumination, and no shadow maps: shadows are cast from capsule chains (so their shape follows the skeleton, not the
-exact surface), onto the water always and onto bodies only in styles that print a shadow block. Effects that look
-like these (biolume's reflection, papercraft's crease shading) are post passes reading the picture and its depth.
+The scene's sun and lamps feed the style's shading. Lamps can cast opaque shadows through depth maps. The sun casts
+capsule-chain shadows onto the water and in styles that print a shadow block. Biolume's reflection and papercraft's
+crease shading read the picture and its depth in post passes.
+
+For smoke, dust or fog, write a function of world position `p` and time `t` in seconds. The density is extinction
+per world unit. You can pass a constant, an expression, or a `(p, t)` function for `albedo` and `emission`.
+Loft clamps extinction and emission at zero and albedo to [0, 1]. Emission is radiance per unit extinction, so a
+sample with zero density contributes no colour.
+
+```ts
+draw.volume("dust", (p, t) => max(0, noise3(sub(p, vec3(t, 0, 0)))), {
+  bounds: { min: [-3, 0, -2], max: [3, 4, 2] },
+  steps: 64,
+  albedo: [0.98, 0.72, 0.46],
+  g: 0.6,
+  shadow: { kind: "march", steps: 6 },
+});
+```
+
+`g` controls the normalized Henyey–Greenstein phase. Zero scatters evenly and positive values brighten backlit
+dust. `shadow: { kind: "march", steps: 6 }` integrates extinction toward each light inside this volume. Omitting
+`shadow` selects unshadowed scattering. Opacity is independent of the style. Toon's volume look bands visibility,
+woodblock prints the arriving light in its inks, and styles can override `Style.volume`.
+
+Order volumes, Gaussian media, and translucent surfaces back to front in `things`. Each volume is a single
+composited layer, so spatially interpenetrating transparent objects can show incorrect occlusion. The view march
+stops at opaque geometry and the ground. Configured lamp maps can also shadow samples with opaque geometry. The
+volume shadow march accounts for its own field only. Volume expressions run inside divergent ray loops, so use
+analytic gradients or finite differences for sample-local derivatives.
 
 ### Many small specks on your own paths
 

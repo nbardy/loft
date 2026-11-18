@@ -1,7 +1,7 @@
 // Styles layer: how a scene is painted. A style is one value of type `Style`; the named styles are compositions of the
 // parts exported here (docs/styles.md), and a built-in style uses nothing a user cannot import. Appearance only; no
 // geometry lives here.
-export { palette, dorsalness, type Style, type ShadeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type GroundCtx } from "./style.ts";
+export { palette, dorsalness, type Style, type ShadeCtx, type VolumeCtx, type WaterCtx, type Contact, type LayerCtx, type SkyCtx, type GroundCtx } from "./style.ts";
 // Styles and the parts they are composed from (src/style/index.ts, docs/styles.md). `Key`, `Cast` and `Layer` are taken
 // by curves and expressions: the lighting recipe's are `LightKey` and `LightCast` here.
 export {

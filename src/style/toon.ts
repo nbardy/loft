@@ -156,6 +156,18 @@ export function toon(spec: ToonSpec = {}): Style {
   return {
     name: "toon",
     shade: sunk(own.shade),
+    volume: (ctx) => {
+      const scattered = ctx.lights("sum", (l) => {
+        // Use fixed transition widths because samples are evaluated inside divergent ray loops.
+        let band = lift<"f32">(0);
+        for (let k = 0; k < bands - 1; k++) {
+          const edge = (k + 0.5) / (bands - 1);
+          band = add(band, smoothstep(edge - 0.02, edge + 0.02, l.visibility));
+        }
+        return mul(l.amount, mix(shadowTint, vec3(1, 1, 1), div(band, bands - 1)));
+      });
+      return add(ctx.emission, mul(ctx.albedo, scattered));
+    },
     mark: own.mark,
     ...(own.block === undefined ? {} : { block: { ...own.block, body: sunk(own.block.body) } }),
     // Toon under each recipe of `LIGHT`: what `--light name` chooses.

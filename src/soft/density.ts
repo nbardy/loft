@@ -64,7 +64,11 @@ const FOG = 8;
 /** Pieces a layer or one side of a bank is cut into along a ray. */
 const PIECES = 8;
 
-const f = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
+const f = (x: number): string => {
+  const text = String(x);
+  // A large integral bound may already use exponent notation, which is a float literal on its own.
+  return /[.e]/.test(text) ? text : `${text}.0`;
+};
 const v3 = (v: readonly number[]): string => `vec3<f32>(${v.map(f).join(", ")})`;
 
 /**
@@ -191,7 +195,8 @@ fn soft_end(px: vec2<f32>, o: vec3<f32>, d: vec3<f32>) -> f32 {
 }`;
 }
 
-function softRayWgsl(b: Box): string {
+/** The pixel ray and its (near, far) inside the box; pairs with boxVertexWgsl for a box-drawn volume. */
+export function softRayWgsl(b: Box): string {
   return /* wgsl */ `
 const BOX_MIN: vec3<f32> = ${v3(b.min)};
 const BOX_MAX: vec3<f32> = ${v3(b.max)};
@@ -202,11 +207,14 @@ fn soft_ray(world: vec3<f32>) -> array<vec3<f32>, 2> {
 }
 /// (near, far) of the ray inside the box.
 fn soft_box(o: vec3<f32>, d: vec3<f32>) -> vec2<f32> {
-  let dd = select(d, vec3<f32>(1e-12), abs(d) < vec3<f32>(1e-12));
+  let parallel = abs(d) < vec3<f32>(1e-12);
+  let dd = select(d, vec3<f32>(1.0), parallel);
   let ta = (BOX_MIN - o) / dd;
   let tb = (BOX_MAX - o) / dd;
-  let lo = min(ta, tb);
-  let hi = max(ta, tb);
+  // Parallel rays on a box face stay in its slab; a near-zero denominator there would put an end at t = 0.
+  let inside = clamp(o, BOX_MIN, BOX_MAX) == o;
+  let lo = select(min(ta, tb), select(vec3<f32>(1e30), vec3<f32>(-1e30), inside), parallel);
+  let hi = select(max(ta, tb), select(vec3<f32>(-1e30), vec3<f32>(1e30), inside), parallel);
   return vec2<f32>(max(max(lo.x, lo.y), lo.z), min(min(hi.x, hi.y), hi.z));
 }`;
 }

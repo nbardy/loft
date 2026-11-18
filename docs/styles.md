@@ -14,12 +14,13 @@ proves it (no file in `src/style/` imports another style's file, and every name 
 
 ## What a style is
 
-One value of type `Style` (`src/style.ts`), written in the same expression language as the shapes. The compiler emits
-each function once, shared by every shader.
+One value of type `Style` (`src/style.ts`), written in the same expression language as the shapes. The compiler shares
+surface shading functions across shaders and emits volume shading with each field.
 
 | Member | What it returns | Called for |
 |---|---|---|
 | `shade(ctx)` | a body's colour | every opaque fragment (`ShadeCtx`: paint, normal, sun, view, world point, depth below the sea, the surface's coordinates, anchor and identity; `lights(combine, term)`, the fold over every light; `channel(name, otherwise)`, a word the thing's paint says; `scatter(toward, otherwise)`, the thing's own answer to one light; `sky(dir)`, the style's sky in any direction) |
+| `volume(ctx)` | source colour per unit extinction | nonempty `draw.volume` ray samples (`VolumeCtx`: world, time, view, extinction, albedo, emission and the light fold) |
 | `ink(ctx)` | the outline hull's colour | the hull, `outline` world units wide, never under 1.5 px |
 | `mark(ctx)` | a number written to the picture's alpha | read back by the style's post passes; 1 for none |
 | `water(ctx)` | the sea's colour and alpha | the sea's fragments (`WaterCtx`: normal, crest, the swell's phase, how near a body is) |
@@ -33,6 +34,11 @@ A style that draws no water still returns something from `water`; a scene withou
 **Lights.** `ShadeCtx`, `GroundCtx` and `WaterCtx` fold every light at their point (`ctx.lights("sum" | "largest",
 (lit, which) => term)`); `SkyCtx` holds the sun alone. A style never sees a list. With no lights the fold is the sun's
 term itself, so a style written this way is unchanged on a scene without them (`docs/lighting.md`, "Lights").
+
+`VolumeCtx.lights` presents arrivals after weighting by the scattering phase. `lit.unshadowed` carries that colour,
+`lit.visibility` combines the volume's transmittance with any lamp depth-map visibility, and `lit.amount` is their
+product. Omit `volume` for single scattering (`albedo * sum(amount) + emission`). Toon bands the visibility tint
+and woodblock bands the luminance in its inks. A custom look can use the same terms and leave extinction to Loft.
 
 **Words a paint says.** A paint may return `{ base, gloss: 0.8, ... }` (`Painted`, `src/map/types.ts`). A style reads
 a word with `ctx.channel(name, otherwise)`; the words it reads are recorded on its one evaluation (`styleReads`), and a

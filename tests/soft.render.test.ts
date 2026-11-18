@@ -120,7 +120,7 @@ test("every example's shaders build pipelines under the contract's layouts", asy
     for (const d of a.draws) {
       dev.pushErrorScope("validation");
       const module = dev.createShaderModule({ code: PRELUDE_WGSL + bindings + (d.sceneDepth === true ? SCENE_DEPTH_WGSL + SCENE_CLEARANCE_WGSL : "") + a.sceneWgsl + a.shaders[d.shader] });
-      const blend = d.blend === "none" ? undefined : { color: { srcFactor: "src-alpha", dstFactor: d.blend === "add" ? "one" : "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const;
+      const blend = d.blend === "none" ? undefined : { color: { srcFactor: d.blend === "premultiplied" ? "one" : "src-alpha", dstFactor: d.blend === "add" ? "one" : "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } } as const;
       try {
         await dev.createRenderPipelineAsync({
           layout: dev.createPipelineLayout({ bindGroupLayouts: d.sceneDepth === true ? [g0, g1, depth, ...g3] : [g0, g1, ...plain2, ...g3] }),

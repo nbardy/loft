@@ -1,6 +1,4 @@
-// One generic drawable per signature (DESIGN.md 7.4): `draw.surface`, `draw.curve`, `draw.points`, `draw.field`
-// (field.ts), `draw.relief` (relief.ts) and `draw.density` (../soft/density.ts) are all implemented.
-// the tracers of docs/folding_and_tracing.md.
+// One generic drawable per signature (DESIGN.md 7.4), including the bounded tracers of docs/folding_and_tracing.md.
 
 import { add, clamp, cross, div, length, lift, max, mul, sub, type In } from "../expr.ts";
 import { viewDir } from "../lib/wgsl.ts";
@@ -13,11 +11,13 @@ import { drawRelief } from "./relief.ts";
 import { drawCopies } from "./copies.ts";
 import { drawMesh } from "./mesh.ts";
 import { drawTraced } from "./traced.ts";
+import { drawVolume, type VolumeOptions } from "./volume.ts";
 import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
 import { specks } from "../soft/specks.ts";
 export type { DensityOptions };
 export type { Speck, SpecksOptions } from "../soft/specks.ts";
+export type { VolumeOptions };
 
 /** A drawable that can be drawn once per point of a `Points`. */
 export interface Instanceable {
@@ -75,6 +75,7 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
  * - `copies`: a list of spheres, capsules or rounded cones, each intersected exactly per pixel.
  * - `density`: a cloud or fog (a `Medium`) integrated along each view ray.
  * - `specks`: N small camera-facing specks, each placed and coloured by your expression of (index, time).
+ * - `volume`: an arbitrary extinction field raymarched inside a box, with single scattering and emission.
  * - `mesh`: triangles made by your own code (a hull, a shatter, a growth), moved by an expression.
  * - `traced`: any solid you can intersect, written as one `hit` function.
  */
@@ -128,5 +129,7 @@ export const draw = {
    * stretched along its motion and veiled by a `draw.density` cloud (`src/soft/specks.ts`).
    */
   specks,
+  /** March a density function of world position and time inside a box, with scattering from the sun and lamps. */
+  volume: drawVolume,
 };
 

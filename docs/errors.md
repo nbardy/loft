@@ -39,6 +39,9 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `scene(): given two things named "x"` | names key shaders | rename one |
 | `draw.field "x": the field can overshoot` (or `march: ...`) | the field changes a little faster than distance (a fold's stretch) | fix the field, or the `safety` it suggests |
 | `draw.field "x": the field is not a distance` (or `march: ...`) | measured above 2: a degenerate primitive or an unscaled field | fix the field; `safety` would hide it |
+| `draw.volume "x": given bounds ...` | an empty, unordered or non-finite axis at f32 precision | supply finite `min` and `max` world-space corners with each max above its min |
+| `draw.volume "x": given steps ...` (or `shadow.steps ...`, `g ...`) | an invalid sample count or phase anisotropy | use a positive whole count such as 64 or 6, and keep `g` strictly inside (-1, 1) |
+| `draw.volume "x": given density as ...` (or `albedo as ...`, `emission as ...`) | a field returns the wrong type | return an f32 for density or a vec3 for a colour |
 | `X needs a sea; this scene's ground is a plane` | a wake or foam on dry ground | `ground: sea(...)`, or drop the thing |
 | `usage: --style "x": no such style` / `input "x": ... no such input` | the command names what is absent | a name from the list printed |
 | `pbr sky: given a sky that reads time` (or a param, curve or table) | the default projection takes a sky of its direction and the sun | use the sky's `sun` argument for motion, or supply `pbr({ sky, clear: [r, g, b], environment })` |
