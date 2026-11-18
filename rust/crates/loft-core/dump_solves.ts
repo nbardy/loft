@@ -16,8 +16,23 @@ import type { Solve as SolveDecl } from "../../../src/record/decls.ts";
 
 // Each case also as wire jobs, a Solve and a Check (out/lr23/jobs/NAME.{solve,check}.job), which the driver runs
 // (tests/it/solve.rs `driver_same_as_ts`): what `solve()` will send once it runs on Rust (plan §2.3 cutover).
+const { time } = E;
 const JOBS = "out/lr23/jobs";
 mkdirSync(JOBS, { recursive: true });
+// Three checks as a Check job (out/lr23/jobs/checks.check.job): one holds, one fails at t = 1, and one is an eventually
+// over a param, which the driver ranges in its own slot.
+{
+  const speed = E.param("lr23.speed", 2, { min: 0, max: 4 });
+  const range = (leaf: E.Expr<"f32">, lo: number, hi: number) => ({ leaf, lo: E.lift<"f32">(lo), hi: E.lift<"f32">(hi) });
+  const atom = (margin: E.Expr<"f32">) => ({ kind: "atom" as const, margin, test: E.gt(margin, 0) });
+  const checks = [
+    { label: "lifts", how: { kind: "prove" as const, boxes: 20000 }, body: { kind: "always" as const, leaves: [range(time, 0, 2)], body: atom(E.sub(E.add(time, 1), 0.5)) } },
+    { label: "early", how: { kind: "prove" as const, boxes: 20000 }, body: { kind: "always" as const, leaves: [range(time, 0, 2)], body: atom(E.sub(1, time)) } },
+    { label: "fast", how: { kind: "prove" as const, boxes: 20000 }, body: { kind: "eventually" as const, leaves: [range(speed, 0, 4)], body: atom(E.sub(speed, 3.5)) } },
+  ];
+  writeFileSync(`${JOBS}/checks.check.job`, pack(rec.job(Program.Check, [], { passes: [], checks, solves: [] })));
+}
+
 function decl(name: string, spec: SolveSpec<string>): SolveDecl {
   const keys = Object.keys(spec.vary).sort();
   const vars = keys.map((k) => [0, 1, 2, 3].map((d) => E.variable(`loft.solve.${k}.d${d}`, "f32")) as [E.Expr<"f32">, E.Expr<"f32">, E.Expr<"f32">, E.Expr<"f32">]);
@@ -40,7 +55,6 @@ function decl(name: string, spec: SolveSpec<string>): SolveDecl {
   };
 }
 
-const { time } = E;
 const cases: { name: string; spec: SolveSpec<string> }[] = [
   { name: "heron_leap", spec: leapSpec(NUMBERS) as SolveSpec<string> },
   { name: "heron_leap moved", spec: leapSpec({ ...NUMBERS, ...heronLeap.spec.variants.moved!.numbers } as typeof NUMBERS) as SolveSpec<string> },

@@ -203,7 +203,11 @@ pub enum Scope { Proved, Sampled { n: u32 } }
 - Nested quantifiers, the and/or of two quantified checks (unbuilt today) and `Not` come from the recursive
   `Formula`. They are not separate features.
 - `Decision`, `Spent`, `HoldReport`, `SolveReport`, `SolveFailure`, `checkOutcome` and `cli/verdict.ts`'s second
-  `Verdict` are deleted. A solve returns curves plus `Vec<Verdict>`. A solve that fails is an `Error` (below).
+  `Verdict` are deleted. A solve returns curves plus one `Proof` per hold. A solve that fails is an `Error` (below).
+- **Proofs are not in the build** (owner decision, 19 Nov 2026). `enum Proof { Unproved, Checked(Verdict) }`. The
+  build's Solve program solves and reports every hold `Unproved`, a named variant that no printer shows as a pass.
+  `loft check`'s Check program solves the same job and proves each hold over its window on the returned f32 curve
+  (`solve::prove`). Why: heron's proofs cost 145k–281k boxes (4–9 s), against 0.1 s for the solve itself.
 
 ### 1.8 One error
 
@@ -795,7 +799,7 @@ the freeze rule in `AGENTS.md`.
 |---|---|---:|---|---|
 | **2.1 kernels** | `loft-core/src/{rate,kernel,schedule,layout}.rs` | ≤ 1,000 | none | For the corpus, the `Kernel`/`Resource` plan accounts for every TS table, `recur` and compute: the same rows and lanes, `Steps` keep the same history, and the number of per-frame dispatches is ≤ TS's. Const-rate fills hold against the TS f32-encoded fills within `Tol::f32_rel(1e-4)` (|got − want| ≤ 1e-4 · max(\|want\|, 1); a typed constructor, never a bare number), and picture parity (§2.2a) holds on the scenes that read them. *Re-scored 19 Nov: the earlier "within 1 ulp" contradicted §3.4 (an f32 tape against TS's f64-then-round; measured worst 9.2e-6)* |
 | **2.2 emit** | `loft-core/src/emit/*` | ≤ 900 | light | Every module of the 63 scenes passes Naga validation (no GPU needed). Three permutations (§3.3) give one bundle hash. Shared modules ≤ TS's shared chunk count. The `lf` alias validates both ways where f16 is available. A raw-function typo gives `Scene{Wgsl}` at the author's line |
-| **2.3 analyses** | `loft-core/src/{check,solve,cache}.rs` (`solve.rs` from feat/rust-core as source; holds as symbolic graphs, derivatives in Rust) | ≤ 1,400 | none | Same verdicts on the corpus and on `tests/{ranged,solve,hold}`. The tunnelling claw is found (sampled pass, proved fail). `--explain` witness within 0.02 s. Heron: 52/52 proved, controls within `Tol::f32_rel(1e-4)`, solve ≤ 90 ms CPU, a cache hit runs 0 rounds |
+| **2.3 analyses** | `loft-core/src/{check,solve,cache}.rs` (`solve.rs` from feat/rust-core as source; holds as symbolic graphs, derivatives in Rust) | ≤ 1,400 | none | Same verdicts on the corpus and on `tests/{ranged,solve,hold}`. The tunnelling claw is found (sampled pass, proved fail). `--explain` witness within 0.02 s. Heron: 52/52 proved (under `loft check`; the build leaves holds `Unproved`, §1.7), controls within `Tol::f32_rel(1e-4)` except the listed undetermined scene (heron moved: the method stalls, agent_notes/2026-11-19_lean_rust_solve2.md), solve ≤ 90 ms CPU, a cache hit runs 0 rounds |
 | **2.4 library** | TS content: `src/checks/*` (17 checks become measures or `Sample`), `graphFn` on hot library functions (`lib/{noise,fold,sdf*}`, light terms), symbolic `gridDetail`, `soft/medium.ts` and `relief/sculpt.ts` fills as `Map` bodies, delete `FilledTable` | ≤ 1,200 TS changed | none | R_Titan ≤ 0.75M (kill condition, §8.1). Every former check is classified. Picture parity holds on the TS engine for touched scenes (this lane changes recording, not meaning) |
 
 **Cutover (integrator):** `loft check`, `solve()`, `evaluate()` and serve's `--check` run on Rust, through the

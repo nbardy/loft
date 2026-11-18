@@ -25,6 +25,14 @@ impl Tol {
     }
 }
 
+/// The named exception to the curve gate (agent_notes/2026-11-19_lean_rust_solve2.md, "Conditioning"): scenes whose
+/// curves the method does not determine. The augmented Lagrangian stops short of the KKT point there (rho reaches
+/// 1e12, where its model holds only within about rho^(-1/4) on a curved hold) at a place that turns on the last bits:
+/// TS's own curves move by `spread` under a 1e-9 relative change in delta. Rust and TS then agree in outcome and in
+/// every verdict, and their curves within that spread, not within `Tol::f32_rel(1e-4)`. An entry whose spread falls
+/// inside the tolerance fails the test: the exception has expired.
+const UNDETERMINED: [&str; 1] = ["heron_leap moved"];
+
 fn u(v: &Value) -> usize {
     v.as_u64().unwrap() as usize
 }
@@ -55,7 +63,8 @@ fn solve_same_as_ts() {
         let name = c["name"].as_str().unwrap();
         let job = |ext: &str| {
             let file = format!("{out}/jobs/{}.{ext}.job", name.replace(' ', "_"));
-            std::fs::read(&file).unwrap_or_else(|e| panic!("{file}: {e}. Write it: bun rust/crates/loft-core/dump_solves.ts"))
+            std::fs::read(&file)
+                .unwrap_or_else(|e| panic!("{file}: {e}. Write it: bun rust/crates/loft-core/dump_solves.ts"))
         };
         let p = &c["solve"];
         let over = [f(&p["over"][0]), f(&p["over"][1])];
@@ -84,12 +93,23 @@ fn solve_same_as_ts() {
                     .map(|k| k.as_array().unwrap().iter().map(f).collect())
                     .collect();
                 let scale = want.iter().flatten().fold(1.0f64, |m, x| m.max(x.abs()));
+                let spread = f(&ts["spread"]);
+                let undetermined = UNDETERMINED.contains(&name);
+                if undetermined && Tol::f32_rel(1e-4).within(spread, 0.0, scale) {
+                    bad.push(format!(
+                        "{name}: TS spread {spread:.1e} is within the tolerance: drop it from UNDETERMINED"
+                    ));
+                }
                 let mut worst = 0.0f64;
                 for (k, w) in want.iter().enumerate() {
                     for (l, &x) in w.iter().enumerate() {
                         let y = regs[roots[k] as usize * at.len() + l] as f64;
                         worst = worst.max((x - y).abs() / scale);
-                        if !Tol::f32_rel(1e-4).within(x, y, scale) {
+                        let met = match undetermined {
+                            false => Tol::f32_rel(1e-4).within(x, y, scale),
+                            true => (x - y).abs() <= spread,
+                        };
+                        if !met {
                             bad.push(format!("{name}: unknown {k} at t = {}: {y} vs TS {x}", at[l]));
                         }
                     }
@@ -136,8 +156,8 @@ fn solve_same_as_ts() {
                     })
                     .sum();
                 println!(
-                    "{name:<20} solved: curves within {worst:.2e} of scale {scale:.2} (TS spread {:.1e}); verdicts {same}/{}; rounds {} (TS {}), steps {} (TS {}); solve {ms:.0} ms, {:.1}M tape ops (TS {:.0} ms); proofs {:.0} ms, {proof_boxes} boxes",
-                    f(&ts["spread"]),
+                    "{name:<20} solved: curves within {worst:.2e} of scale {scale:.2} (TS spread {spread:.1e}{}); verdicts {same}/{}; rounds {} (TS {}), steps {} (TS {}); solve {ms:.0} ms, {:.1}M tape ops (TS {:.0} ms); proofs {:.0} ms, {proof_boxes} boxes",
+                    if undetermined { ", listed undetermined" } else { "" },
                     proved.holds.len(),
                     sol.rounds,
                     ts["rounds"],
@@ -171,6 +191,43 @@ fn solve_same_as_ts() {
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
+}
+
+/// The driver's Check program on recorded check decls (out/lr23/jobs/checks.check.job, from dump_solves.ts): a range over
+/// time that holds, one that fails at t = 1, and an eventually over a param.
+#[test]
+fn driver_checks() {
+    let file = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../out/lr23/jobs/checks.check.job");
+    let job = std::fs::read(file)
+        .unwrap_or_else(|e| panic!("{file}: {e}. Write it: bun rust/crates/loft-core/dump_solves.ts"));
+    let limits = Limits { nodes: u64::MAX, tape_ops: u64::MAX, boxes: 100_000, gpu_nanos: u64::MAX };
+    let (report, bundle) =
+        loft_core::run(&job, limits, Build { naga: Naga::Load, precision: Precision::F32 }, "test").unwrap();
+    assert!(bundle.is_none() && report.solves.is_empty());
+    let got: Vec<(&str, Truth)> = report.checks.iter().map(|c| (c.label.as_str(), c.verdict.truth)).collect();
+    assert_eq!(got, [("lifts", Truth::Holds), ("early", Truth::Fails), ("fast", Truth::Holds)]);
+    let early = &report.checks[1].verdict;
+    assert!((early.witness[0].1 - 2.0).abs() <= 0.02, "early fails worst at t = 2: {:?}", early.witness);
+}
+
+/// The solve phase's wall time on a shared machine: the least of 9 runs of each heron Solve job (plan target 90 ms).
+/// `tools/dev.sh test loft-core --release --run-ignored only -- solve_ms --nocapture`.
+#[test]
+#[ignore]
+fn solve_ms() {
+    let limits = Limits { nodes: u64::MAX, tape_ops: u64::MAX, boxes: 1, gpu_nanos: u64::MAX };
+    for name in ["heron_leap", "heron_leap_moved"] {
+        let file = format!("{}/../../../out/lr23/jobs/{name}.solve.job", env!("CARGO_MANIFEST_DIR"));
+        let job = std::fs::read(&file).unwrap();
+        let ms = (0..9)
+            .map(|_| {
+                let (r, _) =
+                    loft_core::run(&job, limits, Build { naga: Naga::Load, precision: Precision::F32 }, "t").unwrap();
+                r.phases.solve as f64 / 1e6
+            })
+            .fold(f64::INFINITY, f64::min);
+        println!("{name}: solve {ms:.1} ms (least of 9)");
+    }
 }
 
 /// `solve`'s fast f64 evaluation equals the interval rule at a point, bit for bit, for every atom: run each atom over

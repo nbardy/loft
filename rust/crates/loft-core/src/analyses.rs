@@ -83,7 +83,10 @@ fn frame(g: &Graph, ssa: &mut Ssa, roots: &[u32], fixed: &[(u32, Slot)], first: 
         let slots: Vec<Slot> = match n.op {
             Op::Time => vec![0],
             Op::Var(s) => {
-                let what = format!("the free variable `{}` outside a range of it: range it with always or eventually", g.sym(s));
+                let what = format!(
+                    "the free variable `{}` outside a range of it: range it with always or eventually",
+                    g.sym(s)
+                );
                 return Err(refuse(g.site(x).cloned(), what));
             }
             Op::Param(p) => {
@@ -268,13 +271,23 @@ pub fn solves(g: &Graph, limits: Limits, holds: Holds, phases: &mut crate::Phase
             time: 0,
             jets: 1,
             over,
-            vary: s.unknowns.iter().zip(&regs[at..]).map(|(u, r)| solve::Family { n: u.numbers as usize, from: r[0] }).collect(),
+            vary: s
+                .unknowns
+                .iter()
+                .zip(&regs[at..])
+                .map(|(u, r)| solve::Family { n: u.numbers as usize, from: r[0] })
+                .collect(),
             holds: lines,
             prefer: solve::Prefer {
                 jerk: lit(s.numbers + 3),
                 acceleration: lit(s.numbers + 4),
                 near_weight: lit(s.numbers + 5),
-                near: s.near.iter().zip(&regs[at + s.unknowns.len()..]).map(|(z, r)| (z.unknown as usize, r[0])).collect(),
+                near: s
+                    .near
+                    .iter()
+                    .zip(&regs[at + s.unknowns.len()..])
+                    .map(|(z, r)| (z.unknown as usize, r[0]))
+                    .collect(),
             },
             delta: lit(s.numbers + 2),
             tape_ops: limits.tape_ops,

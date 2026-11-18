@@ -32,10 +32,10 @@ pub mod schedule;
 pub mod solve;
 pub mod tape;
 
+pub use analyses::{CheckReport, SolveReport};
 use loft_ir::bundle::{self, Bundle, F32, Format, InputDecl, Module, Origin, ParamDecl, Shape};
 use loft_ir::error::{Internal, Limits, Meter, SceneFault};
 use loft_ir::graph::{self as ir, Fill, Graph, GraphFn, Kernel, Op, Program, Role};
-pub use analyses::{CheckReport, SolveReport};
 pub use loft_ir::identity::Precision;
 use loft_ir::{Error, wire};
 use serde::Serialize;
@@ -149,7 +149,15 @@ pub fn run(job: &[u8], limits: Limits, build: Build, compiler: &str) -> Result<(
     match job.program {
         Program::Scene => {
             let (scene, bytes) = scene(g, build, compiler, &mut phases)?;
-            let report = Report { program: job.program, nodes, decls, scene: Some(scene), checks: vec![], solves: vec![], phases };
+            let report = Report {
+                program: job.program,
+                nodes,
+                decls,
+                scene: Some(scene),
+                checks: vec![],
+                solves: vec![],
+                phases,
+            };
             Ok((report, Some(bytes)))
         }
         Program::Solve => {

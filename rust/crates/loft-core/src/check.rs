@@ -17,8 +17,8 @@ use crate::prim::{self, Atom};
 use crate::tape::{self, Id, Ins, Ssa};
 use loft_ir::error::{Error, SceneFault};
 use loft_ir::graph::Site;
-use std::collections::{BTreeMap as Map, BTreeSet};
 use serde::{Serialize, Serializer};
+use std::collections::{BTreeMap as Map, BTreeSet};
 use std::sync::OnceLock;
 
 /// A leaf slot of the tape (time, a param, an input component, a free variable).
