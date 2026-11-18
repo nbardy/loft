@@ -20,7 +20,9 @@ final-status-level = "slow"
 junit = { path = "junit.xml" }
 
 # Crates that open a real device. Whole packages: a module filter would silently miss the next GPU test added there.
+# Only members that exist: nextest refuses a filter naming a missing package (check.sh full failed on it at wave 0).
+# Lanes 3.2 and 3.3 add package(loft-gpu) and package(loft-draw) here when they create those crates.
 [[profile.default.overrides]]
-filter = 'package(loft-loader) | package(loft-gpu) | package(loft-draw)'
+filter = 'package(loft-loader)'
 test-group = "gpu"
 priority = 20
