@@ -29,13 +29,16 @@ pub struct Bundle {
     pub compiler: Box<str>,
     pub names: Box<[Box<str>]>,
     pub resources: Box<[Resource]>,
+    /// The storage buffers that hold every `Rows` resource, each at a fixed vec4 offset: a shader binds pack p at
+    /// `@group(1) @binding(p)` and reads resource r at its offset, a constant in its text (layout, loft-core).
+    pub packs: Box<[Pack]>,
     pub kernels: Box<[Kernel]>,
     pub modules: Box<[Module]>,
     pub draws: Box<[Draw]>,
     pub passes: Box<[Pass]>,
     pub media: Box<[Medium]>,
-    /// (name, camera root) per named camera.
-    pub cameras: Box<[(Id, Id)]>,
+    /// The named cameras.
+    pub cameras: Box<[Camera]>,
     pub params: Box<[ParamDecl]>,
     pub inputs: Box<[InputDecl]>,
     pub sites: Box<[Site]>,
@@ -82,6 +85,23 @@ pub enum Init {
     By(Id),
 }
 
+/// One storage buffer of rows. `Write` packs hold what kernels write and are bound read-write in compute pipelines,
+/// read-only in render pipelines; `Read` packs only ever read-only. A stepped resource has a pack of its own, since the
+/// host swaps that buffer for each step's previous state.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pack {
+    pub access: Access,
+    /// Its size in vec4s (at least 1).
+    pub vec4s: u64,
+    /// (resource, vec4 offset of its first state): every `Rows` resource is in exactly one pack.
+    pub holds: Box<[(Id, u64)]>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Access {
+    Read,
+    Write,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Kernel {
     pub writes: Box<[Id]>,
@@ -115,8 +135,6 @@ pub struct Module {
     pub origin: Origin,
     /// Written with the `lf` alias, which the host defines as f32 or f16 at load.
     pub precision_alias: bool,
-    /// The resources it reads, in binding order: `@group(1) @binding(k)` is `reads[k]` (emit's `Emitted::reads`).
-    pub reads: Box<[Id]>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Origin {
@@ -210,6 +228,17 @@ pub struct Medium {
 pub enum Integrate {
     March { steps: u16, shadow_steps: u16 },
     Gaussians { res: Id },
+}
+
+/// A named camera (plan §1.5: cameras are graph roots, evaluated on the GPU). `lens` is a compute entry (one invocation,
+/// group 0 the frame, group 1 the packs as render pipelines bind them) that writes the camera's lens
+/// (`loft_ir::frame::LENS`) to `@group(2) @binding(0)`; the host turns a lens into the frame's camera every frame, so a
+/// camera may move with time, params and inputs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Camera {
+    pub name: Id,
+    /// (module, entry).
+    pub lens: (Id, Id),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

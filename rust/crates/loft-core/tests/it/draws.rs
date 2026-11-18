@@ -2,7 +2,8 @@
 //! Naga accepts under both `lf` aliases; a draw writing no depth is veiled by its pass's media and one writing depth is
 //! not; ground and outline logic exist in exactly one place each (the grep gate).
 use loft_core::draw::{Cover, Draw, Find, Medium, Pass, Prim as P, check, lower};
-use loft_core::emit::Slots;
+use loft_core::emit::{Row, Slots};
+use loft_ir::bundle::Access;
 use loft_ir::bundle::{self as b, Blend, Clear, F32, Layer, Proxy, Raster, Target};
 use loft_ir::graph::{Graph, GraphFn, Node, Op, Prim, Ty};
 
@@ -15,8 +16,8 @@ struct B {
     syms: String,
     /// Symbol starts; `graph` appends the end.
     starts: Vec<u32>,
-    /// Layout's `[res, lanes]` per kernel id; the draws read no params or inputs.
-    at_kernels: Vec<[u32; 2]>,
+    /// Layout's place per kernel id (one read pack); the draws read no params or inputs.
+    at_kernels: Vec<Row>,
     bind: u32,
 }
 
@@ -39,8 +40,9 @@ impl B {
         self.node(Op::Bind(self.bind), ty, &[])
     }
     /// A kernel id whose resource layout places at `at`.
-    fn kernel(&mut self, at: [u32; 2]) -> u32 {
-        self.at_kernels.push(at);
+    fn kernel(&mut self, [res, lanes]: [u32; 2]) -> u32 {
+        let offset = self.at_kernels.iter().map(|r| u64::from(r.rows * r.lanes)).sum();
+        self.at_kernels.push(Row { res, pack: 0, offset, rows: 16, lanes });
         (self.at_kernels.len() - 1) as u32
     }
     fn func(&mut self, binders: &[u32], body: u32) -> u32 {
@@ -54,7 +56,12 @@ impl B {
         (self.starts.len() - 1) as u32
     }
     fn slots(&self) -> Slots {
-        Slots { params: Box::new([]), inputs: Box::new([]), kernels: self.at_kernels.clone().into() }
+        Slots {
+            params: Box::new([]),
+            inputs: Box::new([]),
+            kernels: self.at_kernels.clone().into(),
+            packs: Box::new([Access::Read]),
+        }
     }
     fn graph(&self) -> Graph {
         let n = self.nodes.len();

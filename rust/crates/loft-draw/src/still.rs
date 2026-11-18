@@ -1,12 +1,13 @@
-//! `loft-draw still`: one picture of a built directory (moved from loft-view). Its view flags are `profile`'s too.
+//! `loft-draw still`: one picture of a bundle. Its view flags are `profile`'s too.
 //!
-//!   loft-draw still <dir> --view game --time 1.0 --size 1280x800 [--out f.png] [--input name=v[,v...]] [--param name=v]
+//!   loft-draw still <bundle> --view game --time 1.0 --size 1280x800 [--out f.png] [--input name=v[,v...]] [--param name=v]
 //!
-//! The picture waits for its own level-of-detail bounds (as `loft render` does).
+//! `--view` names one of the bundle's cameras, evaluated on the GPU at the frame's time. The bundle draws as f32.
 
 use crate::profile::Flags;
-use crate::{Target, Verdict, gpu};
-use loft_loader::{Loft, read_dir};
+use crate::{Target, Verdict, gpu, load, read_bundle};
+use loft_gpu::Loft;
+use loft_ir::identity::Precision;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -20,7 +21,7 @@ pub struct Args {
     params: Vec<(String, f32)>,
 }
 
-const PROFILE: &str = "--frames, --loads, --wait, --pose-time, --pipeline-cache and --budget-ms are flags of `profile`";
+const PROFILE: &str = "--frames, --loads, --pipeline-cache and --budget-ms are flags of `profile`";
 
 pub fn usage(msg: String) -> ! {
     eprintln!("loft-draw: {msg}");
@@ -34,16 +35,15 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
         Ok(n) if n > 0 => n,
         _ => usage(format!("{flag}: expected a count of at least 1, got {v}")),
     };
-    let dir = it.next().map(PathBuf::from).unwrap_or_else(|| usage("expected a built directory".into()));
+    let dir =
+        it.next().map(PathBuf::from).unwrap_or_else(|| usage("expected a bundle (scene.loft or its directory)".into()));
     let mut a =
         Args { dir, view: "game".into(), time: 1.0, size: (1280, 800), out: None, inputs: vec![], params: vec![] };
     let num = |s: &str, flag: &str| s.parse::<f64>().unwrap_or_else(|_| usage(format!("{flag}: not a number: {s}")));
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| usage(format!("{flag} needs a value")));
         match flag.as_str() {
-            "--frames" | "--loads" | "--wait" | "--pose-time" | "--pipeline-cache" | "--budget-ms" if !profile => {
-                usage(PROFILE.into())
-            }
+            "--frames" | "--loads" | "--pipeline-cache" | "--budget-ms" if !profile => usage(PROFILE.into()),
             "--out" if profile => usage("--out is a flag of `still`".into()),
             "--view" => a.view = value(),
             "--time" => a.time = num(&value(), "--time"),
@@ -65,8 +65,6 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
             }
             "--frames" => f.frames = count(value(), "--frames"),
             "--loads" => f.loads = count(value(), "--loads"),
-            "--wait" => f.wait = true,
-            "--pose-time" => f.pose_time = true,
             "--pipeline-cache" => f.cache = Some(value().into()),
             "--budget-ms" => f.budget_ms = Some(num(&value(), "--budget-ms")),
             _ => usage(format!("unknown flag {flag}")),
@@ -77,8 +75,11 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
 
 /// Points `loft` at the asked view, time, inputs and params.
 pub fn aim(a: &Args, loft: &mut Loft) -> Result<(), Verdict> {
-    loft.set_camera(loft.camera(&a.view)?);
-    loft.set_time(a.time);
+    loft.use_camera(&a.view).map_err(|e| {
+        let have: Vec<&str> = loft.cameras().collect();
+        Verdict::Usage(format!("{e} (it has: {})", if have.is_empty() { "none".into() } else { have.join(", ") }))
+    })?;
+    loft.set_time(a.time as f32);
     for (name, v) in &a.inputs {
         loft.set_input(name, v)?;
     }
@@ -92,12 +93,12 @@ pub fn run(a: Args) -> Result<(), Verdict> {
     let g = gpu(true)?;
     eprintln!("adapter {} ({:?}); timestamp queries {}", g.info.name, g.info.backend, g.timing);
     let t = Instant::now();
-    let mut loft = Loft::load(&g.device, &g.queue, read_dir(&a.dir)?)?;
-    eprintln!("load {:.3} ms, precision {}", t.elapsed().as_secs_f64() * 1e3, loft.precision().as_str());
+    let mut loft = load(&g, &read_bundle(&a.dir)?, Precision::F32, None)?;
+    eprintln!("load {:.3} ms, precision {:?}", t.elapsed().as_secs_f64() * 1e3, loft.precision());
     aim(&a, &mut loft)?;
     let target = Target::new(&g.device, a.size);
-    let (rgba, drawn) = target.picture(&g, &mut loft)?;
-    eprintln!("frame: {} triangles in {} draw calls", drawn.triangles, drawn.draws);
+    let rgba = target.picture(&g, &mut loft)?;
+    eprintln!("frame: {} draws in {} passes", loft.bundle().draws.len(), loft.bundle().passes.len());
     if let Some(out) = &a.out {
         let fail = |e: &dyn std::fmt::Display| Verdict::Environment(format!("{}: {e}", out.display()));
         let file = std::fs::File::create(out).map_err(|e| fail(&e))?;

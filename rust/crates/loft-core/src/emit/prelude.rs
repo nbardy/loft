@@ -11,7 +11,8 @@
 //!   the helpers with no scene content).
 //! - `scene_depth(px)`, `scene_position(px)`, `scene_clearance(px)` (TS `SCENE_DEPTH_WGSL`, `SCENE_CLEARANCE_WGSL`): the
 //!   opaque scene's resolved depth (r32float, `@group(0) @binding(2)`) and its 8 × 8 tile clearance (r8unorm,
-//!   `@group(0) @binding(3)`), which the sea's contact band reads. The host writes them after the opaque draws.
+//!   `@group(0) @binding(3)`), which the sea's contact band reads; and `loft_scene_colour` (`@group(0) @binding(4)`), the
+//!   pass's colour so far, which Screen covers and the ink composer read. The host writes them after the opaque draws.
 //!
 //! A raw function that reads any other global is refused by `needs`: `Scene { Global { name, needs } }`, naming the
 //! decl or prelude change that would give it one. A module is never built with a global left out.
@@ -38,6 +39,7 @@ pub fn text(params: u32, inputs: u32) -> String {
          fn sea_footprint(p: vec3<f32>) -> f32 {{ return pixel_world(p) / max(abs(view_dir(p).y), 0.02); }}\n\
          @group(0) @binding(2) var loft_scene_depth: texture_2d<f32>;\n\
          @group(0) @binding(3) var loft_scene_clearance: texture_2d<f32>;\n\
+         @group(0) @binding(4) var loft_scene_colour: texture_2d<f32>;\n\
          fn scene_depth(px: vec2<f32>) -> f32 {{ let size = vec2<i32>(textureDimensions(loft_scene_depth)); \
          return textureLoad(loft_scene_depth, clamp(vec2<i32>(floor(px)), vec2<i32>(0), size - 1), 0).x; }}\n\
          fn scene_position(px: vec2<f32>) -> vec3<f32> {{ let ndc = vec2<f32>(px.x * frame.viewport.z * 2.0 - 1.0, \

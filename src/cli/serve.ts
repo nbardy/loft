@@ -26,7 +26,7 @@
 // requests in flight may name overlapping `out` directories (the later one is refused), so frames written to `out`
 // are the request's own. An artefact is checked (names, links, sizes against --limits) before its files are read.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,7 +42,7 @@ import { FALLBACK_CAMERAS } from "./cameras.ts";
 import { checkInputs, type InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
 import { selectPrecision } from "../host/precision.ts";
-import { buildOf, canonical, deviceOf, frameOf, identityId, type Identity } from "../identity.ts";
+import { buildOf, canonical, deviceOf, frameOf, identityId, type FrameCamera, type Identity } from "../identity.ts";
 import { ending, exitWith, headed, type Verdict } from "./verdict.ts";
 
 export type ServeCommand = {
@@ -192,9 +192,9 @@ class Budget extends Error {}
 
 async function compile(cmd: ServeCommand, scene: string, dir: string, precision: Precision, children: Set<{ kill(signal?: number | NodeJS.Signals): void }>): Promise<void> {
   const child = Bun.spawn([...cmd.confine, process.execPath, MAIN, "build", scene, "--out", dir, "--precision", precision], {
-    // LOFT_ENGINE=ts: both executors draw the TS artefact directory until the wave 3 cutover (loft-draw reads it
-    // through loft-loader), so the compile child must not take `loft build`'s Rust route, which writes scene.loft.
-    env: { ...process.env, LOFT_NO_GPU: "1", LOFT_ENGINE: "ts" }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
+    // The compile builds for the executor that draws: the TS artefact directory for Dawn, `scene.loft` (Bundle V1,
+    // loft-core's driver) for loft-draw.
+    env: { ...process.env, LOFT_NO_GPU: "1", LOFT_ENGINE: cmd.engine }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
   });
   children.add(child);
   // The deadline kills the direct child. A --confine wrapper should exec the build (or forward the signal), or the
@@ -287,7 +287,73 @@ function startDrawWorker(check: string | undefined, stopped: (v: Verdict) => voi
 
 /** `loft-draw serve` (rust/crates/loft-draw), its protocol version, and where `tools/dev.sh build loft-draw --fast` puts it. */
 export const LOFT_DRAW = fileURLToPath(new URL("../../rust/target/lab/loft-draw", import.meta.url));
-const DRAW_WIRE = 1;
+const DRAW_WIRE = 2;
+
+/**
+ * What the supervisor reads of a `scene.loft` (loft-ir bundle.rs: 16-byte head, then the JSON): names, params, inputs
+ * and cameras, to check a request by name before the child loads it. Numbers are f32 bits.
+ */
+export type LoftHeader = {
+  readonly compiler: string;
+  readonly names: readonly string[];
+  readonly params: readonly { readonly name: number; readonly def: number }[];
+  readonly inputs: readonly { readonly name: number; readonly def: readonly number[] }[];
+  readonly cameras: readonly { readonly name: number }[];
+};
+type Loft = { readonly file: string; readonly sha256: string; readonly header: LoftHeader };
+
+const f32 = (bits: number) => new Float32Array(new Uint32Array([bits]).buffer)[0]!;
+
+/** `dir/scene.loft`, refused past the limits' bytes or when it is not a V1 bundle. */
+function readLoft(dir: string, limits: ArtefactLimits): Loft {
+  const file = join(dir, "scene.loft");
+  if (!existsSync(file)) throw new LoadError(`${file} is missing: loft-draw draws Bundle V1. Fix: build with LOFT_ENGINE=rust loft build <scene> --out ${dir}`);
+  const bytes = readFileSync(file);
+  if (bytes.length > limits.bytes) throw new LoadError(`${file}: ${bytes.length} bytes, over the limit of ${limits.bytes}`);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+  if (bytes.length < 16 || bytes.subarray(0, 4).toString() !== "LOFT" || view.getUint32(4, true) !== 1) throw new LoadError(`${file} is not a Bundle V1 file. Fix: rebuild it with LOFT_ENGINE=rust loft build`);
+  const n = Number(view.getBigUint64(8, true));
+  if (n > limits.manifestBytes || 16 + n > bytes.length) throw new LoadError(`${file}: its JSON head is ${n} bytes, over the limit or past the file`);
+  const header = JSON.parse(bytes.subarray(16, 16 + n).toString()) as LoftHeader;
+  return { file, sha256: createHash("sha256").update(bytes).digest("hex"), header };
+}
+
+/** The request's view as loft-draw takes it, and as the identity records it. */
+type DrawCamera = Exclude<FrameCamera, Camera>;
+
+function rustCamera(ask: CameraAsk, h: LoftHeader): DrawCamera {
+  const look = (c: Camera, why: string): DrawCamera => {
+    if (c.kind === "orthographic") throw new UsageError(`camera ${why}: orthographic host cameras are not built by loft-gpu yet; name one of the bundle's cameras [${h.cameras.map((c) => h.names[c.name]).join(", ")}] or give a perspective camera`);
+    return { kind: "look", eye: c.eye, target: c.target, up: [0, 1, 0], fovY: c.fovY };
+  };
+  switch (ask.kind) {
+    case "given": return look(ask.camera, "(given)");
+    case "named": {
+      if (h.cameras.some((c) => h.names[c.name] === ask.name)) return { kind: "named", name: ask.name };
+      const c = FALLBACK_CAMERAS[ask.name];
+      if (c === undefined) throw new UsageError(`camera "${ask.name}": the bundle names [${h.cameras.map((c) => h.names[c.name]).join(", ")}], defaults are [${Object.keys(FALLBACK_CAMERAS).join(", ")}]`);
+      return look(c, `"${ask.name}"`);
+    }
+  }
+}
+
+/** Params and inputs by name against the bundle, with the defaults filled in, as the identity records them. */
+function rustValues(req: Request, h: LoftHeader): Pick<Identity["frame"], "params" | "inputs"> {
+  const params: Record<string, number> = {}, inputs: Record<string, readonly number[]> = {};
+  for (const p of h.params) params[h.names[p.name]!] = f32(p.def);
+  for (const i of h.inputs) inputs[h.names[i.name]!] = i.def.map(f32);
+  for (const [name, v] of Object.entries(req.params)) {
+    if (!(name in params)) throw new UsageError(`params "${name}": the bundle declares no such param (it has: ${Object.keys(params).join(", ") || "none"})`);
+    params[name] = v;
+  }
+  for (const [name, v] of Object.entries(req.inputs)) {
+    const def = inputs[name];
+    if (def === undefined) throw new UsageError(`inputs "${name}": the bundle declares no such input (it has: ${Object.keys(inputs).join(", ") || "none"})`);
+    if (v.length !== def.length) throw new UsageError(`inputs "${name}": ${v.length} numbers given, it takes ${def.length}`);
+    inputs[name] = v;
+  }
+  return { params, inputs };
+}
 /** The child's lines (rust/crates/loft-draw/src/serve.rs): `ready` once, then one reply per request, in order. */
 type DrawReady = { readonly wire: number; readonly adapter: Extract<DrawMessage, { kind: "ready" }>["adapter"]; readonly device: Identity["device"] };
 type DrawReply =
@@ -329,7 +395,8 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
     buffered = rest;
     return JSON.parse(head) as T;
   };
-  let check: (b: Bundle) => void = () => {};
+  // Under LOFT_ENGINE=rust the --check hook is given the bundle's JSON head (`LoftHeader`), not a TS artefact.
+  let check: (h: LoftHeader) => void = () => {};
   let device: Identity["device"];
   void (async () => {
     try {
@@ -345,26 +412,23 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
     }
   })();
   const draw = async ({ req, dir, limits }: Draw): Promise<Answer> => {
-    let bundle: Bundle, camera: Camera;
+    let loft: Loft, camera: DrawCamera, values: Pick<Identity["frame"], "params" | "inputs">;
     try {
-      try { bundle = readBundle(dir, limits); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
-      try { check(bundle); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
-      checkParams(req.params, bundle.manifest);
-      checkInputs(bundle.manifest, req.inputs, { kind: "none" }, "serve");
-      camera = cameraFor(req.camera, bundle);
-      // The TS host refuses `precision: "mixed"` on an f32-only artefact (LoadError); the Rust loader would draw f32.
-      // Refuse it here, with the same check, so the engine switch does not change the answer. The device argument does
-      // not matter for the refusal: only the ask and the artefact do.
-      selectPrecision(bundle, true, req.precision);
+      loft = readLoft(dir, limits);
+      try { check(loft.header); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
+      values = rustValues(req, loft.header);
+      camera = rustCamera(req.camera, loft.header);
     } catch (e) {
       return failed(req.id, verdictHere(e));
     }
-    child.stdin.write(canonical({ dir, camera, times: req.times, size: [req.size.width, req.size.height], params: req.params, inputs: req.inputs, precision: req.precision ?? "mixed", out: req.out }) + "\n");
+    child.stdin.write(canonical({ bundle: loft.file, camera, times: req.times, size: [req.size.width, req.size.height], params: req.params, inputs: req.inputs, precision: req.precision ?? "f32", out: req.out }) + "\n");
     child.stdin.flush();
     const r = await line<DrawReply>();
     if (!r.ok) return failed(req.id, r.verdict);
-    const build = buildOf(bundle), view = (time: number): View => ({ camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false });
-    const identities = req.times.map((time): Identity => ({ build, frame: frameOf(bundle.manifest, view(time), r.precision, { kind: "frame" }), device }));
+    // A Bundle V1 file is the whole program (plan §1.9: one identity, the file's hash), and one text serves both precisions.
+    const build: Identity["build"] = { program: { kind: "files", sha256: loft.sha256 }, library: loft.header.compiler, tier: "compiled", precision: "mixed" };
+    const frameAt = (time: number): Identity["frame"] => ({ camera, time, size: [req.size.width, req.size.height], ...values, precision: r.precision, drawn: { kind: "frame" }, construction: false });
+    const identities = req.times.map((time): Identity => ({ build, frame: frameAt(time), device }));
     const { time: _, ...frame } = identities[0]!.frame;
     const frames = r.frames.map((f, k) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
     return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };
