@@ -23,7 +23,8 @@ dx12 = ["wgpu/dx12"]
 [dev-dependencies]
 pollster = "0.4"
 
-# `unsafe` is allowed only in cache.rs (wgpu's pipeline cache takes driver bytes on trust), with a SAFETY: comment.
+# `unsafe` is allowed only in cache.rs (driver cache bytes, under a directory lock) and in lib.rs's `shader_module` (§4.3:
+# library modules without runtime checks), each with a SAFETY: comment. The public API has no `unsafe` function.
 [lints]
 workspace = true
 

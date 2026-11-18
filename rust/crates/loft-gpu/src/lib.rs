@@ -28,6 +28,21 @@
 //!   `first + j·k` in slot j of the resource (`first` = round(-from/dt), loft-core `kernel::kept`); readers pick and
 //!   replay. `Keep::Latest` steps live to n = floor((t - from)/dt) per frame and rewinds from the init. A step binds the
 //!   previous state in place of its resource and writes the next; step i sees a frame whose time is `from + i·dt`.
+//! - `Origin::Library` is the bundle writer's promise that the module holds no author text, that every index it makes is
+//!   in range (a `Fetch` clamps to `arrayLength`; constant tables are indexed by the host's own vertex counts) and that
+//!   every loop has a static bound. Such modules compile without Naga's runtime bounds and loop checks (§4.3). A module
+//!   with any author WGSL is `Origin::Author` and keeps every check.
+//!
+//! Many copies of one subject (Keel step 8) share one `Loft`: `instance()` per copy, `prepare` once per frame, and
+//! `draw_subject` into the game's own render pass, so there is no pass per copy:
+//!
+//! ```ignore
+//! let mut bosses: Vec<Instance> = (0..5).map(|_| loft.instance(&device, &queue)).collect::<Result<_, _>>()?;
+//! bosses[1].set_input(&loft, "at", &[4.0, 0.0, 0.0])?;
+//! loft.prepare(&queue, &mut encoder, &bosses);
+//! let mut pass = encoder.begin_render_pass(&game_pass);
+//! loft.draw_subject(&mut pass, canvas, &bosses)?;
+//! ```
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
 mod validate;
@@ -38,8 +53,8 @@ pub use validate::validate;
 
 use loft_ir::Error;
 use loft_ir::bundle::{
-    Blend, Body, Bundle, Clear, Cover, Id, Init, Keep, Kernel, Layer, Module, Proxy, Raster, RasterPrim, Shape, Target,
-    TexFormat, When,
+    Blend, Body, Bundle, Clear, Cover, Id, Init, Keep, Kernel, Layer, Module, Origin, Proxy, Raster, RasterPrim, Shape,
+    Target, TexFormat, When,
 };
 use loft_ir::identity::{FrameKey, Precision};
 use std::collections::HashMap;
@@ -75,6 +90,29 @@ pub struct View<'a> {
     pub size: [u32; 2],
     pub owner: Owner,
     pub layers: Layers,
+}
+
+/// One copy of a loaded subject (Keel step 8): its own time, params and inputs, and its own copy of every resource a
+/// `Frame` kernel writes. `Load` state, `Every` history and pipelines stay shared with the `Loft` it came from.
+pub struct Instance {
+    pub time: f32,
+    params: Vec<f32>,
+    inputs: Vec<f32>,
+    frame: Buffer,
+    g0: BindGroup,
+    g1: Vec<BindGroup>,
+    g2: Vec<BindGroup>,
+    _own: Vec<Res>,
+}
+impl Instance {
+    pub fn set_param(&mut self, loft: &Loft, name: &str, value: f32) -> Result<(), Error> {
+        self.params[loft.param_slot(name)?] = value;
+        Ok(())
+    }
+    pub fn set_input(&mut self, loft: &Loft, name: &str, value: &[f32]) -> Result<(), Error> {
+        self.inputs[loft.input_slot(name, value.len())?].copy_from_slice(value);
+        Ok(())
+    }
 }
 
 /// A resource on the device. A texture a pass draws into (`Target::Texture`) also owns that pass's depth; no other
@@ -144,6 +182,8 @@ struct Item {
 }
 
 type Key = (Option<TextureFormat>, TextureFormat, u32);
+/// The bind groups one copy of the subject dispatches with: (group 0, group 1 per module, group 2 per kernel).
+type Groups<'a> = (&'a BindGroup, &'a [BindGroup], &'a [BindGroup]);
 
 pub struct Loft {
     b: Bundle,
@@ -153,6 +193,8 @@ pub struct Loft {
     res: Vec<Res>,
     frame: Buffer,
     steps: Buffer,
+    bgl0: BindGroupLayout,
+    frame_size: u64,
     bgl1: Vec<BindGroupLayout>,
     bgl2: Vec<BindGroupLayout>,
     g0: [BindGroup; 2],
@@ -205,6 +247,51 @@ fn rows_of(b: &Bundle, r: Id) -> u32 {
 
 fn floats(f: &[f32]) -> Vec<u8> {
     f.iter().flat_map(|x| x.to_le_bytes()).collect()
+}
+
+fn binding(r: &Res) -> wgpu::BindingResource<'_> {
+    match r {
+        Res::Rows(buf) => buf.as_entire_binding(),
+        Res::Tex(t) | Res::Target { tex: t, .. } => wgpu::BindingResource::TextureView(&t.view),
+        Res::Frame => unreachable!("validated: group 1 and 2 never bind the frame"),
+    }
+}
+
+/// A bind group of `list`, binding k = `list[k]` as `at` resolves it (the loft's own, an instance's or a step state).
+fn group<'a>(
+    device: &wgpu::Device,
+    layout: &BindGroupLayout,
+    list: &[Id],
+    at: &dyn Fn(usize) -> wgpu::BindingResource<'a>,
+) -> BindGroup {
+    let entries: Vec<_> = list
+        .iter()
+        .enumerate()
+        .map(|(k, &r)| wgpu::BindGroupEntry { binding: k as u32, resource: at(r as usize) })
+        .collect();
+    device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
+}
+
+fn frame_bytes(time: f32, params: &[f32], inputs: &[f32]) -> Vec<u8> {
+    floats(&[&[time, 0.0, 0.0, 0.0][..], params, inputs].concat())
+}
+
+/// Library modules without Naga's runtime bounds and loop checks (§4.3); author modules with every check.
+#[allow(unsafe_code)]
+fn shader_module(device: &wgpu::Device, origin: Origin, wgsl: String) -> wgpu::ShaderModule {
+    let desc = wgpu::ShaderModuleDescriptor { label: None, source: wgpu::ShaderSource::Wgsl(wgsl.into()) };
+    match origin {
+        Origin::Author => device.create_shader_module(desc),
+        Origin::Library => {
+            let checks =
+                wgpu::ShaderRuntimeChecks { bounds_checks: false, force_loop_bounding: false, ..Default::default() };
+            // SAFETY: `Origin::Library` is the writer's promise (crate docs, the binding contract) that no index leaves
+            // its array and every loop is statically bounded: emit clamps each `Fetch` to `arrayLength`, loop counts
+            // are static, and constant tables are indexed by the vertex counts this host draws. Naga's integer-division
+            // guards are not a switch and stay; ray-query tracking keeps its default.
+            unsafe { device.create_shader_module_trusted(desc, checks) }
+        }
+    }
 }
 
 fn layout_entry(binding: u32, shape: &Shape, write: bool) -> wgpu::BindGroupLayoutEntry {
@@ -342,10 +429,7 @@ impl Loft {
             .iter()
             .map(|m| {
                 let text = std::str::from_utf8(&b.sections[m.wgsl as usize]).expect("validated UTF-8");
-                device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: None,
-                    source: wgpu::ShaderSource::Wgsl(format!("{}{text}", prelude(m, precision)).into()),
-                })
+                shader_module(device, m.origin, format!("{}{text}", prelude(m, precision)))
             })
             .collect();
         let name = |n: Id| &*b.names[n as usize];
@@ -494,6 +578,8 @@ impl Loft {
             canvases: canvases.to_vec(),
             frame,
             steps,
+            bgl0,
+            frame_size: frame_bytes,
             bgl1,
             bgl2,
             g0,
@@ -544,7 +630,7 @@ impl Loft {
         queue.write_buffer(&loft.frame, 0, &loft.frame_bytes(0.0));
         let load: Vec<usize> =
             (0..loft.b.kernels.len()).filter(|&k| matches!(loft.b.kernels[k].when, When::Load)).collect();
-        loft.dispatch_all(&mut enc, &load, None);
+        loft.dispatch_all(&mut enc, &load, None, &[loft.own()]);
         for s in 0..loft.steppers.len() {
             loft.precompute(queue, &mut enc, s);
         }
@@ -620,38 +706,29 @@ impl Loft {
 
     /// Every group 1 and group 2 bind group, and the steppers' (after a resize remade view-sized textures).
     fn bind(&mut self, device: &wgpu::Device) {
-        fn entry<'a>(res: &'a [Res], k: usize, r: Id, sub: Option<(usize, &'a Buffer)>) -> wgpu::BindGroupEntry<'a> {
-            let resource = match (&res[r as usize], sub) {
-                (_, Some((s, buf))) if s == r as usize => buf.as_entire_binding(),
-                (Res::Rows(buf), _) => buf.as_entire_binding(),
-                (Res::Tex(t) | Res::Target { tex: t, .. }, _) => wgpu::BindingResource::TextureView(&t.view),
-                (Res::Frame, _) => unreachable!("validated: group 1 and 2 never bind the frame"),
-            };
-            wgpu::BindGroupEntry { binding: k as u32, resource }
-        }
-        let group = |layout: &BindGroupLayout, list: &[Id], sub: Option<(usize, &Buffer)>| {
-            let entries: Vec<_> = list.iter().enumerate().map(|(k, &r)| entry(&self.res, k, r, sub)).collect();
-            device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
-        };
-        let g1 = self.b.modules.iter().zip(&self.bgl1).map(|(m, l)| group(l, &m.reads, None)).collect();
-        let g2 = self.b.kernels.iter().zip(&self.bgl2).map(|(k, l)| group(l, &k.writes, None)).collect();
-        let steppers: Vec<_> = self
+        let this = &*self;
+        let own = |r: usize| binding(&this.res[r]);
+        let g1 = this.b.modules.iter().zip(&this.bgl1).map(|(m, l)| group(device, l, &m.reads, &own)).collect();
+        let g2 = this.b.kernels.iter().zip(&this.bgl2).map(|(k, l)| group(device, l, &k.writes, &own)).collect();
+        let steppers: Vec<Vec<_>> = this
             .steppers
             .iter()
             .map(|st| {
-                let k = &self.b.kernels[st.kernel];
+                let k = &this.b.kernels[st.kernel];
                 let m = entry_of(k).0 as usize;
-                // Parity p = i % 2 of step i: it reads x[1 - p] and writes x[p].
+                // Parity p = i % 2 of step i: it reads x[1 - p] and writes x[p] in place of its resource.
                 (0..2)
                     .map(|p| {
+                        let reads = |r: usize| if r == st.res { st.x[1 - p].as_entire_binding() } else { own(r) };
+                        let writes = |r: usize| if r == st.res { st.x[p].as_entire_binding() } else { own(r) };
                         (
-                            group(&self.bgl1[m], &self.b.modules[m].reads, Some((st.res, &st.x[1 - p]))),
-                            group(&self.bgl2[st.kernel], &k.writes, Some((st.res, &st.x[p]))),
+                            group(device, &this.bgl1[m], &this.b.modules[m].reads, &reads),
+                            group(device, &this.bgl2[st.kernel], &k.writes, &writes),
                         )
                     })
                     .collect()
             })
-            .collect::<Vec<_>>();
+            .collect();
         (self.g1, self.g2) = (g1, g2);
         for (st, g) in self.steppers.iter_mut().zip(steppers) {
             st.groups = g;
@@ -677,21 +754,39 @@ impl Loft {
         }
     }
 
-    fn dispatch(&self, pass: &mut wgpu::ComputePass, k: usize, g0: (usize, u32), groups: (&BindGroup, &BindGroup)) {
+    fn dispatch(
+        &self,
+        pass: &mut wgpu::ComputePass,
+        k: usize,
+        g0: (&BindGroup, u32),
+        groups: (&BindGroup, &BindGroup),
+    ) {
         let [x, y, z] = match self.b.kernels[k].body {
             Body::Map { rows, .. } => [rows.div_ceil(64), 1, 1],
             Body::Scan { .. } => [1, 1, 1],
             Body::Raw { dispatch, .. } => dispatch,
         };
         pass.set_pipeline(&self.compute[k]);
-        pass.set_bind_group(0, &self.g0[g0.0], &[g0.1]);
+        pass.set_bind_group(0, g0.0, &[g0.1]);
         pass.set_bind_group(1, groups.0, &[]);
         pass.set_bind_group(2, groups.1, &[]);
         pass.dispatch_workgroups(x, y, z);
     }
 
-    fn dispatch_all(&self, enc: &mut wgpu::CommandEncoder, kernels: &[usize], timestamps: Option<&wgpu::QuerySet>) {
-        if kernels.is_empty() {
+    /// The loft's own bind groups: frame at group 0 (offset 0), group 1 per module, group 2 per kernel.
+    fn own(&self) -> Groups<'_> {
+        (&self.g0[0], &self.g1, &self.g2)
+    }
+
+    /// One compute pass: `kernels` in order for each set of bind groups (the loft's own, or one per instance).
+    fn dispatch_all(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        kernels: &[usize],
+        timestamps: Option<&wgpu::QuerySet>,
+        sets: &[Groups],
+    ) {
+        if kernels.is_empty() || sets.is_empty() {
             return;
         }
         let timestamp_writes = timestamps.map(|query_set| wgpu::ComputePassTimestampWrites {
@@ -701,8 +796,10 @@ impl Loft {
         });
         let mut pass =
             enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft kernels"), timestamp_writes });
-        for &k in kernels {
-            self.dispatch(&mut pass, k, (0, 0), (&self.g1[entry_of(&self.b.kernels[k]).0 as usize], &self.g2[k]));
+        for &(g0, g1, g2) in sets {
+            for &k in kernels {
+                self.dispatch(&mut pass, k, (g0, 0), (&g1[entry_of(&self.b.kernels[k]).0 as usize], &g2[k]));
+            }
         }
     }
 
@@ -717,7 +814,7 @@ impl Loft {
     }
 
     fn frame_bytes(&self, time: f32) -> Vec<u8> {
-        floats(&[&[time, 0.0, 0.0, 0.0][..], &self.params, &self.inputs].concat())
+        frame_bytes(time, &self.params, &self.inputs)
     }
 
     /// Steps `s` from state `from` to `to` in one compute pass (state i ends in `x[i % 2]`).
@@ -729,7 +826,7 @@ impl Loft {
             self.step_frame(queue, st, i);
             let (g1, g2) = &st.groups[(i % 2) as usize];
             let offset = ((st.base + u64::from(i)) * self.stride()) as u32;
-            self.dispatch(&mut pass, st.kernel, (1, offset), (g1, g2));
+            self.dispatch(&mut pass, st.kernel, (&self.g0[1], offset), (g1, g2));
         }
     }
 
@@ -783,20 +880,26 @@ impl Loft {
     }
     /// A param by name; `min` and `max` are for editors and do not clamp.
     pub fn set_param(&mut self, name: &str, value: f32) -> Result<(), Error> {
-        let (k, _) = self.named(&self.b.params, |p| p.name, name, "param")?;
+        let k = self.param_slot(name)?;
         self.params[k] = value;
         Ok(())
     }
     /// An input by name, as many floats as its type (a host camera writes the view camera's inputs).
     pub fn set_input(&mut self, name: &str, value: &[f32]) -> Result<(), Error> {
-        let (k, d) = self.named(&self.b.inputs, |i| i.name, name, "input")?;
-        if value.len() != d.def.len() {
-            return Err(Error::Usage(
-                format!("input \"{name}\" takes {} floats, given {}", d.def.len(), value.len()).into(),
-            ));
-        }
-        self.inputs[k * 4..k * 4 + value.len()].copy_from_slice(value);
+        let at = self.input_slot(name, value.len())?;
+        self.inputs[at].copy_from_slice(value);
         Ok(())
+    }
+    fn param_slot(&self, name: &str) -> Result<usize, Error> {
+        self.named(&self.b.params, |p| p.name, name, "param").map(|(k, _)| k)
+    }
+    /// Where an input of `n` floats lives in the inputs array.
+    fn input_slot(&self, name: &str, n: usize) -> Result<std::ops::Range<usize>, Error> {
+        let (k, d) = self.named(&self.b.inputs, |i| i.name, name, "input")?;
+        match n == d.def.len() {
+            true => Ok(k * 4..k * 4 + n),
+            false => Err(Error::Usage(format!("input \"{name}\" takes {} floats, given {n}", d.def.len()).into())),
+        }
     }
     /// Measuring: a query set of `2 + 2·passes` timestamps: the kernel pass at 0 and 1, render pass k at `2 + 2k`,
     /// `3 + 2k`. Resolve them only after the frame completes (Metal: a resolve in the next submit read stale ends).
@@ -853,9 +956,7 @@ impl Loft {
             self.bind(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        let frame: Vec<usize> =
-            (0..self.b.kernels.len()).filter(|&k| matches!(self.b.kernels[k].when, When::Frame)).collect();
-        self.dispatch_all(enc, &frame, self.timestamps.as_ref());
+        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
             let Keep::Latest = st.s.keep else { continue };
@@ -865,7 +966,7 @@ impl Loft {
                 let init = self.b.resources[st.res].init.clone();
                 self.init(queue, enc, st.res, &init);
                 if let Init::By(k) = init {
-                    self.dispatch_all(enc, &[k as usize], None);
+                    self.dispatch_all(enc, &[k as usize], None, &[self.own()]);
                 }
                 self.steppers[s].done = 0;
             }
@@ -953,6 +1054,121 @@ impl Loft {
             }
         }
         Ok(())
+    }
+}
+
+impl Loft {
+    // ---- many instances (Keel step 8) ------------------------------------------------------------------------------
+
+    /// A new copy at this loft's current time, params and inputs. Refused when a copy would share per-frame state it
+    /// cannot share: a live (`Keep::Latest`) stepped kernel, an offscreen pass, or a view-sized `Frame` write.
+    pub fn instance(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Instance, Error> {
+        let live = self
+            .steppers
+            .iter()
+            .find(|st| st.s.keep == Keep::Latest)
+            .map(|st| format!("kernel {} steps live", st.kernel));
+        let offscreen = self
+            .b
+            .passes
+            .iter()
+            .position(|p| !matches!(p.target, Target::View))
+            .map(|p| format!("pass {p} draws offscreen"));
+        let frame: Vec<usize> = self.frame_kernels();
+        let written = |r: usize| frame.iter().any(|&k| self.b.kernels[k].writes.contains(&(r as Id)));
+        let sized = (0..self.res.len())
+            .find(|&r| written(r) && matches!(self.b.resources[r].shape, Shape::ViewSized { .. }))
+            .map(|r| format!("frame kernels write view-sized resource {r}"));
+        if let Some(why) = live.or(offscreen).or(sized) {
+            return Err(Error::Usage(
+                format!("this bundle cannot be instanced: {why}, which every copy would share. Fix: draw it with encode_into").into(),
+            ));
+        }
+        let frame_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("loft instance frame"),
+            size: self.frame_size.max(STEP_STRIDE),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let g0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("loft instance frame"),
+            layout: &self.bgl0,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &frame_buf,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(self.frame_size),
+                }),
+            }],
+        });
+        let own: Vec<(usize, Res)> =
+            (0..self.res.len()).filter(|&r| written(r)).map(|r| (r, self.resource(device, r))).collect();
+        // A copy starts as the loft's resource is now (its init, or the last frame), not as zeros.
+        let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft instance") });
+        for (r, copy) in &own {
+            match (&self.res[*r], copy) {
+                (Res::Rows(a), Res::Rows(b)) => enc.copy_buffer_to_buffer(a, 0, b, 0, None),
+                (Res::Tex(a) | Res::Target { tex: a, .. }, Res::Tex(b) | Res::Target { tex: b, .. }) => {
+                    enc.copy_texture_to_texture(a.tex.as_image_copy(), b.tex.as_image_copy(), a.tex.size())
+                }
+                (Res::Rows(_) | Res::Tex(_) | Res::Target { .. } | Res::Frame, _) => {
+                    unreachable!("a copy has its resource's shape, and kernels never write the frame")
+                }
+            }
+        }
+        queue.submit([enc.finish()]);
+        let at = |r: usize| binding(own.iter().find(|(o, _)| *o == r).map_or(&self.res[r], |(_, res)| res));
+        let g1 = self.b.modules.iter().zip(&self.bgl1).map(|(m, l)| group(device, l, &m.reads, &at)).collect();
+        let g2 = self.b.kernels.iter().zip(&self.bgl2).map(|(k, l)| group(device, l, &k.writes, &at)).collect();
+        Ok(Instance {
+            time: self.time,
+            params: self.params.clone(),
+            inputs: self.inputs.clone(),
+            frame: frame_buf,
+            g0,
+            g1,
+            g2,
+            _own: own.into_iter().map(|(_, res)| res).collect(),
+        })
+    }
+
+    /// Writes each instance's frame and runs the `Frame` kernels for all of them in one compute pass (timestamps 0 and 1
+    /// when set). Call once per frame before `draw_subject`.
+    pub fn prepare(&self, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, instances: &[Instance]) {
+        for i in instances {
+            queue.write_buffer(&i.frame, 0, &frame_bytes(i.time, &i.params, &i.inputs));
+        }
+        let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1[..], &i.g2[..])).collect();
+        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
+    }
+
+    /// Records every instance's subject draws of the view passes into the caller's render pass, whose attachments are
+    /// `canvas` (loaded at `Loft::load`). Each draw's pipeline is set once for all instances.
+    pub fn draw_subject(&self, rp: &mut wgpu::RenderPass, canvas: Canvas, instances: &[Instance]) -> Result<(), Error> {
+        if !self.canvases.contains(&canvas) {
+            return Err(Error::Usage(format!("{canvas:?} was not loaded: pass it to Loft::load").into()));
+        }
+        let key = (Some(canvas.color), canvas.depth, canvas.samples);
+        // `instance()` refused offscreen passes, so every pass draws to the view.
+        for &it in self.pass_items.iter().flatten() {
+            let item = &self.items[it];
+            match item.layer {
+                Layer::Surroundings => continue,
+                Layer::Subject => {}
+            }
+            rp.set_pipeline(&self.render[&(it, key)]);
+            for i in instances {
+                rp.set_bind_group(0, &i.g0, &[0]);
+                rp.set_bind_group(1, &i.g1[item.module as usize], &[]);
+                rp.draw(0..item.count[0], 0..item.count[1]);
+            }
+        }
+        Ok(())
+    }
+
+    fn frame_kernels(&self) -> Vec<usize> {
+        (0..self.b.kernels.len()).filter(|&k| matches!(self.b.kernels[k].when, When::Frame)).collect()
     }
 }
 

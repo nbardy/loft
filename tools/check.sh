@@ -81,6 +81,8 @@ static_checks() {
   static_job layers check_layers
   static_job test-layout check_test_layout
   static_job sh-syntax bash -c 'for f in tools/*.sh tools/lib/*.sh; do bash -n "$f" || exit 1; done'
+  # Exit 2 (no Keel checkout on this machine) is a named skip, printed with its reason; a mismatch (1) fails.
+  static_job pins bash -c 'tools/check_pins.sh && exit 0; c=$?; [[ $c -eq 2 ]] && { echo "pins: SKIPPED (no Keel lock)"; exit 0; }; exit $c'
   # rustfmt one member per job (Keel 2026-11-01: --all as one job was the critical path, 12.0 s against 3.1 s sharded).
   for member in $(members); do static_job "fmt-$member" cargo fmt --check -p "$member"; done
   for pid in "${STATIC_PIDS[@]}"; do wait "$pid" || true; done

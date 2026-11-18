@@ -6,6 +6,8 @@ use loft_ir::bundle::*;
 use loft_ir::error::{LoadFault, SceneFault};
 use loft_ir::identity::Precision;
 
+mod instances;
+
 const PRE: &str = "struct Frame { time: f32, params: array<vec4<f32>, 1>, inputs: array<vec4<f32>, 1> }
 @group(0) @binding(0) var<uniform> frame: Frame;
 ";
