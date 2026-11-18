@@ -9,8 +9,10 @@ For the same ground written for a model, with the whole list of exports, run `lo
 
 ## Three ideas
 
-1. **You write expressions, not numbers.** `add(a, b)`, `sin(time)`, `vec3(x, y, z)` build a graph. The compiler emits
-   it twice: as WGSL for the GPU and as JavaScript for the CPU, so the checks measure exactly what is drawn.
+1. **You write expressions, not numbers.** The maths of a function (a spine, a girth, paint, a field) is WGSL text in
+   a `wgsl` template; the structure (which things, where, the cameras, the checks) is TypeScript. Both build one graph.
+   The compiler emits it twice: as WGSL for the GPU and as JavaScript for the CPU, so the checks measure exactly what
+   is drawn.
 2. **A body is a coordinate system.** A swept body has coordinates (m along it from 0 to 1, v round it). Paint, fins,
    foam and the place a part is attached are functions of those coordinates, so they move with the body for free.
 3. **Time is an argument.** `time` is an input like any other. Motion is a closed-form function of it, so any frame
@@ -31,16 +33,14 @@ Put this in `examples/reed.ts` (a scene is a module whose default export is a `s
 
 ```ts run
 // examples/reed.ts
-import { add, mul, scene, plane, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
+import { plane, scene, strand, toon, wgsl } from "../src/index.ts";
 
-const reed = strand({
-  name: "reed",
-  // The centre line, one point for every m from 0 (root) to 1 (tip). The tip sways with time.
-  spine: (m: F) => vec3(mul(mul(m, m), mul(sin(time), 0.6)), mul(m, 4), 0),
-  girth: (m: F) => add(0.25, mul(m, -0.2)),
-  tips: ["open", "point"],
-  paint: [0.85, 0.55, 0.2],
-});
+const shape = wgsl`
+// The centre line, one point for every m from 0 (root) to 1 (tip). The tip sways with time.
+fn spine(m: f32) -> vec3f { return vec3(m * m * sin(time) * 0.6, m * 4.0, 0.0); }
+fn girth(m: f32) -> f32 { return 0.25 - 0.2 * m; }`;
+
+const reed = strand({ name: "reed", spine: shape.spine, girth: shape.girth, tips: ["open", "point"], paint: [0.85, 0.55, 0.2] });
 
 export default scene({
   ground: plane,
@@ -64,74 +64,6 @@ page on port 5173 with orbit, the scene's cameras, a time bar and a slider for e
 Every command prints its timings and an `rgba` hash of each frame, so two versions of a picture can be compared exactly.
 
 Today a scene must have a sea (see "The ground" below).
-
-## Rendering precision
-
-Scenes default to `f32`. Use the same `--precision mixed` switch for `build`, `render`, `frames`, `clip`, `profile`
-or `dev`. The renderer reports `mixed` when the device grants `shader-f16` and `f32-fallback` otherwise. A mixed build
-is portable. Its manifest carries both choices, and `render --artefact` selects at load. To force full precision for
-a comparison, pass `--precision f32`.
-
-```sh
-loft build examples/mixed_precision.ts --precision mixed --out out/copper
-loft render --artefact out/copper --views three --out out/copper.webp
-```
-
-For a static colour, normal-map or paint-channel lookup, use `tabulate(name, fn, n, "static-shading")`. This gives
-the compiler permission to store its samples in half precision in a mixed build. Samples must be finite and within
-`[-1, 1]`. Lookup indices and interpolation are f32. Use `"static"` for geometry, signed distances, or general numeric
-and HDR data. The example uses a 256-sample palette. Its GPU buffer occupies 2 KiB in mixed and 4 KiB in f32.
-
-Built-in bloom and grain use f16 for bounded colour arithmetic at ordinary gains. Soft media use it for bounded lighting weights.
-Ray geometry, optical depth, HDR lighting, geometric normals, camera transforms, time, depth, and arbitrary author
-expressions keep f32. Small lookup errors can be amplified by sharp material thresholds, so compare the look in
-both modes when deciding whether a lookup qualifies.
-
-## Adding a shape
-
-A shape is a function. The library has a few families, each a short composition over the level below, so leaving one
-is a step down and not a rewrite. `spiralTube` is a tapered tube on a logarithmic spiral; `spiralLine` is its centre
-line and radius in the form `strand` takes, so you can keep the curve and change the rest.
-
-```ts run
-import { add, cos, draw, mul, scene, plane, sin, spacing, spiralLine, spiralTube, strand, surface, toon, vec3, TAU, type F } from "../src/index.ts";
-
-// A spiral tube: one law ties the curl to the taper (read its doc comment for what it cannot do).
-const frond = spiralTube({ name: "frond", length: 5, curl: 2.4, taper: 0.2, girth: 0.3, out: [0, 1, 0], toward: [1, 0, 0], paint: [0.3, 0.6, 0.35] });
-
-// One step down: the same kind of centre line, another radius law (a club that swells near the tip).
-const line = spiralLine({ length: 4, curl: 1.2, taper: 0.5, girth: 0.25, out: [0, 1, 0], toward: [-1, 0, 0] });
-const club = strand({
-  name: "club",
-  spine: (m: F) => add(line.spine(m), vec3(-3, 0, 0)),
-  girth: (m: F) => mul(line.girth(m), add(1, mul(sin(mul(m, Math.PI)), 1.5))),
-  up: line.up,
-  tips: ["open", "round"],
-  paint: [0.8, 0.5, 0.3],
-});
-
-// Any function of (u, v) is a surface: here a bowl, a profile turned round the y axis.
-const bowl = surface((u: F, v: F) => {
-  const r = add(0.4, mul(sin(mul(u, 1.4)), 1.2)), a = mul(v, TAU);
-  return vec3(add(mul(r, cos(a)), 3), add(mul(u, 1.5), 0.2), mul(r, sin(a)));
-}, { u: ["cap", "free"], v: "periodic" });
-
-export default scene({
-  ground: plane,
-  things: [frond, club, draw.surface("bowl", bowl, { paint: () => vec3(0.9, 0.85, 0.7), grid: { u: spacing.even(24), v: spacing.even(32) }, sides: "two", outline: "border" })],
-  style: toon(),
-  sun: [-0.4, 0.8, 0.45],
-  cameras: { three: { kind: "perspective", eye: [4, 6, 12], target: [0, 1.5, 0], fovY: 0.7 } },
-});
-```
-
-The families: `strand` (any centre line, girth, section and twist), `spiralTube` and `shell` (spirals), `limb` (a chain
-of segments reaching a target), `fan` and `crest` (sheets), `surface`, `lathe`, `extrude`, `sheet`, `loft` (maps of
-(u, v)), `draw.field` (a distance function traced per pixel, for folded and recursive solids), `draw.relief` (fine
-form on a surface), `impostors` and `drawCopies` (many small solids), and `hull` and `ship`. Examples:
-`examples/serpent.ts` (a swept body with parts placed on it), `examples/shell.ts` (a surface written directly),
-`examples/coral.ts` and `examples/nest.ts` (traced folds), `examples/shell_relief.ts` (relief), `examples/brig.ts`
-(a ship from numbers).
 
 ## Maths as WGSL text: `wgsl`
 
@@ -166,7 +98,8 @@ export default scene({
   early `return`, swizzles (`p.zxy`, `v.xz = ...`) and operator precedence.
 - **Names in scope**, in order: locals; the module's own `fn`s, `struct`s and `const`s; holes; `time`; the library's
   expression functions by their exported names (`noise3`, `hash22`, `sdRoundBox`, `smin`, `fold3`, `mod`, ...).
-  `gradient(h, p)` differentiates `h` with respect to the vector `p`.
+  `gradient(h, p)` differentiates `h` with respect to the vector `p`. `loft context` prints every builtin and prelude
+  name.
 - **Holes** bring in what the text cannot name: `${param("reach", 1.2, { min: 0.8, max: 1.6 })}`, an input, a solved
   curve, a TypeScript function of expressions (callable in the text), a number or an array (a constant). A string is
   refused: the template splices values, never text. `wgsl(source)` reads text kept in a file.
@@ -191,6 +124,75 @@ export default scene({
 - **Seeing what the GPU compiles.** `loft show examples/eel.ts` lists the scene's shader modules; `--thing eel` prints
   the ones for the eel in full. Each statement lowered from your text ends with its line (`/* eel.ts:9 girth */`), each
   line of a raw function with its line (`// eel.ts:16`), and a comment says who wrote each chunk.
+- **Call form** is the same graph built from TypeScript calls (`add(a, b)`, `mul`, `sin(time)`, `vec3(x, y, z)`,
+  `select`, `iterate`); text lowers to exactly these constructors. Use it where TypeScript does the work: `.map` over
+  legs, a list of stations, a helper generic over any vector size, `solve` specs. The library itself is written in it,
+  so `loft api <name>` shows a function's TypeScript signature; text calls it with the same arguments.
+
+## Rendering precision
+
+Scenes default to `f32`. Use the same `--precision mixed` switch for `build`, `render`, `frames`, `clip`, `profile`
+or `dev`. The renderer reports `mixed` when the device grants `shader-f16` and `f32-fallback` otherwise. A mixed build
+is portable. Its manifest carries both choices, and `render --artefact` selects at load. To force full precision for
+a comparison, pass `--precision f32`.
+
+```sh
+loft build examples/mixed_precision.ts --precision mixed --out out/copper
+loft render --artefact out/copper --views three --out out/copper.webp
+```
+
+For a static colour, normal-map or paint-channel lookup, use `tabulate(name, fn, n, "static-shading")`. This gives
+the compiler permission to store its samples in half precision in a mixed build. Samples must be finite and within
+`[-1, 1]`. Lookup indices and interpolation are f32. Use `"static"` for geometry, signed distances, or general numeric
+and HDR data. The example uses a 256-sample palette. Its GPU buffer occupies 2 KiB in mixed and 4 KiB in f32.
+
+Built-in bloom and grain use f16 for bounded colour arithmetic at ordinary gains. Soft media use it for bounded lighting weights.
+Ray geometry, optical depth, HDR lighting, geometric normals, camera transforms, time, depth, and arbitrary author
+expressions keep f32. Small lookup errors can be amplified by sharp material thresholds, so compare the look in
+both modes when deciding whether a lookup qualifies.
+
+## Adding a shape
+
+A shape is a function. The library has a few families, each a short composition over the level below, so leaving one
+is a step down and not a rewrite. `spiralTube` is a tapered tube on a logarithmic spiral; `spiralLine` is its centre
+line and radius in the form `strand` takes, so you can keep the curve and change the rest.
+
+```ts run
+import { draw, scene, plane, spacing, spiralLine, spiralTube, strand, surface, toon, vec3, wgsl } from "../src/index.ts";
+
+// A spiral tube: one law ties the curl to the taper (read its doc comment for what it cannot do).
+const frond = spiralTube({ name: "frond", length: 5, curl: 2.4, taper: 0.2, girth: 0.3, out: [0, 1, 0], toward: [1, 0, 0], paint: [0.3, 0.6, 0.35] });
+
+// One step down: the same kind of centre line, another radius law (a club that swells near the tip).
+// The library's line comes into the text through holes, as functions.
+const line = spiralLine({ length: 4, curl: 1.2, taper: 0.5, girth: 0.25, out: [0, 1, 0], toward: [-1, 0, 0] });
+const club = wgsl`
+fn spine(m: f32) -> vec3f { return ${line.spine}(m) + vec3(-3.0, 0.0, 0.0); }
+fn girth(m: f32) -> f32 { return ${line.girth}(m) * (1.0 + 1.5 * sin(m * 3.14159265)); }
+// Any function of (u, v) is a surface: here a bowl, a profile turned round the y axis.
+fn bowl(u: f32, v: f32) -> vec3f {
+  let r = 0.4 + 1.2 * sin(1.4 * u);
+  let a = 6.2831853 * v;
+  return vec3(r * cos(a) + 3.0, 1.5 * u + 0.2, r * sin(a));
+}`;
+const bowl = surface(club.bowl, { u: ["cap", "free"], v: "periodic" });
+
+export default scene({
+  ground: plane,
+  things: [frond, strand({ name: "club", spine: club.spine, girth: club.girth, up: line.up, tips: ["open", "round"], paint: [0.8, 0.5, 0.3] }), draw.surface("bowl", bowl, { paint: () => vec3(0.9, 0.85, 0.7), grid: { u: spacing.even(24), v: spacing.even(32) }, sides: "two", outline: "border" })],
+  style: toon(),
+  sun: [-0.4, 0.8, 0.45],
+  cameras: { three: { kind: "perspective", eye: [4, 6, 12], target: [0, 1.5, 0], fovY: 0.7 } },
+});
+```
+
+The families: `strand` (any centre line, girth, section and twist), `spiralTube` and `shell` (spirals), `limb` (a chain
+of segments reaching a target), `fan` and `crest` (sheets), `surface`, `lathe`, `extrude`, `sheet`, `loft` (maps of
+(u, v)), `draw.field` (a distance function traced per pixel, for folded and recursive solids), `draw.relief` (fine
+form on a surface), `impostors` and `drawCopies` (many small solids), and `hull` and `ship`. Examples:
+`examples/serpent.ts` (a swept body with parts placed on it), `examples/shell.ts` (a surface written directly),
+`examples/coral.ts` and `examples/nest.ts` (traced folds), `examples/shell_relief.ts` (relief), `examples/brig.ts`
+(a ship from numbers).
 
 ## Adding motion
 
@@ -199,7 +201,7 @@ Motion is a function of `time`. The library's motion helpers are the twelve prin
 overshoots, loose parts that arrive late and swing on, and a hold that never quite holds still.
 
 ```ts run
-import { add, alive, anticipated, beats, dragged, mod, mul, scene, plane, sin, strand, swing, time, toon, vec3, type F } from "../src/index.ts";
+import { add, alive, anticipated, beats, dragged, mod, mul, scene, plane, strand, swing, time, toon, wgsl } from "../src/index.ts";
 
 // Every 4 seconds: a 0.8 s wind-up, a 0.2 s bow, then 1.5 s to settle.
 const b = beats(mod(time, 4), { anticipate: 0.8, act: 0.2, settle: 1.5 });
@@ -207,14 +209,12 @@ const b = beats(mod(time, 4), { anticipate: 0.8, act: 0.2, settle: 1.5 });
 const lean = add(add(mul(anticipated(b.anticipate), -0.3), mul(b.act, 1.0)), add(mul(b.settle, -1.0), swing(b.after, 0.4)));
 const bend = add(lean, alive(time, 0.05, 1));
 
-const stalk = strand({
-  name: "stalk",
-  // The tip reads a later clock than the root (drag): its sway arrives late.
-  spine: (m: F) => vec3(mul(mul(m, m), add(mul(bend, 3), mul(sin(dragged(time, m, 0.4)), 0.15))), mul(m, 4), 0),
-  girth: (m: F) => add(0.3, mul(m, -0.22)),
-  tips: ["open", "round"],
-  paint: [0.4, 0.55, 0.85],
-});
+// The timing above is structure, composed in TypeScript; the body is maths, in text. `bend` and `dragged` come in
+// through holes: the tip reads a later clock than the root (drag), so its sway arrives late.
+const shape = wgsl`
+fn spine(m: f32) -> vec3f { return vec3(m * m * (3.0 * ${bend} + 0.15 * sin(${dragged}(time, m, 0.4))), 4.0 * m, 0.0); }
+fn girth(m: f32) -> f32 { return 0.3 - 0.22 * m; }`;
+const stalk = strand({ name: "stalk", spine: shape.spine, girth: shape.girth, tips: ["open", "round"], paint: [0.4, 0.55, 0.85] });
 
 export default scene({
   ground: plane,
@@ -518,8 +518,11 @@ is extinction per world unit. You can pass a constant, an expression, or a `(p)`
 Loft clamps extinction and emission at zero and albedo to [0, 1]. Emission is radiance per unit extinction, so a
 sample with zero density contributes no colour.
 
-```ts
-draw.volume("dust", (p) => max(0, noise3(sub(p, vec3(time, 0, 0)))), {
+```ts check
+import { draw, wgsl } from "../src/index.ts";
+
+const fx = wgsl`fn dust(p: vec3f) -> f32 { return max(0.0, noise3(p - vec3(time, 0.0, 0.0))); }`;
+export const dust = draw.volume("dust", fx.dust, {
   bounds: { min: [-3, 0, -2], max: [3, 4, 2] },
   steps: 64,
   albedo: [0.98, 0.72, 0.46],
@@ -542,22 +545,20 @@ analytic gradients or finite differences for sample-local derivatives.
 ### Many small specks on your own paths
 
 `draw.points(name, count, speck, options?)` draws `count` specks; `speck(i)` returns each one's world centre,
-radius, colour and opacity. The index is fixed for each speck: hash it for stable variation, and write the path
-(ballistics, drag, a fan, an orbit) as your own equation of `time`. A WGSL function returning a struct with those
-four fields fills the slot too (`examples/dust_veil.ts`).
+radius, colour and opacity: a struct with those four fields, or a TypeScript record of them. The index is fixed for
+each speck: hash it for stable variation, and write the path (ballistics, drag, a fan, an orbit) as your own equation
+of `time`.
 
 ```ts check
-import { draw, hash22, mix, mul, time, vec2, vec3 } from "../src/index.ts";
+import { draw, wgsl } from "../src/index.ts";
 
-const dust = draw.points("dust", 100_000, (i) => {
-  const h = hash22(vec2(i, 7));
-  return {
-    at: vec3(mul(time, mix(0.5, 4, h.x)), mul(time, mix(1, 2, h.y)), 0),
-    radius: mix(0.002, 0.008, h.y),
-    colour: [0.68, 0.27, 0.12],
-    opacity: 0.4,
-  };
-}, { stretch: 0.005 });
+const fx = wgsl`
+struct Speck { at: vec3f, radius: f32, colour: vec3f, opacity: f32 }
+fn speck(i: f32) -> Speck {
+  let h = hash22(vec2(i, 7.0));
+  return Speck(vec3(time * mix(0.5, 4.0, h.x), time * mix(1.0, 2.0, h.y), 0.0), mix(0.002, 0.008, h.y), vec3(0.68, 0.27, 0.12), 0.4);
+}`;
+export const grains = draw.points("grains", 100_000, fx.speck, { stretch: 0.005 });
 ```
 
 Radius is in world units. A zero radius or opacity hides a speck, and a speck under a plane or swell is clipped

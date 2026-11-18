@@ -44,6 +44,15 @@ Open types: a shape is a function whose signature says how it can be drawn (sect
 Everything is built on the map algebra of section 7: shapes are functions over `Expr`, drawn by one generic drawable
 per signature. The names below are the library on top of it.
 
+**Text first (lane L8, 18 Nov 2026).** An author writes the maths of a function (a spine, a girth, paint, a field) as
+WGSL in a `wgsl` module (2.7) and the structure (which things, where, the cameras, the checks) in TypeScript. Text
+lowers per call into the same interned graph, so nothing downstream can tell the two apart: the guide's first scene,
+its shapes and its motion moved to text and draw pixel-identical frames (`rgba` equal at every time tried). The call
+form below stays the meta-language: the library is written in it, and so is anything TypeScript does better (`.map`
+over parts, generic helpers, `solve` specs). `loft context` teaches text first and prints the subset's builtins and
+the prelude from the lowerer's own tables (`src/cli/context.ts`), so its list cannot drift from what lowers; its size
+is held to a word budget by `tests/context.test.ts`. The example below is call form, as the library's own code is.
+
 ```ts
 import { crest, draw, keys, on, palette, param, place, points, scene, sea, strand, through, toon, vec3, wave } from "loft";
 
@@ -309,8 +318,9 @@ Rules the code keeps, each where it bites:
 - **Sites.** Each node first built from text records `file:line fn` off the interned key (`siteOfNode`); `emitWgsl`
   takes an optional comment callback that ends a statement with it (for `loft show`, lane L4, below).
 
-Not built here: holes holding functions or records inside raw text, and raw code calling prelude functions directly
-(refused with the fix: wrap it in a graph function of the module), both for lane L6; integer graph types (phase 2).
+Not built here: raw code calling prelude functions directly (refused with the fix: wrap it in a graph function of the
+module); integer graph types (phase 2). Holes holding functions inside raw text came with lane L6 (section 18, "One
+escape ladder").
 `wgslFn` and `src/lib/wgsl.ts` are gone (lane L5): the library's own screen facts (`fwidth`, `view_dir`, `pixel_world`,
 the eye) are one-line raw functions in `src/lib/screen.ts`, and its multi-function WGSL helpers (the sea's contact band,
 papercraft's facets) are `LibFn` values, since they read compiler-owned `loft_` names that text refuses.
