@@ -374,7 +374,9 @@ name = "loft-core"
 version = "0.1.0"
 dependencies = [
  "libm",
+ "loft-ir",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

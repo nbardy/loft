@@ -3,3 +3,5 @@ pub mod grad;
 pub mod interval;
 pub mod prim;
 pub mod tape;
+pub mod cache;
+pub mod check;

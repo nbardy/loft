@@ -6,6 +6,7 @@ use loft_core::interval::{I, enclose};
 use loft_core::prim::{ATOMS, Atom, PRIMS, Prim, TyRule, atom};
 use loft_core::tape::{Id, Ins, Ssa, run};
 use serde_json::Value;
+mod analyses;
 
 const ALL_ATOMS: [Atom; 40] = {
     use Atom::*;
