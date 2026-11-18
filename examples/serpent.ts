@@ -272,6 +272,8 @@ const head = swimming.head.skeleton;
 export const headClearance = min(...Array.from({ length: head.joints }, (_, k) => { const j = head.joint(k); return sub(sub(j.p.y, j.r), ocean.height(j.p.xz, time)); }) as [Expr<"f32">, Expr<"f32">]);
 
 export const checks = [
-  // For every neck rise in [2.5, 4.5] and every instant of ten seconds, the head stays out of the water.
-  always([rise, 2.5, 4.5], always([time, 0, 10], ge(headClearance, 0)), { label: "head clears the swell" }),
+  // For every instant of ten seconds, the head stays out of the water (about 4.5 s of CPU). Over every neck rise too,
+  // always([rise, 2.5, 4.5], always([time, 0, 10], ...)), it holds with margin 0.517 at rise 2.5 but costs about 92 s,
+  // too slow for a default check (agent_notes/2026-11-18_ranged_checks.md).
+  always([time, 0, 10], ge(headClearance, 0), { label: "head clears the swell" }),
 ];
