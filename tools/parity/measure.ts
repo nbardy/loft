@@ -105,7 +105,11 @@ async function score(runs: number): Promise<void> {
 const [cmd, arg] = Bun.argv.slice(2);
 switch (cmd) {
   case "child": await child(arg!); break;
-  case "--runs": await score(Number(arg)); break;
+  case "--runs": {
+    const n = Number(arg);
+    if (!Number.isInteger(n) || n < 1) { console.error(`measure: --runs takes a whole count of at least 1, got ${arg}`); process.exit(2); }
+    await score(n); break;
+  }
   case undefined: await score(3); break;
   default: console.error(`measure: unknown ${cmd}: [--runs N] | child <scene.ts>`); process.exit(2);
 }

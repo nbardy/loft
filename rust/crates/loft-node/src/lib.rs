@@ -144,9 +144,9 @@ mod napi {
                 let binding = |m: &str| super::Error::Internal(super::Internal::Binding(m.into()));
                 let limits = <[u8; 32]>::try_from(limits.map_err(binding)?)
                     .map_err(|_| binding("run(job, limits): limits holds one u64 per Meter, 4"))?;
-                let limits = super::Limits(std::array::from_fn(|k| {
-                    u64::from_le_bytes(limits[8 * k..8 * k + 8].try_into().expect("8 bytes"))
-                }));
+                let [nodes, tape_ops, boxes, gpu_nanos] =
+                    std::array::from_fn(|k| u64::from_le_bytes(limits[8 * k..8 * k + 8].try_into().expect("8 bytes")));
+                let limits = super::Limits { nodes, tape_ops, boxes, gpu_nanos };
                 super::drive(job.map_err(binding)?, limits)
             }),
         )
