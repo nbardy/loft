@@ -109,3 +109,43 @@ From the component measurements: bundle start ×0.5, owl link ×0.35, heron link
 
 Expected verdicts: Owl near the gate (FAIL by a few ms or a pass within noise); Titan FAIL (link is the TS engine's
 inlining, ~2× the whole budget); heron FAIL on its TS solve alone.
+
+### Scored once (`bun tools/parity/measure.ts`, 3 alternating runs, `out/parity/measure/609f7fa.json`)
+
+load1 11.6–12.7 on 10 CPUs during the run, so every number is about 2× an unloaded one. To compare, the same tool ran
+right after on wire 2's head (`d020e61`, the library from source; load1 13–14). Medians, ms CPU:
+
+| | start | link | job | Rust (decode..bundle, loaded) | projected (loaded) |
+|---|---:|---:|---:|---:|---:|
+| Owl, wire 2 / wire 3 | 134.5 / **76.2** | 128.7 / **44.9** | 127.5 / **55.8** | 52 / 64 | 491 / 242 |
+| Titan, wire 2 / wire 3 | 130.3 / **75.1** | 896.8 / **574.1** | 1,109.9 / **454.4** | 930 / 920 | 3,047 / 1,865 |
+| heron, wire 2 / wire 3 | 136.4 / **80.9** | 82.4 / **9.4** | 167.3 / **120.0** | 197 / 226 | 5,435 / 5,329 (design 4,852: the TS solve) |
+
+Ratios wire 3 / wire 2 under the same load, applied to the driver note's unloaded figures (61/60/29, 63/394/383,
+64/43/29), against the prediction:
+
+| | start | link | job | TS side | + Rust (given) + rest | gate | verdict |
+|---|---|---|---|---:|---:|---:|---|
+| Owl, predicted / measured | 30 / 35 | 21 / 21 | 17 / 13 | 68 / 69 | 83 / **84** | 80 | FAIL by ~4 (within the load's noise) |
+| Titan, predicted / measured | 30 / 36 | 250 / 252 | 120 / 157 | 400 / 445 | 565 / **610** | 300 | FAIL |
+| heron, predicted / measured | 30 / 38 | 4 / 5 | 18 / 21 | 52 / 64 | 86 / **98** + design | 200 | FAIL (TS solve, ~1,958 unloaded) |
+
+The prediction held for start and link within 6 ms; Titan's job is 37 ms over (the job-time recording of the 298
+`point` bodies and the fills fell less than the R count did). Counts: Owl R 20.3k, Titan R 308k (was 707k), heron R 93k;
+Titan's U 236k is 1.29× the model (`COUNT MISS` on U only; R is 0.56× the model's 0.55M).
+
+What still stands between Titan and 300 ms: the link (252) is the TS engine's eager inlining of graph-function calls
+(author evaluation of every surface map at every read, for the TS engine's WGSL); a non-inlining recorder removes it,
+which needs the TS engine gone (or lazy, which changes its WGSL). The Rust phase given (143) leaves 157 for start, link
+and job together.
+
+## Pass / fail
+
+| Check | Result |
+|---|---|
+| TS graph print = job print, every example (`score.ts`, `out/wire3/score.jsonl`) | **pass**: 124 jobs (71 built, 52 library files `load`, 1 TypeError; heron_leap_refused has no job) |
+| Rust print = TS print (`corpus_prints_equal`, `LOFT_WIRE_CORPUS`) | **125/125**: the 124 example jobs + `sample.ts`'s job (every wire-3 layout) |
+| Job bytes unchanged by the speed work | owl, flock, pool, compute_frame and the sample job byte-identical; Titan changes only by its hull loop |
+| `tools/dev.sh test` loft-ir 10/10, loft-core 20/20 (fixtures regenerated); clippy and rustfmt clean; `pnpm typecheck` | pass |
+| `check.sh quick` (25 Bun test files incl. ships, curve splines, expr, text; crates loft-core, loft-ir, loft-gpu, loft-node) | pass |
+| Corpus through the driver (`bun tools/parity/run.ts rust`) | **232 built**, 283 end as R0 did (unchanged in count). The 9 R0 builds still refused, each now by what it needs: compute 2 and offscreen 3 `unsupported: … on the wire, not yet lowered`; `t_clay_clusters` 1 (the read is on the wire, the accessor is not emitted); `loft_cast` 2 and `soft_box` 1 (not on the wire: lane 3.1's library) |
