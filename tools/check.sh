@@ -114,8 +114,9 @@ plan() {
   }
   PLAN_FULL="" PLAN_CRATES=() PLAN_BUN=()
   while IFS= read -r path; do
+    # Top-level files by name: a case `*` also matches `/`, so `rust/*.toml` caught every crate's Cargo.toml.
     case "$path" in
-      rust/*.toml|rust/Cargo.lock|rust/.config/*|package.json|pnpm-lock.yaml|bunfig.toml|tsconfig.json|tests/setup.ts|tools/lib/*)
+      rust/Cargo.toml|rust/Cargo.lock|rust/rust-toolchain.toml|rust/rustfmt.toml|rust/.config/*|package.json|pnpm-lock.yaml|bunfig.toml|tsconfig.json|tests/setup.ts|tools/lib/*)
         PLAN_FULL="${PLAN_FULL:-$path is a workspace-wide input}" ;;
       rust/crates/*) crates+=("$(cut -d/ -f3 <<<"$path")") ;;
       tests/*.test.ts) PLAN_BUN+=("$path") ;;

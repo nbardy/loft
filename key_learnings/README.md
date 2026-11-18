@@ -32,6 +32,8 @@ mechanism here earns or loses its place, with the date and the numbers.
   `tools/lane.sh new` always passes one.
 - 2026-10-30 (Keel): Cambium reports every workspace ephemeral, the primary checkout included. `lane.sh done` removes
   only a clean lane under `~/git/_wt/`.
+- 2026-11-19 (Loft lane 0.1): `lane.sh done NAME` on a real, clean lane removes it at once (a lane was removed
+  while testing the refusal; the branch kept every commit). Test the refusal with `lane.sh check` or a fake name.
 - 2026-11-01 (Keel): the serial no-compile checks summed to 15-45 s under load; concurrent, the slowest one is the wall
   time. `check.sh static` prints both.
 - Workers run focused checks; the integrator runs `tools/check.sh full` once per wave. Every timing JSON records
