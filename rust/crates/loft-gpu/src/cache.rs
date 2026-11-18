@@ -1,9 +1,10 @@
 //! The Vulkan pipeline cache, moved from loft-loader (feat/pipecache: 0.08-1.28 ms activation from a retained cache).
-//! Pass `raw()` to `Loft::load`. Lane 4.1 makes `open` safe with an exclusive lock on the directory.
+//! Pass `raw()` to `Loft::load`. `open` is safe (plan §5.2): it holds an exclusive lock on the directory for the cache's
+//! life, so this API is the only writer of the files the driver later trusts, and a game calls no `unsafe` function.
 #![allow(unsafe_code)]
 use loft_ir::Error;
 use std::collections::hash_map::DefaultHasher;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::hash::{Hash, Hasher};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -13,6 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub struct PipelineCache {
     raw: wgpu::PipelineCache,
     path: PathBuf,
+    /// Held until drop: `dir/.lock`, exclusive.
+    _lock: File,
 }
 
 fn io(path: &Path, e: io::Error) -> Error {
@@ -23,12 +26,9 @@ fn io(path: &Path, e: io::Error) -> Error {
 
 impl PipelineCache {
     /// Opens the adapter and driver's cache and returns it with the bytes read; a missing file starts empty. The device
-    /// needs `wgpu::Features::PIPELINE_CACHE`.
-    ///
-    /// # Safety
-    /// The directory must be trusted: any cache file in it holds bytes this API saved (wgpu's `get_data`). Keep it apart
-    /// from downloaded bundles.
-    pub unsafe fn open(device: &wgpu::Device, dir: &Path) -> Result<(Self, usize), Error> {
+    /// needs `wgpu::Features::PIPELINE_CACHE`. The directory is locked until the cache drops; a second open, in this
+    /// process or another, is refused as `Environment` naming the lock. Keep the directory apart from downloaded files.
+    pub fn open(device: &wgpu::Device, dir: &Path) -> Result<(Self, usize), Error> {
         let info = device.adapter_info();
         let key = wgpu::util::pipeline_cache_key(&info)
             .filter(|_| device.features().contains(wgpu::Features::PIPELINE_CACHE))
@@ -44,12 +44,33 @@ impl PipelineCache {
         (&info.driver, &info.driver_info).hash(&mut driver);
         let path = dir.join(format!("{key}_{:016x}.bin", driver.finish()));
         fs::create_dir_all(dir).map_err(|e| io(dir, e))?;
+        let lock_path = dir.join(".lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|e| io(&lock_path, e))?;
+        match lock.try_lock() {
+            Ok(()) => {}
+            Err(TryLockError::WouldBlock) => {
+                return Err(Error::Environment(
+                    format!(
+                        "pipeline cache {} is open elsewhere. Fix: share one PipelineCache per device",
+                        lock_path.display()
+                    )
+                    .into(),
+                ));
+            }
+            Err(TryLockError::Error(e)) => return Err(io(&lock_path, e)),
+        }
         let data = match fs::read(&path) {
             Ok(data) => Some(data),
             Err(e) if e.kind() == io::ErrorKind::NotFound => None,
             Err(e) => return Err(io(&path, e)),
         };
-        // SAFETY: the caller vouches for the provenance of the cache bytes (this function's contract).
+        // SAFETY: the bytes are what `save` wrote: the directory lock, held from before this read until drop, makes this
+        // API its only writer, and wgpu checks the adapter and driver keys in the header before Vulkan sees the bytes.
         let raw = unsafe {
             device.create_pipeline_cache(&wgpu::PipelineCacheDescriptor {
                 label: Some("loft pipeline cache"),
@@ -57,7 +78,7 @@ impl PipelineCache {
                 fallback: false,
             })
         };
-        Ok((Self { raw, path }, data.as_ref().map_or(0, Vec::len)))
+        Ok((Self { raw, path, _lock: lock }, data.as_ref().map_or(0, Vec::len)))
     }
 
     pub fn raw(&self) -> &wgpu::PipelineCache {
