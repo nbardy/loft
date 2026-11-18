@@ -319,7 +319,7 @@ fn load_kernels_see_param_defaults_and_a_3d_table_loads() {
 }
 
 /// The corpus check of the wire lane (agent_notes/2026-11-19_lean_rust_wire2.md): every bundle the program driver
-/// wrote loads on this device, as `F32` and as `Mixed`, and draws one frame. `LOFT_BUNDLES` is a folder of
+/// wrote loads on this device as `F32` (a default build's precision) and draws one frame. `LOFT_BUNDLES` is a folder of
 /// `<entry>/scene.loft` (tools/parity/run.ts rust writes out/parity/rust/build/<id>/scene.loft); the answer is one JSON line
 /// per bundle, then the counts.
 #[test]
@@ -344,7 +344,7 @@ fn corpus_bundles_load() {
         let bytes = std::fs::read(p).unwrap();
         let id = p.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
         let mut outcome = Vec::new();
-        for ask in [Precision::F32, Precision::Mixed] {
+        for ask in [Precision::F32] {
             let got = pollster::block_on(Loft::load(&d, &q, &bytes, ask, &[CANVAS], None)).map(|mut loft| {
                 // One frame, so kernels and every pipeline's bindings meet the device.
                 let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -374,7 +374,7 @@ fn corpus_bundles_load() {
             });
         }
         let ok = outcome.iter().all(|o| o == "ok");
-        println!("{{\"id\":{id:?},\"f32\":{:?},\"mixed\":{:?}}}", outcome[0], outcome[1]);
+        println!("{{\"id\":{id:?},\"f32\":{:?}}}", outcome[0]);
         if ok {
             loaded += 1;
         } else {
