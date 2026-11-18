@@ -92,6 +92,9 @@ struct Rows {
 }
 
 impl Rows {
+    fn clear(&mut self) {
+        self.eq.clear(); self.eq_part.clear(); self.ge.clear(); self.ge_part.clear(); self.idx.clear(); self.vals.clear();
+    }
     fn idx(&self, p: Part) -> &[usize] { &self.idx[p.at..p.at + p.len] }
     fn g(&self, p: Part) -> &[f64] { &self.vals[p.g..p.g + p.len] }
     fn m(&self, p: Part) -> &[f64] { &self.vals[p.m..p.m + p.len * p.len] }
@@ -109,6 +112,11 @@ struct Problem {
     delta: f64,
     deadline: Option<Instant>,
     regs: Vec<f64>,
+    /// Rows buffers to reuse (rows() takes one, recycle() returns it).
+    pool: Vec<Rows>,
+    /// The gradient and Hessian `terms` fills, kept between calls.
+    tg: Vec<f64>,
+    th: Vec<f64>,
     /// cholesky_solve's L, kept between calls.
     chol: std::cell::RefCell<Vec<f64>>,
 }
@@ -192,7 +200,8 @@ impl Problem {
     }
 
     fn rows(&mut self, x: &[f64], lines: &[Line], only: Option<usize>, grad: bool) -> R<Rows> {
-        let mut r = Rows::default();
+        let mut r = self.pool.pop().unwrap_or_default();
+        r.clear();
         let (mut vars, mut times) = (Vec::new(), Vec::new());
         let range: Vec<usize> = match only { Some(i) => vec![i], None => (0..lines.len()).collect() };
         for li in range {
@@ -273,6 +282,8 @@ impl Problem {
         Ok(r)
     }
 
+    fn recycle(&mut self, r: Rows) { self.pool.push(r); }
+
     #[inline(never)]
     fn objective(&self, x: &[f64]) -> R<f64> {
         let n = self.n;
@@ -292,6 +303,7 @@ impl Problem {
         let mut w = 0.0;
         if line.equal { for v in &r.eq { w = m::max(w, v.abs() - line.within); } }
         for v in &r.ge { w = m::max(w, -v); }
+        self.recycle(r);
         Ok(w)
     }
 
@@ -361,13 +373,15 @@ impl Problem {
     /// The augmented Lagrangian's terms at y: f, and with grad g and H (the closure `augmented` hands `descend`).
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
-    fn terms(&mut self, y: &[f64], grad: bool, lines: &[Line], slack: &[f64], lam: &[f64], mu: &[f64], rr: f64) -> R<(f64, Vec<f64>, Vec<f64>)> {
+    fn terms(&mut self, y: &[f64], grad: bool, lines: &[Line], slack: &[f64], lam: &[f64], mu: &[f64], rr: f64) -> R<f64> {
         let n = self.n;
         let r = self.rows(y, lines, None, grad)?;
         let mut f = self.objective(y)?;
-        let mut g = if grad { vec![0.0; n] } else { vec![] };
-        let mut h = if grad { self.q.clone() } else { vec![] };
+        // With grad: the gradient and Hessian into self.tg and self.th (taken out while this fills them).
+        let (mut g, mut h) = (std::mem::take(&mut self.tg), std::mem::take(&mut self.th));
         if grad {
+            g.clear(); g.resize(n, 0.0);
+            h.clear(); h.extend_from_slice(&self.q);
             for i in 0..n {
                 self.check()?;
                 let mut s = -self.b[i];
@@ -395,7 +409,10 @@ impl Problem {
                 self.add_curvature(&mut h, r.idx(p), r.m(p), -s)?;
             }
         }
-        Ok((f, g, h))
+        self.tg = g;
+        self.th = h;
+        self.recycle(r);
+        Ok(f)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -428,18 +445,20 @@ impl Problem {
     fn descend(&mut self, x: &mut [f64], lines: &[Line], slack: &[f64], lam: &[f64], mu: &[f64], rr: f64, budget: usize, tol: f64) -> R<()> {
         let n = self.n;
         let mut damp = 1e-9;
+        let (mut d, mut y) = (vec![0.0; n], vec![0.0; n]);
         for _ in 0..budget {
-            let (f, g, h) = self.terms(x, true, lines, slack, lam, mu, rr)?;
+            let f = self.terms(x, true, lines, slack, lam, mu, rr)?;
+            let (g, h) = (std::mem::take(&mut self.tg), std::mem::take(&mut self.th));
             let mut moved = false;
             for _ in 0..40 {
-                let mut d: Vec<f64> = g.iter().map(|v| -v).collect();
+                for (di, gi) in d.iter_mut().zip(&g) { *di = -gi; }
                 if self.cholesky_solve(&h, n, damp, &mut d)? {
                     let (mut step, mut size) = (0.0f64, 0.0f64);
                     for i in 0..n { step = m::max(step, d[i].abs()); size = m::max(size, x[i].abs()); }
-                    if step <= tol * (1.0 + size) { return Ok(()); }
-                    let y: Vec<f64> = x.iter().enumerate().map(|(i, v)| v + d[i]).collect();
+                    if step <= tol * (1.0 + size) { self.tg = g; self.th = h; return Ok(()); }
+                    for i in 0..n { y[i] = x[i] + d[i]; }
                     self.steps += 1;
-                    let fy = self.terms(&y, false, lines, slack, lam, mu, rr)?.0;
+                    let fy = self.terms(&y, false, lines, slack, lam, mu, rr)?;
                     if fy <= f + 1e-13 * f.abs() {
                         x.copy_from_slice(&y);
                         damp = m::max(damp / 8.0, 1e-12);
@@ -450,6 +469,8 @@ impl Problem {
                 damp = m::max(damp * 8.0, 1e-9);
                 if damp > 1e14 { break; }
             }
+            self.tg = g;
+            self.th = h;
             if !moved { return Ok(()); }
         }
         Ok(())
@@ -482,6 +503,7 @@ impl Problem {
             let before = x.to_vec();
             let r0 = self.rows(x, lines, None, false)?;
             let slack: Vec<f64> = r0.eq.iter().enumerate().map(|(k, &e)| m::max(-bands[k], m::min(bands[k], e + lam[k] / rr))).collect();
+            self.recycle(r0);
             self.descend(x, lines, &slack, &lam, &mu, rr, 100, 1e-9)?;
             let r = self.rows(x, lines, None, false)?;
             v = 0.0;
@@ -495,6 +517,7 @@ impl Problem {
                 v = m::max(v, -c);
                 mu[k] = m::max(0.0, mu[k] - rr * c);
             }
+            self.recycle(r);
             let (mut moved, mut size) = (0.0f64, 0.0f64);
             for i in 0..self.n { moved = m::max(moved, (x[i] - before[i]).abs()); size = m::max(size, x[i].abs()); }
             if v <= AIM && moved <= 1e-6 * (1.0 + size) { break; }
@@ -679,7 +702,7 @@ pub fn run(r: &mut Reader, w: &mut Writer) -> Result<bool, WireError> {
     }
     r.done()?;
     let n = x.len();
-    let mut p = Problem { n, steps: 0, mult: HashMap::default(), rho: 10.0, channels, t0, q, b, delta, deadline, regs: vec![], chol: Default::default() };
+    let mut p = Problem { n, steps: 0, mult: HashMap::default(), rho: 10.0, channels, t0, q, b, delta, deadline, regs: vec![], pool: vec![], tg: vec![], th: vec![], chol: Default::default() };
     match rounds(&mut p, &mut lines, &mut x, h) {
         Ok(k) => {
             w.f64s(&x);
