@@ -415,6 +415,7 @@ One generic drawable per signature (DESIGN.md 7.4): `draw.surface`, `draw.curve`
   - `draw.traced`: Any solid you can intersect, drawn per pixel in a bound: you write `hit(ray, copy) => { t, gap, normal }` as expressions; depth, coverage, ink, light and the CPU twin come from Loft.
   - `draw.copies`: A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms.
   - `draw.density`: A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
+  - `draw.specks`: `count` camera-facing specks (dust, sparks, spray, snow) in one instanced draw: `speck(index, seconds)` gives each one's centre, radius, colour and opacity; nothing is stored.
 
 Types:
 - **Bounds**: An axis-aligned box: the proxy a tracer starts and ends its march in. `type Bounds = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }`
@@ -482,6 +483,15 @@ Types:
 - **ReliefOptions**: `type ReliefOptions = { height, hMax, fold, paint, steps, grid, outline }`
 - **ReliefPoint**: A painted point of the relief: its site and the relief's height there. `type ReliefPoint = ReliefSite & { readonly h: F }`
 - **ReliefSite**: Where on the surface a height or a paint is asked: the surface's coordinates, and the cell of the fold they fall in. `type ReliefSite = { readonly u: F; readonly v: F; readonly cell: Folded<"vec2"> }`
+
+### src/soft/specks.ts
+
+`draw.specks`: camera-facing specks generated from (index, time) in one instanced draw.
+
+
+Types:
+- **Speck**: One speck: world centre and radius, colour and opacity, as expressions of its index and the time. `type Speck = { at, radius, colour, opacity }`
+- **SpecksOptions**: `type SpecksOptions = { stretch?, veil? }`
 
 ### src/draw/surface.ts
 
@@ -1010,7 +1020,7 @@ A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by
   - turn: the radii lie along the world axes, so an ellipsoid tilted off them (a leaning plume) is not one blob.
   - have an edge: it fades smoothly for ever (cut at 3.6 radii for culling); a crisp silhouette comes only from many small dense blobs together, or from the drawable's noise detail.
   - be anything but convex and single-peaked: a hollow, a ring or a long thin streak is many blobs.
-  - shade itself in full: the light it gets from the sun through the other blobs is computed at two points on the CPU each frame (one radius either side of its centre), so shading within one large blob is approximate.
+  - shade itself in full: the light it gets from the sun through the other blobs is computed at two points each frame (one radius either side of its centre), so shading within one large blob is approximate.
   relatives:
   - a Gaussian in one coordinate only, unbounded in the others: `layer` (fog in height).
   - the same, cut off past a plane by a second Gaussian factor: `bank`.
@@ -1029,9 +1039,9 @@ A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by
   cannot:
   - be empty of blobs: fog alone needs one blob (of density 0).
   - have blobs appear, split or vanish: the count is fixed; fade one in or out by its density.
-  - be cheap in large numbers: the light pass is O(N^2) on the CPU every frame, and each pixel loops over the blob clusters its ray meets; hundreds of blobs, not tens of thousands.
+  - be cheap in large numbers: the light pass is O(N^2) every frame, and each pixel loops over the blob clusters its ray meets; hundreds of blobs, not tens of thousands.
   - cast shadows on bodies or the ground.
-  - be lit by a light within a blob: each blob gets one light value from each light, at its centre (a large blob is lit evenly by a light touching its edge), with the light's transmission through the medium on the way (the same extinction octaves as sunlight, so a flash glows through thick cloud); 4% of the most of each light reaching any blob lights the whole medium evenly. Each frame the CPU traces from every blob to every light.
+  - be lit by a light within a blob: each blob gets one light value from each light, at its centre (a large blob is lit evenly by a light touching its edge), with the light's transmission through the medium on the way (the same extinction octaves as sunlight, so a flash glows through thick cloud); 4% of the most of each light reaching any blob lights the whole medium evenly. Each frame the light pass traces from every blob to every light.
   - draw outside its box: `draw.density` integrates only within `bounds` (keep it 3 radii past every puff; `cloud` and `billows` return one, and `unionBox` joins several).
 - **unionBox**: The smallest axis-aligned box holding all of `boxes`: the bounds of a medium made of several clouds, each with its own box.
   `function unionBox(boxes: readonly Box[]): Box`
@@ -3037,7 +3047,7 @@ Types:
 
 ## Coverage
 
-821 exports (465 values, 356 types) from src/index.ts and src/lib/index.ts.
+823 exports (465 values, 358 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

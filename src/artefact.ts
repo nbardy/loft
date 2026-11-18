@@ -325,6 +325,8 @@ export type Draw = {
   readonly detail: Detail;
   /** Key into `Artefact.shaders`. The module has entry points `vs` and `fs`. */
   readonly shader: string;
+  /** Fragment entry for offscreen scene cameras when the main view's `fs` uses view-dependent pose data. */
+  readonly scenePassFragment?: string;
   readonly vertices: number;
   readonly instances: number;
   /** Opaque draws run first, in list order; then transparent draws, in list order. */

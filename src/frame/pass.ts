@@ -311,8 +311,8 @@ function cameraOf(where: string, c: PassCamera): PassCamera {
  * - what: "scene" (the default when `camera` is given) draws the scene's things from `camera` (`PassCamera`); "screen"
  *   is a full-screen expression of the pixel's uv (0..1, v down), held in 16-bit float, which may read other passes
  *   (a blur, a smaller copy, one level of a bloom chain).
- * - keep (scene only): "colour" (default) is the picture as the style draws it, through the view's own pipelines (no
- *   new pipeline); "depth" runs each thing's depth-only entry (coverage and depth, no shading) and keeps the depth, 0
+ * - keep (scene only): "colour" (default) is the picture as the style draws it. A draw can provide a separate
+ *   fragment entry for the offscreen camera. "depth" runs each thing's depth-only entry (coverage and depth, no shading) and keeps the depth, 0
  *   near to 1 far; "light" keeps colour in 16-bit float, for a style that writes values above 1.
  *
  * Cannot: read the previous frame (nothing carries over); scatter; draw a list of things other than the scene's; be

@@ -42,6 +42,10 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `X needs a sea; this scene's ground is a plane` | a wake or foam on dry ground | `ground: sea(...)`, or drop the thing |
 | `usage: --style "x": no such style` / `input "x": ... no such input` | the command names what is absent | a name from the list printed |
 | `pbr sky: given a sky that reads time` (or a param; or `the CPU cannot evaluate`) | `pbr` evaluates its sky, tone and lobe on the CPU once, when the style is built | a sky of its direction and the sun alone; for a GPU-only sky, `pbr({ sky, clear: [r, g, b], environment })` |
+| `draw.specks "grains": given count ...` | the index is an f32 and must identify each speck exactly | give a fixed whole count from 1 to 16,777,216 |
+| `draw.specks "grains": given speck.colour ...` | a speck field has the wrong expression type | return `at` and `colour` as vec3 expressions, `radius` and `opacity` as scalars |
+| `draw.specks "grains": given stretch ...` | a motion duration is negative or cannot fit a finite f32 | give a finite nonnegative duration in seconds or omit `stretch` |
+| `draw.specks "grains": given veil ...` | the cloud has to blend before the specks | pass the drawable from `draw.density` and list it before the specks in `things` |
 
 ## Every refusal
 
