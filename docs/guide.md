@@ -431,7 +431,10 @@ loft render --artefact out/files/serpent --out out/serpent_from_files.webp --vie
 The second command draws from the files alone, without the compiler or the scene module, and says so. In a browser,
 `createHost(device)` from `src/host/index.ts` loads an artefact onto your own `GPUDevice`. In Rust,
 `rust/loft-loader` loads the same directory onto a `wgpu` device a game already owns (`Loft::load`, `set_camera`,
-`set_time`, `set_input`, `set_param`, `encode_frame`; its README has the calls). A game sets inputs by name each frame
+`set_time`, `set_input`, `set_param`, `encode_frame`; its README has the calls). Use `Artefact::warm` during a
+loading screen and `WarmedArtefact::load` to allocate the draw resources when entering the level. With a Vulkan
+device that enables `PIPELINE_CACHE`, the game can keep the driver cache in a directory it owns.
+A game sets inputs by name each frame
 (where a target is, when an attack arms) and reads nothing back; what it needs to know about an attack, it computes
 from the same numbers it gave. `loft bake <scene> --out f.glb` exports the bodies at one time as a glTF mesh.
 

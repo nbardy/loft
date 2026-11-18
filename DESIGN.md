@@ -380,6 +380,19 @@ is. JSON lines in and out; each answer carries Loft's exit code and last line. U
   process (`render examples/strike.ts --views front,side` drew `side` with 63313 triangles; `--views side`, 62321).
   The 40 frames of ten training programs at their four times are unchanged.
 
+### 3.3 Loading-screen warm-up and driver caches
+
+The Rust loader can retain all of an artefact's compute and render pipelines before allocating its frame resources.
+`Artefact::warm` returns the prepared artefact, and loading it transfers those same handles into `Loft`. A Vulkan
+device with `PIPELINE_CACHE` enabled can populate and reopen a wgpu cache in the game's directory. wgpu still
+validates WGSL and creates each pipeline. Driver reuse and its cost depend on the backend. Metal has OS-managed
+reuse across launches. wgpu 30 has no Metal binary archive hook.
+
+`loft serve` shares Dawn objects in its running process. bun-webgpu 0.1.7 has no supported device cache setup that
+installs Dawn's native blob callbacks, so the server has no caller-owned disk store for pipeline data. The missing
+binding and the native bridge needed to supply it are recorded in
+[`docs/reliable_render.md`](docs/reliable_render.md#persistent-dawn-cache).
+
 ## 4. Drawables (`src/compile/context.ts`)
 
 ```ts

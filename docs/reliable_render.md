@@ -102,3 +102,38 @@ the scene's fault ends the run with exit 4 and the last line `loft: scene: ...`;
 | 19 | `fovY: 60` (degrees) | **0: draws a wrong picture** | `scene`: camera "three" fovY 60; expected radians in (0, pi). Fix: 60 * Math.PI / 180 |
 | 20 | `sides: "both"`, `outline: "ink"` | **0: draws, the misspellings silently ignored** | `draw.surface "ball"`: sides "both"; expected "one" or "two" (and outline: "hull", "border", "none") |
 | 21 | a design as the default export | 1, `TypeError: ... (evaluating 'scene.style.post')`, stack | load: the default export is a design; Fix: `export const design = ...` |
+
+## Persistent Dawn cache
+
+`loft serve` keeps a content-keyed cache of live GPU objects in `src/host/cache.ts`. The installed
+`bun-webgpu` 0.1.7 exports `setupGlobals({ libPath })` and `createGPUInstance(libPath)`. Its `createInstance`
+calls `wgpuCreateInstance(null)`, and `GPUAdapter.requestDevice` packs the ordinary WebGPU descriptor. The
+internal packer takes a raw `nextInChain` pointer and the bundle has the `DawnCacheDeviceDescriptor` sType
+(`0x50007`). It has no typed cache extension, no callback or userdata setup and no storage lifetime management.
+Loft's patch in `patches/bun-webgpu@0.1.7.patch` pins descriptor allocations for the duration of FFI calls.
+[Binding source at the published 0.1.7 commit](https://github.com/kommander/bun-webgpu/tree/7be02a5357e47a54dcb83d03265ead19c7961d76/src).
+
+The bundled Dawn supports `WGPUDawnCacheDeviceDescriptor` on the device descriptor chain. It carries
+`isolationKey`, `loadDataFunction`, `storeDataFunction` and `functionUserdata`. Dawn queries the load callback
+first with a null output pointer for the byte count, then calls it with a buffer for the bytes. A miss returns
+zero. Dawn invokes the store callback with borrowed key and value bytes. This is the blob store used by Dawn's
+Vulkan pipeline cache. Dawn's alternative native platform caching interface is also absent from bun-webgpu's
+setup surface.
+[Pinned Dawn descriptor](https://github.com/kommander/dawn/blob/d18e21db186c42c073a90f91bdea0cc438b1924d/src/dawn/dawn.json),
+[blob callbacks](https://github.com/kommander/dawn/blob/d18e21db186c42c073a90f91bdea0cc438b1924d/src/dawn/native/BlobCache.cpp),
+[Vulkan pipeline cache](https://github.com/kommander/dawn/blob/d18e21db186c42c073a90f91bdea0cc438b1924d/src/dawn/native/vulkan/PipelineCacheVk.cpp).
+
+The smallest usable patch is an opt-in cache directory and byte limit on the headless device request, plus a
+native bridge in bun-webgpu's Zig wrapper. The existing request wrapper already forwards the descriptor pointer.
+Add a request variant that chains the cache descriptor and gives Dawn native synchronous load and store callbacks.
+Async pipeline creation can call them on Dawn's worker threads, and the size query must return a value
+immediately. Bun's thread-safe JS callbacks dispatch asynchronously and cannot supply that return value.
+Keep the native userdata alive through device teardown and completion of pending tasks. Use Dawn's
+opaque keys, check lengths before copying, and copy borrowed store bytes before returning. A bounded store can
+use one file per key, atomic replacement, and eviction under a lock. An entry larger than the budget is a miss.
+Pin the value selected by the size query until the matching data call so concurrent eviction cannot change it.
+Rebuild the platform wrapper packages and pass the option from `src/host/headless.ts` for the trusted
+`loft serve` device. Measure a restart on Vulkan with callback hit counts and equal pixels.
+[Pinned Zig request wrapper](https://github.com/kommander/bun-webgpu/blob/7be02a5357e47a54dcb83d03265ead19c7961d76/src/zig/lib.zig),
+[Dawn's Vulkan worker dispatch](https://github.com/kommander/dawn/blob/d18e21db186c42c073a90f91bdea0cc438b1924d/src/dawn/native/vulkan/DeviceVk.cpp),
+[Bun's thread-safe callback ABI](https://bun.com/docs/runtime/ffi#experimental-thread-safe-callbacks).

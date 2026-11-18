@@ -29,6 +29,12 @@ pub enum Error {
     ClearWithoutValue(String, &'static str),
     #[error("{what}:\n{message}")]
     Gpu { what: String, message: String },
+    #[error("pipeline cache: {0:?} device has no enabled PIPELINE_CACHE feature. Request it on Vulkan or warm without a cache")]
+    PipelineCacheUnsupported(wgpu::Backend),
+    #[error("pipeline cache {path}: {source}. Use a readable, writable cache directory")]
+    PipelineCacheIo { path: PathBuf, source: std::io::Error },
+    #[error("pipeline cache {0}: the driver returned no data. Continue with the in-memory pipelines")]
+    PipelineCacheNoData(PathBuf),
     #[error("view {kind} \"{name}\": the artefact declares no such {kind}")]
     UnknownName { kind: &'static str, name: String },
     #[error("view input \"{name}\": expected {want} floats, got {got}")]

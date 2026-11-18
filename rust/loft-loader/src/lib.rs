@@ -3,7 +3,7 @@
 //!
 //! ```ignore
 //! let artefact = loft_loader::read_dir(dir)?;
-//! let mut loft = loft_loader::Loft::load(&device, &queue, &artefact)?;
+//! let mut loft = loft_loader::Loft::load(&device, &queue, artefact)?;
 //! loft.set_camera(loft.camera("game")?);
 //! loft.set_time(t);
 //! loft.set_input("phase", &[2.0])?;
@@ -11,11 +11,13 @@
 //! queue.submit([encoder.finish()]);
 //! ```
 
+mod cache;
 mod camera;
 pub mod manifest;
 mod plan;
 mod read;
 
+pub use cache::PipelineCache;
 pub use manifest::Camera;
 pub use read::{read_dir, Artefact, Error};
 
@@ -145,46 +147,28 @@ fn bytes(f: &[f32]) -> Vec<u8> {
     f.iter().flat_map(|x| x.to_le_bytes()).collect()
 }
 
-impl Loft {
-    /// Creates every object the manifest lists on the caller's device (steps 3 to 11 of "Load, call by call").
-    /// Shader modules and pipelines are compiled here, eagerly; a compile error names the module or pipeline.
-    pub fn load(device: &wgpu::Device, queue: &wgpu::Queue, a: Artefact) -> Result<Loft, Error> {
-        let Artefact { manifest, chunks, blobs } = a;
+/// An artefact with all of its pipelines compiled on one device, ready to allocate frame resources.
+pub struct WarmedArtefact {
+    device: wgpu::Device,
+    manifest: Manifest,
+    blobs: HashMap<String, Vec<u8>>,
+    layouts: Vec<wgpu::BindGroupLayout>,
+    compute: Vec<wgpu::ComputePipeline>,
+    render: Vec<wgpu::RenderPipeline>,
+    ops: Vec<PassOps>,
+}
+
+impl Artefact {
+    /// Compiles every compute and render pipeline, including pipelines unused by the first frame.
+    /// The returned artefact keeps the pipelines alive and can be loaded without recompiling.
+    pub fn warm(self, device: &wgpu::Device) -> Result<WarmedArtefact, Error> {
+        self.warm_on(device, None)
+    }
+
+    fn warm_on(self, device: &wgpu::Device, cache: Option<&wgpu::PipelineCache>) -> Result<WarmedArtefact, Error> {
+        let Artefact { manifest, chunks, blobs } = self;
         let m = &manifest;
         let ops = check(m)?;
-        let buffers: Vec<wgpu::Buffer> = m
-            .buffers
-            .iter()
-            .map(|d| {
-                let b = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some(&d.label),
-                    size: d.size,
-                    usage: manifest::buffer_usage(&d.usage),
-                    mapped_at_creation: false,
-                });
-                if let Some(name) = &d.init {
-                    let blob = blobs.get(name).ok_or_else(|| Error::MissingBlob(d.label.clone(), name.clone()))?;
-                    if !blob.is_empty() {
-                        queue.write_buffer(&b, 0, blob);
-                    }
-                }
-                Ok(b)
-            })
-            .collect::<Result<_, Error>>()?;
-        let samplers = m
-            .samplers
-            .iter()
-            .map(|s| {
-                device.create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some(&s.label),
-                    mag_filter: s.mag_filter.wgpu(),
-                    min_filter: s.min_filter.wgpu(),
-                    address_mode_u: s.address_mode_u.wgpu(),
-                    address_mode_v: s.address_mode_v.wgpu(),
-                    ..Default::default()
-                })
-            })
-            .collect();
         let layouts: Vec<wgpu::BindGroupLayout> = m
             .bind_group_layouts
             .iter()
@@ -239,7 +223,7 @@ impl Loft {
                         module: &modules[p.module],
                         entry_point: Some(&p.entry_point),
                         compilation_options: Default::default(),
-                        cache: None,
+                        cache,
                     })
                 })
             })
@@ -287,12 +271,56 @@ impl Loft {
                         }),
                         multisample: wgpu::MultisampleState { count: p.multisample.count, ..Default::default() },
                         multiview_mask: None,
-                        cache: None,
+                        cache,
                     })
                 })
             })
             .into_iter()
             .collect::<Result<_, _>>()?;
+        Ok(WarmedArtefact { device: device.clone(), manifest, blobs, layouts, compute, render, ops })
+    }
+}
+
+impl WarmedArtefact {
+    /// Allocates the artefact's resources using the pipelines already built by Artefact::warm.
+    /// The queue must belong to the device used to warm the artefact.
+    pub fn load(self, queue: &wgpu::Queue) -> Result<Loft, Error> {
+        let Self { device, manifest, blobs, layouts, compute, render, ops } = self;
+        let device = &device;
+        let m = &manifest;
+        let buffers: Vec<wgpu::Buffer> = m
+            .buffers
+            .iter()
+            .map(|d| {
+                let b = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some(&d.label),
+                    size: d.size,
+                    usage: manifest::buffer_usage(&d.usage),
+                    mapped_at_creation: false,
+                });
+                if let Some(name) = &d.init {
+                    let blob = blobs.get(name).ok_or_else(|| Error::MissingBlob(d.label.clone(), name.clone()))?;
+                    if !blob.is_empty() {
+                        queue.write_buffer(&b, 0, blob);
+                    }
+                }
+                Ok(b)
+            })
+            .collect::<Result<_, Error>>()?;
+        let samplers = m
+            .samplers
+            .iter()
+            .map(|s| {
+                device.create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some(&s.label),
+                    mag_filter: s.mag_filter.wgpu(),
+                    min_filter: s.min_filter.wgpu(),
+                    address_mode_u: s.address_mode_u.wgpu(),
+                    address_mode_v: s.address_mode_v.wgpu(),
+                    ..Default::default()
+                })
+            })
+            .collect();
         let textures = m
             .textures
             .iter()
@@ -348,6 +376,12 @@ impl Loft {
 }
 
 impl Loft {
+    /// Warms the pipelines and allocates every fixed resource on the caller's device.
+    /// Use `Artefact::warm` or `PipelineCache::warm` to compile pipelines during a loading screen.
+    pub fn load(device: &wgpu::Device, queue: &wgpu::Queue, a: Artefact) -> Result<Self, Error> {
+        a.warm(device)?.load(queue)
+    }
+
     /// A bind group from its descriptor; `views` are the view-sized textures (none for a group naming no texture).
     fn group(&self, device: &wgpu::Device, k: usize, views: &[wgpu::TextureView]) -> wgpu::BindGroup {
         let g = &self.m.bind_groups[k];

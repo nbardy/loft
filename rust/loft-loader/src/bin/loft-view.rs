@@ -1,7 +1,7 @@
 //! loft-view: draws a Loft artefact folder headless with loft-loader, and times it.
 //!
 //!   loft-view <dir> --view game --time 1.0 --size 1280x800 --out f.png [--input name=v[,v...]] [--param name=v]
-//!             [--frames N [--wait]] [--pose-time]
+//!             [--frames N [--wait]] [--pose-time] [--loads N] [--pipeline-cache DIR]
 //!
 //! One frame waits for its own level-of-detail bounds (as `loft render` does) and is written as PNG. `--frames N` then
 //! draws N consecutive frames of the same view as a game would (planning with the last bounds read, never
@@ -11,7 +11,7 @@
 //! (start to end) plus the render passes (first start to last end), the gap between the two submits not counted.
 //! `--pose-time`: the pose stages alone, as tools/pose_time.ts measures them (40 repeats in one timed pass, least of 8).
 
-use loft_loader::{read_dir, Bounds, Loft, Timestamps, OUTPUT_FORMAT};
+use loft_loader::{read_dir, Bounds, Loft, PipelineCache, Timestamps, OUTPUT_FORMAT};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -26,6 +26,8 @@ struct Args {
     frames: usize,
     wait: bool,
     pose_time: bool,
+    loads: usize,
+    cache_dir: Option<PathBuf>,
 }
 
 fn fail(msg: String) -> ! {
@@ -36,8 +38,9 @@ fn fail(msg: String) -> ! {
 fn parse() -> Args {
     let mut it = std::env::args().skip(1);
     let mut a = Args {
-        dir: it.next().map(PathBuf::from).unwrap_or_else(|| fail("usage: loft-view <dir> --view game --time 1 --size 1280x800 --out f.png".into())),
+        dir: it.next().map(PathBuf::from).unwrap_or_else(|| fail("usage: loft-view <dir> --view game --time 1 --size 1280x800 --out f.png [--loads N] [--pipeline-cache DIR]".into())),
         view: "game".into(), time: 1.0, size: (1280, 800), out: None, inputs: vec![], params: vec![], frames: 0, wait: false, pose_time: false,
+        loads: 1, cache_dir: None,
     };
     let num = |s: &str, flag: &str| s.parse::<f64>().unwrap_or_else(|_| fail(format!("{flag}: not a number: {s}")));
     while let Some(flag) = it.next() {
@@ -63,6 +66,13 @@ fn parse() -> Args {
             "--frames" => a.frames = num(&value(), "--frames") as usize,
             "--wait" => a.wait = true,
             "--pose-time" => a.pose_time = true,
+            "--loads" => {
+                let v = value();
+                a.loads = v.parse::<std::num::NonZeroUsize>()
+                    .unwrap_or_else(|_| fail(format!("--loads: expected a positive integer, got {v}")))
+                    .get();
+            }
+            "--pipeline-cache" => a.cache_dir = Some(value().into()),
             _ => fail(format!("unknown flag {flag}")),
         }
     }
@@ -77,27 +87,56 @@ fn stats(xs: &mut [f64]) -> String {
 
 fn main() {
     let a = parse();
-    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
         ..Default::default()
     }))
     .unwrap_or_else(|e| fail(format!("no adapter: {e}")));
     let timing = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    let mut features = adapter.features() & wgpu::Features::TIMESTAMP_QUERY;
+    if a.cache_dir.is_some() {
+        if !adapter.features().contains(wgpu::Features::PIPELINE_CACHE) {
+            fail(format!("--pipeline-cache needs a Vulkan adapter with PIPELINE_CACHE (selected {:?}). Select one with WGPU_BACKEND=vulkan or omit the flag", adapter.get_info().backend));
+        }
+        features |= wgpu::Features::PIPELINE_CACHE;
+    }
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-view"),
-        required_features: if timing { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() },
+        required_features: features,
         ..Default::default()
     }))
     .unwrap_or_else(|e| fail(format!("no device: {e}")));
     eprintln!("adapter {} ({:?}); timestamp queries {}; inside encoders {}", adapter.get_info().name, adapter.get_info().backend, if timing { "granted" } else { "not granted" }, adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS));
 
-    let t = Instant::now();
-    let artefact = read_dir(&a.dir).unwrap_or_else(|e| fail(e.to_string()));
-    let read_ms = t.elapsed().as_secs_f64() * 1e3;
-    let t = Instant::now();
-    let mut loft = Loft::load(&device, &queue, artefact).unwrap_or_else(|e| fail(e.to_string()));
-    eprintln!("read {read_ms:.0} ms, load {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    let cache = a.cache_dir.as_ref().map(|dir| {
+        let t = Instant::now();
+        // SAFETY: --pipeline-cache designates a trusted directory for cache files written by loft-view.
+        let (cache, loaded_bytes) = unsafe { PipelineCache::open(&device, dir) }
+            .unwrap_or_else(|e| fail(e.to_string()));
+        eprintln!("cache open {:.3} ms ({loaded_bytes} bytes read)", t.elapsed().as_secs_f64() * 1e3);
+        cache
+    });
+    let mut loft = (1..=a.loads).map(|i| {
+        let t = Instant::now();
+        let artefact = read_dir(&a.dir).unwrap_or_else(|e| fail(e.to_string()));
+        let read_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = Instant::now();
+        let warmed = match &cache {
+            Some(cache) => cache.warm(artefact),
+            None => artefact.warm(&device),
+        }.unwrap_or_else(|e| fail(e.to_string()));
+        let warm_ms = t.elapsed().as_secs_f64() * 1e3;
+        let loft = warmed.load(&queue).unwrap_or_else(|e| fail(e.to_string()));
+        let load_ms = t.elapsed().as_secs_f64() * 1e3;
+        eprintln!("load {i}: read {read_ms:.3} ms, pipelines {warm_ms:.3} ms, resources {:.3} ms, load {load_ms:.3} ms", load_ms - warm_ms);
+        loft
+    }).last().expect("positive load count");
+    if let Some(cache) = cache {
+        let t = Instant::now();
+        let saved_bytes = cache.save().unwrap_or_else(|e| fail(e.to_string()));
+        eprintln!("cache save {:.3} ms ({saved_bytes} bytes written)", t.elapsed().as_secs_f64() * 1e3);
+    }
     loft.set_camera(loft.camera(&a.view).unwrap_or_else(|e| fail(e.to_string())));
     loft.set_time(a.time);
     for (name, v) in &a.inputs {
