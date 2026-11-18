@@ -115,3 +115,11 @@ counts the two separately. Its table gives the proven margin bounds, the witness
 
 A malformed range or comparison is a scene error (exit 4). Give the ends independently of every quantified leaf,
 bind free variables, and use `ge`, `gt`, `le` or `lt`. Express approximate equality as a band.
+
+## Rust pipeline cache
+
+- A missing cache file starts an empty cache. If wgpu rejects an existing file, the error names it. Clear that file
+  from the game's cache directory and warm again to rebuild it.
+- If the device lacks `PIPELINE_CACHE`, enable it when requesting a Vulkan device that advertises it, or call
+  `artefact.warm(&device)` to retain compiled pipelines for the current run.
+- Cache I/O errors name the affected path. Use a readable, writable directory reserved for cache files.

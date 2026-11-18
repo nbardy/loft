@@ -10,6 +10,7 @@ cargo build --release                      # in rust/loft-loader; output in rust
 target/release/loft-view <dir> --view game --time 1.0 --size 1280x800 --out f.png
 target/release/loft-view <dir> --view game --frames 60          # CPU and GPU time per frame
 target/release/loft-view <dir> --view game --pose-time          # pose stages alone, as tools/pose_time.ts
+WGPU_BACKEND=vulkan target/release/loft-view <dir> --view game --pipeline-cache <cache-dir> --loads 3
 ```
 
 When creating a device, request the optional `wgpu::Features::SHADER_F16` if the adapter exposes it.
@@ -42,6 +43,43 @@ queue.submit([encoder.finish()]);                            // the caller submi
   the curve rows. `cameras()` lists the artefact's named cameras.
 - Measuring hooks: `set_timestamps` (pass-boundary timestamps per frame: pose pass at 0 and 1, render pass k at `2 + 2k` and `3 + 2k`; resolve them only after the frame has completed: on Metal a resolve in the next submit read the last passes' end samples before they were written) and `encode_pose` (the pose dispatches
   into a caller's compute pass).
+
+## Loading screen and Vulkan cache
+
+```rust
+// Request wgpu::Features::PIPELINE_CACHE when creating the device on a supporting adapter.
+// SAFETY: the game owns cache_dir and only this API writes the cache files.
+let (cache, _) = unsafe { loft_loader::PipelineCache::open(&device, cache_dir)? };
+let warmed = cache.warm(loft_loader::read_dir(dir)?)?;
+cache.save()?;
+
+// When entering the level, on the same device's queue.
+let mut loft = warmed.load(&queue)?;
+```
+
+Use `artefact.warm(&device)` on Metal or when the game only needs in-memory warm-up. Warm-up creates every compute
+and render pipeline and retains the handles. Loading then creates buffers, uploads and fixed bind groups.
+View-sized textures and their bind groups are created on the first frame. Games can also keep a fully loaded `Loft`
+from the loading screen.
+
+`PipelineCache::open` starts empty for a missing file. File names include the Vulkan adapter and driver identity
+reported by wgpu, which also validates its binary driver compatibility key. The directory is game-owned and separate
+from artefacts. An unreadable file or wgpu cache validation failure reports the path. A rejected cache file can be
+cleared and rebuilt. Open one cache, share it across the device's artefact warm-ups, then save once to retain the
+whole snapshot. Saving replaces the previous file atomically. Independent writers to the same file leave the last
+complete snapshot.
+
+`loft-view --loads N` repeats the read and warm-up on one device and draws from the last load. It prints read,
+pipeline and resource times. With `--pipeline-cache` it also prints bytes read and written. Use a fresh cache
+directory for a cold run and the same directory in a fresh process for warm-from-disk. On macOS, testing this via
+MoltenVK requires building the viewer with `--features wgpu/vulkan-portability` and supplying a Vulkan loader and ICD.
+
+Metal's OS-managed shader cache can reduce compilation time across launches. wgpu 30's Metal backend has no
+`PipelineCache` support and does not expose `MTLBinaryArchive` on its pipeline descriptors. A raw Metal device
+handle through wgpu HAL cannot attach an archive to wgpu's internally constructed descriptors. That would require
+a wgpu Metal backend change or a native Metal pipeline creation path.
+[wgpu 30 pipeline cache backends](https://docs.rs/wgpu/30.0.1/wgpu/struct.PipelineCache.html#implementations),
+[Apple's Metal compilation and binary archive walkthrough](https://developer.apple.com/videos/play/wwdc2020/10615/).
 
 ## What the game needs next to show a monster
 

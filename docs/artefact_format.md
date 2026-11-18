@@ -88,7 +88,9 @@ Before creating any objects, check whether the device grants `shader-f16`. If gr
     with `{ binding, buffer }` as the whole buffer and `{ binding, sampler }` as the sampler.
 11. **Level-of-detail memory.** An empty map from grid slot to the level each instance drew last frame.
 
-Pipelines are created at load, eagerly, so no frame stalls on compilation.
+Pipelines are created eagerly. In the Rust loader, `Artefact::warm` performs steps 5 to 9 up front and keeps the
+pipelines on the caller's device. `WarmedArtefact::load` does steps 3, 4, 10 and 11. A caller-owned Vulkan pipeline
+cache can be reused at step 8 and step 9. The cache stays outside the artefact directory and the format is unchanged.
 
 **Per view size** (at the first frame and whenever the width or height changes): destroy the previous set, then for
 each `textures[i]`: `createTexture({ label, size, format, sampleCount, usage })` with `size` from its `size` field
