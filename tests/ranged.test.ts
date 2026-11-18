@@ -177,7 +177,7 @@ test("loft check prints a recurrence refusal and counts it separately", () => {
     const r = Bun.spawnSync([process.execPath, "src/cli/main.ts", "check", file], { env: { ...process.env, LOFT_NO_GPU: "1" } });
     const output = r.stdout.toString() + r.stderr.toString();
     expect(output).toContain("undecided: recur");
-    expect(output).toContain("0 passed, 0 failed, 1 undecided");
+    expect(output).toContain("0 held, 0 found no failure in samples, 0 failed, 1 undecided");
     expect(output).not.toContain("failing checks");
   } finally { unlinkSync(file); rmdirSync(dir); }
 });

@@ -44,7 +44,8 @@ export type Command =
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
   | { readonly kind: "dev"; readonly precision: Precision; readonly source: SceneSource; readonly port: number }
   /** `combinations`: every combination of every slot's options, instead of the named variants. */
-  | { readonly kind: "check"; readonly path: string; readonly variant: VariantArg; readonly combinations: boolean }
+  /** `at`: leaves held at a value (`--at time=1.37,reach=1.1`), by label; `explain`: each check's deciding line. */
+  | { readonly kind: "check"; readonly path: string; readonly variant: VariantArg; readonly combinations: boolean; readonly at: ReadonlyMap<string, number>; readonly explain: boolean }
   | {
     readonly kind: "variants"; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly out: string; readonly size: Size; readonly time: number;
     /** Columns: the design's `compare` cameras, or the ones given. Rows: every named variant, or the ones given. */
@@ -71,6 +72,9 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   profile <scene> [--view game] [--size 1280x800] [--frames 30] [--time 1.0] [--style name] [--outline hull|screen]   (GPU ms per draw, best of frames)
   check  <scene> [--variant v | --combinations]   (runs the checks; exits 5 on failures or undecided checks. A design: every
                     named variant, or the one given, or every combination of slot options)
+         [--at time=1.37,name=v] [--explain]   (--at: the checks with those leaves held at those values, the margin at a
+                    setting; --explain: for each check that does not hold, the line deciding it at its witness, what
+                    that line reads, and the render command that draws the witness)
   variants <design> [--views far,face] [--only base,stilt] [--time 1.0] [--size 640x400] [--out out/variants/<name>]
                     (every named variant through the design's comparison cameras: one picture each, and a labelled sheet)
   --variant v         (render, clip, frames, dev, profile, build, check) a design's variant: a name, slot=option picks over
@@ -114,6 +118,8 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--time": { value: true, commands: ["render", "bake", "profile", "variants"] },
   "--variant": { value: true, commands: ["render", "clip", "frames", "dev", "profile", "build", "check"] },
   "--combinations": { value: false, commands: ["check"] },
+  "--at": { value: true, commands: ["check"] },
+  "--explain": { value: false, commands: ["check"] },
   "--only": { value: true, commands: ["variants"] },
   "--density": { value: true, commands: ["bake"] },
   "--construction": { value: false, commands: ["render"] },
@@ -126,6 +132,18 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--style": { value: true, commands: ["render", "clip", "frames", "dev", "profile", "build", "variants"] },
   "--light": { value: true, commands: ["render", "clip", "frames", "profile", "build", "variants"] },
 };
+
+/** `--at time=1.37,reach=1.1`: leaf labels to values (none given: an empty map). */
+function parseAt(text: string | undefined): ReadonlyMap<string, number> {
+  const at = new Map<string, number>();
+  for (const pair of text === undefined ? [] : text.split(",")) {
+    const [name, value, extra] = pair.split("=");
+    if (!name || value === undefined || extra !== undefined) throw new UsageError(`--at: "${pair}" is not name=value (e.g. --at time=1.37,reach=1.1)`);
+    if (at.has(name)) throw new UsageError(`--at: ${name} given twice`);
+    at.set(name, num("--at", value));
+  }
+  return at;
+}
 
 function num(flag: string, text: string): number {
   const n = Number(text);
@@ -234,7 +252,7 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind !== "file") throw new UsageError("check: needs a scene file (a fixture has no checks)");
     const combinations = flags.has("--combinations");
     if (combinations && source.variant.kind === "ask") throw new UsageError("check: give --variant or --combinations, not both");
-    return { kind: "check", path: source.path, variant: source.variant, combinations };
+    return { kind: "check", path: source.path, variant: source.variant, combinations, at: parseAt(one("--at")), explain: flags.has("--explain") };
   }
   if (name === "variants") {
     if (source.kind !== "file") throw new UsageError("variants: needs a scene file that exports a design");

@@ -347,6 +347,30 @@ lines end `// x.ts:22`. It sets `noteStatements` before the scene is imported (d
 built), which changes only comments. On the section 3 dust burst (`tests/fixtures/show/dust_burst.ts`) all 8 modules
 compile as printed and all 22 computing lines of its text are cited (tests/show.gpu.test.ts).
 
+#### A check explained in the author's lines (lane L7, as built 2026-11-18)
+
+**`loft check <scene> --explain`** (`src/cli/explain.ts`) follows each ranged check that does not hold (or, when all
+hold, the one nearest to failing) to the line that decides it. At the check's witness it walks the condition as its
+margin is defined (`and` takes its smaller side, `or` its greater, `not` its operand) to one comparison, evaluates both
+sides on the interval evaluator at that point, and prints: the line the check was written on; the comparison's line
+and the lines that called it; each side's value; the nearest nodes under it that were written on other lines, with
+their values; and `loft render <scene> --time <t> [--param ...] [--variant v] --views <first camera>`, which draws the
+witness. Every line is quoted from its file. A node's line is its text site (`wgsl`), or for call form the stack
+recorded when it was built: `--explain` calls `recordStacks` (`src/expr.ts`) before the scene is imported. That costs
+about half again a compile (the_strike: 0.80 s to 1.21 s, 239k nodes), so it is on only with `--explain`. The design's
+separate `--sites` flag was folded in: recording is what explaining needs, and a second flag would buy nothing.
+Constants and leaves are interned, so their recorded line is wherever an equal one was first built; they are never
+cited. A tail call (`return length(...)`) leaves no frame in JavaScriptCore, so a helper's result is cited at its
+caller's line.
+
+**`--at time=1.37,name=v`** holds those leaves of every ranged check at those values (`pinned` in `src/ranged.ts`),
+the rest still ranging: the margin at a setting. A check that ranges over none of them runs whole; a value outside a
+check's range drops that check with a line saying so (it claims nothing there); a name no check ranges over is a usage
+error listing the leaves. A range that is one point is evaluated as a point, so a nested search under it runs to its
+precision.
+
+The summary line counts a proof and a sampled pass apart: `24 held, 1 found no failure in samples, 2 failed`.
+
 Two departures from the design: the prelude is printed whole, not as declarations, because the design's own check asks
 that the text compile as one module; and there is no `--stage`, because a draw's vertex and fragment entries are one
 module (pose and compute modules are selected by `--thing` on their labels).

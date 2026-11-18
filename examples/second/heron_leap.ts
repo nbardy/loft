@@ -51,7 +51,7 @@ function rig(c: { readonly x: F; readonly y: F; readonly pitch: F; readonly fx: 
 }
 
 /** Every hold of the leap, over curves of the body and feet: the lines a conflict is named by. */
-function holds(n: N, c: Parameters<typeof rig>[0]) {
+export function holds(n: N, c: Parameters<typeof rig>[0]) {
   const { body, foot } = rig(c);
   const at = (p: readonly [number, number, number]) => inBody(body, p);
   const velocity = vec3(derivative(c.x, time), derivative(c.y, time), derivative(c.pitch, time));
