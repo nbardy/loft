@@ -1,0 +1,23 @@
+[package]
+name = "loft-node"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The hand-written N-API addon: one entry, run(job) (plan 2026-11-19 §3.5)."
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+# Adds a `panic` export that panics inside the same guard as `run`, so the binding test can show a panic becomes
+# Internal without killing the JS process. Never in a shipped build.
+probe = []
+
+[dependencies]
+loft-ir = { path = "../loft-ir" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.149"
+
+[lints]
+workspace = true
