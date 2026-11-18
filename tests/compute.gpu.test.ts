@@ -1,7 +1,7 @@
 // Non-aligned volume rows, a load dependency, a shortened final checkpoint, and a partial frame write. The color
 // channels report independent numbers, so a plausible-looking image cannot hide a scheduling or copy bug.
 import { expect, test } from "bun:test";
-import { always, compute, drawSpec, emitShaderFn, fetch, ge, input, nothing, param, scene, solve, spline, tabulate, time, toon, vec2, vec4, type Drawable } from "../src/index.ts";
+import { always, compute, drawSpec, emitShaderFn, ge, input, nothing, param, scene, solve, spline, tabulate, time, toon, vec4, wgsl, type Drawable } from "../src/index.ts";
 import { checkOutcome, runChecks } from "../src/check.ts";
 import { compile } from "../src/compile/index.ts";
 import { SceneError } from "../src/errors.ts";
@@ -11,38 +11,38 @@ import { bakeRawBuild, loadBundle } from "../src/host/host.ts";
 import { lower } from "../src/host/lower.ts";
 
 const volume = compute("testVolume", {
-  when: { kind: "build" }, entry: "main", dispatch: [3, 2, 3],
+  when: { kind: "build" }, dispatch: [3, 2, 3],
   writes: { sdf: { kind: "texture", size: [3, 2, 3], format: "r32float" } },
-  wgsl: `
+  wgsl: wgsl`
 @compute @workgroup_size(1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   textureStore(sdf, vec3<i32>(id), vec4<f32>(f32(id.x + 2u * id.y + 3u * id.z) / 16.0));
 }`,
 });
 
+// Texel (2, 1, 2) at its centre, uv = (i + 0.5) / size: the filtered read is that texel's value.
 const baked = compute("testBaked", {
-  when: { kind: "build" }, entry: "main", dispatch: [1], reads: { volume: volume.sdf },
+  when: { kind: "build" }, dispatch: [1],
   writes: { point: { kind: "buffer", entries: 1, lanes: 1 } },
-  wgsl: "@compute @workgroup_size(1) fn main() { point[0] = textureLoad(volume, vec3<i32>(2, 1, 2), 0); }",
+  wgsl: wgsl`@compute @workgroup_size(1) fn main() { point[0] = ${volume.sdf}(vec3<f32>(2.5 / 3.0, 0.75, 2.5 / 3.0)); }`,
 });
 
 const seed = compute("testLoad", {
-  when: { kind: "load" }, entry: "main", dispatch: [1], reads: { point: baked.point },
+  when: { kind: "load" }, dispatch: [1],
   writes: { value: { kind: "buffer", entries: 1, lanes: 1 } },
-  wgsl: "@compute @workgroup_size(1) fn main() { value[0] = point[0]; }",
+  wgsl: wgsl`@compute @workgroup_size(1) fn main() { value[0] = ${baked.point}(0.0, 0.0); }`,
 });
 
 const steps = compute("testSteps", {
-  when: { kind: "steps", start: "init", count: 5, keep: 2, rate: 4 }, entry: "main", dispatch: [1],
-  reads: { seed: seed.value },
+  when: { kind: "steps", start: "init", count: 5, keep: 2, rate: 4 }, dispatch: [1],
   writes: {
     count: { kind: "buffer", entries: 1, lanes: 1 },
     image: { kind: "texture", size: [1, 2], format: "r32float" },
     brick: { kind: "texture", size: [1, 1, 2], format: "r32float" },
   },
-  wgsl: `
+  wgsl: wgsl`
 @compute @workgroup_size(1) fn init() {
-  count[0] = seed[0];
+  count[0] = ${seed.value}(0.0, 0.0);
   textureStore(image, vec2<i32>(0, 1), vec4<f32>(0.25));
   textureStore(brick, vec3<i32>(0, 0, 1), vec4<f32>(0.0625));
 }
@@ -58,26 +58,25 @@ const steps = compute("testSteps", {
 const gate = input("gate", "f32", [0]);
 const scale = param("scale", 1);
 const frame = compute("testFrame", {
-  when: { kind: "frame" }, entry: "main", dispatch: [1], reads: { count: steps.count, image: steps.image },
-  values: { gate, scale },
+  when: { kind: "frame" }, dispatch: [1],
   writes: { colour: { kind: "texture", size: [1, 1], format: "rgba8unorm" }, factor: { kind: "buffer", entries: 1, lanes: 1 } },
-  wgsl: `
+  wgsl: wgsl`
 @compute @workgroup_size(1) fn main() {
-  if (gate() > 0.5) {
-    textureStore(colour, vec2<i32>(0), vec4<f32>(count(0u, 0u, loft_time()).x, image(vec2<i32>(0, 1), loft_time()).x, 0, 1));
-    factor[0] = vec4<f32>(scale());
+  if (${gate} > 0.5) {
+    textureStore(colour, vec2<i32>(0), vec4<f32>(${steps.count}(0.0, 0.0).x, ${steps.image}(vec2<f32>(0.5, 0.75)).x, 0, 1));
+    factor[0] = vec4<f32>(${scale});
   }
 }`,
 });
 
 const copy = compute("testCopy", {
-  when: { kind: "frame" }, entry: "main", dispatch: [1], reads: { src: frame.colour },
+  when: { kind: "frame" }, dispatch: [1],
   writes: { colour: { kind: "texture", size: [1, 1], format: "rgba8unorm" } },
-  wgsl: "@compute @workgroup_size(1) fn main() { textureStore(colour, vec2<i32>(0), textureLoad(src, vec2<i32>(0), 0)); }",
+  wgsl: wgsl`@compute @workgroup_size(1) fn main() { textureStore(colour, vec2<i32>(0), ${frame.colour}(vec2<f32>(0.5, 0.5))); }`,
 });
-const pixel = copy.colour.sample([0.5, 0.5]);
-const poseRead = tabulate("poseRead", () => copy.colour.sample([0.5, 0.5]).x, 2, "frame");
-const read = vec4(poseRead(0), pixel.y, steps.brick.sample([0.5, 0.5, 0.75]).x, fetch(frame.factor, 0, 0).x);
+const pixel = copy.colour([0.5, 0.5]);
+const poseRead = tabulate("poseRead", () => copy.colour([0.5, 0.5]).x, 2, "frame");
+const read = vec4(poseRead(0), pixel.y, steps.brick([0.5, 0.5, 0.75]).x, frame.factor(0, 0).x);
 const draw: Drawable = {
   name: "measured", skeletons: [], forms: [],
   draws(ctx) {

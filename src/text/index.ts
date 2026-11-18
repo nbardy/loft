@@ -11,11 +11,12 @@
 import * as X from "../expr.ts";
 import { siteOf } from "../errors.ts";
 import { authored } from "../authored.ts";
-import { emitWgsl, everything, lib, markRaw, type Expr, type LibFn, type Ty } from "../expr.ts";
+import { emitWgsl, everything, lib, markRaw, rawCall, type Expr, type LibFn, type RawCall, type Ty } from "../expr.ts";
 import { parseModule, ParseError, type At, type FnItem, type Module, type StructItem, type TypeRef } from "./parse.ts";
 import { HOLE_PREFIX, type Tok } from "./tokens.ts";
 import { callArg, fromTs, Lowerer, placeOf, TextError, toTs, typeName, type Scope0, type Source, type Value } from "./lower.ts";
 import { PRELUDE } from "./prelude.ts";
+import { RAW_PRELUDE } from "./raw_prelude.ts";
 
 export { siteOfNode } from "./lower.ts";
 export { PRELUDE } from "./prelude.ts";
@@ -29,7 +30,21 @@ export type WgslState = {
   readonly holes: readonly Value[];
   /** A raw function's library function and the expressions its added parameters take (src/text/index.ts `rawOf`). */
   raw(name: string): RawFn;
+  /** Entry points, written as one shader module's text (`draw.shader` and `compute` read these). */
+  entries(names: readonly string[]): EntryText;
 };
+
+/**
+ * Entry points as WGSL a shader module holds: `text` (the module's own declarations and the entries, with holes, `time`
+ * and calls rewritten), the library functions it calls, and `values`: the expression accessor `loft_value_<k>()` must
+ * return, which the module's compiler emits for its own bindings.
+ */
+export type EntryText = { readonly text: string; readonly libs: readonly LibFn[]; readonly values: readonly Expr[] };
+
+/** A hole's raw spelling, when it holds a function raw text may call (a compute output's handle). */
+function rawCallOf(x: unknown): RawCall | undefined {
+  return (typeof x === "function" || (typeof x === "object" && x !== null)) && rawCall in x ? (x as { [rawCall]: RawCall })[rawCall] : undefined;
+}
 export const WGSL_STATE = Symbol("wgsl module");
 
 /**
@@ -192,8 +207,86 @@ function assemble(text: string, source: Source, module: Module, rawHoles: readon
   }
 
   /**
-   * A raw function as a library function. Pass one collects what it reads from outside the text (holes, `time`, the
-   * hidden parameters of the functions it calls); pass two writes the text with each replaced: constants as literals,
+   * What raw text (a raw function or an entry point) reads from outside itself, rewritten: holes, `time`, constants,
+   * this module's functions and structs, and handles called through holes. `hide(e)` spells an expression the text
+   * reads: an added parameter in a raw function, an accessor call in an entry point (which cannot take parameters).
+   * Returns the replaced tokens by index, the arguments to insert before call closes, and the library functions called.
+   */
+  function scanRaw(item: FnItem & { kind: "raw" | "entry" }, stack: readonly string[], hide: (e: Expr) => string) {
+    const name = item.sig.name, toks = item.toks;
+    const deps: LibFn[] = [];
+    const locals = new Set([...item.sig.params.map((p) => p.name), ...toks.filter((t, i) => (toks[i - 1]?.s === "let" || toks[i - 1]?.s === "var" || toks[i - 1]?.s === "const") && t.kind === "ident").map((t) => t.s)]);
+    const literal = (v: Value, at: At, what: string): string => {
+      switch (v.k) {
+        case "num": { const t = /[.e]/.test(String(v.v)) ? String(v.v) : `${v.v}.0`; return v.v < 0 ? `(${t})` : t; }
+        case "lit": return `vec${v.v.length}<f32>(${v.v.map((x) => literal({ k: "num", v: x, int: false }, at, what)).join(", ")})`;
+        case "bool": return String(v.b);
+        case "expr": return hide(v.e);
+        case "int": return typeof v.v === "number" ? `${v.v}` : hide(v.v);
+        default: return fail(at, `${what}, ${typeName(v)}, read by the raw function ${name}`, "a number, a vector, a bool, an expression or a compute output to call", "call it from a graph function and pass raw code the result");
+      }
+    };
+    // Arguments appended to a call: before the call's closing parenthesis, after the author's own.
+    const close = new Map<number, string>();
+    const append = (i: number, args: readonly string[]): void => {
+      let d = 0, j = i + 1;
+      for (; j < toks.length; j++) { if (toks[j]!.s === "(") d++; if (toks[j]!.s === ")") { d--; if (d === 0) break; } }
+      if (args.length === 0) return;
+      close.set(toks[j]!.start, `${close.get(toks[j]!.start) ?? ""}${toks[j - 1]!.s === "(" ? "" : ", "}${args.join(", ")}`);
+    };
+    const named = new Map<number, string>();
+    toks.forEach((t, i) => {
+      if (t.kind !== "ident" || toks[i - 1]?.s === "." || toks[i - 1]?.s === "@") return;
+      const at = { line: t.line, col: t.col };
+      const calls = toks[i + 1]?.s === "(";
+      if (i > 0 && toks[i - 1]!.s === "fn") { if (item.kind === "raw") named.set(i, SELF); return; }
+      if (t.s.startsWith(HOLE_PREFIX)) {
+        const k = Number(t.s.slice(HOLE_PREFIX.length));
+        const callable = rawCallOf(rawHoles[k]);
+        if (callable === undefined) { named.set(i, literal(holes[k]!, at, "a hole")); return; }
+        if (!calls) fail(at, `the hole number ${k + 1}, a compute output, not called`, "a call, as TypeScript calls it: ${tex}(uv) or ${buf}(i, lane)", "call it");
+        deps.push(callable.lib);
+        named.set(i, callable.lib.name);
+        append(i, callable.trailing.map((x) => (typeof x === "number" ? literal({ k: "num", v: x, int: false }, at, "a hole") : hide(x))));
+        return;
+      }
+      if (locals.has(t.s)) return;
+      if (t.s === "time") { named.set(i, hide(X.time)); return; }
+      const c = consts.get(t.s);
+      if (c !== undefined) {
+        // WGSL folds `3.6 * k` in f32 when k is declared f32, in abstract precision when k is untyped: the literal keeps
+        // that type, or the result can differ in its last bit (a stepped simulation then drifts).
+        const v = literal(scope.constValue(t.s), at, t.s);
+        named.set(i, c.type?.name === "f32" ? `f32(${v})` : v);
+        return;
+      }
+      const f = fns.get(t.s);
+      if (f !== undefined && calls) {
+        const target = f.kind === "raw" ? rawOf(t.s, [...stack, name]) : f.kind === "graph" ? standalone(t.s) : fail(at, `a call of the entry point ${t.s}`, "a function", "call a plain fn");
+        deps.push(target.lib);
+        named.set(i, target.lib.name);
+        append(i, target.hidden.map(hide));
+        return;
+      }
+      if (structs.has(t.s)) { const d = structLib(t.s); deps.push(d); named.set(i, d.name); return; }
+      const shaderFn = calls ? RAW_PRELUDE.get(t.s) : undefined;
+      if (shaderFn !== undefined) { deps.push(shaderFn); return; }
+      if (calls && PRELUDE.has(t.s) && !WGSL_BUILTINS.has(t.s)) fail(at, `a call of the prelude function ${t.s} from the raw function ${name}`, "WGSL builtins, this module's functions and holes", `wrap it in a graph function of this module, fn ${t.s}_of(p: vec3f) -> f32 { return ${t.s}(p); }, and call that`);
+    });
+    return { named, close, deps };
+  }
+
+  /** Records where raw text sits, so a GPU refusal of one of its lines names the author's line (src/authored.ts). */
+  function placed(body: string, span: readonly [number, number], what: string): void {
+    // The rewrite keeps every newline, so line k of the written text is line k of the span.
+    const first = text.slice(0, span[0]).split("\n").length - 1;
+    authored(source.file !== undefined
+      ? { text: body, file: source.file, line: source.line0 + first, what }
+      : { text: body, file: `the wgsl text loaded at ${source.call}`, line: first + 1, what });
+  }
+
+  /**
+   * A raw function as a library function. Its text is written with each outside read replaced: constants as literals,
    * expressions as added parameters `loft_h<k>`, this module's functions and structs by their library names.
    */
   function rawOf(name: string, stack: readonly string[]): RawFn {
@@ -205,70 +298,46 @@ function assemble(text: string, source: Source, module: Module, rawHoles: readon
     const toks = item.toks;
     const hidden: Expr[] = [];
     const hide = (e: Expr): string => { let k = hidden.indexOf(e); if (k < 0) k = hidden.push(e) - 1; return `loft_h${k}`; };
-    const deps: LibFn[] = [];
-    const locals = new Set([...item.sig.params.map((p) => p.name), ...toks.filter((t, i) => (toks[i - 1]?.s === "let" || toks[i - 1]?.s === "var" || toks[i - 1]?.s === "const") && t.kind === "ident").map((t) => t.s)]);
-    const literal = (v: Value, at: At, what: string): string => {
-      switch (v.k) {
-        case "num": { const t = /[.e]/.test(String(v.v)) ? String(v.v) : `${v.v}.0`; return v.v < 0 ? `(${t})` : t; }
-        case "lit": return `vec${v.v.length}<f32>(${v.v.map((x) => literal({ k: "num", v: x, int: false }, at, what)).join(", ")})`;
-        case "bool": return String(v.b);
-        case "expr": return hide(v.e);
-        case "int": return typeof v.v === "number" ? `${v.v}` : hide(v.v);
-        default: return fail(at, `${what}, ${typeName(v)}, read by the raw function ${name}`, "a number, a vector, a bool or an expression", "call it from a graph function and pass raw code the result");
-      }
-    };
-    // Calls of this module's functions: the callee's added parameters go at the end of the call's arguments.
-    const close = new Map<number, string>();
-    const callee = (i: number, target: RawFn): void => {
-      let d = 0, j = i + 1;
-      for (; j < toks.length; j++) { if (toks[j]!.s === "(") d++; if (toks[j]!.s === ")") { d--; if (d === 0) break; } }
-      if (target.hidden.length === 0) return;
-      const names = target.hidden.map(hide);
-      close.set(toks[j]!.start, `${toks[j - 1]!.s === "(" ? "" : ", "}${names.join(", ")}`);
-    };
-    const named = new Map<number, string>();
-    toks.forEach((t, i) => {
-      if (t.kind !== "ident" || toks[i - 1]?.s === "." || toks[i - 1]?.s === "@") return;
-      const at = { line: t.line, col: t.col };
-      const calls = toks[i + 1]?.s === "(";
-      if (i > 0 && toks[i - 1]!.s === "fn") { named.set(i, SELF); return; }
-      if (t.s.startsWith(HOLE_PREFIX)) { named.set(i, literal(holes[Number(t.s.slice(HOLE_PREFIX.length))]!, at, "a hole")); return; }
-      if (locals.has(t.s)) return;
-      if (t.s === "time") { named.set(i, hide(X.time)); return; }
-      const c = consts.get(t.s);
-      if (c !== undefined) { named.set(i, literal(scope.constValue(t.s), at, t.s)); return; }
-      const f = fns.get(t.s);
-      if (f !== undefined && calls) {
-        const target = f.kind === "raw" ? rawOf(t.s, [...stack, name]) : f.kind === "graph" ? standalone(t.s) : fail(at, `a call of the entry point ${t.s}`, "a function", "call a plain fn");
-        deps.push(target.lib);
-        named.set(i, target.lib.name);
-        callee(i, target);
-        return;
-      }
-      if (structs.has(t.s)) { const d = structLib(t.s); deps.push(d); named.set(i, d.name); return; }
-      if (calls && PRELUDE.has(t.s) && !WGSL_BUILTINS.has(t.s)) fail(at, `a call of the prelude function ${t.s} from the raw function ${name}`, "WGSL builtins, this module's functions and holes", `wrap it in a graph function of this module, fn ${t.s}_of(p: vec3f) -> f32 { return ${t.s}(p); }, and call that`);
-    });
+    const { named, close, deps } = scanRaw(item, stack, hide);
     // The added parameters, after the declared ones.
     const sigOpen = toks.findIndex((t, i) => t.s === "(" && toks[i - 1]?.kind === "ident" && toks[i - 2]?.s === "fn");
     let d = 0, sigClose = sigOpen;
     for (; sigClose < toks.length; sigClose++) { if (toks[sigClose]!.s === "(") d++; if (toks[sigClose]!.s === ")") { d--; if (d === 0) break; } }
-    const finish = (): string => {
-      const extra = hidden.map((e, k) => `loft_h${k}: ${X.WGSL_TY[e.ty]}`).join(", ");
-      const insert = new Map(close);
-      if (extra !== "") insert.set(toks[sigClose]!.start, `${(close.get(toks[sigClose]!.start) ?? "")}${toks[sigClose - 1]!.s === "(" || toks[sigClose - 1]!.s === "," ? "" : ", "}${extra}`);
-      return rewrite(item.span, (_t, i) => named.get(i), insert);
-    };
-    const body = finish();
+    const extra = hidden.map((e, k) => `loft_h${k}: ${X.WGSL_TY[e.ty]}`).join(", ");
+    const insert = new Map(close);
+    if (extra !== "") insert.set(toks[sigClose]!.start, `${(close.get(toks[sigClose]!.start) ?? "")}${toks[sigClose - 1]!.s === "(" || toks[sigClose - 1]!.s === "," ? "" : ", "}${extra}`);
+    const body = rewrite(item.span, (_t, i) => named.get(i), insert);
     const r: RawFn = { lib: libOf(name, body, graphTy(item.sig.ret) ?? "f32", deps), hidden, params: item.sig.params.map((p) => p.type), ret: graphTy(item.sig.ret) };
     markRaw(r.lib, `raw function ${name} at ${placeOf(source, item.reason.at)}: ${item.reason.why}`);
-    // The GPU is the only reader of this text: where it sits, so a refusal of one of its lines names the author's line
-    // (src/authored.ts). The rewrite keeps every newline, so line k of the library text is line k of the span.
-    const first = text.slice(0, item.span[0]).split("\n").length - 1;
-    authored(source.file !== undefined
-      ? { text: r.lib.wgsl, file: source.file, line: source.line0 + first, what: `raw function ${name}` }
-      : { text: r.lib.wgsl, file: `the wgsl text loaded at ${source.call}`, line: first + 1, what: `raw function ${name}` });
+    placed(r.lib.wgsl, item.span, `raw function ${name}`);
     raws.set(name, r);
     return r;
+  }
+
+  /**
+   * Entry points as the text of one shader module (src/text/index.ts `EntryText`). Their names stay (a pipeline names
+   * its entry); what they read from outside the text goes through accessors `loft_value_<k>()`.
+   */
+  function entries(names: readonly string[]): EntryText {
+    const values: Expr[] = [];
+    const hide = (e: Expr): string => { let k = values.indexOf(e); if (k < 0) k = values.push(e) - 1; return `loft_value_${k}()`; };
+    const libs: LibFn[] = [];
+    const parts = module.raws.map((r) => {
+      const s = text.slice(r.span[0], r.span[1]);
+      if (s.includes(HOLE_PREFIX)) fail(r.at, "a hole in a module-scope declaration", "holes inside functions", "read the value inside the function that uses it");
+      placed(s, r.span, "a module-scope declaration");
+      return s;
+    });
+    for (const name of names) {
+      const item = fns.get(name);
+      if (item?.kind !== "entry") throw new Error(`internal: text: ${name} is not an entry point`);
+      const { named, close, deps } = scanRaw(item, [], hide);
+      const body = rewrite(item.span, (_t, i) => named.get(i), close);
+      placed(body, item.span, `entry point ${name}`);
+      for (const l of deps) if (!libs.includes(l)) libs.push(l);
+      parts.push(body);
+    }
+    return { text: parts.join("\n"), libs, values };
   }
 
   /** A graph function emitted on its own, for raw code to call: its body over variables of its declared types. */
@@ -309,7 +378,7 @@ function assemble(text: string, source: Source, module: Module, rawHoles: readon
   // Module constants are lowered now, once, in order: as a TypeScript module's constants are computed when it loads.
   for (const c of module.consts) scope.constValue(c.name);
 
-  const state: WgslState = { text, source, module, holes, raw: (name) => rawOf(name, []) };
+  const state: WgslState = { text, source, module, holes, raw: (name) => rawOf(name, []), entries };
   const out: Record<string | symbol, unknown> = { [WGSL_STATE]: state };
   const withCaller = <T>(f: () => T): T => {
     try { return f(); } catch (e) {

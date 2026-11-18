@@ -86,8 +86,8 @@ Loft L0: symbolic maths.
   `const exp = unary("exp")`
 - **f**: `f(x)`: the constant expression for the number x (an f32); the same as passing x where an expression is expected.
   `const f = (x: number): Expr<"f32"> =>`
-- **fetch**: Entry `index` of a table or compute buffer, vec4 number `lane` of that entry.
-  `function fetch(table: TableSource | RawComputeFetch, index: In<"f32">, lane: number): Expr<"vec4">`
+- **fetch**: Entry `index` of a table, vec4 number `lane` of that entry.
+  `function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4">`
 - **floor**: `floor(a)`: the largest whole number not above a, componentwise.
   `const floor = unary("floor")`
 - **fract**: `fract(a)`: a - floor(a), the part after the point, componentwise (always in [0, 1)).
@@ -316,7 +316,7 @@ Types:
 
 Author-side declarations.
 
-- **compute**: Declare a raw WGSL compute pass.
+- **compute**: Declare a raw WGSL compute pass, written as a `wgsl` module with an `@compute` entry.
   `function compute<const W extends Readonly<Record<string, Shape>>>(name: string, spec: Spec<W>): { readonly [K in keyof W]: Handle<W[K]> }`
 
 ### src/map/recur.ts
@@ -433,6 +433,7 @@ One generic drawable per signature (DESIGN.md 7.4), including the bounded tracer
   - `draw.density`: A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
   - `draw.points`: `count` camera-facing specks (grains, dust, sparks, spray, snow) in one instanced draw: `speck(index)` gives each one's centre, radius, colour and opacity (read `time` for motion); nothing is stored.
   - `draw.volume`: March a density function of world position inside a box (read `time` for motion), with scattering from the sun and lamps.
+  - `draw.shader`: Your own shaders: a `wgsl` module with `@vertex fn vs` and `@fragment fn fs`, drawn `vertices` times per instance.
 
 Types:
 - **Bounds**: An axis-aligned box: the proxy a tracer starts and ends its march in. `type Bounds = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }`
@@ -516,6 +517,14 @@ A bounded march of the author's extinction field.
 
 Types:
 - **VolumeOptions**: What a raymarch integrates, sampled in world coordinates (read `time` for motion). `type VolumeOptions = { bounds, steps, albedo?, emission?, g?, shadow? }`
+
+### src/draw/shader.ts
+
+`draw.shader`: a raw drawable, rung 3 of the escape ladder (docs/proposals/2026-11-18_authoring_api.md section 4).
+
+
+Types:
+- **ShaderOptions**: The draw's state: how many vertices (and instances) `vs` is run for, its phase, culling, depth and blending. `type ShaderOptions = Pick<DrawSpec, "vertices"> & Partial<Pick<DrawSpec, "instances" | "phase" | "cull" | "depthWrite" | "blend">>`
 
 ### src/draw/surface.ts
 
@@ -3050,7 +3059,7 @@ Types:
 
 ## Coverage
 
-819 exports (462 values, 357 types) from src/index.ts and src/lib/index.ts.
+820 exports (462 values, 358 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

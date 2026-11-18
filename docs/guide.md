@@ -555,30 +555,28 @@ turns and sizes each copy, `points(n, (i) => ({ at, scale }))` only moves and sc
 
 Where you can bring your own:
 
-- **A drawable.** Anything with a `name`, `draws(ctx)`, `skeletons` and `surfaces` is a `Drawable`
-  (`src/compile/context.ts`). `draws` returns WGSL shaders and draw calls, each with a phase (`background`, `opaque`,
-  `on-bodies`, `water`, `on-water`, `transparent`); `ctx.table` declares a per-frame table your raw WGSL reads, and
-  `ctx.post` adds a full-screen pass. The compiler owns bindings, tables and order; nothing in it changes for a new
-  kind. The sky is the smallest real one (`src/draw/sky.ts`, 30 lines):
+- **Your own shaders.** `draw.shader(name, wgsl\`...\`, { vertices, instances, phase, blend, depthWrite, cull })`
+  draws a module's `@vertex fn vs` and `@fragment fn fs`. They read `frame` (`view_proj`, `viewport`, `eye`), `time`,
+  `camera_ray(px)` (a `Ray { o, d }` through a pixel) and holes: `${param(...)}` and `${input(...)}` become generated
+  accessors, `${sim.state}(i, lane)` and `${baked.sdf}(uv)` read compute outputs. No slot index is ever written.
+  A fragment stage that calls `scene_depth(px)` or `scene_position(px)` reads the opaque scene (transparent phases).
+  It is unstyled and checks cannot see it; step down to it only for what a `draw.*` primitive cannot do. A library
+  author who needs tables, posts or several draws writes a `Drawable` (`src/compile/context.ts`, `src/draw/sky.ts`).
 
 ```ts check
-import { drawSpec, type Drawable } from "../src/index.ts";
+import { draw, param, wgsl } from "../src/index.ts";
 
+const glow = param("glow", 0.6, { min: 0, max: 1 });
 // A full-screen gradient behind everything: one triangle, no depth write.
-const WGSL = /* wgsl */ `
-struct VOut { @builtin(position) clip: vec4<f32>, @location(0) y: f32 };
-@vertex fn vs(@builtin(vertex_index) i: u32) -> VOut {
-  let xy = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
-  return VOut(vec4<f32>(xy, 0.99999, 1.0), xy.y);
+export const backdrop = draw.shader("backdrop", wgsl`
+struct Out { @builtin(position) clip: vec4f, @location(0) y: f32 }
+@vertex fn vs(@builtin(vertex_index) i: u32) -> Out {
+  let xy = vec2f(f32((i << 1u) & 2u), f32(i & 2u)) * 2.0 - 1.0;
+  return Out(vec4f(xy, 0.99999, 1.0), xy.y);
 }
-@fragment fn fs(in: VOut) -> @location(0) vec4<f32> { return vec4<f32>(mix(vec3<f32>(0.9, 0.8, 0.6), vec3<f32>(0.3, 0.4, 0.7), in.y * 0.5 + 0.5), 1.0); }`;
-
-export const backdrop: Drawable = {
-  name: "backdrop",
-  skeletons: [],
-  forms: [],
-  draws: () => ({ shaders: { backdrop: { code: WGSL, libs: [] } }, draws: [drawSpec({ label: "backdrop", shader: "backdrop", vertices: 3, phase: "background", cull: "none", depthWrite: false })] }),
-};
+@fragment fn fs(in: Out) -> @location(0) vec4f {
+  return vec4f(mix(vec3f(0.9, 0.8, 0.6), vec3f(0.3, 0.4, 0.7) * ${glow}, in.y * 0.5 + 0.5), 1.0);
+}`, { vertices: 3, phase: "background", cull: "none", depthWrite: false });
 ```
 
 - **A WGSL function inside expressions.** A function in `wgsl` text is a function of expressions; one outside the
@@ -624,48 +622,53 @@ See `examples/materials/refocus.ts` for a copper-sphere study. For a still with 
 
 ## Writing a compute pass
 
-`compute(name, spec)` adds a WGSL entry point with declared storage and dispatch. Put its return value in the
-scene's `compute` list. Each named output in `writes` becomes a WGSL binding and a handle you can give to readers.
+`compute(name, spec)` runs a `wgsl` module's `@compute` entry with declared outputs and dispatch. Put its return value
+in the scene's `compute` list. Each named output in `writes` is a WGSL variable in the pass and a handle on the record:
+call it to read the output, in TypeScript, in graph text, or through a hole in raw text.
 
 ```ts check
-import { compute, param, vec2 } from "../src/index.ts";
+import { compute, param, vec2, wgsl } from "../src/index.ts";
 
+const speed = param("speed", 2);
 const stripes = compute("stripes", {
   when: { kind: "frame" },
   writes: { image: { kind: "texture", size: [64, 64], format: "rgba8unorm" } },
-  values: { speed: param("speed", 2) },
-  entry: "fill",
   dispatch: [8, 8],
-  wgsl: `
+  wgsl: wgsl`
 @compute @workgroup_size(8, 8) fn fill(@builtin(global_invocation_id) id: vec3<u32>) {
-  let phase = f32(id.x) * 0.25 + loft_time() * speed();
+  let phase = f32(id.x) * 0.25 + time * ${speed};
   textureStore(image, vec2<i32>(id.xy), vec4<f32>(0.5 + 0.5 * sin(phase), 0.3, 0.6, 1));
 }`,
 });
 
-const paint = stripes.image.sample(vec2(0.5, 0.5)).xyz;
+const paint = stripes.image(vec2(0.5, 0.5)).xyz;
 ```
 
+`entry` names the kernel only when the module has more than one `@compute` fn (for steps: more than one besides
+`when.start`). Holes are the only way Loft values enter the text, and a hole holding another pass's output is that
+pass's dependency: the producer runs first, in whatever order the scene lists them.
+
 - **Build** runs on the build GPU and stores the result in the artefact. A 48³ `r32float` volume adds 442,368 bytes.
-  [SDF example](../examples/compute_volume.ts)
-- **Load** regenerates data on the loader's GPU once. Use deterministic WGSL with race-free writes. Give a consuming
-  pass `reads: { tones: palette.tones }` to bind that output as `tones`. Passes can be listed in any order.
-- **Frame** runs from zeroed outputs before the pose and draw passes. It reads time in seconds through `loft_time()`.
-  Name an `input(...)` or `param(...)` in `values` to give WGSL a getter of the same name. Use build or load for
-  data shared by all frames. [Palette and frame texture example](../examples/compute_frame.ts)
+  [SDF example](../examples/compute_volume.ts): the bake is drawn by `draw.field`, so it gets the scene's camera,
+  depth, light and ink. The field reads a texture the CPU cannot, so it asks for `safety`.
+- **Load** regenerates data on the loader's GPU once. Use deterministic WGSL with race-free writes. Read an earlier
+  output through a hole: `${palette.tones}(0.0, 0.0)`.
+- **Frame** runs from zeroed outputs before the pose and draw passes. Only a frame pass reads `time` (seconds),
+  params and inputs, by name or hole. Use build or load for data shared by all frames.
+  [Palette and frame texture example](../examples/compute_frame.ts)
 - **Steps** seeds state 0 with `when.start`, then runs `entry` exactly `when.count` times. The step sees the preceding
-  state at `prev_<output>` and writes into a freshly zeroed destination. `loft_dt` is `1 / rate` seconds.
+  state at `prev_<output>` and writes into a freshly zeroed destination. A step's time is its count: write
+  `const dt: f32 = 1.0 / 60.0;` for the rate you declared (typed `f32`, so `3.6 * dt` folds as WGSL folds it).
   Set `keep` to retain every nth state. It defaults to 1 and always keeps the seed and final state. Reads hold the
   latest kept state at or before the requested time, with the first and last states extending outside the simulation.
-  [Particle example](../examples/compute_steps.ts)
+  [Particle example](../examples/compute_steps.ts), drawn by a `draw.shader` that reads `${sim.state}(f32(i), 0.0)`.
 
-A buffer declares `{ kind: "buffer", entries, lanes }` and uses `array<vec4<f32>>` in WGSL. Index it as
-`entry * lanes + lane`. Read it in an expression with `fetch(handle, entry, lane)`. A texture declares
+A buffer declares `{ kind: "buffer", entries, lanes }` and is `array<vec4<f32>>` in its pass. Index it as
+`entry * lanes + lane`. Read it with `handle(entry, lane)`. A texture declares
 `{ kind: "texture", size: [width, height] | [width, height, depth], format }`, where formats are `r32float`,
-`rgba8unorm`, `rgba16float`, and `rgba32float`. Call `.sample(uv)` with normalized coordinates for edge-clamped
-bilinear or trilinear sampling. A raw drawable uses `${handle.wgsl}` as the name of the buffer or texture. For
-stepped outputs it names a function, called as `(entry, lane, seconds)` for buffers or `(texel, seconds)` for textures.
-The alias in a compute pass's `reads` uses that same interface. Expression reads of stepped outputs use scene time.
+`rgba8unorm`, `rgba16float`, and `rgba32float`. Read it with `handle(uv)`, normalized coordinates, edge-clamped
+bilinear or trilinear. Both read the same way in raw text through a hole, and a stepped output is read at the scene's
+`time` everywhere.
 
 A build pass may read build outputs. Load and steps may read build, load, or steps outputs. Frame may read any
 earlier producer. CPU tools report `undecided: raw compute "<pass>.<output>"` when a check or solve hold reads an output.

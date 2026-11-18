@@ -333,8 +333,9 @@ Author text reaches the GPU two ways, and each keeps its line:
 concatenated with nothing between) and asks `Manifest.authored`. An author line is a `ShaderTextError`, a `SceneError`
 whose site is that line: `loft: scene: examples/x.ts:9: given raw function grain with a line the GPU refused
 (unresolved value 'hsh'); ...`, exit 4, never retried. Any other line is the library's and stays an
-`EnvironmentError` (exit 6, retried on fresh devices). Raw compute keeps its own rule (a module labelled `compute "..."`
-is the scene's) until lane L6 registers its texts. The same mapping runs on a built directory: the field is in the
+`EnvironmentError` (exit 6, retried on fresh devices). Compute entries and raw drawables register their texts too
+(lane L6, `WgslState.entries`); the older rule that a module labelled `compute "..."` is the scene's remains in
+`refused` and can go. The same mapping runs on a built directory: the field is in the
 manifest, checked when the files are read.
 
 **`loft show <scene> [--thing name] [--variant v]`** (`src/cli/show.ts`) prints the f32 build's modules: without
@@ -1952,10 +1953,23 @@ map shows the soft edge and the body shading itself underneath.
 
 ## 18. Author compute
 
-`compute(name, spec)` binds the author's raw WGSL to named resources and a schedule. The compiler orders reads within
-each phase, rejects reads of a later phase, and emits WebGPU objects plus a command recipe. The GPU owns the contents.
-A raw drawable can read the resource's WGSL name, and expression code can use `fetch` or `.sample` wherever its consumer
-can run on the GPU. The CPU check and solver paths identify the resource as `undecided: raw compute`.
+`compute(name, spec)` binds a `wgsl` module's `@compute` entry to named resources and a schedule. The compiler orders
+reads within each phase, rejects reads of a later phase, and emits WebGPU objects plus a command recipe. The GPU owns
+the contents. Each output's handle is a function of expressions (`sim.state(i, lane)`, `baked.sdf(uv)`) wherever its
+consumer runs on the GPU. The CPU check and solver paths identify the resource as `undecided: raw compute`.
+
+**One escape ladder** (docs/proposals/2026-11-18_authoring_api.md section 4, lane L6): graph function, raw function,
+raw drawable (`draw.shader`), raw compute, all written as `wgsl` text. Holes are the only way Loft values enter raw
+code. `WgslState.entries(names)` (src/text/index.ts) writes entry points as one module's text: each read from outside
+the text (a hole's expression, `time`, the added parameters of the raw functions it calls) becomes a call of an
+accessor `loft_value_<k>()`, which the module's compiler emits against its own bindings (a pass's `inputs`/`params`
+arrays, a drawable's slots); a hole holding a compute output becomes a call of the output's reading library function
+with the time it reads appended (`rawCall` in src/expr.ts), so raw text reads an output exactly as TypeScript does. A
+pass's reads are the outputs whose reading functions its text calls: the hole is the dependency, and a reader is bound
+under the output's symbol, as in a drawable. A module constant declared `f32` is written as `f32(...)` where raw text
+reads it: WGSL folds `3.6 * dt` in f32 for a typed constant and in abstract precision for a literal, and the last
+bit, compounded over 72 steps, moved the dust example's pixels. `camera_ray(px)` and `Ray` (src/text/raw_prelude.ts)
+are emitted only into a module whose raw text calls them.
 
 | Phase | Contents of an ordinary artefact | When it runs |
 |---|---|---|
@@ -1966,7 +1980,7 @@ can run on the GPU. The CPU check and solver paths identify the resource as `und
 
 Frame destinations are zeroed before dispatch. Outputs feed their declared readers in order within the same
 submission. They can read time, inputs, parameters and predecessor outputs. Load and step kernels see only their
-declared resources and constants. Portable WGSL with race-free writes is the author's determinism contract.
+declared resources, predecessor outputs and constants; reading time, an input or a param there is refused by name. Portable WGSL with race-free writes is the author's determinism contract.
 
 Raw steps and `recur` share the alternating dispatch schedule. The expression compiler for `recur` writes kept
 states in its kernel, supports replay, and supplies CPU arithmetic, drift and seam checks. Raw kernels use GPU

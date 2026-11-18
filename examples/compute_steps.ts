@@ -1,11 +1,11 @@
-import { budget, compute, drawSpec, plane, scene, toon, type Drawable } from "../src/index.ts";
+import { budget, compute, draw, plane, scene, toon, wgsl } from "../src/index.ts";
 
 const sim = compute("dust", {
   when: { kind: "steps", start: "seed", count: 120, rate: 60, keep: 4 },
   writes: { state: { kind: "buffer", entries: 2048, lanes: 2 } },
-  entry: "settle",
   dispatch: [32],
-  wgsl: /* wgsl */ `
+  wgsl: wgsl`
+const dt: f32 = 1.0 / 60.0;
 fn hash(i: u32) -> f32 {
   var n = i * 747796405u + 2891336453u;
   n = ((n >> ((n >> 28u) + 4u)) ^ n) * 277803737u;
@@ -19,8 +19,8 @@ fn hash(i: u32) -> f32 {
 @compute @workgroup_size(64) fn settle(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x * 2u;
   let old = prev_state[i];
-  var v = prev_state[i+1u].xyz * vec3<f32>(0.989, 1, 0.989) - vec3<f32>(0, 3.6 * loft_dt, 0);
-  var p = old.xyz + v * loft_dt;
+  var v = prev_state[i+1u].xyz * vec3<f32>(0.989, 1, 0.989) - vec3<f32>(0, 3.6 * dt, 0);
+  var p = old.xyz + v * dt;
   var ground = 0.025;
   if (abs(p.x) < 0.46 && abs(p.z) < 0.39 && old.y >= 0.70) { ground = 0.70; }
   if (p.y < ground) {
@@ -32,15 +32,11 @@ fn hash(i: u32) -> f32 {
 }`,
 });
 
-const dust: Drawable = {
-  name: "dust",
-  skeletons: [],
-  forms: [],
-  draws: () => ({
-    shaders: { dust: { libs: [], code: /* wgsl */ `
+// Each grain is a quad facing the camera, placed where the stepped state had it at this frame's time.
+const dust = draw.shader("dust", wgsl`
 struct Grain { @builtin(position) clip: vec4<f32>, @location(0) q: vec2<f32>, @location(1) shade: f32 };
 @vertex fn vs(@builtin(vertex_index) v: u32, @builtin(instance_index) i: u32) -> Grain {
-  let p = ${sim.state.wgsl}(i, 0u, frame.time.x);
+  let p = ${sim.state}(f32(i), 0.0);
   let corner = array(vec2<f32>(-1,-1), vec2<f32>(1,-1), vec2<f32>(-1,1), vec2<f32>(-1,1), vec2<f32>(1,-1), vec2<f32>(1,1))[v];
   let h = frame.view_proj * vec4<f32>(p.xyz, 1);
   return Grain(vec4<f32>(h.xy + corner * frame.viewport.zw * h.w * (2.5 + 2.0 * p.w), h.zw), corner, p.w);
@@ -48,17 +44,9 @@ struct Grain { @builtin(position) clip: vec4<f32>, @location(0) q: vec2<f32>, @l
 @fragment fn fs(in: Grain) -> @location(0) vec4<f32> {
   let a = 1.0 - smoothstep(0.1, 1.0, dot(in.q, in.q));
   return vec4<f32>(mix(vec3<f32>(0.64, 0.32, 0.10), vec3<f32>(1, 0.86, 0.47), in.shade), a * 0.82);
-}` } },
-    draws: [drawSpec({ label: "dust", shader: "dust", vertices: 6, instances: 2048, phase: "transparent", depthWrite: false, blend: "alpha", cull: "none" })],
-  }),
-};
+}`, { vertices: 6, instances: 2048, phase: "transparent", depthWrite: false, blend: "alpha", cull: "none" });
 
-const obstacle: Drawable = {
-  name: "obstacle",
-  skeletons: [],
-  forms: [],
-  draws: () => ({
-    shaders: { obstacle: { libs: [], code: /* wgsl */ `
+const obstacle = draw.shader("obstacle", wgsl`
 struct Wall { @builtin(position) clip: vec4<f32>, @location(0) rgb: vec3<f32> };
 @vertex fn vs(@builtin(vertex_index) i: u32) -> Wall {
   let q = array(vec2<f32>(0,0), vec2<f32>(1,0), vec2<f32>(0,1), vec2<f32>(0,1), vec2<f32>(1,0), vec2<f32>(1,1))[i%6u];
@@ -71,10 +59,7 @@ struct Wall { @builtin(position) clip: vec4<f32>, @location(0) rgb: vec3<f32> };
   if (face == 2u) { p = vec3<f32>(0.46, q.y*0.70, mix(-0.39, 0.39, q.x)); c *= 0.53; }
   return Wall(frame.view_proj * vec4<f32>(p, 1), c);
 }
-@fragment fn fs(in: Wall) -> @location(0) vec4<f32> { return vec4<f32>(in.rgb, 1); }` } },
-    draws: [drawSpec({ label: "obstacle", shader: "obstacle", vertices: 18, cull: "none" })],
-  }),
-};
+@fragment fn fs(in: Wall) -> @location(0) vec4<f32> { return vec4<f32>(in.rgb, 1); }`, { vertices: 18, cull: "none" });
 
 export default scene({
   compute: [sim], ground: plane, things: [obstacle, dust], style: toon(), sun: [-1, 2, -1],

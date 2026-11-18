@@ -138,7 +138,15 @@ each at most 65,535, and at most 1,048,576 workgroups total. A step job has at m
 workgroups counting its seed. Texture sides are at most 8,192 for 2D and 256 for 3D, including an atlas of kept
 states. Layouts obey baseline WebGPU per-stage binding limits.
 
-Invalid WGSL in a compute entry is named at the first command that compiles that entry on the GPU. An expression
+The text is a `wgsl` module. Refused by name, with the fix: a WGSL string (`wgsl: wgsl\`...\``), the old `reads`
+or `values` fields (a hole brings both in: `${palette.tones}(0.0, 0.0)`, `${speed}`), a missing or ambiguous `entry`
+(it is named only when the module has more than one `@compute` fn besides `when.start`), and a build, load or steps
+pass whose text reads `time`, an input or a param (only a frame pass has them; a step's clock is its count). A hole
+holding a compute output in raw text must be called, as TypeScript calls it.
+
+`draw.shader` refuses a module without `@vertex fn vs` and `@fragment fn fs`, and a WGSL string in place of a module.
+
+Invalid WGSL in a compute entry or a raw drawable is named at the author's line when the scene loads (exit 4). An expression
 read in a check yields `undecided: raw compute "<pass>.<output>"`. The solver reports the same resource as an
 `undecided` failure reason. Supply a CPU-readable expression when a check or solve needs that value.
 
