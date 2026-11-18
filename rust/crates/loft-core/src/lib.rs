@@ -211,10 +211,8 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         let (mut body, mut at) = (format!("  loft_lens[0] = {head};\n"), 1);
         for (part, node) in parts {
             if let Some(&v) = free_vars(&g, node).first() {
-                let var = match g.nodes[v as usize].op {
-                    Op::Var(s) => g.sym(s).to_string(),
-                    _ => unreachable!("free_vars returns Var nodes"),
-                };
+                let Op::Var(var) = g.nodes[v as usize].op else { unreachable!("free_vars returns Var nodes") };
+                let var = g.sym(var);
                 return Err(unsupported(format!(
                     "camera \"{}\"'s {part} reads the free variable {var}; a camera reads only time, params and inputs",
                     g.sym(c.name)
