@@ -225,8 +225,9 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
     for p in b.params.iter() {
         at(&b.names, p.name, "param name")?;
     }
-    for (n, _) in b.cameras.iter() {
-        at(&b.names, *n, "camera name")?;
+    for c in b.cameras.iter() {
+        at(&b.names, c.name, "camera name")?;
+        entry(c.lens, "camera lens module")?;
     }
     packs(b, limits)?;
     for (k, m) in b.modules.iter().enumerate() {

@@ -49,10 +49,12 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
 mod validate;
+mod view;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use cache::PipelineCache;
 pub use validate::validate;
+pub use view::Aim;
 
 use loft_ir::Error;
 use loft_ir::bundle::{
@@ -211,9 +213,13 @@ pub struct Loft {
     /// `loft_detail` (emit's prelude, `@group(0) @binding(1)`): zero until the level-of-detail plan is ported.
     detail: Buffer,
     /// `loft_scene_depth`, `loft_scene_clearance` and `loft_scene_colour` (emit's prelude, bindings 2 to 4): 1 × 1, far
-    /// and clear, until the host resolves the opaque draws into them.
-    scene: [wgpu::TextureView; 3],
-    camera: Camera,
+    /// and clear, until a pass resolves the opaque draws into them (view.rs).
+    scene: view::Scene,
+    resolve: view::Resolve,
+    /// Per pass: the item before which it resolves the scene (view.rs's rule), if any.
+    resolve_at: Vec<Option<usize>>,
+    cameras: view::Cameras,
+    aim: Aim,
     bgl0: BindGroupLayout,
     frame_size: u64,
     bgl1: Packs<BindGroupLayout>,
@@ -371,38 +377,13 @@ fn group0_layout() -> [wgpu::BindGroupLayoutEntry; 5] {
     ]
 }
 
-/// The prelude's scene textures before any resolve: depth 1 (nothing opaque), clearance 0 and a clear colour, one texel
-/// each.
-fn scene_textures(device: &wgpu::Device, queue: &wgpu::Queue) -> [wgpu::TextureView; 3] {
-    let make = |format: TextureFormat, texel: &[u8]| {
-        let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("loft scene"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: None, rows_per_image: None };
-        queue.write_texture(tex.as_image_copy(), texel, layout, size);
-        tex.create_view(&Default::default())
-    };
-    [
-        make(TextureFormat::R32Float, &1f32.to_le_bytes()),
-        make(TextureFormat::R8Unorm, &[0]),
-        make(TextureFormat::Rgba8Unorm, &[0, 0, 0, 0]),
-    ]
-}
-
 fn group0<'a>(
     frame: &'a Buffer,
     frame_size: u64,
     detail: &'a Buffer,
-    scene: &'a [wgpu::TextureView; 3],
+    scene: &'a view::Scene,
 ) -> [wgpu::BindGroupEntry<'a>; 5] {
+    let scene = &scene.views;
     [
         wgpu::BindGroupEntry {
             binding: 0,
@@ -524,7 +505,7 @@ impl Loft {
             usage,
             mapped_at_creation: false,
         });
-        let scene = scene_textures(device, queue);
+        let scene = view::Scene::new(device, queue, [1, 1], TextureFormat::Rgba8Unorm);
         let bgl0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("loft frame"),
             entries: &group0_layout(),
@@ -711,6 +692,21 @@ impl Loft {
                 }
             }
         }
+        let lenses: Vec<_> = b.cameras.iter().map(|c| (&modules[c.lens.0 as usize], name(c.lens.1))).collect();
+        let cameras = view::Cameras::new(device, &bgl0, &bgl1.render, &lenses, cache);
+        // view.rs's rule: a colour pass resolves the scene before its first item that writes no depth after one that did.
+        let resolve_at = b
+            .passes
+            .iter()
+            .zip(&pass_items)
+            .map(|(pass, its)| match pass.target {
+                Target::View => {
+                    let first = its.iter().position(|&it| items[it].raster.depth_write)?;
+                    its.iter().skip(first).position(|&it| !items[it].raster.depth_write).map(|k| first + k)
+                }
+                Target::Texture(_) | Target::Shadow { .. } => None,
+            })
+            .collect();
         let mut loft = Loft {
             res: Vec::new(),
             packs,
@@ -721,7 +717,10 @@ impl Loft {
             steps,
             detail,
             scene,
-            camera: NO_CAMERA,
+            resolve: view::Resolve::new(device),
+            resolve_at,
+            cameras,
+            aim: Aim::Matrices(NO_CAMERA),
             bgl0,
             frame_size: frame_bytes,
             bgl1,
@@ -956,7 +955,26 @@ impl Loft {
     }
 
     fn frame_bytes(&self, time: f32) -> Vec<u8> {
-        frame_bytes(&self.camera, self.size, time, &self.params, &self.inputs)
+        frame_bytes(&self.host_camera(), self.size, time, &self.params, &self.inputs)
+    }
+
+    /// The camera the CPU writes with the frame: the host's matrices, or a stand-in the GPU camera then overwrites.
+    fn host_camera(&self) -> Camera {
+        match self.aim {
+            Aim::Matrices(c) => c,
+            Aim::Look(_) | Aim::Named(_) => NO_CAMERA,
+        }
+    }
+
+    /// Group 0 for the loft's frame and its step frames, over the current scene textures.
+    fn group0s(&mut self, device: &wgpu::Device) {
+        self.g0 = [&self.frame, &self.steps].map(|buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("loft frame"),
+                layout: &self.bgl0,
+                entries: &group0(buffer, self.frame_size, &self.detail, &self.scene),
+            })
+        });
     }
 
     /// Steps `s` from state `from` to `to` in one compute pass (state i ends in `x[i % 2]`).
@@ -1006,9 +1024,26 @@ impl Loft {
     pub fn set_time(&mut self, seconds: f32) {
         self.time = seconds;
     }
-    /// The camera every pass draws with (`loft_ir::frame`); the viewport comes from the view's size.
+    /// The host's camera matrices for every pass (`loft_ir::frame`); the viewport comes from the view's size.
     pub fn set_camera(&mut self, camera: Camera) {
-        self.camera = camera;
+        self.aim = Aim::Matrices(camera);
+    }
+    /// A host look camera (perspective, `fovy` radians), built on the GPU as a bundle's look cameras are.
+    pub fn set_look(&mut self, eye: [f32; 3], target: [f32; 3], up: [f32; 3], fovy: f32) {
+        self.aim = Aim::Look(frame::look(eye, target, up, fovy));
+    }
+    /// The bundle camera named `name`, evaluated on the GPU every frame.
+    pub fn use_camera(&mut self, name: &str) -> Result<(), Error> {
+        let (k, _) = self.named(&self.b.cameras, |c| c.name, name, "camera")?;
+        self.aim = Aim::Named(k);
+        Ok(())
+    }
+    /// The bundle's camera names, in order.
+    pub fn cameras(&self) -> impl Iterator<Item = &str> {
+        self.b.cameras.iter().map(|c| &*self.b.names[c.name as usize])
+    }
+    pub fn aim(&self) -> Aim {
+        self.aim
     }
     fn named<'a, T>(
         &self,
@@ -1100,7 +1135,12 @@ impl Loft {
             self.bind(device);
         }
         self.size = view.size;
+        if self.resolve_at.iter().any(Option::is_some) && !self.scene.fits(view.size, view.canvas.color) {
+            self.scene = view::Scene::new(device, queue, view.size, view.canvas.color);
+            self.group0s(device);
+        }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame]);
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
@@ -1156,47 +1196,60 @@ impl Loft {
                 },
             };
             let store = wgpu::StoreOp::Store;
-            let colors: Vec<_> = color
-                .map(|view| {
-                    Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations { load: ops.0, store },
+            let items = &self.pass_items[p];
+            // One render pass, or two around the scene resolve (view.rs): the second loads what the first stored.
+            let split = self.resolve_at[p].unwrap_or(items.len());
+            for (seg, run) in [&items[..split], &items[split..]].into_iter().enumerate() {
+                if seg == 1 {
+                    if run.is_empty() {
+                        break;
+                    }
+                    self.resolve.encode(device, enc, &self.scene, color.expect("a View pass has colour"), depth)?;
+                }
+                let load = if seg == 0 { ops } else { (wgpu::LoadOp::Load, wgpu::LoadOp::Load) };
+                let colors: Vec<_> = color
+                    .map(|view| {
+                        Some(wgpu::RenderPassColorAttachment {
+                            view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: load.0, store },
+                        })
                     })
-                })
-                .into_iter()
-                .collect();
-            let timestamp_writes = self.timestamps.as_ref().map(|query_set| wgpu::RenderPassTimestampWrites {
-                query_set,
-                beginning_of_pass_write_index: Some(2 + 2 * p as u32),
-                end_of_pass_write_index: Some(3 + 2 * p as u32),
-            });
-            let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("loft pass"),
-                color_attachments: &colors,
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations { load: ops.1, store }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            rp.set_bind_group(0, &self.g0[0], &[0]);
-            rp.set_bind_group(1, &self.g1.render, &[]);
-            for &it in &self.pass_items[p] {
-                let item = &self.items[it];
-                let drawn = match (&pass.target, view.layers, item.layer) {
-                    (Target::View, Layers::Subject, Layer::Surroundings) => false,
-                    (Target::View, Layers::Subject, Layer::Subject)
-                    | (Target::View, Layers::All, _)
-                    | (Target::Texture(_) | Target::Shadow { .. }, _, _) => true,
-                };
-                if drawn {
-                    rp.set_pipeline(&self.render[&(it, key)]);
-                    rp.draw(0..item.count[0], 0..item.count[1]);
+                    .into_iter()
+                    .collect();
+                let last = split == items.len() || seg == 1;
+                let timestamp_writes = self.timestamps.as_ref().map(|query_set| wgpu::RenderPassTimestampWrites {
+                    query_set,
+                    beginning_of_pass_write_index: (seg == 0).then_some(2 + 2 * p as u32),
+                    end_of_pass_write_index: last.then_some(3 + 2 * p as u32),
+                });
+                let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("loft pass"),
+                    color_attachments: &colors,
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations { load: load.1, store }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                rp.set_bind_group(0, &self.g0[0], &[0]);
+                rp.set_bind_group(1, &self.g1.render, &[]);
+                for &it in run {
+                    let item = &self.items[it];
+                    let drawn = match (&pass.target, view.layers, item.layer) {
+                        (Target::View, Layers::Subject, Layer::Surroundings) => false,
+                        (Target::View, Layers::Subject, Layer::Subject)
+                        | (Target::View, Layers::All, _)
+                        | (Target::Texture(_) | Target::Shadow { .. }, _, _) => true,
+                    };
+                    if drawn {
+                        rp.set_pipeline(&self.render[&(it, key)]);
+                        rp.draw(0..item.count[0], 0..item.count[1]);
+                    }
                 }
             }
         }
@@ -1312,9 +1365,14 @@ impl Loft {
     /// Writes each instance's frame and runs the `Frame` kernels for all of them in one compute pass (timestamps 0 and 1
     /// when set). Call once per frame before `draw_subject`.
     pub fn prepare(&self, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, instances: &[Instance]) {
+        let camera = self.host_camera();
         for i in instances {
-            queue.write_buffer(&i.frame, 0, &frame_bytes(&self.camera, self.size, i.time, &i.params, &i.inputs));
+            queue.write_buffer(&i.frame, 0, &frame_bytes(&camera, self.size, i.time, &i.params, &i.inputs));
         }
+        // A GPU camera is built once, on the loft's own frame, and copied into every copy's.
+        queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
+        let frames: Vec<&Buffer> = instances.iter().map(|i| &i.frame).collect();
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames);
         let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1.compute, &i.g2[..])).collect();
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
     }

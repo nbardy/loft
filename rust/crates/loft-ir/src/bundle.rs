@@ -37,8 +37,8 @@ pub struct Bundle {
     pub draws: Box<[Draw]>,
     pub passes: Box<[Pass]>,
     pub media: Box<[Medium]>,
-    /// (name, camera root) per named camera.
-    pub cameras: Box<[(Id, Id)]>,
+    /// The named cameras.
+    pub cameras: Box<[Camera]>,
     pub params: Box<[ParamDecl]>,
     pub inputs: Box<[InputDecl]>,
     pub sites: Box<[Site]>,
@@ -228,6 +228,17 @@ pub struct Medium {
 pub enum Integrate {
     March { steps: u16, shadow_steps: u16 },
     Gaussians { res: Id },
+}
+
+/// A named camera (plan §1.5: cameras are graph roots, evaluated on the GPU). `lens` is a compute entry (one invocation,
+/// group 0 the frame, group 1 the packs as render pipelines bind them) that writes the camera's lens
+/// (`loft_ir::frame::LENS`) to `@group(2) @binding(0)`; the host turns a lens into the frame's camera every frame, so a
+/// camera may move with time, params and inputs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Camera {
+    pub name: Id,
+    /// (module, entry).
+    pub lens: (Id, Id),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

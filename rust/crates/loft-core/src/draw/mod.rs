@@ -276,7 +276,9 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
         }
         Cover::Screen => {
             gl.templates.push(SCREEN);
-            (b::Cover::Screen, d.raster)
+            // The full-screen triangle is wound clockwise: a Screen cover never culls, or a draw that asked for back
+            // faces culled (as an opaque sky does) drew nothing (measured: the sample job's sky, 2026-11-19).
+            (b::Cover::Screen, Raster { cull: false, ..d.raster })
         }
     };
     for &k in &need {
