@@ -294,6 +294,15 @@ the library declares:
 declares, the most a frame can draw; what a frame actually drew (after level of detail) is the host's `FrameStats`
 (`Loaded.draw`, `GpuLoaded.frameTimed`).
 
+**Render precision.** The baseline remains f32. A mixed build can carry version-4 overlays for individual shader
+modules and static buffer initializers. Every host selects the overlay together on a device with `shader-f16`. On
+other devices a mixed request resolves to `f32-fallback`. Built-in colour post-processing and medium lighting
+weights have explicit f16 arithmetic boundaries. A static shading lookup can represent each vec4 sample in eight
+bytes and widen to f32 on access. Its binding stays fixed and adjacent tables keep their natural alignment.
+Recurrence scenes keep the f32 static buffer layout shared by bake and replay. Frame identity includes the
+selected precision. Geometry, hit distances, time, scene depth, optical depth, and arbitrary expression
+evaluation use f32. The CPU twin reads the full-precision scene.
+
 Level of detail (section 12) added to the contract: `Draw.detail` (`fixed`, `grid`, `projected`), a uniform array
 `loft_detail` at group 0 binding 4 (`DETAIL_SLOTS` vec4) that the host fills each frame and shaders read at their
 `LOFT_DETAIL_SLOT` override (set by the compiler among the draw's constants), `View.cellPixels` (default

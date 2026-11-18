@@ -11,7 +11,7 @@ import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writ
 import { join } from "node:path";
 import { LoadError } from "../errors.ts";
 import { loadBundle, NotDataError, type GpuLoaded } from "./host.ts";
-import { FORMAT, FORMAT_VERSIONS, type Bundle, type Manifest } from "./manifest.ts";
+import { FORMAT, FORMAT_VERSIONS, type Bundle, type Manifest, type Precision } from "./manifest.ts";
 
 export const MANIFEST = "manifest.json";
 const chunkPath = (dir: string, name: string) => join(dir, "wgsl", `${name}.wgsl`);
@@ -128,7 +128,7 @@ export function readBundle(dir: string, limits: ArtefactLimits = ARTEFACT_LIMITS
 }
 
 /** Draws from a built directory alone: no scene module, no compiler, no `cpu` tables (a bundle with one is refused by name). */
-export async function loadArtefactFiles(device: GPUDevice, dir: string): Promise<{ readonly bundle: Bundle; readonly loaded: GpuLoaded }> {
+export async function loadArtefactFiles(device: GPUDevice, dir: string, precision?: Precision): Promise<{ readonly bundle: Bundle; readonly loaded: GpuLoaded }> {
   const bundle = readBundle(dir);
-  return { bundle, loaded: await loadBundle(device, bundle, { kind: "none" }) };
+  return { bundle, loaded: await loadBundle(device, bundle, { kind: "none" }, precision) };
 }

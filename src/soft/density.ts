@@ -89,9 +89,9 @@ export class DensityDrawable implements Drawable {
     const acc = accessMedium(this.medium, ctx.sun, ctx.lighting.lights, (t) => ctx.table(t));
     const key = `density.${this.name}`;
     const detail = detailFn(ctx, this.o.detail);
-    const code = [detail.code, densityWgsl(this.medium, acc, this.o, ctx.sun)].join("\n");
+    const code = (mixed: boolean) => [detail.code, densityWgsl(this.medium, acc, this.o, ctx.sun, mixed)].join("\n");
     return {
-      shaders: { [key]: { code, libs: [...detail.libs, ...(acc.banks.kind === "some" ? [GAUSS_LIB, BANK_LIB] : [GAUSS_LIB])] } },
+      shaders: { [key]: { code: code(false), mixedCode: code(true), libs: [...detail.libs, ...(acc.banks.kind === "some" ? [GAUSS_LIB, BANK_LIB] : [GAUSS_LIB])] } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: 36, phase: "transparent", cull: "front", depthWrite: false, blend: "alpha", sceneDepth: true })],
     };
   }
@@ -191,8 +191,16 @@ function layerSunTail(sun: V3): string {
   return sun[1] > 0.05 ? `let selfSun = selfUp * ${f(1 / sun[1])};` : "let selfSun = a0.w * loft_gauss_tail(Op, k * SUN_DIR);";
 }
 
-function densityWgsl(m: Medium, acc: MediumAccess, o: DensityOptions, sun: V3): string {
+function densityWgsl(m: Medium, acc: MediumAccess, o: DensityOptions, sun: V3, mixed: boolean): string {
   const g = o.forward;
+  // Keep the slowest exponential in f32. The half sum has a constant floor,
+  // so rounding its other terms cannot erase a dim contribution lit by HDR light.
+  const sunVis = mixed
+    ? "exp(-0.09 * tauSun) * f32((f16(exp(-0.91 * tauSun)) + 0.5h * f16(exp(-0.21 * tauSun)) + 0.25h) * (1.0h / 1.75h))"
+    : "(exp(-tauSun) + 0.5 * exp(-0.3 * tauSun) + 0.25 * exp(-0.09 * tauSun)) * (1.0 / 1.75)";
+  const skyVis = mixed
+    ? "exp(-0.15 * tauUp) * f32((f16(exp(-0.35 * tauUp)) + 0.5h) * (1.0h / 1.5h))"
+    : "(exp(-0.5 * tauUp) + 0.5 * exp(-0.15 * tauUp)) * (1.0 / 1.5)";
   const NB = m.blobs.length;
   const layers = acc.layers.kind === "none" ? "" : /* wgsl */ `
   for (var i = 0u; i < ${acc.layers.count}u; i++) {
@@ -266,8 +274,8 @@ fn soft_deposit(t: f32, tau: f32, light: vec3<f32>) {
 fn soft_light(albedo: vec3<f32>, tauSun: f32, tauUp: f32, flash: vec3<f32>, cosv: f32) -> vec3<f32> {
   // Octaves of extinction (Wrenninge's multiple-scattering approximation): each octave half as strong and a third as
   // extinguished, so thick cloud stays luminous a long way in and only the deepest parts go dark.
-  let sunVis = (exp(-tauSun) + 0.5 * exp(-0.3 * tauSun) + 0.25 * exp(-0.09 * tauSun)) * (1.0 / 1.75);
-  let skyVis = (exp(-0.5 * tauUp) + 0.5 * exp(-0.15 * tauUp)) * (1.0 / 1.5);
+  let sunVis = ${sunVis};
+  let skyVis = ${skyVis};
   let hg = ${f(1 - g * g)} / pow(${f(1 + g * g)} - ${f(2 * g)} * cosv, 1.5);
   let phase = mix(1.0, hg, 0.5);
   return albedo * (SUN_LIGHT * sunVis * phase + soft_sky * skyVis + flash) + soft_amb;

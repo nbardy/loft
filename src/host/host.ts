@@ -21,7 +21,8 @@ import { bakeRecurrences } from "./bake.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
-import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
+import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type FramePrecision, type Precision, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
+import { selectPrecision } from "./precision.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 import { stillFrame, type StillSpec } from "./still.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
@@ -37,6 +38,8 @@ export type FrameTimings = {
 };
 
 export interface GpuLoaded extends Loaded {
+  /** The precision used for every frame, including a named f32 fallback. */
+  readonly precision: FramePrecision;
   /** `frame`, with milliseconds per stage and what was drawn. */
   frameTimed(view: View): Promise<{ readonly pixels: Uint8Array; readonly ms: FrameTimings; readonly drawn: FrameStats }>;
   /**
@@ -85,13 +88,13 @@ export class NotDataError extends Error {
   override readonly name = "NotDataError";
 }
 
-export function createHost(device: GPUDevice): GpuHost {
+export function createHost(device: GPUDevice, options: { readonly precision?: Precision } = {}): GpuHost {
   // async: an artefact that fails lower's checks rejects the returned promise, as every load error does, never throws.
   // The first host to load an artefact bakes its recurrences (src/host/bake.ts); lower then writes the baked states.
   return {
     load: async (artefact) => {
       await bakeRecurrences(device, artefact);
-      return loadBundle(device, lower(artefact), { kind: "js", uploads: (state) => artefact.cpuPose(state) });
+      return loadBundle(device, lower(artefact, options.precision), { kind: "js", uploads: (state) => artefact.cpuPose(state) });
     },
   };
 }
@@ -457,7 +460,8 @@ type Readback = { readonly width: number; readonly height: number; readonly text
 // ---- the executor ----------------------------------------------------------------------------------------------
 
 /** Load a lowered artefact: create its objects, and return the frame functions. */
-export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): Promise<GpuLoaded> {
+export async function loadBundle(device: GPUDevice, bundle: Bundle, cpu: CpuTables, ask?: Precision): Promise<GpuLoaded> {
+  const { bundle: b, precision } = selectPrecision(bundle, device.features.has("shader-f16"), ask);
   const m = b.manifest;
   // The `cpu` tables, by place: each frame's uploads must be exactly these, each its table's size.
   const cpuTables = new Map(m.tables.filter((t) => t.fill.kind === "cpu").map((t) => [`${m.buffers[t.buffer]!.label}@${t.offset}`, t]));
@@ -634,6 +638,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
   };
 
   return {
+    precision,
     frameTimed,
     frame: async (view) => (await frameTimed(view)).pixels,
     draw: async (view, target) => {

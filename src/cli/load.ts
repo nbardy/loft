@@ -2,6 +2,7 @@
 // compiles before they exist and fails with a message naming the missing export if the contract drifts.
 import { UsageError } from "./args.ts";
 import type { Artefact } from "../artefact.ts";
+import type { Precision } from "../host/manifest.ts";
 import type { GpuHost } from "../host/host.ts";
 import type { LightChoice, SceneSource, StyleChoice } from "./args.ts";
 import type { Scene } from "../scene.ts";
@@ -81,9 +82,9 @@ async function relit(scene: unknown, light: LightChoice): Promise<unknown> {
 }
 
 /** A host drawing into an offscreen texture on bun's headless WebGPU. */
-export async function headlessHost(): Promise<GpuHost> {
+export async function headlessHost(precision: Precision = "f32"): Promise<GpuHost> {
   const headless = await importFrom<Record<string, unknown>>("../host/headless.ts");
   const device = await need<() => Promise<GPUDevice>>(headless, "headlessDevice", "src/host/headless.ts")();
   const index = await importFrom<Record<string, unknown>>("../host/index.ts");
-  return need<(d: GPUDevice) => GpuHost>(index, "createHost", "src/host/index.ts")(device);
+  return need<(d: GPUDevice, options: { precision: Precision }) => GpuHost>(index, "createHost", "src/host/index.ts")(device, { precision });
 }

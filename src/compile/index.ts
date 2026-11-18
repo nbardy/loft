@@ -131,18 +131,23 @@ export function compileScene(scene: Scene): Compiled {
   const castText = casting === undefined ? "" : casting.wgsl(cpu, restFrame);
   /** A library function's text: its own, or for the cast functions the scene's (written once, with the first of them). */
   const textOf = (l: LibFn): string => (casting !== undefined && casting.libs.includes(l) ? (l === casting.libs[0] ? castText : "") : l.wgsl);
-  const sceneWgsl = [layout.wgsl, CORE_WGSL, MARK_WGSL, style, ...shared.map(textOf)].join("\n");
-  const shaders: Record<string, string> = {};
-  const moduleOf = (m: Shader, depth: boolean): string => {
-    const own = m.libs.filter((l) => !shared.includes(l));
+  const sharedCode = [CORE_WGSL, MARK_WGSL, style, ...shared.map(textOf)].join("\n");
+  const sceneWgsl = `${layout.wgsl}\n${sharedCode}`;
+  const mixedScene = layout.mixed === undefined ? undefined : `${layout.mixed.draw}\n${sharedCode}`;
+  const shaders: Record<string, string> = {}, mixedShaders: Record<string, string> = {};
+  const addModule = (key: string, m: Shader, depth: boolean): void => {
+    const own = m.libs.filter((l) => !shared.includes(l)).map(textOf);
     // A depth entry is written only into a scene with a depth pass (Shader.depthEntry), so others keep their bytes.
-    return [...own.map(textOf), m.code, ...(depth && m.depthEntry !== undefined ? [m.depthEntry] : [])].join("\n");
+    const entries = depth && m.depthEntry !== undefined ? [m.depthEntry] : [];
+    shaders[key] = [...own, m.code, ...entries].join("\n");
+    if (m.mixedCode !== undefined) mixedShaders[key] = [...own, m.mixedCode, ...entries].join("\n");
   };
-  for (const [k, m] of Object.entries(modules)) shaders[k] = moduleOf(m, depthPasses);
-  for (const [name, m] of found.screens) shaders[`pass.${name}`] = moduleOf(m, false);
+  for (const [k, m] of Object.entries(modules)) addModule(k, m, depthPasses);
+  for (const [name, m] of found.screens) addModule(`pass.${name}`, m, false);
   const post: PostPass[] = posts.map((p, i) => {
     const key = `post.${i}`;
     shaders[key] = p.wgsl;
+    if (p.mixedWgsl !== undefined) mixedShaders[key] = p.mixedWgsl;
     return { label: p.label, shader: key };
   });
 
@@ -165,6 +170,7 @@ export function compileScene(scene: Scene): Compiled {
       return { buffer: bufferName(placed.buffer), offset: placed.offset };
     },
   });
+  const mixedTables = layout.mixed;
   const triangles = draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0);
   const artefact: Artefact = {
     version: 1,
@@ -176,6 +182,15 @@ export function compileScene(scene: Scene): Compiled {
     dynamic: layout.dynamic,
     ...(layout.statics.length > 0 ? { statics: layout.statics } : {}),
     sceneWgsl,
+    ...(mixedScene !== undefined || Object.keys(mixedShaders).length > 0
+      ? { mixed: {
+        ...(mixedScene === undefined ? {} : { sceneWgsl: mixedScene }),
+        shaders: mixedShaders,
+        statics: mixedTables?.statics ?? {},
+        stages: mixedTables === undefined ? {} : Object.fromEntries(layout.stages.map((st, i) => [
+          i, mixedTables.pose + st.wgsl.slice(layout.poseWgsl.length),
+        ])),
+      } } : {}),
     ...(notes.length > 0 ? { notes } : {}),
     shaders,
     draws,

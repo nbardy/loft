@@ -6,6 +6,7 @@ import type { ServeCommand } from "./serve.ts";
 import { DesignError, parseVariantAsk, type VariantAsk } from "../design.ts";
 import type { OutlineMethod } from "../scene.ts";
 import { parseInputs, parseSweep, type InputValues, type Sweep } from "./inputs.ts";
+import type { Precision } from "../host/manifest.ts";
 import type { StillSpec } from "../host/still.ts";
 import { ARTEFACT_LIMITS, type ArtefactLimits } from "../host/files.ts";
 
@@ -28,7 +29,7 @@ export type SceneSource = Exclude<Source, { kind: "artefact" }>;
 export type Size = { readonly width: number; readonly height: number };
 export type ViewName = string;
 
-type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly still: StillSpec };
+type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly still: StillSpec; readonly precision?: Precision };
 
 /** What `bake` writes: the bodies at one time, or keyed over a span (the scene's period, or `--seconds`). */
 export type BakeWhen = { readonly kind: "at"; readonly time: number } | { readonly kind: "animated"; readonly seconds: number | undefined };
@@ -39,7 +40,7 @@ export type Command =
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName; readonly sweep: Sweep })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
-  | { readonly kind: "dev"; readonly source: SceneSource; readonly port: number }
+  | { readonly kind: "dev"; readonly precision: Precision; readonly source: SceneSource; readonly port: number }
   /** `combinations`: every combination of every slot's options, instead of the named variants. */
   | { readonly kind: "check"; readonly path: string; readonly variant: VariantArg; readonly combinations: boolean }
   | {
@@ -48,8 +49,8 @@ export type Command =
     readonly views: { readonly kind: "design" } | { readonly kind: "given"; readonly names: readonly ViewName[] };
     readonly only: { readonly kind: "all" } | { readonly kind: "given"; readonly names: readonly string[] };
   }
-  | { readonly kind: "build"; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
-  | { readonly kind: "profile"; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
+  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
+  | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
   | { readonly kind: "help" }
@@ -75,6 +76,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   --artefact dir      (render, clip, frames) draws a built directory, without the scene or the compiler
   --style toon|woodblock|biolume|papercraft|sketch|neon|pbr  (render, clip, frames, dev, build) draws the scene in that style instead of its own
   gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
+  --precision f32|mixed   (build, render, clip, frames, profile, dev; default f32 for scenes)
   --light name        (render, clip, frames, profile, build, variants) draws the scene's style in one of its named lightings
                       (woodblock: flat, twoTone, threeTone, bokashi, hatched, contact, rim, cel; docs/lighting.md)
   --input name=value  (render, clip, frames; repeatable) sets a host input: a scalar, or x,y,z for a vector
@@ -92,6 +94,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
   "--fixture": { value: false, commands: ["render", "clip", "frames", "dev"] },
+  "--precision": { value: true, commands: ["build", "render", "clip", "frames", "profile", "dev"] },
   "--artefact": { value: true, commands: ["render", "clip", "frames"] },
   "--out": { value: true, commands: ["render", "clip", "frames", "bake", "build", "variants"] },
   "--size": { value: true, commands: ["render", "clip", "frames", "profile", "variants"] },
@@ -165,6 +168,14 @@ function outlineOf(text: string | undefined): "scene" | OutlineMethod {
   }
 }
 
+export function parsePrecision(value: unknown): Precision | undefined {
+  switch (value) {
+    case undefined: return undefined;
+    case "f32": case "mixed": return value;
+    default: throw new UsageError(`precision: given ${JSON.stringify(value)}. Fix: use "f32" or "mixed"`);
+  }
+}
+
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
@@ -204,6 +215,7 @@ export function parseArgs(argv: readonly string[]): Command {
   if (positional.length > 1) throw new UsageError(`unexpected argument "${positional[1]}"`);
   if ([fixture, built !== undefined, positional.length === 1].filter((x) => x).length > 1) throw new UsageError("give one of a scene file, --fixture or --artefact");
   if (!fixture && built === undefined && positional.length === 0) throw new UsageError(`${name}: needs a scene file (or --fixture, or --artefact)`);
+  const precision = parsePrecision(one("--precision"));
   const styleName = one("--style");
   if ((fixture || built !== undefined) && styleName !== undefined) throw new UsageError("--style: a fixture or a built artefact is compiled already; it has no style to change");
   const lightName = one("--light");
@@ -236,7 +248,7 @@ export function parseArgs(argv: readonly string[]): Command {
     const frames = one("--frames") === undefined ? 30 : positive("--frames", one("--frames")!);
     if (!Number.isInteger(frames)) throw new UsageError(`--frames: ${frames} is not a whole number`);
     return {
-      kind: "profile", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
+      kind: "profile", precision: precision ?? "f32", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
       time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
       outline: outlineOf(one("--outline")),
     };
@@ -245,10 +257,10 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind !== "file") throw new UsageError("build: needs a scene file");
     const dir = one("--out");
     if (dir === undefined) throw new UsageError("build: --out dir is required");
-    return { kind: "build", source, out: dir };
+    return { kind: "build", source, out: dir, precision: precision ?? "f32" };
   }
   if (name === "dev" && source.kind === "artefact") throw new UsageError("dev: needs a scene file or --fixture");
-  if (name === "dev" && source.kind !== "artefact") return { kind: "dev", source, port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };
+  if (name === "dev" && source.kind !== "artefact") return { kind: "dev", source, precision: precision ?? "f32", port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };
 
   const out = one("--out");
   if (out === undefined) throw new UsageError(`${name}: --out is required`);
@@ -267,6 +279,7 @@ export function parseArgs(argv: readonly string[]): Command {
   }
   const shared: Shared = {
     source,
+    ...(precision === undefined ? {} : { precision }),
     size: parseSize(one("--size") ?? "1280x800"),
     params: Object.fromEntries((flags.get("--param") ?? []).map(parseParam)),
     inputs: parseInputs(flags.get("--input") ?? []),

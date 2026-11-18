@@ -351,7 +351,7 @@ A table is a function too (DESIGN.md 7.3): `tabulate` samples a function of one 
   `function tabulate<T extends NumTy>(given: string, fn: (x: F) => Expr<T>, n: number, when: Schedule): (x: In<"f32">) => Expr<T>`
 
 Types:
-- **Schedule**: `type Schedule = "static" | "frame"`
+- **Schedule**: `type Schedule = "static" | "frame" | "static-shading"`
 
 ### src/map/surface.ts
 
@@ -566,8 +566,8 @@ Types:
 - **DrawSpec**: A draw as a drawable states it: the artefact's `Draw`, with a phase in place of the host's pass. `type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; readonly detail: DetailSpec }`
 - **Emitted**: `type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] }`
 - **Phase**: When a draw runs. `type Phase = "background" | "opaque" | "on-bodies" | "water" | "on-water" | "transparent"`
-- **PostSpec**: A full-screen pass after the scene: `wgsl` defines `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`. `type PostSpec = { readonly label: string; readonly wgsl: string }`
-- **Shader**: A shader module: its code (entry points `vs` and `fs`) and the library functions that code calls. `type Shader = { code, libs, depthEntry? }`
+- **PostSpec**: A full-screen pass after the scene: `wgsl` defines `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`. `type PostSpec = { label, wgsl, mixedWgsl? }`
+- **Shader**: A shader module: its code (entry points `vs` and `fs`) and the library functions that code calls. `type Shader = { code, mixedCode?, libs, depthEntry? }`
 - **TableRef**: What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). `type TableRef = { readonly name: string; readonly wgsl: string }`
 
 ### src/compile/bind.ts
@@ -592,7 +592,7 @@ The contract between the compiler and a host.
 
 
 Types:
-- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, notes?, shaders, draws, post?, passes?, stages, tables, cpuPose, pose, cameras, loop?, recurrences?, stats }`
+- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, mixed?, notes?, shaders, draws, post?, passes?, stages, tables, cpuPose, pose, cameras, loop?, recurrences?, stats }`
 - **Camera**: `type Camera = | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number } | { readonly kind: "orthographic"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, numbe...`
 
 ### src/draw/trace.ts

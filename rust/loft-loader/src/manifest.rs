@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 pub const FORMAT: &str = "loft-artefact";
 /// The versions this loader reads: 2 adds `frame.replay` (a scene whose state keeps checkpoints) and pictures drawn off
 /// screen (sized textures, depth-only passes, pipelines with no fragment stage, `frame.copies`; docs/artefact_format.md);
-/// 3 adds a planned draw's `instanceBase` (shared draw shaders).
-pub const VERSIONS: [u32; 3] = [1, 2, 3];
+/// 3 adds a planned draw's `instanceBase` (shared draw shaders); 4 adds a mixed-precision overlay.
+pub const VERSIONS: [u32; 4] = [1, 2, 3, 4];
 
 pub type Id = usize;
 
@@ -21,6 +21,7 @@ pub type Id = usize;
 pub struct Manifest {
     pub format: String,
     pub version: u32,
+    pub precision: Option<MixedPrecision>,
     pub chunks: Vec<String>,
     pub blobs: Vec<Blob>,
     pub inputs: Vec<InputSlot>,
@@ -41,6 +42,29 @@ pub struct Manifest {
     pub frame: Frame,
     pub plan: Vec<PlanDraw>,
     pub tables: Vec<TableEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum MixedPrecision {
+    Mixed {
+        fallback: Fallback,
+        // JSON object keys remain strings when serde decodes this tagged variant.
+        modules: BTreeMap<String, Vec<Id>>,
+        buffers: BTreeMap<String, MixedBuffer>,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Fallback {
+    F32Fallback,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MixedBuffer {
+    pub size: u64,
+    pub init: String,
 }
 
 /// Read before the rest, so another format or version is refused by name rather than as a parse error.

@@ -7,7 +7,7 @@ import { orbit } from "../src/host/camera.ts";
 import { COLOR_FORMAT, createHost, type GpuLoaded } from "../src/host/host.ts";
 import { FALLBACK_CAMERAS } from "../src/cli/cameras.ts";
 // @ts-expect-error virtual module supplied by `loft dev` (src/cli/dev.ts)
-import { build, sceneName, startStyle, styleNames } from "scene:current";
+import { build, precision, sceneName, startStyle, styleNames } from "scene:current";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const canvas = $<HTMLCanvasElement>("view");
@@ -62,7 +62,7 @@ async function start() {
   if (!("gpu" in navigator)) return showError("WebGPU is not available in this browser (navigator.gpu is missing). Use a recent Chrome or Edge.");
   const adapter = await navigator.gpu.requestAdapter();
   if (!adapter) return showError("WebGPU is present but no adapter was returned (blocked GPU or unsupported hardware).");
-  const device = await adapter.requestDevice();
+  const device = await adapter.requestDevice({ requiredFeatures: adapter.features.has("shader-f16") ? ["shader-f16"] : [] });
   device.addEventListener("uncapturederror", (e) => showError(`WebGPU error:\n${(e as GPUUncapturedErrorEvent).error.message}`));
   const context = canvas.getContext("webgpu")!;
   context.configure({ device, format: COLOR_FORMAT, alphaMode: "opaque" });
@@ -79,7 +79,7 @@ async function start() {
   picker.onchange = () => { state.style = picker.value; persist(); location.reload(); };
   try {
     artefact = await (build as (style: string) => Promise<Artefact>)(style);
-    loaded = await createHost(device).load(artefact);
+    loaded = await createHost(device, { precision }).load(artefact);
   } catch (e) {
     return showError(`scene failed to compile or load:\n${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
   }
@@ -257,7 +257,7 @@ async function start() {
     requestAnimationFrame(tick);
   };
   const readoutText = (head: string) =>
-    `${head}\ncpu ${latest.cpu.toFixed(1)} ms\n${drawn.triangles.toLocaleString("en-US")} triangles drawn (of ${artefact.stats.maxTriangles.toLocaleString("en-US")})  ${drawn.draws} draw calls\n${canvas.width} x ${canvas.height} px @${(window.devicePixelRatio || 1).toFixed(2)}x`;
+    `${head}\nprecision ${loaded.precision}\ncpu ${latest.cpu.toFixed(1)} ms\n${drawn.triangles.toLocaleString("en-US")} triangles drawn (of ${artefact.stats.maxTriangles.toLocaleString("en-US")})  ${drawn.draws} draw calls\n${canvas.width} x ${canvas.height} px @${(window.devicePixelRatio || 1).toFixed(2)}x`;
   requestAnimationFrame(tick);
 }
 

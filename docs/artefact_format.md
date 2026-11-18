@@ -1,4 +1,4 @@
-# The Loft artefact as files (format versions 1, 2 and 3)
+# The Loft artefact as files (format versions 1 through 4)
 
 A built Loft scene is a directory that a client draws with no JavaScript from the compiler and no scene module. It is
 the host, lowered: every WebGPU object a loader creates is an entry in a list of `manifest.json`, described with
@@ -14,7 +14,7 @@ plan). `loft build <scene> --out <dir>` writes one; `loft render --artefact <dir
 ```
 manifest.json         the lowered host, JSON (UTF-8)
 wgsl/<chunk>.wgsl     one file per WGSL chunk, UTF-8, named by `manifest.chunks[i]`
-bin/<blob>.bin        one file per blob, little-endian f32, named by `manifest.blobs[i].name`
+bin/<blob>.bin        one file per blob, little-endian data, named by `manifest.blobs[i].name`
 ```
 
 Nothing else. A chunk's name is a 64-bit hash of its text in hex; a loader never computes it, it only opens the file.
@@ -30,8 +30,9 @@ Nothing else. A chunk's name is a 64-bit hash of its text in hex; a loader never
 - **Flags** are lists of names: buffer `usage` from `MAP_READ COPY_SRC COPY_DST UNIFORM STORAGE`, texture `usage`
   from `COPY_SRC TEXTURE_BINDING RENDER_ATTACHMENT`, layout `visibility` from `VERTEX FRAGMENT COMPUTE`. Or them.
 - **Limits and features.** WebGPU's default limits suffice (the compiler packs tables into at most 5 storage buffers
-  per stage besides the prelude's 3, and `loft_detail` is a 64 KiB uniform). No feature is required. A loader that
-  profiles may ask for `timestamp-query`; drawing never uses it.
+  per stage besides the prelude's 3, and `loft_detail` is a 64 KiB uniform). Version 4 may use
+  [`shader-f16`](https://gpuweb.github.io/gpuweb/#shader-f16). A loader that profiles may ask for `timestamp-query`;
+  ordinary drawing never uses timestamps.
 - **Output.** A frame ends in a texture the caller owns: `rgba8unorm`, the view's size, usage `RENDER_ATTACHMENT` (and
   whatever the caller needs, such as `COPY_SRC` for a readback). Shaders write display-referred sRGB values; there is
   no conversion anywhere. A canvas must be configured `rgba8unorm`.
@@ -52,13 +53,23 @@ Everything else a pass needs is objects version 1 already has: more textures, bi
 passes, listed in drawing order (each pass before the view, after the passes it reads). The group 3 binding layout
 of every draw and post module in such a file is `passBindingsWgsl` in `src/artefact.ts`, a chunk the file carries.
 
+## Mixed precision (version 4)
+
+`precision` is `{"kind":"mixed","fallback":"f32-fallback","modules":{...},"buffers":{...}}`. Main descriptors hold
+the f32 path. `modules` maps a module ID to a replacement list of chunk IDs. `buffers` maps a buffer ID to a
+replacement `{size, init}` pair. Its blob may include binary16 and binary32 fields at their WGSL storage offsets.
+Ids, bindings, pass recipes and frame writes stay the same. Both variants refer to the shared chunk and blob lists.
+
+Before creating any objects, check whether the device grants `shader-f16`. If granted, apply both maps and report
+`mixed`. Otherwise use the main descriptors and report `f32-fallback`. The TypeScript renderer also accepts an explicit f32 override, which uses the main descriptors and reports `f32`. Versions 1–3 have only the f32 path and no `precision` field.
+
 ## Load, call by call
 
-1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1, 2 or 3. Read each
+1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1, 2, 3 or 4. Read each
    `wgsl/<chunks[i]>.wgsl` and each `bin/<blobs[i].name>.bin` (check its length against `blobs[i].bytes`).
 2. **Refuse JavaScript.** If any `tables[i].fill.kind == "cpu"`, refuse to load and name the tables (`loft build`
    never writes such a file; this guards hand-made ones). (`fill.kind` is `map`, `scan`, `cpu` or, in version 2,
-   `replay`: a table the frame's replays write.)
+   `replay`: a table the frame's replays write.) Select precision before step 3.
 3. **Buffers.** For each `buffers[i]`: `createBuffer({ label, size, usage })`. If it has `init`, and that blob is not
    empty: `queue.writeBuffer(buffer, 0, blob bytes)`.
 4. **Samplers.** For each `samplers[i]`: `createSampler(descriptor)` (no mipmaps; `mipmapFilter` default).
@@ -234,9 +245,9 @@ The plan is the one per-frame procedure a loader runs on the CPU; phase 4 moves 
 loader must act on, a changed meaning, a new `FrameWrite` or command kind. A field a loader may ignore does not
 change it. The preludes are chunks, so changing them does not change the format.
 
-**The rule: a file is version 3 when a draw command carries an `instanceBase`, else version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
-It is decided in one place, `formatVersion` in src/host/lower.ts. A loader for n reads every version before it; the TypeScript loader and
-the Rust loader (rust/loft-loader) read all three.
+**The rule: a mixed build is version 4. Otherwise, a file is version 3 when a draw command carries an `instanceBase`, else version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
+`src/host/lower.ts` selects the version. A loader for n reads every version before it; the TypeScript loader and
+the Rust loader (rust/loft-loader) read all four.
 
 - 1: the format above without `frame.replay` and without passes.
 - 2 (2026-11-14): `frame.replay` and the table fill `replay` (Replays); textures of a scaled or fixed size, render
@@ -245,3 +256,5 @@ the Rust loader (rust/loft-loader) read all three.
 - 3 (2026-11-16): `instanceBase` on a `planned` command (shared draw shaders, src/host/share.ts; their rows are an
   ordinary static buffer at group 0 binding 5). A loader for 2 would ignore it and draw a shared draw with another
   draw's numbers. Written only when not 0; a file holding one uses version 3.
+
+- 4 (2026-11-18): mixed shader and storage alternatives, plus the named f32 fallback.

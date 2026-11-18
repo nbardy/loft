@@ -42,6 +42,13 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `X needs a sea; this scene's ground is a plane` | a wake or foam on dry ground | `ground: sea(...)`, or drop the thing |
 | `usage: --style "x": no such style` / `input "x": ... no such input` | the command names what is absent | a name from the list printed |
 | `pbr sky: given a sky that reads time` (or a param; or `the CPU cannot evaluate`) | `pbr` evaluates its sky, tone and lobe on the CPU once, when the style is built | a sky of its direction and the sun alone; for a GPU-only sky, `pbr({ sky, clear: [r, g, b], environment })` |
+| `precision: given ...` | the flag or request value is invalid | use `f32` or `mixed` |
+| `artefact precision: the file contains only f32` | a mixed render was requested from an f32 build | rebuild with `loft build --precision mixed` |
+| `artefact precision: ...` (invalid or missing mixed descriptor) | the version-4 overlay is inconsistent | rebuild with `loft build --precision mixed` |
+| `tabulate "x": given a static shading sample outside [-1, 1]` | `"static-shading"` received a non-finite or out-of-range sample | normalize the shading values or use `"static"` |
+
+`f32-fallback` is a successful mixed request on a device without `shader-f16`. The render and serve answer report
+that name. To render the mixed variant, select a device that grants the feature.
 
 ## Every refusal
 
