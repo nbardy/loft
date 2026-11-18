@@ -206,12 +206,12 @@ export class Lowerer {
       const id = nextRecorded++, binders = item.sig.params.map((p, j) => X.variable(`loft_fn${id}_${j}`, NUM_TYPES.get(typeKey(p.type))!));
       try {
         const out = this.inline(item, binders.map(ex), item.sig.at, [], undefined);
-        return out.k === "expr" ? { binders, body: out.e } : `${item.sig.name} returns a constant`;
+        return out.k === "expr" ? { kind: "body", binders, body: out.e } : { kind: "inline", why: `${item.sig.name} returns a constant` };
       } catch (e) {
         // Only an authoring refusal over binders (say, a loop bound that must be constant) is a reason to inline; any
         // other throw is a bug and surfaces.
         if (!(e instanceof TextError)) throw e;
-        return `${item.sig.name} does not lower over binders: ${e.message}`;
+        return { kind: "inline", why: `${item.sig.name} does not lower over binders: ${e.message}` };
       }
     });
     recordings.set(item, r);

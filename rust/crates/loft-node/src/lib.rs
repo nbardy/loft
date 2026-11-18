@@ -33,7 +33,9 @@ fn drive(job: &[u8]) -> Result<Report, Error> {
     let t = Instant::now();
     let job = wire::decode(job)?;
     let decode_ns = t.elapsed().as_nanos() as u64;
-    let report = Report { program: job.program, nodes: job.graph.nodes.len(), decls: job.graph.decls.len(), decode_ns };
+    let g = &job.graph;
+    let decls = g.fns.len() + g.raws.len() + g.loops.len() + g.kernels.len() + g.params.len() + g.inputs.len();
+    let report = Report { program: job.program, nodes: g.nodes.len(), decls, decode_ns };
     match job.program {
         Program::Scene | Program::Solve | Program::Evaluate | Program::Check => Ok(report),
     }

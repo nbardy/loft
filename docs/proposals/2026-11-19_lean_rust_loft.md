@@ -68,7 +68,7 @@ wgpu. Both rules are `cargo tree` checks in the static gate (§6).
 ```rust
 /// One node, 16 bytes: the same words the TS recorder writes (§3.2), so decode is a bounds check and a copy.
 #[repr(C)]
-pub struct Node { head: u32 /* op:8 | ty:8 | flags:8 | 0 */, args: u32 /* offset in Graph::args */, n: u32, imm: u32 }
+pub struct Node { head: u32 /* op:8 | ty:8 | flags:16 */, args: u32 /* offset in Graph::args */, n: u32, imm: u32 }
 
 pub enum Ty { F32, V2, V3, V4, Bool, Rec(RecId) }        // U32/I32 join in authoring-API phase 2
 
@@ -403,20 +403,61 @@ These parts of sol's plan are kept:
 
 ### 3.2 The wire (pinned here so that lanes 1.1 and 1.2 can run in parallel)
 
-A job is one `ArrayBuffer` set:
+Pinned as implemented on 19 Nov (lane 1.2's writer `src/record/wire.ts`, decoded by `loft-ir/src/wire.rs`; the two
+first filled the open parts differently, `agent_notes/2026-11-19_lean_rust_wire.md`). A job is one byte string, all
+words little-endian:
 
 ```
-header  u32 magic 'LFTW', u32 wire (= 1, internal, never persisted), u32 program kind, u32 n_spans
-spans   nodes  u32×4 per node   [op|ty|flags, args offset, n args, imm]        (same as loft-ir::Node)
-        args   u32              operand node ids, in order
-        lits   f64              authored numbers, exact bits
-        rows   f32              supplied samples (curve controls, author tables)
-        blobs  u8               supplied binary assets
-        syms   u8 + u32 offsets names (params, inputs, cameras, raw fn names), source text of raw functions
-        sites  u32×3            (file sym, line, col); per-node site index in a parallel u32 span (0 = none)
-        decls  u32 tagged       Fn | Loop | Kernel | Draw | Pass | Medium | Check | Solve | Param | Input | Camera
-        roots  u32              ordered roots per decl
+header  u32 magic 'LFTW', u32 wire (= 1, internal, never persisted), u32 program (Scene, Solve, Evaluate, Check),
+        u32 n_spans = 11
+spans   in this order, each: u32 byte length, u32 0, the bytes, zeros to a multiple of 8; nothing after the last
+        nodes   u32×4   [op:8 | ty:8 | flags:16, args offset, n args, imm]       (ty: f32, vec2, vec3, vec4, bool)
+        args    u32     operand node ids, in order, each below its user's id
+        lits    f64     authored numbers, exact bits, finite
+        rows    f32     supplied samples (curve controls, author tables)
+        blobs   u8      supplied binary assets
+        syms    u8      the UTF-8 text of every symbol, concatenated
+        symAt   u32     n_syms + 1 offsets: symbol k = syms[symAt[k] .. symAt[k+1]]
+        sites   u32×3   (file sym, line, col)
+        siteOf  u32     per node: 0 none, k = sites[k-1]
+        decls   u32     [program root count R, then per decl: tag, n roots, n words, words...]
+        roots   u32     the R program roots, then each decl's roots in decl order
 ```
+
+Op codes, one per `loft-ir::Op` variant (flags and imm 0 unless named; a node without args has args offset 0):
+
+| code | op | imm, flags, args |
+|---:|---|---|
+| 0 | Lit | imm first lit, n = 1 per component (a bool is one lit, 0 or 1) |
+| 1 | Time | |
+| 2 / 3 | Param / Input | imm the decl's ordinal |
+| 4 | Bind / Var | imm the name's sym; flags 1 = `Bind`, a loop's or graph function's binder (named `L3s0`, `L3i`, `F2a1` by its owner), 0 = `Var`, a free variable (u, v, p) |
+| 5 | Call | imm a graph Fn's ordinal; args the call's arguments |
+| 6 | Fetch | imm a Kernel's ordinal; flags the lane (16 bits: tables reach 632 lanes); args [index] |
+| 7 | Loop | imm a Loop's ordinal; flags the state component |
+| 8 | Grad | args [f, x]; not written in wave 1 (derivatives arrive expanded) |
+| 9 | Raw | imm a raw Fn's ordinal; args its arguments |
+| 10 | Swizzle | imm components (2 bits each) \| length << 8 |
+| 11 | Vec | args 1..=4 parts |
+| 16 + i | `Prim::ALL[i]` | the order of `src/expr.ts` `Fn` and loft-core's `Prim`; 12..=15 refused |
+
+An ordinal counts the decls of one tag, in decl order. Decl tags and layouts (words, then roots):
+
+| tag | decl | words | roots |
+|---:|---|---|---|
+| 0 | Fn, graph | [0, name, ret ty, n, binder node × n] | [body] |
+| 0 | Fn, raw | [1, name, ret ty, text sym, n deps, dep Fn ordinal × n deps]; each dep a raw Fn declared before it | [] |
+| 1 | Loop | [n, has stop, state binder × n, index binder] | [count, init × n, next × n, stop?] |
+| 2 | Kernel, table | [0, name, lanes, entries, role (stations, data, static)] | [] |
+| 2 | Kernel, rows | [1, label, offset in rows, length] | [] |
+| 8 | Param | [name, def lit, min lit, max lit] | [] |
+| 9 | Input | [name, ty, first def lit] | [] |
+| 3–7, 10 | Draw, Pass, Medium, Check, Solve, Camera | no layout yet: lanes 2.1, 2.3 and 3.1 pin theirs here; until then refused | |
+
+A `Call` or `Loop` node comes after every root and binder of its decl, so the job is acyclic through decls. The
+decoder classifies each decl into its kind's array (`Graph::{fns, raws, loops, kernels, params, inputs}`) and each
+op into one `Op` variant, so no consumer reads a tag or a flag. The canonical print (`loft-ir/src/print.rs`, grammar
+in `src/record/print.ts`) is equal to the TS graph's over the corpus.
 
 There are eleven declaration tags. The render, post and offscreen descriptors of sol's plan are one `Pass`. Tables
 and compute are one `Kernel`.

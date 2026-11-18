@@ -1,32 +1,51 @@
-//! The job wire (plan §3.2), pinned here so the recorder (lane 1.2) and Rust agree. All words little-endian.
+//! The job wire (plan §3.2), as the recorder writes it (src/record/wire.ts `pack`). All words little-endian.
 //!
 //! ```text
 //! 0   u32 magic "LFTW", u32 WIRE, u32 program (Program order), u32 n_spans = 11
-//! 16  11 × (u32 byte offset, u32 byte length), in `SPANS` order; each span lies after this table, starts at a
-//!     multiple of 8 and holds whole elements
-//!     nodes      u32×4  [op:8 | ty:8 | flags:8 | 0, args offset, n args, imm]   (op codes: graph::Op)
-//!     args       u32    operand node ids; each below its node's own id
-//!     lits       f64    authored numbers, exact bits, finite
-//!     rows       f32    supplied samples          blobs  u8   supplied binary assets
-//!     syms       u8     UTF-8 text of every symbol, concatenated
-//!     sym_ends   u32    end byte of each symbol in syms (sym i = syms[end(i-1)..end(i)])
-//!     sites      u32×3  (file sym, line, col)
-//!     node_sites u32    one per node: 0 none, k = sites[k-1]
-//!     decls      u32×4  [tag:8 | arity:24, name sym or u32::MAX, roots offset, n roots]   (tags: graph::Tag)
-//!     roots      u32    node ids
+//! 16  11 spans in this order, each: u32 byte length, u32 0, the bytes, zeros to a multiple of 8; nothing after
+//!     nodes     u32×4  [op:8 | ty:8 | flags:16, args offset, n args, imm]
+//!     args      u32    operand node ids; each below its node's own id
+//!     lits      f64    authored numbers, exact bits, finite
+//!     rows      f32    supplied samples          blobs  u8   supplied binary assets
+//!     syms      u8     UTF-8 text of every symbol, concatenated
+//!     symAt     u32    n_syms + 1 offsets: symbol k = syms[symAt[k]..symAt[k+1]]; symAt[0] = 0, last = syms length
+//!     sites     u32×3  (file sym, line, col)
+//!     siteOf    u32    one per node: 0 none, k = sites[k-1]
+//!     decls     u32    [program root count R, then per decl: tag, n roots, n words, words...]
+//!     roots     u32    node ids: the R program roots, then each decl's roots in decl order
 //! ```
-//! Leaf flags: 0 time, 1 param (imm = Param decl), 2 input (imm = Input decl), 3 binder (imm = binder id).
-//! Fetch: imm = Kernel decl, flags = lane. Loop: imm = Loop decl, flags = component. Raw: imm = source sym.
-//! Swizzle: imm = len (bits 0..3, 1..=4) | comps << 3 (2 bits each). Lit: imm = first lit; a vector takes width lits.
-//! Call and Loop: every root of the named decl precedes the node, so the job is acyclic through decls too.
+//! Ops (`op` byte; flags and imm 0 unless named; a node with no args has args offset 0):
+//! ```text
+//!   0 Lit    imm = first lit, n = ty.lits()        6 Fetch  imm = Kernel ordinal, flags = lane, args [index f32]
+//!   1 Time                                         7 Loop   imm = Loop ordinal, flags = state component
+//!   2 Param  imm = Param ordinal                   8 Grad   args [f, x]
+//!   3 Input  imm = Input ordinal                   9 Raw    imm = Fn ordinal of a raw function, args its arguments
+//!   4 Bind   imm = name sym; flags 1 a binder of   10 Swizzle imm = comps (2 bits each) | len << 8, args [vector]
+//!            a loop or graph function, 0 free      11 Vec   args 1..=4 parts
+//!   5 Call   imm = Fn ordinal of a graph function  16+i Prim::ALL[i]; 12..=15 refused
+//! ```
+//! An ordinal counts decls of one tag in decl order. Decls (tag = `Tag` order; words, then roots):
+//! ```text
+//!   0 Fn      graph [0, name, ret ty, n, binder node × n]   roots [body]
+//!             raw   [1, name, ret ty, text sym, n deps, dep Fn ordinal × n deps]  roots []   (each dep a raw Fn before it)
+//!   1 Loop    [n, has stop, state binder × n, index binder] roots [count, init × n, next × n, stop?]
+//!   2 Kernel  table [0, name, lanes, entries, role]  rows [1, label, rows offset, length]    roots []
+//!   8 Param   [name, def lit, min lit, max lit]      9 Input [name, ty, first def lit]       roots []
+//!   3 Draw, 4 Pass, 5 Medium, 6 Check, 7 Solve, 10 Camera: no layout pinned yet (lanes 2.1, 2.3, 3.1); refused.
+//! ```
+//! A Call or Loop node comes after every root and binder of its decl, so the job is acyclic through decls too.
 use crate::error::{Error, Fault, Internal, Meter, SceneFault, Span, WireFault};
-use crate::graph::{Decl, Graph, Leaf, Node, Op, Prim, Program, Sel, Site, Tag, Ty};
+use crate::graph::{Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, Program, RawFn, Role, Sel, Site, Ty};
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LFTW");
 /// Internal, never persisted: the recorder and this decoder change together. The binding reports it at load.
 pub const WIRE: u32 = 1;
-/// Quota checked before any pass: 16.7M nodes, 30x Titan's recorded count.
+/// Quota checked before any span is read: 16.7M nodes, 30x Titan's recorded count.
 pub const MAX_NODES: u64 = 1 << 24;
+/// Wire code of `Prim::ALL[0]`.
+pub const PRIM0: u8 = 16;
+/// Node flag of a bound `Bind` (a loop's or graph function's binder); 0 is a free variable.
+pub const BOUND: u16 = 1;
 
 const SPANS: [(Span, usize); 11] = [
     (Span::Nodes, 16),
@@ -35,13 +54,12 @@ const SPANS: [(Span, usize); 11] = [
     (Span::Rows, 4),
     (Span::Blobs, 1),
     (Span::Syms, 1),
-    (Span::SymEnds, 4),
+    (Span::SymAt, 4),
     (Span::Sites, 12),
     (Span::NodeSites, 4),
-    (Span::Decls, 16),
+    (Span::Decls, 4),
     (Span::Roots, 4),
 ];
-const TABLE_END: usize = 16 + 8 * SPANS.len();
 
 /// A decoded job: the program asked for and its validated graph.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,18 +76,22 @@ fn words(b: &[u8]) -> Box<[u32]> {
     b.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c)).collect()
 }
 
-/// A `len`-element range at `off` inside a span of `total` elements, or a `Ref` fault.
-fn within(off: u32, len: u32, total: usize, span: Span, at: usize) -> Result<(), Error> {
-    match off.checked_add(len) {
-        Some(end) if end as usize <= total => Ok(()),
-        Some(_) | None => Err(bad(span, at, Fault::Ref { found: off })),
-    }
+/// A `len`-element range at `off` inside `total` elements.
+fn fits(off: u32, len: u32, total: usize) -> bool {
+    off.checked_add(len).is_some_and(|end| end as usize <= total)
 }
 
-/// Decodes and validates a job: every bound, tag, quota and type rule, before any pass sees it.
-pub fn decode(buf: &[u8]) -> Result<Job, Error> {
-    let head = |i: usize| buf.get(4 * i..4 * i + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
-    let h = |i: usize| head(i).ok_or_else(|| bad(Span::Header, 0, Fault::Truncated));
+/// What an Fn ordinal names: the wire numbers graph and raw functions together, `Graph` keeps them apart.
+#[derive(Clone, Copy)]
+enum FnSlot {
+    Graph(u32),
+    Raw(u32),
+}
+
+/// The header and the eleven spans, each checked for length, padding and whole elements.
+fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
+    let word = |at: usize| buf.get(at..at + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
+    let h = |i: usize| word(4 * i).ok_or_else(|| bad(Span::Header, i, Fault::Truncated));
     (h(0)? == MAGIC).then_some(()).ok_or_else(|| bad(Span::Header, 0, Fault::Magic))?;
     let wire = h(1)?;
     (wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
@@ -80,47 +102,183 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         .ok_or_else(|| bad(Span::Header, 2, Fault::Program { found: code }))?;
     let n = h(3)?;
     (n as usize == SPANS.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::SpanCount { found: n }))?;
-    let mut spans: [&[u8]; 11] = [&[]; 11];
+    let mut out: [&[u8]; 11] = [&[]; 11];
+    let mut at = 16usize;
     for (i, (span, size)) in SPANS.iter().enumerate() {
-        let (off, len) = (h(4 + 2 * i)? as usize, h(5 + 2 * i)? as usize);
-        let fits =
-            off >= TABLE_END && off % 8 == 0 && len % size == 0 && off.checked_add(len).is_some_and(|e| e <= buf.len());
-        spans[i] = fits.then(|| &buf[off..off + len]).ok_or_else(|| bad(*span, 0, Fault::Bounds))?;
+        let oob = || bad(*span, 0, Fault::Bounds);
+        let (len, pad) = (word(at).ok_or_else(oob)? as usize, word(at + 4).ok_or_else(oob)?);
+        // The node quota, before any span is read: a length is all it takes.
+        if i == 0 && (len / 16) as u64 > MAX_NODES {
+            return Err(Error::Budget { meter: Meter::Nodes, limit: MAX_NODES, spent: (len / 16) as u64 });
+        }
+        let start = at + 8;
+        let end = start.checked_add(len).filter(|e| *e <= buf.len()).ok_or_else(oob)?;
+        let padded = end.next_multiple_of(8);
+        let clean = pad == 0 && len % size == 0 && buf.get(end..padded).is_some_and(|z| z.iter().all(|b| *b == 0));
+        clean.then_some(()).ok_or_else(oob)?;
+        out[i] = &buf[start..end];
+        at = padded;
     }
-    let [nodes_b, args_b, lits_b, rows_b, blobs_b, syms_b, ends_b, sites_b, nsites_b, decls_b, roots_b] = spans;
+    (at == buf.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::Length))?;
+    Ok((program, out))
+}
+
+/// The decls of a job, classified into `Graph`'s per-kind arrays, with each Fn ordinal's kind and each decl's word
+/// offset (for the layout pass, which needs the nodes).
+struct Decls {
+    fns: Vec<GraphFn>,
+    raws: Vec<RawFn>,
+    loops: Vec<Loop>,
+    kernels: Vec<Kernel>,
+    params: Vec<Param>,
+    inputs: Vec<Input>,
+    fn_slots: Vec<FnSlot>,
+    fn_at: Vec<usize>,
+    loop_at: Vec<usize>,
+    program_roots: u32,
+}
+
+/// The counts the decl words are checked against.
+struct Sizes {
+    nodes: usize,
+    lits: usize,
+    rows: usize,
+    syms: usize,
+}
+
+fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
+    let r0 = *d.first().ok_or_else(|| bad(Span::Decls, 0, Fault::Length))?;
+    (r0 as usize <= roots.len()).then_some(()).ok_or_else(|| bad(Span::Decls, 0, Fault::Ref { found: r0 }))?;
+    let mut out = Decls {
+        fns: Vec::new(),
+        raws: Vec::new(),
+        loops: Vec::new(),
+        kernels: Vec::new(),
+        params: Vec::new(),
+        inputs: Vec::new(),
+        fn_slots: Vec::new(),
+        fn_at: Vec::new(),
+        loop_at: Vec::new(),
+        program_roots: r0,
+    };
+    let (mut at, mut r) = (1usize, r0 as usize);
+    while at < d.len() {
+        let head = d.get(at..at + 3).ok_or_else(|| bad(Span::Decls, at, Fault::Length))?;
+        let (tag, nr, nw) = (head[0], head[1] as usize, head[2] as usize);
+        // Saturating: on a 32-bit target (the wasm viewer) a hostile count must not wrap.
+        let w = d.get(at + 3..(at + 3).saturating_add(nw)).ok_or_else(|| bad(Span::Decls, at, Fault::Length))?;
+        let rs = roots.get(r..r.saturating_add(nr)).ok_or_else(|| bad(Span::Decls, at, Fault::Length))?;
+        let layout = |ok: bool| ok.then_some(()).ok_or_else(|| bad(Span::Decls, at, Fault::Layout));
+        let sym =
+            |s: u32| ((s as usize) < z.syms).then_some(s).ok_or_else(|| bad(Span::Decls, at, Fault::Sym { found: s }));
+        let node =
+            |x: u32| ((x as usize) < z.nodes).then_some(x).ok_or_else(|| bad(Span::Decls, at, Fault::Ref { found: x }));
+        let lit =
+            |k: u32, n: u8| fits(k, u32::from(n), z.lits).then_some(k).ok_or_else(|| bad(Span::Decls, at, Fault::Lit));
+        let ty = |c: u32| {
+            Ty::ALL.get(c as usize).copied().ok_or_else(|| bad(Span::Decls, at, Fault::Ty { code: c.min(255) as u8 }))
+        };
+        match (tag, w) {
+            (0, [0, name, ret, n, binders @ ..]) => {
+                layout(binders.len() == *n as usize && rs.len() == 1)?;
+                let binders = binders.iter().map(|b| node(*b)).collect::<Result<_, _>>()?;
+                out.fn_slots.push(FnSlot::Graph(out.fns.len() as u32));
+                out.fn_at.push(at);
+                out.fns.push(GraphFn { name: sym(*name)?, ret: ty(*ret)?, binders, body: node(rs[0])? });
+            }
+            (0, [1, name, ret, text, n, deps @ ..]) => {
+                layout(deps.len() == *n as usize && rs.is_empty())?;
+                // A dep is a raw function declared earlier, so the raw functions are acyclic.
+                let raw = |k: &u32| match out.fn_slots.get(*k as usize) {
+                    Some(FnSlot::Raw(i)) => Ok(*i),
+                    Some(FnSlot::Graph(_)) => Err(bad(Span::Decls, at, Fault::Tag { found: *k })),
+                    None => Err(bad(Span::Decls, at, Fault::Ref { found: *k })),
+                };
+                let deps = deps.iter().map(raw).collect::<Result<_, _>>()?;
+                out.fn_slots.push(FnSlot::Raw(out.raws.len() as u32));
+                out.raws.push(RawFn { name: sym(*name)?, ret: ty(*ret)?, text: sym(*text)?, deps });
+            }
+            (1, [n, stop, binders @ ..]) => {
+                let n = *n as usize;
+                let roots_n = n.saturating_mul(2).saturating_add(1 + *stop as usize);
+                layout(*stop <= 1 && binders.len() == n.saturating_add(1) && rs.len() == roots_n)?;
+                let ids = |x: &[u32]| x.iter().map(|b| node(*b)).collect::<Result<Box<[u32]>, Error>>();
+                out.loop_at.push(at);
+                out.loops.push(Loop {
+                    count: node(rs[0])?,
+                    init: ids(&rs[1..1 + n])?,
+                    state: ids(&binders[..n])?,
+                    index: node(binders[n])?,
+                    next: ids(&rs[1 + n..1 + 2 * n])?,
+                    stop: rs.get(1 + 2 * n).map(|s| node(*s)).transpose()?,
+                });
+            }
+            (2, [0, name, lanes, entries, role]) => {
+                layout(rs.is_empty())?;
+                let role = *Role::ALL.get(*role as usize).ok_or_else(|| bad(Span::Decls, at, Fault::Layout))?;
+                out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role });
+            }
+            (2, [1, label, off, len]) => {
+                layout(rs.is_empty())?;
+                fits(*off, *len, z.rows)
+                    .then_some(())
+                    .ok_or_else(|| bad(Span::Decls, at, Fault::Ref { found: *off }))?;
+                out.kernels.push(Kernel::Rows { label: sym(*label)?, at: *off, len: *len });
+            }
+            (8, [name, def, min, max]) => {
+                layout(rs.is_empty())?;
+                out.params.push(Param {
+                    name: sym(*name)?,
+                    def: lit(*def, 1)?,
+                    min: lit(*min, 1)?,
+                    max: lit(*max, 1)?,
+                });
+            }
+            (9, [name, t, def]) => {
+                layout(rs.is_empty())?;
+                let t = ty(*t)?;
+                layout(t.width().is_some())?;
+                out.inputs.push(Input { name: sym(*name)?, ty: t, def: lit(*def, t.lits())? });
+            }
+            (0..=2 | 8 | 9, _) => layout(false)?,
+            (_, _) => return Err(bad(Span::Decls, at, Fault::Tag { found: tag })),
+        }
+        at += 3 + nw;
+        r += nr;
+    }
+    (r == roots.len()).then_some(out).ok_or_else(|| bad(Span::Roots, r, Fault::Length))
+}
+
+/// Decodes and validates a job: every bound, reference, layout, quota and type rule, before any pass sees it.
+pub fn decode(buf: &[u8]) -> Result<Job, Error> {
+    let (program, spans) = spans(buf)?;
+    let [nodes_b, args_b, lits_b, rows_b, blobs_b, syms_b, at_b, sites_b, nsites_b, decls_b, roots_b] = spans;
 
     let n_nodes = nodes_b.len() / 16;
-    if n_nodes as u64 > MAX_NODES {
-        return Err(Error::Budget { meter: Meter::Nodes, limit: MAX_NODES, spent: n_nodes as u64 });
-    }
     let args = words(args_b);
     let lits: Box<[u64]> = lits_b.as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
     if let Some(i) = lits.iter().position(|b| !f64::from_bits(*b).is_finite()) {
         return Err(bad(Span::Lits, i, Fault::Lit));
     }
+    let rows = words(rows_b);
     let syms = std::str::from_utf8(syms_b).map_err(|e| bad(Span::Syms, e.valid_up_to(), Fault::Utf8))?;
-    let sym_ends = words(ends_b);
-    let mut prev = 0u32;
-    for (i, e) in sym_ends.iter().enumerate() {
-        if *e < prev || !syms.is_char_boundary(*e as usize) {
-            return Err(bad(Span::SymEnds, i, Fault::Length));
-        }
-        prev = *e;
+    let sym_at = words(at_b);
+    let starts_at_0 = sym_at.first() == Some(&0) && sym_at.last().is_some_and(|e| *e as usize == syms.len());
+    starts_at_0.then_some(()).ok_or_else(|| bad(Span::SymAt, 0, Fault::Length))?;
+    if let Some(i) = sym_at.windows(2).position(|p| p[1] < p[0] || !syms.is_char_boundary(p[1] as usize)) {
+        return Err(bad(Span::SymAt, i + 1, Fault::Length));
     }
-    let n_syms = sym_ends.len();
-    let sym = |i: u32, span: Span, at: usize| -> Result<u32, Error> {
-        ((i as usize) < n_syms).then_some(i).ok_or_else(|| bad(span, at, Fault::Sym { found: i }))
-    };
-    let site_words = words(sites_b);
-    let sites = site_words
+    let n_syms = sym_at.len() - 1;
+    let sites = words(sites_b)
         .as_chunks::<3>()
         .0
         .iter()
         .enumerate()
-        .map(|(i, w)| {
-            let f = sym(w[0], Span::Sites, i)?;
-            let start = f.checked_sub(1).map_or(0, |p| sym_ends[p as usize]);
-            Ok(Site { file: syms[start as usize..sym_ends[f as usize] as usize].into(), line: w[1], col: w[2] })
+        .map(|(i, [f, line, col])| {
+            let f = *f as usize;
+            (f < n_syms)
+                .then(|| Site { file: syms[sym_at[f] as usize..sym_at[f + 1] as usize].into(), line: *line, col: *col })
+                .ok_or_else(|| bad(Span::Sites, i, Fault::Sym { found: f as u32 }))
         })
         .collect::<Result<Box<[Site]>, Error>>()?;
     let node_sites = words(nsites_b);
@@ -134,126 +292,33 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     if let Some(i) = roots.iter().position(|r| *r as usize >= n_nodes) {
         return Err(bad(Span::Roots, i, Fault::Ref { found: roots[i] }));
     }
-    let decl_words = words(decls_b);
-    let decls = decl_words
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .enumerate()
-        .map(|(i, w)| {
-            let tag = *Tag::ALL
-                .get((w[0] & 0xff) as usize)
-                .ok_or_else(|| bad(Span::Decls, i, Fault::Tag { found: w[0] & 0xff }))?;
-            let name = match w[1] {
-                u32::MAX => None,
-                s => Some(sym(s, Span::Decls, i)?),
-            };
-            within(w[2], w[3], roots.len(), Span::Decls, i)?;
-            Ok(Decl { tag, arity: w[0] >> 8, name, roots: w[2], n: w[3] })
-        })
-        .collect::<Result<Box<[Decl]>, Error>>()?;
+    let sizes = Sizes { nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
+    let d = decls(&words(decls_b), &roots, &sizes)?;
 
-    let decl_of = |imm: u32, want: Tag, at: usize| -> Result<&Decl, Error> {
-        let d = decls.get(imm as usize).ok_or_else(|| bad(Span::Nodes, at, Fault::Ref { found: imm }))?;
-        (d.tag == want).then_some(d).ok_or_else(|| bad(Span::Nodes, at, Fault::Tag { found: imm }))
-    };
-    // A Call or Loop names a decl whose roots were all recorded before it. With operands before users this keeps the
-    // whole job acyclic: a Fn that calls itself or a Loop whose body reads its own result, which inlining or unrolling
-    // would chase forever, cannot be written. (The recorder records a body before the node that uses it.)
-    let body_before = |d: &Decl, at: usize| -> Result<(), Error> {
-        let r = &roots[d.roots as usize..(d.roots + d.n) as usize];
-        match r.iter().find(|x| **x as usize >= at) {
-            Some(x) => Err(bad(Span::Nodes, at, Fault::Order { root: *x })),
-            None => Ok(()),
-        }
-    };
-    let node_words = words(nodes_b);
-    let mut nodes: Vec<Node> = Vec::with_capacity(n_nodes);
-    for (i, w) in node_words.as_chunks::<4>().0.iter().enumerate() {
-        let (code, ty_code, flags) = ((w[0] & 0xff) as u8, ((w[0] >> 8) & 0xff) as u8, ((w[0] >> 16) & 0xff) as u8);
-        if w[0] >> 24 != 0 {
-            return Err(bad(Span::Nodes, i, Fault::Flags { found: (w[0] >> 24) as u8 }));
-        }
-        let ty = Ty::from_code(ty_code).ok_or_else(|| bad(Span::Nodes, i, Fault::Ty { code: ty_code }))?;
-        let (a, n, imm) = (w[1], w[2], w[3]);
-        within(a, n, args.len(), Span::Nodes, i)?;
-        let operands = &args[a as usize..(a + n) as usize];
-        if let Some(k) = operands.iter().position(|x| *x as usize >= i) {
-            return Err(bad(Span::Args, a as usize + k, Fault::Ref { found: operands[k] }));
-        }
-        let no_flags =
-            |op: Op| if flags == 0 { Ok(op) } else { Err(bad(Span::Nodes, i, Fault::Flags { found: flags })) };
-        let arity = |want: bool| if want { Ok(()) } else { Err(bad(Span::Nodes, i, Fault::Arity { found: n })) };
-        let op = match code {
-            0 => {
-                let width = ty
-                    .width()
-                    .or((ty == Ty::Bool).then_some(1))
-                    .ok_or_else(|| bad(Span::Nodes, i, Fault::Ty { code: ty_code }))?;
-                within(imm, u32::from(width), lits.len(), Span::Nodes, i)
-                    .map_err(|_| bad(Span::Nodes, i, Fault::Lit))?;
-                arity(n == 0)?;
-                no_flags(Op::Lit(imm))?
-            }
-            1 => {
-                arity(n == 0)?;
-                Op::Leaf(match flags {
-                    0 => Leaf::Time,
-                    1 => decl_of(imm, Tag::Param, i).map(|_| Leaf::Param(imm))?,
-                    2 => decl_of(imm, Tag::Input, i).map(|_| Leaf::Input(imm))?,
-                    3 => Leaf::Bind(imm),
-                    f => return Err(bad(Span::Nodes, i, Fault::Flags { found: f })),
-                })
-            }
-            2 => {
-                let d = decl_of(imm, Tag::Fn, i)?;
-                body_before(d, i)?;
-                arity(n == d.arity)?;
-                no_flags(Op::Call(imm))?
-            }
-            3 => decl_of(imm, Tag::Kernel, i).and(arity(n == 1)).map(|_| Op::Fetch { kernel: imm, lane: flags })?,
-            4 => {
-                let d = decl_of(imm, Tag::Loop, i)?;
-                body_before(d, i)?;
-                arity(n == 0)?;
-                (u32::from(flags) < d.arity)
-                    .then_some(Op::Loop { decl: imm, k: flags })
-                    .ok_or_else(|| bad(Span::Nodes, i, Fault::Flags { found: flags }))?
-            }
-            5 => arity(n == 2).and_then(|_| no_flags(Op::Grad))?,
-            6 => sym(imm, Span::Nodes, i).and_then(|_| no_flags(Op::Raw(imm)))?,
-            7 => {
-                let len = (imm & 7) as u8;
-                let ok = (1..=4).contains(&len) && imm >> (3 + 2 * u32::from(len)) == 0;
-                ok.then_some(()).ok_or_else(|| bad(Span::Nodes, i, Fault::Arity { found: imm }))?;
-                arity(n == 1)?;
-                no_flags(Op::Swizzle(Sel { len, comps: (imm >> 3) as u8 }))?
-            }
-            8..=15 => return Err(bad(Span::Nodes, i, Fault::Op { code })),
-            16..=255 => {
-                let p =
-                    *Prim::ALL.get(usize::from(code - 16)).ok_or_else(|| bad(Span::Nodes, i, Fault::Op { code }))?;
-                arity(p.takes(n as usize))?;
-                no_flags(Op::Prim(p))?
-            }
-        };
-        nodes.push(Node { op, ty, args: a, n });
-    }
+    let nodes = nodes(&words(nodes_b), &args, &d, &sizes)?;
     let graph = Graph {
-        nodes: nodes.into(),
+        nodes,
         args,
         lits,
-        rows: words(rows_b),
+        rows,
         blobs: blobs_b.into(),
         syms: syms.into(),
-        sym_ends,
+        sym_at,
         sites,
         node_sites,
-        decls,
-        roots,
+        fns: d.fns.into(),
+        raws: d.raws.into(),
+        loops: d.loops.into(),
+        kernels: d.kernels.into(),
+        params: d.params.into(),
+        inputs: d.inputs.into(),
+        roots: roots[..d.program_roots as usize].into(),
     };
-    for (i, d) in graph.decls.iter().enumerate() {
-        layout(&graph, d).map_err(|_| bad(Span::Decls, i, Fault::Layout))?;
+    for (f, at) in graph.fns.iter().zip(&d.fn_at) {
+        fn_layout(&graph, f).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
+    }
+    for (l, at) in graph.loops.iter().zip(&d.loop_at) {
+        loop_layout(&graph, l).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
     }
     for i in 0..graph.nodes.len() {
         typed(&graph, i).map_err(|(want, got)| Error::Scene {
@@ -264,39 +329,165 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     Ok(Job { program, graph })
 }
 
-/// A decl's roots have its kind's layout (`graph::Decl`).
-fn layout(g: &Graph, d: &Decl) -> Result<(), ()> {
-    let r = g.roots_of(d);
-    let ty = |k: usize| r.get(k).map(|n| g.nodes[*n as usize].ty).ok_or(());
-    let op = |k: usize| r.get(k).map(|n| g.nodes[*n as usize].op);
-    let binder = |k: usize| matches!(op(k), Some(Op::Leaf(Leaf::Bind(_)))).then_some(()).ok_or(());
-    let lit = |k: usize| matches!(op(k), Some(Op::Lit(_))).then_some(()).ok_or(());
-    let a = d.arity as usize;
-    match d.tag {
-        Tag::Fn => (r.len() > a).then_some(()).ok_or(()).and((0..a).try_for_each(binder)),
-        Tag::Loop => {
-            let stop = match r.len().checked_sub(3 * a + 2) {
-                Some(0) => false,
-                Some(1) => true,
-                Some(_) | None => return Err(()),
-            };
-            (ty(0)? == Ty::F32).then_some(()).ok_or(())?;
-            for k in 0..a {
-                binder(1 + a + k)?;
-                let t = ty(1 + k)?;
-                (ty(1 + a + k)? == t && ty(2 + 2 * a + k)? == t).then_some(()).ok_or(())?;
+/// The node words, each classified into its `Op` with its references, counts and flags checked.
+fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, Error> {
+    let mut out: Vec<Node> = Vec::with_capacity(w.len() / 4);
+    for (i, &[head, a, n, imm]) in w.as_chunks::<4>().0.iter().enumerate() {
+        let fault = |what: Fault| bad(Span::Nodes, i, what);
+        // flags is 16 bits: a table's lane reaches 632 in the corpus (the_strike), past the 8 bits §3.2 first drew.
+        let (code, ty_code, flags) = ((head & 0xff) as u8, ((head >> 8) & 0xff) as u8, (head >> 16) as u16);
+        let ty = *Ty::ALL.get(usize::from(ty_code)).ok_or_else(|| fault(Fault::Ty { code: ty_code }))?;
+        // A Lit's count is its literal entries, not args.
+        let n_args = if code == 0 { 0 } else { n };
+        fits(a, n_args, args.len()).then_some(()).ok_or_else(|| fault(Fault::Ref { found: a }))?;
+        (n_args > 0 || a == 0).then_some(()).ok_or_else(|| fault(Fault::Ref { found: a }))?;
+        let operands = &args[a as usize..(a + n_args) as usize];
+        if let Some(k) = operands.iter().position(|x| *x as usize >= i) {
+            return Err(bad(Span::Args, a as usize + k, Fault::Ref { found: operands[k] }));
+        }
+        let arity = |ok: bool| ok.then_some(()).ok_or_else(|| fault(Fault::Arity { found: n }));
+        let no_flags = || (flags == 0).then_some(()).ok_or_else(|| fault(Fault::Flags { found: flags }));
+        let no_imm = || (imm == 0).then_some(()).ok_or_else(|| fault(Fault::Ref { found: imm }));
+        let ordinal =
+            |len: usize| ((imm as usize) < len).then_some(imm).ok_or_else(|| fault(Fault::Ref { found: imm }));
+        // Every root and binder of a called or looped decl precedes the node: a Fn that calls itself, or a Loop whose
+        // body reads its own result, which inlining or unrolling would chase forever, cannot be written.
+        let before = |late: Option<u32>| match late {
+            Some(root) => Err(fault(Fault::Order { root })),
+            None => Ok(()),
+        };
+        let op = match code {
+            0 => {
+                no_flags()?;
+                (n == u32::from(ty.lits()) && fits(imm, n, z.lits)).then_some(()).ok_or_else(|| fault(Fault::Lit))?;
+                Op::Lit(imm)
             }
-            binder(1 + 2 * a)?;
-            (ty(1 + 2 * a)? == Ty::F32 && (!stop || ty(2 + 3 * a)? == Ty::Bool)).then_some(()).ok_or(())
-        }
-        Tag::Param => (r.len() == 3)
-            .then_some(())
-            .ok_or(())
-            .and((0..3).try_for_each(|k| lit(k).and(ty(k)).and_then(|t| (t == Ty::F32).then_some(()).ok_or(())))),
-        Tag::Input => {
-            (r.len() == 1).then_some(()).ok_or(()).and(lit(0)).and(ty(0)).and_then(|t| t.width().map(|_| ()).ok_or(()))
-        }
-        Tag::Kernel | Tag::Draw | Tag::Pass | Tag::Medium | Tag::Check | Tag::Solve | Tag::Camera => Ok(()),
+            1 => no_flags().and(no_imm()).and(arity(n == 0)).map(|()| Op::Time)?,
+            2 => no_flags().and(arity(n == 0)).and(ordinal(d.params.len())).map(Op::Param)?,
+            3 => no_flags().and(arity(n == 0)).and(ordinal(d.inputs.len())).map(Op::Input)?,
+            4 => {
+                arity(n == 0)?;
+                ((imm as usize) < z.syms).then_some(()).ok_or_else(|| fault(Fault::Sym { found: imm }))?;
+                match flags {
+                    BOUND => Op::Bind(imm),
+                    0 => Op::Var(imm),
+                    f => return Err(fault(Fault::Flags { found: f })),
+                }
+            }
+            5 => {
+                no_flags()?;
+                let f = match d.fn_slots.get(imm as usize) {
+                    Some(FnSlot::Graph(f)) => *f,
+                    Some(FnSlot::Raw(_)) => return Err(fault(Fault::Tag { found: imm })),
+                    None => return Err(fault(Fault::Ref { found: imm })),
+                };
+                let g = &d.fns[f as usize];
+                arity(n as usize == g.binders.len())?;
+                before(late(g.binders.iter().copied().chain([g.body]), i))?;
+                Op::Call(f)
+            }
+            6 => {
+                arity(n == 1)?;
+                let kernel = ordinal(d.kernels.len())?;
+                let lanes = match d.kernels[kernel as usize] {
+                    Kernel::Table { lanes, .. } => lanes,
+                    Kernel::Rows { .. } => 1,
+                };
+                (u32::from(flags) < lanes).then_some(()).ok_or_else(|| fault(Fault::Flags { found: flags }))?;
+                Op::Fetch { kernel, lane: flags }
+            }
+            7 => {
+                arity(n == 0)?;
+                let decl = ordinal(d.loops.len())?;
+                let l = &d.loops[decl as usize];
+                (usize::from(flags) < l.init.len())
+                    .then_some(())
+                    .ok_or_else(|| fault(Fault::Flags { found: flags }))?;
+                let all = [l.count, l.index].into_iter().chain(l.init.iter().copied());
+                before(late(all.chain(l.state.iter().copied()).chain(l.next.iter().copied()).chain(l.stop), i))?;
+                Op::Loop { decl, k: flags }
+            }
+            8 => no_flags().and(no_imm()).and(arity(n == 2)).map(|()| Op::Grad)?,
+            9 => {
+                no_flags()?;
+                match d.fn_slots.get(imm as usize) {
+                    Some(FnSlot::Raw(r)) => Op::Raw(*r),
+                    Some(FnSlot::Graph(_)) => return Err(fault(Fault::Tag { found: imm })),
+                    None => return Err(fault(Fault::Ref { found: imm })),
+                }
+            }
+            10 => {
+                no_flags().and(arity(n == 1))?;
+                let len = imm >> 8;
+                let ok = (1..=4).contains(&len) && (imm & 0xff) >> (2 * len) == 0;
+                ok.then_some(()).ok_or_else(|| fault(Fault::Ref { found: imm }))?;
+                Op::Swizzle(Sel { len: len as u8, comps: (imm & 0xff) as u8 })
+            }
+            11 => no_flags().and(no_imm()).and(arity((1..=4).contains(&n))).map(|()| Op::Vec)?,
+            12..PRIM0 => return Err(fault(Fault::Op { code })),
+            PRIM0.. => {
+                let p = *Prim::ALL.get(usize::from(code - PRIM0)).ok_or_else(|| fault(Fault::Op { code }))?;
+                no_flags().and(no_imm()).and(arity(n as usize == p.arity())).map(|()| Op::Prim(p))?
+            }
+        };
+        out.push(Node { op, ty, args: a, n: n_args });
+    }
+    Ok(out.into())
+}
+
+/// The first of `xs` at or after node `i`.
+fn late(mut xs: impl Iterator<Item = u32>, i: usize) -> Option<u32> {
+    xs.find(|x| *x as usize >= i)
+}
+
+fn binder(g: &Graph, x: u32) -> Result<Ty, ()> {
+    let node = &g.nodes[x as usize];
+    match node.op {
+        Op::Bind(_) => Ok(node.ty),
+        Op::Lit(_)
+        | Op::Time
+        | Op::Param(_)
+        | Op::Input(_)
+        | Op::Var(_)
+        | Op::Call(_)
+        | Op::Fetch { .. }
+        | Op::Loop { .. }
+        | Op::Grad
+        | Op::Raw(_)
+        | Op::Swizzle(_)
+        | Op::Vec
+        | Op::Prim(_) => Err(()),
+    }
+}
+
+/// A graph function's binders are binder nodes, and its body has its return type.
+fn fn_layout(g: &Graph, f: &GraphFn) -> Result<(), ()> {
+    f.binders.iter().try_for_each(|b| binder(g, *b).map(|_| ()))?;
+    (g.nodes[f.body as usize].ty == f.ret).then_some(()).ok_or(())
+}
+
+/// A loop's count and index are f32, each state component keeps one type from init through binder to next, and its
+/// stop is a bool.
+fn loop_layout(g: &Graph, l: &Loop) -> Result<(), ()> {
+    let ty = |x: u32| g.nodes[x as usize].ty;
+    (ty(l.count) == Ty::F32 && binder(g, l.index)? == Ty::F32).then_some(()).ok_or(())?;
+    for ((init, state), next) in l.init.iter().zip(&l.state).zip(&l.next) {
+        (binder(g, *state)? == ty(*init) && ty(*next) == ty(*init)).then_some(()).ok_or(())?;
+    }
+    l.stop.map_or(Ok(()), |s| (ty(s) == Ty::Bool).then_some(()).ok_or(()))
+}
+
+/// A vector of `parts`: their widths sum to the recorded vector's, or one f32 splats to it.
+fn vec_result(parts: &[Ty], rec: Ty) -> Result<Ty, (Ty, Ty)> {
+    let want = rec.width().filter(|w| *w > 1).ok_or((Ty::V4, rec))?;
+    let mut sum = 0u8;
+    for p in parts {
+        sum = sum.saturating_add(p.width().ok_or((Ty::F32, *p))?);
+    }
+    match parts {
+        [Ty::F32] => Ok(rec),
+        _ if sum == want => Ok(rec),
+        _ => Err((rec, Ty::of_width(sum).unwrap_or(Ty::V4))),
     }
 }
 
@@ -306,51 +497,46 @@ fn typed(g: &Graph, i: usize) -> Result<(), (Ty, Ty)> {
     let arg = |k: usize| g.nodes[g.args_of(node)[k] as usize].ty;
     let rec = node.ty;
     let want = match node.op {
-        Op::Lit(_) => rec,
-        Op::Leaf(Leaf::Time | Leaf::Param(_)) => Ty::F32,
-        Op::Leaf(Leaf::Input(d)) => g.nodes[g.roots_of(&g.decls[d as usize])[0] as usize].ty,
-        Op::Leaf(Leaf::Bind(_)) => rec,
+        Op::Lit(_) | Op::Bind(_) | Op::Var(_) => rec,
+        Op::Time | Op::Param(_) => Ty::F32,
+        Op::Input(d) => g.inputs[d as usize].ty,
         Op::Prim(p) => {
-            // Most operators take at most 4 operands: no allocation per node on a 1M-node job.
+            // At most 3 operands: no allocation per node on a 1M-node job.
+            let mut few = [Ty::F32; 3];
+            let slot = &mut few[..node.n as usize];
+            slot.iter_mut().enumerate().for_each(|(k, t)| *t = arg(k));
+            p.result(slot)?
+        }
+        Op::Vec => {
             let mut few = [Ty::F32; 4];
-            let n = node.n as usize;
-            match few.get_mut(..n) {
-                Some(slot) => {
-                    slot.iter_mut().enumerate().for_each(|(k, t)| *t = arg(k));
-                    p.result(slot, rec)?
-                }
-                None => p.result(&(0..n).map(arg).collect::<Vec<_>>(), rec)?,
-            }
+            let slot = &mut few[..node.n as usize];
+            slot.iter_mut().enumerate().for_each(|(k, t)| *t = arg(k));
+            vec_result(slot, rec)?
         }
         Op::Swizzle(s) => {
             let w = arg(0).width().filter(|w| *w > 1).ok_or((Ty::V4, arg(0)))?;
             let fits = (0..s.len).all(|k| (s.comps >> (2 * k)) & 3 < w);
-            let out = Ty::from_code(s.len - 1).ok_or((rec, rec))?;
-            if fits { out } else { return Err((Ty::from_code(w - 1).unwrap_or(rec), arg(0))) }
+            if !fits {
+                return Err((Ty::V4, arg(0)));
+            }
+            Ty::of_width(s.len).ok_or((rec, rec))?
         }
         Op::Call(f) => {
-            let d = &g.decls[f as usize];
-            let r = g.roots_of(d);
-            for (k, binder) in r.iter().take(d.arity as usize).enumerate() {
-                let b = g.nodes[*binder as usize].ty;
+            let f = &g.fns[f as usize];
+            for (k, b) in f.binders.iter().enumerate() {
+                let b = g.nodes[*b as usize].ty;
                 (b == arg(k)).then_some(()).ok_or((b, arg(k)))?;
             }
-            match &r[d.arity as usize..] {
-                [one] => g.nodes[*one as usize].ty,
-                _ => match rec {
-                    Ty::Rec(_) => rec,
-                    Ty::F32 | Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool => Ty::Rec(0),
-                },
-            }
+            f.ret
         }
         Op::Fetch { .. } => (arg(0) == Ty::F32).then_some(Ty::V4).ok_or((Ty::F32, arg(0)))?,
-        Op::Loop { decl, k } => g.nodes[g.roots_of(&g.decls[decl as usize])[1 + usize::from(k)] as usize].ty,
+        Op::Loop { decl, k } => g.nodes[g.loops[decl as usize].init[usize::from(k)] as usize].ty,
         Op::Grad => match (arg(0), arg(1).width()) {
             (Ty::F32, Some(_)) => arg(1),
             (Ty::F32, None) => return Err((Ty::F32, arg(1))),
             (f, _) => return Err((Ty::F32, f)),
         },
-        Op::Raw(_) => rec,
+        Op::Raw(r) => g.raws[r as usize].ret,
     };
     if want == rec { Ok(()) } else { Err((want, rec)) }
 }

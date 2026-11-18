@@ -22,8 +22,9 @@ const head = (op: number, ty: Ty, flags = 0): number => op | (TY[ty] << 8) | (fl
 type Leaf = string | ParamSpec | InputSpec | Row | TableSource | LibFn;
 type LoopRec = { readonly count: number; readonly init: readonly number[]; readonly binders: readonly number[]; readonly next: readonly number[]; readonly stop: number | undefined };
 /** A graph function's body over fresh binders, or why it has none (its calls are then written inlined). */
-export type FnBody = { readonly binders: readonly Expr[]; readonly body: Expr } | string;
-type FnRec = { readonly name: string; readonly lower: () => FnBody; done: { readonly ret: Ty; readonly binders: readonly number[]; readonly body: number } | string | undefined };
+export type FnBody = { readonly kind: "body"; readonly binders: readonly Expr[]; readonly body: Expr } | { readonly kind: "inline"; readonly why: string };
+type Lowered = { readonly kind: "body"; readonly ret: Ty; readonly binders: readonly number[]; readonly body: number } | { readonly kind: "inline"; readonly why: string };
+type FnRec = { readonly name: string; readonly lower: () => FnBody; done: Lowered | undefined };
 type CallRec = { readonly fn: number; readonly args: readonly number[]; readonly result: number };
 
 class Grow<A extends Uint32Array | Float64Array> {
@@ -129,7 +130,10 @@ export class Recorder {
       const f = this.fns[k]!;
       if (f.done !== undefined) continue;
       const b = this.counted(f.lower);
-      f.done = typeof b === "string" ? b : { ret: b.body.ty, binders: b.binders.map((x) => x.id), body: b.body.id };
+      switch (b.kind) {
+        case "body": f.done = { kind: "body", ret: b.body.ty, binders: b.binders.map((x) => x.id), body: b.body.id }; break;
+        case "inline": f.done = b; break;
+      }
     }
     return new Writer(this.view()).write(program, roots.map((r) => r.id));
   }
@@ -209,10 +213,11 @@ class Writer {
 
   private callNode(k: number): number {
     const c = this.log.calls[k]!, f = this.log.fns[c.fn]!.done!;
-    // A function with no body over binders: this call is its inlined nodes, which the log kept.
-    if (typeof f === "string") return this.logNode(c.result);
-    const fn = this.graphFn(c.fn);
-    return this.emit(Op.Call | (TY[f.ret] << 8), c.args.map((a) => this.visit(a)), fn);
+    switch (f.kind) {
+      // A function with no body over binders: this call is its inlined nodes, which the log kept.
+      case "inline": return this.logNode(c.result);
+      case "body": return this.emit(Op.Call | (TY[f.ret] << 8), c.args.map((a) => this.visit(a)), this.graphFn(c.fn, f));
+    }
   }
 
   private logNode(id: number): number {
@@ -263,10 +268,10 @@ class Writer {
     d.words.push(1, this.sym(f.name), TY[f.ret], this.sym(f.wgsl), deps.length, ...deps);
     return k;
   }
-  private graphFn(fn: number): number {
+  private graphFn(fn: number, f: Lowered & { kind: "body" }): number {
     const key = this.log.fns[fn]!, seen = this.declOf.get(key);
     if (seen !== undefined) return seen;
-    const f = key.done as Exclude<FnRec["done"], string | undefined>, { k, d } = this.reserve(Decl.Fn, key);
+    const { k, d } = this.reserve(Decl.Fn, key);
     f.binders.forEach((b, j) => this.binder(b, `F${k}a${j}`));
     d.roots.push(this.visit(f.body));
     d.words.push(0, this.sym(key.name), TY[f.ret], f.binders.length, ...f.binders.map((b) => this.out.get(b)!));

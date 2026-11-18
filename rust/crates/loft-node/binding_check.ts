@@ -7,26 +7,26 @@ import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NativeError, open } from "../../../src/core/native.ts";
+import { Op, pack, PRIM0, PRIMS, Program } from "../../../src/record/wire.ts";
 
 const addon = process.argv[2]!;
 const fails: string[] = [];
 const check = (ok: boolean, what: string) => { if (!ok) fails.push(what); };
 
-/** A chain job: lit 1.0, then n-1 nodes add(prev, lit). Wire layout: loft-ir/src/wire.rs. */
+/** A chain job: lit 1.0, then n-1 nodes add(prev, lit), packed by the recorder's writer (src/record/wire.ts). */
 function chain(n: number): Uint8Array {
-  const ADD = 16; // Prim::ALL[0]
+  const ADD = PRIM0 + PRIMS.indexOf("add");
   const nodes = new Uint32Array(4 * n), args = new Uint32Array(2 * (n - 1));
+  nodes.set([Op.Lit, 0, 1, 0]);
   for (let i = 1; i < n; i++) {
     nodes.set([ADD, 2 * (i - 1), 2, 0], 4 * i);
     args.set([i - 1, 0], 2 * (i - 1));
   }
-  const spans = [nodes, args, new Float64Array([1]), new Uint32Array(0), new Uint8Array(0), new Uint8Array(0), new Uint32Array(0), new Uint32Array(0), new Uint32Array(n), new Uint32Array(0), new Uint32Array(0)];
-  let at = 16 + 88;
-  const table = spans.map((s) => { const off = at; at = (at + s.byteLength + 7) & ~7; return [off, s.byteLength]; });
-  const out = new Uint8Array(at), head = new Uint32Array(out.buffer, 0, 26);
-  head.set([0x5754464c, 1, 0, 11, ...table.flat()]);
-  spans.forEach((s, i) => out.set(new Uint8Array(s.buffer, s.byteOffset, s.byteLength), table[i]![0]!));
-  return out;
+  return pack({
+    program: Program.Scene, nodes, args, lits: new Float64Array([1]), rows: new Float32Array(0), blobs: new Uint8Array(0),
+    syms: new Uint8Array(0), symAt: new Uint32Array(1), sites: new Uint32Array(0), siteOf: new Uint32Array(n),
+    decls: Uint32Array.from([1]), roots: Uint32Array.from([n - 1]),
+  });
 }
 
 const refusal = (f: () => unknown): NativeError | undefined => {

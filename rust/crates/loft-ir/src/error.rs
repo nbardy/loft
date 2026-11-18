@@ -1,6 +1,6 @@
 //! The one engine error (plan §1.8). Exit codes keep today's numbers (src/cli/verdict.ts): internal 1, usage 2,
 //! load 3, scene 4, environment 6, budget 7. Exit 5 (`check`) is a verdict, not an error.
-use crate::graph::{Leaf, Program, Site, Ty};
+use crate::graph::{Program, Site, Ty};
 use serde::Serialize;
 use std::fmt;
 
@@ -38,8 +38,9 @@ pub enum SceneFault {
         fix: Box<str>,
     },
     Unreadable,
+    /// A leaf (time, a param, an input, a binder) was given a value that is not finite: the node.
     NotFinite {
-        at: Leaf,
+        node: u32,
     },
     Wgsl {
         line: u32,
@@ -100,7 +101,7 @@ pub enum Span {
     Rows,
     Blobs,
     Syms,
-    SymEnds,
+    SymAt,
     Sites,
     NodeSites,
     Decls,
@@ -120,10 +121,11 @@ pub enum Fault {
     SpanCount {
         found: u32,
     },
-    /// A span outside the buffer, overlapping the header, or not a whole number of aligned elements.
+    /// A span past the buffer, with a nonzero pad word or padding, or not a whole number of elements.
     Bounds,
     Utf8,
-    /// A count that disagrees with another span (node sites per node, sym ends past the text).
+    /// A count that disagrees with another span (node sites per node, symbol offsets, decl roots), or bytes after the
+    /// last span.
     Length,
     Op {
         code: u8,
@@ -132,13 +134,13 @@ pub enum Fault {
         code: u8,
     },
     Flags {
-        found: u8,
+        found: u16,
     },
     /// An operand id not below its node, a root or decl reference out of range.
     Ref {
         found: u32,
     },
-    /// A reference to a decl of the wrong kind.
+    /// A reference to a decl of the wrong kind, or a decl tag with no pinned layout.
     Tag {
         found: u32,
     },
@@ -150,12 +152,14 @@ pub enum Fault {
     Sym {
         found: u32,
     },
-    /// A decl whose roots do not have its kind's layout.
+    /// A decl whose words or roots do not have its kind's layout.
     Layout,
     /// A Call or Loop of a decl with a root at or after the node itself: a cycle through the decl.
     Order {
         root: u32,
     },
+    /// A binder read outside its loop or graph function (found by the canonical print, which walks scopes).
+    Scope,
 }
 
 impl Error {
@@ -193,7 +197,7 @@ impl fmt::Display for Error {
                     SceneFault::Infeasible { a, b } => write!(f, "infeasible: {a} conflicts with {b}")?,
                     SceneFault::Unsolved { fix } => write!(f, "unsolved. Fix: {fix}")?,
                     SceneFault::Unreadable => f.write_str("unreadable")?,
-                    SceneFault::NotFinite { at } => write!(f, "not finite at {at:?}")?,
+                    SceneFault::NotFinite { node } => write!(f, "not finite at node {node}")?,
                     SceneFault::Wgsl { line, msg } => write!(f, "WGSL line {line}: {msg}")?,
                 }
                 site.as_ref().map_or(Ok(()), |s| write!(f, " (at {s})"))

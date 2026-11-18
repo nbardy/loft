@@ -1,9 +1,9 @@
-//! The graph arena a job decodes into (plan §1.3): typed nodes in recording order, so every operand precedes its user,
-//! and the declarations (functions, loops, kernels, ...) whose roots are nodes. Built only by `wire::decode`, which
-//! validates every bound, tag and type rule; consumers read the public fields and never re-check them.
+//! The graph arena a job decodes into (plan §1.3, wire §3.2): typed nodes in recording order, so every operand precedes
+//! its user, and the declarations their ops name, one array per kind. Built only by `wire::decode`, which validates
+//! every bound, reference, layout and type rule; consumers read the public fields and never re-check them.
 use serde::{Deserialize, Serialize};
 
-/// A value's type. `Rec` is a multi-result function's record (its id is the recorder's).
+/// A value's type. Wire code = the order here (src/record/wire.ts `TYS`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Ty {
     F32,
@@ -11,44 +11,37 @@ pub enum Ty {
     V3,
     V4,
     Bool,
-    Rec(u8),
 }
 
 impl Ty {
-    /// Wire code: 0..=4 the scalars and vectors, 8.. a record (8 + id). 5..=7 are refused.
-    pub fn from_code(c: u8) -> Option<Ty> {
-        match c {
-            0 => Some(Ty::F32),
-            1 => Some(Ty::V2),
-            2 => Some(Ty::V3),
-            3 => Some(Ty::V4),
-            4 => Some(Ty::Bool),
-            5..=7 => None,
-            8..=255 => Some(Ty::Rec(c - 8)),
-        }
-    }
-    /// Components of a number type; None for `Bool` and records.
+    pub const ALL: [Ty; 5] = [Ty::F32, Ty::V2, Ty::V3, Ty::V4, Ty::Bool];
+    /// Components of a number type; None for `Bool`.
     pub fn width(self) -> Option<u8> {
         match self {
             Ty::F32 => Some(1),
             Ty::V2 => Some(2),
             Ty::V3 => Some(3),
             Ty::V4 => Some(4),
-            Ty::Bool | Ty::Rec(_) => None,
+            Ty::Bool => None,
         }
     }
-    fn of_width(w: u8) -> Option<Ty> {
-        [Ty::F32, Ty::V2, Ty::V3, Ty::V4].get(usize::from(w).checked_sub(1)?).copied()
+    /// The literal entries a value of this type takes in `Graph::lits` (a bool is one, 0 or 1).
+    pub fn lits(self) -> u8 {
+        self.width().unwrap_or(1)
     }
-}
-
-/// Where a value comes from without an operation. Ids index `Graph::decls` (params, inputs) or name a binder.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Leaf {
-    Time,
-    Param(u32),
-    Input(u32),
-    Bind(u32),
+    /// The recorder's spelling (`src/expr.ts` `Ty`), which the canonical print uses.
+    pub fn name(self) -> &'static str {
+        match self {
+            Ty::F32 => "f32",
+            Ty::V2 => "vec2",
+            Ty::V3 => "vec3",
+            Ty::V4 => "vec4",
+            Ty::Bool => "bool",
+        }
+    }
+    pub(crate) fn of_width(w: u8) -> Option<Ty> {
+        Ty::ALL.get(usize::from(w).checked_sub(1)?).copied().filter(|t| *t != Ty::Bool)
+    }
 }
 
 /// A swizzle selection: `len` components (1..=4), component k in bits 2k..2k+2 of `comps`.
@@ -58,37 +51,45 @@ pub struct Sel {
     pub comps: u8,
 }
 
-/// What a node computes. Wire op codes: 0 Lit, 1 Leaf, 2 Call, 3 Fetch, 4 Loop, 5 Grad, 6 Raw, 7 Swizzle, 16+i
-/// `Prim::ALL[i]`; 8..=15 are reserved and refused.
+/// What a node computes: one variant per wire op (src/record/wire.ts `Op`; codes in `wire`). Ids name the decl arrays
+/// of `Graph` (`fns`, `raws`, `loops`, `kernels`, `params`, `inputs`) or a symbol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Op {
-    /// The first of `width(ty)` entries of `Graph::lits` (exact f64 bits as authored; a bool is 0 or 1).
+    /// The first of `ty.lits()` entries of `Graph::lits` (exact f64 bits as authored).
     Lit(u32),
-    Leaf(Leaf),
-    Prim(Prim),
-    Swizzle(Sel),
-    /// A recorded graph function (an `Fn` decl), called with the node's args; inlined during interning.
+    Time,
+    Param(u32),
+    Input(u32),
+    /// A binder of a loop or a graph function, named by symbol `.0`; read only inside its owner.
+    Bind(u32),
+    /// A free variable named by symbol `.0` (u, v, p), bound by the job's consumer.
+    Var(u32),
+    /// A graph function called with the node's args; inlined during interning.
     Call(u32),
-    /// vec4 lane `lane` of the row the f32 arg names, of a `Kernel` decl's resource.
+    /// vec4 lane `lane` of the row the f32 arg names, of a kernel's resource.
     Fetch {
         kernel: u32,
-        lane: u8,
+        lane: u16,
     },
-    /// Result component `k` of a `Loop` decl.
+    /// Result component `k` of a loop.
     Loop {
         decl: u32,
-        k: u8,
+        k: u16,
     },
-    /// d args[0] / d args[1]: a request, rewritten to its derivative graph during interning.
+    /// d args[0] / d args[1]: a request, rewritten to its derivative graph during interning. The wave-1 recorder writes
+    /// derivatives already expanded, so no job carries one yet.
     Grad,
-    /// A raw WGSL function (its source is sym `.0`), called with the node's args. GPU only.
+    /// A raw WGSL function called with the node's args. GPU only.
     Raw(u32),
+    Swizzle(Sel),
+    /// A vector from 1..=4 parts whose widths sum to the node's (or one f32, splatted).
+    Vec,
+    Prim(Prim),
 }
 
 macro_rules! prims {
     ($($p:ident $name:literal $rule:ident),* $(,)?) => {
-        /// The operators. One row each here (name and type rule); loft-core's `PRIMS` adds evaluation, interval and
-        /// derivative rules in the same order (`Prim::ALL`), checked by a const assertion there.
+        /// The operators, in the order of `src/expr.ts` `Fn` (wire code 16 + index), the order of loft-core's `Prim`.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
         pub enum Prim { $($p),* }
         impl Prim {
@@ -100,18 +101,18 @@ macro_rules! prims {
     };
 }
 prims! {
-    Add "add" Map2, Sub "sub" Map2, Mul "mul" Map2, Div "div" Map2, Min "min" Map2, Max "max" Map2, Pow "pow" Map2,
-    Mod "mod" Map2, Rem "rem" Map2, Atan2 "atan2" Map2, Step "step" Map2,
-    Neg "neg" Map1, Abs "abs" Map1, Sign "sign" Map1, Floor "floor" Map1, Ceil "ceil" Map1, Trunc "trunc" Map1,
-    RoundEven "roundEven" Map1, Fract "fract" Map1, Sqrt "sqrt" Map1, InverseSqrt "inverseSqrt" Map1, Exp "exp" Map1,
-    Exp2 "exp2" Map1, Log "log" Map1, Log2 "log2" Map1, Sin "sin" Map1, Cos "cos" Map1, Tan "tan" Map1,
-    Asin "asin" Map1, Acos "acos" Map1, Atan "atan" Map1, Sinh "sinh" Map1, Cosh "cosh" Map1, Tanh "tanh" Map1,
-    Saturate "saturate" Map1, Normalize "normalize" Map1,
-    Mix "mix" Map3, Clamp "clamp" Map3, Smoothstep "smoothstep" Map3,
-    Length "length" Norm, Distance "distance" Dot, Dot "dot" Dot, Cross "cross" Cross,
+    Add "add" Map2, Sub "sub" Map2, Mul "mul" Map2, Div "div" Map2, Neg "neg" Map1, Min "min" Map2, Max "max" Map2,
+    Pow "pow" Map2, Mod "mod" Map2, Atan2 "atan2" Map2, Step "step" Map2,
+    Abs "abs" Map1, Sign "sign" Map1, Floor "floor" Map1, Fract "fract" Map1, Sqrt "sqrt" Map1, Exp "exp" Map1,
+    Log "log" Map1, Sin "sin" Map1, Cos "cos" Map1, Tan "tan" Map1, Saturate "saturate" Map1,
+    Normalize "normalize" Map1,
+    Mix "mix" Map3, Clamp "clamp" Map3, Smoothstep "smoothstep" Map3, Length "length" Norm,
+    Distance "distance" Dot, Dot "dot" Dot, Cross "cross" Cross,
     Lt "lt" Cmp, Gt "gt" Cmp, Le "le" Cmp, Ge "ge" Cmp, Eq "eq" Cmp, Ne "ne" Cmp,
     And "and" Logic, Or "or" Logic, Not "not" Not, Select "select" Select,
-    Vec "vec" Vec, Pick "pick" Pick,
+    Ceil "ceil" Map1, Trunc "trunc" Map1, RoundEven "roundEven" Map1, Rem "rem" Map2, InverseSqrt "inverseSqrt" Map1,
+    Exp2 "exp2" Map1, Log2 "log2" Map1, Asin "asin" Map1, Acos "acos" Map1, Atan "atan" Map1, Sinh "sinh" Map1,
+    Cosh "cosh" Map1, Tanh "tanh" Map1,
 }
 
 enum Rule {
@@ -125,8 +126,6 @@ enum Rule {
     Logic,
     Not,
     Select,
-    Vec,
-    Pick,
 }
 
 /// Component-wise result of two number types: equal, or a scalar splats to the other's width.
@@ -148,10 +147,9 @@ fn exactly(want: Ty, got: Ty) -> Result<Ty, (Ty, Ty)> {
 }
 
 impl Prim {
-    /// The result type of this operator over `args`, given the type the recorder wrote (needed only by `Vec`, whose
-    /// target width is not implied by its parts' order). Err is (wanted, given) for the first operand that fails.
-    /// Operand counts are the wire's to check (`arity`); a count that slips through is refused as (recorded, recorded).
-    pub fn result(self, args: &[Ty], recorded: Ty) -> Result<Ty, (Ty, Ty)> {
+    /// The result type of this operator over `args`. Err is (wanted, given) for the first operand that fails. Operand
+    /// counts are the wire's to check (`takes`); a count that slips through is refused as (F32, F32).
+    pub fn result(self, args: &[Ty]) -> Result<Ty, (Ty, Ty)> {
         match (self.rule(), args) {
             (Rule::Map1, [a]) => number(*a),
             (Rule::Map2, [a, b]) => wider(number(*a)?, number(*b)?),
@@ -163,22 +161,6 @@ impl Prim {
             (Rule::Logic, [a, b]) => exactly(Ty::Bool, *a).and(exactly(Ty::Bool, *b)),
             (Rule::Not, [a]) => exactly(Ty::Bool, *a),
             (Rule::Select, [c, a, b]) => exactly(Ty::Bool, *c).and(wider(number(*a)?, number(*b)?)),
-            (Rule::Vec, parts) => {
-                let mut sum = 0u8;
-                for p in parts {
-                    sum = sum.saturating_add(number(*p)?.width().unwrap_or(0));
-                }
-                let want = recorded.width().filter(|w| *w > 1).ok_or((Ty::V4, recorded))?;
-                match parts {
-                    [one] if *one == Ty::F32 => Ok(recorded),
-                    _ if sum == want => Ok(recorded),
-                    _ => Err((recorded, Ty::of_width(sum).unwrap_or(Ty::Rec(sum)))),
-                }
-            }
-            (Rule::Pick, [i, first, rest @ ..]) => {
-                exactly(Ty::F32, *i)?;
-                rest.iter().try_fold(number(*first)?, |t, r| exactly(t, *r))
-            }
             (
                 Rule::Map1
                 | Rule::Map2
@@ -189,20 +171,17 @@ impl Prim {
                 | Rule::Cmp
                 | Rule::Logic
                 | Rule::Not
-                | Rule::Select
-                | Rule::Pick,
+                | Rule::Select,
                 _,
-            ) => Err((recorded, recorded)),
+            ) => Err((Ty::F32, Ty::F32)),
         }
     }
-    /// Whether `n` operands is a legal count: fixed for most, 1..=4 parts for `Vec`, an index and 1+ values for `Pick`.
-    pub fn takes(self, n: usize) -> bool {
+    /// The operand count this operator takes.
+    pub fn arity(self) -> usize {
         match self.rule() {
-            Rule::Map1 | Rule::Norm | Rule::Not => n == 1,
-            Rule::Map2 | Rule::Dot | Rule::Cross | Rule::Cmp | Rule::Logic => n == 2,
-            Rule::Map3 | Rule::Select => n == 3,
-            Rule::Vec => (1..=4).contains(&n),
-            Rule::Pick => n >= 2,
+            Rule::Map1 | Rule::Norm | Rule::Not => 1,
+            Rule::Map2 | Rule::Dot | Rule::Cross | Rule::Cmp | Rule::Logic => 2,
+            Rule::Map3 | Rule::Select => 3,
         }
     }
 }
@@ -224,50 +203,80 @@ pub struct Node {
     pub n: u32,
 }
 
-/// The eleven declaration kinds (plan §3.2). Wire tag = the order here.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Tag {
-    Fn,
-    Loop,
-    Kernel,
-    Draw,
-    Pass,
-    Medium,
-    Check,
-    Solve,
-    Param,
-    Input,
-    Camera,
+/// A graph function: one body over binder nodes (`Op::Bind`), each call's args bound to them in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GraphFn {
+    pub name: u32,
+    pub ret: Ty,
+    pub binders: Box<[u32]>,
+    pub body: u32,
 }
 
-impl Tag {
-    pub const ALL: [Tag; 11] = [
-        Tag::Fn,
-        Tag::Loop,
-        Tag::Kernel,
-        Tag::Draw,
-        Tag::Pass,
-        Tag::Medium,
-        Tag::Check,
-        Tag::Solve,
-        Tag::Param,
-        Tag::Input,
-        Tag::Camera,
-    ];
+/// A raw WGSL function: its name and text (symbols), and the raw functions its text calls (`Graph::raws`, each
+/// declared before it).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawFn {
+    pub name: u32,
+    pub ret: Ty,
+    pub text: u32,
+    pub deps: Box<[u32]>,
 }
 
-/// A declaration: its kind, a count whose meaning is the kind's (an `Fn`'s or `Loop`'s binders), an optional name
-/// (sym id), and its roots as `roots[roots..roots + n]`. Root layouts checked at decode:
-/// `Fn` [binder × arity, result..]; `Loop` [count, init × a, binder × a, index binder, next × a, stop?];
-/// `Param` [default, min, max] f32 literals; `Input` [default] number literal. The others' layouts belong to the
-/// lanes that define them (2.1, 2.3, 3.1) and are only bounds-checked here.
+/// A loop: `count` steps (f32) from `init`, each step reading the state binders and the f32 index binder and giving
+/// `next`, stopped early when `stop` (bool, over the same binders) holds. `init`, `state` and `next` are parallel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Loop {
+    pub count: u32,
+    pub init: Box<[u32]>,
+    pub state: Box<[u32]>,
+    pub index: u32,
+    pub next: Box<[u32]>,
+    pub stop: Option<u32>,
+}
+
+/// What a `Fetch` reads. In wave 1 a kernel names a resource the TS compiler fills; wave 2 gives kernels bodies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Decl {
-    pub tag: Tag,
-    pub arity: u32,
-    pub name: Option<u32>,
-    pub roots: u32,
-    pub n: u32,
+pub enum Kernel {
+    /// A per-frame table: `entries` rows of `lanes` vec4s, filled for `role`.
+    Table { name: u32, lanes: u32, entries: u32, role: Role },
+    /// Supplied samples `rows[at..at + len]`, read as one lane.
+    Rows { label: u32, at: u32, len: u32 },
+}
+
+/// Who fills a table (src/expr.ts `TableSource["role"]`). Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Role {
+    Stations,
+    Data,
+    Static,
+}
+
+impl Role {
+    pub const ALL: [Role; 3] = [Role::Stations, Role::Data, Role::Static];
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::Stations => "stations",
+            Role::Data => "data",
+            Role::Static => "static",
+        }
+    }
+}
+
+/// An authored f32 parameter: default, minimum and maximum are `lits` indices.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Param {
+    pub name: u32,
+    pub def: u32,
+    pub min: u32,
+    pub max: u32,
+}
+
+/// A host input of a number type; its default is `ty.lits()` entries of `lits` from `def`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Input {
+    pub name: u32,
+    pub ty: Ty,
+    pub def: u32,
 }
 
 /// The program a job asks for (plan §3.1). Wire code = the order here.
@@ -279,7 +288,7 @@ pub enum Program {
     Check,
 }
 
-/// A decoded, validated job graph. Spans are kept as decoded; `sym`, `args_of` and `roots_of` index them.
+/// A decoded, validated job graph.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Graph {
     pub nodes: Box<[Node]>,
@@ -290,11 +299,18 @@ pub struct Graph {
     pub rows: Box<[u32]>,
     pub blobs: Box<[u8]>,
     pub syms: Box<str>,
-    pub sym_ends: Box<[u32]>,
+    /// Symbol k is `syms[sym_at[k]..sym_at[k + 1]]`.
+    pub sym_at: Box<[u32]>,
     pub sites: Box<[Site]>,
     /// Per node: 0 = no site, k = `sites[k - 1]`.
     pub node_sites: Box<[u32]>,
-    pub decls: Box<[Decl]>,
+    pub fns: Box<[GraphFn]>,
+    pub raws: Box<[RawFn]>,
+    pub loops: Box<[Loop]>,
+    pub kernels: Box<[Kernel]>,
+    pub params: Box<[Param]>,
+    pub inputs: Box<[Input]>,
+    /// The program's roots.
     pub roots: Box<[u32]>,
 }
 
@@ -302,12 +318,8 @@ impl Graph {
     pub fn args_of(&self, node: &Node) -> &[u32] {
         &self.args[node.args as usize..(node.args + node.n) as usize]
     }
-    pub fn roots_of(&self, decl: &Decl) -> &[u32] {
-        &self.roots[decl.roots as usize..(decl.roots + decl.n) as usize]
-    }
     pub fn sym(&self, i: u32) -> &str {
-        let start = i.checked_sub(1).map_or(0, |p| self.sym_ends[p as usize]);
-        &self.syms[start as usize..self.sym_ends[i as usize] as usize]
+        &self.syms[self.sym_at[i as usize] as usize..self.sym_at[i as usize + 1] as usize]
     }
     pub fn site(&self, node: u32) -> Option<&Site> {
         self.node_sites[node as usize].checked_sub(1).map(|k| &self.sites[k as usize])
