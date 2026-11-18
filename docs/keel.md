@@ -12,7 +12,8 @@ sim's timing, never the other way round. Loft reads no game state except the inp
 ## Pins
 
 `wgpu` and `naga` are pinned exactly (`=30.0.1`) in both workspaces. `tools/check_pins.sh [KEEL_LOCK]` compares the two
-`Cargo.lock` files and fails on any difference, or on a crate that resolves twice. A bump lands in both repos in one
+`Cargo.lock` files for `wgpu`, `wgpu-core`, `wgpu-hal`, `wgpu-types` and `naga`, and fails on any difference, or on a
+crate that resolves twice. A bump lands in both repos in one
 change. Keel runs its mirror script from its side.
 
 ## One subject over Keel's frame (step 1)

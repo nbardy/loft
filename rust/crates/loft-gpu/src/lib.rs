@@ -182,6 +182,8 @@ struct Item {
 }
 
 type Key = (Option<TextureFormat>, TextureFormat, u32);
+/// The bind groups one copy of the subject dispatches with: (group 0, group 1 per module, group 2 per kernel).
+type Groups<'a> = (&'a BindGroup, &'a [BindGroup], &'a [BindGroup]);
 
 pub struct Loft {
     b: Bundle,
@@ -285,8 +287,8 @@ fn shader_module(device: &wgpu::Device, origin: Origin, wgsl: String) -> wgpu::S
                 wgpu::ShaderRuntimeChecks { bounds_checks: false, force_loop_bounding: false, ..Default::default() };
             // SAFETY: `Origin::Library` is the writer's promise (crate docs, the binding contract) that no index leaves
             // its array and every loop is statically bounded: emit clamps each `Fetch` to `arrayLength`, loop counts
-            // are static, and constant tables are indexed by the vertex counts this host draws. Integer division
-            // checks stay on.
+            // are static, and constant tables are indexed by the vertex counts this host draws. Naga's integer-division
+            // guards are not a switch and stay; ray-query tracking keeps its default.
             unsafe { device.create_shader_module_trusted(desc, checks) }
         }
     }
@@ -628,7 +630,7 @@ impl Loft {
         queue.write_buffer(&loft.frame, 0, &loft.frame_bytes(0.0));
         let load: Vec<usize> =
             (0..loft.b.kernels.len()).filter(|&k| matches!(loft.b.kernels[k].when, When::Load)).collect();
-        loft.dispatch_all(&mut enc, &load, None);
+        loft.dispatch_all(&mut enc, &load, None, &[loft.own()]);
         for s in 0..loft.steppers.len() {
             loft.precompute(queue, &mut enc, s);
         }
@@ -771,8 +773,20 @@ impl Loft {
         pass.dispatch_workgroups(x, y, z);
     }
 
-    fn dispatch_all(&self, enc: &mut wgpu::CommandEncoder, kernels: &[usize], timestamps: Option<&wgpu::QuerySet>) {
-        if kernels.is_empty() {
+    /// The loft's own bind groups: frame at group 0 (offset 0), group 1 per module, group 2 per kernel.
+    fn own(&self) -> Groups<'_> {
+        (&self.g0[0], &self.g1, &self.g2)
+    }
+
+    /// One compute pass: `kernels` in order for each set of bind groups (the loft's own, or one per instance).
+    fn dispatch_all(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        kernels: &[usize],
+        timestamps: Option<&wgpu::QuerySet>,
+        sets: &[Groups],
+    ) {
+        if kernels.is_empty() || sets.is_empty() {
             return;
         }
         let timestamp_writes = timestamps.map(|query_set| wgpu::ComputePassTimestampWrites {
@@ -782,13 +796,10 @@ impl Loft {
         });
         let mut pass =
             enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft kernels"), timestamp_writes });
-        for &k in kernels {
-            self.dispatch(
-                &mut pass,
-                k,
-                (&self.g0[0], 0),
-                (&self.g1[entry_of(&self.b.kernels[k]).0 as usize], &self.g2[k]),
-            );
+        for &(g0, g1, g2) in sets {
+            for &k in kernels {
+                self.dispatch(&mut pass, k, (g0, 0), (&g1[entry_of(&self.b.kernels[k]).0 as usize], &g2[k]));
+            }
         }
     }
 
@@ -945,7 +956,7 @@ impl Loft {
             self.bind(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref());
+        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
             let Keep::Latest = st.s.keep else { continue };
@@ -955,7 +966,7 @@ impl Loft {
                 let init = self.b.resources[st.res].init.clone();
                 self.init(queue, enc, st.res, &init);
                 if let Init::By(k) = init {
-                    self.dispatch_all(enc, &[k as usize], None);
+                    self.dispatch_all(enc, &[k as usize], None, &[self.own()]);
                 }
                 self.steppers[s].done = 0;
             }
@@ -1128,22 +1139,8 @@ impl Loft {
         for i in instances {
             queue.write_buffer(&i.frame, 0, &frame_bytes(i.time, &i.params, &i.inputs));
         }
-        let frame = self.frame_kernels();
-        if frame.is_empty() || instances.is_empty() {
-            return;
-        }
-        let timestamp_writes = self.timestamps.as_ref().map(|query_set| wgpu::ComputePassTimestampWrites {
-            query_set,
-            beginning_of_pass_write_index: Some(0),
-            end_of_pass_write_index: Some(1),
-        });
-        let mut pass =
-            enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft instances"), timestamp_writes });
-        for i in instances {
-            for &k in &frame {
-                self.dispatch(&mut pass, k, (&i.g0, 0), (&i.g1[entry_of(&self.b.kernels[k]).0 as usize], &i.g2[k]));
-            }
-        }
+        let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1[..], &i.g2[..])).collect();
+        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
     }
 
     /// Records every instance's subject draws of the view passes into the caller's render pass, whose attachments are
