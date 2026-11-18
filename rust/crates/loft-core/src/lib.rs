@@ -10,4 +10,5 @@ pub mod layout;
 pub mod prim;
 pub mod rate;
 pub mod schedule;
+pub mod solve;
 pub mod tape;

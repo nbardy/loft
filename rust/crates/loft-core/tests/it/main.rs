@@ -5,6 +5,7 @@ mod analyses;
 mod draws;
 mod emit;
 mod kernels;
+mod solve;
 
 use loft_core::grad::grad;
 use loft_core::interval::{I, enclose};

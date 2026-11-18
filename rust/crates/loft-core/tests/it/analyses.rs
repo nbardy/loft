@@ -10,7 +10,7 @@ use serde_json::Value;
 fn u(v: &Value) -> usize {
     v.as_u64().unwrap() as usize
 }
-fn graph(c: &Value) -> (Ssa, Vec<Vec<Id>>) {
+pub(super) fn graph(c: &Value) -> (Ssa, Vec<Vec<Id>>) {
     let mut s = Ssa::default();
     let mut comps: Vec<Vec<Id>> = Vec::new();
     for n in c["nodes"].as_array().unwrap() {
