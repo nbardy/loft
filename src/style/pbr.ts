@@ -10,19 +10,28 @@
 // for each light, as in toon. `base` is sRGB as written and is linearised (x^2.2) before it is lit.
 //
 // Lights (src/light.ts): the sun and each local light through the same term, times its amount; a lamp with a shadow
-// map arrives already shadowed. The sky's light is the daylight scaled by the sun's amount, so under a moon of 0.06 the
-// sky is dark and a lamp carries the scene. The sea reflects the same sky by Fresnel with a glint per light; a plane
+// map arrives already shadowed (its `unshadowed` and `visibility` are beside it for a style of your own).
+//
+// The sky is radiance per unit of the sun's amount (a daylight sky is scattered sunlight): the background, the haze
+// and the environment are the `sky` part times the sun's amount, so under a moon of 0.06 the sky is dark and a lamp
+// carries the scene, and a sun of 0 leaves the sky black whatever `sky` is given. A sky lit with no sun (a studio)
+// puts the sun at amount 1 below the horizon, where it lights nothing above it. The environment's specular weight is
+// the `lobeAlbedo` slot, by default integrated from the `distribution` and `visibility` given.
+//
+// What is not a part: the sea's colours and roughness, the ground's albedo and roughness and the fog are constants of
+// `water`, `ground` and `shadow`; a different sea or floor replaces the member: `{ ...pbr(), water, ground }`. The sea reflects the same sky by Fresnel with a glint per light; a plane
 // ground is a rough grey-beige under the same lights, the sun's share darkened by its cast shadow.
 //
 // Cannot: occlusion (a crevice sees open sky), inter-reflection, transmission; a highlight smaller than a pixel
 // sparkles (no antialiasing of specular: keep `rough` above about 0.1 on small curved things).
 
-import { add, dot, evaluate, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type In } from "../expr.ts";
+import { add, div, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type In } from "../expr.ts";
 import type { F, P3 } from "../map/types.ts";
 import type { ShadeCtx, Style } from "../style.ts";
-import { aces, daylight, ggx, lambert, schlick, skyLight, smithGgx, type PbrParts } from "./pbr_parts.ts";
+import { aces, albedoOf, daylight, ggx, horizonClear, lambert, schlick, skyLight, smithGgx, type PbrParts } from "./pbr_parts.ts";
 
-const DEFAULTS: PbrParts = { distribution: ggx, visibility: smithGgx, fresnel: schlick, diffuse: lambert, environment: skyLight, sky: daylight, tone: aces };
+/** The defaults of the slots that stand alone; `lobeAlbedo` and `clear` are derived from the others (`pbr`). */
+const DEFAULTS = { distribution: ggx, visibility: smithGgx, fresnel: schlick, diffuse: lambert, environment: skyLight, sky: daylight, tone: aces } as const;
 
 const WATER_DEEP = vec3(0.003, 0.03, 0.07);
 const WATER_SHALLOW = vec3(0.01, 0.1, 0.15);
@@ -34,28 +43,13 @@ const WATER_ROUGH = 0.12;
 const linear = (c: In<"vec3">): P3 => pow(max(lift<"vec3">(c), 1e-6), 2.2);
 
 /**
- * The specular lobe's albedo under the default distribution and visibility (`ggx`, `smithGgx`): `e`, the integral of
- * D Vis n.l over the hemisphere of light directions with F = 1, and `t`, the share of it Schlick's (1 - v.h)^5 carries, so f0 e (1 - t)
- * + e t is the split sum's f0 A + B. Fitted by least squares (n.v from 0.05) to a numerical integration of these parts
- * on a 24 x 24 grid of n.v and rough: within 0.06 of f0 A + B at f0 = 1 and 0.04 at f0 = 0.04, mean 0.01. Karis's
- * analytic fit (2014), made for another visibility, is up to 0.47 off for these parts (agent_notes/2026-11-18_pbr_style/NOTE.md).
- * A replaced distribution or visibility keeps this weight: write your own `shade` if its albedo differs much.
- */
-function lobeAlbedo(n_v: F, rough: F): { readonly e: F; readonly t: F } {
-  const mu = max(n_v, 0.05), r = max(rough, 0.05);
-  const poly = (c0: number, c1: number, c2: number): F => add(c0, mul(mu, add(c1, mul(mu, c2))));
-  const e = saturate(add(1, mul(mul(r, r), add(poly(-2.407, 5.998, -2.676), mul(r, add(poly(5.343, -18.319, 9.583), mul(r, poly(-3.119, 11.39, -6.479))))))));
-  const t = mul(pow(sub(1, mu), add(4.879, mul(r, -3.565))), exp(mul(r, add(-0.698, mul(r, -4.272)))));
-  return { e, t };
-}
-
-/**
- * The environment's specular weight for a Fresnel law of any shape: e fresnel(c, f0), c the cosine at which Schlick's
- * (1 - c)^5 equals t (`lobeAlbedo`). For `schlick` it is exactly f0 A + B; a thin film or a measured law is read at the
- * angle the split sum says the lobe averages to.
+ * The environment's specular weight for a Fresnel law of any shape: e fresnel(c, f0), e = scale + bias the lobe's
+ * albedo and c the cosine at which Schlick's (1 - c)^5 equals t = bias / e (`lobeAlbedo`). For `schlick` it is exactly
+ * f0 scale + bias; a thin film or a measured law is read at the angle the split sum says the lobe averages to.
  */
 function envWeight(p: PbrParts, n_v: F, rough: F, f0: P3): P3 {
-  const { e, t } = lobeAlbedo(n_v, rough);
+  const { scale, bias } = p.lobeAlbedo(n_v, rough);
+  const e = add(scale, bias), t = div(bias, max(e, 1e-6));
   return mul(p.fresnel(saturate(sub(1, pow(max(t, 1e-6), 0.2))), f0), e);
 }
 
@@ -83,7 +77,13 @@ const sunAmount = (lights: ShadeCtx["lights"]): P3 => lights("largest", (l, whic
  * thin hull in the body's colour darkened (`pbr.outline`, 0.01 world units, never under the host's 1.5 px).
  */
 export function pbr(parts: Partial<PbrParts> = {}): Style {
-  const p: PbrParts = { ...DEFAULTS, ...parts };
+  const given = { ...DEFAULTS, ...parts };
+  // A slot derived from others follows them: an albedo integrated from the lobe given, a clear colour from the sky given.
+  const p: PbrParts = {
+    ...given,
+    lobeAlbedo: parts.lobeAlbedo ?? albedoOf(given.distribution, given.visibility),
+    clear: parts.clear ?? horizonClear(given.sky, given.tone),
+  };
   const fog = (distance: F): F => { const f = sub(1, exp(mul(distance, -0.008))); return saturate(mul(f, f)); };
   /** What sits on the horizon behind a point seen along `view`: the fog's colour. */
   const haze = (view: P3, sun: P3): P3 => p.sky(normalize(add(vec3(mul(view.x, -1), 0, mul(view.z, -1)), vec3(0, 0.02, 0))), sun);
@@ -108,8 +108,6 @@ export function pbr(parts: Partial<PbrParts> = {}): Style {
 
   const outline = param("pbr.outline", 0.01, { min: 0, max: 0.2 });
   const up = vec3(0, 1, 0);
-  // The clear colour: the default sky on the horizon under a full sun overhead, as the picture shows it.
-  const clear = evaluate(p.tone(p.sky(vec3(1, 0, 0), up))) as number[];
 
   return {
     name: "pbr",
@@ -117,7 +115,7 @@ export function pbr(parts: Partial<PbrParts> = {}): Style {
     ink: (ctx) => p.tone(submerge(mul(linear(ctx.base), mul(sunAmount(ctx.lights), 0.12)), ctx.depth, sunAmount(ctx.lights))),
     mark: () => lift<"f32">(1),
     outline,
-    clear: [clear[0]!, clear[1]!, clear[2]!],
+    clear: [p.clear[0], p.clear[1], p.clear[2]],
     post: [],
     water: (ctx) => {
       const n = ctx.normal, v = ctx.view, n_v = max(dot(n, v), 1e-4);

@@ -2688,7 +2688,7 @@ The parts a physically based look is built from (`pbr`, src/style/pbr.ts): each 
 - **skyLight**: Light from the sky in a body: `diffuse`, the radiance a white Lambert surface facing `normal` reflects (the sky's irradiance over pi), and `specular`, the sky as a mirror of roughness `rough` sees it along the reflected view ray.
   `function skyLight(at: { readonly normal: P3; readonly view: P3; readonly sun: P3 }, rough: F, sky: (dir: P3, sun: P3) => P3): { readonly diffuse: P3; readonly specular: P3 }`
   cannot:
-  - Cannot: follow a sky that changes with time or a moved sun except through the one tap (the projection is at the stated sun and time 0, as a cloud's tables are); see the ground, other bodies or the body itself (a cavity is lit by open sky: no occlusion); blur a sharp sky feature smoothly at middle roughness (it fades as a whole rather than spreading).
+  - Cannot: follow a moved sun except through the one tap (the projection is at the sun's stated direction, as a cloud's tables are); project a sky that reads time or a param (refused by name, `PbrError`: it would be stale); see the ground, other bodies or the body itself (a cavity is lit by open sky: no occlusion); blur a sharp sky feature smoothly at middle roughness (it fades as a whole rather than spreading).
 - **daylight**: A clear day's sky, linear radiance along `dir` with the sun toward `sun`: zenith (0.10, 0.22, 0.50) to horizon (0.50, 0.58, 0.66) by the square root of the height, a warm glow round the sun ((n.sun)^8 x (0.35, 0.27, 0.16)), and a ground (0.20, 0.19, 0.17) below the horizon, blended over 0.08 of height: about what a sunlit floor of albedo 0.2 sends up, so a mirror ball shows a floor rather than a hole.
   `function daylight(dir: P3, sun: P3): P3`
 - **aces**: ACES filmic, as Narkowicz's fit: x (2.51 x + 0.03) / (x (2.43 x + 0.59) + 0.14), clamped to [0, 1], then encoded for the picture (x^(1/2.2), the target is display sRGB).
@@ -2697,7 +2697,7 @@ The parts a physically based look is built from (`pbr`, src/style/pbr.ts): each 
   - Cannot: hold hue at the top (a bright saturated light goes toward white per channel, as film does).
 
 Types:
-- **PbrParts**: The slots of `pbr` (src/style/pbr.ts), each a function; `pbr(parts)` takes any of them in place of its default. `type PbrParts = { distribution, visibility, fresnel, diffuse, environment, sky, tone }`
+- **PbrParts**: The slots of `pbr` (src/style/pbr.ts); `pbr(parts)` takes any of them in place of its default. `type PbrParts = { distribution, visibility, fresnel, diffuse, environment, sky, tone, lobeAlbedo, clear }`
 
 ### src/style/toon.ts
 

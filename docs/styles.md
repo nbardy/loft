@@ -87,9 +87,9 @@ Each part's file opens with its law, its parameters, what it cannot do, and wher
 
 `pbr()` (`src/style/pbr.ts`) lights bodies as physical surfaces: for the sun and every light (lamp shadows included,
 as the light fold delivers them) a GGX specular lobe and a Lambert body, the sky as an environment, then a filmic tone
-map. `--style pbr` draws any scene this way without editing it. It is built from seven parts, each a plain function over
+map. `--style pbr` draws any scene this way without editing it. It is built from nine slots: eight parts, each a plain function over
 expressions (`src/style/pbr_parts.ts`), so each runs on the GPU and in the CPU twin and ports to another engine as
-the maths it is:
+the maths it is, and a clear colour:
 
 | Slot (`PbrParts`) | Signature | Default | What it is |
 |---|---|---|---|
@@ -100,10 +100,20 @@ the maths it is:
 | `environment` | `({ normal, view, sun }, rough, sky) => { diffuse, specular }` | `skyLight` | the sky in a body: what a white diffuse surface reflects, what a mirror of `rough` sees |
 | `sky` | `(dir, sun) => P3` | `daylight` | linear radiance of the sky: the background and the environment |
 | `tone` | `(c) => P3` | `aces` | linear radiance to the picture (Narkowicz's ACES fit, then x^(1/2.2)) |
+| `lobeAlbedo` | `(n_v, rough) => { scale, bias }` | integrated from the `distribution` and `visibility` given | the environment's specular weight: under Schlick a uniform sky reflects f0 scale + bias |
+| `clear` | `[r, g, b]`, display values | the sky on the horizon, toned | the colour where nothing is drawn |
 
 Conventions: cosines arrive clamped to [0, 1]; `rough` is the paint's (a part squares it); a light's amount 1 is the
 sun at noon, under which a white Lambert surface has radiance 1, so a term is BRDF x pi x n.l; colours are linear
-until `tone`. The sky's light is scaled by the sun's amount, so a moonlit sky is dark.
+until `tone`. The sky is radiance per unit of the sun's amount: the background, the haze and the environment are
+`sky` times the sun's amount, so a moonlit sky is dark and a sun of 0 leaves any sky black (tested in
+`tests/style.pbr.gpu.test.ts`). A sky that glows with no sun (a studio) puts the sun at amount 1 below the horizon.
+
+What is built once, on the CPU twin, when the style is made: the sky's projection (at the sun's stated direction), the
+default clear colour, and the default `lobeAlbedo` (about 30 ms per new `distribution`/`visibility` pair; a lobe of 0
+reflects no sky, a swapped visibility reflects the sky by its own albedo, within 0.02). So those parts must evaluate
+on the CPU and must not read time or a param; one that does is refused by name (`pbr sky: given a sky that reads time`,
+exit 4). A sky only the GPU can evaluate is fine beside its own `environment` and a given `clear`.
 
 **Swap one part**; the others stay:
 
@@ -111,7 +121,11 @@ until `tone`. The sky's light is scaled by the sun's amount, so a moonlit sky is
 style: pbr({ fresnel: thinFilm(380) })                       // a film's colours in every reflection (examples/materials/thin_film.ts)
 style: pbr({ sky: (dir, sun) => mix(DUSK, GOLD, pow(saturate(dot(dir, sun)), 4)), tone: (c) => c })
 style: { ...pbr(), ink: () => vec3(0.05, 0.06, 0.08) }     // any member of the Style record, as with every style
+style: { ...pbr(), water: myWater, ground: myFloor }         // the sea and the floor: their colours, roughness and fog are not parts
 ```
+
+The sea's colours and roughness (0.12), the floor's albedo and roughness (0.9) and the fog are constants inside
+`water`, `ground` and `shadow`; a different sea or floor replaces that member of the Style record, as above.
 
 **Write your own `shade` with the parts.** The light fold hands one light at a time; the parts say what it does:
 
@@ -125,7 +139,7 @@ const myShade = (ctx: ShadeCtx) => {
     const n_l = saturate(dot(ctx.normal, l.toward)), v_h = saturate(dot(ctx.view, h));
     const F = schlick(v_h, f0);
     const spec = mul(F, mul(ggx(saturate(dot(ctx.normal, h)), rough), smithGgx(n_l, n_v, rough), n_l, Math.PI));
-    return mul(add(mul(sub(1, F), lambert(base, n_l, n_v, v_h, rough)), spec), l.amount);
+    return mul(add(mul(sub(1, F), lambert(base, n_l, n_v, v_h, rough)), spec), l.amount); // l.unshadowed x l.visibility
   });
   const sky = skyLight(ctx, rough, daylight);
   return aces(add(direct, mul(base, sky.diffuse)));
@@ -134,9 +148,10 @@ style: { ...lit, shade: myShade }
 ```
 
 What it cannot do, and what it costs: `src/style/pbr.ts`'s top comment and `skyLight`'s (no occlusion, no
-inter-reflection; the sky is projected on spherical harmonics once per scene, so a sky that moves with time or a moved
-sun lights bodies as it stood, except through the one direct tap a reflection takes). The environment's specular
-weight is a fit of the default distribution and visibility's lobe albedo (within 0.06); a replaced lobe keeps it. The
+inter-reflection; the sky is projected on spherical harmonics once per scene, so a moved sun lights bodies from the
+sky as it stood, except through the one direct tap a reflection takes; a sky that reads time or a param is refused).
+The default pair's environment weight is a fixed fit of its lobe albedo (within 0.06, kept so its pictures do not
+change); any other pair is integrated. A Fresnel law other than Schlick is read at one representative cosine. The
 sanity numbers (white furnace, roughness sweep, metal tint) and the cost against toon:
 `agent_notes/2026-11-18_pbr_style/NOTE.md`, rerun with `bun tools/pbr_sanity.ts`.
 

@@ -55,7 +55,11 @@ export class Slots {
 
   param(spec: ParamSpec): ParamSlot {
     const seen = this.paramMap.get(spec.name);
-    if (seen) return seen;
+    if (seen) {
+      // One scene, one declaration per name (the process-wide check that was in `param`, src/expr.ts).
+      if (seen.def !== spec.def) throw new Error(`param "${spec.name}" declared twice in one scene with different defaults (${seen.def}, ${spec.def})`);
+      return seen;
+    }
     this.fresh(`param "${spec.name}"`);
     const made: ParamSlot = { name: spec.name, slot: this.paramMap.size, def: spec.def, min: spec.min, max: spec.max };
     this.paramMap.set(spec.name, made);
