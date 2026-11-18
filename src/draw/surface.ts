@@ -81,12 +81,15 @@ type Copies = { readonly kind: "one" } | { readonly kind: "poses"; readonly pose
  * rest measurement, each copy and the constructor's own check, so each is recorded once and every read is a `Call`.
  */
 const UV = ["f32", "f32"] as const;
-const recorded = (s: Surface): Surface => ({
-  point: graphFn("point", UV, (u, v) => s.point(u, v)), normal: graphFn("normal", UV, (u, v) => s.normal(u, v)),
-  anchor: graphFn("anchor", UV, (u, v) => s.anchor(u, v)),
-  // Read when asked: the constructor wraps before it refuses a value that is not a surface (src/mistakes.ts).
-  get topology() { return s.topology; }, get skeleton() { return s.skeleton; },
-});
+// The authored surface is the prototype, so everything else (topology, skeleton, a Body's stations) is read through
+// it when asked, and `instanceof Body` still holds: the bake skins a swept body as a chain and morphs anything else
+// (src/bake/motion.ts kindOf). A plain object here turned every body's bake to morph targets. `Object(s)` because the
+// constructor wraps before it refuses a value that is not a surface (src/mistakes.ts).
+const recorded = (s: Surface): Surface =>
+  Object.assign(Object.create(Object(s)) as Surface, {
+    point: graphFn("point", UV, (u, v) => s.point(u, v)), normal: graphFn("normal", UV, (u, v) => s.normal(u, v)),
+    anchor: graphFn("anchor", UV, (u, v) => s.anchor(u, v)),
+  });
 
 const S = variable("s", "f32"), T = variable("t", "f32"), I = variable("i", "f32");
 const U = variable("u", "f32"), V = variable("v", "f32");
