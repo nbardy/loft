@@ -36,11 +36,12 @@ import { cachingDevice, type CachingDevice } from "../host/cache.ts";
 import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { loadBundle, NotDataError } from "../host/host.ts";
-import type { Bundle, Precision } from "../host/manifest.ts";
+import type { Bundle, FramePrecision, Precision } from "../host/manifest.ts";
 import { parsePrecision, parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
 import { checkInputs, type InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
+import { selectPrecision } from "../host/precision.ts";
 import { buildOf, canonical, deviceOf, frameOf, identityId, type Identity } from "../identity.ts";
 import { ending, exitWith, headed, type Verdict } from "./verdict.ts";
 
@@ -285,6 +286,11 @@ function startDrawWorker(check: string | undefined, stopped: (v: Verdict) => voi
 /** `loft-draw serve` (rust/crates/loft-draw), its protocol version, and where `tools/dev.sh build loft-draw --fast` puts it. */
 const LOFT_DRAW = fileURLToPath(new URL("../../rust/target/lab/loft-draw", import.meta.url));
 const DRAW_WIRE = 1;
+/** The child's lines (rust/crates/loft-draw/src/serve.rs): `ready` once, then one reply per request, in order. */
+type DrawReady = { readonly wire: number; readonly adapter: Extract<DrawMessage, { kind: "ready" }>["adapter"]; readonly device: Identity["device"] };
+type DrawReply =
+  | { readonly ok: true; readonly precision: FramePrecision; readonly frames: readonly { readonly file: string; readonly sha256: string }[]; readonly ms: { readonly load: number; readonly frames: number } }
+  | { readonly ok: false; readonly verdict: Verdict };
 
 /**
  * The draw child as `loft-draw serve`, with startDrawWorker's interface. This process reads and checks the artefact
@@ -311,7 +317,7 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
   });
   const reader = child.stdout.getReader(), decoder = new TextDecoder();
   let buffered = "";
-  const line = async (): Promise<Record<string, any>> => {
+  const line = async <T,>(): Promise<T> => {
     for (let at = buffered.indexOf("\n"); at < 0; at = buffered.indexOf("\n")) {
       const { value, done } = await reader.read();
       if (done) return new Promise(() => {}); // onExit answers
@@ -319,7 +325,7 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
     }
     const [head, rest] = [buffered.slice(0, buffered.indexOf("\n")), buffered.slice(buffered.indexOf("\n") + 1)];
     buffered = rest;
-    return JSON.parse(head);
+    return JSON.parse(head) as T;
   };
   let check: (b: Bundle) => void = () => {};
   let device: Identity["device"];
@@ -327,7 +333,7 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
     try {
       if (checkPath !== undefined) check = (await import(resolve(checkPath))).default;
       if (typeof check !== "function") throw new UsageError(`--check ${checkPath}: its default export is not a function`);
-      const r = await line();
+      const r = await line<DrawReady>();
       if (r.wire !== DRAW_WIRE) throw new EnvironmentError(`${LOFT_DRAW} speaks wire ${r.wire}, this checkout ${DRAW_WIRE}: it is stale. Fix: tools/dev.sh build loft-draw --fast`, false);
       device = r.device;
       starting = false;
@@ -344,17 +350,21 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
       checkParams(req.params, bundle.manifest);
       checkInputs(bundle.manifest, req.inputs, { kind: "none" }, "serve");
       camera = cameraFor(req.camera, bundle);
+      // The TS host refuses `precision: "mixed"` on an f32-only artefact (LoadError); the Rust loader would draw f32.
+      // Refuse it here, with the same check, so the engine switch does not change the answer. The device argument does
+      // not matter for the refusal: only the ask and the artefact do.
+      selectPrecision(bundle, true, req.precision);
     } catch (e) {
       return failed(req.id, verdictHere(e));
     }
     child.stdin.write(canonical({ dir, camera, times: req.times, size: [req.size.width, req.size.height], params: req.params, inputs: req.inputs, precision: req.precision ?? "mixed", out: req.out }) + "\n");
     child.stdin.flush();
-    const r = await line();
+    const r = await line<DrawReply>();
     if (!r.ok) return failed(req.id, r.verdict);
     const build = buildOf(bundle), view = (time: number): View => ({ camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false });
     const identities = req.times.map((time): Identity => ({ build, frame: frameOf(bundle.manifest, view(time), r.precision, { kind: "frame" }), device }));
     const { time: _, ...frame } = identities[0]!.frame;
-    const frames = r.frames.map((f: { file: string; sha256: string }, k: number) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
+    const frames = r.frames.map((f, k) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
     return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };
   };
   return {
