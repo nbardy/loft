@@ -61,7 +61,7 @@ function holds(n: N, c: Parameters<typeof rig>[0]) {
   const rail = [n.rail.x, n.rail.y] as const, pad = n.rail.r + 0.03;
   // Clearance of a part: one hold per station (distance to the rail's axis, less its own radius and the pad). One hold
   // per station, not the least of them: a `min` has corners where the nearest station changes, which stall the solve.
-  const clear = (stations: readonly (readonly [P3, number])[]) => stations.map(([p, r]) => atLeast(apart(rail, p, p), r + pad));
+  const clear = (stations: readonly (readonly [P3, number])[]) => stations.map(([p, r]) => atLeast(length(sub(p.xy, rail)), r + pad));
   const along = (points: readonly (readonly [number, number, number])[], girth: (m: number) => number) =>
     [0, 0.25, 0.5, 0.75, 1].map((m) => [inBody(body, through(lift<"f32">(m), points)), girth(m)] as const);
   const torso = along([[0.55, 0.15, 0], [0, 0, 0], [-0.7, -0.05, 0], [-1.05, -0.2, 0]], (m) => 0.34 * (1 - 0.55 * m));
@@ -71,7 +71,8 @@ function holds(n: N, c: Parameters<typeof rig>[0]) {
     equal(vec3(c.x, c.y, c.pitch), [0, HIP, 0], { at: 0 }),                                    // stands
     equal(velocity, [0, 0, 0], { at: 0 }),                                                     // still
     equal(vec2(c.fx, c.fy), [0, 0], { from: 0, to: T.off }),                                   // planted
-    equal(accel, [0, -G], { from: T.off, to: T.land }),                                        // flies: a parabola
+    // 0.001 m/s² over 0.6 s changes flight height by at most 0.18 mm; differentiating f32 controls costs O(ulp / h²).
+    equal(accel, [0, -G], { from: T.off, to: T.land, within: 0.001 }),                         // flies: a parabola
     equal(vec2(c.fx, c.fy), [n.deck.land, n.deck.top], { from: T.land, to: T.end }),           // lands on the deck at 1.2
     equal(vec3(c.x, c.y, c.pitch), [n.deck.land, n.deck.top + HIP, 0], { at: T.end }),         // stands on it
     equal(velocity, [0, 0, 0], { at: T.end }),                                                 // still

@@ -670,7 +670,14 @@ export class Evaluator {
         if (bound !== undefined) {
           if (!isTrack(bound) && bound[0] === bound[1]) return { kind: "num", v: this.point([n.op === "var" ? bound[0] : Math.fround(bound[0])]) };
           this.deps.add(e.id);
-          const c = isTrack(bound) ? this.track(bound) : this.leaf(this.names.indexOf(key));
+          // With independent axes, range over the image of the f32 store itself. Every use of a
+          // clock then shares one affine coordinate. A track still follows the pre-store coordinate.
+          if (!isTrack(bound) && this.d === this.box.size && n.op !== "var") {
+            const lo = Math.fround(bound[0]), hi = Math.fround(bound[1]);
+            if (!Number.isFinite(lo) || !Number.isFinite(hi)) throw new Unbounded("overflow", "the value exceeds f32 storage");
+            return { kind: "num", v: this.leaf(this.names.indexOf(key), [lo, hi]) };
+          }
+          const c = isTrack(bound) ? this.track(bound) : this.leaf(this.names.indexOf(key), bound);
           return { kind: "num", v: n.op === "var" ? c : stored(c) };
         }
         const held = this.held(n);
@@ -738,8 +745,7 @@ export class Evaluator {
   }
 
   /** Leaf k of the box: its middle, plus half its width times e_k. */
-  private leaf(k: number): Float64Array {
-    const [lo, hi] = this.box.get(this.names[k]!)! as I;
+  private leaf(k: number, [lo, hi]: I): Float64Array {
     const c = new Float64Array(this.d + 4), m = lo / 2 + hi / 2;
     c[0] = m; c[k + 1] = hi / 2 - lo / 2; c[this.d + 1] = (Math.abs(lo) + Math.abs(hi)) * EPS; c[this.d + 2] = lo; c[this.d + 3] = hi;
     return c;
