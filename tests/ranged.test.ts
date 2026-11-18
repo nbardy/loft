@@ -16,7 +16,7 @@ import * as E from "../src/expr.ts";
 import { always, eventually } from "../src/ranged.ts";
 import { RangeRefusal, Unbounded } from "../src/interval.ts";
 import { checkOutcome, formatChecks, runChecks } from "../src/check.ts";
-import { fwidth, wgslFn } from "../src/lib/wgsl.ts";
+import { wgsl } from "../src/text/index.ts";
 import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { scene, strand, toon, plane, world } from "../src/index.ts";
@@ -154,9 +154,9 @@ test("serpent 3b stops at its five-second wall budget", () => {
 }, 120000);
 
 test("raw shaders, GPU-only functions and CPU tables report the refused construct", () => {
-  const raw = wgslFn({ name: "customShader", ret: "f32", wgsl: "fn customShader(x: f32) -> f32 { return x; }" });
+  const raw = wgsl`fn customShader(x: f32) -> f32 { return fwidth(x); }`;
   const table = E.fetch({ name: "cpuOnly", role: "data", entries: 1, lanes: 1, prepare: () => () => {} }, 0, 0);
-  for (const [value, name] of [[raw(time), "customShader"], [fwidth(time), "loft_fwidth"], [table.x, "cpuOnly"]] as const) {
+  for (const [value, name] of [[raw.customShader!(time) as E.Expr<"f32">, "customShader"], [table.x, "cpuOnly"]] as const) {
     const v = always([time, 0, 1], ge(value, 0)).run(probe);
     expect(v).toMatchObject({ kind: "ranged", holds: "undecided" });
     expect(v.measured).toContain(name);

@@ -4,8 +4,8 @@ renderer, what a user can bring, the limits. Everything after it is generated (s
 `ts run`, `ts check` and `sh` are run by `bun tools/check_snippets.ts`.
 -->
 Loft describes animated 3D things as TypeScript expressions and compiles them to WGSL plus tables of numbers that any
-WebGPU host draws. Files in `examples/` import `../src/index.ts`; `src/lib/index.ts` adds plain functions (distance
-functions, folds, noise, raw WGSL). `loft` is `bun src/cli/main.ts`.
+WebGPU host draws. Files in `examples/` import `../src/index.ts`, which exports every public name (distance functions,
+folds and noise included). `loft` is `bun src/cli/main.ts`.
 
 **The layers** (the sections below, in this order). Each is written in the one below, so leaving a component is a step
 down, not a rewrite. Core: expressions (`time`, `input`, `param`), curves, maps (a shape is a function:
@@ -25,10 +25,10 @@ shadows onto the ground and onto bodies in styles that print a shadow block.
 
 **What you can bring.** A `Drawable` (`name`, `draws(ctx)` returning WGSL shaders and phased draws, `skeletons`,
 `surfaces`; `ctx.table` for a per-frame table, `ctx.post` for a full-screen pass; `src/draw/sky.ts` is 30 lines). A
-WGSL function inside expressions (`wgslFn`; GPU only, so checks cannot evaluate it). A WGSL `compute` pass whose
-outputs are made at build, at load, per frame or as a stepped state read by time. A `Style` value, fresh or spread
-from another. A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/` (`docs/artefact_format.md`), executed by
-`createHost` (`src/host/index.ts`) or `rust/loft-loader` on `wgpu`.
+WGSL function inside expressions (a raw function in `wgsl` text; GPU only, so checks refuse it by name and line). A
+WGSL `compute` pass whose outputs are made at build, at load, per frame or as a stepped state read by time. A `Style`
+value, fresh or spread from another. A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/`
+(`docs/artefact_format.md`), executed by `createHost` (`src/host/index.ts`) or `rust/loft-loader` on `wgpu`.
 
 **What it cannot do today.**
 - No ground but the sea: every scene has `sea({ swell })` (an empty list is flat water).

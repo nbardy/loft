@@ -1,15 +1,17 @@
-// `draw.specks`: camera-facing specks generated from (index, time) in one instanced draw. Nothing is stored per speck.
+// `draw.points`: camera-facing specks generated from their index (and `time`) in one instanced draw. Nothing is stored
+// per speck.
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Shader } from "../compile/context.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { SceneError, shown } from "../errors.ts";
-import { add, dot, Expr, lift, mul, saturate, variable, type In } from "../expr.ts";
+import { add, dot, Expr, lift, mul, saturate, substitute, time, variable, type In } from "../expr.ts";
 import { foldAt } from "../light.ts";
 import type { F } from "../map/types.ts";
+import { VolumeDrawable } from "../draw/volume.ts";
 import { DensityDrawable } from "./density.ts";
-import { specksVeil } from "./specks_veil.ts";
+import { specksVeil, specksVolumeVeil } from "./specks_veil.ts";
 
-/** One speck: world centre and radius, colour and opacity, as expressions of its index and the time. */
+/** One speck: world centre and radius, colour and opacity, as expressions of its index (and `time`). */
 export type Speck = {
   readonly at: In<"vec3">;
   readonly radius: In<"f32">;
@@ -17,19 +19,22 @@ export type Speck = {
   readonly opacity: In<"f32">;
 };
 
-export type SpecksOptions = {
+export type PointsOptions = {
   /** Seconds of projected travel to smear across the centre. Default 0 (round specks). */
   readonly stretch?: number;
-  /** A cloud from `draw.density`, listed before the specks in `things`, whose front light and extinction veil them. */
-  readonly veil?: DensityDrawable;
+  /**
+   * A cloud from `draw.density` or `draw.volume`, listed before the specks in `things`: its light in front of each
+   * speck and its extinction up to it veil the speck.
+   */
+  readonly veil?: DensityDrawable | VolumeDrawable;
 };
 
-type Veil = { readonly kind: "clear" } | { readonly kind: "density"; readonly draw: DensityDrawable };
+type Veil = { readonly kind: "clear" } | { readonly kind: "density"; readonly draw: DensityDrawable } | { readonly kind: "volume"; readonly draw: VolumeDrawable };
 
 /**
- * `count` camera-facing specks in one instanced draw, each placed, sized and coloured by your own expression of
- * (index, seconds); nothing is stored per speck. Hash the index (`hash22(vec2(i, k))`) for stable variation; any path
- * (ballistics, drag, orbits, a fan) is your own equation of the seconds. Sub-pixel specks keep a pixel-sized footprint
+ * `count` camera-facing specks in one instanced draw, each placed, sized and coloured by your own expression of its
+ * index; nothing is stored per speck. Hash the index (`hash22(vec2(i, k))`) for stable variation; any path
+ * (ballistics, drag, orbits, a fan) is your own equation of `time`. Sub-pixel specks keep a pixel-sized footprint
  * and fade by projected area, so they do not shimmer. `stretch` samples each path a short time earlier to elongate it
  * along its projected motion. The sun and scene lights light each speck; opaque bodies hide it; a `veil` attenuates
  * and tints it by the cloud's own integral to its centre.
@@ -37,8 +42,8 @@ type Veil = { readonly kind: "clear" } | { readonly kind: "density"; readonly dr
  * Cannot sort overlapping specks by depth (they blend in index order), cast shadows, or keep state between frames.
  * Give a finished speck opacity 0.
  */
-export function specks(name: string, count: number, speck: (index: F, seconds: F) => Speck, o: SpecksOptions = {}): Drawable {
-  const where = `draw.specks ${shown(name)}`;
+export function specks(name: string, count: number, speck: (index: F) => Speck, o: PointsOptions = {}): Drawable {
+  const where = `draw.points ${shown(name)}`;
   if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) {
     throw new SceneError(where, `name ${shown(name)}`, "an identifier starting with a letter", 'use a name like "dust"');
   }
@@ -50,26 +55,25 @@ export function specks(name: string, count: number, speck: (index: F, seconds: F
     throw new SceneError(where, `stretch ${shown(stretch)}`, "a finite nonnegative duration in seconds", "give a small duration such as 0.01, or omit stretch");
   }
   if (typeof speck !== "function") {
-    throw new SceneError(where, `speck ${shown(speck)}`, "a function of (index, seconds)", "write (i, t) => ({ at, radius, colour, opacity })");
+    throw new SceneError(where, `speck ${shown(speck)}`, "a function of the index", "write (i) => ({ at, radius, colour, opacity }), reading time for motion");
   }
-  const density = o.veil;
-  if (density !== undefined && !(density instanceof DensityDrawable)) {
-    throw new SceneError(where, `veil ${shown(density)}`, "the drawable returned by draw.density", "pass your cloud drawable and list it before the specks in things, or omit veil");
-  }
-  const veil: Veil = density === undefined ? { kind: "clear" } : { kind: "density", draw: density };
+  const veil = veilOf(where, o.veil);
   const i = variable("i", "f32"), t = variable("t", "f32");
-  const q = speck(i, t);
-  if (q === null || typeof q !== "object") {
-    throw new SceneError(where, `speck returns ${shown(q)}`, "an object with at, radius, colour and opacity", "return all four fields");
+  const given = speck(i);
+  if (given === null || typeof given !== "object") {
+    throw new SceneError(where, `speck returns ${shown(given)}`, "an object with at, radius, colour and opacity", "return all four fields");
   }
   for (const key of ["at", "radius", "colour", "opacity"] as const) {
-    const value = q[key];
+    const value = given[key];
     const ty = key === "at" || key === "colour" ? "vec3" : "f32";
     const correct = value instanceof Expr ? value.ty === ty
       : ty === "vec3" ? Array.isArray(value) && value.length === 3 && value.every((v) => typeof v === "number")
         : typeof value === "number";
     if (!correct) throw new SceneError(where, `speck.${key} ${shown(value)}`, `a ${ty} expression`, ty === "vec3" ? `give ${key} as vec3(x, y, z)` : `give ${key} as a scalar`);
   }
+  // The shader samples a speck at a time t (the frame's, or a moment earlier for `stretch`), so `time` becomes t.
+  const [at, radius, colour, opacity] = substitute([lift<"vec3">(given.at), lift<"f32">(given.radius), lift<"vec3">(given.colour), lift<"f32">(given.opacity)], time, t);
+  const q = { at: at as Expr<"vec3">, radius: radius as Expr<"f32">, colour: colour as Expr<"vec3">, opacity: opacity as Expr<"f32"> };
   return {
     name, forms: [], skeletons: [],
     draws(ctx) {
@@ -96,6 +100,14 @@ export function specks(name: string, count: number, speck: (index: F, seconds: F
   };
 }
 
+/** The veil option classified once: none, a density cloud or a volume. */
+function veilOf(where: string, cloud: unknown): Veil {
+  if (cloud === undefined) return { kind: "clear" };
+  if (cloud instanceof DensityDrawable) return { kind: "density", draw: cloud };
+  if (cloud instanceof VolumeDrawable) return { kind: "volume", draw: cloud };
+  throw new SceneError(where, `veil ${shown(cloud)}`, "the drawable returned by draw.density or draw.volume", "pass your cloud drawable and list it before the specks in things, or omit veil");
+}
+
 function grainLight(ctx: CompileContext): Shader {
   const p = variable("p", "vec3"), ray = variable("ray", "vec3");
   const light = foldAt(ctx.lighting, { kind: "point", at: p })("sum", (l) => {
@@ -108,14 +120,15 @@ function grainLight(ctx: CompileContext): Shader {
 function grainVeil(ctx: CompileContext, veil: Veil, name: string, count: number): Shader & { cached: boolean } {
   switch (veil.kind) {
     case "clear": return { code: "fn grain_veil(p: vec3<f32>, d: vec3<f32>) -> vec4<f32> { return vec4<f32>(0.0); }", libs: [], cached: false };
-    case "density": {
-      const d = veil.draw;
-      const at = ctx.things.indexOf(d);
-      if (at < 0 || at >= ctx.things.findIndex((t) => t.name === name)) {
-        throw new SceneError(`draw.specks ${shown(name)}`, `veil ${shown(d.name)}`, "a cloud drawn before the specks", `put ${d.name} before ${name} in scene things`);
-      }
-      return specksVeil(ctx, d, count);
-    }
+    case "density": drawnBefore(ctx, veil.draw, name); return specksVeil(ctx, veil.draw, count);
+    case "volume": drawnBefore(ctx, veil.draw, name); return specksVolumeVeil(ctx, veil.draw, count);
+  }
+}
+
+function drawnBefore(ctx: CompileContext, cloud: Drawable, name: string): void {
+  const at = ctx.things.indexOf(cloud);
+  if (at < 0 || at >= ctx.things.findIndex((t) => t.name === name)) {
+    throw new SceneError(`draw.points ${shown(name)}`, `veil ${shown(cloud.name)}`, "a cloud drawn before the specks", `put ${cloud.name} before ${name} in scene things`);
   }
 }
 

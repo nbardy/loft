@@ -31,13 +31,12 @@ import {
   smoothstep, step, sub, time, turn, vec2, vec3, vec4, draw, attack, hit, telegraph, ropes, scene, sea, spacing,
   woodblock, print, NO_SKELETON, WOODBLOCK_PALETTE, beats, dragged, impact, slowInOut, swing,
   type Drawable, type Expr, type F, type Frame, type P3, type Paint, type PoseSpec, type Poses,
-  type Rope, type Sea, type Surface,
+  type In, type Rope, type Sea, type Surface, wgsl,
 } from "../../src/index.ts";
 import { hull, type Hull, type HullSpec } from "../recipes/hull.ts";
 import { atRest } from "../../src/map/surface.ts";
 import { noise2 } from "../../src/lib/noise.ts";
 import { sdBox } from "../../src/lib/sdf2.ts";
-import { fwidth } from "../../src/lib/wgsl.ts";
 import {
   ballPoint, bulwarkLoop, dirWorld, frameOf, framePose, linesOf, ragPoint, ridingFrame, slice, sparPose, toWorld,
   tubePoint, unitPart, v3, type Riding, type V3,
@@ -45,6 +44,10 @@ import {
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
 import { impactFoam, impactPaint, type Splash } from "./lib/impact.ts";
 import { PRINT_WARNING } from "./lib/warning.ts";
+
+// The screen-space rate of a value (WGSL fwidth): a raw function, GPU-only, for antialiased edges.
+const screen = wgsl`fn pixel_rate(x: f32) -> f32 { return fwidth(x); }`;
+const fwidth = (x: In<"f32">): F => screen.pixel_rate!(x);
 
 // =====================================================================================================================
 // The numbers an art director changes

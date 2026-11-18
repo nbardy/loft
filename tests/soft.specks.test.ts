@@ -3,7 +3,7 @@ import type { Camera } from "../src/artefact.ts";
 import { createHost, type GpuHost } from "../src/host/host.ts";
 import { lower } from "../src/host/lower.ts";
 import { headlessDevice } from "../src/host/headless.ts";
-import { add, blob, compile, draw, input, lamp, length, lt, medium, mul, nothing, pass, scene, select, sub, toon, vec3 } from "../src/index.ts";
+import { add, blob, compile, draw, input, lamp, length, lt, medium, mul, nothing, pass, scene, select, sub, time, toon, vec3 } from "../src/index.ts";
 
 let host: GpuHost;
 beforeAll(async () => { host = createHost(await headlessDevice()); });
@@ -14,7 +14,7 @@ const style = toon({ outline: 0, sky: { horizon: [0, 0, 0], zenith: [0, 0, 0] } 
 
 // A one-sample hard circle blinks or loses its energy as the centre crosses a pixel boundary.
 test("sub-pixel grains preserve their area-weighted energy through a pixel of motion", async () => {
-  const grain = draw.specks("speck", 1, (_, t) => ({ at: vec3(mul(t, 1 / 30), mul(t, 1 / 30), 0), radius: 0.020, colour: [1, 1, 1], opacity: 1 }));
+  const grain = draw.points("speck", 1, () => ({ at: vec3(mul(time, 1 / 30), mul(time, 1 / 30), 0), radius: 0.020, colour: [1, 1, 1], opacity: 1 }));
   const s = scene({ ground: nothing, things: [grain], style, sun: [0, 0.12, -1] });
   const loaded = await host.load(compile(s));
   try {
@@ -48,7 +48,7 @@ test("the cloud veils grain contrast by depth, its tint remains, and an opaque b
   const red = (pixels: Uint8Array, x: number): number => pixels[(47 * W + x) * 4]!;
   const contrasts: number[][] = [];
   for (const count of [4, 32768]) {
-    const grains = draw.specks("grains", count, (i) => ({
+    const grains = draw.points("grains", count, (i) => ({
       at: vec3(add(-1.8, mul(i, 1.2)), 0, select(lt(i, 1), 2.6, select(lt(i, 2), 0, -2.6))),
       radius: 0.14, colour: vec3(bright, bright, bright), opacity: select(lt(i, 4), visible, 0),
     }), { veil });
@@ -79,4 +79,31 @@ test("the cloud veils grain contrast by depth, its tint remains, and an opaque b
     } finally { loaded.destroy(); }
   }
   expect(Math.max(...contrasts[0]!.map((a, i) => Math.abs(a - contrasts[1]![i]!)))).toBeLessThanOrEqual(5);
+});
+
+// The bug it catches: a volume veil that integrates the wrong span (the whole box, or nothing in front of the grain),
+// or at the wrong rate. A black, homogeneous slab of extinction sigma between z = -2 and 2: white minus black grains
+// isolates transmission, exp(-sigma * path inside the slab to the grain): 1 in front, 1/2 at the centre, 1/4 behind.
+test("a draw.volume veil dims grains by its transmittance to each grain, marched or from its grid", async () => {
+  const sigma = Math.log(2) / 2;
+  const slab = draw.volume("slab", () => sigma, { bounds: { min: [-8, -3, -2], max: [8, 3, 2] }, steps: 64, albedo: [0, 0, 0] });
+  const bright = input("testVolumePigment", "f32", [1]);
+  for (const count of [3, 32768]) {
+    const grains = draw.points("grains", count, (i) => ({
+      at: vec3(add(-1.8, mul(i, 1.2)), 0, select(lt(i, 1), 2.6, select(lt(i, 2), 0, -2.6))),
+      radius: 0.14, colour: vec3(bright, bright, bright), opacity: select(lt(i, 3), 1, 0),
+    }), { veil: slab });
+    // The sun alone lights the grains, the same for each (a lamp's falloff would differ between them).
+    const s = scene({ ground: nothing, things: [slab, grains], style, sun: { toward: [0, 1, 0], amount: [1.8, 1.8, 1.8] } });
+    const loaded = await host.load(compile(s));
+    try {
+      const white = await loaded.frame(view);
+      const black = await loaded.frame({ ...view, inputs: { testVolumePigment: 0 } });
+      const lum = [26, 62, 98].map((x) => white[(47 * W + x) * 4]! - black[(47 * W + x) * 4]!);
+      console.info(`volume veil, ${count} grains: contrast ${lum.join(", ")}; shares ${(lum[1]! / lum[0]!).toFixed(3)}, ${(lum[2]! / lum[0]!).toFixed(3)} (predicted 0.500, 0.250)`);
+      expect(lum[0]!).toBeGreaterThan(160);
+      expect(lum[1]! / lum[0]!).toBeWithin(0.47, 0.53);
+      expect(lum[2]! / lum[0]!).toBeWithin(0.22, 0.28);
+    } finally { loaded.destroy(); }
+  }
 });

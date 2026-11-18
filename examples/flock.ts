@@ -35,6 +35,6 @@ const bait = strand({ name: "bait", spine: (m: F) => add(lure, vec3(mul(sub(m, 0
 
 export default scene({
   ground: nothing, style: toon(), sun: [-0.4, 0.8, 0.45],
-  things: [draw.points("motes", points(n, (i) => ({ at: flock.at(i)[0]!.xyz, scale: 1 })), mote), bait],
+  things: [draw.posed("motes", points(n, (i) => ({ at: flock.at(i)[0]!.xyz, scale: 1 })), mote), bait],
   cameras: { whole: { kind: "perspective", eye: [0, 8, 24], target: [0, 3, 0], fovY: 0.75 } },
 });

@@ -33,29 +33,34 @@ import { accessMedium, BANK_LIB, clusterLoop, EXTENT, GAUSS_LIB, type Box, type 
 
 export type Rgb = readonly [number, number, number];
 
+/** How a medium is lit and finished. Only `bounds` is required; each other option has the default it names. */
 export type DensityOptions = {
   /** Where the medium is integrated: the box drawn, and the clip of every ray. Keep it 3 radii beyond the puffs. */
   readonly bounds: Box;
-  /** Sun light colour and strength (multiplies the albedo). */
-  readonly sun: Rgb;
-  /** Strength of the sky light (the style's sky colour at the zenith). */
-  readonly sky: number;
-  /** Forward scattering, 0 (even) to 0.9 (a bright rim toward the sun). */
-  readonly forward: number;
+  /** Sun light colour and strength (multiplies the albedo). Default [1, 1, 1]. */
+  readonly sun?: Rgb;
+  /** Strength of the sky light (the style's sky colour at the zenith). Default 0.8. */
+  readonly sky?: number;
+  /** Forward scattering, 0 (even) to 0.9 (a bright rim toward the sun). Default 0.3. */
+  readonly forward?: number;
   /**
    * How strongly the other puffs shadow a puff, 0 to 1 (1 is the plain optical depth). Below 1 stands in for the light
    * that reaches a cloud's surface layers sideways (a stylised cloud reads best with its sunlit side near white).
+   * Default 0.8.
    */
-  readonly shadowing: number;
+  readonly shadowing?: number;
   /**
    * Detail: each piece's optical depth is multiplied by exp(amount * noise) at the point the eye sees, in the puff's own
    * frame (so the detail rides with it), with cells `scale` world units across. It breaks up the Gaussian edges into
-   * wisps and lumps at the cost of one noise lookup per piece. `{ kind: "none" }` for smooth puffs.
+   * wisps and lumps at the cost of one noise lookup per piece. `{ kind: "none" }` (the default) for smooth puffs.
    */
-  readonly detail: { readonly kind: "none" } | { readonly kind: "noise"; readonly amount: number; readonly scale: number };
-  /** Fade toward the style's sky with distance: 1 - exp(-distance * haze). 0 for none. */
-  readonly haze: number;
+  readonly detail?: { readonly kind: "none" } | { readonly kind: "noise"; readonly amount: number; readonly scale: number };
+  /** Fade toward the style's sky with distance: 1 - exp(-distance * haze). Default 0 (none). */
+  readonly haze?: number;
 };
+
+/** The options with every default filled in: what the integral reads. */
+export type DensitySettings = Required<DensityOptions>;
 
 /** Depth bins between the nearest and farthest blob along a ray. */
 const BINS = 24;
@@ -82,7 +87,14 @@ export class DensityDrawable implements Drawable {
     return [{ kind: "medium", name: this.name, bound: { kind: "box", min: [...this.o.bounds.min], max: [...this.o.bounds.max] }, density: (p) => this.medium.density(p), colour: (p) => albedoAt(this.medium, p) }];
   }
 
-  constructor(readonly name: string, readonly medium: Medium, readonly o: DensityOptions) {
+  /** The options as drawn, defaults filled in. */
+  readonly o: DensitySettings;
+
+  constructor(readonly name: string, readonly medium: Medium, given: DensityOptions) {
+    const o: DensitySettings = this.o = {
+      bounds: given.bounds, sun: given.sun ?? [1, 1, 1], sky: given.sky ?? 0.8, forward: given.forward ?? 0.3,
+      shadowing: given.shadowing ?? 0.8, detail: given.detail ?? { kind: "none" }, haze: given.haze ?? 0,
+    };
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.density "${name}": names must be identifiers (they name shaders)`);
     for (let a = 0; a < 3; a++) if (!(o.bounds.max[a] > o.bounds.min[a])) throw new Error(`draw.density "${name}": bounds are empty on axis ${a}`);
     if (!(o.shadowing >= 0 && o.shadowing <= 1)) throw new Error(`draw.density "${name}": shadowing must be in [0, 1]`);
@@ -139,7 +151,7 @@ function albedoAt(m: Medium, p: P3): P3 {
 
 const DP = variable("p", "vec3");
 /** `fn soft_detail(p: vec3<f32>) -> f32`: the factor a piece's optical depth is multiplied by. */
-function detailFn(ctx: CompileContext, d: DensityOptions["detail"]): Shader {
+function detailFn(ctx: CompileContext, d: DensitySettings["detail"]): Shader {
   switch (d.kind) {
     case "none": return { code: "fn soft_detail(p: vec3<f32>) -> f32 { return 1.0; }", libs: [] };
     case "noise": {
@@ -228,7 +240,7 @@ function layerSunTail(sun: V3): string {
   return sun[1] > 0.05 ? `let selfSun = selfUp * ${f(1 / sun[1])};` : "let selfSun = a0.w * loft_gauss_tail(Op, k * SUN_DIR);";
 }
 
-function densityWgsl(m: Medium, acc: MediumAccess, o: DensityOptions, sun: V3, mixed: boolean): string {
+function densityWgsl(m: Medium, acc: MediumAccess, o: DensitySettings, sun: V3, mixed: boolean): string {
   const g = o.forward;
   // Keep the slowest exponential in f32. The half sum has a constant floor,
   // so rounding its other terms cannot erase a dim contribution lit by HDR light.

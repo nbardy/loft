@@ -51,8 +51,8 @@ const scatter = (n: number, r0: number, r1: number, seed: number, awash: number)
   return { at: vec3(mul(r, cos(a)), awash, mul(r, sin(a))), scale: add(0.8, mul(mod(mul(i, 0.37), 1), 0.5)) };
 });
 const debris = [
-  draw.points("barrels", place(scatter(11, 6, 19, 0.3, -0.12), vortex), barrel),
-  draw.points("planks", place(scatter(9, 7, 20, 1.9, 0.02), vortex), plank),
+  draw.posed("barrels", place(scatter(11, 6, 19, 0.3, -0.12), vortex), barrel),
+  draw.posed("planks", place(scatter(9, 7, 20, 1.9, 0.02), vortex), plank),
 ];
 
 // ---- the serpent, coiled ----------------------------------------------------------------------------------------

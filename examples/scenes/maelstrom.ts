@@ -115,9 +115,9 @@ const scatter = (n: number, r0: number, r1: number, seed: number, awash: number)
   return { at: vec3(mul(r, cos(a)), awash, mul(r, sin(a))), scale: add(0.8, mul(mod(mul(i, 0.37), 1), 0.5)) };
 });
 const wreckage = [
-  draw.points("barrels", place(scatter(16, 6, 21, 0.3, -0.1), vortex), barrel),
-  draw.points("planks", place(scatter(14, 7, 22, 1.9, 0.02), vortex), plank),
-  draw.points("spars", place(scatter(4, 9, 20, 4.1, 0.0), vortex), spar),
+  draw.posed("barrels", place(scatter(16, 6, 21, 0.3, -0.1), vortex), barrel),
+  draw.posed("planks", place(scatter(14, 7, 22, 1.9, 0.02), vortex), plank),
+  draw.posed("spars", place(scatter(4, 9, 20, 4.1, 0.0), vortex), spar),
 ];
 
 // ---- the scene ----------------------------------------------------------------------------------------------------

@@ -42,7 +42,7 @@ import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
 import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import { emitMesh, fromNets } from "./mesh.ts";
-import { pixelWorld } from "../lib/wgsl.ts";
+import { pixelWorld } from "../lib/screen.ts";
 import { lipschitz } from "../lib/sdf3.ts";
 import { fieldShadow, shadowSkeleton } from "./field_shadow.ts";
 import type { F, Field, P3, Painted, Skeleton } from "../map/types.ts";

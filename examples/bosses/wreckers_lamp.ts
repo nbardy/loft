@@ -20,13 +20,20 @@
 import { foam,
   abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul, neg, normalize, pick, points,
   lt, posed, pow, print, scene, sea, select, sign, sin, size, smoothstep, spacing, step, strand, sub, TAU, through, time, turn, vec2, vec3,
-  vec4, woodblock, anticipated, dragged, swing as follow, type Drawable, type Expr, type F, type In, type P3, type PaintAt,
+  vec4, woodblock, anticipated, dragged, swing as follow, type Drawable, type Expr, type F, type In, type P3, type PaintAt, wgsl,
 } from "../../src/index.ts";
-import { hash3, viewDir, fwidth, type Branch, type Frame as ListFrame, tree, gen } from "../../src/lib/index.ts";
+import { hash3, type Branch, type Frame as ListFrame, tree, gen } from "../../src/lib/index.ts";
 import { hit, hitContour, hitInradius, hitPatch, type Capsule } from "../../src/spacetime/index.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../../src/lib/sdf2.ts";
 import { NO_SKELETON, type Surface } from "../../src/map/types.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
+
+// Screen facts are raw WGSL functions (GPU-only): the rate of a value per pixel, and the direction the eye looks.
+const screen = wgsl`
+fn pixel_rate(x: f32) -> f32 { return fwidth(x); }
+fn toward_point(p: vec3<f32>) -> vec3<f32> { return view_dir(p); }`;
+const fwidth = (x: In<"f32">): F => screen.pixel_rate!(x);
+const viewDir = (p: In<"vec3">): P3 => screen.toward_point!(p);
 
 // ==== the numbers an art director would change ====================================================================
 
@@ -494,7 +501,7 @@ const ringAt = (i: F, r: number | F, offset: number, y: number): P3 => vec3(mul(
  * One crag shape at every rock (one draw): the six of the ring, a smaller one beside each, and a ring of crags at the
  * spire's foot that is its base.
  */
-const crags = draw.points("crags", points(RING.rocks * 2 + BASE.crags, (i) => {
+const crags = draw.posed("crags", points(RING.rocks * 2 + BASE.crags, (i) => {
   const big = step(i, RING.rocks - 0.5), beside = mul(step(RING.rocks - 0.5, i), step(i, RING.rocks * 2 - 0.5));
   const foot = sub(1, add(big, beside));
   const footAngle = mul(i, 2.39996);
@@ -510,7 +517,7 @@ const plank = strand({
   section: { aspect: 0.3, squareness: 5 }, tips: "open",
   paint: (m) => mix(vec3(...INK.wood), vec3(...INK.strata), step(0.85, fract(mul(m, 5)))), detail: { along: 6, around: 8 },
 });
-const timber = draw.points("timber", points(RING.rocks * 2, (i) => ({ at: ringAt(floor(mul(i, 0.5)), add(RING.radius - 1.9, mul(mod(i, 2), 3.6)), 0.62, 0.05), scale: 1 })), plank);
+const timber = draw.posed("timber", points(RING.rocks * 2, (i) => ({ at: ringAt(floor(mul(i, 0.5)), add(RING.radius - 1.9, mul(mod(i, 2), 3.6)), 0.62, 0.05), scale: 1 })), plank);
 
 // ==== the Lure Beam ===================================================================================================
 

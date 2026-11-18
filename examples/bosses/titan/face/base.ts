@@ -152,7 +152,7 @@ export function faceKit(rig: Rig) {
       name: "weed", length: 1.6, curl: 1.4, taper: 0.6, girth: 0.11, out: [0.4, 1, 0], toward: [1, 0, 0],
       paint: (m) => mix(vec3(...I.mossDeep), vec3(...I.moss), cut(sin(add(mul(m, 7), 1)), 0.6)),
     });
-    return draw.points("beard", place(points(at.length, (i) => {
+    return draw.posed("beard", place(points(at.length, (i) => {
       const pick = (k: 0 | 1 | 2) => at.reduce((acc: F, t, j) => add(acc, mul(t[k], sub(1, min(abs(sub(i, j)), 1)))), lift<"f32">(0));
       return { at: vec3(pick(0), pick(1), 0.92), scale: add(pick(2), mul(sin(add(mul(time, 0.8), i)), 0.05)) };
     }), carapace.hull), weed);

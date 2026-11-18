@@ -18,9 +18,9 @@
 // round a splash, as `crown` does with fingers); droplets whose cell size follows the mass (finer spray far from the
 // body); the roll's lobes cut by the swell's printed lines (`swellLines.off`) so the foam rides the lines.
 
-import { abs, add, and, atan2, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, saturate, select, smoothstep, step, sub, vec2, type Expr } from "../expr.ts";
+import { abs, add, and, atan2, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, saturate, select, smoothstep, step, sub, vec2, lib, type Expr, type In, type LibFn } from "../expr.ts";
 import { hash22 } from "../lib/index.ts";
-import { fwidth, wgslFn } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 
 type F = Expr<"f32">;
 type V2 = Expr<"vec2">;
@@ -36,13 +36,7 @@ export type Lean = { readonly kind: "none" } | { readonly kind: "toward"; readon
  */
 export type WhiteOn = { readonly xz: V2; readonly mass: F; readonly slope: V2; readonly lean: Lean };
 
-/**
- * How a value on the water changes across it, per world unit (x, z), from its screen derivatives and the position's:
- * the slope of a mass that is a smooth formula (a splash's shape, a wave's mark). Not for the sea's contact level (one
- * value a quad: the sea gives that one's direction itself). It turns its diagnostic off for itself: in the sea's cases
- * every pixel of a quad computes the same formula.
- */
-export const slopeOf = wgslFn<"vec2">({
+const SLOPE_OF: LibFn = { js: "gpu-only",
   name: "loft_slope_on_water", ret: "vec2", wgsl: /* wgsl */ `
 @diagnostic(off, derivative_uniformity)
 fn loft_slope_on_water(m: f32, xz: vec2<f32>) -> vec2<f32> {
@@ -51,7 +45,14 @@ fn loft_slope_on_water(m: f32, xz: vec2<f32>) -> vec2<f32> {
   let dm = vec2<f32>(dpdx(m), dpdy(m));
   return select(vec2<f32>(0.0), vec2<f32>(dm.x * b.y - dm.y * a.y, dm.y * a.x - dm.x * b.x) / det, abs(det) > 1e-12);
 }`,
-});
+};
+/**
+ * How a value on the water changes across it, per world unit (x, z), from its screen derivatives and the position's:
+ * the slope of a mass that is a smooth formula (a splash's shape, a wave's mark). Not for the sea's contact level (one
+ * value a quad: the sea gives that one's direction itself). It turns its diagnostic off for itself: in the sea's cases
+ * every pixel of a quad computes the same formula.
+ */
+export const slopeOf = (m: In<"f32">, xz: In<"vec2">): Expr<"vec2"> => lib<"vec2">(SLOPE_OF, m, xz);
 
 /** The mass a lattice offset away: `off` the offset in cells of a lattice at `degrees` with cells `cell` across. */
 function massAt(on: WhiteOn, degrees: number, cell: number, off: V2): F {

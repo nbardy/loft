@@ -1,15 +1,15 @@
 // A backlit bank of windblown dust, and a fog of recursively folded seams.
 import {
   abs, add, design as makeDesign, div, dot, draw, lamp, length, mix, mul, noise3, nothing, scene, sin,
-  smoothstep, sub, toon, vec3, type F, type P3, type VolumeOptions,
+  smoothstep, sub, time, toon, vec3, type P3, type VolumeOptions,
 } from "../src/index.ts";
 
 const bounds = { min: [-3.7, 0.15, -2.2], max: [3.7, 3.9, 2.2] } as const;
 const local = (p: P3) => sub(p, vec3(0, 2, 0));
 
-const dust = (p: P3, t: F) => {
+const dust = (p: P3) => {
   const q = local(p);
-  const drift = sub(q, vec3(mul(t, 0.35), mul(t, 0.08), 0));
+  const drift = sub(q, vec3(mul(time, 0.35), mul(time, 0.08), 0));
   const shape = length(div(q, [3.65, 1.85, 2.18]));
   const billow = noise3(mul(drift, [0.75, 1.2, 1.0]));
   const wisps = noise3(mul(drift, [2.7, 4.9, 3.8]));
@@ -17,14 +17,14 @@ const dust = (p: P3, t: F) => {
   return mul(2.1, body, smoothstep(-0.14, 0.48, add(billow, mul(wisps, 0.24))));
 };
 
-const folded = (p: P3, t: F) => {
+const folded = (p: P3) => {
   const q = div(local(p), [3.6, 1.85, 2.14]);
   let r = q;
   for (let i = 0; i < 4; i++) {
     const x = abs(r);
     r = sub(mul(vec3(add(x.y, mul(x.z, 0.38)), add(x.z, mul(x.x, 0.38)), add(x.x, mul(x.y, 0.38))), 1.62), [0.7, 0.62, 0.54]);
   }
-  const seam = abs(add(dot(r, [0.7, -0.46, 0.55]), mul(sin(mul(t, 0.7)), 0.09)));
+  const seam = abs(add(dot(r, [0.7, -0.46, 0.55]), mul(sin(mul(time, 0.7)), 0.09)));
   return mul(1.2, sub(1, smoothstep(0.035, 0.20, seam)), sub(1, smoothstep(0.70, 0.99, length(q))));
 };
 

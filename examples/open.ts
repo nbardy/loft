@@ -29,7 +29,7 @@ const ring = billows(Array.from({ length: 36 }, (_, i) => {
   return { at: [-3 + 1.3 * Math.cos(a), 2.4 + 1.3 * Math.sin(a), -4] as const, radii: [0.34, 0.34, 0.34] as const, density: 4 };
 }), { turbulence: 0.25, billow: 0.3, drift: [0, 0.05, 0], colour: [0.96, 0.95, 0.92], seed: 3, seconds: 10 });
 const smoke = draw.density("smokeRing", medium("smoke", { puffs: ring.puffs }), {
-  bounds: ring.bounds, sun: [1, 0.97, 0.9], sky: 1.2, forward: 0.3, shadowing: 0.35, detail: { kind: "none" }, haze: 0,
+  bounds: ring.bounds, sun: [1, 0.97, 0.9], sky: 1.2, shadowing: 0.35,
 });
 
 // ---- hull: a lofted body that is not a ship's. `hull` lofts stations its lines plan decides; `loft` lofts any row

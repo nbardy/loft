@@ -180,7 +180,9 @@ export default scene({
 - **Raw functions.** A function using anything outside the subset (integers, bit operations, textures, `dpdx`,
   `while`, atomics, pointers) is emitted as written and still renders when graph code calls it; holes and `time` reach
   it as added parameters. The CPU twin and ranged checks refuse it by name and line: `raw function pcg at
-  eel.ts:14: u32 integers`.
+  eel.ts:14: u32 integers`. What a shader stage knows of the screen is reached the same way, in one line each:
+  `fn pixel_rate(x: f32) -> f32 { return fwidth(x); }` (the width to antialias an edge of `x` with, fragment stage
+  only), `view_dir(p)`, `pixel_world(p)` and `frame.eye.xyz`.
 - **Errors** point at the text: `examples/eel.ts:9:22: given unknown name "nois3"; ... Fix: did you mean noise3?`, the
   line quoted with a caret, and the TypeScript line that called into it.
 
@@ -475,7 +477,7 @@ Loft is a rasteriser with per-pixel tracers inside bounds, not a path tracer. Wh
   lattice cell, `impostors`) and lists of solids (`drawCopies`).
 - **Media integrated in closed form**: clouds and mist (`draw.density`), glows, lightning and rain (`src/soft/`).
 - **Raymarched media**: an authored extinction field (`draw.volume`), lit by the sun and lamps up to opaque depth.
-- **Many small specks** on your own paths (`draw.specks`).
+- **Many small specks** on your own paths (`draw.points`).
 - **Derived layers**: the sky, cast shadows on the water (from capsules along each body's skeleton), contact foam, and
   the style's post passes.
 
@@ -483,13 +485,13 @@ The scene's sun and lamps feed the style's shading. Lamps can cast opaque shadow
 capsule-chain shadows onto the water and in styles that print a shadow block. Biolume's reflection and papercraft's
 crease shading read the picture and its depth in post passes.
 
-For smoke, dust or fog, write a function of world position `p` and time `t` in seconds. The density is extinction
-per world unit. You can pass a constant, an expression, or a `(p, t)` function for `albedo` and `emission`.
+For smoke, dust or fog, write a function of world position `p` (read `time` for motion, as everywhere). The density
+is extinction per world unit. You can pass a constant, an expression, or a `(p)` function for `albedo` and `emission`.
 Loft clamps extinction and emission at zero and albedo to [0, 1]. Emission is radiance per unit extinction, so a
 sample with zero density contributes no colour.
 
 ```ts
-draw.volume("dust", (p, t) => max(0, noise3(sub(p, vec3(t, 0, 0)))), {
+draw.volume("dust", (p) => max(0, noise3(sub(p, vec3(time, 0, 0)))), {
   bounds: { min: [-3, 0, -2], max: [3, 4, 2] },
   steps: 64,
   albedo: [0.98, 0.72, 0.46],
@@ -511,17 +513,18 @@ analytic gradients or finite differences for sample-local derivatives.
 
 ### Many small specks on your own paths
 
-`draw.specks(name, count, speck, options?)` draws `count` specks; `speck(i, t)` returns each one's world centre,
+`draw.points(name, count, speck, options?)` draws `count` specks; `speck(i)` returns each one's world centre,
 radius, colour and opacity. The index is fixed for each speck: hash it for stable variation, and write the path
-(ballistics, drag, a fan, an orbit) as your own equation of the seconds `t`.
+(ballistics, drag, a fan, an orbit) as your own equation of `time`. A WGSL function returning a struct with those
+four fields fills the slot too (`examples/dust_veil.ts`).
 
 ```ts check
-import { draw, hash22, mix, mul, vec2, vec3 } from "../src/index.ts";
+import { draw, hash22, mix, mul, time, vec2, vec3 } from "../src/index.ts";
 
-const dust = draw.specks("dust", 100_000, (i, t) => {
+const dust = draw.points("dust", 100_000, (i) => {
   const h = hash22(vec2(i, 7));
   return {
-    at: vec3(mul(t, mix(0.5, 4, h.x)), mul(t, mix(1, 2, h.y)), 0),
+    at: vec3(mul(time, mix(0.5, 4, h.x)), mul(time, mix(1, 2, h.y)), 0),
     radius: mix(0.002, 0.008, h.y),
     colour: [0.68, 0.27, 0.12],
     opacity: 0.4,
@@ -533,10 +536,16 @@ Radius is in world units. A zero radius or opacity hides a speck, and a speck un
 by its centre. A sub-pixel speck distributes its fading footprint over neighbouring pixels as it moves.
 Stretch in seconds elongates the footprint along projected travel. Omit it for specks.
 
-Give `veil` the drawable returned by `draw.density` and list that cloud before the specks in `things`. A speck takes
-on the colour of the cloud in front of it, with the sun and scene lights contributing to its own colour.
+Give `veil` the drawable returned by `draw.density` or `draw.volume` and list that cloud before the specks in
+`things`. A speck takes on the colour of the cloud in front of it and is dimmed by the cloud's transmittance up to it,
+with the sun and scene lights contributing to its own colour. With 32,768 specks or more the veil is read from a
+32³ grid the cloud fills once a frame for the main camera (for a volume, when its functions read no table, input,
+param or derivative; otherwise each speck pixel marches the volume, which costs its `steps` per pixel).
 Opaque bodies depth-test against the specks. Specks blend by instance order and write no depth.
-See `examples/spray_burst.ts` for a boot kicking up warm clay, with puffs and specks using the same flight equation (the burst, drag and fan are the example's own code).
+See `examples/spray_burst.ts` for a boot kicking up warm clay, with puffs and specks using the same flight equation (the burst, drag and fan are the example's own code), and `examples/dust_veil.ts` for grains inside a `draw.volume` cloud, written as WGSL text.
+
+To draw copies of a shape (teeth, spikes, barrels) rather than specks, give `draw.posed` the poses: `posed(n, ...)`
+turns and sizes each copy, `points(n, (i) => ({ at, scale }))` only moves and scales it.
 
 Where you can bring your own:
 
@@ -566,15 +575,17 @@ export const backdrop: Drawable = {
 };
 ```
 
-- **A WGSL function inside expressions.** `wgslFn` (`src/lib/wgsl.ts`) wraps a function written in WGSL so it can be
-  called from any expression (GPU only: the CPU twin, and so the checks, cannot evaluate it).
+- **A WGSL function inside expressions.** A function in `wgsl` text is a function of expressions; one outside the
+  subset is a raw function, emitted as written (GPU only: the CPU twin, and so the checks, refuse it by name and line).
 
 ```ts check
-import { mul, vec3, type F } from "../src/index.ts";
-import { wgslFn } from "../src/lib/index.ts";
+import { mul, vec3, wgsl, type F } from "../src/index.ts";
 
-const stripes = wgslFn<"f32">({ name: "my_stripes", ret: "f32", wgsl: "fn my_stripes(x: f32) -> f32 { return step(0.5, fract(x * 8.0)); }" });
-export const paint = (u: F) => mul(vec3(0.9, 0.7, 0.3), stripes(u));
+const edge = wgsl`fn aa_stripes(x: f32) -> f32 {
+  let s = fract(x * 8.0);
+  return smoothstep(0.5 - fwidth(s), 0.5 + fwidth(s), s);
+}`;
+export const paint = (u: F) => mul(vec3(0.9, 0.7, 0.3), edge.aa_stripes!(u));
 ```
 
 - **A style, and post passes.** A `Style` is a plain value (`src/style.ts`): write one, or spread an existing one and

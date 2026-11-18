@@ -14,14 +14,14 @@ export { wgsl, type WgslModule } from "./text/index.ts";
 // Symbolic derivatives of expressions (src/grad.ts): a bump's normal from a height, a field's normal.
 export { gradient } from "./grad.ts";
 export { keys, ramp, through, bspline, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";
-export { NO_SKELETON, type F, type P3, type Frame, type Placed, type Points, type Size, type Poses, type Curve, type End, type Topology, type Skeleton, type Surface, type Chart, type Field, type Density, type PaintAt, type Paint, type Painted, type Warp, type Placeable } from "./map/types.ts";
+export { NO_SKELETON, type F, type P3, type Frame, type Placed, type Size, type Poses, type Curve, type End, type Topology, type Skeleton, type Surface, type Chart, type Field, type Density, type PaintAt, type Paint, type Painted, type Warp, type Placeable } from "./map/types.ts";
 export { carry, compose, on, place, points, posed, posedList, shifted, size, sized, sizeLengths, turn, inFrame, world, type PointSpec, type PoseSpec, type Turn } from "./map/index.ts";
 export { compute } from "./compute.ts";
 export { recur } from "./map/recur.ts";
 export { fold2, fold3 } from "./lib/fold.ts";
 export { warp, tile, tabulate, type Schedule, extrude, framed, framedPose, lathe, loft, mapNormal, sheet, surface, thicken } from "./map/index.ts";
 export { Body, rotateAbout, sweep, type FrameSample, type Section, type Tip, type Transport } from "./map/index.ts";
-export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type MeshData, type MeshDrawable, type MeshOptions, type Poseable, type Ray, type ReliefOptions, type Speck, type SpecksOptions, type Traced, type TracedDrawable, type TracedOptions, type VolumeOptions } from "./draw/index.ts";
+export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type MeshData, type MeshDrawable, type MeshOptions, type Poseable, type Ray, type PointsOptions, type ReliefOptions, type Speck, type Traced, type TracedDrawable, type TracedOptions, type VolumeOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { scene, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { plane, nothing, GroundError, type Ground, type Plane, type Nothing } from "./draw/ground.ts";

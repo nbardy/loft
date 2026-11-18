@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { compileJs, evaluate, variable, type LibFn } from "../src/expr.ts";
-import { cartesian, fresnel, hsv, luminance, polar, remap, remapClamped, rotate2, smax, smin, wgslFn } from "../src/lib/index.ts";
-import { compare, coord, rng, runGpu } from "./lib.harness.ts";
+import { compileJs, evaluate, variable } from "../src/expr.ts";
+import { cartesian, fresnel, hsv, luminance, polar, remap, remapClamped, rotate2, smax, smin } from "../src/lib/index.ts";
+import { compare, coord, rng } from "./lib.harness.ts";
 
 const x = variable("x", "f32"), y = variable("y", "f32"), k = variable("k", "f32");
 const p = variable("p", "vec2"), n = variable("n", "vec3"), v = variable("v", "vec3");
@@ -105,13 +105,3 @@ test("hsv gives the primary colours and greys; luminance weights green most", ()
   expect(cpu1(luminance(n), { n: [0, 1, 0] })).toBeGreaterThan(cpu1(luminance(n), { n: [1, 0, 0] }) as number);
 });
 
-test("wgslFn: runs on the GPU (including through a dependency), refuses the CPU, and checks its own name", async () => {
-  const twiceDef: LibFn = { name: "test_twice", ret: "f32", js: "gpu-only", wgsl: "fn test_twice(x: f32) -> f32 { return x * 2.0; }" };
-  const twice = wgslFn({ name: "test_twice", ret: "f32", wgsl: twiceDef.wgsl });
-  const plusOne = wgslFn({ name: "test_twice_plus_one", ret: "vec2", deps: [twiceDef], wgsl: "fn test_twice_plus_one(p: vec2<f32>) -> vec2<f32> { return vec2<f32>(test_twice(p.x) + 1.0, p.y); }" });
-  // Separate modules: `twice` and the dependency `twiceDef` are two definitions of one name, which one module may not hold.
-  expect((await runGpu([twice(x)], [{ x: 1.5 }]))[0][0]).toEqual([3]);
-  expect((await runGpu([plusOne(p)], [{ p: [2, 7] }]))[0][0]).toEqual([5, 7]);
-  expect(() => compileJs([twice(x)])).toThrow(/GPU-only/);
-  expect(() => wgslFn({ name: "wrong_name", ret: "f32", wgsl: "fn other(x: f32) -> f32 { return x; }" })).toThrow(/wrong_name/);
-});

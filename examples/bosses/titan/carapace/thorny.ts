@@ -42,7 +42,7 @@ export const thorny: CarapaceOption = {
     // Spread evenly over the body (m uniform along a sphere's axis is uniform in area), not on the front cap.
     // They cast no shadow: from 7 above the water 190 thorn shadows are noise inside the body's own, and they were half the
     // frame's shadow capsules (2706 in all against the base's 460; profile, far camera, 2026-11-11).
-    const thorns = castsNone(draw.points("thorns", place(points(THORNS, (i: F) => {
+    const thorns = castsNone(draw.posed("thorns", place(points(THORNS, (i: F) => {
       const m = mix(0.03, 0.84, mul(add(i, 0.5), 1 / THORNS));
       const v = fract(mul(i, GOLDEN));
       // Bigger on the back and shoulders, smaller toward the face; each its own size.
@@ -57,7 +57,7 @@ export const thorny: CarapaceOption = {
       detail: { along: 8, around: 6 },
     });
     const SPINES: readonly (readonly [number, number])[] = [[0.62, 0.2], [0.62, 0.3], [0.45, 0.12], [0.45, 0.38], [0.3, 0.06], [0.3, 0.44]];
-    const spines = draw.points("spines", place(points(SPINES.length, (i: F) => ({ at: vec3(pick(i, SPINES.map((s) => s[0])), pick(i, SPINES.map((s) => s[1])), 0.9), scale: 1 })), hull), spine);
+    const spines = draw.posed("spines", place(points(SPINES.length, (i: F) => ({ at: vec3(pick(i, SPINES.map((s) => s[0])), pick(i, SPINES.map((s) => s[1])), 0.9), scale: 1 })), hull), spine);
     return { hull, things: [hull, thorns, spines] };
   },
 };

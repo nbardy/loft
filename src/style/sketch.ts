@@ -13,7 +13,7 @@
 
 import { abs, add, fract, min, mix, mul, param, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { Rgb, Style } from "../style.ts";
 import { contactFoam, foam, marksAs, marksFoam, printLayers, type FoamInk } from "./foam.ts";
 import { light, litBodies } from "./light.ts";

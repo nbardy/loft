@@ -6,7 +6,7 @@
 // collide with a library function that `sceneWgsl` happens to carry.
 
 import { add, div, dot, max, min, mul, smoothstep, sub, vec3, type Expr } from "../expr.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { Rgb, ShadeCtx } from "../style.ts";
 
 /** A colour triple as a vec3 expression, for use inside a style's shading. */

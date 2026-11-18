@@ -10,9 +10,9 @@
 // Lights (src/light.ts): the studio key times the sun's amount; each local light a wrapped term on the facet normal,
 // so a lamp lights a folded model one facet at a time. The fill, the sea and the plane do not read lights.
 
-import { add, dot, fract, lift, max, mix, mul, normalize, param, round, saturate, smoothstep, sub, vec3, vec4, type Expr } from "../expr.ts";
+import { add, dot, fract, lift, max, mix, mul, normalize, param, round, saturate, smoothstep, sub, vec3, vec4, lib, type Expr, type In, type LibFn } from "../expr.ts";
 import { cellular2, luminance, noise2 } from "../lib/index.ts";
-import { fwidth, wgslFn } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { PostSpec } from "../compile/context.ts";
 import type { Contact, Rgb, Style, WaterCtx } from "../style.ts";
 import { calmSea } from "./sea.ts";
@@ -43,7 +43,7 @@ const CELL = 0.55, SLOPE = 0.24, TILT = 0.12;
  * and each fan triangle slopes from the site toward its edge: folded paper, from shading alone.
  * Derivatives come first, in uniform control flow (WGSL's rule); the search is the 27 neighbouring cells.
  */
-const facet = wgslFn<"vec4">({
+const FACET: LibFn = { js: "gpu-only",
   name: "pc_facet", ret: "vec4", wgsl: /* wgsl */ `
 fn pc_hash3(c: vec3<i32>) -> vec3<f32> {
   var h = (bitcast<u32>(c.x) * 73856093u) ^ (bitcast<u32>(c.y) * 19349663u) ^ (bitcast<u32>(c.z) * 83492791u);
@@ -109,7 +109,8 @@ fn pc_facet(n: vec3<f32>, p: vec3<f32>, a: vec3<f32>) -> vec4<f32> {
   let jitter = (pc_hash3(id1 * 3 + id2 + vec3<i32>(17, 5, 11)) - 0.5) * ${TILT * 2};
   return vec4<f32>(normalize(flat + slope + jitter), min(wall, spoke));
 }`,
-});
+};
+const facet = (...args: In[]): Expr<"vec4"> => lib<"vec4">(FACET, ...args);
 
 /**
  * Ambient occlusion from the opaque scene's depth: points of the scene within R of the pixel's surface point and above

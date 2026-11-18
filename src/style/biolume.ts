@@ -12,7 +12,7 @@
 
 import { abs, add, dot, exp, fract, length, lift, max, min, mix, mul, normalize, param, pow, saturate, sin, smoothstep, sub, time, vec3, vec4, type Expr } from "../expr.ts";
 import { hash22, luminance, noise2 } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { Contact, Rgb, Style } from "../style.ts";
 import { bloom, reflection } from "./post.ts";
 import { rgb } from "./shared.ts";

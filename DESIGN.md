@@ -58,7 +58,7 @@ const body = strand({                                  // a sweep (a Surface, a 
   paint: (m, v) => palette.countershade(v, { back: [0.16, 0.13, 0.33], belly: [0.86, 0.82, 0.62] }),
 });
 const head = place(strand(headSpec), on(body, [0, 0.25, 0]));     // headSpec's spine is in the neck's frame there
-const spikes = draw.points("spikes", place(points(7, (i) => ({ at: vec3(i.mul(0.03).add(0.6), 0.25, 0.9), scale: 1 })), body), spike);
+const spikes = draw.posed("spikes", place(points(7, (i) => ({ at: vec3(i.mul(0.03).add(0.6), 0.25, 0.9), scale: 1 })), body), spike);
                                                                       // spike: another strand, drawn once per point
 const fin = crest({ on: body, name: "fin", from: 0.12, to: 0.8, height: keys([[0, 0], [0.3, 1.2], [1, 0]]), paint: [0.75, 0.2, 0.28] });
 
@@ -89,7 +89,7 @@ tests and the baker. A scene module's default export is a `Scene`. Working examp
 - `strand(spec) -> Strand`: `sweep` with defaults and a look. Spec: `name`, `spine(m)`, `stations`, `girth(m)`,
   `section` (`aspect(m)`, `squareness`), `twist(m)`, `tips` (`"round" | "point" | "open"` or with lengths), `up`,
   `level`, `paint(m, v)`, `detail` (rings along, segments around). A `Strand` is a `Body` and a `Drawable`; placing it
-  (`place(s, chart)`) or slicing it (`s.at(t)`) keeps its look; `draw.points(name, pts, s)` instances it.
+  (`place(s, chart)`) or slicing it (`s.at(t)`) keeps its look; `draw.posed(name, pts, s)` instances it.
   Body coordinates: m in [0, 1] along the spine, v in [0, 1] round it (0.25 the dorsal line, 0.75 the belly), rho out
   as a fraction of the thickness (skin at 1). Frames are rotation-minimising (Wang et al. 2008) with optional levelling;
   radii scale by 1 / sqrt(stretch) (volume preservation), growing by at most `bulge` (default about 4.47, a stretch
@@ -129,7 +129,7 @@ closed form (no solver state), so any of them can be read at another time. Tests
 | `shell({ turns, growth, aperture, umbilicus, spire, aspect?, coil?, ridges? }) -> Surface` | `spiral.ts` | Raup's coiling (W = `growth` per whorl, D = `umbilicus`, T = `spire`), apex at the origin, spire up; ridges a whole number per whorl, folded into the section. p(u + 1/turns) = growth x p(u) exactly; the front faces out for either coil. `whorl(u, turns)`, `ridgePhase(u, turns, perTurn)` for paint in its own coordinates |
 | `horn({ name, length, curl, taper, girth, out, toward, twist?, paint }) -> Strand` | `spiral.ts` | the same law in a plane: a tube on an equiangular spiral whose radius grows with the spiral (e^(k theta) = 1 + m (taper - 1), so arc length is linear in m). Horns, claws, pincer fingers, teeth, tusks (curl 0 is a cone). Sliders may drive length, curl, taper, girth |
 | `mirror(part, name)`, `mirror.surface(s)` | `symmetry.ts` | reflection across z = 0 of the part's own coordinates. A strand: spine and frame seed reflected, twist negated, paint at v -> 0.5 - v. A surface: reflected and read at u -> 1 - u so its front still faces out. Mirror before placing; a part placed at v on a host pairs with its mirror placed at 0.5 - v |
-| `array(part, count, placement)` | `symmetry.ts` | named copies `<name>_<i>` of a strand (or drawn surface) in rigid charts; each its own drawable (and shadow). For identical copies use `draw.points` |
+| `array(part, count, placement)` | `symmetry.ts` | named copies `<name>_<i>` of a strand (or drawn surface) in rigid charts; each its own drawable (and shadow). For identical copies use `draw.posed` |
 | `rigid(frame) -> Chart` | `rig.ts` | a closed-form frame (a hovering root, a gait's body) as a chart, so parts are authored in the creature's frame and placed on it |
 | `lookAt({ from, target, yaw, pitch })`, `breathe`, `beat(r, { rate, amplitude, lag, down })`, `strike(s, { anticipation, follow, timing })` | `motion.ts` | yaw/pitch held within limits; a skewed breath; a wing beat on a clock delayed by `lag * r` along the wing (the tip trails the root), with a phase warp for a quicker downstroke; a strike envelope over a 0..1 input: wind-up to -anticipation, hit at 1, follow-through to 1 + follow, back to 0 |
 
@@ -253,7 +253,7 @@ biolume, papercraft; columns serpent, shell, serpent_scales; one camera (`SHEET_
 **Patterns that ride the body** (as built 2026-11-11). Every `Surface` has an `anchor(u, v)`: a point that depends only
 on (u, v), at about world scale. A body's is its skin straightened at rest: (arc length along the rest spine, the rest
 section's ring), with the rest arc lengths in the station table's spare lane (`r.w`) and the section read at time 0, so
-every slice of a body has the same anchor. A copy's (`framed`, `draw.points`) is its own surface's, scaled; a carried
+every slice of a body has the same anchor. A copy's (`framed`, `draw.posed`) is its own surface's, scaled; a carried
 or displaced surface keeps its base's; a closed-form surface's is its point at time 0 (one that reads a host's table,
 such as a crest on a body, keeps that table's motion: a slice is not a substitution). A traced solid's is its world
 point. Papercraft's Voronoi lattice is laid in the anchor (directions found there are carried to the world through the
@@ -310,8 +310,10 @@ Rules the code keeps, each where it bites:
   takes an optional comment callback that ends a statement with it (for `loft show`, lane L4).
 
 Not built here: holes holding functions or records inside raw text, and raw code calling prelude functions directly
-(refused with the fix: wrap it in a graph function of the module), both for lane L6; `wgslFn` stays until lane L5
-deletes `src/lib/wgsl.ts` with its callers; integer graph types (phase 2).
+(refused with the fix: wrap it in a graph function of the module), both for lane L6; integer graph types (phase 2).
+`wgslFn` and `src/lib/wgsl.ts` are gone (lane L5): the library's own screen facts (`fwidth`, `view_dir`, `pixel_world`,
+the eye) are one-line raw functions in `src/lib/screen.ts`, and its multi-function WGSL helpers (the sea's contact band,
+papercraft's facets) are `LibFn` values, since they read compiler-owned `loft_` names that text refuses.
 
 ## 3. The Artefact (`src/artefact.ts`, done)
 
@@ -348,7 +350,7 @@ the library declares:
 |---|---|---|---|
 | `body_<name>` (`_<k>` per extra time slice) | every sweep that is drawn or read | 3 vec4 | scan: `p` (position, arc fraction), `q` (frame quaternion), `r` (half-width, half-height, stretch, rest arc length) |
 | `body_<name>_spine` | the same | 3 vec4 | map: the spine placed (and twist), local (and half-width), at rest (and aspect), per posted station |
-| `shadows` (with `shadows_at`, `shadows_joints`) | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.points` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | 3 vec4 | maps: one capsule per segment projected along the sun onto the sea: ends, radii, strength, softness, chain links, valid (a segment under the water keeps its slot, all zero) |
+| `shadows` (with `shadows_at`, `shadows_joints`) | `src/draw/shadows.ts`, from every drawable's skeletons (a `draw.posed` copy casts its surface's chain carried by its placement; a traced field a fitted blob) | 3 vec4 | maps: one capsule per segment projected along the sun onto the sea: ends, radii, strength, softness, chain links, valid (a segment under the water keeps its slot, all zero) |
 | any name | `tabulate(name, f, n, "frame" \| "static")` | 1 vec4 | samples of f (frame: a map; static: uploaded once) |
 | `<field>_brick` | `draw.field` with schedule `brick` or `auto` (static) | coarse cells, then bricks | `src/map/brick.ts`: per coarse cell (slot or -1, lower bound, union mask), then 9^3 samples per brick |
 | `<field>_mesh`, `<field>_tris` | `draw.field` with schedule `mesh` or `auto` | 2 vec4 / 1 vec4 | vertices (position, normal); triangle corners, 4 indices per vec4 |
@@ -492,7 +494,7 @@ interface CompileContext {
 type Phase = "background" | "opaque" | "water" | "on-water" | "transparent";
 ```
 
-- Every library drawable is a `SurfaceDrawable` (`draw.surface`, `draw.glazed`, `draw.curve`, `draw.points`) except the
+- Every library drawable is a `SurfaceDrawable` (`draw.surface`, `draw.glazed`, `draw.curve`, `draw.posed`) except the
   sky and the shadows, which are raw WGSL. Nothing in `src/compile` knows a kind of thing.
 - A shader module lists the library functions it calls; the compiler puts each either in `sceneWgsl` (when the shared
   functions use it too) or in that module. This is what lets a function that reads scene depth (the sea's contact foam)
@@ -598,12 +600,12 @@ One generic drawable per signature, each assembled from expressions:
 ```ts
 draw.surface(name, surface, { paint, grid, sides, outline })  // grid in the vertex stage; normals from the map itself
 draw.curve(name, curve, { width, paint, segments })          // stroke
-draw.points(name, points, thing)                             // instances of any instanceable drawable
-draw.posed(name, poses, thing)                               // instances turned and scaled along each axis (below)
+draw.posed(name, poses, thing)                               // copies turned and scaled along each axis (below); points(...) are poses
+draw.points(name, count, (i) => speck, { stretch, veil })    // camera-facing specks generated from the index
 draw.field(name, field, { bounds, paint, steps, lipschitz })  // sphere-traced (specified, not built)
 draw.relief(name, surface, { height, hMax, fold, paint, steps }) // shell-traced on a surface (specified)
 draw.density(name, medium, options)                          // analytic Gaussian media
-draw.volume(name, (p, t) => density, { bounds, steps, g })     // march an arbitrary extinction field
+draw.volume(name, (p) => density, { bounds, steps, g })        // march an arbitrary extinction field (reads time)
 ```
 
 `strand`, `crest`, `fan`, `shell`, `sea`, `scatter`, `attach`, `decal`, `cloud`, `glow` become short library functions
@@ -1233,14 +1235,15 @@ to the extinction field are needed. Empty samples and the opacity cutoff can red
 - `rain(name, spec)`: one camera-facing quad per streak, place and fall hashed from (index, cycle), slanted by wind,
   faded at both ends and below a pixel's width, cut at the swell; `splashes(name, rain, spec)`: the ring each streak
   made at its last landing, laid on the sea (`on-water`).
-- `draw.specks(name, count, speck, { stretch?, veil? })`: one instanced draw of camera-facing specks. The expression
-  `speck(index, seconds)` gives world centre and radius, colour and opacity. The tent footprint keeps a one-pixel
+- `draw.points(name, count, speck, { stretch?, veil? })`: one instanced draw of camera-facing specks. The expression
+  `speck(index)` gives world centre and radius, colour and opacity; it reads `time`, which the shader replaces with the
+  sample's time (the frame's, or `stretch` earlier). The tent footprint keeps a one-pixel
   half-width and scales opacity by the ratio of projected areas. A sub-pixel speck distributes its energy by
   bilinear weights, with the quad snapped to the four pixels' edges so MSAA cannot trim the tent a second time.
   Optional stretch samples the path earlier and elongates along that projected motion.
   The sun and lamps provide a forward-weighted light term. Grains test against opaque depth, clip by centre at the
   ground, and blend in instance order.
-- The optional veil is a `draw.density` drawable listed before the specks. Given front in-scattering `Lfront` and
+- The optional veil is a `draw.density` or `draw.volume` drawable listed before the specks. Given front in-scattering `Lfront` and
   transmission `Tfront` to the grain centre, the source colour for alpha blending is `Lfront + Tfront * grain`.
   This preserves the cloud already blended over the scene while replacing the part behind the grain at pixels it covers.
   For at least 32,768 grains with no distance haze and a compute-safe sky, one GPU pose table per cloud samples its
@@ -1248,6 +1251,11 @@ to the extinction field are needed. Empty samples and the opacity cutoff can red
   samples. Queries behind the box use the ray's exit point. Other cases use the direct integral, including a secondary
   camera, which uses a separate fragment entry so the main pipeline can compile the grid lookup by itself.
   The grid smooths veil changes below one cell.
+- A `draw.volume` veil is the volume's own march (its density and source functions) from the ray's entry into its box
+  to the grain, at stratum midpoints. For at least 32,768 grains whose volume functions read no table, row, input,
+  param or fragment-only function, a pose table fills the same 32³ grid with that march for the main camera; otherwise
+  every grain pixel marches. Measured on `examples/dust_veil.ts` (100,000 grains, 64 steps, 1280x800): grains 1.56 ms
+  with the grid (pose stage 0.60 ms with the shadows), 120.8 ms marching per pixel, 1.13 ms unveiled.
 
 ### 8.4 Costs (best of 25, 1280x800, draw to texture without readback, heavily loaded machine; numbers vary ~2x run to run)
 
@@ -1561,7 +1569,7 @@ The design is `docs/proposals/state.md` with the rulings of `docs/proposals/READ
 const flock = recur({ name: "flock", size: 200, rate: 30, until: 30,
   start: (i) => [vec4(...position), vec4(0)],
   step: (prev, i) => { const [p, v] = prev(i); /* gather from prev(j) */ return [vec4(...), vec4(...)]; } });
-draw.points("motes", points(200, (i) => ({ at: flock.at(i)[0]!.xyz, scale: 1 })), mote);
+draw.posed("motes", points(200, (i) => ({ at: flock.at(i)[0]!.xyz, scale: 1 })), mote);
 ```
 
 **The law.** S(n + 1) = step(S(n), t_n), t_n = from + n / rate, run once on the GPU, read as a function of time:

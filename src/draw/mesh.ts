@@ -26,8 +26,8 @@ import { classify, lookFns, tracedCall, withShading } from "./painted.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { drawSpec, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Form, type TableRef } from "../compile/context.ts";
 import type { TableSource } from "../expr.ts";
-import { posesOf, rotate } from "../map/chart.ts";
-import type { F, P3, PaintAt, Painted, Points, Posed, Poses, Skeleton } from "../map/types.ts";
+import { rotate } from "../map/chart.ts";
+import type { F, P3, PaintAt, Painted, Posed, Poses, Skeleton } from "../map/types.ts";
 import { SceneError } from "../errors.ts";
 import { nameId, posedJoint } from "./surface.ts";
 import { fitBlob, shadowSkeleton } from "./field_shadow.ts";
@@ -336,11 +336,6 @@ export class MeshDrawable implements Drawable {
     this.motion = c.motion;
     this.skeletons = o.skeletons ?? defaultShadow(name, this.mesh, this.motion, copies);
     this.forms = [{ kind: "mesh", name: this.name, mesh: this.mesh, at: this.motion.kind === "moved" ? this.motion.at : undefined, paint: o.paint, copies: copies.kind === "poses" ? copies.poses : undefined }];
-  }
-
-  /** The same mesh, one copy per point. */
-  instanced(name: string, points: Points): MeshDrawable {
-    return new MeshDrawable(name, this.data, this.o, { kind: "poses", poses: posesOf(points) });
   }
 
   /** The same mesh, one copy per pose: turned, and scaled along each axis (normals carried by the Jacobian). */

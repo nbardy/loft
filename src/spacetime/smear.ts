@@ -10,7 +10,7 @@ import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, ve
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, nameId, spacing, type Fragment } from "../draw/surface.ts";
 import { levelOf } from "../draw/ground.ts";
-import { viewDir } from "../lib/wgsl.ts";
+import { viewDir } from "../lib/screen.ts";
 import type { Strand } from "../geom/strand.ts";
 import { NO_SKELETON, type Surface } from "../map/types.ts";
 import type { Part, Strike } from "./attack.ts";

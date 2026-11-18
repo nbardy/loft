@@ -1,9 +1,9 @@
 // One generic drawable per signature (DESIGN.md 7.4), including the bounded tracers of docs/folding_and_tracing.md.
 
 import { add, clamp, cross, div, length, lift, max, mul, sub, type In } from "../expr.ts";
-import { viewDir } from "../lib/wgsl.ts";
+import { viewDir } from "../lib/screen.ts";
 import type { Drawable } from "../compile/context.ts";
-import { NO_SKELETON, type Curve, type F, type P3, type Paint, type Points, type Poses, type Surface } from "../map/types.ts";
+import { NO_SKELETON, type Curve, type F, type P3, type Paint, type Poses, type Surface } from "../map/types.ts";
 import { atRest } from "../map/surface.ts";
 import { drawFlat, drawGlazed, drawSurface, spacing, type Grid } from "./surface.ts";
 import { drawField } from "./field.ts";
@@ -16,13 +16,8 @@ import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
 import { specks } from "../soft/specks.ts";
 export type { DensityOptions };
-export type { Speck, SpecksOptions } from "../soft/specks.ts";
+export type { PointsOptions, Speck } from "../soft/specks.ts";
 export type { VolumeOptions };
-
-/** A drawable that can be drawn once per point of a `Points`. */
-export interface Instanceable {
-  instanced(name: string, points: Points): Drawable;
-}
 
 /** A drawable that can be drawn once per pose of a `Poses`: turned and scaled along each axis. */
 export interface Poseable {
@@ -68,13 +63,12 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
  * - `surface`: a parametric surface (u, v) -> point, lit by the scene's style.
  * - `glazed`: a surface with its own colour and alpha, blended over what is behind it.
  * - `curve`: a camera-facing ribbon stroke along a curve, unlit.
- * - `points`: one copy of a drawable per point of a `Points`.
- * - `posed`: one copy of a drawable per pose, each turned and scaled along its own axes.
+ * - `posed`: one copy of a drawable per pose (`posed`, `posedList`, or `points` for unturned, evenly scaled copies).
  * - `field`: a signed distance field, sphere-traced per pixel inside a bounding box.
  * - `relief`: bumps, scales or spikes ray-marched on top of a surface, in its own coordinates.
  * - `copies`: a list of spheres, capsules or rounded cones, each intersected exactly per pixel.
  * - `density`: a cloud or fog (a `Medium`) integrated along each view ray.
- * - `specks`: N small camera-facing specks, each placed and coloured by your expression of (index, time).
+ * - `points`: N small camera-facing specks (grains, sparks, dust), each placed and coloured by your expression of its index.
  * - `volume`: an arbitrary extinction field raymarched inside a box, with single scattering and emission.
  * - `mesh`: triangles made by your own code (a hull, a shatter, a growth), moved by an expression.
  * - `traced`: any solid you can intersect, written as one `hit` function.
@@ -89,13 +83,10 @@ export const draw = {
     const grid: Grid = { u: spacing.even(o.segments), v: spacing.even(1) };
     return drawFlat(name, ribbon(curve, o.width), { paint: o.paint, grid });
   },
-  /** One copy of a drawable `thing` (one that can be instanced) per point of `points`, each in its point's frame and scale. */
-  points(name: string, points: Points, thing: Instanceable): Drawable {
-    return thing.instanced(name, points);
-  },
   /**
-   * One copy of `thing` per pose (`posed`, `posedList`): each turned by its own frame and scaled along each of its axes,
-   * normals turned with it; paint is told the copy's index and its world normal (`PaintAt`). One draw for all of them.
+   * One copy of `thing` per pose (`posed`, `posedList`, or `points` for copies that are only moved and evenly scaled):
+   * each turned by its own frame and scaled along each of its axes, normals turned with it; paint is told the copy's
+   * index and its world normal (`PaintAt`). One draw for all of them.
    */
   posed(name: string, poses: Poses, thing: Poseable): Drawable {
     return thing.posed(name, poses);
@@ -124,12 +115,13 @@ export const draw = {
     return new DensityDrawable(name, medium, o);
   },
   /**
-   * `count` camera-facing specks (dust, sparks, spray, snow) in one instanced draw: `speck(index, seconds)` gives each
-   * one's centre, radius, colour and opacity; nothing is stored. Lit, depth-tested, sub-pixel faded, optionally
-   * stretched along its motion and veiled by a `draw.density` cloud (`src/soft/specks.ts`).
+   * `count` camera-facing specks (grains, dust, sparks, spray, snow) in one instanced draw: `speck(index)` gives each
+   * one's centre, radius, colour and opacity (read `time` for motion); nothing is stored. Lit, depth-tested, sub-pixel
+   * faded, optionally stretched along its motion and veiled by a `draw.density` or `draw.volume` cloud
+   * (`src/soft/specks.ts`).
    */
-  specks,
-  /** March a density function of world position and time inside a box, with scattering from the sun and lamps. */
+  points: specks,
+  /** March a density function of world position inside a box (read `time` for motion), with scattering from the sun and lamps. */
   volume: drawVolume,
 };
 

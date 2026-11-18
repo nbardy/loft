@@ -290,7 +290,7 @@ const pearl = strand({
 });
 /** How far the pearl sits out of the skin (rho), and how much it swells while its gland is open. */
 const PEARL = { out: 0.86, open: 0.45 };
-const pearls = draw.points("wyrmPearls", place(points(ARCHES.length, (k) => ({
+const pearls = draw.posed("wyrmPearls", place(points(ARCHES.length, (k) => ({
   at: vec3(pick(k, ARCHES.map((a) => a.at)), 0.25, PEARL.out),
   // The lashed arch's gland swells open after the slam.
   scale: add(1, mul(select(eq(k, LASH.arch), open, 0), PEARL.open)),
@@ -423,7 +423,7 @@ const tooth = strand({
 const TEETH = 5;
 /** A row of teeth on both lips of a strand (body coordinates: v = `edge` +- `spread`, standing out of the skin). */
 const teethOn = (name: string, host: Chart, from: number, to: number, edge: number, spread: number, size: number) =>
-  draw.points(name, place(points(2 * TEETH, (i) => {
+  draw.posed(name, place(points(2 * TEETH, (i) => {
     const j = mod(i, TEETH), side = select(lt(i, TEETH), -1, 1);
     const fang = select(eq(j, TEETH - 2), 2.2, 1);
     return { at: vec3(add(from, mul(j, (to - from) / (TEETH - 1))), add(edge, mul(side, spread)), 0.9), scale: mul(mul(add(0.9, mul(j, 0.08)), fang), size) };
@@ -477,7 +477,7 @@ const nostril = strand({
   paint: (m, v) => select(lt(0.5, mul(step(0.72, m), sub(1, step(0.22, abs(sub(v, 0.25)))))), rgb(K("black")), rgb(K("slate"))),
   detail: { along: 10, around: 12 },
 });
-const nostrils = draw.points("wyrmNostrils", place(points(2, (i) => ({
+const nostrils = draw.posed("wyrmNostrils", place(points(2, (i) => ({
   at: vec3(xAt(0.9), 0.52 * S, mul(select(lt(i, 0.5), -1, 1), 0.42 * S)), scale: S,
 })), skull), nostril);
 

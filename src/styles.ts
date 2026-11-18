@@ -20,7 +20,7 @@ export {
   woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec,
   biolume, papercraft, sketch, neon, pbr,
 } from "./style/index.ts";
-// What a style is written with beyond expressions: the shade context's block types, a colour's luminance, hashes and
-// fragment-stage derivatives (noise2 and Branch are exported by the core layer).
+// What a style is written with beyond expressions: the shade context's block types, a colour's luminance and hashes
+// (noise2 and Branch are exported by the core layer; derivatives are raw WGSL functions in `wgsl` text).
 export { type BlockCast, type BlockOverlap, type ShadowBlock } from "./style.ts";
-export { noise3, hash2, hash22, cellular2, luminance, fwidth, pixelWorld, wgslFn } from "./lib/index.ts";
+export { noise3, hash2, hash22, cellular2, luminance } from "./lib/index.ts";

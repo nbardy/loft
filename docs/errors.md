@@ -54,10 +54,10 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `tabulate "x": given a static shading sample outside [-1, 1]` | `"static-shading"` received a non-finite or out-of-range sample | normalize the shading values or use `"static"` |
 | `depthOfField: given focus ...` | invalid lens distances or f-stop | use world units with `0 < focalLength < focus` and a positive finite `fStop` |
 | `filmGrain: given amount ...` | strength outside 0 to 1 | give a small amount such as `0.045`, or omit it for the default |
-| `draw.specks "grains": given count ...` | the index is an f32 and must identify each speck exactly | give a fixed whole count from 1 to 16,777,216 |
-| `draw.specks "grains": given speck.colour ...` | a speck field has the wrong expression type | return `at` and `colour` as vec3 expressions, `radius` and `opacity` as scalars |
-| `draw.specks "grains": given stretch ...` | a motion duration is negative or cannot fit a finite f32 | give a finite nonnegative duration in seconds or omit `stretch` |
-| `draw.specks "grains": given veil ...` | the cloud has to blend before the specks | pass the drawable from `draw.density` and list it before the specks in `things` |
+| `draw.points "grains": given count ...` | the index is an f32 and must identify each speck exactly | give a fixed whole count from 1 to 16,777,216 |
+| `draw.points "grains": given speck.colour ...` | a speck field has the wrong expression type | return `at` and `colour` as vec3 expressions, `radius` and `opacity` as scalars |
+| `draw.points "grains": given stretch ...` | a motion duration is negative or cannot fit a finite f32 | give a finite nonnegative duration in seconds or omit `stretch` |
+| `draw.points "grains": given veil ...` | the cloud has to blend before the specks | pass the drawable from `draw.density` or `draw.volume` and list it before the specks in `things` |
 | `examples/x.ts:9:22: given unknown name "nois3"` (WGSL text) | a name the text cannot see; the line is quoted with a caret | the name suggested, or bring the value in through a hole: `${x}` |
 | `...: given an i32 with f32` (WGSL text) | `let n = 1` is an integer in WGSL | write `1.0`, or convert: `f32(n)` |
 | `...: given f, which can reach its end without returning` (WGSL text) | a path through the function has no `return` | end the function with a return |
