@@ -1,6 +1,7 @@
 // Command-line parsing. Every command is one variant of `Command`; main.ts dispatches on `kind` and nothing else
 // looks at argv. Bad input throws `UsageError` naming the offending flag.
 import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
+import type { ServeCommand } from "./serve.ts";
 
 import { DesignError, parseVariantAsk, type VariantAsk } from "../design.ts";
 import type { OutlineMethod } from "../scene.ts";
@@ -33,6 +34,7 @@ export type BakeWhen = { readonly kind: "at"; readonly time: number } | { readon
 
 export type Command =
   | GalleryCommand
+  | ServeCommand
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName; readonly sweep: Sweep })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
@@ -79,6 +81,9 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
                       seconds after its time (exact motion blur), through a lens of radius r focused on the camera's target
   --sweep name=a..b   (clip, frames) moves one input evenly from a to b across the frames; with one --times value,
                       frames draws --count frames (default 6) at that time
+  serve  [--compiles 2] [--confine "cmd args"] [--check check.ts]   (one warm process owns the GPU and draws requests,
+                    JSON lines on stdin and stdout; each scene compiles in a child with no GPU, inside --confine;
+                    docs/handoff_training.md "loft serve")
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)
          [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)`;
 
@@ -169,8 +174,9 @@ export function parseArgs(argv: readonly string[]): Command {
     if (rest.length > 1) throw new UsageError(`api: one name at most (got ${rest.length})`);
     return { kind: "api", name: rest.length === 0 ? { kind: "all" } : { kind: "one", name: rest[0]! } };
   }
-  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build", "variants"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build", "variants", "serve"].includes(name)) throw new UsageError(`unknown command "${name}"`);
   if (name === "gallery") return parseGalleryArgs(rest);
+  if (name === "serve") return parseServeArgs(rest);
 
   const flags = new Map<string, string[]>();
   const positional: string[] = [];
@@ -289,6 +295,24 @@ export function parseArgs(argv: readonly string[]): Command {
     default:
       throw new UsageError(`unhandled command "${name}"`);
   }
+}
+
+/** `loft serve`'s flags: it takes no scene (each request names its own). */
+function parseServeArgs(rest: readonly string[]): ServeCommand {
+  const values = new Map<string, string>();
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (!["--compiles", "--confine", "--check"].includes(a)) throw new UsageError(a.startsWith("--") ? `flag ${a} does not apply to "serve"` : `serve takes no scene (each request names its own), got "${a}"`);
+    const v = rest[++i];
+    if (v === undefined) throw new UsageError(`flag ${a} needs a value`);
+    if (values.has(a)) throw new UsageError(`flag ${a} given twice`);
+    values.set(a, v);
+  }
+  const compiles = values.get("--compiles") === undefined ? 2 : positive("--compiles", values.get("--compiles")!);
+  if (!Number.isInteger(compiles)) throw new UsageError(`--compiles: ${compiles} is not a whole number`);
+  // Split on spaces, no quoting: a confinement whose path holds a space goes in a wrapper script.
+  const confine = (values.get("--confine") ?? "").split(" ").filter((s) => s !== "");
+  return { kind: "serve", compiles, confine, check: values.get("--check") };
 }
 
 /** Still mode's flags, classified once: today's frame (no flags, or --samples 1), or a still. */

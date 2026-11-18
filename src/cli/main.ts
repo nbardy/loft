@@ -199,6 +199,7 @@ async function main(argv: readonly string[]) {
     case "build": return build(cmd);
     case "check": return (await import("./check.ts")).check(cmd);
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
+    case "serve": return (await import("./serve.ts")).serve(cmd);
     case "profile": return (await import("./profile.ts")).profile(cmd);
     case "variants": return (await import("./variants.ts")).variants(cmd);
     case "help": return void console.log(USAGE);

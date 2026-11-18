@@ -466,7 +466,8 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
   }
   const o = await createObjects(device, b);
   const detail = new Float32Array(m.frame.detail.floats);
-  // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames.
+  // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames. Only the
+  // interactive `draw` reads it (a dolly must not flicker); headless frames plan without it (`posedPlan`).
   const memory: Memory = new Map();
   const bounds = m.frame.bounds;
 
@@ -578,7 +579,10 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     const poseMs = await validated("pose", () => pose(view, copy, stamps, undefined, cold));
     const read = copy ? await readBounds() : lastBounds;
     const t0 = performance.now();
-    const p = plan(view, read);
+    // An empty memory: a headless frame's levels come from its own view, never from the frame drawn before it. With the
+    // hysteresis memory, `render --views front,side` drew `side` of examples/strike.ts with 63313 triangles, and
+    // `--views side` alone with 62321; a warm server (loft serve) would make every frame depend on its predecessors.
+    const p = plan(view, read, new Map());
     return { plan: p, poseMs: poseMs + performance.now() - t0 };
   };
 

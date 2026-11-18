@@ -90,16 +90,23 @@ export function headed(message: string): [string, ...string[]] {
   return [`${first!.trimEnd()} ${rest[k]!.trim()}`, ...rest.slice(k + 1)];
 }
 
+/** A verdict as a command ends with it: the exit code, the last line (`loft: <kind>: ...`), and the lines above it. */
+export function ending(v: Verdict): { readonly code: number; readonly line: string; readonly head: string; readonly detail: readonly string[] } {
+  const [head, ...rest] = headed(v.message);
+  const site = v.kind === "scene" ? v.site : undefined;
+  if (site !== undefined) rest.push(`  at ${site}`);
+  return { code: CODE[v.kind], line: `loft: ${LINE[v.kind]}: ${head}${site !== undefined ? ` (at ${site})` : ""}`, head, detail: rest };
+}
+
 /** Prints the verdict (the detail, then one last line) and exits with its code. */
 export function exitWith(v: Verdict): never {
-  const [head, ...rest] = headed(v.message);
+  const e = ending(v);
   switch (v.kind) {
     case "usage": console.error(USAGE); break;
     case "internal": console.error(v.stack); break;
-    case "scene": if (v.site !== undefined) rest.push(`  at ${v.site}`); break;
-    case "load": case "check": case "environment": break;
+    case "scene": case "load": case "check": case "environment": break;
   }
-  if (rest.length > 0) console.error(`${head}\n${rest.join("\n")}`);
-  console.error(`loft: ${LINE[v.kind]}: ${head}${v.kind === "scene" && v.site !== undefined ? ` (at ${v.site})` : ""}`);
-  process.exit(CODE[v.kind]);
+  if (e.detail.length > 0) console.error(`${e.head}\n${e.detail.join("\n")}`);
+  console.error(e.line);
+  process.exit(e.code);
 }

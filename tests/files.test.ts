@@ -37,7 +37,7 @@ test("a written artefact reads back equal, and draws the same pixels as the comp
     const view = { camera: a.cameras.three!, width: 96, height: 64, time: 1.3 };
     const hash = async (b: typeof bundle) => {
       const loaded = await loadBundle(device, b, { kind: "none" });
-      // Two frames: the second plans with the first's level-of-detail memory, as a game's frames do.
+      // Two frames, the second after the first, as a clip's frames are (headless frames keep no level-of-detail memory).
       await loaded.frame({ ...view, time: 0.4 });
       const px = await loaded.frame(view);
       loaded.destroy();

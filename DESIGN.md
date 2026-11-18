@@ -359,6 +359,24 @@ concurrency. Pixels are byte-identical to main: the crab's `game` frames `0c1b1e
 area_lamp, flock, rope, shatter, skin and reeds_shadow (a depth pass, 5 of 7 shared). Pool and reeds_shadow also match
 as `--samples 4` stills. Six training programs agree on main, the branch and creative's library.
 
+### 3.2 A warm server (`loft serve`, upstreamed from creative's training host, 18 Nov)
+
+`src/cli/serve.ts`: one process owns the device and draws built directories one at a time; a scene is compiled by a
+`loft build` child with `LOFT_NO_GPU=1` inside the caller's `--confine` command, so scene code never runs where the GPU
+is. JSON lines in and out; each answer carries Loft's exit code and last line. Usage and measurements:
+`docs/handoff_training.md` "loft serve"; notes: `agent_notes/2026-11-18_loft_serve.md`.
+
+- Inherited from creative: the split (untrusted compile without a GPU, trusted drawing), the content cache of modules,
+  layouts and pipelines (`src/host/cache.ts`; the key here is the whole descriptor with labels dropped, WGSL hashed and
+  GPU objects by their own keys, so a descriptor field added later is keyed too), and serialised draws.
+- Not inherited: creative's own bundle format (its `cpu` uploads per frame: the training programs on main have no `cpu`
+  tables, so Loft's files carry them) and its hostile-data checker with its limits, which are a host's policy. A host
+  passes its own as `--check`.
+- Changed for it: a headless frame plans its level of detail with no memory of the frame before (host.ts `posedPlan`).
+  Only the interactive `draw` keeps the hysteresis. Before, a frame depended on the frames drawn before it in the
+  process (`render examples/strike.ts --views front,side` drew `side` with 63313 triangles; `--views side`, 62321).
+  The 40 frames of ten training programs at their four times are unchanged.
+
 ## 4. Drawables (`src/compile/context.ts`)
 
 ```ts

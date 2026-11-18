@@ -59,6 +59,7 @@ loft check    examples/strike.ts                                                
 loft variants examples/beacon.ts                                                    # every variant of a design (docs/guide.md)
 loft profile  examples/serpent.ts --view three                                      # GPU time per draw
 loft build    examples/serpent.ts --out out/files/serpent                           # the scene as files for any host
+loft serve    --compiles 2                                                          # one warm GPU process: JSON requests on stdin
 loft help
 loft api spiralTube                                                                 # one export, in full
 loft context                                                                        # craft guide and API, to read whole

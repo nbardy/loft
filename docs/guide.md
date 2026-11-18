@@ -380,6 +380,7 @@ loft profile  examples/serpent.ts --view three --frames 30
 loft variants examples/beacon.ts --views three
 loft gallery  --scenes "examples/*.ts" --styles toon,woodblock
 loft build    examples/serpent.ts --out out/files/serpent
+loft serve    --compiles 2      # requests on stdin, answers on stdout, JSON lines (docs/handoff_training.md)
 loft bake     examples/serpent.ts --out out/serpent.glb
 ```
 

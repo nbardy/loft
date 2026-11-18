@@ -90,8 +90,11 @@ command; if it still fails the exit is 6. Do not upgrade `bun-webgpu` without re
 ### Determinism
 
 A fresh process gives byte-identical pixels for the same scene, camera, time and size (each frame line prints an
-`rgba <hash>`). Within one process a frame can depend on what was drawn before it, because the host remembers each
-surface's level of detail from the previous frame. So: one scene per process, times passed explicitly.
+`rgba <hash>`). Since 2026-11-18 a headless frame (`render`, `frames`, `clip`, `serve`) also does not depend on what
+the process drew before it: the host's memory of each surface's level of detail is kept only by the interactive
+`draw` (`loft dev`, a game), where it stops a slow dolly from flickering. Before that change, `render
+examples/strike.ts --views front,side` drew `side` with 63313 triangles and `--views side` alone with 62321, so
+"one scene per process" was the rule. Many scenes per process are now fine; `loft serve` (below) relies on it.
 
 ### Time and throughput
 
@@ -100,6 +103,71 @@ surface's level of detail from the previous frame. So: one scene per process, ti
   and decide whether running out of it is a penalty.
 - One GPU is shared. Seven heavy renders at once made a 5-second render take 283 seconds here. Measure your own
   throughput before choosing a concurrency.
+
+### `loft serve`: many programs, one warm GPU process
+
+`bun src/cli/main.ts serve [--compiles 2] [--confine "cmd args"] [--check check.ts]` keeps one process that owns the GPU
+device and draws requests one at a time. It is upstreamed from creative's training host (`training/loft/host/`,
+16 Nov). Each scene is compiled in a child process that has no GPU: `loft build`, run with `LOFT_NO_GPU=1` inside the
+`--confine` command. Only the built directory (`docs/artefact_format.md`) crosses into the server. The server reads
+files, as `render --artefact` does, and after every request checks that it never loaded the compiler or a scene.
+
+Protocol: JSON lines. Each line on stdin is a request; each line on stdout is an answer tagged with the request's `id`,
+in the order the requests finish. The first line out, unasked, is `{"ready": true, "adapter": ...}`.
+
+```
+{"id": "s1", "scene": "train/s1.ts", "camera": "fixed", "times": [0, 0.37, 0.91, 1.53], "size": "512x512", "out": "out/s1"}
+{"id": "s2", "artefact": "out/files/s2", "camera": {"kind": "perspective", "eye": [4.5, 4.5, 8], "target": [0, 0.7, 0], "fovY": 0.62}, "times": [1], "size": "512x512", "out": "out/s2"}
+
+{"id": "s1", "ok": true, "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
+{"id": "s2", "ok": false, "exit": 4, "line": "loft: scene: …", "detail": ["…"]}
+```
+
+- `scene` (compiled here) or `artefact` (a directory you built, for example in your own sandbox); `camera` is a name
+  the scene declares (or `front`, `side`, `top`, `three`), or a camera object. A camera object is how a host keeps
+  its own camera without trusting the artefact's. Frames are raw RGBA, `width x height x 4` bytes, at
+  `<out>/<k>.rgba`. A `scene` request also leaves its build in `<out>/artefact/`.
+- A failed request is answered and the server goes on. `exit` and `line` are what `loft render` would have ended
+  with, from the table above. A refusal by `--check`, or a directory that cannot be read, is `load` (3). A compile
+  child killed by a signal, such as a CPU limit set by your confinement, is `internal` (1), because nobody knows whose
+  fault it was. A lost device is answered with 6 and ends the server with exit 6: start a new one. Requests still in
+  flight then get no answer.
+- Why JSON lines: any language reads them with no framing code, a request can be typed by hand, and pixels go through
+  files, which the caller already uses for scenes and builds. The server prints nothing else on stdout; logs go to
+  stderr.
+- Concurrency: compiles run at once, up to `--compiles` (CPU only). Draws run one at a time on the one device. One
+  server stops renders from fighting over the GPU. For more throughput, run several servers, each with its own device,
+  and measure.
+- Shader modules, layouts and pipelines are cached by content across requests (`src/host/cache.ts`). Equal WGSL is
+  one module, and a pipeline is a pure function of its WGSL and descriptor, so the cache cannot change pixels. Past
+  8192 objects it is emptied between requests.
+- What stays the host's policy: the sandbox (`--confine` is a command prefix, such as creative's `confine.py`, split
+  on spaces), the screening of programs and allowed imports, time and CPU limits (set them in the confinement, since
+  the server has no timeout), and limits on what an artefact may ask for (`--check`, a module whose default export
+  gets each `Bundle` before it reaches the GPU and throws to refuse it). A scene with `recur` bakes on the GPU, so its
+  compile fails with exit 6. Build it outside serve and send the directory.
+- A built directory has no loop period yet, so a looping scene's time is not wrapped, the same as `render --artefact`.
+
+Measured on 2026-11-18 (`bun tools/serve_bench.ts`, Apple M4, shared machine, 1-minute load 7.5 to 17). The runs
+were interleaved, the order alternated by round, and there were two rounds with a fresh server each. 10 programs
+from creative's training runs (wrapped as scenes the way its host wraps them) and 4 examples, four frames at 512 x 512
+each:
+
+| median per training program | cold `loft frames` | warm `serve` | warm, same program again |
+|---|---|---|---|
+| wall s, Metal cache cold (round 1) | 5.02 | 4.10 | 0.78 |
+| wall s, Metal cache warm (round 2) | 1.33 | 0.96 | 0.55 |
+| Bun CPU s, round 2 (warm: compile child + server) | 2.13 | 1.86 (1.1 + 0.6) | 1.16 |
+
+- Pixel identity: all 112 warm frames (28 requests of 4) equal the cold process's frames, and every repeat equals
+  its first draw.
+- The warm server saves about 0.44 CPU s and 0.35 to 0.45 s of wall per program (paired median, both rounds). That
+  is Bun start, the library import and device creation. Creative's 1.1 s estimate also counted 0.63 s of TypeScript
+  loading in its sandbox, which Loft's own compile does not do.
+- The big costs are elsewhere. One is the compile (about 1 CPU s, in the child). The other is Metal compiling new
+  shaders (about 6 CPU s per new program, in MTLCompilerService, outside Bun). The in-process cache removes the second
+  only for shaders the server has already seen. Here those were the shared sea and sky, and a program's own shaders
+  when the same program came again.
 
 ## What a scene can be
 

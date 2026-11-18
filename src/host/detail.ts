@@ -4,7 +4,8 @@
 // grid: the size on screen of a grid's cells is measured at the nearest point of the instance's bounding sphere,
 // where the view is largest, so a body seen end-on is never under-sampled at its near end. Hysteresis keeps a level
 // while its cells stay inside a band around the target (HYSTERESIS), so a slow dolly does not flicker between two
-// levels; the previous level is the only memory, kept per slot and instance by the caller.
+// levels; the previous level is the only memory, kept per slot and instance by the caller. Only the interactive
+// `draw` keeps it: a headless frame or a still plans with an empty memory, so its pixels depend on its own view alone.
 //
 // projected: the rows of the image of a plane out to a view depth. Both the plane's rows and the margin are found here,
 // on the CPU, so the shader only maps a vertex index to NDC (the sea, src/geom/sea.ts).
