@@ -85,7 +85,9 @@ and last line.
 
 - `infeasible` names a certified contradiction, such as incompatible bounds on a planted foot at landing.
 - `unsolved` with reason `search` means the local search stopped. Give a rough starting curve with `spline(n, from)`
-  on the intended side of the obstacle. Reason `budget` means the shared `budget.ms` expired. Increase it or simplify the holds.
+  on the intended side of the obstacle. Reason `verification` names the hold, time and amount by which the
+  returned f32 curve missed its bound. For an equality, set `within` to an acceptable error in the quantity's
+  units. For a clearance, increase `delta` or change the spline family. Reason `budget` means the shared `budget.ms` expired. Increase it or simplify the holds.
 - `unreadable` names the hold and, for a non-finite margin or derivative, the evaluation time. Check the domain of the
   expression at that time. Holds must also have a CPU evaluator and derivatives, and read each unknown at the hold's own time.
 

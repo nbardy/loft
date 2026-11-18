@@ -170,7 +170,7 @@ const hop = solve({
   vary: { x: spline(23), y: spline(23, 1) },   // a number per 0.1 s; `from`: start above the bar, not under it
   hold: ({ x, y }) => [
     equal(vec2(x, y), [0, 0.3], { from: 0, to: 0.4 }),                       // waits on the ground
-    equal(vec2(derivative(derivative(x, time), time), derivative(derivative(y, time), time)), [0, -9.81], { from: 0.6, to: 1.1 }),
+    equal(vec2(derivative(derivative(x, time), time), derivative(derivative(y, time), time)), [0, -9.81], { from: 0.6, to: 1.1, within: 0.001 }),
     equal(vec2(x, y), [3, 0.8], { from: 1.5, to: 2 }),                       // on the block, still
     atLeast(distance(vec2(x, y), BAR), 0.45),                                // clear of the bar, always
   ],
@@ -186,10 +186,16 @@ export default scene({
 ```
 
 Use `checks: hop.holds` in a design build, or `export const checks = hop.holds` beside a scene. Each check is an
-`always` over the authored window, including singleton instants. For `equal`, each component can differ by up to
-`TOLERANCE` (1e-5). For `atLeast`, the solver aims for an interior margin of `delta` (default 1e-6 in the
-margin's units). The ranged check compares the actual margin to zero. `hop.report` gives the target, the solve time
-and each hold's worst measured miss on the verification grid and at refined peaks.
+`always` over the authored window, including singleton instants. For `equal`, the default half-width is `TOLERANCE` (1e-5). Set `within` in the
+units of each component. For example, `equal(accel, gravity, { from, to, within: 0.001 })` allows 0.001 m/s²
+per axis. Use `{ within: 0.001 }` alone for the whole span.
+
+For `atLeast`, the solver targets a positive margin of `delta` (default 4e-6 in the margin's units).
+That leaves four times the solver's 1e-6 settling allowance while fitting inside the 5e-6 interior target
+of a coincident default equality, as when a planted foot also has to clear the ground. The ranged check
+compares the authored margin to zero. `hop.report` gives the target, the solve time and each hold's worst
+measured miss. Verification evaluates the returned f32 spline controls on the CPU twin at f32 frame times
+on the fine grid and at refined peaks. The ranged checks cover the time between those samples.
 
 Identical problems reuse their verified curves in the same process. Set `budget: { ms: 2000 }` to give setup,
 optimisation, verification and conflict diagnosis a shared two seconds. Expiry raises `unsolved` with reason

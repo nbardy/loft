@@ -1879,8 +1879,8 @@ Motion from stated constraints (docs/proposals/2026-11-18_next.md section 5): `s
   - change after the build: the result is numbers. A hold that should follow a host input at run time is a closed form, not a solve.
 - **spline**: An unknown curve for `solve`'s `vary`: a uniform cubic B-spline with `n` numbers (n - 3 cubic pieces) over the solve's span.
   `function spline(n: number, from: In<"f32"> = 0): Family`
-- **equal**: Each component of `a - b` stays within ±`TOLERANCE` at `when`: an instant `{ at }` (lands, reaches), an interval `{ from, to }` (planted), or the whole span when left out.
-  `function equal(a: In<NumTy>, b: In<NumTy>, when?: When): HoldLine`
+- **equal**: Each component of `a - b` stays within ±`within` (default 1e-5), in its own units, at `when`: an instant `{ at }` (lands, reaches), an interval `{ from, to }` (planted), or the whole span when left out.
+  `function equal(a: In<NumTy>, b: In<NumTy>, when?: (When & { readonly within?: number }) | { readonly within: number }): HoldLine`
 - **atLeast**: `a` is at least `b` (numbers) at `when` (as for `equal`): clear by a distance, above a floor, within a reach (`atLeast(reach, distance)`).
   `function atLeast(a: In<"f32">, b: In<"f32">, when?: When): HoldLine`
 - **SolveError**: A solve refusal (exit 4).

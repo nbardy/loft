@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { leap, NUMBERS } from "../examples/second/heron_leap.ts";
 import { compileScene } from "../src/compile/index.ts";
 import { plane, Probe, scene, toon } from "../src/index.ts";
-import { add, cos, evaluate, max, mul, sqrt, sub, substitute, time, vec3, length, type Expr } from "../src/expr.ts";
+import { add, compileJs, cos, evaluate, max, mul, sqrt, sub, substitute, time, vec3, length, type Expr } from "../src/expr.ts";
 import { derivative } from "../src/grad.ts";
 import { blendFrames, turnedAbout } from "../src/geom/placing.ts";
 import { atLeast, equal, solve, spline, SolveError, TOLERANCE, type HoldLine } from "../src/geom/solve.ts";
@@ -51,6 +51,41 @@ test("holds at instants and on intervals are met by the returned curves, at knot
   for (const t of [0.6, 0.75, 0.9, 1.05, 1.2]) expect(Math.abs(at(acc, t) + 9.81)).toBeLessThan(TOLERANCE * 10);
   expect(Math.abs(at(r.curves.y, 1.2) - 1.4)).toBeLessThan(TOLERANCE);
   for (const h of r.report.holds) expect(h.worst).toBeLessThanOrEqual(TOLERANCE);
+});
+
+// A fine-grid endpoint can cross a knot when the frame clock stores it in f32.
+test("a successful solve meets every hold on its fine grid at stored frame times", () => {
+  const { solved } = leap(NUMBERS);
+  for (const [index, hold] of solved.holds.entries()) {
+    const [a, b] = hold.times.kind === "at" ? [hold.times.t, hold.times.t]
+      : hold.times.kind === "during" ? [hold.times.from, hold.times.to] : [0, 1.8];
+    const fn = compileJs([hold.margin]);
+    const steps = Math.round((b - a) / 0.15 * 64);
+    let worst = 0;
+    for (let i = 0; i <= steps; i++) {
+      const t = i === steps ? b : a + (b - a) * i / steps;
+      const value = fn({ inputs: { time: Math.fround(t) }, vars: {}, params: {} })[0]!;
+      const components = Array.isArray(value) ? value : [Number(value)];
+      const miss = hold.kind === "equal" ? Math.max(...components.map(Math.abs)) : -components[0]!;
+      worst = Math.max(worst, miss);
+    }
+    expect(worst).toBeLessThanOrEqual(solved.report.holds[index]!.worst);
+    expect(worst).toBeLessThanOrEqual(hold.kind === "equal" ? hold.within : 0);
+  }
+});
+
+// A full-span constant halfway between adjacent f32 controls cannot survive storage to this band.
+test("rounding spline controls can refuse a hold that double precision met", () => {
+  const target = 1024 + 2 ** -14;
+  const run = (within: number) => solve({
+    over: [0, 1], vary: { x: spline(4, target) }, hold: ({ x }) => [equal(x, target, { within })],
+    prefer: { near: { to: { x: target }, weight: 1 } },
+  });
+  // A looser band in the cache cannot certify the same graph with a tighter band.
+  expect(run(0.001).report.holds[0]!.worst).toBeLessThanOrEqual(0.001);
+  const e = failure(() => run(TOLERANCE));
+  expect(e.failure).toMatchObject({ kind: "unsolved", reason: "verification", hold: { kind: "equal" } });
+  expect(e.message).toContain("tests/solve.test.ts");
 });
 
 // Catches: an interval hold enforced only at its sample times, the curve dipping through it between them.
@@ -149,7 +184,7 @@ test("the hop clears its bump and returns ranged checks on the authored windows"
     prefer: { jerk: 1 },
   });
   const probe = new Probe(compileScene(scene({ ground: plane, things: [], style: toon(), sun: [0, 1, 0], cameras: {} })), {});
-  expect(hop.report.delta).toBe(1e-6);
+  expect(hop.report.delta).toBe(4e-6);
   for (const check of hop.holds) expect(check.decide(probe).holds).toBe(true);
   // The inequalities still mean the authored bound, even beside a point equality at contact.
   expect(at(hop.curves.y, 0)).toBeGreaterThan(0);
@@ -171,6 +206,15 @@ test("the heron rebuild reuses the structural solve and publishes its checks", (
   expect(steps).toBe(0);
   expect(checks).toBe(holds);
   expect(checks).toBeGreaterThan(0);
+}, 120_000);
+
+test("every heron hold has a ranged proof on both decks", () => {
+  const probe = new Probe(compileScene(scene({ ground: plane, things: [], style: toon(), sun: [0, 1, 0], cameras: {} })), {});
+  for (const deck of [NUMBERS.deck, { from: 3.4, to: 5.2, top: 1, land: 4 }]) {
+    const { solved } = leap({ ...NUMBERS, deck });
+    const misses = solved.holds.filter(hold => hold.decide(probe).holds !== true);
+    expect(misses.map(hold => hold.name)).toEqual([]);
+  }
 }, 120_000);
 
 test("the 9 m deck stops on the solve deadline", () => {

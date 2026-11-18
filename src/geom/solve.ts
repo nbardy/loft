@@ -22,7 +22,7 @@
 //   certify infeasibility. The deadline is shared by construction, optimisation, conflict diagnosis and verification.
 
 import { SceneError, siteOf } from "../errors.ts";
-import { abs, add, compileJs, ge, le, leaves, lib, lift, max, mul, sub, time, variable, type LibFn, type Env, type Expr, type In, type NumTy, type V } from "../expr.ts";
+import { abs, add, compileJs, everything, fold, ge, le, leaves, lib, lift, max, mul, replace, sub, time, variable, type LibFn, type Env, type Expr, type In, type NumTy, type V } from "../expr.ts";
 import { DerivativeError, defineDerivative, derivative } from "../grad.ts";
 import { always, type Ranged } from "../ranged.ts";
 import { bspline } from "../curve.ts";
@@ -58,7 +58,7 @@ export type When = { readonly at: number } | { readonly from: number; readonly t
 type Times = { readonly kind: "at"; readonly t: number } | { readonly kind: "during"; readonly from: number; readonly to: number } | { readonly kind: "span" };
 
 /**
- * A stated constraint. At its `times`, every `equal` component must be within `TOLERANCE` of zero, or the scalar
+ * A stated constraint. At its `times`, the absolute value of each `equal` component must be at most `within`, or the scalar
  * `atLeast` margin must be nonnegative.
  * `site` is the line it was written on. The margin is an ordinary expression of the unknowns and `time` (of `time`
  * alone once solved), so a ranged check can read the same hold.
@@ -67,15 +67,19 @@ export type HoldLine = {
   readonly times: Times;
   readonly site: string | undefined;
 } & (
-  | { readonly kind: "equal"; readonly margin: Expr<NumTy> }
+  | { readonly kind: "equal"; readonly within: number; readonly margin: Expr<NumTy> }
   | { readonly kind: "atLeast"; readonly margin: F }
 );
 
-function timesOf(where: string, when: When | undefined): Times {
+function timesOf(where: string, when: When | { readonly within: number } | undefined): Times {
   if (when === undefined) return { kind: "span" };
   if ("at" in when) {
     if (!Number.isFinite(when.at)) throw new SceneError(where, `at ${when.at}`, "a finite time", "a time in seconds");
     return { kind: "at", t: when.at };
+  }
+  if (!("from" in when)) {
+    if ("within" in when && !("to" in when)) return { kind: "span" };
+    throw new SceneError(where, "an incomplete window", "{ at } or { from, to }", "supply both interval ends or omit the window");
   }
   if (!(Number.isFinite(when.from) && Number.isFinite(when.to) && when.to > when.from)) throw new SceneError(where, `from ${when.from} to ${when.to}`, "from < to", "give the interval in increasing order, or { at } for one instant");
   return { kind: "during", from: when.from, to: when.to };
@@ -84,19 +88,22 @@ function timesOf(where: string, when: When | undefined): Times {
 const SIZE: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
 /**
- * Each component of `a - b` stays within ±`TOLERANCE` at `when`: an instant `{ at }` (lands, reaches),
+ * Each component of `a - b` stays within ±`within` (default 1e-5), in its own units, at `when`: an instant `{ at }` (lands, reaches),
  * an interval `{ from, to }` (planted), or the whole span when left out. For `solve`'s `hold`.
  */
-export function equal(a: In<NumTy>, b: In<NumTy>, when?: When): HoldLine {
+export function equal(a: In<NumTy>, b: In<NumTy>, when?: (When & { readonly within?: number }) | { readonly within: number }): HoldLine {
   const site = siteOf(new Error().stack);
   const A = lift<NumTy>(a), B = lift<NumTy>(b);
   if (A.ty !== B.ty && B.ty !== "f32" && A.ty !== "f32") throw new SceneError("equal", `a ${A.ty} and a ${B.ty}`, "two values of one size", "compare like with like: `.xy`, or vec3(...)");
-  return { kind: "equal", margin: sub(A, B) as Expr<NumTy>, times: timesOf("equal", when), site };
+  const within = when?.within ?? TOLERANCE;
+  if (!(Number.isFinite(within) && within >= 0))
+    throw new SceneError("equal", `within ${within}`, "a finite nonnegative half-width", "give within in the units of each component");
+  return { kind: "equal", within, margin: sub(A, B) as Expr<NumTy>, times: timesOf("equal", when), site };
 }
 
 /**
  * `a` is at least `b` (numbers) at `when` (as for `equal`): clear by a distance, above a floor, within a reach
- * (`atLeast(reach, distance)`). `solve` aims at the interior margin `delta` (default 1e-6).
+ * (`atLeast(reach, distance)`). `solve` aims at the interior margin `delta` (default 4e-6).
  */
 export function atLeast(a: In<"f32">, b: In<"f32">, when?: When): HoldLine {
   const site = siteOf(new Error().stack);
@@ -123,7 +130,7 @@ export type SolveSpec<K extends string> = {
   /** The holds, written over the unknowns (each an expression of `time`). Called again with the solved curves. */
   readonly hold: (c: Readonly<Record<K, F>>) => readonly HoldLine[];
   readonly prefer: Prefer<K>;
-  /** Interior target for atLeast, in each margin's units (default 1e-6). */
+  /** Interior target for atLeast, in each margin's units (default 4e-6). */
   readonly delta?: number;
   /** Wall-clock limit shared by setup, search and verification, in milliseconds. */
   readonly budget?: { readonly ms: number };
@@ -143,7 +150,7 @@ export type SolveReport = {
   readonly rounds: number;
   /** Sample times the interval holds were held at, in all. */
   readonly samples: number;
-  /** Per hold: its worst violation (|margin| for equal, -margin for atLeast; at most `TOLERANCE`) and when. */
+  /** Largest sampled |margin| for equal (at most its `within`), or lower-bound violation for atLeast (zero), and when. */
   readonly holds: readonly HoldReport[];
 };
 
@@ -161,21 +168,25 @@ export type SolveFailure =
   | { readonly kind: "infeasible"; readonly conflict: readonly HoldLine[]; readonly worst: number }
   /** The local search stopped without finding a verified curve. */
   | { readonly kind: "unsolved"; readonly reason: "search"; readonly worst: number; readonly hold: HoldLine }
+  /** The returned f32 curve misses the authored band or lower bound at a verification point. */
+  | { readonly kind: "unsolved"; readonly reason: "verification"; readonly hold: HoldLine; readonly worst: number; readonly at: number }
   | { readonly kind: "unsolved"; readonly reason: "budget"; readonly ms: number }
   /** A hold cannot be evaluated or differentiated on the CPU (raw WGSL, a per-frame table, a function with no derivative). */
   | { readonly kind: "unreadable"; readonly hold: HoldLine; readonly detail: string; readonly at?: number };
 
-/** Half-width of the equality band, in each component's units. */
+/** Default half-width of the equality band, in each component's units. */
 export const TOLERANCE = 1e-5;
-/** What the solver aims for in double precision, so the returned f32 numbers still meet `TOLERANCE`. */
+/** Convergence target for the interior bounds in double precision. */
 const AIM = 1e-8;
 /**
- * A violation the solver counts as met, at its samples, in double precision: a tenth of `TOLERANCE`, leaving the rest
- * for the f32 rounding of the returned numbers. A solve that stops above this is unsolved or infeasible.
+ * Sampled search residual above which the solver diagnoses a conflict or adds a neighbourhood of samples.
+ * Acceptance always uses the authored bound on the returned curve.
  */
 const MET = TOLERANCE / 10;
 // Keep the optimisation target inside the reported equality band, leaving room for exchange and returned-curve rounding.
-const INNER_BAND = TOLERANCE / 2;
+const innerBand = (within: number) => within / 2;
+// Four settling allowances above contact, still inside the default half-band target of a planted equality (5e-6).
+const DEFAULT_DELTA = 4e-6;
 /** An atLeast hold near its target between samples gets a sample at the dip (in the margin's own units). */
 const NEAR = 1e-3;
 
@@ -196,6 +207,11 @@ function spanOf(t: Times, t0: number, t1: number): [number, number] {
 }
 const holdText = (h: HoldLine): string => `${h.kind} ${whenText(h.times)}${h.site !== undefined ? ` (${h.site})` : ""}`;
 
+function sameWindow(a: HoldLine, b: HoldLine): boolean {
+  return whenText(a.times) === whenText(b.times) && a.kind === b.kind &&
+    (a.kind === "atLeast" || (b.kind === "equal" && a.within === b.within));
+}
+
 function failureParts(f: SolveFailure): [string, string, string] {
   switch (f.kind) {
     case "infeasible": return [
@@ -205,6 +221,11 @@ function failureParts(f: SolveFailure): [string, string, string] {
     ];
     case "unsolved": switch (f.reason) {
       case "budget": return [`unsolved: budget of ${f.ms} ms spent`, "a solve within its time budget", "increase budget.ms or simplify the holds"];
+      case "verification": return [
+        `unsolved: the f32 curve for ${holdText(f.hold)} misses its bound by ${f.worst.toPrecision(3)} at t = ${f.at}`,
+        "a returned curve meeting the hold on the verification grid",
+        f.hold.kind === "equal" ? "set within to an acceptable error in this hold's units, or change the spline family" : "increase delta in the margin's units, or change the spline family",
+      ];
       case "search": return [
         `a local search that stopped with ${holdText(f.hold)} off by ${f.worst.toPrecision(3)}`,
         "a solve that settles",
@@ -315,34 +336,47 @@ function choleskySolve(A: Float64Array, n: number, damp: number, r: Float64Array
   return true;
 }
 
+/** Each held input and parameter uses its f32 frame default. The caller supplies the clock (continuous for quadrature). */
+function frameAt(deps: ReturnType<typeof leaves>) {
+  const inputs = Object.fromEntries(deps.inputs.filter(s => s.name !== "time").map(s => [s.name, s.def.length === 1 ? Math.fround(s.def[0]!) : s.def.map(Math.fround)]));
+  const params = Object.fromEntries(deps.params.map(s => [s.name, Math.fround(s.def)]));
+  return (t: number, vars: Env["vars"] = {}): Env => ({ inputs: { time: t, ...inputs }, params, vars });
+}
+
 class Problem {
   readonly n: number;
   steps = 0;
   /** The augmented Lagrangian's multipliers by row (`keys`), and its penalty weight. */
   private readonly mult = new Map<string, number>();
   private rho = 10;
-  constructor(readonly lines: Line[], readonly channels: readonly Channel[], readonly t0: number, readonly jetNames: readonly (readonly string[])[], readonly Q: Float64Array, readonly b: Float64Array, readonly delta: number, readonly check: () => void) {
+  constructor(readonly lines: Line[], readonly channels: readonly Channel[], readonly t0: number, readonly jetNames: readonly (readonly string[])[], readonly Q: Float64Array, readonly b: Float64Array, readonly delta: number, readonly frame: ReturnType<typeof frameAt>, readonly check: () => void) {
     this.n = channels.reduce((s, c) => s + c.n, 0);
   }
 
-  /** Where unknown k's numbers weigh at t: its position tau in knot gaps and the first number that reaches t. */
-  private place(c: Channel, t: number): { tau: number; first: number } {
-    const tau = Math.min(Math.max((t - this.t0) / c.h, 0), c.n - 3);
-    return { tau, first: Math.max(0, Math.min(c.n - 4, Math.floor(tau))) };
+  /** The four controls and their weights on this span, using the same stored time and clamp as the curve. */
+  private place(c: Channel, t: number) {
+    const raw = (Math.fround(t) - this.t0) / c.h, tau = Math.min(Math.max(raw, 0), c.n - 3);
+    const first = Math.max(0, Math.min(c.n - 4, Math.floor(tau)));
+    const weight = (q: number, d: number) => {
+      if (d > 0 && raw !== tau) return 0;
+      // At a knot the piecewise cubic takes the right span (the last span at the upper endpoint).
+      return d === 3 ? [-1, 3, -3, 1][q]! : kernel(tau - (first + q - 1), d);
+    };
+    return { first, weight };
   }
 
   /** The jets of every unknown at t (value and three time derivatives), as the variables the compiled holds read. */
   env(x: Float64Array, t: number): Env {
     const vars: Record<string, number> = {};
     this.channels.forEach((c, k) => {
-      const { tau, first } = this.place(c, t);
+      const { first, weight } = this.place(c, t);
       for (let d = 0; d < 4; d++) {
         let v = 0;
-        for (let j = first; j < first + 4; j++) v += x[c.offset + j]! * kernel(tau - (j - 1), d);
+        for (let q = 0; q < 4; q++) v += x[c.offset + first + q]! * weight(q, d);
         vars[this.jetNames[k]![d]!] = v / c.h ** d;
       }
     });
-    return { vars, inputs: { time: t }, params: {} };
+    return this.frame(Math.fround(t), vars);
   }
 
   /**
@@ -367,9 +401,9 @@ class Problem {
         if (p < 0) { p = chans.push(jet.k) - 1; firsts.push(this.place(this.channels[jet.k]!, t).first); }
         return p;
       }) : [];
-      const w = grad ? line.reads.map((jet) => {
-        const ch = this.channels[jet.k]!, { tau, first } = this.place(ch, t), scale = ch.h ** jet.d;
-        return [0, 1, 2, 3].map((q) => kernel(tau - (first + q - 1), jet.d) / scale);
+      const w = grad ? line.reads.map(jet => {
+        const ch = this.channels[jet.k]!, { weight } = this.place(ch, t), scale = ch.h ** jet.d;
+        return [0, 1, 2, 3].map(q => weight(q, jet.d) / scale);
       }) : [];
       const idx: number[] = [];
       chans.forEach((k, p) => { for (let q = 0; q < 4; q++) idx.push(this.channels[k]!.offset + firsts[p]! + q); });
@@ -412,11 +446,11 @@ class Problem {
     return f;
   }
 
-  /** The worst violation of `lines` at their samples. */
-  worst(x: Float64Array, lines: readonly Line[]): number {
-    const r = this.rows(x, lines, false);
+  /** The worst violation of this hold at its samples. */
+  worst(x: Float64Array, line: Line): number {
+    const r = this.rows(x, [line], false);
     let w = 0;
-    for (const v of r.eq) w = Math.max(w, Math.abs(v) - TOLERANCE);
+    if (line.hold.kind === "equal") for (const v of r.eq) w = Math.max(w, Math.abs(v) - line.hold.within);
     for (const v of r.ge) w = Math.max(w, -v);
     return w;
   }
@@ -461,13 +495,14 @@ class Problem {
   augmented(x: Float64Array): number {
     const n = this.n, lines = this.lines;
     const keys = this.keys(lines);
+    const bands = lines.flatMap(({ hold, size, samples }) => hold.kind === "equal" ? Array<number>(size * samples.length).fill(innerBand(hold.within)) : []);
     const lam = Float64Array.from(keys.eq, (k) => this.mult.get(k) ?? 0), mu = Float64Array.from(keys.ge, (k) => this.mult.get(k) ?? 0);
     let last = Infinity, v = Infinity;
     for (let outer = 0; outer < 60; outer++) {
       const L = lam, M = mu, R = this.rho, before = Float64Array.from(x);
       // Split each equality band into a target inside the band and a smooth equality subproblem.
       // Holding the target fixed during Newton steps keeps the spline Hessian conditioned at contact.
-      const slack = this.rows(x, lines, false).eq.map((e, k) => Math.max(-INNER_BAND, Math.min(INNER_BAND, e + L[k]! / R)));
+      const slack = this.rows(x, lines, false).eq.map((e, k) => Math.max(-bands[k]!, Math.min(bands[k]!, e + L[k]! / R)));
       this.descend(x, (y, grad) => {
         const r = this.rows(y, lines, grad);
         let f = this.objective(y);
@@ -489,9 +524,9 @@ class Problem {
       const r = this.rows(x, lines, false);
       v = 0;
       r.eq.forEach((e, k) => {
-        v = Math.max(v, Math.abs(e) - INNER_BAND);
+        v = Math.max(v, Math.abs(e) - bands[k]!);
         const u = lam[k]! + R * e;
-        lam[k] = u - Math.min(Math.max(u, -R * INNER_BAND), R * INNER_BAND);
+        lam[k] = u - Math.min(Math.max(u, -R * bands[k]!), R * bands[k]!);
       });
       r.ge.forEach((margin, k) => {
         const c = margin - this.delta;
@@ -560,7 +595,7 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
         case "vec3": largest = max(m.x, m.y, m.z); break;
         case "vec4": largest = max(m.x, m.y, m.z, m.w); break;
       }
-      return { ...hold, ...always(range, le(largest, TOLERANCE), settings) };
+      return { ...hold, ...always(range, le(largest, hold.within), settings) };
     }
   }
 }
@@ -585,9 +620,10 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
  *
  * The law. Each unknown is a uniform cubic B-spline (`spline(n)`: n numbers) over `over`. The numbers minimise the
  * preference (an exact quadratic in them) subject to every hold, by an augmented Lagrangian with Newton steps and
- * exact symbolic derivatives. Each `equal` allows ±`TOLERANCE` per component. Each `atLeast` aims for a positive
- * margin (`delta`, default 1e-6) and checks the authored lower bound. Intervals are held once per knot gap on a grid 64
+ * exact symbolic derivatives. Each `equal` allows ±`within` (default 1e-5) per component. Each `atLeast` aims for a positive
+ * margin (`delta`, default 4e-6) and checks the authored lower bound. Intervals are held once per knot gap on a grid 64
  * times coarser than the verification grid. The search adds samples around breaks and repeats up to 24 times.
+ * Final verification reads the returned f32 controls at stored frame times, with the frame's f32 input and param defaults.
  * Pass `checks: leap.holds` to check the entire windows. The report gives the sampled worst misses and `delta`.
  * Identical problems reuse verified curves within a process. A cache hit reports the time of this call and zero steps.
  *
@@ -608,14 +644,15 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
  *   form, not a solve.
  *
  * Failure is a `SolveError` (exit 4). `infeasible` names certified contradictory bounds. `unreadable` identifies a
- * non-finite margin or derivative at its time. `unsolved` reports a local search failure or expiry of `budget: { ms }`.
+ * non-finite margin or derivative at its time. `unsolved` names a local search failure, a missed hold on the
+ * returned curve (`verification`), or expiry of `budget: { ms }`.
  *
  * Relatives: `keys` and `through` (curves from given values); equations of time written directly; `bspline` (the
  * family, by hand).
  */
 export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   const start = performance.now();
-  const ms = spec.budget?.ms, delta = spec.delta ?? 1e-6;
+  const ms = spec.budget?.ms, delta = spec.delta ?? DEFAULT_DELTA;
   if (ms !== undefined && !(Number.isFinite(ms) && ms >= 0))
     throw new SceneError("solve", `budget.ms ${ms}`, "a finite nonnegative time budget", "give milliseconds, for example budget: { ms: 2000 }");
   if (!(Number.isFinite(delta) && delta >= 0))
@@ -660,18 +697,19 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   const targets = nearKeys.map(k => lift<"f32">(near!.to[k]!));
   // A row's interned ID describes its slot. Its mutable samples also enter a CPU solve.
   const dependencies = leaves([...holds.map(h => h.margin), ...keys.map(k => spec.vary[k].from), ...targets]);
+  const frame = frameAt(dependencies);
   const rowContent = dependencies.rows.map(row => {
     check();
     return Array.from(new Uint32Array(row.samples.buffer, row.samples.byteOffset, row.samples.length));
   });
   const key = JSON.stringify([rowContent, spec.over, delta, keys.map(k => [k, spec.vary[k].kind, spec.vary[k].n, spec.vary[k].from.id]),
     weights, nearKeys.map((k, i) => [k, targets[i]!.id]),
-    holds.map(h => [h.kind, h.margin.id, h.times])]);
+    holds.map(h => [h.kind, h.margin.id, h.times, h.kind === "equal" && h.within])]);
   const hit = cache.get(key);
   if (hit) {
     const curves = hit.curves as Readonly<Record<K, F>>, current = spec.hold(curves);
     if (current.length === hit.margins.length && current.every((h, i) =>
-      h.margin.id === hit.margins[i] && h.kind === holds[i]!.kind && whenText(h.times) === whenText(holds[i]!.times))) {
+      h.margin.id === hit.margins[i] && sameWindow(h, holds[i]!))) {
       const checks = current.map(h => { check(); return rangedHold(h, spec.over); });
       const reports = hit.reports.map((r, i) => ({ ...r, site: current[i]!.site }));
       check();
@@ -689,7 +727,16 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     check();
     const [a, b] = spanOf(hold.times, t0, t1);
     if (!(a >= t0 - 1e-12 && b <= t1 + 1e-12)) throw new SceneError("solve", `${holdText(hold)}, outside the span [${t0}, ${t1}]`, "holds within the span", "widen `over`, or move the hold");
-    const readNames = [...leaves([hold.margin]).vars.keys()].filter((nm) => jetOf.has(nm));
+    // Time differentiation is finished. JET now reads just its value argument. Keeping its three
+    // unused derivatives would grow a five-channel position hold's Hessian from 15 entries to 210.
+    const values = new Map<number, Expr>();
+    for (const { id, node } of everything([hold.margin])) {
+      if (node.op !== "lib" || node.fn !== JET) continue;
+      if (node.args[0] !== time) throw new SolveError({ kind: "unreadable", hold, detail: "it reads an unknown at a time other than its own; write the hold at the time it reads" });
+      values.set(id, node.args[1]!);
+    }
+    const margin = replace([hold.margin], values)[0] as Expr<NumTy>;
+    const readNames = [...leaves([margin]).vars.keys()].filter((nm) => jetOf.has(nm));
     // The margin, its gradient in the jets it reads, and its Hessian in them (upper triangle, row by row): with the
     // Hessian the inner steps are Newton steps on the Lagrangian, not Gauss-Newton ones, which converge only linearly
     // where a curved hold (a reach, a clearance) carries a large multiplier.
@@ -701,8 +748,8 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     let roots: Expr[];
     try {
       const vars = readNames.map((nm) => variable(nm, "f32"));
-      const grads = vars.map((v) => { check(); return derivative(hold.margin, v); });
-      roots = [hold.margin, ...grads, ...pairs.map(([i, j]) => { check(); return derivative(grads[i]!, vars[j]!); })];
+      const grads = vars.map((v) => { check(); return derivative(margin, v); });
+      roots = [margin, ...grads, ...pairs.map(([i, j]) => { check(); return derivative(grads[i]!, vars[j]!); })];
     } catch (e) {
       if (e instanceof SolveError) throw e;
       if (e instanceof DerivativeError || e instanceof SceneError) throw new SolveError({ kind: "unreadable", hold, at: a, detail: e.message });
@@ -710,7 +757,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     }
     const samples = a === b ? [a] : grid(a, b, h);
     const dense = a === b ? [a] : grid(a, b, h / 64);
-    return { hold, size: SIZE[hold.margin.ty as NumTy], reads: readNames.map((nm) => jetOf.get(nm)!), pairs, withGrad: checkedEvaluator(hold, roots, a, check), value: checkedEvaluator(hold, [hold.margin], a, check), samples, dense };
+    return { hold, size: SIZE[hold.margin.ty as NumTy], reads: readNames.map((nm) => jetOf.get(nm)!), pairs, withGrad: checkedEvaluator(hold, roots, a, check), value: checkedEvaluator(hold, [margin], a, check), samples, dense };
   });
 
   // The preference as an exact quadratic 0.5 x'Qx - b'x, by Gauss-Legendre over each knot gap.
@@ -737,7 +784,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
       }
       const nf = nearFns.get(k);
       if (nf !== undefined && near !== undefined) {
-        const r = comps(nf({ vars: {}, inputs: { time: t }, params: {} })[0]!)[0]!;
+        const r = comps(nf(frame(t))[0]!)[0]!;
         // A NaN here would poison Q and b, and the Newton steps would then silently refuse to move.
         if (!Number.isFinite(r)) throw new SceneError("solve", `prefer.near for "${k}" = ${r} at t = ${t}`, "a finite curve to stay near", "check the domain of the near curve over the span");
         const b0 = js.map((j) => kernel(tau - (j - 1), 0));
@@ -755,7 +802,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   }
   for (let i = 0; i < n; i++) { b[i]! /= scale; Q[i * n + i]! += 1e-12; }
 
-  const problem = new Problem(lines, channels, t0, jetNames, Q, b, delta, check);
+  const problem = new Problem(lines, channels, t0, jetNames, Q, b, delta, frame, check);
   // The start: each unknown's B-spline nearest its `from`, by least squares over the span (Gauss-Legendre again).
   const x = new Float64Array(n);
   for (const k of keys) {
@@ -763,7 +810,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     const M = new Float64Array(ch.n * ch.n), r = new Float64Array(ch.n);
     for (let s = 0; s < ch.n - 3; s++) for (const [xi, wq] of GL) {
       check();
-      const tau = s + (1 + xi) / 2, w = (wq * ch.h) / 2, v = comps(from({ vars: {}, inputs: { time: t0 + tau * ch.h }, params: {} })[0]!)[0]!;
+      const tau = s + (1 + xi) / 2, w = (wq * ch.h) / 2, v = comps(from(frame(t0 + tau * ch.h))[0]!)[0]!;
       // A NaN start would surface later as an unreadable hold, blamed on the wrong line.
       if (!Number.isFinite(v)) throw new SceneError("spline", `from = ${v} for "${k}" at t = ${t0 + tau * ch.h}`, "a finite starting curve", "check the domain of the starting curve over the span");
       for (let i = s; i < s + 4; i++) {
@@ -775,22 +822,6 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     choleskySolve(M, ch.n, 1e-12, r, check);
     x.set(r, ch.offset);
   }
-  // Before solving, each hold is read once at made-up numbers: through the jets (refusing what the CPU
-  // cannot evaluate), and again written over the B-splines themselves, which must agree. They differ only for a hold
-  // that reads an unknown at a time other than its own (a delay, a substitution of time), which the jets cannot say.
-  const probeX = Float64Array.from({ length: n }, (_, i) => 0.1 * Math.sin(1.7 * i + 0.3));
-  const probeHolds = spec.hold(bsplines(spec, keys, offset, probeX, check));
-  if (probeHolds.length !== lines.length) throw new SceneError("solve", "a changing list of holds", "the same holds every call", "build the list of holds from the curves alone");
-  lines.forEach((line, i) => {
-    const t = line.samples[0]!;
-    const jet = comps(line.value(problem.env(probeX, t))[0]!);
-    const realHold = probeHolds[i]!;
-    const real = comps(checkedEvaluator(realHold, [realHold.margin], t, check)({ vars: {}, inputs: { time: t }, params: {} })[0]!);
-    if (real.some((r, c) => !(Math.abs(r - jet[c]!) <= 1e-6 * (1 + Math.abs(r))))) {
-      throw new SolveError({ kind: "unreadable", hold: line.hold, detail: "it reads an unknown at a time other than its own (a delay or a substitution of time); write the hold at the time it reads" });
-    }
-  });
-
   let rounds = 0;
   for (; ;) {
     rounds++;
@@ -802,7 +833,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
       if (line.dense.length === 1) continue;
       const violation = (t: number): number => {
         const m = comps(line.value(problem.env(x, t))[0]!);
-        return line.hold.kind === "equal" ? Math.max(...m.map(Math.abs)) - INNER_BAND : delta - m[0]!;
+        return line.hold.kind === "equal" ? Math.max(...m.map(Math.abs)) - innerBand(line.hold.within) : delta - m[0]!;
       };
       // The worst time of each stretch that is broken, or that an atLeast hold nearly touches (within NEAR), joins the
       // samples: a local peak of the violation, refined between grid points. Taking the near ones too saves rounds,
@@ -828,20 +859,21 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   // The answer as numbers, and the holds measured on the expressions actually returned (f32 constants).
   const curves = bsplines(spec, keys, offset, x, check);
   const solvedHolds = spec.hold(curves);
-  if (solvedHolds.length !== lines.length || solvedHolds.some((h, i) => h.kind !== holds[i]!.kind || whenText(h.times) !== whenText(holds[i]!.times)))
+  if (solvedHolds.length !== lines.length || solvedHolds.some((h, i) => !sameWindow(h, holds[i]!)))
     throw new SceneError("solve", "a hold function that changed its list or windows", "the same holds every call", "build the list of holds from the curves alone");
   const reports: HoldReport[] = solvedHolds.map((hold, i) => {
     const fn = checkedEvaluator(hold, [hold.margin], lines[i]!.dense[0]!, check);
+    const frame = frameAt(leaves([hold.margin]));
     const violation = (t: number): number => {
-      const m = comps(fn({ vars: {}, inputs: { time: t }, params: {} })[0]!);
+      const m = comps(fn(frame(Math.fround(t)))[0]!);
       return hold.kind === "equal" ? Math.max(...m.map(Math.abs)) : -m[0]!;
     };
     const worst = peaks(violation, lines[i]!.dense).reduce((w, p) => (p.v > w.v ? p : w), { t: lines[i]!.dense[0]!, v: -Infinity });
+    const miss = worst.v - (hold.kind === "equal" ? hold.within : 0);
+    if (miss > 0) throw new SolveError({ kind: "unsolved", reason: "verification", worst: miss, at: worst.t, hold });
     return { kind: hold.kind, site: hold.site, when: whenText(hold.times), worst: Math.max(worst.v, 0), at: worst.t };
   });
   check();
-  const off = reports.findIndex((r) => r.worst > (r.kind === "equal" ? TOLERANCE : 0));
-  if (off >= 0) throw new SolveError({ kind: "unsolved", reason: "search", worst: reports[off]!.worst, hold: solvedHolds[off]! });
   const checks = solvedHolds.map(h => { check(); return rangedHold(h, spec.over); });
   check();
   cache.set(key, { curves, reports, margins: solvedHolds.map(h => h.margin.id) });
@@ -878,7 +910,9 @@ function bsplines<K extends string>(spec: SolveSpec<K>, keys: readonly K[], offs
   for (const k of keys) {
     check();
     const begin = offset.get(k)!;
-    out[k] = bspline(time, spec.over, Array.from(x.subarray(begin, begin + spec.vary[k].n)));
+    // Materialise the same f32 controls and constant polynomial coefficients that the shader stores.
+    const curve = bspline(time, spec.over, Array.from(x.subarray(begin, begin + spec.vary[k].n), Math.fround));
+    out[k] = fold([curve])[0] as F;
   }
   return out;
 }
@@ -890,7 +924,7 @@ function diagnose(problem: Problem, lines: readonly Line[], x: Float64Array): vo
   let worst = -Infinity, which = lines[0]!;
   for (const line of lines) {
     problem.check();
-    const miss = problem.worst(x, [line]);
+    const miss = problem.worst(x, line);
     problem.check();
     if (miss > worst) { worst = miss; which = line; }
     if (line.reads.length === 0 && miss > 0) throw new SolveError({ kind: "infeasible", conflict: [line.hold], worst: miss });
@@ -906,11 +940,11 @@ function diagnose(problem: Problem, lines: readonly Line[], x: Float64Array): vo
         const jet = components[components.length === 1 ? 0 : i]!;
         if (jet.node.op !== "lib" || jet.node.fn !== JET) continue;
         const value = limit.v[limit.v.length === 1 ? 0 : i]!;
-        const equal = line.hold.kind === "equal";
+        const width = line.hold.kind === "equal" ? line.hold.within : 0;
         // Widen certificate bounds for rounding in both the margin subtraction and the two endpoints.
-        const radius = TOLERANCE + 4 * Number.EPSILON * (Math.abs(value) + TOLERANCE);
-        const low = equal ? value - radius : side === 0 ? value : -Infinity;
-        const high = equal ? value + radius : side === 0 ? Infinity : value;
+        const radius = width + 4 * Number.EPSILON * (Math.abs(value) + width);
+        const low = line.hold.kind === "equal" ? value - radius : side === 0 ? value : -Infinity;
+        const high = line.hold.kind === "equal" ? value + radius : side === 0 ? Infinity : value;
         const prior = bounds.get(jet.id) ?? [];
         for (const other of prior) {
           problem.check();

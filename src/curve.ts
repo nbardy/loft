@@ -3,7 +3,7 @@
 // closed-form functions of time with no state (DESIGN.md 2.1).
 
 import {
-  abs, add, clamp, cos, CURVE_N, div, exp, lift, lt, max, mul, neg, row, Row, select, sin, smoothstep, step, sub, TAU, time,
+  abs, add, clamp, cos, CURVE_N, div, exp, lift, lt, max, mix, mul, row, Row, select, sin, smoothstep, step, sub, TAU, time,
   type Expr, type In,
 } from "./expr.ts";
 import { SceneError } from "./errors.ts";
@@ -119,20 +119,6 @@ export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3
 }
 
 /**
- * Weight of the uniform cubic B-spline kernel at offset x: (4 - 6x^2 + 3|x|^3) / 6 within 1 of the centre,
- * (2 - |x|)^3 / 6 within 2, 0 beyond. Twice continuously differentiable, and the weights of the four kernels that
- * reach any point sum to 1.
- */
-function bsplineKernel(x: Expr<"f32">): Expr<"f32"> {
-  // |x| as a select, not `abs`: the derivative of abs at 0 is sign(0) = 0, so the second time derivative of the
-  // curve read exactly at a knot came out 0 times the kernel's curvature there, not the curvature (found by solve's
-  // probe, 2026-11-18). A select takes one branch's derivative at the tie, which is the right one-sided value.
-  const a = select(lt(x, 0), neg(x), x), a2 = mul(a, a), a3 = mul(a2, a), out = sub(2, a);
-  const inner = div(add(sub(4, mul(a2, 6)), mul(a3, 3)), 6);
-  return select(lt(a, 1), inner, select(lt(a, 2), div(mul(mul(out, out), out), 6), 0));
-}
-
-/**
  * A curve of time through `values` as a uniform cubic B-spline over `over` = [t0, t1]: value j weights the curve
  * most at t0 + (j - 1) h, h = (t1 - t0) / (n - 3), and reaches 2 h either side of it. It is what `solve` returns, and
  * the same thing written by hand: edit a value and the curve moves near that time only, by at most 2/3 of the edit.
@@ -161,7 +147,20 @@ export function bspline(t: In<"f32">, over: readonly [number, number], values: r
   if (!(Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0)) throw new SceneError("bspline", `over [${t0}, ${t1}]`, "a span [t0, t1] with t1 > t0", "give the times in increasing order");
   const h = (t1 - t0) / (n - 3);
   const tau = clamp(div(sub(t, t0), h), 0, n - 3);
-  return values.map((v, j) => mul(lift<"f32">(v), bsplineKernel(sub(tau, j - 1)))).reduce((s, x) => add(s, x));
+  // Collect the four overlapping kernels into one polynomial per span. A planted foot then has
+  // tiny slope and curvature even over a wide interval box, and all control literals stay as authored.
+  const piece = (lo: number, hi: number): Expr<"f32"> => {
+    if (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      return select(lt(tau, mid), piece(lo, mid - 1), piece(mid, hi));
+    }
+    const a = values[lo]!, b = values[lo + 1]!, c = values[lo + 2]!, d = values[lo + 3]!;
+    const slope = sub(c, b), left = div(sub(slope, sub(b, a)), 6), right = div(sub(sub(d, c), slope), 6);
+    const u = sub(tau, lo), v = sub(1, u);
+    // The outer controls have weights v³/6 and u³/6: each vanishes exactly at the opposite knot.
+    return add(mix(b, c, u), mul(left, mul(v, v, v)), mul(right, mul(u, u, u)));
+  };
+  return piece(0, n - 4);
 }
 
 // ---- stateless motion operators -----------------------------------------------------------------------------------
