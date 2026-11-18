@@ -1,7 +1,7 @@
 //! Loft's compiler core, and its program driver (lean Rust plan §1.10, §8.2: the integrator's file).
 //!
-//! `run` takes one job (wire §3.2) and answers with a report, plus the bundle for a Scene. A Scene goes
-//! decode → kernel plan → schedule → layout → emit (Naga, f32 and f16) → `Bundle` V1 → bytes and hash.
+//! `run` takes one job (wire §3.2) and how to build it, and answers with a report, plus the bundle for a Scene. A Scene
+//! goes decode → kernel plan → schedule → layout → emit (Naga only when `Build` asks) → `Bundle` V1 → bytes and hash.
 //!
 //! What a Scene job can say today bounds what its bundle holds (driver note, `agent_notes/2026-11-19_lean_rust_driver.md`):
 //! - the program roots are the expressions the TS emitter handed to `emitWgsl`, with their free variables (u, v, p).
@@ -28,6 +28,7 @@ pub mod tape;
 use loft_ir::bundle::{self, Bundle, F32, Format, InputDecl, Module, Origin, ParamDecl, Shape};
 use loft_ir::error::{Internal, Limits, Meter, SceneFault};
 use loft_ir::graph::{Graph, GraphFn, Kernel, Op, Program};
+pub use loft_ir::identity::Precision;
 use loft_ir::{Error, wire};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -61,8 +62,8 @@ pub struct Scene {
     pub bundle_bytes: usize,
     /// sha256 of the bundle file, hex: `Identity::build`.
     pub build: String,
-    /// Whether the module also validates under `alias lf = f16;`. A build is f32 by default; a `Mixed` load of a
-    /// module that does not is refused by the host's own Naga check (loft-gpu `validate`), so here it is reported.
+    /// Whether the module also validates under `alias lf = f16;`, when `Build::precision` asked for `Mixed`. A `Mixed`
+    /// load of a module that does not is refused by the host's own Naga check (loft-gpu `validate`).
     pub mixed: Mixed,
 }
 
@@ -71,20 +72,42 @@ pub enum Mixed {
     Valid,
     /// Naga's refusal under f16, as `Error`'s text (a literal past f16's 65504 is the case met in the corpus).
     Refused(String),
+    /// The build asked for f32, so no f16 check ran (`--precision mixed` asks for it).
+    NotAsked,
+}
+
+/// How to build a job: what the caller asked for, classified once at the boundary (loft-node).
+#[derive(Clone, Copy, Debug)]
+pub struct Build {
+    pub naga: Naga,
+    /// `Mixed` adds the f16 check (`Scene::mixed`); the module text is the same either way (one `lf` alias).
+    pub precision: Precision,
+}
+
+/// Where a Scene's WGSL is validated. Owl 2026-11-19: Naga at emit was 33 of 58 ms of Rust, and the host validates the
+/// same text again when it creates the module, so a build validates once, at load, unless it asks for more.
+#[derive(Clone, Copy, Debug)]
+pub enum Naga {
+    /// Naga at emit (`emit::check`): a refusal is `Scene { Wgsl }` at the author's line. `loft check` and the lab tools.
+    Emit,
+    /// No Naga at compile: the host's module creation at load is the one validation (loft-gpu `validate`, then wgpu).
+    /// A bad module is then refused at load, without the author's line. The default build.
+    Load,
 }
 
 #[derive(Serialize, Default)]
 pub struct Phases {
     pub decode: u64,
     pub plan: u64,
+    /// Emission, plus Naga as f32 under `Naga::Emit`.
     pub emit: u64,
-    /// Naga under `alias lf = f16;` (lane 2.2's both-ways check), apart from emit's own f32 validation.
+    /// Naga under `alias lf = f16;` (lane 2.2's both-ways check), when `Precision::Mixed` asked for it; else 0.
     pub f16: u64,
     pub bundle: u64,
 }
 
 /// One job. For a Scene, the bundle file's bytes come back beside the report; the caller writes them.
-pub fn run(job: &[u8], limits: Limits, compiler: &str) -> Result<(Report, Option<Vec<u8>>), Error> {
+pub fn run(job: &[u8], limits: Limits, build: Build, compiler: &str) -> Result<(Report, Option<Vec<u8>>), Error> {
     let mut phases = Phases::default();
     let t = Instant::now();
     let job = wire::decode(job)?;
@@ -95,7 +118,7 @@ pub fn run(job: &[u8], limits: Limits, compiler: &str) -> Result<(Report, Option
         (g.nodes.len(), g.fns.len() + g.raws.len() + g.loops.len() + g.kernels.len() + g.params.len() + g.inputs.len());
     match job.program {
         Program::Scene => {
-            let (scene, bytes) = scene(g, compiler, &mut phases)?;
+            let (scene, bytes) = scene(g, build, compiler, &mut phases)?;
             Ok((Report { program: job.program, nodes, decls, scene: Some(scene), phases }, Some(bytes)))
         }
         Program::Solve | Program::Evaluate | Program::Check => Err(Error::Internal(Internal::Unbuilt(job.program))),
@@ -110,7 +133,7 @@ fn unsupported(what: String) -> Error {
     Error::Scene { site: None, fault: SceneFault::Unsupported { what: what.into() } }
 }
 
-fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Vec<u8>), Error> {
+fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Result<(Scene, Vec<u8>), Error> {
     // Plan: one resource per Kernel decl, in decl order, so resource k is kernel k (emit's Slots, Fetch's binding).
     let t = Instant::now();
     let sources = g
@@ -163,9 +186,18 @@ fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Ve
             .collect(),
     };
     let m = emit::module(&g, &exports, &slots)?;
+    match build.naga {
+        Naga::Emit => emit::check(&g, &m)?,
+        Naga::Load => {}
+    }
     phases.emit = ns(t);
     let t = Instant::now();
-    let mixed = emit::validate(&g, &m, true).map_or_else(|e| Mixed::Refused(e.to_string()), |()| Mixed::Valid);
+    let mixed = match build.precision {
+        Precision::Mixed => {
+            emit::validate(&g, &m, true).map_or_else(|e| Mixed::Refused(e.to_string()), |()| Mixed::Valid)
+        }
+        Precision::F32 => Mixed::NotAsked,
+    };
     phases.f16 = ns(t);
 
     let t = Instant::now();

@@ -247,8 +247,8 @@ async function cross(other: string) {
 /**
  * Every entry through the Rust program driver (`LOFT_ENGINE=rust loft build`), in its own process, against how R0's
  * build ended: built against built (the bundle's sha256 and its draw count recorded), a refusal against a refusal of the
- * same verdict and head. Exit 0 is a bundle whose module Naga accepted as f32 and f16. Pictures need draws, which the
- * wire cannot carry yet, so no frame is drawn here.
+ * same verdict and head. Built with `--naga --precision mixed`: exit 0 is a bundle whose module Naga accepted as f32,
+ * with its f16 verdict printed. Pictures need draws, which the wire cannot carry yet, so no frame is drawn here.
  */
 async function rust(only: string) {
   const out = join(ROOT, "out/parity/rust"), list = await entries(only);
@@ -259,7 +259,7 @@ async function rust(only: string) {
     for (let e = queue.shift(); e !== undefined; e = queue.shift()) {
       const dir = join(out, "build", e.id), t = performance.now();
       rmSync(dir, { recursive: true, force: true });
-      const r = await spawn(["env", "LOFT_ENGINE=rust", process.execPath, "src/cli/main.ts", "build", e.path, "--out", dir]);
+      const r = await spawn(["env", "LOFT_ENGINE=rust", process.execPath, "src/cli/main.ts", "build", e.path, "--out", dir, "--naga", "--precision", "mixed"]);
       const ms = Math.round(performance.now() - t);
       const r0 = existsSync(join(OUT, "entries", `${e.id}.json`)) ? outcome((JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec).build) : "absent";
       if (r.exit === 0) {

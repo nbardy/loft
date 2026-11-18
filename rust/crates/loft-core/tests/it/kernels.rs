@@ -1,6 +1,6 @@
 //! Lane 2.1 pass/fail (lean Rust plan §8.2): over the corpus, the Kernel/Resource plan accounts for every TS table,
 //! recurrence and compute pass (same rows and lanes, `Steps` keep the same history, per-frame dispatches <= TS's), and
-//! Const fills equal TS's f32 fills within 1 ulp. Input: `bun rust/crates/loft-core/dump_kernels.ts >
+//! Const fills hold against TS's f32 fills within `FILL` (plus picture parity, once bundles draw). Input: `bun rust/crates/loft-core/dump_kernels.ts >
 //! out/lr21/kernels.jsonl`. Run: `cargo test --release --test it kernels -- --nocapture`.
 
 use loft_core::kernel::{Decl, Fill, Job, Source, kept, plan};
@@ -11,6 +11,8 @@ use loft_ir::graph::{Graph, Loop, Node, Op, Prim, Sel, Ty};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::BufRead;
+
+use crate::Tol;
 
 fn ty(v: &Value) -> Ty {
     match v.as_str().unwrap() {
@@ -210,16 +212,15 @@ fn scene(s: &Value) -> Scene {
     Scene { g, sources, decls: kd, names: kn, opaque }
 }
 
-/// Distance in f32 ulps (ordered bit patterns); equal NaNs are 0.
-fn ulps(a: u32, b: u32) -> u64 {
-    let ord = |x: u32| if x & 0x8000_0000 != 0 { -((x & 0x7fff_ffff) as i64) } else { x as i64 };
-    if f32::from_bits(a).is_nan() && f32::from_bits(b).is_nan() { 0 } else { (ord(a) - ord(b)).unsigned_abs() }
-}
+/// Lane 2.1 check (4), as the owner re-scored it on 19 Nov (plan §8.2): the tape fills in f32 (§3.4) and TS filled in
+/// f64 and rounded once, so a body that cancels (a transported frame's cross products, cos(pi/2)) differs by more than
+/// an ulp of a near-zero result. The old 1 ulp rule failed 79 of 160 fills at a worst 9.2e-6 of max(1, |want|).
+const FILL: Tol = Tol::f32_rel(1e-4);
 
-/// What the corpus run measured: structural misses, and Const fills further than 1 ulp from TS.
+/// What the corpus run measured: structural misses, and Const fills with a value outside `FILL` of TS's.
 struct Report {
     fails: Vec<String>,
-    worst: Vec<(u64, String)>,
+    far: Vec<String>,
 }
 
 fn report() -> &'static Report {
@@ -233,16 +234,12 @@ fn kernels_account_for_the_ts_plan() {
     assert!(r.fails.is_empty(), "{} misses: {:#?}", r.fails.len(), &r.fails[..r.fails.len().min(40)]);
 }
 
-/// Plan §3.4 moves fills to an f32 tape; TS filled in f64 and rounded once. A body that cancels (a transported
-/// frame's cross products, cos(pi/2)) differs by more than 1 ulp of a near-zero result. Measured 19 Nov: 79 of 160
-/// fills, worst |d| / max(1, |want|) = 9.2e-6. The gate's 1 ulp is the owner's to re-score; this test states it.
-/// Ignored in the suite at the wave 2 merge so a known, recorded lane miss does not hold every other gate red; the
-/// gate itself is unchanged. Run it with `tools/dev.sh test loft-core --release --run-ignored all -E 'test(const_fills)'`.
+/// Const fills hold against TS's within `FILL`. The other half of the check, picture parity (§2.2a) on the scenes that
+/// read them, needs bundles that draw (lane 3.1).
 #[test]
-#[ignore = "lane 2.1 check (4) is red as written (1 ulp vs measured 9.2e-6 relative); owner re-scores (plan §8.2)"]
-fn const_fills_within_1_ulp_of_ts() {
+fn const_fills_within_f32_tol_of_ts() {
     let r = report();
-    assert!(r.worst.is_empty(), "{} fills over 1 ulp; worst {:?}", r.worst.len(), &r.worst[..r.worst.len().min(8)]);
+    assert!(r.far.is_empty(), "{} fills outside {FILL:?}: {:?}", r.far.len(), &r.far[..r.far.len().min(8)]);
 }
 
 fn measure() -> Report {
@@ -253,7 +250,7 @@ fn measure() -> Report {
     });
     let (mut scenes, mut fails) = (0, Vec::<String>::new());
     let mut tot: HashMap<&str, u64> = HashMap::new();
-    let mut worst: Vec<(u64, String)> = vec![];
+    let mut far_fills: Vec<String> = vec![];
     let mut worst_rel = 0f64;
     for line in std::io::BufReader::new(file).lines() {
         let s: Value = serde_json::from_str(&line.unwrap()).unwrap();
@@ -332,7 +329,7 @@ fn measure() -> Report {
             fails.push(format!("{name}: {frame_stages} dispatches per frame; TS {ts_frame}"));
         }
 
-        // (4) Const fills equal TS's f32 fills within 1 ulp, on the rows they write.
+        // (4) Const fills hold against TS's f32 fills within `FILL`, on the rows they write.
         let on_gpu: Vec<bool> = {
             let mut v = vec![false; sc.decls.len()];
             for k in &p.kernels {
@@ -369,49 +366,45 @@ fn measure() -> Report {
                 Fill::Raw { .. } => unreachable!(),
             };
             let bytes = &p.sections[*sec as usize];
-            let mut far = 0;
+            let mut far = false;
             for r in rows {
                 for c in 0..lanes {
                     let at = r as usize * lanes + c;
-                    let got = u32::from_le_bytes(bytes[4 * at..4 * at + 4].try_into().unwrap());
-                    let w = u(&want[at]);
-                    let du = ulps(got, w);
-                    let (gf, wf) = (f32::from_bits(got) as f64, f32::from_bits(w) as f64);
-                    let rel = if du == 0 { 0.0 } else { (gf - wf).abs() / wf.abs().max(1.0) };
-                    worst_rel = worst_rel.max(rel);
-                    *tot.entry("fill_values").or_default() += 1;
-                    if du > 1 {
-                        *tot.entry("fill_values_over_1ulp").or_default() += 1;
+                    let got = f32::from_bits(u32::from_le_bytes(bytes[4 * at..4 * at + 4].try_into().unwrap()));
+                    let w = f32::from_bits(u(&want[at]));
+                    if got.to_bits() != w.to_bits() && !(got.is_nan() && w.is_nan()) {
+                        worst_rel = worst_rel.max((f64::from(got) - f64::from(w)).abs() / f64::from(w).abs().max(1.0));
                     }
-                    far = far.max(du);
+                    *tot.entry("fill_values").or_default() += 1;
+                    if !FILL.holds(got, w) {
+                        *tot.entry("fill_values_outside_tol").or_default() += 1;
+                        far = true;
+                    }
                 }
             }
             *tot.entry("compile_compared").or_default() += 1;
-            if far > 1 {
-                worst.push((
-                    far,
-                    format!(
-                        "{name}: {} rows {:?}",
-                        sc.names[k],
-                        match d.fill {
-                            Fill::Map { start, count, .. } => (start, count),
-                            Fill::Scan { first, steps, .. } => (first, steps),
-                            Fill::Raw { .. } => (0, 0),
-                        }
-                    ),
+            if far {
+                far_fills.push(format!(
+                    "{name}: {} rows {:?}",
+                    sc.names[k],
+                    match d.fill {
+                        Fill::Map { start, count, .. } => (start, count),
+                        Fill::Scan { first, steps, .. } => (first, steps),
+                        Fill::Raw { .. } => (0, 0),
+                    }
                 ));
             }
         }
         *tot.entry("lifted").or_default() += p.lifted.len() as u64;
         *tot.entry("kernels").or_default() += sc.decls.len() as u64;
     }
-    worst.sort_unstable_by(|a, b| b.cmp(a));
+
     let mut t: Vec<_> = tot.into_iter().collect();
     t.sort();
     println!(
-        "scenes {scenes}\n{t:?}\nworst |got - want| / max(1, |want|): {worst_rel:e}\nfills over 1 ulp: {}\n{:?}",
-        worst.len(),
-        &worst[..worst.len().min(8)]
+        "scenes {scenes}\n{t:?}\nworst |got - want| / max(1, |want|): {worst_rel:e}\nfills outside {FILL:?}: {}\n{:?}",
+        far_fills.len(),
+        &far_fills[..far_fills.len().min(8)]
     );
-    Report { fails, worst }
+    Report { fails, far: far_fills }
 }

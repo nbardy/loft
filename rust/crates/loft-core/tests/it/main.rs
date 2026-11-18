@@ -6,6 +6,27 @@ mod draws;
 mod emit;
 mod kernels;
 
+/// An f32 tolerance (plan §3.4): `got` holds against `want` when |got - want| <= rel · max(|want|, 1). The floor at 1
+/// holds a value that cancels to near zero to `rel` absolute, where a relative or ulp bound has no scale. Made only by
+/// `f32_rel`, which refuses rel < 1e-4 (in a `const`, at compile time): f32 arithmetic in a different order (the tape
+/// against TS's f64-then-round) is not held to a few ulps, and a bare number is never a tolerance.
+#[derive(Clone, Copy, Debug)]
+pub struct Tol {
+    rel: f64,
+}
+impl Tol {
+    pub const fn f32_rel(rel: f64) -> Tol {
+        assert!(rel >= 1e-4, "an f32 relative tolerance is at least 1e-4");
+        Tol { rel }
+    }
+    /// The same bits (equal NaNs, equal infinities) always hold; otherwise the bound above.
+    pub fn holds(self, got: f32, want: f32) -> bool {
+        got.to_bits() == want.to_bits()
+            || (got.is_nan() && want.is_nan())
+            || (f64::from(got) - f64::from(want)).abs() <= self.rel * f64::from(want).abs().max(1.0)
+    }
+}
+
 use loft_core::grad::grad;
 use loft_core::interval::{I, enclose};
 use loft_core::prim::{ATOMS, Atom, PRIMS, Prim, TyRule, atom};
