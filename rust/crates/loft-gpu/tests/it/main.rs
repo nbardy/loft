@@ -343,38 +343,35 @@ fn corpus_bundles_load() {
     for p in &paths {
         let bytes = std::fs::read(p).unwrap();
         let id = p.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
-        let mut outcome = Vec::new();
-        for ask in [Precision::F32] {
-            let got = pollster::block_on(Loft::load(&d, &q, &bytes, ask, &[CANVAS], None)).map(|mut loft| {
-                // One frame, so kernels and every pipeline's bindings meet the device.
-                let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
-                let game = Game::new(&d);
-                let (color, depth) =
-                    (game.color.create_view(&Default::default()), game.depth.create_view(&Default::default()));
-                let view = View {
-                    canvas: CANVAS,
-                    color: &color,
-                    depth: &depth,
-                    size: [N, N],
-                    owner: Owner::Loft,
-                    layers: Layers::All,
-                };
-                let mut enc = d.create_command_encoder(&Default::default());
-                loft.set_time(1.0);
-                let encoded = loft.encode_into(&d, &q, &mut enc, &view);
-                q.submit([enc.finish()]);
-                d.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
-                (encoded, pollster::block_on(scope.pop()))
-            });
-            outcome.push(match got {
-                Ok((Ok(()), None)) => "ok".to_string(),
-                Ok((Err(e), _)) => format!("frame refused: {e}"),
-                Ok((Ok(()), Some(e))) => format!("device refused the frame: {e}"),
-                Err(e) => format!("load refused: {e}"),
-            });
-        }
-        let ok = outcome.iter().all(|o| o == "ok");
-        println!("{{\"id\":{id:?},\"f32\":{:?}}}", outcome[0]);
+        let got = pollster::block_on(Loft::load(&d, &q, &bytes, Precision::F32, &[CANVAS], None)).map(|mut loft| {
+            // One frame, so kernels and every pipeline's bindings meet the device.
+            let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
+            let game = Game::new(&d);
+            let (color, depth) =
+                (game.color.create_view(&Default::default()), game.depth.create_view(&Default::default()));
+            let view = View {
+                canvas: CANVAS,
+                color: &color,
+                depth: &depth,
+                size: [N, N],
+                owner: Owner::Loft,
+                layers: Layers::All,
+            };
+            let mut enc = d.create_command_encoder(&Default::default());
+            loft.set_time(1.0);
+            let encoded = loft.encode_into(&d, &q, &mut enc, &view);
+            q.submit([enc.finish()]);
+            d.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            (encoded, pollster::block_on(scope.pop()))
+        });
+        let outcome = match got {
+            Ok((Ok(()), None)) => "ok".to_string(),
+            Ok((Err(e), _)) => format!("frame refused: {e}"),
+            Ok((Ok(()), Some(e))) => format!("device refused the frame: {e}"),
+            Err(e) => format!("load refused: {e}"),
+        };
+        let ok = outcome == "ok";
+        println!("{{\"id\":{id:?},\"f32\":{outcome:?}}}");
         if ok {
             loaded += 1;
         } else {
