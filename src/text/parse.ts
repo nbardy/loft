@@ -81,6 +81,11 @@ const RAW_NAMES = new Map<string, string>([
   ["arrayLength", "runtime-sized arrays"], ["countOneBits", "integer bit operations"], ["countLeadingZeros", "integer bit operations"], ["countTrailingZeros", "integer bit operations"],
   ["extractBits", "integer bit operations"], ["insertBits", "integer bit operations"], ["firstLeadingBit", "integer bit operations"], ["firstTrailingBit", "integer bit operations"], ["reverseBits", "integer bit operations"],
   ["quantizeToF16", "f16"],
+  // WGSL builtins the subset does not lower: raw, not an "unknown name" (the design's rule for outside the subset).
+  ["ldexp", "the builtin ldexp"], ["frexp", "the builtin frexp"], ["modf", "the builtin modf"],
+  ["determinant", "the builtin determinant"], ["transpose", "the builtin transpose"],
+  ["dot4U8Packed", "packing"], ["dot4I8Packed", "packing"],
+  ...["mat4x4", "mat2x3", "mat3x2", "mat2x4", "mat4x2", "mat3x4", "mat4x3"].flatMap((m) => [[m, `${m} matrices`], [`${m}f`, `${m} matrices`]] as [string, string][]),
   // The scene prelude's shader-stage values (src/compile/scene_wgsl.ts): raw code may read them, the CPU twin cannot.
   ["frame", "the frame uniform"], ["view_dir", "view_dir, a shader-stage value"], ["pixel_world", "pixel_world, a shader-stage value"],
   ["scene_depth", "scene_depth, a shader-stage value"], ["scene_position", "scene_position, a shader-stage value"], ["camera_ray", "camera_ray, a shader-stage value"],
@@ -114,7 +119,7 @@ function rawReason(toks: readonly Tok[], moduleVars: ReadonlySet<string>): RawRe
     if (t.s === "var" && toks[j + 1]?.s === "<") return { why: "address-space variables (var<...>)", at };
     const named = RAW_NAMES.get(t.s);
     if (named !== undefined && toks[j - 1]?.s !== ".") return { why: named, at };
-    if (toks[j - 1]?.s !== ".") for (const [p, why] of RAW_PREFIXES) if (t.s.startsWith(p) && t.s.length > p.length && /[A-Z_]/.test(t.s[p.length]!)) return { why, at };
+    if (toks[j - 1]?.s !== ".") for (const [p, why] of RAW_PREFIXES) if (t.s.startsWith(p) && t.s.length > p.length && /[A-Z_0-9]/.test(t.s[p.length]!)) return { why, at };
     if (t.s === "sampler" || t.s === "sampler_comparison") return { why: "texture samplers", at };
     if (moduleVars.has(t.s) && toks[j - 1]?.s !== ".") return { why: `the module variable ${t.s}`, at };
   }

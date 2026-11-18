@@ -106,15 +106,17 @@ function graphTy(t: TypeRef | undefined): Ty | undefined {
 function assemble(text: string, source: Source, module: Module, rawHoles: readonly unknown[]): WgslModule {
   const fns = new Map<string, FnItem>(), structs = new Map<string, StructItem>(), consts = new Map(module.consts.map((c) => [c.name, c] as const));
   const names = new Map<string, At>();
-  const declare = (name: string, at: At): void => {
+  // Not named `declare`: Bun's TypeScript transpiler drops a statement that starts `declare(` as an ambient
+  // declaration, so every duplicate-name and type-name check below silently never ran.
+  const claim = (name: string, at: At): void => {
     if (/^(f32|f16|i32|u32|bool|array|vec[234][fhiu]?|mat[234]x[234][fh]?)$/.test(name)) throw new TextError(source, at, `a declaration named ${name}`, "a name that is not one of WGSL's types", "rename it");
     const seen = names.get(name);
     if (seen !== undefined) throw new TextError(source, at, `a second declaration of ${name}`, "one declaration per name (the first is at line " + (source.line0 + seen.line) + ")", "rename one of them");
     names.set(name, at);
   };
-  for (const f of module.fns) { declare(f.sig.name, f.sig.at); fns.set(f.sig.name, f); }
-  for (const s of module.structs) { declare(s.name, s.at); structs.set(s.name, s); }
-  for (const c of module.consts) declare(c.name, c.at);
+  for (const f of module.fns) { claim(f.sig.name, f.sig.at); fns.set(f.sig.name, f); }
+  for (const s of module.structs) { claim(s.name, s.at); structs.set(s.name, s); }
+  for (const c of module.consts) claim(c.name, c.at);
   const failAt = (at: At) => (given: string, expected: string, fix: string): never => { throw new TextError(source, at, given, expected, fix); };
   const holes = rawHoles.map((h, k) => fromTs(h, `the hole \${...} number ${k + 1}`, failAt(holeAt(module, k))));
 
@@ -309,21 +311,22 @@ function assemble(text: string, source: Source, module: Module, rawHoles: readon
       throw e;
     }
   };
-  const tsFail = (name: string) => (given: string, expected: string, fix: string): never => { throw new TextError(source, fns.get(name)?.sig.at ?? { line: 0, col: 0 }, given, expected, fix); };
+  // `at`: the fn or struct the TypeScript caller called (a struct's errors point at its declaration, not line 0).
+  const tsFail = (at: At) => (given: string, expected: string, fix: string): never => { throw new TextError(source, at, given, expected, fix); };
   for (const f of module.fns) {
     const name = f.sig.name;
     if (f.kind === "entry") continue;
     out[name] = (...args: unknown[]) => withCaller(() => {
       const n = f.sig.params.length;
       // A slot may pass more arguments than a function declares: it takes a prefix, as a JavaScript function does.
-      if (args.length < n) tsFail(name)(`${args.length} argument${args.length === 1 ? "" : "s"} to ${name}`, `${n} (${f.sig.params.map((p) => p.name).join(", ")})`, `pass ${f.sig.params.map((p) => p.name).join(", ")}`);
-      const values = args.slice(0, n).map((a, i) => fromTs(a, `${name}'s argument ${f.sig.params[i]!.name}`, tsFail(name)));
+      if (args.length < n) tsFail(f.sig.at)(`${args.length} argument${args.length === 1 ? "" : "s"} to ${name}`, `${n} (${f.sig.params.map((p) => p.name).join(", ")})`, `pass ${f.sig.params.map((p) => p.name).join(", ")}`);
+      const values = args.slice(0, n).map((a, i) => fromTs(a, `${name}'s argument ${f.sig.params[i]!.name}`, tsFail(f.sig.at)));
       const v = f.kind === "graph" ? lowerer.call(f, values, f.sig.at, [], undefined) : callRaw(name, values, f.sig.at);
-      return toTs(v, name, tsFail(name));
+      return toTs(v, name, tsFail(f.sig.at));
     });
   }
   for (const s of module.structs) {
-    out[s.name] = (...args: unknown[]) => withCaller(() => toTs(lowerer.structOf(s.name, s.fields, args.map((a, i) => fromTs(a, `${s.name}.${s.fields[i]?.name ?? i}`, tsFail(s.name))), s.at), s.name, tsFail(s.name)));
+    out[s.name] = (...args: unknown[]) => withCaller(() => toTs(lowerer.structOf(s.name, s.fields, args.map((a, i) => fromTs(a, `${s.name}.${s.fields[i]?.name ?? i}`, tsFail(s.at))), s.at), s.name, tsFail(s.at)));
   }
   return out as WgslModule;
 }

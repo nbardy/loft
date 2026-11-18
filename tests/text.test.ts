@@ -44,6 +44,9 @@ test("each construct outside the subset makes its function raw, with its reason"
     ["fn f(x: f32) -> f32 { switch (u32(x)) { default: { return x; } } }", "a switch"],
     ["var<private> acc: f32;\nfn f(x: f32) -> f32 { return acc + x; }", "the module variable acc"],
     ["@group(0) @binding(0) var tex: texture_2d<f32>;\nfn f(x: f32) -> f32 { return textureLoad(tex, vec2i(0), 0).x * x; }", "texture reads"],
+    // Builtins whose names continue with a digit, and matrices outside the subset: raw, not "unknown name".
+    ["fn f(x: f32) -> f32 { return unpack2x16float(pack2x16float(vec2(x, x))).x; }", "packing"],
+    ["fn f(x: f32) -> f32 { let m = mat4x4f(); return m[0].x + x; }", "mat4x4 matrices"],
   ];
   const x = variable("x", "f32");
   for (const [text, why] of cases) {
@@ -70,6 +73,13 @@ fn f(p: vec3f) -> f32 {
   expect(message).toContain(`tests/text.test.ts:${Number(line) + 3}:10: given unknown name "nois3"`);
   expect(message).toContain("did you mean noise3?");
   expect(message).toContain("  return nois3(p);\n         ^");
+});
+
+// Two declarations of one name are refused. The bug this catches: Bun's transpiler silently dropped the checking call
+// when the helper was named `declare` (an ambient declaration to it), so the second `fn f` replaced the first unseen.
+test("a second declaration of a name is refused, quoting its line", () => {
+  expect(() => wgsl("fn f(x: f32) -> f32 { return x; }\nfn f(y: f32) -> f32 { return y; }")).toThrow(/line 2 of the wgsl text .*: given a second declaration of f/);
+  expect(() => wgsl("struct vec3f { a: f32 }")).toThrow(/given a declaration named vec3f/);
 });
 
 // Check 4. A 300-line module parses and lowers in under 20 ms (the target that keeps `loft check` and `build` quick).
