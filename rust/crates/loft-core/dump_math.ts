@@ -1,11 +1,11 @@
 // Lane 1.3 check (a) input: every `tests/expr*` fixture and one case per operator, as graphs plus `compileJs` (f64)
 // values at f32 points. Until the recorder (lane 1.2) lands, this walk of the TS graph is the bridge.
-// Usage: bun rust/crates/loft-core/tests/it/dump_math.ts > out/lr13/math.json
+// Usage: bun rust/crates/loft-core/dump_math.ts > out/lr13/math.json
 import {
   abs, add, atan2, clamp, compileJs, cos, cross, eq, f, floor, length, lt, mix, mod, mul, ne, normalize, param, pick, pow,
   round, select, sin, smoothstep, step, sub, time, variable, vec3, type Expr, type Fn,
-} from "../../../../../src/expr.ts";
-import * as E from "../../../../../src/expr.ts";
+} from "../../../src/expr.ts";
+import * as E from "../../../src/expr.ts";
 
 const FNS: Fn[] = [
   "add", "sub", "mul", "div", "neg", "min", "max", "pow", "mod", "atan2", "step",

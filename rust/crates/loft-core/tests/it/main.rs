@@ -225,7 +225,7 @@ fn fixtures() -> Vec<Fixture> {
     let path = std::env::var("LR13_MATH")
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../../out/lr13/math.json").into());
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!("{path}: {e}. Write it first: bun rust/crates/loft-core/tests/it/dump_math.ts > out/lr13/math.json")
+        panic!("{path}: {e}. Write it first: bun rust/crates/loft-core/dump_math.ts > out/lr13/math.json")
     });
     let doc: Value = serde_json::from_str(&text).unwrap();
     let u = |v: &Value| v.as_u64().unwrap() as usize;
