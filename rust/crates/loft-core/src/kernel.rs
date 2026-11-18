@@ -3,7 +3,7 @@
 //!
 //! - a Map or Scan whose body is Const (reads no time, param, input, curve or per-frame resource) is run on the tape
 //!   at compile and becomes `Init::Bytes`; no kernel is left. When the tape cannot run it yet (a fetch, a loop, a raw
-//!   call, `pick`), it runs once on the GPU at load: `When::Load`, the named place for that case;
+//!   call), it runs once on the GPU at load: `When::Load`, the named place for that case;
 //! - a fill that reads the frame runs per frame, and its per-frame frontier is lifted into frame-values resources
 //!   (src/compile/rates.ts, inherited);
 //! - `Steps` and author `Raw` passes keep the clock they declare. Ping-pong, history and checkpoint replay are the
@@ -31,13 +31,22 @@ pub struct Decl {
     pub when: When,
 }
 
+/// A fill's bodies are its own roots, not graph functions: a graph function has one result (wire §3.2), and a row has
+/// several lanes and a step several states.
 pub enum Fill {
-    /// Rows `start..start + count`: `f` is a `Fn` decl of one binder (the row index, f32) whose results are the
-    /// row's lanes, a vec4 each.
-    Map { start: u32, count: u32, f: u32 },
-    /// Rows `first..first + steps`, in order: `init` is a `Fn` of no binder giving the state; `step` a `Fn` over
-    /// `[state..., i]` giving `[next..., lanes...]`, with `i` the step number.
-    Scan { first: u32, steps: u32, init: u32, step: u32 },
+    /// Rows `start..start + count`: `lanes` (a vec4 each) over the binder `index` (the row index, f32).
+    Map { start: u32, count: u32, index: u32, lanes: Box<[u32]> },
+    /// Rows `first..first + steps`, in order: the state starts at `init`; each step reads the binders `state` and
+    /// `index` (the step number) and gives `next` and the row's `lanes`. `init`, `state` and `next` are parallel.
+    Scan {
+        first: u32,
+        steps: u32,
+        init: Box<[u32]>,
+        state: Box<[u32]>,
+        index: u32,
+        next: Box<[u32]>,
+        lanes: Box<[u32]>,
+    },
     /// An author compute pass: `module`'s raw WGSL, `dispatch` workgroups, reading `reads`.
     Raw { module: u32, dispatch: [u32; 3], reads: Box<[u32]> },
 }
@@ -83,24 +92,30 @@ pub fn kept(when: &When) -> u32 {
 }
 
 pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error> {
-    let fns = |d: &Decl| -> Vec<u32> {
-        match d.fill {
-            Fill::Map { f, .. } => vec![f],
-            Fill::Scan { init, step, .. } => vec![init, step],
+    // The values a fill computes, and the per-invocation binders they read.
+    let results = |d: &Decl| -> Vec<u32> {
+        match &d.fill {
+            Fill::Map { lanes, .. } => lanes.to_vec(),
+            Fill::Scan { init, next, lanes, .. } => {
+                init.iter().chain(next.iter()).chain(lanes.iter()).copied().collect()
+            }
             Fill::Raw { .. } => vec![],
         }
     };
-    let results = |f: u32| &g.roots_of(&g.decls[f as usize])[rate::binders(g, f).len()..];
-    let mut items: Vec<u32> =
-        decls.iter().flat_map(|d| fns(d).into_iter().flat_map(|f| rate::binders(g, f).to_vec())).collect();
+    let mut items: Vec<u32> = decls
+        .iter()
+        .flat_map(|d| match &d.fill {
+            Fill::Map { index, .. } => vec![*index],
+            Fill::Scan { state, index, .. } => state.iter().copied().chain([*index]).collect(),
+            Fill::Raw { .. } => vec![],
+        })
+        .collect();
     items.sort_unstable();
     let reads: Vec<Box<[u32]>> = decls
         .iter()
         .map(|d| match &d.fill {
             Fill::Raw { reads, .. } => reads.clone(),
-            Fill::Map { .. } | Fill::Scan { .. } => {
-                fetched(g, &fns(d).iter().flat_map(|&f| results(f).to_vec()).collect::<Vec<_>>())
-            }
+            Fill::Map { .. } | Fill::Scan { .. } => fetched(g, &results(d)),
         })
         .collect();
 
@@ -113,7 +128,7 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         let when: Vec<When> = decls
             .iter()
             .map(|d| {
-                let body = fns(d).iter().flat_map(|&f| results(f)).fold(false, |a, &x| a | rates[x as usize].frame);
+                let body = results(d).iter().any(|&x| rates[x as usize].frame);
                 match (&d.when, &d.fill) {
                     (When::Steps { .. }, _) | (_, Fill::Raw { .. }) | (When::Load, _) => d.when.clone(),
                     (When::Frame, Fill::Map { .. } | Fill::Scan { .. }) => {
@@ -137,7 +152,7 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
     };
 
     // Compile fills: a Const Map/Scan whose resource has no other writer that must stay on the GPU before frames.
-    let body_frame = |k: usize| fns(&decls[k]).iter().flat_map(|&f| results(f)).any(|&x| rates[x as usize].frame);
+    let body_frame = |k: usize| results(&decls[k]).iter().any(|&x| rates[x as usize].frame);
     let gpu_writer = |r: u32, k: usize| {
         decls.iter().enumerate().any(|(j, d)| {
             j != k
@@ -187,11 +202,11 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
     let mut groups: Vec<Vec<u32>> = Vec::new();
     let mut extra: Vec<Vec<u32>> = vec![Vec::new(); decls.len()];
     for (k, d) in decls.iter().enumerate() {
-        let Fill::Map { f, count: 2.., .. } = d.fill else { continue };
+        let Fill::Map { count: 2.., ref lanes, .. } = d.fill else { continue };
         if !on_gpu[k] || !matches!(when[k], When::Frame) {
             continue;
         }
-        for x in rate::frontier(g, &rates, results(f)) {
+        for x in rate::frontier(g, &rates, lanes) {
             let at = fetched(g, &[x]).iter().map(|&r| depth[r as usize]).max().unwrap_or(0) as usize;
             let (group, _) = *lifted.entry(x).or_insert_with(|| {
                 groups.resize_with(groups.len().max(at + 1), Vec::new);
@@ -277,8 +292,19 @@ pub fn fetched(g: &Graph, roots: &[u32]) -> Box<[u32]> {
         stack.extend(g.args_of(n));
         match n.op {
             Op::Fetch { kernel, .. } => out.push(kernel),
-            Op::Call(d) | Op::Loop { decl: d, .. } => stack.extend(g.roots_of(&g.decls[d as usize])),
-            Op::Lit(_) | Op::Leaf(_) | Op::Prim(_) | Op::Swizzle(_) | Op::Grad | Op::Raw(_) => {}
+            Op::Call(f) => stack.push(g.fns[f as usize].body),
+            Op::Loop { decl, .. } => stack.extend(g.loops[decl as usize].nodes()),
+            Op::Lit(_)
+            | Op::Time
+            | Op::Param(_)
+            | Op::Input(_)
+            | Op::Bind(_)
+            | Op::Var(_)
+            | Op::Prim(_)
+            | Op::Swizzle(_)
+            | Op::Vec
+            | Op::Grad
+            | Op::Raw(_) => {}
         }
     }
     out.sort_unstable();
@@ -292,12 +318,11 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
         let w = lanes.len() * 4;
         out[r * w..(r + 1) * w].copy_from_slice(&lanes.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
     };
-    match d.fill {
-        Fill::Map { start, count, f } => {
+    match &d.fill {
+        &Fill::Map { start, count, index, ref lanes } => {
             let mut l = Lower { g, ssa: Ssa::default() };
-            let (bind, res) = split(g, f);
             let i = l.ssa.leaf(0);
-            let lanes: Vec<Id> = l.lower(res, &[(bind[0], vec![i])])?.concat();
+            let lanes: Vec<Id> = l.lower(lanes, &[(index, vec![i])])?.concat();
             let leaves: Vec<f32> = (0..count).map(|i| i as f32).collect();
             let mut regs = Vec::new();
             tape::run(&l.ssa, count as usize, 1, &leaves, &mut regs).expect(UNBOUND);
@@ -306,21 +331,20 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
                 row(out, start as usize + r, &lanes.iter().map(|&x| regs[x as usize * n + r]).collect::<Vec<_>>());
             }
         }
-        Fill::Scan { first, steps, init, step } => {
+        &Fill::Scan { first, steps, ref init, ref state, index, ref next, ref lanes } => {
             let mut a = Lower { g, ssa: Ssa::default() };
-            let init_regs: Vec<Id> = a.lower(split(g, init).1, &[])?.concat();
-            let (bind, res) = split(g, step);
+            let init_regs: Vec<Id> = a.lower(init, &[])?.concat();
             let mut b = Lower { g, ssa: Ssa::default() };
             let mut slot = 0;
             let mut binds = Vec::new();
-            for &x in bind {
-                let w = u32::from(tape_width(g.nodes[x as usize].ty)?);
+            for &x in state.iter().chain([&index]) {
+                let w = u32::from(tape_width(g.nodes[x as usize].ty));
                 binds.push((x, (slot..slot + w).map(|s| b.ssa.leaf(s)).collect::<Vec<_>>()));
                 slot += w;
             }
-            let outs = b.lower(res, &binds)?;
-            let n_state = bind.len() - 1;
-            let (next, lanes): (Vec<Id>, Vec<Id>) = (outs[..n_state].concat(), outs[n_state..].concat());
+            let res: Vec<u32> = next.iter().chain(lanes.iter()).copied().collect();
+            let outs = b.lower(&res, &binds)?;
+            let (next, lanes): (Vec<Id>, Vec<Id>) = (outs[..next.len()].concat(), outs[next.len()..].concat());
             let mut regs = Vec::new();
             tape::run(&a.ssa, 1, 0, &[], &mut regs).expect(UNBOUND);
             let mut state: Vec<f32> = init_regs.iter().map(|&x| regs[x as usize]).collect();
@@ -340,19 +364,9 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
 /// move a fill to the GPU.
 const UNBOUND: &str = "a lowered fill reads only the leaf slots it allocated";
 
-/// Tape registers a value of `ty` takes: one per component, one for a bool (0 or 1). A record is not on the tape yet.
-fn tape_width(ty: Ty) -> Option<u8> {
-    match ty {
-        Ty::Bool => Some(1),
-        Ty::F32 | Ty::V2 | Ty::V3 | Ty::V4 => ty.width(),
-        Ty::Rec(_) => None,
-    }
-}
-
-/// A `Fn` decl's binders and results.
-fn split(g: &Graph, f: u32) -> (&[u32], &[u32]) {
-    let a = rate::binders(g, f).len();
-    g.roots_of(&g.decls[f as usize]).split_at(a)
+/// Tape registers a value of `ty` takes: one per component, one for a bool (0 or 1).
+fn tape_width(ty: Ty) -> u8 {
+    ty.lits()
 }
 
 /// Graph to tape: vectors become component registers, calls are inlined over their arguments.
@@ -380,28 +394,30 @@ impl Lower<'_> {
             let n = &g.nodes[x as usize];
             let args: Vec<&[Id]> = g.args_of(n).iter().map(|a| memo[a].as_slice()).collect();
             let v = match n.op {
-                Op::Lit(at) => (0..tape_width(n.ty)? as usize)
+                Op::Lit(at) => (0..tape_width(n.ty) as usize)
                     .map(|c| self.ssa.lit(f64::from_bits(g.lits[at as usize + c]) as f32))
                     .collect(),
-                Op::Prim(Prim::Vec) => match (args.as_slice(), n.ty.width()?) {
+                Op::Vec => match (args.as_slice(), n.ty.width()?) {
                     ([one], w) if one.len() == 1 => vec![one[0]; w as usize],
                     (parts, _) => parts.concat(),
                 },
-                Op::Prim(p) => {
-                    let p = twin(p)?;
-                    self.ssa.apply(p, &args)
-                }
+                Op::Prim(p) => self.ssa.apply(twin(p), &args),
                 Op::Swizzle(s) => (0..s.len).map(|k| args[0][((s.comps >> (2 * k)) & 3) as usize]).collect(),
-                Op::Call(d) => {
-                    let (bind, res) = split(g, d);
+                Op::Call(f) => {
+                    let f = &g.fns[f as usize];
                     let given: Vec<(u32, Vec<Id>)> =
-                        bind.iter().copied().zip(args.iter().map(|a| a.to_vec())).collect();
-                    match self.lower(res, &given)?.as_slice() {
-                        [one] => one.clone(),
-                        _ => return None,
-                    }
+                        f.binders.iter().copied().zip(args.iter().map(|a| a.to_vec())).collect();
+                    self.lower(&[f.body], &given)?.swap_remove(0)
                 }
-                Op::Leaf(_) | Op::Fetch { .. } | Op::Loop { .. } | Op::Grad | Op::Raw(_) => return None,
+                Op::Time
+                | Op::Param(_)
+                | Op::Input(_)
+                | Op::Bind(_)
+                | Op::Var(_)
+                | Op::Fetch { .. }
+                | Op::Loop { .. }
+                | Op::Grad
+                | Op::Raw(_) => return None,
             };
             memo.insert(x, v);
         }
@@ -409,11 +425,11 @@ impl Lower<'_> {
     }
 }
 
-/// loft-ir's operator as the tape's (`Vec` is handled by the lowering; `Pick` is not a tape operator yet). The two
-/// enums are the same operators in different orders until the wire is reconciled (wave 1 integration note).
+/// loft-ir's operator as the tape's: the same operators (loft-ir's `Prim` is now in the wire's order, which equals
+/// loft-core's), still two enums because loft-ir carries no arithmetic.
 #[rustfmt::skip]
-fn twin(p: Prim) -> Option<P> {
-    Some(match p {
+fn twin(p: Prim) -> P {
+    match p {
         Prim::Add => P::Add, Prim::Sub => P::Sub, Prim::Mul => P::Mul, Prim::Div => P::Div, Prim::Min => P::Min,
         Prim::Max => P::Max, Prim::Pow => P::Pow, Prim::Mod => P::Mod, Prim::Rem => P::Rem, Prim::Atan2 => P::Atan2,
         Prim::Step => P::Step, Prim::Neg => P::Neg, Prim::Abs => P::Abs, Prim::Sign => P::Sign, Prim::Floor => P::Floor,
@@ -426,6 +442,5 @@ fn twin(p: Prim) -> Option<P> {
         Prim::Dot => P::Dot, Prim::Cross => P::Cross, Prim::Lt => P::Lt, Prim::Gt => P::Gt, Prim::Le => P::Le,
         Prim::Ge => P::Ge, Prim::Eq => P::Eq, Prim::Ne => P::Ne, Prim::And => P::And, Prim::Or => P::Or, Prim::Not => P::Not,
         Prim::Select => P::Select,
-        Prim::Vec | Prim::Pick => return None,
-    })
+    }
 }

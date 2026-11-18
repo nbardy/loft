@@ -48,33 +48,31 @@ Lines (scc code): loft-ir src 1,414 (was about 860, of which print.rs is about 2
 Reproduce: run `out/wire/dump_all.sh` (score.ts per examples file, about 3 min), then
 `LOFT_WIRE_CORPUS=$PWD/out/wire/corpus tools/dev.sh test loft-ir --run-ignored only --no-capture`.
 
-## Wave-2 migration (not edited here; the lanes own the files)
+## Wave-2 merge (main 5272308 merged in; no text conflicts)
 
-The graph API changed. These are the mechanical edits each lane needs when it rebases:
+The wave-2 code moved to the per-kind graph:
 
-- **2.1 kernels** (`loft-core/src/{rate,kernel}.rs`, `tests/it/kernels.rs`):
-  - `Op::Leaf(Leaf::Time | Leaf::Param(_) | Leaf::Input(_))` becomes `Op::Time | Op::Param(_) | Op::Input(_)`, and
-    `Leaf::Bind` becomes `Op::Bind(_) | Op::Var(_)`.
-  - `Prim::Vec` becomes `Op::Vec`.
-  - `g.decls[d]` with `Tag::Fn`/`Tag::Loop` and `roots_of` become `g.fns[f].{binders, body}` and
-    `g.loops[l].{count, init, state, index, next, stop}`. A Fn has one body, so `results(f)` is `[g.fns[f].body]`.
-  - Test graphs build `sym_at` (n + 1 starts) and the per-kind arrays instead of `sym_ends` and `decls`.
-    `Op::Fetch.lane` is `u16`.
-- **2.2 emit** (`loft-core/src/emit/{mod,body}.rs`, `tests/it/emit.rs`):
-  - The `Tag::Param`/`Tag::Input` fold over decls becomes `g.params.len()` / `g.inputs.len()`.
-  - `Op::Raw(sym)` becomes `Op::Raw(r)`, with `g.raws[r].{name, text, deps}`. The "same name, two sources" check can
-    key on `name`.
-  - "A graph function with several results" cannot be written any more.
-  - Loop arity is `g.loops[l].init.len()`.
-  - Tests drop `Prim::Pick` and `Ty::Rec(_)`.
-- **2.3 analyses**: loft-ir is used only for `Error`/`Site`, so the only possible change is `NotFinite { node }`.
-- **2.4 library**:
-  - `src/record/graph_fn.ts` must return `{ kind: "body", binders, body }`. It is a type error after the merge, not
-    a text conflict.
-  - Its print.ts change (lazy call arguments) matches the Rust print. Its loop cache key
-    `${k}:${level}:${bound}` no longer separates calls, because call arguments moved out of `bound`. A graph
-    function whose body holds a loop that reads an argument, called twice with different arguments, would get the
-    first call's loop line. The Rust print keys loops by (loop, level, call frame). Fix: add a frame id to the key.
+- **2.1 kernels**: `rate`, `kernel` read `Op::{Time, Param, Input, Bind, Var, Vec}` and `g.fns` / `g.loops`
+  (`Loop::nodes()` in loft-ir lists every node a loop names). `rate::binders` is gone. **Not mechanical:**
+  `Fill::Map`/`Fill::Scan` held `Fn` decls with several results (a row's lanes; a step's next states and lanes),
+  which a one-body `GraphFn` cannot say. A fill now holds its own roots: `Map { index, lanes }`,
+  `Scan { init, state, index, next, lanes }`. The corpus plan is unchanged: 71 scenes, 4,020 tables, 215 vs 446 frame
+  dispatches, and the ignored const-fill check is the same red (79 fills over 1 ulp, worst 9.2e-6 relative).
+- **2.2 emit**: `module` takes `Slots { params, inputs, kernels }` (layout's slots, indexed like the graph's decl
+  arrays) instead of one per-decl `[u32; 2]` table. `Op::Raw(r)` reads `g.raws[r]`: the name is the declared one (no
+  "last function in the source" guess), and the module includes a raw function's `deps` before it. `Own`/`Pick` and
+  the several-results refusal are gone; `Op::Vec` is written by the body.
+- **2.3 analyses**: no change needed.
+- **2.4 library**: `graph_fn.ts` returns `kind: "body"`. The job print's loop cache key gains the call frame
+  (`Scope.frame`), so a graph function's loop that reads an argument gets one line per call, as the Rust print does.
+
+| Check (after the merge) | Result |
+|---|---|
+| Corpus print equality (`out/wire/dump_all.sh` re-run on merged TS) | **124/125**, all 124 jobs equal; `heron_leap_refused.ts` still throws at import |
+| Lab addon `tools/dev.sh build loft-node --fast --features probe`; `binding_check.ts` | built; `fails: []` (28 MB job, decode 82 ms) |
+| Shadow check through the addon: owl, reefback_titan, heron_leap, dust_veil | all four `run` as `Scene` (5,906 / 53,955 / 12,537 / 613 nodes) and print equal |
+| `tools/dev.sh test loft-ir`, `test loft-core`; lint both; `cargo fmt --check` | 8/8 + corpus; 13/13 (1 ignored, known red); clean |
+| `pnpm typecheck` | clean |
 
 ## Left
 

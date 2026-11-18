@@ -49,13 +49,13 @@ class Canon {
 }
 
 /**
- * Where a walk is: the loop level, the binders it reads (node id -> canonical line), and its memo. A loop scope reads
- * through to its parent's memo; a call scope does not (its body's binders mean that call's arguments). A value that
- * reads no binder is memoised for the whole walk.
+ * Where a walk is: the loop level, the binders it reads (node id -> canonical line), the call frame it is in, and its
+ * memo. A loop scope reads through to its parent's memo; a call scope does not (its body's binders mean that call's
+ * arguments). A value that reads no binder is memoised for the whole walk.
  */
-type Scope = { readonly level: number; readonly bound: Map<number, number>; readonly args: ReadonlyMap<number, () => number>; readonly memo: Map<number, number>; readonly parent: Scope | undefined };
-const root = (): Scope => ({ level: 0, bound: new Map(), args: new Map(), memo: new Map(), parent: undefined });
-const inner = (s: Scope): Scope => ({ level: s.level + 1, bound: new Map(s.bound), args: s.args, memo: new Map(), parent: s });
+type Scope = { readonly level: number; readonly frame: number; readonly bound: Map<number, number>; readonly args: ReadonlyMap<number, () => number>; readonly memo: Map<number, number>; readonly parent: Scope | undefined };
+const root = (): Scope => ({ level: 0, frame: 0, bound: new Map(), args: new Map(), memo: new Map(), parent: undefined });
+const inner = (s: Scope): Scope => ({ level: s.level + 1, frame: s.frame, bound: new Map(s.bound), args: s.args, memo: new Map(), parent: s });
 function find(s: Scope, global: Map<number, number>, id: number): number | undefined {
   const g = global.get(id);
   if (g !== undefined) return g;
@@ -108,6 +108,7 @@ export function printJob(job: Job): string {
   const of = (tag: Decl) => decls.filter((d) => d.tag === tag);
   const fns = of(Decl.Fn), loops = of(Decl.Loop), kernels = of(Decl.Kernel), params = of(Decl.Param), inputs = of(Decl.Input);
   const N = job.nodes, sym = (k: number): string => symOf(job, k);
+  let frames = 0; // call frames entered, so each call's body has its own loop lines
   const walk = (id: number, s: Scope, inCall: boolean): number => {
     const hit = s.bound.get(id) ?? s.args.get(id)?.() ?? find(s, global, id);
     if (hit !== undefined) return hit;
@@ -141,15 +142,17 @@ export function printJob(job: Job): string {
         const d = fns[imm]!, args = job.args.subarray(at, at + n);
         // A call's body sees only its binders, bound to this call's arguments, at the caller's level. An argument is
         // walked where its binder is first read, not before the body: the TS graph, which inlined the call, meets it there.
-        const body: Scope = { level: s.level, bound: new Map(), args: new Map(Array.from(d.words.subarray(4, 4 + d.words[3]!), (b, j) => [b, () => walk(args[j]!, s, inCall)])), memo: new Map(), parent: undefined };
+        const body: Scope = { level: s.level, frame: ++frames, bound: new Map(), args: new Map(Array.from(d.words.subarray(4, 4 + d.words[3]!), (b, j) => [b, () => walk(args[j]!, s, inCall)])), memo: new Map(), parent: undefined };
         return walk(d.roots[0]!, body, true);
       }
       case Op.Grad: throw new Error("job: a Grad node (the wave-1 recorder writes derivatives expanded)");
     }
   };
+  // Per (loop, level, call frame, enclosing binders): its line, so its K results share one walk. The frame matters
+  // because call arguments are not in `bound`: a loop in a graph function that reads an argument differs per call.
   const loopLine = new Map<string, number>();
   const loop = (k: number, s: Scope, inCall: boolean): number => {
-    const d = loops[k]!, nState = d.words[0]!, hasStop = d.words[1]!, key = `${k}:${s.level}:${[...s.bound.values()].join(",")}`;
+    const d = loops[k]!, nState = d.words[0]!, hasStop = d.words[1]!, key = `${k}:${s.level}:${s.frame}:${[...s.bound.values()].join(",")}`;
     const seen = loopLine.get(key);
     if (seen !== undefined) return seen;
     const r = d.roots, count = walk(r[0]!, s, inCall), init = Array.from(r.subarray(1, 1 + nState), (x) => walk(x, s, inCall)), body = inner(s);

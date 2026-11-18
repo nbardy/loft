@@ -6,7 +6,7 @@
 //!
 //! Two bits instead of TS's ranked `build < frame < copy < item` (src/compile/rates.ts): a Map body that reads its row
 //! index and a param is per item for lifting but per frame for classification, and one rank cannot say both.
-use loft_ir::graph::{Graph, Leaf, Op, Tag};
+use loft_ir::graph::{Graph, Op};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct Rate {
@@ -28,14 +28,15 @@ pub fn rates(g: &Graph, frame_res: &[bool], items: &[u32]) -> Vec<Rate> {
     let frame = Rate { frame: true, item: false };
     for (id, n) in g.nodes.iter().enumerate() {
         let args = g.args_of(n).iter().fold(Rate::default(), |a, &x| a.join(r[x as usize]));
-        let decl = |d: u32| g.roots_of(&g.decls[d as usize]).iter().fold(args, |a, &x| a.join(r[x as usize]));
+        let over = |xs: &mut dyn Iterator<Item = u32>| xs.fold(args, |a, x| a.join(r[x as usize]));
         r.push(match n.op {
             Op::Lit(_) => Rate::default(),
-            Op::Leaf(Leaf::Time | Leaf::Param(_) | Leaf::Input(_)) => frame,
-            Op::Leaf(Leaf::Bind(_)) => Rate { frame: false, item: items.binary_search(&(id as u32)).is_ok() },
-            Op::Prim(_) | Op::Swizzle(_) | Op::Grad => args,
+            Op::Time | Op::Param(_) | Op::Input(_) => frame,
+            Op::Bind(_) | Op::Var(_) => Rate { frame: false, item: items.binary_search(&(id as u32)).is_ok() },
+            Op::Prim(_) | Op::Swizzle(_) | Op::Vec | Op::Grad => args,
             Op::Fetch { kernel, .. } => args.join(Rate { frame: frame_res[kernel as usize], item: false }),
-            Op::Call(d) | Op::Loop { decl: d, .. } => decl(d),
+            Op::Call(f) => over(&mut std::iter::once(g.fns[f as usize].body)),
+            Op::Loop { decl, .. } => over(&mut g.loops[decl as usize].nodes()),
             Op::Raw(_) => Rate { frame: true, item: true },
         });
     }
@@ -48,7 +49,7 @@ pub const LIFT_MIN: u32 = 3;
 /// What evaluating a node costs in operations, as src/compile/rates.ts counts (a move is free; a loop is large).
 fn own_cost(op: Op) -> u32 {
     match op {
-        Op::Lit(_) | Op::Leaf(_) | Op::Swizzle(_) | Op::Prim(loft_ir::graph::Prim::Vec) => 0,
+        Op::Lit(_) | Op::Time | Op::Param(_) | Op::Input(_) | Op::Bind(_) | Op::Var(_) | Op::Swizzle(_) | Op::Vec => 0,
         Op::Prim(_) | Op::Fetch { .. } | Op::Grad => 1,
         Op::Call(_) | Op::Raw(_) => 4,
         Op::Loop { .. } => 64,
@@ -87,24 +88,4 @@ fn cost_under(g: &Graph, rate: &[Rate], x: u32) -> u32 {
         stack.extend(g.args_of(&g.nodes[y as usize]));
     }
     total
-}
-
-/// The binders a decl owns: a `Fn`'s parameters, a `Loop`'s state and index (loft-ir's root layouts).
-pub(crate) fn binders(g: &Graph, d: u32) -> &[u32] {
-    let decl = &g.decls[d as usize];
-    let roots = g.roots_of(decl);
-    let a = decl.arity as usize;
-    match decl.tag {
-        Tag::Fn => &roots[..a],
-        Tag::Loop => &roots[1 + a..2 + 2 * a],
-        Tag::Kernel
-        | Tag::Draw
-        | Tag::Pass
-        | Tag::Medium
-        | Tag::Check
-        | Tag::Solve
-        | Tag::Param
-        | Tag::Input
-        | Tag::Camera => &[],
-    }
 }

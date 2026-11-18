@@ -11,8 +11,8 @@
 mod body;
 
 use crate::prim::{self, Spell};
-use body::{Body, unsupported};
-use loft_ir::graph::{Graph, Prim, Tag, Ty};
+use body::Body;
+use loft_ir::graph::{Graph, Prim, Ty};
 use loft_ir::{Error, error::SceneFault};
 use std::collections::HashMap;
 
@@ -36,16 +36,25 @@ pub struct Emitted {
     lines: Vec<Src>,
 }
 
-/// The module exporting each Fn decl `exports[i].1` as a WGSL function named `exports[i].0`. `at` is layout's answer
-/// per decl (lane 2.1): a Param's component slot and an Input's vec4 slot in the frame uniform (`[slot, 0]`), a Kernel's
-/// resource index and lanes per row (`[res, lanes]`). The module is validated as f32 before it is returned.
-pub fn module(g: &Graph, exports: &[(&str, u32)], at: &[[u32; 2]]) -> Result<Emitted, Error> {
+/// Where layout (lane 2.1) put each decl the module reads, indexed like the graph's decl arrays.
+pub struct Slots {
+    /// Per param: its component slot in the frame uniform.
+    pub params: Box<[u32]>,
+    /// Per input: its vec4 slot in the frame uniform.
+    pub inputs: Box<[u32]>,
+    /// Per kernel: its resource index and lanes per row, `[res, lanes]`.
+    pub kernels: Box<[[u32; 2]]>,
+}
+
+/// The module exporting each graph function `g.fns[exports[i].1]` as a WGSL function named `exports[i].0`. The
+/// module is validated as f32 before it is returned.
+pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted, Error> {
     let raws = raw_names(g)?;
     let mut e =
         Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], reads: vec![], raw_used: vec![] };
     let mut tail = vec![];
     for &(name, d) in exports {
-        let (params, result) = signature(g, d)?;
+        let (params, result) = signature(g, d);
         let f = e.function(d)?;
         let ps: Vec<String> = params
             .iter()
@@ -56,19 +65,8 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &[[u32; 2]]) -> Result<Emi
         let ret = ty_name(g.nodes[result as usize].ty, "lf");
         tail.push(format!("fn {name}({}) -> {ret} {{ return {f}({}); }}", ps.join(", "), args.join(", ")));
     }
-    let (params, inputs) = (0..g.decls.len()).fold((0, 0), |(p, i), d| match g.decls[d].tag {
-        Tag::Param => (p.max(at[d][0] / 4 + 1), i),
-        Tag::Input => (p, i.max(at[d][0] + 1)),
-        Tag::Fn
-        | Tag::Loop
-        | Tag::Kernel
-        | Tag::Draw
-        | Tag::Pass
-        | Tag::Medium
-        | Tag::Check
-        | Tag::Solve
-        | Tag::Camera => (p, i),
-    });
+    let params = at.params.iter().map(|s| s / 4 + 1).max().unwrap_or(0);
+    let inputs = at.inputs.iter().map(|s| s + 1).max().unwrap_or(0);
     let mut lines: Vec<(String, Src)> = vec![];
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
     put(format!(
@@ -78,10 +76,12 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &[[u32; 2]]) -> Result<Emi
     ));
     put("@group(0) @binding(0) var<uniform> frame: Frame;".into());
     for (k, &kern) in e.reads.iter().enumerate() {
-        put(format!("@group(1) @binding({k}) var<storage, read> r{}: array<vec4<f32>>;", at[kern as usize][0]));
+        put(format!("@group(1) @binding({k}) var<storage, read> r{}: array<vec4<f32>>;", at.kernels[kern as usize][0]));
     }
-    for &(n, sym) in &e.raw_used {
-        lines.extend(g.sym(sym).lines().enumerate().map(|(k, t)| (t.to_string(), Src::Raw(n, k as u32))));
+    for &(n, r) in &e.raw_used {
+        lines.extend(
+            g.sym(g.raws[r as usize].text).lines().enumerate().map(|(k, t)| (t.to_string(), Src::Raw(n, k as u32))),
+        );
     }
     for &d in &e.order {
         lines.extend(e.fns[&d].1.iter().map(|l| (l.text.clone(), Src::Gen(l.node))));
@@ -122,59 +122,65 @@ fn raw_site(g: &Graph, n: u32, k: u32) -> Option<loft_ir::graph::Site> {
     g.site(n).map(|s| loft_ir::graph::Site { line: s.line + k, ..s.clone() })
 }
 
-/// Each raw node's function name: the last function its source declares, after Naga parses the source alone (so a
-/// typo in a raw function is refused at the author's line even when nothing calls it).
-fn raw_names(g: &Graph) -> Result<HashMap<u32, String>, Error> {
-    let mut by_sym: HashMap<u32, String> = HashMap::new();
-    let mut out = HashMap::new();
-    for (n, node) in g.nodes.iter().enumerate() {
-        let loft_ir::graph::Op::Raw(sym) = node.op else { continue };
-        let n = n as u32;
-        if let Some(name) = by_sym.get(&sym) {
-            out.insert(n, name.clone());
-            continue;
-        }
-        let src = format!("alias lf = f32;\n{}", g.sym(sym));
-        let refuse = |line: Option<u32>, msg: &str| {
-            let k = line.unwrap_or(2).saturating_sub(2);
-            Error::Scene { site: raw_site(g, n, k), fault: SceneFault::Wgsl { line: k + 1, msg: msg.into() } }
-        };
-        let m = naga::front::wgsl::parse_str(&src)
-            .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))?;
-        let name = m
-            .functions
-            .iter()
-            .last()
-            .and_then(|(_, f)| f.name.clone())
-            .ok_or_else(|| refuse(None, "a raw function source declares no function"))?;
-        by_sym.insert(sym, name.clone());
-        out.insert(n, name);
-    }
-    Ok(out)
+/// Each raw function's name (its declared symbol), after Naga parses its source alone, with the raw functions it calls
+/// before it, so a typo in a raw function is refused at the author's line even when nothing calls it. The site is the
+/// first node calling it.
+fn raw_names(g: &Graph) -> Result<Vec<String>, Error> {
+    let caller = |r: u32| g.nodes.iter().position(|n| n.op == loft_ir::graph::Op::Raw(r)).map(|n| n as u32);
+    (0..g.raws.len() as u32)
+        .map(|r| {
+            // The prelude, then each dep's text on its own lines, then this one's: line `skip + 1` is its first.
+            let mut src = String::from("alias lf = f32;\n");
+            for d in raw_closure(g, r).into_iter().filter(|&d| d != r) {
+                src.push_str(g.sym(g.raws[d as usize].text));
+                src.push('\n');
+            }
+            let skip = src.lines().count() as u32;
+            src.push_str(g.sym(g.raws[r as usize].text));
+            let refuse = |line: Option<u32>, msg: &str| {
+                let k = line.unwrap_or(skip + 1).saturating_sub(skip + 1);
+                let site = caller(r).and_then(|n| raw_site(g, n, k));
+                Error::Scene { site, fault: SceneFault::Wgsl { line: k + 1, msg: msg.into() } }
+            };
+            naga::front::wgsl::parse_str(&src)
+                .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))?;
+            Ok(g.sym(g.raws[r as usize].name).to_string())
+        })
+        .collect()
 }
 
-/// A Fn decl's parameters (binder nodes) and its single result. A multi-result function has no consumer in WGSL yet.
-fn signature(g: &Graph, d: u32) -> Result<(&[u32], u32), Error> {
-    let decl = &g.decls[d as usize];
-    let roots = g.roots_of(decl);
-    match (decl.tag, roots.split_at_checked(decl.arity as usize)) {
-        (Tag::Fn, Some((params, [result]))) => Ok((params, *result)),
-        (Tag::Fn, Some((_, [r, ..]))) => Err(unsupported(g, *r, "a graph function with several results in WGSL")),
-        (_, _) => Err(Error::Usage(format!("emit: decl {d} is not a graph function with a result").into())),
+/// Raw function `r` and every raw function it calls, callees first (each dep is declared before its user).
+fn raw_closure(g: &Graph, r: u32) -> Vec<u32> {
+    let mut out = vec![];
+    let mut visit = vec![r];
+    while let Some(x) = visit.pop() {
+        if !out.contains(&x) {
+            out.push(x);
+            visit.extend(g.raws[x as usize].deps.iter());
+        }
     }
+    out.sort_unstable();
+    out
+}
+
+/// A graph function's parameters (binder nodes) and its result.
+fn signature(g: &Graph, f: u32) -> (&[u32], u32) {
+    let f = &g.fns[f as usize];
+    (&f.binders, f.body)
 }
 
 struct Module<'g> {
     g: &'g Graph,
-    at: &'g [[u32; 2]],
-    raws: &'g HashMap<u32, String>,
+    at: &'g Slots,
+    raws: &'g [String],
     /// Per Fn decl: its name and its lines (empty for a second decl with the same text, which shares the first's).
     fns: HashMap<u32, (String, Vec<Line>)>,
     order: Vec<u32>,
     out: Vec<String>,
     reads: Vec<u32>,
-    /// One (first calling node, source) per distinct raw source. Deduplicated by source, not by function name: two
-    /// sources declaring one name both go in, and Naga refuses the redefinition at the second author's line.
+    /// One (first calling node, raw function) per distinct raw source, callees first. Deduplicated by source, not by
+    /// function name: two sources declaring one name both go in, and Naga refuses the redefinition at the second
+    /// author's line.
     raw_used: Vec<(u32, u32)>,
 }
 
@@ -185,7 +191,7 @@ impl Module<'_> {
             return Ok(name.clone());
         }
         let g = self.g;
-        let (params, result) = signature(g, d)?;
+        let (params, result) = signature(g, d);
         let mut b = Body::new(g, self.at, self.raws, params);
         for c in b.place(result) {
             let name = self.function(c)?;
@@ -210,9 +216,12 @@ impl Module<'_> {
                 self.reads.push(k);
             }
         }
-        for (n, sym) in needs.raws {
-            if self.raw_used.iter().all(|&(_, s)| s != sym) {
-                self.raw_used.push((n, sym));
+        for (n, r) in needs.raws {
+            for d in raw_closure(g, r) {
+                let text = g.raws[d as usize].text;
+                if self.raw_used.iter().all(|&(_, u)| g.raws[u as usize].text != text) {
+                    self.raw_used.push((n, d));
+                }
             }
         }
         if self.out.contains(&name) {
@@ -250,7 +259,6 @@ pub(crate) fn ty_name(t: Ty, float: &str) -> String {
         Ty::V3 => format!("vec3<{float}>"),
         Ty::V4 => format!("vec4<{float}>"),
         Ty::Bool => "bool".into(),
-        Ty::Rec(_) => unreachable!("a record value is refused at its function's signature"),
     }
 }
 
@@ -268,21 +276,13 @@ pub(crate) fn lit(g: &Graph, i: u32, ty: Ty) -> String {
     }
 }
 
-/// An operator's WGSL from its operands' text and types. Spellings come from `prim::PRIMS`; `vec`, `pick` and the
-/// scalar forms WGSL lacks (`normalize`, `dot` of scalars) are written here.
+/// An operator's WGSL from its operands' text and types. Spellings come from `prim::PRIMS`; the scalar forms WGSL lacks
+/// (`normalize`, `dot` of scalars) are written here.
 pub(crate) fn spell(p: Prim, xs: &[String], tys: &[Ty], ty: Ty) -> String {
     let splat = |k: usize| {
         if tys[k] == ty || tys[k] != Ty::F32 { xs[k].clone() } else { format!("{}({})", ty_name(ty, "lf"), xs[k]) }
     };
-    let c = match core(p) {
-        Ok(c) => c,
-        Err(Own::Vec) => return format!("{}({})", ty_name(ty, "lf"), xs.join(", ")),
-        // `pick` is a chain of selects on `i == k`, as src/expr.ts defines it: out of range reads the first value.
-        Err(Own::Pick) => {
-            return (2..xs.len())
-                .fold(splat(1), |acc, k| format!("select({acc}, {}, {} == lf({}.0))", splat(k), xs[0], k - 1));
-        }
-    };
+    let c = core(p);
     let def = prim::def(c);
     match (&def.wgsl, c, tys.first()) {
         (_, prim::Prim::Normalize, Some(Ty::F32)) => format!("sign({})", xs[0]),
@@ -298,18 +298,12 @@ pub(crate) fn spell(p: Prim, xs: &[String], tys: &[Ty], ty: Ty) -> String {
     }
 }
 
-/// The loft-ir operators with no row in loft-core's table: emit writes them itself.
-enum Own {
-    Vec,
-    Pick,
-}
-
-/// loft-ir's operator as loft-core's table row. Two enums for one operator set is a wave-1 seam (lane 1.1 and 1.3 each
-/// wrote one); when they become one `Prim` this match goes away.
+/// loft-ir's operator as loft-core's table row: the same operators in the same order (the wire's), two enums because
+/// loft-ir carries no arithmetic.
 #[rustfmt::skip]
-fn core(p: Prim) -> Result<prim::Prim, Own> {
+fn core(p: Prim) -> prim::Prim {
     use prim::Prim as C;
-    Ok(match p {
+    match p {
         Prim::Add => C::Add, Prim::Sub => C::Sub, Prim::Mul => C::Mul, Prim::Div => C::Div, Prim::Min => C::Min,
         Prim::Max => C::Max, Prim::Pow => C::Pow, Prim::Mod => C::Mod, Prim::Rem => C::Rem, Prim::Atan2 => C::Atan2,
         Prim::Step => C::Step, Prim::Neg => C::Neg, Prim::Abs => C::Abs, Prim::Sign => C::Sign, Prim::Floor => C::Floor,
@@ -322,7 +316,5 @@ fn core(p: Prim) -> Result<prim::Prim, Own> {
         Prim::Dot => C::Dot, Prim::Cross => C::Cross, Prim::Lt => C::Lt, Prim::Gt => C::Gt, Prim::Le => C::Le,
         Prim::Ge => C::Ge, Prim::Eq => C::Eq, Prim::Ne => C::Ne, Prim::And => C::And, Prim::Or => C::Or, Prim::Not => C::Not,
         Prim::Select => C::Select,
-        Prim::Vec => return Err(Own::Vec),
-        Prim::Pick => return Err(Own::Pick),
-    })
+    }
 }

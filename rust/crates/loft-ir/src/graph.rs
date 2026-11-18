@@ -234,6 +234,18 @@ pub struct Loop {
     pub stop: Option<u32>,
 }
 
+impl Loop {
+    /// Every node the loop names: count, starts, binders, index, steps and stop.
+    pub fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
+        std::iter::once(self.count)
+            .chain(self.init.iter().copied())
+            .chain(self.state.iter().copied())
+            .chain(std::iter::once(self.index))
+            .chain(self.next.iter().copied())
+            .chain(self.stop)
+    }
+}
+
 /// What a `Fetch` reads. In wave 1 a kernel names a resource the TS compiler fills; wave 2 gives kernels bodies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kernel {

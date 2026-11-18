@@ -7,7 +7,7 @@ use loft_core::kernel::{Decl, Fill, Job, Source, kept, plan};
 use loft_core::layout::layout;
 use loft_core::schedule::schedule;
 use loft_ir::bundle::{F32, Init, Keep, Shape, TexFormat, When};
-use loft_ir::graph::{Decl as GDecl, Graph, Leaf, Node, Op, Prim, Sel, Tag, Ty};
+use loft_ir::graph::{Graph, Loop, Node, Op, Prim, Sel, Ty};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::io::BufRead;
@@ -61,38 +61,38 @@ fn scene(s: &Value) -> Scene {
         rows: Box::new([]),
         blobs: Box::new([]),
         syms: "".into(),
-        sym_ends: Box::new([]),
+        sym_at: Box::new([0]),
         sites: Box::new([]),
         node_sites: Box::new([]),
-        decls: Box::new([]),
+        fns: Box::new([]),
+        raws: Box::new([]),
+        loops: Box::new([]),
+        kernels: Box::new([]),
+        params: Box::new([]),
+        inputs: Box::new([]),
         roots: Box::new([]),
     };
-    let (mut nodes, mut args, mut lits, mut rows, mut decls, mut roots) =
-        (vec![], vec![], vec![], vec![], vec![], vec![]);
+    let (mut nodes, mut args, mut lits, mut rows) = (vec![], vec![], vec![], vec![]);
     let mut names: HashMap<String, u32> = HashMap::new();
     let mut intern = |n: &str| {
         let k = names.len() as u32;
         *names.entry(n.to_string()).or_insert(k)
     };
-    let decl = |tag: Tag, arity: usize, rs: Vec<u32>, decls: &mut Vec<GDecl>, roots: &mut Vec<u32>| {
-        decls.push(GDecl { tag, arity: arity as u32, name: None, roots: roots.len() as u32, n: rs.len() as u32 });
-        roots.extend(rs);
-        decls.len() as u32 - 1
-    };
-    // Loops first (decl k = loop k); the fixture writes a loop's parts before the node that names it.
-    let loops = s["loops"].as_array().unwrap();
-    for l in loops {
-        let (init, state, next) = (ids(&l["init"]), ids(&l["state"]), ids(&l["next"]));
-        let mut rs = vec![u(&l["count"])];
-        rs.extend(&init);
-        rs.extend(&state);
-        rs.push(u(&l["index"]));
-        rs.extend(&next);
-        if let Some(st) = l["stop"].as_u64() {
-            rs.push(st as u32);
-        }
-        decl(Tag::Loop, init.len(), rs, &mut decls, &mut roots);
-    }
+    // Params, inputs and binders are named by interned symbol ids: the plan reads only their rates. The fixture writes
+    // a loop's parts before the node that names it.
+    let loops: Vec<Loop> = s["loops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| Loop {
+            count: u(&l["count"]),
+            init: ids(&l["init"]).into(),
+            state: ids(&l["state"]).into(),
+            index: u(&l["index"]),
+            next: ids(&l["next"]).into(),
+            stop: l["stop"].as_u64().map(|x| x as u32),
+        })
+        .collect();
     for n in s["nodes"].as_array().unwrap() {
         let t = ty(&n["ty"]);
         let a: Vec<u32> = match n["k"].as_str().unwrap() {
@@ -106,15 +106,15 @@ fn scene(s: &Value) -> Scene {
                 lits.extend(n["v"].as_array().unwrap().iter().map(|x| x.as_f64().unwrap().to_bits()));
                 Op::Lit((lits.len() - n["v"].as_array().unwrap().len()) as u32)
             }
-            "var" => Op::Leaf(Leaf::Bind(intern(n["name"].as_str().unwrap()))),
-            "time" => Op::Leaf(Leaf::Time),
-            "param" => Op::Leaf(Leaf::Param(intern(n["name"].as_str().unwrap()))),
-            "input" => Op::Leaf(Leaf::Input(intern(n["name"].as_str().unwrap()))),
+            "var" => Op::Bind(intern(n["name"].as_str().unwrap())),
+            "time" => Op::Time,
+            "param" => Op::Param(intern(n["name"].as_str().unwrap())),
+            "input" => Op::Input(intern(n["name"].as_str().unwrap())),
             "prim" => {
                 let f = n["fn"].as_str().unwrap();
                 Op::Prim(*Prim::ALL.iter().find(|p| p.name() == f).unwrap_or_else(|| panic!("prim {f}")))
             }
-            "vec" => Op::Prim(Prim::Vec),
+            "vec" => Op::Vec,
             "get" => {
                 let sel = ids(&n["sel"]);
                 Op::Swizzle(Sel {
@@ -122,9 +122,9 @@ fn scene(s: &Value) -> Scene {
                     comps: sel.iter().enumerate().fold(0, |c, (k, &x)| c | (x as u8) << (2 * k)),
                 })
             }
-            "fetch" => Op::Fetch { kernel: u(&n["res"]), lane: u(&n["lane"]) as u8 },
+            "fetch" => Op::Fetch { kernel: u(&n["res"]), lane: u(&n["lane"]) as u16 },
             "raw" => Op::Raw(0),
-            "loop" => Op::Loop { decl: u(&n["loop"]), k: u(&n["comp"]) as u8 },
+            "loop" => Op::Loop { decl: u(&n["loop"]), k: u(&n["comp"]) as u16 },
             k => panic!("node {k}"),
         };
         nodes.push(Node { op, ty: t, args: args.len() as u32, n: a.len() as u32 });
@@ -161,19 +161,22 @@ fn scene(s: &Value) -> Scene {
         let when = when(&k["when"]);
         let f = &k["fill"];
         let fill = if let Some(m) = f.get("map") {
-            let mut rs = vec![u(&m["i"])];
-            rs.extend(ids(&m["lanes"]));
-            let fd = decl(Tag::Fn, 1, rs, &mut decls, &mut roots);
-            Fill::Map { start: u(&m["start"]), count: u(&m["count"]), f: fd }
+            Fill::Map {
+                start: u(&m["start"]),
+                count: u(&m["count"]),
+                index: u(&m["i"]),
+                lanes: ids(&m["lanes"]).into(),
+            }
         } else if let Some(sc) = f.get("scan") {
-            let init = decl(Tag::Fn, 0, ids(&sc["init"]), &mut decls, &mut roots);
-            let state = ids(&sc["state"]);
-            let mut rs = state.clone();
-            rs.push(u(&sc["i"]));
-            rs.extend(ids(&sc["next"]));
-            rs.extend(ids(&sc["lanes"]));
-            let step = decl(Tag::Fn, state.len() + 1, rs, &mut decls, &mut roots);
-            Fill::Scan { first: u(&sc["first"]), steps: u(&sc["steps"]), init, step }
+            Fill::Scan {
+                first: u(&sc["first"]),
+                steps: u(&sc["steps"]),
+                init: ids(&sc["init"]).into(),
+                state: ids(&sc["state"]).into(),
+                index: u(&sc["i"]),
+                next: ids(&sc["next"]).into(),
+                lanes: ids(&sc["lanes"]).into(),
+            }
         } else if let Some(r) = f.get("raw") {
             let d = ids(&r["dispatch"]);
             Fill::Raw {
@@ -190,18 +193,11 @@ fn scene(s: &Value) -> Scene {
             }
             let (r, lanes) = (u(&res[writes as usize]["rows"]), u(&res[writes as usize]["lanes"]));
             let at = nodes.len() as u32;
-            nodes.push(Node {
-                op: Op::Leaf(Leaf::Bind(intern(&format!("_opaque_{name}")))),
-                ty: Ty::F32,
-                args: 0,
-                n: 0,
-            });
-            nodes.push(Node { op: Op::Leaf(Leaf::Time), ty: Ty::F32, args: 0, n: 0 });
-            nodes.push(Node { op: Op::Prim(Prim::Vec), ty: Ty::V4, args: args.len() as u32, n: 1 });
+            nodes.push(Node { op: Op::Bind(intern(&format!("_opaque_{name}"))), ty: Ty::F32, args: 0, n: 0 });
+            nodes.push(Node { op: Op::Time, ty: Ty::F32, args: 0, n: 0 });
+            nodes.push(Node { op: Op::Vec, ty: Ty::V4, args: args.len() as u32, n: 1 });
             args.push(at + 1);
-            let mut rs = vec![at];
-            rs.extend(std::iter::repeat_n(at + 2, lanes as usize));
-            Fill::Map { start: 0, count: r, f: decl(Tag::Fn, 1, rs, &mut decls, &mut roots) }
+            Fill::Map { start: 0, count: r, index: at, lanes: vec![at + 2; lanes as usize].into() }
         };
         kd.push(Decl { writes, fill, when });
         kn.push(name);
@@ -210,8 +206,7 @@ fn scene(s: &Value) -> Scene {
     g.args = args.into();
     g.lits = lits.into();
     g.rows = rows.into();
-    g.decls = decls.into();
-    g.roots = roots.into();
+    g.loops = loops.into();
     Scene { g, sources, decls: kd, names: kn, opaque }
 }
 

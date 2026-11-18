@@ -25,7 +25,7 @@ export function graphFn<P extends readonly NumTy[], R extends NumTy>(name: strin
     // Lowered over binders only when a job is written: nodes made now would shift the ids the TS engine names WGSL by.
     fn ??= rec.fn(name, () => {
       const id = bodies++, binders = params.map((t, j) => variable(`loft_g${id}_${j}`, t)) as unknown as Args<P>;
-      return { binders: binders as readonly Expr[], body: body(...binders) };
+      return { kind: "body", binders: binders as readonly Expr[], body: body(...binders) };
     });
     const since = rec.size, out = rec.muted(() => body(...args));
     rec.call(fn, args, out, since);

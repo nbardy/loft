@@ -6,8 +6,8 @@
 //! binders is lifted out of that loop. **Write** walks from the result in operand order and names each statement by
 //! first use (`v0`, `v1`, ...), so the text depends on the graph's structure and never on node ids, creation order or
 //! discarded nodes. Both passes are structural, so the same function gives the same text in any job.
-use super::{Line, lit, spell, ty_name};
-use loft_ir::graph::{Graph, Leaf, Node, Op, Prim, Ty};
+use super::{Line, Slots, lit, spell, ty_name};
+use loft_ir::graph::{Graph, Node, Op, Prim, Ty};
 use loft_ir::{Error, error::SceneFault};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -37,15 +37,15 @@ enum Use {
 #[derive(Default)]
 pub struct Needs {
     pub calls: Vec<u32>,
-    /// (calling node, source symbol) per raw call.
+    /// (calling node, raw function) per raw call.
     pub raws: Vec<(u32, u32)>,
     pub reads: Vec<u32>,
 }
 
 pub struct Body<'g> {
     g: &'g Graph,
-    at: &'g [[u32; 2]],
-    raw_names: &'g HashMap<u32, String>,
+    at: &'g Slots,
+    raw_names: &'g [String],
     /// The called functions' names, which the module fills in after `place` reports the calls.
     pub fn_names: HashMap<u32, String>,
     blocks: Vec<Block>,
@@ -60,18 +60,13 @@ pub struct Body<'g> {
     pub needs: Needs,
 }
 
-fn loop_parts(g: &Graph, l: u32) -> (&[u32], usize) {
-    let d = &g.decls[l as usize];
-    (g.roots_of(d), d.arity as usize)
-}
-
 pub fn unsupported(g: &Graph, n: u32, what: &str) -> Error {
     Error::Scene { site: g.site(n).cloned(), fault: SceneFault::Unsupported { what: what.into() } }
 }
 
 impl<'g> Body<'g> {
     /// Places and writes the body of `result` with parameters `params` (binder nodes, named `a0`, `a1`, ...).
-    pub fn new(g: &'g Graph, at: &'g [[u32; 2]], raw_names: &'g HashMap<u32, String>, params: &[u32]) -> Self {
+    pub fn new(g: &'g Graph, at: &'g Slots, raw_names: &'g [String], params: &[u32]) -> Self {
         let names = params.iter().enumerate().map(|(k, &b)| (b, format!("a{k}"))).collect();
         let root = Block { parent: 0, depth: 0, kind: Kind::Root };
         #[rustfmt::skip]
@@ -140,9 +135,9 @@ impl<'g> Body<'g> {
             i += 1;
             let mut more: Vec<u32> = g.args_of(self.node(n)).to_vec();
             if let Op::Loop { decl, .. } = self.node(n).op {
-                let (roots, a) = loop_parts(g, decl);
-                roots[1 + a..2 + 2 * a].iter().for_each(|&b| _ = binder_of.insert(b, decl));
-                more.extend_from_slice(roots);
+                let l = &g.loops[decl as usize];
+                l.state.iter().chain([&l.index]).for_each(|&b| _ = binder_of.insert(b, decl));
+                more.extend(l.nodes());
             }
             for m in more {
                 if seen.insert(m) {
@@ -155,13 +150,18 @@ impl<'g> Body<'g> {
         let mut deps: HashMap<u32, Vec<u32>> = HashMap::new();
         for &n in &live {
             let mut d: Vec<u32> = match self.node(n).op {
-                Op::Leaf(Leaf::Bind(_)) => binder_of.get(&n).map_or(vec![], |&l| vec![l]),
-                Op::Loop { decl, .. } => {
-                    let (roots, _) = loop_parts(g, decl);
-                    roots.iter().flat_map(|r| deps[r].iter().copied()).filter(|&l| l != decl).collect()
-                }
+                Op::Bind(_) => binder_of.get(&n).map_or(vec![], |&l| vec![l]),
+                Op::Loop { decl, .. } => g.loops[decl as usize]
+                    .nodes()
+                    .flat_map(|r| deps[&r].iter().copied())
+                    .filter(|&l| l != decl)
+                    .collect(),
                 Op::Lit(_)
-                | Op::Leaf(_)
+                | Op::Time
+                | Op::Param(_)
+                | Op::Input(_)
+                | Op::Var(_)
+                | Op::Vec
                 | Op::Prim(_)
                 | Op::Swizzle(_)
                 | Op::Call(_)
@@ -177,7 +177,7 @@ impl<'g> Body<'g> {
         let mut rooted: HashSet<u32> = HashSet::new();
         for &n in live.iter().rev() {
             let node = self.node(n);
-            if matches!(node.op, Op::Lit(_) | Op::Leaf(_)) {
+            if matches!(node.op, Op::Lit(_) | Op::Time | Op::Param(_) | Op::Input(_) | Op::Bind(_) | Op::Var(_)) {
                 continue;
             }
             let mut b: Option<u32> = None;
@@ -206,26 +206,36 @@ impl<'g> Body<'g> {
                     let at = self.loop_at.get(&decl).map_or(b, |&x| self.lca(x, b));
                     self.loop_at.insert(decl, at);
                     if rooted.insert(decl) {
-                        let (roots, a) = loop_parts(g, decl);
-                        roots[..1 + a].iter().for_each(|&r| push(r, Use::Stmt(decl)));
-                        roots[2 + 2 * a..].iter().for_each(|&r| push(r, Use::Body(decl)));
+                        let l = &g.loops[decl as usize];
+                        [l.count].iter().chain(&l.init).for_each(|&r| push(r, Use::Stmt(decl)));
+                        l.next.iter().chain(&l.stop).for_each(|&r| push(r, Use::Body(decl)));
                     }
                 }
                 Op::Prim(_)
+                | Op::Vec
                 | Op::Swizzle(_)
                 | Op::Call(_)
                 | Op::Fetch { .. }
                 | Op::Grad
                 | Op::Raw(_)
                 | Op::Lit(_)
-                | Op::Leaf(_) => args.iter().for_each(|&m| push(m, Use::At(b))),
+                | Op::Time
+                | Op::Param(_)
+                | Op::Input(_)
+                | Op::Bind(_)
+                | Op::Var(_) => args.iter().for_each(|&m| push(m, Use::At(b))),
             }
         }
         live.iter()
             .filter_map(|&n| match self.node(n).op {
                 Op::Call(d) => Some(d),
                 Op::Lit(_)
-                | Op::Leaf(_)
+                | Op::Time
+                | Op::Param(_)
+                | Op::Input(_)
+                | Op::Bind(_)
+                | Op::Var(_)
+                | Op::Vec
                 | Op::Prim(_)
                 | Op::Swizzle(_)
                 | Op::Fetch { .. }
@@ -256,17 +266,18 @@ impl<'g> Body<'g> {
         let inline = |s: String| Ok(s);
         let expr = match node.op {
             Op::Lit(i) => return inline(lit(g, i, ty)),
-            Op::Leaf(Leaf::Time) => return inline("lf(frame.time)".into()),
-            Op::Leaf(Leaf::Param(d)) => {
-                let s = self.at[d as usize][0];
+            Op::Time => return inline("lf(frame.time)".into()),
+            Op::Param(d) => {
+                let s = self.at.params[d as usize];
                 return inline(format!("lf(frame.params[{}].{})", s / 4, ["x", "y", "z", "w"][s as usize % 4]));
             }
-            Op::Leaf(Leaf::Input(d)) => {
-                let s = self.at[d as usize][0];
+            Op::Input(d) => {
+                let s = self.at.inputs[d as usize];
                 let w = ty.width().unwrap_or(1) as usize;
                 return inline(format!("{}(frame.inputs[{s}].{})", ty_name(ty, "lf"), &"xyzw"[..w]));
             }
-            Op::Leaf(Leaf::Bind(_)) => return Err(unsupported(g, n, "a binder read outside its function or loop")),
+            Op::Bind(_) => return Err(unsupported(g, n, "a binder read outside its function or loop")),
+            Op::Var(_) => return Err(unsupported(g, n, "a free variable (bound by the job's consumer) in WGSL")),
             Op::Loop { decl, k } => {
                 self.need_loop(decl)?;
                 return Ok(format!("s{}_{k}", self.loops[&decl]));
@@ -275,6 +286,10 @@ impl<'g> Body<'g> {
                 return Err(unsupported(g, n, "a gradient request (rewritten during interning, which has not run)"));
             }
             Op::Prim(Prim::Select) => return self.select(n, args, ty),
+            Op::Vec => {
+                let xs = args.iter().map(|&a| self.need(a)).collect::<Result<Vec<_>, _>>()?;
+                format!("{}({})", ty_name(ty, "lf"), xs.join(", "))
+            }
             Op::Prim(p) => {
                 let xs = args.iter().map(|&a| self.need(a)).collect::<Result<Vec<_>, _>>()?;
                 let tys: Vec<Ty> = args.iter().map(|&a| self.node(a).ty).collect();
@@ -285,7 +300,7 @@ impl<'g> Body<'g> {
                 match (self.node(args[0]).ty, sel.len) {
                     (Ty::F32, 1) => x,
                     (Ty::F32, _) => format!("{}({x})", ty_name(ty, "lf")),
-                    (Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool | Ty::Rec(_), _) => {
+                    (Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool, _) => {
                         let c: String =
                             (0..sel.len).map(|k| ["x", "y", "z", "w"][(sel.comps >> (2 * k)) as usize & 3]).collect();
                         format!("{x}.{c}")
@@ -297,15 +312,15 @@ impl<'g> Body<'g> {
                 self.needs.calls.push(d);
                 format!("{}({})", self.fn_names[&d], xs.join(", "))
             }
-            Op::Raw(sym) => {
+            Op::Raw(r) => {
                 let xs = args.iter().map(|&a| Ok(format!("{}({})", ty_name(self.node(a).ty, "f32"), self.need(a)?)));
                 let xs = xs.collect::<Result<Vec<_>, Error>>()?;
-                self.needs.raws.push((n, sym));
-                format!("{}({}({}))", ty_name(ty, "lf"), self.raw_names[&n], xs.join(", "))
+                self.needs.raws.push((n, r));
+                format!("{}({}({}))", ty_name(ty, "lf"), self.raw_names[r as usize], xs.join(", "))
             }
             Op::Fetch { kernel, lane } => {
                 let row = self.need(args[0])?;
-                let [res, lanes] = self.at[kernel as usize];
+                let [res, lanes] = self.at.kernels[kernel as usize];
                 self.needs.reads.push(kernel);
                 // Clamped by construction (plan §4.3): the row index never leaves the buffer.
                 format!("vec4<lf>(r{res}[min(u32({row}), arrayLength(&r{res}) / {lanes}u - 1u) * {lanes}u + {lane}u])")
@@ -376,15 +391,8 @@ impl<'g> Body<'g> {
         if self.loops.contains_key(&l) {
             return Ok(());
         }
-        let (roots, a) = loop_parts(self.g, l);
-        let (count, init, binders, index, next, stop) = (
-            roots[0],
-            &roots[1..1 + a],
-            &roots[1 + a..1 + 2 * a],
-            roots[1 + 2 * a],
-            &roots[2 + 2 * a..2 + 3 * a],
-            roots.get(2 + 3 * a),
-        );
+        let lp = &self.g.loops[l as usize];
+        let (count, init, binders, index, next, stop) = (lp.count, &lp.init, &lp.state, lp.index, &lp.next, lp.stop);
         let at = self.loop_at[&l];
         let id = self.fresh("L");
         let starts = init.iter().map(|&i| self.need(i)).collect::<Result<Vec<_>, _>>()?;
@@ -397,7 +405,7 @@ impl<'g> Body<'g> {
         self.loops.insert(l, id.clone());
         let body = self.body_block(l);
         let nexts = next.iter().map(|&x| self.need(x)).collect::<Result<Vec<_>, _>>()?;
-        let stop = stop.map(|&s| self.need(s)).transpose()?;
+        let stop = stop.map(|s| self.need(s)).transpose()?;
         let mut tail = String::new();
         for (k, x) in nexts.iter().enumerate() {
             _ = write!(tail, "let n{id}_{k} = {x}; ");
