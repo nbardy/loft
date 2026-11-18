@@ -212,14 +212,25 @@ pub struct GraphFn {
     pub body: u32,
 }
 
-/// A raw WGSL function: its name and text (symbols), and the raw functions its text calls (`Graph::raws`, each
-/// declared before it).
+/// A raw WGSL function: its name and text (symbols), the raw functions its text calls (`Graph::raws`, each
+/// declared before it), and the resources its text reads by name rather than through its arguments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawFn {
     pub name: u32,
     pub ret: Ty,
     pub text: u32,
     pub deps: Box<[u32]>,
+    pub reads: Box<[Read]>,
+}
+/// A resource raw text reads by name (src/expr.ts `LibRead`). Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Read {
+    /// A table (`Kernel::Table`), through its accessor `t_<name>(i: u32) -> vec4<f32>`.
+    Table(u32),
+    /// Output `output` of a compute kernel (`Kernel::Compute`), by its symbol.
+    Output { kernel: u32, output: u32 },
+    /// The texture of an offscreen pass (`Graph::passes`, `Target::Texture`), as `loft_passtex_<name>`.
+    Pass(u32),
 }
 
 /// A loop: `count` steps (f32) from `init`, each step reading the state binders and the f32 index binder and giving
@@ -246,13 +257,51 @@ impl Loop {
     }
 }
 
-/// What a `Fetch` reads: a table the job fills, or supplied samples (an author curve).
+/// What a `Fetch` reads: a table the job fills, or supplied samples (an author curve); or an author compute pass,
+/// which no `Fetch` names (raw text reads its outputs, `Read::Output`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kernel {
     /// `entries` rows of `lanes` vec4s, filled by `fill`, read for `role`.
     Table { name: u32, lanes: u32, entries: u32, role: Role, fill: Fill },
     /// Supplied samples `rows[at..at + len]`, read as one lane.
     Rows { label: u32, at: u32, len: u32 },
+    Compute(Box<Compute>),
+}
+/// An author compute pass (src/compute.ts `compute`): WGSL text with `@compute` entries, run on a schedule, writing
+/// named outputs. What its text reads through holes are `values` (roots), read as `loft_value_<k>()`; the raw
+/// functions it calls are `libs` (`Graph::raws`), whose reads name other passes' outputs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Compute {
+    pub name: u32,
+    pub when: When,
+    pub entry: u32,
+    pub dispatch: [u32; 3],
+    pub text: u32,
+    pub libs: Box<[u32]>,
+    pub writes: Box<[Output]>,
+    pub values: Box<[u32]>,
+}
+/// When a compute pass runs. Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum When {
+    Build,
+    Load,
+    Frame,
+    /// `count` steps at `rate` (a lit) a second from the entry `start` seeds, every `keep`-th state kept.
+    Steps { start: u32, count: u32, rate: u32, keep: u32 },
+}
+/// One output of a compute pass: the text's variable `key`, bound under `symbol` for readers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Output {
+    pub key: u32,
+    pub symbol: u32,
+    pub shape: OutShape,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutShape {
+    Buffer { entries: u32, lanes: u32 },
+    /// `dims` 2 or 3; `size[2]` is 1 for a 2D texture. `format` a symbol (`rgba8unorm`, `r32float`, ...).
+    Texture { dims: u32, size: [u32; 3], format: u32 },
 }
 
 /// How a table is filled (src/expr.ts `TableSource`). Bodies are the decl's own roots over its own binders (`Op::Bind`),
@@ -266,12 +315,54 @@ pub enum Fill {
     Data {
         at: u32,
     },
-    /// One of a recurrence's tables (its kept states, its previous state, a replay buffer), stepped by the TS
-    /// recurrence named `recurrence`, which the wire does not carry yet. The host starts it at zero: the named
-    /// default, which the driver counts as unfilled.
-    Recurrence {
-        recurrence: u32,
-    },
+    /// One of a recurrence's tables (src/map/recur.ts): its kept states, which carry the recurrence, or its previous
+    /// state or a replay buffer, which name that table.
+    Recurrence(Recur),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Recur {
+    Kept(Box<Kept>),
+    /// The previous state (what `prev` fetches inside the step) or a checkpoint replay's pair, of kernel `kept`.
+    Part { part: Part, kept: u32 },
+}
+/// Wire code = the order here, from 1 (0 is the kept states).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Prev,
+    Even,
+    Odd,
+}
+/// S(n + 1) = step(S(n), t_n), t_n = from + n / rate, from `start` at `from`, kept from step `first` for `steps`
+/// steps (every `every`-th state; 1 keeps all). Each kept state is `cells + 1` rows: the state, then the clock. `start`
+/// and `step` are `lanes` vec4 roots over the `index` binder (f32 for a list, vec2 for a grid); `step` also reads the
+/// f32 `clock` binder (its own time) and fetches `prev`. `rate`, `from` and `until` are lits.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Kept {
+    pub cells: Cells,
+    pub rate: u32,
+    pub from: u32,
+    pub until: u32,
+    pub first: u32,
+    pub steps: u32,
+    pub every: u32,
+    pub prev: u32,
+    pub index: u32,
+    pub clock: u32,
+    pub start: Box<[u32]>,
+    pub step: Box<[u32]>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cells {
+    List(u32),
+    Grid(u32, u32),
+}
+impl Cells {
+    pub fn count(self) -> u64 {
+        match self {
+            Cells::List(n) => u64::from(n),
+            Cells::Grid(w, h) => u64::from(w) * u64::from(h),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -416,8 +507,7 @@ pub enum Medium {
     /// Gaussians in a table's rows.
     Gaussians { kernel: u32 },
 }
-/// Draws `first..end` of `Graph::draws` seen by a camera of `Graph::cameras` (plan §1.5). The wire carries view passes
-/// only: an offscreen or shadow target names a texture resource, which no decl declares yet.
+/// Draws `first..end` of `Graph::draws` seen by a camera of `Graph::cameras` (plan §1.5), into `target`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pass {
     pub camera: u32,
@@ -425,6 +515,28 @@ pub struct Pass {
     pub clear: Clear,
     pub ground: Ground,
     pub outline: Outline,
+    pub target: Target,
+}
+/// Where a pass draws. Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Target {
+    View,
+    /// An offscreen texture `loft_passtex_<name>` that raw text reads (`Read::Pass`). `scene`: it also draws every
+    /// subject draw of the view passes (an author pass of the scene, src/frame/pass.ts), seen by its own camera.
+    Texture { name: u32, size: Size, keep: Keep, scene: bool },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Size {
+    /// The view's size times a lit.
+    View(u32),
+    Fixed(u32, u32),
+}
+/// What an offscreen pass keeps (src/frame/pass.ts `PassKeep`). Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Keep {
+    Colour,
+    Depth,
+    Light,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Clear {
@@ -459,6 +571,8 @@ pub enum Lens {
     Look { eye: u32, target: u32, up: u32, fovy: u32 },
     /// clip from world, four vec4 columns.
     Matrix { cols: [u32; 4] },
+    /// A table's one row of `struct Frame` lanes (src/frame/pass.ts `cameraLanes`), which the job fills.
+    Table { kernel: u32 },
 }
 /// A check (plan §1.7): a formula over leaves, decided by proof or by samples.
 #[derive(Clone, Debug, PartialEq, Eq)]

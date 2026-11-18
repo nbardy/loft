@@ -10,8 +10,8 @@
 //! with a large stack.
 use crate::error::{Error, Fault, Internal, Span, WireFault};
 use crate::graph::{
-    Blend, Clear, Cover, Fill, Find, Formula, Graph, Ground, HoldKind, Kernel, Layer, Lens, Medium, Op, Outline, Proxy,
-    Strategy, Times,
+    Blend, Cells, Clear, Cover, Fill, Find, Formula, Graph, Ground, HoldKind, Keep, Kernel, Layer, Lens, Medium, Op,
+    OutShape, Outline, Part, Proxy, Read, Recur, Size, Strategy, Target, Times, When,
 };
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -29,6 +29,7 @@ pub fn print(g: &Graph) -> Result<String, Error> {
         frames: vec![HashMap::new()],
         loop_lines: HashMap::new(),
         tables: Vec::new(),
+        noted: Vec::new(),
     };
     let roots = g.roots.iter().map(|r| p.walk(*r, 0, false)).collect::<Result<Vec<u32>, Error>>()?;
     let decls = p.decls()?;
@@ -80,8 +81,10 @@ struct Printer<'g> {
     frames: Vec<Frame>,
     /// (loop, level, frame) -> its line: re-walking would give the same line, so its results share one walk.
     loop_lines: HashMap<(u32, u32, usize), u32>,
-    /// Table kernels in the order the walk first fetched them.
+    /// Table kernels in the order the walk first fetched them, and compute kernels as raw reads first named them.
     tables: Vec<u32>,
+    /// Raw functions whose reads are listed (each once, its deps' first).
+    noted: Vec<u32>,
 }
 
 fn refs(ks: &[u32]) -> String {
@@ -203,7 +206,7 @@ impl Printer<'_> {
             Op::Bind(_) => return Err(unprintable(id, Fault::Scope)),
             Op::Fetch { kernel, lane } => {
                 let res = match &g.kernels[kernel as usize] {
-                    Kernel::Table { .. } => self.table_name(kernel),
+                    Kernel::Table { .. } | Kernel::Compute(_) => self.table_name(kernel),
                     Kernel::Rows { label, at, len } => {
                         let rows = &g.rows[*at as usize..(at + len) as usize];
                         format!("rows:{}:{}", g.sym(*label), fnv(rows.iter().copied()))
@@ -216,10 +219,16 @@ impl Printer<'_> {
                 }
                 self.op(format!("fetch {res} {lane}"), &ks)
             }
-            Op::Raw(r) => {
-                let r = &g.raws[r as usize];
-                let head = format!("raw {} {ty} {}", g.sym(r.name), fnv(code_units(g.sym(r.text))));
+            Op::Raw(k) => {
+                let r = &g.raws[k as usize];
+                let mut head = format!("raw {} {ty} {}", g.sym(r.name), fnv(code_units(g.sym(r.text))));
+                if !r.reads.is_empty() {
+                    let reads: Vec<String> = r.reads.iter().map(|x| self.read_name(*x)).collect();
+                    let _ = write!(head, " reads [{}]", reads.join(" "));
+                }
                 let ks = kids(self)?;
+                // After its arguments, as print.ts does: an argument may name another table first.
+                self.note(k);
                 self.op(head, &ks)
             }
             Op::Swizzle(sel) => {
@@ -256,6 +265,41 @@ impl Printer<'_> {
                 format!("table:{}:{lanes}:{entries}:{}", self.g.sym(*name), role.name())
             }
             Kernel::Rows { label, .. } => format!("rows:{}", self.g.sym(*label)),
+            Kernel::Compute(c) => format!("compute:{}", self.g.sym(c.name)),
+        }
+    }
+    fn read_name(&self, r: Read) -> String {
+        let g = self.g;
+        match r {
+            Read::Table(k) => self.table_name(k),
+            Read::Output { kernel, output } => match &g.kernels[kernel as usize] {
+                Kernel::Compute(c) => format!("compute:{}:{}", g.sym(c.name), g.sym(c.writes[output as usize].key)),
+                Kernel::Table { .. } | Kernel::Rows { .. } => unreachable!("decode checked a read output's kernel"),
+            },
+            Read::Pass(p) => match g.passes[p as usize].target {
+                Target::Texture { name, .. } => format!("pass:{}", g.sym(name)),
+                Target::View => unreachable!("decode checked a read pass's target"),
+            },
+        }
+    }
+    /// List the kernels raw function `r` reads (its deps' first, each raw once), as print.ts `note` does.
+    fn note(&mut self, r: u32) {
+        if self.noted.contains(&r) {
+            return;
+        }
+        self.noted.push(r);
+        let raw = &self.g.raws[r as usize];
+        for d in raw.deps.iter() {
+            self.note(*d);
+        }
+        for x in raw.reads.iter() {
+            let k = match *x {
+                Read::Table(k) | Read::Output { kernel: k, .. } => k,
+                Read::Pass(_) => continue,
+            };
+            if !self.tables.contains(&k) {
+                self.tables.push(k);
+            }
         }
     }
 
@@ -299,6 +343,7 @@ impl Printer<'_> {
                     format!("look [{}]", self.root_refs(&[eye, target, up, fovy], 0)?)
                 }
                 Lens::Matrix { cols } => format!("matrix [{}]", self.root_refs(&cols, 0)?),
+                Lens::Table { kernel } => format!("table {}", self.table_name(kernel)),
             };
             out.push(format!("camera {} {line}", g.sym(c.name)));
         }
@@ -359,8 +404,23 @@ impl Printer<'_> {
                 Outline::None => "none".to_string(),
                 Outline::Ink(f) => self.fn_ref(f)?,
             };
+            let target = match p.target {
+                Target::View => "view".to_string(),
+                Target::Texture { name, size, keep, scene } => {
+                    let size = match size {
+                        Size::View(scale) => format!("view {}", self.lits(scale, 1)),
+                        Size::Fixed(w, h) => format!("fixed {w} {h}"),
+                    };
+                    let keep = match keep {
+                        Keep::Colour => "colour",
+                        Keep::Depth => "depth",
+                        Keep::Light => "light",
+                    };
+                    format!("texture {} {size} {keep} {}", g.sym(name), u8::from(scene))
+                }
+            };
             out.push(format!(
-                "pass camera {} draws {} {} clear {clear} ground {ground} outline {outline}",
+                "pass camera {} draws {} {} clear {clear} ground {ground} outline {outline} target {target}",
                 p.camera, p.draws[0], p.draws[1]
             ));
         }
@@ -438,8 +498,54 @@ impl Printer<'_> {
     fn fill(&mut self, k: u32) -> Result<String, Error> {
         let g = self.g;
         let head = format!("kernel {}", self.table_name(k));
-        let Kernel::Table { fill, lanes, entries, .. } = &g.kernels[k as usize] else {
-            unreachable!("only tables are listed")
+        let (fill, lanes, entries) = match &g.kernels[k as usize] {
+            Kernel::Table { fill, lanes, entries, .. } => (fill, lanes, entries),
+            Kernel::Compute(c) => {
+                let when = match c.when {
+                    When::Build => "build".to_string(),
+                    When::Load => "load".to_string(),
+                    When::Frame => "frame".to_string(),
+                    When::Steps { start, count, rate, keep } => {
+                        format!("steps {} {count} {} {keep}", g.sym(start), self.lits(rate, 1))
+                    }
+                };
+                let libs: Vec<String> = c
+                    .libs
+                    .iter()
+                    .map(|r| {
+                        let r = &g.raws[*r as usize];
+                        format!("{}:{}", g.sym(r.name), fnv(code_units(g.sym(r.text))))
+                    })
+                    .collect();
+                let writes: Vec<String> = c
+                    .writes
+                    .iter()
+                    .map(|w| {
+                        let shape = match w.shape {
+                            OutShape::Buffer { entries, lanes } => format!("buffer {entries} {lanes}"),
+                            OutShape::Texture { dims, size, format } => {
+                                format!("texture {dims} {} {} {} {}", size[0], size[1], size[2], g.sym(format))
+                            }
+                        };
+                        format!("{} {} {shape}", g.sym(w.key), g.sym(w.symbol))
+                    })
+                    .collect();
+                // The libs' reads first, then the values: print.ts's order.
+                for r in c.libs.iter() {
+                    self.note(*r);
+                }
+                let values = c.values.iter().map(|x| self.walk(*x, 0, false)).collect::<Result<Vec<_>, _>>()?;
+                let [x, y, z] = c.dispatch;
+                return Ok(format!(
+                    "{head} {when} entry {} dispatch {x} {y} {z} text {} libs [{}] writes [{}] values [{}]",
+                    g.sym(c.entry),
+                    fnv(code_units(g.sym(c.text))),
+                    libs.join(" "),
+                    writes.join(", "),
+                    refs(&values)
+                ));
+            }
+            Kernel::Rows { .. } => unreachable!("only tables and compute kernels are listed"),
         };
         Ok(match fill {
             Fill::Map(runs) => {
@@ -465,7 +571,37 @@ impl Printer<'_> {
                 let len = (entries * lanes * 4) as usize;
                 format!("{head} data {}", fnv(g.rows[*at as usize..*at as usize + len].iter().copied()))
             }
-            Fill::Recurrence { recurrence } => format!("{head} recurrence {}", g.sym(*recurrence)),
+            Fill::Recurrence(Recur::Part { part, kept }) => {
+                let part = match part {
+                    Part::Prev => "prev",
+                    Part::Even => "even",
+                    Part::Odd => "odd",
+                };
+                if !self.tables.contains(kept) {
+                    self.tables.push(*kept);
+                }
+                format!("{head} recurrence {part} of {}", self.table_name(*kept))
+            }
+            Fill::Recurrence(Recur::Kept(x)) => {
+                let cells = match x.cells {
+                    Cells::List(n) => format!("list {n}"),
+                    Cells::Grid(w, h) => format!("grid {w} {h}"),
+                };
+                let s = self.fill_scope(&[(x.index, "i".into()), (x.clock, "t".into())]);
+                let start = x.start.iter().map(|r| self.walk(*r, s, false)).collect::<Result<Vec<_>, _>>()?;
+                let step = x.step.iter().map(|r| self.walk(*r, s, false)).collect::<Result<Vec<_>, _>>()?;
+                format!(
+                    "{head} recurrence {cells} rate {} from {} until {} first {} steps {} every {} [{}] -> [{}]",
+                    self.lits(x.rate, 1),
+                    self.lits(x.from, 1),
+                    self.lits(x.until, 1),
+                    x.first,
+                    x.steps,
+                    x.every,
+                    refs(&start),
+                    refs(&step)
+                )
+            }
         })
     }
 

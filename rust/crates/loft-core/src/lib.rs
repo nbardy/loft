@@ -152,7 +152,25 @@ fn unsupported(what: String) -> Error {
     Error::Scene { site: None, fault: SceneFault::Unsupported { what: what.into() } }
 }
 
+/// What the wire carries and no driver phase lowers yet (wire 3, agent_notes/2026-11-19_lean_rust_wire3.md): an author
+/// compute pass, an offscreen pass and its table camera. Refused here, by name, before any phase reads them.
+fn unlowered(g: &Graph) -> Result<(), Error> {
+    if let Some(Kernel::Compute(c)) = g.kernels.iter().find(|k| matches!(k, Kernel::Compute(_))) {
+        return Err(unsupported(format!("the author compute pass `{}`: on the wire, not yet lowered", g.sym(c.name))));
+    }
+    if let Some(ir::Target::Texture { name, .. }) =
+        g.passes.iter().map(|p| p.target).find(|t| matches!(t, ir::Target::Texture { .. }))
+    {
+        return Err(unsupported(format!("the offscreen pass `{}`: on the wire, not yet lowered", g.sym(name))));
+    }
+    match g.cameras.iter().find(|c| matches!(c.lens, ir::Lens::Table { .. })) {
+        Some(c) => Err(unsupported(format!("the table camera `{}`: on the wire, not yet lowered", g.sym(c.name)))),
+        None => Ok(()),
+    }
+}
+
 fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Result<(Scene, Vec<u8>), Error> {
+    unlowered(&g)?;
     // Plan: one resource per Kernel decl, in decl order, so resource k is kernel k (emit's Slots, Fetch's binding).
     let t = Instant::now();
     let sources = g
@@ -164,12 +182,13 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
                     .map_err(|_| unsupported(format!("a table of {lanes} lanes; a row holds at most {}", u16::MAX)))?;
                 Ok(match fill {
                     Fill::Data { at } => kernel::Source::Data { rows: *entries, lanes, at: *at },
-                    Fill::Map(_) | Fill::Scan(_) | Fill::Recurrence { .. } => {
+                    Fill::Map(_) | Fill::Scan(_) | Fill::Recurrence(_) => {
                         kernel::Source::Made(Shape::Rows { rows: *entries, lanes })
                     }
                 })
             }
             Kernel::Rows { at, len, .. } => Ok(kernel::Source::Curve { at: *at, len: *len }),
+            Kernel::Compute(_) => unreachable!("`unlowered` refused compute kernels"),
         })
         .collect::<Result<Vec<_>, Error>>()?;
     let decls = fill_decls(&g);
@@ -200,6 +219,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
                 vec![("eye", eye), ("target", target), ("up", up), ("fovy", fovy)]
             }
             ir::Lens::Matrix { cols } => vec![("c0", cols[0]), ("c1", cols[1]), ("c2", cols[2]), ("c3", cols[3])],
+            ir::Lens::Table { .. } => unreachable!("`unlowered` refused table cameras"),
         };
         camera_names.push((c.name, names.len()));
         for (part, node) in parts {
@@ -224,6 +244,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
             .map(|(k, x)| match x {
                 Kernel::Table { lanes, .. } => [k as u32, *lanes],
                 Kernel::Rows { .. } => [k as u32, 1],
+                Kernel::Compute(_) => unreachable!("`unlowered` refused compute kernels"),
             })
             .collect(),
     };
@@ -509,7 +530,7 @@ fn fill_decls(g: &Graph) -> Vec<kernel::Decl> {
                 };
                 out.push(kernel::Decl { writes: k as u32, fill, when });
             }
-            Fill::Data { .. } | Fill::Recurrence { .. } => {}
+            Fill::Data { .. } | Fill::Recurrence(_) => {}
         }
     }
     out

@@ -8,6 +8,7 @@
 
 import { passOf, passOfTable } from "../frame/pass.ts";
 import { SceneError } from "../errors.ts";
+import { rec } from "../record/recorder.ts";
 import {
   add, clamp, eq, Expr, f, fetch, floor, input, leaves, lift, min, mix, mod, mul, replace, saturate, scopedName, select, sub, time, variable, vec2,
   type In, type TableSource,
@@ -151,6 +152,8 @@ function refusal(r: Read): { readonly given: string; readonly fix: string } | un
 const recurOf = new WeakMap<TableSource, { readonly state: RecurState; readonly part: RecurPart }>();
 /** The recurrence a table belongs to, and which of its tables it is (undefined for any other table). */
 export const recurTable = (t: TableSource): { readonly state: RecurState; readonly part: RecurPart } | undefined => recurOf.get(t);
+// The recorder writes a recurrence's tables from its state, and cannot import this module (expr.ts imports it).
+rec.useRecurrences(recurTable);
 
 function classifyReads(roots: readonly Expr[], own: { readonly prev: TableSource; readonly index: Expr; readonly clock: Expr }): Read[] {
   const l = leaves(roots);

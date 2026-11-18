@@ -11,7 +11,10 @@
 // engine, and the result is aliased to the `Call`. `made` counts what a recorder that does not intern appends (R in section 8.1): each
 // construction outside a recorded call's inlining, plus one per call.
 
-import type { Expr, Fn, InputSpec, LibFn, Loop, ParamSpec, Row, TableSource, Ty } from "../expr.ts";
+import type { Expr, Fn, InputSpec, LibFn, LibRead, Loop, ParamSpec, Row, TableSource, Ty } from "../expr.ts";
+import type { ComputePass } from "../compute.ts";
+import type { PassDef } from "../frame/pass.ts";
+import type { RecurPart, RecurState } from "../map/recur.ts";
 import { BOUND, Decl, FREE, Fill, Op, PRIM0, PRIMS, ROLES, swizzleCode, TYS, type Job, type Program } from "./wire.ts";
 import type { Camera, Check, Cover, Draw, Formula, Medium, Pass, Role, Scene, Solve } from "./decls.ts";
 
@@ -61,6 +64,10 @@ export class Recorder {
    * expr.ts, which imports `rec` from here and uses it while it loads. A fill's binders are made with it. */
   private variable: Variable | undefined;
   useVariables(v: Variable): void { this.variable = v; }
+  /** src/map/recur.ts `recurTable`, handed over when that module loads (it imports this one). Until it loads no table
+   * belongs to a recurrence, so none is asked about. */
+  private recurrences: Recurrences = () => undefined;
+  useRecurrences(r: Recurrences): void { this.recurrences = r; }
 
   /** One construction (an interning lookup, hit or miss). */
   construct(): void { if (this.rewrites > 0) this.rewritten++; else if (this.mutes === 0) this.made++; }
@@ -123,6 +130,12 @@ export class Recorder {
     const c = (this.capture = { roots: [], seen: new Set() });
     return () => { this.capture = undefined; return c.roots; };
   }
+  /** `f` with `watch` suspended: what it emits is a decl's body the job carries itself, not a program root. */
+  unwatched<T>(f: () => T): T {
+    const c = this.capture;
+    this.capture = undefined;
+    try { return f(); } finally { this.capture = c; }
+  }
   emitted(roots: readonly Expr[]): void {
     const c = this.capture;
     if (c !== undefined) for (const r of roots) if (!c.seen.has(r.id)) { c.seen.add(r.id); c.roots.push(r); }
@@ -133,7 +146,7 @@ export class Recorder {
     this.settle();
     const variable = this.variable;
     if (variable === undefined) throw new Error("internal: src/expr.ts has not handed the recorder `variable`");
-    return new Writer(this.view(), { settle: () => this.settle(), quiet: (f) => this.muted(f), variable }).write(program, roots.map((r) => r.id), scene);
+    return new Writer(this.view(), { settle: () => this.settle(), quiet: (f) => this.muted(f), variable, recurrences: this.recurrences }).write(program, roots.map((r) => r.id), scene);
   }
 
   /** Lower every graph function not yet lowered. Lowering a body may call (and so record) further functions: the loop runs until none is pending. */
@@ -162,7 +175,16 @@ export class Recorder {
 
 /** What the writer asks of its recorder while it builds fill bodies: lower functions those bodies called, and build uncounted. */
 type Variable = <T extends Ty>(name: string, ty: T) => Expr<T>;
-type Host = { readonly settle: () => void; readonly quiet: <T>(f: () => T) => T; readonly variable: Variable };
+type Recurrences = (t: TableSource) => { readonly state: RecurState; readonly part: RecurPart } | undefined;
+type Host = { readonly settle: () => void; readonly quiet: <T>(f: () => T) => T; readonly variable: Variable; readonly recurrences: Recurrences };
+
+/** A thing the TS engine can build that the wire cannot carry yet: the job is not written, by name. */
+export class Unrecorded extends Error {
+  override readonly name = "Unrecorded";
+}
+const PARTS: readonly RecurPart[] = ["kept", "prev", "even", "odd"];
+const WHEN = { build: 0, load: 1, frame: 2, steps: 3 } as const;
+const KEEP = { colour: 0, depth: 1, light: 2 } as const;
 
 type LogView = {
   readonly nodes: Uint32Array; readonly args: Uint32Array; readonly lits: Float64Array; readonly leaves: readonly Leaf[];
@@ -285,7 +307,7 @@ class Writer {
     if ("samples" in r) { d.words.push(Fill.Rows, this.sym(r.label), this.rows.length, r.samples.length); this.pushRows(r.samples); return k; }
     const head = [this.sym(r.name), r.lanes, r.entries, ROLES.indexOf(r.role)];
     if ("data" in r) { d.words.push(Fill.Data, ...head, this.rows.length); this.pushRows(r.data); return k; }
-    if ("recurrence" in r) { d.words.push(Fill.Recurrence, ...head, this.sym(r.recurrence)); return k; }
+    if ("recurrence" in r) { this.recurrence(r, head, k, d); return k; }
     // A program's bodies are built here, over fresh variables written as this kernel's binders (K3r0i, K3s0, K3i).
     const p = r.program, fresh = <T extends Ty>(name: string, ty: T): Expr<T> => { const v = this.host.variable(`${name}@${r.name}`, ty); this.binder(v.id, name); return v; };
     switch (p.kind) {
@@ -308,6 +330,63 @@ class Writer {
       }
     }
   }
+  /** A recurrence's table (src/map/recur.ts): the kept states carry the recurrence over this kernel's binders (K4i, K4t);
+   * a part (its previous state, a replay buffer) names the kept states' kernel. */
+  private recurrence(r: TableSource, head: readonly number[], k: number, d: DeclOut): void {
+    const of = this.host.recurrences(r);
+    if (of === undefined) throw new Error(`internal: table "${r.name}" names a recurrence that src/map/recur.ts does not know`);
+    const { state, part } = of;
+    if (part !== "kept") { d.words.push(Fill.Recurrence, ...head, PARTS.indexOf(part), this.kernel(state.table)); return; }
+    this.binder(state.index.id, `K${k}i`);
+    this.binder(state.clock.id, `K${k}t`);
+    const start = state.startLanes.map((x) => this.visit(x.id)), step = state.stepLanes.map((x) => this.visit(x.id));
+    const cells = state.shape.kind === "list" ? [0, state.shape.n] : [1, state.shape.w, state.shape.h];
+    const every = state.kept.kind === "every" ? 1 : state.kept.every;
+    d.words.push(Fill.Recurrence, ...head, 0, ...cells, this.lit(state.rate), this.lit(state.from), this.lit(state.until), state.first, state.steps, every,
+      this.kernel(state.prev), this.out.get(state.index.id)!, this.out.get(state.clock.id)!);
+    d.roots.push(...start, ...step);
+  }
+  /** An author compute pass (src/compute.ts): a Kernel decl with no table head, reached through its readers. */
+  private compute(p: ComputePass): number {
+    const seen = this.declOf.get(p);
+    if (seen !== undefined) return seen;
+    const { k, d } = this.reserve(Decl.Kernel, p);
+    const w = p.when, when = w.kind === "steps" ? [WHEN.steps, this.sym(w.start), w.count, this.lit(w.rate), w.keep] : [WHEN[w.kind]];
+    const libs = p.code.libs.map((l) => this.rawFn(l)), values = p.code.values.map((x) => this.visit(x.id));
+    const writes = p.writes.flatMap(([key, r]) => [this.sym(key), this.sym(r.symbol), ...(r.kind === "buffer"
+      ? [0, r.entries, r.lanes]
+      : [1, r.size.length, r.size[0], r.size[1], r.size[2] ?? 1, this.sym(r.format)])]);
+    d.words.push(Fill.Compute, this.sym(p.name), ...when, this.sym(p.entry), ...p.dispatch, this.sym(p.code.text), libs.length, ...libs, p.writes.length, ...writes);
+    d.roots.push(...values);
+    return k;
+  }
+  /** An offscreen pass (src/frame/pass.ts) a raw function reads: its table camera, then a Pass decl targeting its texture. */
+  private offscreen(def: PassDef): number {
+    const seen = this.declOf.get(def);
+    if (seen !== undefined) return seen;
+    const what = def.what;
+    switch (what.kind) {
+      case "screen": throw new Unrecorded(`the screen pass "${def.name}": the wire has no layout for a pass drawn by a colour over its uv yet`);
+      case "scene": {
+        const kernel = this.kernel(what.camera);
+        const { k: camera, d: cam } = this.reserve(Decl.Camera, what.camera);
+        cam.words.push(this.sym(def.name), 2, kernel);
+        const draws = this.count.get(Decl.Draw) ?? 0, size = def.size.kind === "view" ? [0, this.lit(def.size.scale)] : [1, def.size.width, def.size.height];
+        const { k, d } = this.reserve(Decl.Pass, def);
+        // Clear is written load: what an offscreen texture starts as is its keep's (the host's lowering).
+        d.words.push(camera, draws, draws, 0, 0, 0, 1, this.sym(def.name), ...size, KEEP[what.keep], 1);
+        return k;
+      }
+    }
+  }
+  private read(r: LibRead): number[] {
+    switch (r.kind) {
+      case "table": return [0, this.kernel(r.table)];
+      case "compute": return [1, this.compute(r.pass), r.pass.writes.findIndex(([key]) => key === r.key)];
+      case "pass": return [2, this.offscreen(r.pass)];
+    }
+  }
+
   // ---- scene-level decls (src/record/decls.ts; layouts in loft-ir wire.rs) ----
 
   private lit(...xs: number[]): number { return this.lits.push(...xs) - xs.length; }
@@ -372,7 +451,7 @@ class Writer {
     const ground = p.ground.kind === "none" ? [0] : [1, this.role(p.ground.hit), this.role(p.ground.paint)];
     const outline = p.outline.kind === "none" ? [0] : [1, this.role(p.outline.outline)];
     const { d } = this.reserve(Decl.Pass, p);
-    d.words.push(camera, first, end, ...clear, ...ground, ...outline);
+    d.words.push(camera, first, end, ...clear, ...ground, ...outline, 0);
   }
   /** A formula's words, pre-order, with its roots appended to `roots` in the same order. */
   private formula(f: Formula, words: number[], roots: number[]): void {
@@ -418,9 +497,10 @@ class Writer {
   private rawFn(f: LibFn): number {
     const seen = this.declOf.get(f);
     if (seen !== undefined) return seen;
-    const deps = (f.deps ?? []).map((x) => this.rawFn(x));
+    const deps = (f.deps ?? []).map((x) => this.rawFn(x)), reads = f.reads ?? [];
+    const words = reads.flatMap((r) => this.read(r));
     const { k, d } = this.reserve(Decl.Fn, f);
-    d.words.push(1, this.sym(f.name), TY[f.ret], this.sym(f.wgsl), deps.length, ...deps);
+    d.words.push(1, this.sym(f.name), TY[f.ret], this.sym(f.wgsl), deps.length, ...deps, reads.length, ...words);
     return k;
   }
   private graphFn(fn: number, f: Lowered & { kind: "body" }): number {

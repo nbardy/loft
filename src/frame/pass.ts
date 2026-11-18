@@ -372,7 +372,7 @@ function build(spec: PassSpec, where: string): { readonly pass: Pass; readonly d
   return vec4<f32>(select(1.0, textureLoad(${texture}, c, 0).x, inside), 0.0, 0.0, 1.0);
 }`
     : /* wgsl */ `fn loft_pass_${spec.name}_at(uv: vec2<f32>) -> vec4<f32> { return textureSampleLevel(${texture}, loft_pass_sampler, uv, 0.0); }`;
-  const at: LibFn = { name: `loft_pass_${spec.name}_at`, ret: "vec4", wgsl: reads, js: "gpu-only" };
+  const at: LibFn = { name: `loft_pass_${spec.name}_at`, ret: "vec4", wgsl: reads, js: "gpu-only", reads: [{ kind: "pass", pass: def }] };
   byLib.set(at, def);
   if (def.what.kind === "scene") byCamera.set(def.what.camera, def);
   const camera = def.what.kind === "scene" ? def.what.camera : undefined;

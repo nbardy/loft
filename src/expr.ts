@@ -21,6 +21,8 @@ const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
 import { CURVE_N } from "./artefact.ts";
 import { RawComputeError, SceneError } from "./errors.ts";
 import { rec } from "./record/recorder.ts";
+import type { ComputePass } from "./compute.ts";
+import type { PassDef } from "./frame/pass.ts";
 export { CURVE_N };
 
 /** A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends. */
@@ -59,7 +61,18 @@ export type LibFn = {
   readonly wgsl: string;
   readonly js: ((...args: any[]) => number | number[] | boolean) | "gpu-only";
   readonly deps?: readonly LibFn[];
+  /** Resources the WGSL text reads by name rather than through its arguments: what the wire declares for it. */
+  readonly reads?: readonly LibRead[];
 };
+
+/**
+ * A resource raw WGSL text reads by name (docs/proposals/2026-11-19_lean_rust_loft.md section 3.2, raw Fn reads): a
+ * table through its accessor `t_<name>(i)`, a compute pass's output through its symbol, an offscreen pass's texture.
+ */
+export type LibRead =
+  | { readonly kind: "table"; readonly table: TableSource }
+  | { readonly kind: "compute"; readonly pass: ComputePass; readonly key: string }
+  | { readonly kind: "pass"; readonly pass: PassDef };
 
 // ---- per-frame tables -----------------------------------------------------------------------------------------------
 

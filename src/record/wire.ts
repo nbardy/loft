@@ -18,25 +18,32 @@
 // decls  [program root count, then per decl: tag, n roots, n words, words...]; `roots` holds the program's roots, then
 //        each decl's in decl order.
 //   Fn      graph [0, name, ret ty, n params, binder node...]  roots [body]
-//           raw   [1, name, ret ty, text sym, n deps, dep Fn ordinal...]
+//           raw   [1, name, ret ty, text sym, n deps, dep Fn ordinal..., n reads, read...]: read 0 table [kernel] |
+//                 1 compute output [kernel, output] | 2 offscreen pass [pass] (src/expr.ts `LibRead`)
 //   Loop    [n state, has stop, binder node per state component, index binder]  roots [count, init..., next..., stop?]
 //   Kernel  [fill, ...] by `Fill` (a table's head is name, lanes, entries, role):
 //           map        [0, head, n runs, (count, index binder) per run]          roots [lanes of run 0, of run 1, ...]
 //           rows       [1, label, offset in `rows`, length]                       roots []
 //           scan       [2, head, first, steps, n, state binder per n, index binder]  roots [init..., next..., lanes...]
 //           data       [3, head, offset in `rows`] (entries * lanes * 4 floats)  roots []
-//           recurrence [4, head, recurrence sym]: stepped by its recurrence, which the wire does not carry yet
+//           recurrence [4, head, 0 kept, cells (0 list [n] | 1 grid [w, h]), rate lit, from lit, until lit, first, steps,
+//                       every, prev kernel, index binder, clock binder]   roots [start lanes..., step lanes...]
+//                      | [4, head, 1 prev / 2 even / 3 odd, kept kernel]  roots []
+//           compute    [5, name, when (0 build | 1 load | 2 frame | 3 steps [start sym, count, rate lit, keep]), entry sym,
+//                       dispatch x y z, text sym, n libs, raw Fn ordinal..., n writes, (key sym, symbol sym, shape)...]
+//                       roots [values]; shape 0 buffer [entries, lanes] | 1 texture [dims, x, y, z, format sym]. No
+//                       head: a compute pass is not a table, and raw text reads its outputs by symbol
 //   Param   [name, def lit, min lit, max lit]        Input  [name, ty, first def lit]
 
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
-const WIRE = 2;
+const WIRE = 3;
 
 export enum Program { Scene, Solve, Evaluate, Check }
 export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }
 /** How a Kernel decl fills its resource: the first word of its layout. */
-export enum Fill { Map, Rows, Scan, Data, Recurrence }
+export enum Fill { Map, Rows, Scan, Data, Recurrence, Compute }
 export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec } // then PRIMS from PRIM0
 export const BOUND = 1, FREE = 0;
 export const TYS = ["f32", "vec2", "vec3", "vec4", "bool"] as const satisfies readonly Ty[];

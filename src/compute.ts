@@ -125,13 +125,14 @@ export function keptStates(s: Steps): number { return 1 + Math.ceil(s.count / s.
  * An output's handle: a function of expressions (TypeScript and graph text call it), which raw WGSL text calls through
  * a hole by the name of the same library function (`rawCall`), with the time it reads appended.
  */
-function output(r: ComputeResource): BufferRead | TextureRead<"vec2" | "vec3"> {
+function output(r: ComputeResource, pass: ComputePass, key: string): BufferRead | TextureRead<"vec2" | "vec3"> {
+  const reads = [{ kind: "compute", pass, key }] as const;
   // A stepped output is read at the scene's time; any other has one state, and its readers ignore the time.
   const at: number | Expr<"f32"> = r.steps === undefined ? 0 : time;
   if (r.kind === "buffer") {
     const name = `${r.symbol}_fetch`;
     const read = r.steps === undefined ? `${r.symbol}[u32(i) * ${r.lanes}u + u32(lane)]` : `${r.symbol}(u32(i), u32(lane), t)`;
-    const fn: LibFn = { name, ret: "vec4", js: "gpu-only", wgsl: `fn ${name}(i: f32, lane: f32, t: f32) -> vec4<f32> { return ${read}; }` };
+    const fn: LibFn = { name, ret: "vec4", js: "gpu-only", reads, wgsl: `fn ${name}(i: f32, lane: f32, t: f32) -> vec4<f32> { return ${read}; }` };
     readers.set(fn, r);
     const h: BufferRead = (i, lane) => {
       if (!Number.isInteger(lane) || lane < 0 || lane >= r.lanes) resourceError(r.key, `lane ${lane}`, `a lane in [0, ${r.lanes - 1}]`, "use a declared lane");
@@ -148,7 +149,7 @@ function output(r: ComputeResource): BufferRead | TextureRead<"vec2" | "vec3"> {
     ? `textureLoad(${r.symbol}, ${coords(x, y, z)}, 0)`
     : `${r.symbol}(${coords(x, y, z)}, t)`;
   const layer = (z: string) => `mix(mix(${sample("a.x", "a.y", z)}, ${sample("b.x", "a.y", z)}, f.x), mix(${sample("a.x", "b.y", z)}, ${sample("b.x", "b.y", z)}, f.x), f.y)`;
-  const fn: LibFn = { name, ret: "vec4", js: "gpu-only", wgsl: `
+  const fn: LibFn = { name, ret: "vec4", js: "gpu-only", reads, wgsl: `
 fn ${name}(uv: ${dim}<f32>, t: f32) -> vec4<f32> {
   let n = ${size};
   let p = clamp(uv * ${dim}<f32>(n) - ${dim}<f32>(0.5), ${dim}<f32>(0), ${dim}<f32>(n - ${dim}<i32>(1)));
@@ -227,7 +228,6 @@ export function compute<const W extends Readonly<Record<string, Shape>>>(name: s
       if (Math.max(...size) > limit)
         resourceError(at, `${size.join("×")} kept texels`, `a texture history at most ${limit} texels on each axis`, "reduce the texture size, keep fewer steps or pack state into a buffer");
     }
-    handles[key] = Object.freeze(output(r));
     return [key, r] as const;
   });
   if (writes.length === 0) resourceError(name, "no outputs", "at least one declared output", "add an output to writes");
@@ -244,7 +244,10 @@ export function compute<const W extends Readonly<Record<string, Shape>>>(name: s
   if (drawOnly !== undefined)
     resourceError(name, `a call of ${drawOnly.name}`, "WGSL builtins, this module's functions and holes", "compute the ray in a drawable (draw.shader), or pass the camera in as a param");
   const reads = passLibs(code).flatMap((l) => { const r = readers.get(l); return r === undefined ? [] : [[r.symbol, r] as const]; });
-  passes.set(handles, { name, when, reads, writes, entry, dispatch, code });
+  // The handles after the record: each reader names its pass on the wire (a raw Fn's reads).
+  const pass: ComputePass = { name, when, reads, writes, entry, dispatch, code };
+  for (const [key, r] of writes) handles[key] = Object.freeze(output(r, pass, key));
+  passes.set(handles, pass);
   return Object.freeze(handles) as unknown as { readonly [K in keyof W]: Handle<W[K]> };
 }
 

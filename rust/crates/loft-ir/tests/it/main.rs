@@ -162,8 +162,15 @@ fn sample() -> (Job, Ids) {
     let data = j.sym("data");
     j.rows.extend([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
     j.decl(2, &[3, data, 1, 2, 2, 2], &[]);
-    let (kept, flock) = (j.sym("kept"), j.sym("flock"));
-    j.decl(2, &[4, kept, 2, 4, 2, flock], &[]);
+    // Kernels 4 and 5: a recurrence over a list of 2, one step kept whole (2 states of 3 rows), and its previous state.
+    let (kept, prev, ki, kt) = (j.sym("kept"), j.sym("kept_prev"), j.sym("K4i"), j.sym("K4t"));
+    let (rate, from, until) = (j.lit_at(&[60.0]), j.lit_at(&[0.0]), j.lit_at(&[1.0 / 60.0]));
+    let (bi, bt) = (j.node(BIND | F32, &[], ki), j.node(BIND | F32, &[], kt));
+    let start = j.node(11 | V4, &[bi], 0);
+    let before = j.node(6 | V4, &[bi], 5);
+    let stepped = j.node(prim(Prim::Add) | V4, &[before, bt], 0);
+    j.decl(2, &[4, kept, 1, 6, 2, 0, 0, 2, rate, from, until, 0, 1, 1, 5, bi, bt], &[start, stepped]);
+    j.decl(2, &[4, prev, 1, 3, 1, 1, 4], &[]);
     let row = j.node(6 | V4, &[looped], 1);
     let sw = j.node(10 | V2, &[fetch], 2 | 2 << 8); // z then x
     let v = j.node(11 | V3, &[sw, looped], 0);
@@ -171,9 +178,9 @@ fn sample() -> (Job, Ids) {
     let grad = j.node(8 | V3, &[call, input], 0);
     // Fn ordinals 1 and 2: raw functions, the second calling the first.
     let (base, base_text) = (j.sym("base"), j.sym("fn base(x: f32) -> f32 { return x; }"));
-    j.decl(0, &[1, base, 0, base_text, 0], &[]);
+    j.decl(0, &[1, base, 0, base_text, 0, 0], &[]);
     let (wobble, text) = (j.sym("wobble"), j.sym("fn wobble(x: f32) -> f32 { return base(x); }"));
-    let raw_decl = j.decl(0, &[1, wobble, 0, text, 1, 1], &[]);
+    let raw_decl = j.decl(0, &[1, wobble, 0, text, 1, 1, 0], &[]);
     let r = j.node(9 | F32, &[time], 2);
     let u = j.sym("u");
     let var = j.node(4 | F32, &[], u);
@@ -235,13 +242,14 @@ fn sample_decodes() {
         .iter()
         .filter_map(|k| match k {
             graph::Kernel::Table { fill, .. } => Some(fill),
-            graph::Kernel::Rows { .. } => None,
+            graph::Kernel::Rows { .. } | graph::Kernel::Compute(_) => None,
         })
         .collect();
     assert!(matches!(fills[0], Fill::Map(runs) if runs.len() == 1 && runs[0].count == 64 && runs[0].lanes.len() == 3));
     assert!(matches!(fills[1], Fill::Scan(s) if s.first == 0 && s.steps == 8 && s.state.len() == 1));
     assert!(matches!(fills[2], Fill::Data { at: 2 }));
-    assert!(matches!(fills[3], Fill::Recurrence { .. }));
+    assert!(matches!(fills[3], Fill::Recurrence(graph::Recur::Kept(k)) if k.prev == 5 && k.step.len() == 1));
+    assert!(matches!(fills[4], Fill::Recurrence(graph::Recur::Part { part: graph::Part::Prev, kept: 4 })));
 }
 
 #[test]
@@ -266,7 +274,7 @@ fn faults_are_named() {
         // A map run past the table's entries, a scan lane that is not a vec4, a fill kind that does not exist.
         (Box::new(move |j| j.decls[md].1[6] = 65), Span::Decls, Fault::Layout),
         (Box::new(move |j| j.decls[sd].2[2] = one as u32), Span::Decls, Fault::Layout),
-        (Box::new(move |j| j.decls[sd].1[0] = 5), Span::Decls, Fault::Layout),
+        (Box::new(move |j| j.decls[sd].1[0] = 6), Span::Decls, Fault::Layout),
         (Box::new(|j| j.node_sites.push(0)), Span::NodeSites, Fault::Length),
         (Box::new(|j| j.sites[0][0] = 70), Span::Sites, Fault::Sym { found: 70 }),
         (Box::new(move |j| j.nodes[call][3] = 1), Span::Nodes, Fault::Tag { found: 1 }),
