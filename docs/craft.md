@@ -238,7 +238,7 @@ export default scene({
   data. Keys land on counts and hold; canon is a time shift per member, mirror a sign, solos the contrast; `inSync`
   measures it.
 - **An action with its warning.** `attack` takes a hit shape, an arming time and a warning; `telegraph` draws the
-  warning on the water before the motion; `warned`, `landsInside` and `stopsAt` hold it to that. Ask what the world
+  warning on the water before the motion; `warned`, `landsInside` and a `clearance` condition hold it to that. Ask what the world
   feels: a slam the water does not answer (`ring`), or a grab that sets nothing down, reads as unfinished.
 - **Push it.** When it works, `exaggerated(x, rest, 1.3 to 2)` every departure from rest, and look again.
 

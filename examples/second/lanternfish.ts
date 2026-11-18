@@ -15,9 +15,9 @@
 // least gap was 0.584 (hydra), predicted ~0.6. Weak: `Option` carries only numbers, so what an option draws (`splay`,
 // `fork`) is typed by the subject with a cast per option (`as Heads`); nothing checks an option is complete.
 import {
-  add, bent, design, lift, mix, mul, scene, sea, sin, smoothstep, strand, sub, time, toon, vec3, type F, type Option, type P3,
+  add, always, bent, clearance, design, ge, lift, mix, mul, scene, sea, sin, smoothstep, strand, sub, time, toon, vec3, type F, type Option, type P3,
 } from "../../src/index.ts";
-import { budget, staysClear } from "../../src/check.ts";
+import { budget } from "../../src/check.ts";
 
 const water = { swell: [] }; // stand-in for the deep
 const NUMBERS = { length: 3.2, girth: 0.55, ride: 1.6, lure: 1.1, beat: 1.4, ink: [0.16, 0.12, 0.3] as readonly number[], glow: [0.6, 1.0, 0.85] as readonly number[] };
@@ -51,7 +51,7 @@ function fish(heads: Heads, tails: Tails, n: N, at: readonly [number, number]) {
   });
   const fins = tails.fork.map((a, k) => strand({ name: `fin${k}`, spine: (m) => add(tail, mul(out(Math.PI + a, 0.9, 0.1), m)), stations: 4, girth: (m) => mul(m, 0.45), section: { aspect: 0.12 }, tips: ["open", "round"], paint: rgb(n.ink), detail: { along: 8, around: 10 } }));
   const bulbs = heads_.filter((s) => s.name.includes("bulb"));
-  const checks = [budget({ triangles: 60_000 }), ...bulbs.flatMap((b, i) => bulbs.slice(i + 1).map((c) => staysClear(b, { kind: "body", body: c }, { until: n.beat * 10, label: `${b.name} and ${c.name} never touch` })))];
+  const checks = [budget({ triangles: 60_000 }), ...bulbs.flatMap((b, i) => bulbs.slice(i + 1).map((c) => always([time, 0, n.beat * 10], ge(clearance(b, { kind: "body", body: c }), 0), { label: `${b.name} and ${c.name} never touch` })))];
   return { things: [body, ...heads_, ...fins], checks };
 }
 

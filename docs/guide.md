@@ -230,11 +230,13 @@ solos). Look at frames across an action before and after: `loft frames <scene> -
 When what you know is what must hold, not the curve (planted here until then, on the deck at 1.2 s, clear of the
 rail always), `solve` finds the curve: the smoothest one of a family that meets every hold. It runs once when the scene
 is built and returns ordinary expressions of `time` (`bspline(time, over, [numbers])`), so the result is edited, read
-at another time and composed like any other curve. Holds are `equal(a, b, when)` and `atLeast(a, b, when)` over any
-expressions of the unknowns, with `when` an instant `{ at }`, an interval `{ from, to }`, or the whole span.
+at another time and composed like any other curve. Holds are conditions, the same formulas a check takes: a comparison
+(`ge`, `le`, `gt`, `lt`, or several joined by `and`) or `equal(a, b, within)` over any expressions of the unknowns. A
+bare condition holds over the whole span; `always([time, a, b], condition)` holds it over an interval, and
+`[time, t, t]` is an instant.
 
 ```ts run
-import { atLeast, distance, equal, plane, scene, solve, spline, strand, time, toon, vec2, vec3, type F } from "../src/index.ts";
+import { always, distance, equal, ge, plane, scene, solve, spline, strand, time, toon, vec2, vec3, type F } from "../src/index.ts";
 import { derivative } from "../src/grad.ts";
 
 const BAR = [1.5, 1.2] as const;   // a bar to hop over, end on (x, y)
@@ -242,10 +244,10 @@ const hop = solve({
   over: [0, 2],
   vary: { x: spline(23), y: spline(23, 1) },   // a number per 0.1 s; `from`: start above the bar, not under it
   hold: ({ x, y }) => [
-    equal(vec2(x, y), [0, 0.3], { from: 0, to: 0.4 }),                       // waits on the ground
-    equal(vec2(derivative(derivative(x, time), time), derivative(derivative(y, time), time)), [0, -9.81], { from: 0.6, to: 1.1, within: 0.001 }),
-    equal(vec2(x, y), [3, 0.8], { from: 1.5, to: 2 }),                       // on the block, still
-    atLeast(distance(vec2(x, y), BAR), 0.45),                                // clear of the bar, always
+    always([time, 0, 0.4], equal(vec2(x, y), [0, 0.3])),                     // waits on the ground
+    always([time, 0.6, 1.1], equal(vec2(derivative(derivative(x, time), time), derivative(derivative(y, time), time)), [0, -9.81], 0.001)),
+    always([time, 1.5, 2], equal(vec2(x, y), [3, 0.8])),                     // on the block, still
+    ge(distance(vec2(x, y), BAR), 0.45),                                     // clear of the bar: bare, so always
   ],
   prefer: { jerk: 1 },
 });
@@ -258,12 +260,17 @@ export default scene({
 });
 ```
 
-Use `checks: hop.holds` in a design build, or `export const checks = hop.holds` beside a scene. Each check is an
-`always` over the authored window, including singleton instants. For `equal`, the default half-width is `TOLERANCE` (1e-5). Set `within` in the
-units of each component. For example, `equal(accel, gravity, { from, to, within: 0.001 })` allows 0.001 m/s²
-per axis. Use `{ within: 0.001 }` alone for the whole span.
+Use `checks: hop.holds` in a design build, or `export const checks = hop.holds` beside a scene. Each check is the
+condition as written, proved by `always` over its window (the whole span for a bare one). `equal(a, b, within)` is
+true where every component of `a - b` is within `within` (default `TOLERANCE`, 1e-5) in its own units:
+`equal(accel, gravity, 0.001)` allows 0.001 m/s² per axis. `solve` pins an `equal` as a target. It knows one by the node
+`equal` returns, not by its shape, so a band spelled another way (`le(length(a - b), w)`) is solved as the inequality
+it literally is: correct, but less pinned. A hold
+under `always` is named in errors by its line; a bare one by its place in the list (`hold 4 of the solve at file:line`).
+`eventually`, `or`, `not` and an `always` over a param are refused: the search is local and cannot choose a time or a
+branch, and params take their defaults while solving.
 
-For `atLeast`, the solver targets a positive margin of `delta` (default 4e-6 in the margin's units).
+For a bound (`ge` and the rest), the solver targets a positive margin of `delta` (default 4e-6 in the margin's units).
 That leaves four times the solver's 1e-6 settling allowance while fitting inside the 5e-6 interior target
 of a coincident default equality, as when a planted foot also has to clear the ground. The ranged check
 compares the authored margin to zero. `hop.report` gives the target, the solve time and each hold's worst
@@ -281,9 +288,11 @@ and build the parts with `turnedAbout`, `poseFrame` or `chain`.
 `examples/second/heron_leap.ts` solves a heron's crouch, leap and landing; `agent_notes/2026-11-18_solve/NOTE.md` has
 the method.
 
-When you call `runChecks` from TypeScript, branch on `verdict.kind` to get a `"sampled"` or `"ranged"` result.
-Both have `holds`. A ranged result can be `"undecided"` and carries `spent` for the reason, plus the proven
-`bounds`, best `witness` and search `work`. See `examples/ranged.ts` for a mix of the two kinds in one scene.
+When you call `runChecks` from TypeScript, branch on `verdict.kind`: `"ranged"` (proved over its range: `holds` is
+`true`, `false` or `"undecided"`, with `spent` for the reason, the proven `bounds`, best `witness` and search `work`)
+or `"sampled"` (measured at instants: `pass` and `samples`; a pass means no failure at those samples, never that it
+holds). `checkOutcome(verdict)` gives `"pass"`, `"fail"` or `"undecided"` for either. See `examples/ranged.ts` for a mix
+of the two kinds in one scene.
 
 ## An action a game can read, with its checks
 
@@ -325,19 +334,36 @@ export const checks = [landsInside(creature.strikes.lash!), warned(lash), minScr
 loft check examples/strike.ts
 ```
 
-The checks that exist: `landsInside`, `stopsAt`, `staysClear`, `warned`, `gripReaches`, `releasesAt`, `throwLands`,
-`fliesClear`, `letsGoClean`, `shoves`, `frontFirst` (an attack's contract), `minScreenSize`, `spansOnScreen`,
-`staysInView`, `expressionsRead` (what reads on screen), `limbsReach`, `holdsStill`, a routine's `inSync`, and
-`budget`. `examples/strike.ts` is a serpent that bites one ship and sweeps its tail at another, with a smear and a
-wake; `examples/grab.ts` takes hold of a ship and carries it.
+A condition over time has one spelling: a boolean expression (`ge`, `le`, `gt`, `lt`, `equal`, joined by `and`, `or`,
+`not`) quantified by `always` or `eventually` over a range `[leaf, lo, hi]`, where the leaf is `time`, a param, an
+input or a variable, and `[time, t, t]` is an instant. A quantity a check used to measure for you is now a measure, an
+expression you compare: `clearance(body, target)` is how far a body's capsules are from a target (a disc, a column or
+another body; negative inside), so "stays clear" and "stops at the target" are
 
-For a continuous interval, import `always` and `eventually` from `src/ranged.ts`. For example,
-`always([time, 0, 2], gt(clearance, 0), { boxes: 2000, ms: 500 })` asks whether clearance is strictly positive
-throughout two seconds. Touching zero violates this condition. A range end may use a held input or parameter.
-Each decision shares its budgets across nested ranges, point evaluations and case splits.
+```ts
+const T = bite.first;                                                                 // the arming time
+always([time, 0, T], ge(clearance(parts.body, ship), 0))                              // clear until it arms
+always([time, T, T], le(clearance(strikes.bite.part, ship), 0.1))                     // reaches the ship at arming
+always([time, sub(T, bite.span.before), add(T, bite.span.after)], ge(clearance(strikes.bite.part, ship), -0.05)) // never enters it
+```
 
-Read `holds` on the verdict from `runChecks`. Ranged checks return `true`, `false` or `"undecided"`, along with
-`bounds` on the extreme margin, the best sampled `witness`, its `margin`, `work`, and the stop reason in `spent.kind`.
+and each is proved over every t, not sampled. A clearance from a `skin` target is a search on the CPU, not an
+expression: it is measured, a condition over it is sampled at 60 Hz, and its verdict says `no failure at N samples`.
+
+The checks that are not conditions measure something no expression gives (a footprint's share outside a hit shape, a
+triangle count, what reads on screen across a loop), so they sample and say so: `landsInside`, `warned`,
+`gripReaches`, `releasesAt`, `throwLands`, `fliesClear`, `letsGoClean`, `shoves`, `frontFirst` (an attack's contract),
+`minScreenSize`, `litBy`, `spansOnScreen`, `staysInView`, `expressionsRead` (what reads on screen), `limbsReach`,
+`holdsStill`, a routine's `inSync`, and `budget`. `examples/strike.ts` is a serpent that bites one ship and sweeps its
+tail at another, with a smear and a wake; `examples/grab.ts` takes hold of a ship and carries it.
+
+`always([time, 0, 2], gt(gap, 0), { boxes: 2000, ms: 500 })` asks whether `gap` is strictly positive throughout two
+seconds; touching zero violates it. A range end may use a held input or parameter (`bite.first`). Each decision
+shares its budgets across nested ranges, point evaluations and case splits. `precision` (default 1e-4, in the margin's
+units) is how tightly the margin is bounded; a costly measure proves sooner at 1e-3.
+
+A ranged verdict's `holds` is `true`, `false` or `"undecided"`, along with `bounds` on the extreme margin, the best
+sampled `witness`, its `margin`, `work`, and the stop reason in `spent.kind`.
 An empty witness means the check obtained no point measurement. In JSON, non-finite bounds and missing numerical
 measurements serialize as `null`. The enclosure follows the CPU twin's frame encoding and table stores.
 See [Ranged checks in the error guide](errors.md#ranged-checks).

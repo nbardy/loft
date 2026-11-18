@@ -3,10 +3,13 @@ import { expect, test } from "bun:test";
 import { leap, NUMBERS } from "../examples/second/heron_leap.ts";
 import { compileScene } from "../src/compile/index.ts";
 import { plane, Probe, scene, toon } from "../src/index.ts";
-import { add, compileJs, cos, evaluate, max, mul, sqrt, sub, substitute, time, vec3, length, type Expr } from "../src/expr.ts";
+import { add, compileJs, cos, evaluate, ge, max, mul, sqrt, sub, substitute, time, vec3, length, type Expr } from "../src/expr.ts";
 import { derivative } from "../src/grad.ts";
 import { blendFrames, turnedAbout } from "../src/geom/placing.ts";
-import { atLeast, equal, solve, spline, SolveError, TOLERANCE, type HoldLine } from "../src/geom/solve.ts";
+import { equal, solve, spline, SolveError, TOLERANCE } from "../src/geom/solve.ts";
+import { always, eventually, type Ranged } from "../src/ranged.ts";
+import * as X from "../src/expr.ts";
+const E = { ...X, eventually };
 import type { Frame } from "../src/map/types.ts";
 
 const at = (e: Expr, t: number) => evaluate(e, { inputs: { time: t } }) as number;
@@ -15,7 +18,7 @@ const ROD = 2, TURN = Math.PI / 6;
 test("the solve cache retains the newest 128 successes even through a long stream of distinct problems", () => {
   const run = (target: number) => solve({
     over: [0, 1], vary: { lruTest: spline(4, target) },
-    hold: ({ lruTest }) => [equal(lruTest, target, { at: 0 })],
+    hold: ({ lruTest }) => [always([time, 0, 0], equal(lruTest, target))],
     prefer: { near: { to: { lruTest: target }, weight: 1 } },
   });
   expect(run(0).report.samples).toBe(1);
@@ -42,7 +45,7 @@ test("a 2 m rod turning 30 degrees between keys keeps its length at the midpoint
 
   const turn = solve({
     over: [0, 1], vary: { a: spline(6) },
-    hold: ({ a }) => [equal(a, 0, { at: 0 }), equal(a, TURN, { at: 1 }), equal(derivative(a, time), 0, { at: 0 }), equal(derivative(a, time), 0, { at: 1 })],
+    hold: ({ a }) => [always([time, 0, 0], equal(a, 0)), always([time, 1, 1], equal(a, TURN)), always([time, 0, 0], equal(derivative(a, time), 0)), always([time, 1, 1], equal(derivative(a, time), 0))],
     prefer: { jerk: 1 },
   });
   const a = turn.curves.a, rod = turnedAbout(k0, [0, 0, 1], a), end = add(rod.o, mul(rod.x, ROD));
@@ -57,10 +60,10 @@ test("holds at instants and on intervals are met by the returned curves, at knot
   const r = solve({
     over: [0, 1.8], vary: { y: spline(15) },
     hold: ({ y }) => [
-      equal(y, 1.9, { at: 0 }), equal(derivative(y, time), 0, { at: 0 }),
-      equal(derivative(derivative(y, time), time), -9.81, { from: 0.6, to: 1.2 }),
-      equal(y, 2.6, { at: 1.8 }), equal(derivative(y, time), 0, { at: 1.8 }),
-      equal(y, 1.4, { at: 1.2 }),
+      always([time, 0, 0], equal(y, 1.9)), always([time, 0, 0], equal(derivative(y, time), 0)),
+      always([time, 0.6, 1.2], equal(derivative(derivative(y, time), time), -9.81)),
+      always([time, 1.8, 1.8], equal(y, 2.6)), always([time, 1.8, 1.8], equal(derivative(y, time), 0)),
+      always([time, 1.2, 1.2], equal(y, 1.4)),
     ],
     prefer: { jerk: 1 },
   });
@@ -95,7 +98,7 @@ test("a successful solve meets every hold on its fine grid at stored frame times
 test("rounding spline controls can refuse a hold that double precision met", () => {
   const target = 1024 + 2 ** -14;
   const run = (within: number) => solve({
-    over: [0, 1], vary: { x: spline(4, target) }, hold: ({ x }) => [equal(x, target, { within })],
+    over: [0, 1], vary: { x: spline(4, target) }, hold: ({ x }) => [equal(x, target, within)],
     prefer: { near: { to: { x: target }, weight: 1 } },
   });
   // A looser band in the cache cannot certify the same graph with a tighter band.
@@ -109,7 +112,7 @@ test("rounding spline controls can refuse a hold that double precision met", () 
 test("an interval hold holds between its samples", () => {
   const r = solve({
     over: [0, 1], vary: { y: spline(8) },
-    hold: ({ y }) => [equal(y, 0, { at: 0.2 }), equal(y, 1, { at: 0.5 }), equal(y, 0, { at: 0.8 }), atLeast(y, 0)],
+    hold: ({ y }) => [always([time, 0.2, 0.2], equal(y, 0)), always([time, 0.5, 0.5], equal(y, 1)), always([time, 0.8, 0.8], equal(y, 0)), ge(y, 0)],
     prefer: { jerk: 1 },
   });
   let least = Infinity;
@@ -124,15 +127,15 @@ const failure = (f: () => unknown): SolveError => {
 
 // Catches: a conflict named by the wrong holds, or by more than it needs (an innocent hold kept in the set).
 test("an infeasible solve names exactly the conflicting holds, by line", () => {
-  const made: HoldLine[][] = [];
+  const made: Ranged[][] = [];
   const e = failure(() => solve({
     over: [0, 2], vary: { x: spline(8), y: spline(8) },
     hold: ({ x, y }) => {
       const hs = [
-        atLeast(x, -1),                                   // innocent
-        equal(y, 0, { from: 0, to: 1.3 }),                // planted until 1.3 ...
-        equal(vec3(x, y, 0), [1, 0.7, 0], { at: 1.2 }),   // ... but on the deck at 1.2
-        equal(x, 0, { at: 0 }),                           // innocent
+        always([time, 0, 2], ge(x, -1)),                          // innocent
+        always([time, 0, 1.3], equal(y, 0)),                      // planted until 1.3 ...
+        always([time, 1.2, 1.2], equal(vec3(x, y, 0), [1, 0.7, 0])), // ... but on the deck at 1.2
+        always([time, 0, 0], equal(x, 0)),                        // innocent
       ];
       made.push(hs);
       return hs;
@@ -141,8 +144,8 @@ test("an infeasible solve names exactly the conflicting holds, by line", () => {
   }));
   const f = e.failure;
   if (f.kind !== "infeasible") throw new Error(`expected infeasible, got ${f.kind}`);
-  expect(f.conflict).toEqual([made[0]![1]!, made[0]![2]!]);
-  expect(f.conflict.map((h) => h.site)).toEqual([made[0]![1]!.site, made[0]![2]!.site]);
+  expect(f.conflict.map((h) => h.site)).toEqual([made[0]![1]!.site!, made[0]![2]!.site!]);
+  expect(f.conflict.map((h) => h.condition)).toEqual([made[0]![1]!.formula.body, made[0]![2]!.formula.body].map((b) => b.kind === "atom" ? b.condition : undefined!));
   expect(made[0]![1]!.site).toMatch(/tests\/solve\.test\.ts:\d+$/);
   expect(e.message).toContain(made[0]![2]!.site!);
 });
@@ -152,7 +155,7 @@ test("an infeasible solve names exactly the conflicting holds, by line", () => {
 test("a hold that reads an unknown at another time is refused", () => {
   const e = failure(() => solve({
     over: [0, 1], vary: { y: spline(6) },
-    hold: ({ y }) => [equal(y, 0, { at: 0 }), equal(substitute([y], time, sub(time, 0.3))[0] as Expr<"f32">, 1, { at: 0.9 })],
+    hold: ({ y }) => [always([time, 0, 0], equal(y, 0)), always([time, 0.9, 0.9], equal(substitute([y], time, sub(time, 0.3))[0] as Expr<"f32">, 1))],
     prefer: { jerk: 1 },
   }));
   expect(e.failure.kind).toBe("unreadable");
@@ -167,17 +170,17 @@ test("a non-finite hold names the time, including between optimisation samples",
   for (const margin of [atSample, between, atPeak]) {
     const e = failure(() => solve({
       over: [0, 1], vary: { x: spline(4) },
-      hold: ({ x }) => [equal(x, 0, { at: 0 }), atLeast(margin, 0)], prefer: { jerk: 1 },
+      hold: ({ x }) => [always([time, 0, 0], equal(x, 0)), always([time, 0, 1], ge(margin, 0))], prefer: { jerk: 1 },
     }));
     expect(e.failure.kind).toBe("unreadable");
-    expect(e.message).toMatch(/atLeast.*t = [0-9.]+/);
+    expect(e.message).toMatch(/ge from t = 0 to 1.*t = [0-9.]+/);
     expect(e.message).toContain("tests/solve.test.ts");
   }
 });
 
 test("a finite margin with an overflowing Hessian is unreadable", () => {
   const e = failure(() => solve({
-    over: [0, 1], vary: { x: spline(4) }, hold: ({ x }) => [atLeast(cos(mul(1e200, x)), -2)], prefer: { jerk: 1 },
+    over: [0, 1], vary: { x: spline(4) }, hold: ({ x }) => [ge(cos(mul(1e200, x)), -2)], prefer: { jerk: 1 },
   }));
   expect(e.failure).toMatchObject({ kind: "unreadable", at: 0 });
   expect(e.message).toContain("non-finite derivative");
@@ -185,7 +188,7 @@ test("a finite margin with an overflowing Hessian is unreadable", () => {
 
 test("a stationary start for x squared is a local failure", () => {
   const run = (from: number) => solve({
-    over: [0, 1], vary: { x: spline(4, from) }, hold: ({ x }) => [atLeast(mul(x, x), 1)], prefer: { jerk: 1 },
+    over: [0, 1], vary: { x: spline(4, from) }, hold: ({ x }) => [ge(mul(x, x), 1)], prefer: { jerk: 1 },
   });
   const e = failure(() => run(0));
   expect(e.failure.kind).toBe("unsolved");
@@ -197,7 +200,7 @@ test("the hop clears its bump and returns ranged checks on the authored windows"
   const bump = max(0, sub(0.3, mul(sub(time, 0.5), sub(time, 0.5), 4)));
   const hop = solve({
     over: [0, 1], vary: { y: spline(6) },
-    hold: ({ y }) => [equal(y, 0, { at: 0 }), equal(y, 0, { at: 1 }), atLeast(y, bump)],
+    hold: ({ y }) => [always([time, 0, 0], equal(y, 0)), always([time, 1, 1], equal(y, 0)), ge(y, bump)],
     prefer: { jerk: 1 },
   });
   const probe = new Probe(compileScene(scene({ ground: plane, things: [], style: toon(), sun: [0, 1, 0], cameras: {} })), {});
@@ -241,3 +244,14 @@ test("the 9 m deck stops on the solve deadline", () => {
   expect(e.failure).toMatchObject({ kind: "unsolved", reason: "budget" });
   expect(performance.now() - start).toBeLessThan(2500);
 }, 120_000);
+
+// Catches: a hold the local search cannot honour (a choice of time or branch) solved as something else without a word,
+// and an `and` that loses one side. `eventually`, `or` and an always over a param are refused; `and` is two holds.
+test("holds are classified once: and is two, eventually and or are refused by name", () => {
+  const spec = (hold: Parameters<typeof solve<"y">>[0]["hold"]) => () => solve({ over: [0, 1], vary: { y: spline(6) }, hold, prefer: { jerk: 1 } });
+  const both = spec(({ y }) => [always([time, 0, 0], equal(y, 0)), always([time, 0.2, 0.8], E.and(ge(y, 0.1), E.le(y, 2)))])();
+  expect(both.holds.map((h) => h.said)).toEqual(["equal", "ge", "le"]);
+  expect(() => spec(({ y }) => [E.eventually([time, 0, 1], ge(y, 1))])()).toThrow(/eventually in a hold/);
+  expect(() => spec(({ y }) => [E.or(ge(y, 1), E.le(y, -1))])()).toThrow(/a hold built by or/);
+  expect(() => spec(({ y }) => [always([E.param("solve.test.k", 1), 0, 2], ge(y, 0))])()).toThrow(/quantified over solve\.test\.k/);
+});

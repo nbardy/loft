@@ -44,7 +44,7 @@ type V2 = Expr<"vec2">;
 export type Spine = (m: F) => P3;
 
 /**
- * A solid a striking body must not pass into, as the checks measure it (`stopsAt`, `staysClear` take one): a disc on
+ * A solid a striking body must not pass into, as the checks measure it (`clearance` takes one): a disc on
  * the ground (a vertical cylinder without top), a column (a disc that stops at a height), a body's skeleton, or a
  * closed skin in the frame it is placed in. An attack carries one (`AttackSpec.target`), but the pose never reads it:
  * the strike is aimed by its hit shape, and the target is what a check measures the landing against.
@@ -67,7 +67,7 @@ export type Part = { readonly name: string; readonly body: Strand; readonly from
 /**
  * Names the stretch of a strand that strikes: m from `from` (default 0) to `to` (default 1) of `body`, its striking tip
  * at m = `tip`. A creature builder returns its parts by name (`Creature.parts`); `animate` binds each body attack to the
- * part it names, `smear` copies that stretch, and `landsInside` and `stopsAt` measure it. Numbers, fixed at build. It
+ * part it names, `smear` copies that stretch, and `landsInside` and a `clearance` condition measure it. Numbers, fixed at build. It
  * cannot name a stretch of anything but a `Strand`, nor two disjoint stretches as one part (make two parts).
  */
 export function part(name: string, body: Strand, range: { readonly from?: number; readonly to?: number; readonly tip: number }): Part {
@@ -774,7 +774,7 @@ export class BodyAttack<W extends Aftermath = Aftermath> extends Attack<BodyMoti
  *
  * What it cannot do, because of the law:
  * - aim at anything but its hit shape: the target is not read while posing, so a body that crosses the target on the way
- *   is not stopped (`stopsAt` and `staysClear` measure that afterward).
+ *   is not stopped (a `clearance` condition measures that afterward).
  * - change course, be parried or miss once warned: q is a fixed function of tau. A hit shape that moves carries the
  *   landing with it, at every clock at once (the past and future poses move too).
  * - overshoot its landing: q is normalised to its first peak (a recoil after it, with `zeta` below 1, is allowed).
@@ -895,7 +895,7 @@ export type Animated = Creature & {
  *
  * The law: spine = a_n.pose(... a_2.pose(a_1.pose(rest))), in the order given, and `build(spine)` makes the creature;
  * each attack is bound to `parts[attack.part]` of what `build` returns, with the spine it was applied to (`Strike`),
- * which is what `smear`, `landsInside` and `stopsAt` read.
+ * which is what `smear`, `landsInside` and `clearance` read.
  *
  * Parameters: `rest` is a function of m and may read time and inputs (a body that breathes, swims or walks while it
  * attacks); the attacks are a fixed list; `build` is yours.

@@ -1911,28 +1911,26 @@ Motion from stated constraints (docs/proposals/2026-11-18_next.md section 5): `s
   - guarantee between fine-grid times: an interval hold is checked at h/64 spacing (h the knot gap), not proven. Ranged checks prove it.
   - find a solution far from its start: the search is local, from each unknown's `spline(n, from)` (default 0). A hold says nothing of which side of an obstacle to pass ("clear of the rail" is met under it as well as over it): the start picks the side. A failed local search returns `unsolved` with a suggested starting curve.
   - read an unknown at another time than the hold's own (a delay): refused, naming the hold.
-  - hold for every value of a param or input: they take their defaults while solving.
+  - hold for every value of a param or input: they take their defaults while solving (an `always` over one is refused).
+  - hold `eventually`, or an `or` or a `not`: the search is local and cannot choose a time or a branch (refused).
   - read raw WGSL or per-frame tables in a hold (refused, naming the hold).
   - change after the build: the result is numbers. A hold that should follow a host input at run time is a closed form, not a solve.
 - **spline**: An unknown curve for `solve`'s `vary`: a uniform cubic B-spline with `n` numbers (n - 3 cubic pieces) over the solve's span.
   `function spline(n: number, from: In<"f32"> = 0): Family`
-- **equal**: Each component of `a - b` stays within ±`within` (default 1e-5), in its own units, at `when`: an instant `{ at }` (lands, reaches), an interval `{ from, to }` (planted), or the whole span when left out.
-  `function equal(a: In<NumTy>, b: In<NumTy>, when?: (When & { readonly within?: number }) | { readonly within: number }): HoldLine`
-- **atLeast**: `a` is at least `b` (numbers) at `when` (as for `equal`): clear by a distance, above a floor, within a reach (`atLeast(reach, distance)`).
-  `function atLeast(a: In<"f32">, b: In<"f32">, when?: When): HoldLine`
+- **equal**: Each component of `a - b` is within ±`within` (default 1e-5) in its own units: a condition (a boolean expression), true where `max |a - b| <= within`.
+  `function equal(a: In<NumTy>, b: In<NumTy>, within: number = TOLERANCE): Expr<"bool">`
 - **SolveError**: A solve refusal (exit 4).
   `class SolveError extends SceneError`
 
 Types:
 - **Family**: The family of an unknown curve, and where the search for it starts. `type Family = { readonly kind: "spline"; readonly n: number; readonly from: F }`
-- **HoldLine**: A stated constraint. `type HoldLine = { times, site }`
-- **HoldReport**: How well one hold is met by the returned curves, measured on the fine grid (and its instant). `type HoldReport = { readonly kind: HoldLine["kind"]; readonly site: string | undefined; readonly when: string; readonly worst: number; readonly at: number }`
+- **HoldLine**: A condition as `solve` reads it, classified once from what the author wrote (`holdsOf`): a target band (`equal`) or a lower bound on a margin (`ge`, `le`, `gt`, `lt`), at its `times`. `type HoldLine = { times, site, said, condition }`
+- **HoldReport**: How well one hold is met by the returned curves, measured on the fine grid (and its instant). `type HoldReport = { readonly kind: HoldLine["kind"]; readonly said: string; readonly site: string; readonly when: string; readonly worst: number; readonly at: number }`
 - **Prefer**: What `solve` makes least, a weighted sum: `jerk` and `acceleration` (each the integral over the span of the squared third or second time derivative, summed over the unknowns) and `near` (the integral of the squared difference from given curves of time, for the unknowns named: least change from a curve you had). `type Prefer<K extends string> = { jerk?, acceleration?, near? }`
 - **Solved**: `type Solved<K extends string> = { curves, holds, report }`
 - **SolveFailure**: Why `solve` returned no curves. `type SolveFailure = /** The hold uses a named raw WGSL compute output, which the solver cannot inspect. */ | { readonly kind: "undecided"; readonly hold: HoldLine; readonly resource: string } /** A contradiction between the named linear bounds, including the equality tolerance. */ | { readonly ki...`
 - **SolveReport**: `type SolveReport = { delta, ms, steps, rounds, samples, holds }`
 - **SolveSpec**: `type SolveSpec<K extends string> = { over, vary, hold, prefer, delta?, budget? }`
-- **When**: When a hold applies: one instant, an interval, or (left out) the whole span of the solve. `type When = { readonly at: number } | { readonly from: number; readonly to: number }`
 
 ## Actions (src/actions.ts)
 
@@ -1984,7 +1982,7 @@ An attack defined once, everything derived from it (DESIGN.md 8).
 - **attack**: An attack, defined once: by a body part (`part` and a lunge, sweep or rear), by a gripper (`grip`, holding what it takes), or remote (a hit shape, timing and effect only).
   `function attack<W extends Aftermath = Still>(spec: BodyAttackSpec<W>): BodyAttack<W>`
   cannot:
-  - aim at anything but its hit shape: the target is not read while posing, so a body that crosses the target on the way is not stopped (`stopsAt` and `staysClear` measure that afterward).
+  - aim at anything but its hit shape: the target is not read while posing, so a body that crosses the target on the way is not stopped (a `clearance` condition measures that afterward).
   - change course, be parried or miss once warned: q is a fixed function of tau. A hit shape that moves carries the landing with it, at every clock at once (the past and future poses move too).
   - overshoot its landing: q is normalised to its first peak (a recoil after it, with `zeta` below 1, is allowed).
   - strike along any path but its motion's: a lunge lays the m = 0 end along a capsule's lane on a quadratic Bezier (or toward a disc's centre from where it rests), a sweep swings the m = 1 end round an arc's centre, a rear stands a middle stretch up as a loop and topples it onto a capsule. A remote attack poses nothing.
@@ -2079,7 +2077,7 @@ Types:
 - **SweepSpec**: A sweep: the m = 1 end of the spine swings round the arc's centre from its `from` angle to its `to` angle. `type SweepSpec = { kind, hit, root, height, inset }`
 - **Motion**: How an attack moves its part (the m = 0 end lunges, the m = 1 end sweeps, a middle stretch rears and slams, a gripper takes), or not at all. `type Motion = LungeSpec | SweepSpec | RearSpec | RemoteSpec | GripSpec`
 - **Timing**: Seconds and rates of an attack, all relative to its arming time T. `type Timing = { windup, strike, zeta, anticipation, hold, recover, travel }`
-- **Target**: A solid a striking body must not pass into, as the checks measure it (`stopsAt`, `staysClear` take one): a disc on the ground (a vertical cylinder without top), a column (a disc that stops at a height), a body's skeleton, or a closed skin in the frame it is placed in. `type Target = | { readonly kind: "disc"; readonly centre: V2; readonly radius: F } /** A disc that stands only up to `top` (world y): what a thrown thing may pass over (a low wall, a body's back). */ | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F } | { reado...`
+- **Target**: A solid a striking body must not pass into, as the checks measure it (`clearance` takes one): a disc on the ground (a vertical cylinder without top), a column (a disc that stops at a height), a body's skeleton, or a closed skin in the frame it is placed in. `type Target = | { readonly kind: "disc"; readonly centre: V2; readonly radius: F } /** A disc that stands only up to `top` (world y): what a thrown thing may pass over (a low wall, a body's back). */ | { readonly kind: "column"; readonly centre: V2; readonly radius: F; readonly top: F } | { reado...`
 - **Part**: A stretch of a body that strikes: m from `from` to `to`, its striking tip at m = `tip`. `type Part = { readonly name: string; readonly body: Strand; readonly from: number; readonly to: number; readonly tip: number }`
 - **Strike**: An attack bound to the part of the posed creature that strikes with it; `before` is the spine the attack was applied to. `type Strike = { readonly attack: BodyAttack; readonly part: Part; readonly before: Spine }`
 - **Creature**: What a creature builder returns: its drawables, and the parts an attack may name. `type Creature = { readonly things: readonly Drawable[]; readonly parts: Readonly<Record<string, Part>> }`
@@ -2385,12 +2383,13 @@ the measured verdicts on a built subject (reach, clearance, readability, budgets
 
 Checks: arithmetic on the CPU from the same description the GPU draws (DESIGN.md 8).
 
+- **clearance**: How far a body's surface is from a target, as an expression of time (negative: it is inside): the least, over the body's chain of capsules (its skeleton, the chain that casts its shadow), of the target's distance less the capsule's radius there.
+  `function clearance(body: Measured, target: Target): Expr<"f32">`
+  cannot:
+  - Targets: a disc on the ground (the footprint's distance in the water plane), a column (its capped cylinder, at the joints) or another body (capsule to capsule). cannot: be proved against a `skin` target: a skin's signed distance is a CPU search over its mesh, not an expression, so the clearance from one is a measured quantity, and a condition over it is sampled at 60 Hz (its verdict is `sampled`, "no failure at N samples").
+  - It cannot be a `solve` hold (refused). relatives: always, eventually, letsGoClean, fliesClear.
 - **landsInside**: The striking part's footprint at the arming time lies within the hit shape: at most `tolerance` of it outside.
   `function landsInside(strike: Strike, o: { readonly tolerance?: number; readonly step?: number } = {}): Check`
-- **staysClear**: The least distance between `body` and `target` from `from` until (not including) `until` is at least `margin`.
-  `function staysClear(body: Measured, target: Target, o: { readonly until: CheckTime; readonly from?: CheckTime; readonly margin?: number; readonly rate?: number; readonly label?: string }): Check`
-- **stopsAt**: The striking part reaches the target at the arming time (within `contact`) and never enters it over the whole attack (it stops at the hull: the least distance is at least `-tolerance`).
-  `function stopsAt(strike: Strike, target: Target, o: { readonly contact?: number; readonly tolerance?: number; readonly rate?: number } = {}): Check`
 - **gripReaches**: A two-sided gripper (two fingers, a jaw's halves) reaches the thing its hold takes, and keeps it: at the closing instant (the arming time) and at every sampled instant of the hold, the point of each drawn finger's surface nearest the thing's middle is found.
   `function gripReaches(attack: Attack<Motion, Hold>, fingers: readonly [Measured, Measured], o: { readonly middle: Tolerance; readonly gap: Tolerance; readonly rate?: number }): Check`
 - **releasesAt**: The hand-off a throw promises a game (docs/throw_and_shove.md, "The contract"): at the stated release instant the thing is at the stated release point, and the gripper has brought it to the stated release velocity.
@@ -2438,7 +2437,7 @@ Types:
 - **Check**: `interface Check { name, run }`
 - **CheckTime**: A time a check is given: seconds, or an attack's arming (`attack.arming`), which a check measures at its first arming time. `type CheckTime = In<"f32"> | Arming`
 - **Tolerance**: How far a measurement may be from what it should be: a distance in world units, or a share of a reference that the check taking it names (for `gripReaches`, the held thing's width). `type Tolerance = { readonly kind: "units"; readonly units: number } | { readonly kind: "share"; readonly share: number }`
-- **Verdict**: A check result: sampled, ranged (with bounds, witness, work and stop reason), or a sampled check that reads a raw WGSL compute output, which has no CPU twin and so is undecided by name. `type Verdict = | (Measurement & { readonly kind: "sampled"; readonly holds: boolean; readonly pass: boolean }) | (Measurement & Decision & { readonly kind: "ranged"; readonly pass: boolean | undefined }) | (Measurement & { readonly kind: "raw-compute"; readonly holds: "undecided"; readonly pass: ...`
+- **Verdict**: A check result: proved over a range (`ranged`, with bounds, witness, work and stop reason), measured at samples (`sampled`: a pass is "no failure at N samples", never "holds", since nothing is known between them), or a sampled check that reads a raw WGSL compute output, which has no CPU twin and so is undecided by name. `type Verdict = | (Measurement & { readonly kind: "sampled"; readonly pass: boolean; readonly samples: number | undefined }) | (Measurement & Decision & { readonly kind: "ranged"; readonly pass: boolean | undefined }) | (Measurement & { readonly kind: "raw-compute"; readonly holds: "undecided"; re...`
 - **Measured**: Something with a skeleton to measure: a whole body, or a part (its stretch of joints). `type Measured = Body | Part`
 - **Mark**: A drawn length: two world points (closed forms of the clock) whose difference a viewer sees: an eye's middle to its lid's edge, a stalk's root to its tip, an eye's middle to its pupil. `type Mark = { readonly from: In<"vec3">; readonly to: In<"vec3"> }`
 - **Reaching**: A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of (outboard of the root: a knee that crosses inward has folded under the body). `type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> }`
@@ -2450,12 +2449,12 @@ Ranged checks: a condition that holds for every time in [a, b] and every value o
 - **always**: The condition holds for every value of the range's leaf in [lo, hi]: `always([time, 0, 4], ge(gap, 0.1))`.
   `function always(range: Range, condition: Condition, o: Settings = {}): Ranged`
   cannot:
-  - Its margin is the least of the condition's margin over the range, found within `precision`, with the leaf values where it is least. cannot: compare with `eq` or `ne` (no margin); read a GPU-only function, a cellular noise, or a table filled on the CPU (refused by name when the check runs). relatives: eventually, staysClear (the sampled check it replaces where the scene is a closed form).
+  - Its margin is the least of the condition's margin over the range, found within `precision`, with the leaf values where it is least. cannot: compare with `eq` or `ne` (no margin); read a GPU-only function, a cellular noise, or a table filled on the CPU (refused by name when the check runs).
 - **eventually**: The condition holds for some value of the range's leaf in [lo, hi]: `eventually([time, 0, 3], le(height, 0))`.
   `function eventually(range: Range, condition: Condition, o: Settings = {}): Ranged`
 
 Types:
-- **Ranged**: A ranged check: a `Check` for `loft check`, and `decide(probe)` for the numbers. `interface Ranged extends Check { formula, run, decide }`
+- **Ranged**: A ranged check: a `Check` for `loft check`, and `decide(probe)` for the numbers. `interface Ranged extends Check { formula, site, run, decide }`
 - **Range**: A leaf and the range it takes: `[time, 0, 4]`, `[param("crab.reach", 1), 0.8, 1.2]`. `type Range = readonly [Expr<"f32">, In<"f32">, In<"f32">]`
 - **RangedSettings**: Search settings. `type Settings = { label?, precision?, boxes?, ms? }`
 - **Decision**: Truth of the quantified condition, bounds on its extreme, and the best point observed. `type Decision = { holds, margin, bounds, witness, work, spent }`
@@ -3077,9 +3076,9 @@ Types:
 
 ## Coverage
 
-830 exports (469 values, 361 types) from src/index.ts and src/lib/index.ts.
+827 exports (467 values, 360 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 
-Shape and motion functions whose comment states no limits (3): spline, equal, atLeast.
+Shape and motion functions whose comment states no limits (2): spline, equal.
 

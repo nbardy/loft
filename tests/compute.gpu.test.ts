@@ -1,8 +1,8 @@
 // Non-aligned volume rows, a load dependency, a shortened final checkpoint, and a partial frame write. The color
 // channels report independent numbers, so a plausible-looking image cannot hide a scheduling or copy bug.
 import { expect, test } from "bun:test";
-import { always, atLeast, compute, drawSpec, emitShaderFn, fetch, ge, input, nothing, param, scene, solve, spline, tabulate, time, toon, vec2, vec4, type Drawable } from "../src/index.ts";
-import { runChecks } from "../src/check.ts";
+import { always, compute, drawSpec, emitShaderFn, fetch, ge, input, nothing, param, scene, solve, spline, tabulate, time, toon, vec2, vec4, type Drawable } from "../src/index.ts";
+import { checkOutcome, runChecks } from "../src/check.ts";
 import { compile } from "../src/compile/index.ts";
 import { SceneError } from "../src/errors.ts";
 import { SolveError } from "../src/geom/solve.ts";
@@ -133,11 +133,11 @@ test("CPU checks and solve identify the exact raw compute read", () => {
     { name: "sampled", run: (p: Parameters<ReturnType<typeof always>["run"]>[0]) => { p.scalar(pixel.x); throw new Error("expected refusal"); } },
   ];
   for (const result of runChecks(example, checks)) {
-    expect(result.holds).toBe("undecided");
+    expect(checkOutcome(result)).toBe("undecided");
     expect(result.measured).toContain('raw compute "testCopy.colour"');
   }
   try {
-    solve({ over: [0, 1], vary: { x: spline(4, 1) }, hold: ({ x }) => [atLeast(x, pixel.x, { at: 0 })], prefer: { jerk: 1 } });
+    solve({ over: [0, 1], vary: { x: spline(4, 1) }, hold: ({ x }) => [always([time, 0, 0], ge(x, pixel.x))], prefer: { jerk: 1 } });
     throw new Error("expected refusal");
   } catch (e) {
     expect(e).toBeInstanceOf(SolveError);

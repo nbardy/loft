@@ -12,4 +12,4 @@ export { dart, chosen, tremor, RestlessError, type Dart, type DartSpec } from ".
 export { cast, score, show, only, added, during, ExpressionError, type Cast, type Expression, type Layer, type Posed, type Score } from "./geom/expression.ts";
 export { struck, holdsStill, StruckError, type Struck, type StruckSpec } from "./geom/struck.ts";
 export { carriedFrame } from "./geom/stance.ts";
-export { solve, spline, equal, atLeast, SolveError, type Family, type HoldLine, type HoldReport, type Prefer, type Solved, type SolveFailure, type SolveReport, type SolveSpec, type When } from "./geom/solve.ts";
+export { solve, spline, equal, SolveError, type Family, type HoldLine, type HoldReport, type Prefer, type Solved, type SolveFailure, type SolveReport, type SolveSpec } from "./geom/solve.ts";

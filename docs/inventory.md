@@ -109,7 +109,7 @@ All in `src/geom/`, closed form in time. Most came out of the crab work and are 
 
 ## 6. Checks: arithmetic on the CPU from the same description the GPU draws
 
-`src/check.ts` (870 lines), all **library**: `landsInside`, `staysClear`, `stopsAt`, `gripReaches`, `releasesAt`,
+`src/check.ts` (870 lines), all **library**: `landsInside`, `clearance` (a measure), `gripReaches`, `releasesAt`,
 `throwLands`, `fliesClear`, `letsGoClean`, `shoves`, `frontFirst`, `warned`, `minScreenSize`, `expressionsRead`,
 `spansOnScreen`, `staysInView`, `limbsReach`, `budget`; the routine's `inSync`.
 

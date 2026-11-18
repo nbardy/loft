@@ -13,10 +13,9 @@
 // box; a quantifier inside another of the other kind is a search of its own for each box or point the outer one asks
 // about, cut short for a box (a few splits give a valid but loose enclosure) and run to the precision for a point.
 
-import { Expr, everything, lift, max, min, neg, sub, type In } from "./expr.ts";
-import { SceneError } from "./errors.ts";
+import { Expr, everything, lift, max, min, neg, sub, variable, type In } from "./expr.ts";
+import { SceneError, siteOf } from "./errors.ts";
 import { Evaluator, RangeRefusal, Unbounded, type Tri, type Refusal, type Box, type I, type Track, type Work } from "./interval.ts";
-import type { Target } from "./spacetime/attack.ts";
 import type { Check, Probe, Verdict } from "./check.ts";
 
 /** A leaf and the range it takes: `[time, 0, 4]`, `[param("crab.reach", 1), 0.8, 1.2]`. */
@@ -45,19 +44,26 @@ export type Spent =
   /** The box budget ran out. */
   | { readonly kind: "boxes"; readonly boxes: number }
   /** The boxes that could hold the extreme could not be split further; `op` is why they stayed wide, if an operator was unbounded on them. */
-  | { readonly kind: "width"; readonly width: number; readonly op: string | undefined };
+  | { readonly kind: "width"; readonly width: number; readonly op: string | undefined }
+  /** The condition reads a measured quantity (`measured`), which has no enclosure: `run` samples it instead. */
+  | { readonly kind: "measured"; readonly what: string };
 
 /** A ranged check: a `Check` for `loft check`, and `decide(probe)` for the numbers. */
 export interface Ranged extends Check {
   readonly formula: Quantified;
-  run(probe: Probe): Extract<Verdict, { kind: "ranged" }>;
+  /** The line the `always` or `eventually` was written on (undefined when no line outside the library is on the stack). */
+  readonly site: string | undefined;
+  /** Proved over the range (`ranged`), or, for a condition over a measured quantity, sampled over time (`sampled`). */
+  run(probe: Probe): Extract<Verdict, { kind: "ranged" | "sampled" }>;
   decide(probe: Probe): Decision;
 }
 
-type Leaf = { readonly key: string; readonly label: string; readonly lo: Expr<"f32">; readonly hi: Expr<"f32"> };
-type Quantified = { readonly kind: "always" | "eventually"; readonly leaves: readonly Leaf[]; readonly body: Body; readonly label: string };
-type Condition = Expr<"bool"> | Ranged | Extract<Target, { kind: "skin" }>;
-type Body = { readonly kind: "skin" } | { readonly kind: "atom"; readonly condition: Expr<"bool">; readonly margin: Expr<"f32"> } | { readonly kind: "nested"; readonly q: Quantified };
+/** A bound leaf: `key` is `input:time`, `param:<name>`, `input:<name>` or `var:<name>`. */
+export type Leaf = { readonly key: string; readonly label: string; readonly lo: Expr<"f32">; readonly hi: Expr<"f32"> };
+/** A quantified condition: what `solve` reads of an `always` it is given as a hold. */
+export type Quantified = { readonly kind: "always" | "eventually"; readonly leaves: readonly Leaf[]; readonly body: Body; readonly label: string };
+type Condition = Expr<"bool"> | Ranged;
+type Body = { readonly kind: "atom"; readonly condition: Expr<"bool">; readonly margin: Expr<"f32"> } | { readonly kind: "nested"; readonly q: Quantified };
 
 /** Search settings. */
 export type Settings = {
@@ -71,6 +77,34 @@ export type Settings = {
   readonly ms?: number;
 };
 
+// ---- measured quantities ------------------------------------------------------------------------------------------
+
+/** A quantity the CPU measures at an instant by a search, not an expression (a body's clearance from a skin). */
+type Measure = { readonly what: string; readonly name: string; readonly at: (probe: Probe, t: number) => number };
+// Keyed by the leaf a measure stands in for in expressions: a variable of its own, never bound by a range.
+const measures = new WeakMap<Expr, Measure>();
+let measureCount = 0;
+
+/**
+ * A quantity measured on the CPU at each instant (`at`), standing in an expression as a leaf of its own, so it is
+ * compared with the same vocabulary as any expression. It has no enclosure: a condition reading it is sampled at
+ * `SAMPLE_RATE` over its time range, and its verdict is `sampled` ("no failure at N samples"), never a proof. Library
+ * use: `clearance` from a skin.
+ */
+export function measured(what: string, at: Measure["at"]): Expr<"f32"> {
+  const name = `loft.measured.${++measureCount}`, leaf = variable(name, "f32");
+  measures.set(leaf, { what, name, at });
+  return leaf;
+}
+
+/** The measured quantities an expression reads (classified once, where a check or a hold is built). */
+export function measuredIn(roots: readonly Expr[]): Measure[] {
+  return everything(roots).flatMap((e) => measures.get(e) ?? []);
+}
+
+/** Samples per second of a condition over a measured quantity: the rate the sampled checks it replaces used. */
+const SAMPLE_RATE = 60;
+
 // ---- the authoring surface ----------------------------------------------------------------------------------------
 
 /**
@@ -80,7 +114,9 @@ export type Settings = {
  * condition's margin over the range, found within `precision`, with the leaf values where it is least.
  * cannot: compare with `eq` or `ne` (no margin); read a GPU-only function, a cellular noise, or a table filled on the
  *   CPU (refused by name when the check runs).
- * relatives: eventually, staysClear (the sampled check it replaces where the scene is a closed form).
+ * The same formulas are `solve`'s holds, and a measure (`clearance`) is a quantity to compare: `always([time, 1, 3],
+ * ge(clearance(tail, ship), 0.1))` is proved over every t, where a sampled check only fails to find a failure.
+ * relatives: eventually, clearance, equal.
  */
 export function always(range: Range, condition: Condition, o: Settings = {}): Ranged {
   return ranged("always", range, condition, o);
@@ -129,11 +165,11 @@ const shownRange = (l: Leaf): string => `${l.label} in [${show(l.lo)}, ${show(l.
 const show = (e: Expr<"f32">): string => (e.node.op === "const" ? String(e.node.v[0]) : "(expr)");
 
 function ranged(kind: "always" | "eventually", range: Range, condition: Condition, o: Settings): Ranged {
+  const site = siteOf(new Error().stack);
   const leaf = leafOf(kind, range);
   let body: Body;
   if (condition instanceof Expr) body = { kind: "atom", condition, margin: marginOf(kind, condition) };
   else if (typeof condition === "object" && condition !== null && "formula" in condition) body = { kind: "nested", q: condition.formula };
-  else if (condition?.kind === "skin") body = { kind: "skin" };
   else throw new SceneError(kind, "an unknown condition", "a comparison or a quantified condition", `${kind}(range, ge(a, b))`);
   // A run of one kind is one search over the joint box.
   const merged = body.kind === "nested" && body.q.kind === kind ? body.q : undefined;
@@ -164,8 +200,23 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
   if (!Number.isSafeInteger(boxes) || boxes < 0) throw new SceneError(kind, `boxes ${boxes}`, "a nonnegative integer", "set boxes to the maximum number of enclosures");
   if (o.ms !== undefined && !(Number.isFinite(o.ms) && o.ms >= 0)) throw new SceneError(kind, `ms ${o.ms}`, "a finite nonnegative duration", "give the time budget in milliseconds");
   const name = o.label ?? label;
+  // Read through every nesting: an inner always over time that samples a measure, wrapped by a quantifier of the
+  // other kind, would otherwise reach the interval search as an unbound variable and be refused under the wrong fix.
+  const atomOf = (b: Body): Expr<"bool"> => (b.kind === "atom" ? b.condition : atomOf(b.q.body));
+  const sampled = measuredIn([atomOf(inner)]);
+  if (sampled.length > 0 && (leaves.length !== 1 || leaf.key !== "input:time" || inner.kind !== "atom"))
+    throw new SceneError(kind, `a condition over ${sampled[0]!.what} (measured, not an expression) quantified over ${leaves.map((l) => l.label).join(", ")}`,
+      "a measured quantity under one range over time, which is sampled", `${kind}([time, a, b], ge(...))`);
+  if (sampled.length > 0 && inner.kind === "atom") {
+    const what = sampled.map((m) => m.what).join(", ");
+    return {
+      name, formula, site,
+      decide: () => ({ holds: "undecided", margin: NaN, bounds: [-Infinity, Infinity], witness: {}, spent: { kind: "measured", what }, work: { boxes: 0, nodes: 0, ms: 0, codomain: 0 } }),
+      run: (probe) => sampleRun(kind, leaf, inner.condition, inner.margin, sampled, probe, name, what),
+    };
+  }
   return {
-    name, formula,
+    name, formula, site,
     decide: (probe) => decide(formula, probe, name, precision, boxes, o.ms, keys),
     run(probe) {
       const d = decide(formula, probe, name, precision, boxes, o.ms, keys);
@@ -181,6 +232,32 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
 }
 
 const fmt = (x: number, digits: number): string => (Number.isFinite(x) ? x.toFixed(digits) : String(x));
+
+/**
+ * A condition over a measured quantity, sampled at `SAMPLE_RATE` over its time range (both ends included): the least
+ * (`always`) or greatest (`eventually`) margin seen and where. Between samples nothing is known, and the verdict says so.
+ */
+function sampleRun(kind: "always" | "eventually", leaf: Leaf, condition: Expr<"bool">, margin: Expr<"f32">, sampled: ReturnType<typeof measuredIn>, probe: Probe, name: string, what: string): Extract<Verdict, { kind: "sampled" }> {
+  const [a, b] = [probe.scalar(leaf.lo), probe.scalar(leaf.hi)];
+  if (!(Number.isFinite(a) && Number.isFinite(b) && a <= b)) throw new SceneError(kind, `the range ${shownRange(leaf)} = [${a}, ${b}]`, "finite ends, lo <= hi", "swap the two ends");
+  const n = Math.max(1, Math.ceil((b - a) * SAMPLE_RATE));
+  const roots = [margin, condition], sign = kind === "always" ? 1 : -1;
+  let best = { t: a, m: Infinity * sign }, found = kind === "eventually" ? false : true;
+  for (let i = 0; i <= (a === b ? 0 : n); i++) {
+    const t = i === n ? b : a + ((b - a) * i) / n;
+    const vars = Object.fromEntries(sampled.map((m) => [m.name, m.at(probe, t)]));
+    const [m, truth] = probe.eval(roots, t, vars) as [number, number | boolean];
+    if (sign * m < sign * best.m) best = { t, m };
+    if (kind === "always" && !truth) found = false;
+    if (kind === "eventually" && truth) found = true;
+  }
+  const samples = a === b ? 1 : n + 1;
+  return {
+    kind: "sampled", name, pass: found, samples, value: best.m,
+    measured: `${kind === "always" ? "least" : "greatest"} margin ${fmt(best.m, 4)} at t=${fmt(best.t, 3)} (${fmt(a, 2)}..${fmt(b, 2)}; ${what} is measured, not an expression)`,
+    limit: `condition true ${kind === "always" ? "at every" : "at some"} sample`,
+  };
+}
 function spentText(s: Spent): string {
   switch (s.kind) {
     case "finished": return "finished";
@@ -192,6 +269,7 @@ function spentText(s: Spent): string {
     case "raw-compute": return `raw compute "${s.resource}"`;
     case "recur": return `recur (${s.table}; measure the baked trajectory with a sampled check)`;
     case "skin": return "skin (measure the skin with a sampled contact check)";
+    case "measured": return `measured (${s.what} has no enclosure: run samples the condition)`;
     case "width": return `width: boxes ${s.width.toExponential(1)} wide could not be split further${s.op === undefined ? "" : `; unbounded there: ${s.op}`}`;
   }
 }
@@ -263,7 +341,6 @@ function decide(q: Quantified, probe: Probe, where: string, precision: number, l
     const recurrence = probe.artefact.recurrences?.[0];
     if (recurrence) throw new RangeRefusal(where, { kind: "recur", table: recurrence.name });
     for (let f: Quantified | undefined = q; f; f = f.body.kind === "nested" ? f.body.q : undefined) {
-      if (f.body.kind === "skin") throw new RangeRefusal(where, { kind: "skin" });
       for (const l of f.leaves) {
         labels.set(l.key, l.label);
         const end = (e: Expr<"f32">): number => {
@@ -348,7 +425,6 @@ function search(q: Quantified, outer: Box, run: Run, precision: number, effort: 
     const box = boxOf(at), cellAt = at.map((b): I => (Array.isArray(b) ? (b as unknown as I) : [(b as Track).centre, (b as Track).centre]));
     try {
       switch (q.body.kind) {
-        case "skin": throw new RangeRefusal(run.where, { kind: "skin" });
         case "atom": {
           const ev = new Evaluator(box, run.held, run.where, run.work);
           const v = ev.scalar(q.body.margin);

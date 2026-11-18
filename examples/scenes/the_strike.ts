@@ -5,8 +5,8 @@
 // arming time, a warning) and the pose, marker, smear, wake and the checks below are all derived from it.
 // `pnpm loft check examples/scenes/the_strike.ts` runs the checks.
 import {
-  add, atan2, budget, input, landsInside, lift, minScreenSize, mul, normalize, scene, sea, smoothstep,
-  staysClear, stopsAt, strand, sub, through, time, toon, vec2, vec3,
+  add, always, atan2, budget, clearance, ge, input, landsInside, le, lift, minScreenSize, mul, normalize, scene, sea, smoothstep,
+  strand, sub, through, time, toon, vec2, vec3,
 } from "../../src/index.ts";
 import { ship } from "../recipes/ship.ts";
 import { animate, attack, hit, part, smear, telegraph, wake, type Target } from "../../src/spacetime/index.ts";
@@ -21,7 +21,7 @@ const SHIP_LENGTH = 5.6;
 /** Where the lane starts: on the water in front of the serpent's neck (examples/serpent.ts puts the head near x = 8). */
 const ANCHOR: readonly [number, number] = [7.4, 0];
 const BITE_RADIUS = 1.0;
-/** How far inside the beam line the lane ends: the head lands on the bulwark, not short of it (checked by stopsAt). */
+/** How far inside the beam line the lane ends: the head lands on the bulwark, not short of it (checked by a clearance at arming). */
 const LAND_INSET = 0.25;
 const WIND: readonly [number, number] = [0.3, 1];
 
@@ -109,9 +109,13 @@ export default scene({
 
 export const checks = [
   landsInside(strikes.bite),
-  stopsAt(strikes.bite, target),
-  staysClear(parts.body, target, { until: bite.arm, label: "bite: body clear of the brig until arming" }),
-  staysClear(parts.head, target, { until: bite.arm, margin: 0.02, label: "bite: head clear of the brig until arming" }),
+  always([time, bite.first, bite.first], le(clearance(strikes.bite.part, target), 0.6), { label: "bite: head reaches the brig at arming" }),
+  // Proved over every t against the hull's stand-in (capsule to capsule, riding the swell). The head's two proofs are
+  // the costly ones (~14 ms a box: 148 s and 140 s at the default precision 1e-4, 32 s and 15 s at 1e-3, measured
+  // 18 Nov 2026), so they bound the margin to a millimetre, ample against margins of 0.45 m and more.
+  always([time, sub(bite.first, bite.span.before), add(bite.first, bite.span.after)], ge(clearance(strikes.bite.part, target), -0.05), { label: "bite: head never enters the brig", precision: 1e-3 }),
+  always([time, 0, bite.first], ge(clearance(parts.body, target), 0), { label: "bite: body clear of the brig until arming" }),
+  always([time, 0, bite.first], ge(clearance(parts.head, target), 0.02), { label: "bite: head clear of the brig until arming", precision: 1e-3 }),
   minScreenSize(parts.eye, "game", 4, { at: bite.arm }),
   budget({ triangles: 500_000 }),
 ];

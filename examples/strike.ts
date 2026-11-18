@@ -7,13 +7,13 @@
 // the shape and the strike follows. Run `loft check examples/strike.ts` for the checks.
 
 import {
-  add, atan2, div, input, length, lift, mod, mul, normalize, scene, sea, smoothstep, sub, time, toon, vec2,
+  add, always, atan2, div, ge, input, le, length, lift, mod, mul, normalize, scene, sea, smoothstep, sub, time, toon, vec2,
   type Expr,
 } from "../src/index.ts";
 import { ship, type ShipSpec } from "./recipes/ship.ts";
 import { sloopSpec } from "./fleet.ts";
 import { animate, attack, hit, part, smear, telegraph, wake, type Target } from "../src/spacetime/index.ts";
-import { budget, landsInside, minScreenSize, staysClear, stopsAt } from "../src/check.ts";
+import { budget, clearance, landsInside, minScreenSize } from "../src/check.ts";
 import { restGape, restSpine, S, serpent } from "./serpent.ts";
 
 const water = sea({
@@ -129,12 +129,16 @@ export default scene({
 
 export const checks = [
   landsInside(strikes.bite),
-  stopsAt(strikes.bite, biteTarget, { contact: 0.1 }),
-  staysClear(parts.body, biteTarget, { until: bite.arm, label: "bite: body clear of the ship until arming" }),
-  staysClear(parts.head, biteTarget, { until: bite.arm, margin: 0.02, label: "bite: head clear of the ship until arming" }),
+  // Proved over every t (the measure is an expression of time), not sampled: reaches the target at arming, never
+  // enters it during the attack, and keeps clear before.
+  always([time, bite.first, bite.first], le(clearance(strikes.bite.part, biteTarget), 0.1), { label: "bite: head reaches the ship at arming" }),
+  always([time, sub(bite.first, bite.span.before), add(bite.first, bite.span.after)], ge(clearance(strikes.bite.part, biteTarget), -0.05), { label: "bite: head never enters the ship" }),
+  always([time, 0, bite.first], ge(clearance(parts.body, biteTarget), 0), { label: "bite: body clear of the ship until arming" }),
+  always([time, 0, bite.first], ge(clearance(parts.head, biteTarget), 0.02), { label: "bite: head clear of the ship until arming" }),
   landsInside(strikes.lash),
-  stopsAt(strikes.lash, lashTarget, { contact: 0.1 }),
-  staysClear(parts.body, lashTarget, { until: lash.arm, label: "lash: body clear of ship2 until arming" }),
+  always([time, lash.first, lash.first], le(clearance(strikes.lash.part, lashTarget), 0.1), { label: "lash: tail reaches ship2 at arming" }),
+  always([time, sub(lash.first, lash.span.before), add(lash.first, lash.span.after)], ge(clearance(strikes.lash.part, lashTarget), -0.05), { label: "lash: tail never enters ship2" }),
+  always([time, 0, lash.first], ge(clearance(parts.body, lashTarget), 0), { label: "lash: body clear of ship2 until arming" }),
   minScreenSize(parts.eye, "three", 4, { at: bite.arm }),
   budget({ triangles: 400_000 }),
 ];
