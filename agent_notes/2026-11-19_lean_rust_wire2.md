@@ -55,7 +55,7 @@ with main `b0a1f2b` (feat/lr-speed) merged in. Numbers below: M4, loaded (other 
 | Rust print = TS print | **125/125**: the 124 example jobs (fills included) + `sample.ts`'s job with every scene-level layout. TS `printGraph` = `printJob` on all 124 |
 | `tools/dev.sh test` loft-ir 10/10, loft-core 20/20 (incl. lane 2.1's ignored fill check on main's typed Tol), loft-gpu 6/6; lint and rustfmt clean; `pnpm typecheck` clean | pass |
 | Corpus through the driver (`bun tools/parity/run.ts rust`) | **232 built** of 295 (was 27); 283 end as R0 did (was 81). 229 of R0's 238 builds build. The 9 R0 builds refused here, each by name: `loft_passtex_*` 3 (Pass), `loft_cast` 2 and `soft_box` 1 (Draw), `loft_compute_*` 2 (Kernel), `t_clay_clusters` 1 (Table) |
-| loft-gpu loads the built bundles (f32, one frame, default device limits) | LOADED_LINE |
+| loft-gpu loads the built bundles (`corpus_bundles_load`, 16 shards, f32, one frame, default device limits) | **26 of 232** load and run a frame (kernels dispatched; there is nothing to draw). 205 are refused at bind group layout creation: emit binds one storage buffer per table read and the default limit is 8 per stage. 1 exceeds the binding index limit. A frame-sized steps buffer fixed 4 others (the 208-byte header outgrew the old 256-byte minimum) |
 | Drawn (loft-draw against R0, §2.2a) | **0 of 295.** No bundle has a draw: the TS library records no Draw decls yet (lane 3.1's TS half: hit, place and paint functions), and loft-draw still reads TS artefact directories |
 | Parity passing | **0 of 295** (nothing drawn) |
 
@@ -70,4 +70,13 @@ with main `b0a1f2b` (feat/lr-speed) merged in. Numbers below: M4, loaded (other 
 4. **Recurrences** (`Fill::Recurrence`) and author compute (`loft_compute_*`) as Steps/Raw kernels on the wire;
    offscreen Pass targets need a texture resource decl.
 5. **Check/Solve programs:** decls decode; `run` still answers `Unbuilt` for them (analyses, feat/lr-solve).
-6. **Cost:** a kernel module per GPU fill: Titan builds 824 modules (rust ≈ 4 s with Naga at emit).
+6. **Cost:** a kernel module per GPU fill: Titan builds 824 modules (rust ≈ 4 s with Naga at emit); owl 62 kernels,
+   rust 26.7 ms with Naga at load (the default since feat/lr-speed).
+
+## Reproduce
+
+`bun out/wire/dump_all.sh`-style dump (score.ts `--dump/--print` per example into a folder) plus
+`bun src/record/sample.ts DIR`, then `LOFT_WIRE_CORPUS=DIR tools/dev.sh test loft-ir --run-ignored all`;
+`bun tools/parity/run.ts rust` (needs `out/parity/R0` as a copy, not a symlink: seeds import `loft` by package name);
+`LOFT_BUNDLES=$PWD/out/parity/rust/build LOFT_BUNDLES_SHARD=k/16 tools/dev.sh test loft-gpu --retries 0 --run-ignored only -E 'test(corpus_bundles_load)'`.
+Gates on the merged branch: `check.sh quick` and `check.sh full` exit 0 (loft-draw built first: serve.rust needs it).

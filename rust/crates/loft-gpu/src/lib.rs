@@ -469,7 +469,8 @@ impl Loft {
         let entries: u64 = steppings.iter().map(|(_, s)| u64::from(s.count) + 1).sum();
         let steps = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("loft step frames"),
-            size: (entries * stride).max(STEP_STRIDE),
+            // At least one stride: group 0 binds a whole frame from it even when nothing steps.
+            size: (entries * stride).max(stride),
             usage,
             mapped_at_creation: false,
         });
