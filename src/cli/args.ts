@@ -2,6 +2,7 @@
 // looks at argv. Bad input throws `UsageError` naming the offending flag.
 import { parseGalleryArgs, type GalleryCommand } from "./gallery_args.ts";
 import type { ServeCommand } from "./serve.ts";
+import { parseShowArgs, type ShowCommand } from "./show.ts";
 
 import { DesignError, parseVariantAsk, type VariantAsk } from "../design.ts";
 import type { OutlineMethod } from "../scene.ts";
@@ -37,6 +38,7 @@ export type BakeWhen = { readonly kind: "at"; readonly time: number } | { readon
 export type Command =
   | GalleryCommand
   | ServeCommand
+  | ShowCommand
   | (Shared & { readonly kind: "render"; readonly out: string; readonly views: readonly ViewName[]; readonly time: number; readonly construction: boolean })
   | (Shared & { readonly kind: "clip"; readonly out: string; readonly seconds: number; readonly fps: number; readonly view: ViewName; readonly sweep: Sweep })
   | (Shared & { readonly kind: "frames"; readonly out: string; readonly times: readonly number[]; readonly view: ViewName; readonly sweep: Sweep })
@@ -89,6 +91,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
                     docs/handoff_training.md "loft serve")
          [--pending 64] [--compile-seconds 120] [--draw-seconds 120] [--limits manifest=BYTES,files=N,bytes=BYTES]
                     (requests admitted at once; compile and draw deadlines; what an artefact may hold. Budget limits answer exit 7)
+  show   <scene> [--thing name] [--variant v]   (the WGSL the GPU compiles; with --thing, those modules whole, your lines marked)
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)
          [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)`;
 
@@ -188,9 +191,10 @@ export function parseArgs(argv: readonly string[]): Command {
     if (rest.length > 1) throw new UsageError(`api: one name at most (got ${rest.length})`);
     return { kind: "api", name: rest.length === 0 ? { kind: "all" } : { kind: "one", name: rest[0]! } };
   }
-  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build", "variants", "serve"].includes(name)) throw new UsageError(`unknown command "${name}"`);
+  if (!["render", "clip", "frames", "dev", "bake", "check", "gallery", "profile", "build", "variants", "serve", "show"].includes(name)) throw new UsageError(`unknown command "${name}"`);
   if (name === "gallery") return parseGalleryArgs(rest);
   if (name === "serve") return parseServeArgs(rest);
+  if (name === "show") return parseShowArgs(rest);
 
   const flags = new Map<string, string[]>();
   const positional: string[] = [];

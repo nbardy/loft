@@ -12,7 +12,7 @@
 | 3 | `loft: load:` | the module did not load as a scene: syntax, an unknown import, a throw at top level, wrong exports | yes |
 | 4 | `loft: scene:` | a constructor refused the scene; the message says given, expected and the fix, and ends `(at file:line)` | yes |
 | 5 | `loft: check:` | the named checks failed or remained undecided | follow the check's result and reason |
-| 6 | `loft: environment (not the scene's fault):` | the GPU, the WebGPU binding, or a missing `cwebp`/`ffmpeg`; a shader or pipeline that failed to build was already tried on 3 fresh devices | no |
+| 6 | `loft: environment (not the scene's fault):` | the GPU, the WebGPU binding, or a missing `cwebp`/`ffmpeg`; a shader or pipeline that failed to build in text the library wrote was already tried on 3 fresh devices (a refused line of your own raw WGSL is exit 4, at its line) | no |
 | 7 | `loft: budget:` | (`loft serve` only) a compile or draw exceeded `--compile-seconds` or `--draw-seconds`, a compile hit its CPU limit, or `--pending` was full. The line names the limit | no; decide whether it is a penalty |
 
 Does it type-check: `pnpm exec tsc --noEmit`. Does it render, and what to change:
@@ -61,6 +61,7 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `examples/x.ts:9:22: given unknown name "nois3"` (WGSL text) | a name the text cannot see; the line is quoted with a caret | the name suggested, or bring the value in through a hole: `${x}` |
 | `...: given an i32 with f32` (WGSL text) | `let n = 1` is an integer in WGSL | write `1.0`, or convert: `f32(n)` |
 | `...: given f, which can reach its end without returning` (WGSL text) | a path through the function has no `return` | end the function with a return |
+| `x.ts:16: given raw function f with a line the GPU refused (...)` | a mistake only the GPU reads: raw functions are WGSL outside the text subset, checked when the scene loads | correct the line named; `loft show <scene> --thing <name>` prints the module with your lines marked |
 | `raw function f at x.ts:14: u32 integers: the CPU twin cannot evaluate it` | a check, `evaluate` or `solve` reached a function outside the text subset | write it in the subset, or measure it in a picture |
 
 `f32-fallback` is a successful mixed request on a device without `shader-f16`. The render and serve answer report
@@ -103,6 +104,7 @@ and last line.
 | 28 | `ball: paint: given "gloss" as vec3; expected "gloss" as f32, as toon reads it` | a channel given as another type than the style reads it | give it as the style's comment says |
 | 29 | `"stroke": given a paint with its own shade or scatter on a flat look` | a flat look's paint is the final colour: nothing to wrap | return the colour, or draw a lit surface |
 | 35 | `solve: given holds that cannot all be met: equal from t = 0 to 1.3 (file:7); equal at t = 1.2 (file:7) ...` | two bounds on the same spline component contradict each other where their time windows overlap, even allowing the equality tolerance | drop or loosen one of the holds named |
+| 36 | `36_raw_wgsl_typo.ts:9: given raw function grain with a line the GPU refused (unresolved value 'hsh')` | a misspelt name in a raw function (outside the text subset, so only the GPU reads it) | `h`, the name meant |
 
 `SolveError.failure` distinguishes three outcomes (exit 4 for each).
 

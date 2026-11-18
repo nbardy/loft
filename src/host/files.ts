@@ -10,6 +10,7 @@
 import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { LoadError } from "../errors.ts";
+import { authorLinesProblem } from "../artefact.ts";
 import { loadBundle, NotDataError, type GpuLoaded } from "./host.ts";
 import { FORMAT, FORMAT_VERSIONS, type Bundle, type Manifest, type Precision } from "./manifest.ts";
 
@@ -96,6 +97,12 @@ export function readBundle(dir: string, limits: ArtefactLimits = ARTEFACT_LIMITS
   if (manifest.format !== FORMAT) throw new LoadError(`${dir}: not a Loft artefact (format "${String(manifest.format)}")`);
   if (!(FORMAT_VERSIONS as readonly number[]).includes(manifest.version)) throw new LoadError(`${dir}: artefact format version ${manifest.version}; this loader reads versions ${FORMAT_VERSIONS.join(", ")}`);
   if (!Array.isArray(manifest.chunks) || !Array.isArray(manifest.blobs)) throw new LoadError(`${dir}/${MANIFEST}: "chunks" and "blobs" must be lists`);
+  const authored: unknown = manifest.authored ?? {};
+  if (typeof authored !== "object" || authored === null || Array.isArray(authored)) throw new LoadError(`${dir}/${MANIFEST}: "authored" must be an object of chunk names`);
+  for (const [name, spans] of Object.entries(authored)) {
+    const problem = authorLinesProblem(spans);
+    if (problem !== undefined) throw new LoadError(`${dir}/${MANIFEST}: "authored" of chunk ${name}: ${problem}`);
+  }
   const files = 1 + manifest.chunks.length + manifest.blobs.length;
   if (files > limits.files) throw over("the number of files", files, limits.files, "files");
   // Names and sizes, all from lstat; a name given twice would be read twice and is refused.

@@ -1020,13 +1020,18 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
   }
 }
 
+/** `loft show`'s note for statements whose emitter gave none (src/cli/show.ts sets it to a node's site); unset, none. */
+let statementNote: ((e: Expr) => string | undefined) | undefined;
+/** Ends every emitted statement with `note(e)` where it gives one, for the rest of the process: diagnosis only. */
+export function noteStatements(note: (e: Expr) => string | undefined): void { statementNote = note; }
+
 /**
  * WGSL statements for a set of expressions: one `let` per shared node, in dependency order, and a `for` loop per
  * `iterate`. Returns the statements, for each root the name (or inline source) that holds its value, and the library
  * functions the statements call.
  */
 export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: ReadonlyMap<number, string> = new Map(), comment?: (e: Expr) => string | undefined): { lines: string[]; out: string[]; libs: LibFn[]; names: ReadonlyMap<number, string> } {
-  // `comment`: a note to end a node's statement with (src/text's sites: `// eel.ts:9 girth`); absent, the text is as before.
+  // `comment`: a note to end a node's statement with (src/text's sites: `/* eel.ts:9 girth */`); absent, the text is as before.
   // `pre`: nodes already computed by earlier statements (a scan hoists its loop-invariant work), by name.
   const names = new Map<number, string>(pre);
   const ref = (x: Expr): string => names.get(x.id)!;
@@ -1039,8 +1044,9 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
       if (n.op === "const" || n.op === "var") names.set(e.id, src);
       else {
         const name = `${prefix}${e.id}`;
-        const note = comment?.(e);
-        lines.push(note === undefined ? `let ${name}: ${WGSL_TY[e.ty]} = ${src};` : `let ${name}: ${WGSL_TY[e.ty]} = ${src};   // ${note}`);
+        const note = (comment ?? statementNote)?.(e);
+        // A block comment, not `//`: some emitters join statements onto one line (src/compile/compute.ts).
+        lines.push(note === undefined ? `let ${name}: ${WGSL_TY[e.ty]} = ${src};` : `let ${name}: ${WGSL_TY[e.ty]} = ${src};   /* ${note.replaceAll("*/", "* /")} */`);
         names.set(e.id, name);
       }
     }
@@ -1138,8 +1144,23 @@ export function structuralHash(roots: readonly Expr[]): string {
 
 // ---- rewriting ----------------------------------------------------------------------------------------------------
 
-/** A node with new children, interned under the same key scheme its constructor uses. */
+/** A node a rewrite made (`replace`, `fold`), to the node it was made from: sites survive a compiler's rewrite (`loft show`, src/text). */
+const rewrites = new WeakMap<Expr, Expr>();
+/** The node `e` was first rewritten from, through any number of rewrites; `e` itself when it was built directly. */
+export function rewrittenFrom(e: Expr): Expr {
+  for (let x = rewrites.get(e); x !== undefined; x = rewrites.get(e)) e = x;
+  return e;
+}
+
+/** A node with new children, interned under the same key scheme its constructor uses; it remembers `e` (`rewrittenFrom`). */
 function rebuild(e: Expr, kids: readonly Expr[]): Expr {
+  const made = rebuild0(e, kids);
+  // Only a node made here for the first time: a node built directly (or rewritten back to) keeps its own lineage, so
+  // the chain never loops.
+  if (made !== e && !rewrites.has(made) && rewrittenFrom(e) !== made) rewrites.set(made, e);
+  return made;
+}
+function rebuild0(e: Expr, kids: readonly Expr[]): Expr {
   const n = e.node;
   switch (n.op) {
     case "const": case "var": case "input": case "param": return e;

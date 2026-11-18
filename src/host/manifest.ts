@@ -5,7 +5,7 @@
 // This file is types and constants only, and imports nothing that evaluates: the file loader's import closure must not
 // reach the compiler (tools/check_loader_closure.ts).
 
-import type { Camera, Detail, InputSlot, ParamSlot, TableFillKind, TextureSize } from "../artefact.ts";
+import type { AuthorLines, Camera, Detail, InputSlot, ParamSlot, TableFillKind, TextureSize } from "../artefact.ts";
 export type { TextureSize };
 
 export const FORMAT = "loft-artefact";
@@ -194,6 +194,11 @@ export type Manifest = {
   };
   /** Chunk names (a hash of the text); a file loader reads `wgsl/<name>.wgsl`. */
   readonly chunks: readonly string[];
+  /**
+   * The lines of a chunk the scene's author wrote (raw functions of `wgsl` text), by chunk name; absent, and a chunk
+   * absent from it, the library wrote all of it. A host names the author's line when the GPU refuses one of these.
+   */
+  readonly authored?: Readonly<Record<string, readonly AuthorLines[]>>;
   /** Blob names; a file loader reads `bin/<name>.bin` (little-endian data). */
   readonly blobs: readonly { readonly name: string; readonly bytes: number }[];
 

@@ -10,6 +10,7 @@
 
 import * as X from "../expr.ts";
 import { siteOf } from "../errors.ts";
+import { authored } from "../authored.ts";
 import { emitWgsl, everything, lib, markRaw, type Expr, type LibFn, type Ty } from "../expr.ts";
 import { parseModule, ParseError, type At, type FnItem, type Module, type StructItem, type TypeRef } from "./parse.ts";
 import { HOLE_PREFIX, type Tok } from "./tokens.ts";
@@ -260,6 +261,12 @@ function assemble(text: string, source: Source, module: Module, rawHoles: readon
     const body = finish();
     const r: RawFn = { lib: libOf(name, body, graphTy(item.sig.ret) ?? "f32", deps), hidden, params: item.sig.params.map((p) => p.type), ret: graphTy(item.sig.ret) };
     markRaw(r.lib, `raw function ${name} at ${placeOf(source, item.reason.at)}: ${item.reason.why}`);
+    // The GPU is the only reader of this text: where it sits, so a refusal of one of its lines names the author's line
+    // (src/authored.ts). The rewrite keeps every newline, so line k of the library text is line k of the span.
+    const first = text.slice(0, item.span[0]).split("\n").length - 1;
+    authored(source.file !== undefined
+      ? { text: r.lib.wgsl, file: source.file, line: source.line0 + first, what: `raw function ${name}` }
+      : { text: r.lib.wgsl, file: `the wgsl text loaded at ${source.call}`, line: first + 1, what: `raw function ${name}` });
     raws.set(name, r);
     return r;
   }

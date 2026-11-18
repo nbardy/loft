@@ -183,6 +183,12 @@ export default scene({
   eel.ts:14: u32 integers`.
 - **Errors** point at the text: `examples/eel.ts:9:22: given unknown name "nois3"; ... Fix: did you mean noise3?`, the
   line quoted with a caret, and the TypeScript line that called into it.
+- **Raw lines the GPU refuses** are the scene's too: only the GPU reads a raw function, so a typo there surfaces when
+  the scene loads, as `loft: scene: examples/eel.ts:16: given raw function pcg with a line the GPU refused (unresolved
+  value 'hsh')`, exit 4, with the line quoted and the GPU's message.
+- **Seeing what the GPU compiles.** `loft show examples/eel.ts` lists the scene's shader modules; `--thing eel` prints
+  the ones for the eel in full. Each statement lowered from your text ends with its line (`/* eel.ts:9 girth */`), each
+  line of a raw function with its line (`// eel.ts:16`), and a comment says who wrote each chunk.
 
 ## Adding motion
 
@@ -685,6 +691,7 @@ loft gallery  --scenes "examples/*.ts" --styles toon,woodblock
 loft build    examples/serpent.ts --out out/files/serpent
 loft serve    --compiles 2      # requests on stdin, answers on stdout, JSON lines (docs/handoff_training.md)
 loft bake     examples/serpent.ts --out out/serpent.glb
+loft show     examples/serpent.ts --thing serpent   # the WGSL the GPU compiles, your text's lines marked
 ```
 
 `loft help` prints every flag; `loft context` prints the whole library for a reader in one go.

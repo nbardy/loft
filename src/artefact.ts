@@ -430,6 +430,28 @@ export function passBindingsWgsl(passes: readonly ArtefactPass[]): string {
 export type PostPass = { readonly label: string; readonly shader: string };
 
 /**
+ * Lines of a WGSL text that the scene's author wrote (a raw function of a `wgsl` module), placed there verbatim: lines
+ * `from` to `from + lines - 1` of the text (from 0) are lines `line` onward of `file`, in order (holes are replaced
+ * within a line, never across lines). A host maps a GPU refusal at such a line to the author's line, a scene error;
+ * a refusal anywhere else is in text the library wrote. `what` names the function (`raw function pcg`).
+ */
+export type AuthorLines = { readonly from: number; readonly lines: number; readonly file: string; readonly line: number; readonly what: string };
+
+/** Why a value read from files is not a list of AuthorLines, or undefined when it is one. */
+export function authorLinesProblem(x: unknown): string | undefined {
+  if (!Array.isArray(x)) return "not a list";
+  const whole = (n: unknown, least: number) => typeof n === "number" && Number.isSafeInteger(n) && n >= least;
+  const k = x.findIndex((s) => typeof s !== "object" || s === null || !whole(s.from, 0) || !whole(s.lines, 1) || !whole(s.line, 1) || typeof s.file !== "string" || typeof s.what !== "string");
+  return k < 0 ? undefined : `entry ${k} is not { from, lines, file, line, what }`;
+}
+
+/** The author's line that line `n` (from 0) of a text holding `spans` is, or undefined where the library wrote it. */
+export function authorLineAt(spans: readonly AuthorLines[], n: number): { readonly file: string; readonly line: number; readonly what: string } | undefined {
+  const s = spans.find((s) => n >= s.from && n < s.from + s.lines);
+  return s === undefined ? undefined : { file: s.file, line: s.line + (n - s.from), what: s.what };
+}
+
+/**
  * What a host hands the pose function every frame. `inputs` and `params` are laid out by slot. `curves` is the curve
  * table as the host holds it now: `Artefact.curves` until a `setCurves`, the last data set after it (so an edited
  * curve moves the CPU pose exactly as it moves the GPU).
