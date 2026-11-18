@@ -6,6 +6,7 @@ import { add, clamp, fract, leaves, lift, mix, mul, sin, smoothstep, sub, abs, T
 import type { PostSpec } from "./compile/context.ts";
 import { foldAt, sunDir, sunOnly, type LightFold, type Lighting } from "./light.ts";
 import { SceneError } from "./errors.ts";
+import type { F, Field } from "./map/types.ts";
 
 export type Rgb = readonly [number, number, number];
 
@@ -16,6 +17,13 @@ export type ShadeCtx = {
   readonly sun: Expr<"vec3">;
   readonly view: Expr<"vec3">;
   readonly world: Expr<"vec3">;
+  /**
+   * A traced distance field can be sampled in world space at the hit's level of detail. `scale` is the proxy's
+   * diagonal in world units and `pixel` is the world width of a pixel at the hit. Other geometry uses `unoccluded`.
+   */
+  readonly geometry:
+    | { readonly kind: "unoccluded" }
+    | { readonly kind: "field"; readonly distance: Field; readonly scale: number; readonly pixel: F };
   /** Depth below the sea surface (negative above it). */
   readonly depth: Expr<"f32">;
   /** The surface's own coordinates (u, v) here (body coordinates (m, v) on a body); (0, 0) on a traced solid. */
@@ -267,21 +275,22 @@ const BODY_VARS = ["c_uv", "c_anchor", "c_id"] as const;
 /** What a thing's paint said beyond its colour (src/draw/painted.ts classifies it): its channels and its `scatter`. */
 export type Said = { readonly channels: ReadonlyMap<string, Expr<NumTy>>; readonly scatter: ((ctx: ShadeCtx, toward: Expr<"vec3">) => Expr<"vec3">) | undefined };
 
-/** What a style reads, found on one evaluation of its body functions: the surface's coordinates, the channels by name and type, a thing's scatter. */
-export type Reads = { readonly body: boolean; readonly channels: ReadonlyMap<string, NumTy>; readonly scatter: boolean };
+/** What the body functions read: surface coordinates, paint channels and scatter, and the geometry sampler. */
+export type Reads = { readonly body: boolean; readonly channels: ReadonlyMap<string, NumTy>; readonly scatter: boolean; readonly geometry: boolean };
 
-const readsCache = new WeakMap<Style, Reads>();
+const UNOCCLUDED = { kind: "unoccluded" } as const;
+const FIELD_PROBE = { kind: "field", distance: (p) => p.x, pixel: variable("c_field_pixel", "f32"), scale: 1 } satisfies ShadeCtx["geometry"];
+const readsCache = { unoccluded: new WeakMap<Style, Reads>(), field: new WeakMap<Style, Reads>() };
 /**
- * What the style's body functions read, from one evaluation with a recording context (cached per style): whether they
- * read the surface's coordinates, anchor or identity (a drawable computes the anchor in its vertex stage only when they
- * do), the channels they read by name, and whether they ask a thing's `scatter`. Refuses a style that reads one name as
- * two types.
+ * Record the style's reads once per geometry kind. A custom style can use different paint channels on fields.
  */
-export function styleReads(style: Style): Reads {
-  const seen = readsCache.get(style);
+export function styleReads(style: Style, kind: ShadeCtx["geometry"]["kind"] = "unoccluded"): Reads {
+  const cache = readsCache[kind];
+  const seen = cache.get(style);
   if (seen !== undefined) return seen;
   const channels = new Map<string, NumTy>();
   let scatter = false;
+  let geometry = false;
   const record: Recorder = {
     channel: (name, ty) => {
       const had = channels.get(name);
@@ -289,11 +298,15 @@ export function styleReads(style: Style): Reads {
       channels.set(name, ty);
     },
     scatter: () => { scatter = true; },
+    geometry: () => { geometry = true; },
   };
-  const ctx = shadeContext(variablesAt(SUN_UP), SUN_UP, style, NOTHING_SAID, record);
-  const vars = leaves(withIdentities(() => [style.shade(ctx), style.ink(ctx), style.mark(ctx)])).vars;
-  const reads: Reads = { body: BODY_VARS.some((n) => vars.has(n)), channels, scatter };
-  readsCache.set(style, reads);
+  const ctx = shadeContext(variablesAt(SUN_UP), SUN_UP, style, { ...NOTHING_SAID, geometry: kind === "field" ? FIELD_PROBE : UNOCCLUDED }, record);
+  const vars = leaves(withIdentities(() => [
+    style.shade(ctx), style.ink(ctx), style.mark(ctx),
+    ...(kind === "field" && style.block !== undefined ? [style.block.body(ctx)] : []),
+  ])).vars;
+  const reads: Reads = { body: BODY_VARS.some((n) => vars.has(n)), channels, scatter, geometry };
+  cache.set(style, reads);
   return reads;
 }
 
@@ -308,11 +321,12 @@ export function readsBody(style: Style): boolean {
 const SUN_UP: Lighting = { sun: { kind: "fixed", dir: [0, 1, 0] }, amount: { kind: "full" }, lights: [], sampling: { kind: "point" }, shadows: new Map() };
 const NOTHING_SAID: Said = { channels: new Map(), scatter: undefined };
 /** Where a context's reads are recorded (only on `styleReads`' evaluation). */
-type Recorder = { readonly channel: (name: string, ty: NumTy) => void; readonly scatter: () => void };
-const NO_RECORD: Recorder = { channel: () => {}, scatter: () => {} };
+type Recorder = { readonly channel: (name: string, ty: NumTy) => void; readonly scatter: () => void; readonly geometry: () => void };
+const NO_RECORD: Recorder = { channel: () => {}, scatter: () => {}, geometry: () => {} };
+type About = Said & { readonly thing?: string; readonly geometry?: ShadeCtx["geometry"] | undefined };
 
 /** The fields of a shade context that are values, not members: what a fragment knows of its surface and place. */
-export type ShadeFields = Omit<ShadeCtx, "lights" | "channel" | "sky" | "scatter">;
+export type ShadeFields = Omit<ShadeCtx, "lights" | "channel" | "sky" | "scatter" | "geometry">;
 
 /** The free variables the compiler emits `shade`, `ink` and `mark` over (src/compile/scene_wgsl.ts). */
 function variablesAt(lighting: Lighting): ShadeFields {
@@ -328,9 +342,10 @@ function variablesAt(lighting: Lighting): ShadeFields {
  * and scatter of the thing `about` names (none: every channel is its default). A paint giving a channel as another type
  * than the style reads it is refused, naming the thing.
  */
-export function shadeContext(f: ShadeFields, lighting: Lighting, style: Style, about: Said & { readonly thing?: string } = NOTHING_SAID, record: Recorder = NO_RECORD): ShadeCtx {
+export function shadeContext(f: ShadeFields, lighting: Lighting, style: Style, about: About = NOTHING_SAID, record: Recorder = NO_RECORD): ShadeCtx {
   const ctx: ShadeCtx = {
     ...f,
+    get geometry() { record.geometry(); return about.geometry ?? UNOCCLUDED; },
     lights: foldAt(lighting, { kind: "surface", at: f.world, normal: f.normal }),
     channel: <T extends NumTy>(name: string, otherwise: In<T>): Expr<T> => {
       const fallback = lift<T>(otherwise);
@@ -352,6 +367,6 @@ export function shadeContext(f: ShadeFields, lighting: Lighting, style: Style, a
 }
 
 /** The shade context as the free variables the compiler emits `shade`, `ink` and `mark` over (src/compile/scene_wgsl.ts). */
-export function shadeVariables(lighting: Lighting, style: Style, about: Said & { readonly thing?: string } = NOTHING_SAID): ShadeCtx {
+export function shadeVariables(lighting: Lighting, style: Style, about: About = NOTHING_SAID): ShadeCtx {
   return shadeContext(variablesAt(lighting), lighting, style, about);
 }

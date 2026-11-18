@@ -1,6 +1,6 @@
 // pbr: bodies lit as physical surfaces. GGX with height-correlated Smith visibility and Schlick's Fresnel for the sun
-// and every light, a Lambert body under it, the sky as an environment (projected once per scene, a sharp tap for the
-// mirror), and a filmic tone map. Built from parts (src/style/pbr_parts.ts), each a plain function: `pbr({ fresnel })`
+// and every light, a Lambert body under it, the sky as an environment (projected at the current sun, a sharp tap for
+// the mirror), and a filmic tone map. Built from parts (src/style/pbr_parts.ts), each a plain function: `pbr({ fresnel })`
 // swaps one and leaves the others; `{ ...pbr(), ink }` replaces any member of the Style record.
 //
 // Words a paint may say: `rough` (0 mirror to 1 chalk; default 1 - `gloss`, so a scene written for toon keeps its
@@ -22,16 +22,36 @@
 // `water`, `ground` and `shadow`; a different sea or floor replaces the member: `{ ...pbr(), water, ground }`. The sea reflects the same sky by Fresnel with a glint per light; a plane
 // ground is a rough grey-beige under the same lights, the sun's share darkened by its cast shadow.
 //
-// Cannot: occlusion (a crevice sees open sky), inter-reflection, transmission; a highlight smaller than a pixel
-// sparkles (no antialiasing of specular: keep `rough` above about 0.1 on small curved things).
+// Field occlusion dims the environment in crevices. Inter-reflection and transmission are outside this style.
+// A highlight smaller than a pixel sparkles: keep `rough` above about 0.1 on small curved things.
 
-import { add, div, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type In } from "../expr.ts";
+import { add, div, dot, exp, f, iterate, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type In } from "../expr.ts";
 import type { F, P3 } from "../map/types.ts";
 import type { ShadeCtx, Style } from "../style.ts";
 import { aces, albedoOf, daylight, ggx, horizonClear, lambert, schlick, skyLight, smithGgx, type PbrParts } from "./pbr_parts.ts";
 
+/** Four normal taps compare the available free space to that above a flat face. */
+function fieldOcclusion(ctx: ShadeCtx): F {
+  const geometry = ctx.geometry;
+  switch (geometry.kind) {
+    case "unoccluded": return f(1);
+    case "field": {
+      const radius = 0.09 * geometry.scale;
+      const start = geometry.distance(ctx.world);
+      const [blocked] = iterate(4, [f(0)], ([sum], i) => {
+        const h = mul(radius / 8, pow(2, i));
+        const d = geometry.distance(add(ctx.world, mul(ctx.normal, h)));
+        // Subtract the signed distance at the hit so march error does not darken the whole face.
+        const deficit = saturate(div(sub(sub(h, sub(d, start)), mul(geometry.pixel, 0.5)), h));
+        return [add(sum, mul(add(i, 1), deficit))];
+      });
+      return sub(1, mul(blocked, 0.08));
+    }
+  }
+}
+
 /** The defaults of the slots that stand alone; `lobeAlbedo` and `clear` are derived from the others (`pbr`). */
-const DEFAULTS = { distribution: ggx, visibility: smithGgx, fresnel: schlick, diffuse: lambert, environment: skyLight, sky: daylight, tone: aces } as const;
+const DEFAULTS = { distribution: ggx, visibility: smithGgx, fresnel: schlick, diffuse: lambert, environment: skyLight, occlusion: fieldOcclusion, sky: daylight, tone: aces } as const;
 
 const WATER_DEEP = vec3(0.003, 0.03, 0.07);
 const WATER_SHALLOW = vec3(0.01, 0.1, 0.15);
@@ -102,7 +122,7 @@ export function pbr(parts: Partial<PbrParts> = {}): Style {
     const env = p.environment({ normal: n, view: ctx.view, sun: ctx.sun }, rough, p.sky);
     const spec = envWeight(p, max(dot(n, ctx.view), 1e-4), rough, f0);
     const sky = add(mul(mul(albedo, env.diffuse), sub(1, spec)), mul(env.specular, spec));
-    const lit = add(add(direct, mul(sky, sunAmount(ctx.lights))), ctx.channel<"vec3">("emits", [0, 0, 0]));
+    const lit = add(add(direct, mul(sky, sunAmount(ctx.lights), saturate(p.occlusion(ctx)))), ctx.channel<"vec3">("emits", [0, 0, 0]));
     return submerge(lit, ctx.depth, sunAmount(ctx.lights));
   };
 

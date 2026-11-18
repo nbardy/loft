@@ -228,8 +228,10 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
   cut-paper sheets along `phase` with edges scalloped by cellular domes, a shadow under each edge and a lit cut edge;
   foam a scalloped white collar. Post: ambient occlusion from depth (16 taps) and paper fibre.
 - `pbr` (2026-11-18, `src/style/pbr.ts`): physically lit. GGX, height-correlated Smith and Schlick for the sun and every
-  light, Lambert under it, the sky projected on spherical harmonics once per scene as the environment, an ACES tone
-  map; seven parts in `PbrParts`, each swappable (`pbr({ fresnel })`). docs/styles.md, "`pbr`".
+  light, Lambert under it, and an ACES tone map. The environment uses nine RGB spherical harmonics, compiled for a
+  fixed sun and lifted into the GPU frame-values table for a moving sun. The swappable `occlusion` slot scales the
+  environment contribution. Its default takes four taps plus a hit-distance reference on a traced field, and uses
+  the `unoccluded` fallback elsewhere. See `docs/styles.md`.
 
 **The style sheet**: `bun src/style/sheet.ts [--out out/style_sheet.webp] [--size 640x400]`: rows toon, woodblock,
 biolume, papercraft; columns serpent, shell, serpent_scales; one camera (`SHEET_CAMERA`).

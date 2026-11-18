@@ -12,12 +12,13 @@
 //
 // Inherited: GGX (Walter et al. 2007), height-correlated Smith visibility (Heitz 2014), Schlick's Fresnel, the analytic
 // split-sum DFG (Karis 2014), the Narkowicz fit of ACES, irradiance from L2 spherical harmonics (Ramamoorthi and
-// Hanrahan 2001). New here: the environment from a closed-form sky projected once per scene, with the reflection's
+// Hanrahan 2001). New here: the environment from a closed-form sky projected at the current sun, with the reflection's
 // sharp part a direct tap of the same sky, blurred by roughness through per-band attenuation (`skyLight`).
 
 import { SceneError } from "../errors.ts";
-import { add, compileJs, div, dot, evaluate, exp, f, leaves, max, min, mix, mul, normalize, pow, saturate, smoothstep, sqrt, sub, variable, vec3, type Expr } from "../expr.ts";
+import { add, compileJs, cos, div, dot, exp, f, iterate, leaves, max, min, mix, mul, normalize, pow, saturate, sin, smoothstep, sqrt, sub, variable, vec3, type Expr } from "../expr.ts";
 import type { F, P3 } from "../map/types.ts";
+import type { ShadeCtx } from "../style.ts";
 
 /** alpha = rough^2, rough floored at 0.05. */
 const alphaOf = (rough: F): F => { const r = max(rough, 0.05); return mul(r, r); };
@@ -118,10 +119,12 @@ export type PbrParts = {
    * reflects, and what a mirror of `rough` sees along the reflected ray, before the sun's amount (`skyLight`).
    */
   readonly environment: (at: { readonly normal: P3; readonly view: P3; readonly sun: P3 }, rough: F, sky: (dir: P3, sun: P3) => P3) => { readonly diffuse: P3; readonly specular: P3 };
+  /** Fraction of environment light reaching a body, clamped to [0, 1]. Default: distance-field AO, or 1 on other geometry. */
+  readonly occlusion: (ctx: ShadeCtx) => F;
   /**
    * The sky, linear radiance along a direction given the sun's (`daylight`): the background and the environment. It is
-   * radiance per unit of the sun's amount (`pbr` multiplies it by the amount). Projected once when the style is built,
-   * so it may read its direction, the sun and constants: one that reads time or a param is refused (`PbrError`).
+   * radiance per unit of the sun's amount (`pbr` multiplies it by the amount). The default environment follows its
+   * sun argument. A sky that captures time, another input, a param or a table directly is refused (`PbrError`).
    */
   readonly sky: (dir: P3, sun: P3) => P3;
   /** Linear radiance to the picture's display values (`aces`). */
@@ -145,7 +148,9 @@ export type PbrFailure =
   /** A part evaluated once at build time reads something that changes after it: the projection would be stale. */
   | { readonly kind: "varies"; readonly part: "sky" | "distribution" | "visibility"; readonly reads: string }
   /** A part evaluated at build time has no CPU twin (raw WGSL, a per-frame table). */
-  | { readonly kind: "gpu-only"; readonly part: "sky" | "tone" | "distribution" | "visibility"; readonly detail: string }
+  | { readonly kind: "gpu-only"; readonly part: "sun" | "sky" | "tone" | "distribution" | "visibility"; readonly detail: string }
+  /** An unbound variable cannot feed a shared frame projection. */
+  | { readonly kind: "free-variable"; readonly part: "sun" | "sky"; readonly name: string }
   /** The integrated lobe albedo is not a smooth enough surface for the environment's fit. */
   | { readonly kind: "unfitted"; readonly worst: number };
 
@@ -153,8 +158,12 @@ const failureParts = (x: PbrFailure): [string, string, string, string] => {
   switch (x.kind) {
     case "varies": return [`pbr ${x.part}`, `a ${x.part} that reads ${x.reads}`, `a ${x.part} of its arguments and constants alone: it is evaluated once, when the style is built`,
       x.part === "sky" ? "make the sky a function of its direction and the sun alone, or pass `clear: [r, g, b]` and an `environment` that does not project the sky" : `make the ${x.part} a function of its arguments alone, or pass \`lobeAlbedo\` for it`];
-    case "gpu-only": return [`pbr ${x.part}`, `a ${x.part} the CPU cannot evaluate (${x.detail})`, `a ${x.part} the JS twin evaluates: it is evaluated once, when the style is built`,
-      x.part === "sky" || x.part === "tone" ? "write it without raw WGSL; or pass `clear: [r, g, b]` and an `environment` that does not project the sky" : "write it without raw WGSL, or pass `lobeAlbedo` for it"];
+    case "gpu-only": return [`pbr ${x.part}`, `a ${x.part} the CPU cannot evaluate (${x.detail})`, `a ${x.part} the JS twin can evaluate`,
+      x.part === "sun" ? "pass ctx.sun or a direction based on time, params and inputs"
+        : x.part === "sky" || x.part === "tone" ? "write it without raw WGSL; or pass `clear: [r, g, b]` and an `environment` that does not project the sky"
+          : "write it without raw WGSL, or pass `lobeAlbedo` for it"];
+    case "free-variable": return ["pbr sky", `a ${x.part} that reads the free variable "${x.name}"`, "a projection shared by the frame",
+      x.part === "sun" ? "pass ctx.sun, or a direction based on time, params and inputs" : "write sky as a function of its two arguments, or pass a custom environment"];
     case "unfitted": return ["pbr lobeAlbedo", `a distribution and visibility whose albedo the environment's fit misses by ${x.worst.toFixed(3)}`, "a fit within 0.02", "pass `lobeAlbedo: (n_v, rough) => ({ scale, bias })` for these parts"];
   }
 };
@@ -168,15 +177,16 @@ export class PbrError extends SceneError {
 }
 
 /** What in an expression changes after build time: the first input (time is one) or param it reads, or none. */
-function variesBy(e: Expr): string | undefined {
-  const { inputs, params } = leaves([e]);
+function variesBy({ inputs, params, rows, tables }: ReturnType<typeof leaves>): string | undefined {
   if (inputs.length > 0) return inputs[0]!.name === "time" ? "time" : `the input "${inputs[0]!.name}"`;
   if (params.length > 0) return `the param "${params[0]!.name}"`;
+  if (rows.length > 0) return `the curve "${rows[0]!.label}"`;
+  if (tables.length > 0) return `the table "${tables[0]!.name}"`;
   return undefined;
 }
 
 /** A part's expression compiled for the twin, or a typed refusal. */
-function onCpu(part: "sky" | "tone" | "distribution" | "visibility", roots: readonly Expr[]): ReturnType<typeof compileJs> {
+function onCpu(part: Extract<PbrFailure, { kind: "gpu-only" }>["part"], roots: readonly Expr[]): ReturnType<typeof compileJs> {
   const refuse = (e: unknown): never => { throw new PbrError({ kind: "gpu-only", part, detail: (e as Error).message }); };
   let fn: ReturnType<typeof compileJs>;
   try { fn = compileJs(roots); } catch (e) { return refuse(e); }
@@ -187,7 +197,7 @@ function onCpu(part: "sky" | "tone" | "distribution" | "visibility", roots: read
 /** The default clear colour: the sky on the horizon under a sun overhead, toned (see `PbrParts.clear`). */
 export function horizonClear(sky: SkyLaw, tone: (c: P3) => P3): readonly [number, number, number] {
   const sky0 = sky(vec3(1, 0, 0), vec3(0, 1, 0));
-  const reads = variesBy(sky0);
+  const reads = variesBy(leaves([sky0]));
   if (reads !== undefined) throw new PbrError({ kind: "varies", part: "sky", reads });
   const c = onCpu("tone", [tone(sky0)])({ vars: {}, inputs: {}, params: {} })[0] as number[];
   return [c[0]!, c[1]!, c[2]!];
@@ -213,7 +223,7 @@ function integrated(distribution: PbrParts["distribution"], visibility: PbrParts
   const nh = variable("pbr_n_h", "f32"), nl = variable("pbr_n_l", "f32"), nv = variable("pbr_n_v", "f32"), r = variable("pbr_rough", "f32");
   const d = distribution(nh, r), vis = visibility(nl, nv, r);
   for (const [part, e] of [["distribution", d], ["visibility", vis]] as const) {
-    const reads = variesBy(e);
+    const reads = variesBy(leaves([e]));
     if (reads !== undefined) throw new PbrError({ kind: "varies", part, reads });
   }
   const dFn = onCpu("distribution", [d]), vFn = onCpu("visibility", [vis]);
@@ -332,45 +342,77 @@ const basisOf = (d: P3): F[] => [
 /** The band (l) of each of the nine. */
 const BAND = [0, 1, 1, 1, 2, 2, 2, 2, 2] as const;
 const DIRECTIONS = 1024;
+const GOLDEN = Math.PI * (3 - Math.sqrt(5)), WEIGHT = 4 * Math.PI / DIRECTIONS;
+const SKY_DIR = variable("pbr_sky_dir", "vec3"), SKY_SUN = variable("pbr_sky_sun", "vec3");
+const fixedProjections = new WeakMap<SkyLaw, Map<string, readonly P3[]>>();
+const frameProjections = new WeakMap<SkyLaw, WeakMap<P3, readonly P3[]>>();
 
-const projections = new WeakMap<SkyLaw, Map<string, readonly (readonly [number, number, number])[]>>();
-/**
- * The sky's nine SH coefficients (one rgb each), by quadrature over 1024 Fibonacci directions on the twin, at the sun
- * `sun` evaluates to now (a host input at its default) and time 0: once per (sky, sun), cached.
- */
-function projected(sky: SkyLaw, sun: P3): readonly (readonly [number, number, number])[] {
-  const s = evaluate(sun) as number[];
+function projectionLeaves(law: P3): ReturnType<typeof leaves> {
+  const used = leaves([law]);
+  const reads = variesBy(used);
+  if (reads !== undefined) throw new PbrError({ kind: "varies", part: "sky", reads });
+  for (const name of used.vars.keys()) {
+    if (name !== "pbr_sky_dir" && name !== "pbr_sky_sun") throw new PbrError({ kind: "free-variable", part: "sky", name });
+  }
+  return used;
+}
+
+/** The sky's nine RGB harmonics over 1024 Fibonacci directions, built once for a sun with no per-frame leaves. */
+function fixedProjection(sky: SkyLaw, sun: P3): readonly P3[] {
+  const s = onCpu("sun", [sun])({ vars: {}, inputs: {}, params: {} })[0] as number[];
   const key = s.join(",");
-  let bySun = projections.get(sky);
-  if (bySun === undefined) { bySun = new Map(); projections.set(sky, bySun); }
+  let bySun = fixedProjections.get(sky);
+  if (bySun === undefined) { bySun = new Map(); fixedProjections.set(sky, bySun); }
   const had = bySun.get(key);
   if (had !== undefined) return had;
-  const dir = variable("pbr_sky_dir", "vec3");
-  const law = sky(dir, vec3(s[0]!, s[1]!, s[2]!));
-  // Projected once, a sky that reads time or a param would light bodies as it was at time 0 and the param's default
-  // while the background (and the sharp reflection) moved on: refused by name rather than drawn stale.
-  const reads = variesBy(law);
-  if (reads !== undefined) throw new PbrError({ kind: "varies", part: "sky", reads });
+  const law = sky(SKY_DIR, vec3(s[0]!, s[1]!, s[2]!));
+  projectionLeaves(law);
   const fn = onCpu("sky", [law]);
   const at = (d: number[]): number[] => fn({ vars: { pbr_sky_dir: d }, inputs: {}, params: {} })[0] as number[];
   const c = Array.from({ length: 9 }, () => [0, 0, 0]);
-  const golden = Math.PI * (3 - Math.sqrt(5)), w = (4 * Math.PI) / DIRECTIONS;
   for (let i = 0; i < DIRECTIONS; i++) {
-    const y = 1 - (2 * (i + 0.5)) / DIRECTIONS, r = Math.sqrt(1 - y * y), phi = i * golden;
+    const y = 1 - (2 * (i + 0.5)) / DIRECTIONS, r = Math.sqrt(1 - y * y), phi = i * GOLDEN;
     const x = r * Math.cos(phi), z = r * Math.sin(phi);
     const L = at([x, y, z]);
-    basis(x, y, z).forEach((b, k) => { for (let ch = 0; ch < 3; ch++) c[k]![ch]! += L[ch]! * b * w; });
+    basis(x, y, z).forEach((b, k) => { for (let ch = 0; ch < 3; ch++) c[k]![ch]! += L[ch]! * b * WEIGHT; });
   }
-  const out = c.map((v) => [v[0]!, v[1]!, v[2]!] as const);
+  const out = c.map((v) => vec3(v[0]!, v[1]!, v[2]!));
   bySun.set(key, out);
   return out;
 }
 
+/** The same quadrature over the live sun. Frame-rate lowering shares its nine results across all receivers. */
+function frameProjection(sky: SkyLaw, sun: P3): readonly P3[] {
+  let bySun = frameProjections.get(sky);
+  if (bySun === undefined) { bySun = new WeakMap(); frameProjections.set(sky, bySun); }
+  const had = bySun.get(sun);
+  if (had !== undefined) return had;
+  const law = sky(SKY_DIR, SKY_SUN);
+  const used = projectionLeaves(law);
+  const gpuOnly = used.libs.find((fn) => fn.js === "gpu-only");
+  if (gpuOnly !== undefined) throw new PbrError({ kind: "gpu-only", part: "sky", detail: gpuOnly.name });
+  if (!used.vars.has("pbr_sky_sun")) {
+    const coefficients = fixedProjection(sky, vec3(0, 1, 0));
+    bySun.set(sun, coefficients);
+    return coefficients;
+  }
+  const sums = iterate(DIRECTIONS, BAND.map(() => vec3(0, 0, 0)), (state, i) => {
+    const y = sub(1, mul(add(i, 0.5), 2 / DIRECTIONS));
+    const r = sqrt(sub(1, mul(y, y))), phi = mul(i, GOLDEN);
+    const dir = vec3(mul(r, cos(phi)), y, mul(r, sin(phi)));
+    const L = sky(dir, sun);
+    return basisOf(dir).map((b, k) => add(state[k]!, mul(L, b)));
+  });
+  const coefficients = sums.map((s) => mul(s, WEIGHT));
+  bySun.set(sun, coefficients);
+  return coefficients;
+}
+
 /** sum_k weight(band k) L_k Y_k(d): the projected sky with each band scaled. */
-function shAt(L: readonly (readonly [number, number, number])[], d: P3, weight: (band: 0 | 1 | 2) => F | number): P3 {
+function shAt(L: readonly P3[], d: P3, weight: (band: 0 | 1 | 2) => F | number): P3 {
   const y = basisOf(d);
   let acc: P3 = vec3(0, 0, 0);
-  L.forEach((c, k) => { acc = add(acc, mul(vec3(c[0], c[1], c[2]), mul(y[k]!, weight(BAND[k]!)))); });
+  L.forEach((c, k) => { acc = add(acc, mul(c, mul(y[k]!, weight(BAND[k]!)))); });
   return acc;
 }
 
@@ -378,7 +420,7 @@ function shAt(L: readonly (readonly [number, number, number])[], d: P3, weight: 
  * Light from the sky in a body: `diffuse`, the radiance a white Lambert surface facing `normal` reflects (the sky's
  * irradiance over pi), and `specular`, the sky as a mirror of roughness `rough` sees it along the reflected view ray.
  *
- * The law: the sky is projected on spherical harmonics of degree <= 2 once per scene (`projected`). `diffuse` is that
+ * The sky is projected on spherical harmonics of degree <= 2, once for a fixed sun or once per frame. `diffuse` is that
  * projection convolved with the cosine lobe (bands scaled 1, 2/3, 1/4). `specular` is
  *   S(r) = sum_l a_l L_l Y_l(r) + a_3 (sky(r) - sum_l L_l Y_l(r)),  a_l = exp(-l (l + 1) alpha^2):
  * the low bands of the sky blurred as a lobe of GGX width blurs them (a spherical Gaussian of sharpness 1 / (2
@@ -386,16 +428,16 @@ function shAt(L: readonly (readonly [number, number, number])[], d: P3, weight: 
  * tapped once at r and faded as band 3 would be. Exactly sky(r) at rough 0; exactly the blurred projection when rough
  * is large. Both are scaled by nothing: the caller multiplies by the sun's amount and the DFG.
  *
- * Cannot: follow a moved sun except through the one tap (the projection is at the sun's stated direction, as a
- * cloud's tables are); project a sky that reads time or a param (refused by name, `PbrError`: it would be stale); see the ground, other bodies or the body itself (a cavity is lit by
- * open sky: no occlusion); blur a sharp sky feature smoothly at middle roughness (it fades as a whole rather than
- * spreading). Costs about 90 multiply-adds and one sky evaluation a pixel; 1024 sky evaluations on the CPU at compile.
- *
- * Relatives: a second tap along the lobe's tangent for a smoother middle roughness (as `glossed` does with four); an
- * occlusion term from the body's own thickness; a projection per frame for a moving sun (a table, written each frame).
+ * At middle roughness a sharp sky feature fades as a whole. Cost: about 90 multiply-adds and one sky evaluation per
+ * pixel, plus 1024 sky evaluations per projection. `pbr` applies the body's occlusion separately.
  */
 export function skyLight(at: { readonly normal: P3; readonly view: P3; readonly sun: P3 }, rough: F, sky: (dir: P3, sun: P3) => P3): { readonly diffuse: P3; readonly specular: P3 } {
-  const L = projected(sky, at.sun);
+  const sun = leaves([at.sun]);
+  if (sun.vars.size > 0) throw new PbrError({ kind: "free-variable", part: "sun", name: sun.vars.keys().next().value! });
+  // GPU-only functions have item rate even with no varying arguments, so a projection over one would stay in shade.
+  const gpuOnly = sun.libs.find((fn) => fn.js === "gpu-only");
+  if (gpuOnly !== undefined) throw new PbrError({ kind: "gpu-only", part: "sun", detail: gpuOnly.name });
+  const L = variesBy(sun) === undefined ? fixedProjection(sky, at.sun) : frameProjection(sky, at.sun);
   const n = at.normal, v = at.view;
   const r = sub(mul(n, mul(dot(n, v), 2)), v);
   const diffuse = max(shAt(L, n, (l) => [1, 2 / 3, 1 / 4][l]!), 0);

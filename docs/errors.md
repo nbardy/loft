@@ -41,7 +41,10 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `draw.field "x": the field is not a distance` (or `march: ...`) | measured above 2: a degenerate primitive or an unscaled field | fix the field; `safety` would hide it |
 | `X needs a sea; this scene's ground is a plane` | a wake or foam on dry ground | `ground: sea(...)`, or drop the thing |
 | `usage: --style "x": no such style` / `input "x": ... no such input` | the command names what is absent | a name from the list printed |
-| `pbr sky: given a sky that reads time` (or a param; or `the CPU cannot evaluate`) | `pbr` evaluates its sky, tone and lobe on the CPU once, when the style is built | a sky of its direction and the sun alone; for a GPU-only sky, `pbr({ sky, clear: [r, g, b], environment })` |
+| `pbr sky: given a sky that reads time` (or a param, curve or table) | the default projection takes a sky of its direction and the sun | use the sky's `sun` argument for motion, or supply `pbr({ sky, clear: [r, g, b], environment })` |
+| `pbr sky: given a sun that reads the free variable ...` | a fragment-local value cannot drive the shared sky projection | pass `ctx.sun` or a frame expression based on time, params and inputs |
+| `pbr ...: given ... the CPU cannot evaluate` | the default sky projection, clear and lobe fitting require the CPU twin | use a CPU-evaluable sun direction, give `clear` and `environment` for a GPU-only sky, or give `lobeAlbedo` for a GPU-only lobe |
+| `scene() sun: given ...` | the default direction at time 0 must be finite, evaluable on the CPU and above the horizon | give `[0.3, 0.8, 0.4]`, `movable(...)` or an above-horizon `vec3` expression of time, params and inputs |
 | `precision: given ...` | the flag or request value is invalid | use `f32` or `mixed` |
 | `artefact precision: the file contains only f32` | a mixed render was requested from an f32 build | rebuild with `loft build --precision mixed` |
 | `artefact precision: ...` (invalid or missing mixed descriptor) | the version-4 overlay is inconsistent | rebuild with `loft build --precision mixed` |
@@ -71,7 +74,7 @@ and last line.
 | 12 | `a number in an expression: given Infinity` | a division by zero in a constant | the line named at the end |
 | 13 | `scene(): given things: undefined` | no `things` | `things: [draw.surface(...)]` |
 | 14 | `usage: slot "colour" of design "d" has no option "purple"` | `--variant` names an absent option | one of the options listed |
-| 15 | `scene(): given sun [0, 0, 0], which points nowhere` | a zero sun | `sun: [0.3, 0.8, 0.4]` |
+| 15 | `scene() sun: given direction [0, 0, 0], at or below the horizon threshold` | a zero sun | `sun: [0.3, 0.8, 0.4]` |
 | 16 | `add: given a vec3 and a vec2` | vectors of two sizes | `vec3(v.xy, 0)` or `.xy` |
 | 17 | `vec3: given 2 components` | a short vector | `vec3(x, y, 0)` |
 | 18 | `scene(): given a Surface (a shape, not yet drawn) at things[0]` | a shape in `things` | `draw.surface("name", shape, {...})` |
