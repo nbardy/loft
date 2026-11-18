@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NativeError, open } from "../../../src/core/native.ts";
+import { type Limits, NativeError, open, UNLIMITED } from "../../../src/core/native.ts";
 import { Op, pack, PRIM0, PRIMS, Program } from "../../../src/record/wire.ts";
 
 const addon = process.argv[2]!;
@@ -33,8 +33,14 @@ const refusal = (f: () => unknown): NativeError | undefined => {
   try { f(); return undefined; } catch (e) { return e instanceof NativeError ? e : undefined; }
 };
 
-const n = open(addon);
+const free: Limits = { nodes: UNLIMITED, tapeOps: UNLIMITED, boxes: UNLIMITED, gpuNanos: UNLIMITED };
+const opened = open(addon), n = { run: (job: Uint8Array) => opened.run(job, free) };
 const small = n.run(chain(3));
+
+// Lane 4.2: a node limit one under the job's count refuses as budget, at the same count every time; at the count it runs.
+const over = [0, 1].map(() => refusal(() => opened.run(chain(1000), { ...free, nodes: 999n })));
+check(over.every((e) => e?.kind === "budget" && e.code === 7 && JSON.stringify(e.error) === JSON.stringify({ Budget: { meter: "Nodes", limit: 999, spent: 1000 } })), "a job one node over its limit is Budget{Nodes, 999, 1000}, twice");
+check(opened.run(chain(1000), { ...free, nodes: 1000n }).nodes === 1000, "a job at its node limit runs");
 check(small.nodes === 3 && small.program === "Scene", "a 3-node job decodes");
 
 const big = chain(1_000_000);
@@ -67,7 +73,7 @@ check(missing?.kind === "environment" && missing.code === 6, "a missing addon is
 const dir = mkdtempSync(join(tmpdir(), "loft-stale-"));
 const stale = join(dir, "libloft_node_stale.dylib");
 copyFileSync(addon, stale);
-const bytes = readFileSync(stale), at = bytes.indexOf("loft-node abi 1 wire 1");
+const bytes = readFileSync(stale), at = bytes.indexOf("loft-node abi 2 wire 1");
 check(at >= 0, "the stamp is in the binary");
 bytes[at + 14] = "9".charCodeAt(0);
 writeFileSync(stale, bytes);

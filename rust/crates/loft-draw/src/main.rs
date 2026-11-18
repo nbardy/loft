@@ -1,9 +1,11 @@
 //! loft-draw: the one headless executor (plan 2026-11-19 §4.1). It owns a wgpu device and draws built scenes; it
-//! never compiles. Two commands:
+//! never compiles. Three commands:
 //!
 //!   loft-draw serve                      JSON lines: `loft serve`'s draw child, and `render`/`frames`/`clip` (serve.rs)
-//!   loft-draw still DIR [flags]          one PNG, plus frame and pose timings for `profile` (still.rs; was loft-view)
+//!   loft-draw still DIR [flags]          one PNG (still.rs; was loft-view)
+//!   loft-draw profile DIR [flags]        load and frame timings, the Vulkan cache, the frame budget (profile.rs)
 
+mod profile;
 mod serve;
 mod still;
 
@@ -21,6 +23,8 @@ pub enum Verdict {
     Environment(String),
     /// A Loft bug (a panic in this process).
     Internal(String),
+    /// Over a budget the caller set (`profile --budget-ms`).
+    Budget(String),
 }
 
 impl Verdict {
@@ -30,6 +34,7 @@ impl Verdict {
             Verdict::Usage(_) => 2,
             Verdict::Load(_) => 3,
             Verdict::Environment(_) => 6,
+            Verdict::Budget(_) => 7,
         }
     }
 }
@@ -81,8 +86,10 @@ pub fn gpu(f16: bool) -> Result<Gpu, Verdict> {
         ..Default::default()
     }))
     .map_err(|e| env(&format!("no adapter: {e}")))?;
-    let wanted =
-        wgpu::Features::TIMESTAMP_QUERY | if f16 { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() };
+    // PIPELINE_CACHE where the adapter has it (Vulkan), for `profile --pipeline-cache`.
+    let wanted = wgpu::Features::TIMESTAMP_QUERY
+        | wgpu::Features::PIPELINE_CACHE
+        | if f16 { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() };
     let features = adapter.features() & wanted;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-draw"),
@@ -177,21 +184,27 @@ impl Target {
 enum Command {
     Serve,
     Still(still::Args),
+    Profile(still::Args, profile::Flags),
 }
 
 fn main() {
     let mut args = std::env::args().skip(1);
     let command = match args.next().as_deref() {
         Some("serve") => Command::Serve,
-        Some("still") => Command::Still(still::parse(args)),
+        Some("still") => Command::Still(still::parse(args, false).0),
+        Some("profile") => {
+            let (a, f) = still::parse(args, true);
+            Command::Profile(a, f)
+        }
         other => {
-            eprintln!("loft-draw: expected `serve` or `still DIR ...`, got {other:?}");
+            eprintln!("loft-draw: expected `serve`, `still DIR ...` or `profile DIR ...`, got {other:?}");
             std::process::exit(2)
         }
     };
     let ended = match command {
         Command::Serve => serve::run(),
         Command::Still(a) => still::run(a),
+        Command::Profile(a, f) => profile::run(a, f),
     };
     if let Err(v) = ended {
         eprintln!("loft-draw: {v:?}");

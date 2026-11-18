@@ -53,7 +53,7 @@ export type Command =
     readonly only: { readonly kind: "all" } | { readonly kind: "given"; readonly names: readonly string[] };
   }
   | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
-  | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod }
+  | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: "ts" | "rust" }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
   | { readonly kind: "help" }
@@ -279,10 +279,14 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind !== "file") throw new UsageError("profile: needs a scene file");
     const frames = one("--frames") === undefined ? 30 : positive("--frames", one("--frames")!);
     if (!Number.isInteger(frames)) throw new UsageError(`--frames: ${frames} is not a whole number`);
+    const engine = parseEngine(process.env.LOFT_ENGINE), outline = outlineOf(one("--outline"));
+    if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: profile times one engine, "ts" or "rust"`);
+    // loft-draw times the built bundle as drawn; the outline method is a TS-host profiling knob.
+    if (engine === "rust" && outline !== "scene") throw new UsageError(`--outline: a flag of the TS profile; LOFT_ENGINE=rust draws the scene's own outline`);
     return {
-      kind: "profile", precision: precision ?? "f32", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
+      kind: "profile", engine, precision: precision ?? "f32", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
       time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
-      outline: outlineOf(one("--outline")),
+      outline,
     };
   }
   if (name === "build") {

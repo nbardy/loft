@@ -4,7 +4,10 @@
 //   bun tools/parity/run.ts repeat [--only text]      draw every recorded frame again: byte-identical, or the envelope
 //   bun tools/parity/run.ts checks <scene.ts>         (child) one scene's check verdicts as JSON on stdout
 //   bun tools/parity/run.ts dawn <scene.ts> <id>      (child) a scene `loft build` refuses, drawn as `loft render` draws it
+//   bun tools/parity/run.ts cross <R0 dir>            this set's frames against another backend's R0 (§2.3 cross rule)
 //
+// LOFT_PARITY_OUT names the set (default out/parity/R0): the Linux runner (tools/parity/linux.sh) draws its own set on
+// Vulkan and crosses it with the macOS R0.
 // The corpus is tools/parity/corpus.json: every examples/**/*.ts and the creative seeds, migrated by tools/migrate.ts.
 // Each entry is built by the real CLI (`loft build`); a refusal is recorded with its exit code, kind, site and text.
 // Built entries are checked in a child (every Verdict object whole) and drawn by `loft-draw still` (wgpu 30, Metal) as
@@ -13,10 +16,10 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { cpus, homedir, loadavg } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const ROOT = join(import.meta.dir, "../..");
-const OUT = join(ROOT, "out/parity/R0");
+const OUT = join(ROOT, process.env.LOFT_PARITY_OUT ?? "out/parity/R0");
 const VIEW = join(ROOT, "rust/target/lab/loft-draw");
 const DIFF = join(ROOT, "tools/parity/target/release/parity-diff");
 /** The paths that decide a reference picture (the loader moved to rust/crates in lane 0.1; the workspace lock pins its wgpu). */
@@ -28,7 +31,7 @@ type Corpus = {
   seeds: { default: string; env: string; commit: string; sets: { set: string; path: string; rows: number; sha256: string }[] };
   frames: { cameras: number; times: number[]; size: [number, number]; stepsTime: number; detail: { time: number; size: [number, number] } };
 };
-type Mode = { kind: "reference" | "repeat"; only: string } | { kind: "checks"; path: string } | { kind: "dawn"; path: string; id: string };
+type Mode = { kind: "reference" | "repeat"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
 type Origin = { kind: "example" } | { kind: "seed"; set: string; seed: string; unported: number };
 type Entry = { id: string; path: string; origin: Origin };
 /** How `loft build` ended: the CLI's verdict kinds (src/cli/verdict.ts, docs/errors.md), or a process that died outside them. */
@@ -57,13 +60,13 @@ function parse(argv: string[]): Mode {
       if (rest.length !== (i < 0 ? 0 : 2) || (i >= 0 && !rest[i + 1])) throw new ParityError(`${cmd} takes only --only <text>`);
       return { kind: cmd, only: i < 0 ? "" : rest[i + 1]! };
     }
-    case "checks":
-      if (rest.length !== 1) throw new ParityError("checks takes one scene path");
-      return { kind: "checks", path: rest[0]! };
+    case "checks": case "cross":
+      if (rest.length !== 1) throw new ParityError(`${cmd} takes one path`);
+      return { kind: cmd, path: rest[0]! };
     case "dawn":
       if (rest.length !== 2) throw new ParityError("dawn takes a scene path and its entry id");
       return { kind: "dawn", path: rest[0]!, id: rest[1]! };
-    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: reference | repeat | checks <scene.ts> | dawn <scene.ts> <id>`);
+    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: reference | repeat | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
   }
 }
 
@@ -214,6 +217,31 @@ async function repeat(only: string) {
   console.log(`${report.identical}/${drawn.length} frames byte-identical; ${differing.length} differ (envelope ${envelope} codes); ${refused} refused`);
 }
 
+/** Lane 4.2: every loft-draw frame of `other` (the macOS R0) against this set's (OUT, another backend) under the
+ * cross-executor rule (§2.3). Every entry must also end its build the same way. */
+async function cross(other: string) {
+  const read = (dir: string) => new Map([...new Bun.Glob("entries/*.json").scanSync({ cwd: dir })]
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as Rec).map((r) => [r.entry.id, r] as const));
+  const ours = read(OUT), theirs = read(other), builds: string[] = [], fails: { id: string; frame: string; diff: unknown }[] = [];
+  let frames = 0;
+  for (const [id, t] of theirs) {
+    const o = ours.get(id);
+    if (o?.build.kind !== t.build.kind) { builds.push(`${id}: ${t.build.kind} in ${other}, ${o?.build.kind ?? "absent"} here`); continue; }
+    // Native frames only: R0 predates the loft-view → loft-draw rename and records "loft-view"; Dawn frames are not crossed.
+    for (const f of t.frames.filter((f) => f.kind === "drawn" && f.executor !== "dawn")) {
+      const g = o.frames.find((x) => frameName(x) === frameName(f)), frame = frameName(f);
+      frames++;
+      if (g?.kind !== "drawn" || f.kind !== "drawn") { fails.push({ id, frame, diff: g?.kind ?? "absent" }); continue; }
+      const d = await spawn([DIFF, join(other, f.file), join(OUT, g.file), "--rule", "cross"]);
+      if (d.exit !== 0) fails.push({ id, frame, diff: d.exit === 1 ? JSON.parse(d.stdout) : d.stderr.trim() });
+    }
+  }
+  const report = { other, here: OUT, entries: theirs.size, builds, frames, fails: fails.length, failed: fails };
+  writeFileSync(join(OUT, "cross.json"), json(report));
+  console.log(`cross: ${theirs.size} entries, ${builds.length} build mismatches; ${frames - fails.length}/${frames} frames meet the cross rule`);
+  process.exit(builds.length + fails.length === 0 && frames > 0 ? 0 : 1); // no frame compared is no pass
+}
+
 /** Child: the verdicts `loft check` computes (src/cli/check.ts), for the variant `loft build` builds, whole. */
 async function verdicts(path: string): Promise<Checks> {
   const { subjectAt, choose } = await import("../../src/cli/variant.ts");
@@ -274,6 +302,7 @@ try {
     case "reference": await reference(mode.only); break;
     case "repeat": await repeat(mode.only); break;
     case "checks": process.stdout.write(json(await verdicts(mode.path), 0)); process.exit(0);
+    case "cross": await cross(resolve(mode.path)); break;
     case "dawn": process.stdout.write(json(await dawn(mode.path, mode.id), 0)); process.exit(0);
   }
 } catch (e) {

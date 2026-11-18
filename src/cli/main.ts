@@ -202,6 +202,21 @@ async function clip(cmd: Extract<Command, { kind: "clip" }>) {
 }
 
 /** `loft build`: compile, bake (a scene with `recur`, on this GPU), lower, write the directory (`writeBundle` refuses `cpu` tables by name). */
+/**
+ * `loft profile` under LOFT_ENGINE=rust: build the bundle (the TS compiler still builds until the cutover), then time
+ * it with `loft-draw profile` (lane 4.2), whose report and exit code (7 = over `--budget-ms`) are this command's.
+ */
+async function profileOnDraw(cmd: Extract<Command, { kind: "profile" }>) {
+  const { LOFT_DRAW } = await import("./serve.ts");
+  const { existsSync } = await import("node:fs");
+  if (!existsSync(LOFT_DRAW)) throw new EnvironmentError(`${LOFT_DRAW} is missing. Fix: tools/dev.sh build loft-draw --fast`, false);
+  const out = `out/profile/${/([^/]+?)(\.ts)?$/.exec(cmd.path)![1]!}`;
+  await build({ kind: "build", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
+  const child = Bun.spawn([LOFT_DRAW, "profile", out, "--view", cmd.view, "--time", String(cmd.time), "--size", `${cmd.size.width}x${cmd.size.height}`, "--frames", String(cmd.frames)], { stdout: "inherit", stderr: "inherit" });
+  const code = await child.exited;
+  if (code !== 0) process.exit(code);
+}
+
 async function build(cmd: Extract<Command, { kind: "build" }>) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
@@ -247,7 +262,7 @@ async function main(argv: readonly string[]) {
     case "gallery": return (await import("./gallery.ts")).gallery(cmd);
     case "serve": return (await import("./serve.ts")).serve(cmd);
     case "show": return (await import("./show.ts")).show(cmd);
-    case "profile": return (await import("./profile.ts")).profile(cmd);
+    case "profile": return cmd.engine === "rust" ? profileOnDraw(cmd) : (await import("./profile.ts")).profile(cmd);
     case "variants": return (await import("./variants.ts")).variants(cmd);
     case "help": return void console.log(USAGE);
     case "api": {

@@ -6,7 +6,7 @@
 import { fileURLToPath } from "node:url";
 
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
-const STAMP = "loft-node abi 1 wire 1";
+const STAMP = "loft-node abi 2 wire 1";
 const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
@@ -28,8 +28,13 @@ export class NativeError extends Error {
   }
 }
 
-type Native = { run(job: Uint8Array): Report };
-type Addon = { run(job: Uint8Array): string; stamp: unknown };
+/** One job's ceilings in work units (loft-ir `Limits`): over one, the job ends as `budget` (exit 7) at the same count on
+ * every machine. `UNLIMITED` leaves a meter to the engine's own quotas. */
+export type Limits = { readonly nodes: bigint; readonly tapeOps: bigint; readonly boxes: bigint; readonly gpuNanos: bigint };
+export const UNLIMITED = 2n ** 64n - 1n;
+
+type Native = { run(job: Uint8Array, limits: Limits): Report };
+type Addon = { run(job: Uint8Array, limits: BigUint64Array): string; stamp: unknown };
 type Answer = { Ok: Report } | { Err: { kind: Kind; code: number; message: string; error: unknown } };
 
 const environment = (message: string): NativeError => new NativeError("environment", 6, message, null);
@@ -48,8 +53,8 @@ export function open(path: string): Native {
   }
   const run = addon.run;
   return {
-    run(job) {
-      const a = JSON.parse(run(job)) as Answer;
+    run(job, l) {
+      const a = JSON.parse(run(job, BigUint64Array.of(l.nodes, l.tapeOps, l.boxes, l.gpuNanos))) as Answer;
       if ("Ok" in a) return a.Ok;
       throw new NativeError(a.Err.kind, a.Err.code, a.Err.message, a.Err.error);
     },

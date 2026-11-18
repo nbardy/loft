@@ -56,6 +56,30 @@ pub enum Meter {
     GpuNanos,
 }
 
+/// One job's ceilings in work units, one per `Meter` (plan §7: training budgets as typed exits). A request sets
+/// them, so the same job under the same limits refuses at the same count on every machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Limits {
+    pub nodes: u64,
+    pub tape_ops: u64,
+    pub boxes: u64,
+    pub gpu_nanos: u64,
+}
+
+impl Limits {
+    /// `Budget` when `spent` is over `meter`'s limit.
+    pub fn spend(&self, meter: Meter, spent: u64) -> Result<(), Error> {
+        // Named fields and an exhaustive match, not `[u64; 4][meter as usize]`: a new Meter fails to compile here.
+        let limit = match meter {
+            Meter::Nodes => self.nodes,
+            Meter::TapeOps => self.tape_ops,
+            Meter::Boxes => self.boxes,
+            Meter::GpuNanos => self.gpu_nanos,
+        };
+        (spent <= limit).then_some(()).ok_or(Error::Budget { meter, limit, spent })
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum LoadFault {
     /// Not a bundle: the first four bytes are not `LOFT`.
