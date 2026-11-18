@@ -77,17 +77,18 @@ pub struct View<'a> {
     pub layers: Layers,
 }
 
-/// A resource on the device. A texture keeps a Loft-owned depth view for passes that draw into it.
+/// A resource on the device. A texture a pass draws into (`Target::Texture`) also owns that pass's depth; no other
+/// texture gets one, since a 3D table cannot have a depth texture and a large one would double its memory.
 enum Res {
     Rows(Buffer),
     Tex(Box<Tex>),
+    Target { tex: Box<Tex>, depth: TextureView },
     Frame,
 }
 
 struct Tex {
     tex: wgpu::Texture,
     view: TextureView,
-    depth: TextureView,
 }
 
 /// What one `Steps` kernel needs from its `When`.
@@ -527,7 +528,9 @@ impl Loft {
             let x = match (s.keep, &loft.res[res]) {
                 (Keep::Latest, Res::Rows(r)) => [r.clone(), scratch()],
                 (Keep::Every(_), Res::Rows(_)) => [scratch(), scratch()],
-                (_, Res::Tex(_) | Res::Frame) => unreachable!("validated: a stepped kernel writes rows"),
+                (_, Res::Tex(_) | Res::Target { .. } | Res::Frame) => {
+                    unreachable!("validated: a stepped kernel writes rows")
+                }
             };
             loft.steppers.push(Stepper { kernel, res, s, x, base, done: 0, groups: Vec::new() });
             base += u64::from(s.count) + 1;
@@ -537,6 +540,8 @@ impl Loft {
         for (r, res) in loft.b.resources.iter().enumerate() {
             loft.init(queue, &mut enc, r, &res.init);
         }
+        // Load kernels read group 0 too: time 0 with the default params and inputs, not an unwritten (zero) frame.
+        queue.write_buffer(&loft.frame, 0, &loft.frame_bytes(0.0));
         let load: Vec<usize> =
             (0..loft.b.kernels.len()).filter(|&k| matches!(loft.b.kernels[k].when, When::Load)).collect();
         loft.dispatch_all(&mut enc, &load, None);
@@ -603,10 +608,14 @@ impl Loft {
             view_formats: &[],
         };
         let tex = device.create_texture(&desc(format, usage));
-        let depth = device
-            .create_texture(&desc(DEPTH, wgpu::TextureUsages::RENDER_ATTACHMENT))
-            .create_view(&Default::default());
-        Res::Tex(Box::new(Tex { view: tex.create_view(&Default::default()), tex, depth }))
+        let tex = Box::new(Tex { view: tex.create_view(&Default::default()), tex });
+        match self.b.passes.iter().any(|p| matches!(p.target, Target::Texture(t) if t as usize == r)) {
+            true => {
+                let depth = device.create_texture(&desc(DEPTH, wgpu::TextureUsages::RENDER_ATTACHMENT));
+                Res::Target { tex, depth: depth.create_view(&Default::default()) }
+            }
+            false => Res::Tex(tex),
+        }
     }
 
     /// Every group 1 and group 2 bind group, and the steppers' (after a resize remade view-sized textures).
@@ -615,7 +624,7 @@ impl Loft {
             let resource = match (&res[r as usize], sub) {
                 (_, Some((s, buf))) if s == r as usize => buf.as_entire_binding(),
                 (Res::Rows(buf), _) => buf.as_entire_binding(),
-                (Res::Tex(t), _) => wgpu::BindingResource::TextureView(&t.view),
+                (Res::Tex(t) | Res::Target { tex: t, .. }, _) => wgpu::BindingResource::TextureView(&t.view),
                 (Res::Frame, _) => unreachable!("validated: group 1 and 2 never bind the frame"),
             };
             wgpu::BindGroupEntry { binding: k as u32, resource }
@@ -653,7 +662,7 @@ impl Loft {
         match (init, &self.res[r]) {
             (Init::Zero, Res::Rows(buf)) => enc.clear_buffer(buf, 0, None),
             (Init::Bytes(s), Res::Rows(buf)) => queue.write_buffer(buf, 0, &self.b.sections[*s as usize]),
-            (Init::Bytes(s), Res::Tex(t)) => {
+            (Init::Bytes(s), Res::Tex(t) | Res::Target { tex: t, .. }) => {
                 let tex = &t.tex;
                 let e = tex.size();
                 let row = e.width * tex.format().block_copy_size(None).expect("an uncompressed format");
@@ -662,7 +671,9 @@ impl Loft {
                 queue.write_texture(tex.as_image_copy(), &self.b.sections[*s as usize], layout, e);
             }
             // A new texture is zero; `By` runs with the load kernels, or `rewind` runs it.
-            (Init::Zero, Res::Tex(_) | Res::Frame) | (Init::Bytes(_), Res::Frame) | (Init::By(_), _) => {}
+            (Init::Zero, Res::Tex(_) | Res::Target { .. } | Res::Frame)
+            | (Init::Bytes(_), Res::Frame)
+            | (Init::By(_), _) => {}
         }
     }
 
@@ -884,12 +895,16 @@ impl Loft {
                     (Some(view.canvas.color), view.canvas.depth, view.canvas.samples),
                 ),
                 Target::Texture(r) => match &self.res[r as usize] {
-                    Res::Tex(t) => (Some(&t.view), &t.depth, clear(true), (Some(t.tex.format()), DEPTH, 1)),
-                    Res::Rows(_) | Res::Frame => unreachable!("validated: a pass target is a texture"),
+                    Res::Target { tex, depth } => {
+                        (Some(&tex.view), depth, clear(true), (Some(tex.tex.format()), DEPTH, 1))
+                    }
+                    Res::Tex(_) | Res::Rows(_) | Res::Frame => unreachable!("a pass's colour target is a Res::Target"),
                 },
                 Target::Shadow { map, .. } => match &self.res[map as usize] {
                     Res::Tex(t) => (None, &t.view, clear(true), (None, DEPTH, 1)),
-                    Res::Rows(_) | Res::Frame => unreachable!("validated: a shadow map is a texture"),
+                    Res::Target { .. } | Res::Rows(_) | Res::Frame => {
+                        unreachable!("validated: a shadow map is a depth texture, never a colour target")
+                    }
                 },
             };
             let store = wgpu::StoreOp::Store;

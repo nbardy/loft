@@ -122,10 +122,16 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
         if p.draws[0] > p.draws[1] || p.draws[1] as usize > b.draws.len() {
             return Err(bad(format!("pass draws {:?} are not a range of the {} draws", p.draws, b.draws.len())));
         }
+        let flat = |r: Id, what: &str| match b.resources[r as usize].shape {
+            Shape::Texture { extent, .. } if extent[2] > 1 => {
+                Err(bad(format!("{what} {r} is 3D; passes draw into 2D")))
+            }
+            Shape::Texture { .. } | Shape::ViewSized { .. } | Shape::Rows { .. } | Shape::Frame => Ok(()),
+        };
         match p.target {
             Target::View => {}
-            Target::Texture(r) => texture(b, r, false, "pass target")?,
-            Target::Shadow { map, .. } => texture(b, map, true, "shadow map")?,
+            Target::Texture(r) => texture(b, r, false, "pass target").and_then(|_| flat(r, "pass target"))?,
+            Target::Shadow { map, .. } => texture(b, map, true, "shadow map").and_then(|_| flat(map, "shadow map"))?,
         }
         for e in p.compose.outline.iter().chain(&p.compose.ground) {
             entry(*e, "compose module")?;

@@ -294,3 +294,21 @@ fn refusals_are_typed_and_named() {
     let mut enc = d.create_command_encoder(&Default::default());
     assert!(matches!(loft.encode_into(&d, &q, &mut enc, &view), Err(Error::Usage(_))));
 }
+
+#[test]
+fn load_kernels_see_param_defaults_and_a_3d_table_loads() {
+    let (d, q) = device();
+    // The load kernel paints the subject with param 0's default; a 3D table rides along unused.
+    let mut b = subject();
+    b.sections[0] = format!("{PRE}{}", FILL.replace("f32(lf(1.0))", "frame.params[0].x")).into_bytes().into();
+    b.params = [ParamDecl { name: 0, def: f(0.5), min: f(0.0), max: f(1.0) }].into();
+    b.resources = [
+        &b.resources[..],
+        &[Resource { shape: Shape::Texture { extent: [2, 2, 2], format: TexFormat::Rgba8Unorm }, init: Init::Zero }],
+    ]
+    .concat()
+    .into();
+    let mut loft = load(&d, &q, &b);
+    let (rgba, _) = Game::new(&d).frame(&d, &q, &mut loft, Some(1.0), Owner::Caller, Layers::Subject);
+    assert_eq!(px(&rgba, 4, 4)[0], 128, "the load kernel read param 0's default, 0.5");
+}
