@@ -72,10 +72,21 @@ pub enum Kind {
 pub struct Solved {
     /// Each unknown's f32 numbers: `curve` of them is what is drawn.
     pub controls: Vec<Vec<f32>>,
-    /// One per hold, in order: proved over its window on the returned curve, or `Undecided`.
-    pub verdicts: Vec<Verdict>,
+    /// One per hold, in order: `Unproved` from `solve`, a proof's verdict after `prove`.
+    pub holds: Vec<Proof>,
     pub rounds: u32,
     pub steps: u32,
+    /// Hold evaluation spent, in tape operations (instructions times lanes).
+    pub tape_ops: u64,
+}
+/// What is known of one hold on the returned curve. The build solves and does not prove (proofs take seconds on rig
+/// programs); `loft check` proves. An unproved hold is never reported as a pass.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub enum Proof {
+    /// Met at the search's samples in f64, not proved over its window on the f32 curve.
+    Unproved,
+    /// `check`'s proof over the hold's window on the returned curve: Holds or Undecided (a proved break is an error).
+    Checked(Verdict),
 }
 
 const AIM: f64 = 1e-8;
@@ -182,23 +193,87 @@ fn compact(s: &Ssa, roots: &[Id]) -> Prog {
     Prog { roots: roots.iter().map(|&r| map[r as usize]).collect(), ssa: out }
 }
 
+/// Renumbers `p`'s leaves to their place in `slots` (added on first read): a lane then holds only what is read.
+fn narrow(p: &mut Ssa, slots: &mut Vec<Slot>) {
+    for ins in &mut p.ins {
+        if let Ins::Leaf(k) = ins {
+            *k = slots.iter().position(|s| s == k).unwrap_or_else(|| {
+                slots.push(*k);
+                slots.len() - 1
+            }) as Slot;
+        }
+    }
+}
+
+/// Atom `a`'s interval rule at the point box x: its value there, or NaN where the rule gives no point.
+pub fn point(a: Atom, x: [f64; 3]) -> f64 {
+    match (prim::atom(a).iv)(x.map(|v| [v; 2])) {
+        Ok([lo, hi]) if lo == hi => lo,
+        Ok(_) | Err(_) => f64::NAN,
+    }
+}
+
 /// Runs `p` in f64 for `lanes` leaf vectors of width `w`; register r of lane l is `regs[r * lanes + l]`.
-fn eval(p: &Ssa, lanes: usize, w: usize, leaves: &[f64], regs: &mut Vec<f64>) {
+/// Speed (agent_notes/2026-11-19_lean_rust_solve2.md): the atoms the holds are mostly made of run as one f64
+/// operation per lane, in a loop the compiler vectorises; each is `point` exactly, bit for bit (`point_fast_same`
+/// in tests/it/solve.rs). The others go through the interval rule at a point, `point`, as before.
+pub fn eval(p: &Ssa, lanes: usize, w: usize, leaves: &[f64], regs: &mut Vec<f64>) {
     regs.clear();
     regs.resize(p.ins.len() * lanes, 0.0);
+    let zero = vec![0.0; lanes];
     for (r, ins) in p.ins.iter().enumerate() {
         let (done, out) = regs.split_at_mut(r * lanes);
-        for (l, o) in out[..lanes].iter_mut().enumerate() {
-            *o = match *ins {
-                Ins::Lit(v) => v as f64,
-                Ins::Leaf(s) => leaves[l * w + s as usize],
-                Ins::Op(a, x) => {
-                    match (prim::atom(a).iv)(x.map(|k| [done.get(k as usize * lanes + l).copied().unwrap_or(0.0); 2])) {
-                        Ok([lo, hi]) if lo == hi => lo,
-                        Ok(_) | Err(_) => f64::NAN,
+        let out = &mut out[..lanes];
+        match *ins {
+            Ins::Lit(v) => out.fill(v as f64),
+            Ins::Leaf(s) => out.iter_mut().enumerate().for_each(|(l, o)| *o = leaves[l * w + s as usize]),
+            Ins::Op(a, x) => {
+                // An operand past the atom's arity is register 0 by convention, unread; at r = 0 it reads zeros.
+                let arg = |j: usize| done.get(x[j] as usize * lanes..(x[j] as usize + 1) * lanes);
+                let [p, q, t] = [0, 1, 2].map(|j| arg(j).unwrap_or(&zero));
+                macro_rules! each {
+                    (|$a:ident, $b:ident| $e:expr) => {
+                        out.iter_mut().zip(p.iter().zip(q)).for_each(|(o, (&$a, &$b))| *o = $e)
+                    };
+                }
+                match a {
+                    Atom::Add => each!(|a, b| a + b),
+                    Atom::Sub => each!(|a, b| a - b),
+                    Atom::Mul => each!(|a, b| a * b),
+                    Atom::Div => each!(|a, b| if b == 0.0 { f64::NAN } else { a / b }),
+                    Atom::Neg => each!(|a, _b| -a),
+                    Atom::Min => each!(|a, b| a.min(b)),
+                    Atom::Max => each!(|a, b| a.max(b)),
+                    // abs's rule keeps -0 (a >= 0 takes a as it is).
+                    Atom::Abs => each!(|a, _b| if a >= 0.0 { a } else { -a }),
+                    Atom::Sqrt => each!(|a, _b| if a < 0.0 { f64::NAN } else { libm::sqrt(a) }),
+                    // Comparisons are 1 or 0, or NaN where neither is decided (a NaN operand).
+                    Atom::Lt => each!(|a, b| if a < b { 1.0 } else if a >= b { 0.0 } else { f64::NAN }),
+                    Atom::Gt => each!(|a, b| if a > b { 1.0 } else if a <= b { 0.0 } else { f64::NAN }),
+                    Atom::Le => each!(|a, b| if a <= b { 1.0 } else if a > b { 0.0 } else { f64::NAN }),
+                    Atom::Ge => each!(|a, b| if a >= b { 1.0 } else if a < b { 0.0 } else { f64::NAN }),
+                    // `pick`: a NaN condition gives the hull of both, a point only where they agree.
+                    Atom::Select => {
+                        for (l, o) in out.iter_mut().enumerate() {
+                            let (c, y, n) = (p[l], q[l], t[l]);
+                            *o = if c > 0.0 || c < 0.0 {
+                                y
+                            } else if c == 0.0 {
+                                n
+                            } else if y.min(n) == y.max(n) {
+                                y.min(n)
+                            } else {
+                                f64::NAN
+                            };
+                        }
+                    }
+                    _ => {
+                        for (l, o) in out.iter_mut().enumerate() {
+                            *o = point(a, [p[l], q[l], t[l]]);
+                        }
                     }
                 }
-            };
+            }
         }
     }
 }
@@ -210,10 +285,16 @@ struct Line<'a> {
     /// Pinned half-band of an `equal`.
     band: Option<f64>,
     reads: Vec<(usize, usize)>,
+    /// The unknowns `reads` names, in first-read order: the blocks of a row's `idx`.
+    chans: Vec<usize>,
     pairs: Vec<(usize, usize)>,
+    /// `value` and `grad` read leaf k as `slots[k]` of the frame: only what they read is built per lane.
+    slots: Vec<Slot>,
     value: Prog,
     grad: Prog,
     samples: Vec<f64>,
+    /// Where each sample sits on each of `chans`' splines (`Problem::place`), kept with `samples`.
+    places: Vec<Vec<(usize, [[f64; 4]; 4])>>,
     dense: Vec<f64>,
     /// Constant bounds on a jet the authored hold states: (slot, low, high).
     cert: Vec<(Slot, f64, f64)>,
@@ -239,6 +320,9 @@ struct Problem<'a> {
     steps: u32,
     spent: u64,
     regs: Vec<f64>,
+    /// The last values `rows` ran: (x, the lines' address and total samples, the values). An accepted step's line
+    /// search ran the rows the next Newton step and the outer loop read again at the same x.
+    memo: Option<(Vec<f64>, (usize, usize, usize), Vec<f64>)>,
 }
 
 fn scene(site: &Site, fault: SceneFault) -> Error {
@@ -266,20 +350,27 @@ impl Problem<'_> {
         (first, std::array::from_fn(|d| std::array::from_fn(|q| w(d, q))))
     }
 
-    /// Runs `p` at times `ts` with the jets of x; every root must be finite.
-    fn run(&mut self, p: &Prog, h: &Hold, ts: &[f64], x: &[f64]) -> Result<(), Error> {
-        let (w, s) = (self.s.held.len(), self.s);
+    /// Where each of `ts` sits on each of the line's unknowns.
+    fn locate(&self, line: &Line, ts: &[f64]) -> Vec<Vec<(usize, [[f64; 4]; 4])>> {
+        ts.iter().map(|&t| line.chans.iter().map(|&k| self.place(k, t)).collect()).collect()
+    }
+
+    /// Runs `p` (a program of `line`) at times `ts`, placed by `places`, with the jets of x; every root must be finite.
+    fn run(&mut self, p: &Prog, line: &Line, ts: &[f64], places: &[Vec<(usize, [[f64; 4]; 4])>], x: &[f64]) -> Result<(), Error> {
+        let (w, s) = (line.slots.len(), self.s);
         let mut leaves: Vec<f64> = Vec::with_capacity(ts.len() * w);
-        for &t in ts {
-            let at = leaves.len();
-            leaves.extend(s.held.iter().map(|&v| v as f64));
-            leaves[at + s.time as usize] = (t as f32) as f64;
-            for k in 0..self.chan.len() {
-                let (first, wt) = self.place(k, t);
-                for (d, wd) in wt.iter().enumerate() {
-                    let v: f64 = (0..4).map(|q| x[self.chan[k].0 + first + q] * wd[q]).sum();
-                    leaves[at + s.jets as usize + 4 * k + d] = v / self.chan[k].2.powf(d as f64);
-                }
+        for (&t, at) in ts.iter().zip(places) {
+            for &slot in &line.slots {
+                leaves.push(match slot {
+                    _ if slot == s.time => (t as f32) as f64,
+                    _ if slot >= s.jets && slot < s.jets + 4 * self.chan.len() as Slot => {
+                        let (k, d) = ((slot - s.jets) as usize / 4, (slot - s.jets) as usize % 4);
+                        let (first, wt) = at[line.chans.iter().position(|&c| c == k).expect("a line places what it reads")];
+                        let v: f64 = (0..4).map(|q| x[self.chan[k].0 + first + q] * wt[d][q]).sum();
+                        v / self.chan[k].2.powf(d as f64)
+                    }
+                    _ => s.held[slot as usize] as f64,
+                });
             }
         }
         self.spent += (p.ssa.ins.len() * ts.len()) as u64;
@@ -289,28 +380,62 @@ impl Problem<'_> {
         eval(&p.ssa, ts.len(), w, &leaves, &mut self.regs);
         let fine =
             p.roots.iter().all(|&r| self.regs[r as usize * ts.len()..][..ts.len()].iter().all(|v| v.is_finite()));
-        if fine { Ok(()) } else { Err(scene(&h.site, SceneFault::Unreadable)) }
+        if fine { Ok(()) } else { Err(scene(&line.hold.site, SceneFault::Unreadable)) }
     }
 
     /// Every row of `lines` at x, with gradients and Hessians when asked (`solve.ts` `Problem.rows`).
-    fn rows(&mut self, x: &[f64], lines: &[Line], grad: bool) -> Result<Vec<Row>, Error> {
+    fn rows(&mut self, x: &[f64], lines: &[Line]) -> Result<Vec<Row>, Error> {
+        let key = (lines.as_ptr() as usize, lines.len(), lines.iter().map(|l| l.samples.len()).sum());
+        if let Some((mx, mk, v)) = &self.memo
+            && *mk == key
+            && mx.iter().zip(x).all(|(a, b)| a.to_bits() == b.to_bits())
+        {
+            let bands = lines.iter().flat_map(|l| std::iter::repeat_n(l.band, l.samples.len() * l.size));
+            return Ok(v.iter().zip(bands).map(|(&v, band)| Row { v, band, idx: vec![], g: vec![], m: vec![] }).collect());
+        }
+        let out = self.rows1(x, lines)?;
+        self.memo = Some((x.to_vec(), key, out.iter().map(|r| r.v).collect()));
+        Ok(out)
+    }
+    fn rows1(&mut self, x: &[f64], lines: &[Line]) -> Result<Vec<Row>, Error> {
         let mut out = vec![];
         for line in lines {
-            let p = if grad { &line.grad } else { &line.value };
-            self.run(p, line.hold, &line.samples, x)?;
+            self.run(&line.value, line, &line.samples, &line.places, x)?;
             let lanes = line.samples.len();
-            for (l, &t) in line.samples.iter().enumerate() {
-                let at = |i: usize| self.regs[p.roots[i] as usize * lanes + l];
-                let mut chans: Vec<usize> = vec![];
-                line.reads.iter().for_each(|&(k, _)| {
-                    if !chans.contains(&k) {
-                        chans.push(k)
-                    }
-                });
-                let places: Vec<_> = chans.iter().map(|&k| self.place(k, t)).collect();
-                let idx: Vec<usize> = chans
+            for l in 0..lanes {
+                out.extend((0..line.size).map(|c| Row {
+                    v: self.regs[line.value.roots[c] as usize * lanes + l],
+                    band: line.band,
+                    idx: vec![],
+                    g: vec![],
+                    m: vec![],
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    /// The gradient and Hessian of each of `rows` (`rows`' order) that `need` names.
+    /// Speed: the derivatives run only on the samples whose rows the Lagrangian reads (every row of an `equal`, a
+    /// bound's row where it is active). A lane's arithmetic does not depend on the other lanes, and the derivative
+    /// program's value roots are the value program's operations, so the rows are the same bits as when every sample ran.
+    fn derive(&mut self, x: &[f64], lines: &[Line], out: &mut [Row], need: &[bool]) -> Result<(), Error> {
+        let mut k0 = 0;
+        for line in lines {
+            let (lanes, size) = (line.samples.len(), line.size);
+            let pick: Vec<usize> = (0..lanes).filter(|&l| (0..size).any(|c| need[k0 + l * size + c])).collect();
+            let ts: Vec<f64> = pick.iter().map(|&l| line.samples[l]).collect();
+            let places: Vec<_> = pick.iter().map(|&l| line.places[l].clone()).collect();
+            if !pick.is_empty() {
+                self.run(&line.grad, line, &ts, &places, x)?;
+            }
+            let p = &line.grad;
+            for (j, (&l, places)) in pick.iter().zip(&places).enumerate() {
+                let at = |i: usize| self.regs[p.roots[i] as usize * pick.len() + j];
+                let idx: Vec<usize> = line
+                    .chans
                     .iter()
-                    .zip(&places)
+                    .zip(places)
                     .flat_map(|(&k, w)| self.chan[k].0 + w.0..self.chan[k].0 + w.0 + 4)
                     .collect();
                 // Each jet read: where its unknown's four numbers sit in `idx`, and their weights.
@@ -318,42 +443,41 @@ impl Problem<'_> {
                     .reads
                     .iter()
                     .map(|&(k, d)| {
-                        let at = chans.iter().take_while(|&&c| c != k).count();
+                        let at = line.chans.iter().take_while(|&&c| c != k).count();
                         (4 * at, places[at].1[d].map(|v| v / self.chan[k].2.powf(d as f64)))
                     })
                     .collect();
-                for c in 0..line.size {
-                    let mut row = Row { v: at(c), band: line.band, idx: vec![], g: vec![], m: vec![] };
-                    if grad {
-                        let (ll, nr) = (idx.len(), line.reads.len());
-                        row.g = vec![0.0; ll];
-                        row.m = vec![0.0; ll * ll];
-                        for (r, &(o, wr)) in w.iter().enumerate() {
-                            let dv = at((1 + r) * line.size + c);
-                            (0..4).for_each(|q| row.g[o + q] += dv * wr[q]);
-                        }
-                        for (r, &(i, j)) in line.pairs.iter().enumerate() {
-                            let dv = at((1 + nr + r) * line.size + c);
-                            let ((pi, wi), (pj, wj)) = (w[i], w[j]);
-                            for (a, wa) in wi.iter().enumerate() {
-                                for (b, wb) in wj.iter().enumerate() {
-                                    row.m[(pi + a) * ll + pj + b] += dv * wa * wb;
-                                    if i != j {
-                                        row.m[(pj + b) * ll + pi + a] += dv * wa * wb;
-                                    }
+                for c in 0..size {
+                    let (ll, nr) = (idx.len(), line.reads.len());
+                    let row = &mut out[k0 + l * size + c];
+                    row.v = at(c);
+                    row.g = vec![0.0; ll];
+                    row.m = vec![0.0; ll * ll];
+                    for (r, &(o, wr)) in w.iter().enumerate() {
+                        let dv = at((1 + r) * size + c);
+                        (0..4).for_each(|q| row.g[o + q] += dv * wr[q]);
+                    }
+                    for (r, &(i, j)) in line.pairs.iter().enumerate() {
+                        let dv = at((1 + nr + r) * size + c);
+                        let ((pi, wi), (pj, wj)) = (w[i], w[j]);
+                        for (a, wa) in wi.iter().enumerate() {
+                            for (b, wb) in wj.iter().enumerate() {
+                                row.m[(pi + a) * ll + pj + b] += dv * wa * wb;
+                                if i != j {
+                                    row.m[(pj + b) * ll + pi + a] += dv * wa * wb;
                                 }
                             }
                         }
-                        if !row.g.iter().chain(&row.m).all(|v| v.is_finite()) {
-                            return Err(scene(&line.hold.site, SceneFault::Unreadable));
-                        }
-                        row.idx = idx.clone();
                     }
-                    out.push(row);
+                    if !row.g.iter().chain(&row.m).all(|v| v.is_finite()) {
+                        return Err(scene(&line.hold.site, SceneFault::Unreadable));
+                    }
+                    row.idx = idx.clone();
                 }
             }
+            k0 += lanes * size;
         }
-        Ok(out)
+        Ok(())
     }
 
     /// The augmented Lagrangian at y, with its gradient and Hessian when asked.
@@ -366,7 +490,16 @@ impl Problem<'_> {
         mult: &[f64],
     ) -> Result<(f64, Vec<f64>, Vec<f64>), Error> {
         let (n, rr) = (self.n, self.rho);
-        let rows = self.rows(y, lines, grad)?;
+        let mut rows = self.rows(y, lines)?;
+        if grad {
+            // A bound row adds nothing where its shifted multiplier is 0 (below), so its derivatives are not run there.
+            let need: Vec<bool> = rows
+                .iter()
+                .enumerate()
+                .map(|(k, r)| r.band.is_some() || (mult[k] - rr * (r.v - self.s.delta)).max(0.0) != 0.0)
+                .collect();
+            self.derive(y, lines, &mut rows, &need)?;
+        }
         let qy: Vec<f64> = (0..n).map(|i| (0..n).map(|j| self.q[i * n + j] * y[j]).sum::<f64>()).collect();
         let mut f = (0..n).map(|i| 0.5 * y[i] * qy[i] - self.b[i] * y[i]).sum::<f64>();
         let (mut g, mut h): (Vec<f64>, _) = match grad {
@@ -455,12 +588,12 @@ impl Problem<'_> {
         let (mut last, mut v) = (f64::INFINITY, f64::INFINITY);
         for _ in 0..60 {
             let (rr, before) = (self.rho, x.clone());
-            let rows = self.rows(x, lines, false)?;
+            let rows = self.rows(x, lines)?;
             let slack: Vec<f64> =
                 rows.iter().zip(&mult).map(|(r, &m)| r.band.map_or(0.0, |b| (r.v + m / rr).clamp(-b, b))).collect();
             self.descend(x, lines, &slack, &mult)?;
             v = 0.0;
-            for (r, m) in self.rows(x, lines, false)?.iter().zip(&mut mult) {
+            for (r, m) in self.rows(x, lines)?.iter().zip(&mut mult) {
                 (v, *m) = match r.band {
                     Some(b) => (v.max(r.v.abs() - b), *m + rr * r.v - (*m + rr * r.v).clamp(-rr * b, rr * b)),
                     None => (v.max(self.s.delta - r.v), (*m - rr * (r.v - self.s.delta)).max(0.0)),
@@ -484,7 +617,7 @@ impl Problem<'_> {
         let (mut seen, mut worst, mut which) = (vec![], f64::NEG_INFINITY, 0);
         for (li, line) in lines.iter().enumerate() {
             let within = line.band.map_or(0.0, |b| 2.0 * b);
-            let rows = self.rows(x, std::slice::from_ref(line), false)?;
+            let rows = self.rows(x, std::slice::from_ref(line))?;
             let miss = rows.iter().fold(0.0f64, |w, r| w.max(if r.band.is_some() { r.v.abs() - within } else { -r.v }));
             if miss > worst {
                 (worst, which) = (miss, li);
@@ -524,10 +657,17 @@ fn norm(v: &[f64]) -> f64 {
 }
 /// Cholesky solve of (A + damp I) x = r in place of r; false when not positive definite.
 fn cholesky(a: &[f64], n: usize, damp: f64, r: &mut [f64]) -> bool {
+    // Speed: row i of L is zero left of row i of A's first nonzero (its envelope), so each sum starts where both rows
+    // can be nonzero. The terms skipped are exact zeros: the same sums.
+    let first: Vec<usize> = (0..n).map(|i| (0..i).find(|&j| a[i * n + j] != 0.0).unwrap_or(i)).collect();
     let mut l = vec![0.0; n * n];
     for i in 0..n {
-        for j in 0..=i {
-            let s = (0..j).fold(a[i * n + j] + if i == j { damp } else { 0.0 }, |s, k| s - l[i * n + k] * l[j * n + k]);
+        for j in first[i]..=i {
+            let k0 = first[i].max(first[j]).min(j);
+            let s = l[i * n + k0..i * n + j]
+                .iter()
+                .zip(&l[j * n + k0..j * n + j])
+                .fold(a[i * n + j] + if i == j { damp } else { 0.0 }, |s, (p, q)| s - p * q);
             if i == j && s <= 0.0 || s.is_nan() {
                 return false;
             }
@@ -535,7 +675,7 @@ fn cholesky(a: &[f64], n: usize, damp: f64, r: &mut [f64]) -> bool {
         }
     }
     for i in 0..n {
-        r[i] = (0..i).fold(r[i], |s, k| s - l[i * n + k] * r[k]) / l[i * n + i];
+        r[i] = (first[i]..i).fold(r[i], |s, k| s - l[i * n + k] * r[k]) / l[i * n + i];
     }
     for i in (0..n).rev() {
         r[i] = (i + 1..n).fold(r[i], |s, k| s - l[k * n + i] * r[k]) / l[i * n + i];
@@ -544,33 +684,51 @@ fn cholesky(a: &[f64], n: usize, damp: f64, r: &mut [f64]) -> bool {
 }
 
 /// The local peaks of f over a grid (ends included), each refined by golden-section search between its neighbours.
+/// Speed: the searches run in lockstep, one lane per peak, so each step is one run of f over all of them; each
+/// search reads only its own lane, so it takes the same steps and the same values as alone.
 type Measure<'a> = dyn FnMut(&[f64]) -> Result<Vec<f64>, Error> + 'a;
 fn peaks(f: &mut Measure, grid: &[f64]) -> Result<Vec<(f64, f64)>, Error> {
-    let (v, g, mut out) = (f(grid)?, (5f64.sqrt() - 1.0) / 2.0, vec![]);
-    for i in 0..grid.len() {
-        if !(i == 0 || v[i] >= v[i - 1]) || !(i + 1 == grid.len() || v[i] >= v[i + 1]) {
-            continue;
+    let (v, g) = (f(grid)?, (5f64.sqrt() - 1.0) / 2.0);
+    let at: Vec<usize> = (0..grid.len())
+        .filter(|&i| (i == 0 || v[i] >= v[i - 1]) && (i + 1 == grid.len() || v[i] >= v[i + 1]))
+        .collect();
+    // Per peak: a, b, c, d, f(c), f(d).
+    let mut st: Vec<[f64; 6]> = at
+        .iter()
+        .map(|&i| {
+            let (a, b) = (grid[i.saturating_sub(1)], grid[(i + 1).min(grid.len() - 1)]);
+            [a, b, b - g * (b - a), a + g * (b - a), 0.0, 0.0]
+        })
+        .collect();
+    let first = f(&[st.iter().map(|p| p[2]).collect::<Vec<_>>(), st.iter().map(|p| p[3]).collect()].concat())?;
+    let n = st.len();
+    st.iter_mut().enumerate().for_each(|(k, p)| (p[4], p[5]) = (first[k], first[n + k]));
+    for _ in 0..30 {
+        let live: Vec<usize> = (0..n).filter(|&k| st[k][1] - st[k][0] > 1e-12).collect();
+        if live.is_empty() {
+            break;
         }
-        let (mut a, mut b) = (grid[i.saturating_sub(1)], grid[(i + 1).min(grid.len() - 1)]);
-        let (mut c, mut d) = (b - g * (b - a), a + g * (b - a));
-        let (mut fc, mut fd) = (f(&[c])?[0], f(&[d])?[0]);
-        for _ in 0..30 {
-            if b - a <= 1e-12 {
-                break;
-            }
-            if fc >= fd {
-                (b, d, fd, c) = (d, c, fc, d - g * (d - a));
-                fc = f(&[c])?[0];
-            } else {
-                (a, c, fc, d) = (c, d, fd, c + g * (b - c));
-                fd = f(&[d])?[0];
-            }
+        // Each live search moves one end in, and names the one new point it needs: c when it kept [a, d], else d.
+        let left: Vec<bool> = live.iter().map(|&k| st[k][4] >= st[k][5]).collect();
+        for (&k, &l) in live.iter().zip(&left) {
+            let [a, b, c, d, fc, fd] = st[k];
+            st[k] = if l { [a, d, d - g * (d - a), c, f64::NAN, fc] } else { [c, b, d, c + g * (b - c), fd, f64::NAN] };
         }
-        out.push(
-            [(grid[i], v[i]), (c, fc), (d, fd)].into_iter().fold((grid[i], v[i]), |w, p| if p.1 > w.1 { p } else { w }),
-        );
+        let ts: Vec<f64> = live.iter().zip(&left).map(|(&k, &l)| st[k][if l { 2 } else { 3 }]).collect();
+        let got = f(&ts)?;
+        for ((&k, &l), v) in live.iter().zip(&left).zip(got) {
+            st[k][if l { 4 } else { 5 }] = v;
+        }
     }
-    Ok(out)
+    Ok(at
+        .iter()
+        .zip(&st)
+        .map(|(&i, p)| {
+            [(grid[i], v[i]), (p[2], p[4]), (p[3], p[5])]
+                .into_iter()
+                .fold((grid[i], v[i]), |w, q| if q.1 > w.1 { q } else { w })
+        })
+        .collect())
 }
 
 fn grid(a: f64, b: f64, step: f64) -> Vec<f64> {
@@ -659,8 +817,30 @@ pub fn solve(s: &Solve) -> Result<Solved, Error> {
             reads.iter().map(|&k| ((k - s.jets) as usize / 4, (k - s.jets) as usize % 4)).collect();
         let size = hold.margin.len();
         let (samples, dense) = (grid(a, b, h), grid(a, b, h / 64.0));
-        let gp = compact(&d, &roots);
-        lines.push(Line { hold, size, band, reads, pairs, value, grad: gp, samples, dense, cert });
+        let (mut value, mut gp, mut slots) = (value, compact(&d, &roots), vec![]);
+        narrow(&mut value.ssa, &mut slots);
+        narrow(&mut gp.ssa, &mut slots);
+        let mut chans: Vec<usize> = vec![];
+        reads.iter().for_each(|&(k, _)| {
+            if !chans.contains(&k) {
+                chans.push(k)
+            }
+        });
+        lines.push(Line {
+            hold,
+            size,
+            band,
+            reads,
+            chans,
+            pairs,
+            slots,
+            value,
+            grad: gp,
+            samples,
+            places: vec![],
+            dense,
+            cert,
+        });
     }
 
     // The preference as an exact quadratic 0.5 x'Qx - b'x by Gauss-Legendre over each knot gap, and the start: each
@@ -709,7 +889,10 @@ pub fn solve(s: &Solve) -> Result<Solved, Error> {
     q.iter_mut().chain(&mut bv).for_each(|v| *v /= scale);
     (0..n).for_each(|i| q[i * n + i] += 1e-12);
 
-    let mut pr = Problem { s, chan, n, q, b: bv, mult: HashMap::new(), rho: 10.0, steps: 0, spent: 0, regs: vec![] };
+    let mut pr = Problem { s, chan, n, q, b: bv, mult: HashMap::new(), rho: 10.0, steps: 0, spent: 0, regs: vec![], memo: None };
+    for line in &mut lines {
+        line.places = pr.locate(line, &line.samples);
+    }
     let mut rounds = 0;
     loop {
         rounds += 1;
@@ -725,7 +908,8 @@ pub fn solve(s: &Solve) -> Result<Solved, Error> {
             }
             let (band, delta) = (line.band, s.delta);
             let mut violation = |ts: &[f64]| -> Result<Vec<f64>, Error> {
-                pr.run(&line.value, line.hold, ts, &x)?;
+                let places = pr.locate(line, ts);
+                pr.run(&line.value, line, ts, &places, &x)?;
                 Ok((0..ts.len())
                     .map(|l| {
                         let m = |c: usize| pr.regs[line.value.roots[c] as usize * ts.len() + l];
@@ -759,6 +943,7 @@ pub fn solve(s: &Solve) -> Result<Solved, Error> {
             added += fresh.len();
             line.samples.extend(fresh);
             line.samples.sort_by(f64::total_cmp);
+            line.places = pr.locate(line, &line.samples);
         }
         if added == 0 || rounds >= 24 {
             break;
@@ -767,11 +952,16 @@ pub fn solve(s: &Solve) -> Result<Solved, Error> {
 
     let controls: Vec<Vec<f32>> =
         pr.chan.iter().map(|&(o, nk, _)| x[o..o + nk].iter().map(|&v| v as f32).collect()).collect();
-    Ok(Solved { verdicts: verdicts(s, &controls)?, controls, rounds, steps: pr.steps })
+    let holds = vec![Proof::Unproved; s.holds.len()];
+    Ok(Solved { controls, holds, rounds, steps: pr.steps, tape_ops: pr.spent })
 }
 
-/// Each hold proved over its window on the returned curves: the holds' program with every jet leaf replaced by the
-/// curve's time derivative (`grad` of `curve`), as the solved scene's holds read it.
+/// Each hold of `solved` proved over its window on the returned curves: the holds' program with every jet leaf
+/// replaced by the curve's time derivative (`grad` of `curve`), as the solved scene's holds read it.
+pub fn prove(s: &Solve, solved: &mut Solved) -> Result<(), Error> {
+    solved.holds = verdicts(s, &solved.controls)?.into_iter().map(Proof::Checked).collect();
+    Ok(())
+}
 fn verdicts(s: &Solve, controls: &[Vec<f32>]) -> Result<Vec<Verdict>, Error> {
     let mut v = Ssa::default();
     let t = v.leaf(s.time);

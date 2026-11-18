@@ -9,6 +9,36 @@ import { always } from "../../../src/ranged.ts";
 import { equal, holdsOf, JET, solve, SolveError, spline, type SolveSpec } from "../../../src/geom/solve.ts";
 import { heronLeap, leapSpec, NUMBERS, sceneFor } from "../../../examples/second/heron_leap.ts";
 import { graph } from "./dump_graph.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { rec } from "../../../src/record/recorder.ts";
+import { pack, Program } from "../../../src/record/wire.ts";
+import type { Solve as SolveDecl } from "../../../src/record/decls.ts";
+
+// Each case also as wire jobs, a Solve and a Check (out/lr23/jobs/NAME.{solve,check}.job), which the driver runs
+// (tests/it/solve.rs `driver_same_as_ts`): what `solve()` will send once it runs on Rust (plan §2.3 cutover).
+const JOBS = "out/lr23/jobs";
+mkdirSync(JOBS, { recursive: true });
+function decl(name: string, spec: SolveSpec<string>): SolveDecl {
+  const keys = Object.keys(spec.vary).sort();
+  const vars = keys.map((k) => [0, 1, 2, 3].map((d) => E.variable(`loft.solve.${k}.d${d}`, "f32")) as [E.Expr<"f32">, E.Expr<"f32">, E.Expr<"f32">, E.Expr<"f32">]);
+  const jets = Object.fromEntries(keys.map((k, i) => [k, E.lib<"f32">(JET, time, ...vars[i]!)]));
+  // As `solve` does once time differentiation is done: each JET(time, v0, ...) is its value v0.
+  const strip = <T extends E.Expr>(m: T): T => {
+    const values = new Map<number, E.Expr>();
+    for (const { id, node } of E.everything([m])) if (node.op === "lib" && node.fn === JET) values.set(id, node.args[1]!);
+    return E.replace([m], values)[0] as T;
+  };
+  const near = spec.prefer.near;
+  return {
+    label: name, over: spec.over, delta: spec.delta ?? 4e-6, jerk: spec.prefer.jerk ?? 0, acceleration: spec.prefer.acceleration ?? 0, nearWeight: near?.weight ?? 0,
+    unknowns: keys.map((k, i) => ({ name: k, numbers: spec.vary[k]!.n, from: spec.vary[k]!.from, jets: vars[i]! })),
+    near: near ? Object.keys(near.to).sort().map((k) => ({ unknown: keys.indexOf(k), to: E.lift<"f32">(near.to[k]!) })) : [],
+    holds: spec.hold(jets).flatMap((h, i) => holdsOf(h, `hold ${i + 1}`)).map((l) => {
+      const at = { times: l.times, said: l.said, site: l.site };
+      return l.kind === "equal" ? { ...at, kind: "equal" as const, margin: strip(l.margin), within: l.within } : { ...at, kind: "bound" as const, margin: strip(l.margin) };
+    }),
+  };
+}
 
 const { time } = E;
 const cases: { name: string; spec: SolveSpec<string> }[] = [
@@ -28,6 +58,8 @@ const cases: { name: string; spec: SolveSpec<string> }[] = [
 // Built after the first solve (a cache hit then), so that solve is timed cold.
 let probe: Probe | undefined;
 const out = cases.map(({ name, spec }) => {
+  for (const [program, ext] of [[Program.Solve, "solve"], [Program.Check, "check"]] as const)
+    writeFileSync(`${JOBS}/${name.replace(/ /g, "_")}.${ext}.job`, pack(rec.job(program, [], { passes: [], checks: [], solves: [decl(name, spec)] })));
   const g = graph(name);
   g.slot("time", 0);
   const keys = Object.keys(spec.vary).sort();

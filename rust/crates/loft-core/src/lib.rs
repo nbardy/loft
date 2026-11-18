@@ -13,8 +13,10 @@
 //!   each camera's parts are exported from the root module as `loft_camera{k}_{part}`, which `Bundle::cameras` names.
 //!   No corpus scene records them yet (the TS library's hit, place and paint functions are lane 3.1's TS half).
 //!
-//! Solve, Evaluate and Check jobs are `Internal::Unbuilt`: their decls decode (wire 2), and their programs are the
-//! analyses lanes' (check, feat/lr-solve).
+//! Check and Solve jobs run their decls (`analyses`): Solve solves every Solve decl and reports each hold
+//! `Proof::Unproved` (the default build: proofs take seconds); Check decides every Check decl and solves and proves
+//! every Solve decl (`loft check`). An Evaluate job is `Internal::Unbuilt`.
+mod analyses;
 pub mod cache;
 pub mod check;
 pub mod draw;
@@ -33,6 +35,7 @@ pub mod tape;
 use loft_ir::bundle::{self, Bundle, F32, Format, InputDecl, Module, Origin, ParamDecl, Shape};
 use loft_ir::error::{Internal, Limits, Meter, SceneFault};
 use loft_ir::graph::{self as ir, Fill, Graph, GraphFn, Kernel, Op, Program, Role};
+pub use analyses::{CheckReport, SolveReport};
 pub use loft_ir::identity::Precision;
 use loft_ir::{Error, wire};
 use serde::Serialize;
@@ -46,6 +49,10 @@ pub struct Report {
     pub nodes: usize,
     pub decls: usize,
     pub scene: Option<Scene>,
+    /// A Check job's checks, in decl order (empty for other programs).
+    pub checks: Vec<CheckReport>,
+    /// A Solve or Check job's solves, in decl order (empty for a Scene).
+    pub solves: Vec<SolveReport>,
     /// Wall time per phase, ns: Rust's own time, so the caller can tell the crossing from the work.
     pub phases: Phases,
 }
@@ -111,6 +118,9 @@ pub struct Phases {
     /// Naga under `alias lf = f16;` (lane 2.2's both-ways check), when `Precision::Mixed` asked for it; else 0.
     pub f16: u64,
     pub bundle: u64,
+    /// Solving (Solve and Check jobs), and proving (checks, and a Check job's solve holds).
+    pub solve: u64,
+    pub prove: u64,
 }
 
 /// One job. For a Scene, the bundle file's bytes come back beside the report; the caller writes them.
@@ -139,9 +149,21 @@ pub fn run(job: &[u8], limits: Limits, build: Build, compiler: &str) -> Result<(
     match job.program {
         Program::Scene => {
             let (scene, bytes) = scene(g, build, compiler, &mut phases)?;
-            Ok((Report { program: job.program, nodes, decls, scene: Some(scene), phases }, Some(bytes)))
+            let report = Report { program: job.program, nodes, decls, scene: Some(scene), checks: vec![], solves: vec![], phases };
+            Ok((report, Some(bytes)))
         }
-        Program::Solve | Program::Evaluate | Program::Check => Err(Error::Internal(Internal::Unbuilt(job.program))),
+        Program::Solve => {
+            let solves = analyses::solves(&g, limits, analyses::Holds::Unproved, &mut phases)?;
+            Ok((Report { program: job.program, nodes, decls, scene: None, checks: vec![], solves, phases }, None))
+        }
+        Program::Check => {
+            let t = Instant::now();
+            let checks = analyses::checks(&g, limits)?;
+            phases.prove = ns(t);
+            let solves = analyses::solves(&g, limits, analyses::Holds::Prove, &mut phases)?;
+            Ok((Report { program: job.program, nodes, decls, scene: None, checks, solves, phases }, None))
+        }
+        Program::Evaluate => Err(Error::Internal(Internal::Unbuilt(job.program))),
     }
 }
 

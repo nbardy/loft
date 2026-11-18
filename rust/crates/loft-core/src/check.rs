@@ -18,6 +18,7 @@ use crate::tape::{self, Id, Ins, Ssa};
 use loft_ir::error::{Error, SceneFault};
 use loft_ir::graph::Site;
 use std::collections::{BTreeMap as Map, BTreeSet};
+use serde::{Serialize, Serializer};
 use std::sync::OnceLock;
 
 /// A leaf slot of the tape (time, a param, an input component, a free variable).
@@ -54,7 +55,7 @@ pub enum Strategy {
     Sample { n: u32 },
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Verdict {
     pub truth: Truth,
     /// The twin's margin at the witness (NaN with no witness).
@@ -65,28 +66,32 @@ pub struct Verdict {
     pub work: Work,
     pub scope: Scope,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum Truth {
     Holds,
     Fails,
     Undecided(Why),
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum Why {
     Budget(Work),
     /// An operator with no finite enclosure over the boxes that could hold the extreme (the register and why).
-    Codomain(Unbounded),
+    Codomain(#[serde(serialize_with = "unbounded")] Unbounded),
     /// The boxes that could hold the extreme are one f32 apart and still straddle the answer.
     WithinPrecision,
 }
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum Scope {
     Proved,
     Sampled { n: u32 },
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Work {
     pub boxes: u32,
+}
+/// The register and the reason, as text: `interval` keeps its types free of serde.
+fn unbounded<S: Serializer>(u: &Unbounded, s: S) -> Result<S::Ok, S::Error> {
+    s.serialize_str(&format!("register {}: {:?}", u.at, u.why))
 }
 
 /// Decides `c` over `ssa` with every leaf no quantifier binds held at `held[slot]`.
