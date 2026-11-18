@@ -1,0 +1,19 @@
+# The parity comparator (docs/proposals/2026-11-19_lean_rust_loft.md §2.2a). Standalone until lane 3.3 moves it into
+# `loft-draw diff`; the empty [workspace] keeps it out of rust/'s workspace and its lock.
+[package]
+name = "parity-diff"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+png = "=0.18.1"
+
+[[bin]]
+name = "parity-diff"
+path = "diff.rs"
+
+[profile.release]
+debug = false
