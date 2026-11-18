@@ -1151,7 +1151,7 @@ export function structuralHash(roots: readonly Expr[]): string {
 // ---- construction sites (diagnosis) -------------------------------------------------------------------------------
 
 /**
- * Records the stack at every node built from now on, for the rest of the process (`loft check --sites`): a call-form
+ * Records the stack at every node built from now on, for the rest of the process (`loft check --explain`): a call-form
  * node then has the author's line it was built on (`stackOf`). Diagnosis only: a crab builds ~500k nodes.
  */
 export function recordStacks(): void {

@@ -13,7 +13,7 @@ import { sitesOf } from "../errors.ts";
 import { Evaluator, type I } from "../interval.ts";
 import { siteOfNode } from "../text/index.ts";
 import type { Probe } from "../check.ts";
-import type { Decision, Quantified, Ranged } from "../ranged.ts";
+import { heldBy, type Decision, type Quantified, type Ranged } from "../ranged.ts";
 
 /** The library's root, which sites are relative to (src/errors.ts). */
 const ROOT = new URL("../../", import.meta.url).pathname;
@@ -38,7 +38,7 @@ export function explain(check: Ranged, d: Decision, probe: Probe, at: RenderAt):
   const keys = new Map<string, string>();
   for (let q: Quantified | undefined = check.formula; q; q = q.body.kind === "nested" ? q.body.q : undefined) for (const l of q.leaves) keys.set(l.label, l.key);
   const box = new Map<string, I>(witness.map(([label, v]) => [keys.get(label)!, [v, v]]));
-  const ev = new Evaluator(box, heldOf(probe), check.name, { nodes: 0, codomain: 0, tableFills: probe.compiled.tableFills });
+  const ev = new Evaluator(box, heldBy(probe), check.name, { nodes: 0, codomain: 0, tableFills: probe.compiled.tableFills });
   const value = (e: Expr): number[] => ev.enclose(e).map(([lo, hi]) => lo / 2 + hi / 2);
 
   let atom: Quantified["body"] = check.formula.body;
@@ -57,15 +57,6 @@ export function explain(check: Ranged, d: Decision, probe: Probe, at: RenderAt):
     out.push("  (no line recorded for these nodes: they were built inside the library, or before the scene was imported)");
   out.push(`  see it: ${renderCommand(at, witness.map(([label, v]) => [keys.get(label)!, v]))}`);
   return out;
-}
-
-/** Every leaf the box does not bind, held as `decide` holds it: inputs and params at the probe's values at t = 0. */
-function heldOf(probe: Probe): ConstructorParameters<typeof Evaluator>[1] {
-  const state = probe.state(0);
-  const slots = new Map<string, readonly number[]>();
-  for (const s of probe.artefact.inputs) slots.set(`input:${s.name}`, Array.from(state.inputs.subarray(s.slot, s.slot + s.def.length)));
-  for (const s of probe.artefact.params) slots.set(`param:${s.name}`, [state.params[s.slot]!]);
-  return (n) => n.op === "var" ? undefined : slots.get(`${n.op}:${n.spec.name}`) ?? (n.op === "param" ? [Math.fround(n.spec.def)] : n.spec.def.map(Math.fround));
 }
 
 type Comparison = { readonly fn: "ge" | "gt" | "le" | "lt"; readonly e: Expr<"bool">; readonly args: readonly [Expr, Expr] };
@@ -169,7 +160,7 @@ function quote(site: string): string {
  * `param:<name>`, `input:<name>`, `var:<name>`), the variant and the scene's first camera. A free variable is no
  * setting of the scene, so the command draws the witness's other leaves and says which variable it leaves out.
  */
-export function renderCommand(at: RenderAt, witness: readonly (readonly [string, number])[]): string {
+function renderCommand(at: RenderAt, witness: readonly (readonly [string, number])[]): string {
   const parts = ["loft render", at.path, "--out", `out/explain/${at.path.replace(/^.*\//, "").replace(/\.[^.]*$/, "")}.webp`];
   if (at.camera !== undefined) parts.push("--views", at.camera);
   if (at.variant !== undefined) parts.push("--variant", at.variant);

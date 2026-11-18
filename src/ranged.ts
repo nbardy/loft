@@ -323,6 +323,16 @@ function spentText(s: Spent): string {
 
 // ---- the search ---------------------------------------------------------------------------------------------------
 
+/** Every leaf a search does not bind, held as `decide` holds it: inputs and params at the probe's values at t = 0 (also `loft check --explain`). */
+export function heldBy(probe: Probe): ConstructorParameters<typeof Evaluator>[1] {
+  const state = probe.state(0);
+  const slots = new Map<string, readonly number[]>();
+  for (const s of probe.artefact.inputs) slots.set(`input:${s.name}`, Array.from(state.inputs.subarray(s.slot, s.slot + s.def.length)));
+  for (const s of probe.artefact.params) slots.set(`param:${s.name}`, [state.params[s.slot]!]);
+  return (n) => n.op === "var" ? undefined : slots.get(`${n.op}:${n.spec.name}`) ??
+    (n.op === "param" ? [Math.fround(n.spec.def)] : n.spec.def.map(Math.fround));
+}
+
 /** What every search in one decision shares: the probe's held values, the budget and the counters. */
 type Run = {
   readonly ranges: Map<Leaf, I>;
@@ -375,13 +385,7 @@ function decide(q: Quantified, probe: Probe, where: string, precision: number, l
     run.boxes++;
   };
   const work = { tableFills: probe.compiled.tableFills, nodes: 0, codomain: 0, charge, checkTime };
-  const state = probe.state(0);
-  const slots = new Map<string, readonly number[]>();
-  for (const s of probe.artefact.inputs) slots.set(`input:${s.name}`, Array.from(state.inputs.subarray(s.slot, s.slot + s.def.length)));
-  for (const s of probe.artefact.params) slots.set(`param:${s.name}`, [state.params[s.slot]!]);
-  const held: Run["held"] = (n) => n.op === "var" ? undefined : slots.get(`${n.op}:${n.spec.name}`) ??
-    (n.op === "param" ? [Math.fround(n.spec.def)] : n.spec.def.map(Math.fround));
-  const run: Run = { ranges: new Map(), held, where, work, limit, boxes: 0 };
+  const run: Run = { ranges: new Map(), held: heldBy(probe), where, work, limit, boxes: 0 };
   const labels = new Map<string, string>();
   let found: Found;
   try {
@@ -397,7 +401,7 @@ function decide(q: Quantified, probe: Probe, where: string, precision: number, l
           const ev = new Evaluator(new Map(), (n) => {
             const key = `${n.op}:${n.op === "var" ? n.name : n.spec.name}`;
             if (keys.has(key)) throw new RangeRefusal(where, { kind: "dependent-end", leaf: key });
-            return held(n);
+            return run.held(n);
           }, where, work);
           const [lo, hi] = ev.scalar(e).at;
           if (lo !== hi) throw new SceneError(where, `a range end enclosed by [${lo}, ${hi}]`, "a fixed endpoint", "use an endpoint computed only from held leaves");
