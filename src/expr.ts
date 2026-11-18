@@ -241,6 +241,8 @@ function internGet(a: Expr, sel: string, node: () => Node): Expr {
   if (e === undefined) { e = Expr.fresh(node()); bySel.set(a.id, e); }
   return e;
 }
+/** The stack at each node's construction, while `recordStacks` is on; an interned node keeps its first construction's. */
+let stacks: WeakMap<Expr, Error> | undefined;
 const params = new Map<string, ParamSpec>();
 
 /**
@@ -257,14 +259,16 @@ export class Expr<T extends Ty = Ty> {
   static make<T extends Ty>(node: Node, key: string): Expr<T> {
     const hit = interned.get(key);
     if (hit) return hit as Expr<T>;
-    const made = new Expr<T>(nextId++, node);
+    const made = Expr.fresh<T>(node);
     interned.set(key, made);
     return made;
   }
 
   /** A new node, for the numerically keyed tables above `Expr` (they look it up themselves). Not for other callers. */
   static fresh<T extends Ty>(node: Node): Expr<T> {
-    return new Expr<T>(nextId++, node);
+    const made = new Expr<T>(nextId++, node);
+    if (stacks !== undefined) stacks.set(made, new Error());
+    return made;
   }
 
   // Fluent forms of the common operators. `a.add(b)` is `add(a, b)`.
@@ -1148,6 +1152,20 @@ export function structuralHash(roots: readonly Expr[]): string {
 }
 
 // ---- rewriting ----------------------------------------------------------------------------------------------------
+
+// ---- construction sites (diagnosis) -------------------------------------------------------------------------------
+
+/**
+ * Records the stack at every node built from now on, for the rest of the process (`loft check --explain`): a call-form
+ * node then has the author's line it was built on (`stackOf`). Diagnosis only: a crab builds ~500k nodes.
+ */
+export function recordStacks(): void {
+  stacks ??= new WeakMap();
+  // Library frames (inBody, through, chain) sit between a node and the author line that asked for it.
+  Error.stackTraceLimit = Math.max(Error.stackTraceLimit, 40);
+}
+/** The stack at `e`'s construction (or the node a rewrite made it from), if stacks were being recorded then. */
+export function stackOf(e: Expr): string | undefined { return (stacks?.get(e) ?? stacks?.get(rewrittenFrom(e)))?.stack; }
 
 /** A node a rewrite made (`replace`, `fold`), to the node it was made from: sites survive a compiler's rewrite (`loft show`, src/text). */
 const rewrites = new WeakMap<Expr, Expr>();

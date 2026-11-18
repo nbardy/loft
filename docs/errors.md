@@ -169,6 +169,12 @@ time range, and its row reads `no failure at N samples` or `FAIL`, never `holds`
 over `time` (scene error otherwise). Every library check that is not a condition (`landsInside`, `budget`, ...) is
 sampled the same way and says so.
 
+`loft check --explain` prints, for each ranged check that does not hold, the comparison that decides it at the
+witness, its line and the lines it reads, and the `loft render` command for that frame. An undecided check with no
+witness has nothing to explain at a point; its stop reason above is the explanation. `--at name=value` with a name no
+ranged check ranges over is a usage error (exit 2) listing the names they do range over; a value outside one check's
+range drops that check with a line saying so.
+
 A malformed range or comparison is a scene error (exit 4). Give the ends independently of every quantified leaf,
 bind free variables, and use `ge`, `gt`, `le` or `lt`. Express approximate equality as a band.
 

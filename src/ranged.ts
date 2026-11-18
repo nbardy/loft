@@ -193,13 +193,24 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
       if (keys.has(key)) throw new RangeRefusal(kind, { kind: "dependent-end", leaf: key });
     }
   }
-  const label = `${kind} ${leaves.map(shownRange).join(", ")}${inner.kind === "nested" ? `: ${inner.q.label}` : ""}`;
-  const formula: Quantified = { kind, leaves, body: inner, label };
+  const formula: Quantified = { kind, leaves, body: inner, label: labelOf(kind, leaves, inner) };
+  return fromFormula(formula, o, site, keys);
+}
+
+const labelOf = (kind: Quantified["kind"], leaves: readonly Leaf[], inner: Body): string =>
+  `${kind} ${leaves.map(shownRange).join(", ")}${inner.kind === "nested" ? `: ${inner.q.label}` : ""}`;
+
+/** The settings each formula's check was made with, for `pinned` (keyed by formula: a copy of a check keeps it). */
+const settingsOf = new WeakMap<Quantified, Settings>();
+
+/** The check for a classified formula: proved by `decide`, or sampled when it reads a measured quantity. */
+function fromFormula(formula: Quantified, o: Settings, site: string | undefined, keys: ReadonlySet<string>): Ranged {
+  const { kind, leaves, body: inner } = formula, leaf = leaves[0]!;
   const precision = o.precision ?? 1e-4, boxes = o.boxes ?? 20000;
   if (!(precision > 0)) throw new SceneError(kind, `precision ${precision}`, "a precision above 0", `${kind}(range, condition, { precision: 1e-4 })`);
   if (!Number.isSafeInteger(boxes) || boxes < 0) throw new SceneError(kind, `boxes ${boxes}`, "a nonnegative integer", "set boxes to the maximum number of enclosures");
   if (o.ms !== undefined && !(Number.isFinite(o.ms) && o.ms >= 0)) throw new SceneError(kind, `ms ${o.ms}`, "a finite nonnegative duration", "give the time budget in milliseconds");
-  const name = o.label ?? label;
+  const name = o.label ?? formula.label;
   // Read through every nesting: an inner always over time that samples a measure, wrapped by a quantifier of the
   // other kind, would otherwise reach the interval search as an unbound variable and be refused under the wrong fix.
   const atomOf = (b: Body): Expr<"bool"> => (b.kind === "atom" ? b.condition : atomOf(b.q.body));
@@ -207,15 +218,15 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
   if (sampled.length > 0 && (leaves.length !== 1 || leaf.key !== "input:time" || inner.kind !== "atom"))
     throw new SceneError(kind, `a condition over ${sampled[0]!.what} (measured, not an expression) quantified over ${leaves.map((l) => l.label).join(", ")}`,
       "a measured quantity under one range over time, which is sampled", `${kind}([time, a, b], ge(...))`);
+  let made: Ranged;
   if (sampled.length > 0 && inner.kind === "atom") {
     const what = sampled.map((m) => m.what).join(", ");
-    return {
+    made = {
       name, formula, site,
       decide: () => ({ holds: "undecided", margin: NaN, bounds: [-Infinity, Infinity], witness: {}, spent: { kind: "measured", what }, work: { boxes: 0, nodes: 0, ms: 0, codomain: 0 } }),
       run: (probe) => sampleRun(kind, leaf, inner.condition, inner.margin, sampled, probe, name, what),
     };
-  }
-  return {
+  } else made = {
     name, formula, site,
     decide: (probe) => decide(formula, probe, name, precision, boxes, o.ms, keys),
     run(probe) {
@@ -229,6 +240,42 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
       };
     },
   };
+  settingsOf.set(formula, o);
+  return made;
+}
+
+/** A check held at a setting (`pinned`), or why it says nothing there. */
+export type Pinned =
+  | { readonly kind: "pinned"; readonly check: Ranged }
+  /** The value lies outside the leaf's range: the check makes no claim there. */
+  | { readonly kind: "outside"; readonly leaf: string; readonly value: number; readonly range: readonly [number, number] };
+
+/**
+ * The check with the leaves named in `at` (by label: `time`, a param's name) held at one value each, the rest still
+ * ranging (`loft check --at time=1.37`): the margin at a setting. `probe` gives the range ends, which may read params.
+ */
+export function pinned(check: Ranged, at: ReadonlyMap<string, number>, probe: Probe): Pinned {
+  let outside: Pinned | undefined;
+  const used: string[] = [];
+  const narrow = (q: Quantified): Quantified => {
+    const leaves = q.leaves.map((l): Leaf => {
+      const v = at.get(l.label);
+      if (v === undefined) return l;
+      used.push(`${l.label}=${v}`);
+      const range = [probe.scalar(l.lo), probe.scalar(l.hi)] as const;
+      if (!(v >= range[0] && v <= range[1])) outside ??= { kind: "outside", leaf: l.label, value: v, range };
+      return { ...l, lo: lift<"f32">(v), hi: lift<"f32">(v) };
+    });
+    const body: Body = q.body.kind === "nested" ? { kind: "nested", q: narrow(q.body.q) } : q.body;
+    return { kind: q.kind, leaves, body, label: labelOf(q.kind, leaves, body) };
+  };
+  const formula = narrow(check.formula);
+  if (outside !== undefined) return outside;
+  const keys = new Set<string>();
+  for (let q: Quantified | undefined = formula; q; q = q.body.kind === "nested" ? q.body.q : undefined) for (const l of q.leaves) keys.add(l.key);
+  // Every formula is made by `fromFormula`, which records its settings.
+  const o = settingsOf.get(check.formula)!;
+  return { kind: "pinned", check: fromFormula(formula, { ...o, label: `${check.name} at ${used.join(", ")}` }, check.site, keys) };
 }
 
 const fmt = (x: number, digits: number): string => (Number.isFinite(x) ? x.toFixed(digits) : String(x));
@@ -275,6 +322,16 @@ function spentText(s: Spent): string {
 }
 
 // ---- the search ---------------------------------------------------------------------------------------------------
+
+/** Every leaf a search does not bind, held as `decide` holds it: inputs and params at the probe's values at t = 0 (also `loft check --explain`). */
+export function heldBy(probe: Probe): ConstructorParameters<typeof Evaluator>[1] {
+  const state = probe.state(0);
+  const slots = new Map<string, readonly number[]>();
+  for (const s of probe.artefact.inputs) slots.set(`input:${s.name}`, Array.from(state.inputs.subarray(s.slot, s.slot + s.def.length)));
+  for (const s of probe.artefact.params) slots.set(`param:${s.name}`, [state.params[s.slot]!]);
+  return (n) => n.op === "var" ? undefined : slots.get(`${n.op}:${n.spec.name}`) ??
+    (n.op === "param" ? [Math.fround(n.spec.def)] : n.spec.def.map(Math.fround));
+}
 
 /** What every search in one decision shares: the probe's held values, the budget and the counters. */
 type Run = {
@@ -328,13 +385,7 @@ function decide(q: Quantified, probe: Probe, where: string, precision: number, l
     run.boxes++;
   };
   const work = { tableFills: probe.compiled.tableFills, nodes: 0, codomain: 0, charge, checkTime };
-  const state = probe.state(0);
-  const slots = new Map<string, readonly number[]>();
-  for (const s of probe.artefact.inputs) slots.set(`input:${s.name}`, Array.from(state.inputs.subarray(s.slot, s.slot + s.def.length)));
-  for (const s of probe.artefact.params) slots.set(`param:${s.name}`, [state.params[s.slot]!]);
-  const held: Run["held"] = (n) => n.op === "var" ? undefined : slots.get(`${n.op}:${n.spec.name}`) ??
-    (n.op === "param" ? [Math.fround(n.spec.def)] : n.spec.def.map(Math.fround));
-  const run: Run = { ranges: new Map(), held, where, work, limit, boxes: 0 };
+  const run: Run = { ranges: new Map(), held: heldBy(probe), where, work, limit, boxes: 0 };
   const labels = new Map<string, string>();
   let found: Found;
   try {
@@ -350,7 +401,7 @@ function decide(q: Quantified, probe: Probe, where: string, precision: number, l
           const ev = new Evaluator(new Map(), (n) => {
             const key = `${n.op}:${n.op === "var" ? n.name : n.spec.name}`;
             if (keys.has(key)) throw new RangeRefusal(where, { kind: "dependent-end", leaf: key });
-            return held(n);
+            return run.held(n);
           }, where, work);
           const [lo, hi] = ev.scalar(e).at;
           if (lo !== hi) throw new SceneError(where, `a range end enclosed by [${lo}, ${hi}]`, "a fixed endpoint", "use an endpoint computed only from held leaves");
@@ -497,7 +548,10 @@ function search(q: Quantified, outer: Box, run: Run, precision: number, effort: 
     return "either";
   };
   try {
-    whole = enclose(ranges, false, hint);
+    // A range that is one point (an instant, or a leaf held by `pinned`) is a point: its inner search runs to the
+    // precision. As a box it got a few splits only, and no split could narrow it (`loft check --at stone.speed=5`
+    // ended "width 0" at bounds [0.0165, 0.02]).
+    whole = enclose(ranges, ranges.every(([a, b]) => a === b), hint);
     live = [whole];
     if (q.leaves.every((l) => hint.at.has(l.key))) tryPoint(q.leaves.map((l) => hint.at.get(l.key)!), hint);
     live = [{ ...whole, inner: tryPoint(middle(ranges), { at: whole.inner, slopes: hint.slopes }) }];

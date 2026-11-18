@@ -49,13 +49,18 @@ const ROOT = new URL("..", import.meta.url).pathname;
  * (`examples/leap.ts:42`), or undefined when every frame is Loft's (a call from inside the library).
  */
 export function siteOf(stack: string | undefined): string | undefined {
-  for (const line of (stack ?? "").split("\n").slice(1)) {
-    const m = line.match(/\(?((?:\/|[A-Za-z]:)[^()]*?):(\d+):(\d+)\)?\s*$/);
-    if (m && !m[1]!.startsWith(SRC) && !m[1]!.includes("/node_modules/")) return `${m[1]!.startsWith(ROOT) ? m[1]!.slice(ROOT.length) : m[1]!}:${m[2]}`;
-  }
-  return undefined;
+  return sitesOf(stack)[0];
 }
 
+/** Every stack frame outside Loft's own source, innermost first: the author's line, then the lines that called it. */
+export function sitesOf(stack: string | undefined): string[] {
+  const out: string[] = [];
+  for (const line of (stack ?? "").split("\n").slice(1)) {
+    const m = line.match(/\(?((?:\/|[A-Za-z]:)[^()]*?):(\d+):(\d+)\)?\s*$/);
+    if (m && !m[1]!.startsWith(SRC) && !m[1]!.includes("/node_modules/")) out.push(`${m[1]!.startsWith(ROOT) ? m[1]!.slice(ROOT.length) : m[1]!}:${m[2]}`);
+  }
+  return out;
+}
 
 /** A CPU tool reached a resource whose contents come from the author's WGSL. */
 export class RawComputeError extends Error {

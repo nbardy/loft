@@ -376,6 +376,28 @@ An empty witness means the check obtained no point measurement. In JSON, non-fin
 measurements serialize as `null`. The enclosure follows the CPU twin's frame encoding and table stores.
 See [Ranged checks in the error guide](errors.md#ranged-checks).
 
+When a check fails, ask it why, and look at the frame it failed on:
+
+```sh
+loft check tests/fixtures/explain/heron_rail_raised.ts --explain     # the deciding line of each check that fails
+loft check tests/fixtures/explain/heron_rail_raised.ts --at time=0.95 # every check's margin at t = 0.95
+```
+
+```
+explain: always time in [0, 1.8]
+  written at tests/fixtures/explain/heron_rail_raised.ts:22  `export const checks = holds(raised, ...`
+  FAIL: margin -0.094868 at time=0.94301 (proven bounds [-0.094934, -0.094868])
+  decided by ge(a, b)  at examples/second/heron_leap.ts:88  `ge(apart(rail, foot(0), add(foot(0), vec3(0.28, 0, 0))), 0.025 + pad),`
+    a = 0.020132
+    b = 0.115
+  it reads, at the witness:
+    (0.0021341, 0.020019)        examples/second/heron_leap.ts:43  `return length(sub(R, add(A, mul(ab, s))));`
+  see it: loft render tests/fixtures/explain/heron_rail_raised.ts --out out/explain/heron_rail_raised.webp --views side --time 0.943
+```
+
+The deciding comparison is the one whose margin is the check's at the witness (an `and` is decided by its smaller
+side). `--at` holds the named leaves (`time`, a param's name) at those values and leaves the others ranging.
+
 ## A creature with variants
 
 A design is one subject with a record of numbers, slots with named options, and named variants. A variant is valid
