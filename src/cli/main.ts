@@ -244,7 +244,8 @@ async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
   const f16 = s.mixed === "Valid" ? "valid" : s.mixed === "NotAsked" ? "not asked (--precision mixed)" : `refused (a mixed load will be): ${s.mixed.Refused}`;
   console.log(`naga     f32 ${cmd.naga === "emit" ? "valid" : "at load (--naga checks at emit)"}; f16 ${f16}`);
   console.log(`wrote ${file}  ${(s.bundle_bytes / 1024).toFixed(1)} KB, build ${s.build.slice(0, 16)}`);
-  console.log(`not drawable yet: ${s.draws} draws (the wire has no Draw/Pass layout) and ${s.unfilled} unfilled tables (no Kernel bodies)`);
+  console.log(`fills    ${s.kernels} GPU kernels, ${s.unfilled} unfilled tables (a recurrence's: not on the wire yet)`);
+  if (s.draws === 0) console.log("not drawable yet: 0 draws (the library records no Draw decls yet: lane 3.1's hit, place and paint functions)");
 }
 
 async function buildTs(cmd: Extract<Command, { kind: "build" }>) {

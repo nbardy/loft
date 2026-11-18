@@ -56,6 +56,7 @@ use loft_ir::bundle::{
     Blend, Body, Bundle, Clear, Cover, Id, Init, Keep, Kernel, Layer, Module, Origin, Proxy, Raster, RasterPrim, Shape,
     Target, TexFormat, When,
 };
+use loft_ir::frame::{self, Camera};
 use loft_ir::identity::{FrameKey, Precision};
 use std::collections::HashMap;
 use wgpu::{BindGroup, BindGroupLayout, Buffer, ShaderStages, TextureFormat, TextureView};
@@ -193,6 +194,12 @@ pub struct Loft {
     res: Vec<Res>,
     frame: Buffer,
     steps: Buffer,
+    /// `loft_detail` (emit's prelude, `@group(0) @binding(1)`): zero until the level-of-detail plan is ported.
+    detail: Buffer,
+    /// `loft_scene_depth` and `loft_scene_clearance` (emit's prelude, bindings 2 and 3): 1 × 1, far and clear, until
+    /// the host resolves the opaque draws' depth into them (TS src/host/lower.ts; not ported yet).
+    scene: [wgpu::TextureView; 2],
+    camera: Camera,
     bgl0: BindGroupLayout,
     frame_size: u64,
     bgl1: Vec<BindGroupLayout>,
@@ -272,8 +279,85 @@ fn group<'a>(
     device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout, entries: &entries })
 }
 
-fn frame_bytes(time: f32, params: &[f32], inputs: &[f32]) -> Vec<u8> {
-    floats(&[&[time, 0.0, 0.0, 0.0][..], params, inputs].concat())
+/// The frame uniform (loft_ir::frame): the camera header, then params and inputs.
+fn frame_bytes(camera: &Camera, size: [u32; 2], time: f32, params: &[f32], inputs: &[f32]) -> Vec<u8> {
+    let (w, h) = (size[0] as f32, size[1] as f32);
+    let mut out = frame::header(camera, [w, h, 1.0 / w, 1.0 / h], time).to_vec();
+    out.extend(floats(&[params, inputs].concat()));
+    out
+}
+
+/// The camera before the caller sets one: identity matrices, the eye at the origin looking down -z, the sun overhead.
+const NO_CAMERA: Camera = Camera {
+    view_proj: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    inv_view_proj: [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+    eye: [0.0, 0.0, 0.0, 1.0],
+    forward: [0.0, 0.0, -1.0, 0.0],
+    sun: [0.0, 1.0, 0.0, 0.0],
+};
+
+/// Group 0's entries (emit's prelude, `loft_ir::frame`): the frame (dynamic offset, so step frames share one buffer),
+/// `loft_detail`, and the opaque scene's depth and clearance textures.
+fn group0_layout() -> [wgpu::BindGroupLayoutEntry; 4] {
+    let buffer = |dynamic: bool| wgpu::BindingType::Buffer {
+        ty: wgpu::BufferBindingType::Uniform,
+        has_dynamic_offset: dynamic,
+        min_binding_size: None,
+    };
+    let visibility = ShaderStages::VERTEX_FRAGMENT | ShaderStages::COMPUTE;
+    let texture = wgpu::BindingType::Texture {
+        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+        view_dimension: wgpu::TextureViewDimension::D2,
+        multisampled: false,
+    };
+    [
+        wgpu::BindGroupLayoutEntry { binding: 0, visibility, ty: buffer(true), count: None },
+        wgpu::BindGroupLayoutEntry { binding: 1, visibility, ty: buffer(false), count: None },
+        wgpu::BindGroupLayoutEntry { binding: 2, visibility, ty: texture, count: None },
+        wgpu::BindGroupLayoutEntry { binding: 3, visibility, ty: texture, count: None },
+    ]
+}
+
+/// The prelude's scene textures before any resolve: depth 1 (nothing opaque) and clearance 0, one texel each.
+fn scene_textures(device: &wgpu::Device, queue: &wgpu::Queue) -> [wgpu::TextureView; 2] {
+    let make = |format: TextureFormat, texel: &[u8]| {
+        let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+        let tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("loft scene"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let layout = wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: None, rows_per_image: None };
+        queue.write_texture(tex.as_image_copy(), texel, layout, size);
+        tex.create_view(&Default::default())
+    };
+    [make(TextureFormat::R32Float, &1f32.to_le_bytes()), make(TextureFormat::R8Unorm, &[0])]
+}
+
+fn group0<'a>(
+    frame: &'a Buffer,
+    frame_size: u64,
+    detail: &'a Buffer,
+    scene: &'a [wgpu::TextureView; 2],
+) -> [wgpu::BindGroupEntry<'a>; 4] {
+    [
+        wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: frame,
+                offset: 0,
+                size: wgpu::BufferSize::new(frame_size),
+            }),
+        },
+        wgpu::BindGroupEntry { binding: 1, resource: detail.as_entire_binding() },
+        wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&scene[0]) },
+        wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&scene[1]) },
+    ]
 }
 
 /// Library modules without Naga's runtime bounds and loop checks (§4.3); author modules with every check.
@@ -361,7 +445,7 @@ impl Loft {
     ) -> Loft {
         let p = b.params.len().div_ceil(4).max(1);
         let i = b.inputs.len().max(1);
-        let frame_bytes = 16 + 16 * (p + i) as u64;
+        let frame_bytes = (frame::HEADER + 16 * (p + i)) as u64;
         let mut params = vec![0.0; p * 4];
         let mut inputs = vec![0.0; i * 4];
         for (k, d) in b.params.iter().enumerate() {
@@ -385,35 +469,27 @@ impl Loft {
         let entries: u64 = steppings.iter().map(|(_, s)| u64::from(s.count) + 1).sum();
         let steps = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("loft step frames"),
-            size: (entries * stride).max(STEP_STRIDE),
+            // At least one stride: group 0 binds a whole frame from it even when nothing steps.
+            size: (entries * stride).max(stride),
             usage,
             mapped_at_creation: false,
         });
+        let detail = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("loft_detail"),
+            size: 16 * frame::DETAIL_SLOTS as u64,
+            usage,
+            mapped_at_creation: false,
+        });
+        let scene = scene_textures(device, queue);
         let bgl0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("loft frame"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::VERTEX_FRAGMENT | ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+            entries: &group0_layout(),
         });
         let g0 = [&frame, &steps].map(|buffer| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("loft frame"),
                 layout: &bgl0,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer,
-                        offset: 0,
-                        size: wgpu::BufferSize::new(frame_bytes),
-                    }),
-                }],
+                entries: &group0(buffer, frame_bytes, &detail, &scene),
             })
         });
         let shape = |r: Id| &b.resources[r as usize].shape;
@@ -578,6 +654,9 @@ impl Loft {
             canvases: canvases.to_vec(),
             frame,
             steps,
+            detail,
+            scene,
+            camera: NO_CAMERA,
             bgl0,
             frame_size: frame_bytes,
             bgl1,
@@ -810,11 +889,11 @@ impl Loft {
     }
 
     fn stride(&self) -> u64 {
-        (16 + 4 * (self.params.len() + self.inputs.len()) as u64).next_multiple_of(STEP_STRIDE)
+        ((frame::HEADER + 4 * (self.params.len() + self.inputs.len())) as u64).next_multiple_of(STEP_STRIDE)
     }
 
     fn frame_bytes(&self, time: f32) -> Vec<u8> {
-        frame_bytes(time, &self.params, &self.inputs)
+        frame_bytes(&self.camera, self.size, time, &self.params, &self.inputs)
     }
 
     /// Steps `s` from state `from` to `to` in one compute pass (state i ends in `x[i % 2]`).
@@ -865,6 +944,10 @@ impl Loft {
     }
     pub fn set_time(&mut self, seconds: f32) {
         self.time = seconds;
+    }
+    /// The camera every pass draws with (`loft_ir::frame`); the viewport comes from the view's size.
+    pub fn set_camera(&mut self, camera: Camera) {
+        self.camera = camera;
     }
     fn named<'a, T>(
         &self,
@@ -955,6 +1038,7 @@ impl Loft {
             }
             self.bind(device);
         }
+        self.size = view.size;
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
@@ -1093,14 +1177,7 @@ impl Loft {
         let g0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("loft instance frame"),
             layout: &self.bgl0,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &frame_buf,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(self.frame_size),
-                }),
-            }],
+            entries: &group0(&frame_buf, self.frame_size, &self.detail, &self.scene),
         });
         let own: Vec<(usize, Res)> =
             (0..self.res.len()).filter(|&r| written(r)).map(|r| (r, self.resource(device, r))).collect();
@@ -1137,7 +1214,7 @@ impl Loft {
     /// when set). Call once per frame before `draw_subject`.
     pub fn prepare(&self, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, instances: &[Instance]) {
         for i in instances {
-            queue.write_buffer(&i.frame, 0, &frame_bytes(i.time, &i.params, &i.inputs));
+            queue.write_buffer(&i.frame, 0, &frame_bytes(&self.camera, self.size, i.time, &i.params, &i.inputs));
         }
         let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1[..], &i.g2[..])).collect();
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);

@@ -266,7 +266,7 @@ impl<'g> Body<'g> {
         let inline = |s: String| Ok(s);
         let expr = match node.op {
             Op::Lit(i) => return inline(lit(g, i, ty)),
-            Op::Time => return inline("lf(frame.time)".into()),
+            Op::Time => return inline("lf(frame.time.x)".into()),
             Op::Param(d) => {
                 let s = self.at.params[d as usize];
                 return inline(format!("lf(frame.params[{}].{})", s / 4, ["x", "y", "z", "w"][s as usize % 4]));

@@ -3,6 +3,7 @@
 #![deny(clippy::float_arithmetic)]
 pub mod bundle;
 pub mod error;
+pub mod frame;
 pub mod graph;
 pub mod identity;
 pub mod print;

@@ -7,14 +7,14 @@ import { fileURLToPath } from "node:url";
 import type { Precision } from "../host/manifest.ts";
 
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
-const STAMP = "loft-node abi 4 wire 1";
+const STAMP = "loft-node abi 4 wire 2";
 const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
-/** What a Scene job built (loft-core `Scene`). `draws` is 0 and `unfilled` counts zero tables until the wire carries
- * Draw/Pass decls and Kernel bodies (agent_notes/2026-11-19_lean_rust_driver.md). */
+/** What a Scene job built (loft-core `Scene`). `unfilled` counts tables nothing fills (a recurrence's: the wire does not
+ * carry recurrences yet); `draws` is 0 until the library records its drawables as Draw decls (lane 3.1's TS half). */
 export type SceneReport = {
-  readonly roots: number; readonly functions: number; readonly wgsl_bytes: number; readonly resources: number; readonly unfilled: number;
+  readonly roots: number; readonly functions: number; readonly wgsl_bytes: number; readonly resources: number; readonly unfilled: number; readonly kernels: number;
   readonly storage_buffers: number; readonly dispatches: number; readonly draws: number; readonly bundle_bytes: number; readonly build: string;
   /** Under `precision: "mixed"`: "Valid", or Naga's refusal of the module under `alias lf = f16;` (a mixed load is then
    * refused by the host). Under "f32": "NotAsked". */

@@ -11,6 +11,7 @@
 //! - **Site map.** Every line of the module records the node it writes (or the raw line it copies), so a Naga refusal
 //!   comes back as `Scene { Wgsl }` at the author's file and line.
 mod body;
+pub mod prelude;
 
 use crate::prim::{self, Spell};
 use body::Body;
@@ -71,12 +72,7 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted,
     let inputs = at.inputs.iter().map(|s| s + 1).max().unwrap_or(0);
     let mut lines: Vec<(String, Src)> = vec![];
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
-    put(format!(
-        "struct Frame {{ time: f32, params: array<vec4<f32>, {}>, inputs: array<vec4<f32>, {}> }}",
-        params.max(1),
-        inputs.max(1)
-    ));
-    put("@group(0) @binding(0) var<uniform> frame: Frame;".into());
+    prelude::text(params, inputs).lines().for_each(|l| put(l.into()));
     for (k, &kern) in e.reads.iter().enumerate() {
         put(format!("@group(1) @binding({k}) var<storage, read> r{}: array<vec4<f32>>;", at.kernels[kern as usize][0]));
     }
@@ -136,7 +132,7 @@ fn raws(g: &Graph) -> Result<(), Error> {
     let caller = |r: u32| g.nodes.iter().position(|n| n.op == loft_ir::graph::Op::Raw(r)).map(|n| n as u32);
     (0..g.raws.len() as u32).try_for_each(|r| {
         // The prelude, then each dep's text on its own lines, then this one's: line `skip + 1` is its first.
-        let mut src = String::from("alias lf = f32;\n");
+        let mut src = format!("alias lf = f32;\n{}\n", prelude::text(1, 1));
         for d in raw_closure(g, r).into_iter().filter(|&d| d != r) {
             src.push_str(g.sym(g.raws[d as usize].text));
             src.push('\n');
@@ -155,7 +151,7 @@ fn raws(g: &Graph) -> Result<(), Error> {
 }
 
 /// Raw function `r` and every raw function it calls, callees first (each dep is declared before its user).
-fn raw_closure(g: &Graph, r: u32) -> Vec<u32> {
+pub(crate) fn raw_closure(g: &Graph, r: u32) -> Vec<u32> {
     let mut out = vec![];
     let mut visit = vec![r];
     while let Some(x) = visit.pop() {

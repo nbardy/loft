@@ -20,7 +20,16 @@ use std::collections::HashMap;
 /// which the host may rewrite each frame, so reading one is per frame.
 pub enum Source {
     Made(Shape),
-    Curve { at: u32, len: u32 },
+    Curve {
+        at: u32,
+        len: u32,
+    },
+    /// Supplied numbers (a mesh, a distance brick): `rows` rows of `lanes` vec4s, f32 bits `Graph::rows[at..]`. Constant.
+    Data {
+        rows: u32,
+        lanes: u16,
+        at: u32,
+    },
 }
 
 /// A declared kernel. `When::Frame` means "at most per frame": a Const body moves to compile. `Load` runs once (a
@@ -167,7 +176,9 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         if matches!(when[k], When::Load) && !body_frame(k) && !gpu_writer(d.writes, k) {
             let size = match &sources[d.writes as usize] {
                 Source::Made(Shape::Rows { rows, lanes }) => *rows as usize * *lanes as usize * 16,
-                Source::Made(Shape::Texture { .. } | Shape::ViewSized { .. } | Shape::Frame) | Source::Curve { .. } => {
+                Source::Made(Shape::Texture { .. } | Shape::ViewSized { .. } | Shape::Frame)
+                | Source::Curve { .. }
+                | Source::Data { .. } => {
                     continue;
                 }
             };
@@ -233,6 +244,11 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
                     g.rows[*at as usize..(at + len) as usize].iter().flat_map(|b| b.to_le_bytes()).collect(),
                 )),
             },
+            Source::Data { rows, lanes, at } => {
+                let len = *rows as usize * usize::from(*lanes) * 4;
+                let bytes = g.rows[*at as usize..*at as usize + len].iter().flat_map(|b| b.to_le_bytes()).collect();
+                Resource { shape: Shape::Rows { rows: *rows, lanes: *lanes }, init: Init::Bytes(section(bytes)) }
+            }
             Source::Made(shape) => Resource {
                 shape: shape.clone(),
                 init: match (bytes[r].take(), first_kernel(r)) {

@@ -5,7 +5,7 @@
                                     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
   let c = corners[k];
   let q = vec4<f32>(loft_place(lf(f32(i))));
-  let m = view.clip_from_world;
+  let m = frame.view_proj;
   let right = normalize(vec3<f32>(m[0].x, m[1].x, m[2].x));
   let up = normalize(vec3<f32>(m[0].y, m[1].y, m[2].y));
   let p = q.xyz + (right * c.x + up * c.y) * q.w;

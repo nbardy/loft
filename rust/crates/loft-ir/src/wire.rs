@@ -29,17 +29,42 @@
 //!   0 Fn      graph [0, name, ret ty, n, binder node × n]   roots [body]
 //!             raw   [1, name, ret ty, text sym, n deps, dep Fn ordinal × n deps]  roots []   (each dep a raw Fn before it)
 //!   1 Loop    [n, has stop, state binder × n, index binder] roots [count, init × n, next × n, stop?]
-//!   2 Kernel  table [0, name, lanes, entries, role]  rows [1, label, rows offset, length]    roots []
+//!   2 Kernel  by fill; a table's head is [name, lanes, entries, role]:
+//!             map        [0, head, n, (count, index binder) × n]             roots [lanes × n runs]
+//!             rows       [1, label, rows offset, length]                     roots []
+//!             scan       [2, head, first, steps, n, state binder × n, index binder]  roots [init × n, next × n, lanes]
+//!             data       [3, head, rows offset] (entries × lanes × 4 f32)    roots []
+//!             recurrence [4, head, recurrence sym]                           roots []
 //!   8 Param   [name, def lit, min lit, max lit]      9 Input [name, ty, first def lit]       roots []
-//!   3 Draw, 4 Pass, 5 Medium, 6 Check, 7 Solve, 10 Camera: no layout pinned yet (lanes 2.1, 2.3, 3.1); refused.
+//!   3 Draw    [name, layer, cull, depth write, blend, paint Fn, cover...]                         roots []
+//!             cover  0 grid [u, v, place Fn, count]   1 mesh [kernel, count]   2 quads [place Fn, count]
+//!                    3 ray box [find, f, box lits (min, max)]   4 ray instances [find, f, kernel, local lits]
+//!                    5 screen []      find 0 hit (f a Fn), 1 medium (f a Medium ordinal)
+//!   4 Pass    [camera, first draw, end draw, clear..., ground..., outline...]                    roots []
+//!             clear 0 load | 1 colour [rgba lits]; ground 0 none | 1 traced [hit Fn, paint Fn];
+//!             outline 0 none | 1 ink [outline Fn]. The target is the view (no texture resource decl exists yet)
+//!   5 Medium  [0 march, density Fn, within lits, steps, shadow steps] | [1 gaussians, kernel]      roots []
+//!   6 Check   [label, 0 prove boxes | 1 sample n, formula...]  formula, pre-order:  roots in that order
+//!             0 atom (roots margin, test) | 1 always / 2 eventually [n, leaf node × n] (roots lo × n, hi × n),
+//!             then the body | 3 and / 4 or [n] then n parts | 5 not, then one part
+//!   7 Solve   [label, numbers lits (t0, t1, delta, jerk, acceleration, near weight), n,
+//!              (name, controls, jet binder × 4) × n, m, unknown × m, h, hold × h]   roots [from × n, to × m, margin × h]
+//!             hold [0 equal, within lit | 1 bound, times..., said sym, site sym]; times 0 at [t lit] | 1 during
+//!             [lits] | 2 span
+//!   10 Camera [name, 0 look] roots [eye, target, up, fovy] | [name, 1 matrix] roots [4 columns]
 //! ```
+//! Fn, kernel, medium and camera references are checked after every decl is read, so a decl may name a later one.
 //! A Call or Loop node comes after every root and binder of its decl, so the job is acyclic through decls too.
 use crate::error::{Error, Fault, Internal, Meter, SceneFault, Span, WireFault};
-use crate::graph::{Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, Program, RawFn, Role, Sel, Site, Ty};
+use crate::graph::{
+    Blend, Camera, Check, Clear, Cover, Draw, Fill, Find, Formula, Graph, GraphFn, Ground, Hold, HoldKind, Input,
+    Kernel, Layer, Lens, Loop, Medium, Near, Node, Op, Outline, Param, Pass, Prim, Program, Proxy, Quant, Raster,
+    RawFn, Role, Run, Scan, Sel, Site, Solve, Strategy, Times, Ty, Unknown,
+};
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LFTW");
 /// Internal, never persisted: the recorder and this decoder change together. The binding reports it at load.
-pub const WIRE: u32 = 1;
+pub const WIRE: u32 = 2;
 /// Quota checked before any span is read: 16.7M nodes, 30x Titan's recorded count.
 pub const MAX_NODES: u64 = 1 << 24;
 /// Wire code of `Prim::ALL[0]`.
@@ -135,7 +160,233 @@ struct Decls {
     fn_slots: Vec<FnSlot>,
     fn_at: Vec<usize>,
     loop_at: Vec<usize>,
+    kernel_at: Vec<usize>,
+    draws: Vec<Draw>,
+    passes: Vec<Pass>,
+    media: Vec<Medium>,
+    cameras: Vec<Camera>,
+    checks: Vec<Check>,
+    solves: Vec<Solve>,
+    /// Each scene-level decl's word offset, for refusing a reference checked after all decls are read.
+    top_at: Vec<(Top, usize)>,
     program_roots: u32,
+}
+
+/// The scene-level decl kinds, for `top_at`.
+#[derive(Clone, Copy)]
+enum Top {
+    Draw(usize),
+    Pass(usize),
+    Medium(usize),
+    Camera(usize),
+    Check(usize),
+    Solve(usize),
+}
+
+/// Reads a scene-level decl's words and roots in order; any shortfall or excess is the decl's `Layout` fault.
+struct Cur<'a> {
+    w: &'a [u32],
+    r: &'a [u32],
+    wi: usize,
+    ri: usize,
+    z: &'a Sizes,
+}
+impl Cur<'_> {
+    fn word(&mut self) -> Result<u32, ()> {
+        let x = *self.w.get(self.wi).ok_or(())?;
+        self.wi += 1;
+        Ok(x)
+    }
+    fn root(&mut self) -> Result<u32, ()> {
+        let x = *self.r.get(self.ri).ok_or(())?;
+        self.ri += 1;
+        ((x as usize) < self.z.nodes).then_some(x).ok_or(())
+    }
+    fn roots(&mut self, n: usize) -> Result<Box<[u32]>, ()> {
+        (0..n).map(|_| self.root()).collect()
+    }
+    fn node(&mut self) -> Result<u32, ()> {
+        self.word().and_then(|x| ((x as usize) < self.z.nodes).then_some(x).ok_or(()))
+    }
+    fn sym(&mut self) -> Result<u32, ()> {
+        self.word().and_then(|x| ((x as usize) < self.z.syms).then_some(x).ok_or(()))
+    }
+    fn lits(&mut self, n: u32) -> Result<u32, ()> {
+        self.word().and_then(|x| fits(x, n, self.z.lits).then_some(x).ok_or(()))
+    }
+    fn flag(&mut self) -> Result<bool, ()> {
+        match self.word()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(()),
+        }
+    }
+    fn done(&self) -> Result<(), ()> {
+        (self.wi == self.w.len() && self.ri == self.r.len()).then_some(()).ok_or(())
+    }
+}
+
+fn draw(c: &mut Cur) -> Result<Draw, ()> {
+    let name = c.sym()?;
+    let layer = [Layer::Subject, Layer::Surroundings].get(c.word()? as usize).copied().ok_or(())?;
+    let (cull, depth_write) = (c.flag()?, c.flag()?);
+    let blend = [Blend::Opaque, Blend::Alpha, Blend::Add].get(c.word()? as usize).copied().ok_or(())?;
+    let paint = c.word()?;
+    let find = |c: &mut Cur| match c.word()? {
+        0 => Ok(Find::Hit(c.word()?)),
+        1 => Ok(Find::Medium(c.word()?)),
+        _ => Err(()),
+    };
+    let cover = match c.word()? {
+        0 => Cover::Grid { u: c.word()?, v: c.word()?, place: c.word()?, count: c.word()? },
+        1 => Cover::Mesh { kernel: c.word()?, count: c.word()? },
+        2 => Cover::Quads { place: c.word()?, count: c.word()? },
+        3 => {
+            let find = find(c)?;
+            Cover::Ray { proxy: Proxy::Box { lits: c.lits(6)? }, find }
+        }
+        4 => {
+            let find = find(c)?;
+            Cover::Ray { proxy: Proxy::Instances { kernel: c.word()?, local: c.lits(6)? }, find }
+        }
+        5 => Cover::Screen,
+        _ => return Err(()),
+    };
+    c.done()?;
+    Ok(Draw { name, layer, cover, paint, raster: Raster { cull, depth_write, blend } })
+}
+
+fn pass(c: &mut Cur) -> Result<Pass, ()> {
+    let camera = c.word()?;
+    let draws = [c.word()?, c.word()?];
+    let clear = match c.word()? {
+        0 => Clear::Load,
+        1 => Clear::Colour(c.lits(4)?),
+        _ => return Err(()),
+    };
+    let ground = match c.word()? {
+        0 => Ground::None,
+        1 => Ground::Traced { hit: c.word()?, paint: c.word()? },
+        _ => return Err(()),
+    };
+    let outline = match c.word()? {
+        0 => Outline::None,
+        1 => Outline::Ink(c.word()?),
+        _ => return Err(()),
+    };
+    c.done()?;
+    (draws[0] <= draws[1]).then_some(Pass { camera, draws, clear, ground, outline }).ok_or(())
+}
+
+fn medium(c: &mut Cur) -> Result<Medium, ()> {
+    let m = match c.word()? {
+        0 => {
+            let density = c.word()?;
+            let within = c.lits(6)?;
+            let (steps, shadow_steps) = (c.word()?, c.word()?);
+            let (steps, shadow_steps) =
+                (u16::try_from(steps).map_err(|_| ())?, u16::try_from(shadow_steps).map_err(|_| ())?);
+            Medium::March { density, within, steps, shadow_steps }
+        }
+        1 => Medium::Gaussians { kernel: c.word()? },
+        _ => return Err(()),
+    };
+    c.done()?;
+    Ok(m)
+}
+
+fn camera(c: &mut Cur) -> Result<Camera, ()> {
+    let name = c.sym()?;
+    let lens = match c.word()? {
+        0 => Lens::Look { eye: c.root()?, target: c.root()?, up: c.root()?, fovy: c.root()? },
+        1 => Lens::Matrix { cols: [c.root()?, c.root()?, c.root()?, c.root()?] },
+        _ => return Err(()),
+    };
+    c.done()?;
+    Ok(Camera { name, lens })
+}
+
+fn formula(c: &mut Cur, depth: u32) -> Result<Formula, ()> {
+    // A hostile job cannot nest past the stack: 64 levels is more than any authored check.
+    (depth < 64).then_some(()).ok_or(())?;
+    Ok(match c.word()? {
+        0 => Formula::Atom { margin: c.root()?, test: c.root()? },
+        k @ (1 | 2) => {
+            let n = c.word()? as usize;
+            (1..=16).contains(&n).then_some(()).ok_or(())?;
+            let leaves = (0..n).map(|_| c.node()).collect::<Result<Box<[u32]>, ()>>()?;
+            let (lo, hi) = (c.roots(n)?, c.roots(n)?);
+            let q = Quant { leaves, lo, hi, body: Box::new(formula(c, depth + 1)?) };
+            if k == 1 { Formula::Always(q) } else { Formula::Eventually(q) }
+        }
+        k @ (3 | 4) => {
+            let n = c.word()? as usize;
+            (2..=64).contains(&n).then_some(()).ok_or(())?;
+            let parts = (0..n).map(|_| formula(c, depth + 1)).collect::<Result<Box<[Formula]>, ()>>()?;
+            if k == 3 { Formula::And(parts) } else { Formula::Or(parts) }
+        }
+        5 => Formula::Not(Box::new(formula(c, depth + 1)?)),
+        _ => return Err(()),
+    })
+}
+
+fn check(c: &mut Cur) -> Result<Check, ()> {
+    let label = c.sym()?;
+    let how = match c.word()? {
+        0 => Strategy::Prove { boxes: c.word()? },
+        1 => Strategy::Sample { n: c.word()? },
+        _ => return Err(()),
+    };
+    let body = formula(c, 0)?;
+    c.done()?;
+    Ok(Check { label, how, body })
+}
+
+fn solve(c: &mut Cur) -> Result<Solve, ()> {
+    let label = c.sym()?;
+    let numbers = c.lits(6)?;
+    let n = c.word()? as usize;
+    (n <= c.w.len()).then_some(()).ok_or(())?;
+    let mut unknowns = Vec::with_capacity(n);
+    for _ in 0..n {
+        let (name, numbers) = (c.sym()?, c.word()?);
+        let jets = [c.node()?, c.node()?, c.node()?, c.node()?];
+        unknowns.push(Unknown { name, numbers, from: 0, jets });
+    }
+    let m = c.word()? as usize;
+    (m <= c.w.len()).then_some(()).ok_or(())?;
+    let near_of = (0..m).map(|_| c.word()).collect::<Result<Vec<u32>, ()>>()?;
+    let h = c.word()? as usize;
+    (h <= c.w.len()).then_some(()).ok_or(())?;
+    let mut holds = Vec::with_capacity(h);
+    for _ in 0..h {
+        let kind = match c.word()? {
+            0 => HoldKind::Equal { margin: 0, within: c.lits(1)? },
+            1 => HoldKind::Bound { margin: 0 },
+            _ => return Err(()),
+        };
+        let times = match c.word()? {
+            0 => Times::At { t: c.lits(1)? },
+            1 => Times::During { lits: c.lits(2)? },
+            2 => Times::Span,
+            _ => return Err(()),
+        };
+        holds.push(Hold { kind, times, said: c.sym()?, site: c.sym()? });
+    }
+    // Roots after the words: each unknown's start, each near curve, each hold's margin.
+    for u in &mut unknowns {
+        u.from = c.root()?;
+    }
+    let near =
+        near_of.into_iter().map(|unknown| Ok(Near { unknown, to: c.root()? })).collect::<Result<Box<[Near]>, ()>>()?;
+    for hold in &mut holds {
+        hold.kind = match hold.kind {
+            HoldKind::Equal { within, .. } => HoldKind::Equal { margin: c.root()?, within },
+            HoldKind::Bound { .. } => HoldKind::Bound { margin: c.root()? },
+        };
+    }
+    c.done()?;
+    Ok(Solve { label, numbers, unknowns: unknowns.into(), near, holds: holds.into() })
 }
 
 /// The counts the decl words are checked against.
@@ -159,6 +410,14 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
         fn_slots: Vec::new(),
         fn_at: Vec::new(),
         loop_at: Vec::new(),
+        kernel_at: Vec::new(),
+        draws: Vec::new(),
+        passes: Vec::new(),
+        media: Vec::new(),
+        cameras: Vec::new(),
+        checks: Vec::new(),
+        solves: Vec::new(),
+        top_at: Vec::new(),
         program_roots: r0,
     };
     let (mut at, mut r) = (1usize, r0 as usize);
@@ -213,17 +472,62 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                     stop: rs.get(1 + 2 * n).map(|s| node(*s)).transpose()?,
                 });
             }
-            (2, [0, name, lanes, entries, role]) => {
-                layout(rs.is_empty())?;
-                let role = *Role::ALL.get(*role as usize).ok_or_else(|| bad(Span::Decls, at, Fault::Layout))?;
-                out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role });
-            }
             (2, [1, label, off, len]) => {
                 layout(rs.is_empty())?;
                 fits(*off, *len, z.rows)
                     .then_some(())
                     .ok_or_else(|| bad(Span::Decls, at, Fault::Ref { found: *off }))?;
+                out.kernel_at.push(at);
                 out.kernels.push(Kernel::Rows { label: sym(*label)?, at: *off, len: *len });
+            }
+            (2, [fill @ (0 | 2 | 3 | 4), name, lanes, entries, role, rest @ ..]) => {
+                let role = *Role::ALL.get(*role as usize).ok_or_else(|| bad(Span::Decls, at, Fault::Layout))?;
+                layout(*lanes >= 1)?;
+                let n_lanes = *lanes as usize;
+                let ids = |x: &[u32]| x.iter().map(|b| node(*b)).collect::<Result<Box<[u32]>, Error>>();
+                let fill = match (fill, rest) {
+                    (0, [n, runs @ ..]) => {
+                        let n = *n as usize;
+                        layout(runs.len() == n.saturating_mul(2) && rs.len() == n.saturating_mul(n_lanes))?;
+                        let total = runs.chunks(2).try_fold(0u32, |t, r| t.checked_add(r[0]));
+                        layout(total.is_some_and(|t| t <= *entries))?;
+                        let runs = runs
+                            .chunks(2)
+                            .zip(rs.chunks(n_lanes))
+                            .map(|(r, l)| Ok(Run { count: r[0], index: node(r[1])?, lanes: ids(l)? }))
+                            .collect::<Result<Box<[Run]>, Error>>()?;
+                        Fill::Map(runs)
+                    }
+                    (2, [first, steps, n, binders @ ..]) => {
+                        let n = *n as usize;
+                        let roots_n = n.saturating_mul(2).saturating_add(n_lanes);
+                        layout(binders.len() == n.saturating_add(1) && rs.len() == roots_n)?;
+                        layout(first.checked_add(*steps).is_some_and(|e| e <= *entries))?;
+                        Fill::Scan(Scan {
+                            first: *first,
+                            steps: *steps,
+                            init: ids(&rs[..n])?,
+                            state: ids(&binders[..n])?,
+                            index: node(binders[n])?,
+                            next: ids(&rs[n..2 * n])?,
+                            lanes: ids(&rs[2 * n..])?,
+                        })
+                    }
+                    (3, [off]) => {
+                        layout(rs.is_empty())?;
+                        let len = u64::from(*entries) * u64::from(*lanes) * 4;
+                        let fit = u32::try_from(len).ok().is_some_and(|len| fits(*off, len, z.rows));
+                        fit.then_some(()).ok_or_else(|| bad(Span::Decls, at, Fault::Ref { found: *off }))?;
+                        Fill::Data { at: *off }
+                    }
+                    (4, [recurrence]) => {
+                        layout(rs.is_empty())?;
+                        Fill::Recurrence { recurrence: sym(*recurrence)? }
+                    }
+                    _ => return Err(bad(Span::Decls, at, Fault::Layout)),
+                };
+                out.kernel_at.push(at);
+                out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role, fill });
             }
             (8, [name, def, min, max]) => {
                 layout(rs.is_empty())?;
@@ -240,13 +544,93 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 layout(t.width().is_some())?;
                 out.inputs.push(Input { name: sym(*name)?, ty: t, def: lit(*def, t.lits())? });
             }
+            (3..=7 | 10, _) => {
+                let mut c = Cur { w, r: rs, wi: 0, ri: 0, z };
+                let failed = || bad(Span::Decls, at, Fault::Layout);
+                match tag {
+                    3 => out.top_at.push((Top::Draw(out.draws.len()), at)),
+                    4 => out.top_at.push((Top::Pass(out.passes.len()), at)),
+                    5 => out.top_at.push((Top::Medium(out.media.len()), at)),
+                    6 => out.top_at.push((Top::Check(out.checks.len()), at)),
+                    7 => out.top_at.push((Top::Solve(out.solves.len()), at)),
+                    _ => out.top_at.push((Top::Camera(out.cameras.len()), at)),
+                }
+                match tag {
+                    3 => out.draws.push(draw(&mut c).map_err(|()| failed())?),
+                    4 => out.passes.push(pass(&mut c).map_err(|()| failed())?),
+                    5 => out.media.push(medium(&mut c).map_err(|()| failed())?),
+                    6 => out.checks.push(check(&mut c).map_err(|()| failed())?),
+                    7 => out.solves.push(solve(&mut c).map_err(|()| failed())?),
+                    _ => out.cameras.push(camera(&mut c).map_err(|()| failed())?),
+                }
+            }
             (0..=2 | 8 | 9, _) => layout(false)?,
             (_, _) => return Err(bad(Span::Decls, at, Fault::Tag { found: tag })),
         }
         at += 3 + nw;
         r += nr;
     }
-    (r == roots.len()).then_some(out).ok_or_else(|| bad(Span::Roots, r, Fault::Length))
+    (r == roots.len()).then_some(()).ok_or_else(|| bad(Span::Roots, r, Fault::Length))?;
+    graph_fns(&mut out)?;
+    Ok(out)
+}
+
+/// A scene-level decl names graph functions by Fn ordinal (graph and raw numbered together); `Graph` keeps graph
+/// functions apart, so each becomes its `Graph::fns` index here. A raw function or a missing one is the decl's fault.
+fn graph_fns(out: &mut Decls) -> Result<(), Error> {
+    let slots = &out.fn_slots;
+    let at = |top: Top| out.top_at.iter().find(|(t, _)| t.same(top)).map_or(0, |(_, a)| *a);
+    let map = |f: &mut u32, top: Top| match slots.get(*f as usize) {
+        Some(FnSlot::Graph(g)) => {
+            *f = *g;
+            Ok(())
+        }
+        Some(FnSlot::Raw(_)) | None => Err(bad(Span::Decls, at(top), Fault::Layout)),
+    };
+    for (k, d) in out.draws.iter_mut().enumerate() {
+        let top = Top::Draw(k);
+        map(&mut d.paint, top)?;
+        match &mut d.cover {
+            Cover::Grid { place, .. } | Cover::Quads { place, .. } => map(place, top)?,
+            Cover::Ray { find: Find::Hit(f), .. } => map(f, top)?,
+            Cover::Mesh { .. } | Cover::Ray { find: Find::Medium(_), .. } | Cover::Screen => {}
+        }
+    }
+    for (k, p) in out.passes.iter_mut().enumerate() {
+        let top = Top::Pass(k);
+        match &mut p.ground {
+            Ground::Traced { hit, paint } => {
+                map(hit, top)?;
+                map(paint, top)?;
+            }
+            Ground::None => {}
+        }
+        match &mut p.outline {
+            Outline::Ink(f) => map(f, top)?,
+            Outline::None => {}
+        }
+    }
+    for (k, m) in out.media.iter_mut().enumerate() {
+        match m {
+            Medium::March { density, .. } => map(density, Top::Medium(k))?,
+            Medium::Gaussians { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+impl Top {
+    fn same(self, o: Top) -> bool {
+        match (self, o) {
+            (Top::Draw(a), Top::Draw(b))
+            | (Top::Pass(a), Top::Pass(b))
+            | (Top::Medium(a), Top::Medium(b))
+            | (Top::Camera(a), Top::Camera(b))
+            | (Top::Check(a), Top::Check(b))
+            | (Top::Solve(a), Top::Solve(b)) => a == b,
+            (Top::Draw(_) | Top::Pass(_) | Top::Medium(_) | Top::Camera(_) | Top::Check(_) | Top::Solve(_), _) => false,
+        }
+    }
 }
 
 /// Decodes and validates a job: every bound, reference, layout, quota and type rule, before any pass sees it.
@@ -312,6 +696,12 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         kernels: d.kernels.into(),
         params: d.params.into(),
         inputs: d.inputs.into(),
+        draws: d.draws.into(),
+        passes: d.passes.into(),
+        media: d.media.into(),
+        cameras: d.cameras.into(),
+        checks: d.checks.into(),
+        solves: d.solves.into(),
         roots: roots[..d.program_roots as usize].into(),
     };
     for (f, at) in graph.fns.iter().zip(&d.fn_at) {
@@ -319,6 +709,12 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     }
     for (l, at) in graph.loops.iter().zip(&d.loop_at) {
         loop_layout(&graph, l).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
+    }
+    for (k, at) in graph.kernels.iter().zip(&d.kernel_at) {
+        kernel_layout(&graph, k).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
+    }
+    for (top, at) in &d.top_at {
+        top_layout(&graph, *top).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
     }
     for i in 0..graph.nodes.len() {
         typed(&graph, i).map_err(|(want, got)| Error::Scene {
@@ -389,8 +785,8 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
             6 => {
                 arity(n == 1)?;
                 let kernel = ordinal(d.kernels.len())?;
-                let lanes = match d.kernels[kernel as usize] {
-                    Kernel::Table { lanes, .. } => lanes,
+                let lanes = match &d.kernels[kernel as usize] {
+                    Kernel::Table { lanes, .. } => *lanes,
                     Kernel::Rows { .. } => 1,
                 };
                 (u32::from(flags) < lanes).then_some(()).ok_or_else(|| fault(Fault::Flags { found: flags }))?;
@@ -475,6 +871,123 @@ fn loop_layout(g: &Graph, l: &Loop) -> Result<(), ()> {
         (binder(g, *state)? == ty(*init) && ty(*next) == ty(*init)).then_some(()).ok_or(())?;
     }
     l.stop.map_or(Ok(()), |s| (ty(s) == Ty::Bool).then_some(()).ok_or(()))
+}
+
+/// A fill's index binders are f32 binder nodes and its lanes vec4; a scan's state keeps one type from init through
+/// binder to next.
+fn kernel_layout(g: &Graph, k: &Kernel) -> Result<(), ()> {
+    let ty = |x: u32| g.nodes[x as usize].ty;
+    let vec4s = |xs: &[u32]| xs.iter().all(|x| ty(*x) == Ty::V4).then_some(()).ok_or(());
+    match k {
+        Kernel::Rows { .. } => Ok(()),
+        Kernel::Table { fill, .. } => match fill {
+            Fill::Map(runs) => runs.iter().try_for_each(|r| {
+                (binder(g, r.index)? == Ty::F32).then_some(()).ok_or(())?;
+                vec4s(&r.lanes)
+            }),
+            Fill::Scan(s) => {
+                (binder(g, s.index)? == Ty::F32).then_some(()).ok_or(())?;
+                for ((init, state), next) in s.init.iter().zip(&s.state).zip(&s.next) {
+                    (binder(g, *state)? == ty(*init) && ty(*next) == ty(*init)).then_some(()).ok_or(())?;
+                }
+                vec4s(&s.lanes)
+            }
+            Fill::Data { .. } | Fill::Recurrence { .. } => Ok(()),
+        },
+    }
+}
+
+/// A graph function `f` takes `params` and returns `ret` (a draw role's signature, loft-core `draw`).
+fn sig(g: &Graph, f: u32, params: &[Ty], ret: Ty) -> Result<(), ()> {
+    let f = g.fns.get(f as usize).ok_or(())?;
+    let tys: Vec<Ty> = f.binders.iter().map(|b| g.nodes[*b as usize].ty).collect();
+    (tys == params && f.ret == ret).then_some(()).ok_or(())
+}
+
+/// A scene-level decl's references (Fn, kernel, medium, camera and draw ranges) and its nodes' types.
+fn top_layout(g: &Graph, top: Top) -> Result<(), ()> {
+    use Ty::{F32, V2, V3, V4};
+    let ty = |x: u32| g.nodes[x as usize].ty;
+    let is = |x: u32, t: Ty| (ty(x) == t).then_some(()).ok_or(());
+    let kernel = |k: u32| ((k as usize) < g.kernels.len()).then_some(()).ok_or(());
+    let paint = |f: u32| sig(g, f, &[V3, V3, F32], V4);
+    let hit = |f: u32| sig(g, f, &[V3, V3, V2, V2], V4);
+    match top {
+        Top::Draw(k) => {
+            let d = &g.draws[k];
+            paint(d.paint)?;
+            match &d.cover {
+                Cover::Grid { place, .. } => sig(g, *place, &[V2, F32], V3),
+                Cover::Mesh { kernel: r, .. } => kernel(*r),
+                Cover::Quads { place, .. } => sig(g, *place, &[F32], V4),
+                Cover::Ray { proxy, find } => {
+                    match proxy {
+                        Proxy::Box { .. } => {}
+                        Proxy::Instances { kernel: r, .. } => kernel(*r)?,
+                    }
+                    match find {
+                        Find::Hit(f) => hit(*f),
+                        Find::Medium(m) => ((*m as usize) < g.media.len()).then_some(()).ok_or(()),
+                    }
+                }
+                Cover::Screen => Ok(()),
+            }
+        }
+        Top::Pass(k) => {
+            let p = &g.passes[k];
+            ((p.camera as usize) < g.cameras.len() && p.draws[1] as usize <= g.draws.len()).then_some(()).ok_or(())?;
+            match p.ground {
+                Ground::None => {}
+                Ground::Traced { hit: h, paint: c } => hit(h).and(paint(c))?,
+            }
+            match p.outline {
+                Outline::None => Ok(()),
+                Outline::Ink(f) => sig(g, f, &[V3, V3], V4),
+            }
+        }
+        Top::Medium(k) => match g.media[k] {
+            Medium::March { density, .. } => sig(g, density, &[V3], F32),
+            Medium::Gaussians { kernel: r } => kernel(r),
+        },
+        Top::Camera(k) => match g.cameras[k].lens {
+            Lens::Look { eye, target, up, fovy } => is(eye, V3).and(is(target, V3)).and(is(up, V3)).and(is(fovy, F32)),
+            Lens::Matrix { cols } => cols.iter().try_for_each(|c| is(*c, V4)),
+        },
+        Top::Check(k) => {
+            fn formula(f: &Formula, is: &dyn Fn(u32, Ty) -> Result<(), ()>, g: &Graph) -> Result<(), ()> {
+                match f {
+                    Formula::Atom { margin, test } => is(*margin, Ty::F32).and(is(*test, Ty::Bool)),
+                    Formula::Always(q) | Formula::Eventually(q) => {
+                        for ((leaf, lo), hi) in q.leaves.iter().zip(&q.lo).zip(&q.hi) {
+                            let n = &g.nodes[*leaf as usize];
+                            let leafy = matches!(n.op, Op::Time | Op::Param(_) | Op::Input(_) | Op::Var(_));
+                            (leafy && n.ty == Ty::F32).then_some(()).ok_or(())?;
+                            is(*lo, Ty::F32).and(is(*hi, Ty::F32))?;
+                        }
+                        formula(&q.body, is, g)
+                    }
+                    Formula::And(parts) | Formula::Or(parts) => parts.iter().try_for_each(|p| formula(p, is, g)),
+                    Formula::Not(p) => formula(p, is, g),
+                }
+            }
+            formula(&g.checks[k].body, &is, g)
+        }
+        Top::Solve(k) => {
+            let s = &g.solves[k];
+            for u in s.unknowns.iter() {
+                is(u.from, F32)?;
+                u.jets.iter().try_for_each(|j| (binder(g, *j)? == F32).then_some(()).ok_or(()))?;
+            }
+            for n in s.near.iter() {
+                ((n.unknown as usize) < s.unknowns.len()).then_some(()).ok_or(())?;
+                is(n.to, F32)?;
+            }
+            s.holds.iter().try_for_each(|h| match h.kind {
+                HoldKind::Equal { margin, .. } => ty(margin).width().map(|_| ()).ok_or(()),
+                HoldKind::Bound { margin } => is(margin, F32),
+            })
+        }
+    }
 }
 
 /// A vector of `parts`: their widths sum to the recorded vector's, or one f32 splats to it.

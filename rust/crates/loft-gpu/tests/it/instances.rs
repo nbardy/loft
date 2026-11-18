@@ -8,7 +8,7 @@ const SIDE: u32 = 4;
 const POSE: &str = "@group(2) @binding(0) var<storage, read_write> w0: array<vec4<f32>>;
 @compute @workgroup_size(64) fn pose(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= arrayLength(&w0)) { return; }
-  let a = f32(id.x) * 0.39 + frame.time;
+  let a = f32(id.x) * 0.39 + frame.time.x;
   w0[id.x] = vec4<f32>(frame.inputs[0].x + 0.3 * cos(a), 0.4 * sin(a * 1.3), 2.0 + 0.3 * sin(a), 0.08);
 }";
 // The subject: a quad around the instance, sphere-traced through the posed table with emit's clamped fetch.

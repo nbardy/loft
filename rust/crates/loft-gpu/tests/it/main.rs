@@ -8,7 +8,10 @@ use loft_ir::identity::Precision;
 
 mod instances;
 
-const PRE: &str = "struct Frame { time: f32, params: array<vec4<f32>, 1>, inputs: array<vec4<f32>, 1> }
+/// Emit's prelude frame (loft-core emit/prelude.rs, bytes in `loft_ir::frame`), with one param and one input vec4.
+pub(crate) const PRE: &str =
+    "struct Frame { view_proj: mat4x4<f32>, inv_view_proj: mat4x4<f32>, eye: vec4<f32>, forward: vec4<f32>,
+  viewport: vec4<f32>, time: vec4<f32>, sun: vec4<f32>, params: array<vec4<f32>, 1>, inputs: array<vec4<f32>, 1> }
 @group(0) @binding(0) var<uniform> frame: Frame;
 ";
 const FILL: &str = "@group(2) @binding(0) var<storage, read_write> w0: array<vec4<f32>>;
@@ -29,7 +32,7 @@ const SKY: &str = "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(posi
 const STEP: &str = "@group(1) @binding(0) var<storage, read> r2: array<vec4<f32>>;
 @group(2) @binding(0) var<storage, read_write> w0: array<vec4<f32>>;
 @compute @workgroup_size(64) fn step(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x < 1u) { w0[0] = vec4<f32>(r2[0].x + 1.0, frame.time, 0.0, 0.0); }
+  if (id.x < 1u) { w0[0] = vec4<f32>(r2[0].x + 1.0, frame.time.x, 0.0, 0.0); }
 }";
 const SHOW: &str = "@group(1) @binding(0) var<storage, read> r2: array<vec4<f32>>;
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -281,7 +284,7 @@ fn refusals_are_typed_and_named() {
     typo.sections[1] = format!("{PRE}{}", SUBJECT.replace("r1[0];", "r1[0]")).into_bytes().into();
     let limits = d.limits();
     let got = loft_gpu::validate(&typo, Precision::F32, &limits);
-    assert!(matches!(&got, Err(Error::Scene { fault: SceneFault::Wgsl { line: 8, .. }, .. })), "{got:?}");
+    assert!(matches!(&got, Err(Error::Scene { fault: SceneFault::Wgsl { line: 9, .. }, .. })), "{got:?}");
     let mut stray = subject();
     stray.draws[1].shade = (7, 1);
     assert!(
@@ -313,4 +316,68 @@ fn load_kernels_see_param_defaults_and_a_3d_table_loads() {
     let mut loft = load(&d, &q, &b);
     let (rgba, _) = Game::new(&d).frame(&d, &q, &mut loft, Some(1.0), Owner::Caller, Layers::Subject);
     assert_eq!(px(&rgba, 4, 4)[0], 128, "the load kernel read param 0's default, 0.5");
+}
+
+/// The corpus check of the wire lane (agent_notes/2026-11-19_lean_rust_wire2.md): every bundle the program driver
+/// wrote loads on this device as `F32` (a default build's precision) and draws one frame. `LOFT_BUNDLES` is a folder of
+/// `<entry>/scene.loft` (tools/parity/run.ts rust writes out/parity/rust/build/<id>/scene.loft); the answer is one JSON line
+/// per bundle, then the counts.
+#[test]
+#[ignore = "needs LOFT_BUNDLES: a folder of built corpus bundles"]
+fn corpus_bundles_load() {
+    let dir = std::env::var("LOFT_BUNDLES").expect("LOFT_BUNDLES names the folder");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| Some(e.ok()?.path().join("scene.loft")))
+        .filter(|p| p.exists())
+        .collect();
+    paths.sort();
+    // `LOFT_BUNDLES_SHARD=k/n` takes every n-th bundle from k: one test stays under the runner's time limit.
+    if let Ok(shard) = std::env::var("LOFT_BUNDLES_SHARD") {
+        let (k, n) = shard.split_once('/').expect("LOFT_BUNDLES_SHARD is k/n");
+        let (k, n): (usize, usize) = (k.parse().expect("k"), n.parse().expect("n"));
+        paths = paths.into_iter().skip(k).step_by(n).collect();
+    }
+    let (d, q) = device();
+    let (mut loaded, mut fails) = (0, Vec::new());
+    for p in &paths {
+        let bytes = std::fs::read(p).unwrap();
+        let id = p.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned();
+        let got = pollster::block_on(Loft::load(&d, &q, &bytes, Precision::F32, &[CANVAS], None)).map(|mut loft| {
+            // One frame, so kernels and every pipeline's bindings meet the device.
+            let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
+            let game = Game::new(&d);
+            let (color, depth) =
+                (game.color.create_view(&Default::default()), game.depth.create_view(&Default::default()));
+            let view = View {
+                canvas: CANVAS,
+                color: &color,
+                depth: &depth,
+                size: [N, N],
+                owner: Owner::Loft,
+                layers: Layers::All,
+            };
+            let mut enc = d.create_command_encoder(&Default::default());
+            loft.set_time(1.0);
+            let encoded = loft.encode_into(&d, &q, &mut enc, &view);
+            q.submit([enc.finish()]);
+            d.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
+            (encoded, pollster::block_on(scope.pop()))
+        });
+        let outcome = match got {
+            Ok((Ok(()), None)) => "ok".to_string(),
+            Ok((Err(e), _)) => format!("frame refused: {e}"),
+            Ok((Ok(()), Some(e))) => format!("device refused the frame: {e}"),
+            Err(e) => format!("load refused: {e}"),
+        };
+        let ok = outcome == "ok";
+        println!("{{\"id\":{id:?},\"f32\":{outcome:?}}}");
+        if ok {
+            loaded += 1;
+        } else {
+            fails.push(id);
+        }
+    }
+    println!("corpus bundles loaded and drawn one frame: {loaded} of {}", paths.len());
+    assert!(fails.is_empty(), "{} refused: {}", fails.len(), fails.join(" "));
 }

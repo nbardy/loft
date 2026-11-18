@@ -20,16 +20,23 @@
 //   Fn      graph [0, name, ret ty, n params, binder node...]  roots [body]
 //           raw   [1, name, ret ty, text sym, n deps, dep Fn ordinal...]
 //   Loop    [n state, has stop, binder node per state component, index binder]  roots [count, init..., next..., stop?]
-//   Kernel  table [0, name, lanes, entries, role]  rows [1, label, offset in `rows`, length]
+//   Kernel  [fill, ...] by `Fill` (a table's head is name, lanes, entries, role):
+//           map        [0, head, n runs, (count, index binder) per run]          roots [lanes of run 0, of run 1, ...]
+//           rows       [1, label, offset in `rows`, length]                       roots []
+//           scan       [2, head, first, steps, n, state binder per n, index binder]  roots [init..., next..., lanes...]
+//           data       [3, head, offset in `rows`] (entries * lanes * 4 floats)  roots []
+//           recurrence [4, head, recurrence sym]: stepped by its recurrence, which the wire does not carry yet
 //   Param   [name, def lit, min lit, max lit]        Input  [name, ty, first def lit]
 
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
-const WIRE = 1;
+const WIRE = 2;
 
 export enum Program { Scene, Solve, Evaluate, Check }
 export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }
+/** How a Kernel decl fills its resource: the first word of its layout. */
+export enum Fill { Map, Rows, Scan, Data, Recurrence }
 export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec } // then PRIMS from PRIM0
 export const BOUND = 1, FREE = 0;
 export const TYS = ["f32", "vec2", "vec3", "vec4", "bool"] as const satisfies readonly Ty[];

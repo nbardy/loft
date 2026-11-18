@@ -3,7 +3,7 @@
 //! bytes; every Identity field moves the hash.
 use loft_ir::bundle::*;
 use loft_ir::error::{Error, Fault, Internal, SceneFault, Span};
-use loft_ir::graph::{Op, Prim, Program, Site, Ty};
+use loft_ir::graph::{self, Fill, Op, Prim, Program, Site, Ty};
 use loft_ir::identity::{self, Backend, Device, FrameKey, Identity, Precision};
 use loft_ir::wire::{self, BOUND, MAGIC, PRIM0, WIRE};
 
@@ -112,6 +112,8 @@ struct Ids {
     fn_decl: usize,
     loop_decl: usize,
     raw_decl: usize,
+    map_decl: usize,
+    scan_decl: usize,
 }
 
 /// One job using every op and every pinned decl layout.
@@ -143,12 +145,25 @@ fn sample() -> (Job, Ids) {
     let stop = j.node(prim(Prim::Gt) | BOOL, &[next, two], 0);
     let loop_decl = j.decl(1, &[1, 1, s, k], &[two, one, next, stop]);
     let looped = j.node(7 | F32, &[], 0);
-    let tab = j.sym("tab");
-    j.decl(2, &[0, tab, 3, 64, 1], &[]);
+    // Kernel 0: a map table, one run of 64 rows, each lane the row index splatted.
+    let (tab, ki) = (j.sym("tab"), j.sym("K0r0i"));
+    let ri = j.node(BIND | F32, &[], ki);
+    let lane = j.node(11 | V4, &[ri], 0);
+    let map_decl = j.decl(2, &[0, tab, 3, 64, 1, 1, 64, ri], &[lane, lane, lane]);
     let fetch = j.node(6 | V4 | 2 << 16, &[call], 0);
     let curve = j.sym("curve");
     j.rows.extend([1.5, 2.0]);
     j.decl(2, &[1, curve, 0, 2], &[]);
+    // Kernels 2..=4: a scan (a counter from 1), supplied numbers and a recurrence's table.
+    let (scan, ss, si) = (j.sym("scan"), j.sym("K2s0"), j.sym("K2i"));
+    let (sb, sk) = (j.node(BIND | F32, &[], ss), j.node(BIND | F32, &[], si));
+    let (sn, sl) = (j.node(prim(Prim::Add) | F32, &[sb, sk], 0), j.node(11 | V4, &[sb], 0));
+    let scan_decl = j.decl(2, &[2, scan, 1, 8, 2, 0, 8, 1, sb, sk], &[one, sn, sl]);
+    let data = j.sym("data");
+    j.rows.extend([0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+    j.decl(2, &[3, data, 1, 2, 2, 2], &[]);
+    let (kept, flock) = (j.sym("kept"), j.sym("flock"));
+    j.decl(2, &[4, kept, 2, 4, 2, flock], &[]);
     let row = j.node(6 | V4, &[looped], 1);
     let sw = j.node(10 | V2, &[fetch], 2 | 2 << 8); // z then x
     let v = j.node(11 | V3, &[sw, looped], 0);
@@ -180,6 +195,8 @@ fn sample() -> (Job, Ids) {
         fn_decl,
         loop_decl,
         raw_decl,
+        map_decl,
+        scan_decl,
     };
     (j, ids)
 }
@@ -212,6 +229,19 @@ fn sample_decodes() {
     assert_eq!((g.fns.len(), g.raws.len(), &*g.raws[1].deps), (1, 2, &[0][..]));
     assert_eq!(g.sym(g.raws[0].name), "base");
     assert_eq!(&*g.roots, &[id.last as u32]);
+    // Each fill layout decodes into its variant.
+    let fills: Vec<&Fill> = g
+        .kernels
+        .iter()
+        .filter_map(|k| match k {
+            graph::Kernel::Table { fill, .. } => Some(fill),
+            graph::Kernel::Rows { .. } => None,
+        })
+        .collect();
+    assert!(matches!(fills[0], Fill::Map(runs) if runs.len() == 1 && runs[0].count == 64 && runs[0].lanes.len() == 3));
+    assert!(matches!(fills[1], Fill::Scan(s) if s.first == 0 && s.steps == 8 && s.state.len() == 1));
+    assert!(matches!(fills[2], Fill::Data { at: 2 }));
+    assert!(matches!(fills[3], Fill::Recurrence { .. }));
 }
 
 #[test]
@@ -219,7 +249,7 @@ fn faults_are_named() {
     let (base, id) = sample();
     type Edit = Box<dyn Fn(&mut Job)>;
     let (sq, call, looped, fetch, sw, one) = (id.sq, id.call, id.looped, id.fetch, id.sw, id.one);
-    let (fd, ld, rd) = (id.fn_decl, id.loop_decl, id.raw_decl);
+    let (fd, ld, rd, md, sd) = (id.fn_decl, id.loop_decl, id.raw_decl, id.map_decl, id.scan_decl);
     let cases: Vec<(Edit, Span, Fault)> = vec![
         (Box::new(move |j| j.nodes[sq][1] = 99), Span::Nodes, Fault::Ref { found: 99 }),
         (Box::new(|j| j.args[0] = 50), Span::Args, Fault::Ref { found: 50 }),
@@ -228,11 +258,15 @@ fn faults_are_named() {
         (Box::new(move |j| j.nodes[one][3] = 1000), Span::Nodes, Fault::Lit),
         (Box::new(move |j| j.nodes[one][2] = 3), Span::Nodes, Fault::Lit),
         (Box::new(|j| j.lits[0] = f64::NAN), Span::Lits, Fault::Lit),
-        (Box::new(move |j| j.decls[fd].0 = 3), Span::Decls, Fault::Tag { found: 3 }),
+        (Box::new(move |j| j.decls[fd].0 = 11), Span::Decls, Fault::Tag { found: 11 }),
         (Box::new(move |j| j.decls[ld].1[1] = 2), Span::Decls, Fault::Layout),
         (Box::new(move |j| j.decls[ld].1[2] = one as u32), Span::Decls, Fault::Layout),
         (Box::new(move |j| j.decls[rd].1[5] = 2), Span::Decls, Fault::Ref { found: 2 }),
         (Box::new(move |j| j.decls[rd].1[5] = 0), Span::Decls, Fault::Tag { found: 0 }),
+        // A map run past the table's entries, a scan lane that is not a vec4, a fill kind that does not exist.
+        (Box::new(move |j| j.decls[md].1[6] = 65), Span::Decls, Fault::Layout),
+        (Box::new(move |j| j.decls[sd].2[2] = one as u32), Span::Decls, Fault::Layout),
+        (Box::new(move |j| j.decls[sd].1[0] = 5), Span::Decls, Fault::Layout),
         (Box::new(|j| j.node_sites.push(0)), Span::NodeSites, Fault::Length),
         (Box::new(|j| j.sites[0][0] = 70), Span::Sites, Fault::Sym { found: 70 }),
         (Box::new(move |j| j.nodes[call][3] = 1), Span::Nodes, Fault::Tag { found: 1 }),
@@ -298,6 +332,29 @@ fn print_known_answer() {
     let g = wire::decode(&j.bytes(0)).unwrap().graph;
     let want = "lit f32 3ff0000000000000\ntime\nbind f32 0 s0\nbind f32 0 i\nadd f32 #2 #3\n\
                 loop #0 [#1] -> [#4] until -\niter f32 0 #5\nmul f32 #6 #6\nroots #7 #1";
+    assert_eq!(loft_ir::print::print(&g).unwrap(), want);
+}
+
+/// The kernel lines of the print: a map run and a scan, walked after the roots over `fill` binders.
+#[test]
+fn print_fills_known_answer() {
+    let mut j = Job::default();
+    let one = j.lit(F32, &[1.0]);
+    let (tab, ki) = (j.sym("tab"), j.sym("K0r0i"));
+    let ri = j.node(BIND | F32, &[], ki);
+    let lane = j.node(11 | V4, &[ri], 0);
+    j.decl(2, &[0, tab, 1, 4, 1, 1, 4, ri], &[lane]);
+    let (scan, ss, si) = (j.sym("scan"), j.sym("K1s0"), j.sym("K1i"));
+    let (sb, sk) = (j.node(BIND | F32, &[], ss), j.node(BIND | F32, &[], si));
+    let (sn, sl) = (j.node(prim(Prim::Add) | F32, &[sb, sk], 0), j.node(11 | V4, &[sb], 0));
+    j.decl(2, &[2, scan, 1, 2, 2, 0, 2, 1, sb, sk], &[one, sn, sl]);
+    let f0 = j.node(6 | V4, &[one], 0);
+    let f1 = j.node(6 | V4, &[one], 1);
+    j.roots.extend([f0, f1]);
+    let g = wire::decode(&j.bytes(0)).unwrap().graph;
+    let want = "lit f32 3ff0000000000000\nfetch table:tab:1:4:data 0 #0\nfetch table:scan:1:2:static 0 #0\n\
+                fill f32 i\nvec vec4 #3\nfill f32 s0\nadd f32 #5 #3\nvec vec4 #5\nroots #1 #2\n\
+                kernel table:tab:1:4:data map 4 [#4]\nkernel table:scan:1:2:static scan 0 2 [#0] -> [#6] [#7]";
     assert_eq!(loft_ir::print::print(&g).unwrap(), want);
 }
 

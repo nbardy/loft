@@ -4,7 +4,7 @@
   let r = ray_at(in.pos.xy);
   let b = proxy(in.id);
   var s = box_span(r.o, r.d, b[0], b[1]);
-  s.y = min(s.y, dot(world_at(in.pos.xy, textureLoad(scene_depth, vec2<i32>(in.pos.xy), 0)) - r.o, r.d));
+  s.y = min(s.y, dot(world_at(in.pos.xy, textureLoad(loft_depth, vec2<i32>(in.pos.xy), 0)) - r.o, r.d));
   if (s.x >= s.y) { discard; }
   return scatter(r, s);
 }
