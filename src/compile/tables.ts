@@ -27,7 +27,7 @@
 import { Baked, POSE_WORKGROUP, type CpuUpload, type DynamicBuffer, type FrameState, type PoseStage, type Recurrence, type StaticBuffer, type TableFillKind, type TableInfo } from "../artefact.ts";
 import {
   children, emitWgsl, fetch, fold, leaves, listOf, replace, splitOn, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy,
-  type ProgramTable, type TableFill, type TableFrame, type TablePrep, type TableProgram, type TableSource, type V,
+  type ProgramTable, type TableFill, type TableFrame, type TableProgram, type TableSource, type V,
 } from "../expr.ts";
 import { shadingTables } from "../precision.ts";
 import { recurTable, type RecurState } from "../map/recur.ts";
@@ -178,9 +178,9 @@ const STATIC: TableFillKind = { kind: "cpu", why: "filled once, at build" };
 
 /**
  * Classify a declared table into its canonical form, once (the boundary: nothing after this asks what a table is).
- * `prep` is the compiler's, for hand-written fills; `c` registers a program's expressions.
+ * `c` registers a program's expressions.
  */
-function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: Program) => readonly Expr[], record: (g: readonly Program[]) => void): Canon {
+function classify(t: TableSource, c: TableCompiler, lower: (p: Program) => readonly Expr[], record: (g: readonly Program[]) => void): Canon {
   const r = recurTable(t);
   if (r !== undefined) {
     switch (r.part) {
@@ -248,11 +248,6 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: 
       record([scanProgram(t.name, canon)]);
       // Once per frame: folded here, lowered scene-wide when the layout begins.
       return withScanRoots(canon, fold(authored));
-    }
-    case "cpu": {
-      const reads: TableSource[] = [];
-      const fill = p.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
-      return { kind: "cpu", why: p.why, fill, reads, authored: reads };
     }
   }
 }
@@ -370,7 +365,7 @@ export class Tables {
   constructor(private readonly c: TableCompiler) {}
 
   /** Declare a table (once per object; later calls return the same accessor) and classify its program. */
-  declare(t: TableSource, prep: TablePrep): TableRef {
+  declare(t: TableSource): TableRef {
     const ref = { name: t.name, wgsl: accessor(t.name) };
     if (this.declared.has(t)) return ref;
     // A recurrence's previous state is read only inside its step, which binds it itself (src/compile/recur.ts).
@@ -386,7 +381,7 @@ export class Tables {
     const d: Declared = { kind: "declared", table: t, canon: undefined };
     this.declared.set(t, d);
     this.names.set(t.name, t);
-    d.canon = classify(t, prep, this.c, (p) => this.lowerItem(p), (g) => { this.programs.push(g); });
+    d.canon = classify(t, this.c, (p) => this.lowerItem(p), (g) => { this.programs.push(g); });
     return ref;
   }
 

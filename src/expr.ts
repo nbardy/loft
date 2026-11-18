@@ -69,9 +69,8 @@ export type LibFn = {
  * (as it discovers params and curve rows).
  *
  * How a table is filled is its `program` (docs/gpu_native.md, phase 1): a `map` or a `scan` written in expressions,
- * from which the compiler derives both the GPU compute stage that fills it each frame and the CPU fill tools use; or
- * `cpu`, a hand-written fill, which is the named, counted state of a table not yet ported. A table of supplied numbers
- * carries them (`data`), and a recurrence's tables are its own.
+ * from which the compiler derives both the GPU compute stage that fills it each frame and the CPU fill tools use. A
+ * table of supplied numbers carries them (`data`), and a recurrence's tables are its own.
  */
 export type TableSource = ProgramTable | DataTable | RecurrenceTable;
 type TableShape = {
@@ -109,7 +108,6 @@ export type ScanStep = { readonly next: readonly Expr<NumTy>[]; readonly lanes: 
  * scan  entries `first .. first + steps - 1` in order, carrying a small state from one to the next (frames transported
  *       along a spine, an arc length). `step(state, i)` is called once, with fresh variables, as `iterate`'s is. On the
  *       GPU one invocation loops. Entries outside the range are never written (they stay zero).
- * cpu   a hand-written fill, with the reason it is not (yet) a map or a scan. Filled on the CPU and uploaded.
  */
 export type TableProgram =
   | { readonly kind: "map"; readonly runs: readonly MapRun[] }
@@ -119,8 +117,7 @@ export type TableProgram =
     readonly steps: number;
     readonly init: readonly Expr<NumTy>[];
     readonly step: (state: readonly Expr<NumTy>[], i: Expr<"f32">) => ScanStep;
-  }
-  | { readonly kind: "cpu"; readonly why: string; prepare(p: TablePrep): TableFill };
+  };
 
 /** A map whose every entry is the same closed form in the entry index. */
 export const mapOf = (entries: number, lanes: MapRun["lanes"]): TableProgram => ({ kind: "map", runs: [{ count: entries, lanes }] });
@@ -132,14 +129,6 @@ export type TableFill = (frame: TableFrame, out: Float32Array) => void;
 export interface TableFrame {
   readonly env: Env;
   table(t: TableSource): Float32Array;
-}
-/** What a table may ask of the compiler while it is prepared. */
-export interface TablePrep {
-  /**
-   * Compile expressions for the CPU, reading curves, inputs, params and tables from a frame; free variables are bound
-   * per call. Compiled once, here; called every frame.
-   */
-  compile(roots: readonly Expr[]): (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
 }
 
 const tableIds = new WeakMap<TableSource, number>();

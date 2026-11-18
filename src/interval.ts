@@ -285,7 +285,6 @@ function entryOf(t: TableSource, k: number, where: string, work: Work): readonly
   if (hit !== undefined) return hit;
   const p = e.program;
   switch (p.kind) {
-    case "cpu": throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: p.why });
     case "map": {
       let start = 0;
       for (const r of p.runs) {
