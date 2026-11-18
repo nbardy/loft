@@ -23,6 +23,7 @@
     "@webgpu/types": "^0.1.74",
     "bun-webgpu": "0.1.7",
     "playwright": "^1.65.0",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "typescript-ast": "npm:typescript@5.9.3"
   }
 }
