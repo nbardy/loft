@@ -92,10 +92,8 @@ pub fn read_dir(dir: &Path) -> Result<Artefact, Error> {
         .iter()
         .map(|name| {
             let p = dir.join("wgsl").join(format!("{name}.wgsl"));
-            String::from_utf8(read(p.clone())?).map_err(|e| Error::Io {
-                path: p,
-                source: std::io::Error::new(std::io::ErrorKind::InvalidData, e),
-            })
+            String::from_utf8(read(p.clone())?)
+                .map_err(|e| Error::Io { path: p, source: std::io::Error::new(std::io::ErrorKind::InvalidData, e) })
         })
         .collect::<Result<_, _>>()?;
     let mut blobs = HashMap::new();

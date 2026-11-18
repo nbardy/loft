@@ -123,8 +123,16 @@ pub struct ParamSlot {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Camera {
     #[serde(rename_all = "camelCase")]
-    Perspective { eye: [f64; 3], target: [f64; 3], fov_y: f64 },
-    Orthographic { eye: [f64; 3], target: [f64; 3], height: f64 },
+    Perspective {
+        eye: [f64; 3],
+        target: [f64; 3],
+        fov_y: f64,
+    },
+    Orthographic {
+        eye: [f64; 3],
+        target: [f64; 3],
+        height: f64,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -169,20 +177,48 @@ pub struct Format(wgpu::TextureFormat);
 const FORMATS: &[(&str, wgpu::TextureFormat)] = {
     use wgpu::TextureFormat as F;
     &[
-        ("r8unorm", F::R8Unorm), ("r8snorm", F::R8Snorm), ("r8uint", F::R8Uint), ("r8sint", F::R8Sint),
-        ("r16uint", F::R16Uint), ("r16sint", F::R16Sint), ("r16float", F::R16Float),
-        ("rg8unorm", F::Rg8Unorm), ("rg8snorm", F::Rg8Snorm), ("rg8uint", F::Rg8Uint), ("rg8sint", F::Rg8Sint),
-        ("r32uint", F::R32Uint), ("r32sint", F::R32Sint), ("r32float", F::R32Float),
-        ("rg16uint", F::Rg16Uint), ("rg16sint", F::Rg16Sint), ("rg16float", F::Rg16Float),
-        ("rgba8unorm", F::Rgba8Unorm), ("rgba8unorm-srgb", F::Rgba8UnormSrgb), ("rgba8snorm", F::Rgba8Snorm),
-        ("rgba8uint", F::Rgba8Uint), ("rgba8sint", F::Rgba8Sint), ("bgra8unorm", F::Bgra8Unorm),
-        ("bgra8unorm-srgb", F::Bgra8UnormSrgb), ("rgb10a2uint", F::Rgb10a2Uint), ("rgb10a2unorm", F::Rgb10a2Unorm),
-        ("rg11b10ufloat", F::Rg11b10Ufloat), ("rgb9e5ufloat", F::Rgb9e5Ufloat),
-        ("rg32uint", F::Rg32Uint), ("rg32sint", F::Rg32Sint), ("rg32float", F::Rg32Float),
-        ("rgba16uint", F::Rgba16Uint), ("rgba16sint", F::Rgba16Sint), ("rgba16float", F::Rgba16Float),
-        ("rgba32uint", F::Rgba32Uint), ("rgba32sint", F::Rgba32Sint), ("rgba32float", F::Rgba32Float),
-        ("stencil8", F::Stencil8), ("depth16unorm", F::Depth16Unorm), ("depth24plus", F::Depth24Plus),
-        ("depth24plus-stencil8", F::Depth24PlusStencil8), ("depth32float", F::Depth32Float),
+        ("r8unorm", F::R8Unorm),
+        ("r8snorm", F::R8Snorm),
+        ("r8uint", F::R8Uint),
+        ("r8sint", F::R8Sint),
+        ("r16uint", F::R16Uint),
+        ("r16sint", F::R16Sint),
+        ("r16float", F::R16Float),
+        ("rg8unorm", F::Rg8Unorm),
+        ("rg8snorm", F::Rg8Snorm),
+        ("rg8uint", F::Rg8Uint),
+        ("rg8sint", F::Rg8Sint),
+        ("r32uint", F::R32Uint),
+        ("r32sint", F::R32Sint),
+        ("r32float", F::R32Float),
+        ("rg16uint", F::Rg16Uint),
+        ("rg16sint", F::Rg16Sint),
+        ("rg16float", F::Rg16Float),
+        ("rgba8unorm", F::Rgba8Unorm),
+        ("rgba8unorm-srgb", F::Rgba8UnormSrgb),
+        ("rgba8snorm", F::Rgba8Snorm),
+        ("rgba8uint", F::Rgba8Uint),
+        ("rgba8sint", F::Rgba8Sint),
+        ("bgra8unorm", F::Bgra8Unorm),
+        ("bgra8unorm-srgb", F::Bgra8UnormSrgb),
+        ("rgb10a2uint", F::Rgb10a2Uint),
+        ("rgb10a2unorm", F::Rgb10a2Unorm),
+        ("rg11b10ufloat", F::Rg11b10Ufloat),
+        ("rgb9e5ufloat", F::Rgb9e5Ufloat),
+        ("rg32uint", F::Rg32Uint),
+        ("rg32sint", F::Rg32Sint),
+        ("rg32float", F::Rg32Float),
+        ("rgba16uint", F::Rgba16Uint),
+        ("rgba16sint", F::Rgba16Sint),
+        ("rgba16float", F::Rgba16Float),
+        ("rgba32uint", F::Rgba32Uint),
+        ("rgba32sint", F::Rgba32Sint),
+        ("rgba32float", F::Rgba32Float),
+        ("stencil8", F::Stencil8),
+        ("depth16unorm", F::Depth16Unorm),
+        ("depth24plus", F::Depth24Plus),
+        ("depth24plus-stencil8", F::Depth24PlusStencil8),
+        ("depth32float", F::Depth32Float),
     ]
 };
 
@@ -190,7 +226,9 @@ impl<'de> Deserialize<'de> for Format {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let name = String::deserialize(d)?;
         FORMATS.iter().find(|(n, _)| *n == name).map(|&(_, f)| Format(f)).ok_or_else(|| {
-            serde::de::Error::custom(format!("unknown texture format `{name}` (a loader without features reads the core uncompressed formats)"))
+            serde::de::Error::custom(format!(
+                "unknown texture format `{name}` (a loader without features reads the core uncompressed formats)"
+            ))
         })
     }
 }
@@ -245,10 +283,9 @@ impl TextureSize {
     pub fn pixels(s: Option<TextureSize>, view: (u32, u32)) -> (u32, u32) {
         match s {
             None => view,
-            Some(TextureSize::View { scale }) => (
-                ((view.0 as f64 * scale).round() as u32).max(1),
-                ((view.1 as f64 * scale).round() as u32).max(1),
-            ),
+            Some(TextureSize::View { scale }) => {
+                (((view.0 as f64 * scale).round() as u32).max(1), ((view.1 as f64 * scale).round() as u32).max(1))
+            }
             Some(TextureSize::Fixed { width, height }) => (width, height),
         }
     }
@@ -582,6 +619,7 @@ pub enum StepCopy {
 }
 
 #[derive(Debug, Deserialize)]
+#[expect(clippy::large_enum_variant, reason = "one per compute in a parsed manifest; size does not matter")]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ComputeRun {
     Once(RawDispatch),
@@ -645,7 +683,11 @@ pub struct DepthAttachment {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum DrawCommand {
-    Fixed { pipeline: Id, vertices: u32, instances: u32 },
+    Fixed {
+        pipeline: Id,
+        vertices: u32,
+        instances: u32,
+    },
     /// `instance_base` (version 3, absent 0): added to every run's first instance; it picks a shared shader's row.
     Planned {
         pipeline: Id,
@@ -861,7 +903,9 @@ impl LayoutResource {
                 multisampled,
             },
             LayoutResource::StorageTexture { access, format, view_dimension } => wgpu::BindingType::StorageTexture {
-                access: match access { StorageAccess::WriteOnly => wgpu::StorageTextureAccess::WriteOnly },
+                access: match access {
+                    StorageAccess::WriteOnly => wgpu::StorageTextureAccess::WriteOnly,
+                },
                 format: format.wgpu(),
                 view_dimension: view_dimension.wgpu(),
             },

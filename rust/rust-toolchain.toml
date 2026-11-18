@@ -1,0 +1,7 @@
+# Same pin as Keel (keel/rust-toolchain.toml). tools/lib/cache-env.sh puts the rustup proxy first on PATH: 2026-11-01
+# Homebrew's cargo came first and its newer Clippy failed crates the pinned toolchain passes.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]

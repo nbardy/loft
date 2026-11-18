@@ -5,7 +5,7 @@
 //   bun tools/rust_compare.ts [--size 1280x800] [--only grab,thundermaw] [--keep]
 //   bun tools/rust_compare.ts --time [--rounds 3] [--only ...]
 // Folders: out/rust/files/<scene> (`bun src/cli/main.ts build <scene> --out out/rust/files/<scene>`; the stilt crab with
-// `--variant stilt --out out/rust/files/reefback_stilt`). The binary is rust/loft-loader/target/release/loft-view
+// `--variant stilt --out out/rust/files/reefback_stilt`). The binary is rust/target/release/loft-view
 // (`cargo build --release` there).
 //
 // Pictures: per frame, the pixels whose largest channel differs by more than 8/255, and what they are: how many sit
@@ -33,9 +33,9 @@ const [width, height] = (flag("--size") ?? "1280x800").split("x").map(Number) as
 const only = flag("--only")?.split(",");
 const keep = args.includes("--keep");
 const OUT = "out/rust/compare";
-const BIN = "rust/loft-loader/target/release/loft-view";
+const BIN = "rust/target/release/loft-view";
 mkdirSync(OUT, { recursive: true });
-if (!existsSync(BIN)) throw new Error(`${BIN} missing: cargo build --release in rust/loft-loader`);
+if (!existsSync(BIN)) throw new Error(`${BIN} missing: tools/dev.sh build loft-loader --release`);
 
 const device = await headlessDevice();
 // The proofs' scenes, and the crab's tallest variant (most draws), drawn like the crab.

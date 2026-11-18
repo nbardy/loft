@@ -21,7 +21,10 @@ pub use cache::PipelineCache;
 pub use manifest::Camera;
 pub use read::{read_dir, Artefact, Error};
 
-use manifest::{BoundsRead, ComputeRun, Dispatch, RawDispatch, StepCopy, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
+use manifest::{
+    BoundsRead, ComputeRun, Dispatch, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, RawDispatch, StepCopy,
+    Target,
+};
 use plan::{Memory, Run};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -190,7 +193,8 @@ impl Artefact {
     fn warm_on(self, device: &wgpu::Device, cache: Option<&wgpu::PipelineCache>) -> Result<WarmedArtefact, Error> {
         let Artefact { mut manifest, chunks, blobs } = self;
         // Precision rewrites module chunks and buffer initializers, so it is selected before any pipeline compiles.
-        let precision = select_precision(&mut manifest, &blobs, device.features().contains(wgpu::Features::SHADER_F16))?;
+        let precision =
+            select_precision(&mut manifest, &blobs, device.features().contains(wgpu::Features::SHADER_F16))?;
         let m = &manifest;
         let ops = check(m)?;
         for d in &m.textures {
@@ -200,7 +204,10 @@ impl Artefact {
                 let bytes = u64::from(row) * u64::from(e.height) * u64::from(e.depth_or_array_layers);
                 let got = blobs.get(name).map(Vec::len);
                 if got.map(|n| n as u64) != Some(bytes) {
-                    return Err(Error::Invalid(format!("texture \"{}\" needs a {bytes}-byte blob \"{name}\", got {got:?}; rebuild with loft build", d.label)));
+                    return Err(Error::Invalid(format!(
+                        "texture \"{}\" needs a {bytes}-byte blob \"{name}\", got {got:?}; rebuild with loft build",
+                        d.label
+                    )));
                 }
             }
         }
@@ -218,16 +225,24 @@ impl Artefact {
                         count: None,
                     })
                     .collect();
-                scoped(device, || format!("bind group layout \"{}\"", l.label), || {
-                    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(&l.label), entries: &entries })
-                })
+                scoped(
+                    device,
+                    || format!("bind group layout \"{}\"", l.label),
+                    || {
+                        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                            label: Some(&l.label),
+                            entries: &entries,
+                        })
+                    },
+                )
             })
             .collect::<Result<_, _>>()?;
         let pipeline_layouts: Vec<wgpu::PipelineLayout> = m
             .pipeline_layouts
             .iter()
             .map(|p| {
-                let groups: Vec<Option<&wgpu::BindGroupLayout>> = p.bind_group_layouts.iter().map(|&i| Some(&layouts[i])).collect();
+                let groups: Vec<Option<&wgpu::BindGroupLayout>> =
+                    p.bind_group_layouts.iter().map(|&i| Some(&layouts[i])).collect();
                 device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some(&p.label),
                     bind_group_layouts: &groups,
@@ -240,18 +255,25 @@ impl Artefact {
             .iter()
             .map(|d| {
                 let code: String = d.chunks.iter().map(|&c| chunks[c].as_str()).collect();
-                scoped(device, || format!("{} failed to compile", d.label), || {
-                    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(&d.label),
-                        source: wgpu::ShaderSource::Wgsl(code.into()),
-                    })
-                })
+                scoped(
+                    device,
+                    || format!("{} failed to compile", d.label),
+                    || {
+                        device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                            label: Some(&d.label),
+                            source: wgpu::ShaderSource::Wgsl(code.into()),
+                        })
+                    },
+                )
             })
             .collect::<Result<_, _>>()?;
         // Pipelines compile in parallel (Naga per stage, then Metal), as Dawn's createRenderPipelineAsync does; each
         // worker thread has its own error scope (wgpu's scopes are thread-local with its `std` feature).
         let compute = par_map(&m.compute_pipelines, |p| {
-                scoped(device, || format!("pose stage \"{}\": pipeline creation failed", p.label), || {
+            scoped(
+                device,
+                || format!("pose stage \"{}\": pipeline creation failed", p.label),
+                || {
                     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                         label: Some(&p.label),
                         layout: Some(&pipeline_layouts[p.layout]),
@@ -260,40 +282,50 @@ impl Artefact {
                         compilation_options: Default::default(),
                         cache,
                     })
-                })
-            })
-            .into_iter()
-            .collect::<Result<_, _>>()?;
+                },
+            )
+        })
+        .into_iter()
+        .collect::<Result<_, _>>()?;
         let render = par_map(&m.render_pipelines, |p| {
-                let vc = constants(&p.vertex.constants);
-                let fc = p.fragment.as_ref().map(|f| constants(&f.stage.constants)).unwrap_or_default();
-                let targets: Vec<Option<wgpu::ColorTargetState>> = p
-                    .fragment
-                    .iter()
-                    .flat_map(|f| &f.targets)
-                    .map(|t| {
-                        Some(wgpu::ColorTargetState {
-                            format: t.format.wgpu(),
-                            blend: t.blend.map(|b| b.wgpu()),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })
+            let vc = constants(&p.vertex.constants);
+            let fc = p.fragment.as_ref().map(|f| constants(&f.stage.constants)).unwrap_or_default();
+            let targets: Vec<Option<wgpu::ColorTargetState>> = p
+                .fragment
+                .iter()
+                .flat_map(|f| &f.targets)
+                .map(|t| {
+                    Some(wgpu::ColorTargetState {
+                        format: t.format.wgpu(),
+                        blend: t.blend.map(|b| b.wgpu()),
+                        write_mask: wgpu::ColorWrites::ALL,
                     })
-                    .collect();
-                scoped(device, || format!("{}: pipeline creation failed", p.label), || {
+                })
+                .collect();
+            scoped(
+                device,
+                || format!("{}: pipeline creation failed", p.label),
+                || {
                     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                         label: Some(&p.label),
                         layout: Some(&pipeline_layouts[p.layout]),
                         vertex: wgpu::VertexState {
                             module: &modules[p.vertex.module],
                             entry_point: Some(&p.vertex.entry_point),
-                            compilation_options: wgpu::PipelineCompilationOptions { constants: &vc, ..Default::default() },
+                            compilation_options: wgpu::PipelineCompilationOptions {
+                                constants: &vc,
+                                ..Default::default()
+                            },
                             buffers: &[],
                         },
                         // No fragment stage: a depth pass's pipeline draws depth from its triangles alone (version 2).
                         fragment: p.fragment.as_ref().map(|f| wgpu::FragmentState {
                             module: &modules[f.stage.module],
                             entry_point: Some(&f.stage.entry_point),
-                            compilation_options: wgpu::PipelineCompilationOptions { constants: &fc, ..Default::default() },
+                            compilation_options: wgpu::PipelineCompilationOptions {
+                                constants: &fc,
+                                ..Default::default()
+                            },
                             targets: &targets,
                         }),
                         primitive: p.primitive.wgpu(),
@@ -308,10 +340,11 @@ impl Artefact {
                         multiview_mask: None,
                         cache,
                     })
-                })
-            })
-            .into_iter()
-            .collect::<Result<_, _>>()?;
+                },
+            )
+        })
+        .into_iter()
+        .collect::<Result<_, _>>()?;
         Ok(WarmedArtefact { device: device.clone(), precision, manifest, blobs, layouts, compute, render, ops })
     }
 }
@@ -370,22 +403,37 @@ impl WarmedArtefact {
                 view_formats: &[],
             })
             .collect();
-        let fixed_textures = m.textures.iter().zip(&textures).map(|(t, d)| {
-            let Some(e) = t.extent else { return Ok(None) };
-            let texture = scoped(device, || format!("compute texture \"{}\"", t.label), || {
-                device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), ..d.clone() })
-            })?;
-            if let Some(name) = &t.init {
-                let e = e.extent();
-                queue.write_texture(texture.as_image_copy(), &blobs[name], wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(e.width * t.format.compute_texel_bytes().expect("compute format checked")),
-                    rows_per_image: Some(e.height),
-                }, e);
-            }
-            Ok::<_, Error>(Some(texture))
-        }).collect::<Result<Vec<_>, _>>()?;
-        let fixed_views = fixed_textures.iter().map(|t| t.as_ref().map(|t| t.create_view(&Default::default()))).collect();
+        let fixed_textures = m
+            .textures
+            .iter()
+            .zip(&textures)
+            .map(|(t, d)| {
+                let Some(e) = t.extent else { return Ok(None) };
+                let texture = scoped(
+                    device,
+                    || format!("compute texture \"{}\"", t.label),
+                    || device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), ..d.clone() }),
+                )?;
+                if let Some(name) = &t.init {
+                    let e = e.extent();
+                    queue.write_texture(
+                        texture.as_image_copy(),
+                        &blobs[name],
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(
+                                e.width * t.format.compute_texel_bytes().expect("compute format checked"),
+                            ),
+                            rows_per_image: Some(e.height),
+                        },
+                        e,
+                    );
+                }
+                Ok::<_, Error>(Some(texture))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let fixed_views =
+            fixed_textures.iter().map(|t| t.as_ref().map(|t| t.create_view(&Default::default()))).collect();
         let bounds_at = match &m.frame.bounds {
             BoundsRead::None => HashMap::new(),
             BoundsRead::Read { grids, .. } => grids.iter().map(|g| (g.slot, g.at)).collect(),
@@ -426,14 +474,22 @@ impl WarmedArtefact {
         }
         loft.fixed_groups = (0..loft.m.bind_groups.len()).map(|k| loft.fixed_group(device, k)).collect();
         if !loft.m.load.is_empty() {
-            scoped(device, || "loft compute at load".into(), || {
-                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft compute at load") });
-                for job in &loft.m.load {
-                    loft.encode_load(&mut encoder, job);
-                }
-                queue.submit([encoder.finish()])
-            })?;
-            device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Error::Gpu { what: "loft compute at load".into(), message: e.to_string() })?;
+            scoped(
+                device,
+                || "loft compute at load".into(),
+                || {
+                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("loft compute at load"),
+                    });
+                    for job in &loft.m.load {
+                        loft.encode_load(&mut encoder, job);
+                    }
+                    queue.submit([encoder.finish()])
+                },
+            )?;
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| Error::Gpu { what: "loft compute at load".into(), message: e.to_string() })?;
         }
         Ok(loft)
     }
@@ -456,12 +512,18 @@ impl Loft {
                 binding: e.binding,
                 resource: match e.resource {
                     GroupResource::Buffer(b) => self.buffers[b].as_entire_binding(),
-                    GroupResource::Texture(t) => wgpu::BindingResource::TextureView(self.fixed_views[t].as_ref().unwrap_or_else(|| &views[t])),
+                    GroupResource::Texture(t) => {
+                        wgpu::BindingResource::TextureView(self.fixed_views[t].as_ref().unwrap_or_else(|| &views[t]))
+                    }
                     GroupResource::Sampler(s) => wgpu::BindingResource::Sampler(&self.samplers[s]),
                 },
             })
             .collect();
-        device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some(&g.label), layout: &self.layouts[g.layout], entries: &entries })
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&g.label),
+            layout: &self.layouts[g.layout],
+            entries: &entries,
+        })
     }
 
     /// FORMAT: whether a group is made at load or per view size is inferred from its entries (proposal in the README).
@@ -485,10 +547,14 @@ impl Loft {
             .zip(&self.m.textures)
             .enumerate()
             .map(|(i, (d, t))| {
-                if let Some(view) = &self.fixed_views[i] { return view.clone(); }
+                if let Some(view) = &self.fixed_views[i] {
+                    return view.clone();
+                }
                 let (width, height) = manifest::TextureSize::pixels(t.size, size);
                 let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
-                device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), size: extent, ..d.clone() }).create_view(&Default::default())
+                device
+                    .create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), size: extent, ..d.clone() })
+                    .create_view(&Default::default())
             })
             .collect();
         let groups = (0..self.m.bind_groups.len())
@@ -529,9 +595,16 @@ impl Loft {
         if name == "time" {
             return Err(Error::TimeInput);
         }
-        let i = self.m.inputs.iter().find(|i| i.name == name).ok_or_else(|| Error::UnknownName { kind: "input", name: name.into() })?;
+        let i = self
+            .m
+            .inputs
+            .iter()
+            .find(|i| i.name == name)
+            .ok_or_else(|| Error::UnknownName { kind: "input", name: name.into() })?;
         if self.m.frame.replay.iter().any(|r| r.slot == i.slot) {
-            return Err(Error::Invalid(format!("view input \"{name}\": a replay's step number, which the loader sets from the time")));
+            return Err(Error::Invalid(format!(
+                "view input \"{name}\": a replay's step number, which the loader sets from the time"
+            )));
         }
         if value.len() != i.ty.floats() {
             return Err(Error::InputFloats { name: name.into(), want: i.ty.floats(), got: value.len() });
@@ -541,7 +614,12 @@ impl Loft {
     }
     /// A param by name. `min` and `max` are for editors: not clamped.
     pub fn set_param(&mut self, name: &str, value: f32) -> Result<(), Error> {
-        let p = self.m.params.iter().find(|p| p.name == name).ok_or_else(|| Error::UnknownName { kind: "param", name: name.into() })?;
+        let p = self
+            .m
+            .params
+            .iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| Error::UnknownName { kind: "param", name: name.into() })?;
         self.params[p.slot] = value;
         Ok(())
     }
@@ -574,8 +652,14 @@ impl Loft {
     /// submits `encoder`. Every pass of the format clears or overwrites `target` (see the README).
     #[allow(clippy::too_many_arguments)]
     pub fn encode_frame(
-        &mut self, device: &wgpu::Device, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView,
-        width: u32, height: u32, bounds: Bounds,
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+        bounds: Bounds,
     ) -> Result<FrameStats, Error> {
         if width == 0 || height == 0 {
             return Err(Error::Size(width, height));
@@ -592,7 +676,9 @@ impl Loft {
         }
         for w in &self.m.frame.writes {
             let (buffer, data) = match *w {
-                FrameWrite::Frame { buffer } => (buffer, bytes(&camera::frame_uniform(&mats, width, height, self.time))),
+                FrameWrite::Frame { buffer } => {
+                    (buffer, bytes(&camera::frame_uniform(&mats, width, height, self.time)))
+                }
                 FrameWrite::Inputs { buffer } => (buffer, bytes(&self.inputs)),
                 FrameWrite::Params { buffer } => (buffer, bytes(&self.params)),
             };
@@ -622,7 +708,8 @@ impl Loft {
                 beginning_of_pass_write_index: Some(0),
                 end_of_pass_write_index: Some(1),
             });
-            let mut pass = pose.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft pose"), timestamp_writes });
+            let mut pass =
+                pose.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft pose"), timestamp_writes });
             for cmd in author {
                 self.dispatch(&mut pass, &cmd.run);
             }
@@ -634,7 +721,13 @@ impl Loft {
         }
         if let (true, BoundsRead::Read { buffer, grids }) = (copy, &self.m.frame.bounds) {
             for g in grids {
-                pose.copy_buffer_to_buffer(&self.buffers[g.from], g.from_offset, &self.buffers[*buffer], g.at as u64 * 16, Some(g.instances as u64 * 16));
+                pose.copy_buffer_to_buffer(
+                    &self.buffers[g.from],
+                    g.from_offset,
+                    &self.buffers[*buffer],
+                    g.at as u64 * 16,
+                    Some(g.instances as u64 * 16),
+                );
             }
         }
         queue.submit([pose.finish()]);
@@ -651,7 +744,18 @@ impl Loft {
             None => plan::Bounds::None,
             Some(floats) => plan::Bounds::Read { floats, at: &self.bounds_at },
         };
-        plan::plan_frame(&self.m.plan, &mats, width, height, self.cell_pixels, self.construction, &read, &mut self.memory, &mut self.detail, &mut self.plan);
+        plan::plan_frame(
+            &self.m.plan,
+            &mats,
+            width,
+            height,
+            self.cell_pixels,
+            self.construction,
+            &read,
+            &mut self.memory,
+            &mut self.detail,
+            &mut self.plan,
+        );
         let detail = self.m.frame.detail.buffer;
         queue.write_buffer(&self.buffers[detail], 0, &bytes(&self.detail));
         // 6. Passes.
@@ -703,7 +807,8 @@ impl Loft {
 
     fn encode_compute(&self, encoder: &mut wgpu::CommandEncoder, cmd: &RawDispatch) {
         self.clear_compute(encoder, cmd);
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(&cmd.run.label), timestamp_writes: None });
+        let mut pass = encoder
+            .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(&cmd.run.label), timestamp_writes: None });
         self.dispatch(&mut pass, &cmd.run);
     }
 
@@ -712,15 +817,29 @@ impl Loft {
             ComputeRun::Once(run) => self.encode_compute(encoder, run),
             ComputeRun::Steps { start, odd, even, count, keep, history } => {
                 for n in 0..=*count {
-                    let run = if n == 0 { start } else if n % 2 == 0 { even } else { odd };
+                    let run = if n == 0 {
+                        start
+                    } else if n % 2 == 0 {
+                        even
+                    } else {
+                        odd
+                    };
                     self.encode_compute(encoder, run);
-                    if n % keep != 0 && n != *count { continue; }
+                    if n % keep != 0 && n != *count {
+                        continue;
+                    }
                     let at = u64::from(n.div_ceil(*keep));
                     for c in history {
                         match *c {
                             StepCopy::Buffer { a, b, to, bytes } => {
                                 let from = if n % 2 == 0 { a } else { b };
-                                encoder.copy_buffer_to_buffer(&self.buffers[from], 0, &self.buffers[to], at * bytes, Some(bytes));
+                                encoder.copy_buffer_to_buffer(
+                                    &self.buffers[from],
+                                    0,
+                                    &self.buffers[to],
+                                    at * bytes,
+                                    Some(bytes),
+                                );
                             }
                             StepCopy::Texture { a, b, to } => {
                                 let from = if n % 2 == 0 { a } else { b };
@@ -728,8 +847,11 @@ impl Loft {
                                 let dst = self.fixed_textures[to].as_ref().expect("fixed texture checked");
                                 let size = src.size();
                                 let mut copy = dst.as_image_copy();
-                                if src.dimension() == wgpu::TextureDimension::D2 { copy.origin.y = at as u32 * size.height; }
-                                else { copy.origin.z = at as u32 * size.depth_or_array_layers; }
+                                if src.dimension() == wgpu::TextureDimension::D2 {
+                                    copy.origin.y = at as u32 * size.height;
+                                } else {
+                                    copy.origin.z = at as u32 * size.depth_or_array_layers;
+                                }
                                 encoder.copy_texture_to_texture(src.as_image_copy(), copy, size);
                             }
                         }
@@ -751,9 +873,18 @@ impl Loft {
             None => Ok(waited),
             Some(Err(e)) => Err(Error::Map(e.to_string())),
             Some(Ok(())) => {
-                let BoundsRead::Read { buffer, .. } = &self.m.frame.bounds else { unreachable!("a read is only started for BoundsRead::Read") };
+                let BoundsRead::Read { buffer, .. } = &self.m.frame.bounds else {
+                    unreachable!("a read is only started for BoundsRead::Read")
+                };
                 let b = &self.buffers[*buffer];
-                let floats = b.get_mapped_range(..).map_err(|e| Error::Map(e.to_string()))?.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+                let floats = b
+                    .get_mapped_range(..)
+                    .map_err(|e| Error::Map(e.to_string()))?
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| f32::from_le_bytes(*c))
+                    .collect();
                 b.unmap();
                 self.last_bounds = Some(floats);
                 self.read = Read::Idle;
@@ -780,7 +911,10 @@ impl Loft {
                 resolve_target: c.resolve_target.map(view),
                 ops,
             });
-            let colors: &[Option<wgpu::RenderPassColorAttachment>] = match &color { Some(_) => std::slice::from_ref(&color), None => &[] };
+            let colors: &[Option<wgpu::RenderPassColorAttachment>] = match &color {
+                Some(_) => std::slice::from_ref(&color),
+                None => &[],
+            };
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&p.label),
                 color_attachments: colors,
@@ -819,17 +953,25 @@ impl Loft {
 }
 
 fn select_precision(
-    m: &mut Manifest, blobs: &std::collections::HashMap<String, Vec<u8>>, shader_f16: bool,
+    m: &mut Manifest,
+    blobs: &std::collections::HashMap<String, Vec<u8>>,
+    shader_f16: bool,
 ) -> Result<Precision, Error> {
-    let invalid = |reason: &str| Error::Invalid(format!("precision: {reason}. Fix: rebuild with loft build --precision mixed"));
+    let invalid =
+        |reason: &str| Error::Invalid(format!("precision: {reason}. Fix: rebuild with loft build --precision mixed"));
     let (modules, buffers) = match (m.version, m.precision.take()) {
         // Version 4 always carries the overlay; version 5 (author compute) may or may not.
         (1..=3 | 5, None) => return Ok(Precision::F32),
-        (4 | 5, Some(manifest::MixedPrecision::Mixed { fallback: manifest::Fallback::F32Fallback, modules, buffers })) => (modules, buffers),
+        (
+            4 | 5,
+            Some(manifest::MixedPrecision::Mixed { fallback: manifest::Fallback::F32Fallback, modules, buffers }),
+        ) => (modules, buffers),
         _ => return Err(invalid("expected the mixed variant and its f32 fallback in format 4 or 5")),
     };
     let id = |kind: &str, key: &str, limit: usize| {
-        key.parse::<usize>().ok().filter(|&i| i < limit && i.to_string() == key)
+        key.parse::<usize>()
+            .ok()
+            .filter(|&i| i < limit && i.to_string() == key)
             .ok_or_else(|| invalid(&format!("invalid mixed {kind} {key}")))
     };
     for (key, chunks) in modules {
@@ -845,7 +987,7 @@ fn select_precision(
         let i = id("buffer", &key, m.buffers.len())?;
         let original = &mut m.buffers[i];
         let length = blobs.get(&b.init).ok_or_else(|| invalid(&format!("missing mixed buffer {i} data")))?.len() as u64;
-        if b.size < 4 || b.size % 4 != 0 || b.size > original.size || length > b.size || length % 4 != 0 {
+        if b.size < 4 || b.size % 4 != 0 || b.size > original.size || length > b.size || !length.is_multiple_of(4) {
             return Err(invalid(&format!("invalid mixed buffer {i}")));
         }
         if shader_f16 {
@@ -859,7 +1001,11 @@ fn select_precision(
 /// Every reference in the manifest resolves, and every pass's operations are complete; so a frame indexes freely.
 fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     let id = |what: &str, kind: &'static str, id: usize, len: usize| {
-        if id < len { Ok(()) } else { Err(Error::BadId { what: what.into(), kind, id }) }
+        if id < len {
+            Ok(())
+        } else {
+            Err(Error::BadId { what: what.into(), kind, id })
+        }
     };
     for b in &m.bind_groups {
         id(&b.label, "bind group layout", b.layout, m.bind_group_layouts.len())?;
@@ -899,10 +1045,16 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
         id("frame write", "buffer", buffer, m.buffers.len())?;
     }
     if m.build.is_some() {
-        return Err(Error::Invalid("the GPU-less child left build jobs; run loft build on a GPU to finish the directory".into()));
+        return Err(Error::Invalid(
+            "the GPU-less child left build jobs; run loft build on a GPU to finish the directory".into(),
+        ));
     }
     let invalid = |label: &str, fix: &str| Error::Invalid(format!("{label}: {fix}; rebuild with loft build"));
-    if m.version < 5 && (!m.load.is_empty() || !m.frame.compute.is_empty() || m.textures.iter().any(|t| t.extent.is_some() || t.init.is_some())) {
+    if m.version < 5
+        && (!m.load.is_empty()
+            || !m.frame.compute.is_empty()
+            || m.textures.iter().any(|t| t.extent.is_some() || t.init.is_some()))
+    {
         return Err(invalid("compute", "author compute requires format version 5"));
     }
     if m.load.len() > 64 || m.frame.compute.len() > 64 {
@@ -912,12 +1064,17 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     let mut total_compute_textures = 0;
     for t in &m.textures {
         let Some(e) = t.extent else {
-            if t.init.is_some() { return Err(invalid(&t.label, "view-sized textures cannot have initial data")); }
+            if t.init.is_some() {
+                return Err(invalid(&t.label, "view-sized textures cannot have initial data"));
+            }
             continue;
         };
         let n = e.extent();
         let max = if e.dimension() == wgpu::TextureDimension::D3 { 256 } else { 8192 };
-        if t.size.is_some() || t.sample_count != 1 || [n.width, n.height, n.depth_or_array_layers].iter().any(|&k| k == 0 || k > max) {
+        if t.size.is_some()
+            || t.sample_count != 1
+            || [n.width, n.height, n.depth_or_array_layers].iter().any(|&k| k == 0 || k > max)
+        {
             return Err(invalid(&t.label, "invalid compute texture dimensions"));
         }
         let b = t.format.compute_texel_bytes().ok_or_else(|| invalid(&t.label, "invalid compute texture format"))?;
@@ -930,12 +1087,19 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     let dispatch = |d: &Dispatch| {
         id(&d.label, "compute pipeline", d.pipeline, m.compute_pipelines.len())?;
         let xyz = d.workgroups.xyz();
-        if xyz.iter().any(|&n| n == 0 || n > 65535) || matches!(d.workgroups, manifest::Workgroups::Xyz(_)) && xyz.iter().copied().map(u64::from).product::<u64>() > 1_048_576 {
+        if xyz.iter().any(|&n| n == 0 || n > 65535)
+            || matches!(d.workgroups, manifest::Workgroups::Xyz(_))
+                && xyz.iter().copied().map(u64::from).product::<u64>() > 1_048_576
+        {
             return Err(invalid(&d.label, "invalid dispatch dimensions"));
         }
         for &g in &d.bind_groups {
             id(&d.label, "bind group", g, m.bind_groups.len())?;
-            if m.bind_groups[g].entries.iter().any(|e| matches!(e.resource, GroupResource::Texture(t) if m.textures[t].extent.is_none())) {
+            if m.bind_groups[g]
+                .entries
+                .iter()
+                .any(|e| matches!(e.resource, GroupResource::Texture(t) if m.textures[t].extent.is_none()))
+            {
                 return Err(invalid(&d.label, "a compute group names a view-sized texture"));
             }
         }
@@ -974,29 +1138,50 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
                     return Err(invalid(&start.run.label, "invalid step count or keep interval"));
                 }
                 let groups = |d: &RawDispatch| d.run.workgroups.xyz().iter().copied().map(u64::from).product::<u64>();
-                if groups(start) + u64::from(count.div_ceil(2)) * groups(odd) + u64::from(count / 2) * groups(even) > 4_194_304 {
+                if groups(start) + u64::from(count.div_ceil(2)) * groups(odd) + u64::from(count / 2) * groups(even)
+                    > 4_194_304
+                {
                     return Err(invalid(&start.run.label, "too many workgroups across steps"));
                 }
                 let states = 1 + u64::from(count.div_ceil(*keep));
                 for c in history {
                     match *c {
                         StepCopy::Buffer { a, b, to, bytes } => {
-                            for k in [a, b, to] { id(&start.run.label, "buffer", k, m.buffers.len())?; }
-                            if a == b || a == to || b == to || bytes == 0 || bytes % 16 != 0 || bytes > compute_bytes
-                                || bytes > m.buffers[a].size || bytes > m.buffers[b].size || bytes * states > m.buffers[to].size {
+                            for k in [a, b, to] {
+                                id(&start.run.label, "buffer", k, m.buffers.len())?;
+                            }
+                            if a == b
+                                || a == to
+                                || b == to
+                                || bytes == 0
+                                || bytes % 16 != 0
+                                || bytes > compute_bytes
+                                || bytes > m.buffers[a].size
+                                || bytes > m.buffers[b].size
+                                || bytes * states > m.buffers[to].size
+                            {
                                 return Err(invalid(&start.run.label, "invalid kept-state buffer copy"));
                             }
                         }
                         StepCopy::Texture { a, b, to } => {
-                            for k in [a, b, to] { id(&start.run.label, "texture", k, m.textures.len())?; }
+                            for k in [a, b, to] {
+                                id(&start.run.label, "texture", k, m.textures.len())?;
+                            }
                             let [src, alt, dst] = [a, b, to].map(|k| &m.textures[k]);
                             use manifest::FixedExtent::{D2, D3};
                             let size = |e| match e {
                                 D2([w, h]) => D2([w, h * states as u32]),
                                 D3([w, h, z]) => D3([w, h, z * states as u32]),
                             };
-                            if a == b || a == to || b == to || src.extent.is_none() || src.extent != alt.extent
-                                || src.extent.map(size) != dst.extent || src.format != alt.format || src.format != dst.format {
+                            if a == b
+                                || a == to
+                                || b == to
+                                || src.extent.is_none()
+                                || src.extent != alt.extent
+                                || src.extent.map(size) != dst.extent
+                                || src.format != alt.format
+                                || src.format != dst.format
+                            {
                                 return Err(invalid(&start.run.label, "invalid kept-state texture copy"));
                             }
                         }
@@ -1018,10 +1203,13 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     let bad = |msg: String| Err(Error::Invalid(msg));
     for i in &m.inputs {
         if i.def.len() != i.ty.floats() || i.slot + i.ty.floats() > m.input_floats {
-            return bad(format!("input \"{}\" at slot {} does not fit inputFloats = {}", i.name, i.slot, m.input_floats));
+            return bad(format!(
+                "input \"{}\" at slot {} does not fit inputFloats = {}",
+                i.name, i.slot, m.input_floats
+            ));
         }
     }
-    for p in m.params.iter().filter(|p| p.slot >= m.param_floats) {
+    if let Some(p) = m.params.iter().find(|p| p.slot >= m.param_floats) {
         return bad(format!("param \"{}\" at slot {} is past paramFloats = {}", p.name, p.slot, m.param_floats));
     }
     let slots = m.frame.detail.floats / 4;
@@ -1032,7 +1220,9 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
     for d in &m.plan {
         let (end, grid) = match &d.detail {
             manifest::Detail::Fixed => (0, None),
-            manifest::Detail::Grid { slot, levels, .. } if !levels.is_empty() => (slot + d.instances as usize, Some(*slot)),
+            manifest::Detail::Grid { slot, levels, .. } if !levels.is_empty() => {
+                (slot + d.instances as usize, Some(*slot))
+            }
             manifest::Detail::Grid { .. } => return bad(format!("draw \"{}\": a grid with no levels", d.label)),
             manifest::Detail::Projected { slot, .. } => (slot + 2, None),
         };
@@ -1060,7 +1250,9 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
             }
             for c in &p.commands {
                 match *c {
-                    DrawCommand::Fixed { pipeline, .. } => id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?,
+                    DrawCommand::Fixed { pipeline, .. } => {
+                        id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?
+                    }
                     DrawCommand::Planned { pipeline, draw, .. } => {
                         id(&p.label, "render pipeline", pipeline, m.render_pipelines.len())?;
                         id(&p.label, "planned draw", draw, m.plan.len())?;
@@ -1086,7 +1278,9 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
                         load: match (d.depth_load_op, d.depth_clear_value) {
                             (LoadOp::Load, _) => wgpu::LoadOp::Load,
                             (LoadOp::Clear, Some(v)) => wgpu::LoadOp::Clear(v),
-                            (LoadOp::Clear, None) => return Err(Error::ClearWithoutValue(p.label.clone(), "depthClearValue")),
+                            (LoadOp::Clear, None) => {
+                                return Err(Error::ClearWithoutValue(p.label.clone(), "depthClearValue"))
+                            }
                         },
                         store: d.depth_store_op.wgpu(),
                     })

@@ -6,11 +6,11 @@ recipe (frame writes, the pose compute pass, the level-of-detail bounds read and
 nothing about scenes. `loft-view` is a small headless binary on top of it, for pictures and timing.
 
 ```
-cargo build --release                      # in rust/loft-loader; output in rust/loft-loader/target (git-ignored)
-target/release/loft-view <dir> --view game --time 1.0 --size 1280x800 --out f.png
-target/release/loft-view <dir> --view game --frames 60          # CPU and GPU time per frame
-target/release/loft-view <dir> --view game --pose-time          # pose stages alone, as tools/pose_time.ts
-WGPU_BACKEND=vulkan target/release/loft-view <dir> --view game --pipeline-cache <cache-dir> --loads 3
+tools/dev.sh build loft-loader --release    # output in rust/target/release (git-ignored)
+rust/target/release/loft-view <dir> --view game --time 1.0 --size 1280x800 --out f.png
+rust/target/release/loft-view <dir> --view game --frames 60          # CPU and GPU time per frame
+rust/target/release/loft-view <dir> --view game --pose-time          # pose stages alone, as tools/pose_time.ts
+WGPU_BACKEND=vulkan rust/target/release/loft-view <dir> --view game --pipeline-cache <cache-dir> --loads 3
 ```
 
 When creating a device, request the optional `wgpu::Features::SHADER_F16` if the adapter exposes it.

@@ -38,12 +38,7 @@ impl PipelineCache {
         };
         let raw = scoped(
             device,
-            || {
-                format!(
-                    "pipeline cache {}: clear this file to rebuild the cache",
-                    path.display()
-                )
-            },
+            || format!("pipeline cache {}: clear this file to rebuild the cache", path.display()),
             || {
                 // SAFETY: the caller vouches for the provenance of the cache bytes.
                 unsafe {
@@ -55,14 +50,7 @@ impl PipelineCache {
                 }
             },
         )?;
-        Ok((
-            Self {
-                device: device.clone(),
-                raw,
-                path,
-            },
-            data.as_ref().map_or(0, Vec::len),
-        ))
+        Ok((Self { device: device.clone(), raw, path }, data.as_ref().map_or(0, Vec::len)))
     }
 
     /// Compiles the artefact on this cache's device, adding any new pipelines to the cache.
@@ -73,20 +61,14 @@ impl PipelineCache {
     /// Atomically saves a snapshot of this device's cache and returns its size in bytes.
     /// Reuse one cache across the artefacts to retain them in the same snapshot.
     pub fn save(&self) -> Result<usize, Error> {
-        let data = self
-            .raw
-            .get_data()
-            .ok_or_else(|| Error::PipelineCacheNoData(self.path.clone()))?;
+        let data = self.raw.get_data().ok_or_else(|| Error::PipelineCacheNoData(self.path.clone()))?;
         write_atomically(&self.path, &data)?;
         Ok(data.len())
     }
 }
 
 fn cache_io(path: &Path, source: io::Error) -> Error {
-    Error::PipelineCacheIo {
-        path: path.into(),
-        source,
-    }
+    Error::PipelineCacheIo { path: path.into(), source }
 }
 
 fn write_atomically(path: &Path, data: &[u8]) -> Result<(), Error> {
