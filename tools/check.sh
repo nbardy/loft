@@ -115,7 +115,7 @@ plan() {
   PLAN_FULL="" PLAN_CRATES=() PLAN_BUN=()
   while IFS= read -r path; do
     case "$path" in
-      rust/Cargo.toml|rust/Cargo.lock|rust/rust-toolchain.toml|rust/.config/*|package.json|pnpm-lock.yaml|bunfig.toml|tsconfig.json|tests/setup.ts|tools/lib/*)
+      rust/*.toml|rust/Cargo.lock|rust/.config/*|package.json|pnpm-lock.yaml|bunfig.toml|tsconfig.json|tests/setup.ts|tools/lib/*)
         PLAN_FULL="${PLAN_FULL:-$path is a workspace-wide input}" ;;
       rust/crates/*) crates+=("$(cut -d/ -f3 <<<"$path")") ;;
       tests/*.test.ts) PLAN_BUN+=("$path") ;;
