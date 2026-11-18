@@ -20,6 +20,7 @@ const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
 // Defined beside the host contract, which the file loader imports without this module (docs/artefact_format.md).
 import { CURVE_N } from "./artefact.ts";
 import { RawComputeError, SceneError } from "./errors.ts";
+import { rec } from "./record/recorder.ts";
 export { CURVE_N };
 
 /** A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends. */
@@ -223,6 +224,7 @@ function trieOf(tries: Map<string, IdTrie>, name: string): IdTrie {
 }
 /** The trie leaf for these children, in order (a vec3 of one scalar and of three are different paths). */
 function leafOf(root: IdTrie, args: readonly Expr[]): IdTrie {
+  rec.construct();
   let t = root;
   for (let i = 0; i < args.length; i++) {
     const id = args[i]!.id;
@@ -235,6 +237,7 @@ function leafOf(root: IdTrie, args: readonly Expr[]): IdTrie {
   return t;
 }
 function internGet(a: Expr, sel: string, node: () => Node): Expr {
+  rec.construct();
   let bySel = gets.get(sel);
   if (bySel === undefined) { bySel = new Map(); gets.set(sel, bySel); }
   let e = bySel.get(a.id);
@@ -257,6 +260,7 @@ export class Expr<T extends Ty = Ty> {
   get ty(): T { return this.node.ty as T; }
 
   static make<T extends Ty>(node: Node, key: string): Expr<T> {
+    rec.construct();
     const hit = interned.get(key);
     if (hit) return hit as Expr<T>;
     const made = Expr.fresh<T>(node);
@@ -267,6 +271,7 @@ export class Expr<T extends Ty = Ty> {
   /** A new node, for the numerically keyed tables above `Expr` (they look it up themselves). Not for other callers. */
   static fresh<T extends Ty>(node: Node): Expr<T> {
     const made = new Expr<T>(nextId++, node);
+    rec.node(made);
     if (stacks !== undefined) stacks.set(made, new Error());
     return made;
   }
@@ -307,6 +312,7 @@ export class Expr<T extends Ty = Ty> {
 function constant(ty: Ty, v: readonly number[]): Expr {
   for (const n of v) if (!Number.isFinite(n)) throw new SceneError("a number in an expression", String(n), "a finite number", "look for a division by zero, or a value read before it was set, on the line named at the end");
   if (v.length !== 1) return Expr.make({ op: "const", ty, v }, `c:${ty}:${v.join(",")}`);
+  rec.construct();
   let byValue = scalars.get(ty);
   if (byValue === undefined) { byValue = new Map(); scalars.set(ty, byValue); }
   let e = byValue.get(v[0]!);
@@ -599,6 +605,8 @@ const isZero = (x: In<NumTy>): boolean => isConst(x, 0) && identities > 0;
  * is where "a channel no paint gives costs nothing" needs them (materials.md section 7's stated fallback).
  */
 let identities = 0;
+/** Whether `withIdentities` is open (a text graph function is recorded as a call only outside it: src/text/lower.ts). */
+export const identitiesOn = (): boolean => identities > 0;
 /** `f`, built with the identities on (src/compile/scene_wgsl.ts, src/draw/painted.ts and the style's one recorded evaluation). */
 export function withIdentities<T>(f: () => T): T {
   identities++;
@@ -1078,6 +1086,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
     l.results.forEach((r, j) => names.set(r.id, `${L}s${j}`));
   };
   const lines: string[] = [];
+  rec.emitted(roots);
   emit(topo(roots), lines);
   // `libs`: definitions the caller must place at module scope (once per module) for the statements to compile.
   return { lines, out: roots.map(ref), libs: libsOf(roots), names };
@@ -1208,6 +1217,9 @@ export function substitute(roots: readonly Expr[], from: Expr, to: Expr): Expr[]
 
 /** The same expressions with each node whose id is a key of `by` replaced by its value (of the same type). */
 export function replace(roots: readonly Expr[], by: ReadonlyMap<number, Expr>): Expr[] {
+  return rec.rewrite(() => replace0(roots, by));
+}
+function replace0(roots: readonly Expr[], by: ReadonlyMap<number, Expr>): Expr[] {
   const done = new Map<number, Expr>();
   const loops = new Map<number, readonly Expr[]>();
   for (const e of topo(roots)) {

@@ -14,6 +14,7 @@ import { gradient as gradientOf } from "../grad.ts";
 import { SceneError, siteOf } from "../errors.ts";
 import type { At, ConstItem, Expr as Ast, FnItem, Param, Place, Stmt, StructItem, TypeRef } from "./parse.ts";
 import { HOLE_PREFIX } from "./tokens.ts";
+import { rec } from "../record/recorder.ts";
 
 type E = X.Expr;
 type NumE = X.Expr<X.NumTy>;
@@ -167,6 +168,12 @@ type Frame = { readonly fn: string; readonly ret: TypeRef | undefined; readonly 
 
 // ---- the lowerer ----------------------------------------------------------------------------------------------------
 
+/** Each graph function's recording (Lowerer.recording), and the signature types a recorded function may have. */
+const recordings = new WeakMap<FnItem, number | string>();
+let nextRecorded = 0;
+const typeKey = (t: TypeRef): string => (t.args.length === 0 ? t.name : `${t.name}<${t.args.map(typeKey).join(",")}>`);
+const NUM_TYPES = new Map<string, X.NumTy>([["f32", "f32"], ["vec2f", "vec2"], ["vec3f", "vec3"], ["vec4f", "vec4"], ["vec2<f32>", "vec2"], ["vec3<f32>", "vec3"], ["vec4<f32>", "vec4"]]);
+
 export class Lowerer {
   constructor(readonly m: Scope0) {}
 
@@ -181,6 +188,66 @@ export class Lowerer {
    * text, quoted by errors that depend on the arguments.
    */
   call(item: FnItem & { kind: "graph" }, args: readonly Value[], at: At, stack: readonly string[], caller: string | undefined): Value {
+    // Recorded once over binders and per call as one `Call` (src/record/recorder.ts) when the call is a function of
+    // its arguments' values alone: every argument a non-constant expression (a constant would fold differently in
+    // the body), and no identities open (they fold differently too). The inlining below is then for the TS engine only.
+    const fn = args.every((a) => a.k === "expr" && a.e.node.op !== "const") && !X.identitiesOn() ? this.recording(item) : "a constant argument or identities";
+    if (typeof fn === "string") return this.inline(item, args, at, stack, caller);
+    const since = rec.size, out = rec.muted(() => this.inline(item, args, at, stack, caller));
+    if (out.k === "expr") rec.call(fn, args.map((a) => (a as Value & { k: "expr" }).e), out.e, since);
+    return out;
+  }
+
+  /** `item`'s recording: its number, or why each call of it is inlined (one classification per function). */
+  recording(item: FnItem & { kind: "graph" }): number | string {
+    let r = recordings.get(item);
+    if (r !== undefined) return r;
+    r = this.unrecordable(item, new Set()) ?? rec.fn(item.sig.name, () => {
+      const id = nextRecorded++, binders = item.sig.params.map((p, j) => X.variable(`loft_fn${id}_${j}`, NUM_TYPES.get(typeKey(p.type))!));
+      try {
+        const out = this.inline(item, binders.map(ex), item.sig.at, [], undefined);
+        return out.k === "expr" ? { binders, body: out.e } : `${item.sig.name} returns a constant`;
+      } catch (e) {
+        // Only an authoring refusal over binders (say, a loop bound that must be constant) is a reason to inline; any
+        // other throw is a bug and surfaces.
+        if (!(e instanceof TextError)) throw e;
+        return `${item.sig.name} does not lower over binders: ${e.message}`;
+      }
+    });
+    recordings.set(item, r);
+    return r;
+  }
+
+  /** Why `item` cannot be one recorded body for every call, or undefined: read from its text, through the functions it calls. */
+  unrecordable(item: FnItem & { kind: "graph" }, seen: Set<FnItem>): string | undefined {
+    seen.add(item);
+    // A bool argument may be a `not` the body would simplify away (boolNot); a vector is fine.
+    const typed = [...item.sig.params.map((p) => p.type), ...(item.sig.ret === undefined ? [] : [item.sig.ret])].find((t) => !NUM_TYPES.has(typeKey(t)));
+    if (typed !== undefined) return `${item.sig.name} has a ${typeKey(typed)} in its signature`;
+    const names: string[] = [];
+    const scan = (x: unknown): void => {
+      if (Array.isArray(x)) for (const y of x) scan(y);
+      else if (typeof x === "object" && x !== null) {
+        const o = x as { k?: string; name?: string };
+        if (o.k === "ident" && o.name !== undefined) names.push(o.name);
+        for (const v of Object.values(o)) scan(v);
+      }
+    };
+    scan(item.body);
+    for (const n of names) {
+      // gradient reads which arguments are leaves; a hole holding a function or a record may run TypeScript that does.
+      if (n === "gradient") return `${item.sig.name} reads gradient`;
+      if (n.startsWith(HOLE_PREFIX)) {
+        const k = this.m.hole(Number(n.slice(HOLE_PREFIX.length))).k;
+        if (k === "fn" || k === "open") return `${item.sig.name} reads a hole holding a ${k === "fn" ? "function" : "record"}`;
+      }
+      const f = this.m.fns.get(n);
+      if (f?.kind === "graph" && !seen.has(f)) { const why = this.unrecordable(f, seen); if (why !== undefined) return why; }
+    }
+    return undefined;
+  }
+
+  inline(item: FnItem & { kind: "graph" }, args: readonly Value[], at: At, stack: readonly string[], caller: string | undefined): Value {
     const sig = item.sig;
     if (stack.includes(sig.name)) this.fail(at, `${sig.name} calling itself (${[...stack, sig.name].join(" -> ")})`, "no recursion (WGSL has none)", "write the repetition as a for loop");
     if (args.length !== sig.params.length) this.fail(at, `${args.length} argument${args.length === 1 ? "" : "s"} to ${sig.name}`, `${sig.params.length} (${sig.params.map((p) => p.name).join(", ")})`, `call ${sig.name}(${sig.params.map((p) => p.name).join(", ")})`, caller);
