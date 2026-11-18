@@ -1,8 +1,7 @@
 // How a command ends: every failure classified once, here, into one of a closed list of verdicts, and each verdict
 // mapped to one exit code and one last line on stderr that a script can match (`loft: <kind>: ...`). README.md
 // "Exit codes" is the table.
-import { relative } from "node:path";
-import { EnvironmentError, LoadError, SceneError } from "../errors.ts";
+import { EnvironmentError, LoadError, SceneError, siteOf } from "../errors.ts";
 import { DesignError } from "../design.ts";
 import { UsageError, USAGE } from "./args.ts";
 
@@ -23,17 +22,6 @@ export type Verdict =
 /** `loft check` found failing checks (and every variant built). */
 export class ChecksFailed extends Error {
   override readonly name = "ChecksFailed";
-}
-
-const SRC = new URL("..", import.meta.url).pathname;
-
-/** The first stack frame outside Loft's own source: the line of the user's file a constructor was called from. */
-export function siteOf(stack: string | undefined): string | undefined {
-  for (const line of (stack ?? "").split("\n").slice(1)) {
-    const m = line.match(/\(?((?:\/|[A-Za-z]:)[^()]*?):(\d+):(\d+)\)?\s*$/);
-    if (m && !m[1]!.startsWith(SRC) && !m[1]!.includes("/node_modules/")) return `${relative(process.cwd(), m[1]!)}:${m[2]}`;
-  }
-  return undefined;
 }
 
 /** The library's typed errors that are the scene's fault, loaded only when an error needs classifying. */

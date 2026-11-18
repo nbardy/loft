@@ -77,6 +77,11 @@ and last line.
 | 27 | `scene(): given lights: 8 lights; expected at most 7 besides the sun` | each light is a term in every lit fragment | one function for many sources (a row by repetition) |
 | 28 | `ball: paint: given "gloss" as vec3; expected "gloss" as f32, as toon reads it` | a channel given as another type than the style reads it | give it as the style's comment says |
 | 29 | `"stroke": given a paint with its own shade or scatter on a flat look` | a flat look's paint is the final colour: nothing to wrap | return the colour, or draw a lit surface |
+| 35 | `solve: given holds that cannot all be met: equal from t = 0 to 1.3 (file:7); equal at t = 1.2 (file:7) ...` | no curve meets those holds together; the list is minimal (drop any one and the rest can be met) and each names its line | drop or loosen one of the holds named |
+
+`solve` refuses the same way (exit 4) when its search stops short of a curve that does exist (`unsolved`, naming the
+hold left furthest off: more numbers or a nearer `spline(n, from)`), and when a hold reads an unknown at another time or
+something the CPU cannot evaluate (`unreadable`).
 
 Refused the same way, without a fixture each: a step reading a param, a curve row, a per-frame table or a checkpointed
 recurrence; a span that is not a whole number of steps; a history over 120 x 64 MiB; a checkpointed state read at a time

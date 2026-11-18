@@ -208,6 +208,13 @@ Curves are the atoms: any function of one variable.
   `function ramp(colours: readonly (readonly [number, number, number])[], label = "ramp"): Curve<"vec4">`
 - **through**: An interpolating cubic spline (uniform Catmull-Rom) through control points that may be expressions, at parameter m in [0, 1] (clamped).
   `function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3">`
+- **bspline**: A curve of time through `values` as a uniform cubic B-spline over `over` = [t0, t1]: value j weights the curve most at t0 + (j - 1) h, h = (t1 - t0) / (n - 3), and reaches 2 h either side of it.
+  `function bspline(t: In<"f32">, over: readonly [number, number], values: readonly In<"f32">[]): Expr<"f32">`
+  cannot:
+  - pass through its values: it is near them, not on them (at t0 it is (v0 + 4 v1 + v2) / 6). `through` interpolates.
+  - corner or jump: a corner needs a knot repeated, which a uniform spline has no way to say.
+  - change speed at its ends: outside [t0, t1] it is constant, so a curve still moving at t1 stops there in one frame (hold its speed to 0 at the end, or end the span after the motion).
+  - fewer than four values.
 - **wave**: A travelling lateral wave: `axis * amplitude * grow(m) * sin(TAU (m waves - t rate))` (anguilliform swimming).
   `function wave(m: In<"f32">, spec: WaveSpec): Expr<"vec3">`
 - **retarded**: Retarded time: the clock a part at m reads when a signal starts at m = 0 and runs at `speed` (m per second).
@@ -1857,6 +1864,39 @@ Types:
 - **Struck**: `type Struck = { spec, weight, still, since }`
 - **StruckSpec**: A struck pose's timing on its clock, seconds. `type StruckSpec = { from, snap, hold, release, recoil? }`
 
+### src/geom/solve.ts (unproven: one user so far)
+
+Motion from stated constraints (docs/proposals/2026-11-18_next.md section 5): `solve` chooses the numbers of unknown curves so that stated holds are met and a stated preference is least, once, at build time, on the CPU, and returns the curves as ordinary expressions of time (`bspline` of numbers), which the model reads, edits and composes like any other.
+
+- **solve**: Unknown curves chosen to meet stated holds, with the preferred one among those that do: motion from constraints, returned as ordinary expressions of time (`bspline(time, over, [numbers])`) to read, edit and compose.
+  `function solve<K extends string>(spec: SolveSpec<K>): Solved<K>`
+  cannot:
+  - guarantee between fine-grid times: an interval hold is checked at h/64 spacing (h the knot gap), not proven. Ranged checks prove it.
+  - find a solution far from its start: the search is local, from each unknown's `spline(n, from)` (default 0). A hold says nothing of which side of an obstacle to pass ("clear of the rail" is met under it as well as over it): the start picks the side. Holds not linear in the unknowns may have solutions it does not find, and "infeasible" means none was found near where the search stopped.
+  - read an unknown at another time than the hold's own (a delay): refused, naming the hold.
+  - hold for every value of a param or input: they take their defaults while solving.
+  - read raw WGSL or per-frame tables in a hold (refused, naming the hold).
+  - change after the build: the result is numbers. A hold that should follow a host input at run time is a closed form, not a solve.
+- **spline**: An unknown curve for `solve`'s `vary`: a uniform cubic B-spline with `n` numbers (n - 3 cubic pieces) over the solve's span.
+  `function spline(n: number, from: In<"f32"> = 0): Family`
+- **equal**: `a` equals `b` (numbers or vectors of one size, every component) at `when`: an instant `{ at }` (lands, reaches), an interval `{ from, to }` (planted), or the whole span when left out.
+  `function equal(a: In<NumTy>, b: In<NumTy>, when?: When): HoldLine`
+- **atLeast**: `a` is at least `b` (numbers) at `when` (as for `equal`): clear by a distance, above a floor, within a reach (`atLeast(reach, distance)`).
+  `function atLeast(a: In<"f32">, b: In<"f32">, when?: When): HoldLine`
+- **SolveError**: `solve` could not return curves: the holds conflict (exit 4, with the conflicting lines), or the search did not settle.
+  `class SolveError extends SceneError`
+
+Types:
+- **Family**: The family of an unknown curve, and where the search for it starts. `type Family = { readonly kind: "spline"; readonly n: number; readonly from: F }`
+- **HoldLine**: A stated constraint: `margin` is zero (`equal`, every component) or at least zero (`atLeast`) at the `times`. `type HoldLine = { kind, margin, times, site }`
+- **HoldReport**: How well one hold is met by the returned curves, measured on the fine grid (and its instant). `type HoldReport = { readonly kind: HoldLine["kind"]; readonly site: string | undefined; readonly when: string; readonly worst: number; readonly at: number }`
+- **Prefer**: What `solve` makes least, a weighted sum: `jerk` and `acceleration` (each the integral over the span of the squared third or second time derivative, summed over the unknowns) and `near` (the integral of the squared difference from given curves of time, for the unknowns named: least change from a curve you had). `type Prefer<K extends string> = { jerk?, acceleration?, near? }`
+- **Solved**: `type Solved<K extends string> = { curves, holds, report }`
+- **SolveFailure**: Why `solve` returned no curves. `type SolveFailure = /** No curve of the family meets these holds together (a minimal set: drop any one and the rest can be met). */ | { readonly kind: "infeasible"; readonly conflict: readonly HoldLine[]; readonly worst: number } /** A curve meeting every hold exists, but the search did not settl...`
+- **SolveReport**: `type SolveReport = { ms, steps, rounds, samples, holds }`
+- **SolveSpec**: `type SolveSpec<K extends string> = { over, vary, hold, prefer }`
+- **When**: When a hold applies: one instant, an interval, or (left out) the whole span of the solve. `type When = { readonly at: number } | { readonly from: number; readonly to: number }`
+
 ## Actions (src/actions.ts)
 
 attacks, hit shapes, telegraphs, smears, wakes, grabs, the lineup and the design (variants and slots).
@@ -2980,9 +3020,9 @@ Types:
 
 ## Coverage
 
-800 exports (457 values, 343 types) from src/index.ts and src/lib/index.ts.
+815 exports (463 values, 352 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 
-Shape and motion functions whose comment states no limits (0): .
+Shape and motion functions whose comment states no limits (3): spline, equal, atLeast.
 

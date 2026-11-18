@@ -1,5 +1,6 @@
-// The two kinds of failure a caller must tell apart, as types. A leaf module: it imports nothing, so any constructor
-// can raise these without an import cycle. The CLI maps them to exit codes in src/cli/verdict.ts.
+// The two kinds of failure a caller must tell apart, as types. A leaf module: it imports nothing of Loft's, so any
+// constructor can raise these without an import cycle. The CLI maps them to exit codes in src/cli/verdict.ts.
+import { relative } from "node:path";
 
 /**
  * A mistake in the scene as written, raised by the constructor where it was made: what was given, what was expected,
@@ -36,4 +37,18 @@ export function shown(x: unknown): string {
   if (typeof x === "function") return "a function";
   if (typeof x === "object" && x !== null) return "an object";
   return String(x);
+}
+
+const SRC = new URL(".", import.meta.url).pathname;
+
+/**
+ * The first stack frame outside Loft's own source: the line of the user's file a constructor was called from
+ * (`examples/leap.ts:42`), or undefined when every frame is Loft's (a call from inside the library).
+ */
+export function siteOf(stack: string | undefined): string | undefined {
+  for (const line of (stack ?? "").split("\n").slice(1)) {
+    const m = line.match(/\(?((?:\/|[A-Za-z]:)[^()]*?):(\d+):(\d+)\)?\s*$/);
+    if (m && !m[1]!.startsWith(SRC) && !m[1]!.includes("/node_modules/")) return `${relative(process.cwd(), m[1]!)}:${m[2]}`;
+  }
+  return undefined;
 }
