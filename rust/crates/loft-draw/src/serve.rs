@@ -11,10 +11,10 @@
 //! Frame k is written to `out/k.rgba`. A lost device ends the process with exit 6 (main.rs `gpu`), which the supervisor
 //! answers for every request in flight. A panic answers `internal` and the server goes on: every load is fresh.
 
-use crate::{gpu, Gpu, Target, Verdict};
-use loft_loader::{read_dir, Camera, Loft, Precision};
+use crate::{Gpu, Target, Verdict, gpu};
+use loft_loader::{Camera, Loft, Precision, read_dir};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
@@ -65,7 +65,8 @@ pub fn run() -> Result<(), Verdict> {
                     None => slot.insert(gpu(false)?),
                 };
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| draw(g, &req))).unwrap_or_else(|p| {
-                    let what = p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()));
+                    let what =
+                        p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()));
                     Err(Verdict::Internal(format!("loft-draw panicked: {}", what.unwrap_or_default())))
                 })
             })

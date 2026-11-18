@@ -50,9 +50,12 @@ impl From<loft_loader::Error> for Verdict {
             | E::Invalid(_)
             | E::ClearWithoutValue(..)
             | E::Gpu { .. } => Verdict::Load(m),
-            E::UnknownName { .. } | E::InputFloats { .. } | E::TimeInput | E::Camera(_) | E::Size(..) | E::Curves(..) => {
-                Verdict::Usage(m)
-            }
+            E::UnknownName { .. }
+            | E::InputFloats { .. }
+            | E::TimeInput
+            | E::Camera(_)
+            | E::Size(..)
+            | E::Curves(..) => Verdict::Usage(m),
             E::PipelineCacheUnsupported(_) | E::PipelineCacheIo { .. } | E::PipelineCacheNoData(_) | E::Map(_) => {
                 Verdict::Environment(m)
             }
@@ -78,7 +81,8 @@ pub fn gpu(f16: bool) -> Result<Gpu, Verdict> {
         ..Default::default()
     }))
     .map_err(|e| env(&format!("no adapter: {e}")))?;
-    let wanted = wgpu::Features::TIMESTAMP_QUERY | if f16 { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() };
+    let wanted =
+        wgpu::Features::TIMESTAMP_QUERY | if f16 { wgpu::Features::SHADER_F16 } else { wgpu::Features::empty() };
     let features = adapter.features() & wanted;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-draw"),

@@ -10,8 +10,8 @@
 //! alone, as tools/pose_time.ts measures them (40 repeats in one timed pass, least of 8). The Vulkan pipeline cache and
 //! repeated loads that loft-view also timed move here with lane 4.2.
 
-use crate::{gpu, Gpu, Target, Verdict};
-use loft_loader::{read_dir, Bounds, Loft, Timestamps};
+use crate::{Gpu, Target, Verdict, gpu};
+use loft_loader::{Bounds, Loft, Timestamps, read_dir};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -129,7 +129,12 @@ struct Clock {
 impl Clock {
     fn new(g: &Gpu, n: u64) -> Clock {
         let buffer = |usage, label| {
-            g.device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: n * 8, usage, mapped_at_creation: false })
+            g.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: n * 8,
+                usage,
+                mapped_at_creation: false,
+            })
         };
         Clock {
             resolve: buffer(wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, "resolve"),
@@ -145,7 +150,15 @@ impl Clock {
     fn ticks(&self, g: &Gpu) -> Result<Vec<u64>, Verdict> {
         self.read.map_async(wgpu::MapMode::Read, .., |r| r.expect("timestamp map"));
         g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Verdict::Environment(format!("poll: {e}")))?;
-        let t = self.read.get_mapped_range(..).expect("timestamp range").as_chunks::<8>().0.iter().map(|c| u64::from_le_bytes(*c)).collect();
+        let t = self
+            .read
+            .get_mapped_range(..)
+            .expect("timestamp range")
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| u64::from_le_bytes(*c))
+            .collect();
         self.read.unmap();
         Ok(t)
     }
@@ -155,7 +168,8 @@ impl Clock {
 }
 
 fn frames(a: &Args, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<(), Verdict> {
-    let poll = || g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Verdict::Environment(format!("poll: {e}")));
+    let poll =
+        || g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Verdict::Environment(format!("poll: {e}")));
     let n = 2 + 2 * loft.pass_labels().count() as u32;
     let clock = g.timing.then(|| {
         let set = g.device.create_query_set(&wgpu::QuerySetDescriptor {
@@ -193,7 +207,11 @@ fn frames(a: &Args, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<(), Ver
         }
     }
     // The first frames include first-use costs (pipeline residency, the first bounds read): reported, not hidden.
-    println!("frames {}  ({})", a.frames, if a.wait { "each waits for its own bounds" } else { "planning with the last bounds read" });
+    println!(
+        "frames {}  ({})",
+        a.frames,
+        if a.wait { "each waits for its own bounds" } else { "planning with the last bounds read" }
+    );
     println!("cpu  per frame  {}", stats(&mut cpu.clone()));
     println!("cpu  frames 10+ {}", stats(&mut cpu[10.min(cpu.len() - 1)..].to_vec()));
     if !gpu.is_empty() {
