@@ -195,11 +195,10 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: 
       case "prev": throw new Error(`internal: recurrence "${r.state.name}": prev is never declared`);
     }
   }
-  if (!("program" in t)) {
-    const reads: TableSource[] = [];
-    const fill = t.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
-    const why = t.role === "static" ? "filled once, at build" : "a hand-written fill with no program";
-    return { kind: "cpu", why, fill, reads, authored: reads };
+  if ("recurrence" in t) throw new Error(`internal: table "${t.name}" of recurrence "${t.recurrence}" was never registered (src/map/recur.ts)`);
+  if ("data" in t) {
+    const data = t.data, why = t.role === "static" ? "filled once, at build" : "supplied numbers";
+    return { kind: "cpu", why, fill: (_frame, out) => out.set(data), reads: [], authored: [] };
   }
   const p = t.program;
   const id = nextProgram++;

@@ -9,7 +9,7 @@
 // interpolant passes through every sample, is C1 (relief normals do not facet at the cell walls, as bilinear would),
 // and costs four fetches.
 
-import { add, fetch, floor, fract, max, min, mul, sub, type Expr, type FilledTable, type TableFill } from "../expr.ts";
+import { add, fetch, floor, fract, max, min, mul, sub, type DataTable, type Expr } from "../expr.ts";
 import type { F } from "../map/types.ts";
 import type { Height, Wrap } from "./height.ts";
 
@@ -23,34 +23,19 @@ const wrapIndex = (a: Axis, k: number): number => (a.closed ? ((k % a.n) + a.n) 
 /** Where sample k sits in [0, 1]. */
 const coordOf = (a: Axis, k: number): number => (a.closed ? k / a.n : k / (a.n - 1));
 
-/** The table: one vec4 per sample, entry i + nu * j. */
-export class SculptTable implements FilledTable {
-  readonly lanes = 1;
-  readonly role = "static";
-  readonly entries: number;
-  private readonly data: Float32Array;
-
-  constructor(readonly name: string, samples: ArrayLike<number>, readonly u: Axis, readonly v: Axis) {
-    if (samples.length !== u.n * v.n) throw new Error(`sculptLayer "${name}": ${samples.length} samples for a ${u.n} x ${v.n} grid`);
-    for (let k = 0; k < samples.length; k++) if (!Number.isFinite(samples[k])) throw new Error(`sculptLayer "${name}": sample ${k} is ${samples[k]}`);
-    this.entries = u.n * v.n;
-    const at = (i: number, j: number) => samples[wrapIndex(u, i) + u.n * wrapIndex(v, j)];
-    // One-sided at an open end (the clamped neighbour is the sample itself, so the central difference halves): a
-    // Catmull-Rom slope with a clamped phantom, which keeps the end value exact.
-    const di = (i: number, j: number) => (at(i + 1, j) - at(i - 1, j)) * 0.5;
-    const dj = (i: number, j: number) => (at(i, j + 1) - at(i, j - 1)) * 0.5;
-    const dij = (i: number, j: number) => (at(i + 1, j + 1) - at(i + 1, j - 1) - at(i - 1, j + 1) + at(i - 1, j - 1)) * 0.25;
-    this.data = new Float32Array(this.entries * 4);
-    for (let j = 0; j < v.n; j++) for (let i = 0; i < u.n; i++) {
-      const o = (i + u.n * j) * 4;
-      this.data[o] = at(i, j); this.data[o + 1] = di(i, j); this.data[o + 2] = dj(i, j); this.data[o + 3] = dij(i, j);
-    }
-  }
-
-  prepare(): TableFill {
-    const data = this.data;
-    return (_frame, out) => out.set(data);
-  }
+/** The table: one vec4 per sample, entry i + nu * j, the sample and its slopes (supplied numbers, worked out once). */
+function sculptTable(name: string, samples: ArrayLike<number>, u: Axis, v: Axis): DataTable {
+  if (samples.length !== u.n * v.n) throw new Error(`sculptLayer "${name}": ${samples.length} samples for a ${u.n} x ${v.n} grid`);
+  for (let k = 0; k < samples.length; k++) if (!Number.isFinite(samples[k])) throw new Error(`sculptLayer "${name}": sample ${k} is ${samples[k]}`);
+  const at = (i: number, j: number) => samples[wrapIndex(u, i) + u.n * wrapIndex(v, j)]!;
+  // One-sided at an open end (the clamped neighbour is the sample itself, so the central difference halves): a
+  // Catmull-Rom slope with a clamped phantom, which keeps the end value exact.
+  const di = (i: number, j: number) => (at(i + 1, j) - at(i - 1, j)) * 0.5;
+  const dj = (i: number, j: number) => (at(i, j + 1) - at(i, j - 1)) * 0.5;
+  const dij = (i: number, j: number) => (at(i + 1, j + 1) - at(i + 1, j - 1) - at(i - 1, j + 1) + at(i - 1, j - 1)) * 0.25;
+  const data = new Float32Array(u.n * v.n * 4);
+  for (let j = 0; j < v.n; j++) for (let i = 0; i < u.n; i++) data.set([at(i, j), di(i, j), dj(i, j), dij(i, j)], (i + u.n * j) * 4);
+  return { name, lanes: 1, entries: u.n * v.n, role: "static", data };
 }
 
 /** Cubic Hermite basis: value weights (h00, h01) and slope weights (h10, h11) at t in [0, 1]. */
@@ -89,9 +74,9 @@ export function sculptLayer(name: string, samples: ArrayLike<number>, size: read
   for (const [axis, n, closed] of [["u", nu, cu], ["v", nv, cv]] as const) {
     if (!(Number.isInteger(n) && n >= (closed ? 3 : 2))) throw new Error(`sculptLayer "${name}": n${axis} must be an integer >= ${closed ? 3 : 2}, got ${n}`);
   }
-  const table = new SculptTable(name, samples, { n: nu, closed: cu }, { n: nv, closed: cv });
+  const U: Axis = { n: nu, closed: cu }, V: Axis = { n: nv, closed: cv }, table = sculptTable(name, samples, U, V);
   return (u, v) => {
-    const a = cellOf(table.u, u), b = cellOf(table.v, v);
+    const a = cellOf(U, u), b = cellOf(V, v);
     const ha = hermite(a.t), hb = hermite(b.t);
     const at = (i: F, j: F): Expr<"vec4"> => fetch(table, add(i, mul(j, nu)), 0);
     const corner = (c: Expr<"vec4">, wa: F, sa: F, wb: F, sb: F): F =>

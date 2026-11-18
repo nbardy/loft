@@ -70,10 +70,10 @@ export type LibFn = {
  *
  * How a table is filled is its `program` (docs/gpu_native.md, phase 1): a `map` or a `scan` written in expressions,
  * from which the compiler derives both the GPU compute stage that fills it each frame and the CPU fill tools use; or
- * `cpu`, a hand-written fill, which is the named, counted state of a table not yet ported. A table written before
- * programs existed (`prepare` alone, as in examples/bosses/tithe/kit.ts) is read as `cpu` at the compiler's boundary.
+ * `cpu`, a hand-written fill, which is the named, counted state of a table not yet ported. A table of supplied numbers
+ * carries them (`data`), and a recurrence's tables are its own.
  */
-export type TableSource = ProgramTable | FilledTable;
+export type TableSource = ProgramTable | DataTable | RecurrenceTable;
 type TableShape = {
   /** An identifier, unique in a compiled scene. */
   readonly name: string;
@@ -87,8 +87,10 @@ type TableShape = {
   readonly role: "stations" | "data" | "static";
 };
 export type ProgramTable = TableShape & { readonly program: TableProgram };
-/** A hand-written fill. `prepare` is called once per compilation; `p.compile` gives CPU functions over a frame. */
-export type FilledTable = TableShape & { prepare(p: TablePrep): TableFill };
+/** Supplied numbers (a mesh, a distance brick, a sculpt layer, a static `tabulate`): `entries * lanes * 4` floats. */
+export type DataTable = TableShape & { readonly data: Float32Array };
+/** One of a recurrence's tables (src/map/recur.ts): filled by its bake or its replay, or bound where its step is emitted. */
+export type RecurrenceTable = TableShape & { readonly recurrence: string };
 
 /**
  * Entries `count` long, each a closed form in its index `i` within the run (0 .. count - 1, an f32 holding a whole
