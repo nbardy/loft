@@ -6,6 +6,9 @@
 - `pnpm test` is the suite (`bun test --timeout 120000`: a bare `bun test` gives some GPU tests bun's 5 s limit, which
   they miss when the whole suite runs at once, although `tests/setup.ts` asks for 60 s). The old note: Under a loaded machine it can time out or fail once and pass on the next run; the intermittent shader-module
   failure was bun-webgpu freeing descriptor strings early, patched (`docs/reliable_render.md`). Exit codes: `docs/errors.md`.
+- For parallel worktrees, each worker runs its focused checks. The integrating reviewer owns one full suite on the
+  combined revision. On macOS the test preload admits one LOFT Bun test process per user across worktrees. Exit 75
+  means another check is running. Record the pending check for the reviewer.
 - GPU time per draw: `bun src/cli/main.ts profile <scene> --view <camera>`. It also prints the pose stages (the
   per-frame tables, computed on the GPU since phase 1 of `docs/gpu_native.md`), the CPU pose time, and every table
   still filled on the CPU (`cpu`) with its reason. Pose stages alone: `bun tools/pose_time.ts [scene.ts:view ...]`. The GPU clock ticks in 0.065 ms steps; a reading below that is unresolved.
