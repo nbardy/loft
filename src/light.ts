@@ -57,6 +57,15 @@ export type Arrival = {
   readonly size?: In<"f32">;
 };
 
+/**
+ * An arrival as a fold hands it to a style: `amount` is what gets past whatever stands between (existing styles read
+ * this), `unshadowed` what would arrive with nothing in the way, and `visibility` (0 to 1) the share that gets past:
+ * amount = unshadowed x visibility. A light with no shadow map, and the sun, have visibility 1 (the sun's cast shadow
+ * on the ground is the ground context's `shadow`). For a style that inks a shadow's edge, or lights a shadowed side
+ * otherwise than by darkening it.
+ */
+export type Arrived = Arrival & { readonly unshadowed: In<"vec3">; readonly visibility: In<"f32"> };
+
 /** Where a light is, for a later shadow-map pass: a point, or a direction for a light at infinity. */
 export type LightSource = { readonly kind: "point"; readonly at: Expr<"vec3"> } | { readonly kind: "direction"; readonly toward: In<"vec3"> };
 
@@ -177,24 +186,24 @@ export type Which = "sun" | "local";
  * Every light at a point, folded: `term` says what one light does here, `combine` how the lights' terms join. The sun's
  * term comes first, then each of the scene's lights in order. With no lights it is the sun's term itself.
  */
-export type LightFold = <T extends NumTy>(combine: Combine, term: (lit: Arrival, which: Which) => Expr<T>) => Expr<T>;
+export type LightFold = <T extends NumTy>(combine: Combine, term: (lit: Arrived, which: Which) => Expr<T>) => Expr<T>;
 
-/** The sun's arrival. */
-export function sunArrival(l: Lighting): Arrival {
+/** The sun's arrival (nothing in the way: a body's cast shadow from the sun is not folded in). */
+export function sunArrival(l: Lighting): Arrived {
   const toward = lift<"vec3">(sunDir(l.sun));
   switch (l.amount.kind) {
-    case "full": return { toward, amount: FULL };
-    case "given": return { toward, amount: l.amount.amount };
+    case "full": return { toward, amount: FULL, unshadowed: FULL, visibility: 1 };
+    case "given": return { toward, amount: l.amount.amount, unshadowed: l.amount.amount, visibility: 1 };
   }
 }
 
 /**
  * The fold at a receiver. Each light is evaluated only inside a call, so a style that never asks creates no
  * expression (an expression created and not used still renumbers every later one's name in the shader text). A light
- * with a shadow map arrives multiplied by its test here, before the style sees it.
+ * with a shadow map arrives multiplied by its test here (`amount`), with the two factors beside it (`Arrived`).
  */
 export function foldAt(l: Lighting, r: Receiver): LightFold {
-  return <T extends NumTy>(combine: Combine, term: (lit: Arrival, which: Which) => Expr<T>): Expr<T> => {
+  return <T extends NumTy>(combine: Combine, term: (lit: Arrived, which: Which) => Expr<T>): Expr<T> => {
     let acc = term(sunArrival(l), "sun");
     for (const [i, light] of l.lights.entries()) {
       const t = term(shadowed(l.shadows.get(light), r, arriving(light, r.at, l.sampling, i)), "local");
@@ -205,8 +214,10 @@ export function foldAt(l: Lighting, r: Receiver): LightFold {
 }
 
 /** An arrival past its shadow map's test, when the light has one. */
-function shadowed(test: ShadowTest | undefined, r: Receiver, a: Arrival): Arrival {
-  return test === undefined ? a : { ...a, amount: mul(a.amount, test(r, a)) };
+function shadowed(test: ShadowTest | undefined, r: Receiver, a: Arrival): Arrived {
+  if (test === undefined) return { ...a, unshadowed: a.amount, visibility: 1 };
+  const visibility = test(r, a);
+  return { ...a, amount: mul(a.amount, visibility), unshadowed: a.amount, visibility };
 }
 
 /** Light `i` at p: at its point, or at the still's sample (see `Sampling`). */

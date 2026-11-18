@@ -151,7 +151,10 @@ lights nothing by itself (write one `const` for where it is and hand it to both 
 
 A style never sees a list: each shading context offers one fold, `ctx.lights(combine, term)`, where `term(lit, which)`
 says what one light does (`which` is "sun" or "local", a fact of the build) and `combine` ("sum" or "largest") how the
-terms join. With no lights it returns the sun's term itself. The sky's context holds the sun alone. A medium (a cloud)
+terms join. With no lights it returns the sun's term itself. `lit.amount` is what gets past a lamp's shadow map;
+`lit.unshadowed` and `lit.visibility` (0 to 1) are its two factors (amount = unshadowed x visibility; 1 for the sun
+and for a light with no shadow map), for a style that inks a shadow's edge or lights a shadowed side otherwise than by
+darkening it. The sky's context holds the sun alone. A medium (a cloud)
 is lit by the same lights on the CPU, at its blobs' centres.
 
 In a recipe every treatment that reads a key reads the union over lights, the distance-field algebra applied to "lit":

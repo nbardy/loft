@@ -381,10 +381,14 @@ export const time: Expr<"f32"> = input("time", "f32", [0]);
 export function param(name: string, def: number, range?: { min?: number; max?: number }): Expr<"f32"> {
   const span = Math.max(Math.abs(def), 1e-3);
   const spec: ParamSpec = { name, def, min: range?.min ?? def - 2 * span, max: range?.max ?? def + 2 * span };
-  const seen = params.get(name);
-  if (seen && seen.def !== def) throw new Error(`param "${name}" declared twice with different defaults (${seen.def}, ${def})`);
-  params.set(name, seen ?? spec);
-  return Expr.make({ op: "param", ty: "f32", spec: seen ?? spec }, `p:${name}`);
+  // As for inputs: a param's declaration belongs to the scene that reads it, so the node is interned by name and
+  // default, and "declared twice, differently" is refused where one scene's params are bound (src/compile/bind.ts).
+  // Interned by name alone, a style swapped in by `--style` (toon's `toon.outline` at 0.04) was refused against the
+  // scene's own, now unused, style (toon at 0.03) built earlier in the same process.
+  const key = `${name}:${def}`;
+  const seen = params.get(key);
+  params.set(key, seen ?? spec);
+  return Expr.make({ op: "param", ty: "f32", spec: seen ?? spec }, `p:${key}`);
 }
 
 /** Look up a table-backed curve at x in [0, 1]. Always a vec4; take components with `.x`, `.xyz`. */
