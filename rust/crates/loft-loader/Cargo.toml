@@ -7,7 +7,7 @@ publish = false
 
 # wgpu 30: the version the game client pins, so the loader can be handed the game's own Device.
 [dependencies]
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "wgsl"] }
+wgpu = { workspace = true, features = ["std", "parking_lot", "metal", "vulkan", "dx12", "wgsl"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
@@ -19,6 +19,3 @@ png = "0.18"
 [[bin]]
 name = "loft-view"
 path = "src/bin/loft-view.rs"
-
-[profile.release]
-debug = false
