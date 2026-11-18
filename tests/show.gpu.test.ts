@@ -12,9 +12,10 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { headlessDevice } from "../src/host/headless.ts";
-import { shownModules } from "../src/cli/show.ts";
+import type { Shown } from "../src/cli/show.ts";
 
 const DUST = "tests/fixtures/show/dust_burst.ts";
+const SHOW = join(import.meta.dir, "../src/cli/show.ts");
 const TYPO = "tests/fixtures/mistakes/36_raw_wgsl_typo.ts";
 const OK = "tests/fixtures/mistakes/_ok.ts";
 
@@ -25,7 +26,13 @@ async function loft(...args: string[]): Promise<{ code: number; last: string }> 
 }
 
 test("loft show: every module compiles as one module, and every computing line of the scene's text is sited", async () => {
-  const modules = await shownModules(DUST, { kind: "default" });
+  // In a child process, as `loft show` runs: text lowering hash-conses nodes and a node keeps the first site it was
+  // lowered at (src/text/lower.ts), so a test earlier in this process that loaded examples/dust_veil.ts (the same
+  // flight and dust text) would leave those nodes cited at the example instead of this fixture.
+  const child = Bun.spawn(["bun", "-e", `const { shownModules } = await import(${JSON.stringify(SHOW)}); console.log(JSON.stringify(await shownModules(${JSON.stringify(DUST)}, { kind: "default" })));`], { stdout: "pipe", stderr: "inherit" });
+  const out = await new Response(child.stdout).text();
+  expect(await child.exited).toBe(0);
+  const modules: Shown[] = JSON.parse(out.trim().split("\n").at(-1)!);
   const device = await headlessDevice();
   for (const m of modules) {
     device.pushErrorScope("validation");
