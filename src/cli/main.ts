@@ -211,13 +211,42 @@ async function profileOnDraw(cmd: Extract<Command, { kind: "profile" }>) {
   const { existsSync } = await import("node:fs");
   if (!existsSync(LOFT_DRAW)) throw new EnvironmentError(`${LOFT_DRAW} is missing. Fix: tools/dev.sh build loft-draw --fast`, false);
   const out = `out/profile/${/([^/]+?)(\.ts)?$/.exec(cmd.path)![1]!}`;
-  await build({ kind: "build", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
+  await buildTs({ kind: "build", engine: "ts", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
   const child = Bun.spawn([LOFT_DRAW, "profile", out, "--view", cmd.view, "--time", String(cmd.time), "--size", `${cmd.size.width}x${cmd.size.height}`, "--frames", String(cmd.frames)], { stdout: "inherit", stderr: "inherit" });
   const code = await child.exited;
   if (code !== 0) process.exit(code);
 }
 
 async function build(cmd: Extract<Command, { kind: "build" }>) {
+  switch (cmd.engine) {
+    case "ts": return buildTs(cmd);
+    case "rust": return buildRust(cmd);
+  }
+}
+
+/**
+ * `loft build` under LOFT_ENGINE=rust: the TS compiler runs once more with the recorder watching (it still finds the
+ * roots), then the job crosses to loft-core's program driver, which writes `scene.loft` (Bundle V1). Until the wire
+ * carries Draw/Pass decls and Kernel bodies the bundle has no draws and zero tables, and this says so.
+ */
+async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
+  const [{ rec }, { pack, Program }, { native, UNLIMITED }, { mkdirSync }] = await Promise.all([
+    import("../record/recorder.ts"), import("../record/wire.ts"), import("../core/native.ts"), import("node:fs")]);
+  const t = performance.now(), stop = rec.watch();
+  let roots: ReturnType<typeof stop>;
+  try { await loadArtefact(cmd.source); } finally { roots = stop(); }
+  const job = pack(rec.job(Program.Scene, roots));
+  mkdirSync(cmd.out, { recursive: true });
+  const file = `${cmd.out}/scene.loft`;
+  const r = native().run(job, { nodes: UNLIMITED, tapeOps: UNLIMITED, boxes: UNLIMITED, gpuNanos: UNLIMITED }, file);
+  const s = r.scene!, p = r.phases, rustMs = (p.decode + p.plan + p.emit + p.f16 + p.bundle) / 1e6;
+  console.log(`compile  ${ms(t)}  rust ${rustMs.toFixed(1)} ms: ${r.nodes} nodes, ${s.roots} roots, ${s.functions} functions (${(s.wgsl_bytes / 1024).toFixed(1)} KB WGSL), ${s.resources} resources`);
+  console.log(`naga     f32 valid; f16 ${s.mixed === "Valid" ? "valid" : `refused (a mixed load will be): ${s.mixed.Refused}`}`);
+  console.log(`wrote ${file}  ${(s.bundle_bytes / 1024).toFixed(1)} KB, build ${s.build.slice(0, 16)}`);
+  console.log(`not drawable yet: ${s.draws} draws (the wire has no Draw/Pass layout) and ${s.unfilled} unfilled tables (no Kernel bodies)`);
+}
+
+async function buildTs(cmd: Extract<Command, { kind: "build" }>) {
   let t = performance.now();
   const artefact = await loadArtefact(cmd.source);
   console.log(`compile  ${ms(t)}  ${fillCounts(artefact.tables)}`);

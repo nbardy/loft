@@ -15,6 +15,7 @@ crate-type = ["cdylib"]
 probe = []
 
 [dependencies]
+loft-core = { path = "../loft-core" }
 loft-ir = { path = "../loft-ir" }
 serde.workspace = true
 serde_json.workspace = true

@@ -5,6 +5,8 @@
 //   bun tools/parity/run.ts checks <scene.ts>         (child) one scene's check verdicts as JSON on stdout
 //   bun tools/parity/run.ts dawn <scene.ts> <id>      (child) a scene `loft build` refuses, drawn as `loft render` draws it
 //   bun tools/parity/run.ts cross <R0 dir>            this set's frames against another backend's R0 (§2.3 cross rule)
+//   bun tools/parity/run.ts rust [--only text]        every entry through `LOFT_ENGINE=rust loft build` (loft-core's
+//                                                     program driver), each ending against R0's build: out/parity/rust
 //
 // LOFT_PARITY_OUT names the set (default out/parity/R0): the Linux runner (tools/parity/linux.sh) draws its own set on
 // Vulkan and crosses it with the macOS R0.
@@ -31,7 +33,7 @@ type Corpus = {
   seeds: { default: string; env: string; commit: string; sets: { set: string; path: string; rows: number; sha256: string }[] };
   frames: { cameras: number; times: number[]; size: [number, number]; stepsTime: number; detail: { time: number; size: [number, number] } };
 };
-type Mode = { kind: "reference" | "repeat"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
+type Mode = { kind: "reference" | "repeat" | "rust"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
 type Origin = { kind: "example" } | { kind: "seed"; set: string; seed: string; unported: number };
 type Entry = { id: string; path: string; origin: Origin };
 /** How `loft build` ended: the CLI's verdict kinds (src/cli/verdict.ts, docs/errors.md), or a process that died outside them. */
@@ -55,7 +57,7 @@ class ParityError extends Error {}
 function parse(argv: string[]): Mode {
   const [cmd, ...rest] = argv;
   switch (cmd) {
-    case "reference": case "repeat": {
+    case "reference": case "repeat": case "rust": {
       const i = rest.indexOf("--only");
       if (rest.length !== (i < 0 ? 0 : 2) || (i >= 0 && !rest[i + 1])) throw new ParityError(`${cmd} takes only --only <text>`);
       return { kind: cmd, only: i < 0 ? "" : rest[i + 1]! };
@@ -66,7 +68,7 @@ function parse(argv: string[]): Mode {
     case "dawn":
       if (rest.length !== 2) throw new ParityError("dawn takes a scene path and its entry id");
       return { kind: "dawn", path: rest[0]!, id: rest[1]! };
-    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: reference | repeat | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
+    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: reference | repeat | rust | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
   }
 }
 
@@ -242,6 +244,47 @@ async function cross(other: string) {
   process.exit(builds.length + fails.length === 0 && frames > 0 ? 0 : 1); // no frame compared is no pass
 }
 
+/**
+ * Every entry through the Rust program driver (`LOFT_ENGINE=rust loft build`), in its own process, against how R0's
+ * build ended: built against built (the bundle's sha256 and its draw count recorded), a refusal against a refusal of the
+ * same verdict and head. Exit 0 is a bundle whose module Naga accepted as f32 and f16. Pictures need draws, which the
+ * wire cannot carry yet, so no frame is drawn here.
+ */
+async function rust(only: string) {
+  const out = join(ROOT, "out/parity/rust"), list = await entries(only);
+  const rows: { id: string; r0: string; rust: string; same: boolean; build?: string; draws?: number; bytes?: number; ms: number }[] = [];
+  const outcome = (b: Built) => b.kind === "refused" ? `refused:${b.verdict}:${b.head}` : b.kind === "built" ? "built" : `crashed:${b.exit}`;
+  const queue = [...list];
+  const worker = async () => {
+    for (let e = queue.shift(); e !== undefined; e = queue.shift()) {
+      const dir = join(out, "build", e.id), t = performance.now();
+      rmSync(dir, { recursive: true, force: true });
+      const r = await spawn(["env", "LOFT_ENGINE=rust", process.execPath, "src/cli/main.ts", "build", e.path, "--out", dir]);
+      const ms = Math.round(performance.now() - t);
+      const r0 = existsSync(join(OUT, "entries", `${e.id}.json`)) ? outcome((JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec).build) : "absent";
+      if (r.exit === 0) {
+        const bytes = readFileSync(join(dir, "scene.loft")), n = Number(new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(8, true));
+        const draws = (JSON.parse(new TextDecoder().decode(bytes.subarray(16, 16 + n))) as { draws: unknown[] }).draws.length;
+        rows.push({ id: e.id, r0, rust: "built", same: r0 === "built", build: sha(bytes), draws, bytes: bytes.length, ms });
+      } else {
+        const verdict = KIND[r.exit as keyof typeof KIND], last = r.stderr.trimEnd().split("\n").at(-1) ?? "";
+        const rust = verdict === undefined ? `crashed:${r.exit}` : `refused:${verdict}:${last.replace(/^loft: [^:]+: /, "").replace(/ \(at [^()]+\)$/, "")}`;
+        rows.push({ id: e.id, r0, rust, same: rust === r0, ms });
+      }
+      const x = rows.at(-1)!;
+      console.log(`${rows.length}/${list.length} ${x.same ? "same" : "DIFF"} ${e.id}: ${x.rust}${x.same ? "" : ` (R0 ${x.r0})`}`);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  rows.sort((a, b) => a.id.localeCompare(b.id));
+  const count = (k: (r: (typeof rows)[number]) => string) => rows.reduce<{ [k: string]: number }>((o, r) => ({ ...o, [k(r)]: (o[k(r)] ?? 0) + 1 }), {});
+  const report = { head: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain", "--", "src", "rust", "tools/parity") !== "", r0: OUT, only, entries: rows.length, same: rows.filter((r) => r.same).length,
+    outcomes: count((r) => r.rust.split(":").slice(0, 2).join(":")), drawable: rows.filter((r) => (r.draws ?? 0) > 0).length, rows };
+  mkdirSync(out, { recursive: true });
+  writeFileSync(join(out, only === "" ? "rust.json" : `rust.only-${only}.json`), json(report));
+  console.log(`rust: ${report.entries} entries, ${report.same} end as R0 did; ${json(report.outcomes, 0).trim()}; ${report.drawable} drawable`);
+}
+
 /** Child: the verdicts `loft check` computes (src/cli/check.ts), for the variant `loft build` builds, whole. */
 async function verdicts(path: string): Promise<Checks> {
   const { subjectAt, choose } = await import("../../src/cli/variant.ts");
@@ -301,6 +344,7 @@ try {
   switch (mode.kind) {
     case "reference": await reference(mode.only); break;
     case "repeat": await repeat(mode.only); break;
+    case "rust": await rust(mode.only); break;
     case "checks": process.stdout.write(json(await verdicts(mode.path), 0)); process.exit(0);
     case "cross": await cross(resolve(mode.path)); break;
     case "dawn": process.stdout.write(json(await dawn(mode.path, mode.id), 0)); process.exit(0);

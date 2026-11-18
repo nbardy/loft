@@ -1,28 +1,20 @@
-//! The N-API addon (plan §3.5), hand-written: one entry, `run(job: Uint8Array, limits: BigUint64Array) -> string`
-//! (limits per `Meter`, in its order; lane 4.2), plus `stamp`, the version
-//! handshake src/core/native.ts checks at load. The job is borrowed in place, never copied by the binding. The answer
-//! is JSON, `{"Ok": report}` or `{"Err": {kind, code, message, error}}`, and a panic inside is caught and answered as
-//! `Internal`, so the JS process lives. Wave 1 decodes and validates; the integrator wires loft-core's program driver
-//! into `drive`.
-use loft_ir::error::{Error, Internal, Limits, Meter};
-use loft_ir::graph::Program;
-use loft_ir::wire::{self, WIRE};
+//! The N-API addon (plan §3.5), hand-written: one entry,
+//! `run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array) -> string` (limits per `Meter`, in its order, lane
+//! 4.2; `out` the UTF-8 path a Scene's bundle is written to, empty for none), plus `stamp`, the version handshake
+//! src/core/native.ts checks at load. The job is borrowed in place, never copied by the binding. The answer is JSON,
+//! `{"Ok": report}` or `{"Err": {kind, code, message, error}}`, and a panic inside is caught and answered as
+//! `Internal`, so the JS process lives. The work is loft-core's program driver, `loft_core::run`.
+use loft_core::Report;
+use loft_ir::error::{Error, Internal, Limits};
+use loft_ir::wire::WIRE;
 use serde::Serialize;
 use std::panic::{self, AssertUnwindSafe};
-use std::time::Instant;
 
 /// What native.ts expects, byte for byte. Bump the abi number with any change to `run`'s arguments or answer.
-const STAMP: &str = concat!("loft-node abi 2 wire ", 1);
+const STAMP: &str = concat!("loft-node abi 3 wire ", 1);
 const _: () = assert!(WIRE == 1, "STAMP names the wire version");
-
-#[derive(Serialize)]
-struct Report {
-    program: Program,
-    nodes: usize,
-    decls: usize,
-    /// Rust's own time on the job, so the caller can tell the crossing from the work.
-    decode_ns: u64,
-}
+/// The Loft commit this addon was built from (build.rs), written into every bundle as `compiler`.
+const COMMIT: &str = env!("LOFT_COMMIT");
 
 #[derive(Serialize)]
 enum Answer<T> {
@@ -30,17 +22,14 @@ enum Answer<T> {
     Err { kind: &'static str, code: u8, message: String, error: Error },
 }
 
-fn drive(job: &[u8], limits: Limits) -> Result<Report, Error> {
-    let t = Instant::now();
-    let job = wire::decode(job)?;
-    let decode_ns = t.elapsed().as_nanos() as u64;
-    let g = &job.graph;
-    limits.spend(Meter::Nodes, g.nodes.len() as u64)?;
-    let decls = g.fns.len() + g.raws.len() + g.loops.len() + g.kernels.len() + g.params.len() + g.inputs.len();
-    let report = Report { program: job.program, nodes: g.nodes.len(), decls, decode_ns };
-    match job.program {
-        Program::Scene | Program::Solve | Program::Evaluate | Program::Check => Ok(report),
+fn drive(job: &[u8], limits: Limits, out: &[u8]) -> Result<Report, Error> {
+    let out = std::str::from_utf8(out).map_err(|_| Error::Usage("run(job, limits, out): out is not UTF-8".into()))?;
+    let (report, bundle) = loft_core::run(job, limits, COMMIT)?;
+    if let (Some(bytes), false) = (bundle, out.is_empty()) {
+        std::fs::write(out, bytes)
+            .map_err(|e| Error::Environment(format!("writing the bundle to {out}: {e}").into()))?;
     }
+    Ok(report)
 }
 
 /// Runs `f` with panics caught, and answers in JSON.
@@ -111,18 +100,19 @@ mod napi {
         v
     }
 
-    /// Argument `k` of 2, a typed array of type `want`, borrowed for the duration of the call.
+    /// Argument `k` of 3, a typed array of type `want`, borrowed for the duration of the call.
     ///
     /// SAFETY: called only from an N-API callback with its own `env` and `info`; the slice is used before the callback
     /// returns, while the JS engine keeps the array alive and does not run JS (so nothing can detach or write it).
     unsafe fn array<'a>(env: Env, info: Info, k: usize, want: i32) -> Result<&'a [u8], &'static str> {
-        let (mut argc, mut argv) = (2usize, [ptr::null_mut(); 2]);
+        let (mut argc, mut argv) = (3usize, [ptr::null_mut(); 3]);
         let (mut ty, mut len, mut data, mut buf, mut off) = (-1, 0usize, ptr::null_mut(), ptr::null_mut(), 0usize);
-        const USAGE: &str = "run(job, limits) takes a Uint8Array job and a BigUint64Array of 4 limits";
-        // SAFETY: argv has room for argc = 2 values; the out-pointers are live locals.
+        const USAGE: &str =
+            "run(job, limits, out) takes a Uint8Array job, a BigUint64Array of 4 limits and a Uint8Array path";
+        // SAFETY: argv has room for argc = 3 values; the out-pointers are live locals.
         unsafe {
             if napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), ptr::null_mut(), ptr::null_mut()) != OK
-                || argc < 2
+                || argc < 3
                 || napi_get_typedarray_info(env, argv[k], &mut ty, &mut len, &mut data, &mut buf, &mut off) != OK
                 || ty != want
             {
@@ -137,7 +127,9 @@ mod napi {
 
     unsafe extern "C" fn run(env: Env, info: Info) -> Value {
         // SAFETY: env and info come from N-API for this callback.
-        let (job, limits) = unsafe { (array(env, info, 0, UINT8_ARRAY), array(env, info, 1, BIGUINT64_ARRAY)) };
+        let (job, limits, out) = unsafe {
+            (array(env, info, 0, UINT8_ARRAY), array(env, info, 1, BIGUINT64_ARRAY), array(env, info, 2, UINT8_ARRAY))
+        };
         string(
             env,
             &super::guard(|| {
@@ -147,7 +139,7 @@ mod napi {
                 let [nodes, tape_ops, boxes, gpu_nanos] =
                     std::array::from_fn(|k| u64::from_le_bytes(limits[8 * k..8 * k + 8].try_into().expect("8 bytes")));
                 let limits = super::Limits { nodes, tape_ops, boxes, gpu_nanos };
-                super::drive(job.map_err(binding)?, limits)
+                super::drive(job.map_err(binding)?, limits, out.map_err(binding)?)
             }),
         )
     }

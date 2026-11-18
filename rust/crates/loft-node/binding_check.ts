@@ -13,8 +13,10 @@ const addon = process.argv[2]!;
 const fails: string[] = [];
 const check = (ok: boolean, what: string) => { if (!ok) fails.push(what); };
 
-/** A chain job: lit 1.0, then n-1 nodes add(prev, lit), packed by the recorder's writer (src/record/wire.ts). */
-function chain(n: number): Uint8Array {
+/** A chain job: lit 1.0, then n-1 nodes add(prev, lit), packed by the recorder's writer (src/record/wire.ts). With
+ * `root`, the last node is the program's root, which the driver emits; without, the job only decodes (the 1M-node
+ * crossing: emit's walk recurses per node of a chain). */
+function chain(n: number, root = true): Uint8Array {
   const ADD = PRIM0 + PRIMS.indexOf("add");
   const nodes = new Uint32Array(4 * n), args = new Uint32Array(2 * (n - 1));
   nodes.set([Op.Lit, 0, 1, 0]);
@@ -25,7 +27,7 @@ function chain(n: number): Uint8Array {
   return pack({
     program: Program.Scene, nodes, args, lits: new Float64Array([1]), rows: new Float32Array(0), blobs: new Uint8Array(0),
     syms: new Uint8Array(0), symAt: new Uint32Array(1), sites: new Uint32Array(0), siteOf: new Uint32Array(n),
-    decls: Uint32Array.from([1]), roots: Uint32Array.from([n - 1]),
+    decls: Uint32Array.from([root ? 1 : 0]), roots: root ? Uint32Array.from([n - 1]) : new Uint32Array(0),
   });
 }
 
@@ -41,14 +43,15 @@ const small = n.run(chain(3));
 const over = [0, 1].map(() => refusal(() => opened.run(chain(1000), { ...free, nodes: 999n })));
 check(over.every((e) => e?.kind === "budget" && e.code === 7 && JSON.stringify(e.error) === JSON.stringify({ Budget: { meter: "Nodes", limit: 999, spent: 1000 } })), "a job one node over its limit is Budget{Nodes, 999, 1000}, twice");
 check(opened.run(chain(1000), { ...free, nodes: 1000n }).nodes === 1000, "a job at its node limit runs");
-check(small.nodes === 3 && small.program === "Scene", "a 3-node job decodes");
+check(small.nodes === 3 && small.program === "Scene" && small.scene?.roots === 1 && small.scene.draws === 0 && small.scene.build.length === 64, "a 3-node Scene job builds a bundle of one root");
 
-const big = chain(1_000_000);
+const big = chain(1_000_000, false);
 const times: { total: number; decode: number }[] = [];
 for (let k = 0; k < 15; k++) {
   const t = process.hrtime.bigint();
   const r = n.run(big);
-  times.push({ total: Number(process.hrtime.bigint() - t) / 1e6, decode: r.decode_ns / 1e6 });
+  const p = r.phases;
+  times.push({ total: Number(process.hrtime.bigint() - t) / 1e6, decode: (p.decode + p.plan + p.emit + p.f16 + p.bundle) / 1e6 });
 }
 times.sort((a, b) => a.total - b.total);
 const med = times[7]!;
@@ -73,7 +76,7 @@ check(missing?.kind === "environment" && missing.code === 6, "a missing addon is
 const dir = mkdtempSync(join(tmpdir(), "loft-stale-"));
 const stale = join(dir, "libloft_node_stale.dylib");
 copyFileSync(addon, stale);
-const bytes = readFileSync(stale), at = bytes.indexOf("loft-node abi 2 wire 1");
+const bytes = readFileSync(stale), at = bytes.indexOf("loft-node abi 3 wire 1");
 check(at >= 0, "the stamp is in the binary");
 bytes[at + 14] = "9".charCodeAt(0);
 writeFileSync(stale, bytes);

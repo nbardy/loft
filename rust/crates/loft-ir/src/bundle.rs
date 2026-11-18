@@ -53,7 +53,7 @@ pub struct Resource {
 pub enum Shape {
     Rows {
         rows: u32,
-        lanes: u8,
+        lanes: u16,
     },
     Texture {
         extent: [u32; 3],
