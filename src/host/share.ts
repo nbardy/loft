@@ -184,11 +184,13 @@ function read(wgsl: string, tables: ReadonlyMap<string, Accessor>): Read | strin
     if (c !== undefined && k !== c.from + 1 && (fixed[k] || branchy(k))) consts.delete(at(k));
   }
 
+  // A surviving declaration has exactly one number token. Index those offsets once for the per-token pass.
+  const constByNumber = new Map([...consts.values()].map((c) => [c.num, c]));
   let perDraw: Read["perDraw"];
   const keyParts: string[] = [], slots: Slot[] = [], values: number[] = [];
   for (let k = 0; k < code.length; k++) {
     const t = at(k);
-    const c = [...consts.values()].find((x) => x.num === k);
+    const c = constByNumber.get(k);
     if (c !== undefined) {
       keyParts.push(`#${c.type}`); slots.push({ kind: "const", at: code[k]!, type: c.type, name: at(c.from + 1), from: code[c.from]!, to: code[c.to]! });
       values.push(numberValue(t, c.type));
