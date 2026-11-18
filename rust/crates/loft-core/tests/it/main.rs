@@ -1,6 +1,8 @@
 //! Lane 1.3 pass/fail checks (lean Rust plan §8.2): (a) tape vs `compileJs`, (b) interval soundness, (c) grad vs
 //! central differences, (d) a digest of tape bits to compare across hosts. Heavy counts: run with `--release`.
 
+mod kernels;
+
 use loft_core::grad::grad;
 use loft_core::interval::{I, enclose};
 use loft_core::prim::{ATOMS, Atom, PRIMS, Prim, TyRule, atom};
