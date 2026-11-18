@@ -4,10 +4,11 @@
 // +x. Ported from keel's preview_probe `serpent.rs`.
 
 import {
-  add, sheetOn, draw, lift, cross, dot, floor, keys, lt, mod, mul, normalize, on, palette, param, place, points, retarded,
+  add, sheetOn, draw, lift, cross, dot, floor, ge, keys, lt, min, mod, mul, normalize, on, palette, param, place, points, retarded,
   rotateAbout as rotate, scene, sea, select, sin, smoothstep, strand, sub, TAU, through, time, toon, vec3, wave, abs, cos, mix,
   type Drawable, type Expr, type In, type Strand, type StrandSpec,
 } from "../src/index.ts";
+import { always } from "../src/ranged.ts";
 
 export const S = {
   // body
@@ -243,13 +244,15 @@ export const restGape = mul(add(1, mul(sin(mul(time, 0.9)), 0.4)), S.jawGape);
 
 const swimming = serpent({ spine: restSpine, gape: restGape });
 
+const ocean = sea({
+  swell: [
+    { direction: [1, 0.3], length: 14, height: 0.35, speed: 1.1 },
+    { direction: [-0.3, 1], length: 6.5, height: 0.12, speed: 0.8, phase: 1.3 },
+  ],
+});
+
 export default scene({
-  ground: sea({
-    swell: [
-      { direction: [1, 0.3], length: 14, height: 0.35, speed: 1.1 },
-      { direction: [-0.3, 1], length: 6.5, height: 0.12, speed: 0.8, phase: 1.3 },
-    ],
-  }),
+  ground: ocean,
   things: swimming.things,
   style: toon({ bands: 3, outline: 0.04 }),
   sun: [-0.45, 0.75, 0.5],
@@ -260,3 +263,15 @@ export default scene({
     three: { kind: "perspective", eye: [14, 8.5, 16], target: [0, 1, 0], fovY: 0.6 },
   },
 });
+
+/**
+ * How far the head is above the swell: the least, over the head's joints, of the joint's height less its radius less
+ * the sea's height under it. The head rides the neck's frame (the body's station table), so this is the whole pose.
+ */
+const head = swimming.head.skeleton;
+export const headClearance = min(...Array.from({ length: head.joints }, (_, k) => { const j = head.joint(k); return sub(sub(j.p.y, j.r), ocean.height(j.p.xz, time)); }) as [Expr<"f32">, Expr<"f32">]);
+
+export const checks = [
+  // For every neck rise in [2.5, 4.5] and every instant of ten seconds, the head stays out of the water.
+  always([rise, 2.5, 4.5], always([time, 0, 10], ge(headClearance, 0)), { label: "head clears the swell" }),
+];
