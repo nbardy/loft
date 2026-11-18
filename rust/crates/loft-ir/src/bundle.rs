@@ -29,6 +29,9 @@ pub struct Bundle {
     pub compiler: Box<str>,
     pub names: Box<[Box<str>]>,
     pub resources: Box<[Resource]>,
+    /// The storage buffers that hold every `Rows` resource, each at a fixed vec4 offset: a shader binds pack p at
+    /// `@group(1) @binding(p)` and reads resource r at its offset, a constant in its text (layout, loft-core).
+    pub packs: Box<[Pack]>,
     pub kernels: Box<[Kernel]>,
     pub modules: Box<[Module]>,
     pub draws: Box<[Draw]>,
@@ -82,6 +85,23 @@ pub enum Init {
     By(Id),
 }
 
+/// One storage buffer of rows. `Write` packs hold what kernels write and are bound read-write in compute pipelines,
+/// read-only in render pipelines; `Read` packs only ever read-only. A stepped resource has a pack of its own, since the
+/// host swaps that buffer for each step's previous state.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pack {
+    pub access: Access,
+    /// Its size in vec4s (at least 1).
+    pub vec4s: u64,
+    /// (resource, vec4 offset of its first state): every `Rows` resource is in exactly one pack.
+    pub holds: Box<[(Id, u64)]>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Access {
+    Read,
+    Write,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Kernel {
     pub writes: Box<[Id]>,
@@ -115,8 +135,6 @@ pub struct Module {
     pub origin: Origin,
     /// Written with the `lf` alias, which the host defines as f32 or f16 at load.
     pub precision_alias: bool,
-    /// The resources it reads, in binding order: `@group(1) @binding(k)` is `reads[k]` (emit's `Emitted::reads`).
-    pub reads: Box<[Id]>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Origin {

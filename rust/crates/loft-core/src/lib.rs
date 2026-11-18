@@ -214,22 +214,24 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         .collect();
     g.fns = g.fns.iter().cloned().chain(wrappers).collect();
     let exports: Vec<(&str, u32)> = names.iter().enumerate().map(|(k, n)| (n.as_str(), first + k as u32)).collect();
+    // Resource k is kernel decl k (plan above); layout put each in a pack.
+    let row = |k: usize| match (lay.at[k], &plan.resources[k].shape) {
+        (layout::Place::Rows { pack, offset }, Shape::Rows { rows, lanes }) => {
+            emit::Row { res: k as u32, pack, offset, rows: *rows, lanes: u32::from(*lanes) }
+        }
+        (layout::Place::Rows { .. } | layout::Place::Bound, _) => {
+            unreachable!("kernel::plan makes every kernel decl's resource rows, and layout packs every rows resource")
+        }
+    };
     let slots = emit::Slots {
         params: (0..g.params.len() as u32).collect(),
         inputs: (0..g.inputs.len() as u32).collect(),
-        kernels: g
-            .kernels
-            .iter()
-            .enumerate()
-            .map(|(k, x)| match x {
-                Kernel::Table { lanes, .. } => [k as u32, *lanes],
-                Kernel::Rows { .. } => [k as u32, 1],
-            })
-            .collect(),
+        kernels: (0..g.kernels.len()).map(row).collect(),
+        packs: lay.packs.iter().map(|p| p.access).collect(),
     };
     // Globals outside emit's prelude are refused by name whether or not Naga runs at emit.
     emit::prelude::globals(&g)?;
-    let m = emit::module(&g, &exports, &slots)?;
+    let m = emit::module(&g, &exports, &slots, emit::Stage::Render)?;
     match build.naga {
         Naga::Emit => emit::check(&g, &m)?,
         Naga::Load => {}
@@ -249,12 +251,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
     let wgsl_bytes = m.text.len();
     let mut sections = plan.sections;
     sections.push(m.text.into_bytes().into());
-    let mut modules = vec![Module {
-        wgsl: sections.len() as u32 - 1,
-        origin: Origin::Author,
-        precision_alias: true,
-        reads: m.reads.iter().copied().collect(),
-    }];
+    let mut modules = vec![Module { wgsl: sections.len() as u32 - 1, origin: Origin::Author, precision_alias: true }];
     let mut strings: Vec<Box<str>> = Vec::new();
     let mut name = |s: &str| {
         strings.push(s.into());
@@ -269,12 +266,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         let kernel::Job::Decl(d) = pk.job else { unreachable!("drop_lifted left only decl kernels") };
         let fm = fill::module(&mut g, &slots, &decls[d as usize], build.naga)?;
         sections.push(fm.text.into_bytes().into());
-        modules.push(Module {
-            wgsl: sections.len() as u32 - 1,
-            origin: Origin::Author,
-            precision_alias: true,
-            reads: fm.reads.into(),
-        });
+        modules.push(Module { wgsl: sections.len() as u32 - 1, origin: Origin::Author, precision_alias: true });
         let module = modules.len() as u32 - 1;
         let body = match decls[d as usize].fill {
             kernel::Fill::Map { .. } => bundle::Body::Map { module, entry: fill_entry, rows: fm.rows },
@@ -333,14 +325,9 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
     let (draws_ir, media_ir, passes_ir) = draw_decls(&g);
     let low = draw::lower(&g, &slots, &draws_ir, &media_ir, &passes_ir)?;
     let (module0, name0) = (modules.len() as u32, strings.len() as u32);
-    for (text, reads) in low.modules.into_iter().zip(low.reads) {
+    for text in low.modules {
         sections.push(text.into_bytes().into());
-        modules.push(Module {
-            wgsl: sections.len() as u32 - 1,
-            origin: Origin::Author,
-            precision_alias: true,
-            reads: reads.into(),
-        });
+        modules.push(Module { wgsl: sections.len() as u32 - 1, origin: Origin::Author, precision_alias: true });
     }
     strings.extend(low.names);
     let at = |(m, n): (u32, u32)| (m + module0, n + name0);
@@ -361,6 +348,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         compiler: compiler.into(),
         names: strings.into(),
         resources: resources.into(),
+        packs: lay.packs.into(),
         kernels: kernels.into(),
         modules: modules.into(),
         draws,
@@ -373,7 +361,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         sections: sections.into(),
     };
     let resources = b.resources.len();
-    let (n_kernels, n_draws) = (b.kernels.len(), b.draws.len());
+    let (n_kernels, n_draws, n_packs) = (b.kernels.len(), b.draws.len(), b.packs.len());
     let bytes = b.write()?;
     let build = Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect();
     phases.bundle = ns(t);
@@ -384,7 +372,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         resources,
         unfilled,
         kernels: n_kernels,
-        storage_buffers: lay.buffers.len(),
+        storage_buffers: n_packs,
         dispatches,
         draws: n_draws,
         bundle_bytes: bytes.len(),

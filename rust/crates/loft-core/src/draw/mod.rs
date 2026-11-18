@@ -16,11 +16,10 @@
 //! Composition, decided once here: a draw that writes no depth (glow, specks, rain) is invisible to a medium's
 //! scene-depth clip, so its colour is multiplied by every medium of its passes (`veil`); one that writes depth is
 //! veiled by the medium drawn over it. Ground and ink exist only in `compose`.
-use crate::emit::{self, Slots};
+use crate::emit::{self, Row, Slots, Stage};
 use loft_ir::bundle::{self as b, Clear, F32, Layer, Proxy, Raster, Target};
 use loft_ir::error::SceneFault;
 use loft_ir::{Error, graph::Graph};
-use std::fmt::Write;
 
 const VIEW: &str = include_str!("../../wgsl/view.wgsl");
 const RAY: &str = include_str!("../../wgsl/ray.wgsl");
@@ -37,7 +36,7 @@ const OUTLINE: &str = include_str!("../../wgsl/outline.wgsl");
 
 /// A draw as the compiler holds it: bundle `Draw` with its graph functions (`Graph::fns` ids) still attached. Resource
 /// ids (`Mesh.res`, `Proxy::Instances.res`, `Medium::Gaussians.res`) are `Graph::kernels` ids, mapped through
-/// `Slots::kernels`.
+/// `Slots::kernels` to a pack and an offset (layout).
 pub struct Draw {
     pub name: u32,
     pub layer: Layer,
@@ -78,8 +77,6 @@ pub struct Pass {
 #[derive(Default)]
 pub struct Lowered {
     pub modules: Vec<String>,
-    /// Per module, the resources its graph part reads at `@group(1)`, in binding order (emit's `reads`).
-    pub reads: Vec<Vec<u32>>,
     pub names: Vec<Box<str>>,
     pub draws: Vec<b::Draw>,
     pub media: Vec<b::Medium>,
@@ -109,7 +106,7 @@ pub fn lower(g: &Graph, at: &Slots, draws: &[Draw], media: &[Medium], passes: &[
             t.ok_or_else(|| unsupported(&format!("medium {k} is found by no draw: draw it or drop it")))?;
         let integrate = match *m {
             Medium::March { steps, shadow_steps, .. } => b::Integrate::March { steps, shadow_steps },
-            Medium::Gaussians { res } => b::Integrate::Gaussians { res: at.kernels[res as usize][0] },
+            Medium::Gaussians { res } => b::Integrate::Gaussians { res: at.kernels[res as usize].res },
         };
         l.media.push(b::Medium { transmittance, integrate });
     }
@@ -138,11 +135,12 @@ fn in_view(draws: &[Draw], passes: &[Pass], i: u32) -> Vec<u32> {
     out
 }
 
-/// What one module is made of: the graph functions it exports, its @group(2) declarations and glue, its templates.
+/// What one module is made of: the graph functions it exports, its glue and its templates.
 #[derive(Default)]
 struct Glue {
     exports: Vec<(String, u32)>,
-    group2: Vec<String>,
+    /// Row readers already written (by bundle resource).
+    readers: Vec<u32>,
     text: String,
     templates: Vec<&'static str>,
 }
@@ -156,17 +154,21 @@ impl Glue {
         self.export("loft_paint", decl);
         self.line("fn paint(p: vec3<f32>, n: vec3<f32>, id: u32) -> vec4<f32> { return vec4<f32>(loft_paint(vec3<lf>(p), vec3<lf>(n), lf(f32(id)))); }");
     }
-    /// A row resource at the next @group(2) binding, named by its bundle resource; once per module.
-    fn rows(&mut self, res: u32) -> String {
-        let name = format!("g{res}");
-        let decl = format!("var<storage, read> {name}: array<vec4<f32>>;");
-        if !self.group2.contains(&decl) {
-            self.group2.push(decl);
+    /// A row resource's reader, `loft_rows{res}(k) -> vec4<f32>` over its `loft_rows{res}_n` vec4s, clamped (plan §4.3),
+    /// from its pack; written once per module. Returns the reader's name.
+    fn rows(&mut self, r: Row) -> String {
+        let name = format!("loft_rows{}", r.res);
+        if !self.readers.contains(&r.res) {
+            self.readers.push(r.res);
+            let n = u64::from(r.rows) * u64::from(r.lanes);
+            self.line(format!(
+                "const {name}_n = {n}u;\nfn {name}(k: u32) -> vec4<f32> {{ return loft_pack{}[{}u + min(k, {}u)]; }}",
+                r.pack,
+                r.offset,
+                n.max(1) - 1
+            ));
         }
         name
-    }
-    fn texture(&mut self, name: &str, ty: &str) {
-        self.group2.push(format!("var {name}: {ty};"));
     }
     fn line(&mut self, s: impl AsRef<str>) {
         self.text.push_str(s.as_ref());
@@ -181,9 +183,9 @@ impl Glue {
                 v3(max)
             )),
             Proxy::Instances { res, local } => {
-                let g = self.rows(at.kernels[*res as usize][0]);
+                let g = self.rows(at.kernels[*res as usize]);
                 self.line(format!(
-                    "fn proxy(i: u32) -> array<vec3<f32>, 2> {{ let r = {g}[i]; return array(r.xyz + {} * r.w, r.xyz + {} * r.w); }}",
+                    "fn proxy(i: u32) -> array<vec3<f32>, 2> {{ let r = {g}(i); return array(r.xyz + {} * r.w, r.xyz + {} * r.w); }}",
                     v3(&local[0]),
                     v3(&local[1])
                 ));
@@ -204,8 +206,8 @@ impl Glue {
                 MARCH.replace("{K}", &k.to_string())
             }
             Medium::Gaussians { res } => {
-                let rows = self.rows(at.kernels[*res as usize][0]);
-                GAUSS.replace("{K}", &k.to_string()).replace("{ROWS}", &rows)
+                let rows = self.rows(at.kernels[*res as usize]);
+                GAUSS.replace("{K}", &k.to_string()).replace("{COUNT}", &format!("{rows}_n")).replace("{ROWS}", &rows)
             }
         };
         self.line(text);
@@ -236,10 +238,10 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
                     b::RasterPrim::Grid { u, v }
                 }
                 Prim::Mesh { res } => {
-                    let r = gl.rows(at.kernels[res as usize][0]);
-                    gl.line(format!("fn mesh_row(k: u32) -> vec4<f32> {{ return {r}[k]; }}"));
+                    let r = gl.rows(at.kernels[res as usize]);
+                    gl.line(format!("fn mesh_row(k: u32) -> vec4<f32> {{ return {r}(k); }}"));
                     gl.templates.push(MESH);
-                    b::RasterPrim::Mesh { res: at.kernels[res as usize][0] }
+                    b::RasterPrim::Mesh { res: at.kernels[res as usize].res }
                 }
                 Prim::Quads { place } => {
                     gl.export("loft_place", place);
@@ -261,7 +263,6 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
                 }
                 Find::Medium(k) => {
                     need.extend((!need.contains(&k)).then_some(k));
-                    gl.texture("loft_depth", "texture_depth_2d");
                     gl.line(format!(
                         "fn scatter(r: Ray, s: vec2<f32>) -> vec4<f32> {{ return loft_scatter{k}(r, s); }}"
                     ));
@@ -274,7 +275,6 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
             (b::Cover::Ray { proxy: bundle_proxy(at, proxy), find }, Raster { cull: true, ..d.raster })
         }
         Cover::Screen => {
-            gl.texture("under", "texture_2d<f32>");
             gl.templates.push(SCREEN);
             (b::Cover::Screen, d.raster)
         }
@@ -293,7 +293,7 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
 fn bundle_proxy(at: &Slots, p: &Proxy) -> Proxy {
     match p {
         Proxy::Box { .. } => p.clone(),
-        Proxy::Instances { res, local } => Proxy::Instances { res: at.kernels[*res as usize][0], local: *local },
+        Proxy::Instances { res, local } => Proxy::Instances { res: at.kernels[*res as usize].res, local: *local },
     }
 }
 
@@ -311,16 +311,12 @@ impl Lowered {
         let exports: Vec<(&str, u32)> = gl.exports.iter().map(|(n, d)| (n.as_str(), *d)).collect();
         // Naga at emit first, so a refusal in a graph function or raw source names the author's line; `check` below
         // then covers the glue and templates.
-        let m = emit::module(g, &exports, at)?;
+        let m = emit::module(g, &exports, at, Stage::Render)?;
         emit::check(g, &m)?;
-        self.reads.push(m.reads);
         let mut text = m.text;
         for s in [VIEW].into_iter().chain(std::iter::once(gl.text.as_str())) {
             text.push('\n');
             text.push_str(s);
-        }
-        for (k, decl) in gl.group2.iter().enumerate() {
-            let _ = write!(text, "\n@group(2) @binding({k}) {decl}");
         }
         for t in &gl.templates {
             text.push('\n');
@@ -352,8 +348,6 @@ impl Lowered {
         let outline = p.outline.map(|f| {
             let mut gl = Glue::default();
             gl.export("loft_outline", f);
-            gl.texture("scene_colour", "texture_2d<f32>");
-            gl.texture("loft_depth", "texture_depth_2d");
             gl.templates.push(OUTLINE);
             gl
         });

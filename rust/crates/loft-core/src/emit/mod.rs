@@ -15,6 +15,7 @@ pub mod prelude;
 
 use crate::prim::{self, Spell};
 use body::Body;
+use loft_ir::bundle::Access;
 use loft_ir::graph::{Graph, Prim, Ty};
 use loft_ir::{Error, error::SceneFault};
 use std::collections::HashMap;
@@ -31,11 +32,9 @@ enum Src {
     Raw(u32, u32),
 }
 
-/// One WGSL module (without the `lf` alias line) and the kernel resources it reads, in binding order
-/// (`@group(1) @binding(k)` reads `reads[k]`).
+/// One WGSL module (without the `lf` alias line).
 pub struct Emitted {
     pub text: String,
-    pub reads: Vec<u32>,
     lines: Vec<Src>,
 }
 
@@ -45,16 +44,49 @@ pub struct Slots {
     pub params: Box<[u32]>,
     /// Per input: its vec4 slot in the frame uniform.
     pub inputs: Box<[u32]>,
-    /// Per kernel: its resource index and lanes per row, `[res, lanes]`.
-    pub kernels: Box<[[u32; 2]]>,
+    /// Per kernel decl: where its resource's rows are.
+    pub kernels: Box<[Row]>,
+    /// Per pack (`Bundle::packs`): whether kernels write it, which decides how a compute module declares it.
+    pub packs: Box<[Access]>,
+}
+
+/// A kernel decl's resource: bundle resource `res`, `rows` rows of `lanes` vec4s from vec4 `offset` of pack `pack`.
+#[derive(Clone, Copy, Debug)]
+pub struct Row {
+    pub res: u32,
+    pub pack: u32,
+    pub offset: u64,
+    pub rows: u32,
+    pub lanes: u32,
+}
+
+/// Which pipelines a module serves: a render module binds every pack read-only (a vertex stage may not write storage),
+/// a compute module binds the written packs read-write (loft-gpu builds one layout per stage).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stage {
+    Render,
+    Compute,
+}
+
+/// The pack bindings every module of `stage` declares: all of them, always, so every module of a stage shares one
+/// bind group layout (`@group(1) @binding(p)` is pack p, named `loft_pack{p}`).
+pub fn packs(at: &Slots, stage: Stage) -> String {
+    let access = |a: Access| match (stage, a) {
+        (Stage::Compute, Access::Write) => "read_write",
+        (Stage::Compute, Access::Read) | (Stage::Render, _) => "read",
+    };
+    at.packs
+        .iter()
+        .enumerate()
+        .map(|(p, &a)| format!("@group(1) @binding({p}) var<storage, {}> loft_pack{p}: array<vec4<f32>>;\n", access(a)))
+        .collect()
 }
 
 /// The module exporting each graph function `g.fns[exports[i].1]` as a WGSL function named `exports[i].0`. Not
 /// validated: `check` is Naga's pass over it.
-pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted, Error> {
+pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots, stage: Stage) -> Result<Emitted, Error> {
     let raws: Vec<String> = g.raws.iter().map(|r| g.sym(r.name).to_string()).collect();
-    let mut e =
-        Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], reads: vec![], raw_used: vec![] };
+    let mut e = Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], raw_used: vec![] };
     let mut tail = vec![];
     for &(name, d) in exports {
         let (params, result) = signature(g, d);
@@ -73,9 +105,7 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted,
     let mut lines: Vec<(String, Src)> = vec![];
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
     prelude::text(params, inputs).lines().for_each(|l| put(l.into()));
-    for (k, &kern) in e.reads.iter().enumerate() {
-        put(format!("@group(1) @binding({k}) var<storage, read> r{}: array<vec4<f32>>;", at.kernels[kern as usize][0]));
-    }
+    packs(at, stage).lines().for_each(|l| put(l.into()));
     for &(n, r) in &e.raw_used {
         lines.extend(
             g.sym(g.raws[r as usize].text).lines().enumerate().map(|(k, t)| (t.to_string(), Src::Raw(n, k as u32))),
@@ -86,7 +116,7 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted,
     }
     lines.extend(tail.into_iter().map(|t| (t, Src::Gen(None))));
     let text = lines.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join("\n");
-    Ok(Emitted { text, reads: e.reads, lines: lines.into_iter().map(|(_, s)| s).collect() })
+    Ok(Emitted { text, lines: lines.into_iter().map(|(_, s)| s).collect() })
 }
 
 /// Naga at emit, as f32: each raw function alone (so a typo in one nothing calls is refused at the author's line too),
@@ -178,7 +208,6 @@ struct Module<'g> {
     fns: HashMap<u32, (String, Vec<Line>)>,
     order: Vec<u32>,
     out: Vec<String>,
-    reads: Vec<u32>,
     /// One (first calling node, raw function) per distinct raw source, callees first. Deduplicated by source, not by
     /// function name: two sources declaring one name both go in, and Naga refuses the redefinition at the second
     /// author's line.
@@ -212,11 +241,6 @@ impl Module<'_> {
         lines.iter().for_each(|l| h.eat(&l.text));
         h.eat(&r);
         let name = format!("f{:016x}", h.0);
-        for k in needs.reads {
-            if !self.reads.contains(&k) {
-                self.reads.push(k);
-            }
-        }
         for (n, r) in needs.raws {
             for d in raw_closure(g, r) {
                 let text = g.raws[d as usize].text;

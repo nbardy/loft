@@ -33,13 +33,12 @@ enum Use {
     Body(u32),
 }
 
-/// What the module needs from a body: functions it calls, raw functions, and kernel resources it reads.
+/// What the module needs from a body: functions it calls and raw functions.
 #[derive(Default)]
 pub struct Needs {
     pub calls: Vec<u32>,
     /// (calling node, raw function) per raw call.
     pub raws: Vec<(u32, u32)>,
-    pub reads: Vec<u32>,
 }
 
 pub struct Body<'g> {
@@ -320,10 +319,10 @@ impl<'g> Body<'g> {
             }
             Op::Fetch { kernel, lane } => {
                 let row = self.need(args[0])?;
-                let [res, lanes] = self.at.kernels[kernel as usize];
-                self.needs.reads.push(kernel);
-                // Clamped by construction (plan §4.3): the row index never leaves the buffer.
-                format!("vec4<lf>(r{res}[min(u32({row}), arrayLength(&r{res}) / {lanes}u - 1u) * {lanes}u + {lane}u])")
+                let r = self.at.kernels[kernel as usize];
+                // Clamped by construction (plan §4.3): the row index never leaves its resource, so never its pack.
+                let (p, off, last, lanes) = (r.pack, r.offset, r.rows.max(1) - 1, r.lanes);
+                format!("vec4<lf>(loft_pack{p}[{off}u + min(u32({row}), {last}u) * {lanes}u + {lane}u])")
             }
         };
         let name = self.fresh("v");

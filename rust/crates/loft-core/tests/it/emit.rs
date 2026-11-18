@@ -1,8 +1,9 @@
 //! Lane 2.2 checks (lean Rust plan §8.2): random typed programs over every operator, loops, selects, calls, fetches,
 //! params and inputs emit modules Naga accepts under both `lf` aliases; permuted jobs (shuffled node and decl order,
 //! discarded nodes) give byte-identical modules; a raw typo is refused at the author's line.
-use loft_core::emit::{Slots, check, module, validate};
+use loft_core::emit::{Row, Slots, Stage, check, module, validate};
 use loft_ir::Error;
+use loft_ir::bundle::Access;
 use loft_ir::error::SceneFault;
 use loft_ir::graph::{Fill, Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, RawFn, Role, Sel, Site, Ty};
 
@@ -38,7 +39,7 @@ struct B {
     /// Layout's slots: per param, per input, per kernel.
     at_params: Vec<u32>,
     at_inputs: Vec<u32>,
-    at_kernels: Vec<[u32; 2]>,
+    at_kernels: Vec<Row>,
     /// Whether a node reads only literals: the fold pass (§1.10) leaves no such operator for emit, and Naga's
     /// constant evaluator refuses one outside its domain (`log` of a negative literal).
     konst: Vec<bool>,
@@ -103,6 +104,7 @@ impl B {
             params: self.at_params.clone().into(),
             inputs: self.at_inputs.clone().into(),
             kernels: self.at_kernels.clone().into(),
+            packs: Box::new([Access::Read]),
         }
     }
 }
@@ -213,7 +215,7 @@ fn program(seed: u64) -> (B, u32) {
         role: Role::Data,
         fill: Fill::Recurrence { recurrence: 0 },
     });
-    b.at_kernels.push([7, 3]);
+    b.at_kernels.push(Row { res: 7, pack: 0, offset: 40, rows: 1, lanes: 3 });
     let kernel = 0;
     let row = pool[r.below(pool.len())];
     let row = if b.nodes[row as usize].ty == Ty::F32 { row } else { pool[1] };
@@ -263,7 +265,7 @@ fn program(seed: u64) -> (B, u32) {
 
 fn emit_text(b: &B, main: u32) -> String {
     let g = b.graph();
-    match module(&g, &[("paint", main)], &b.slots()) {
+    match module(&g, &[("paint", main)], &b.slots(), Stage::Render) {
         Ok(m) => {
             check(&g, &m).unwrap_or_else(|e| panic!("f32 refused: {e}\n{}", m.text));
             validate(&g, &m, true).unwrap_or_else(|e| panic!("f16 refused: {e}\n{}", m.text));
@@ -438,7 +440,7 @@ fn raw_typo_is_refused_at_the_authors_line() {
     b.node_sites[call as usize] = 1;
     let f = b.func(&[x], call);
     let g = b.graph();
-    match module(&g, &[("paint", f)], &b.slots()).and_then(|m| check(&g, &m).map(|()| m)) {
+    match module(&g, &[("paint", f)], &b.slots(), Stage::Render).and_then(|m| check(&g, &m).map(|()| m)) {
         Err(Error::Scene { site: Some(site), fault: SceneFault::Wgsl { line, msg } }) => {
             println!("refused at {site}, raw line {line}: {msg}");
             // Naga points at the token after the missing `;`: `return` on line 3 of the raw source, the author's line 42.
@@ -476,7 +478,7 @@ fn two_raw_sources_with_one_name_are_refused() {
     let sum = b.node(Op::Prim(Prim::Add), Ty::F32, &[c1, c2]);
     let f = b.func(&[x], sum);
     let g = b.graph();
-    match module(&g, &[("paint", f)], &b.slots()).and_then(|m| check(&g, &m).map(|()| m)) {
+    match module(&g, &[("paint", f)], &b.slots(), Stage::Render).and_then(|m| check(&g, &m).map(|()| m)) {
         Err(Error::Scene { fault: SceneFault::Wgsl { msg, .. }, .. }) => println!("refused: {msg}"),
         other => panic!("expected Scene{{Wgsl}}, got {:?}", other.map(|m| m.text)),
     }

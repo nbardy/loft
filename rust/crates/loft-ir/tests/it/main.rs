@@ -472,6 +472,7 @@ fn bundle() -> Bundle {
             Resource { shape: Shape::Frame, init: Init::Zero },
         ]
         .into(),
+        packs: [Pack { access: Access::Write, vec4s: 64 * 2 * 91, holds: [(0, 0)].into() }].into(),
         kernels: [
             Kernel {
                 writes: [1].into(),
@@ -488,8 +489,8 @@ fn bundle() -> Bundle {
         ]
         .into(),
         modules: [
-            Module { wgsl: 1, origin: Origin::Library, precision_alias: true, reads: Box::new([0]) },
-            Module { wgsl: 2, origin: Origin::Author, precision_alias: false, reads: Box::new([]) },
+            Module { wgsl: 1, origin: Origin::Library, precision_alias: true },
+            Module { wgsl: 2, origin: Origin::Author, precision_alias: false },
         ]
         .into(),
         draws: [
