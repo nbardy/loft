@@ -83,3 +83,11 @@ recurrence; a span that is not a whole number of steps; a history over 120 x 64 
 other than `time`; a looping scene whose state span does not cover its loop (`scene() with period P`). A clip past the
 shortest `until` of a scene that does not loop is a usage error (exit 2). A scene with `recur` needs a GPU for `check`
 and `build` (exit 6 without one).
+
+## Ranged checks
+
+A ranged check (`always`, `eventually`: `src/ranged.ts`) is a check like any other: exit 5 when it fails, and also
+when it is **undecided** (its row says `undecided (...)` and which budget ran out: the box budget, or boxes that could
+not be split further, naming the operator that stayed unbounded there); raise `boxes` or rewrite the condition. One that
+reads what it cannot enclose (a GPU-only function, cellular noise, a table filled on the CPU, a leaf no range binds, `eq`
+or `ne`) is refused before it is decided: exit 4, `loft: scene: always ...: given ...`.

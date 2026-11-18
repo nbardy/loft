@@ -650,7 +650,8 @@ const quinticE = (t: E): E => MUL(MUL(MUL(t, t), t), ADD(MUL(t, SUB(MUL(t, f(6))
 const MIX = mix as unknown as (a: E, b: E, t: E) => E;
 const offset = (c: E, o: readonly number[]): E => (o.every((x) => x === 0) ? c : ADD(c, constOf(o)));
 
-function noise2Expr(p: E): E {
+/** Gradient noise written as an expression over the public hashes: what src/interval.ts encloses cell by cell. */
+export function noise2Expr(p: E): E {
   const c = FLOOR(p), fr = SUB(p, c), w = quinticE(fr);
   const corner = (o: readonly number[]): E => {
     const a = MUL(hash2(offset(c, o) as Expr<"vec2">) as E, f(TAU));
@@ -659,7 +660,7 @@ function noise2Expr(p: E): E {
   const x0 = MIX(corner([0, 0]), corner([1, 0]), w.x), x1 = MIX(corner([0, 1]), corner([1, 1]), w.x);
   return MUL(MIX(x0, x1, w.y), f(SCALE2));
 }
-function noise3Expr(p: E): E {
+export function noise3Expr(p: E): E {
   const c = FLOOR(p), fr = SUB(p, c), w = quinticE(fr);
   const corner = (o: readonly number[]): E => {
     const h = hash33(offset(c, o) as Expr<"vec3">) as E;
