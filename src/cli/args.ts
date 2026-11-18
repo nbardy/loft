@@ -197,6 +197,16 @@ export function parsePrecision(value: unknown): Precision | undefined {
   }
 }
 
+/** `LOFT_ENGINE` (plan 2026-11-19 §8.2): unset is "ts" until the wave 3 cutover, which removes the switch. */
+export type Engine = "ts" | "rust" | "shadow";
+export function parseEngine(value: string | undefined): Engine {
+  switch (value) {
+    case undefined: case "ts": return "ts";
+    case "rust": case "shadow": return value;
+    default: throw new UsageError(`LOFT_ENGINE=${value}: not ts, rust or shadow`);
+  }
+}
+
 export function parseArgs(argv: readonly string[]): Command {
   const [name, ...rest] = argv;
   if (name === undefined) throw new UsageError("no command given");
@@ -360,7 +370,10 @@ function parseServeArgs(rest: readonly string[]): ServeCommand {
   };
   // Split on spaces, no quoting: a confinement whose path holds a space goes in a wrapper script.
   const confine = (values.get("--confine") ?? "").split(" ").filter((s) => s !== "");
-  return { kind: "serve", compiles, confine, check: values.get("--check"), pending, compileSeconds: seconds("--compile-seconds"), drawSeconds: seconds("--draw-seconds"), limits: parseLimits(values.get("--limits")) };
+  // Classified here, the one place serve reads LOFT_ENGINE; "shadow" diffs two engines and is for the corpus tools.
+  const engine = parseEngine(process.env.LOFT_ENGINE);
+  if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: serve draws on "ts" or "rust" ("shadow" is for the corpus tools)`);
+  return { kind: "serve", engine, compiles, confine, check: values.get("--check"), pending, compileSeconds: seconds("--compile-seconds"), drawSeconds: seconds("--draw-seconds"), limits: parseLimits(values.get("--limits")) };
 }
 
 /** `--limits manifest=BYTES,files=N,bytes=BYTES`, any of the three; the rest keep ARTEFACT_LIMITS. */

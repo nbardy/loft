@@ -7,7 +7,7 @@
 //
 // The corpus is tools/parity/corpus.json: every examples/**/*.ts and the creative seeds, migrated by tools/migrate.ts.
 // Each entry is built by the real CLI (`loft build`); a refusal is recorded with its exit code, kind, site and text.
-// Built entries are checked in a child (every Verdict object whole) and drawn by `loft-view` (wgpu 30, Metal) as
+// Built entries are checked in a child (every Verdict object whole) and drawn by `loft-draw still` (wgpu 30, Metal) as
 // lossless PNG. A scene the build refuses (a CPU table a file cannot hold: Storm) is drawn by `loft render`'s path on
 // Dawn when it can be, and its frames are marked `dawn`: they are compared under the cross-executor rule. R0 is the commit of the tree, which must be clean where it decides pictures.
 import { createHash } from "node:crypto";
@@ -17,10 +17,10 @@ import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "../..");
 const OUT = join(ROOT, "out/parity/R0");
-const VIEW = join(ROOT, "rust/target/release/loft-view");
+const VIEW = join(ROOT, "rust/target/lab/loft-draw");
 const DIFF = join(ROOT, "tools/parity/target/release/parity-diff");
 /** The paths that decide a reference picture (the loader moved to rust/crates in lane 0.1; the workspace lock pins its wgpu). */
-const PICTURE = ["src", "examples", "rust/crates/loft-loader", "rust/Cargo.lock", "tools/migrate.ts", "package.json"];
+const PICTURE = ["src", "examples", "rust/crates/loft-loader", "rust/crates/loft-draw", "rust/Cargo.lock", "tools/migrate.ts", "package.json"];
 const corpus = JSON.parse(readFileSync(join(import.meta.dir, "corpus.json"), "utf8")) as Corpus;
 
 type Corpus = {
@@ -39,7 +39,7 @@ type Built =
 type Kind = (typeof KIND)[keyof typeof KIND];
 type Checks = { kind: "verdicts"; label: string; verdicts: unknown[] } | { kind: "absent" } | { kind: "refused"; verdict: unknown } | { kind: "crashed"; exit: number; stderr: string };
 type Shot = { camera: string; time: number; size: [number, number] };
-type Executor = "loft-view" | "dawn";
+type Executor = "loft-draw" | "dawn";
 type Frame = Shot & ({ kind: "drawn"; executor: Executor; file: string; sha256: string } | { kind: "refused"; executor: Executor; exit: number; stderr: string });
 /** What `loft render` made of a refused build: frames, or its own refusal (the build's, usually). */
 type Dawn = { kind: "drawn"; frames: Frame[] } | { kind: "refused"; exit: number; stderr: string };
@@ -137,17 +137,17 @@ function plan(b: { steps: boolean; cameras: string[] }): Shot[] {
 const frameName = (f: Shot) => `${f.camera}@${f.time}@${f.size.join("x")}.png`;
 
 async function draw(id: string, f: Shot, file: string): Promise<Frame> {
-  const r = await spawn([VIEW, join(OUT, "build", id), "--view", f.camera, "--time", String(f.time), "--size", f.size.join("x"), "--out", file]);
+  const r = await spawn([VIEW, "still", join(OUT, "build", id), "--view", f.camera, "--time", String(f.time), "--size", f.size.join("x"), "--out", file]);
   adapter ??= r.stderr.match(/^adapter (.*)$/m)?.[1];
-  if (r.exit !== 0) return { ...f, kind: "refused", executor: "loft-view", exit: r.exit, stderr: r.stderr.slice(-2000) };
-  return { ...f, kind: "drawn", executor: "loft-view", file: file.slice(OUT.length + 1), sha256: sha(readFileSync(file)) };
+  if (r.exit !== 0) return { ...f, kind: "refused", executor: "loft-draw", exit: r.exit, stderr: r.stderr.slice(-2000) };
+  return { ...f, kind: "drawn", executor: "loft-draw", file: file.slice(OUT.length + 1), sha256: sha(readFileSync(file)) };
 }
 let adapter: string | undefined;
 
 async function reference(only: string) {
   const dirty = git("status", "--porcelain", "--", ...PICTURE);
   if (dirty !== "") throw new ParityError(`R0 must be a commit: the tree is dirty where it decides pictures:\n${dirty}\nFix: commit or stash first`);
-  if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: tools/dev.sh build loft-loader --release`);
+  if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: tools/dev.sh build loft-draw --fast`);
   // R0 is the last commit that decides pictures, so a run interrupted at that commit resumes: recorded entries are kept.
   const r0 = git("log", "-1", "--format=%H", "--", ...PICTURE), stamp = join(OUT, "r0");
   const held = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : r0;
@@ -180,7 +180,7 @@ async function reference(only: string) {
   const recs = list.map((e) => JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec);
   const count = <T,>(xs: T[], key: (x: T) => string) => xs.reduce<{ [k: string]: number }>((o, x) => ({ ...o, [key(x)]: (o[key(x)] ?? 0) + 1 }), {});
   const manifest = {
-    r0, head: git("rev-parse", "HEAD"), loftView: { sha256: sha(readFileSync(VIEW)), loader: git("log", "-1", "--format=%H", "--", "rust/crates/loft-loader") },
+    r0, head: git("rev-parse", "HEAD"), loftDraw: { sha256: sha(readFileSync(VIEW)), source: git("log", "-1", "--format=%H", "--", "rust/crates/loft-loader", "rust/crates/loft-draw") },
     adapter, only, corpus: sha(readFileSync(join(import.meta.dir, "corpus.json"))), started, ended: { at: new Date().toISOString(), load1: loadavg()[0] }, cpus: cpus().length,
     entries: recs.length, origins: count(recs, (r) => r.entry.origin.kind),
     builds: count(recs, (r) => r.build.kind === "refused" ? `refused:${r.build.verdict}` : r.build.kind),
@@ -194,8 +194,8 @@ async function reference(only: string) {
 /** §2.3 precondition: every recorded frame drawn again; differing ones are kept and measured by the comparator. */
 async function repeat(only: string) {
   const recs = (await entries(only)).flatMap((e) => existsSync(join(OUT, "entries", `${e.id}.json`)) ? [JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec] : []);
-  // Dawn frames are drawn per scene by their child, so the repeat covers the loft-view references only.
-  const drawn = recs.flatMap((r) => r.frames.flatMap((f) => f.kind === "drawn" && f.executor === "loft-view" ? [{ id: r.entry.id, f }] : []));
+  // Dawn frames are drawn per scene by their child, so the repeat covers the loft-draw references only.
+  const drawn = recs.flatMap((r) => r.frames.flatMap((f) => f.kind === "drawn" && f.executor === "loft-draw" ? [{ id: r.entry.id, f }] : []));
   const differing: { id: string; frame: string; diff: unknown }[] = [];
   let refused = 0;
   for (const [i, { id, f }] of drawn.entries()) {
