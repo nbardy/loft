@@ -227,6 +227,9 @@ reconstructed from neighbouring depths using the nearer of each pair, "is this p
   lines along cell walls and spokes; a studio key that leans toward the camera; paint turned to card. Sea: opaque
   cut-paper sheets along `phase` with edges scalloped by cellular domes, a shadow under each edge and a lit cut edge;
   foam a scalloped white collar. Post: ambient occlusion from depth (16 taps) and paper fibre.
+- `pbr` (2026-11-18, `src/style/pbr.ts`): physically lit. GGX, height-correlated Smith and Schlick for the sun and every
+  light, Lambert under it, the sky projected on spherical harmonics once per scene as the environment, an ACES tone
+  map; seven parts in `PbrParts`, each swappable (`pbr({ fresnel })`). docs/styles.md, "`pbr`".
 
 **The style sheet**: `bun src/style/sheet.ts [--out out/style_sheet.webp] [--size 640x400]`: rows toon, woodblock,
 biolume, papercraft; columns serpent, shell, serpent_scales; one camera (`SHEET_CAMERA`).

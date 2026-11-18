@@ -72,7 +72,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   --variant v         (render, clip, frames, dev, profile, build, check) a design's variant: a name, slot=option picks over
                       base, or a name then picks: stilt | legs=stilt,face=mask | stilt,face=mask
   --artefact dir      (render, clip, frames) draws a built directory, without the scene or the compiler
-  --style toon|woodblock|biolume|papercraft  (render, clip, frames, dev, build) draws the scene in that style instead of its own
+  --style toon|woodblock|biolume|papercraft|sketch|neon|pbr  (render, clip, frames, dev, build) draws the scene in that style instead of its own
   gallery [--out out/gallery] [--scenes "examples/*.ts,examples/scenes/*.ts"] [--styles toon,woodblock,biolume,papercraft] [--size 960x600] [--clip-seconds 6] [--only a,b] [--force]
   --light name        (render, clip, frames, profile, build, variants) draws the scene's style in one of its named lightings
                       (woodblock: flat, twoTone, threeTone, bokashi, hatched, contact, rim, cel; docs/lighting.md)

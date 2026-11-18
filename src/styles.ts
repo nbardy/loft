@@ -15,9 +15,10 @@ export {
   paperGrain, bloom, reflection,
   edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON,
   glossed,
+  ggx, smithGgx, schlick, lambert, skyLight, daylight, aces, type PbrParts,
   toon, type ToonSpec,
   woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec,
-  biolume, papercraft, sketch, neon,
+  biolume, papercraft, sketch, neon, pbr,
 } from "./style/index.ts";
 // What a style is written with beyond expressions: the shade context's block types, a colour's luminance, hashes and
 // fragment-stage derivatives (noise2 and Branch are exported by the core layer).

@@ -4,7 +4,7 @@ A scene says what things are; a **style** says how they look. Swapping one never
 (`withStyle(scene, sketch())`, `--style sketch`). Styles come in three layers, each built only from the one below:
 
 - **parts**: functions a style is composed from, each importable on its own from the public entry point;
-- **styles**: named ones (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`), each a short file that
+- **styles**: named ones (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`, `pbr`), each a short file that
   composes parts and makes its own few decisions;
 - **looks**: named presets of a style, chosen by one word (`--light engraving`).
 
@@ -48,7 +48,19 @@ whose paints say nothing more than a colour keeps every shader's text. The three
 | woodblock | a flat cream shape, 6 degrees about the half vector, 0.9 x gloss | not read | not read | not read |
 | biolume | not read | not read | **is** the glow (default: the guess `glowOf`) | each local light |
 | neon | not read | not read | **is** the tube's light in `shade` and `ink` (default `tubeOf`) | each local light |
+| pbr | `rough` defaults to 1 - gloss | 0 to 1: specular takes the paint's colour, diffuse goes | added before the tone map | in place of the diffuse term for each light |
 | papercraft, sketch | not read | not read | not read | not read |
+
+`pbr` alone reads two more words: `rough` (f32, 0 mirror to 1 chalk; default 1 - `gloss`, 0.5 when neither is given)
+and `normal` (vec3, the shading normal for a bump; default the surface's own). A bump is the gradient of a height in the
+world less its part along the normal, written in the paint with `gradient`:
+
+```ts
+paint: (u, v, at) => {
+  const g = gradient(mul(noise3(mul(at.world, 12)), 0.01), at.world);   // dents 0.08 across, 1 cm deep
+  return { base: COPPER, metal: 1, rough: 0.3, normal: normalize(sub(at.normal, sub(g, mul(at.normal, dot(at.normal, g))))) };
+}
+```
 
 `glossed(colour, ctx, { gloss, metal?, seen? })` (`src/style/gloss.ts`) is the part: the sky mirrored in a body, four
 taps on a cone of half-angle 0.02 + 0.5 max(0.02, (1 - gloss)^2), Fresnel-weighted (Schlick); `seen` replaces the sky.
@@ -70,6 +82,63 @@ taps on a cone of half-angle 0.02 + 0.5 max(0.02, (1 - gloss)^2), Fresnel-weight
 | `noise2`, `noise3`, `hash2`, `hash22`, `cellular2`, `luminance`, `fwidth`, `pixelWorld`, `wgslFn` | what patterns are made of |
 
 Each part's file opens with its law, its parameters, what it cannot do, and where to go past it.
+
+## `pbr`: a style from swappable parts
+
+`pbr()` (`src/style/pbr.ts`) lights bodies as physical surfaces: for the sun and every light (lamp shadows included,
+as the light fold delivers them) a GGX specular lobe and a Lambert body, the sky as an environment, then a filmic tone
+map. `--style pbr` draws any scene this way without editing it. It is built from seven parts, each a plain function over
+expressions (`src/style/pbr_parts.ts`), so each runs on the GPU and in the CPU twin and ports to another engine as
+the maths it is:
+
+| Slot (`PbrParts`) | Signature | Default | What it is |
+|---|---|---|---|
+| `distribution` | `(n_h, rough) => F` | `ggx` | Trowbridge-Reitz microfacet normals, alpha = rough^2 |
+| `visibility` | `(n_l, n_v, rough) => F` | `smithGgx` | Smith shadowing, height-correlated, over 4 n.l n.v |
+| `fresnel` | `(v_h, f0) => P3` | `schlick` | the share reflected, per colour; f0 is 0.04 or the metal's colour |
+| `diffuse` | `(albedo, n_l, n_v, v_h, rough) => P3` | `lambert` | the body's light per unit arrival, cosine included |
+| `environment` | `({ normal, view, sun }, rough, sky) => { diffuse, specular }` | `skyLight` | the sky in a body: what a white diffuse surface reflects, what a mirror of `rough` sees |
+| `sky` | `(dir, sun) => P3` | `daylight` | linear radiance of the sky: the background and the environment |
+| `tone` | `(c) => P3` | `aces` | linear radiance to the picture (Narkowicz's ACES fit, then x^(1/2.2)) |
+
+Conventions: cosines arrive clamped to [0, 1]; `rough` is the paint's (a part squares it); a light's amount 1 is the
+sun at noon, under which a white Lambert surface has radiance 1, so a term is BRDF x pi x n.l; colours are linear
+until `tone`. The sky's light is scaled by the sun's amount, so a moonlit sky is dark.
+
+**Swap one part**; the others stay:
+
+```ts
+style: pbr({ fresnel: thinFilm(380) })                       // a film's colours in every reflection (examples/materials/thin_film.ts)
+style: pbr({ sky: (dir, sun) => mix(DUSK, GOLD, pow(saturate(dot(dir, sun)), 4)), tone: (c) => c })
+style: { ...pbr(), ink: () => vec3(0.05, 0.06, 0.08) }     // any member of the Style record, as with every style
+```
+
+**Write your own `shade` with the parts.** The light fold hands one light at a time; the parts say what it does:
+
+```ts
+const lit = pbr();
+const myShade = (ctx: ShadeCtx) => {
+  const base = pow(ctx.base, 2.2), rough = ctx.channel<"f32">("rough", 0.4), f0 = vec3(0.04, 0.04, 0.04);
+  const n_v = max(dot(ctx.normal, ctx.view), 1e-4);
+  const direct = ctx.lights("sum", (l) => {
+    const h = normalize(add(l.toward, ctx.view));
+    const n_l = saturate(dot(ctx.normal, l.toward)), v_h = saturate(dot(ctx.view, h));
+    const F = schlick(v_h, f0);
+    const spec = mul(F, mul(ggx(saturate(dot(ctx.normal, h)), rough), smithGgx(n_l, n_v, rough), n_l, Math.PI));
+    return mul(add(mul(sub(1, F), lambert(base, n_l, n_v, v_h, rough)), spec), l.amount);
+  });
+  const sky = skyLight(ctx, rough, daylight);
+  return aces(add(direct, mul(base, sky.diffuse)));
+};
+style: { ...lit, shade: myShade }
+```
+
+What it cannot do, and what it costs: `src/style/pbr.ts`'s top comment and `skyLight`'s (no occlusion, no
+inter-reflection; the sky is projected on spherical harmonics once per scene, so a sky that moves with time or a moved
+sun lights bodies as it stood, except through the one direct tap a reflection takes). The environment's specular
+weight is a fit of the default distribution and visibility's lobe albedo (within 0.06); a replaced lobe keeps it. The
+sanity numbers (white furnace, roughness sweep, metal tint) and the cost against toon:
+`agent_notes/2026-11-18_pbr_style/NOTE.md`, rerun with `bun tools/pbr_sanity.ts`.
 
 ## Writing one: `sketch`, all of it
 

@@ -17,7 +17,7 @@ Light is the sun (`sun: { toward, amount }` dims or colours it; amount 0 is a mo
 each a function of a world point returning `{ toward, amount, distance?, size? }`, such as `lamp(at, { colour, reach })`.
 A lamp casts a shadow when given shadow: true (its `size` softens it); any other light casts none unless its function does (`castRay`); a glow lights nothing by itself. Paint may return an
 object: `base` (the colour) and words of your own, of which the styles know gloss (0 to 1), metal and emits (linear
-light); a style notes the words it does not read. Its `scatter` answers light from a direction, its `shade` changes
+light), and `pbr` also rough (0 to 1) and normal (a bump: `gradient` of a height); a style notes the words it does not read. Its `scatter` answers light from a direction, its `shade` changes
 the finished colour.
 Triangles your own code makes draw with `draw.mesh`; a solid you can intersect, with `draw.traced` (`march` traces a
 field). `recur` bakes a step (a flock, a grid) on the GPU into the files; it still reads as a function of time. `pass`

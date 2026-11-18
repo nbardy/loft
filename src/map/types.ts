@@ -125,7 +125,8 @@ export type Paint = (u: F, v: F, at: PaintAt) => P3 | Painted;
  * - `base`: the colour, sRGB as written, as a bare paint returns it.
  * - Every other key but `shade` and `scatter` is a channel: a number or vector under a name you choose. A style reads it
  *   with `ctx.channel(name, otherwise)` if it knows the name. The built-in styles read `gloss` (0 matte to 1 mirror),
- *   `metal` (0 or 1) and `emits` (linear light the surface gives off, may exceed 1), each listed in its style's comment.
+ *   `metal` (0 or 1) and `emits` (linear light the surface gives off, may exceed 1), and `pbr` also `rough` (0 mirror to
+ *   1 chalk) and `normal` (the shading normal, for a bump), each listed in its style's comment.
  *   A name no part of the scene's style reads is noted (`loft` prints a note), not refused, so restyling never breaks.
  * - `scatter`: how this surface answers light from `toward` (unit, toward the light): the share that leaves toward the
  *   eye, cosine included, per colour channel. A style calls it once per light (`ctx.scatter`) and prints the result in

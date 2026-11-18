@@ -7,6 +7,7 @@ import type { Style } from "../style.ts";
 import { biolume } from "./biolume.ts";
 import { neon } from "./neon.ts";
 import { papercraft } from "./papercraft.ts";
+import { pbr } from "./pbr.ts";
 import { sketch } from "./sketch.ts";
 import { toon } from "./toon.ts";
 import { woodblock } from "./woodblock.ts";
@@ -22,12 +23,13 @@ export const STYLES = {
   papercraft,
   sketch,
   neon,
+  pbr: () => pbr(),
 } as const satisfies Record<string, () => Style>;
 
 export type StyleName = keyof typeof STYLES;
 /**
  * The names of the built-in styles, as the keys of `STYLES` (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`,
- * `neon`); what `styleNamed` and the gallery's `--styles` accept.
+ * `neon`, `pbr`); what `styleNamed` and the gallery's `--styles` accept.
  */
 export const STYLE_NAMES = Object.keys(STYLES) as readonly StyleName[];
 
@@ -61,9 +63,11 @@ export { paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight,
 export { paperGrain, bloom, reflection } from "./post.ts";
 export { edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON } from "./shared.ts";
 export { glossed } from "./gloss.ts";
+export { ggx, smithGgx, schlick, lambert, skyLight, daylight, aces, type PbrParts } from "./pbr_parts.ts";
 export { toon, type ToonSpec } from "./toon.ts";
 export { woodblock, print, seaPalette, LOOKS, REFERENCE_PAINT, WOODBLOCK_PALETTE, WOODBLOCK_SEA, type Accent, type AccentInk, type InkKey, type LookName, type Print, type SeaPalette, type WoodblockEye, type WoodblockInks, type WoodblockLook, type WoodblockSpec } from "./woodblock.ts";
 export { biolume } from "./biolume.ts";
 export { papercraft } from "./papercraft.ts";
 export { sketch } from "./sketch.ts";
 export { neon } from "./neon.ts";
+export { pbr } from "./pbr.ts";
