@@ -9,7 +9,7 @@
 // light: args.ts imports this file to parse, and the compiler loads only when the command runs.
 import { UsageError, type VariantArg } from "./args.ts";
 import { parseVariantAsk } from "../design.ts";
-import type { AuthorLines } from "../artefact.ts";
+import { authorLineAt, type AuthorLines } from "../artefact.ts";
 import type { Bundle } from "../host/manifest.ts";
 
 export type ShowCommand = { readonly kind: "show"; readonly path: string; readonly thing: string | undefined; readonly variant: VariantArg };
@@ -80,9 +80,9 @@ export function modulesOf(b: Bundle): Shown[] {
       const own = b.chunks.get(name)!.split("\n");
       let notes = 0;
       const marked = own.map((line, n) => {
-        const at = spans.find((s) => n >= s.from && n < s.from + s.lines);
+        const at = authorLineAt(spans, n);
         if (at === undefined && NOTE.test(line)) notes++;
-        return at === undefined ? line : `${line}  // ${at.file}:${at.line + n - at.from}`;
+        return at === undefined ? line : `${line}  // ${at.file}:${at.line}`;
       });
       sited += notes + spans.reduce((n, s) => n + s.lines, 0);
       // A chunk not ending in a newline would share its last line with the next chunk's first: the banner breaks the
@@ -103,8 +103,3 @@ function origin(spans: readonly AuthorLines[], notes: number): string {
   return parts.length === 0 ? "no sites (the library's text, or the scene's call form)" : parts.join("; ");
 }
 
-if (import.meta.main) {
-  // Runnable before the verb is registered in args.ts/main.ts: `bun src/cli/show.ts <scene> [--thing name]`.
-  const { exitWith, verdictOf } = await import("./verdict.ts");
-  try { await show(parseShowArgs(process.argv.slice(2))); } catch (e) { exitWith(await verdictOf(e)); }
-}

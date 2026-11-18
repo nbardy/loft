@@ -691,6 +691,7 @@ loft gallery  --scenes "examples/*.ts" --styles toon,woodblock
 loft build    examples/serpent.ts --out out/files/serpent
 loft serve    --compiles 2      # requests on stdin, answers on stdout, JSON lines (docs/handoff_training.md)
 loft bake     examples/serpent.ts --out out/serpent.glb
+loft show     examples/serpent.ts --thing serpent   # the WGSL the GPU compiles, your text's lines marked
 ```
 
 `loft help` prints every flag; `loft context` prints the whole library for a reader in one go.
