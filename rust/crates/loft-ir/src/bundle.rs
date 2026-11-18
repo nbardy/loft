@@ -115,6 +115,8 @@ pub struct Module {
     pub origin: Origin,
     /// Written with the `lf` alias, which the host defines as f32 or f16 at load.
     pub precision_alias: bool,
+    /// The resources it reads, in binding order: `@group(1) @binding(k)` is `reads[k]` (emit's `Emitted::reads`).
+    pub reads: Box<[Id]>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Origin {
