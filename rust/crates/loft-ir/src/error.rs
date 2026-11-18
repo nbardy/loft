@@ -68,6 +68,9 @@ pub enum LoadFault {
     Trailing { end: u64, have: u64 },
     /// The JSON does not decode as this format's `Bundle`.
     Json(Box<str>),
+    /// A bundle that decodes but that the host refuses before any GPU object exists: an id out of range, a size over
+    /// the device's limits, a library module Naga refuses. The message names which, and the fix.
+    Invalid(Box<str>),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

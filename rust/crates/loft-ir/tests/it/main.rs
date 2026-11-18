@@ -431,8 +431,8 @@ fn bundle() -> Bundle {
         ]
         .into(),
         modules: [
-            Module { wgsl: 1, origin: Origin::Library, precision_alias: true },
-            Module { wgsl: 2, origin: Origin::Author, precision_alias: false },
+            Module { wgsl: 1, origin: Origin::Library, precision_alias: true, reads: Box::new([0]) },
+            Module { wgsl: 2, origin: Origin::Author, precision_alias: false, reads: Box::new([]) },
         ]
         .into(),
         draws: [
