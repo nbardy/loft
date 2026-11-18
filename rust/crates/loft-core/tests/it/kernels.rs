@@ -71,6 +71,7 @@ fn scene(s: &Value) -> Scene {
         params: Box::new([]),
         inputs: Box::new([]),
         roots: Box::new([]),
+        ..Graph::default()
     };
     let (mut nodes, mut args, mut lits, mut rows) = (vec![], vec![], vec![], vec![]);
     let mut names: HashMap<String, u32> = HashMap::new();

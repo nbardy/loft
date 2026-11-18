@@ -9,6 +9,7 @@
 //! - **Site map.** Every line of the module records the node it writes (or the raw line it copies), so a Naga refusal
 //!   comes back as `Scene { Wgsl }` at the author's file and line.
 mod body;
+pub mod prelude;
 
 use crate::prim::{self, Spell};
 use body::Body;
@@ -69,12 +70,7 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted,
     let inputs = at.inputs.iter().map(|s| s + 1).max().unwrap_or(0);
     let mut lines: Vec<(String, Src)> = vec![];
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
-    put(format!(
-        "struct Frame {{ time: f32, params: array<vec4<f32>, {}>, inputs: array<vec4<f32>, {}> }}",
-        params.max(1),
-        inputs.max(1)
-    ));
-    put("@group(0) @binding(0) var<uniform> frame: Frame;".into());
+    prelude::text(params, inputs).lines().for_each(|l| put(l.into()));
     for (k, &kern) in e.reads.iter().enumerate() {
         put(format!("@group(1) @binding({k}) var<storage, read> r{}: array<vec4<f32>>;", at.kernels[kern as usize][0]));
     }
@@ -130,7 +126,7 @@ fn raw_names(g: &Graph) -> Result<Vec<String>, Error> {
     (0..g.raws.len() as u32)
         .map(|r| {
             // The prelude, then each dep's text on its own lines, then this one's: line `skip + 1` is its first.
-            let mut src = String::from("alias lf = f32;\n");
+            let mut src = format!("alias lf = f32;\n{}\n", prelude::text(1, 1));
             for d in raw_closure(g, r).into_iter().filter(|&d| d != r) {
                 src.push_str(g.sym(g.raws[d as usize].text));
                 src.push('\n');
@@ -140,11 +136,23 @@ fn raw_names(g: &Graph) -> Result<Vec<String>, Error> {
             let refuse = |line: Option<u32>, msg: &str| {
                 let k = line.unwrap_or(skip + 1).saturating_sub(skip + 1);
                 let site = caller(r).and_then(|n| raw_site(g, n, k));
-                Error::Scene { site, fault: SceneFault::Wgsl { line: k + 1, msg: msg.into() } }
+                // A global outside the prelude is classified here, once: the fault names the decl it needs.
+                let fault = match prelude::unbound(msg) {
+                    Some(name) => SceneFault::Global { name: name.into(), needs: prelude::needs(name) },
+                    None => SceneFault::Wgsl { line: k + 1, msg: msg.into() },
+                };
+                Error::Scene { site, fault }
             };
+            // A raw function with no text is a name the TS host defines in a draw module (`loft_cast`): no module
+            // here can hold it, so it is refused by name before Naga meets the call.
+            let name = g.sym(g.raws[r as usize].name);
+            if g.sym(g.raws[r as usize].text).trim().is_empty() {
+                let site = caller(r).and_then(|n| g.site(n).cloned());
+                return Err(Error::Scene { site, fault: SceneFault::Global { name: name.into(), needs: prelude::needs(name) } });
+            }
             naga::front::wgsl::parse_str(&src)
                 .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))?;
-            Ok(g.sym(g.raws[r as usize].name).to_string())
+            Ok(name.to_string())
         })
         .collect()
 }

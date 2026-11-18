@@ -1,14 +1,7 @@
-// Every draw module's prelude (lean Rust plan §1.5): the view the host writes per pass, the interstage record, rays.
-// Read with the graph module above it (its `Frame` at @group(0) @binding(0), kernel rows at @group(1)) and the glue the
-// lowering writes below it (`proxy`, `veil`, the medium functions, @group(2) bindings).
-
-struct View {
-  clip_from_world: mat4x4<f32>,
-  world_from_clip: mat4x4<f32>,
-  size: vec4<f32>, // width, height, 1 / width, 1 / height (pixels)
-  sun: vec4<f32>,  // unit direction toward the sun
-}
-@group(0) @binding(1) var<uniform> view: View;
+// Every draw module's prelude (lean Rust plan §1.5): the interstage record and rays. Read with the graph module above
+// it, whose emit prelude (loft-core emit/prelude.rs) holds the camera (`frame.view_proj`, `frame.inv_view_proj`,
+// `frame.viewport`, `frame.sun`) at @group(0) @binding(0) and kernel rows at @group(1), and the glue the lowering
+// writes below it (`proxy`, `veil`, the medium functions, @group(2) bindings).
 
 struct Out {
   @builtin(position) pos: vec4<f32>,
@@ -22,10 +15,10 @@ struct Lit {
   @builtin(frag_depth) depth: f32,
 }
 
-fn to_clip(p: vec3<f32>) -> vec4<f32> { return view.clip_from_world * vec4<f32>(p, 1.0); }
+fn to_clip(p: vec3<f32>) -> vec4<f32> { return frame.view_proj * vec4<f32>(p, 1.0); }
 fn depth_of(p: vec3<f32>) -> f32 { let c = to_clip(p); return c.z / c.w; }
 fn world_at(px: vec2<f32>, z: f32) -> vec3<f32> {
-  let w = view.world_from_clip * vec4<f32>(px.x * view.size.z * 2.0 - 1.0, 1.0 - px.y * view.size.w * 2.0, z, 1.0);
+  let w = frame.inv_view_proj * vec4<f32>(px.x * frame.viewport.z * 2.0 - 1.0, 1.0 - px.y * frame.viewport.w * 2.0, z, 1.0);
   return w.xyz / w.w;
 }
 

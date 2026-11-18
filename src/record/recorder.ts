@@ -12,7 +12,8 @@
 // construction outside a recorded call's inlining, plus one per call.
 
 import type { Expr, Fn, InputSpec, LibFn, Loop, ParamSpec, Row, TableSource, Ty } from "../expr.ts";
-import { BOUND, Decl, FREE, Op, PRIM0, PRIMS, ROLES, swizzleCode, TYS, type Job, type Program } from "./wire.ts";
+import { BOUND, Decl, FREE, Fill, Op, PRIM0, PRIMS, ROLES, swizzleCode, TYS, type Job, type Program } from "./wire.ts";
+import type { Camera, Check, Cover, Draw, Formula, Medium, Pass, Role, Scene, Solve } from "./decls.ts";
 
 const PRIM = Object.fromEntries(PRIMS.map((p, k) => [p, PRIM0 + k])) as Record<Fn, number>;
 const TY = Object.fromEntries(TYS.map((t, k) => [t, k])) as Record<Ty, number>;
@@ -56,6 +57,10 @@ export class Recorder {
   /** A call's inlined result (an `Expr` id) to its `Call` (encoded -1 - k). */
   private readonly alias = new Map<number, number>();
   private capture: { roots: Expr[]; seen: Set<number> } | undefined;
+  /** src/expr.ts `variable`, which src/expr.ts hands over when it loads: this module cannot import a value from
+   * expr.ts, which imports `rec` from here and uses it while it loads. A fill's binders are made with it. */
+  private variable: Variable | undefined;
+  useVariables(v: Variable): void { this.variable = v; }
 
   /** One construction (an interning lookup, hit or miss). */
   construct(): void { if (this.rewrites > 0) this.rewritten++; else if (this.mutes === 0) this.made++; }
@@ -123,9 +128,16 @@ export class Recorder {
     if (c !== undefined) for (const r of roots) if (!c.seen.has(r.id)) { c.seen.add(r.id); c.roots.push(r); }
   }
 
-  /** The job for `program` over these roots. */
-  job(program: Program, roots: readonly Expr[]): Job {
-    // Lowering a body may call (and so record) further functions: the loop runs until none is pending.
+  /** The job for `program` over these roots, with the scene-level decls `scene` (none by default). */
+  job(program: Program, roots: readonly Expr[], scene: Scene = { passes: [], checks: [], solves: [] }): Job {
+    this.settle();
+    const variable = this.variable;
+    if (variable === undefined) throw new Error("internal: src/expr.ts has not handed the recorder `variable`");
+    return new Writer(this.view(), { settle: () => this.settle(), quiet: (f) => this.muted(f), variable }).write(program, roots.map((r) => r.id), scene);
+  }
+
+  /** Lower every graph function not yet lowered. Lowering a body may call (and so record) further functions: the loop runs until none is pending. */
+  private settle(): void {
     for (let k = 0; k < this.fns.length; k++) {
       const f = this.fns[k]!;
       if (f.done !== undefined) continue;
@@ -135,13 +147,22 @@ export class Recorder {
         case "inline": f.done = b; break;
       }
     }
-    return new Writer(this.view()).write(program, roots.map((r) => r.id));
   }
 
+  // The log's typed arrays are read through getters: a table's fill is built while the job is written, and its new
+  // nodes may grow (so replace) an array the writer would otherwise still hold.
   private view(): LogView {
-    return { nodes: this.nodes.a, args: this.args.a, lits: this.lits.a, leaves: this.leaves, loops: this.loops, fns: this.fns, calls: this.calls, alias: this.alias };
+    const r = this;
+    return {
+      get nodes() { return r.nodes.a; }, get args() { return r.args.a; }, get lits() { return r.lits.a; },
+      leaves: this.leaves, loops: this.loops, fns: this.fns, calls: this.calls, alias: this.alias,
+    };
   }
 }
+
+/** What the writer asks of its recorder while it builds fill bodies: lower functions those bodies called, and build uncounted. */
+type Variable = <T extends Ty>(name: string, ty: T) => Expr<T>;
+type Host = { readonly settle: () => void; readonly quiet: <T>(f: () => T) => T; readonly variable: Variable };
 
 type LogView = {
   readonly nodes: Uint32Array; readonly args: Uint32Array; readonly lits: Float64Array; readonly leaves: readonly Leaf[];
@@ -161,10 +182,13 @@ class Writer {
   private readonly count = new Map<Decl, number>();
   private readonly out = new Map<number, number>();
   private readonly declOf = new Map<unknown, number>();
-  constructor(private readonly log: LogView) {}
+  constructor(private readonly log: LogView, private readonly host: Host) {}
 
-  write(program: Program, roots: readonly number[]): Job {
+  write(program: Program, roots: readonly number[], scene: Scene): Job {
     const top = roots.map((r) => this.visit(r));
+    for (const p of scene.passes) this.pass(p);
+    for (const c of scene.checks) this.check(c);
+    for (const s of scene.solves) this.solve(s);
     const symList = [...this.syms.keys()], bytes = symList.map((s) => new TextEncoder().encode(s));
     const symAt = new Uint32Array(symList.length + 1);
     bytes.forEach((b, k) => { symAt[k + 1] = symAt[k]! + b.length; });
@@ -212,6 +236,8 @@ class Writer {
   }
 
   private callNode(k: number): number {
+    // A call made while a fill body was built (after the job began) may name a function not yet lowered.
+    if (this.log.fns[this.log.calls[k]!.fn]!.done === undefined) this.host.settle();
     const c = this.log.calls[k]!, f = this.log.fns[c.fn]!.done!;
     switch (f.kind) {
       // A function with no body over binders: this call is its inlined nodes, which the log kept.
@@ -256,10 +282,139 @@ class Writer {
     const seen = this.declOf.get(r);
     if (seen !== undefined) return seen;
     const { k, d } = this.reserve(Decl.Kernel, r);
-    if ("samples" in r) d.words.push(1, this.sym(r.label), this.rows.push(...r.samples) - r.samples.length, r.samples.length);
-    else d.words.push(0, this.sym(r.name), r.lanes, r.entries, ROLES.indexOf(r.role));
+    if ("samples" in r) { d.words.push(Fill.Rows, this.sym(r.label), this.rows.length, r.samples.length); this.pushRows(r.samples); return k; }
+    const head = [this.sym(r.name), r.lanes, r.entries, ROLES.indexOf(r.role)];
+    if ("data" in r) { d.words.push(Fill.Data, ...head, this.rows.length); this.pushRows(r.data); return k; }
+    if ("recurrence" in r) { d.words.push(Fill.Recurrence, ...head, this.sym(r.recurrence)); return k; }
+    // A program's bodies are built here, over fresh variables written as this kernel's binders (K3r0i, K3s0, K3i).
+    const p = r.program, fresh = <T extends Ty>(name: string, ty: T): Expr<T> => { const v = this.host.variable(`${name}@${r.name}`, ty); this.binder(v.id, name); return v; };
+    switch (p.kind) {
+      case "map": {
+        d.words.push(Fill.Map, ...head, p.runs.length);
+        p.runs.forEach((run, j) => {
+          const i = fresh(`K${k}r${j}i`, "f32"), lanes = this.host.quiet(() => run.lanes(i));
+          d.words.push(run.count, this.out.get(i.id)!);
+          d.roots.push(...lanes.map((x) => this.visit(x.id)));
+        });
+        return k;
+      }
+      case "scan": {
+        const init = p.init.map((x) => this.visit(x.id));
+        const state = p.init.map((x, j) => fresh(`K${k}s${j}`, x.ty)), i = fresh(`K${k}i`, "f32");
+        const step = this.host.quiet(() => p.step(state, i));
+        d.words.push(Fill.Scan, ...head, p.first, p.steps, state.length, ...state.map((x) => this.out.get(x.id)!), this.out.get(i.id)!);
+        d.roots.push(...init, ...step.next.map((x) => this.visit(x.id)), ...step.lanes.map((x) => this.visit(x.id)));
+        return k;
+      }
+    }
+  }
+  // ---- scene-level decls (src/record/decls.ts; layouts in loft-ir wire.rs) ----
+
+  private lit(...xs: number[]): number { return this.lits.push(...xs) - xs.length; }
+  /** A role's Fn ordinal (its graph function, lowered now if it was recorded after the job began). */
+  private role(r: Role): number {
+    if (this.log.fns[r.fn]!.done === undefined) this.host.settle();
+    const f = this.log.fns[r.fn]!.done!;
+    switch (f.kind) {
+      case "body": return this.graphFn(r.fn, f);
+      case "inline": throw new Error(`internal: role ${this.log.fns[r.fn]!.name} has no body over binders (${f.why})`);
+    }
+  }
+  private camera(c: Camera): number {
+    const seen = this.declOf.get(c);
+    if (seen !== undefined) return seen;
+    const roots = c.kind === "look" ? [c.eye, c.target, c.up, c.fovy] : [...c.cols];
+    const ids = roots.map((x) => this.visit(x.id));
+    const { k, d } = this.reserve(Decl.Camera, c);
+    d.words.push(this.sym(c.name), c.kind === "look" ? 0 : 1);
+    d.roots.push(...ids);
     return k;
   }
+  private medium(m: Medium): number {
+    const seen = this.declOf.get(m);
+    if (seen !== undefined) return seen;
+    const words = m.kind === "march"
+      ? [0, this.role(m.density), this.lit(...m.within[0], ...m.within[1]), m.steps, m.shadowSteps]
+      : [1, this.kernel(m.table)];
+    const { k, d } = this.reserve(Decl.Medium, m);
+    d.words.push(...words);
+    return k;
+  }
+  private cover(c: Cover): number[] {
+    switch (c.kind) {
+      case "grid": return [0, c.u, c.v, this.role(c.place), c.count];
+      case "mesh": return [1, this.kernel(c.table), c.count];
+      case "quads": return [2, this.role(c.place), c.count];
+      case "ray": {
+        const find = c.find.kind === "hit" ? [0, this.role(c.find.hit)] : [1, this.medium(c.find.medium)];
+        switch (c.proxy.kind) {
+          case "box": return [3, ...find, this.lit(...c.proxy.min, ...c.proxy.max)];
+          case "instances": return [4, ...find, this.kernel(c.proxy.table), this.lit(...c.proxy.local[0], ...c.proxy.local[1])];
+        }
+      }
+      // falls through: no proxy kind is left
+      case "screen": return [5];
+    }
+  }
+  private draw(x: Draw): number {
+    const paint = this.role(x.paint), cover = this.cover(x.cover);
+    const { k, d } = this.reserve(Decl.Draw, x);
+    const blend = ["opaque", "alpha", "add"].indexOf(x.raster.blend);
+    d.words.push(this.sym(x.name), x.layer === "subject" ? 0 : 1, Number(x.raster.cull), Number(x.raster.depthWrite), blend, paint, ...cover);
+    return k;
+  }
+  private pass(p: Pass): void {
+    const camera = this.camera(p.camera), first = this.count.get(Decl.Draw) ?? 0;
+    // A pass's draws are consecutive Draw ordinals: each draw is written here, once, for its pass.
+    for (const x of p.draws) this.draw(x);
+    const end = this.count.get(Decl.Draw) ?? 0;
+    const clear = p.clear.kind === "load" ? [0] : [1, this.lit(...p.clear.rgba)];
+    const ground = p.ground.kind === "none" ? [0] : [1, this.role(p.ground.hit), this.role(p.ground.paint)];
+    const outline = p.outline.kind === "none" ? [0] : [1, this.role(p.outline.outline)];
+    const { d } = this.reserve(Decl.Pass, p);
+    d.words.push(camera, first, end, ...clear, ...ground, ...outline);
+  }
+  /** A formula's words, pre-order, with its roots appended to `roots` in the same order. */
+  private formula(f: Formula, words: number[], roots: number[]): void {
+    switch (f.kind) {
+      case "atom": words.push(0); roots.push(this.visit(f.margin.id), this.visit(f.test.id)); return;
+      case "always": case "eventually":
+        words.push(f.kind === "always" ? 1 : 2, f.leaves.length, ...f.leaves.map((l) => this.visit(l.leaf.id)));
+        roots.push(...f.leaves.map((l) => this.visit(l.lo.id)), ...f.leaves.map((l) => this.visit(l.hi.id)));
+        this.formula(f.body, words, roots);
+        return;
+      case "and": case "or":
+        words.push(f.kind === "and" ? 3 : 4, f.parts.length);
+        for (const p of f.parts) this.formula(p, words, roots);
+        return;
+      case "not": words.push(5); this.formula(f.part, words, roots); return;
+    }
+  }
+  private check(c: Check): void {
+    const words = [this.sym(c.label), c.how.kind === "prove" ? 0 : 1, c.how.kind === "prove" ? c.how.boxes : c.how.n], roots: number[] = [];
+    this.formula(c.body, words, roots);
+    const { d } = this.reserve(Decl.Check, c);
+    d.words.push(...words);
+    d.roots.push(...roots);
+  }
+  private solve(s: Solve): void {
+    const from = s.unknowns.map((u) => this.visit(u.from.id)), to = s.near.map((n) => this.visit(n.to.id));
+    const { k, d } = this.reserve(Decl.Solve, s);
+    // The jets are this solve's binders (S0u1j2: solve 0, unknown 1, derivative 2), read only by its margins.
+    s.unknowns.forEach((u, j) => u.jets.forEach((x, o) => this.binder(x.id, `S${k}u${j}j${o}`)));
+    const margins = s.holds.map((h) => this.visit(h.margin.id));
+    d.words.push(this.sym(s.label), this.lit(s.over[0], s.over[1], s.delta, s.jerk, s.acceleration, s.nearWeight), s.unknowns.length);
+    for (const u of s.unknowns) d.words.push(this.sym(u.name), u.numbers, ...u.jets.map((x) => this.out.get(x.id)!));
+    d.words.push(s.near.length, ...s.near.map((n) => n.unknown), s.holds.length);
+    for (const h of s.holds) {
+      d.words.push(...(h.kind === "equal" ? [0, this.lit(h.within)] : [1]));
+      d.words.push(...(h.times.kind === "at" ? [0, this.lit(h.times.t)] : h.times.kind === "during" ? [1, this.lit(h.times.from, h.times.to)] : [2]));
+      d.words.push(this.sym(h.said), this.sym(h.site));
+    }
+    d.roots.push(...from, ...to, ...margins);
+  }
+
+  private pushRows(xs: ArrayLike<number>): void { for (let j = 0; j < xs.length; j++) this.rows.push(xs[j]!); }
   private rawFn(f: LibFn): number {
     const seen = this.declOf.get(f);
     if (seen !== undefined) return seen;

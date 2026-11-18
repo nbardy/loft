@@ -328,6 +328,8 @@ export const f = (x: number): Expr<"f32"> => lift<"f32">(x);
 export function variable<T extends Ty>(name: string, ty: T): Expr<T> {
   return Expr.make({ op: "var", ty, name }, `v:${ty}:${name}`);
 }
+// The recorder writes a table's fill over fresh variables and cannot import this module (it is imported by it).
+rec.useVariables(variable);
 
 // ---- namespaces ---------------------------------------------------------------------------------------------------
 //

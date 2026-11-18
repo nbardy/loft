@@ -4,7 +4,7 @@
 use loft_core::emit::{Slots, module, validate};
 use loft_ir::Error;
 use loft_ir::error::SceneFault;
-use loft_ir::graph::{Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, RawFn, Role, Sel, Site, Ty};
+use loft_ir::graph::{Fill, Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, RawFn, Role, Sel, Site, Ty};
 
 struct Rng(u64);
 impl Rng {
@@ -95,7 +95,7 @@ impl B {
             rows: Box::new([]), blobs: Box::new([]), syms: self.syms.clone().into(), sym_at: sym_at.into(),
             sites: self.sites.clone().into(), node_sites: self.node_sites.clone().into(), fns: self.fns.clone().into(),
             raws: self.raws.clone().into(), loops: self.loops.clone().into(), kernels: self.kernels.clone().into(),
-            params: self.params.clone().into(), inputs: self.inputs.clone().into(), roots: Box::new([]) };
+            params: self.params.clone().into(), inputs: self.inputs.clone().into(), roots: Box::new([]), ..Graph::default() };
         g
     }
     fn slots(&self) -> Slots {
@@ -206,7 +206,13 @@ fn program(seed: u64) -> (B, u32) {
     }
     pool.push(b.lit(&[1.0], Ty::Bool));
     grow(&mut b, &mut r, &mut pool, 120);
-    b.kernels.push(Kernel::Table { name: 0, lanes: 3, entries: 1, role: Role::Data });
+    b.kernels.push(Kernel::Table {
+        name: 0,
+        lanes: 3,
+        entries: 1,
+        role: Role::Data,
+        fill: Fill::Recurrence { recurrence: 0 },
+    });
     b.at_kernels.push([7, 3]);
     let kernel = 0;
     let row = pool[r.below(pool.len())];
@@ -395,7 +401,7 @@ fn permute(b: &B, main: u32, seed: u64, dead: usize) -> (B, u32) {
         out.loops.push(Loop { count: m(l.count), init: ms(&l.init), state: ms(&l.state), index: m(l.index), next: ms(&l.next), stop: l.stop.map(m) });
     }
     for &o in &ko {
-        out.kernels.push(src.kernels[o]);
+        out.kernels.push(src.kernels[o].clone());
         out.at_kernels.push(src.at_kernels[o]);
     }
     for &o in &po {

@@ -64,7 +64,7 @@ impl B {
         let g = Graph { nodes: self.nodes.clone().into(), args: self.args.clone().into(), lits: self.lits.clone().into(),
             rows: Box::new([]), blobs: Box::new([]), syms: self.syms.clone().into(), sym_at: sym_at.into(),
             sites: Box::new([]), node_sites: vec![0; n].into(), fns: self.fns.clone().into(), raws: Box::new([]),
-            loops: Box::new([]), kernels: Box::new([]), params: Box::new([]), inputs: Box::new([]), roots: Box::new([]) };
+            loops: Box::new([]), kernels: Box::new([]), params: Box::new([]), inputs: Box::new([]), roots: Box::new([]), ..Graph::default() };
         g
     }
 }

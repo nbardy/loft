@@ -17,7 +17,7 @@ fn loft_scatter{K}(r: Ray, s: vec2<f32>) -> vec4<f32> {
   for (var k = 0u; k < MEDIUM{K}_STEPS; k++) {
     let p = r.o + r.d * (s.x + (f32(k) + 0.5) * dt);
     let a = 1.0 - exp(-loft_density{K}(p) * dt);
-    c += tr * a * paint(p, view.sun.xyz, k).rgb * loft_tr{K}(p, view.sun.xyz, 3.4e38, MEDIUM{K}_SHADOW);
+    c += tr * a * paint(p, frame.sun.xyz, k).rgb * loft_tr{K}(p, frame.sun.xyz, 3.4e38, MEDIUM{K}_SHADOW);
     tr *= 1.0 - a;
   }
   return vec4<f32>(c, 1.0 - tr);

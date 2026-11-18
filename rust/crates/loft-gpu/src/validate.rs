@@ -149,7 +149,7 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
             return Err(bad(format!("input {name} is {:?} with {} default floats", i.ty, i.def.len())));
         }
     }
-    let frame = 16 + 16 * (b.params.len().div_ceil(4).max(1) + b.inputs.len().max(1)) as u64;
+    let frame = loft_ir::frame::HEADER as u64 + 16 * (b.params.len().div_ceil(4).max(1) + b.inputs.len().max(1)) as u64;
     if frame > limits.max_uniform_buffer_binding_size {
         return Err(bad(format!(
             "the frame uniform needs {frame} bytes; this device binds {}: fewer params or inputs",

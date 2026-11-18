@@ -404,11 +404,12 @@ These parts of sol's plan are kept:
 ### 3.2 The wire (pinned here so that lanes 1.1 and 1.2 can run in parallel)
 
 Pinned as implemented on 19 Nov (lane 1.2's writer `src/record/wire.ts`, decoded by `loft-ir/src/wire.rs`; the two
-first filled the open parts differently, `agent_notes/2026-11-19_lean_rust_wire.md`). A job is one byte string, all
-words little-endian:
+first filled the open parts differently, `agent_notes/2026-11-19_lean_rust_wire.md`). Wire 2 (`feat/lr-wire2`,
+`agent_notes/2026-11-19_lean_rust_wire2.md`) adds every remaining decl kind and the tables' fills. A job is one byte
+string, all words little-endian:
 
 ```
-header  u32 magic 'LFTW', u32 wire (= 1, internal, never persisted), u32 program (Scene, Solve, Evaluate, Check),
+header  u32 magic 'LFTW', u32 wire (= 2, internal, never persisted), u32 program (Scene, Solve, Evaluate, Check),
         u32 n_spans = 11
 spans   in this order, each: u32 byte length, u32 0, the bytes, zeros to a multiple of 8; nothing after the last
         nodes   u32×4   [op:8 | ty:8 | flags:16, args offset, n args, imm]       (ty: f32, vec2, vec3, vec4, bool)
@@ -448,16 +449,29 @@ An ordinal counts the decls of one tag, in decl order. Decl tags and layouts (wo
 | 0 | Fn, graph | [0, name, ret ty, n, binder node × n] | [body] |
 | 0 | Fn, raw | [1, name, ret ty, text sym, n deps, dep Fn ordinal × n deps]; each dep a raw Fn declared before it | [] |
 | 1 | Loop | [n, has stop, state binder × n, index binder] | [count, init × n, next × n, stop?] |
-| 2 | Kernel, table | [0, name, lanes, entries, role (stations, data, static)] | [] |
+| 2 | Kernel, map table | [0, head, n runs, (count, index binder) × n]; head = name, lanes, entries, role (stations, data, static); runs fill rows end to end | [lanes of run 0, of run 1, …] (vec4) |
 | 2 | Kernel, rows | [1, label, offset in rows, length] | [] |
+| 2 | Kernel, scan table | [2, head, first, steps, n, state binder × n, index binder]; step j writes row first + j from the state before it | [init × n, next × n, lanes] |
+| 2 | Kernel, data table | [3, head, offset in rows] (entries × lanes × 4 f32) | [] |
+| 2 | Kernel, recurrence table | [4, head, recurrence sym]: its recurrence is not on the wire yet; the driver leaves it zero and counts it `unfilled` | [] |
+| 3 | Draw | [name, layer (subject, surroundings), cull, depth write, blend (opaque, alpha, add), paint Fn, cover…]; cover: 0 grid [u, v, place Fn, count], 1 mesh [kernel, count], 2 quads [place Fn, count], 3 ray box [find, f, 6 lits min max], 4 ray instances [find, f, kernel, 6 lits local], 5 screen []; find 0 hit (f a Fn), 1 medium (f a Medium ordinal) | [] |
+| 4 | Pass | [camera, first draw, end draw, clear, ground, outline]: clear 0 load \| 1 colour [4 lits]; ground 0 none \| 1 traced [hit Fn, paint Fn]; outline 0 none \| 1 ink [Fn]. The target is the view: an offscreen or shadow target names a texture resource, which no decl declares yet | [] |
+| 5 | Medium | [0 march, density Fn, 6 lits within, steps, shadow steps] \| [1 gaussians, kernel] | [] |
+| 6 | Check | [label, 0 prove boxes \| 1 sample n, formula…]; formula pre-order: 0 atom, 1 always / 2 eventually [n, leaf node × n] then the body, 3 and / 4 or [n] then n parts, 5 not then one part | roots in that order: atom [margin, test], quantifier [lo × n, hi × n] |
+| 7 | Solve | [label, 6 lits (t0, t1, delta, jerk, acceleration, near weight), n, (name, controls, jet binder × 4) × n, m, unknown × m, h, hold × h]; hold [0 equal, within lit \| 1 bound, times, said sym, site sym], times 0 at [lit] \| 1 during [2 lits] \| 2 span. Jets are the unknown's value and three time derivatives, read by the margins | [from × n, near-to × m, margin × h] |
 | 8 | Param | [name, def lit, min lit, max lit] | [] |
 | 9 | Input | [name, ty, first def lit] | [] |
-| 3–7, 10 | Draw, Pass, Medium, Check, Solve, Camera | no layout yet: lanes 2.1, 2.3 and 3.1 pin theirs here; until then refused | |
+| 10 | Camera | [name, 0 look] \| [name, 1 matrix] | look [eye, target, up, fovy]; matrix [4 vec4 columns] |
 
-A `Call` or `Loop` node comes after every root and binder of its decl, so the job is acyclic through decls. The
-decoder classifies each decl into its kind's array (`Graph::{fns, raws, loops, kernels, params, inputs}`) and each
-op into one `Op` variant, so no consumer reads a tag or a flag. The canonical print (`loft-ir/src/print.rs`, grammar
-in `src/record/print.ts`) is equal to the TS graph's over the corpus.
+A `Call` or `Loop` node comes after every root and binder of its decl, so the job is acyclic through decls. Fn,
+kernel, medium and camera references of scene-level decls are checked after every decl is read, with each role's
+signature (`paint (vec3, vec3, f32) -> vec4`, `hit (vec3, vec3, vec2, vec2) -> vec4`, grid `place (vec2, f32) -> vec3`,
+quads `place (f32) -> vec4`, `density (vec3) -> f32`, `outline (vec3, vec3) -> vec4`). A fill's, a role's and a solve's
+binders are `Bind` nodes owned by that decl. The decoder classifies each decl into its kind's array
+(`Graph::{fns, raws, loops, kernels, params, inputs, draws, passes, media, cameras, checks, solves}`, a table's fill as
+`Fill::{Map, Scan, Data, Recurrence}`) and each op into one `Op` variant, so no consumer reads a tag or a flag. The
+canonical print (`loft-ir/src/print.rs`, grammar in `src/record/print.ts`) is equal to the TS graph's over the corpus,
+fills included, and to the TS job print on `src/record/sample.ts`'s job, which carries every scene-level layout.
 
 There are eleven declaration tags. The render, post and offscreen descriptors of sol's plan are one `Pass`. Tables
 and compute are one `Kernel`.

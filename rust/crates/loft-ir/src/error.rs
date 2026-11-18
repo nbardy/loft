@@ -46,6 +46,51 @@ pub enum SceneFault {
         line: u32,
         msg: Box<str>,
     },
+    /// Raw WGSL reads a global that emit's prelude does not name (loft-core `emit::prelude`); `needs` is the fix.
+    Global {
+        name: Box<str>,
+        needs: Needs,
+    },
+}
+
+/// What a global outside the prelude needs. Each is a decl the job must carry, or a prelude change; the module is
+/// never built with the global left out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum Needs {
+    /// A function a TS draw module defines around the shared code (`loft_cast`, `soft_box`): the drawable must be
+    /// recorded as a Draw decl whose hit, place and paint functions are graph functions (lane 3.1's TS half).
+    Draw,
+    /// An offscreen pass's texture (`loft_passtex_NAME`): a Pass decl that targets that texture.
+    Pass,
+    /// An author compute pass's resource (`loft_compute_*`): the pass recorded as a Kernel decl.
+    Kernel,
+    /// A table's accessor the TS compiler defines for raw WGSL (`t_NAME`, src/compile/tables.ts): read the table with
+    /// `fetch` in a graph expression, which the wire carries as a Kernel decl.
+    Table,
+    /// A function the TS style or ground emits by name around the shared code (`shade`, `sky`, `outline_world`,
+    /// `sea_height`, `SUN`): the style's function recorded as a graph function that the draw or pass names.
+    Style,
+    /// Anything else: add it to emit's prelude (and its bytes to `loft_ir::frame` and the host), or pass it in as an
+    /// argument of the raw function.
+    Prelude,
+}
+
+impl Needs {
+    /// The fix, in words.
+    pub fn fix(self) -> &'static str {
+        match self {
+            Needs::Draw => {
+                "it is a draw module's own function; record the drawable as a Draw decl (hit, place and paint graph functions)"
+            }
+            Needs::Pass => "it is an offscreen pass's texture; record the pass as a Pass decl that targets it",
+            Needs::Kernel => "it is an author compute pass's resource; record the pass as a Kernel decl",
+            Needs::Table => "it is a table accessor the TS compiler defines for raw WGSL; read the table with fetch in a graph expression",
+            Needs::Style => "it is the scene style's or ground's own function; record it as a graph function a draw or pass names",
+            Needs::Prelude => {
+                "add it to emit's prelude (loft-core emit/prelude.rs, loft_ir::frame and the host), or pass it as an argument"
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -226,6 +271,9 @@ impl fmt::Display for Error {
                     SceneFault::Unreadable => f.write_str("unreadable")?,
                     SceneFault::NotFinite { node } => write!(f, "not finite at node {node}")?,
                     SceneFault::Wgsl { line, msg } => write!(f, "WGSL line {line}: {msg}")?,
+                    SceneFault::Global { name, needs } => {
+                        write!(f, "raw WGSL reads `{name}`, which emit's prelude does not name. Fix: {}", needs.fix())?
+                    }
                 }
                 site.as_ref().map_or(Ok(()), |s| write!(f, " (at {s})"))
             }

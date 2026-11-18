@@ -78,6 +78,8 @@ pub struct Pass {
 #[derive(Default)]
 pub struct Lowered {
     pub modules: Vec<String>,
+    /// Per module, the resources its graph part reads at `@group(1)`, in binding order (emit's `reads`).
+    pub reads: Vec<Vec<u32>>,
     pub names: Vec<Box<str>>,
     pub draws: Vec<b::Draw>,
     pub media: Vec<b::Medium>,
@@ -259,7 +261,7 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
                 }
                 Find::Medium(k) => {
                     need.extend((!need.contains(&k)).then_some(k));
-                    gl.texture("scene_depth", "texture_depth_2d");
+                    gl.texture("loft_depth", "texture_depth_2d");
                     gl.line(format!(
                         "fn scatter(r: Ray, s: vec2<f32>) -> vec4<f32> {{ return loft_scatter{k}(r, s); }}"
                     ));
@@ -307,7 +309,9 @@ impl Lowered {
     /// Emits the graph functions, appends the prelude, glue and templates, and checks the whole module with Naga.
     fn module(&mut self, g: &Graph, at: &Slots, gl: &Glue) -> Result<u32, Error> {
         let exports: Vec<(&str, u32)> = gl.exports.iter().map(|(n, d)| (n.as_str(), *d)).collect();
-        let mut text = emit::module(g, &exports, at)?.text;
+        let emitted = emit::module(g, &exports, at)?;
+        self.reads.push(emitted.reads);
+        let mut text = emitted.text;
         for s in [VIEW].into_iter().chain(std::iter::once(gl.text.as_str())) {
             text.push('\n');
             text.push_str(s);
@@ -346,7 +350,7 @@ impl Lowered {
             let mut gl = Glue::default();
             gl.export("loft_outline", f);
             gl.texture("scene_colour", "texture_2d<f32>");
-            gl.texture("scene_depth", "texture_depth_2d");
+            gl.texture("loft_depth", "texture_depth_2d");
             gl.templates.push(OUTLINE);
             gl
         });

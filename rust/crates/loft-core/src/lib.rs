@@ -6,16 +6,20 @@
 //! What a Scene job can say today bounds what its bundle holds (driver note, `agent_notes/2026-11-19_lean_rust_driver.md`):
 //! - the program roots are the expressions the TS emitter handed to `emitWgsl`, with their free variables (u, v, p).
 //!   Each root becomes one exported function `loft_root{k}` whose parameters are those variables, in name order;
-//! - a `Kernel` decl names a table but carries no fill body, so a table resource is declared with `Init::Zero` and the
-//!   report counts it as `unfilled`;
-//! - Draw, Pass, Medium, Camera, Check and Solve decls have no pinned layout (§3.2), so the bundle has no draws or
-//!   passes and cannot be drawn yet. The report says `draws: 0`.
+//! - a `Kernel` decl carries its table's fill (wire 2): a Map or Scan body is planned (a Const one runs on the tape at
+//!   compile, the rest become one compute module each, `fill`), supplied numbers become section bytes, and a
+//!   recurrence's tables, which the wire does not carry yet, are `Init::Zero`, counted as `unfilled`;
+//! - Draw, Pass, Medium and Camera decls (wire 2) are lowered by `draw` into the bundle's draws, media and passes;
+//!   each camera's parts are exported from the root module as `loft_camera{k}_{part}`, which `Bundle::cameras` names.
+//!   No corpus scene records them yet (the TS library's hit, place and paint functions are lane 3.1's TS half).
 //!
-//! Solve, Evaluate and Check jobs are `Internal::Unbuilt`: the wire cannot carry their decls yet.
+//! Solve, Evaluate and Check jobs are `Internal::Unbuilt`: their decls decode (wire 2), and their programs are the
+//! analyses lanes' (check, feat/lr-solve).
 pub mod cache;
 pub mod check;
 pub mod draw;
 pub mod emit;
+pub mod fill;
 pub mod grad;
 pub mod interval;
 pub mod kernel;
@@ -27,7 +31,7 @@ pub mod tape;
 
 use loft_ir::bundle::{self, Bundle, F32, Format, InputDecl, Module, Origin, ParamDecl, Shape};
 use loft_ir::error::{Internal, Limits, Meter, SceneFault};
-use loft_ir::graph::{Graph, GraphFn, Kernel, Op, Program};
+use loft_ir::graph::{self as ir, Fill, Graph, GraphFn, Kernel, Op, Program, Role};
 use loft_ir::{Error, wire};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -52,8 +56,10 @@ pub struct Scene {
     pub functions: usize,
     pub wgsl_bytes: usize,
     pub resources: usize,
-    /// Table resources the job names but gives no fill for (wire §3.2 carries no Kernel body): `Init::Zero`.
+    /// Table resources nothing fills (a recurrence's tables: the wire does not carry recurrences yet): `Init::Zero`.
     pub unfilled: usize,
+    /// GPU fill kernels (each its own module), after Const fills moved to compile.
+    pub kernels: usize,
     pub storage_buffers: usize,
     pub dispatches: usize,
     /// Always 0 until the wire pins Draw/Pass decls: the bundle cannot be drawn.
@@ -91,8 +97,21 @@ pub fn run(job: &[u8], limits: Limits, compiler: &str) -> Result<(Report, Option
     phases.decode = ns(t);
     let g = job.graph;
     limits.spend(Meter::Nodes, g.nodes.len() as u64)?;
-    let (nodes, decls) =
-        (g.nodes.len(), g.fns.len() + g.raws.len() + g.loops.len() + g.kernels.len() + g.params.len() + g.inputs.len());
+    let decls = [
+        g.fns.len(),
+        g.raws.len(),
+        g.loops.len(),
+        g.kernels.len(),
+        g.params.len(),
+        g.inputs.len(),
+        g.draws.len(),
+        g.passes.len(),
+        g.media.len(),
+        g.cameras.len(),
+        g.checks.len(),
+        g.solves.len(),
+    ];
+    let (nodes, decls) = (g.nodes.len(), decls.iter().sum());
     match job.program {
         Program::Scene => {
             let (scene, bytes) = scene(g, compiler, &mut phases)?;
@@ -116,19 +135,26 @@ fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Ve
     let sources = g
         .kernels
         .iter()
-        .map(|k| match *k {
-            Kernel::Table { lanes, entries, .. } => {
-                let lanes = u16::try_from(lanes)
+        .map(|k| match k {
+            Kernel::Table { lanes, entries, fill, .. } => {
+                let lanes = u16::try_from(*lanes)
                     .map_err(|_| unsupported(format!("a table of {lanes} lanes; a row holds at most {}", u16::MAX)))?;
-                Ok(kernel::Source::Made(Shape::Rows { rows: entries, lanes }))
+                Ok(match fill {
+                    Fill::Data { at } => kernel::Source::Data { rows: *entries, lanes, at: *at },
+                    Fill::Map(_) | Fill::Scan(_) | Fill::Recurrence { .. } => {
+                        kernel::Source::Made(Shape::Rows { rows: *entries, lanes })
+                    }
+                })
             }
-            Kernel::Rows { at, len, .. } => Ok(kernel::Source::Curve { at, len }),
+            Kernel::Rows { at, len, .. } => Ok(kernel::Source::Curve { at: *at, len: *len }),
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    // No fill decls: the wire carries none yet (module docs).
-    let plan = kernel::plan(&g, &sources, &[])?;
-    assert!(plan.kernels.is_empty(), "a plan with no fill decls has no kernels");
-    let dispatches = schedule::schedule(&plan, &[])?.len();
+    let decls = fill_decls(&g);
+    let mut plan = kernel::plan(&g, &sources, &decls)?;
+    drop_lifted(&mut plan, sources.len());
+    let dispatch_list = schedule::schedule(&plan, &decls)?;
+    let dispatches = dispatch_list.len();
+    let order: Vec<usize> = dispatch_list.iter().flat_map(|d| d.iter().map(|&k| k as usize)).collect();
     let lay = layout::layout(&plan)?;
     phases.plan = ns(t);
 
@@ -140,14 +166,30 @@ fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Ve
             roots.push(r);
         }
     }
+    // `loft_` is the reserved prefix (draw templates); `r{k}` would meet emit's storage bindings `r{res}`.
+    let mut names: Vec<String> = (0..roots.len()).map(|k| format!("loft_root{k}")).collect();
+    let program_roots = roots.len();
+    // Each camera's parts, exported beside the roots: the host evaluates them (plan §1.5, one camera builder).
+    let mut camera_names = Vec::with_capacity(g.cameras.len());
+    for (k, c) in g.cameras.iter().enumerate() {
+        let parts: Vec<(&str, u32)> = match c.lens {
+            ir::Lens::Look { eye, target, up, fovy } => {
+                vec![("eye", eye), ("target", target), ("up", up), ("fovy", fovy)]
+            }
+            ir::Lens::Matrix { cols } => vec![("c0", cols[0]), ("c1", cols[1]), ("c2", cols[2]), ("c3", cols[3])],
+        };
+        camera_names.push((c.name, names.len()));
+        for (part, node) in parts {
+            roots.push(node);
+            names.push(format!("loft_camera{k}_{part}"));
+        }
+    }
     let first = g.fns.len() as u32;
     let wrappers: Vec<GraphFn> = roots
         .iter()
         .map(|&r| GraphFn { name: 0, ret: g.nodes[r as usize].ty, binders: free_vars(&g, r), body: r })
         .collect();
     g.fns = g.fns.iter().cloned().chain(wrappers).collect();
-    // `loft_` is the reserved prefix (draw templates); `r{k}` would meet emit's storage bindings `r{res}`.
-    let names: Vec<String> = (0..roots.len()).map(|k| format!("loft_root{k}")).collect();
     let exports: Vec<(&str, u32)> = names.iter().enumerate().map(|(k, n)| (n.as_str(), first + k as u32)).collect();
     let slots = emit::Slots {
         params: (0..g.params.len() as u32).collect(),
@@ -156,8 +198,8 @@ fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Ve
             .kernels
             .iter()
             .enumerate()
-            .map(|(k, x)| match *x {
-                Kernel::Table { lanes, .. } => [k as u32, lanes],
+            .map(|(k, x)| match x {
+                Kernel::Table { lanes, .. } => [k as u32, *lanes],
                 Kernel::Rows { .. } => [k as u32, 1],
             })
             .collect(),
@@ -169,21 +211,71 @@ fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Ve
     phases.f16 = ns(t);
 
     let t = Instant::now();
-    let unfilled = plan
-        .resources
-        .iter()
-        .zip(&sources)
-        .filter(|(r, s)| matches!((&r.init, s), (bundle::Init::Zero, kernel::Source::Made(_))))
-        .count();
     let functions = m.text.lines().filter(|l| l.starts_with("fn f")).count();
     let wgsl_bytes = m.text.len();
     let mut sections = plan.sections;
     sections.push(m.text.into_bytes().into());
+    let mut modules = vec![Module {
+        wgsl: sections.len() as u32 - 1,
+        origin: Origin::Author,
+        precision_alias: true,
+        reads: m.reads.iter().copied().collect(),
+    }];
     let mut strings: Vec<Box<str>> = Vec::new();
     let mut name = |s: &str| {
         strings.push(s.into());
         strings.len() as u32 - 1
     };
+    // Fill kernels in schedule order (the host runs them in bundle order); `Init::By` follows the new numbering.
+    let mut renumber = vec![0u32; plan.kernels.len()];
+    let mut kernels: Vec<bundle::Kernel> = Vec::with_capacity(order.len());
+    let fill_entry = name("loft_fill");
+    for &k in &order {
+        let pk = &plan.kernels[k];
+        let kernel::Job::Decl(d) = pk.job else { unreachable!("drop_lifted left only decl kernels") };
+        let fm = fill::module(&mut g, &slots, &decls[d as usize])?;
+        sections.push(fm.text.into_bytes().into());
+        modules.push(Module {
+            wgsl: sections.len() as u32 - 1,
+            origin: Origin::Author,
+            precision_alias: true,
+            reads: fm.reads.into(),
+        });
+        let module = modules.len() as u32 - 1;
+        let body = match decls[d as usize].fill {
+            kernel::Fill::Map { .. } => bundle::Body::Map { module, entry: fill_entry, rows: fm.rows },
+            kernel::Fill::Scan { .. } => bundle::Body::Scan { module, entry: fill_entry, rows: fm.rows },
+            kernel::Fill::Raw { .. } => unreachable!("fill_decls makes no raw kernel"),
+        };
+        renumber[k] = kernels.len() as u32;
+        kernels.push(bundle::Kernel {
+            writes: Box::new([pk.writes]),
+            reads: pk.reads.clone(),
+            body,
+            when: pk.when.clone(),
+        });
+    }
+    let mut resources = plan.resources;
+    for r in &mut resources {
+        if let bundle::Init::By(k) = r.init {
+            let k = renumber[k as usize];
+            // The host runs an init kernel once at load (loft-gpu `validate`). A table a frame kernel fills is
+            // written every frame before it is read, so it starts as zero, not as that kernel's output.
+            r.init = match kernels[k as usize].when {
+                bundle::When::Load => bundle::Init::By(k),
+                bundle::When::Frame | bundle::When::Steps { .. } => bundle::Init::Zero,
+            };
+        }
+    }
+    let written: Vec<u32> = kernels.iter().flat_map(|k| k.writes.iter().copied()).collect();
+    let unfilled = resources
+        .iter()
+        .zip(&sources)
+        .enumerate()
+        .filter(|(r, (x, s))| {
+            matches!((&x.init, s), (bundle::Init::Zero, kernel::Source::Made(_))) && !written.contains(&(*r as u32))
+        })
+        .count();
     let lit = |i: u32| F32((f64::from_bits(g.lits[i as usize]) as f32).to_bits());
     let params = g.params.iter().map(|p| ParamDecl {
         name: name(g.sym(p.name)),
@@ -201,46 +293,204 @@ fn scene(mut g: Graph, compiler: &str, phases: &mut Phases) -> Result<(Scene, Ve
             def: (0..u32::from(i.ty.lits())).map(|k| lit(i.def + k)).collect(),
         })
         .collect();
-    names.iter().for_each(|n| _ = name(n));
+    let exports: Vec<u32> = names.iter().map(|n| name(n)).collect();
+    let cameras: Box<[(u32, u32)]> = camera_names.iter().map(|&(sym, at)| (name(g.sym(sym)), exports[at])).collect();
+    // Draws, media and passes: lowered by `draw` into modules of their own; their module and name ids move past ours.
+    let (draws_ir, media_ir, passes_ir) = draw_decls(&g);
+    let low = draw::lower(&g, &slots, &draws_ir, &media_ir, &passes_ir)?;
+    let (module0, name0) = (modules.len() as u32, strings.len() as u32);
+    for (text, reads) in low.modules.into_iter().zip(low.reads) {
+        sections.push(text.into_bytes().into());
+        modules.push(Module {
+            wgsl: sections.len() as u32 - 1,
+            origin: Origin::Author,
+            precision_alias: true,
+            reads: reads.into(),
+        });
+    }
+    strings.extend(low.names);
+    let at = |(m, n): (u32, u32)| (m + module0, n + name0);
+    let draws: Box<[bundle::Draw]> =
+        low.draws.into_iter().map(|d| bundle::Draw { name: d.name + name0, shade: at(d.shade), ..d }).collect();
+    let media: Box<[bundle::Medium]> =
+        low.media.into_iter().map(|m| bundle::Medium { transmittance: at(m.transmittance), ..m }).collect();
+    let passes: Box<[bundle::Pass]> = low
+        .passes
+        .into_iter()
+        .map(|p| {
+            let compose = bundle::Compose { outline: p.compose.outline.map(at), ground: p.compose.ground.map(at) };
+            bundle::Pass { compose, ..p }
+        })
+        .collect();
     let b = Bundle {
         format: Format::V1,
         compiler: compiler.into(),
         names: strings.into(),
-        resources: plan.resources.into(),
-        kernels: Box::new([]),
-        modules: Box::new([Module {
-            wgsl: sections.len() as u32 - 1,
-            origin: Origin::Author,
-            precision_alias: true,
-            reads: m.reads.iter().copied().collect(),
-        }]),
-        draws: Box::new([]),
-        passes: Box::new([]),
-        media: Box::new([]),
-        cameras: Box::new([]),
+        resources: resources.into(),
+        kernels: kernels.into(),
+        modules: modules.into(),
+        draws,
+        passes,
+        media,
+        cameras,
         params,
         inputs,
         sites: Box::new([]),
         sections: sections.into(),
     };
     let resources = b.resources.len();
+    let (n_kernels, n_draws) = (b.kernels.len(), b.draws.len());
     let bytes = b.write()?;
     let build = Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect();
     phases.bundle = ns(t);
     let report = Scene {
-        roots: roots.len(),
+        roots: program_roots,
         functions,
         wgsl_bytes,
         resources,
         unfilled,
+        kernels: n_kernels,
         storage_buffers: lay.buffers.len(),
         dispatches,
-        draws: 0,
+        draws: n_draws,
         bundle_bytes: bytes.len(),
         build,
         mixed,
     };
     Ok((report, bytes))
+}
+
+/// The job's draws, media and passes as `draw` lowers them: references stay decl ids (fns, kernels, media), numbers
+/// become f32 bits. Every pass draws to the view (the wire has no texture resource decl yet).
+fn draw_decls(g: &Graph) -> (Vec<draw::Draw>, Vec<draw::Medium>, Vec<draw::Pass>) {
+    let f = |i: u32| F32((f64::from_bits(g.lits[i as usize]) as f32).to_bits());
+    let v3 = |at: u32| [f(at), f(at + 1), f(at + 2)];
+    let box6 = |at: u32| [v3(at), v3(at + 3)];
+    let draws = g
+        .draws
+        .iter()
+        .map(|d| {
+            let cover = match &d.cover {
+                ir::Cover::Grid { u, v, place, count } => {
+                    draw::Cover::Raster { prim: draw::Prim::Grid { u: *u, v: *v, place: *place }, count: *count }
+                }
+                ir::Cover::Mesh { kernel, count } => {
+                    draw::Cover::Raster { prim: draw::Prim::Mesh { res: *kernel }, count: *count }
+                }
+                ir::Cover::Quads { place, count } => {
+                    draw::Cover::Raster { prim: draw::Prim::Quads { place: *place }, count: *count }
+                }
+                ir::Cover::Ray { proxy, find } => draw::Cover::Ray {
+                    proxy: match proxy {
+                        ir::Proxy::Box { lits } => {
+                            let [min, max] = box6(*lits);
+                            bundle::Proxy::Box { min, max }
+                        }
+                        ir::Proxy::Instances { kernel, local } => {
+                            bundle::Proxy::Instances { res: *kernel, local: box6(*local) }
+                        }
+                    },
+                    find: match find {
+                        ir::Find::Hit(h) => draw::Find::Hit(*h),
+                        ir::Find::Medium(m) => draw::Find::Medium(*m),
+                    },
+                },
+                ir::Cover::Screen => draw::Cover::Screen,
+            };
+            let layer = match d.layer {
+                ir::Layer::Subject => bundle::Layer::Subject,
+                ir::Layer::Surroundings => bundle::Layer::Surroundings,
+            };
+            let blend = match d.raster.blend {
+                ir::Blend::Opaque => bundle::Blend::Opaque,
+                ir::Blend::Alpha => bundle::Blend::Alpha,
+                ir::Blend::Add => bundle::Blend::Add,
+            };
+            let raster = bundle::Raster { cull: d.raster.cull, depth_write: d.raster.depth_write, blend };
+            draw::Draw { name: d.name, layer, cover, paint: d.paint, raster }
+        })
+        .collect();
+    let media = g
+        .media
+        .iter()
+        .map(|m| match *m {
+            ir::Medium::March { density, within, steps, shadow_steps } => {
+                draw::Medium::March { density, within: box6(within), steps, shadow_steps }
+            }
+            ir::Medium::Gaussians { kernel } => draw::Medium::Gaussians { res: kernel },
+        })
+        .collect();
+    let passes = g
+        .passes
+        .iter()
+        .map(|p| draw::Pass {
+            target: bundle::Target::View,
+            camera: p.camera,
+            draws: p.draws,
+            clear: match p.clear {
+                ir::Clear::Load => bundle::Clear::Load,
+                ir::Clear::Colour(at) => bundle::Clear::Color([f(at), f(at + 1), f(at + 2), f(at + 3)]),
+            },
+            ground: match p.ground {
+                ir::Ground::None => None,
+                ir::Ground::Traced { hit, paint } => Some([hit, paint]),
+            },
+            outline: match p.outline {
+                ir::Outline::None => None,
+                ir::Outline::Ink(f) => Some(f),
+            },
+        })
+        .collect();
+    (draws, media, passes)
+}
+
+/// One kernel decl per Map run and per Scan, writing the resource of its Kernel decl (resource k is kernel k). A
+/// static table fills once at load; any other at most per frame (the plan moves a Const body to compile).
+fn fill_decls(g: &Graph) -> Vec<kernel::Decl> {
+    let mut out = vec![];
+    for (k, x) in g.kernels.iter().enumerate() {
+        let Kernel::Table { fill, role, .. } = x else { continue };
+        let when = match role {
+            Role::Static => bundle::When::Load,
+            Role::Stations | Role::Data => bundle::When::Frame,
+        };
+        match fill {
+            Fill::Map(runs) => {
+                let mut start = 0;
+                for r in runs.iter() {
+                    let fill = kernel::Fill::Map { start, count: r.count, index: r.index, lanes: r.lanes.clone() };
+                    out.push(kernel::Decl { writes: k as u32, fill, when: when.clone() });
+                    start += r.count;
+                }
+            }
+            Fill::Scan(s) => {
+                let fill = kernel::Fill::Scan {
+                    first: s.first,
+                    steps: s.steps,
+                    init: s.init.clone(),
+                    state: s.state.clone(),
+                    index: s.index,
+                    next: s.next.clone(),
+                    lanes: s.lanes.clone(),
+                };
+                out.push(kernel::Decl { writes: k as u32, fill, when });
+            }
+            Fill::Data { .. } | Fill::Recurrence { .. } => {}
+        }
+    }
+    out
+}
+
+/// Emit does not yet read lifted frame values (each root computes its values whole), so the plan's frame-values
+/// kernels and resources would be written and never read. They are dropped with the reads that name them. They come
+/// last in both lists, so no other index moves.
+fn drop_lifted(plan: &mut kernel::Plan, declared: usize) {
+    plan.kernels.retain(|k| matches!(k.job, kernel::Job::Decl(_)));
+    plan.resources.truncate(declared);
+    for k in &mut plan.kernels {
+        k.reads = k.reads.iter().copied().filter(|&r| (r as usize) < declared).collect();
+    }
+    plan.lifted.clear();
 }
 
 /// The free variables (`Op::Var`) root `r` reads, one node per name, in name order: the exported function's

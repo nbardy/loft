@@ -1,12 +1,18 @@
 //! The canonical print (plan §8.2, lane 1.2's shadow check): the text src/record/print.ts writes for the same roots,
 //! byte for byte. Its grammar is in that file's header. In short: the program's roots walked post-order with every
 //! call inlined, one line per distinct text, numbered by first use; loop binders print as `bind TY LEVEL SLOT`, LEVEL
-//! counting the loops they are inside, so two equal loops are one line.
+//! counting the loops they are inside, so two equal loops are one line. After the roots line, one `kernel` line per
+//! table in the order the walk first fetched it, its fill walked after the roots (binders as `fill TY SLOT`), then one
+//! line per scene-level decl (cameras, media, draws, passes, checks, solves, each in decl order), walked before the
+//! fills; a graph function a decl names prints as its body over `arg TY K` binders.
 //!
 //! The walk recurses once per graph level (operand, call body, loop body); callers on deep graphs run it on a thread
 //! with a large stack.
 use crate::error::{Error, Fault, Internal, Span, WireFault};
-use crate::graph::{Graph, Kernel, Op};
+use crate::graph::{
+    Blend, Clear, Cover, Fill, Find, Formula, Graph, Ground, HoldKind, Kernel, Layer, Lens, Medium, Op, Outline, Proxy,
+    Strategy, Times,
+};
 use std::collections::HashMap;
 use std::fmt::Write;
 
@@ -22,8 +28,17 @@ pub fn print(g: &Graph) -> Result<String, Error> {
         scopes: vec![Scope { level: 0, bound: HashMap::new(), frame: 0, memo: HashMap::new(), parent: None }],
         frames: vec![HashMap::new()],
         loop_lines: HashMap::new(),
+        tables: Vec::new(),
     };
     let roots = g.roots.iter().map(|r| p.walk(*r, 0, false)).collect::<Result<Vec<u32>, Error>>()?;
+    let decls = p.decls()?;
+    // Each fetched table's fill (`tables` grows while fills are walked).
+    let mut kernels = Vec::new();
+    let mut j = 0;
+    while let Some(&k) = p.tables.get(j) {
+        kernels.push(p.fill(k)?);
+        j += 1;
+    }
     let mut out = String::new();
     for l in &p.lines {
         out.push_str(l);
@@ -32,6 +47,10 @@ pub fn print(g: &Graph) -> Result<String, Error> {
     out.push_str("roots");
     out.push(' ');
     out.push_str(&refs(&roots));
+    for k in kernels.iter().chain(&decls) {
+        out.push('\n');
+        out.push_str(k);
+    }
     Ok(out)
 }
 
@@ -61,6 +80,8 @@ struct Printer<'g> {
     frames: Vec<Frame>,
     /// (loop, level, frame) -> its line: re-walking would give the same line, so its results share one walk.
     loop_lines: HashMap<(u32, u32, usize), u32>,
+    /// Table kernels in the order the walk first fetched them.
+    tables: Vec<u32>,
 }
 
 fn refs(ks: &[u32]) -> String {
@@ -181,16 +202,18 @@ impl Printer<'_> {
             Op::Var(name) => self.line(format!("var {ty} {}", g.sym(name)), 0),
             Op::Bind(_) => return Err(unprintable(id, Fault::Scope)),
             Op::Fetch { kernel, lane } => {
-                let res = match g.kernels[kernel as usize] {
-                    Kernel::Table { name, lanes, entries, role } => {
-                        format!("table:{}:{lanes}:{entries}:{}", g.sym(name), role.name())
-                    }
+                let res = match &g.kernels[kernel as usize] {
+                    Kernel::Table { .. } => self.table_name(kernel),
                     Kernel::Rows { label, at, len } => {
-                        let rows = &g.rows[at as usize..(at + len) as usize];
-                        format!("rows:{}:{}", g.sym(label), fnv(rows.iter().copied()))
+                        let rows = &g.rows[*at as usize..(at + len) as usize];
+                        format!("rows:{}:{}", g.sym(*label), fnv(rows.iter().copied()))
                     }
                 };
                 let ks = kids(self)?;
+                // Listed after its index is walked, as print.ts does: the index may fetch another table first.
+                if matches!(g.kernels[kernel as usize], Kernel::Table { .. }) && !self.tables.contains(&kernel) {
+                    self.tables.push(kernel);
+                }
                 self.op(format!("fetch {res} {lane}"), &ks)
             }
             Op::Raw(r) => {
@@ -224,6 +247,225 @@ impl Printer<'_> {
                 self.walk(f.body, body, true)?
             }
             Op::Grad => return Err(unprintable(id, Fault::Op { code: 8 })),
+        })
+    }
+
+    fn table_name(&self, k: u32) -> String {
+        match &self.g.kernels[k as usize] {
+            Kernel::Table { name, lanes, entries, role, .. } => {
+                format!("table:{}:{lanes}:{entries}:{}", self.g.sym(*name), role.name())
+            }
+            Kernel::Rows { label, .. } => format!("rows:{}", self.g.sym(*label)),
+        }
+    }
+
+    /// A scope for a fill: one level in, its binders bound to `fill TY SLOT` lines (print.ts `Canon.fill`).
+    fn fill_scope(&mut self, binders: &[(u32, String)]) -> usize {
+        self.scoped("fill", binders)
+    }
+
+    /// Graph function `f` as its body's line, over binders printed `arg TY K` one level in.
+    fn fn_ref(&mut self, f: u32) -> Result<String, Error> {
+        let binders: Vec<(u32, String)> =
+            self.g.fns[f as usize].binders.iter().enumerate().map(|(k, b)| (*b, k.to_string())).collect();
+        let s = self.scoped("arg", &binders);
+        Ok(format!("#{}", self.walk(self.g.fns[f as usize].body, s, false)?))
+    }
+    /// A scope one level in whose binders print as `WORD TY SLOT`.
+    fn scoped(&mut self, word: &str, binders: &[(u32, String)]) -> usize {
+        let mut bound = HashMap::new();
+        for (b, slot) in binders {
+            let k = self.line(format!("{word} {} {slot}", self.g.nodes[*b as usize].ty.name()), 1);
+            bound.insert(*b, k);
+        }
+        self.scopes.push(Scope { level: 1, bound, frame: 0, memo: HashMap::new(), parent: None });
+        self.scopes.len() - 1
+    }
+    fn lits(&self, at: u32, n: usize) -> String {
+        hex(&self.g.lits[at as usize..at as usize + n])
+    }
+    fn root_refs(&mut self, xs: &[u32], s: usize) -> Result<String, Error> {
+        let ks = xs.iter().map(|x| self.walk(*x, s, false)).collect::<Result<Vec<_>, _>>()?;
+        Ok(refs(&ks))
+    }
+
+    /// The scene-level decls' lines, in print.ts's order.
+    fn decls(&mut self) -> Result<Vec<String>, Error> {
+        let g = self.g;
+        let mut out = Vec::new();
+        for c in g.cameras.iter() {
+            let line = match c.lens {
+                Lens::Look { eye, target, up, fovy } => {
+                    format!("look [{}]", self.root_refs(&[eye, target, up, fovy], 0)?)
+                }
+                Lens::Matrix { cols } => format!("matrix [{}]", self.root_refs(&cols, 0)?),
+            };
+            out.push(format!("camera {} {line}", g.sym(c.name)));
+        }
+        for m in g.media.iter() {
+            out.push(match *m {
+                Medium::March { density, within, steps, shadow_steps } => format!(
+                    "medium march {} within {} steps {steps} {shadow_steps}",
+                    self.fn_ref(density)?,
+                    self.lits(within, 6)
+                ),
+                Medium::Gaussians { kernel } => format!("medium gaussians {}", self.table_name(kernel)),
+            });
+        }
+        for d in g.draws.iter() {
+            // The paint first, then the cover's functions: print.ts's order.
+            let paint = self.fn_ref(d.paint)?;
+            let cover = match &d.cover {
+                Cover::Grid { u, v, place, count } => format!("grid {u} {v} {} {count}", self.fn_ref(*place)?),
+                Cover::Mesh { kernel, count } => format!("mesh {} {count}", self.table_name(*kernel)),
+                Cover::Quads { place, count } => format!("quads {} {count}", self.fn_ref(*place)?),
+                Cover::Ray { proxy, find } => {
+                    let proxy = match proxy {
+                        Proxy::Box { lits } => format!("box {}", self.lits(*lits, 6)),
+                        Proxy::Instances { kernel, local } => {
+                            format!("instances {} {}", self.table_name(*kernel), self.lits(*local, 6))
+                        }
+                    };
+                    let find = match find {
+                        Find::Hit(f) => format!("hit {}", self.fn_ref(*f)?),
+                        Find::Medium(m) => format!("medium {m}"),
+                    };
+                    format!("ray {proxy} {find}")
+                }
+                Cover::Screen => "screen".into(),
+            };
+            let layer = match d.layer {
+                Layer::Subject => "subject",
+                Layer::Surroundings => "surroundings",
+            };
+            let blend = match d.raster.blend {
+                Blend::Opaque => "opaque",
+                Blend::Alpha => "alpha",
+                Blend::Add => "add",
+            };
+            let (cull, depth) = (u8::from(d.raster.cull), u8::from(d.raster.depth_write));
+            out.push(format!("draw {} {layer} {cull} {depth} {blend} paint {paint} {cover}", g.sym(d.name)));
+        }
+        for p in g.passes.iter() {
+            let clear = match p.clear {
+                Clear::Load => "load".to_string(),
+                Clear::Colour(at) => self.lits(at, 4),
+            };
+            let ground = match p.ground {
+                Ground::None => "none".to_string(),
+                Ground::Traced { hit, paint } => format!("{} {}", self.fn_ref(hit)?, self.fn_ref(paint)?),
+            };
+            let outline = match p.outline {
+                Outline::None => "none".to_string(),
+                Outline::Ink(f) => self.fn_ref(f)?,
+            };
+            out.push(format!(
+                "pass camera {} draws {} {} clear {clear} ground {ground} outline {outline}",
+                p.camera, p.draws[0], p.draws[1]
+            ));
+        }
+        for c in g.checks.iter() {
+            let how = match c.how {
+                Strategy::Prove { boxes } => format!("prove {boxes}"),
+                Strategy::Sample { n } => format!("sample {n}"),
+            };
+            let body = self.formula(&c.body)?;
+            out.push(format!("check {} {how} {body}", g.sym(c.label)));
+        }
+        for sv in g.solves.iter() {
+            let mut binders = Vec::new();
+            for (k, u) in sv.unknowns.iter().enumerate() {
+                binders.extend(u.jets.iter().enumerate().map(|(d, j)| (*j, format!("{k} {d}"))));
+            }
+            let mut unknowns = Vec::new();
+            for u in sv.unknowns.iter() {
+                let from = self.walk(u.from, 0, false)?;
+                unknowns.push(format!("{} {} #{from}", g.sym(u.name), u.numbers));
+            }
+            let mut near = Vec::new();
+            for n in sv.near.iter() {
+                near.push(format!("{} #{}", n.unknown, self.walk(n.to, 0, false)?));
+            }
+            let s = self.scoped("jet", &binders);
+            let mut holds = Vec::new();
+            for h in sv.holds.iter() {
+                let kind = match h.kind {
+                    HoldKind::Equal { margin, within } => {
+                        format!("equal #{} {}", self.walk(margin, s, false)?, self.lits(within, 1))
+                    }
+                    HoldKind::Bound { margin } => format!("bound #{}", self.walk(margin, s, false)?),
+                };
+                let times = match h.times {
+                    Times::At { t } => format!("at {}", self.lits(t, 1)),
+                    Times::During { lits } => format!("during {}", self.lits(lits, 2)),
+                    Times::Span => "span".into(),
+                };
+                holds.push(format!("{kind} {times} {} {}", g.sym(h.said), g.sym(h.site)));
+            }
+            out.push(format!(
+                "solve {} {} unknowns [{}] near [{}] holds [{}]",
+                g.sym(sv.label),
+                self.lits(sv.numbers, 6),
+                unknowns.join(", "),
+                near.join(", "),
+                holds.join(", ")
+            ));
+        }
+        Ok(out)
+    }
+
+    fn formula(&mut self, f: &Formula) -> Result<String, Error> {
+        Ok(match f {
+            Formula::Atom { margin, test } => format!("(atom {})", self.root_refs(&[*margin, *test], 0)?),
+            Formula::Always(q) | Formula::Eventually(q) => {
+                let word = if matches!(f, Formula::Always(_)) { "always" } else { "eventually" };
+                let mut leaves = Vec::new();
+                for ((l, lo), hi) in q.leaves.iter().zip(&q.lo).zip(&q.hi) {
+                    leaves.push(self.root_refs(&[*l, *lo, *hi], 0)?);
+                }
+                format!("({word} [{}] {})", leaves.join(", "), self.formula(&q.body)?)
+            }
+            Formula::And(parts) | Formula::Or(parts) => {
+                let word = if matches!(f, Formula::And(_)) { "and" } else { "or" };
+                let ps = parts.iter().map(|p| self.formula(p)).collect::<Result<Vec<_>, _>>()?;
+                format!("({word} {})", ps.join(" "))
+            }
+            Formula::Not(p) => format!("(not {})", self.formula(p)?),
+        })
+    }
+
+    /// Table `k`'s line: its fill walked over its binders.
+    fn fill(&mut self, k: u32) -> Result<String, Error> {
+        let g = self.g;
+        let head = format!("kernel {}", self.table_name(k));
+        let Kernel::Table { fill, lanes, entries, .. } = &g.kernels[k as usize] else {
+            unreachable!("only tables are listed")
+        };
+        Ok(match fill {
+            Fill::Map(runs) => {
+                let mut text = format!("{head} map");
+                for r in runs.iter() {
+                    let s = self.fill_scope(&[(r.index, "i".into())]);
+                    let ls = r.lanes.iter().map(|x| self.walk(*x, s, false)).collect::<Result<Vec<_>, _>>()?;
+                    let _ = write!(text, " {} [{}]", r.count, refs(&ls));
+                }
+                text
+            }
+            Fill::Scan(sc) => {
+                let init = sc.init.iter().map(|x| self.walk(*x, 0, false)).collect::<Result<Vec<_>, _>>()?;
+                let mut binders: Vec<(u32, String)> =
+                    sc.state.iter().enumerate().map(|(j, b)| (*b, format!("s{j}"))).collect();
+                binders.push((sc.index, "i".into()));
+                let s = self.fill_scope(&binders);
+                let next = sc.next.iter().map(|x| self.walk(*x, s, false)).collect::<Result<Vec<_>, _>>()?;
+                let ls = sc.lanes.iter().map(|x| self.walk(*x, s, false)).collect::<Result<Vec<_>, _>>()?;
+                format!("{head} scan {} {} [{}] -> [{}] [{}]", sc.first, sc.steps, refs(&init), refs(&next), refs(&ls))
+            }
+            Fill::Data { at } => {
+                let len = (entries * lanes * 4) as usize;
+                format!("{head} data {}", fnv(g.rows[*at as usize..*at as usize + len].iter().copied()))
+            }
+            Fill::Recurrence { recurrence } => format!("{head} recurrence {}", g.sym(*recurrence)),
         })
     }
 

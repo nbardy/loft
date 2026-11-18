@@ -246,13 +246,52 @@ impl Loop {
     }
 }
 
-/// What a `Fetch` reads. In wave 1 a kernel names a resource the TS compiler fills; wave 2 gives kernels bodies.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What a `Fetch` reads: a table the job fills, or supplied samples (an author curve).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kernel {
-    /// A per-frame table: `entries` rows of `lanes` vec4s, filled for `role`.
-    Table { name: u32, lanes: u32, entries: u32, role: Role },
+    /// `entries` rows of `lanes` vec4s, filled by `fill`, read for `role`.
+    Table { name: u32, lanes: u32, entries: u32, role: Role, fill: Fill },
     /// Supplied samples `rows[at..at + len]`, read as one lane.
     Rows { label: u32, at: u32, len: u32 },
+}
+
+/// How a table is filled (src/expr.ts `TableSource`). Bodies are the decl's own roots over its own binders (`Op::Bind`),
+/// because a row has several lanes and a step several states, which a one-result graph function cannot say.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Fill {
+    /// Runs laid end to end: run k fills `count` rows, each row's `lanes` (vec4 roots) over its f32 `index` binder.
+    Map(Box<[Run]>),
+    Scan(Scan),
+    /// Supplied numbers: `entries * lanes * 4` f32 bits of `Graph::rows` from `at`.
+    Data {
+        at: u32,
+    },
+    /// One of a recurrence's tables (its kept states, its previous state, a replay buffer), stepped by the TS
+    /// recurrence named `recurrence`, which the wire does not carry yet. The host starts it at zero: the named
+    /// default, which the driver counts as unfilled.
+    Recurrence {
+        recurrence: u32,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Run {
+    pub count: u32,
+    pub index: u32,
+    pub lanes: Box<[u32]>,
+}
+
+/// Rows `first..first + steps` in order: the state starts at `init`; step j reads the `state` binders and the f32
+/// `index` binder (j) and gives `next` and row `first + j`'s `lanes`. `init`, `state` and `next` are parallel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Scan {
+    pub first: u32,
+    pub steps: u32,
+    pub init: Box<[u32]>,
+    pub state: Box<[u32]>,
+    pub index: u32,
+    pub next: Box<[u32]>,
+    pub lanes: Box<[u32]>,
 }
 
 /// Who fills a table (src/expr.ts `TableSource["role"]`). Wire code = the order here.
@@ -300,8 +339,215 @@ pub enum Program {
     Check,
 }
 
+/// A drawn thing (plan §1.5): how it covers pixels and the graph function (`Graph::fns`) that paints them,
+/// `paint(p: vec3, n: vec3, id: f32) -> vec4`. Signatures of every role are loft-core `draw`'s.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Draw {
+    pub name: u32,
+    pub layer: Layer,
+    pub cover: Cover,
+    pub paint: u32,
+    pub raster: Raster,
+}
+/// Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Layer {
+    Subject,
+    Surroundings,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Raster {
+    pub cull: bool,
+    pub depth_write: bool,
+    pub blend: Blend,
+}
+/// Wire code = the order here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Blend {
+    Opaque,
+    Alpha,
+    Add,
+}
+/// Fn ids name `Graph::fns`, kernel ids `Graph::kernels`, lit ids the first of `Graph::lits`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Cover {
+    /// `count` copies of a u × v grid of `place(uv: vec2, id: f32) -> vec3`.
+    Grid {
+        u: u32,
+        v: u32,
+        place: u32,
+        count: u32,
+    },
+    /// `count` copies of the triangles in a table's rows.
+    Mesh {
+        kernel: u32,
+        count: u32,
+    },
+    /// `count` camera-facing quads, `place(id: f32) -> vec4` (centre, radius).
+    Quads {
+        place: u32,
+        count: u32,
+    },
+    Ray {
+        proxy: Proxy,
+        find: Find,
+    },
+    Screen,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Proxy {
+    /// min then max: six lits from `lits`.
+    Box { lits: u32 },
+    /// One box per row of a table (centre xyz, scale w), `local` its min then max: six lits.
+    Instances { kernel: u32, local: u32 },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Find {
+    /// `hit(o: vec3, d: vec3, span: vec2, width: vec2) -> vec4` (normal, t), t < 0 a miss.
+    Hit(u32),
+    /// A medium of `Graph::media`.
+    Medium(u32),
+}
+/// One medium, two integrations (plan §1.6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Medium {
+    /// `density(p: vec3) -> f32` marched inside `within` (six lits).
+    March { density: u32, within: u32, steps: u16, shadow_steps: u16 },
+    /// Gaussians in a table's rows.
+    Gaussians { kernel: u32 },
+}
+/// Draws `first..end` of `Graph::draws` seen by a camera of `Graph::cameras` (plan §1.5). The wire carries view passes
+/// only: an offscreen or shadow target names a texture resource, which no decl declares yet.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Pass {
+    pub camera: u32,
+    pub draws: [u32; 2],
+    pub clear: Clear,
+    pub ground: Ground,
+    pub outline: Outline,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Clear {
+    Load,
+    /// rgba: four lits.
+    Colour(u32),
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ground {
+    None,
+    /// Traced over the whole view: (hit, paint) graph functions with a draw's signatures.
+    Traced {
+        hit: u32,
+        paint: u32,
+    },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outline {
+    None,
+    /// `outline(colour: vec3, q: vec3) -> vec4` (ink rgb, width in world units).
+    Ink(u32),
+}
+/// A named camera; its parts are nodes, so a camera can move with time, params and inputs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Camera {
+    pub name: u32,
+    pub lens: Lens,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lens {
+    /// eye, target, up (vec3) and the vertical field of view in radians (f32).
+    Look { eye: u32, target: u32, up: u32, fovy: u32 },
+    /// clip from world, four vec4 columns.
+    Matrix { cols: [u32; 4] },
+}
+/// A check (plan §1.7): a formula over leaves, decided by proof or by samples.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Check {
+    pub label: u32,
+    pub how: Strategy,
+    pub body: Formula,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Strategy {
+    Prove { boxes: u32 },
+    Sample { n: u32 },
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Formula {
+    /// `margin` (f32) > 0 holds, < 0 fails; at 0 `test` (bool) decides.
+    Atom {
+        margin: u32,
+        test: u32,
+    },
+    Always(Quant),
+    Eventually(Quant),
+    And(Box<[Formula]>),
+    Or(Box<[Formula]>),
+    Not(Box<Formula>),
+}
+/// Leaves (Time, Param, Input or Var nodes) each in [lo, hi] (f32 nodes), parallel.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Quant {
+    pub leaves: Box<[u32]>,
+    pub lo: Box<[u32]>,
+    pub hi: Box<[u32]>,
+    pub body: Box<Formula>,
+}
+/// A solve (src/geom/solve.ts `SolveSpec`): unknown curves over [t0, t1] that meet the holds, preferring the least
+/// jerk and acceleration (and nearness to given curves). The solver is loft-core's (feat/lr-solve).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Solve {
+    pub label: u32,
+    /// t0, t1, delta, jerk weight, acceleration weight, near weight: six lits.
+    pub numbers: u32,
+    pub unknowns: Box<[Unknown]>,
+    pub near: Box<[Near]>,
+    pub holds: Box<[Hold]>,
+}
+/// A uniform cubic B-spline of `numbers` controls, started from `from` (f32 over time). A hold reads it through its
+/// four `jets` binders: its value and first three time derivatives at the hold's time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unknown {
+    pub name: u32,
+    pub numbers: u32,
+    pub from: u32,
+    pub jets: [u32; 4],
+}
+/// Prefer unknown `unknown` near `to` (f32 over time).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Near {
+    pub unknown: u32,
+    pub to: u32,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Hold {
+    pub kind: HoldKind,
+    pub times: Times,
+    /// The comparison as written (`equal`, `ge`, ...) and where: symbols.
+    pub said: u32,
+    pub site: u32,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldKind {
+    /// `margin` (any number type) within the lit `within` of zero.
+    Equal { margin: u32, within: u32 },
+    /// `margin` (f32) at least zero.
+    Bound { margin: u32 },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Times {
+    At {
+        t: u32,
+    },
+    /// from then to: two lits.
+    During {
+        lits: u32,
+    },
+    Span,
+}
+
 /// A decoded, validated job graph.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Graph {
     pub nodes: Box<[Node]>,
     pub args: Box<[u32]>,
@@ -322,6 +568,12 @@ pub struct Graph {
     pub kernels: Box<[Kernel]>,
     pub params: Box<[Param]>,
     pub inputs: Box<[Input]>,
+    pub draws: Box<[Draw]>,
+    pub passes: Box<[Pass]>,
+    pub media: Box<[Medium]>,
+    pub cameras: Box<[Camera]>,
+    pub checks: Box<[Check]>,
+    pub solves: Box<[Solve]>,
     /// The program's roots.
     pub roots: Box<[u32]>,
 }
