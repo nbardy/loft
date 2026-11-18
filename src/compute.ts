@@ -1,7 +1,9 @@
 // Author-side declarations. The GPU-less compiler turns these into data before a host sees them.
 import { COMPUTE_TEXEL_BYTES as TEXEL_BYTES, computeHistorySize } from "./host/manifest.ts";
 import { SceneError, shown } from "./errors.ts";
-import { computeFetch, lift, rawComputeExpression, time, type Expr, type In, type NumTy, type RawComputeFetch } from "./expr.ts";
+import { everything, leaves, lift, rawCall, rawComputeExpression, time, type Expr, type In, type LibFn } from "./expr.ts";
+import { WGSL_STATE, type EntryText, type WgslModule } from "./text/index.ts";
+import { RAW_PRELUDE } from "./text/raw_prelude.ts";
 
 type Extent = readonly [number, number] | readonly [number, number, number];
 type Grid = readonly [number] | Extent;
@@ -16,20 +18,20 @@ type When =
   | { readonly kind: "steps"; readonly start: string; readonly count: number; readonly rate: number; readonly keep?: number };
 type Steps = Extract<When, { kind: "steps" }> & { readonly keep: number };
 
-type BufferRead = RawComputeFetch & { readonly wgsl: string };
-type TextureRead<T extends "vec2" | "vec3"> = { readonly wgsl: string; sample(uv: In<T>): Expr<"vec4"> };
+/** A buffer output, read by calling it: vec4 number `lane` of entry `index` (stepped: the state kept at `time`). */
+type BufferRead = (index: In<"f32">, lane: number) => Expr<"vec4">;
+/** A texture output, read by calling it at uv in [0, 1] per axis, filtered linearly (stepped: the state kept at `time`). */
+type TextureRead<T extends "vec2" | "vec3"> = (uv: In<T>) => Expr<"vec4">;
 type Handle<S extends Shape> = S extends { kind: "buffer" } ? BufferRead
   : S extends { size: readonly [number, number, number] } ? TextureRead<"vec3"> : TextureRead<"vec2">;
-type Read = BufferRead | TextureRead<"vec2"> | TextureRead<"vec3">;
 type Spec<W extends Readonly<Record<string, Shape>>> = {
   readonly when: When;
   readonly writes: W;
-  readonly reads?: Readonly<Record<string, Read>>;
-  /** Named WGSL getters for inputs and parameters. Frame passes also see frame.time.x, in seconds. */
-  readonly values?: Readonly<Record<string, Expr<NumTy>>>;
-  readonly entry: string;
+  /** The `@compute` entry each dispatch runs. Omit it when the module has one (for steps: one besides `when.start`). */
+  readonly entry?: string;
   readonly dispatch: Grid;
-  readonly wgsl: string;
+  /** The pass's WGSL: a `wgsl` module. Its holes bring in params, inputs and other passes' outputs; it reads `time`. */
+  readonly wgsl: WgslModule;
 };
 
 export type ComputeResource = Shape & {
@@ -41,15 +43,17 @@ export type ComputeResource = Shape & {
 export type ComputePass = {
   readonly name: string;
   readonly when: Exclude<When, { kind: "steps" }> | Steps;
+  /** Other passes' outputs this pass's text reads (found from its holes), each bound under its symbol. */
   readonly reads: readonly (readonly [string, ComputeResource])[];
   readonly writes: readonly (readonly [string, ComputeResource])[];
-  readonly values: Spec<never>["values"];
   readonly entry: string;
   readonly dispatch: readonly [number, number, number];
-  readonly wgsl: string;
+  /** The entry points as text, the library functions they call and the values their accessors return. */
+  readonly code: EntryText;
 };
-const resources = new WeakMap<object, ComputeResource>();
 const passes = new WeakMap<object, ComputePass>();
+/** The output a reading library function reads (each output has one: `X_fetch` or `X_sample`). */
+const readers = new WeakMap<LibFn, ComputeResource>();
 const IDENT = /^[A-Za-z][A-Za-z0-9_]*$/;
 // Frugal by default and within baseline WebGPU per-stage and resource limits.
 const MAX_BYTES = 64 * 1024 ** 2;
@@ -117,18 +121,23 @@ function shapeOf(where: string, shape: Shape): Shape & { bytes: number } {
 
 export function keptStates(s: Steps): number { return 1 + Math.ceil(s.count / s.keep); }
 
-function output(r: ComputeResource): Read {
+/**
+ * An output's handle: a function of expressions (TypeScript and graph text call it), which raw WGSL text calls through
+ * a hole by the name of the same library function (`rawCall`), with the time it reads appended.
+ */
+function output(r: ComputeResource): BufferRead | TextureRead<"vec2" | "vec3"> {
+  // A stepped output is read at the scene's time; any other has one state, and its readers ignore the time.
+  const at: number | Expr<"f32"> = r.steps === undefined ? 0 : time;
   if (r.kind === "buffer") {
     const name = `${r.symbol}_fetch`;
     const read = r.steps === undefined ? `${r.symbol}[u32(i) * ${r.lanes}u + u32(lane)]` : `${r.symbol}(u32(i), u32(lane), t)`;
-    const fn = { name, ret: "vec4", js: "gpu-only", wgsl: `fn ${name}(i: f32, lane: f32, t: f32) -> vec4<f32> { return ${read}; }` } as const;
-    return {
-      wgsl: r.symbol,
-      [computeFetch]: (i, lane) => {
-        if (!Number.isInteger(lane) || lane < 0 || lane >= r.lanes) resourceError(r.key, `lane ${lane}`, `a lane in [0, ${r.lanes - 1}]`, "use a declared lane");
-        return rawComputeExpression(fn, r.key, lift<"f32">(i), lane, r.steps === undefined ? 0 : time);
-      },
+    const fn: LibFn = { name, ret: "vec4", js: "gpu-only", wgsl: `fn ${name}(i: f32, lane: f32, t: f32) -> vec4<f32> { return ${read}; }` };
+    readers.set(fn, r);
+    const h: BufferRead = (i, lane) => {
+      if (!Number.isInteger(lane) || lane < 0 || lane >= r.lanes) resourceError(r.key, `lane ${lane}`, `a lane in [0, ${r.lanes - 1}]`, "use a declared lane");
+      return rawComputeExpression(fn, r.key, lift<"f32">(i), lane, at);
     };
+    return Object.assign(h, { [rawCall]: { lib: fn, trailing: [at] } });
   }
   const name = `${r.symbol}_sample`, dim = r.size.length === 2 ? "vec2" : "vec3";
   const steps = r.steps;
@@ -139,7 +148,7 @@ function output(r: ComputeResource): Read {
     ? `textureLoad(${r.symbol}, ${coords(x, y, z)}, 0)`
     : `${r.symbol}(${coords(x, y, z)}, t)`;
   const layer = (z: string) => `mix(mix(${sample("a.x", "a.y", z)}, ${sample("b.x", "a.y", z)}, f.x), mix(${sample("a.x", "b.y", z)}, ${sample("b.x", "b.y", z)}, f.x), f.y)`;
-  const fn = { name, ret: "vec4", js: "gpu-only", wgsl: `
+  const fn: LibFn = { name, ret: "vec4", js: "gpu-only", wgsl: `
 fn ${name}(uv: ${dim}<f32>, t: f32) -> vec4<f32> {
   let n = ${size};
   let p = clamp(uv * ${dim}<f32>(n) - ${dim}<f32>(0.5), ${dim}<f32>(0), ${dim}<f32>(n - ${dim}<i32>(1)));
@@ -147,22 +156,51 @@ fn ${name}(uv: ${dim}<f32>, t: f32) -> vec4<f32> {
   let b = min(a + ${dim}<i32>(1), n - ${dim}<i32>(1));
   let f = fract(p);
   return ${dim === "vec2" ? layer("") : `mix(${layer("a.z")}, ${layer("b.z")}, f.z)`};
-}` } as const;
-  return { wgsl: r.symbol, sample: (uv: In<typeof dim>) => rawComputeExpression(fn, r.key, lift(uv), steps === undefined ? 0 : time) };
+}` };
+  readers.set(fn, r);
+  const h: TextureRead<typeof dim> = (uv) => rawComputeExpression(fn, r.key, lift(uv), at);
+  return Object.assign(h, { [rawCall]: { lib: fn, trailing: [at] } });
+}
+
+/** Every library function these call, their dependencies included. */
+function closure(libs: readonly LibFn[]): LibFn[] {
+  const out: LibFn[] = [];
+  const add = (l: LibFn): void => { if (out.includes(l)) return; out.push(l); for (const d of l.deps ?? []) add(d); };
+  libs.forEach(add);
+  return out;
+}
+
+/** The library functions an entry text and its accessors call. */
+export function passLibs(code: EntryText): LibFn[] {
+  const fromValues = everything(code.values).flatMap((e) => (e.node.op === "lib" ? [e.node.fn] : []));
+  return closure([...code.libs, ...fromValues]);
 }
 
 /**
- * Declare a raw WGSL compute pass. Add its returned record to the scene's `compute` list. Each key in `writes`
- * becomes a WGSL variable and a handle on that record. Use handles in another pass's `reads`, in `fetch` or
- * `.sample(uv)` expressions, or via `.wgsl` in a raw drawable. Mark the pass build, load, frame, or steps.
+ * Declare a raw WGSL compute pass, written as a `wgsl` module with an `@compute` entry. Add its returned record to the
+ * scene's `compute` list. Each key in `writes` is a WGSL variable in the pass (for steps, `prev_<key>` too) and a
+ * handle on the record: call it to read the output (`baked.sdf(uv)`, `sim.state(i, lane)`) in TypeScript or in text,
+ * and `${baked.sdf}(uv)` in a hole of any `wgsl` text, raw or not. A hole is the dependency: a pass that reads another's
+ * output runs after it. Mark the pass build, load, frame, or steps; a frame pass also reads params, inputs and `time`.
  */
 export function compute<const W extends Readonly<Record<string, Shape>>>(name: string, spec: Spec<W>): { readonly [K in keyof W]: Handle<W[K]> } {
   identifier("name", "name", name);
   record(name, "options", spec);
+  for (const gone of ["reads", "values"] as const) {
+    if (gone in spec) resourceError(name, gone, "no reads or values (a hole brings them in)", gone === "reads" ? "call another pass's output through a hole in the text: ${palette.tones}(0.0, 0.0)" : "read a param or input through a hole in the text: ${speed}");
+  }
   const when = schedule(name, spec.when);
-  identifier(name, "entry", spec.entry);
-  if (typeof spec.wgsl !== "string" || spec.wgsl.trim() === "")
-    resourceError(name, "empty WGSL", "a WGSL module defining the declared entry points", "give wgsl with an @compute function");
+  const state = typeof spec.wgsl === "object" || typeof spec.wgsl === "function" ? (spec.wgsl as WgslModule | null)?.[WGSL_STATE] : undefined;
+  if (state === undefined)
+    resourceError(name, `wgsl: ${typeof spec.wgsl === "string" ? "a string" : shown(spec.wgsl)}`, "a wgsl module", "write wgsl: wgsl`@compute @workgroup_size(64) fn main(...) { ... }` (import wgsl from loft)");
+  const kernels = state.module.fns.flatMap((f) => (f.kind === "entry" && f.stage === "compute" ? [f.sig.name] : []));
+  if (when.kind === "steps" && !kernels.includes(when.start))
+    resourceError(name, `when.start: "${when.start}"`, `one of the module's @compute entries (${kernels.join(", ") || "none"})`, "name the entry that seeds the state");
+  const candidates = kernels.filter((k) => when.kind !== "steps" || k !== when.start);
+  const entry = spec.entry ?? (candidates.length === 1 ? candidates[0]! : resourceError(name, `${candidates.length} @compute entries${when.kind === "steps" ? " besides when.start" : ""} (${candidates.join(", ") || "none"})`, "the entry to run", candidates.length === 0 ? "add an @compute fn" : `name it: entry: "${candidates[0]}"`));
+  identifier(name, "entry", entry);
+  if (!candidates.includes(entry))
+    resourceError(name, `entry: "${entry}"`, `one of ${candidates.join(", ") || "no @compute entries"}`, when.kind === "steps" && entry === when.start ? "give when.start and entry different functions" : "name an @compute fn of the module");
   if (!Array.isArray(spec.dispatch) || spec.dispatch.length < 1 || spec.dispatch.length > 3)
     resourceError(name, `dispatch: ${shown(spec.dispatch)}`, "[x], [x, y] or [x, y, z] workgroup counts", "give one to three positive workgroup counts");
   const dims = [...spec.dispatch].map((n, i) => integer(name, `dispatch[${i}]`, n, 1, MAX_GRID));
@@ -172,18 +210,13 @@ export function compute<const W extends Readonly<Record<string, Shape>>>(name: s
   if (when.kind === "steps" && dispatch.reduce((a, b) => a * b, when.count + 1) > 2 ** 22)
     resourceError(name, "over 4,194,304 workgroups across the steps", "a bounded step bake", "reduce dispatch or step count");
   record(name, "writes", spec.writes);
-  if (spec.reads !== undefined) record(name, "reads", spec.reads);
-  if (spec.values !== undefined) record(name, "values", spec.values);
   const aliases = new Set(["frame", "inputs", "params", "curves", "loft_detail", "view_dir", "curve", "CURVE_N", "loft_dt"]);
-  const alias = (field: string, key: string) => {
-    identifier(name, field, key);
-    if (aliases.has(key) || (when.kind === "steps" && key.startsWith("prev_")))
-      resourceError(name, `alias "${key}" in ${field}`, "a unique, unreserved alias", "rename the alias in the declaration and WGSL");
-    aliases.add(key);
-  };
-  const handles = Object.create(null) as Record<string, Read>;
+  const handles = Object.create(null) as Record<string, BufferRead | TextureRead<"vec2" | "vec3">>;
   const writes = Object.entries(spec.writes).map(([key, shape]) => {
-    alias("writes", key);
+    identifier(name, "writes", key);
+    if (aliases.has(key) || (when.kind === "steps" && key.startsWith("prev_")))
+      resourceError(name, `output "${key}"`, "a unique, unreserved name", "rename the output in writes and in the WGSL");
+    aliases.add(key);
     const at = `${name}.${key}`;
     const s = shapeOf(at, shape);
     const r: ComputeResource = { ...s, key: at, symbol: `loft_compute_${name.length}_${name}_${key}`, ...(when.kind === "steps" ? { steps: when } : {}) };
@@ -194,28 +227,25 @@ export function compute<const W extends Readonly<Record<string, Shape>>>(name: s
       if (Math.max(...size) > limit)
         resourceError(at, `${size.join("×")} kept texels`, `a texture history at most ${limit} texels on each axis`, "reduce the texture size, keep fewer steps or pack state into a buffer");
     }
-    const h = output(r);
-    resources.set(h, r);
-    handles[key] = Object.freeze(h);
+    handles[key] = Object.freeze(output(r));
     return [key, r] as const;
   });
   if (writes.length === 0) resourceError(name, "no outputs", "at least one declared output", "add an output to writes");
-  const reads = Object.entries(spec.reads ?? {}).map(([key, h]) => {
-    alias("reads", key);
-    const r = typeof h === "object" && h !== null ? resources.get(h) : undefined;
-    if (r === undefined) resourceError(name, `reads.${key}`, "an output handle returned by compute", "use a handle such as palette.tones");
-    return [key, r] as const;
-  });
-  const values = spec.values === undefined ? undefined : { ...spec.values };
-  for (const [key, e] of Object.entries(values ?? {})) {
-    alias("values", key);
-    if (when.kind !== "frame" || (e?.node?.op !== "input" && e?.node?.op !== "param"))
-      resourceError(name, `values.${key}`, "an input or param in a frame pass", "pass input(...) or param(...) directly and do its maths in WGSL, or use a WGSL constant outside a frame pass");
-  }
-  if (when.kind === "steps" && when.start === spec.entry)
-    resourceError(name, "one entry for both start and step", "two entry points", "give when.start and entry different functions");
-  passes.set(handles, { name, when, reads, writes, values, entry: spec.entry, dispatch, wgsl: spec.wgsl });
-  return Object.freeze(handles) as { readonly [K in keyof W]: Handle<W[K]> };
+  const code = state.entries(when.kind === "steps" ? [when.start, entry] : [entry]);
+  // What the text reads from outside: only a frame pass has the frame's inputs and params bound; nothing binds curves
+  // or tables in a pass.
+  const read = leaves(code.values);
+  if (read.rows.length > 0 || read.tables.length > 0)
+    resourceError(name, `a hole reading ${read.rows.length > 0 ? `the curve "${read.rows[0]!.label}"` : `the table "${read.tables[0]!.name}"`}`, "params, inputs, time and other passes' outputs", "bake the curve or table into a compute output, or read it in a drawable");
+  if (when.kind !== "frame" && (read.inputs.length > 0 || read.params.length > 0))
+    resourceError(name, `a ${when.kind} pass reading ${read.inputs.length > 0 ? (read.inputs[0]!.name === "time" ? "time" : `the input "${read.inputs[0]!.name}"`) : `the param "${read.params[0]!.name}"`}`, "time, inputs and params in frame passes only", when.kind === "steps" ? "a step's clock is its count: keep it in the state" : "use a constant here, or make it a frame pass");
+  // camera_ray reads the frame being drawn; a pass has no frame bound, so the GPU would refuse library text, not the author's.
+  const drawOnly = passLibs(code).find((l) => RAW_PRELUDE.get(l.name) === l);
+  if (drawOnly !== undefined)
+    resourceError(name, `a call of ${drawOnly.name}`, "WGSL builtins, this module's functions and holes", "compute the ray in a drawable (draw.shader), or pass the camera in as a param");
+  const reads = passLibs(code).flatMap((l) => { const r = readers.get(l); return r === undefined ? [] : [[r.symbol, r] as const]; });
+  passes.set(handles, { name, when, reads, writes, entry, dispatch, code });
+  return Object.freeze(handles) as unknown as { readonly [K in keyof W]: Handle<W[K]> };
 }
 
 const PHASE = { build: 0, load: 1, steps: 1, frame: 2 } as const;
@@ -240,9 +270,10 @@ export function orderCompute(given: readonly object[] | undefined): ComputePass[
     if (done.has(p)) return;
     if (active.has(p)) resourceError(p.name, "a cycle of compute reads", "passes where producers finish before consumers", "remove the cycle or express the feedback with steps");
     active.add(p);
-    for (const [alias, r] of p.reads) {
+    for (const [, r] of p.reads) {
+      const alias = r.key;
       const from = writers.get(r);
-      if (from === undefined) resourceError(p.name, `reads.${alias} from "${r.key}" outside this scene`, "a producer in scene.compute", "add its compute record to scene.compute");
+      if (from === undefined) resourceError(p.name, `a read of "${alias}" outside this scene`, "a producer in scene.compute", "add its compute record to scene.compute");
       if (PHASE[from.when.kind] > PHASE[p.when.kind])
         resourceError(p.name, `${p.when.kind} reads ${from.when.kind} output "${r.key}"`, "a producer that runs before this pass", "move the producer earlier or the consumer later");
       visit(from);

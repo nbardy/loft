@@ -173,12 +173,10 @@ const bits = <K extends string>(table: Record<K, number>, names: readonly K[]): 
 type Settled<T> = { readonly ok: true; readonly v: T } | { readonly ok: false; readonly message: string };
 const settle = <T>(create: () => Promise<T>): Promise<Settled<T>> =>
   new Promise<T>((resolve) => resolve(create())).then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
-// Except at the author's own lines (`Manifest.authored`, mapped by `authorRefusal`) and in raw compute, the WGSL and
-// descriptors are the compiler's, already accepted from the scene: a refusal is the GPU stack's (or a compiler bug),
-// never the scene's, and a fresh device may pass (src/cli/main.ts retries).
-const refused = (what: string, message: string) => what.startsWith('compute "')
-  ? new SceneError(what, message, "valid WGSL and bindings for the declared compute entry", "correct the named WGSL entry or declaration")
-  : new EnvironmentError(`${what}:\n${message}`, true);
+// Except at the author's own lines (`Manifest.authored`, mapped by `authorRefusal`; raw compute text is registered
+// there too), the WGSL and descriptors are the compiler's, already accepted from the scene: a refusal is the GPU
+// stack's (or a compiler bug), never the scene's, and a fresh device may pass (src/cli/main.ts retries).
+const refused = (what: string, message: string) => new EnvironmentError(`${what}:\n${message}`, true);
 
 /**
  * The GPU refused a line of WGSL the scene's author wrote (a raw function of `wgsl` text): the scene's mistake, at the

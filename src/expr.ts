@@ -400,15 +400,20 @@ export function row(r: Row, x: In<"f32">): Expr<"vec4"> {
   return Expr.make({ op: "row", ty: "vec4", row: r, x: xe }, `r:${r.id}:${xe.id}`);
 }
 
-export const computeFetch = Symbol("compute fetch");
-export type RawComputeFetch = { readonly [computeFetch]: (index: In<"f32">, lane: number) => Expr<"vec4"> };
+/**
+ * How raw WGSL text calls a TypeScript function held in a `wgsl` hole (src/text/index.ts): by the name of a GPU library
+ * function, with `trailing` appended after the author's own arguments (numbers as literals, expressions through the
+ * text's accessors). A compute output's handle carries one, so `${sim.state}(f32(i), 0.0)` reads the same in raw text as
+ * `sim.state(i, 0)` does in TypeScript.
+ */
+export const rawCall = Symbol("raw call");
+export type RawCall = { readonly lib: LibFn; readonly trailing: readonly (number | Expr)[] };
 
 /**
- * Entry `index` of a table or compute buffer, vec4 number `lane` of that entry. The index is truncated to a whole
- * number. Keep it within the declared entry count.
+ * Entry `index` of a table, vec4 number `lane` of that entry. The index is truncated to a whole number. Keep it within
+ * the declared entry count. (A compute buffer is read by calling its handle: `sim.state(i, lane)`.)
  */
-export function fetch(table: TableSource | RawComputeFetch, index: In<"f32">, lane: number): Expr<"vec4"> {
-  if (computeFetch in table) return table[computeFetch](index, lane);
+export function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4"> {
   if (!(Number.isInteger(lane) && lane >= 0 && lane < table.lanes)) throw new Error(`fetch: table "${table.name}" has ${table.lanes} lanes, asked for lane ${lane}`);
   const ie = lift<"f32">(index);
   return Expr.make({ op: "fetch", ty: "vec4", table, lane, index: ie }, `F:${tableId(table)}:${lane}:${ie.id}`);

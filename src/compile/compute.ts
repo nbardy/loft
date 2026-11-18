@@ -1,10 +1,12 @@
-import { keptStates, orderCompute, resourceError, type ComputePass, type ComputeResource } from "../compute.ts";
-import { emitWgsl, rawComputeOf, time, WGSL_TY, type LibFn } from "../expr.ts";
+import { keptStates, orderCompute, passLibs, resourceError, type ComputePass, type ComputeResource } from "../compute.ts";
+import { emitWgsl, rawComputeOf, WGSL_TY, type LibFn } from "../expr.ts";
 import { computeHistorySize } from "../host/manifest.ts";
 import type { Slots } from "./bind.ts";
 
+/** A pass as the host runs it: its whole module as one text. */
+export type CompiledPass = Omit<ComputePass, "code"> & { readonly wgsl: string };
 export type CompiledCompute = {
-  readonly passes: readonly Omit<ComputePass, "values">[];
+  readonly passes: readonly CompiledPass[];
   readonly resources: readonly { readonly binding: number; readonly resource: ComputeResource }[];
   readonly wgsl: string;
 };
@@ -53,25 +55,27 @@ function shader(p: ComputePass, slots: Slots): string {
   const declarations = [
     ...p.writes.map(([name, r], i) => binding(1, i, r, name, "write")),
     ...(stepped ? p.writes.map(([name, r], i) => binding(1, q + i, r, `prev_${name}`, "read")) : []),
-    ...p.reads.map(([name, r], i) => reader(1, (stepped ? 2 : 1) * q + i, r, name)),
+    ...p.reads.map(([symbol, r], i) => reader(1, (stepped ? 2 : 1) * q + i, r, symbol)),
   ];
+  // The step's length, derived from the declared rate, so the text never restates it (and cannot disagree with it).
   if (p.when.kind === "steps") declarations.push(`const loft_dt: f32 = 1.0 / f32(${p.when.rate});`);
   if (p.when.kind === "frame") {
     declarations.push(
       "@group(0) @binding(0) var<storage, read> inputs: array<f32>;",
       "@group(0) @binding(1) var<storage, read> params: array<f32>;",
     );
-    for (const [name, e] of [["loft_time", time], ...Object.entries(p.values ?? {})] as const) {
-      const { lines, out } = emitWgsl([e], slots.wgsl({}), "value");
-      declarations.push(`fn ${name}() -> ${WGSL_TY[e.ty]} { ${lines.join(" ")} return ${out[0]}; }`);
-    }
   }
-  return [p.wgsl, ...declarations].join("\n");
+  // What the text reads through holes and `time`: one accessor each (src/text/index.ts `EntryText`).
+  const accessors = p.code.values.map((e, k) => {
+    const { lines, out } = emitWgsl([e], slots.wgsl({}), "value");
+    return `fn loft_value_${k}() -> ${WGSL_TY[e.ty]} { ${lines.join(" ")} return ${out[0]}; }`;
+  });
+  return [p.code.text, ...passLibs(p.code).map((l) => l.wgsl), ...accessors, ...declarations].join("\n");
 }
 
 /** Registers frame inputs before slots are sealed and gives every consumer the same generated accessors. */
 export function compileCompute(given: readonly object[] | undefined, slots: Slots) {
-  const passes = orderCompute(given).map(({ values, ...p }) => ({ ...p, wgsl: shader({ ...p, values }, slots) }));
+  const passes = orderCompute(given).map(({ code, ...p }): CompiledPass => ({ ...p, wgsl: shader({ ...p, code }, slots) }));
   const outputs = passes.flatMap((p) => p.writes.map(([, r]) => r));
   const byName = new Set(outputs.map((r) => r.key));
   const check = (libs: readonly LibFn[]): void => {

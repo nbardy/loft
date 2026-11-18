@@ -12,12 +12,14 @@ import { drawCopies } from "./copies.ts";
 import { drawMesh } from "./mesh.ts";
 import { drawTraced } from "./traced.ts";
 import { drawVolume, type VolumeOptions } from "./volume.ts";
+import { drawShader, type ShaderOptions } from "./shader.ts";
 import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
 import { specks } from "../soft/specks.ts";
 export type { DensityOptions };
 export type { PointsOptions, Speck } from "../soft/specks.ts";
 export type { VolumeOptions };
+export type { ShaderOptions };
 
 /** A drawable that can be drawn once per pose of a `Poses`: turned and scaled along each axis. */
 export interface Poseable {
@@ -72,6 +74,7 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
  * - `volume`: an arbitrary extinction field raymarched inside a box, with single scattering and emission.
  * - `mesh`: triangles made by your own code (a hull, a shatter, a growth), moved by an expression.
  * - `traced`: any solid you can intersect, written as one `hit` function.
+ * - `shader`: your own `@vertex fn vs` and `@fragment fn fs` in a `wgsl` module, reading Loft values through holes.
  */
 export const draw = {
   /** A parametric surface (u, v) -> point, lit by the scene's style: a grid in the vertex stage, paint per pixel, an outline as asked. */
@@ -123,5 +126,10 @@ export const draw = {
   points: specks,
   /** March a density function of world position inside a box (read `time` for motion), with scattering from the sun and lamps. */
   volume: drawVolume,
+  /**
+   * Your own shaders: a `wgsl` module with `@vertex fn vs` and `@fragment fn fs`, drawn `vertices` times per instance.
+   * They read `frame`, `time`, `camera_ray(px)` and holes (params, inputs, compute outputs). Unstyled, unseen by checks.
+   */
+  shader: drawShader,
 };
 
