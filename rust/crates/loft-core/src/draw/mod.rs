@@ -93,13 +93,13 @@ pub fn lower(g: &Graph, at: &[[u32; 2]], draws: &[Draw], media: &[Medium], passe
             true => vec![],
             false => in_view(draws, passes, i as u32),
         };
-        let (glue, cover) = cover(at, d, media, &veils)?;
+        let (glue, cover, raster) = cover(at, d, media, &veils)?;
         let module = l.module(g, at, &glue)?;
         if let Cover::Ray { find: Find::Medium(k), .. } = d.cover {
             tr[k as usize].get_or_insert((module, l.name(&format!("loft_tr{k}"))));
         }
         let (name, shade) = (l.name(g.sym(d.name)), (module, l.name("fs")));
-        l.draws.push(b::Draw { name, layer: d.layer, cover, shade, raster: d.raster });
+        l.draws.push(b::Draw { name, layer: d.layer, cover, shade, raster });
     }
     for (k, (m, t)) in media.iter().zip(tr).enumerate() {
         let transmittance =
@@ -218,12 +218,12 @@ fn unsupported(what: &str) -> Error {
     Error::Scene { site: None, fault: SceneFault::Unsupported { what: what.into() } }
 }
 
-/// The one dispatcher over covers: a draw's glue and templates, and its bundle cover.
-fn cover(at: &[[u32; 2]], d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue, b::Cover), Error> {
+/// The one dispatcher over covers: a draw's glue and templates, its bundle cover and its raster state.
+fn cover(at: &[[u32; 2]], d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue, b::Cover, Raster), Error> {
     let mut gl = Glue::default();
     gl.paint(d.paint);
     let mut need = veils.to_vec();
-    let out = match &d.cover {
+    let (out, raster) = match &d.cover {
         Cover::Raster { prim, count } => {
             let prim = match *prim {
                 Prim::Grid { u, v, place } => {
@@ -245,7 +245,7 @@ fn cover(at: &[[u32; 2]], d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(
                 }
             };
             gl.templates.push(LIT);
-            b::Cover::Raster { prim, count: *count }
+            (b::Cover::Raster { prim, count: *count }, d.raster)
         }
         Cover::Ray { proxy, find } => {
             gl.proxy(at, proxy);
@@ -266,12 +266,14 @@ fn cover(at: &[[u32; 2]], d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(
                     b::Find::Medium(k)
                 }
             };
-            b::Cover::Ray { proxy: bundle_proxy(at, proxy), find }
+            // The proxy box is wound inward, so only culling back faces runs each pixel once (outside or inside the
+            // box). A draw that asked for no culling (a medium drawn like glow) would otherwise composite twice, once per face.
+            (b::Cover::Ray { proxy: bundle_proxy(at, proxy), find }, Raster { cull: true, ..d.raster })
         }
         Cover::Screen => {
             gl.texture("under", "texture_2d<f32>");
             gl.templates.push(SCREEN);
-            b::Cover::Screen
+            (b::Cover::Screen, d.raster)
         }
     };
     for &k in &need {
@@ -282,7 +284,7 @@ fn cover(at: &[[u32; 2]], d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(
     gl.line(format!(
         "const MEDIUM_VEIL = 32u;\nfn veil(p: vec3<f32>, back: vec3<f32>, reach: f32) -> f32 {{ return 1.0{reach}; }}"
     ));
-    Ok((gl, out))
+    Ok((gl, out, raster))
 }
 
 fn bundle_proxy(at: &[[u32; 2]], p: &Proxy) -> Proxy {
