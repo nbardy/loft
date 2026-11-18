@@ -197,7 +197,8 @@ compares the authored margin to zero. `hop.report` gives the target, the solve t
 measured miss. Verification evaluates the returned f32 spline controls on the CPU twin at f32 frame times
 on the fine grid and at refined peaks. The ranged checks cover the time between those samples.
 
-Identical problems reuse their verified curves in the same process. Set `budget: { ms: 2000 }` to give setup,
+Identical problems reuse their verified curves in the same process, which keeps the 128 most recently used solutions.
+Set `budget: { ms: 2000 }` to give setup,
 optimisation, verification and conflict diagnosis a shared two seconds. Expiry raises `unsolved` with reason
 `budget`. A local search failure raises `unsolved` with reason `search`. A clearance constraint can be met on either
 side of a rail, so use `spline(n, from)` to start on the intended side. `infeasible` names a certified contradiction,
@@ -206,6 +207,10 @@ and build the parts with `turnedAbout`, `poseFrame` or `chain`.
 
 `examples/second/heron_leap.ts` solves a heron's crouch, leap and landing; `agent_notes/2026-11-18_solve/NOTE.md` has
 the method.
+
+When you call `runChecks` from TypeScript, branch on `verdict.kind` to get a `"sampled"` or `"ranged"` result.
+Both have `holds`. A ranged result can be `"undecided"` and carries `spent` for the reason, plus the proven
+`bounds`, best `witness` and search `work`. See `examples/ranged.ts` for a mix of the two kinds in one scene.
 
 ## An action a game can read, with its checks
 

@@ -59,7 +59,7 @@ loft check    examples/strike.ts                                                
 loft variants examples/beacon.ts                                                    # every variant of a design (docs/guide.md)
 loft profile  examples/serpent.ts --view three                                      # GPU time per draw
 loft build    examples/serpent.ts --out out/files/serpent                           # the scene as files for any host
-loft serve    --compiles 2                                                          # one warm GPU process: JSON requests on stdin
+loft serve    --compiles 2 --draw-seconds 120                                        # one warm GPU process: JSON requests on stdin
 loft help
 loft api spiralTube                                                                 # one export, in full
 loft context                                                                        # craft guide and API, to read whole
@@ -80,9 +80,9 @@ match. A scene refusal names your own thing, what was given, what was expected a
 | 2 | `loft: usage:` | the command line asked for something absent (flag, camera, variant, option, input, style) |
 | 3 | `loft: load:` | the module did not load as a scene (syntax, unknown import, a throw at top level, wrong exports) |
 | 4 | `loft: scene:` | a constructor refused the scene: `given ...; expected ... Fix: ... (at file:line)` |
-| 5 | `loft: check:` | the scene drew and the checks named on the line failed |
+| 5 | `loft: check:` | the named checks failed or remained undecided |
 | 6 | `loft: environment (not the scene's fault):` | GPU, WebGPU binding, or missing `cwebp`/`ffmpeg`; builds already retried on 3 fresh devices |
-| 7 | `loft: budget:` | (`loft serve` only) a limit ran out: compile deadline, CPU limit, pending requests; not about the scene |
+| 7 | `loft: budget:` | (`loft serve` only) a compile deadline, draw deadline, CPU limit, or full pending queue |
 
 ## Where to go next
 

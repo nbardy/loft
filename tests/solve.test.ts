@@ -12,6 +12,23 @@ import type { Frame } from "../src/map/types.ts";
 const at = (e: Expr, t: number) => evaluate(e, { inputs: { time: t } }) as number;
 const ROD = 2, TURN = Math.PI / 6;
 
+test("the solve cache retains the newest 128 successes even through a long stream of distinct problems", () => {
+  const run = (target: number) => solve({
+    over: [0, 1], vary: { lruTest: spline(4, target) },
+    hold: ({ lruTest }) => [equal(lruTest, target, { at: 0 })],
+    prefer: { near: { to: { lruTest: target }, weight: 1 } },
+  });
+  expect(run(0).report.samples).toBe(1);
+  for (let i = 1; i <= 512; i++) {
+    expect(run(i).report.samples).toBe(1);
+    if (i % 64 === 0) expect(run(0).report.samples).toBe(0);
+  }
+  // With 0 kept hot, the other 127 slots hold 386..512. A FIFO would have evicted 0 and an unbounded cache would hit 385.
+  expect(run(386).report.samples).toBe(0);
+  expect(run(385).report.samples).toBe(1);
+  expect(run(387).report.samples).toBe(1);
+});
+
 // Catches: a pose between keys that blends a rigid part's points (or its axes without making them unit again) instead
 // of turning it, which shortens a 2 m rod turning 30 degrees to 2 cos 15 = 1.932 at the midpoint. Two ways Loft turns a
 // part between keys: frames blended (`blendFrames`), and a hinge angle that `solve` makes (a rod about its root).
@@ -197,12 +214,13 @@ test("the heron rebuild reuses the structural solve and publishes its checks", (
     import { heronLeap, leap, NUMBERS } from "./examples/second/heron_leap.ts";
     const built = heronLeap.build(heronLeap.resolve({ variant: "base", picks: [] }));
     const { report } = leap(structuredClone(NUMBERS)).solved;
-    console.log(JSON.stringify({ ms: report.ms, steps: report.steps, checks: built.checks.length, holds: report.holds.length }));
+    console.log(JSON.stringify({ samples: report.samples, steps: report.steps, checks: built.checks.length, holds: report.holds.length }));
   `], { cwd: new URL("../", import.meta.url).pathname });
   expect(result.stderr.toString()).toBe("");
   expect(result.exitCode).toBe(0);
-  const { ms, steps, checks, holds } = JSON.parse(result.stdout.toString());
-  expect(ms).toBeLessThan(50);
+  const { samples, steps, checks, holds } = JSON.parse(result.stdout.toString());
+  // A cold solve at a feasible start can also take zero Newton steps. A cache hit takes no samples.
+  expect(samples).toBe(0);
   expect(steps).toBe(0);
   expect(checks).toBe(holds);
   expect(checks).toBeGreaterThan(0);

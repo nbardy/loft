@@ -5,7 +5,8 @@
 // Names are checked against the artefact before anything is drawn (`checkInputs`), so a typo fails by name with the
 // list of what the scene declares, instead of rendering defaults.
 
-import type { Artefact } from "../artefact.ts";
+import { replayClocks, type Artefact } from "../artefact.ts";
+import type { Manifest } from "../host/manifest.ts";
 import { UsageError } from "./args.ts";
 
 export type InputValues = Readonly<Record<string, readonly number[]>>;
@@ -60,17 +61,18 @@ export function viewInputs(fixed: InputValues, sweep: Sweep, k: number, n: numbe
 }
 
 /** Every named input exists in the artefact, with its number of components; `time` is the `--time` flags' business. */
-export function checkInputs(a: Pick<Artefact, "inputs">, fixed: InputValues, sweep: Sweep): void {
+export function checkInputs(a: Pick<Artefact, "inputs" | "recurrences"> & { readonly frame?: Pick<Manifest["frame"], "replay"> }, fixed: InputValues, sweep: Sweep, source: "cli" | "serve" = "cli"): void {
   const given: [string, number][] = Object.entries(fixed).map(([n, v]) => [n, v.length]);
   if (sweep.kind === "linear") {
     if (sweep.name in fixed) throw new UsageError(`--sweep ${sweep.name}: also given as --input`);
     given.push([sweep.name, sweep.from.length]);
   }
-  const declared = a.inputs.filter((s) => s.name !== "time");
+  const replayed = new Set((a.frame?.replay ?? replayClocks(a.recurrences)).map((r) => r.slot));
+  const declared = a.inputs.filter((s) => s.name !== "time" && !replayed.has(s.slot));
   for (const [name, count] of given) {
-    if (name === "time") throw new UsageError(`input "time": use --time / --times (or the clip's clock) instead`);
+    if (name === "time") throw new UsageError(`input "time": ${source === "serve" ? 'give the times in "times"' : "use --time / --times (or the clip's clock)"} instead`);
     const s = declared.find((d) => d.name === name);
-    if (!s) throw new UsageError(`input "${name}": the scene declares no such input (it has: ${declared.map((d) => `${d.name} (${d.def.length})`).join(", ") || "none"}). Fix: drop --input ${name}, or declare it in the scene: input("${name}", "f32", 0)`);
+    if (!s) throw new UsageError(`input "${name}": the scene declares no such settable input (it has: ${declared.map((d) => `${d.name} (${d.def.length})`).join(", ") || "none"}). Fix: ${source === "serve" ? 'drop it from "inputs"' : `drop --input ${name}`}, or declare it in the scene: input("${name}", "f32", 0)`);
     if (s.def.length !== count) throw new UsageError(`input "${name}": takes ${s.def.length} number(s), got ${count}`);
   }
 }

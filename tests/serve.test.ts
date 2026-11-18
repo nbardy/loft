@@ -9,7 +9,7 @@
 // before the files it names are read; pending requests are bounded; a compile past its deadline or a CPU limit is
 // `budget` (7), not `internal`; and a lost device answers every request in flight before the server exits 6.
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -72,6 +72,7 @@ test("serve: params and inputs reach the frame, and a name the scene lacks is re
       ask("struck", { inputs: { strike: 0.5 } }),
       ask("typo", { params: { "stormwing.spam": 1.4 } }),
       ask("vector", { inputs: { strike: [1, 2] } }),
+      ask("clock", { inputs: { time: 1 } }),
     ]);
     expect(code).toBe(0);
     for (const id of ["plain", "wide", "struck"]) expect(by.get(id)!.ok).toBe(true);
@@ -80,6 +81,7 @@ test("serve: params and inputs reach the frame, and a name the scene lacks is re
     expect(by.get("typo")).toMatchObject({ ok: false, exit: 2 });
     expect(by.get("typo")!.line).toContain("stormwing.span");
     expect(by.get("vector")).toMatchObject({ ok: false, exit: 2 });
+    expect(by.get("clock")).toMatchObject({ ok: false, exit: 2, line: expect.stringContaining('give the times in "times"') });
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
@@ -154,6 +156,46 @@ test("serve: a compile past its deadline, or killed by a CPU limit, is budget (7
     const cpu = await served(["--confine", limit], [ask("cpu")]);
     expect(cpu.by.get("cpu")).toMatchObject({ ok: false, exit: 7 });
     expect(cpu.by.get("cpu")!.line).toContain("SIGXCPU");
+  } finally {
+    rmSync(out, { recursive: true, force: true });
+  }
+}, 120_000);
+
+test("serve: a blocked draw answers budget and the next request draws on a fresh GPU process", async () => {
+  const out = mkdtempSync(join(tmpdir(), "loft-serve-"));
+  try {
+    const dir = join(out, "shell");
+    build("examples/shell.ts", dir);
+    const block = join(out, "block.ts");
+    // Block the second draw inside readback. Even a timer racing the draw in this same process cannot run here.
+    // The finite stall makes a broken implementation fail the test without leaving an infinite loop behind.
+    writeFileSync(block, `let calls = 0;
+export default function () {
+  if (++calls !== 2) return;
+  const proto = GPUDevice.prototype, make = proto.createBuffer;
+  proto.createBuffer = function (descriptor: GPUBufferDescriptor) {
+    const buffer = make.call(this, descriptor);
+    if (descriptor.label !== "loft readback") return buffer;
+    proto.createBuffer = make;
+    const map = buffer.mapAsync.bind(buffer);
+    buffer.mapAsync = (...args) => {
+      const until = performance.now() + 15_000;
+      while (performance.now() < until) {}
+      return map(...args);
+    };
+    return buffer;
+  };
+}
+`);
+    const ask = (id: string) => ({ id, artefact: dir, camera: "three", times: [0.4], size: "96x64", out: join(out, id) });
+    const t0 = performance.now();
+    const { code, by, count } = await served(["--check", block, "--draw-seconds", "5"], [ask("warm"), ask("late"), ask("next")]);
+    expect(performance.now() - t0).toBeLessThan(15_000);
+    expect(code).toBe(0);
+    expect(count).toBe(3);
+    expect(by.get("late")).toMatchObject({ ok: false, exit: 7, line: expect.stringContaining("5 s (--draw-seconds)") });
+    expect(existsSync(join(out, "late/0.rgba"))).toBe(false);
+    expect(hashes(by.get("next"))).toEqual(hashes(by.get("warm")));
   } finally {
     rmSync(out, { recursive: true, force: true });
   }

@@ -76,8 +76,8 @@ async function runChecksOf(scene: unknown, checks: unknown): Promise<Checks> {
   if (checks === undefined) return { kind: "none" };
   if (!Array.isArray(checks)) return { kind: "error", error: "the module's `checks` export is not an array" };
   try {
-    const { runChecks } = await import("../check.ts");
-    return { kind: "table", rows: runChecks(scene as Parameters<typeof runChecks>[0], checks) };
+    const { runChecks, checkOutcome } = await import("../check.ts");
+    return { kind: "table", rows: runChecks(scene as Parameters<typeof runChecks>[0], checks).map((v) => ({ ...v, outcome: checkOutcome(v) })) };
   } catch (e) {
     return { kind: "error", error: errText(e) };
   }
@@ -104,7 +104,8 @@ async function renderScene(host: GpuHost, d: Extract<Discovered, { kind: "scene"
   const source = relative(cmd.out, d.path);
   const scene = d.module.default;
   const optionsOf = (...extra: readonly string[]) => [`${cmd.size.width}x${cmd.size.height}`, ...extra];
-  const metaRel = store.metaPath(...optionsOf(String(cmd.clipSeconds), cmd.styles.join(",")));
+  // Old metadata has untagged check rows. Refresh it independently of the pictures, including in a dirty worktree.
+  const metaRel = store.metaPath(...optionsOf("checks-v2", String(cmd.clipSeconds), cmd.styles.join(",")));
 
   // Outputs that exist already need no GPU; the scene is loaded only when something is missing or the numbers are.
   const meta: Meta | undefined = store.has(metaRel) ? (JSON.parse(readFileSync(store.abs(metaRel), "utf8")) as Meta) : undefined;

@@ -31,10 +31,19 @@ type Joint = { readonly p: V3; readonly r: number };
 type Inputs = Readonly<Record<string, number | readonly number[]>>;
 
 type Measurement = { readonly name: string; readonly value: number; readonly measured: string; readonly limit: string };
-type Sampled = Measurement & { readonly pass: boolean };
+type Sampled = Measurement & { readonly pass: boolean; readonly kind?: never };
 
-/** A measured check result. Ranged results also carry proven bounds, witness, work and stop reason. */
-export type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined });
+/** A check result tagged as sampled or ranged. Only ranged results can be undecided, and they carry bounds, witness, work and stop reason. */
+export type Verdict =
+  | (Measurement & { readonly kind: "sampled"; readonly holds: boolean; readonly pass: boolean })
+  | (Measurement & Decision & { readonly kind: "ranged"; readonly pass: boolean | undefined });
+
+export function checkOutcome(v: Verdict): "pass" | "fail" | "undecided" {
+  switch (v.kind) {
+    case "sampled": return v.holds ? "pass" : "fail";
+    case "ranged": return v.holds === "undecided" ? "undecided" : v.holds ? "pass" : "fail";
+  }
+}
 
 /** Measurements over one compiled scene, with inputs held at the given values (time aside). */
 export class Probe {
@@ -89,6 +98,7 @@ export class Probe {
 
 export interface Check {
   readonly name: string;
+  /** A custom sampled check may return a measurement with `pass`. `runChecks` adds `kind: "sampled"` and `holds`. */
   run(probe: Probe): Sampled | Verdict;
 }
 
@@ -936,14 +946,18 @@ export function budget(o: { readonly triangles: number }): Check {
  */
 export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[] {
   const probe = new Probe(o.compiled ?? compileScene(scene), o.inputs ?? {});
-  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)].map((v) => "holds" in v ? v : { ...v, holds: v.pass });
+  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)].map(asVerdict);
+}
+
+function asVerdict(v: ReturnType<Check["run"]>): Verdict {
+  return v.kind === undefined ? { ...v, kind: "sampled", holds: v.pass } : v;
 }
 
 /** The verdicts as a plain-text table. */
 export function formatChecks(vs: readonly ReturnType<Check["run"]>[]): string {
   const rows = [["check", "verdict", "measured", "limit"], ...vs.map((v) => {
-    const holds = "holds" in v ? v.holds : v.pass;
-    return [v.name, holds === "undecided" ? "undecided" : holds ? "pass" : "FAIL", v.measured, v.limit];
+    const outcome = checkOutcome(asVerdict(v));
+    return [v.name, outcome === "fail" ? "FAIL" : outcome, v.measured, v.limit];
   })];
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
   const line = (r: readonly string[]) => r.map((x, i) => x.padEnd(widths[i])).join("  ").trimEnd();

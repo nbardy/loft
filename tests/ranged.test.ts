@@ -65,6 +65,8 @@ test("examples/ranged.ts decides as the closed forms say", () => {
   expect(stone.bounds[0]).toBeLessThanOrEqual(0.01558);
   expect(stone.bounds[1]).toBeGreaterThanOrEqual(0.01556);
   expect(stone.witness["stone.speed"]!).toBeCloseTo(6, 6);
+  const verdicts = runChecks(demo.default, demo.checks, { compiled: probe.compiled });
+  expect(verdicts.map(({ kind, holds }) => [kind, holds])).toEqual([["ranged", false], ["ranged", true], ["sampled", true]]);
 }, 120000);
 
 const { time, ge } = E;
@@ -134,7 +136,7 @@ test("all nested enclosures share the box cap and an exhausted verdict survives 
     expect(d.work.boxes).toBeLessThanOrEqual(boxes);
     const [v] = runChecks(demo.default, [check], { compiled: probe.compiled });
     expect(v!.pass).toBeUndefined();
-    expect(v).toMatchObject({ holds: "undecided", bounds: d.bounds, witness: d.witness, spent: { kind: "boxes", boxes } });
+    expect(v).toMatchObject({ kind: "ranged", holds: "undecided", bounds: d.bounds, witness: d.witness, spent: { kind: "boxes", boxes } });
     expect(formatChecks([v])).not.toContain("FAIL");
   }
 });
