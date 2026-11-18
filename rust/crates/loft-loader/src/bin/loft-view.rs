@@ -56,7 +56,8 @@ fn parse() -> Args {
             "--out" => a.out = Some(value().into()),
             "--input" | "--param" => {
                 let v = value();
-                let (name, vals) = v.split_once('=').unwrap_or_else(|| fail(format!("{flag}: expected name=value, got {v}")));
+                let (name, vals) =
+                    v.split_once('=').unwrap_or_else(|| fail(format!("{flag}: expected name=value, got {v}")));
                 let vals: Vec<f32> = vals.split(',').map(|x| num(x, &flag) as f32).collect();
                 match flag.as_str() {
                     "--input" => a.inputs.push((name.into(), vals)),
@@ -68,7 +69,8 @@ fn parse() -> Args {
             "--pose-time" => a.pose_time = true,
             "--loads" => {
                 let v = value();
-                a.loads = v.parse::<std::num::NonZeroUsize>()
+                a.loads = v
+                    .parse::<std::num::NonZeroUsize>()
                     .unwrap_or_else(|_| fail(format!("--loads: expected a positive integer, got {v}")))
                     .get();
             }
@@ -107,13 +109,19 @@ fn main() {
         ..Default::default()
     }))
     .unwrap_or_else(|e| fail(format!("no device: {e}")));
-    eprintln!("adapter {} ({:?}); timestamp queries {}; inside encoders {}", adapter.get_info().name, adapter.get_info().backend, if timing { "granted" } else { "not granted" }, adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS));
+    eprintln!(
+        "adapter {} ({:?}); timestamp queries {}; inside encoders {}",
+        adapter.get_info().name,
+        adapter.get_info().backend,
+        if timing { "granted" } else { "not granted" },
+        adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+    );
 
     let cache = a.cache_dir.as_ref().map(|dir| {
         let t = Instant::now();
         // SAFETY: --pipeline-cache designates a trusted directory for cache files written by loft-view.
-        let (cache, loaded_bytes) = unsafe { PipelineCache::open(&device, dir) }
-            .unwrap_or_else(|e| fail(e.to_string()));
+        let (cache, loaded_bytes) =
+            unsafe { PipelineCache::open(&device, dir) }.unwrap_or_else(|e| fail(e.to_string()));
         eprintln!("cache open {:.3} ms ({loaded_bytes} bytes read)", t.elapsed().as_secs_f64() * 1e3);
         cache
     });
@@ -168,10 +176,15 @@ fn main() {
 
     // The picture: a frame that waits for its own bounds.
     let mut encoder = device.create_command_encoder(&Default::default());
-    let drawn = loft.encode_frame(&device, &queue, &mut encoder, &target, w, h, Bounds::Latest).unwrap_or_else(|e| fail(e.to_string()));
+    let drawn = loft
+        .encode_frame(&device, &queue, &mut encoder, &target, w, h, Bounds::Latest)
+        .unwrap_or_else(|e| fail(e.to_string()));
     encoder.copy_texture_to_buffer(
         output.as_image_copy(),
-        wgpu::TexelCopyBufferInfo { buffer: &readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) } },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(h) },
+        },
         output.size(),
     );
     queue.submit([encoder.finish()]);
@@ -211,7 +224,14 @@ struct Clock {
 }
 impl Clock {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, n: u64) -> Clock {
-        let buffer = |usage, label| device.create_buffer(&wgpu::BufferDescriptor { label: Some(label), size: n * 8, usage, mapped_at_creation: false });
+        let buffer = |usage, label| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: n * 8,
+                usage,
+                mapped_at_creation: false,
+            })
+        };
         Clock {
             resolve: buffer(wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC, "resolve"),
             read: buffer(wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, "read"),
@@ -226,7 +246,13 @@ impl Clock {
     fn ticks(&self, device: &wgpu::Device) -> Vec<u64> {
         self.read.map_async(wgpu::MapMode::Read, .., |r| r.expect("timestamp map"));
         device.poll(wgpu::PollType::wait_indefinitely()).expect("poll");
-        let t = self.read.get_mapped_range(..).expect("timestamp range").chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let t = self
+            .read
+            .get_mapped_range(..)
+            .expect("timestamp range")
+            .chunks_exact(8)
+            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .collect();
         self.read.unmap();
         t
     }
@@ -235,10 +261,24 @@ impl Clock {
 /// `copy`: the output texture, readback buffer and row pitch. A waiting frame copies its picture out, as Dawn's `frame`
 /// (whose GPU time profile reports) does.
 #[allow(clippy::type_complexity)]
-fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft, target: &wgpu::TextureView, copy: (&wgpu::Texture, &wgpu::Buffer, u32), timing: bool) {
+fn frames(
+    a: &Args,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    loft: &mut Loft,
+    target: &wgpu::TextureView,
+    copy: (&wgpu::Texture, &wgpu::Buffer, u32),
+    timing: bool,
+) {
     let n = 2 + 2 * loft.pass_labels().count() as u32;
     let clock = timing.then(|| {
-        loft.set_timestamps(Some(Timestamps { set: device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("loft frame"), ty: wgpu::QueryType::Timestamp, count: n }) }));
+        loft.set_timestamps(Some(Timestamps {
+            set: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("loft frame"),
+                ty: wgpu::QueryType::Timestamp,
+                count: n,
+            }),
+        }));
         Clock::new(device, queue, n as u64)
     });
     let bounds = if a.wait { Bounds::Latest } else { Bounds::Last };
@@ -246,12 +286,21 @@ fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft,
     for _ in 0..a.frames {
         let t = Instant::now();
         let mut encoder = device.create_command_encoder(&Default::default());
-        let s = loft.encode_frame(device, queue, &mut encoder, target, a.size.0, a.size.1, bounds).unwrap_or_else(|e| fail(e.to_string()));
+        let s = loft
+            .encode_frame(device, queue, &mut encoder, target, a.size.0, a.size.1, bounds)
+            .unwrap_or_else(|e| fail(e.to_string()));
         if a.wait {
             let (output, readback, row) = copy;
             encoder.copy_texture_to_buffer(
                 output.as_image_copy(),
-                wgpu::TexelCopyBufferInfo { buffer: readback, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(row), rows_per_image: Some(a.size.1) } },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: Some(a.size.1),
+                    },
+                },
                 output.size(),
             );
         }
@@ -280,7 +329,11 @@ fn frames(a: &Args, device: &wgpu::Device, queue: &wgpu::Queue, loft: &mut Loft,
         }
     }
     // The first frames include first-use costs (pipeline residency, the first bounds read): reported, not hidden.
-    println!("frames {}  ({})", a.frames, if a.wait { "each waits for its own bounds" } else { "planning with the last bounds read" });
+    println!(
+        "frames {}  ({})",
+        a.frames,
+        if a.wait { "each waits for its own bounds" } else { "planning with the last bounds read" }
+    );
     println!("cpu  per frame  {}", stats(&mut cpu.clone()));
     println!("cpu  frames 10+ {}", stats(&mut cpu[10.min(cpu.len() - 1)..].to_vec()));
     if !gpu.is_empty() {
@@ -294,7 +347,11 @@ fn pose_time(device: &wgpu::Device, queue: &wgpu::Queue, loft: &Loft, timing: bo
     if !timing {
         fail("--pose-time: the adapter grants no timestamp queries".into());
     }
-    let set = device.create_query_set(&wgpu::QuerySetDescriptor { label: Some("pose time"), ty: wgpu::QueryType::Timestamp, count: 2 });
+    let set = device.create_query_set(&wgpu::QuerySetDescriptor {
+        label: Some("pose time"),
+        ty: wgpu::QueryType::Timestamp,
+        count: 2,
+    });
     let clock = Clock::new(device, queue, 2);
     let (repeats, rounds) = (40, 8);
     let time = |n: usize| -> f64 {
@@ -304,7 +361,11 @@ fn pose_time(device: &wgpu::Device, queue: &wgpu::Queue, loft: &Loft, timing: bo
             {
                 let mut pass = e.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("pose x repeats"),
-                    timestamp_writes: Some(wgpu::ComputePassTimestampWrites { query_set: &set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1) }),
+                    timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                        query_set: &set,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }),
                 });
                 for _ in 0..repeats {
                     loft.encode_pose(&mut pass);

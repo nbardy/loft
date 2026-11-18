@@ -102,8 +102,15 @@ fn set(out: &mut [f32], slot: usize, v: [f32; 4]) {
 
 #[allow(clippy::too_many_arguments)]
 fn grid_runs(
-    slot: usize, radius: f64, levels: &[Level], instances: usize, view: &View, bounds: &Bounds, target: f64,
-    memory: &mut Memory, out: &mut [f32],
+    slot: usize,
+    radius: f64,
+    levels: &[Level],
+    instances: usize,
+    view: &View,
+    bounds: &Bounds,
+    target: f64,
+    memory: &mut Memory,
+    out: &mut [f32],
 ) -> Vec<Run> {
     let (floats, first) = match bounds {
         Bounds::None => {
@@ -125,8 +132,11 @@ fn grid_runs(
         let behind = w + r * persp <= near;
         let near_ppu = view.ppu((w - r * persp).max(near));
         let across = 2.0 * r * view.ppu(w.max(near));
-        let level =
-            if behind { -1 } else { choose_level(levels, |k| scale * levels[k].cell * near_ppu, across, target, seen[i]) };
+        let level = if behind {
+            -1
+        } else {
+            choose_level(levels, |k| scale * levels[k].cell * near_ppu, across, target, seen[i])
+        };
         chosen[i] = level;
         if level >= 0 {
             let c = levels[level as usize].cells;
@@ -141,7 +151,11 @@ fn grid_runs(
             j += 1;
         }
         if chosen[i] >= 0 {
-            runs.push(Run { vertices: levels[chosen[i] as usize].vertices, instances: (j - i) as u32, first: i as u32 });
+            runs.push(Run {
+                vertices: levels[chosen[i] as usize].vertices,
+                instances: (j - i) as u32,
+                first: i as u32,
+            });
         }
         i = j;
     }
@@ -149,7 +163,16 @@ fn grid_runs(
     runs
 }
 
-fn projected_runs(slot: usize, cell: f64, plane: f64, reach: f64, lift: f64, view: &View, target: f64, out: &mut [f32]) -> Vec<Run> {
+fn projected_runs(
+    slot: usize,
+    cell: f64,
+    plane: f64,
+    reach: f64,
+    lift: f64,
+    view: &View,
+    target: f64,
+    out: &mut [f32],
+) -> Vec<Run> {
     let cell_px = cell * if target > 0.0 { target } else { CELL_PIXELS };
     let lifted = view.hit(0.0, -1.0, plane).map(|(p, _)| view.ndc([p[0], p[1] + lift, p[2]]));
     let m = 0.02 + lifted.map_or(0.1, |l| ((l[1] + 1.0).abs() * 1.25).min(1.0));
@@ -157,7 +180,11 @@ fn projected_runs(slot: usize, cell: f64, plane: f64, reach: f64, lift: f64, vie
     let edge = |mut a: f64, mut b: f64| {
         for _ in 0..40 {
             let mid = (a + b) / 2.0;
-            if inside(mid) { a = mid } else { b = mid }
+            if inside(mid) {
+                a = mid
+            } else {
+                b = mid
+            }
         }
         a
     };
@@ -178,8 +205,16 @@ fn projected_runs(slot: usize, cell: f64, plane: f64, reach: f64, lift: f64, vie
 /// The frame's plan (runs per `plan[k]`) and `loft_detail` contents. `out` persists between frames, as in detail.ts.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_frame(
-    draws: &[PlanDraw], m: &Matrices, width: u32, height: u32, cell_pixels: f64, construction: bool, bounds: &Bounds,
-    memory: &mut Memory, out: &mut [f32], plan: &mut Vec<Vec<Run>>,
+    draws: &[PlanDraw],
+    m: &Matrices,
+    width: u32,
+    height: u32,
+    cell_pixels: f64,
+    construction: bool,
+    bounds: &Bounds,
+    memory: &mut Memory,
+    out: &mut [f32],
+    plan: &mut Vec<Vec<Run>>,
 ) {
     let v = &m.view_proj;
     let view = View { m, width: width as f64, height: height as f64, fy: hypot3(v[1], v[5], v[9]) };
