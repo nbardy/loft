@@ -17,10 +17,10 @@ named ones. A module marked "unproven" has had one user so far; expect to cut it
 **What draws a thing.** A rasteriser with per-pixel tracers inside bounds, not a path tracer: rasterised (u, v)
 surfaces with ink outlines (`draw.surface`, everything swept); sphere-traced distance fields (`draw.field`),
 shell-traced relief (`draw.relief`), analytic impostors and listed solids (`impostors`, `draw.copies`), each solved per
-pixel inside its bounding box; media integrated in closed form (`draw.density`, glows, lightning, rain); and derived
-layers (sky, cast shadows on the water, contact foam, post passes). One sun. No reflections, refraction, indirect
-light or shadow maps: shadows come from capsule chains along each skeleton (on bodies only in a style that prints a
-shadow block); what resembles reflection or occlusion is a post pass reading the picture and its depth.
+pixel inside its bounding box; closed-form soft media (`draw.density`); arbitrary extinction fields raymarched with
+scattering from the sun and lamps (`draw.volume`); glows, lightning and rain; and derived layers (sky, cast shadows
+on the water, contact foam, post passes). Lamps can cast shadows through a depth map. The sun casts capsule-chain
+shadows onto the ground and onto bodies in styles that print a shadow block.
 
 **What you can bring.** A `Drawable` (`name`, `draws(ctx)` returning WGSL shaders and phased draws, `skeletons`,
 `surfaces`; `ctx.table` for a per-frame table, `ctx.post` for a full-screen pass; `src/draw/sky.ts` is 30 lines). A
@@ -400,7 +400,7 @@ Frames transported along a spine, once per frame: the part of a sweep that canno
 
 ### src/draw/index.ts
 
-One generic drawable per signature (DESIGN.md 7.4): `draw.surface`, `draw.curve`, `draw.points`, `draw.field` (field.ts), `draw.relief` (relief.ts) and `draw.density` (../soft/density.ts) are all implemented. the tracers of docs/folding_and_tracing.md.
+One generic drawable per signature (DESIGN.md 7.4), including the bounded tracers of docs/folding_and_tracing.md.
 
 - **draw**: Wraps a shape as a `Drawable`, which is how it reaches the screen.
   `const draw = { ... }`
@@ -415,6 +415,7 @@ One generic drawable per signature (DESIGN.md 7.4): `draw.surface`, `draw.curve`
   - `draw.traced`: Any solid you can intersect, drawn per pixel in a bound: you write `hit(ray, copy) => { t, gap, normal }` as expressions; depth, coverage, ink, light and the CPU twin come from Loft.
   - `draw.copies`: A list of copies of one simple solid (sphere, capsule or rounded cone), each intersected exactly per pixel; suits trees and branching forms.
   - `draw.density`: A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
+  - `draw.volume`: March a density function of world position and time inside a box, with scattering from the sun and lamps.
 
 Types:
 - **Bounds**: An axis-aligned box: the proxy a tracer starts and ends its march in. `type Bounds = { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] }`
@@ -482,6 +483,14 @@ Types:
 - **ReliefOptions**: `type ReliefOptions = { height, hMax, fold, paint, steps, grid, outline }`
 - **ReliefPoint**: A painted point of the relief: its site and the relief's height there. `type ReliefPoint = ReliefSite & { readonly h: F }`
 - **ReliefSite**: Where on the surface a height or a paint is asked: the surface's coordinates, and the cell of the fold they fall in. `type ReliefSite = { readonly u: F; readonly v: F; readonly cell: Folded<"vec2"> }`
+
+### src/draw/volume.ts
+
+A bounded march of the author's extinction field.
+
+
+Types:
+- **VolumeOptions**: What a raymarch integrates, sampled in world coordinates and at the frame's time in seconds. `type VolumeOptions = { bounds, steps, albedo?, emission?, g?, shadow? }`
 
 ### src/draw/surface.ts
 
@@ -2441,8 +2450,9 @@ A style is a program in the same expression language (DESIGN.md 2.6): it maps a 
   `function dorsalness(v: Expr<"f32">): Expr<"f32">`
 
 Types:
-- **Style**: `type Style = { name, shade, ink, mark, outline, water, shadow, post, ground, sky, clear, block?, lights? }`
+- **Style**: `type Style = { name, shade, volume?, ink, mark, outline, water, shadow, post, ground, sky, clear, block?, lights? }`
 - **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, depth, uv, anchor, id, lights, sky, scatter }`
+- **VolumeCtx**: A sample inside `draw.volume`, where there is no surface normal. `type VolumeCtx = { world, time, view, density, albedo, emission, lights }`
 - **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, lights, swell, phase, sky }`
 - **Contact**: How near a body is to a pixel of water. `type Contact = /** * No opaque surface lies within the sea's search of this pixel (or of the other pixels of its 2 x 2 quad): the * band would be below -800 here, where every contact term of every style is exactly 0. `foam` holds only the * deformations' marks. A style prints no contact foam. */ ...`
 - **LayerCtx**: A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. `type LayerCtx = { world, view, distance, amount }`
@@ -3037,7 +3047,7 @@ Types:
 
 ## Coverage
 
-821 exports (465 values, 356 types) from src/index.ts and src/lib/index.ts.
+823 exports (465 values, 358 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

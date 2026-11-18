@@ -510,7 +510,8 @@ draw.points(name, points, thing)                             // instances of any
 draw.posed(name, poses, thing)                               // instances turned and scaled along each axis (below)
 draw.field(name, field, { bounds, paint, steps, lipschitz })  // sphere-traced (specified, not built)
 draw.relief(name, surface, { height, hMax, fold, paint, steps }) // shell-traced on a surface (specified)
-draw.density(name, density, { bounds, colour, steps })       // integrated (specified)
+draw.density(name, medium, options)                          // analytic Gaussian media
+draw.volume(name, (p, t) => density, { bounds, steps, g })     // march an arbitrary extinction field
 ```
 
 `strand`, `crest`, `fan`, `shell`, `sea`, `scatter`, `attach`, `decal`, `cloud`, `glow` become short library functions
@@ -537,7 +538,7 @@ area with the axis is refused by name. Before, a rising profile was drawn inside
 |---|---|
 | `src/expr.ts` | `fetch(table, index, lane)` (a leaf over a `TableSource`), `iterate(count, init, step)` (a real loop in both backends; `count` may be an expression); `leaves` reports tables; `substitute` rebuilds loops; `eq`, `ne` (exact; both backends agree on whole numbers, `tests/expr.eq.gpu.test.ts`) and `pick(i, values)` (2026-11-11) |
 | `src/map/` | the signatures (`types.ts`), `warp` and `tile`, `place`/`on`/`compose`/`points`, the products (`sweep`, `sheet`, `lathe`, `loft`, `extrude`, `thicken`, `surface`), `tabulate`, frame transport |
-| `src/draw/` | `draw.surface`, `draw.glazed`, `draw.curve`, `draw.points` (implemented); `draw.field`, `draw.relief`, `draw.density` (specified: options types, throw `NotImplementedError`); the sky and shadows |
+| `src/draw/` | `draw.surface`, `draw.glazed`, `draw.curve`, `draw.points`, `draw.field`, `draw.relief`, `draw.density`, `draw.volume`; the sky and shadows |
 | `src/geom/` | `strand`, `crest`, `sea` as library functions; `scatter`, `attach`, the chart WGSL and its CPU twin, the station reader in WGSL and its JS mirror, and every per-kind shader template are gone |
 | `src/compile/` | slots, the table registry and packing, shared WGSL, the pose function; no kind of thing appears in it |
 | `src/bake/` | bakes every `Drawable.forms` entry it can (one switch: surfaces and meshes sampled, fields meshed by surface nets, media and hits reported as skipped by name); colours converted to linear |
@@ -1079,6 +1080,28 @@ Corrections found by looking: lighting a puff at its centroid drew dark discs wi
 capped list of 16 strongest pieces per pixel drew hard-edged discs where its membership changed (now: bins); a piece
 count growing with length drew streaks along view rays (now: fixed); one bin in front of the blobs drew the outline of
 the rain shaft into the fog (now: fixed fog bins).
+
+#### Raymarched extinction (`draw.volume`, 2026-11-18)
+
+One back-face box draw covers the ray segment, even when the camera is inside. The march clips the segment to the
+resolved opaque depth and the ground (an analytic plane or the soft-medium sea intersection). It subdivides the
+visible segment into equal strata and offsets each sample within its stratum using a hash of the pixel. The offset
+stays fixed across frames. Empty samples skip shading. With extinction `σ` and step length `ds`, the sample weight
+is `T * (1 - exp(-σ ds))`, where `T` is transmittance before the step. The march sums weighted source colour and
+terminates when `T ≤ 1/1024`. Premultiplied blending writes `C + T * background`, keeping bright emission in dilute
+media until it has been weighted by opacity. The drawable emits the existing `medium` form for other readers.
+
+The default source is `emission + albedo * sum(arrivals)`. The [normalized Henyey–Greenstein phase](https://doi.org/10.1086/144246)
+weights each arrival. Positive `g` peaks when the eye ray points toward the light. Each shadow ray uses midpoint
+quadrature over the same extinction field to the box exit or the light, whichever is closer. The unshadowed mode
+omits this inner loop. `Style.volume` can use each phase-weighted arrival and its visibility separately, with no
+surface normal. Lamp shadow maps apply to point receivers through the usual light fold.
+
+Each volume is a single transparent draw in author order, including when mixed with `draw.density` or glazed
+surfaces. Interpenetrating transparents need per-ray interleaving to composite correctly. Self-shadowing integrates
+only the current field. A volume adds no per-frame tables or textures of its own, and reuses the split frame's depth
+resolve. For `P` covered pixels, `N` view samples, `S` shadow samples and `L` lights, at most `P*N*(1 + S*L)` calls
+to the extinction field are needed. Empty samples and the opacity cutoff can reduce this work.
 
 ### 8.3 Glows, lightning, rain (`glow.ts`, `lightning.ts`, `rain.ts`)
 

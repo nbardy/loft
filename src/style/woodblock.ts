@@ -18,7 +18,7 @@
 // The sea and the plane go into the block under a stated sun dimmer than the pool, and each local light's pool is cut
 // out of them in the cream line ink: a hard pool, as a printer cuts it, not a falloff.
 
-import { add, distance, dot, f, lt, min, mix, mul, normalize, param, select, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
+import { add, distance, dot, f, lift, lt, min, mix, mul, normalize, param, select, smoothstep, sub, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
 import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { contactFoam, foam, marksAs, marksFoam, printLayers, type ContactFoam, type FoamInk, type MarksPrint } from "./foam.ts";
@@ -338,6 +338,12 @@ export function woodblock(spec: WoodblockSpec = {}): Style {
   return {
     name: "woodblock",
     ...bodies,
+    volume: (ctx) => {
+      const level = luminance(mul(ctx.albedo, ctx.lights("sum", (l) => lift<"vec3">(l.amount))));
+      const low = mix(rgb(inks.indigo), rgb(inks.pale), smoothstep(0.055, 0.075, level));
+      const print = mix(low, rgb(inks.cream), smoothstep(0.23, 0.27, level));
+      return add(ctx.emission, mul(print, smoothstep(0, 0.025, level)));
+    },
     // The named recipes on this same print: what `--light name` chooses.
     lights: Object.fromEntries(Object.entries(LOOKS).map(([name, look]) => [name, () => woodblock(look.on(spec))])),
     // The key line: the hull, this wide in world units and never under 1.5 px.

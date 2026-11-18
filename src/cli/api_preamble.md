@@ -18,10 +18,10 @@ named ones. A module marked "unproven" has had one user so far; expect to cut it
 **What draws a thing.** A rasteriser with per-pixel tracers inside bounds, not a path tracer: rasterised (u, v)
 surfaces with ink outlines (`draw.surface`, everything swept); sphere-traced distance fields (`draw.field`),
 shell-traced relief (`draw.relief`), analytic impostors and listed solids (`impostors`, `draw.copies`), each solved per
-pixel inside its bounding box; media integrated in closed form (`draw.density`, glows, lightning, rain); and derived
-layers (sky, cast shadows on the water, contact foam, post passes). One sun. No reflections, refraction, indirect
-light or shadow maps: shadows come from capsule chains along each skeleton (on bodies only in a style that prints a
-shadow block); what resembles reflection or occlusion is a post pass reading the picture and its depth.
+pixel inside its bounding box; closed-form soft media (`draw.density`); arbitrary extinction fields raymarched with
+scattering from the sun and lamps (`draw.volume`); glows, lightning and rain; and derived layers (sky, cast shadows
+on the water, contact foam, post passes). Lamps can cast shadows through a depth map. The sun casts capsule-chain
+shadows onto the ground and onto bodies in styles that print a shadow block.
 
 **What you can bring.** A `Drawable` (`name`, `draws(ctx)` returning WGSL shaders and phased draws, `skeletons`,
 `surfaces`; `ctx.table` for a per-frame table, `ctx.post` for a full-screen pass; `src/draw/sky.ts` is 30 lines). A

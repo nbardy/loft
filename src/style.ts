@@ -182,9 +182,25 @@ export type BlockOverlap =
   /** `width` wide (world units) round a part that stands less than `gap` in front; `amount` of the block (0..1). */
   | { readonly kind: "band"; readonly width: number; readonly gap: number; readonly amount: number };
 
+/** A sample inside `draw.volume`, where there is no surface normal. */
+export type VolumeCtx = {
+  readonly world: Expr<"vec3">;
+  readonly time: Expr<"f32">;
+  /** Unit direction toward the eye. */
+  readonly view: Expr<"vec3">;
+  /** Extinction in inverse world units. */
+  readonly density: Expr<"f32">;
+  readonly albedo: Expr<"vec3">;
+  readonly emission: Expr<"vec3">;
+  /** Each arrival's unshadowed colour includes the phase function. Its visibility includes self-shadowing. */
+  readonly lights: LightFold;
+};
+
 export type Style = {
   readonly name: string;
   shade(ctx: ShadeCtx): Expr<"vec3">;
+  /** Source colour per unit extinction inside `draw.volume`. Absent uses linear single scattering plus emission. */
+  volume?(ctx: VolumeCtx): Expr<"vec3">;
   /** Colour of the outline pass. */
   ink(ctx: ShadeCtx): Expr<"vec3">;
   /**

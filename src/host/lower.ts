@@ -135,6 +135,7 @@ const BLEND: Record<Draw["blend"], GPUBlendState | undefined> = {
   none: undefined,
   // Straight alpha over.
   alpha: { color: { srcFactor: "src-alpha", dstFactor: "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } },
+  premultiplied: { color: { srcFactor: "one", dstFactor: "one-minus-src-alpha" }, alpha: { srcFactor: "one", dstFactor: "one-minus-src-alpha" } },
   // Additive, scaled by the fragment's alpha (straight alpha, like `alpha`); the target's alpha is left as it is.
   add: { color: { srcFactor: "src-alpha", dstFactor: "one" }, alpha: { srcFactor: "zero", dstFactor: "one" } },
   // A shadow block's tone, lowered: colour untouched, alpha the lesser (WebGPU wants both factors "one" with min).

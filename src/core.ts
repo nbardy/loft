@@ -18,7 +18,7 @@ export { recur } from "./map/recur.ts";
 export { fold2, fold3 } from "./lib/fold.ts";
 export { warp, tile, tabulate, type Schedule, extrude, framed, framedPose, lathe, loft, mapNormal, sheet, surface, thicken } from "./map/index.ts";
 export { Body, rotateAbout, sweep, type FrameSample, type Section, type Tip, type Transport } from "./map/index.ts";
-export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type MeshData, type MeshDrawable, type MeshOptions, type Poseable, type Ray, type ReliefOptions, type Traced, type TracedDrawable, type TracedOptions } from "./draw/index.ts";
+export { draw, type Bounds, type CurveOptions, type DensityOptions, type FieldOptions, type Instanceable, type MeshData, type MeshDrawable, type MeshOptions, type Poseable, type Ray, type ReliefOptions, type Traced, type TracedDrawable, type TracedOptions, type VolumeOptions } from "./draw/index.ts";
 export { spacing, SurfaceDrawable, type Fragment, type Grid, type Look, type Outline, type Sampling, type SurfaceOptions } from "./draw/surface.ts";
 export { scene, type OutlineMethod, type Scene, type SceneSpec } from "./scene.ts";
 export { plane, nothing, GroundError, type Ground, type Plane, type Nothing } from "./draw/ground.ts";
