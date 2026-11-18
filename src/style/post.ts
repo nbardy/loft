@@ -1,6 +1,9 @@
 // Full-screen passes a style runs after the scene (`Style.post`), each with its numbers as options.
 //
 // The laws:
+//  - `depthOfField`: a signed circle of confusion from axial depth and the lens, gathered on a disc with depth
+//    rejection. A second gather lets nearer sources cover pixels within their own discs.
+//  - `filmGrain`: a monochrome pixel hash of frame time, strongest at middle grey, vanishing at black and white.
 //  - `paperGrain`: the picture times 1 + g, g = (fibre noise - 0.5) `fibre` + (a per-pixel hash - 0.5) `tooth` (0.4 +
 //    luminance): fibres are value noise stretched 9:1 along x (the way the sheet was laid), the tooth shows most in pale
 //    inks, where a print's paper shows through. Fixed to the screen: the picture is the sheet.
@@ -12,7 +15,7 @@
 //    water lies below what it reflects), gathered over 24 steps of 4 px up a column that wavers with time, the part of
 //    each over 0.1 added at `gain`.
 //
-// Parameters: numbers fixed when the style is built; sizes in pixels scale with the picture's height (800 px = 1).
+// Parameters: numbers fixed when the style is built. Paper, bloom and reflection use 800 px as their reference height.
 //
 // Cannot: anything that needs a second target or a mip chain (bloom is one pass, so its radius is bounded by its 40
 // taps: wider means sparser); paper that moves with the camera or the world (it is the frame's); a reflection of
@@ -27,13 +30,142 @@
 // edges (the woodblock's first key line, 2026-11-11: it was ragged and cost 0.37 ms).
 
 import type { PostSpec } from "../compile/context.ts";
+import { SceneError } from "../errors.ts";
 import { POST_COMMON } from "./shared.ts";
 
 /** A number as a WGSL float literal. */
 const lit = (x: number): string => {
   if (!Number.isFinite(x)) throw new Error(`post: ${x} is not a number WGSL can take`);
-  return Number.isInteger(x) ? `${x}.0` : `${x}`;
+  return Number.isInteger(x) && Math.abs(x) < 1e21 ? `${x}.0` : `${x}`;
 };
+
+// Antipodal pairs keep the disc centred. Scatter taps concentrate toward the middle and carry their annular area.
+const lensTaps = (pairs: number, areaPower: number): string => {
+  const taps = Array.from({ length: pairs }, (_, i) => {
+    const inner = (i / pairs) ** areaPower;
+    const outer = ((i + 1) / pairs) ** areaPower;
+    const radius = Math.sqrt((inner + outer) / 2);
+    const angle = i * Math.PI * (3 - Math.sqrt(5));
+    return `vec4<f32>(${radius * Math.cos(angle)}, ${radius * Math.sin(angle)}, ${radius}, ${(outer - inner) / 2})`;
+  });
+  return `array<vec4<f32>, ${pairs}>(${taps.join(",\n  ")})`;
+};
+
+/**
+ * Thin-lens depth of field. Focus (axial distance) and focal length are in world units. The camera's FoV sets the
+ * framing and the f-stop sets the pupil diameter. Uses the opaque scene depth, with sky at infinity, and caps the
+ * blur at a radius of 16 pixels at 720p. Orthographic views use a telecentric lens with the same cone at focus.
+ */
+export function depthOfField({ focus, focalLength, fStop }: { readonly focus: number; readonly focalLength: number; readonly fStop: number }): PostSpec {
+  const inverseFocus = Math.fround(1 / focus);
+  const pupil = Math.fround(focalLength / (2 * fStop));
+  if (!(Number.isFinite(focus) && Number.isFinite(focalLength) && Number.isFinite(fStop) &&
+        focalLength > 0 && focalLength < focus && fStop > 0 && Number.isFinite(Math.fround(focus)) &&
+        Number.isFinite(inverseFocus) && inverseFocus > 0 && Number.isFinite(pupil) && pupil > 0)) {
+    throw new SceneError("depthOfField", `focus ${focus}, focalLength ${focalLength}, fStop ${fStop}`,
+      "a positive focal length shorter than the focus distance and a positive f-stop, with a representable focus and pupil",
+      "give focus and focalLength in the scene's world units, for example { focus: 4, focalLength: 0.05, fStop: 2.8 }");
+  }
+  return {
+    label: "depth of field",
+    wgsl: /* wgsl */ `
+const dof_disc = ${lensTaps(16, 1)};
+const dof_scatter = ${lensTaps(20, 2)};
+
+// Under perspective h.w after unprojection is 1 / axial distance; ndc.xy contributes zero to h.w.
+// Under orthographic projection the axial distance itself is affine in depth. Remove the component of
+// view_proj's y row along forward so an off-axis or subpixel still shift cannot change the lens scale.
+fn dof_lens() -> vec3<f32> {
+  let row_y = vec3<f32>(frame.view_proj[0].y, frame.view_proj[1].y, frame.view_proj[2].y);
+  let scale = length(cross(row_y, frame.forward.xyz)) * frame.viewport.y * 0.5 * ${lit(pupil)};
+  let from_clip = frame.inv_view_proj;
+  if (frame.eye.w > 0.5) {
+    return vec3<f32>(-from_clip[2].w, ${lit(inverseFocus)} - from_clip[3].w, ${lit(inverseFocus)}) * scale;
+  }
+  // In an object-space telecentric view, the blur cone has constant slope pupil / focus.
+  return vec3<f32>(dot(from_clip[2].xyz, frame.forward.xyz) * ${lit(inverseFocus)},
+    dot(from_clip[3].xyz - frame.eye.xyz, frame.forward.xyz) * ${lit(inverseFocus)} - 1.0, 1e20) * scale;
+}
+
+fn dof_coc(p: vec2<i32>, lens: vec3<f32>) -> f32 {
+  let depth = textureLoad(loft_scene_depth, p, 0).x;
+  return select(fma(depth, lens.x, lens.y), lens.z, depth == 1.0);
+}
+
+@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
+  let lens = dof_lens();
+  let cap = 16.0 * frame.viewport.y / 720.0;
+  let last = vec2<i32>(frame.viewport.xy) - 1;
+  let pixel = vec2<i32>(in.px.xy);
+  let centre = textureLoad(loft_post_colour, pixel, 0);
+  let coc = dof_coc(pixel, lens);
+  let radius = min(abs(coc), cap);
+  var colour = centre.rgb;
+  if (radius > 0.5) {
+    var sum = centre.rgb;
+    var total = 1.0;
+    for (var i = 0u; i < 16u; i++) {
+      let offset = dof_disc[i].xy * radius;
+      for (var side = -1.0; side <= 1.0; side += 2.0) {
+        let p = clamp(vec2<i32>(floor(in.px.xy + side * offset)), vec2<i32>(0), last);
+        let tap = dof_coc(p, lens);
+        let same = 1.0 - smoothstep(0.5, 1.5, abs(tap - coc));
+        // A defocused surface uncovers backing colour inside its silhouette. Closer, mismatched depths are
+        // excluded here. They can only cover this pixel through their own pupil footprints below.
+        let w = select(same, 1.0, tap > coc);
+        if (w > 0.0) { sum += textureLoad(loft_post_colour, p, 0).rgb * w; total += w; }
+      }
+    }
+    colour = mix(colour, sum / total, smoothstep(0.5, 1.5, radius));
+  }
+
+  // A closer, out-of-focus source covers this pixel by its own disc. Weight by the patch of the search disc
+  // each tap represents divided by the area of that source's disc. No colour filtering across depth texels.
+  var foreground = vec3<f32>(0.0);
+  var coverage = 0.0;
+  for (var i = 0u; i < 20u; i++) {
+    let ring = dof_scatter[i];
+    let offset = ring.xy * cap;
+    for (var side = -1.0; side <= 1.0; side += 2.0) {
+      let p = clamp(vec2<i32>(floor(in.px.xy + side * offset)), vec2<i32>(0), last);
+      let tap = dof_coc(p, lens);
+      let reach = min(abs(tap), cap);
+      let edge = reach - ring.z * cap;
+      let ahead = min(abs(tap), coc - tap);
+      if (edge > -0.5 && ahead > 0.5) {
+        let ratio = cap / max(0.5, reach);
+        let w = ring.w * ratio * ratio * clamp(edge + 0.5, 0.0, 1.0) * smoothstep(0.5, 1.5, ahead);
+        foreground += textureLoad(loft_post_colour, p, 0).rgb * w;
+        coverage += w;
+      }
+    }
+  }
+  return vec4<f32>(colour * (1.0 - min(coverage, 1.0)) + foreground / max(coverage, 1.0), centre.a);
+}
+`,
+  };
+}
+
+/** Fine monochrome film grain, seeded by frame time. `amount` is peak-to-peak at middle grey (default 0.045). */
+export function filmGrain({ amount = 0.045 }: { readonly amount?: number } = {}): PostSpec {
+  if (!(Number.isFinite(amount) && amount >= 0 && amount <= 1)) {
+    throw new SceneError("filmGrain", `amount ${amount}`, "an amount from 0 to 1", "use a small amount such as 0.045, or omit amount for the default");
+  }
+  return {
+    label: "film grain",
+    wgsl: /* wgsl */ `${POST_COMMON}
+@fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
+  let c = post_color(in.uv);
+  let px = vec2<u32>(in.px.xy);
+  let seed = bitcast<u32>(frame.time.x);
+  let light = dot(c.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let noise = sty_hash(bitcast<vec2<i32>>(px + vec2<u32>(seed, seed * 2654435761u))) - 0.5;
+  let grain = noise * ${lit(amount)} * (4.0 * light * (1.0 - light));
+  return vec4<f32>(c.rgb + grain, c.a);
+}
+`,
+  };
+}
 
 /** Paper fibre and tooth. Defaults: fibre 0.07, tooth 0.035 (the woodblock print's paper). */
 export function paperGrain(o: { readonly fibre?: number; readonly tooth?: number } = {}): PostSpec {

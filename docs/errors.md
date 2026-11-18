@@ -42,6 +42,8 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `X needs a sea; this scene's ground is a plane` | a wake or foam on dry ground | `ground: sea(...)`, or drop the thing |
 | `usage: --style "x": no such style` / `input "x": ... no such input` | the command names what is absent | a name from the list printed |
 | `pbr sky: given a sky that reads time` (or a param; or `the CPU cannot evaluate`) | `pbr` evaluates its sky, tone and lobe on the CPU once, when the style is built | a sky of its direction and the sun alone; for a GPU-only sky, `pbr({ sky, clear: [r, g, b], environment })` |
+| `depthOfField: given focus ...` | invalid lens distances or f-stop | use world units with `0 < focalLength < focus` and a positive finite `fStop` |
+| `filmGrain: given amount ...` | strength outside 0 to 1 | give a small amount such as `0.045`, or omit it for the default |
 
 ## Every refusal
 

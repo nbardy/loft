@@ -77,7 +77,7 @@ taps on a cone of half-angle 0.02 + 0.5 max(0.02, (1 - gloss)^2), Fresnel-weight
 | `printLayers(under, layers, { fill, line, edge })` | prints that coverage in a style's inks |
 | `rollingFoam`, `curledHeads`, `crown` | white water from any mass: hooks, lobes, droplets drawn as curves in the world |
 | `warmed`, `mottled`, `weighted`, `paint.*` | repaint before lighting (hotter reds, blotches that ride the body); a line inside the hull whose weight follows the light (`swelling`) or wanders (`wandering`) |
-| `paperGrain`, `bloom`, `reflection` | post passes with their numbers as options |
+| `depthOfField`, `filmGrain`, `paperGrain`, `bloom`, `reflection` | composable post passes with their numbers as options |
 | `edgeOf`, `pixelsInside`, `rgb`, `POST_COMMON` | an edge antialiased by a pixel; pixels in from the silhouette; WGSL helpers for post passes |
 | `noise2`, `noise3`, `hash2`, `hash22`, `cellular2`, `luminance`, `fwidth`, `pixelWorld`, `wgslFn` | what patterns are made of |
 

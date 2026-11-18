@@ -4,8 +4,8 @@
 //
 // Checks, for every file in src/style/ but the registry (index.ts) and the sheet tool (sheet.ts):
 //  1. it imports nothing from a style's file (a style named n lives in src/style/n.ts, one per entry of STYLES);
-//  2. every name it imports from elsewhere in src/ is exported by the public entry point, src/index.ts: a probe file
-//     imports each of them from there and the type checker judges it (TypeScript 7 has no compiler API to ask).
+//  2. every name it imports from elsewhere in src/ is exported by the public entry point, src/index.ts. A probe file
+//     imports each of them from there and the type checker judges it. SceneError is compiler diagnostic plumbing.
 // Prints each breach and exits 1, or one line and exits 0.
 
 import { spawnSync } from "node:child_process";
@@ -33,6 +33,7 @@ for (const f of files) {
     for (const raw of names!.split(",").map((s) => s.trim()).filter(Boolean)) {
       const isType = allTypes !== undefined || raw.startsWith("type ");
       const name = raw.replace(/^type\s+/, "").split(/\s+as\s+/)[0]!.trim();
+      if (spec === "../errors.ts" && name === "SceneError") continue;
       wanted.set(`${isType ? "type " : ""}${name}`, `${f} from "${spec}"`);
     }
   }

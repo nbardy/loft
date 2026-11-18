@@ -12,7 +12,7 @@ export {
   contactFoam, marksFoam, printLayers, foam, marksAs, type ContactFoam, type FoamInk, type HeadSize, type InkLayers, type MarksPrint,
   rollingFoam, curledHeads, crown, behind, joined, rollOf, slopeOf, along, pixelOn, type Lean, type Roll, type White, type WhiteOn,
   paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight, type Mottle, type Warm,
-  paperGrain, bloom, reflection,
+  depthOfField, filmGrain, paperGrain, bloom, reflection,
   edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON,
   glossed,
   ggx, smithGgx, schlick, lambert, skyLight, daylight, aces, type PbrParts,

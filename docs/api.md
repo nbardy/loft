@@ -2653,6 +2653,10 @@ Types:
 
 Full-screen passes a style runs after the scene (`Style.post`), each with its numbers as options.
 
+- **depthOfField**: Thin-lens depth of field.
+  `function depthOfField({ focus, focalLength, fStop }: { readonly focus: number; readonly focalLength: number; readonly fStop: number }): PostSpec`
+- **filmGrain**: Fine monochrome film grain, seeded by frame time.
+  `function filmGrain({ amount = 0.045 }: { readonly amount?: number } = {}): PostSpec`
 - **paperGrain**: Paper fibre and tooth.
   `function paperGrain(o: { readonly fibre?: number; readonly tooth?: number } = {}): PostSpec`
 - **bloom**: Bloom.
@@ -3037,7 +3041,7 @@ Types:
 
 ## Coverage
 
-821 exports (465 values, 356 types) from src/index.ts and src/lib/index.ts.
+823 exports (467 values, 356 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 
