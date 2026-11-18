@@ -271,7 +271,7 @@ function entries(t: TableSource, where: string, fills: Work["tableFills"]): Entr
     }
   } else {
     if (recurTable(t) !== undefined) throw new RangeRefusal(where, { kind: "recur", table: t.name });
-    if (!("program" in t)) throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: t.role === "static" ? "filled once, at build" : "a hand-written fill" });
+    if (!("program" in t)) throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: t.role === "static" ? "filled once, at build" : "supplied numbers" });
     program = t.program;
   }
   const result: Entries = { program, made: new Map() };
