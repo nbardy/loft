@@ -1,7 +1,7 @@
 // A lighthouse searches the bay: its lit band sweeps an arc of water round the rock and stops on a boat, every nine
 // seconds. A game reads it as an attack: the arc is marked on the water before the band arrives (the telegraph), the
 // band arms when it reaches the boat, and the checks below say the warning came first and the band stopped short.
-// Shows: `attack` with a `sweep` motion, `animate`, `telegraph`, and `warned`, `landsInside`, `stopsAt`, `staysClear`.
+// Shows: `attack` with a `sweep` motion, `animate`, `telegraph`, `warned`, `landsInside`, and `clearance` under `always`.
 // Ground: a calm sea (the bay is its own water: nothing to change when floors arrive).
 //
 // Theory, before running. A sweep swings the end of a spine round the arc's centre from `from` to `to`: a beam's lit

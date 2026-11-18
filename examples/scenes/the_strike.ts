@@ -21,7 +21,7 @@ const SHIP_LENGTH = 5.6;
 /** Where the lane starts: on the water in front of the serpent's neck (examples/serpent.ts puts the head near x = 8). */
 const ANCHOR: readonly [number, number] = [7.4, 0];
 const BITE_RADIUS = 1.0;
-/** How far inside the beam line the lane ends: the head lands on the bulwark, not short of it (checked by stopsAt). */
+/** How far inside the beam line the lane ends: the head lands on the bulwark, not short of it (checked by a clearance at arming). */
 const LAND_INSET = 0.25;
 const WIND: readonly [number, number] = [0.3, 1];
 

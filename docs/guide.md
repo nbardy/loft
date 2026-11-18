@@ -212,8 +212,9 @@ export default scene({
 Use `checks: hop.holds` in a design build, or `export const checks = hop.holds` beside a scene. Each check is the
 condition as written, proved by `always` over its window (the whole span for a bare one). `equal(a, b, within)` is
 true where every component of `a - b` is within `within` (default `TOLERANCE`, 1e-5) in its own units:
-`equal(accel, gravity, 0.001)` allows 0.001 m/s² per axis. `solve` pins an `equal` as a target; the same band written
-out by hand (`le(abs(a - b), w)`) is solved as the inequality it literally is, which is correct but less pinned. A hold
+`equal(accel, gravity, 0.001)` allows 0.001 m/s² per axis. `solve` pins an `equal` as a target. It knows one by the node
+`equal` returns, not by its shape, so a band spelled another way (`le(length(a - b), w)`) is solved as the inequality
+it literally is: correct, but less pinned. A hold
 under `always` is named in errors by its line; a bare one by its place in the list (`hold 4 of the solve at file:line`).
 `eventually`, `or`, `not` and an `always` over a param are refused: the search is local and cannot choose a time or a
 branch, and params take their defaults while solving.

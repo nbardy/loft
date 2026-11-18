@@ -200,7 +200,10 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
   if (!Number.isSafeInteger(boxes) || boxes < 0) throw new SceneError(kind, `boxes ${boxes}`, "a nonnegative integer", "set boxes to the maximum number of enclosures");
   if (o.ms !== undefined && !(Number.isFinite(o.ms) && o.ms >= 0)) throw new SceneError(kind, `ms ${o.ms}`, "a finite nonnegative duration", "give the time budget in milliseconds");
   const name = o.label ?? label;
-  const sampled = inner.kind === "atom" ? measuredIn([inner.condition]) : [];
+  // Read through every nesting: an inner always over time that samples a measure, wrapped by a quantifier of the
+  // other kind, would otherwise reach the interval search as an unbound variable and be refused under the wrong fix.
+  const atomOf = (b: Body): Expr<"bool"> => (b.kind === "atom" ? b.condition : atomOf(b.q.body));
+  const sampled = measuredIn([atomOf(inner)]);
   if (sampled.length > 0 && (leaves.length !== 1 || leaf.key !== "input:time" || inner.kind !== "atom"))
     throw new SceneError(kind, `a condition over ${sampled[0]!.what} (measured, not an expression) quantified over ${leaves.map((l) => l.label).join(", ")}`,
       "a measured quantity under one range over time, which is sampled", `${kind}([time, a, b], ge(...))`);
