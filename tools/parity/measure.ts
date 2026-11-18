@@ -1,6 +1,9 @@
 // Scores plan 2026-11-19 §8.1 (lane 4.2): the cold, GPU-less build of Owl, Titan and heron, three alternating runs.
 //
 //   bun tools/parity/measure.ts [--runs 3]         every run in a fresh process at nice 15; a table and out/parity/measure/<commit>.json
+//
+// The library loads as it ships: the prebuilt bytecode bundle (tools/bundle.ts, rebuilt here first), preloaded by
+// tools/bundle_load.ts, so `start` is Bun plus the bundle and `link` is the scene's own modules (§8.1's first row).
 //   bun tools/parity/measure.ts child <scene.ts>   (child) one build, its phases, one JSON line
 //
 // Per run: CPU and peak RSS of the whole process (getrusage), CPU per phase, and the counts the model is built on
@@ -73,7 +76,7 @@ type Run = Child & { name: Name; cpuMs: number; rssMiB: number; load: { start: n
 
 async function run(name: Name): Promise<Run> {
   const start = loadavg()[0]!;
-  const p = Bun.spawn(["nice", "-n", "15", process.execPath, join(import.meta.dir, "measure.ts"), "child", MODEL[name].path], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  const p = Bun.spawn(["nice", "-n", "15", process.execPath, "--preload", join(ROOT, "tools/bundle_load.ts"), join(import.meta.dir, "measure.ts"), "child", MODEL[name].path], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
   const [out, err, exit] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
   if (exit !== 0) throw new Error(`measure child ${name} exited ${exit}: ${err.trim().split("\n").slice(-3).join(" | ")}`);
   const use = p.resourceUsage()!, end = loadavg()[0]!;
@@ -86,6 +89,8 @@ const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[xs.length >> 1]!;
 const f = (x: number) => x.toFixed(1).padStart(8);
 
 async function score(runs: number): Promise<void> {
+  const built = Bun.spawnSync([process.execPath, join(ROOT, "tools/bundle.ts")], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  if (built.exitCode !== 0) throw new Error(`measure: the library bundle did not build: ${built.stderr.toString().trim().split("\n").slice(-3).join(" | ")}`);
   const names = Object.keys(MODEL) as Name[], all: Run[] = [];
   for (let k = 0; k < runs; k++) for (const name of names) all.push(await run(name)); // alternating: owl, titan, heron, owl, ...
   const report = names.map((name) => {

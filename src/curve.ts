@@ -3,7 +3,7 @@
 // closed-form functions of time with no state (DESIGN.md 2.1).
 
 import {
-  abs, add, clamp, cos, CURVE_N, div, exp, lift, lt, max, mix, mul, row, Row, select, sin, smoothstep, step, sub, TAU, time,
+  abs, add, clamp, cos, CURVE_N, div, eq, exp, iterate, lift, lt, max, mix, mul, row, Row, select, sin, smoothstep, step, sub, TAU, time,
   type Expr, type In,
 } from "./expr.ts";
 import { SceneError } from "./errors.ts";
@@ -102,7 +102,15 @@ function kernel(x: Expr<"f32">): Expr<"f32"> {
  * parameter m in [0, 1] (clamped). The ends are mirrored (phantom points 2 p0 - p1 and 2 pn - pn-1, as in
  * `strand_kit::catmull_rom`), so the curve leaves its end points heading at the neighbouring point.
  */
-export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3"> {
+export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3">;
+/**
+ * The same spline through `count` points given by their index, `point(j)` for j = 0 .. count - 1 (an f32 holding a
+ * whole number), summed in one loop: the graph holds one point's expression, not `count` of them (a hull's 17
+ * stations: about 500 nodes instead of 7,000). Each weight is folded exactly as the list form folds it.
+ */
+export function through(m: In<"f32">, count: number, point: (j: Expr<"f32">) => In<"vec3">): Expr<"vec3">;
+export function through(m: In<"f32">, points: readonly In<"vec3">[] | number, point?: (j: Expr<"f32">) => In<"vec3">): Expr<"vec3"> {
+  if (typeof points === "number") return throughEach(m, points, point!);
   const n = points.length;
   if (n < 2) throw new Error(`through: need at least two control points, got ${n}`);
   const p = points.map((q) => lift<"vec3">(q));
@@ -116,6 +124,22 @@ export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3
   w[n - 1] = add(w[n - 1], mul(after, 2));
   w[n - 2] = sub(w[n - 2], after);
   return p.map((q, j) => mul(q, w[j])).reduce((s, x) => add(s, x)) as Expr<"vec3">;
+}
+
+function throughEach(m: In<"f32">, n: number, point: (j: Expr<"f32">) => In<"vec3">): Expr<"vec3"> {
+  if (!Number.isInteger(n) || n < 2) throw new Error(`through: need a whole count of at least two control points, got ${n}`);
+  const tau = mul(clamp(lift<"f32">(m), 0, 1), n - 1);
+  const before = kernel(add(tau, 1)), after = kernel(sub(tau, n));
+  // The list form's folds in its order, each a select of the fold or an exact 0 (x + 0 and x - 0 are x).
+  const weight = (j: Expr<"f32">): Expr<"f32"> => {
+    let w: Expr<"f32"> = kernel(sub(tau, j));
+    w = add(w, select(eq(j, 0), mul(before, 2), 0));
+    w = sub(w, select(eq(j, 1), before, 0));
+    w = add(w, select(eq(j, n - 1), mul(after, 2), 0));
+    return sub(w, select(eq(j, n - 2), after, 0));
+  };
+  const [sum] = iterate(n, [lift<"vec3">([0, 0, 0])], ([s], j) => [add(s, mul(lift<"vec3">(point(j)), weight(j)))]);
+  return sum;
 }
 
 /**
