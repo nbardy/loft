@@ -5,7 +5,6 @@ const sim = compute("dust", {
   writes: { state: { kind: "buffer", entries: 2048, lanes: 2 } },
   dispatch: [32],
   wgsl: wgsl`
-const dt: f32 = 1.0 / 60.0;
 fn hash(i: u32) -> f32 {
   var n = i * 747796405u + 2891336453u;
   n = ((n >> ((n >> 28u) + 4u)) ^ n) * 277803737u;
@@ -19,8 +18,8 @@ fn hash(i: u32) -> f32 {
 @compute @workgroup_size(64) fn settle(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x * 2u;
   let old = prev_state[i];
-  var v = prev_state[i+1u].xyz * vec3<f32>(0.989, 1, 0.989) - vec3<f32>(0, 3.6 * dt, 0);
-  var p = old.xyz + v * dt;
+  var v = prev_state[i+1u].xyz * vec3<f32>(0.989, 1, 0.989) - vec3<f32>(0, 3.6 * loft_dt, 0);
+  var p = old.xyz + v * loft_dt;
   var ground = 0.025;
   if (abs(p.x) < 0.46 && abs(p.z) < 0.39 && old.y >= 0.70) { ground = 0.70; }
   if (p.y < ground) {

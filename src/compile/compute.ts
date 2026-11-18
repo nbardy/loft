@@ -57,6 +57,8 @@ function shader(p: ComputePass, slots: Slots): string {
     ...(stepped ? p.writes.map(([name, r], i) => binding(1, q + i, r, `prev_${name}`, "read")) : []),
     ...p.reads.map(([symbol, r], i) => reader(1, (stepped ? 2 : 1) * q + i, r, symbol)),
   ];
+  // The step's length, derived from the declared rate, so the text never restates it (and cannot disagree with it).
+  if (p.when.kind === "steps") declarations.push(`const loft_dt: f32 = 1.0 / f32(${p.when.rate});`);
   if (p.when.kind === "frame") {
     declarations.push(
       "@group(0) @binding(0) var<storage, read> inputs: array<f32>;",

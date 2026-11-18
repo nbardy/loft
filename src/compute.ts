@@ -3,6 +3,7 @@ import { COMPUTE_TEXEL_BYTES as TEXEL_BYTES, computeHistorySize } from "./host/m
 import { SceneError, shown } from "./errors.ts";
 import { everything, leaves, lift, rawCall, rawComputeExpression, time, type Expr, type In, type LibFn } from "./expr.ts";
 import { WGSL_STATE, type EntryText, type WgslModule } from "./text/index.ts";
+import { RAW_PRELUDE } from "./text/raw_prelude.ts";
 
 type Extent = readonly [number, number] | readonly [number, number, number];
 type Grid = readonly [number] | Extent;
@@ -209,7 +210,7 @@ export function compute<const W extends Readonly<Record<string, Shape>>>(name: s
   if (when.kind === "steps" && dispatch.reduce((a, b) => a * b, when.count + 1) > 2 ** 22)
     resourceError(name, "over 4,194,304 workgroups across the steps", "a bounded step bake", "reduce dispatch or step count");
   record(name, "writes", spec.writes);
-  const aliases = new Set(["frame", "inputs", "params", "curves", "loft_detail", "view_dir", "curve", "CURVE_N"]);
+  const aliases = new Set(["frame", "inputs", "params", "curves", "loft_detail", "view_dir", "curve", "CURVE_N", "loft_dt"]);
   const handles = Object.create(null) as Record<string, BufferRead | TextureRead<"vec2" | "vec3">>;
   const writes = Object.entries(spec.writes).map(([key, shape]) => {
     identifier(name, "writes", key);
@@ -238,6 +239,10 @@ export function compute<const W extends Readonly<Record<string, Shape>>>(name: s
     resourceError(name, `a hole reading ${read.rows.length > 0 ? `the curve "${read.rows[0]!.label}"` : `the table "${read.tables[0]!.name}"`}`, "params, inputs, time and other passes' outputs", "bake the curve or table into a compute output, or read it in a drawable");
   if (when.kind !== "frame" && (read.inputs.length > 0 || read.params.length > 0))
     resourceError(name, `a ${when.kind} pass reading ${read.inputs.length > 0 ? (read.inputs[0]!.name === "time" ? "time" : `the input "${read.inputs[0]!.name}"`) : `the param "${read.params[0]!.name}"`}`, "time, inputs and params in frame passes only", when.kind === "steps" ? "a step's clock is its count: keep it in the state" : "use a constant here, or make it a frame pass");
+  // camera_ray reads the frame being drawn; a pass has no frame bound, so the GPU would refuse library text, not the author's.
+  const drawOnly = passLibs(code).find((l) => RAW_PRELUDE.get(l.name) === l);
+  if (drawOnly !== undefined)
+    resourceError(name, `a call of ${drawOnly.name}`, "WGSL builtins, this module's functions and holes", "compute the ray in a drawable (draw.shader), or pass the camera in as a param");
   const reads = passLibs(code).flatMap((l) => { const r = readers.get(l); return r === undefined ? [] : [[r.symbol, r] as const]; });
   passes.set(handles, { name, when, reads, writes, entry, dispatch, code });
   return Object.freeze(handles) as unknown as { readonly [K in keyof W]: Handle<W[K]> };

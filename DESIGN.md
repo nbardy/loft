@@ -1968,7 +1968,7 @@ with the time it reads appended (`rawCall` in src/expr.ts), so raw text reads an
 pass's reads are the outputs whose reading functions its text calls: the hole is the dependency, and a reader is bound
 under the output's symbol, as in a drawable. A module constant declared `f32` is written as `f32(...)` where raw text
 reads it: WGSL folds `3.6 * dt` in f32 for a typed constant and in abstract precision for a literal, and the last
-bit, compounded over 72 steps, moved the dust example's pixels. `camera_ray(px)` and `Ray` (src/text/raw_prelude.ts)
+bit, compounded over 72 steps, moved the dust example's pixels. A steps pass also sees `loft_dt: f32 = 1 / rate`, so its text never restates the rate. `camera_ray(px)` and `Ray` (src/text/raw_prelude.ts)
 are emitted only into a module whose raw text calls them.
 
 | Phase | Contents of an ordinary artefact | When it runs |

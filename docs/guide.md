@@ -657,8 +657,8 @@ pass's dependency: the producer runs first, in whatever order the scene lists th
   params and inputs, by name or hole. Use build or load for data shared by all frames.
   [Palette and frame texture example](../examples/compute_frame.ts)
 - **Steps** seeds state 0 with `when.start`, then runs `entry` exactly `when.count` times. The step sees the preceding
-  state at `prev_<output>` and writes into a freshly zeroed destination. A step's time is its count: write
-  `const dt: f32 = 1.0 / 60.0;` for the rate you declared (typed `f32`, so `3.6 * dt` folds as WGSL folds it).
+  state at `prev_<output>` and writes into a freshly zeroed destination. `loft_dt` is `1 / rate` seconds
+  (an `f32` constant); a step has no `time`, its clock is its count.
   Set `keep` to retain every nth state. It defaults to 1 and always keeps the seed and final state. Reads hold the
   latest kept state at or before the requested time, with the first and last states extending outside the simulation.
   [Particle example](../examples/compute_steps.ts), drawn by a `draw.shader` that reads `${sim.state}(f32(i), 0.0)`.

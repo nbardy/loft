@@ -70,7 +70,8 @@ export function wgsl(strings: TemplateStringsArray | string, ...holes: unknown[]
   const text = parts.map((s, k) => (k < parts.length - 1 ? `${s}${HOLE_PREFIX}${k}` : s)).join("");
   const source: Source = { file, line0: line, call, lines: text.split("\n") };
   parts.forEach((s) => {
-    const m = /\b(loft_\w*|__\w*)/.exec(s);
+    // `loft_dt` is the one compiler name text reads: a steps pass's `1 / rate` (src/compile/compute.ts).
+    const m = /\b(loft_(?!dt\b)\w*|__\w*)/.exec(s);
     if (m) {
       const before = text.slice(0, text.indexOf(s) + m.index).split("\n");
       throw new TextError(source, { line: before.length - 1, col: before[before.length - 1]!.length }, `the name ${m[1]}`, "a name that does not start with loft_ or __ (the compiler's own names)", "rename it");
