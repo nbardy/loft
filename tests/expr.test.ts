@@ -139,7 +139,7 @@ async function onGpu(exprs: readonly Expr[], us: readonly number[], table: Table
 test("fetch and iterate agree between JS and WGSL", async () => {
   const lanes = 3, entries = 7;
   const data = Float32Array.from({ length: entries * lanes * 4 }, (_, i) => Math.cos(i * 0.71) * 3 + i * 0.01);
-  const table: TableSource = { name: "probe", lanes, entries, role: "data", prepare: () => () => {} };
+  const table: TableSource = { name: "probe", lanes, entries, role: "data", data: new Float32Array(lanes * entries * 4) };
   const k = floor(mul(u, entries - 0.01));
   // A kaleidoscopic fold, six times: abs, shift, rotate, scale; the scale accumulates in the second component.
   const [q, scale] = iterate(6, [vec2(u, mul(u, 0.3)), f(1)], ([p, s]) => {

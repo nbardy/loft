@@ -11,6 +11,8 @@ export {
 } from "./expr.ts";
 // WGSL text as functions of expressions (src/text): maths written as a shader writer writes it.
 export { wgsl, type WgslModule } from "./text/index.ts";
+// A TypeScript function of expressions recorded once and called by reference (src/record/graph_fn.ts).
+export { graphFn } from "./record/graph_fn.ts";
 // Symbolic derivatives of expressions (src/grad.ts): a bump's normal from a height, a field's normal.
 export { gradient } from "./grad.ts";
 export { keys, ramp, through, bspline, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";

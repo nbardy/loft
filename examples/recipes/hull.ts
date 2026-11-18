@@ -32,7 +32,7 @@
 // fuselage. For a body round in every section use `lathe`; for one swept straight, `extrude`.
 
 import {
-  abs, add, atan2, clamp, cos, div, fract, lift, lt, mapNormal, max, min, mix, mul, NO_SKELETON, pow, select, sheet, sign, sin, smoothstep, sqrt, sub,
+  abs, add, atan2, clamp, cos, div, fract, graphFn, lift, lt, mapNormal, max, min, mix, mul, NO_SKELETON, pow, select, sheet, sign, sin, smoothstep, sqrt, sub,
   through, vec2, vec3, wgsl, length, type Expr, type F, type In, type P3, type Paint, type Rgb, type Skeleton, type Surface,
 } from "../../src/index.ts";
 
@@ -114,12 +114,15 @@ export class Hull {
       const u = lift<"f32">(i / (n - 1));
       return { u: i / (n - 1), curve: (v: F) => this.section(u, v) };
     });
-    const skinPoint = (u: F, v: F): P3 => through(u, this.stations.map((s) => s.curve(v)));
+    // Graph functions: the skin is read by its drawable, its normal, the deck and both bulwarks, each as a call of one
+    // recorded loft through every station, and the two edges (v = 0, 1) once each, not once per reader.
+    const skinPoint = graphFn("hull_skin", ["f32", "f32"], (u, v) => through(u, this.stations.map((s) => s.curve(v))));
+    const edge = [0, 1].map((v) => graphFn(`hull_edge${v}`, ["f32"], (u) => skinPoint(u, lift<"f32">(v))));
     this.skin = { point: skinPoint, normal: mapNormal(skinPoint), anchor: skinPoint, topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
     const L = this.lines;
     // The deck edge: the rail lowered by the bulwark and drawn in a little.
-    const deckEdge = (u: F, v: number): P3 => {
-      const p = skinPoint(u, lift<"f32">(v));
+    const deckEdge = (u: F, v: 0 | 1): P3 => {
+      const p = edge[v]!(u);
       return vec3(p.x, sub(p.y, L.bulwark * L.freeboard), mul(p.z, 0.93));
     };
     const deckPoint = (u: F, v: F): P3 => {
@@ -128,8 +131,8 @@ export class Hull {
     };
     this.deck = { point: deckPoint, normal: mapNormal(deckPoint), anchor: deckPoint, topology: { u: ["free", "free"], v: "free" }, skeleton: NO_SKELETON };
     this.bulwarks = [
-      sheet((u) => skinPoint(lift<"f32">(u), lift<"f32">(1)), (u) => deckEdge(lift<"f32">(u), 1)),
-      sheet((u) => skinPoint(lift<"f32">(u), lift<"f32">(0)), (u) => deckEdge(lift<"f32">(u), 0)),
+      sheet((u) => edge[1]!(lift<"f32">(u)), (u) => deckEdge(lift<"f32">(u), 1)),
+      sheet((u) => edge[0]!(lift<"f32">(u)), (u) => deckEdge(lift<"f32">(u), 0)),
     ];
     const stern = this.stations[0].curve;
     const top = (v: F): P3 => mix(stern(lift<"f32">(0)), stern(lift<"f32">(1)), v);

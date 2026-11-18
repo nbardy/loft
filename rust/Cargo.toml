@@ -13,6 +13,8 @@ publish = false
 # Exact and equal to Keel's lock: a bump happens in both repos in one change (plan §5.2; tools/check_pins.sh, lane 4.1).
 [workspace.dependencies]
 wgpu = { version = "=30.0.1", default-features = false }
+# naga is wgpu's own and moves with it: loft-core validates generated WGSL with it at compile, with no GPU (lane 2.2).
+naga = { version = "=30.0.1", default-features = false }
 # Shared by the compiler crates (wave 1): one version each across loft-ir, loft-node and loft-core.
 libm = "0.2.16"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -4,14 +4,14 @@
 // the library functions `sceneWgsl` does not already hold, the draws are ordered by phase and the pose function built.
 
 import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type ArtefactPass, type Detail, type Draw, type FrameState, type Loop, type PostPass, type Recurrence } from "../artefact.ts";
-import { compileJs, type Env, type Expr, type LibFn, type RowSource, type TableFrame, type TablePrep, type TableSource, type V } from "../expr.ts";
+import { compileJs, type Env, type Expr, type LibFn, type RowSource, type TableFrame, type TableSource, type V } from "../expr.ts";
 import type { Scene } from "../scene.ts";
 import { Slots } from "./bind.ts";
 import type { Program } from "./rates.ts";
 import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
-import { measureRest } from "../draw/grid_detail.ts";
+import { measureRest, REST_CENTRE, restPoints } from "../draw/grid_detail.ts";
 import { castPlan } from "../draw/cast.ts";
 import { lampShadows, refuseSpread } from "../frame/lamp_shadow.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
@@ -51,7 +51,7 @@ export function compile(scene: Scene): Artefact {
 export function compileScene(scene: Scene): Compiled {
   // The slots and the table registry need each other: a fetched table is declared on first sight, and classifying it
   // registers the leaves of its program (or compiles the CPU expressions of a hand-written fill).
-  const slots: Slots = new Slots((t) => tables.declare(t, prep), (p) => tables.lower(p));
+  const slots: Slots = new Slots((t) => tables.declare(t), (p) => tables.lower(p));
   const rows: RowSource = { kind: "table", slot: (r) => slots.row(r) };
   const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars), input: (spec) => slots.input(spec).slot });
   const cpu = (roots: readonly Expr[]): CpuFn => {
@@ -59,7 +59,6 @@ export function compileScene(scene: Scene): Compiled {
     const run = compileJs(roots, rows);
     return (frame, vars = {}) => run({ ...frame.env, vars });
   };
-  const prep: TablePrep = { compile: cpu };
   const resourcesOf = compileCompute(scene.compute, slots);
   const posts: PostSpec[] = [...scene.style.post];
   let screenInk = false;
@@ -76,7 +75,7 @@ export function compileScene(scene: Scene): Compiled {
   const lighting = lamps.lighting;
   const ctx: CompileContext = {
     slots, style: scene.style, ground: scene.ground, sun: scene.sun, sunAt: scene.sunAt, lighting, things: scene.things,
-    table: (t) => tables.declare(t, prep),
+    table: (t) => tables.declare(t),
     post: (p) => { posts.push(p); },
     outline: scene.outline, markOut,
     note: (line) => { if (!notes.includes(line)) notes.push(line); },
@@ -102,7 +101,7 @@ export function compileScene(scene: Scene): Compiled {
   // Passes are found from what the shaders call (src/compile/passes.ts); a scene that reads none finds none here, and
   // every step below that is about passes then does nothing.
   const found = discover(slots, [...slots.libs(), ...Object.values(modules).flatMap((m) => m.libs)]);
-  for (const d of found.defs) if (d.what.kind === "scene") tables.declare(d.what.camera, prep);
+  for (const d of found.defs) if (d.what.kind === "scene") tables.declare(d.what.camera);
   const depthPasses = found.defs.some((d) => d.what.kind === "scene" && d.what.keep === "depth");
   // castRay: its tables and functions exist only in a scene whose code calls it (src/draw/cast.ts).
   const casting = castPlan(ctx, [...Object.values(modules).flatMap((m) => m.libs), ...slots.libs()]);
@@ -160,7 +159,7 @@ export function compileScene(scene: Scene): Compiled {
   });
 
   // Stable sort by phase: within a phase, the order drawables emitted.
-  const detailOf = detailSlots(layout.placed, (roots) => cpu(roots)(restFrame));
+  const detailOf = detailSlots(layout.placed, (roots) => { const run = cpu(roots); return (vars) => run(restFrame, vars); });
   const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, depth, ...d }) => {
     const resolved = detailOf(detail, d);
     // The shader reads its level from `loft_detail[LOFT_DETAIL_SLOT + instance]` (an override, so one module serves
@@ -246,7 +245,7 @@ function refuseSpans(rs: readonly Recurrence[], loop: Loop): readonly Recurrence
  * shape measured at rest (`rest` evaluates expressions in the rest frame). One choice per bound table (a surface and its
  * ink outline name the same one), one per projected spec.
  */
-function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[]) => (V | boolean)[]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
+function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[]) => (vars: Env["vars"]) => (V | boolean)[]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
   const slots = new Map<object, number>();
   const measured = new Map<object, ReturnType<typeof measureRest>>();
   let next = 0;
@@ -266,8 +265,8 @@ function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[
         if (!p) throw new Error(`compile: draw "${d.label}" states bounds in table "${spec.bound.name}", which was never declared (ctx.table)`);
         if (spec.bound.entries !== d.instances || spec.bound.lanes !== 1) throw new Error(`compile: draw "${d.label}": its bound table must have 1 lane and one entry per instance (${d.instances}), got ${spec.bound.lanes} x ${spec.bound.entries}`);
         const m = measured.get(spec.bound) ?? (() => {
-          const values = rest([...spec.rest.samples, spec.rest.anchor]) as number[][];
-          const r = measureRest(values.slice(0, -1), values[values.length - 1]!);
+          const run = rest([spec.rest.point, spec.rest.anchor]);
+          const r = measureRest(restPoints.map((at) => run(at)[0] as number[]), run(REST_CENTRE)[1] as number[]);
           measured.set(spec.bound, r);
           return r;
         })();
@@ -284,10 +283,9 @@ function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[
  * program at time 0 with every input and param at its default, curve rows as authored.
  */
 export function readTablesAlone(roots: readonly TableSource[]): (t: TableSource) => Float32Array {
-  const slots: Slots = new Slots((t) => tables.declare(t, prep), (p) => tables.lower(p));
-  const prep: TablePrep = { compile: (r) => { slots.register(r); const run = compileJs(r); return (frame, vars = {}) => run({ ...frame.env, vars }); } };
+  const slots: Slots = new Slots((t) => tables.declare(t), (p) => tables.lower(p));
   const tables = new Tables({ register: (r) => slots.register(r), cpu: (r) => compileJs(r), wgsl: (v) => slots.wgsl(v), input: (spec) => slots.input(spec).slot });
-  for (const t of roots) tables.declare(t, prep);
+  for (const t of roots) tables.declare(t);
   const layout = tables.layout();
   const state: FrameState = { time: 0, inputs: new Float32Array(0), params: new Float32Array(0), curves: new Float32Array(0) };
   const { frame } = poseFrame(layout, () => ({ vars: {}, inputs: {}, params: {} }), state);

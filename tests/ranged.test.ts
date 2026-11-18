@@ -155,7 +155,7 @@ test("serpent 3b stops at its five-second wall budget", () => {
 
 test("raw shaders, GPU-only functions and CPU tables report the refused construct", () => {
   const raw = wgsl`fn customShader(x: f32) -> f32 { return fwidth(x); }`;
-  const table = E.fetch({ name: "cpuOnly", role: "data", entries: 1, lanes: 1, prepare: () => () => {} }, 0, 0);
+  const table = E.fetch({ name: "cpuOnly", role: "data", entries: 1, lanes: 1, data: new Float32Array(4) }, 0, 0);
   for (const [value, name] of [[raw.customShader!(time) as E.Expr<"f32">, "customShader"], [table.x, "cpuOnly"]] as const) {
     const v = always([time, 0, 1], ge(value, 0)).run(probe);
     expect(v).toMatchObject({ kind: "ranged", holds: "undecided" });

@@ -12,10 +12,10 @@
 // Every number may be an expression of time (centres drift, radii breathe, densities build). The pose pass groups
 // every CLUSTER consecutive blobs under a sphere and computes the light reaching each centre from the scene's lamps.
 // It also finds the depth of the other blobs toward the sun and zenith from one radius either side of each centre.
-// Media of up to two clusters use GPU maps. Larger ones use the CPU with a Morton sort for tighter culling spheres.
+// Every table is a GPU map. Media of more than two clusters are sorted along a Morton curve first, for tighter culling spheres.
 // The per-pixel shader adds each blob's own self-shadow at the point the ray sees, in closed form.
 
-import { add, div, dot, exp, fetch, iterate, length, lib, lift, listOf, max, min, mul, ne, select, sub, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
+import { add, and, div, dot, eq, exp, fetch, floor, iterate, length, lib, lift, listOf, lt, mapOf, max, min, mul, ne, or, select, sub, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
 import type { V3 } from "../compile/context.ts";
 import type { F, P3 } from "../map/types.ts";
 import { FAR, GAUSS_WGSL, gaussDepth, gaussTail } from "./gauss.ts";
@@ -224,8 +224,8 @@ export class Medium {
  *
  * The shape and its law: density(p) = sum of the puffs' and banks' Gaussians, so the optical depth along any ray is a
  * sum of closed forms (erf), integrated per pixel without marching. Lighting: each blob gets the other blobs' depth
- * toward the sun and zenith, and its light from each lamp, from a light pass each frame. Media with up to 16 blobs use
- * GPU tables in a built artefact. Larger media use CPU tables. Per pixel the depth is deposited into bins and composited front to back. `density(p)` gives the same sum as an expression.
+ * toward the sun and zenith, and its light from each lamp, from a light pass each frame, all GPU maps (more than 16
+ * blobs are first sorted along a Morton curve). Per pixel the depth is deposited into bins and composited front to back. `density(p)` gives the same sum as an expression.
  *
  * Parameters: `name` (an identifier: it names tables), the `puffs` (blobs and layers) and `banks`, each with the
  * expressions it takes. The list itself is fixed at build: blobs can move, not appear.
@@ -251,14 +251,8 @@ export function medium(name: string, parts: { readonly puffs?: readonly Puff[]; 
   return new Medium(name, parts.puffs ?? [], parts.banks ?? []);
 }
 
-/**
- * Blobs evaluated for one frame, in flat arrays (the light pass reads them O(N^2) times): centre, inverse radii,
- * density, albedo, seed (the blob's index as authored, so per-blob detail stays with it when the order changes).
- */
-type Frame = { n: number; c: Float64Array; k: Float64Array; d: Float64Array; col: Float64Array; seed: Float64Array; cc: Float64Array; cr: Float64Array };
-
 function makeTables(m: Medium, sun: V3, lights: readonly Light[]): MediumTables {
-  // Two clusters or fewer: a Morton sort buys little culling, so these media can be packed as plain GPU data.
+  // Two clusters or fewer: a Morton sort buys little culling, so these media keep the order they were written in.
   const { blobs, clusters } = m.blobs.length <= 2 * CLUSTER ? smallMediumTables(m, sun, lights) : sortedMediumTables(m, sun, lights);
   const layers: Optional = m.layers.length === 0 ? { kind: "none" } : (() => {
     const table: TableSource = {
@@ -279,45 +273,21 @@ function makeTables(m: Medium, sun: V3, lights: readonly Light[]): MediumTables 
   })();
   return { blobs, clusters, layers, banks };
 }
-function sortedMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<MediumTables, "blobs" | "clusters"> {
-  const N = m.blobs.length, NC = Math.ceil(N / CLUSTER);
-  const blobRoots = m.blobs.flatMap((q) => [vec4(q.centre, q.density), vec4(q.inv, 0), vec4(q.colour, 0)]);
-  // Each light at each blob's centre, as authored (before the sort): (toward, distance) and the amount. A light at
-  // infinity has no distance: its ray runs to FAR.
-  const lightRoots = m.blobs.flatMap((q) => lights.flatMap((l) => {
-    const a = l(q.centre);
-    return [vec4(a.toward, a.distance ?? FAR), vec4(a.amount, 0)];
-  }));
-  const blobs: TableSource = {
-    name: `${m.name}_blobs`, lanes: BLOB_LANES, entries: N + 1, role: "data",
-    program: { kind: "cpu", why: "sorts the blobs along a Morton curve and runs an O(N^2) light pass between them (a scan could; not ported in phase 1)", prepare: (p) => {
-      const run = p.compile([...blobRoots, ...lightRoots]);
-      const L = lights.length;
-      return (frame, out) => {
-        const v = run(frame) as number[][];
-        lightPass(sortAndCluster(v, N), (i, j) => ({ ray: v[3 * N + 2 * (i * L + j)]!, amount: v[3 * N + 2 * (i * L + j) + 1]! }), L, sun, out);
-      };
-    } },
-  };
-  // The spheres are recomputed from the (sorted) blob table, which this fill reads: the same sort, no shared state.
-  const clusters: TableSource = {
-    name: `${m.name}_clusters`, lanes: 1, entries: NC, role: "data",
-    program: { kind: "cpu", why: "bounding spheres of the sorted blobs, which are filled on the CPU", prepare: () => (frame, out) => {
-      const b = frame.table(blobs);
-      const sph = spheres(N, (j, a) => b[j * 20 + a], (j, a) => b[j * 20 + 4 + a]);
-      out.set(sph);
-    } },
-  };
-  return { blobs, clusters };
-}
-
-function smallMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<MediumTables, "blobs" | "clusters"> {
-  const N = m.blobs.length;
-  const base: TableSource = {
-    name: `${m.name}_puffs`, lanes: 3, entries: N, role: "data",
+/** The blobs as written: (centre, density), (inverse radii, index), (colour, 0). */
+function puffsTable(m: Medium): TableSource {
+  return {
+    name: `${m.name}_puffs`, lanes: 3, entries: m.blobs.length, role: "data",
     program: listOf(m.blobs.map((q, i) => [vec4(q.centre, q.density), vec4(q.inv, i), vec4(q.colour, 0)])),
   };
-  const zero = vec3(0, 0, 0);
+}
+
+/**
+ * The blob table: entry r is written blob `source(r)` and the light reaching it (as `BLOB_LANES` lanes), then one
+ * global entry (the lights' even share). The light pass: each light's transmission to the blob, through every blob,
+ * and the other blobs' depth toward the sun and zenith from one radius either side of its centre.
+ */
+function blobsTable(m: Medium, base: TableSource, source: (r: F) => F, sun: V3, lights: readonly Light[]): TableSource {
+  const N = m.blobs.length, zero = vec3(0, 0, 0);
   const depths = (p: P3, d: V3 | P3, reach: In<"f32">, skip: F | number): F =>
     iterate(N, [lift<"f32">(0)], ([tau], j) => {
       const a = fetch(base, j, 0), k = fetch(base, j, 1).xyz;
@@ -332,11 +302,11 @@ function smallMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<M
     const most = iterate(N, [zero], ([peak], j) => [max(peak, light(fetch(base, j, 0).xyz).amount)])[0];
     return add(rgb, mul(most, LIGHT_AMBIENT));
   }, zero);
-  const blobs: TableSource = {
+  return {
     name: `${m.name}_blobs`, lanes: BLOB_LANES, entries: N + 1, role: "data",
     program: { kind: "map", runs: [
-      { count: N, lanes: (i) => {
-        const c = fetch(base, i, 0), pk = fetch(base, i, 1), k = pk.xyz, p = c.xyz;
+      { count: N, lanes: (r) => {
+        const i = source(r), c = fetch(base, i, 0), pk = fetch(base, i, 1), k = pk.xyz, p = c.xyz;
         const local = lights.reduce((rgb, light) => {
           const a = light(p);
           const tau = depths(p, a.toward, a.distance ?? FAR, -1);
@@ -349,6 +319,58 @@ function smallMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<M
       { count: 1, lanes: () => [vec4(ambient, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0)] },
     ] },
   };
+}
+
+/**
+ * Media of more than two clusters: the blobs sorted along a Morton curve of their centres each frame, so that each
+ * cluster of CLUSTER consecutive blobs is compact and its sphere culls. All maps: the box of the centres, each blob's
+ * key (10 bits per axis in the box, interleaved, as two 15-bit halves so f32 holds them exactly), each blob's rank
+ * (keys, ties by index), the sorted blob table, and a sphere per cluster of it.
+ */
+function sortedMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<MediumTables, "blobs" | "clusters"> {
+  const N = m.blobs.length, base = puffsTable(m), centre = (j: In<"f32">): P3 => fetch(base, j, 0).xyz;
+  const [lo, hi] = iterate(N, [vec3(BIG, BIG, BIG), vec3(-BIG, -BIG, -BIG)], ([l, h], j) => [min(l, centre(j)), max(h, centre(j))]) as [P3, P3];
+  const box: TableSource = { name: `${m.name}_box`, lanes: 2, entries: 1, role: "data", program: listOf([[vec4(lo, 0), vec4(hi, 0)]]) };
+  const keys: TableSource = { name: `${m.name}_keys`, lanes: 1, entries: N, role: "data", program: mapOf(N, (j) => {
+    const l = fetch(box, 0, 0).xyz, q = min(max(floor(mul(div(sub(centre(j), l), max(sub(fetch(box, 0, 1).xyz, l), 1e-9)), 1023)), 0), 1023);
+    // Bit b of a whole number x < 1024, and bits b0 .. b0 + 4 of each axis interleaved (x lowest), as the CPU's `morton`.
+    const bit = (x: F, b: number): F => sub(floor(mul(x, 2 ** -b)), mul(floor(mul(x, 2 ** -(b + 1))), 2));
+    const half = (b0: number): F => [0, 1, 2, 3, 4].reduce((k, d) => add(k, add(add(mul(bit(q.x, b0 + d), 2 ** (3 * d)), mul(bit(q.y, b0 + d), 2 ** (3 * d + 1))), mul(bit(q.z, b0 + d), 2 ** (3 * d + 2)))), lift<"f32">(0));
+    return [vec4(half(5), half(0), 0, 0)];
+  }) };
+  const ranks: TableSource = { name: `${m.name}_ranks`, lanes: 1, entries: N, role: "data", program: mapOf(N, (j) => {
+    const kj = fetch(keys, j, 0);
+    const [n] = iterate(N, [lift<"f32">(0)], ([n], k) => {
+      const kk = fetch(keys, k, 0);
+      const before = or(lt(kk.x, kj.x), and(eq(kk.x, kj.x), or(lt(kk.y, kj.y), and(eq(kk.y, kj.y), lt(k, j)))));
+      return [add(n, select(before, 1, 0))];
+    });
+    return [vec4(n!, 0, 0, 0)];
+  }) };
+  const source = (r: F): F => iterate(N, [lift<"f32">(0)], ([s], j) => [select(eq(fetch(ranks, j, 0).x, r), j, s)])[0]!;
+  const blobs = blobsTable(m, base, source, sun, lights);
+  // A sphere per CLUSTER consecutive sorted blobs (the last cluster may hold fewer): their mean centre, and the reach
+  // of the farthest out to CLUSTER_EXTENT radii, rounded up a little so the f32 table and the shader never cut a blob.
+  const sphere = (c: F, n: number): Expr<"vec4">[] => {
+    const at = (j: F): P3 => fetch(blobs, add(mul(c, CLUSTER), j), 0).xyz, inv = (j: F): P3 => fetch(blobs, add(mul(c, CLUSTER), j), 1).xyz;
+    const mean = div(iterate(n, [vec3(0, 0, 0)], ([sum], j) => [add(sum, at(j))])[0]! as P3, n);
+    const [r] = iterate(n, [lift<"f32">(0)], ([r], j) => { const k = inv(j); return [max(r, add(length(sub(at(j), mean)), div(CLUSTER_EXTENT, min(k.x, min(k.y, k.z)))))]; });
+    return [vec4(mean, add(mul(r!, 1.001), 1e-3))];
+  };
+  const full = Math.floor(N / CLUSTER), rest = N - full * CLUSTER;
+  const clusters: TableSource = {
+    name: `${m.name}_clusters`, lanes: 1, entries: Math.ceil(N / CLUSTER), role: "data",
+    program: { kind: "map", runs: [{ count: full, lanes: (c) => sphere(c, CLUSTER) }, ...(rest === 0 ? [] : [{ count: 1, lanes: () => sphere(lift<"f32">(full), rest) }])] },
+  };
+  return { blobs, clusters };
+}
+
+/** Beyond any centre: the start of the box's min and max. */
+const BIG = 1e30;
+
+function smallMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<MediumTables, "blobs" | "clusters"> {
+  const N = m.blobs.length, zero = vec3(0, 0, 0), base = puffsTable(m);
+  const blobs = blobsTable(m, base, (r) => r, sun, lights);
   const entries = Math.ceil(N / CLUSTER);
   const clusters: TableSource = {
     name: `${m.name}_clusters`, lanes: 1, entries, role: "data",
@@ -362,123 +384,8 @@ function smallMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<M
   return { blobs, clusters };
 }
 
-/** Interleave the low 10 bits of x, y, z. */
-function morton(x: number, y: number, z: number): number {
-  const spread = (v: number): number => {
-    v = (v | (v << 16)) & 0x030000ff;
-    v = (v | (v << 8)) & 0x0300f00f;
-    v = (v | (v << 4)) & 0x030c30c3;
-    return (v | (v << 2)) & 0x09249249;
-  };
-  return spread(x) | (spread(y) << 1) | (spread(z) << 2);
-}
-
-/** The evaluated blobs, sorted along a Morton curve of their centres, with a bounding sphere per CLUSTER of them. */
-function sortAndCluster(v: readonly number[][], N: number): Frame {
-  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
-  for (let i = 0; i < N; i++) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], v[3 * i][a]); hi[a] = Math.max(hi[a], v[3 * i][a]); }
-  const q = (i: number, a: number) => Math.min(1023, Math.max(0, Math.floor(((v[3 * i][a] - lo[a]) / Math.max(hi[a] - lo[a], 1e-9)) * 1023)));
-  const order = Array.from({ length: N }, (_, i) => ({ i, key: morton(q(i, 0), q(i, 1), q(i, 2)) })).sort((a, b) => a.key - b.key || a.i - b.i);
-  const NC = Math.ceil(N / CLUSTER);
-  const fr: Frame = { n: N, c: new Float64Array(3 * N), k: new Float64Array(3 * N), d: new Float64Array(N), col: new Float64Array(3 * N), seed: new Float64Array(N), cc: new Float64Array(3 * NC), cr: new Float64Array(NC) };
-  order.forEach(({ i }, j) => {
-    for (let a = 0; a < 3; a++) { fr.c[3 * j + a] = v[3 * i][a]; fr.k[3 * j + a] = v[3 * i + 1][a]; fr.col[3 * j + a] = v[3 * i + 2][a]; }
-    fr.d[j] = v[3 * i][3];
-    fr.seed[j] = i;
-  });
-  const sph = spheres(N, (j, a) => fr.c[3 * j + a], (j, a) => fr.k[3 * j + a]);
-  for (let c = 0; c < NC; c++) { fr.cc.set(sph.subarray(4 * c, 4 * c + 3), 3 * c); fr.cr[c] = sph[4 * c + 3]; }
-  return fr;
-}
-
-/** A bounding sphere (centre, radius) per CLUSTER consecutive blobs, covering each blob out to EXTENT radii. */
-function spheres(N: number, centre: (j: number, a: number) => number, inv: (j: number, a: number) => number): Float32Array {
-  const NC = Math.ceil(N / CLUSTER);
-  const out = new Float32Array(4 * NC);
-  for (let c = 0; c < NC; c++) {
-    const a0 = c * CLUSTER, a1 = Math.min(N, a0 + CLUSTER);
-    const m = [0, 0, 0];
-    for (let j = a0; j < a1; j++) for (let a = 0; a < 3; a++) m[a] += centre(j, a) / (a1 - a0);
-    let r = 0;
-    for (let j = a0; j < a1; j++) {
-      const reach = CLUSTER_EXTENT / Math.min(inv(j, 0), inv(j, 1), inv(j, 2));
-      r = Math.max(r, Math.hypot(centre(j, 0) - m[0], centre(j, 1) - m[1], centre(j, 2) - m[2]) + reach);
-    }
-    // Rounded up a little: the f32 table and the shader's arithmetic must not cut a blob's edge.
-    out.set([m[0], m[1], m[2], r * 1.001 + 1e-3], 4 * c);
-  }
-  return out;
-}
-
-/** Puffs whose closest approach to a ray is beyond this (in the exponent) are skipped by the light pass. */
+/** Puffs whose closest approach to a ray is beyond this (in the exponent) are skipped by the shader's integration. */
 const CULL_Q = 16;
-
-const O4 = [0, 0, 0, 0], D4 = [0, 0, 0, 0];
-/** Optical depth of the other blobs along a ray from a point: toward infinity (`len` FAR) or to a point `len` away. */
-function depthThrough(fr: Frame, skip: number, o: readonly number[], d: readonly number[], len: number): number {
-  let tau = 0;
-  const NC = fr.cr.length;
-  for (let c = 0; c < NC; c++) {
-    // The cluster's sphere against the ray segment.
-    const ox = o[0] - fr.cc[3 * c], oy = o[1] - fr.cc[3 * c + 1], oz = o[2] - fr.cc[3 * c + 2];
-    const b = ox * d[0] + oy * d[1] + oz * d[2];
-    const tc = Math.min(Math.max(-b, 0), len);
-    const px = ox + d[0] * tc, py = oy + d[1] * tc, pz = oz + d[2] * tc;
-    if (px * px + py * py + pz * pz > fr.cr[c] * fr.cr[c]) continue;
-    const j1 = Math.min(fr.n, (c + 1) * CLUSTER);
-    for (let j = c * CLUSTER; j < j1; j++) {
-      if (j === skip || fr.d[j] <= 0) continue;
-      for (let a = 0; a < 3; a++) { O4[a] = fr.k[3 * j + a] * (o[a] - fr.c[3 * j + a]); D4[a] = fr.k[3 * j + a] * d[a]; }
-      // Cull by closest approach (in the blob's own units) before paying for erfc.
-      const al = Math.max(D4[0] * D4[0] + D4[1] * D4[1] + D4[2] * D4[2], 1e-20);
-      const tm = Math.min(Math.max(-(O4[0] * D4[0] + O4[1] * D4[1] + O4[2] * D4[2]) / al, 0), len);
-      const qx = O4[0] + D4[0] * tm, qy = O4[1] + D4[1] * tm, qz = O4[2] + D4[2] * tm;
-      if (qx * qx + qy * qy + qz * qz > CULL_Q) continue;
-      tau += fr.d[j] * (len >= FAR ? gaussTail(O4, D4) : gaussDepth(O4, D4, 0, len));
-    }
-  }
-  return tau;
-}
-
-/**
- * Fill the blob table: the evaluated blobs (sorted), the light reaching each from the sun, the sky and the scene's
- * lights. `arrival(i, j)`: light j at blob i as authored, (toward, distance) and the amount.
- */
-function lightPass(fr: Frame, arrival: (i: number, j: number) => { readonly ray: number[]; readonly amount: number[] }, lights: number, sun: V3, out: Float32Array): void {
-  // The ambient share: of the most of each light that reaches any blob.
-  const ambient = [0, 0, 0];
-  for (let j = 0; j < lights; j++) {
-    const most = [0, 0, 0];
-    for (let i = 0; i < fr.n; i++) { const a = arrival(i, j).amount; for (let k = 0; k < 3; k++) most[k] = Math.max(most[k]!, a[k]!); }
-    for (let k = 0; k < 3; k++) ambient[k] += LIGHT_AMBIENT * most[k]!;
-  }
-  const c = [0, 0, 0], at = [0, 0, 0];
-  for (let i = 0; i < fr.n; i++) {
-    for (let a = 0; a < 3; a++) c[a] = fr.c[3 * i + a];
-    // The others' depth toward a light, one radius (along the light) behind and in front of the centre.
-    const toward = (u: V3, sgn: number): number => {
-      const ku = Math.hypot(fr.k[3 * i] * u[0], fr.k[3 * i + 1] * u[1], fr.k[3 * i + 2] * u[2]);
-      const r = ku > 1e-9 ? 1 / ku : 0;
-      for (let a = 0; a < 3; a++) at[a] = c[a] + sgn * r * u[a];
-      return depthThrough(fr, i, at, u, FAR);
-    };
-    const sunBack = toward(sun, -1), sunFront = toward(sun, 1), upBack = toward(ZENITH, -1), upFront = toward(ZENITH, 1);
-    const light = [0, 0, 0];
-    for (let j = 0; j < lights; j++) {
-      const { ray, amount } = arrival(fr.seed[i]!, j);
-      if (!(Math.max(amount[0]!, amount[1]!, amount[2]!) > 1e-4)) continue;
-      const u = ray.slice(0, 3) as unknown as V3, dist = ray[3]!;
-      // The path to the light crosses this blob's own half too: count every blob.
-      const tau = depthThrough(fr, -1, c, u, dist);
-      // Through the same octaves of extinction the shader uses for sunlight (multiple scattering): a flash inside a
-      // thick cloud lights it from within instead of only the few blobs in direct sight of the channel.
-      const through = (Math.exp(-tau) + 0.5 * Math.exp(-0.3 * tau) + 0.25 * Math.exp(-0.09 * tau)) / 1.75;
-      for (let a = 0; a < 3; a++) light[a] += amount[a]! * through;
-    }
-    out.set([c[0], c[1], c[2], fr.d[i], fr.k[3 * i], fr.k[3 * i + 1], fr.k[3 * i + 2], fr.seed[i], fr.col[3 * i], fr.col[3 * i + 1], fr.col[3 * i + 2], 0, light[0], light[1], light[2], 0, sunBack, sunFront, upBack, upFront], i * 20);
-  }
-  out.set([ambient[0], ambient[1], ambient[2], 0], fr.n * 20);
-}
 
 // ---- WGSL ---------------------------------------------------------------------------------------------------------
 

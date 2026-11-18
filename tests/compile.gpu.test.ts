@@ -10,6 +10,7 @@ import {
   toon, variable, vec3, wave, framedPose, type Compiled, type Drawable, type F, type Surface, type TableSource,
 } from "../src/index.ts";
 import { compileScene } from "../src/compile/index.ts";
+import { fetch, listOf, mapOf, sub, vec4 } from "../src/expr.ts";
 import { FRAGMENT, gpu, layouts, probe, relErr, stateAt, VERTEX } from "./compile.harness.ts";
 
 // Scenes: the serpent, the two map demonstrations (a shell written as a map, the body with folded scales) and a stroke.
@@ -130,18 +131,9 @@ test("drawn surfaces land where a CPU evaluation of the same expressions says", 
 // Two tables share one buffer; the second reads the first, and both carry values a shader can only get through them.
 test("a table a drawable declares reaches the shader with the values its fill wrote", async () => {
   const lifted = param("probe.lift", 0.7);
-  const first: TableSource = { name: "first", lanes: 1, entries: 3, role: "data", prepare: (p) => {
-    const cpu = p.compile([mul(time, 3), add(lifted, 1)]);
-    return (frame, out) => {
-      const [t3, l1] = cpu(frame) as number[];
-      for (let i = 0; i < 3; i++) out.set([t3 + i, l1, i * 10, -1 - i], i * 4);
-    };
-  } };
-  const second: TableSource = { name: "second", lanes: 2, entries: 1, role: "data", prepare: () => (frame, out) => {
-    const src = frame.table(first);
-    out.set([src[0] * 2, src[4] * 2, src[8] * 2, 7], 0);
-    out.set([1, 2, 3, 4], 4);
-  } };
+  const first: TableSource = { name: "first", lanes: 1, entries: 3, role: "data", program: mapOf(3, (i) => [vec4(add(mul(time, 3), i), add(lifted, 1), mul(i, 10), sub(-1, i))]) };
+  const x = (k: number) => mul(fetch(first, k, 0).x, 2);
+  const second: TableSource = { name: "second", lanes: 2, entries: 1, role: "data", program: listOf([[vec4(x(0), x(1), x(2), 7), vec4(1, 2, 3, 4)]]) };
   const refs: { wgsl: string }[] = [];
   const thing: Drawable = { name: "tabled", skeletons: [], forms: [], draws(ctx) { refs.push(ctx.table(first), ctx.table(second)); return { shaders: {}, draws: [] }; } };
   const c = compileScene(scene({ ground: swell, things: [body, thing], style: toon(), sun: [0, 1, 0] }));

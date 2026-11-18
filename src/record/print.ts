@@ -53,9 +53,9 @@ class Canon {
  * through to its parent's memo; a call scope does not (its body's binders mean that call's arguments). A value that
  * reads no binder is memoised for the whole walk.
  */
-type Scope = { readonly level: number; readonly bound: Map<number, number>; readonly memo: Map<number, number>; readonly parent: Scope | undefined };
-const root = (): Scope => ({ level: 0, bound: new Map(), memo: new Map(), parent: undefined });
-const inner = (s: Scope): Scope => ({ level: s.level + 1, bound: new Map(s.bound), memo: new Map(), parent: s });
+type Scope = { readonly level: number; readonly bound: Map<number, number>; readonly args: ReadonlyMap<number, () => number>; readonly memo: Map<number, number>; readonly parent: Scope | undefined };
+const root = (): Scope => ({ level: 0, bound: new Map(), args: new Map(), memo: new Map(), parent: undefined });
+const inner = (s: Scope): Scope => ({ level: s.level + 1, bound: new Map(s.bound), args: s.args, memo: new Map(), parent: s });
 function find(s: Scope, global: Map<number, number>, id: number): number | undefined {
   const g = global.get(id);
   if (g !== undefined) return g;
@@ -109,7 +109,7 @@ export function printJob(job: Job): string {
   const fns = of(Decl.Fn), loops = of(Decl.Loop), kernels = of(Decl.Kernel), params = of(Decl.Param), inputs = of(Decl.Input);
   const N = job.nodes, sym = (k: number): string => symOf(job, k);
   const walk = (id: number, s: Scope, inCall: boolean): number => {
-    const hit = s.bound.get(id) ?? find(s, global, id);
+    const hit = s.bound.get(id) ?? s.args.get(id)?.() ?? find(s, global, id);
     if (hit !== undefined) return hit;
     const k = node(id, s, inCall);
     (c.levels[k] === 0 && !inCall ? global : s.memo).set(id, k);
@@ -138,9 +138,10 @@ export function printJob(job: Job): string {
       case Op.Vec: return c.op(`vec ${ty}`, kids());
       case Op.Loop: return c.op(`iter ${ty} ${flags}`, [loop(imm, s, inCall)]);
       case Op.Call: {
-        const d = fns[imm]!, args = kids();
-        // A call's body sees only its binders, bound to this call's arguments, at the caller's level.
-        const body: Scope = { level: s.level, bound: new Map(Array.from(d.words.subarray(4, 4 + d.words[3]!), (b, j) => [b, args[j]!])), memo: new Map(), parent: undefined };
+        const d = fns[imm]!, args = job.args.subarray(at, at + n);
+        // A call's body sees only its binders, bound to this call's arguments, at the caller's level. An argument is
+        // walked where its binder is first read, not before the body: the TS graph, which inlined the call, meets it there.
+        const body: Scope = { level: s.level, bound: new Map(), args: new Map(Array.from(d.words.subarray(4, 4 + d.words[3]!), (b, j) => [b, () => walk(args[j]!, s, inCall)])), memo: new Map(), parent: undefined };
         return walk(d.roots[0]!, body, true);
       }
       case Op.Grad: throw new Error("job: a Grad node (the wave-1 recorder writes derivatives expanded)");

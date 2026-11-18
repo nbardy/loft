@@ -192,7 +192,7 @@ export type PoseStage = { readonly label: string; readonly wgsl: string; readonl
 export type TableFillKind =
   | { readonly kind: "map"; readonly level: number }
   | { readonly kind: "scan"; readonly level: number }
-  /** `why`: the table's own reason (a hand-written fill), or the GPU table that reads it ("read by ..."). */
+  /** `why`: the table's reason ("filled once, at build", "supplied numbers"; older artefacts may name a reader). */
   | { readonly kind: "cpu"; readonly why: string }
   /** Replayed from a checkpoint of `recurrence` before the pose stages (`Recurrence.replay`). */
   | { readonly kind: "replay"; readonly recurrence: string };
