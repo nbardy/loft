@@ -27,6 +27,8 @@ import { abs, add, compileJs, everything, Expr, fold, le, leaves, lib, lift, max
 import { DerivativeError, defineDerivative, derivative } from "../grad.ts";
 import { always, measuredIn, type Ranged } from "../ranged.ts";
 import { bspline } from "../curve.ts";
+import { rustKernel } from "../core/switch.ts";
+import type { NativeSolve } from "../core/solve_rust.ts";
 
 type F = Expr<"f32">;
 
@@ -306,6 +308,8 @@ type Line = {
   /** The Hessian roots' jet pairs (indices into reads), after the gradient roots. */
   readonly pairs: readonly (readonly [number, number])[];
   readonly withGrad: (env: Env) => (V | boolean)[];
+  /** `withGrad`'s roots, for the Rust core (src/core/solve_rust.ts). */
+  readonly roots: readonly Expr[];
   readonly value: (env: Env) => (V | boolean)[];
   /** Times the hold is held at, this round. */
   samples: number[];
@@ -606,11 +610,16 @@ const CACHE_ENTRIES = 128;
 const cache = new Map<string, { curves: Readonly<Record<string, F>>; reports: readonly HoldReport[]; margins: readonly number[] }>();
 
 function checkedEvaluator(hold: HoldLine, roots: readonly Expr[], first: number, check: () => void): Line["value"] {
-  let fn: Line["value"];
-  try { fn = compileJs(roots); }
-  catch (e) { throw new SolveError({ kind: "unreadable", hold, at: first, detail: String(e) }); }
+  const compiled = (): Line["value"] => {
+    try { return compileJs(roots); }
+    catch (e) { throw new SolveError({ kind: "unreadable", hold, at: first, detail: String(e) }); }
+  };
+  // compileJs refuses only a library function it cannot run: without one it cannot fail, so it compiles on first
+  // use (never, when the Rust core runs the rounds) with the same outcome as compiling here.
+  let fn: Line["value"] | undefined = everything(roots).some((e) => e.node.op === "lib") ? compiled() : undefined;
   return (env) => {
     check();
+    fn ??= compiled();
     const at = env.inputs.time as number;
     let values;
     try { values = fn(env); }
@@ -806,7 +815,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     }
     const samples = a === b ? [a] : grid(a, b, h);
     const dense = a === b ? [a] : grid(a, b, h / 64);
-    return { hold, size: SIZE[hold.margin.ty as NumTy], reads: readNames.map((nm) => jetOf.get(nm)!), pairs, withGrad: checkedEvaluator(hold, roots, a, check), value: checkedEvaluator(hold, [margin], a, check), samples, dense };
+    return { hold, size: SIZE[hold.margin.ty as NumTy], reads: readNames.map((nm) => jetOf.get(nm)!), pairs, withGrad: checkedEvaluator(hold, roots, a, check), roots, value: checkedEvaluator(hold, [margin], a, check), samples, dense };
   });
 
   // The preference as an exact quadratic 0.5 x'Qx - b'x, by Gauss-Legendre over each knot gap.
@@ -872,7 +881,11 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     x.set(r, ch.offset);
   }
   let rounds = 0;
-  for (; ;) {
+  // LOFT_CORE=rust: the rounds in the Rust core (src/core/solve_rust.ts), or undefined when refused (reported there).
+  const native = rustKernel("solve") as NativeSolve | undefined;
+  const solved = native?.rounds({ lines, channels, jetNames, t0, delta, h, Q, b, x, frame, jet: JET, budget: ms === undefined ? undefined : { ms, start } });
+  if (solved !== undefined) { rounds = solved.rounds; problem.steps = solved.steps; }
+  else for (; ;) {
     rounds++;
     const v = problem.augmented(x);
     if (v > MET) diagnose(problem, lines, x);
@@ -910,14 +923,18 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   const solvedHolds = classify(spec.hold(curves));
   if (solvedHolds.length !== lines.length || solvedHolds.some((h, i) => !sameWindow(h, holds[i]!)))
     throw new SceneError("solve", "a hold function that changed its list or windows", "the same holds every call", "build the list of holds from the curves alone");
+  // LOFT_CORE=rust: measured in the Rust core, or undefined when refused (reported there).
+  const verified = native?.verify({ holds: solvedHolds, dense: lines.map((l) => l.dense), budget: ms === undefined ? undefined : { ms, start }, frameAt });
   const reports: HoldReport[] = solvedHolds.map((hold, i) => {
-    const fn = checkedEvaluator(hold, [hold.margin], lines[i]!.dense[0]!, check);
-    const frame = frameAt(leaves([hold.margin]));
-    const violation = (t: number): number => {
-      const m = comps(fn(frame(Math.fround(t)))[0]!);
-      return hold.kind === "equal" ? Math.max(...m.map(Math.abs)) : -m[0]!;
-    };
-    const worst = peaks(violation, lines[i]!.dense).reduce((w, p) => (p.v > w.v ? p : w), { t: lines[i]!.dense[0]!, v: -Infinity });
+    const worst = verified?.(i) ?? (() => {
+      const fn = checkedEvaluator(hold, [hold.margin], lines[i]!.dense[0]!, check);
+      const frame = frameAt(leaves([hold.margin]));
+      const violation = (t: number): number => {
+        const m = comps(fn(frame(Math.fround(t)))[0]!);
+        return hold.kind === "equal" ? Math.max(...m.map(Math.abs)) : -m[0]!;
+      };
+      return peaks(violation, lines[i]!.dense).reduce((w, p) => (p.v > w.v ? p : w), { t: lines[i]!.dense[0]!, v: -Infinity });
+    })();
     const miss = worst.v - (hold.kind === "equal" ? hold.within : 0);
     if (miss > 0) throw new SolveError({ kind: "unsolved", reason: "verification", worst: miss, at: worst.t, hold });
     return { kind: hold.kind, said: hold.said, site: hold.site, when: whenText(hold.times), worst: Math.max(worst.v, 0), at: worst.t };

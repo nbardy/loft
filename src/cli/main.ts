@@ -236,6 +236,8 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
 
 async function main(argv: readonly string[]) {
   const cmd = parseArgs(argv);
+  // LOFT_CORE=rust: the Rust compiler core's kernels (src/core/switch.ts), registered before anything compiles.
+  if (process.env.LOFT_CORE === "rust") await import("../core/native.ts");
   switch (cmd.kind) {
     case "render": return render(cmd);
     case "frames": return frames(cmd);

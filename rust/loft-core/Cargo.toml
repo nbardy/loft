@@ -1,0 +1,16 @@
+[package]
+name = "loft-core"
+version = "0.1.0"
+edition = "2021"
+description = "Loft's compiler core: numeric kernels the TypeScript compiler hands whole programs to (bun:ffi, one call each)."
+publish = false
+
+# No dependencies: the core takes packed bytes and returns packed bytes.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+opt-level = 3
+debug = false
+codegen-units = 1
+lto = true

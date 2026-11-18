@@ -25,6 +25,7 @@
 // Imports no bun-only module (the browser host uses it, through lower.ts).
 
 import type { Artefact } from "../artefact.ts";
+import { rustKernel } from "../core/switch.ts";
 
 /** How a draw's shader is compiled and drawn after sharing. */
 export type Sharing = {
@@ -268,6 +269,9 @@ function plumb(wgsl: string, start: number, width: number): string {
 }
 
 export function share(a: Artefact): Sharing {
+  // LOFT_CORE=rust: the Rust twin (src/core/share_rust.ts), or undefined when refused (reported there).
+  const native = (rustKernel("share") as ((a: Artefact) => Sharing | undefined) | undefined)?.(a);
+  if (native !== undefined) return native;
   const tables = accessors(a.sceneWgsl);
   const used = [...new Set(a.draws.map((d) => d.shader))];
   const reads = new Map<string, Read>();
