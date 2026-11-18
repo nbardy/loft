@@ -918,7 +918,8 @@ const bvecOf = (l: Lowerer, name: string, v: Value, at: At): readonly B[] => {
 };
 const DEG = Math.PI / 180;
 
-const BUILTINS = new Map<string, Builtin>([
+/** The WGSL builtins graph text lowers; `loft context` prints their names from here, so its list cannot drift. */
+export const BUILTINS = new Map<string, Builtin>([
   unary("abs", X.abs), unary("sign", X.sign), unary("floor", X.floor), unary("ceil", X.ceil), unary("fract", X.fract), unary("trunc", X.trunc),
   // WGSL's round is half to even; Loft's call-form `round` is floor(x + 0.5). Text means WGSL.
   unary("round", X.roundEven), unary("sqrt", X.sqrt), unary("inverseSqrt", X.inverseSqrt), unary("exp", X.exp), unary("exp2", X.exp2),

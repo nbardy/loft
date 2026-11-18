@@ -1,45 +1,42 @@
 <!--
-The written part of `loft context` (src/cli/context.ts): the craft, condensed, then the generated API map where the
-marker below stands, then failures and where to read more. docs/craft.md is the long form for people; keep this one
-short, since it is read in full before every scene. `bun tools/check_snippets.ts` runs its code and checks that every
+The written part of `loft context` (src/cli/context.ts): conventions and the smallest scene, WGSL text (the names in
+scope are generated where its marker stands), the craft, condensed, then the generated API map where its marker
+stands, then failures and where to read more. docs/craft.md is the long form for people; keep this one short, since it
+is read in full before every scene: tests/context.test.ts holds the whole print to its word budget. `bun tools/check_snippets.ts` runs its code and checks that every
 name in its inline code is exported.
 -->
 # Loft
 
-TypeScript expressions compiled to WGSL. A scene imports from `../src/index.ts` and default-exports
-`scene({ ground, things, style, sun, cameras })`; `ground` is `plane` (y = 0), `nothing` or `sea`. y is up. `time` is
-an argument, in seconds, so any frame draws alone; `period` says when every motion repeats. Expressions (`add`, `sin(time)`,
-`vec3`) draw on the GPU and evaluate on the CPU. A swept body's m runs 0 (root) to 1 (tip) and v 0 to 1 round it; a
-surface's u and v run 0 to 1; paint is a function of them. Give every scene two cameras: the whole with room round
-it, and the focus. `strand`, `spiralTube`, `sheetOn`, `ropes` and `impostors` return things: put them in `things`. `coil`, `fan`,
-`sheet`, `lathe`, `loft` and `extrude` return a bare surface: draw it first, `draw.surface(name, surface, { paint, grid })`.
+A scene imports from `../src/index.ts` and default-exports `scene({ ground, things, style, sun, cameras })`; `ground`
+is `plane` (y = 0), `nothing` or `sea`. y is up. Write the maths of a function (a spine, a girth, paint, a field) as
+WGSL in `wgsl` text and the structure (which things, where, cameras, checks) in TypeScript: both build one expression
+graph that draws on the GPU and evaluates on the CPU, so checks read what is drawn. `time` is an argument, in seconds,
+so any frame draws alone; `period` says when every motion repeats. A swept body's m runs 0 (root) to 1 (tip) and v 0
+to 1 round it; a surface's u and v run 0 to 1; paint is a function of them. Give every scene two cameras: the whole
+with room round it, and the focus. `strand`, `spiralTube`, `sheetOn`, `ropes` and `impostors` return things: put them
+in `things`. `coil`, `fan`, `sheet`, `lathe`, `loft` and `extrude` return a bare surface: draw it,
+`draw.surface(name, surface, { paint, grid })`.
 Light is the sun (`sun: { toward, amount }` dims or colours it; amount 0 is a moonless night) and up to seven `lights`,
-each a function of a world point returning `{ toward, amount, distance?, size? }`, such as `lamp(at, { colour, reach })`.
-A lamp casts a shadow when given shadow: true (its `size` softens it); any other light casts none unless its function does (`castRay`); a glow lights nothing by itself. Paint may return an
-object: `base` (the colour) and words of your own, of which the styles know gloss (0 to 1), metal and emits (linear
-light), and `pbr` also rough (0 to 1) and normal (a bump: `gradient` of a height); a style notes the words it does not read. Its `scatter` answers light from a direction, its `shade` changes
-the finished colour.
-Triangles your own code makes draw with `draw.mesh`; a solid you can intersect, with `draw.traced` (`march` traces a
-field). `recur` bakes a step (a flock, a grid) on the GPU into the files; it still reads as a function of time. `pass`
-is another camera's picture (a shadow map, a mirror) for an expression to read. `--samples 64 --shutter 0.05
---aperture 0.1` makes a still with motion blur and depth of field. Meshes come out (the bake command writes glTF, skinned and
-animated if asked), none go in. `loft` is `bun src/cli/main.ts`.
+each a function of a world point returning `{ toward, amount, distance?, size? }`, such as `lamp(at, { colour, reach })`;
+a lamp casts a shadow given shadow: true, a glow lights nothing by itself. Paint may return a struct: `base` (the colour)
+and words of your own, of which the styles know gloss (0 to 1), metal and emits (linear light), and `pbr` also rough
+and normal (a bump: `gradient` of a height); a style notes the words it does not read. Its `scatter` answers light
+from a direction, its `shade` changes the finished colour.
+Your own triangles draw with `draw.mesh`, a solid you can intersect with `draw.traced`. `pass` is another camera's
+picture (a mirror) for an expression to read. `--samples 64 --shutter 0.05 --aperture 0.1` makes a still with motion
+blur and depth of field. Meshes come out (the bake command writes glTF), none go in. `loft` is `bun src/cli/main.ts`.
 
 ```ts run
 // examples/reed.ts
-import { add, mul, scene, plane, sin, strand, time, toon, vec3, type F } from "../src/index.ts";
+import { plane, scene, strand, toon, wgsl } from "../src/index.ts";
 
-const reed = strand({
-  name: "reed",
-  spine: (m: F) => vec3(mul(mul(m, m), mul(sin(time), 0.6)), mul(m, 4), 0), // a point for each m; the tip sways
-  girth: (m: F) => add(0.25, mul(m, -0.2)),
-  tips: ["open", "point"],
-  paint: [0.85, 0.55, 0.2],
-});
+const reed = wgsl`
+fn spine(m: f32) -> vec3f { return vec3(m * m * sin(time) * 0.6, m * 4.0, 0.0); }  // a point per m; the tip sways
+fn girth(m: f32) -> f32 { return 0.25 - 0.2 * m; }`;
 
 export default scene({
   ground: plane,
-  things: [reed],
+  things: [strand({ name: "reed", spine: reed.spine, girth: reed.girth, tips: ["open", "point"], paint: [0.85, 0.55, 0.2] })],
   style: toon(),
   sun: [-0.4, 0.8, 0.45],
   cameras: {
@@ -53,6 +50,21 @@ export default scene({
 loft render examples/reed.ts --out out/reed.webp --views whole,tip --size 640x400
 loft frames examples/reed.ts --out out/reed_t.webp --times 0,0.8,1.6 --view whole --size 480x300
 ```
+
+# WGSL text
+
+`wgsl` returns a function per fn, taking expressions or numbers; it fills any slot a TypeScript function fills. A slot
+may pass more arguments than a fn declares (paint passes u, v, at); a returned struct fills a record slot by field
+name. In scope: the module's fns, structs and consts, `time`, the names below, and holes: `${x}` brings in a `param`,
+an `input`, a solved curve, a TypeScript function (called in the text) or a number. The subset that checks, `solve`
+and `gradient` read: f32, vec2f..vec4f, bool, mat2x2f, mat3x3f, constant arrays, structs; let, var, assignment,
+swizzle writes, if/else, for over a counter with break and continue, early return. As in WGSL, round ties to even, %
+truncates (mod floors) and 1 is an integer (write 1.0). A fn using anything else (integers, bit operations, textures,
+derivatives, while) is raw: it renders, and checks refuse it by name and line. Lower down, a module draws
+(`draw.shader`: vs and fs entries) or computes (`compute`), reading camera_ray(px), frame and holes.
+`loft show examples/reed.ts --thing reed` prints the WGSL the GPU runs, your lines marked. Call form (`add`, `mul`,
+`vec3`) is for what TypeScript does: mapping over parts, helpers.
+<!-- the names in scope in WGSL text are printed here -->
 
 # Craft (long form: docs/craft.md)
 
