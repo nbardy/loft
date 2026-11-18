@@ -19,6 +19,8 @@ const ROOT = join(import.meta.dir, "../..");
 const OUT = join(ROOT, "out/parity/R0");
 const VIEW = join(ROOT, "rust/loft-loader/target/release/loft-view");
 const DIFF = join(ROOT, "tools/parity/target/release/parity-diff");
+/** The paths that decide a reference picture. */
+const PICTURE = ["src", "examples", "rust/loft-loader", "tools/migrate.ts", "package.json"];
 const corpus = JSON.parse(readFileSync(join(import.meta.dir, "corpus.json"), "utf8")) as Corpus;
 
 type Corpus = {
@@ -68,10 +70,12 @@ function parse(argv: string[]): Mode {
 const sha = (b: Uint8Array | string) => createHash("sha256").update(b).digest("hex");
 const git = (...a: string[]) => Bun.spawnSync(["git", ...a], { cwd: ROOT }).stdout.toString().trim();
 
+/** A draw that outlives DEADLINE is killed and recorded as refused: a loft-view under load 25 once hung 15 min on one frame. */
+const DEADLINE = 300_000;
 async function spawn(cmd: string[]): Promise<{ exit: number; stdout: string; stderr: string }> {
-  const p = Bun.spawn(["nice", "-n", "15", ...cmd], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  const p = Bun.spawn(["nice", "-n", "15", ...cmd], { cwd: ROOT, stdout: "pipe", stderr: "pipe", timeout: DEADLINE });
   const [stdout, stderr, exit] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
-  return { exit, stdout, stderr };
+  return { exit, stdout, stderr: p.signalCode === null ? stderr : `killed (${p.signalCode}) after the ${DEADLINE / 1000} s deadline\n${stderr}` };
 }
 
 async function entries(only: string): Promise<Entry[]> {
@@ -141,9 +145,15 @@ async function draw(id: string, f: Shot, file: string): Promise<Frame> {
 let adapter: string | undefined;
 
 async function reference(only: string) {
-  const dirty = git("status", "--porcelain", "--", "src", "examples", "rust/loft-loader", "tools/migrate.ts", "package.json");
+  const dirty = git("status", "--porcelain", "--", ...PICTURE);
   if (dirty !== "") throw new ParityError(`R0 must be a commit: the tree is dirty where it decides pictures:\n${dirty}\nFix: commit or stash first`);
   if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: cargo build --release in rust/loft-loader`);
+  // R0 is the last commit that decides pictures, so a run interrupted at that commit resumes: recorded entries are kept.
+  const r0 = git("log", "-1", "--format=%H", "--", ...PICTURE), stamp = join(OUT, "r0");
+  const held = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : r0;
+  if (held !== r0) throw new ParityError(`${OUT} holds R0 ${held}, this tree's is ${r0}. Fix: check out ${held} to resume, or move ${OUT} aside for a new reference`);
+  mkdirSync(OUT, { recursive: true });
+  writeFileSync(stamp, `${r0}\n`);
   const started = { at: new Date().toISOString(), load1: loadavg()[0] };
   const list = await entries(only);
   mkdirSync(join(OUT, "entries"), { recursive: true });
@@ -151,6 +161,7 @@ async function reference(only: string) {
   const worker = async () => {
     for (let i = next++; i < list.length; i = next++) {
       const entry = list[i]!;
+      if (existsSync(join(OUT, "entries", `${entry.id}.json`))) continue;
       const b = await build(entry);
       const frames: Frame[] = [];
       if (b.kind === "built") {
@@ -169,7 +180,7 @@ async function reference(only: string) {
   const recs = list.map((e) => JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec);
   const count = <T,>(xs: T[], key: (x: T) => string) => xs.reduce<{ [k: string]: number }>((o, x) => ({ ...o, [key(x)]: (o[key(x)] ?? 0) + 1 }), {});
   const manifest = {
-    r0: git("rev-parse", "HEAD"), loftView: { sha256: sha(readFileSync(VIEW)), loader: git("log", "-1", "--format=%H", "--", "rust/loft-loader") },
+    r0, head: git("rev-parse", "HEAD"), loftView: { sha256: sha(readFileSync(VIEW)), loader: git("log", "-1", "--format=%H", "--", "rust/loft-loader") },
     adapter, only, corpus: sha(readFileSync(join(import.meta.dir, "corpus.json"))), started, ended: { at: new Date().toISOString(), load1: loadavg()[0] }, cpus: cpus().length,
     entries: recs.length, origins: count(recs, (r) => r.entry.origin.kind),
     builds: count(recs, (r) => r.build.kind === "refused" ? `refused:${r.build.verdict}` : r.build.kind),
@@ -198,7 +209,7 @@ async function repeat(only: string) {
     if (i % 200 === 0) console.log(`${i}/${drawn.length} frames, ${differing.length} differ`);
   }
   const envelope = Math.max(0, ...differing.map((d) => (d.diff as { maxDiff: number }).maxDiff));
-  const report = { r0: git("rev-parse", "HEAD"), only, frames: drawn.length, identical: drawn.length - differing.length - refused, refused, envelope, differing };
+  const report = { r0: readFileSync(join(OUT, "r0"), "utf8").trim(), only, frames: drawn.length, identical: drawn.length - differing.length - refused, refused, envelope, differing };
   writeFileSync(join(OUT, only === "" ? "repeat.json" : `repeat.only-${only}.json`), json(report));
   console.log(`${report.identical}/${drawn.length} frames byte-identical; ${differing.length} differ (envelope ${envelope} codes); ${refused} refused`);
 }
