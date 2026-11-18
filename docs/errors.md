@@ -109,6 +109,14 @@ and last line.
   units. For a clearance, increase `delta` or change the spline family. Reason `budget` means the shared `budget.ms` expired. Increase it or simplify the holds.
 - `unreadable` names the hold and, for a non-finite margin or derivative, the evaluation time. Check the domain of the
   expression at that time. Holds must also have a CPU evaluator and derivatives, and read each unknown at the hold's own time.
+  A clearance from a `skin` target is measured by a search, not an expression, and is refused as a hold the same way.
+
+A hold the solver cannot read as a target or a bound is a scene error naming it: `eventually in a hold`, `a hold built
+by or` (or `not`), `a hold compared by eq`, and `a hold quantified over <param>` (params take their defaults while
+solving). Name the instant with `always([time, t, t], ...)`, choose the branch, and check other ranges after solving
+with an `always` of their own. A hold is named by its line when written under `always`, and by `hold N of the solve at
+file:line` when bare. `equal(a, b, { at: 1 })` is the old spelling: the third argument is now `within`, a number, and
+the time is the range of an `always` (`equal: given within {"at":1}` says so).
 
 Refused the same way, without a fixture each: a step reading a param, a curve row, a per-frame table or a checkpointed
 recurrence; a span that is not a whole number of steps; a history over 120 x 64 MiB; a checkpointed state read at a time
@@ -136,7 +144,16 @@ counts the two separately. Its table gives the proven margin bounds, the witness
 - `undecided: boxes` or `undecided: ms` means the shared enclosure count or wall-clock budget ran out. Raise the indicated budget or narrow the domain.
 - `undecided: width` identifies a box the search could no longer split. An unbounded operator is named when known. Narrow its operands or rewrite the condition around its domain.
 - `undecided: unbounded` names a range end that could not be evaluated, including numeric overflow. Supply finite, defined ends.
-- `undecided: recur` identifies the scene's baked recurrence. A ranged read of raw WGSL or a GPU-only function names the function. A library function without an enclosure, a CPU table and a skin target also report their respective reasons. Use a supported expression or a sampled measurement.
+- `undecided: recur` identifies the scene's baked recurrence. A ranged read of raw WGSL or a GPU-only function names the function. A library function without an enclosure and a CPU table also report their respective reasons. Use a supported expression or a sampled measurement.
+- `undecided: width` with no operator, at a time where the twin's value is far from the bound, is usually a `floor`
+  inside the motion (a repeating arming's cycle, `dart`'s clock of holds): a box straddling the step encloses both
+  sides' values at once. Start the range after the step (`[time, sub(first, span.before), first]`) when the step is
+  outside what the check is about.
+
+A condition over a measured quantity (`clearance` from a `skin` target) is not proved: it is sampled at 60 Hz over its
+time range, and its row reads `no failure at N samples` or `FAIL`, never `holds`. Such a condition must be one range
+over `time` (scene error otherwise). Every library check that is not a condition (`landsInside`, `budget`, ...) is
+sampled the same way and says so.
 
 A malformed range or comparison is a scene error (exit 4). Give the ends independently of every quantified leaf,
 bind free variables, and use `ge`, `gt`, `le` or `lt`. Express approximate equality as a band.

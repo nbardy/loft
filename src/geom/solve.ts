@@ -6,9 +6,10 @@
 // The method (the note agent_notes/2026-11-18_solve/NOTE.md has the reasons):
 // - Family: each unknown is a uniform cubic B-spline (`bspline`) over the solve's span. Linear in its numbers, so the
 //   preference is an exact quadratic; C2, so jerk is defined; local, so a hold near one time moves few numbers.
-// - Holds: `equal(a, b, when)` and `atLeast(a, b, when)`, any expressions of the unknowns and `time`. A hold is a
-//   margin expression and the times it applies (an instant, an interval, or the whole span), which is what a ranged
-//   check reads; nothing about it is particular to this solver.
+// - Holds: conditions, the one vocabulary of checks (src/ranged.ts): a comparison of any expressions of the unknowns
+//   and `time` (`ge`, `le`, `gt`, `lt`, `and` of them, or `equal`), bare for the whole span or under
+//   `always([time, a, b], ...)` for an interval or an instant. Each is classified once here into a margin expression and
+//   the times it applies; the ranged check returned for it is the condition as written.
 // - Solver: an augmented Lagrangian (Powell-Hestenes-Rockafellar) over the numbers, each subproblem by Newton steps
 //   with Levenberg-Marquardt damping. The first and second derivatives of every hold are symbolic (src/grad.ts), taken
 //   in the unknowns' jets (value and three time derivatives at the hold's time) and carried to the numbers by the
@@ -22,9 +23,9 @@
 //   certify infeasibility. The deadline is shared by construction, optimisation, conflict diagnosis and verification.
 
 import { SceneError, siteOf } from "../errors.ts";
-import { abs, add, compileJs, everything, fold, ge, le, leaves, lib, lift, max, mul, rawComputeOf, replace, sub, time, variable, type LibFn, type Env, type Expr, type In, type NumTy, type V } from "../expr.ts";
+import { abs, add, compileJs, everything, Expr, fold, le, leaves, lib, lift, max, mul, rawComputeOf, replace, sub, time, variable, type LibFn, type Env, type In, type NumTy, type V } from "../expr.ts";
 import { DerivativeError, defineDerivative, derivative } from "../grad.ts";
-import { always, type Ranged } from "../ranged.ts";
+import { always, measuredIn, type Ranged } from "../ranged.ts";
 import { bspline } from "../curve.ts";
 
 type F = Expr<"f32">;
@@ -52,64 +53,100 @@ export function spline(n: number, from: In<"f32"> = 0): Family {
   return { kind: "spline", n, from: start };
 }
 
-/** When a hold applies: one instant, an interval, or (left out) the whole span of the solve. */
-export type When = { readonly at: number } | { readonly from: number; readonly to: number };
-/** `When` classified, with the whole span as its own variant. */
+/** When a hold applies: an instant, an interval, or the whole span of the solve (a bare condition). */
 type Times = { readonly kind: "at"; readonly t: number } | { readonly kind: "during"; readonly from: number; readonly to: number } | { readonly kind: "span" };
 
 /**
- * A stated constraint. At its `times`, the absolute value of each `equal` component must be at most `within`, or the scalar
- * `atLeast` margin must be nonnegative.
- * `site` is the line it was written on. The margin is an ordinary expression of the unknowns and `time` (of `time`
- * alone once solved), so a ranged check can read the same hold.
+ * A condition as `solve` reads it, classified once from what the author wrote (`holdsOf`): a target band (`equal`) or a
+ * lower bound on a margin (`ge`, `le`, `gt`, `lt`), at its `times`. The margin is an ordinary expression of the
+ * unknowns and `time` (of `time` alone once solved); `condition` is the comparison as written, which the returned
+ * ranged check proves.
  */
 export type HoldLine = {
   readonly times: Times;
-  readonly site: string | undefined;
+  /** The line it was written on (an `always` records its own), or else its place in the list of `solve`'s holds. */
+  readonly site: string;
+  /** The comparison the author wrote: `equal`, `ge`, `le`, `gt` or `lt`. */
+  readonly said: string;
+  readonly condition: Expr<"bool">;
 } & (
   | { readonly kind: "equal"; readonly within: number; readonly margin: Expr<NumTy> }
-  | { readonly kind: "atLeast"; readonly margin: F }
+  | { readonly kind: "bound"; readonly margin: F }
 );
-
-function timesOf(where: string, when: When | { readonly within: number } | undefined): Times {
-  if (when === undefined) return { kind: "span" };
-  if ("at" in when) {
-    if (!Number.isFinite(when.at)) throw new SceneError(where, `at ${when.at}`, "a finite time", "a time in seconds");
-    return { kind: "at", t: when.at };
-  }
-  if (!("from" in when)) {
-    if ("within" in when && !("to" in when)) return { kind: "span" };
-    throw new SceneError(where, "an incomplete window", "{ at } or { from, to }", "supply both interval ends or omit the window");
-  }
-  if (!(Number.isFinite(when.from) && Number.isFinite(when.to) && when.to > when.from)) throw new SceneError(where, `from ${when.from} to ${when.to}`, "from < to", "give the interval in increasing order, or { at } for one instant");
-  return { kind: "during", from: when.from, to: when.to };
-}
 
 const SIZE: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
-/**
- * Each component of `a - b` stays within ±`within` (default 1e-5), in its own units, at `when`: an instant `{ at }` (lands, reaches),
- * an interval `{ from, to }` (planted), or the whole span when left out. For `solve`'s `hold`.
- */
-export function equal(a: In<NumTy>, b: In<NumTy>, when?: (When & { readonly within?: number }) | { readonly within: number }): HoldLine {
-  const site = siteOf(new Error().stack);
-  const A = lift<NumTy>(a), B = lift<NumTy>(b);
-  if (A.ty !== B.ty && B.ty !== "f32" && A.ty !== "f32") throw new SceneError("equal", `a ${A.ty} and a ${B.ty}`, "two values of one size", "compare like with like: `.xy`, or vec3(...)");
-  const within = when?.within ?? TOLERANCE;
-  if (!(Number.isFinite(within) && within >= 0))
-    throw new SceneError("equal", `within ${within}`, "a finite nonnegative half-width", "give within in the units of each component");
-  return { kind: "equal", within, margin: sub(A, B) as Expr<NumTy>, times: timesOf("equal", when), site };
-}
+/** What `equal` wrote: its condition is then a target band of `margin`, not merely the inequality it also is. */
+type EqualMark = { readonly margin: Expr<NumTy>; readonly within: number };
+// Keyed by the interned condition, so two `equal`s of the same values and band are one entry, as they are one node.
+// Recognised by this registry, not by the shape of the expression: `all(abs(a - b) <= w)` written by hand is solved as
+// the inequality it literally is (correct, only less pinned).
+const equals = new WeakMap<Expr<"bool">, EqualMark>();
 
 /**
- * `a` is at least `b` (numbers) at `when` (as for `equal`): clear by a distance, above a floor, within a reach
- * (`atLeast(reach, distance)`). `solve` aims at the interior margin `delta` (default 4e-6).
+ * Each component of `a - b` is within ±`within` (default 1e-5) in its own units: a condition (a boolean expression),
+ * true where `max |a - b| <= within`. In `solve`'s `hold` it is a target (the solve pins it, not merely bounds it);
+ * anywhere else it is the comparison it is: `always([time, 1.2, 1.2], equal(foot, [3, 0.7]))`.
  */
-export function atLeast(a: In<"f32">, b: In<"f32">, when?: When): HoldLine {
-  const site = siteOf(new Error().stack);
-  const A = lift<"f32">(a), B = lift<"f32">(b);
-  if (A.ty !== "f32" || B.ty !== "f32") throw new SceneError("atLeast", `a ${A.ty} and a ${B.ty}`, "two numbers", "compare one component (`.y`), or a length");
-  return { kind: "atLeast", margin: sub(A, B), times: timesOf("atLeast", when), site };
+export function equal(a: In<NumTy>, b: In<NumTy>, within: number = TOLERANCE): Expr<"bool"> {
+  const A = lift<NumTy>(a), B = lift<NumTy>(b);
+  if (A.ty !== B.ty && B.ty !== "f32" && A.ty !== "f32") throw new SceneError("equal", `a ${A.ty} and a ${B.ty}`, "two values of one size", "compare like with like: `.xy`, or vec3(...)");
+  if (typeof within !== "number" || !(Number.isFinite(within) && within >= 0))
+    throw new SceneError("equal", `within ${typeof within === "object" ? JSON.stringify(within) : within}`, "a finite nonnegative half-width, a number",
+      "equal(a, b, 0.001); the time it holds is the range of an always: always([time, 0, 0.6], equal(a, b))");
+  const margin = sub(A, B) as Expr<NumTy>, m = abs(margin);
+  let largest: F;
+  switch (m.ty) {
+    case "f32": largest = m as F; break;
+    case "vec2": largest = max(m.x, m.y); break;
+    case "vec3": largest = max(m.x, m.y, m.z); break;
+    case "vec4": largest = max(m.x, m.y, m.z, m.w); break;
+  }
+  const condition = le(largest, within);
+  equals.set(condition, { margin, within });
+  return condition;
+}
+
+/** What a hold may be: a condition (the whole span), or one quantified by `always` over time. */
+type Hold = Expr<"bool"> | Ranged;
+
+/** A hold as written, classified into lines (an `and` is two). `place` names it where it records no line of its own. */
+function holdsOf(c: Hold, place: string): HoldLine[] {
+  if (c instanceof Expr) {
+    if (c.ty !== "bool") throw new SceneError("solve", `a hold that is a ${c.ty}`, "a condition: ge(a, b), equal(a, b), ...", "compare: ge(distance(p, rail), 0.4)");
+    return linesOf(c, { kind: "span" }, place);
+  }
+  if (typeof c !== "object" || c === null || !("formula" in c))
+    throw new SceneError("solve", `a hold that is ${JSON.stringify(c)?.slice(0, 60)}`, "a condition, or always([time, a, b], condition)", "hold: (c) => [equal(c.y, 0), always([time, 0, 0.5], ge(c.y, 0))]");
+  const f = c.formula, site = c.site ?? place;
+  if (f.kind !== "always") throw new SceneError("solve", `eventually in a hold (${site})`, "a condition at every time of its range: always, or a bare condition for the whole span",
+    "say when: always([time, t, t], condition) for one instant");
+  const [leaf, ...more] = f.leaves;
+  if (leaf!.key !== "input:time" || more.length > 0 || f.body.kind !== "atom")
+    throw new SceneError("solve", `a hold quantified over ${f.leaves.map((l) => l.label).join(", ")}${f.body.kind === "nested" ? " and nested" : ""} (${site})`,
+      "a hold over time alone (params and inputs take their defaults while solving)", "always([time, a, b], condition); check other ranges after solving with their own always");
+  const ends = [leaf!.lo.node, leaf!.hi.node];
+  if (!ends.every((n) => n.op === "const"))
+    throw new SceneError("solve", `a hold over a time range with a computed end (${site})`, "range ends that are numbers", "always([time, 0.6, 1.2], condition)");
+  const [a, b] = ends.map((n) => (n.op === "const" ? n.v[0]! : NaN)) as [number, number];
+  if (!(Number.isFinite(a) && Number.isFinite(b) && a <= b)) throw new SceneError("solve", `a hold from t = ${a} to ${b} (${site})`, "finite ends, the first no later", "give the range in increasing order");
+  return linesOf(f.body.condition, a === b ? { kind: "at", t: a } : { kind: "during", from: a, to: b }, site);
+}
+
+function linesOf(c: Expr<"bool">, times: Times, site: string): HoldLine[] {
+  const mark = equals.get(c);
+  if (mark !== undefined) return [{ kind: "equal", said: "equal", within: mark.within, margin: mark.margin, condition: c, times, site }];
+  const n = c.node;
+  if (n.op !== "call") throw new SceneError("solve", `a hold that is ${n.op === "const" ? `the constant ${n.v[0] ? "true" : "false"}` : `a ${n.op}`} (${site})`, "a comparison of the unknowns", "ge(c.y, 0)");
+  const [x, y] = n.args as [F, F];
+  switch (n.fn) {
+    case "ge": case "gt": return [{ kind: "bound", said: n.fn, margin: sub(x, y), condition: c, times, site }];
+    case "le": case "lt": return [{ kind: "bound", said: n.fn, margin: sub(y, x), condition: c, times, site }];
+    case "and": return [...linesOf(n.args[0] as Expr<"bool">, times, site), ...linesOf(n.args[1] as Expr<"bool">, times, site)];
+    case "or": case "not": throw new SceneError("solve", `a hold built by ${n.fn} (${site})`, "comparisons, joined by and: a solve meets every one", "split the hold, or choose the branch: the search is local and cannot pick one side of an or");
+    case "eq": case "ne": throw new SceneError("solve", `a hold compared by ${n.fn} (${site})`, "equal(a, b, within) or ge, le, gt, lt", "equal(a, b) for a target");
+    default: throw new SceneError("solve", `a hold built by ${n.fn} (${site})`, "a comparison: equal, ge, le, gt or lt (joined by and)", "ge(a, b)");
+  }
 }
 
 /**
@@ -127,20 +164,23 @@ export type SolveSpec<K extends string> = {
   /** The span [t0, t1] the unknowns cover, seconds. Outside it each holds its end value. */
   readonly over: readonly [number, number];
   readonly vary: Readonly<Record<K, Family>>;
-  /** The holds, written over the unknowns (each an expression of `time`). Called again with the solved curves. */
-  readonly hold: (c: Readonly<Record<K, F>>) => readonly HoldLine[];
+  /**
+   * The holds, conditions over the unknowns (each an expression of `time`): bare for the whole span, or
+   * `always([time, a, b], ...)` for an interval or an instant. Called again with the solved curves.
+   */
+  readonly hold: (c: Readonly<Record<K, F>>) => readonly Hold[];
   readonly prefer: Prefer<K>;
-  /** Interior target for atLeast, in each margin's units (default 4e-6). */
+  /** Interior target for a bound (`ge` and the rest), in each margin's units (default 4e-6). */
   readonly delta?: number;
   /** Wall-clock limit shared by setup, search and verification, in milliseconds. */
   readonly budget?: { readonly ms: number };
 };
 
 /** How well one hold is met by the returned curves, measured on the fine grid (and its instant). */
-export type HoldReport = { readonly kind: HoldLine["kind"]; readonly site: string | undefined; readonly when: string; readonly worst: number; readonly at: number };
+export type HoldReport = { readonly kind: HoldLine["kind"]; readonly said: string; readonly site: string; readonly when: string; readonly worst: number; readonly at: number };
 
 export type SolveReport = {
-  /** Interior target for each atLeast, in its margin's units. */
+  /** Interior target for each bound, in its margin's units. */
   readonly delta: number;
   /** Wall time of this call in ms, including cache lookup. */
   readonly ms: number;
@@ -150,14 +190,14 @@ export type SolveReport = {
   readonly rounds: number;
   /** Sample times the interval holds were held at, in all. */
   readonly samples: number;
-  /** Largest sampled |margin| for equal (at most its `within`), or lower-bound violation for atLeast (zero), and when. */
+  /** Largest sampled |margin| for equal (at most its `within`), or lower-bound violation for a bound (zero), and when. */
   readonly holds: readonly HoldReport[];
 };
 
 export type Solved<K extends string> = {
   /** The solved curves: `bspline(time, over, [numbers])`, ordinary expressions of time. */
   readonly curves: Readonly<Record<K, F>>;
-  /** Ranged checks over the solved curves, one always formula per authored hold and window. */
+  /** Ranged checks over the solved curves: each hold line's condition as written, under `always` over its times. */
   readonly holds: readonly (HoldLine & Ranged)[];
   readonly report: SolveReport;
 };
@@ -189,7 +229,7 @@ const MET = TOLERANCE / 10;
 const innerBand = (within: number) => within / 2;
 // Four settling allowances above contact, still inside the default half-band target of a planted equality (5e-6).
 const DEFAULT_DELTA = 4e-6;
-/** An atLeast hold near its target between samples gets a sample at the dip (in the margin's own units). */
+/** A bound near its target between samples gets a sample at the dip (in the margin's own units). */
 const NEAR = 1e-3;
 
 const whenText = (t: Times): string => {
@@ -207,11 +247,11 @@ function spanOf(t: Times, t0: number, t1: number): [number, number] {
     case "span": return [t0, t1];
   }
 }
-const holdText = (h: HoldLine): string => `${h.kind} ${whenText(h.times)}${h.site !== undefined ? ` (${h.site})` : ""}`;
+const holdText = (h: HoldLine): string => `${h.said} ${whenText(h.times)} (${h.site})`;
 
 function sameWindow(a: HoldLine, b: HoldLine): boolean {
-  return whenText(a.times) === whenText(b.times) && a.kind === b.kind &&
-    (a.kind === "atLeast" || (b.kind === "equal" && a.within === b.within));
+  return whenText(a.times) === whenText(b.times) && a.kind === b.kind && a.said === b.said &&
+    (a.kind === "bound" || (b.kind === "equal" && a.within === b.within));
 }
 
 function failureParts(f: SolveFailure): [string, string, string] {
@@ -585,23 +625,10 @@ function checkedEvaluator(hold: HoldLine, roots: readonly Expr[], first: number,
   };
 }
 
+/** The hold's condition as written, proved over its times. */
 function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine & Ranged {
-  const range = [time, ...spanOf(hold.times, ...over)] as const;
-  const settings = { label: holdText(hold) };
-  switch (hold.kind) {
-    case "atLeast": return { ...hold, ...always(range, ge(hold.margin, 0), settings) };
-    case "equal": {
-      const m = abs(hold.margin);
-      let largest: F;
-      switch (m.ty) {
-        case "f32": largest = m as F; break;
-        case "vec2": largest = max(m.x, m.y); break;
-        case "vec3": largest = max(m.x, m.y, m.z); break;
-        case "vec4": largest = max(m.x, m.y, m.z, m.w); break;
-      }
-      return { ...hold, ...always(range, le(largest, hold.within), settings) };
-    }
-  }
+  const r = always([time, ...spanOf(hold.times, ...over)], hold.condition, { label: holdText(hold) });
+  return { ...hold, ...r, site: hold.site };
 }
 
 /**
@@ -613,9 +640,9 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
  *   over: [0, 1.8],
  *   vary: { x: spline(10), y: spline(10) },
  *   hold: ({ x, y }) => [
- *     equal(vec2(x, y), [0, 1.9], { at: 0 }),                         // starts here
- *     equal(vec2(x, y), [3, 2.7], { at: 1.2 }),                       // lands
- *     atLeast(distance(vec2(x, y), RAIL), 0.4),                       // clear, always
+ *     always([time, 0, 0], equal(vec2(x, y), [0, 1.9])),              // starts here
+ *     always([time, 1.2, 1.2], equal(vec2(x, y), [3, 2.7])),          // lands
+ *     ge(distance(vec2(x, y), RAIL), 0.4),                            // clear: bare, so the whole span
  *   ],
  *   prefer: { jerk: 1 },
  * });
@@ -624,17 +651,20 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
  *
  * The law. Each unknown is a uniform cubic B-spline (`spline(n)`: n numbers) over `over`. The numbers minimise the
  * preference (an exact quadratic in them) subject to every hold, by an augmented Lagrangian with Newton steps and
- * exact symbolic derivatives. Each `equal` allows ±`within` (default 1e-5) per component. Each `atLeast` aims for a positive
- * margin (`delta`, default 4e-6) and checks the authored lower bound. Intervals are held once per knot gap on a grid 64
+ * exact symbolic derivatives. Each `equal` allows ±`within` (default 1e-5) per component and is pinned as a target. Each
+ * bound (`ge`, `le`, `gt`, `lt`; `and` is two holds) aims for a positive margin (`delta`, default 4e-6) and checks the
+ * authored bound (a strict `gt` is solved as `ge`: its returned check decides the strictness). Intervals are held once per knot gap on a grid 64
  * times coarser than the verification grid. The search adds samples around breaks and repeats up to 24 times.
  * Final verification reads the returned f32 controls at stored frame times, with the frame's f32 input and param defaults.
  * Pass `checks: leap.holds` to check the entire windows. The report gives the sampled worst misses and `delta`.
  * Identical problems reuse verified curves within a process. The cache keeps the 128 most recently used solutions.
  * A cache hit reports the time of this call and zero steps.
  *
- * Parameters: `hold` is a function of the unknown curves, so any expression of them is a hold (positions through a
- * rig, distances, `derivative(c.y, time)` for a speed or an acceleration); `over`, the families and the preference's
- * weights are numbers.
+ * Parameters: `hold` is a function of the unknown curves returning conditions, the same formulas a check takes: any
+ * comparison of expressions of them (positions through a rig, distances, `derivative(c.y, time)` for a speed or an
+ * acceleration), bare for the whole span or under `always([time, a, b], ...)` (a = b: an instant). `over`, the
+ * families and the preference's weights are numbers. A hold under `always` is named by its line; a bare one by its place
+ * in the list.
  *
  * What it cannot do, because of the law:
  * - guarantee between fine-grid times: an interval hold is checked at h/64 spacing (h the knot gap), not proven.
@@ -643,7 +673,8 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
  *   hold says nothing of which side of an obstacle to pass ("clear of the rail" is met under it as well as over it):
  *   the start picks the side. A failed local search returns `unsolved` with a suggested starting curve.
  * - read an unknown at another time than the hold's own (a delay): refused, naming the hold.
- * - hold for every value of a param or input: they take their defaults while solving.
+ * - hold for every value of a param or input: they take their defaults while solving (an `always` over one is refused).
+ * - hold `eventually`, or an `or` or a `not`: the search is local and cannot choose a time or a branch (refused).
  * - read raw WGSL or per-frame tables in a hold (refused, naming the hold).
  * - change after the build: the result is numbers. A hold that should follow a host input at run time is a closed
  *   form, not a solve.
@@ -690,9 +721,14 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   }
   const jetOf = new Map(jetNames.flatMap((names, k) => names.map((nm, d) => [nm, { k, d }] as const)));
 
-  const holds = spec.hold(jetCurves);
+  // Holds without a line of their own are named by their place in the list and the line `solve` was called on.
+  const called = siteOf(new Error().stack) ?? "solve";
+  const classify = (written: readonly Hold[]): HoldLine[] => {
+    if (!Array.isArray(written) || written.length === 0) throw new SceneError("solve", "no holds", "at least one hold", "hold: (c) => [always([time, 0, 0], equal(c.y, 0)), ...]");
+    return written.flatMap((h, i) => holdsOf(h, `hold ${i + 1} of the solve at ${called}`));
+  };
+  const holds = classify(spec.hold(jetCurves));
   check();
-  if (!Array.isArray(holds) || holds.length === 0) throw new SceneError("solve", "no holds", "at least one hold", "hold: (c) => [equal(c.y, 0, { at: 0 }), ...]");
 
   const pre = spec.prefer, near = pre.near;
   const weights = [pre.jerk ?? 0, pre.acceleration ?? 0, near?.weight ?? 0];
@@ -712,7 +748,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     holds.map(h => [h.kind, h.margin.id, h.times, h.kind === "equal" && h.within])]);
   const hit = cache.get(key);
   if (hit) {
-    const curves = hit.curves as Readonly<Record<K, F>>, current = spec.hold(curves);
+    const curves = hit.curves as Readonly<Record<K, F>>, current = classify(spec.hold(curves));
     if (current.length === hit.margins.length && current.every((h, i) =>
       h.margin.id === hit.margins[i] && sameWindow(h, holds[i]!))) {
       const checks = current.map(h => { check(); return rangedHold(h, spec.over); });
@@ -735,6 +771,8 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     check();
     const [a, b] = spanOf(hold.times, t0, t1);
     if (!(a >= t0 - 1e-12 && b <= t1 + 1e-12)) throw new SceneError("solve", `${holdText(hold)}, outside the span [${t0}, ${t1}]`, "holds within the span", "widen `over`, or move the hold");
+    const sampled = measuredIn([hold.margin]);
+    if (sampled.length > 0) throw new SolveError({ kind: "unreadable", hold, detail: `${sampled[0]!.what} is measured by a search on the CPU, not an expression; hold a clearance from a body, a disc or a column` });
     // Time differentiation is finished. JET now reads just its value argument. Keeping its three
     // unused derivatives would grow a five-channel position hold's Hessian from 15 entries to 210.
     const values = new Map<number, Expr>();
@@ -846,7 +884,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
         const m = comps(line.value(problem.env(x, t))[0]!);
         return line.hold.kind === "equal" ? Math.max(...m.map(Math.abs)) - innerBand(line.hold.within) : delta - m[0]!;
       };
-      // The worst time of each stretch that is broken, or that an atLeast hold nearly touches (within NEAR), joins the
+      // The worst time of each stretch that is broken, or that a bound nearly touches (within NEAR), joins the
       // samples: a local peak of the violation, refined between grid points. Taking the near ones too saves rounds,
       // since the next solve moves a little and a dip that was just clear is often the next one broken.
       const floor = line.hold.kind === "equal" ? MET : -NEAR;
@@ -869,7 +907,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
 
   // The answer as numbers, and the holds measured on the expressions actually returned (f32 constants).
   const curves = bsplines(spec, keys, offset, x, check);
-  const solvedHolds = spec.hold(curves);
+  const solvedHolds = classify(spec.hold(curves));
   if (solvedHolds.length !== lines.length || solvedHolds.some((h, i) => !sameWindow(h, holds[i]!)))
     throw new SceneError("solve", "a hold function that changed its list or windows", "the same holds every call", "build the list of holds from the curves alone");
   const reports: HoldReport[] = solvedHolds.map((hold, i) => {
@@ -882,7 +920,7 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     const worst = peaks(violation, lines[i]!.dense).reduce((w, p) => (p.v > w.v ? p : w), { t: lines[i]!.dense[0]!, v: -Infinity });
     const miss = worst.v - (hold.kind === "equal" ? hold.within : 0);
     if (miss > 0) throw new SolveError({ kind: "unsolved", reason: "verification", worst: miss, at: worst.t, hold });
-    return { kind: hold.kind, site: hold.site, when: whenText(hold.times), worst: Math.max(worst.v, 0), at: worst.t };
+    return { kind: hold.kind, said: hold.said, site: hold.site, when: whenText(hold.times), worst: Math.max(worst.v, 0), at: worst.t };
   });
   check();
   const checks = solvedHolds.map(h => { check(); return rangedHold(h, spec.over); });

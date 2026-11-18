@@ -15,7 +15,7 @@ import serpent, { headClearance, S } from "../examples/serpent.ts";
 import * as E from "../src/expr.ts";
 import { always, eventually } from "../src/ranged.ts";
 import { RangeRefusal, Unbounded } from "../src/interval.ts";
-import { formatChecks, runChecks } from "../src/check.ts";
+import { checkOutcome, formatChecks, runChecks } from "../src/check.ts";
 import { fwidth, wgslFn } from "../src/lib/wgsl.ts";
 import { mkdirSync, mkdtempSync, writeFileSync, unlinkSync, rmdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -66,7 +66,7 @@ test("examples/ranged.ts decides as the closed forms say", () => {
   expect(stone.bounds[1]).toBeGreaterThanOrEqual(0.01556);
   expect(stone.witness["stone.speed"]!).toBeCloseTo(6, 6);
   const verdicts = runChecks(demo.default, demo.checks, { compiled: probe.compiled });
-  expect(verdicts.map(({ kind, holds }) => [kind, holds])).toEqual([["ranged", false], ["ranged", true], ["sampled", true]]);
+  expect(verdicts.map((v) => [v.kind, checkOutcome(v)])).toEqual([["ranged", "fail"], ["ranged", "pass"], ["sampled", "pass"]]);
 }, 120000);
 
 const { time, ge } = E;
@@ -153,16 +153,14 @@ test("serpent 3b stops at its five-second wall budget", () => {
   expect(d).toMatchObject({ holds: "undecided", spent: { kind: "ms", ms: 5000 } });
 }, 120000);
 
-test("raw shaders, GPU-only functions, CPU tables and skin targets report the refused construct", () => {
+test("raw shaders, GPU-only functions and CPU tables report the refused construct", () => {
   const raw = wgslFn({ name: "customShader", ret: "f32", wgsl: "fn customShader(x: f32) -> f32 { return x; }" });
   const table = E.fetch({ name: "cpuOnly", role: "data", entries: 1, lanes: 1, prepare: () => () => {} }, 0, 0);
   for (const [value, name] of [[raw(time), "customShader"], [fwidth(time), "loft_fwidth"], [table.x, "cpuOnly"]] as const) {
     const v = always([time, 0, 1], ge(value, 0)).run(probe);
-    expect(v.holds).toBe("undecided");
+    expect(v).toMatchObject({ kind: "ranged", holds: "undecided" });
     expect(v.measured).toContain(name);
   }
-  const skin = { kind: "skin" as const, skin: demo.claw, frame: world.frame(E.vec3(0)) };
-  expect(always([time, 0, 1], skin).run(probe)).toMatchObject({ holds: "undecided", spent: { kind: "skin" } });
 });
 
 test("loft check prints a recurrence refusal and counts it separately", () => {

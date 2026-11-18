@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 import strike, { checks, strikes } from "../examples/strike.ts";
 import { PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact } from "../src/artefact.ts";
 import {
-  attack, compile, f, fetch, hit, hitSdf, landsInside, Probe, runChecks, scene, sea, staysClear, stopsAt, sub, telegraph, time, toon, vec2,
+  always, attack, clearance, compile, f, fetch, formatChecks, ge, hit, hitSdf, landsInside, le, Probe, runChecks, scene, sea, sub, telegraph, time, toon, vec2,
   type Check, type Hit, type Target,
 } from "../src/index.ts";
 import { compileScene } from "../src/compile/index.ts";
@@ -66,17 +66,27 @@ test("a body taken for the smear at t - dt is the body at that time", () => {
 });
 
 // Catches: a check that cannot fail. The example's own checks pass; a narrow lane (the head cannot fit) fails
-// landsInside, a target placed on the lane fails staysClear and stopsAt (the head passes through it before arming).
+// landsInside, a target placed on the lane fails the clearance proofs (the head passes through it before arming, and is
+// not at it when it arms).
 test("checks pass the example's attacks and fail a bad one", () => {
   const good = runChecks(strike, checks, { compiled });
   expect(good.filter((v) => !v.pass).map((v) => v.name)).toEqual([]);
+  // The ships are skins: their clearance is a CPU search (a measured quantity), so a condition over it is sampled and
+  // says so. Catches a sampled verdict printed as a proof ("holds"), or a skin clearance refused as undecided.
+  const enters = good.find((v) => v.name === "bite: head never enters the ship")!;
+  expect(enters).toMatchObject({ kind: "sampled", pass: true });
+  expect(enters.kind === "sampled" && enters.samples).toBeGreaterThan(200);
+  const table = formatChecks(good.filter((v) => v.kind === "sampled"));
+  expect(table).toContain("no failure at");
+  expect(table).not.toContain("holds");
 
   const narrow = runChecks(strike, [landsInside(strikes.bite)], { compiled, inputs: { "bite.radius": 0.25 } })[0];
   expect(narrow.pass).toBe(false);
   expect(narrow.value).toBeGreaterThan(0.2);
 
   const inTheWay: Target = { kind: "disc", centre: vec2(10.2, 0.75), radius: f(0.4) };
-  const early: Check[] = [staysClear(strikes.bite.part, inTheWay, { until: strikes.bite.attack.arm }), stopsAt(strikes.bite, inTheWay)];
+  const T = strikes.bite.attack.first;
+  const early: Check[] = [always([time, 0, T], ge(clearance(strikes.bite.part, inTheWay), 0)), always([time, T, T], le(clearance(strikes.bite.part, inTheWay), 0.1))];
   for (const v of runChecks(strike, early, { compiled })) expect(v.pass).toBe(false);
 }, 120000); // the skin targets (src/geom/skin_distance.ts) take 3-10 s of CPU on a loaded machine
 

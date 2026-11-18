@@ -889,7 +889,8 @@ const bite = attack({
 const lash = attack({ ..., part: "tail", motion: { kind: "sweep", hit: hit.arc({ centre, inner, outer, from, to }), root: 0.72, height: 0.25, inset: 0.45 } });
 const serpent = animate(restSpine, [bite, lash], (spine) => ({ things, parts: { head: part("head", head, { tip: 1 }), tail: part("tail", body, { from: 0.8, to: 1, tip: 1 }) } }));
 things: [...serpent.things, telegraph(bite), smear(serpent.strikes.bite, { over: 0.12, samples: 4 }), wake(body, { over: 1.6 })]
-export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strikes.bite, target), staysClear(part, target, { until: bite.arm }), minScreenSize(eye, "three", 4), budget({ triangles })];
+export const checks = [landsInside(serpent.strikes.bite), always([time, bite.first, bite.first], le(clearance(serpent.strikes.bite.part, target), 0.6)),
+  always([time, 0, bite.first], ge(clearance(part, target), 0)), minScreenSize(eye, "three", 4), budget({ triangles })];
 ```
 
 - **Remote attacks and arming** (2026-11-11). `Motion` has a fourth kind, `{ kind: "remote", hit }`: a hit shape and
@@ -898,8 +899,8 @@ export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strike
   `Arming`: `once(t)` or `every(period, first)`. `attack.armAt(t)` is the arming time of the cycle clock t is in (a
   cycle runs from its warning or wind-up, whichever is earlier, to the next one's), `attack.arm` is that now,
   `attack.cycle(t)` its number (a bolt's seed), `attack.first` the first arming. A repeating attack must fit its period
-  (lead plus recovery; a remote one has no motion span). Checks measure at the first arming: `landsInside` and `stopsAt`
-  read `first`, and `staysClear({ until })`, `minScreenSize({ at })` take an `Arming` as a time (`CheckTime`). Before,
+  (lead plus recovery; a remote one has no motion span). Checks measure at the first arming: `landsInside` reads
+  `first`, a clearance condition takes `first` as a range end, and `minScreenSize({ at })` takes an `Arming` as a time (`CheckTime`). Before,
   `floor(time / LOOP) * LOOP + at` evaluated at time 0 was a cycle that had passed or not begun.
 - **Hit shapes** (`Hit = Capsule | Disc | Arc`, every field an expression). One handler per kind for each question:
   `hitSdf` (signed distance in the xz plane: the one expression the telegraph draws and the checks evaluate),
@@ -934,12 +935,23 @@ export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strike
   overrides and evaluates expressions on the CPU at any time (each time is a pose of the tables it reads). Skeleton
   capsules are what is measured (radius = the larger half-axis, so distances are conservative). `landsInside` samples
   the part's footprint (its capsules from above) at the arming time and reports the share where `hitSdf > 0`;
-  `staysClear` is the least capsule-to-target distance at 60 Hz over a range (target: a vertical disc or a body's
-  skeleton); `stopsAt` asks for contact at arming and no penetration over the attack's span; `minScreenSize` projects the
-  feature's joint spheres through a named camera and takes the narrower side of their bounds; `budget` reads
-  `stats.maxTriangles` (the declared maximum, so it holds for every view). `runChecks` returns tagged `sampled`
-  and `ranged` verdicts. A ranged verdict can be undecided and also carries bounds, witness, work and stop reason.
+  `minScreenSize` projects the feature's joint spheres through a named camera and takes the narrower side of their
+  bounds; `budget` reads `stats.maxTriangles` (the declared maximum, so it holds for every view). `runChecks` returns
+  tagged `sampled` and `ranged` verdicts. A ranged verdict can be undecided and also carries bounds, witness, work and
+  stop reason; a sampled one carries `pass` and its sample count, and prints "no failure at N samples", never "holds".
   `loft check <scene.ts>` runs the module's exported checks and exits 5 for a failure or an undecided check.
+- **One vocabulary for a condition over time** (2026-11-18, `docs/proposals/2026-11-18_authoring_api.md` section 6).
+  A condition is a boolean expression; `always`/`eventually` quantify it over `[leaf, lo, hi]` (`[time, t, t]` an
+  instant), and `solve`'s holds are the same formulas (a bare one: the whole span). `equal(a, b, within)` is a
+  condition (`max |a - b| <= within`) that `solve` pins as a target, known by a registry `equal` writes, not by the
+  shape of the expression. The old staysClear and stopsAt are a measure and two conditions: `clearance(body, target)`
+  is an expression of time (capsule to capsule for a body, the footprint for a disc, the capped cylinder at the joints
+  for a column), so "clear until arming" and "reaches it at arming" are proved, not sampled at 60 Hz. A `skin` target's
+  distance is a search over its mesh, so its clearance is a measured leaf (`measured` in src/ranged.ts): a condition
+  over it is sampled at 60 Hz over one range of time and its verdict is `sampled`. The checks that measure what no
+  expression gives (a footprint's share, a triangle count, screen readability over a loop) stay sampled and say so.
+  Cost of the proofs, measured: the strike's ships (skins) sample as before (~3 s for 11 checks); the_strike's head
+  against its hull stand-in (a body riding the swell) takes ~14 ms a box, 32 s and 15 s at precision 1e-3.
 - **Solve cache** (`src/geom/solve.ts`). The process keeps the 128 most recently used verified solutions, keyed by
   the structural problem and its row data. A hit rebuilds the authored holds from the cached curves and checks their
   margin IDs and windows.
@@ -958,7 +970,7 @@ Where the plan met the code:
   at the start of a strike. The default anticipation is 0; the coil supplies it.
 - **The head's pitch is the neck's business.** A head hung forward of the neck at a pitch dove into the water when the
   neck met it horizontally; `approach` makes the neck climb into the head so it levels out, and `lead` (spine end to
-  tip) is a number of the creature measured once, then verified by `landsInside` and `stopsAt`.
+  tip) is a number of the creature measured once, then verified by `landsInside` and a clearance at arming.
 - **Past slices pose only what they are read for** (polish pass, 2026-11-11). A slice's cost is evaluating the posed
   spine at each station (about 2300 expression nodes per station in the example; frame transport is a quarter of it), so:
   a part placed on a body at a constant m (`on(body, c)`) takes its host's slice with `Body.atNear`, which posts only

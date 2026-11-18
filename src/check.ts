@@ -7,7 +7,7 @@
 
 import { replayClocks, replayStep, type Artefact, type Camera, type FrameState } from "./artefact.ts";
 import { compileScene, type Compiled, type CpuFn } from "./compile/index.ts";
-import { add, Expr, lift, time, variable, vec2, vec3, vec4, type In, type TableFrame } from "./expr.ts";
+import { add, clamp, div, dot, Expr, gt, length, lift, lt, max, min, mul, select, sub, time, variable, vec2, vec3, vec4, type In, type TableFrame } from "./expr.ts";
 import type { Light } from "./light.ts";
 import { luminance } from "./lib/index.ts";
 import type { Score } from "./geom/expression.ts";
@@ -25,27 +25,30 @@ import { RingWave } from "./geom/ring.ts";
 import { stateChecks } from "./check_state.ts";
 
 import { RawComputeError } from "./errors.ts";
-import type { Decision } from "./ranged.ts";
+import { measured, type Decision } from "./ranged.ts";
 
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
 type Inputs = Readonly<Record<string, number | readonly number[]>>;
 
 type Measurement = { readonly name: string; readonly value: number; readonly measured: string; readonly limit: string };
-type Sampled = Measurement & { readonly pass: boolean; readonly kind?: never };
+/** What a sampled check returns: whether any sample failed, and how many instants it measured (when it counts them). */
+type Sampled = Measurement & { readonly pass: boolean; readonly samples?: number; readonly kind?: never };
 
 /**
- * A check result: sampled, ranged (with bounds, witness, work and stop reason), or a sampled check that reads a raw
- * WGSL compute output, which has no CPU twin and so is undecided by name. Only the last two can be undecided.
+ * A check result: proved over a range (`ranged`, with bounds, witness, work and stop reason), measured at samples
+ * (`sampled`: a pass is "no failure at N samples", never "holds", since nothing is known between them), or a sampled
+ * check that reads a raw WGSL compute output, which has no CPU twin and so is undecided by name. Only the ranged and
+ * the raw-compute ones can be undecided.
  */
 export type Verdict =
-  | (Measurement & { readonly kind: "sampled"; readonly holds: boolean; readonly pass: boolean })
+  | (Measurement & { readonly kind: "sampled"; readonly pass: boolean; readonly samples: number | undefined })
   | (Measurement & Decision & { readonly kind: "ranged"; readonly pass: boolean | undefined })
   | (Measurement & { readonly kind: "raw-compute"; readonly holds: "undecided"; readonly pass: undefined; readonly resource: string });
 
 export function checkOutcome(v: Verdict): "pass" | "fail" | "undecided" {
   switch (v.kind) {
-    case "sampled": return v.holds ? "pass" : "fail";
+    case "sampled": return v.pass ? "pass" : "fail";
     case "ranged": return v.holds === "undecided" ? "undecided" : v.holds ? "pass" : "fail";
     case "raw-compute": return "undecided";
   }
@@ -104,7 +107,7 @@ export class Probe {
 
 export interface Check {
   readonly name: string;
-  /** A custom sampled check may return a measurement with `pass`. `runChecks` adds `kind: "sampled"` and `holds`. */
+  /** A custom sampled check may return a measurement with `pass` (and `samples`). `runChecks` adds `kind: "sampled"`. */
   run(probe: Probe): Sampled | Verdict;
 }
 
@@ -246,6 +249,80 @@ export function footprintShare(chain: readonly Joint[], outside: (x: number, z: 
   return { share: out / inside, area: inside * step * step };
 }
 
+// ---- measures -------------------------------------------------------------------------------------------------------
+
+type P3 = Expr<"vec3">;
+type Station = { readonly p: P3; readonly r: Expr<"f32"> };
+const stationsOf = (x: Measured): Station[] => {
+  const c = chainOf(x);
+  return Array.from({ length: c.range[1] - c.range[0] + 1 }, (_, i) => c.skeleton.joint(c.range[0] + i));
+};
+// A guard below which a squared length or a determinant counts as zero. Joints of a chain never coincide, so it only
+// matters for parallel segments, where any parameter is a closest one (Ericson 5.1.9 takes s = 0; a clamp of a huge
+// quotient gives an end, which is as good).
+const TINY = 1e-12;
+
+/** Least surface distance between two tapered capsules: segment-to-segment closest points, the radii there subtracted. */
+function capsuleGap(a0: Station, a1: Station, b0: Station, b1: Station): Expr<"f32"> {
+  const d1 = sub(a1.p, a0.p), d2 = sub(b1.p, b0.p), r = sub(a0.p, b0.p);
+  const a = dot(d1, d1), e = max(dot(d2, d2), TINY), f = dot(d2, r), c = dot(d1, r), b = dot(d1, d2);
+  const s0 = clamp(div(sub(mul(b, f), mul(c, e)), max(sub(mul(a, e), mul(b, b)), TINY)), 0, 1);
+  const t0 = div(add(mul(b, s0), f), e);
+  const s = select(lt(t0, 0), clamp(div(mul(c, -1), max(a, TINY)), 0, 1), select(gt(t0, 1), clamp(div(sub(b, c), max(a, TINY)), 0, 1), s0));
+  const t = clamp(t0, 0, 1);
+  const pa = add(a0.p, mul(d1, s)), pb = add(b0.p, mul(d2, t));
+  return sub(sub(length(sub(pa, pb)), add(a0.r, mul(sub(a1.r, a0.r), s))), add(b0.r, mul(sub(b1.r, b0.r), t)));
+}
+
+/** Least distance in the water plane from a capsule's footprint to a point (a disc's centre), less the capsule's radius there. */
+function footprintGap(a0: Station, a1: Station, centre: Expr<"vec2">): Expr<"f32"> {
+  const p0 = a0.p.xz, d = sub(a1.p.xz, p0);
+  const s = clamp(div(dot(sub(centre, p0), d), max(dot(d, d), TINY)), 0, 1);
+  return sub(length(sub(centre, add(p0, mul(d, s)))), add(a0.r, mul(sub(a1.r, a0.r), s)));
+}
+
+/**
+ * How far a body's surface is from a target, as an expression of time (negative: it is inside): the least, over the
+ * body's chain of capsules (its skeleton, the chain that casts its shadow), of the target's distance less the
+ * capsule's radius there. A measure, so a condition over it is proved, not sampled:
+ * `always([time, 1, 3], ge(clearance(tail, ship), 0.1))` (stays clear) and `always([time, T, T], le(clearance(head,
+ * ship), 0.1))` (reaches it at T). Targets: a disc on the ground (the footprint's distance in the water plane), a
+ * column (its capped cylinder, at the joints) or another body (capsule to capsule).
+ * cannot: be proved against a `skin` target: a skin's signed distance is a CPU search over its mesh, not an expression,
+ *   so the clearance from one is a measured quantity, and a condition over it is sampled at 60 Hz (its verdict is
+ *   `sampled`, "no failure at N samples"). It cannot be a `solve` hold (refused).
+ * relatives: always, eventually, letsGoClean, fliesClear.
+ */
+export function clearance(body: Measured, target: Target): Expr<"f32"> {
+  const ours = stationsOf(body);
+  const each: Expr<"f32">[] = [];
+  const segments = <T>(xs: readonly T[]): [T, T][] => xs.slice(1).map((x, i) => [xs[i]!, x]);
+  switch (target.kind) {
+    case "disc":
+      for (const [a0, a1] of segments(ours)) each.push(sub(footprintGap(a0, a1, target.centre), target.radius));
+      break;
+    case "column":
+      // The capped cylinder's own distance at each joint (exact for a ball, at the joints for a longer chain).
+      for (const j of ours) {
+        const dx = sub(length(sub(j.p.xz, target.centre)), target.radius), dy = sub(j.p.y, target.top);
+        each.push(sub(add(length(max(vec2(dx, dy), 0)), min(max(dx, dy), 0)), j.r));
+      }
+      break;
+    case "body": {
+      const theirs = stationsOf(target.body);
+      for (const [a0, a1] of segments(ours)) for (const [b0, b1] of segments(theirs)) each.push(capsuleGap(a0, a1, b0, b1));
+      break;
+    }
+    case "skin": {
+      // The skin's signed distance is a search over its mesh (src/geom/skin_distance.ts), not an expression: a measured
+      // quantity, so a condition over it is sampled, and its verdict says so.
+      const c = chainOf(body);
+      return measured(`${c.name}'s clearance from a skin`, (probe, t) => gap(probe, probe.joints(c.skeleton, c.range, t), target, t));
+    }
+  }
+  return each.reduce((least, x) => min(least, x));
+}
+
 // ---- the checks ---------------------------------------------------------------------------------------------------
 
 /**
@@ -276,46 +353,7 @@ export function landsInside(strike: Strike, o: { readonly tolerance?: number; re
       const chain = probe.joints(c.skeleton, c.range, T);
       const sdf = probe.planar((p) => hitSdf(a.hit, p), T);
       const { share } = footprintShare(chain, (x, z) => sdf(x, z) > 0, step);
-      return { name: this.name, pass: share <= tol, value: share, measured: `${(share * 100).toFixed(1)}% outside`, limit: `<= ${(tol * 100).toFixed(1)}%` };
-    },
-  };
-}
-
-/** The least distance between `body` and `target` from `from` until (not including) `until` is at least `margin`. */
-export function staysClear(body: Measured, target: Target, o: { readonly until: CheckTime; readonly from?: CheckTime; readonly margin?: number; readonly rate?: number; readonly label?: string }): Check {
-  const c = chainOf(body), margin = o.margin ?? 0, rate = o.rate ?? 60;
-  return {
-    name: o.label ?? `${c.name} stays clear of the target`,
-    run(probe) {
-      const t1 = timeOf(probe, o.until), t0 = o.from === undefined ? 0 : timeOf(probe, o.from);
-      let least = Infinity, when = t0;
-      for (const t of times(t0, t1, rate)) {
-        const g = gap(probe, probe.joints(c.skeleton, c.range, t), target, t);
-        if (g < least) { least = g; when = t; }
-      }
-      return { name: this.name, pass: least >= margin, value: least, measured: `${fmt(least)} at t=${fmt(when, 2)} (${fmt(t0, 2)}..${fmt(t1, 2)})`, limit: `>= ${fmt(margin)}` };
-    },
-  };
-}
-
-/**
- * The striking part reaches the target at the arming time (within `contact`) and never enters it over the whole
- * attack (it stops at the hull: the least distance is at least `-tolerance`). An attack that repeats is measured over its
- * first arming.
- */
-export function stopsAt(strike: Strike, target: Target, o: { readonly contact?: number; readonly tolerance?: number; readonly rate?: number } = {}): Check {
-  const a = strike.attack, c = chainOf(strike.part), contact = o.contact ?? 0.6, tol = o.tolerance ?? 0.05, rate = o.rate ?? 60;
-  return {
-    name: `${a.name}: ${c.name} stops at the target`,
-    run(probe) {
-      const T = probe.scalar(a.first);
-      const at = gap(probe, probe.joints(c.skeleton, c.range, T), target, T);
-      let least = Infinity;
-      for (const t of times(T - a.span.before, T + a.span.after, rate)) least = Math.min(least, gap(probe, probe.joints(c.skeleton, c.range, t), target, t));
-      return {
-        name: this.name, pass: at <= contact && least >= -tol, value: least,
-        measured: `gap ${fmt(at)} at arming, least ${fmt(least)}`, limit: `gap <= ${fmt(contact)}, least >= ${fmt(-tol)}`,
-      };
+      return { name: this.name, pass: share <= tol, samples: 1, value: share, measured: `${(share * 100).toFixed(1)}% outside`, limit: `<= ${(tol * 100).toFixed(1)}%` };
     },
   };
 }
@@ -341,7 +379,7 @@ export function litBy(light: Light, feature: Measured, o: { readonly least: numb
       const mean = each.reduce((a, e) => a + e.lum, 0) / each.length;
       const dark = each.reduce((a, e) => (e.lum < a.lum ? e : a), each[0]!);
       return {
-        name: this.name, pass: mean >= o.least, value: mean,
+        name: this.name, pass: mean >= o.least, samples: 1, value: mean,
         measured: `${fmt(mean)} on average over ${each.length} joints at t=${fmt(t, 2)}; least ${fmt(dark.lum)} at [${dark.at.map((x) => fmt(x, 2)).join(", ")}]`,
         limit: `>= ${fmt(o.least)}`,
       };
@@ -366,7 +404,7 @@ export function minScreenSize(feature: Measured, camera: string, pixels: number,
         x0 = Math.min(x0, q.x); x1 = Math.max(x1, q.x); y0 = Math.min(y0, q.y); y1 = Math.max(y1, q.y);
       }
       const across = Math.min(x1 - x0, y1 - y0);
-      return { name: this.name, pass: across >= pixels, value: across, measured: `${fmt(across, 1)} px at t=${fmt(t, 2)}`, limit: `>= ${pixels} px` };
+      return { name: this.name, pass: across >= pixels, samples: 1, value: across, measured: `${fmt(across, 1)} px at t=${fmt(t, 2)}`, limit: `>= ${pixels} px` };
     },
   };
 }
@@ -446,7 +484,7 @@ export function expressionsRead<K extends string, N extends string>(score: Score
         if (far.px < closest.px) closest = { px: far.px, pair: `${names[i]} / ${names[j]}`, mark: far.mark };
       }
       return {
-        name: this.name, pass: hidden.length === 0 && closest.px >= least, value: closest.px,
+        name: this.name, pass: hidden.length === 0 && closest.px >= least, samples: ts.length, value: closest.px,
         measured: `${hidden.length > 0 ? `never shown: ${hidden.map((p) => p.name).join(", ")}; ` : ""}closest pair ${closest.pair}: ${fmt(closest.px, 1)} px (${closest.mark}); ${showing}`,
         limit: `each >= ${fmt(shown, 2)} of the face; any two >= ${fmt(least, 1)} px (${leastSaid})`,
       };
@@ -466,7 +504,7 @@ export function spansOnScreen(what: string, mark: Mark, camera: string, pixels: 
       const t = timeOf(probe, o.at), m = cameraMatrices(cam, w / h);
       const [a, b] = (probe.eval(roots, t) as unknown as V3[]).map((p) => project(m, p, w, h));
       const across = Math.hypot(b!.x - a!.x, b!.y - a!.y);
-      return { name: this.name, pass: across >= pixels, value: across, measured: `${fmt(across, 1)} px at t=${fmt(t, 2)}`, limit: `>= ${pixels} px` };
+      return { name: this.name, pass: across >= pixels, samples: 1, value: across, measured: `${fmt(across, 1)} px at t=${fmt(t, 2)}`, limit: `>= ${pixels} px` };
     },
   };
 }
@@ -528,7 +566,7 @@ export function staysInView(points: Readonly<Record<string, In<"vec3">>>, blocke
       const worst = run.reduce((a, b) => (b.longest > a.longest ? b : a));
       const seconds = worst.longest / rate;
       const said = run.map((r, i) => `${names[i]} ${fmt(r.longest / rate, 2)} s${r.longest > 0 ? ` (by ${r.by}, until t=${fmt(r.at, 2)}; ${fmt(r.total / rate, 2)} s in all)` : ""}`).join(", ");
-      return { name: this.name, pass: seconds <= allowed, value: seconds, measured: `longest hidden: ${said}`, limit: `each <= ${describe(o.hidden, allowed, "the period")} s at a stretch` };
+      return { name: this.name, pass: seconds <= allowed, samples: ts.length, value: seconds, measured: `longest hidden: ${said}`, limit: `each <= ${describe(o.hidden, allowed, "the period")} s at a stretch` };
     },
   };
 }
@@ -602,7 +640,8 @@ export function limbsReach(limbs: readonly Reaching[], o: { readonly period: num
     run(probe) {
       let stretch = { share: 0, name: "", t: 0 }, folded = { share: Infinity, name: "", t: 0 }, inward = { by: Infinity, name: "", t: 0 };
       let fail = false;
-      for (const t of times(0, o.period, rate)) {
+      const ts = times(0, o.period, rate);
+      for (const t of ts) {
         const v = probe.eval(roots, t) as number[][];
         limbs.forEach((l, i) => {
           const [root, target, bend, foot, out, len] = v.slice(i * 6, i * 6 + 6) as [V3, V3, V3, V3, V3, number[]];
@@ -624,7 +663,7 @@ export function limbsReach(limbs: readonly Reaching[], o: { readonly period: num
         });
       }
       return {
-        name: this.name, pass: !fail, value: stretch.share,
+        name: this.name, pass: !fail, samples: ts.length, value: stretch.share,
         measured: `most stretched ${stretch.share.toFixed(3)} of the span (${stretch.name}, t=${fmt(stretch.t, 2)}); least ${folded.share.toFixed(3)} from folded (${folded.name}, t=${fmt(folded.t, 2)}); knee ${fmt(inward.by, 2)} outboard at least (${inward.name}, t=${fmt(inward.t, 2)})`,
         limit: `stretched <= span less ${describe(o.slack, allowance(o.slack, 1), "span")}, folded by at least ${describe(o.fold, allowance(o.fold, 1), "span")}, knees outboard`,
       };
@@ -658,10 +697,11 @@ export function gripReaches(attack: Attack<Motion, Hold>, fingers: readonly [Mea
       const okMiddle = allowance(o.middle, close.width), okGap = allowance(o.gap, close.width);
       // The worst instant is the one nearest to failing, on either measure.
       const score = (s: typeof close) => Math.max(s.middle / okMiddle, s.gap / okGap);
-      const worst = times(T, T + attack.effect.seconds, rate).map(sample).reduce((w, s) => (score(s) > score(w) ? s : w), close);
+      const ts = times(T, T + attack.effect.seconds, rate);
+      const worst = ts.map(sample).reduce((w, s) => (score(s) > score(w) ? s : w), close);
       const line = (s: typeof close) => `middle ${fmt(s.middle)} off, ${fmt(s.apart, 2)} apart (want ${fmt(s.want, 2)})`;
       return {
-        name: this.name, pass: score(worst) <= 1, value: score(worst),
+        name: this.name, pass: score(worst) <= 1, samples: ts.length + 1, value: score(worst),
         measured: `closing: ${line(close)}; worst t=${fmt(worst.t, 2)}: ${line(worst)}`,
         limit: `middle <= ${describe(o.middle, okMiddle, "width")}, gap within ${describe(o.gap, okGap, "width")}`,
       };
@@ -682,7 +722,7 @@ export function warned(attack: Attack): Check {
       const early = warn - lead;
       const cover = covered(probe, attack.effect, attack);
       const pass = early >= 0 && cover.inside;
-      return { name: this.name, pass, value: early, measured: `warns ${fmt(warn, 2)} s, moves ${fmt(lead, 2)} s before arming; ${cover.measured}`, limit: `warning >= first movement; ${cover.limit}` };
+      return { name: this.name, pass, samples: 1, value: early, measured: `warns ${fmt(warn, 2)} s, moves ${fmt(lead, 2)} s before arming; ${cover.measured}`, limit: `warning >= first movement; ${cover.limit}` };
     },
   };
 }
@@ -738,7 +778,7 @@ export function releasesAt(attack: Attack<Motion, Hold<Thrown>>, o: { readonly s
       const speed = lenV(v0), off = lenV(subV(before, v0)), miss = lenV(subV(here, release));
       const okSpeed = allowance(o.speed, speed), okPlace = allowance(o.place, lenV(subV(release, windback)));
       return {
-        name: this.name, pass: off <= okSpeed && miss <= okPlace, value: off,
+        name: this.name, pass: off <= okSpeed && miss <= okPlace, samples: 3, value: off,
         measured: `t=${fmt(released, 2)}: at (${release.map((x) => fmt(x, 2)).join(", ")}), ${fmt(miss)} off; velocity (${v0.map((x) => fmt(x, 2)).join(", ")}), ${fmt(speed, 2)}/s, the grip's ${fmt(off)} off`,
         limit: `velocity within ${describe(o.speed, okSpeed, "release speed")}; point within ${describe(o.place, okPlace, "stroke")}`,
       };
@@ -794,13 +834,14 @@ export function fliesClear(attack: Attack<Motion, Hold<Thrown>>, targets: readon
     run(probe) {
       const released = probe.scalar(attack.first) + e.seconds;
       let least = Infinity, when = released, which = 0;
-      for (const t of times(released, released + e.end.flight, rate)) {
+      const ts = times(released, released + e.end.flight, rate);
+      for (const t of ts) {
         const p = asV3(probe.eval(thing, t)[0] as number[]);
         // A ball as a capsule of no length: the gap measures are written for chains.
         const ball: Joint[] = [{ p, r: o.size }, { p: [p[0], p[1] + 1e-4, p[2]], r: o.size }];
         targets.forEach((target, k) => { const g = gap(probe, ball, target, t); if (g < least) { least = g; when = t; which = k; } });
       }
-      return { name: this.name, pass: least >= margin, value: least, measured: `${fmt(least, 2)} from target ${which} (${targets[which]!.kind}) at t=${fmt(when, 2)}`, limit: `>= ${fmt(margin, 2)}` };
+      return { name: this.name, pass: least >= margin, samples: ts.length, value: least, measured: `${fmt(least, 2)} from target ${which} (${targets[which]!.kind}) at t=${fmt(when, 2)}`, limit: `>= ${fmt(margin, 2)}` };
     },
   };
 }
@@ -826,14 +867,15 @@ export function letsGoClean(attack: Attack<Motion, Hold<Thrown>>, fingers: reado
       // The grip's own overlap, a frame before the release (at the instant itself the thing is already its placer's).
       const grip = least(released - 1 / rate).g;
       let worst = { g: Infinity, name: chains[0]!.name }, when = released, clearAt = released;
-      for (const t of times(released, released + 2 * o.seconds, rate)) {
+      const ts = times(released, released + 2 * o.seconds, rate);
+      for (const t of ts) {
         const m = least(t);
         if (m.g < worst.g) { worst = m; when = t; }
         if (m.g < 0) clearAt = t + 1 / rate;
       }
       const deeper = Math.max(grip - worst.g, 0), cleared = clearAt - released;
       return {
-        name: this.name, pass: deeper <= ok && cleared <= o.seconds, value: deeper,
+        name: this.name, pass: deeper <= ok && cleared <= o.seconds, samples: ts.length + 1, value: deeper,
         measured: `holding, ${fmt(-grip)} of overlap; after the release at most ${fmt(deeper)} deeper (${worst.name}, ${fmt(when - released, 2)} s after); clear of the thing from ${fmt(cleared, 2)} s`,
         limit: `no more than ${describe(o.depth, ok, "width")} deeper; clear within ${fmt(o.seconds, 2)} s`,
       };
@@ -912,11 +954,12 @@ export function frontFirst(ringing: Ringing, places: readonly In<"vec2">[], o: {
     name: `${attack.name}: nothing moves before its ring's front arrives`,
     run(probe) {
       const T = probe.scalar(attack.first);
-      let early = 0, when = T, later = Infinity;
+      let early = 0, when = T, later = Infinity, samples = 0;
       for (const r of roots) {
         const arrival = probe.eval(r.arrival, T)[0] as number;
         for (const t of times(T - 1, T + arrival + wave.lag, rate)) {
           const [push, rise] = probe.eval(r.moved, t) as [number[], number];
+          samples++;
           // Before the edge: nothing at all. Between the edge and the face: lifted, not moved.
           const m = Math.max(Math.abs(push[0]!), Math.abs(push[1]!), t < T + arrival ? Math.abs(rise) : 0);
           if (m > early) { early = m; when = t; }
@@ -925,7 +968,7 @@ export function frontFirst(ringing: Ringing, places: readonly In<"vec2">[], o: {
         later = Math.min(later, Math.hypot(push[0]!, push[1]!));
       }
       return {
-        name: this.name, pass: early === 0 && later > 0, value: early,
+        name: this.name, pass: early === 0 && later > 0, samples, value: early,
         measured: `most before the front ${early === 0 ? "0 (exactly)" : `${early.toExponential(2)} at t=${fmt(when, 2)}`}; a drag time after its face, moved at least ${fmt(later, 2)}`,
         limit: "exactly 0 before; moving after",
       };
@@ -939,7 +982,7 @@ export function budget(o: { readonly triangles: number }): Check {
     name: `triangle budget ${o.triangles}`,
     run(probe) {
       const n = probe.artefact.stats.maxTriangles;
-      return { name: this.name, pass: n <= o.triangles, value: n, measured: `${n} triangles`, limit: `<= ${o.triangles}` };
+      return { name: this.name, pass: n <= o.triangles, samples: 1, value: n, measured: `${n} triangles`, limit: `<= ${o.triangles}` };
     },
   };
 }
@@ -963,15 +1006,21 @@ export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly 
 }
 
 function asVerdict(v: ReturnType<Check["run"]>): Verdict {
-  return v.kind === undefined ? { ...v, kind: "sampled", holds: v.pass } : v;
+  return v.kind === undefined ? { ...v, kind: "sampled", samples: v.samples } : v;
+}
+
+/** The verdict column: a proof says it holds; samples only that none failed. */
+function verdictText(v: Verdict): string {
+  switch (v.kind) {
+    case "ranged": return v.holds === "undecided" ? "undecided" : v.holds ? "holds" : "FAIL";
+    case "sampled": return !v.pass ? "FAIL" : v.samples === undefined ? "no failure (sampled)" : `no failure at ${v.samples} sample${v.samples === 1 ? "" : "s"}`;
+    case "raw-compute": return "undecided";
+  }
 }
 
 /** The verdicts as a plain-text table. */
 export function formatChecks(vs: readonly ReturnType<Check["run"]>[]): string {
-  const rows = [["check", "verdict", "measured", "limit"], ...vs.map((v) => {
-    const outcome = checkOutcome(asVerdict(v));
-    return [v.name, outcome === "fail" ? "FAIL" : outcome, v.measured, v.limit];
-  })];
+  const rows = [["check", "verdict", "measured", "limit"], ...vs.map((v) => [v.name, verdictText(asVerdict(v)), v.measured, v.limit])];
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
   const line = (r: readonly string[]) => r.map((x, i) => x.padEnd(widths[i])).join("  ").trimEnd();
   return [line(rows[0]), widths.map((w) => "-".repeat(w)).join("  "), ...rows.slice(1).map(line)].join("\n");

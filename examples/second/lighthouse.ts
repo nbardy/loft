@@ -21,9 +21,9 @@
 // frames (it lands 0.02 short). Not fixed, as predicted: on the way back the band is a linear mix of the swept and
 // rest postures, so it shrinks across the chord (frame at t = 6.2) instead of turning back; and a beam that keeps turning,
 // hitting each place as it passes, is not one attack. Warning 3.9 s against 3.2 s of movement, as predicted.
-import { atan2, cos, every, lift, mix, mul, place, rigid, scene, sea, sin, strand, sub, toon, vec3, type F, type P3 } from "../../src/index.ts";
+import { add, always, atan2, clearance, cos, every, ge, le, lift, mix, mul, place, rigid, scene, sea, sin, strand, sub, time, toon, vec3, type F, type P3 } from "../../src/index.ts";
 import { animate, attack, hit, part, telegraph, type Target } from "../../src/spacetime/index.ts";
-import { landsInside, staysClear, stopsAt, warned } from "../../src/check.ts";
+import { landsInside, warned } from "../../src/check.ts";
 
 const BAY = sea({ swell: [] }); // the bay's water
 const TOWER = 8, ARC = { inner: 2.6, outer: 12.5, from: 0.25 }, BAND = { half: 0.35, inset: 0.45, height: 0.05 };
@@ -71,8 +71,11 @@ const band = lit.strikes.search!;
 export const checks = [
   warned(search),
   landsInside(band),
-  stopsAt(band, boat, { contact: 0.1 }),
+  always([time, search.first, search.first], le(clearance(band.part, boat), 0.1), { label: "search: the band reaches the boat at arming" }),
+  always([time, sub(search.first, search.span.before), add(search.first, search.span.after)], ge(clearance(band.part, boat), -0.05), { label: "search: the band never enters the boat" }),
   // With zeta 0.9 the band crept onto the boat and touched it 0.2 s early: the strike's peak is a flat top. At the
-  // default 0.5 it arrives at speed, on the arming time.
-  staysClear(band.part, boat, { until: search.arming, label: "the band does not touch the boat before it arms" }),
+  // default 0.5 it arrives at speed, on the arming time. Proved from the start of the motion: from t = 0 the range met
+  // the previous cycle's end at t = 0.3, where the repeating arming's floor encloses both cycles and no split narrows
+  // it (undecided, lower bound -2.79; the twin is 8.68 there). Before the motion the band is at rest, far off.
+  always([time, sub(search.first, search.span.before), search.first], ge(clearance(band.part, boat), 0), { label: "the band does not touch the boat before it arms" }),
 ];

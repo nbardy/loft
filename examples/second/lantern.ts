@@ -21,9 +21,8 @@
 // 0.150 (t = 21.0), not explained. The one-plane limit of `pendulum` did not bite here, because the wind is along x;
 // a wind that turns would need two pendulums, one per plane (linear, so that is exact for small swings).
 import {
-  add, bent, bentTip, chosen, cos, dart, lift, mix, mul, pendulum, scene, plane, sin, smoothstep, strand, sub, sway, time, toon, tremor, vec3, type F,
+  add, always, bent, bentTip, chosen, clearance, cos, dart, ge, lift, mix, mul, pendulum, scene, plane, sin, smoothstep, strand, sub, sway, time, toon, tremor, vec3, type F,
 } from "../../src/index.ts";
-import { staysClear } from "../../src/check.ts";
 
 const FLOOR = plane; // the bank the pole is planted in
 const POLE = { root: [0, 0, 0] as const, along: [0, 1, 0] as const, a: [1, 0, 0] as const, b: [0, 0, 1] as const, length: 5, lean: [0.45, 0] as const };
@@ -71,6 +70,9 @@ export default scene({
 });
 
 export const checks = [
-  staysClear(mothBody, { kind: "body", body: paper }, { until: LOOP, rate: 30, label: "the moth never flies through the lantern" }),
-  staysClear(paper, { kind: "body", body: rod }, { until: LOOP, rate: 30, label: "the lantern never swings into the pole" }),
+  // Undecided as a proof (18 Nov 2026): `dart`'s clock of holds is a floor, and a box that straddles a hold's start
+  // encloses the targets of both holds, so no split narrows it (lower bound -0.44 at 2.8e-8 s wide; sampled at 30 Hz it
+  // kept 0.356). It decides once the interval evaluator splits on a floor as it splits on a select.
+  always([time, 0, LOOP], ge(clearance(mothBody, { kind: "body", body: paper }), 0), { label: "the moth never flies through the lantern" }),
+  always([time, 0, LOOP], ge(clearance(paper, { kind: "body", body: rod }), 0), { label: "the lantern never swings into the pole" }),
 ];

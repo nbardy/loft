@@ -17,12 +17,12 @@
 //
 // Scored: agent_notes/2026-11-18_solve/NOTE.md.
 import {
-  add, clamp, design, div, dot, length, lift, max, mix, mul, plane, pose, sin, smoothstep, poseFrame, scene, strand, sub, through, time, toon, vec2, vec3,
+  add, always, clamp, design, div, dot, ge, length, lift, max, mix, mul, plane, pose, sin, smoothstep, poseFrame, scene, strand, sub, through, time, toon, vec2, vec3,
   type F, type P3,
 } from "../../src/index.ts";
 import { derivative } from "../../src/grad.ts";
 import { chain } from "../../src/geom/limb.ts";
-import { atLeast, equal, solve, spline } from "../../src/geom/solve.ts";
+import { equal, solve, spline } from "../../src/geom/solve.ts";
 import { heron, hipOf, HOMES, inBody, LEGS } from "./lib/heron.ts";
 
 export const NUMBERS = {
@@ -61,30 +61,31 @@ function holds(n: N, c: Parameters<typeof rig>[0]) {
   const rail = [n.rail.x, n.rail.y] as const, pad = n.rail.r + 0.03;
   // Clearance of a part: one hold per station (distance to the rail's axis, less its own radius and the pad). One hold
   // per station, not the least of them: a `min` has corners where the nearest station changes, which stall the solve.
-  const clear = (stations: readonly (readonly [P3, number])[]) => stations.map(([p, r]) => atLeast(length(sub(p.xy, rail)), r + pad));
+  const clear = (stations: readonly (readonly [P3, number])[]) => stations.map(([p, r]) => ge(length(sub(p.xy, rail)), r + pad));
   const along = (points: readonly (readonly [number, number, number])[], girth: (m: number) => number) =>
     [0, 0.25, 0.5, 0.75, 1].map((m) => [inBody(body, through(lift<"f32">(m), points)), girth(m)] as const);
   const torso = along([[0.55, 0.15, 0], [0, 0, 0], [-0.7, -0.05, 0], [-1.05, -0.2, 0]], (m) => 0.34 * (1 - 0.55 * m));
   const neck = along([[0.5, 0.2, 0], [0.75, 0.55, 0], [0.55, 0.95, 0], [0.75, 1.3, 0], [1.0, 1.38, 0]], (m) => 0.14 + (0.08 - 0.14) * m);
   const bill = [0, 0.5, 1].map((m) => [at([1.0 + 0.75 * m, 1.38 - 0.1 * m, 0]), 0.075] as const);
   return [
-    equal(vec3(c.x, c.y, c.pitch), [0, HIP, 0], { at: 0 }),                                    // stands
-    equal(velocity, [0, 0, 0], { at: 0 }),                                                     // still
-    equal(vec2(c.fx, c.fy), [0, 0], { from: 0, to: T.off }),                                   // planted
+    always([time, 0, 0], equal(vec3(c.x, c.y, c.pitch), [0, HIP, 0])),                         // stands
+    always([time, 0, 0], equal(velocity, [0, 0, 0])),                                          // still
+    always([time, 0, T.off], equal(vec2(c.fx, c.fy), [0, 0])),                                 // planted
     // 0.001 m/s² over 0.6 s changes flight height by at most 0.18 mm; differentiating f32 controls costs O(ulp / h²).
-    equal(accel, [0, -G], { from: T.off, to: T.land, within: 0.001 }),                         // flies: a parabola
-    equal(vec2(c.fx, c.fy), [n.deck.land, n.deck.top], { from: T.land, to: T.end }),           // lands on the deck at 1.2
-    equal(vec3(c.x, c.y, c.pitch), [n.deck.land, n.deck.top + HIP, 0], { at: T.end }),         // stands on it
-    equal(velocity, [0, 0, 0], { at: T.end }),                                                 // still
-    atLeast(0.97 * SPAN, reach),                                                               // legs within reach
-    atLeast(reach, 0.6),                                                                       // and not folded flat
-    atLeast(c.fy, 0),                                                                          // feet above the ground
+    always([time, T.off, T.land], equal(accel, [0, -G], 0.001)),                               // flies: a parabola
+    always([time, T.land, T.end], equal(vec2(c.fx, c.fy), [n.deck.land, n.deck.top])),        // lands on the deck at 1.2
+    always([time, T.end, T.end], equal(vec3(c.x, c.y, c.pitch), [n.deck.land, n.deck.top + HIP, 0])), // stands on it
+    always([time, T.end, T.end], equal(velocity, [0, 0, 0])),                                  // still
+    // Bare conditions hold over the whole span.
+    ge(0.97 * SPAN, reach),                                                                    // legs within reach
+    ge(reach, 0.6),                                                                            // and not folded flat
+    ge(c.fy, 0),                                                                               // feet above the ground
     ...clear(torso),                                                                           // clear of the rail
     ...clear(neck),
     ...clear(bill),
-    atLeast(apart(rail, leg[0]!, leg[1]!), 0.045 + pad),
-    atLeast(apart(rail, leg[1]!, leg[2]!), 0.045 + pad),
-    atLeast(apart(rail, foot(0), add(foot(0), vec3(0.28, 0, 0))), 0.025 + pad),
+    ge(apart(rail, leg[0]!, leg[1]!), 0.045 + pad),
+    ge(apart(rail, leg[1]!, leg[2]!), 0.045 + pad),
+    ge(apart(rail, foot(0), add(foot(0), vec3(0.28, 0, 0))), 0.025 + pad),
   ];
 }
 
