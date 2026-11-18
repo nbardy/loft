@@ -211,7 +211,7 @@ async function profileOnDraw(cmd: Extract<Command, { kind: "profile" }>) {
   const { existsSync } = await import("node:fs");
   if (!existsSync(LOFT_DRAW)) throw new EnvironmentError(`${LOFT_DRAW} is missing. Fix: tools/dev.sh build loft-draw --fast`, false);
   const out = `out/profile/${/([^/]+?)(\.ts)?$/.exec(cmd.path)![1]!}`;
-  await buildTs({ kind: "build", engine: "ts", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
+  await buildTs({ kind: "build", engine: "ts", naga: "load", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
   const child = Bun.spawn([LOFT_DRAW, "profile", out, "--view", cmd.view, "--time", String(cmd.time), "--size", `${cmd.size.width}x${cmd.size.height}`, "--frames", String(cmd.frames)], { stdout: "inherit", stderr: "inherit" });
   const code = await child.exited;
   if (code !== 0) process.exit(code);
@@ -238,10 +238,11 @@ async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
   const job = pack(rec.job(Program.Scene, roots));
   mkdirSync(cmd.out, { recursive: true });
   const file = `${cmd.out}/scene.loft`;
-  const r = native().run(job, { nodes: UNLIMITED, tapeOps: UNLIMITED, boxes: UNLIMITED, gpuNanos: UNLIMITED }, file);
+  const r = native().run(job, { nodes: UNLIMITED, tapeOps: UNLIMITED, boxes: UNLIMITED, gpuNanos: UNLIMITED }, file, { naga: cmd.naga, precision: cmd.precision });
   const s = r.scene!, p = r.phases, rustMs = (p.decode + p.plan + p.emit + p.f16 + p.bundle) / 1e6;
   console.log(`compile  ${ms(t)}  rust ${rustMs.toFixed(1)} ms: ${r.nodes} nodes, ${s.roots} roots, ${s.functions} functions (${(s.wgsl_bytes / 1024).toFixed(1)} KB WGSL), ${s.resources} resources`);
-  console.log(`naga     f32 valid; f16 ${s.mixed === "Valid" ? "valid" : `refused (a mixed load will be): ${s.mixed.Refused}`}`);
+  const f16 = s.mixed === "Valid" ? "valid" : s.mixed === "NotAsked" ? "not asked (--precision mixed)" : `refused (a mixed load will be): ${s.mixed.Refused}`;
+  console.log(`naga     f32 ${cmd.naga === "emit" ? "valid" : "at load (--naga checks at emit)"}; f16 ${f16}`);
   console.log(`wrote ${file}  ${(s.bundle_bytes / 1024).toFixed(1)} KB, build ${s.build.slice(0, 16)}`);
   console.log(`not drawable yet: ${s.draws} draws (the wire has no Draw/Pass layout) and ${s.unfilled} unfilled tables (no Kernel bodies)`);
 }

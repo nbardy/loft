@@ -1,4 +1,6 @@
-//! Emit (plan §1.10, §3.3, §1.9 precision, lane 2.2): graph functions to one WGSL module, validated by Naga with no GPU.
+//! Emit (plan §1.10, §3.3, §1.9 precision, lane 2.2): graph functions to one WGSL module. `check` validates it with
+//! Naga and no GPU, at the author's line; the driver runs it only when asked (`Naga::Emit`), since the host's own module
+//! creation validates the same text again at load (agent_notes/2026-11-19_lean_rust_speed.md).
 //!
 //! - **Names by first use.** Statements are named in the order a walk from each result first needs them; a graph
 //!   function is named `f` + the hash of its own text, so the same function has the same name in every module and
@@ -46,10 +48,10 @@ pub struct Slots {
     pub kernels: Box<[[u32; 2]]>,
 }
 
-/// The module exporting each graph function `g.fns[exports[i].1]` as a WGSL function named `exports[i].0`. The
-/// module is validated as f32 before it is returned.
+/// The module exporting each graph function `g.fns[exports[i].1]` as a WGSL function named `exports[i].0`. Not
+/// validated: `check` is Naga's pass over it.
 pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted, Error> {
-    let raws = raw_names(g)?;
+    let raws: Vec<String> = g.raws.iter().map(|r| g.sym(r.name).to_string()).collect();
     let mut e =
         Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], reads: vec![], raw_used: vec![] };
     let mut tail = vec![];
@@ -88,9 +90,15 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots) -> Result<Emitted,
     }
     lines.extend(tail.into_iter().map(|t| (t, Src::Gen(None))));
     let text = lines.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join("\n");
-    let m = Emitted { text, reads: e.reads, lines: lines.into_iter().map(|(_, s)| s).collect() };
-    validate(g, &m, false)?;
-    Ok(m)
+    Ok(Emitted { text, reads: e.reads, lines: lines.into_iter().map(|(_, s)| s).collect() })
+}
+
+/// Naga at emit, as f32: each raw function alone (so a typo in one nothing calls is refused at the author's line too),
+/// then the module. `loft check`, the lab tools and draw modules ask for it; a default build leaves validation to the
+/// host's module creation, which refuses the same text without the author's line.
+pub fn check(g: &Graph, m: &Emitted) -> Result<(), Error> {
+    raws(g)?;
+    validate(g, m, false)
 }
 
 /// Naga's validation of `m` under one precision (the `lf` alias the host would prepend). A refusal is `Scene { Wgsl }`
@@ -122,31 +130,28 @@ fn raw_site(g: &Graph, n: u32, k: u32) -> Option<loft_ir::graph::Site> {
     g.site(n).map(|s| loft_ir::graph::Site { line: s.line + k, ..s.clone() })
 }
 
-/// Each raw function's name (its declared symbol), after Naga parses its source alone, with the raw functions it calls
-/// before it, so a typo in a raw function is refused at the author's line even when nothing calls it. The site is the
-/// first node calling it.
-fn raw_names(g: &Graph) -> Result<Vec<String>, Error> {
+/// Naga parses each raw function's source alone, with the raw functions it calls before it, so a typo in a raw
+/// function is refused at the author's line even when nothing calls it. The site is the first node calling it.
+fn raws(g: &Graph) -> Result<(), Error> {
     let caller = |r: u32| g.nodes.iter().position(|n| n.op == loft_ir::graph::Op::Raw(r)).map(|n| n as u32);
-    (0..g.raws.len() as u32)
-        .map(|r| {
-            // The prelude, then each dep's text on its own lines, then this one's: line `skip + 1` is its first.
-            let mut src = String::from("alias lf = f32;\n");
-            for d in raw_closure(g, r).into_iter().filter(|&d| d != r) {
-                src.push_str(g.sym(g.raws[d as usize].text));
-                src.push('\n');
-            }
-            let skip = src.lines().count() as u32;
-            src.push_str(g.sym(g.raws[r as usize].text));
-            let refuse = |line: Option<u32>, msg: &str| {
-                let k = line.unwrap_or(skip + 1).saturating_sub(skip + 1);
-                let site = caller(r).and_then(|n| raw_site(g, n, k));
-                Error::Scene { site, fault: SceneFault::Wgsl { line: k + 1, msg: msg.into() } }
-            };
-            naga::front::wgsl::parse_str(&src)
-                .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))?;
-            Ok(g.sym(g.raws[r as usize].name).to_string())
-        })
-        .collect()
+    (0..g.raws.len() as u32).try_for_each(|r| {
+        // The prelude, then each dep's text on its own lines, then this one's: line `skip + 1` is its first.
+        let mut src = String::from("alias lf = f32;\n");
+        for d in raw_closure(g, r).into_iter().filter(|&d| d != r) {
+            src.push_str(g.sym(g.raws[d as usize].text));
+            src.push('\n');
+        }
+        let skip = src.lines().count() as u32;
+        src.push_str(g.sym(g.raws[r as usize].text));
+        let refuse = |line: Option<u32>, msg: &str| {
+            let k = line.unwrap_or(skip + 1).saturating_sub(skip + 1);
+            let site = caller(r).and_then(|n| raw_site(g, n, k));
+            Error::Scene { site, fault: SceneFault::Wgsl { line: k + 1, msg: msg.into() } }
+        };
+        naga::front::wgsl::parse_str(&src)
+            .map(|_| ())
+            .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))
+    })
 }
 
 /// Raw function `r` and every raw function it calls, callees first (each dep is declared before its user).

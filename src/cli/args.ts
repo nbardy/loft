@@ -52,7 +52,9 @@ export type Command =
     readonly views: { readonly kind: "design" } | { readonly kind: "given"; readonly names: readonly ViewName[] };
     readonly only: { readonly kind: "all" } | { readonly kind: "given"; readonly names: readonly string[] };
   }
-  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string; readonly engine: "ts" | "rust" }
+  /** `naga`: LOFT_ENGINE=rust only; "emit" (`--naga`) validates at emit and refuses at the author's line, "load" leaves it
+   * to the host's module creation (src/core/native.ts `Build`). */
+  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string; readonly engine: "ts" | "rust"; readonly naga: "emit" | "load" }
   | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: "ts" | "rust" }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
@@ -65,6 +67,8 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   api [name]           the API reference, generated from the source (one export in full with a name; docs/api.md)
   context              docs/craft.md (making things that read, with range) then the compact API: to read whole
   build  <scene> --out dir [--style name]   (the artefact as files: manifest.json, wgsl/, bin/; refuses cpu tables by name)
+         [--naga]   (LOFT_ENGINE=rust: Naga validates at emit and refuses at the author's line; without it the host
+                    validates at load, once)
   render <scene> --out f.webp [--views front,side,top,three] [--time 1.0] [--size 1280x800] [--param name=value ...] [--construction]
   clip   <scene> --out f.mp4  [--seconds 8] [--fps 30] [--view three] [--size 1280x800]
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
@@ -123,6 +127,7 @@ const FLAGS: Record<string, { readonly value: boolean; readonly commands: readon
   "--only": { value: true, commands: ["variants"] },
   "--density": { value: true, commands: ["bake"] },
   "--construction": { value: false, commands: ["render"] },
+  "--naga": { value: false, commands: ["build"] },
   "--seconds": { value: true, commands: ["clip", "bake"] },
   "--animated": { value: false, commands: ["bake"] },
   "--fps": { value: true, commands: ["clip"] },
@@ -295,7 +300,8 @@ export function parseArgs(argv: readonly string[]): Command {
     if (dir === undefined) throw new UsageError("build: --out dir is required");
     const engine = parseEngine(process.env.LOFT_ENGINE);
     if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: build writes one engine's files, "ts" or "rust"`);
-    return { kind: "build", source, out: dir, precision: precision ?? "f32", engine };
+    if (engine === "ts" && flags.has("--naga")) throw new UsageError(`--naga: a flag of LOFT_ENGINE=rust build (the TS build validates in its own host)`);
+    return { kind: "build", source, out: dir, precision: precision ?? "f32", engine, naga: flags.has("--naga") ? "emit" : "load" };
   }
   if (name === "dev" && source.kind === "artefact") throw new UsageError("dev: needs a scene file or --fixture");
   if (name === "dev" && source.kind !== "artefact") return { kind: "dev", source, precision: precision ?? "f32", port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };
