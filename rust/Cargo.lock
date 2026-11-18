@@ -377,6 +377,7 @@ dependencies = [
  "loft-ir",
  "naga",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
