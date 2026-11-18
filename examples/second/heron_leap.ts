@@ -2,7 +2,7 @@
 // and stands. Nothing is keyed. The motion is `solve`d from what must hold (planted feet, a ballistic flight, legs
 // within reach, every part clear of the rail, both feet on the deck at 1.2), the smoothest such motion (least jerk).
 // The `moved` variant puts the deck farther and higher and solves again; heron_leap_refused.ts asks for a rail no
-// 0.6 s flight can clear, and is refused with the conflicting holds named.
+// 0.6 s flight can clear, and the local search is refused.
 // Shows: `solve` (src/geom/solve.ts) driving a rig (`poseFrame` for the body, `chain` for the legs).
 //
 // Theory, before running. Takeoff at 0.6 s, landing at 1.2: a 0.6 s parabola rises g T^2 / 8 = 0.44 m above the mean
@@ -43,11 +43,11 @@ function apart(r: readonly [number, number], a: P3, b: P3): F {
   return length(sub(R, add(A, mul(ab, s))));
 }
 
-/** The bird for given curves of its body (x, y, pitch) and both feet (fx, fy): the frame, the feet, the drawn parts. */
+/** The bird for given curves of its body (x, y, pitch) and both feet (fx, fy): the body frame and the foot targets. */
 function rig(c: { readonly x: F; readonly y: F; readonly pitch: F; readonly fx: F; readonly fy: F }) {
   const body = poseFrame(pose({ at: vec3(c.x, c.y, 0), heading: 0, pitch: c.pitch, heel: 0 }));
   const foot = (i: number): P3 => vec3(c.fx, c.fy, HOMES[i]![2]);
-  return { body, foot, bird: heron(body, foot, { x: vec3(1, 0, 0), z: vec3(0, 0, 1) }) };
+  return { body, foot };
 }
 
 /** Every hold of the leap, over curves of the body and feet: the lines a conflict is named by. */
@@ -88,12 +88,12 @@ function holds(n: N, c: Parameters<typeof rig>[0]) {
 }
 
 /** The leap for these numbers: solved once, here, at build time. */
-export function leap(n: N) {
+export function leap(n: N, budget?: { readonly ms: number }) {
   // The search starts from a rough leap that goes over the rail (a local search keeps the side it starts on: from
   // feet at rest it finds the feet passing under the rail and the legs through it). The answer does not lean on it.
   const flight = clamp(div(sub(time, T.off), T.land - T.off), 0, 1), arch = sin(mul(flight, Math.PI)), across = smoothstep(T.off, T.land, time);
   const solved = solve({
-    over: [0, T.end],
+    over: [0, T.end], budget,
     // One number per 0.15 s, so takeoff (0.6) and landing (1.2) fall on knots: the flight's parabola starts and ends
     // exactly there, and the push before it is free to differ.
     vary: {
@@ -103,12 +103,13 @@ export function leap(n: N) {
     hold: (c) => holds(n, c),
     prefer: { jerk: 1 },
   });
-  const c = solved.curves;
-  return { solved, ...rig(c) };
+  const { body, foot } = rig(solved.curves);
+  const bird = heron(body, foot, { x: vec3(1, 0, 0), z: vec3(0, 0, 1) });
+  return { solved, body, foot, bird };
 }
 
 function built(n: N) {
-  const { bird } = leap(n);
+  const { bird, solved: leapMotion } = leap(n);
   const box = strand({
     name: "deck", spine: (m) => vec3(mix(n.deck.from, n.deck.to, m), n.deck.top / 2, 0), stations: 4, girth: 1.2,
     section: { aspect: n.deck.top / 2 / 1.2, squareness: 8 }, tips: [{ round: 0.04 }, { round: 0.04 }], paint: brown, detail: { along: 8, around: 32 }, up: [0, 1, 0],
@@ -117,19 +118,20 @@ function built(n: N) {
     strand({ name, spine: (m) => mix(vec3(...a), vec3(...b), m), stations: 4, girth: r, tips: ["round", "round"], paint: steel, detail: { along: 12, around: 12 } });
   const { x, y, r } = n.rail;
   const things = [...bird.things, box, bar("rail", [x, y, -1.4], [x, y, 1.4], r), bar("postL", [x, 0, -1.4], [x, y, -1.4], r), bar("postR", [x, 0, 1.4], [x, y, 1.4], r)];
-  return scene({
+  const world = scene({
     ground: plane, things, style: toon({ bands: 3, outline: 0.03 }), sun: [-0.4, 0.8, 0.45], period: 2.4,
     cameras: {
       side: { kind: "perspective", eye: [0.5, 2.6, 10], target: [2.2, 1.4, 0], fovY: 0.62 },
       game: { kind: "perspective", eye: [7.5, 5.5, 7], target: [2.0, 1.3, 0], fovY: 0.6 },
     },
   });
+  return { scene: world, checks: leapMotion.holds };
 }
 
 export const heronLeap = design({
   name: "heron_leap", numbers: NUMBERS, slots: {}, compare: ["side"],
   variants: { moved: { about: "the deck 0.8 farther and 0.3 higher, solved again", numbers: { deck: { from: 3.4, to: 5.2, top: 1.0, land: 4.0 } } } },
-  build: (_, n) => ({ scene: built(n), checks: [] }),
+  build: (_, n) => built(n),
 });
 export { heronLeap as design };
-export const sceneFor = built;
+export const sceneFor = (n: N) => built(n).scene;
