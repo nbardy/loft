@@ -29,6 +29,7 @@ import {
   children, emitWgsl, fetch, fold, leaves, listOf, replace, splitOn, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy,
   type ProgramTable, type TableFill, type TableFrame, type TablePrep, type TableProgram, type TableSource, type V,
 } from "../expr.ts";
+import { shadingTables } from "../precision.ts";
 import { recurTable, type RecurState } from "../map/recur.ts";
 import type { TableRef } from "./context.ts";
 import { plan, type Program, type Rate } from "./rates.ts";
@@ -125,6 +126,12 @@ export type TableLayout = {
   readonly statics: readonly StaticBuffer[];
   /** Bind group 1 declarations and one accessor per table. */
   readonly wgsl: string;
+  readonly poseWgsl: string;
+  readonly mixed: {
+    readonly draw: string;
+    readonly pose: string;
+    readonly statics: Readonly<Record<string, Uint8Array>>;
+  } | undefined;
   readonly placed: ReadonlyMap<TableSource, Placed>;
   /** Entries of the tables whose role is "stations". */
   readonly stations: number;
@@ -530,7 +537,10 @@ export class Tables {
     const info = [...placed.values()].filter((p) => p.kind === "dynamic").map((p): TableInfo => ({ name: p.table.name, buffer: bufferName(p.buffer), offset: p.offset, vec4s: vec4sOf(p.table), lanes: p.table.lanes, fill: p.fill }));
     const group1 = groupWgsl(dynamic, statics, placed, "read_write");
     const stages = poseStages(placed, group1, this.c);
-    return { dynamic, statics, wgsl, placed, stations, stages, info, ...recurrencesOf(placed, statics, group1, this.c) };
+    const replays = recurrencesOf(placed, statics, group1, this.c);
+    // Replay and bake address kept states directly. Keep their static ABI, including any neighbour tables.
+    const mixed = replays.recurrences.length === 0 ? mixedStatics(statics, placed, wgsl, group1) : undefined;
+    return { dynamic, statics, wgsl, poseWgsl: group1, mixed, placed, stations, stages, info, ...replays };
   }
 }
 
@@ -587,6 +597,55 @@ function groupWgsl(dynamic: readonly DynamicBuffer[], statics: readonly StaticBu
     ...statics.map((d) => `@group(1) @binding(${d.binding}) var<storage, read> ${d.name}: array<vec4<f32>>;`),
     ...[...placed.values()].map((p) => `fn ${accessor(p.table.name)}(i: u32) -> vec4<f32> { return ${nameOf(p)}[${p.offset}u + i]; }`),
   ].join("\n");
+}
+
+/** Store each table as a typed field of its old buffer. Vec4 alignment is 8 for f16 and 16 for f32. */
+function mixedStatics(statics: readonly StaticBuffer[], placed: ReadonlyMap<TableSource, Placed>, draw: string, pose: string): TableLayout["mixed"] {
+  const selected = [...placed.values()].filter((p) => shadingTables.has(p.table));
+  if (selected.length === 0) return undefined;
+  const buffers: Record<string, Uint8Array> = {};
+  const replacements = new Map<string, string>();
+  for (const k of new Set(selected.map((p) => p.buffer))) {
+    const buffer = statics[k]!;
+    const members = [...placed.values()].filter((p) => p.kind === "static" && p.buffer === k);
+    const fields: string[] = [];
+    let bytes = 0;
+    const rows = members.map((p, i) => {
+      const half = shadingTables.has(p.table);
+      const stride = half ? 8 : 16, count = vec4sOf(p.table);
+      const at = Math.ceil(bytes / stride) * stride;
+      bytes = at + count * stride;
+      fields.push(`  t${i}: array<vec4<${half ? "f16" : "f32"}>, ${count}>,`);
+      const get = `${buffer.name}.t${i}[i]`;
+      replacements.set(
+        `fn ${accessor(p.table.name)}(i: u32) -> vec4<f32> { return ${buffer.name}[${p.offset}u + i]; }`,
+        `fn ${accessor(p.table.name)}(i: u32) -> vec4<f32> { return ${half ? `vec4<f32>(${get})` : get}; }`,
+      );
+      return { at, half, data: buffer.data.subarray(p.offset * 4, (p.offset + count) * 4) };
+    });
+    const struct = `${buffer.name}_layout`;
+    const align = rows.every((r) => r.half) ? 8 : 16;
+    const raw = new Uint8Array(Math.ceil(bytes / align) * align);
+    const view = new DataView(raw.buffer);
+    for (const { at, half, data } of rows) {
+      if (half) data.forEach((x, i) => view.setUint16(at + i * 2, shadingHalf(x), true));
+      else raw.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), at);
+    }
+    buffers[buffer.name] = raw;
+    const declaration = `@group(1) @binding(${buffer.binding}) var<storage, read> ${buffer.name}:`;
+    replacements.set(`${declaration} array<vec4<f32>>;`, `struct ${struct} {\n${fields.join("\n")}\n}\n${declaration} ${struct};`);
+  }
+  const rewrite = (code: string) => code.split("\n").map((line) => replacements.get(line) ?? line).join("\n");
+  return { statics: buffers, draw: rewrite(draw), pose: rewrite(pose) };
+}
+
+/** A validated [-1, 1] sample as IEEE binary16, rounding ties to even. */
+function shadingHalf(value: number): number {
+  const x = Math.abs(value);
+  const sign = value < 0 || Object.is(value, -0) ? 0x8000 : 0;
+  const e = Math.max(-14, Math.floor(Math.log2(x)));
+  const q = x * 2 ** (10 - e), n = Math.floor(q);
+  return sign + (e + 14) * 1024 + n + Number(q - n > 0.5 || (q - n === 0.5 && n % 2 !== 0));
 }
 
 /**

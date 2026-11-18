@@ -65,6 +65,28 @@ Every command prints its timings and an `rgba` hash of each frame, so two versio
 
 Today a scene must have a sea (see "The ground" below).
 
+## Rendering precision
+
+Scenes default to `f32`. Use the same `--precision mixed` switch for `build`, `render`, `frames`, `clip`, `profile`
+or `dev`. The renderer reports `mixed` when the device grants `shader-f16` and `f32-fallback` otherwise. A mixed build
+is portable. Its manifest carries both choices, and `render --artefact` selects at load. To force full precision for
+a comparison, pass `--precision f32`.
+
+```sh
+loft build examples/mixed_precision.ts --precision mixed --out out/copper
+loft render --artefact out/copper --views three --out out/copper.webp
+```
+
+For a static colour, normal-map or paint-channel lookup, use `tabulate(name, fn, n, "static-shading")`. This gives
+the compiler permission to store its samples in half precision in a mixed build. Samples must be finite and within
+`[-1, 1]`. Lookup indices and interpolation are f32. Use `"static"` for geometry, signed distances, or general numeric
+and HDR data. The example uses a 256-sample palette. Its GPU buffer occupies 2 KiB in mixed and 4 KiB in f32.
+
+Built-in bloom and grain use f16 for bounded colour arithmetic at ordinary gains. Soft media use it for bounded lighting weights.
+Ray geometry, optical depth, HDR lighting, geometric normals, camera transforms, time, depth, and arbitrary author
+expressions keep f32. Small lookup errors can be amplified by sharp material thresholds, so compare the look in
+both modes when deciding whether a lookup qualifies.
+
 ## Adding a shape
 
 A shape is a function. The library has a few families, each a short composition over the level below, so leaving one

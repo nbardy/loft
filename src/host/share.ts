@@ -270,6 +270,8 @@ export function share(a: Artefact): Sharing {
   const used = [...new Set(a.draws.map((d) => d.shader))];
   const reads = new Map<string, Read>();
   for (const s of used) {
+    // A precision-specific module can have different literal slots. Both variants keep their own complete shader.
+    if (a.mixed?.shaders[s] !== undefined) continue;
     const r = read(a.shaders[s]!, tables);
     // Unshareable (a reason string): compiled on its own, as before.
     if (typeof r === "string") continue;

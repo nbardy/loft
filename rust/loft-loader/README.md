@@ -1,6 +1,6 @@
 # loft-loader
 
-Loads a Loft artefact folder (`docs/artefact_format.md`, format versions 1, 2 and 3) onto a `wgpu` 30 device and draws its
+Loads a Loft artefact folder (`docs/artefact_format.md`, format versions 1 through 4) onto a `wgpu` 30 device and draws its
 frames. It is an executor of the manifest: it creates the objects the manifest lists, in order, and per frame runs the
 recipe (frame writes, the pose compute pass, the level-of-detail bounds read and plan, the render passes). It knows
 nothing about scenes. `loft-view` is a small headless binary on top of it, for pictures and timing.
@@ -11,6 +11,10 @@ target/release/loft-view <dir> --view game --time 1.0 --size 1280x800 --out f.pn
 target/release/loft-view <dir> --view game --frames 60          # CPU and GPU time per frame
 target/release/loft-view <dir> --view game --pose-time          # pose stages alone, as tools/pose_time.ts
 ```
+
+When creating a device, request the optional `wgpu::Features::SHADER_F16` if the adapter exposes it.
+`Loft::load` selects the variant on the supplied device and `Loft::precision()` reports `F32`, `Mixed`, or
+`F32Fallback`. Version-4 files carry the data for both device classes.
 
 ## The surface
 

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
 import type { Artefact } from "../artefact.ts";
 import { baked } from "./state.ts";
+import type { Precision } from "../host/manifest.ts";
 import type { GpuLoaded } from "../host/host.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
@@ -26,10 +27,11 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
     case "artefact": {
       // Without the compiler: the loader reads the directory alone (src/cli/run_files.ts).
       const { openFiles } = await import("./run_files.ts");
-      const { bundle, loaded } = await openFiles(cmd.source.dir);
+      const { bundle, loaded } = await openFiles(cmd.source.dir, cmd.precision);
       const m = bundle.manifest;
       checkInputs(m, cmd.inputs, sweep);
       console.log(`files    ${ms(t)}  read and loaded ${cmd.source.dir}  (${fillCounts(m.tables)}; ${m.modules.length} modules, ${m.renderPipelines.length + m.computePipelines.length} pipelines)`);
+      console.log(`precision ${loaded.precision}`);
       return { info: m, loaded };
     }
     case "file": case "fixture": {
@@ -38,8 +40,8 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
       for (const line of passNotes(artefact)) console.log(line);
       t = performance.now();
-      const loaded = await loadedWithRetries(artefact);
-      console.log(`load     ${ms(t)}`);
+      const loaded = await loadedWithRetries(artefact, cmd.precision);
+      console.log(`load     ${ms(t)}  precision ${loaded.precision}`);
       for (const r of artefact.recurrences ?? []) console.log(baked(r));
       return { info: artefact, loaded };
     }
@@ -51,11 +53,11 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
  * compiler wrote is the environment's (until 2026-11-12 it was bun-webgpu freeing descriptor strings early, now
  * patched: docs/reliable_render.md), and a fresh device is what can make it pass.
  */
-async function loadedWithRetries(artefact: Artefact): Promise<GpuLoaded> {
+async function loadedWithRetries(artefact: Artefact, precision?: Precision): Promise<GpuLoaded> {
   const seen: string[] = [];
   for (let attempt = 1; ; attempt++) {
     try {
-      return await (await headlessHost()).load(artefact);
+      return await (await headlessHost(precision)).load(artefact);
     } catch (e) {
       if (!(e instanceof EnvironmentError && e.transient)) throw e;
       seen.push(headed(e.message)[0]);
@@ -180,7 +182,7 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
   }
   t = performance.now();
   const [{ lower }, { writeBundle }] = await Promise.all([import("../host/lower.ts"), import("../host/files.ts")]);
-  const bundle = lower(artefact);
+  const bundle = lower(artefact, cmd.precision);
   const sizes = writeBundle(cmd.out, bundle);
   const m = bundle.manifest;
   const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;

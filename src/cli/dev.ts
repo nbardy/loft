@@ -16,17 +16,18 @@ type Built = { readonly kind: "ok"; readonly js: string } | { readonly kind: "er
  */
 function sceneModule(cmd: DevCommand): string {
   const idx = JSON.stringify(resolve(ROOT, "src/index.ts"));
+  const precision = `export const precision = ${JSON.stringify(cmd.precision)};\n`;
   switch (cmd.source.kind) {
     // `build(style)`: "scene" for the scene's own style, or a name from src/style/index.ts (the viewer's selector);
     // `startStyle` is the `--style` the server was started with. The fixture is a compiled artefact: no styles.
     case "fixture":
-      return `export const sceneName = "fixture";\nexport const styleNames = [];\nexport const startStyle = "scene";\nexport const build = async () => (await import(${JSON.stringify(resolve(ROOT, "src/host/fixture.ts"))})).fixture;\n`;
+      return precision + `export const sceneName = "fixture";\nexport const styleNames = [];\nexport const startStyle = "scene";\nexport const build = async () => (await import(${JSON.stringify(resolve(ROOT, "src/host/fixture.ts"))})).fixture;\n`;
     case "file": {
       const styles = JSON.stringify(resolve(ROOT, "src/style/index.ts"));
       const start = JSON.stringify(cmd.source.style.kind === "named" ? cmd.source.style.name : "scene");
       // A design's chosen variant (validated when the server starts, src/cli/variant.ts), or the module's default export.
       const pick = cmd.source.variant.kind === "ask" ? `mod.design.build(mod.design.resolve(${JSON.stringify(cmd.source.variant.ask)})).scene` : "mod.default";
-      return `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport { STYLE_NAMES as styleNames } from ${styles};\nexport const startStyle = ${start};\nexport const build = async (style) => {\n  const [mod, { compile }, s] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx}), import(${styles})]);\n  const scene = ${pick};\n  return compile(style === "scene" ? scene : s.withStyle(scene, s.styleNamed(style)));\n};\n`;
+      return precision + `export const sceneName = ${JSON.stringify(cmd.source.path)};\nexport { STYLE_NAMES as styleNames } from ${styles};\nexport const startStyle = ${start};\nexport const build = async (style) => {\n  const [mod, { compile }, s] = await Promise.all([import(${JSON.stringify(resolve(cmd.source.path))}), import(${idx}), import(${styles})]);\n  const scene = ${pick};\n  return compile(style === "scene" ? scene : s.withStyle(scene, s.styleNamed(style)));\n};\n`;
     }
   }
 }

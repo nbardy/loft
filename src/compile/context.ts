@@ -64,6 +64,8 @@ export type DrawSpec = Omit<Draw, "pass" | "detail"> & { readonly phase: Phase; 
  */
 export type Shader = {
   readonly code: string;
+  /** Alternative body with the same shader interface. The host supplies `enable f16;`. */
+  readonly mixedCode?: string;
   readonly libs: readonly LibFn[];
   /**
    * WGSL defining a depth-only fragment entry (`DrawDepth` "entry"), appended to the module only when the scene has a
@@ -75,7 +77,12 @@ export type Shader = {
 export type Emitted = { readonly shaders: Readonly<Record<string, Shader>>; readonly draws: readonly DrawSpec[] };
 
 /** A full-screen pass after the scene: `wgsl` defines `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`. */
-export type PostSpec = { readonly label: string; readonly wgsl: string };
+export type PostSpec = {
+  readonly label: string;
+  readonly wgsl: string;
+  /** Alternative fragment with the same interface. The host supplies `enable f16;`. */
+  readonly mixedWgsl?: string;
+};
 
 /**
  * What a `Drawable` is handed when it emits its shaders: the slots for inputs, params and tables, the scene's style,

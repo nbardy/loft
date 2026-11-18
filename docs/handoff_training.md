@@ -120,7 +120,7 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
 {"id": "s1", "scene": "train/s1.ts", "camera": "fixed", "times": [0, 0.37, 0.91, 1.53], "size": "512x512", "out": "out/s1"}
 {"id": "s2", "artefact": "out/files/s2", "camera": {"kind": "perspective", "eye": [4.5, 4.5, 8], "target": [0, 0.7, 0], "fovY": 0.62}, "times": [1], "size": "512x512", "out": "out/s2", "params": {"stormwing.span": 1.4}, "inputs": {"strike": 0.5}}
 
-{"id": "s1", "ok": true, "tier": "C", "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
+{"id": "s1", "ok": true, "tier": "C", "precision": "f32", "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
 {"id": "s2", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: …", "detail": ["…"]}
 ```
 
@@ -139,8 +139,11 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
   file it names is one plain name (no `/`, `..`) and a regular file (no links), each bin file's declared size, and
   the totals against `--limits` (defaults: manifest 64 MiB, 65536 files, 1 GiB in all). Anything wrong is `load` (3).
   `--check` then sees the bundle before it reaches the GPU.
+- A request can include `"precision":"mixed"` or `"precision":"f32"`. Scenes default to f32. A request for a
+  directory inherits its precision when the field is absent. Every successful answer identifies the selected
+  precision as `f32`, `mixed`, or `f32-fallback`. The latter means a mixed request ran without shader-f16.
 - Every answer carries `tier`. Only `"C"` (the compiled scene) exists; the field is there before an interpreter is.
-  A frame's identity is (scene, camera, time, size, params, inputs, tier, library commit, adapter, driver). In
+  A frame's identity is (scene, camera, time, size, params, inputs, tier, precision, library commit, adapter, driver). In
   training the tier is chosen once per sample and never promoted within a run, so a frame never depends on what the
   server saw before.
 - A failed request is answered and the server goes on. `exit` and `line` are what `loft render` would have ended

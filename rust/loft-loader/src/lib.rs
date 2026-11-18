@@ -65,7 +65,26 @@ enum Read {
     InFlight(Arc<Mutex<Option<Result<(), wgpu::BufferAsyncError>>>>),
 }
 
+/// The selected shader and storage precision for every frame drawn by this loader.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Precision {
+    F32,
+    Mixed,
+    F32Fallback,
+}
+
+impl Precision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::Mixed => "mixed",
+            Self::F32Fallback => "f32-fallback",
+        }
+    }
+}
+
 pub struct Loft {
+    precision: Precision,
     m: Manifest,
     buffers: Vec<wgpu::Buffer>,
     textures: Vec<wgpu::TextureDescriptor<'static>>,
@@ -149,7 +168,8 @@ impl Loft {
     /// Creates every object the manifest lists on the caller's device (steps 3 to 11 of "Load, call by call").
     /// Shader modules and pipelines are compiled here, eagerly; a compile error names the module or pipeline.
     pub fn load(device: &wgpu::Device, queue: &wgpu::Queue, a: Artefact) -> Result<Loft, Error> {
-        let Artefact { manifest, chunks, blobs } = a;
+        let Artefact { mut manifest, chunks, blobs } = a;
+        let precision = select_precision(&mut manifest, &blobs, device.features().contains(wgpu::Features::SHADER_F16))?;
         let m = &manifest;
         let ops = check(m)?;
         let buffers: Vec<wgpu::Buffer> = m
@@ -312,6 +332,7 @@ impl Loft {
             BoundsRead::Read { grids, .. } => grids.iter().map(|g| (g.slot, g.at)).collect(),
         };
         let mut loft = Loft {
+            precision,
             buffers,
             textures,
             layouts,
@@ -400,6 +421,10 @@ impl Loft {
     // ---- the view ------------------------------------------------------------------------------------------------
 
     /// The artefact's named cameras.
+    pub fn precision(&self) -> Precision {
+        self.precision
+    }
+
     pub fn cameras(&self) -> impl Iterator<Item = (&str, &Camera)> {
         self.m.cameras.iter().map(|(k, v)| (k.as_str(), v))
     }
@@ -653,6 +678,43 @@ impl Loft {
             }
         }
     }
+}
+
+fn select_precision(
+    m: &mut Manifest, blobs: &std::collections::HashMap<String, Vec<u8>>, shader_f16: bool,
+) -> Result<Precision, Error> {
+    let invalid = |reason: &str| Error::Invalid(format!("precision: {reason}. Fix: rebuild with loft build --precision mixed"));
+    let (modules, buffers) = match (m.version, m.precision.take()) {
+        (1..=3, None) => return Ok(Precision::F32),
+        (4, Some(manifest::MixedPrecision::Mixed { fallback: manifest::Fallback::F32Fallback, modules, buffers })) => (modules, buffers),
+        _ => return Err(invalid("expected the mixed variant and its f32 fallback in format 4")),
+    };
+    let id = |kind: &str, key: &str, limit: usize| {
+        key.parse::<usize>().ok().filter(|&i| i < limit && i.to_string() == key)
+            .ok_or_else(|| invalid(&format!("invalid mixed {kind} {key}")))
+    };
+    for (key, chunks) in modules {
+        let i = id("shader module", &key, m.modules.len())?;
+        if chunks.is_empty() || chunks.iter().any(|&c| c >= m.chunks.len()) {
+            return Err(invalid(&format!("invalid mixed shader module {i}")));
+        }
+        if shader_f16 {
+            m.modules[i].chunks = chunks;
+        }
+    }
+    for (key, b) in buffers {
+        let i = id("buffer", &key, m.buffers.len())?;
+        let original = &mut m.buffers[i];
+        let length = blobs.get(&b.init).ok_or_else(|| invalid(&format!("missing mixed buffer {i} data")))?.len() as u64;
+        if b.size < 4 || b.size % 4 != 0 || b.size > original.size || length > b.size || length % 4 != 0 {
+            return Err(invalid(&format!("invalid mixed buffer {i}")));
+        }
+        if shader_f16 {
+            original.size = b.size;
+            original.init = Some(b.init);
+        }
+    }
+    Ok(if shader_f16 { Precision::Mixed } else { Precision::F32Fallback })
 }
 
 /// Every reference in the manifest resolves, and every pass's operations are complete; so a frame indexes freely.

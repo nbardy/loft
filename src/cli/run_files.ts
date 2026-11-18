@@ -2,6 +2,7 @@
 // import closure is the loader's (src/host/files.ts) and the headless device, nothing else; tools/check_loader_closure.ts
 // and tests/files.test.ts fail if it ever reaches the compiler, and `compilerModulesLoaded` checks the same at run time.
 import { headlessDevice } from "../host/headless.ts";
+import type { Precision } from "../host/manifest.ts";
 import { loadArtefactFiles } from "../host/files.ts";
 
 /** Modules a file loader must never load: the compiler, the expression evaluators, the library's entry, scenes. */
@@ -13,8 +14,8 @@ export const FORBIDDEN: readonly { readonly name: string; readonly test: (path: 
   { name: "examples/**", test: (p) => /\/examples\//.test(p) },
 ];
 
-export async function openFiles(dir: string) {
-  return loadArtefactFiles(await headlessDevice(), dir);
+export async function openFiles(dir: string, precision?: Precision) {
+  return loadArtefactFiles(await headlessDevice(), dir, precision);
 }
 
 /** The forbidden modules this process has loaded so far (Bun's module registry: what actually ran, not what could). */

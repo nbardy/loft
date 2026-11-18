@@ -15,6 +15,7 @@ export async function headlessDevice(): Promise<GPUDevice> {
   if (!adapter) throw new EnvironmentError("headlessDevice: no WebGPU adapter found (bun-webgpu/Dawn could not open a GPU on this machine)", false);
   // Timestamp queries let `GpuLoaded.profile` time each draw on the GPU; ordinary frames never use them.
   const requiredFeatures: GPUFeatureName[] = adapter.features.has("timestamp-query") ? ["timestamp-query"] : [];
+  if (adapter.features.has("shader-f16")) requiredFeatures.push("shader-f16");
   const device = await adapter.requestDevice({ requiredFeatures }).catch((e: unknown) => {
     throw new EnvironmentError(`headlessDevice: the adapter refused a device: ${e instanceof Error ? e.message : String(e)}`, true);
   });

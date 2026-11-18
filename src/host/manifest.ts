@@ -15,11 +15,14 @@ export const FORMAT_VERSION = 1;
  * whose state keeps checkpoints) and pictures drawn off screen (src/frame/pass.ts: textures of a fixed or scaled size,
  * render passes with no colour attachment, pipelines with no fragment stage, `frame.copies`). A file with neither is
  * written as version 1, byte for byte what it was. Each version-2 field is optional; `formatVersion` (src/host/lower.ts)
- * is the one place the version is decided. 3 adds `instanceBase` on planned draws (shared draw shaders, src/host/share.ts):
+ * decides which legacy version to write. 3 adds `instanceBase` on planned draws (shared draw shaders, src/host/share.ts):
  * a version-1 or -2 loader would ignore it and draw every shared draw with another draw's numbers.
+ * 4 adds mixed shader and buffer alternatives.
  */
-export const FORMAT_VERSIONS = [1, 2, 3] as const;
+export const FORMAT_VERSIONS = [1, 2, 3, 4] as const;
 export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
+export type Precision = "f32" | "mixed";
+export type FramePrecision = Precision | "f32-fallback";
 
 /** Index into the list of its kind (`Manifest.buffers`, `Manifest.textures`, ...). */
 export type Id = number;
@@ -149,9 +152,16 @@ export type TableEntry = { readonly name: string; readonly buffer: Id; readonly 
 export type Manifest = {
   readonly format: typeof FORMAT;
   readonly version: FormatVersion;
+  /** Version 4 overlays the f32 descriptors when the device grants shader-f16. */
+  readonly precision?: {
+    readonly kind: "mixed";
+    readonly fallback: "f32-fallback";
+    readonly modules: Readonly<Record<number, readonly Id[]>>;
+    readonly buffers: Readonly<Record<number, { readonly size: number; readonly init: string }>>;
+  };
   /** Chunk names (a hash of the text); a file loader reads `wgsl/<name>.wgsl`. */
   readonly chunks: readonly string[];
-  /** Blob names; a file loader reads `bin/<name>.bin` (little-endian f32). */
+  /** Blob names; a file loader reads `bin/<name>.bin` (little-endian data). */
   readonly blobs: readonly { readonly name: string; readonly bytes: number }[];
 
   readonly inputs: readonly InputSlot[];

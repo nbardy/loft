@@ -30,7 +30,7 @@ import { ROWS_BINDING, share } from "./share.ts";
 import {
   COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, LIGHT_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT,
   type BindGroupDesc, type BindGroupLayoutDesc, type BufferCopy, type BufferDesc, type Bundle, type ComputePipelineDesc, type Dispatch, type DrawCommand, type FormatVersion, type Id, type LayoutEntry, type Replay,
-  type Manifest, type ModuleDesc, type PipelineLayoutDesc, type RenderPassDesc, type RenderPipelineDesc, type SamplerDesc, type Stage, type TextureDesc,
+  type Manifest, type Precision, type ModuleDesc, type PipelineLayoutDesc, type RenderPassDesc, type RenderPipelineDesc, type SamplerDesc, type Stage, type TextureDesc,
 } from "./manifest.ts";
 
 const FLOATS = { f32: 1, vec2: 2, vec3: 3, vec4: 4 } as const;
@@ -289,7 +289,10 @@ class List<T> {
   add(x: T): Id { return this.items.push(x) - 1; }
 }
 
-export function lower(a: Artefact): Bundle {
+export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
+  const mixed = precision === "mixed" ? a.mixed : undefined;
+  const mixedModules: Record<number, readonly Id[]> = {};
+  const mixedBuffers: Record<number, { size: number; init: string }> = {};
   const { paramFloats } = checkArtefact(a);
   const post = a.post ?? []; // absent means none (artefact.ts)
   const sharing = share(a);
@@ -329,6 +332,13 @@ export function lower(a: Artefact): Bundle {
   // Dynamic buffers are also copied from: the level-of-detail bounds and `readTables` read them back.
   const dynamic = a.dynamic.map((d) => ({ binding: d.binding, name: d.name, id: buffer(d.name, d.vec4s * 16, ["STORAGE", "COPY_DST", "COPY_SRC"]) }));
   const staticBufs = statics.map((d) => ({ binding: d.binding, id: buffer(d.name, d.data.byteLength, STORAGE, blob(d.name, d.data)) }));
+  for (const [i, d] of statics.entries()) {
+    const data = mixed?.statics[d.name];
+    if (data === undefined) continue;
+    const init = `${d.name}.f16`;
+    blobs.set(init, data);
+    mixedBuffers[staticBufs[i]!.id] = { size: Math.max(MIN_BUFFER_BYTES, data.byteLength), init };
+  }
   const group1Buffers = [...dynamic, ...staticBufs];
   // Shared shaders' rows (src/host/share.ts): bound at group 0 only when some shader is shared.
   const rowsBuf = sharing.rows.length > 0 ? [buffer("loft rows", sharing.rows.byteLength, STORAGE, blob("loft rows", sharing.rows))] : [];
@@ -395,14 +405,16 @@ export function lower(a: Artefact): Bundle {
 
   // ---- the pose stages ---------------------------------------------------------------------------------------------
   const preludeChunk = chunk(PRELUDE_WGSL);
+  const enableF16 = () => chunk("enable f16;\n");
   const replayed = (a.recurrences ?? []).flatMap((r) => (r.replay === undefined ? [] : [{ r, replay: r.replay }]));
   const poseLayout = a.stages.length > 0 || replayed.length > 0 ? pls.add({ label: "loft pose", bindGroupLayouts: [layout0, poseLayout1] }) : -1;
-  const dispatch = (st: Artefact["stages"][number], what: string): Dispatch => {
+  const dispatch = (st: Artefact["stages"][number], what: string, alternative?: string): Dispatch => {
     const module = modules.add({ label: `${what} "${st.label}"`, chunks: [preludeChunk, chunk(st.wgsl)] });
+    if (alternative !== undefined && alternative !== st.wgsl) mixedModules[module] = [enableF16(), preludeChunk, chunk(alternative)];
     const pipeline = computes.add({ label: st.label, layout: poseLayout, module, entryPoint: "pose_main" });
     return { label: st.label, pipeline, bindGroups: [group0, poseGroup1], workgroups: Math.ceil(st.invocations / POSE_WORKGROUP) };
   };
-  const pose = a.stages.map((st) => dispatch(st, "pose stage"));
+  const pose = a.stages.map((st, i) => dispatch(st, "pose stage", mixed?.stages[i]));
   // A checkpointed recurrence's replay: three more pose-stage modules, recorded by the loader before the stages.
   const replay = replayed.map(({ r, replay: p }): Replay => ({
     label: `replay ${r.name}`, slot: p.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.kind === "checkpoints" ? r.kept.every : 1,
@@ -424,7 +436,12 @@ export function lower(a: Artefact): Bundle {
     // The pass bindings chunk is the same for every module of one artefact (all passes, or none), so a shared group's
     // module needs it exactly as an unshared one does; it is part of the key so the key names every chunk that varies.
     passChunk ??= withPasses ? [chunk(passBindingsWgsl(passes))] : [];
-    const id = modules.add({ label: `shader "${shared.key}"${VARIANT[v].named}`, chunks: [preludeChunk, ...passChunk, ...variant, sceneChunk, chunk(shared.wgsl)] });
+    const prefix = [preludeChunk, ...passChunk, ...variant];
+    const id = modules.add({ label: `shader "${shared.key}"${VARIANT[v].named}`, chunks: [...prefix, sceneChunk, chunk(shared.wgsl)] });
+    const alternative = mixed?.shaders[shader];
+    if (alternative !== undefined || mixed?.sceneWgsl !== undefined) {
+      mixedModules[id] = [enableF16(), ...prefix, mixed?.sceneWgsl === undefined ? sceneChunk : chunk(mixed.sceneWgsl), chunk(alternative ?? shared.wgsl)];
+    }
     moduleIds.set(key, id);
     return id;
   };
@@ -740,7 +757,8 @@ export function lower(a: Artefact): Bundle {
 
   const manifest: Manifest = {
     format: FORMAT,
-    version: formatVersion({ replay: replay.length > 0, passes: withPasses, shared: sharing.rows.length > 0 }),
+    version: precision === "mixed" ? 4 : formatVersion({ replay: replay.length > 0, passes: withPasses, shared: sharing.rows.length > 0 }),
+    ...(precision === "mixed" ? { precision: { kind: "mixed", fallback: "f32-fallback", modules: mixedModules, buffers: mixedBuffers } as const } : {}),
     chunks: chunkNames,
     blobs: [...blobs].map(([name, b]) => ({ name, bytes: b.byteLength })),
     inputs: a.inputs,

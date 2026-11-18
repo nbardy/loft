@@ -12,7 +12,7 @@
 //   {"id": "b", "artefact": "out/files/x", "camera": {"kind": "perspective", "eye": [4, 4, 8], "target": [0, 0.7, 0], "fovY": 0.62}, ...,
 //    "params": {"stormwing.span": 1.4}, "inputs": {"strike": 1, "ship.at": [14, 2]}}
 //
-//   {"id": "a", "ok": true, "tier": "C", "frames": [{"time": 0, "file": "out/a/0.rgba", "sha256": "..."}, ...], "ms": {...}, "cache": {...}}
+//   {"id": "a", "ok": true, "tier": "C", "precision": "f32", "frames": [{"time": 0, "file": "out/a/0.rgba", "sha256": "..."}, ...], "ms": {...}, "cache": {...}}
 //   {"id": "a", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: ...", "detail": [...]}
 //
 // A failed request is answered and the server goes on; `exit` and `line` are what `loft render` would have ended with
@@ -33,8 +33,8 @@ import { cachingDevice, type CachingDevice } from "../host/cache.ts";
 import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { loadBundle, NotDataError } from "../host/host.ts";
-import type { Bundle } from "../host/manifest.ts";
-import { parseSize, UsageError, type Size } from "./args.ts";
+import type { Bundle, FramePrecision, Precision } from "../host/manifest.ts";
+import { parsePrecision, parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
 import type { InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
@@ -60,11 +60,12 @@ type Source = { readonly kind: "scene"; readonly path: string } | { readonly kin
 type CameraAsk = { readonly kind: "named"; readonly name: string } | { readonly kind: "given"; readonly camera: Camera };
 type Request = {
   readonly id: string | number; readonly source: Source; readonly camera: CameraAsk; readonly times: readonly number[]; readonly size: Size; readonly out: string;
+  readonly precision: Precision | undefined;
   readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues;
 };
 
 /**
- * The tier a frame was drawn in, part of its identity (with scene, camera, time, size, params, inputs, library commit,
+ * The tier a frame was drawn in, part of its identity (with scene, camera, time, size, params, inputs, precision, library commit,
  * adapter and driver). Only "C", the compiled scene, exists today; the field is in every answer before an interpreter
  * ("I") exists. In training the tier is chosen once per sample and never promoted within a run.
  */
@@ -72,7 +73,7 @@ type Tier = "C";
 const TIER: Tier = "C";
 
 type Answer =
-  | { readonly id: string | number | null; readonly ok: true; readonly tier: Tier; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string }[];
+  | { readonly id: string | number | null; readonly ok: true; readonly tier: Tier; readonly precision: FramePrecision; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string }[];
       readonly ms: { readonly compile?: number; readonly load: number; readonly frames: number }; readonly cache: ReturnType<CachingDevice["counts"]> }
   | { readonly id: string | number | null; readonly ok: false; readonly tier: Tier; readonly exit: number; readonly line: string; readonly detail: readonly string[] };
 
@@ -107,7 +108,7 @@ function requestOf(line: string): Request {
   let r: Record<string, unknown>;
   try { r = JSON.parse(line); } catch (e) { throw new UsageError(`request: not JSON: ${e instanceof Error ? e.message : String(e)}`); }
   if (typeof r !== "object" || r === null || Array.isArray(r)) throw new UsageError("request: expected a JSON object");
-  const known = ["id", "scene", "artefact", "camera", "times", "size", "out", "params", "inputs"];
+  const known = ["id", "scene", "artefact", "camera", "times", "size", "out", "params", "inputs", "precision"];
   const stray = Object.keys(r).filter((k) => !known.includes(k));
   if (stray.length > 0) throw new UsageError(`request: unknown field ${stray.map((k) => `"${k}"`).join(", ")} (fields: ${known.join(", ")})`);
   const id = idOf(r);
@@ -121,7 +122,7 @@ function requestOf(line: string): Request {
   if (!Array.isArray(r.times) || r.times.length === 0 || !r.times.every((t) => typeof t === "number" && Number.isFinite(t))) throw new UsageError("request: \"times\" must be a non-empty list of numbers (seconds)");
   if (typeof r.size !== "string") throw new UsageError("request: \"size\" must be WIDTHxHEIGHT, e.g. \"512x512\"");
   if (r.camera === undefined) throw new UsageError("request: needs a \"camera\": a name the scene declares (or front, side, top, three), or a camera object");
-  return { id, source, camera: cameraOf(r.camera), times: r.times as number[], size: parseSize(r.size), out: path("out", r.out), params: paramsOf(r.params), inputs: inputsOf(r.inputs) };
+  return { id, source, camera: cameraOf(r.camera), times: r.times as number[], size: parseSize(r.size), out: path("out", r.out), precision: parsePrecision(r.precision), params: paramsOf(r.params), inputs: inputsOf(r.inputs) };
 }
 
 /** `{name: value}` as given, or `{}` when absent; anything but a plain object is refused. */
@@ -193,8 +194,8 @@ class Budget extends Error {}
 
 // ---- compile: a child process, no GPU --------------------------------------------------------------------------
 
-async function compile(cmd: ServeCommand, scene: string, dir: string, children: Set<{ kill(signal?: number | NodeJS.Signals): void }>): Promise<void> {
-  const child = Bun.spawn([...cmd.confine, process.execPath, MAIN, "build", scene, "--out", dir], {
+async function compile(cmd: ServeCommand, scene: string, dir: string, precision: Precision, children: Set<{ kill(signal?: number | NodeJS.Signals): void }>): Promise<void> {
+  const child = Bun.spawn([...cmd.confine, process.execPath, MAIN, "build", scene, "--out", dir, "--precision", precision], {
     env: { ...process.env, LOFT_NO_GPU: "1" }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
   });
   children.add(child);
@@ -309,7 +310,7 @@ export async function serve(cmd: ServeCommand) {
     const t0 = performance.now();
     for (let attempt = 1; ; attempt++) {
       try {
-        const loaded = await gpu.cache.settle(() => loadBundle(gpu.cache.device, bundle, { kind: "none" }));
+        const loaded = await gpu.cache.settle(() => loadBundle(gpu.cache.device, bundle, { kind: "none" }, req.precision));
         const t1 = performance.now();
         try {
           mkdirSync(req.out, { recursive: true });
@@ -321,7 +322,7 @@ export async function serve(cmd: ServeCommand) {
             writeFileSync(file, pixels);
             frames.push({ time, file, sha256: createHash("sha256").update(pixels).digest("hex") });
           }
-          return { id: req.id, ok: true, tier: TIER, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
+          return { id: req.id, ok: true, tier: TIER, precision: loaded.precision, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
         } finally {
           loaded.destroy();
         }
@@ -346,7 +347,7 @@ export async function serve(cmd: ServeCommand) {
         try {
           const compileMs = await compileSlot(async () => {
             const t0 = performance.now();
-            await compile(cmd, scene, dir, children);
+            await compile(cmd, scene, dir, req.precision ?? "f32", children);
             return performance.now() - t0;
           });
           const drawn = await drawSlot(() => drawBounded(req, dir));

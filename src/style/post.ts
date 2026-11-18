@@ -38,34 +38,35 @@ const lit = (x: number): string => {
 /** Paper fibre and tooth. Defaults: fibre 0.07, tooth 0.035 (the woodblock print's paper). */
 export function paperGrain(o: { readonly fibre?: number; readonly tooth?: number } = {}): PostSpec {
   const fibre = o.fibre ?? 0.07, tooth = o.tooth ?? 0.035;
-  return {
-    label: "paper grain",
-    wgsl: /* wgsl */ `${POST_COMMON}
+  const wgsl = (mixed: boolean) => /* wgsl */ `${POST_COMMON}
 @fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
   let c = post_color(in.uv).rgb;
   let scale = max(frame.viewport.y / 800.0, 0.375);
   let q = in.px.xy / scale;
   let fibre = sty_noise(q * vec2<f32>(0.08, 0.7)) * 0.6 + sty_noise(q * vec2<f32>(0.03, 0.25)) * 0.4;
   let tooth = sty_hash(vec2<i32>(in.px.xy));
-  let light = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+  let light = ${mixed
+    ? "f32(dot(vec3<f16>(c), vec3<f16>(0.2126, 0.7152, 0.0722)))"
+    : "dot(c, vec3<f32>(0.2126, 0.7152, 0.0722))"};
   let g = (fibre - 0.5) * ${lit(fibre)} + (tooth - 0.5) * ${lit(tooth)} * (0.4 + light);
   return vec4<f32>(c * (1.0 + g), 1.0);
 }
-`,
-  };
+`;
+  // Luminance error is multiplied by tooth. Keep unusual gains on the original path.
+  return { label: "paper grain", wgsl: wgsl(false), ...(Math.abs(tooth) <= 0.25 ? { mixedWgsl: wgsl(true) } : {}) };
 }
 
 /** Bloom. Defaults: radius 30 px, gain 1.6, brightness from 0.12 to 0.5 (biolume's). */
 export function bloom(o: { readonly radius?: number; readonly gain?: number; readonly from?: number; readonly to?: number } = {}): PostSpec {
   const radius = o.radius ?? 30, gain = o.gain ?? 1.6, from = o.from ?? 0.12, to = o.to ?? 0.5;
   if (!(to > from)) throw new Error(`bloom: the brightness range must rise (from ${from} to ${to})`);
-  return {
-    label: "bloom",
-    wgsl: /* wgsl */ `${POST_COMMON}
+  const wgsl = (mixed: boolean) => /* wgsl */ `${POST_COMMON}
 const BL_TAPS: u32 = 40u;
 fn bl_bright(c: vec3<f32>) -> vec3<f32> {
   let l = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
-  return c * smoothstep(${lit(from)}, ${lit(to)}, l);
+  return ${mixed
+    ? `vec3<f32>(vec3<f16>(c) * f16(smoothstep(${lit(from)}, ${lit(to)}, l)))`
+    : `c * smoothstep(${lit(from)}, ${lit(to)}, l)`};
 }
 @fragment fn fs(in: PostIn) -> @location(0) vec4<f32> {
   let c = post_color(in.uv).rgb;
@@ -87,8 +88,9 @@ fn bl_bright(c: vec3<f32>) -> vec3<f32> {
   let lit = c + glow * ${lit(gain)};
   return vec4<f32>(lit / (1.0 + 0.25 * max(lit - vec3<f32>(0.8), vec3<f32>(0.0))), 1.0);
 }
-`,
-  };
+`;
+  // The normalized tap sum has the per-tap error bound. A large gain can expose rounded tails.
+  return { label: "bloom", wgsl: wgsl(false), ...(Math.abs(gain) <= 2 ? { mixedWgsl: wgsl(true) } : {}) };
 }
 
 /** The light of bodies smeared down the water below them. Default gain 0.09 (biolume's). */

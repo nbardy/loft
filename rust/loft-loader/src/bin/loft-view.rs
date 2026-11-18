@@ -84,9 +84,10 @@ fn main() {
     }))
     .unwrap_or_else(|e| fail(format!("no adapter: {e}")));
     let timing = adapter.features().contains(wgpu::Features::TIMESTAMP_QUERY);
+    let optional = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::SHADER_F16;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-view"),
-        required_features: if timing { wgpu::Features::TIMESTAMP_QUERY } else { wgpu::Features::empty() },
+        required_features: adapter.features() & optional,
         ..Default::default()
     }))
     .unwrap_or_else(|e| fail(format!("no device: {e}")));
@@ -97,7 +98,7 @@ fn main() {
     let read_ms = t.elapsed().as_secs_f64() * 1e3;
     let t = Instant::now();
     let mut loft = Loft::load(&device, &queue, artefact).unwrap_or_else(|e| fail(e.to_string()));
-    eprintln!("read {read_ms:.0} ms, load {:.0} ms", t.elapsed().as_secs_f64() * 1e3);
+    eprintln!("read {read_ms:.0} ms, load {:.0} ms, precision {}", t.elapsed().as_secs_f64() * 1e3, loft.precision().as_str());
     loft.set_camera(loft.camera(&a.view).unwrap_or_else(|e| fail(e.to_string())));
     loft.set_time(a.time);
     for (name, v) in &a.inputs {
