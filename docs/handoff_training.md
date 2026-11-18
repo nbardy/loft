@@ -125,8 +125,8 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
 {"id": "s1", "scene": "train/s1.ts", "camera": "fixed", "times": [0, 0.37, 0.91, 1.53], "size": "512x512", "out": "out/s1"}
 {"id": "s2", "artefact": "out/files/s2", "camera": {"kind": "perspective", "eye": [4.5, 4.5, 8], "target": [0, 0.7, 0], "fovY": 0.62}, "times": [1], "size": "512x512", "out": "out/s2", "params": {"stormwing.span": 1.4}, "inputs": {"strike": 0.5}}
 
-{"id": "s1", "ok": true, "tier": "C", "precision": "f32", "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
-{"id": "s2", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: …", "detail": ["…"]}
+{"id": "s1", "ok": true, "identity": {"build": {…}, "frame": {…}, "device": {…}}, "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…", "id": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
+{"id": "s2", "ok": false, "exit": 4, "line": "loft: scene: …", "detail": ["…"]}
 ```
 
 - `scene` (compiled here) or `artefact` (a directory you built, for example in your own sandbox); `camera` is a name
@@ -145,12 +145,11 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
   the totals against `--limits` (defaults: manifest 64 MiB, 65536 files, 1 GiB in all). Anything wrong is `load` (3).
   `--check` then sees the bundle before it reaches the GPU.
 - A request can include `"precision":"mixed"` or `"precision":"f32"`. Scenes default to f32. A request for a
-  directory inherits its precision when the field is absent. Every successful answer identifies the selected
-  precision as `f32`, `mixed`, or `f32-fallback`. The latter means a mixed request ran without shader-f16.
-- Every answer carries `tier`. Only `"C"` (the compiled scene) exists; the field is there before an interpreter is.
-  A frame's identity is (scene, camera, time, size, params, inputs, tier, precision, library commit, adapter, driver). In
-  training the tier is chosen once per sample and never promoted within a run, so a frame never depends on what the
-  server saw before.
+  directory inherits its precision when the field is absent. Every successful answer records the precision used
+  in `identity.frame.precision`: `f32`, `mixed`, or `f32-fallback`. The latter means a mixed request ran without
+  shader-f16.
+- Every successful answer carries `identity` (below), and each frame its `id`. The same `id` is the same RGBA. Until
+  18 Nov the answer carried `tier` (always `"C"`) and `precision` instead; both are now fields of `identity`.
 - A failed request is answered and the server goes on. `exit` and `line` are what `loft render` would have ended
   with, from the table above. A refusal by `--check`, or a directory that cannot be read, is `load` (3). The
   server's own limits answer `budget` (7, `loft: budget: …`), naming the limit: a compile still running after
@@ -177,6 +176,42 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
   export gets each `Bundle` before it reaches the GPU and throws to refuse it). A scene with `recur` bakes on the GPU, so its
   compile fails with exit 6. Build it outside serve and send the directory.
 - A built directory has no loop period yet, so a looping scene's time is not wrapped, the same as `render --artefact`.
+
+#### Identity
+
+A frame is a function of one record (`src/identity.ts`), and its `id` is the sha256 of that record's canonical JSON
+(keys sorted at every level, `-0` written as `-0`). `serve` answers carry the record without the frame's time, and
+frame *k*'s `id` is the hash of the record with `frame.time` set to `frames[k].time`. `render` and `frames` print
+the build and device parts once (`identity program … library … device …`) and each frame's `id` (first 16 hex digits)
+beside its `rgba` hash; `clip` prints the identity line.
+
+```ts
+type Identity = {
+  build:  { program: { kind: "files"; sha256 } | { kind: "js-tables"; sha256; tables }; library: string;
+            tier: "compiled"; precision: "f32" | "mixed" };
+  frame:  { camera: Camera; time: number; size: [w, h]; params: Record<string, number>; inputs: Record<string, number[]>;
+            precision: "f32" | "mixed" | "f32-fallback"; drawn: { kind: "frame" } | { kind: "still"; samples; shutter; aperture };
+            construction: boolean };
+  device: { runtime: string; adapter: string; driver: string };
+};
+```
+
+- `program` hashes the bundle the GPU ran: the manifest as written, then every WGSL chunk and data blob. A scene,
+  its variant, its style and `--samples` lights all reach the GPU only through the bundle, so they need no field of
+  their own: a scene compiled by `render` and the directory `loft build` wrote of it have one `program` and give one
+  `id`. `js-tables`: a scene compiled in-process fills those tables from JavaScript each frame, which the hash does not
+  cover; a built directory never has them.
+- `library` hashes every file under this checkout's `src/` (the loader that ran the bundle), not a git commit: a
+  vendored copy has no `.git`, and an uncommitted edit changes pixels as a commit does. Any edit to `src/` changes it.
+- `frame` holds the values the frame used. `camera` is the resolved camera, not its name. `params` and `inputs` list
+  every one the scene declares, the defaults filled in, so a request that gives a default and one that omits it have
+  one `id`. `precision` is what ran: `f32-fallback` is a mixed bundle on a device without shader-f16.
+- `device`: `runtime` is Bun's and bun-webgpu's (Dawn's) versions; `adapter` is vendor / architecture / device;
+  `driver` is the adapter's description (on macOS, the OS build).
+- Only the compiled tier exists. In training the tier is chosen once per sample and never promoted within a run, so a
+  frame never depends on what the server saw before.
+- Cost: hashing a bundle takes about 0.6 ms per MB (0.5 ms for stormwing's 0.9 MB; about 13 ms for a 22 MB scene,
+  derived), once per request; `library` takes 25 ms, once per process.
 
 Measured on 2026-11-18 (`bun tools/serve_bench.ts`, Apple M4, shared machine, 1-minute load 7.5 to 17). The runs
 were interleaved, the order alternated by round, and there were two rounds with a fresh server each. 10 programs

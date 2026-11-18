@@ -396,6 +396,11 @@ as `--samples 4` stills. Six training programs agree on main, the branch and cre
 is. JSON lines in and out; each answer carries Loft's exit code and last line. Usage and measurements:
 `docs/handoff_training.md` "loft serve"; notes: `agent_notes/2026-11-18_loft_serve.md`.
 
+Each successful answer, and each frame `render` and `frames` print, carries an identity (`src/identity.ts`,
+`docs/handoff_training.md` "Identity"): the bundle's hash, the library's (`src/` as it is), the view with every param
+and input value filled in, the precision used, and the device; `id` is the hash of that record, and the same `id` is the
+same RGBA. Variant, style and scene source are not fields: they reach the GPU only through the bundle.
+
 - Inherited from creative: the split (untrusted compile without a GPU, trusted drawing), the content cache of modules,
   layouts and pipelines (`src/host/cache.ts`; the key here is the whole descriptor with labels dropped, WGSL hashed and
   GPU objects by their own keys, so a descriptor field added later is keyed too), and serialised draws.
