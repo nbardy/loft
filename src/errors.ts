@@ -1,6 +1,5 @@
 // The two kinds of failure a caller must tell apart, as types. A leaf module: it imports nothing of Loft's, so any
 // constructor can raise these without an import cycle. The CLI maps them to exit codes in src/cli/verdict.ts.
-import { relative } from "node:path";
 
 /**
  * A mistake in the scene as written, raised by the constructor where it was made: what was given, what was expected,
@@ -40,6 +39,10 @@ export function shown(x: unknown): string {
 }
 
 const SRC = new URL(".", import.meta.url).pathname;
+// The library's root (the parent of src/). A site inside it prints relative to it; any other prints absolute. Pure
+// string work, not node:path and process.cwd(): this module is reachable from scene code, which creative's confined
+// compile admits only when it touches no host module or global.
+const ROOT = new URL("..", import.meta.url).pathname;
 
 /**
  * The first stack frame outside Loft's own source: the line of the user's file a constructor was called from
@@ -48,7 +51,7 @@ const SRC = new URL(".", import.meta.url).pathname;
 export function siteOf(stack: string | undefined): string | undefined {
   for (const line of (stack ?? "").split("\n").slice(1)) {
     const m = line.match(/\(?((?:\/|[A-Za-z]:)[^()]*?):(\d+):(\d+)\)?\s*$/);
-    if (m && !m[1]!.startsWith(SRC) && !m[1]!.includes("/node_modules/")) return `${relative(process.cwd(), m[1]!)}:${m[2]}`;
+    if (m && !m[1]!.startsWith(SRC) && !m[1]!.includes("/node_modules/")) return `${m[1]!.startsWith(ROOT) ? m[1]!.slice(ROOT.length) : m[1]!}:${m[2]}`;
   }
   return undefined;
 }
