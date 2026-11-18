@@ -1,18 +1,20 @@
 //! `loft-draw serve`: the draw child of `loft serve` (src/cli/serve.ts), one JSON line per request on stdin and one
-//! answer line per request on stdout, in order. The supervisor has already checked the artefact (names, links, sizes
-//! against --limits, the --check hook) and resolved the camera, so a request here is only what the frames need:
+//! answer line per request on stdout, in order. The supervisor has already checked the bundle (names, sizes against
+//! --limits, the --check hook), so a request here is only what the frames need:
 //!
-//!   in   {"dir": "...", "camera": {"kind": "perspective", "eye": [..], "target": [..], "fovY": 0.6}, "times": [0, 1.5],
-//!         "size": [512, 512], "params": {"a.b": 1}, "inputs": {"strike": [1]}, "precision": "f32" | "mixed", "out": "..."}
-//!   out  first and unasked: {"ready": true, "wire": 1, "adapter": {...}, "device": {"runtime", "adapter", "driver"}}
+//!   in   {"bundle": ".../scene.loft", "camera": {"kind": "named", "name": "three"}
+//!                                            | {"kind": "look", "eye": [..], "target": [..], "up": [..], "fovY": 0.6},
+//!         "times": [0, 1.5], "size": [512, 512], "params": {"a.b": 1}, "inputs": {"strike": [1]},
+//!         "precision": "f32" | "mixed", "out": "..."}
+//!   out  first and unasked: {"ready": true, "wire": 2, "adapter": {...}, "device": {"runtime", "adapter", "driver"}}
 //!        then per request:  {"ok": true, "precision": "f32", "frames": [{"file", "sha256"}], "ms": {"load", "frames"}}
-//!                       or  {"ok": false, "verdict": {"kind": "usage" | "load" | "environment" | "internal", "message"}}
+//!                       or  {"ok": false, "verdict": {"kind": "usage" | "load" | "scene" | "environment" | "internal", "message"}}
 //!
 //! Frame k is written to `out/k.rgba`. A lost device ends the process with exit 6 (main.rs `gpu`), which the supervisor
 //! answers for every request in flight. A panic answers `internal` and the server goes on: every load is fresh.
 
-use crate::{Gpu, Target, Verdict, gpu};
-use loft_loader::{Camera, Loft, Precision, read_dir};
+use crate::{Gpu, Target, Verdict, gpu, load, read_bundle};
+use loft_ir::identity::Precision;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -23,12 +25,12 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 /// The protocol's version, checked by the supervisor at `ready`: a stale binary is an environment error, not a mismatch.
-const WIRE: u32 = 1;
+const WIRE: u32 = 2;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Request {
-    dir: PathBuf,
+    bundle: PathBuf,
     camera: Camera,
     times: Vec<f64>,
     size: [NonZeroU32; 2],
@@ -38,8 +40,24 @@ struct Request {
     out: PathBuf,
 }
 
-/// The precision asked for (src/host/precision.ts): `f32` draws the f32 shaders; `mixed` draws f16 where the device
-/// has it, else the artefact's named f32 fallback. Each runs on its own device, so `f32` never sees `SHADER_F16`.
+/// The view: one of the bundle's cameras, or a host look camera (built on the GPU as a bundle's are).
+#[derive(Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+enum Camera {
+    Named {
+        name: String,
+    },
+    Look {
+        eye: [f32; 3],
+        target: [f32; 3],
+        up: [f32; 3],
+        #[serde(rename = "fovY")]
+        fov_y: f32,
+    },
+}
+
+/// The precision asked for: `f32` draws on a device without `SHADER_F16`; `mixed` draws f16 where the device has it,
+/// else f32 (the answer says which ran). Each runs on its own device.
 #[derive(Deserialize, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
 enum Ask {
@@ -79,19 +97,24 @@ pub fn run() -> Result<(), Verdict> {
 fn draw(g: &Gpu, req: &Request) -> Result<Value, Verdict> {
     let ms = |t: Instant| t.elapsed().as_secs_f64() * 1e3;
     let t0 = Instant::now();
-    let mut loft = Loft::load(&g.device, &g.queue, read_dir(&req.dir)?)?;
-    loft.set_camera(req.camera);
+    let ask = match req.precision {
+        Ask::F32 => Precision::F32,
+        Ask::Mixed => Precision::Mixed,
+    };
+    let mut loft = load(g, &read_bundle(&req.bundle)?, ask, None)?;
+    match &req.camera {
+        Camera::Named { name } => loft.use_camera(name)?,
+        Camera::Look { eye, target, up, fov_y } => loft.set_look(*eye, *target, *up, *fov_y),
+    }
     for (name, v) in &req.params {
         loft.set_param(name, *v)?;
     }
     for (name, v) in &req.inputs {
         loft.set_input(name, v)?;
     }
-    let precision = match (req.precision, loft.precision()) {
-        // The f32 device has no SHADER_F16, so a mixed artefact drew its f32 shaders: what was asked, and ran.
-        (Ask::F32, Precision::F32 | Precision::F32Fallback) => "f32",
-        (Ask::F32, Precision::Mixed) => unreachable!("the f32 device is made without SHADER_F16"),
-        (Ask::Mixed, p @ (Precision::F32 | Precision::Mixed | Precision::F32Fallback)) => p.as_str(),
+    let precision = match loft.precision() {
+        Precision::F32 => "f32",
+        Precision::Mixed => "mixed",
     };
     let load = ms(t0);
     let t1 = Instant::now();
@@ -100,8 +123,8 @@ fn draw(g: &Gpu, req: &Request) -> Result<Value, Verdict> {
     let target = Target::new(&g.device, (req.size[0].get(), req.size[1].get()));
     let mut frames = Vec::with_capacity(req.times.len());
     for (k, &time) in req.times.iter().enumerate() {
-        loft.set_time(time);
-        let (rgba, _) = target.picture(g, &mut loft)?;
+        loft.set_time(time as f32);
+        let rgba = target.picture(g, &mut loft)?;
         let file = req.out.join(format!("{k}.rgba"));
         std::fs::write(&file, &rgba).map_err(env)?;
         frames.push(json!({"file": file, "sha256": format!("{:x}", Sha256::digest(&rgba))}));

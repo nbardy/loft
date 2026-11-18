@@ -29,12 +29,12 @@ const SKY: &str = "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(posi
 }
 @fragment fn sky() -> @location(0) vec4<f32> { return vec4<f32>(0.0, 0.0, 1.0, 1.0); }";
 // A counter stepped live: x counts steps, y is the time the last step saw.
-const STEP: &str = "@group(1) @binding(0) var<storage, read> r2: array<vec4<f32>>;
+const STEP: &str = "@group(1) @binding(1) var<storage, read_write> r2: array<vec4<f32>>;
 @group(2) @binding(0) var<storage, read_write> w0: array<vec4<f32>>;
 @compute @workgroup_size(64) fn step(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x < 1u) { w0[0] = vec4<f32>(r2[0].x + 1.0, frame.time.x, 0.0, 0.0); }
 }";
-const SHOW: &str = "@group(1) @binding(0) var<storage, read> r2: array<vec4<f32>>;
+const SHOW: &str = "@group(1) @binding(1) var<storage, read> r2: array<vec4<f32>>;
 @vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
   return vec4<f32>(f32(i == 1u) * 4.0 - 1.0, f32(i == 2u) * 4.0 - 1.0, 0.5, 1.0);
 }
@@ -43,8 +43,12 @@ const SHOW: &str = "@group(1) @binding(0) var<storage, read> r2: array<vec4<f32>
 fn f(x: f32) -> F32 {
     F32(x.to_bits())
 }
-fn module(wgsl: Id, reads: &[Id], origin: Origin) -> Module {
-    Module { wgsl, origin, precision_alias: true, reads: reads.into() }
+fn module(wgsl: Id, origin: Origin) -> Module {
+    Module { wgsl, origin, precision_alias: true }
+}
+/// One pack holding `holds` (resource, vec4 offset), `vec4s` long.
+fn pack(access: Access, vec4s: u64, holds: &[(Id, u64)]) -> Pack {
+    Pack { access, vec4s, holds: holds.into() }
 }
 fn raster(depth_write: bool) -> Raster {
     Raster { cull: false, depth_write, blend: Blend::Opaque }
@@ -64,6 +68,7 @@ fn subject() -> Bundle {
             Resource { shape: Shape::Rows { rows: 1, lanes: 1 }, init: Init::By(0) },
         ]
         .into(),
+        packs: [pack(Access::Write, 1, &[(1, 0)])].into(),
         kernels: [Kernel {
             writes: [1].into(),
             reads: [].into(),
@@ -71,8 +76,7 @@ fn subject() -> Bundle {
             when: When::Load,
         }]
         .into(),
-        modules: [module(0, &[], Origin::Library), module(1, &[1], Origin::Library), module(2, &[], Origin::Library)]
-            .into(),
+        modules: [module(0, Origin::Library), module(1, Origin::Library), module(2, Origin::Library)].into(),
         draws: [
             Draw { name: 4, layer: Layer::Surroundings, cover: Cover::Screen, shade: (2, 2), raster: raster(false) },
             Draw {
@@ -111,6 +115,8 @@ fn counter() -> Bundle {
             Resource { shape: Shape::Rows { rows: 1, lanes: 1 }, init: Init::Zero },
         ]
         .into(),
+        // Resource 1 is only read; the stepped resource 2 has a pack of its own (loft-core layout).
+        packs: [pack(Access::Read, 1, &[(1, 0)]), pack(Access::Write, 1, &[(2, 0)])].into(),
         kernels: [Kernel {
             writes: [2].into(),
             reads: [2].into(),
@@ -118,7 +124,7 @@ fn counter() -> Bundle {
             when: When::Steps { dt: f(0.5), from: f(0.0), count: 10, keep: Keep::Latest },
         }]
         .into(),
-        modules: [module(0, &[2], Origin::Library), module(1, &[2], Origin::Library)].into(),
+        modules: [module(0, Origin::Library), module(1, Origin::Library)].into(),
         draws: [Draw { name: 2, layer: Layer::Subject, cover: Cover::Screen, shade: (1, 1), raster: raster(false) }]
             .into(),
         sections: text(&[STEP, SHOW]),

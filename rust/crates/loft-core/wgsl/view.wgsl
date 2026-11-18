@@ -1,7 +1,7 @@
 // Every draw module's prelude (lean Rust plan §1.5): the interstage record and rays. Read with the graph module above
 // it, whose emit prelude (loft-core emit/prelude.rs) holds the camera (`frame.view_proj`, `frame.inv_view_proj`,
-// `frame.viewport`, `frame.sun`) at @group(0) @binding(0) and kernel rows at @group(1), and the glue the lowering
-// writes below it (`proxy`, `veil`, the medium functions, @group(2) bindings).
+// `frame.viewport`, `frame.sun`) at @group(0) @binding(0), the opaque scene's depth and colour, and the packs of kernel
+// rows at @group(1), and the glue the lowering writes below it (`proxy`, `veil`, the medium functions, row readers).
 
 struct Out {
   @builtin(position) pos: vec4<f32>,

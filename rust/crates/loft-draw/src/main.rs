@@ -1,15 +1,22 @@
-//! loft-draw: the one headless executor (plan 2026-11-19 §4.1). It owns a wgpu device and draws built scenes; it
-//! never compiles. Three commands:
+//! loft-draw: the one headless executor (plan 2026-11-19 §4.1). It owns a wgpu device and draws built bundles
+//! (`scene.loft`, Bundle V1) through loft-gpu; it never compiles. Three commands, each taking a bundle file or the
+//! directory `loft build` wrote it into:
 //!
 //!   loft-draw serve                      JSON lines: `loft serve`'s draw child, and `render`/`frames`/`clip` (serve.rs)
-//!   loft-draw still DIR [flags]          one PNG (still.rs; was loft-view)
-//!   loft-draw profile DIR [flags]        load and frame timings, the Vulkan cache, the frame budget (profile.rs)
+//!   loft-draw still BUNDLE [flags]       one PNG (still.rs)
+//!   loft-draw profile BUNDLE [flags]     load and frame timings, the Vulkan cache, the frame budget (profile.rs)
 
 mod profile;
 mod serve;
 mod still;
 
-use loft_loader::{Bounds, Loft, OUTPUT_FORMAT};
+use loft_gpu::{Canvas, Layers, Loft, Owner, View};
+use loft_ir::identity::Precision;
+use std::path::Path;
+
+/// What every picture is drawn into, and read back as.
+pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+pub const CANVAS: Canvas = Canvas { color: OUTPUT_FORMAT, depth: loft_gpu::DEPTH, samples: 1 };
 
 /// What failed, in `src/cli/verdict.ts`'s kinds: the supervisor turns it into the exit code and the `loft:` line.
 #[derive(Debug, serde::Serialize)]
@@ -17,8 +24,10 @@ use loft_loader::{Bounds, Loft, OUTPUT_FORMAT};
 pub enum Verdict {
     /// The request names something the artefact lacks, or a bad size or camera.
     Usage(String),
-    /// The artefact is refused: format, links, sizes, or WGSL that validation refuses.
+    /// The bundle is refused: format, ids, sizes, or library WGSL that validation refuses.
     Load(String),
+    /// The author's WGSL in the bundle, refused at load.
+    Scene(String),
     /// The machine: no adapter, a failed read-back.
     Environment(String),
     /// A Loft bug (a panic in this process).
@@ -33,39 +42,42 @@ impl Verdict {
             Verdict::Internal(_) => 1,
             Verdict::Usage(_) => 2,
             Verdict::Load(_) => 3,
+            Verdict::Scene(_) => 4,
             Verdict::Environment(_) => 6,
             Verdict::Budget(_) => 7,
         }
     }
 }
 
-impl From<loft_loader::Error> for Verdict {
-    fn from(e: loft_loader::Error) -> Verdict {
-        use loft_loader::Error as E;
+impl From<loft_ir::Error> for Verdict {
+    fn from(e: loft_ir::Error) -> Verdict {
+        use loft_ir::Error as E;
         let m = e.to_string();
         match e {
-            E::Io { .. }
-            | E::Manifest { .. }
-            | E::NotLoft(..)
-            | E::Version(..)
-            | E::BlobLength { .. }
-            | E::CpuTables(..)
-            | E::BadId { .. }
-            | E::MissingBlob(..)
-            | E::Invalid(_)
-            | E::ClearWithoutValue(..)
-            | E::Gpu { .. } => Verdict::Load(m),
-            E::UnknownName { .. }
-            | E::InputFloats { .. }
-            | E::TimeInput
-            | E::Camera(_)
-            | E::Size(..)
-            | E::Curves(..) => Verdict::Usage(m),
-            E::PipelineCacheUnsupported(_) | E::PipelineCacheIo { .. } | E::PipelineCacheNoData(_) | E::Map(_) => {
-                Verdict::Environment(m)
-            }
+            E::Usage(_) => Verdict::Usage(m),
+            E::Scene { .. } => Verdict::Scene(m),
+            E::Budget { .. } => Verdict::Budget(m),
+            E::Load(_) => Verdict::Load(m),
+            E::Environment(_) => Verdict::Environment(m),
+            E::Internal(_) => Verdict::Internal(m),
         }
     }
+}
+
+/// The bundle at `path`: a `scene.loft` file, or the directory `loft build` wrote one into.
+pub fn read_bundle(path: &Path) -> Result<Vec<u8>, Verdict> {
+    let file = if path.is_dir() { path.join("scene.loft") } else { path.to_path_buf() };
+    std::fs::read(&file).map_err(|e| {
+        Verdict::Load(format!(
+            "{}: {e}. Fix: LOFT_ENGINE=rust loft build <scene> --out <dir> writes it",
+            file.display()
+        ))
+    })
+}
+
+/// Loads `bytes` on `g` for the one canvas this executor draws into.
+pub fn load(g: &Gpu, bytes: &[u8], ask: Precision, cache: Option<&wgpu::PipelineCache>) -> Result<Loft, Verdict> {
+    Ok(pollster::block_on(Loft::load(&g.device, &g.queue, bytes, ask, &[CANVAS], cache))?)
 }
 
 /// A device, and what a frame's identity records of it (`src/identity.ts` `Identity.device`).
@@ -111,6 +123,8 @@ pub fn gpu(f16: bool) -> Result<Gpu, Verdict> {
 pub struct Target {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    /// Read by the scene resolve when a pass reads the opaque scene (loft-gpu view.rs), so it is a binding too.
+    depth: wgpu::TextureView,
     readback: wgpu::Buffer,
     size: (u32, u32),
     row: u32,
@@ -128,6 +142,16 @@ impl Target {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
+        let depth = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("loft-draw depth"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: CANVAS.depth,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
         let row = (w * 4).div_ceil(256) * 256;
         let readback = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("loft-draw readback"),
@@ -135,7 +159,8 @@ impl Target {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        Target { view: texture.create_view(&Default::default()), texture, readback, size: (w, h), row }
+        let depth = depth.create_view(&Default::default());
+        Target { view: texture.create_view(&Default::default()), texture, depth, readback, size: (w, h), row }
     }
 
     /// Records the copy of the drawn texture into the read-back buffer.
@@ -154,12 +179,25 @@ impl Target {
         );
     }
 
-    /// One headless frame: it waits for its own level-of-detail bounds (as `loft render` does), and comes back as
-    /// tightly packed RGBA.
-    pub fn picture(&self, gpu: &Gpu, loft: &mut Loft) -> Result<(Vec<u8>, loft_loader::FrameStats), Verdict> {
+    /// Records one frame of `loft` into `encoder`: every layer, into attachments Loft owns (it clears them).
+    pub fn encode(&self, gpu: &Gpu, loft: &mut Loft, encoder: &mut wgpu::CommandEncoder) -> Result<(), Verdict> {
+        let (w, h) = self.size;
+        let view = View {
+            canvas: CANVAS,
+            color: &self.view,
+            depth: &self.depth,
+            size: [w, h],
+            owner: Owner::Loft,
+            layers: Layers::All,
+        };
+        Ok(loft.encode_into(&gpu.device, &gpu.queue, encoder, &view)?)
+    }
+
+    /// One headless frame, as tightly packed RGBA.
+    pub fn picture(&self, gpu: &Gpu, loft: &mut Loft) -> Result<Vec<u8>, Verdict> {
         let (w, h) = self.size;
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
-        let stats = loft.encode_frame(&gpu.device, &gpu.queue, &mut encoder, &self.view, w, h, Bounds::Latest)?;
+        self.encode(gpu, loft, &mut encoder)?;
         self.copy(&mut encoder);
         gpu.queue.submit([encoder.finish()]);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -177,7 +215,7 @@ impl Target {
             }
         }
         self.readback.unmap();
-        Ok((rgba, stats))
+        Ok(rgba)
     }
 }
 

@@ -43,6 +43,7 @@ fn boss(origin: Origin) -> Bundle {
             Resource { shape: Shape::Rows { rows: SPHERES, lanes: 1 }, init: Init::Zero },
         ]
         .into(),
+        packs: [pack(Access::Write, u64::from(SPHERES), &[(1, 0)])].into(),
         kernels: [Kernel {
             writes: [1].into(),
             reads: [].into(),
@@ -50,7 +51,7 @@ fn boss(origin: Origin) -> Bundle {
             when: When::Frame,
         }]
         .into(),
-        modules: [module(0, &[], origin), module(1, &[1], origin), module(2, &[], origin)].into(),
+        modules: [module(0, origin), module(1, origin), module(2, origin)].into(),
         draws: [
             Draw { name: 4, layer: Layer::Surroundings, cover: Cover::Screen, shade: (2, 2), raster: raster(false) },
             Draw {

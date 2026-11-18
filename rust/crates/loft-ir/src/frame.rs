@@ -34,6 +34,31 @@ pub const HEADER: usize = 208;
 /// What a slot holds is the drawing library's (grid cell counts, the sea's rows); the host's LOD plan writes them.
 pub const DETAIL_SLOTS: usize = 4096;
 
+/// A lens: what a camera says before the host builds its matrices (loft-gpu `camera.wgsl`), `LENS` vec4s.
+///
+/// ```text
+///   0  (kind, fovy, 0, 0)   kind LOOK: perspective, `fovy` radians; kind MATRIX: rows 1..4 are clip-from-world's columns
+///   1  eye     | column 0
+///   2  target  | column 1
+///   3  up      | column 2
+///   4  unused  | column 3
+/// ```
+///
+/// A look camera's near and far planes are its distance / 100 and × 100 (TS src/host/camera.ts, which R0 drew with).
+pub const LENS: usize = 5;
+pub const LOOK: f32 = 0.0;
+pub const MATRIX: f32 = 1.0;
+
+/// The lens of a look camera.
+pub fn look(eye: [f32; 3], target: [f32; 3], up: [f32; 3], fovy: f32) -> [f32; 4 * LENS] {
+    let mut out = [0.0; 4 * LENS];
+    out[..4].copy_from_slice(&[LOOK, fovy, 0.0, 0.0]);
+    for (k, v) in [eye, target, up].iter().enumerate() {
+        out[4 * (k + 1)..4 * (k + 1) + 3].copy_from_slice(v);
+    }
+    out
+}
+
 /// The camera part of the header, as the host sets it. `viewport` is derived from the view size by the host.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Camera {
