@@ -28,7 +28,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import type { Camera, View } from "../artefact.ts";
-import { EnvironmentError, LoadError } from "../errors.ts";
+import { EnvironmentError, LoadError, SceneError } from "../errors.ts";
 import { cachingDevice, type CachingDevice } from "../host/cache.ts";
 import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
@@ -173,6 +173,7 @@ function verdictHere(e: unknown): Verdict {
   if (e instanceof Budget) return { kind: "budget", message: e.message };
   if (e instanceof UsageError) return { kind: "usage", message: e.message };
   if (e instanceof LoadError) return { kind: "load", message: e.message };
+  if (e instanceof SceneError) return { kind: "scene", message: e.message, site: undefined };
   if (e instanceof NotDataError) return { kind: "scene", message: e.message, site: undefined };
   if (e instanceof EnvironmentError) return { kind: "environment", message: e.message };
   return { kind: "internal", message: `${e.name === "Error" ? "" : `${e.name}: `}${e.message}`, stack: e.stack ?? "" };

@@ -24,6 +24,7 @@ import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_di
 import { RingWave } from "./geom/ring.ts";
 import { stateChecks } from "./check_state.ts";
 
+import { RawComputeError } from "./errors.ts";
 import type { Decision } from "./ranged.ts";
 
 type V3 = readonly [number, number, number];
@@ -34,7 +35,8 @@ type Measurement = { readonly name: string; readonly value: number; readonly mea
 type Sampled = Measurement & { readonly pass: boolean };
 
 /** A measured check result. Ranged results also carry proven bounds, witness, work and stop reason. */
-export type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined });
+export type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined })
+  | (Measurement & { readonly holds: "undecided"; readonly pass: undefined });
 
 /** Measurements over one compiled scene, with inputs held at the given values (time aside). */
 export class Probe {
@@ -936,7 +938,14 @@ export function budget(o: { readonly triangles: number }): Check {
  */
 export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[] {
   const probe = new Probe(o.compiled ?? compileScene(scene), o.inputs ?? {});
-  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)].map((v) => "holds" in v ? v : { ...v, holds: v.pass });
+  const results = checks.map((c) => {
+    try { return c.run(probe); }
+    catch (e) {
+      if (!(e instanceof RawComputeError)) throw e;
+      return { name: c.name, holds: "undecided", pass: undefined, value: NaN, measured: e.message, limit: "an expression with a CPU twin" } as const;
+    }
+  });
+  return [...results, ...stateChecks(probe, scene.loop)].map((v) => "holds" in v ? v : { ...v, holds: v.pass });
 }
 
 /** The verdicts as a plain-text table. */

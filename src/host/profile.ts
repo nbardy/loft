@@ -20,7 +20,7 @@
 // overhead": a loaded and stored pass with the empty draw) and `net` subtracts it from each draw.
 
 import type { Plan } from "./detail.ts";
-import { command, dispatchAll, passDescriptor, type Objects } from "./host.ts";
+import { command, dispatchAll, passDescriptor, recordCompute, type Objects } from "./host.ts";
 import { COLOR_FORMAT, type RenderPassDesc } from "./manifest.ts";
 
 /** The profile's label for every pose stage run in one pass. */
@@ -110,7 +110,7 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     return { format: tex.format, samples: tex.sampleCount, depth: q.depth === undefined ? undefined : m.textures[q.depth.view]!.format };
   };
 
-  const maxStages = 6 + 2 * m.frame.pose.length + m.frame.passes.reduce((n, q) => n + 3 + q.commands.length, 0);
+  const maxStages = 6 + (m.frame.compute?.length ?? 0) + 2 * m.frame.pose.length + m.frame.passes.reduce((n, q) => n + 3 + q.commands.length, 0);
   const querySet = device.createQuerySet({ type: "timestamp", count: 2 * maxStages });
   const resolveBuf = device.createBuffer({ size: 16 * maxStages, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
   const readTs = device.createBuffer({ size: 16 * maxStages, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -130,6 +130,8 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
       return { querySet, beginningOfPassWriteIndex: 2 * index, endOfPassWriteIndex: 2 * index + 1 };
     };
     const end = (pass: GPURenderPassEncoder, pipeline: GPURenderPipeline) => { pass.setPipeline(pipeline); pass.draw(3); pass.end(); };
+
+    for (const d of m.frame.compute ?? []) recordCompute(encoder, o, d, timed(d.run.label, "pose"));
 
     // The pose stages again (the upload ran them untimed to read the bounds; the same inputs give the same tables):
     // a pass per stage for the breakdown, then every stage in one pass, as a frame runs them. A compute pass may
@@ -220,7 +222,7 @@ export async function profileFrames(p: ProfileInput): Promise<Profile> {
     }
     shape = { stages, plan };
   }
-  for (const t of [...s.textures, out, tiny]) t.destroy();
+  for (const t of [...s.transient, out, tiny]) t.destroy();
   for (const b of [readback, resolveBuf, readTs]) b.destroy();
   querySet.destroy();
 

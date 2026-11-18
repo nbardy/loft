@@ -15,13 +15,14 @@
 //
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts and files.ts) stays clean.
 
-import { EnvironmentError } from "../errors.ts";
+import { EnvironmentError, SceneError } from "../errors.ts";
 import { LIGHT_SAMPLE_INPUT, replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
-import { bakeRecurrences } from "./bake.ts";
+import { bakeRecurrences, readBake, recordSteps } from "./bake.ts";
+import { checkComputeData } from "./compute_data.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
-import { COLOR_FORMAT, type Bundle, type Dispatch, type FrameWrite, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
+import { COLOR_FORMAT, COMPUTE_TEXEL_BYTES, type Bundle, type ComputeRun, type Dispatch, type RawDispatch, type TextureDesc, type FrameWrite, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 import { stillFrame, type StillSpec } from "./still.ts";
 export type { Profile, ProfileDraw, ProfileStage } from "./profile.ts";
@@ -162,7 +163,7 @@ function writeData(w: FrameWrite, view: View, state: FrameState, frame?: Float32
 // ---- objects ---------------------------------------------------------------------------------------------------
 
 const BUFFER_USAGE = { MAP_READ: 0x1, COPY_SRC: 0x4, COPY_DST: 0x8, UNIFORM: 0x40, STORAGE: 0x80 } as const;
-const TEXTURE_USAGE = { COPY_SRC: 0x1, TEXTURE_BINDING: 0x4, RENDER_ATTACHMENT: 0x10 } as const;
+const TEXTURE_USAGE = { COPY_SRC: 0x1, COPY_DST: 0x2, TEXTURE_BINDING: 0x4, STORAGE_BINDING: 0x8, RENDER_ATTACHMENT: 0x10 } as const;
 const STAGE = { VERTEX: 0x1, FRAGMENT: 0x2, COMPUTE: 0x4 } as const;
 const bits = <K extends string>(table: Record<K, number>, names: readonly K[]): number => names.reduce((n, k) => n | table[k], 0);
 
@@ -171,7 +172,9 @@ const settle = <T>(create: () => Promise<T>): Promise<Settled<T>> =>
   new Promise<T>((resolve) => resolve(create())).then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
 // The WGSL and descriptors are the compiler's, already accepted from the scene: a refusal here is the GPU stack's
 // (or a compiler bug), never the scene's, and a fresh device may pass (src/cli/main.ts retries).
-const refused = (what: string, message: string) => new EnvironmentError(`${what}:\n${message}`, true);
+const refused = (what: string, message: string) => what.startsWith('compute "')
+  ? new SceneError(what, message, "valid WGSL and bindings for the declared compute entry", "correct the named WGSL entry or declaration")
+  : new EnvironmentError(`${what}:\n${message}`, true);
 
 /**
  * Creates every shader module, each inside its own validation scope; `what` names the module in the error.
@@ -215,6 +218,8 @@ async function scopedPipelines<T>(device: GPUDevice, batch: string, creations: r
 export type Objects = {
   readonly manifest: Manifest;
   readonly buffers: readonly GPUBuffer[];
+  readonly textures: readonly (GPUTexture | undefined)[];
+  destroy(): void;
   readonly computePipelines: readonly GPUComputePipeline[];
   readonly renderPipelines: readonly GPURenderPipeline[];
   /** Bind groups naming no texture; undefined at the others' ids. */
@@ -226,73 +231,123 @@ export type Sized = {
   readonly width: number;
   readonly height: number;
   readonly textures: readonly GPUTexture[];
+  readonly transient: readonly GPUTexture[];
   readonly views: readonly GPUTextureView[];
   readonly groups: readonly GPUBindGroup[];
 };
 
-async function createObjects(device: GPUDevice, b: Bundle): Promise<Objects> {
+function extent(t: TextureDesc): GPUExtent3DDict {
+  const [width, height, depthOrArrayLayers = 1] = t.extent!;
+  return { width, height, depthOrArrayLayers };
+}
+
+function rowBytes(t: TextureDesc): number {
+  return t.extent![0] * COMPUTE_TEXEL_BYTES[t.format as keyof typeof COMPUTE_TEXEL_BYTES];
+}
+
+async function createObjects(device: GPUDevice, b: Bundle, mode: "all" | "bake" = "all"): Promise<Objects> {
+  checkComputeData(b);
   const m = b.manifest;
-  const buffers = m.buffers.map((d) => device.createBuffer({ label: d.label, size: d.size, usage: bits(BUFFER_USAGE, d.usage) }));
-  m.buffers.forEach((d, k) => {
-    if (d.init === undefined) return;
-    const bytes = b.blobs.get(d.init);
-    if (bytes === undefined) throw new Error(`artefact: buffer "${d.label}" starts from blob "${d.init}", which the bundle lacks`);
-    if (bytes.byteLength > 0) device.queue.writeBuffer(buffers[k]!, 0, bytes as Uint8Array<ArrayBuffer>); // Dawn warns on empty writes
-  });
-  const samplers = m.samplers.map((s) => device.createSampler(s));
-  const layouts = m.bindGroupLayouts.map((l) => device.createBindGroupLayout({
-    label: l.label,
-    entries: l.entries.map((e): GPUBindGroupLayoutEntry => ({ ...e, visibility: bits(STAGE, e.visibility) })),
-  }));
-  const pipelineLayouts = m.pipelineLayouts.map((p) => device.createPipelineLayout({ label: p.label, bindGroupLayouts: p.bindGroupLayouts.map((i) => layouts[i]!) }));
-  const modules = await scopedModules(device, m.modules.map((mod) => {
-    const code = mod.chunks.map((c) => {
-      const text = b.chunks.get(m.chunks[c]!);
-      if (text === undefined) throw new Error(`artefact: module ${mod.label} names chunk ${m.chunks[c]}, which the bundle lacks`);
-      return text;
-    }).join("");
-    return { what: `${mod.label} failed to compile`, create: () => device.createShaderModule({ label: mod.label, code }) };
-  }));
-  // Pipelines are built eagerly, so every error surfaces at load and a frame never stalls on compilation.
-  // Compute pipelines come first in the one batch, as they came first in the old loop.
-  const pipelines = await scopedPipelines<GPUComputePipeline | GPURenderPipeline>(device, `${m.computePipelines.length + m.renderPipelines.length} pipelines: creation failed`, [
-    ...m.computePipelines.map((p) => ({ what: `pose stage "${p.label}": pipeline creation failed`, create: () => device.createComputePipelineAsync({
-      label: p.label, layout: pipelineLayouts[p.layout]!, compute: { module: modules[p.module]!, entryPoint: p.entryPoint },
-    }) })),
-    ...m.renderPipelines.map((p) => ({ what: `${p.label}: pipeline creation failed`, create: () => device.createRenderPipelineAsync({
-      label: p.label,
-      layout: pipelineLayouts[p.layout]!,
-      vertex: { module: modules[p.vertex.module]!, entryPoint: p.vertex.entryPoint, constants: p.vertex.constants },
-      ...(p.fragment === undefined ? {} : { fragment: { module: modules[p.fragment.module]!, entryPoint: p.fragment.entryPoint, constants: p.fragment.constants, targets: p.fragment.targets.map((t) => ({ ...t })) } }),
-      primitive: p.primitive,
-      ...(p.depthStencil === undefined ? {} : { depthStencil: p.depthStencil }),
-      multisample: p.multisample,
-    }) })),
-  ]);
-  const computePipelines = pipelines.slice(0, m.computePipelines.length) as GPUComputePipeline[];
-  const renderPipelines = pipelines.slice(m.computePipelines.length) as GPURenderPipeline[];
-  const named = (g: Manifest["bindGroups"][number]) => g.entries.some((e) => "texture" in e);
-  const group = (k: number, views: readonly GPUTextureView[]): GPUBindGroup => {
-    const g = m.bindGroups[k]!;
-    return device.createBindGroup({
-      label: g.label, layout: layouts[g.layout]!,
-      entries: g.entries.map((e): GPUBindGroupEntry => {
-        if ("buffer" in e) return { binding: e.binding, resource: { buffer: buffers[e.buffer]! } };
-        if ("texture" in e) return { binding: e.binding, resource: views[e.texture]! };
-        return { binding: e.binding, resource: samplers[e.sampler]! };
-      }),
-    });
+  const buffers: GPUBuffer[] = [];
+  const textures: (GPUTexture | undefined)[] = [];
+  const destroy = () => {
+    for (const buffer of buffers) buffer.destroy();
+    for (const texture of textures) texture?.destroy();
   };
-  const fixedGroups = m.bindGroups.map((g, k) => (named(g) ? undefined : group(k, [])));
-  return {
-    manifest: m, buffers, computePipelines, renderPipelines, fixedGroups,
-    sized: (size) => {
-      const textures = m.textures.map((t) => device.createTexture({ label: t.label, size: textureSize(t.size, size), format: t.format, sampleCount: t.sampleCount, usage: bits(TEXTURE_USAGE, t.usage) }));
-      const views = textures.map((t) => t.createView());
-      const groups = m.bindGroups.map((g, k) => fixedGroups[k] ?? group(k, views));
-      return { ...size, textures, views, groups };
-    },
-  };
+  try {
+    for (const d of m.buffers) {
+      const buffer = device.createBuffer({ label: d.label, size: d.size, usage: bits(BUFFER_USAGE, d.usage) });
+      buffers.push(buffer);
+      if (d.init === undefined) continue;
+      const bytes = b.blobs.get(d.init);
+      if (bytes === undefined) throw new Error(`artefact: buffer "${d.label}" starts from blob "${d.init}", which the bundle lacks`);
+      if (bytes.byteLength > 0) device.queue.writeBuffer(buffer, 0, bytes as Uint8Array<ArrayBuffer>);
+    }
+    for (const d of m.textures) {
+      if (d.extent === undefined) { textures.push(undefined); continue; }
+      const t = device.createTexture({ label: d.label, size: extent(d), dimension: d.extent.length === 2 ? "2d" : "3d", format: d.format, sampleCount: 1, usage: bits(TEXTURE_USAGE, d.usage) });
+      textures.push(t);
+      if (d.init === undefined) continue;
+      const bytes = b.blobs.get(d.init);
+      if (bytes === undefined) throw new Error(`artefact: texture "${d.label}" starts from blob "${d.init}", which the bundle lacks`);
+      device.queue.writeTexture({ texture: t }, bytes as Uint8Array<ArrayBuffer>, { bytesPerRow: rowBytes(d), rowsPerImage: d.extent[1] }, extent(d));
+    }
+    const textureViews = textures.map((t) => t?.createView());
+    const samplers = m.samplers.map((s) => device.createSampler(s));
+    const layouts = m.bindGroupLayouts.map((l) => device.createBindGroupLayout({
+      label: l.label,
+      entries: l.entries.map((e): GPUBindGroupLayoutEntry => ({ ...e, visibility: bits(STAGE, e.visibility) })),
+    }));
+    const pipelineLayouts = m.pipelineLayouts.map((p) => device.createPipelineLayout({ label: p.label, bindGroupLayouts: p.bindGroupLayouts.map((i) => layouts[i]!) }));
+    // Build compiles only the kernels it runs. Rendering and load pipelines are the eventual loader's work.
+    const buildPipelines = new Set(m.build?.runs.map((d) => d.run.pipeline));
+    const buildModules = new Set([...buildPipelines].map((id) => m.computePipelines[id]!.module));
+    const moduleSpecs = m.modules.flatMap((mod, i) => mode === "all" || buildModules.has(i) ? [{ mod, i }] : []);
+    const made = await scopedModules(device, moduleSpecs.map(({ mod }) => {
+      const code = mod.chunks.map((c) => {
+        const text = b.chunks.get(m.chunks[c]!);
+        if (text === undefined) throw new Error(`artefact: module ${mod.label} names chunk ${m.chunks[c]}, which the bundle lacks`);
+        return text;
+      }).join("");
+      return { what: `${mod.label} failed to compile`, create: () => device.createShaderModule({ label: mod.label, code }) };
+    }));
+    const modules = new Map(moduleSpecs.map(({ i }, j) => [i, made[j]!]));
+    const computeSpecs = m.computePipelines.flatMap((p, i) => mode === "all" || buildPipelines.has(i) ? [{ p, i }] : []);
+    const renderSpecs = mode === "all" ? m.renderPipelines : [];
+    // Pipelines are built eagerly and concurrently, so the first frame never stalls on compilation.
+    const pipelines = await scopedPipelines<GPUComputePipeline | GPURenderPipeline>(device, `${computeSpecs.length + renderSpecs.length} pipelines: creation failed`, [
+      ...computeSpecs.map(({ p }) => ({
+        what: p.label.startsWith('compute "') ? `${p.label}: pipeline creation failed` : `pose stage "${p.label}": pipeline creation failed`,
+        create: () => device.createComputePipelineAsync({
+          label: p.label, layout: pipelineLayouts[p.layout]!, compute: { module: modules.get(p.module)!, entryPoint: p.entryPoint },
+        }),
+      })),
+      ...renderSpecs.map((p) => ({ what: `${p.label}: pipeline creation failed`, create: () => device.createRenderPipelineAsync({
+        label: p.label,
+        layout: pipelineLayouts[p.layout]!,
+        vertex: { module: modules.get(p.vertex.module)!, entryPoint: p.vertex.entryPoint, constants: p.vertex.constants },
+        ...(p.fragment === undefined ? {} : { fragment: { module: modules.get(p.fragment.module)!, entryPoint: p.fragment.entryPoint, constants: p.fragment.constants, targets: p.fragment.targets.map((t) => ({ ...t })) } }),
+        primitive: p.primitive,
+        ...(p.depthStencil === undefined ? {} : { depthStencil: p.depthStencil }),
+        multisample: p.multisample,
+      }) })),
+    ]);
+    const computePipelines: GPUComputePipeline[] = [];
+    computeSpecs.forEach(({ i }, k) => { computePipelines[i] = pipelines[k] as GPUComputePipeline; });
+    const renderPipelines = pipelines.slice(computeSpecs.length) as GPURenderPipeline[];
+    const group = (k: number, views: readonly (GPUTextureView | undefined)[]): GPUBindGroup => {
+      const g = m.bindGroups[k]!;
+      return device.createBindGroup({
+        label: g.label, layout: layouts[g.layout]!,
+        entries: g.entries.map((e): GPUBindGroupEntry => {
+          if ("buffer" in e) return { binding: e.binding, resource: { buffer: buffers[e.buffer]! } };
+          if ("texture" in e) return { binding: e.binding, resource: views[e.texture]! };
+          return { binding: e.binding, resource: samplers[e.sampler]! };
+        }),
+      });
+    };
+    // A group that reads only persistent textures is created once, even if the viewport changes.
+    const fixedGroups = m.bindGroups.map((g, k) => g.entries.some((e) => "texture" in e && textureViews[e.texture] === undefined) ? undefined : group(k, textureViews));
+    return {
+      manifest: m, buffers, textures, computePipelines, renderPipelines, fixedGroups, destroy,
+      sized: (size) => {
+        const transient: GPUTexture[] = [];
+        const all = m.textures.map((t, i) => {
+          const fixed = textures[i];
+          if (fixed !== undefined) return fixed;
+          const texture = device.createTexture({ label: t.label, size: textureSize(t.size, size), format: t.format, sampleCount: t.sampleCount, usage: bits(TEXTURE_USAGE, t.usage) });
+          transient.push(texture);
+          return texture;
+        });
+        const views = all.map((t, i) => textureViews[i] ?? t.createView());
+        const groups = m.bindGroups.map((g, k) => fixedGroups[k] ?? group(k, views));
+        return { ...size, textures: all, transient, views, groups };
+      },
+    };
+  } catch (e) {
+    destroy();
+    throw e;
+  }
 }
 
 /** A texture's pixels for a view of this size (TextureDesc.size: absent is the view's). */
@@ -373,7 +428,96 @@ export function dispatchAll(pass: GPUComputePassEncoder, o: Objects, list: reado
   for (const d of list) {
     pass.setPipeline(o.computePipelines[d.pipeline]!);
     d.bindGroups.forEach((g, i) => pass.setBindGroup(i, o.fixedGroups[g]!));
-    pass.dispatchWorkgroups(d.workgroups);
+    if (typeof d.workgroups === "number") pass.dispatchWorkgroups(d.workgroups);
+    else pass.dispatchWorkgroups(...d.workgroups);
+  }
+}
+
+function clearCompute(encoder: GPUCommandEncoder, o: Objects, cmd: RawDispatch): void {
+  for (const id of cmd.clearBuffers ?? []) encoder.clearBuffer(o.buffers[id]!);
+  for (const { from, to } of cmd.clearTextures ?? []) {
+    encoder.copyTextureToTexture({ texture: o.textures[from]! }, { texture: o.textures[to]! }, extent(o.manifest.textures[to]!));
+  }
+}
+
+/** One author dispatch with its zero initial state. Used for load, steps and profile attribution. */
+export function recordCompute(encoder: GPUCommandEncoder, o: Objects, cmd: RawDispatch, timestampWrites?: GPUComputePassTimestampWrites): void {
+  clearCompute(encoder, o, cmd);
+  const pass = encoder.beginComputePass({ label: cmd.run.label, ...(timestampWrites === undefined ? {} : { timestampWrites }) });
+  dispatchAll(pass, o, [cmd.run]);
+  pass.end();
+}
+
+function recordLoad(encoder: GPUCommandEncoder, o: Objects, job: ComputeRun): void {
+  switch (job.kind) {
+    case "once": return recordCompute(encoder, o, job);
+    case "steps": return recordSteps(job.count, job.start, job.odd, job.even, (run, step) => {
+      recordCompute(encoder, o, run);
+      if (step % job.keep !== 0 && step !== job.count) return;
+      const kept = Math.ceil(step / job.keep);
+      for (const copy of job.history) {
+        const from = step % 2 === 0 ? copy.a : copy.b;
+        switch (copy.kind) {
+          case "buffer": encoder.copyBufferToBuffer(o.buffers[from]!, 0, o.buffers[copy.to]!, kept * copy.bytes, copy.bytes); break;
+          case "texture": {
+            const d = o.manifest.textures[from]!, size = extent(d);
+            const origin = d.extent!.length === 2 ? { y: kept * size.height! } : { z: kept * size.depthOrArrayLayers! };
+            encoder.copyTextureToTexture({ texture: o.textures[from]! }, { texture: o.textures[copy.to]!, origin }, size);
+            break;
+          }
+        }
+      }
+    });
+  }
+}
+
+async function submitCompute<T>(device: GPUDevice, label: string, record: (encoder: GPUCommandEncoder) => T): Promise<T> {
+  device.pushErrorScope("validation");
+  try {
+    const encoder = device.createCommandEncoder({ label });
+    const out = record(encoder);
+    device.queue.submit([encoder.finish()]);
+    return out;
+  } finally {
+    const error = await device.popErrorScope();
+    if (error) throw new EnvironmentError(`${label}: WebGPU refused the compute commands:\n${error.message}`, true);
+  }
+}
+
+/** Finish a normal build's deferred jobs and return tightly packed bytes for its second lowering. */
+export async function bakeRawBuild(device: GPUDevice, b: Bundle): Promise<ReadonlyMap<string, Uint8Array>> {
+  const build = b.manifest.build;
+  if (build === undefined) return new Map();
+  const o = await createObjects(device, b, "bake");
+  const staging: GPUBuffer[] = [];
+  try {
+    const reads = await submitCompute(device, "loft compute build", (encoder) => {
+      for (const run of build.runs) recordCompute(encoder, o, run);
+      return build.outputs.map((out) => {
+        const texture = out.kind === "texture" ? b.manifest.textures[out.id]! : undefined;
+        const row = texture === undefined ? 0 : rowBytes(texture);
+        const pitch = Math.ceil(row / 256) * 256;
+        const rows = texture === undefined ? 0 : texture.extent![1] * (texture.extent![2] ?? 1);
+        const size = out.kind === "buffer" ? out.bytes : pitch * rows;
+        const read = device.createBuffer({ label: `bake ${out.name} readback`, size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        staging.push(read);
+        if (texture === undefined) encoder.copyBufferToBuffer(o.buffers[out.id]!, 0, read, 0, size);
+        else encoder.copyTextureToBuffer({ texture: o.textures[out.id]! }, { buffer: read, bytesPerRow: pitch, rowsPerImage: texture.extent![1] }, extent(texture));
+        return { name: out.name, read, row, pitch, rows };
+      });
+    });
+    const result = new Map<string, Uint8Array>();
+    for (const { name, read, row, pitch, rows } of reads) {
+      const bytes = await readBake(read);
+      if (row === pitch) { result.set(name, bytes); continue; }
+      const packed = new Uint8Array(row * rows);
+      for (let i = 0; i < rows; i++) packed.set(bytes.subarray(i * pitch, i * pitch + row), i * row);
+      result.set(name, packed);
+    }
+    return result;
+  } finally {
+    for (const read of staging) read.destroy();
+    o.destroy();
   }
 }
 
@@ -465,6 +609,15 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     throw new NotDataError(`artefact: ${cpuTables.size} table(s) are filled by JavaScript, which a file cannot hold:${[...cpuTables.values()].map((t) => ` "${t.name}"`).join(",")}`);
   }
   const o = await createObjects(device, b);
+  try {
+    if (m.build !== undefined || (m.load?.length ?? 0) > 0) {
+      await submitCompute(device, "loft compute at load", (encoder) => {
+        for (const run of m.build?.runs ?? []) recordCompute(encoder, o, run);
+        for (const run of m.load ?? []) recordLoad(encoder, o, run);
+      });
+      await device.queue.onSubmittedWorkDone();
+    }
+  } catch (e) { o.destroy(); throw e; }
   const detail = new Float32Array(m.frame.detail.floats);
   // Each grid's level last frame, for hysteresis (src/host/detail.ts): the host's only memory between frames. Only the
   // interactive `draw` reads it (a dolly must not flicker); headless frames plan without it (`posedPlan`).
@@ -476,7 +629,7 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
   let reading = false;
   const sizedFor = (view: View): Sized => {
     if (sized && sameSize(sized, view)) return sized;
-    for (const t of sized?.textures ?? []) t.destroy();
+    for (const t of sized?.transient ?? []) t.destroy();
     sized = o.sized({ width: view.width, height: view.height });
     return sized;
   };
@@ -548,8 +701,15 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
     const encoder = device.createCommandEncoder({ label: "loft pose" });
     let replayed: ReadonlyMap<Replay, number> | undefined;
     const replays = m.frame.replay ?? [];
-    if (m.frame.pose.length > 0 || replays.length > 0) {
-      const pass = encoder.beginComputePass({ label: "loft pose", ...(stamps === undefined ? {} : { timestampWrites: { querySet: stamps.querySet, beginningOfPassWriteIndex: stamps.begin, endOfPassWriteIndex: stamps.end } }) });
+    const compute = m.frame.compute ?? [];
+    // Frame outputs have distinct writers. Clear all of them up front, then dispatch into one pass with pose.
+    // Each dispatch has its own usage scope, so an output texture can be sampled by a later dispatch.
+    for (const cmd of compute) clearCompute(encoder, o, cmd);
+    if (compute.length > 0 || m.frame.pose.length > 0 || replays.length > 0) {
+      const pass = encoder.beginComputePass({ label: "loft pose", ...(stamps === undefined ? {} : { timestampWrites: {
+        querySet: stamps.querySet, beginningOfPassWriteIndex: stamps.begin, endOfPassWriteIndex: stamps.end,
+      } }) });
+      for (const cmd of compute) dispatchAll(pass, o, [cmd.run]);
       replayed = dispatchReplays(pass, o, replays, view.time, replayedAt);
       dispatchAll(pass, o, m.frame.pose);
       pass.end();
@@ -783,8 +943,8 @@ export async function loadBundle(device: GPUDevice, b: Bundle, cpu: CpuTables): 
       curves = next.slice();
     },
     destroy: () => {
-      for (const buf of o.buffers) buf.destroy();
-      for (const t of sized?.textures ?? []) t.destroy();
+      o.destroy();
+      for (const t of sized?.transient ?? []) t.destroy();
       readback?.texture.destroy(); readback?.buffer.destroy();
       sized = undefined; readback = undefined;
     },

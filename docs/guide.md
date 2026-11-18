@@ -421,6 +421,55 @@ export const paint = (u: F) => mul(vec3(0.9, 0.7, 0.3), stripes(u));
   object to create, in WebGPU's own names, and the per-frame recipe), `wgsl/` and `bin/`. A loader executes the
   recipe and decides nothing about the scene (`docs/artefact_format.md`). Below.
 
+## Writing a compute pass
+
+`compute(name, spec)` adds a WGSL entry point with declared storage and dispatch. Put its return value in the
+scene's `compute` list. Each named output in `writes` becomes a WGSL binding and a handle you can give to readers.
+
+```ts check
+import { compute, param, vec2 } from "../src/index.ts";
+
+const stripes = compute("stripes", {
+  when: { kind: "frame" },
+  writes: { image: { kind: "texture", size: [64, 64], format: "rgba8unorm" } },
+  values: { speed: param("speed", 2) },
+  entry: "fill",
+  dispatch: [8, 8],
+  wgsl: `
+@compute @workgroup_size(8, 8) fn fill(@builtin(global_invocation_id) id: vec3<u32>) {
+  let phase = f32(id.x) * 0.25 + loft_time() * speed();
+  textureStore(image, vec2<i32>(id.xy), vec4<f32>(0.5 + 0.5 * sin(phase), 0.3, 0.6, 1));
+}`,
+});
+
+const paint = stripes.image.sample(vec2(0.5, 0.5)).xyz;
+```
+
+- **Build** runs on the build GPU and stores the result in the artefact. A 48³ `r32float` volume adds 442,368 bytes.
+  [SDF example](../examples/compute_volume.ts)
+- **Load** regenerates data on the loader's GPU once. Use deterministic WGSL with race-free writes. Give a consuming
+  pass `reads: { tones: palette.tones }` to bind that output as `tones`. Passes can be listed in any order.
+- **Frame** runs from zeroed outputs before the pose and draw passes. It reads time in seconds through `loft_time()`.
+  Name an `input(...)` or `param(...)` in `values` to give WGSL a getter of the same name. Use build or load for
+  data shared by all frames. [Palette and frame texture example](../examples/compute_frame.ts)
+- **Steps** seeds state 0 with `when.start`, then runs `entry` exactly `when.count` times. The step sees the preceding
+  state at `prev_<output>` and writes into a freshly zeroed destination. `loft_dt` is `1 / rate` seconds.
+  Set `keep` to retain every nth state. It defaults to 1 and always keeps the seed and final state. Reads hold the
+  latest kept state at or before the requested time, with the first and last states extending outside the simulation.
+  [Particle example](../examples/compute_steps.ts)
+
+A buffer declares `{ kind: "buffer", entries, lanes }` and uses `array<vec4<f32>>` in WGSL. Index it as
+`entry * lanes + lane`. Read it in an expression with `fetch(handle, entry, lane)`. A texture declares
+`{ kind: "texture", size: [width, height] | [width, height, depth], format }`, where formats are `r32float`,
+`rgba8unorm`, `rgba16float`, and `rgba32float`. Call `.sample(uv)` with normalized coordinates for edge-clamped
+bilinear or trilinear sampling. A raw drawable uses `${handle.wgsl}` as the name of the buffer or texture. For
+stepped outputs it names a function, called as `(entry, lane, seconds)` for buffers or `(texel, seconds)` for textures.
+The alias in a compute pass's `reads` uses that same interface. Expression reads of stepped outputs use scene time.
+
+A build pass may read build outputs. Load and steps may read build, load, or steps outputs. Frame may read any
+earlier producer. CPU tools report `undecided: raw compute "<pass>.<output>"` when a check or solve hold reads an output.
+The direct WGSL runs on the selected GPU. Each kernel is responsible for indexing and synchronizing its invocations.
+
 ## Drawing a scene elsewhere
 
 ```sh

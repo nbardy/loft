@@ -25,7 +25,7 @@
 // Per-frame tables are read by inlining their programs: entry k of a `map` table is its run's closed form at k; entry
 // k of a `scan` is its step unrolled k times from the start, as expressions. The CPU fill computes the same thing.
 
-import { children, replace, CURVE_N, Expr, f, variable, type Fn, type LibFn, type Loop, type Node, type NumTy, type TableProgram, type TableSource } from "./expr.ts";
+import { children, rawComputeOf, replace, CURVE_N, Expr, f, variable, type Fn, type LibFn, type Loop, type Node, type NumTy, type TableProgram, type TableSource } from "./expr.ts";
 import type { Compiled } from "./compile/index.ts";
 import { SceneError } from "./errors.ts";
 import { recurTable } from "./map/recur.ts";
@@ -62,6 +62,7 @@ export class Unbounded extends Error {
 /** Why an expression has no enclosure at all. */
 export type Refusal =
   | { readonly kind: "recur"; readonly table: string }
+  | { readonly kind: "raw-compute"; readonly resource: string }
   | { readonly kind: "skin" }
   | { readonly kind: "dependent-end"; readonly leaf: string }
   | { readonly kind: "gpu-only"; readonly fn: string }
@@ -72,6 +73,7 @@ export type Refusal =
 
 const refusalText = (r: Refusal): [string, string, string] => {
   switch (r.kind) {
+    case "raw-compute": return [`raw compute "${r.resource}"`, "an expression with a CPU twin", "measure the resource in a render or express the condition with Loft maths"];
     case "recur": return [`the baked recurrence "${r.table}"`, "a closed-form scene", "measure the baked trajectory with a sampled check"];
     case "skin": return ["a skin target", "a condition over expressions", "measure the skin with a sampled contact check"];
     case "dependent-end": return [`a range end that reads the bound leaf ${r.leaf}`, "ends fixed throughout the search", "use fixed ends or parameterise the dependent interval over [0, 1]"];
@@ -701,6 +703,8 @@ export class Evaluator {
         return { kind: "num", v: this.join([...n.sel].map((ch) => a["xyzw".indexOf(ch)]!)) };
       }
       case "lib": {
+        const raw = rawComputeOf(n.fn);
+        if (raw !== undefined) throw new RangeRefusal(this.where, { kind: "raw-compute", resource: raw });
         const args = n.args.map((a) => this.numeric(a));
         if (!n.args.some((a) => this.dep(a))) {
           if (n.fn.js === "gpu-only") throw new RangeRefusal(this.where, { kind: "gpu-only", fn: n.fn.name });

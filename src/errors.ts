@@ -55,3 +55,10 @@ export function siteOf(stack: string | undefined): string | undefined {
   }
   return undefined;
 }
+
+
+/** A CPU tool reached a resource whose contents come from the author's WGSL. */
+export class RawComputeError extends Error {
+  override readonly name = "RawComputeError";
+  constructor(readonly resource: string) { super(`undecided: raw compute "${resource}"`); }
+}

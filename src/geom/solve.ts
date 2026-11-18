@@ -22,7 +22,7 @@
 //   certify infeasibility. The deadline is shared by construction, optimisation, conflict diagnosis and verification.
 
 import { SceneError, siteOf } from "../errors.ts";
-import { abs, add, compileJs, everything, fold, ge, le, leaves, lib, lift, max, mul, replace, sub, time, variable, type LibFn, type Env, type Expr, type In, type NumTy, type V } from "../expr.ts";
+import { abs, add, compileJs, everything, fold, ge, le, leaves, lib, lift, max, mul, rawComputeOf, replace, sub, time, variable, type LibFn, type Env, type Expr, type In, type NumTy, type V } from "../expr.ts";
 import { DerivativeError, defineDerivative, derivative } from "../grad.ts";
 import { always, type Ranged } from "../ranged.ts";
 import { bspline } from "../curve.ts";
@@ -164,6 +164,8 @@ export type Solved<K extends string> = {
 
 /** Why `solve` returned no curves. */
 export type SolveFailure =
+  /** The hold uses a named raw WGSL compute output, which the solver cannot inspect. */
+  | { readonly kind: "undecided"; readonly hold: HoldLine; readonly resource: string }
   /** A contradiction between the named linear bounds, including the equality tolerance. */
   | { readonly kind: "infeasible"; readonly conflict: readonly HoldLine[]; readonly worst: number }
   /** The local search stopped without finding a verified curve. */
@@ -232,6 +234,7 @@ function failureParts(f: SolveFailure): [string, string, string] {
         "give a starting curve with spline(n, from), or start the curve on the other side of the obstacle",
       ];
     }
+    case "undecided": return [`undecided: raw compute "${f.resource}" in ${holdText(f.hold)}`, "holds made of expressions with a CPU twin", "express this hold without the compute read"];
     case "unreadable": return [`a hold the CPU cannot read: ${holdText(f.hold)}${f.at === undefined ? "" : ` at t = ${f.at}`}: ${f.detail}`, "holds made of expressions the JS twin evaluates", "use a CPU-readable expression with finite values and derivatives throughout its window"];
   }
 }
@@ -731,7 +734,10 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
     // unused derivatives would grow a five-channel position hold's Hessian from 15 entries to 210.
     const values = new Map<number, Expr>();
     for (const { id, node } of everything([hold.margin])) {
-      if (node.op !== "lib" || node.fn !== JET) continue;
+      if (node.op !== "lib") continue;
+      const raw = rawComputeOf(node.fn);
+      if (raw !== undefined) throw new SolveError({ kind: "undecided", hold, resource: raw });
+      if (node.fn !== JET) continue;
       if (node.args[0] !== time) throw new SolveError({ kind: "unreadable", hold, detail: "it reads an unknown at a time other than its own; write the hold at the time it reads" });
       values.set(id, node.args[1]!);
     }

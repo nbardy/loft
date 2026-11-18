@@ -24,14 +24,15 @@ shadow block); what resembles reflection or occlusion is a post pass reading the
 
 **What you can bring.** A `Drawable` (`name`, `draws(ctx)` returning WGSL shaders and phased draws, `skeletons`,
 `surfaces`; `ctx.table` for a per-frame table, `ctx.post` for a full-screen pass; `src/draw/sky.ts` is 30 lines). A
-WGSL function inside expressions (`wgslFn`; GPU only, so checks cannot evaluate it). A `Style` value, fresh or spread
+WGSL function inside expressions (`wgslFn`; GPU only, so checks cannot evaluate it). A WGSL `compute` pass whose
+outputs are made at build, at load, per frame or as a stepped state read by time. A `Style` value, fresh or spread
 from another. A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/` (`docs/artefact_format.md`), executed by
 `createHost` (`src/host/index.ts`) or `rust/loft-loader` on `wgpu`.
 
 **What it cannot do today.**
 - No ground but the sea: every scene has `sea({ swell })` (an empty list is flat water).
 - No path tracing (above). One sun.
-- No simulation: everything is a closed form of time and inputs; nothing carries state from frame to frame.
+- Frames are independent. Simulations use a baked or load-time stepped history read by time.
 - No meshes in: shapes are functions (`loft bake` writes glTF out).
 - Headless rendering needs bun; the package is not published; a large subject is megabytes of WGSL and seconds to load.
 - Several components take only numbers, so their family is fixed (`whirlpool`, `sea`): leave them by
@@ -85,8 +86,8 @@ Loft L0: symbolic maths.
   `const exp = unary("exp")`
 - **f**: `f(x)`: the constant expression for the number x (an f32); the same as passing x where an expression is expected.
   `const f = (x: number): Expr<"f32"> =>`
-- **fetch**: Entry `index` of a per-frame table, vec4 number `lane` of that entry.
-  `function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4">`
+- **fetch**: Entry `index` of a table or compute buffer, vec4 number `lane` of that entry.
+  `function fetch(table: TableSource | RawComputeFetch, index: In<"f32">, lane: number): Expr<"vec4">`
 - **floor**: `floor(a)`: the largest whole number not above a, componentwise.
   `const floor = unary("floor")`
 - **fract**: `fract(a)`: a - floor(a), the part after the point, componentwise (always in [0, 1)).
@@ -302,6 +303,13 @@ Types:
 - **PoseSpec**: Where one posed copy goes, in the coordinates of the set it belongs to: a point, a turn and a size. `type PoseSpec = { readonly at: In<"vec3">; readonly turn: Turn; readonly size: Size }`
 - **Turn**: How a copy is turned in the coordinates it is placed in: not at all, by an angle about a unit axis (a bell swinging on its hook), or to given axes (unit and perpendicular: `x` and `y`, with z = x cross y; a spar along its direction). `type Turn = | { readonly kind: "none" } | { readonly kind: "about"; readonly axis: P3; readonly angle: F } | { readonly kind: "axes"; readonly x: P3; readonly y: P3 }`
 
+### src/compute.ts
+
+Author-side declarations.
+
+- **compute**: Declare a raw WGSL compute pass.
+  `function compute<const W extends Readonly<Record<string, Shape>>>(name: string, spec: Spec<W>): { readonly [K in keyof W]: Handle<W[K]> }`
+
 ### src/map/recur.ts
 
 `recur`: state that is stepped, baked once on the GPU, and read as a function of time (docs/proposals/state.md).
@@ -512,8 +520,8 @@ A scene says what things are; `compile` decides where each part is evaluated.
 
 Types:
 - **OutlineMethod**: `type OutlineMethod = "hull" | "screen"`
-- **Scene**: `type Scene = { ground, things, style, sun, sunAt, lighting, cameras, outline, loop }`
-- **SceneSpec**: `type SceneSpec = { ground, things, style, sun, lights?, cameras?, outline?, period? }`
+- **Scene**: `type Scene = { ground, things, style, compute?, sun, sunAt, lighting, cameras, outline, loop }`
+- **SceneSpec**: `type SceneSpec = { ground, things, style, compute?, sun, lights?, cameras?, outline?, period? }`
 
 ### src/draw/ground.ts
 
@@ -592,7 +600,7 @@ The contract between the compiler and a host.
 
 
 Types:
-- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, notes?, shaders, draws, post?, passes?, stages, tables, cpuPose, pose, cameras, loop?, recurrences?, stats }`
+- **Artefact**: `type Artefact = { version, clear, inputs, inputFloats, params, curves, dynamic, statics?, sceneWgsl, notes?, shaders, draws, post?, passes?, stages, tables, cpuPose, pose, cameras, loop?, recurrences?, compute?, stats }`
 - **Camera**: `type Camera = | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number } | { readonly kind: "orthographic"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, numbe...`
 
 ### src/draw/trace.ts
@@ -1892,7 +1900,7 @@ Types:
 - **HoldReport**: How well one hold is met by the returned curves, measured on the fine grid (and its instant). `type HoldReport = { readonly kind: HoldLine["kind"]; readonly site: string | undefined; readonly when: string; readonly worst: number; readonly at: number }`
 - **Prefer**: What `solve` makes least, a weighted sum: `jerk` and `acceleration` (each the integral over the span of the squared third or second time derivative, summed over the unknowns) and `near` (the integral of the squared difference from given curves of time, for the unknowns named: least change from a curve you had). `type Prefer<K extends string> = { jerk?, acceleration?, near? }`
 - **Solved**: `type Solved<K extends string> = { curves, holds, report }`
-- **SolveFailure**: Why `solve` returned no curves. `type SolveFailure = /** A contradiction between the named linear bounds, including the equality tolerance. */ | { readonly kind: "infeasible"; readonly conflict: readonly HoldLine[]; readonly worst: number } /** The local search stopped without finding a verified curve. */ | { readonly kind: "uns...`
+- **SolveFailure**: Why `solve` returned no curves. `type SolveFailure = /** The hold uses a named raw WGSL compute output, which the solver cannot inspect. */ | { readonly kind: "undecided"; readonly hold: HoldLine; readonly resource: string } /** A contradiction between the named linear bounds, including the equality tolerance. */ | { readonly ki...`
 - **SolveReport**: `type SolveReport = { delta, ms, steps, rounds, samples, holds }`
 - **SolveSpec**: `type SolveSpec<K extends string> = { over, vary, hold, prefer, delta?, budget? }`
 - **When**: When a hold applies: one instant, an interval, or (left out) the whole span of the solve. `type When = { readonly at: number } | { readonly from: number; readonly to: number }`
@@ -2401,7 +2409,7 @@ Types:
 - **Check**: `interface Check { name, run }`
 - **CheckTime**: A time a check is given: seconds, or an attack's arming (`attack.arming`), which a check measures at its first arming time. `type CheckTime = In<"f32"> | Arming`
 - **Tolerance**: How far a measurement may be from what it should be: a distance in world units, or a share of a reference that the check taking it names (for `gripReaches`, the held thing's width). `type Tolerance = { readonly kind: "units"; readonly units: number } | { readonly kind: "share"; readonly share: number }`
-- **Verdict**: A measured check result. `type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined })`
+- **Verdict**: A measured check result. `type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined }) | (Measurement & { readonly holds: "undecided"; readonly pass: undefined })`
 - **Measured**: Something with a skeleton to measure: a whole body, or a part (its stretch of joints). `type Measured = Body | Part`
 - **Mark**: A drawn length: two world points (closed forms of the clock) whose difference a viewer sees: an eye's middle to its lid's edge, a stalk's root to its tip, an eye's middle to its pupil. `type Mark = { readonly from: In<"vec3">; readonly to: In<"vec3"> }`
 - **Reaching**: A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of (outboard of the root: a knee that crosses inward has folded under the body). `type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> }`
@@ -3037,7 +3045,7 @@ Types:
 
 ## Coverage
 
-821 exports (465 values, 356 types) from src/index.ts and src/lib/index.ts.
+822 exports (466 values, 356 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

@@ -105,6 +105,12 @@ test("every example's shaders build pipelines under the contract's layouts", asy
     // An example's default export is not always a scene (a cut list for a clip is one that is not): only scenes compile.
     if (!mod.default || !("style" in mod.default && "things" in mod.default)) continue;
     const a = compile(mod.default);
+    if (a.compute !== undefined) {
+      // The production recipe binds author resources and checks their compute pipelines too.
+      try { (await createHost(dev).load(a)).destroy(); }
+      catch (e) { errors.push(`${file}: ${e instanceof Error ? e.message : String(e)}`); }
+      continue;
+    }
     const [g0, g1] = layouts(dev, a, VERTEX | FRAGMENT);
     const depth = dev.createBindGroupLayout({ entries: [0, 1].map((binding) => ({ binding, visibility: VERTEX | FRAGMENT, texture: { sampleType: "unfilterable-float" as const } })) });
     // A scene that reads passes binds them as group 3 (passBindingsWgsl), and its plain draws take group 2 as the

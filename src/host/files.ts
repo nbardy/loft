@@ -130,5 +130,6 @@ export function readBundle(dir: string, limits: ArtefactLimits = ARTEFACT_LIMITS
 /** Draws from a built directory alone: no scene module, no compiler, no `cpu` tables (a bundle with one is refused by name). */
 export async function loadArtefactFiles(device: GPUDevice, dir: string): Promise<{ readonly bundle: Bundle; readonly loaded: GpuLoaded }> {
   const bundle = readBundle(dir);
+  if (bundle.manifest.build !== undefined) throw new LoadError(`${dir}: unfinished GPU-less build; run loft build on a GPU to write its baked outputs`);
   return { bundle, loaded: await loadBundle(device, bundle, { kind: "none" }) };
 }

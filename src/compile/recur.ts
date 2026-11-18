@@ -4,7 +4,8 @@
 // module: so a replay repeats the bake's own arithmetic, which is what makes it bitwise the bake on the GPU that baked.
 
 import { POSE_WORKGROUP } from "../artefact.ts";
-import { compileJs, emitWgsl, type Bind, type Env, type LibFn, type TableSource } from "../expr.ts";
+import { compileJs, emitWgsl, rawComputeOf, type Bind, type Env, type LibFn, type TableSource } from "../expr.ts";
+import { SceneError } from "../errors.ts";
 import type { RecurState } from "../map/recur.ts";
 
 /** The step and start functions' WGSL, shared text, and the library functions they call. */
@@ -46,6 +47,10 @@ export function stepCode(s: RecurState, bind: (vars: Readonly<Record<string, str
   ].join("\n");
   const libs: LibFn[] = [];
   for (const l of [...start.libs, ...step.libs]) if (!libs.includes(l)) libs.push(l);
+  for (const lib of libs) {
+    const raw = rawComputeOf(lib);
+    if (raw !== undefined) throw new SceneError(`recur "${s.name}"`, `a read of raw compute "${raw}"`, "a recurrence written in expressions", "move this state and its reads to a compute steps pass");
+  }
   return { fns, libs };
 }
 

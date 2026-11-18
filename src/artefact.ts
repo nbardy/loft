@@ -16,6 +16,7 @@
 //   every binding visible to vertex and fragment stages, because a shader may use any subset.
 
 import type { NumTy } from "./expr.ts";
+import type { CompiledCompute } from "./compile/compute.ts";
 
 /** Samples per table-backed curve row. Each sample is a vec4. */
 export const CURVE_N = 64;
@@ -479,6 +480,8 @@ export type Artefact = {
   readonly loop?: Loop;
   /** States stepped by the scene's own functions, in the order they bake. Absent means none. */
   readonly recurrences?: readonly Recurrence[];
+  /** Raw WGSL passes and their resources; absent in scenes without compute declarations. */
+  readonly compute?: CompiledCompute;
   /**
    * `maxTriangles`: what the draw list declares (every draw's vertices / 3 x instances, scene layer), the most a frame
    * can draw; a host drawing at a coarser level of detail draws fewer (`FrameStats`). `draws`: draws declared.
