@@ -41,7 +41,10 @@ export type Fn =
   | "add" | "sub" | "mul" | "div" | "neg" | "min" | "max" | "pow" | "mod" | "atan2" | "step"
   | "abs" | "sign" | "floor" | "fract" | "sqrt" | "exp" | "log" | "sin" | "cos" | "tan" | "saturate" | "normalize"
   | "mix" | "clamp" | "smoothstep" | "length" | "distance" | "dot" | "cross"
-  | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "and" | "or" | "not" | "select";
+  | "lt" | "gt" | "le" | "ge" | "eq" | "ne" | "and" | "or" | "not" | "select"
+  // WGSL's own meanings, for text (src/text): `roundEven` is WGSL `round` (ties to even, unlike `round` below), `rem` is
+  // WGSL `%` (the truncated remainder, the sign of the dividend, unlike `mod`).
+  | "ceil" | "trunc" | "roundEven" | "rem" | "inverseSqrt" | "exp2" | "log2" | "asin" | "acos" | "atan" | "sinh" | "cosh" | "tanh";
 
 /**
  * A named function written once in each backend's language: the way to add vocabulary (noise, a custom falloff) that
@@ -466,6 +469,14 @@ export function rawComputeExpression(fn: LibFn, resource: string, ...args: In[])
   return lib<"vec4">(fn, ...args);
 }
 
+/**
+ * Why a GPU-only function has no CPU twin, when it came from WGSL text (src/text): "raw function pcg at eel.ts:14: u32
+ * integers". The twin's and the ranged checks' refusals quote it.
+ */
+const rawReasons = new WeakMap<LibFn, string>();
+export function markRaw(fn: LibFn, reason: string): void { rawReasons.set(fn, reason); }
+export function rawReasonOf(fn: LibFn): string | undefined { return rawReasons.get(fn); }
+
 /** Call a library function. Two different functions may not share a name. */
 export function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T> {
   const raw = rawCompute.get(fn);
@@ -683,6 +694,34 @@ export const tan = unary("tan");
 export const saturate = unary("saturate");
 /** `normalize(v)`: v scaled to length 1 (WGSL `normalize`); v must be a vec2, vec3 or vec4 that is not zero. */
 export const normalize = unary("normalize");
+// WGSL builtins that WGSL text (src/text) reaches; not on the call form's public surface (src/core.ts), since text is
+// how a scene writes maths and these add nothing to the meta-language.
+/** WGSL `ceil`. */
+export const ceil = unary("ceil");
+/** WGSL `trunc`: toward zero. */
+export const trunc = unary("trunc");
+/** WGSL `round`: to the nearest whole number, ties to even (Loft's `round` takes ties upward). */
+export const roundEven = unary("roundEven");
+/** WGSL `%` on floats: a - b trunc(a / b), the sign of the dividend (Loft's `mod` is floored). */
+export const rem = binary("rem");
+/** WGSL `inverseSqrt`: 1 / sqrt(a). */
+export const inverseSqrt = unary("inverseSqrt");
+/** WGSL `exp2`. */
+export const exp2 = unary("exp2");
+/** WGSL `log2`. */
+export const log2 = unary("log2");
+/** WGSL `asin`. */
+export const asin = unary("asin");
+/** WGSL `acos`. */
+export const acos = unary("acos");
+/** WGSL `atan` (one argument). */
+export const atan = unary("atan");
+/** WGSL `sinh`. */
+export const sinh = unary("sinh");
+/** WGSL `cosh`. */
+export const cosh = unary("cosh");
+/** WGSL `tanh`. */
+export const tanh = unary("tanh");
 
 /**
  * `mix(a, b, t)`: a + (b - a) t, the linear blend from a (t = 0) to b (t = 1), componentwise; t may be a scalar or the
@@ -946,8 +985,8 @@ export const WGSL_TY: Readonly<Record<Ty, string>> = { f32: "f32", vec2: "vec2<f
 /** Fns whose WGSL form needs every argument to have the result's type (a scalar is splatted to a vector). */
 // `mix` and `select` are here because one branch may be a scalar and the other a vector: WGSL wants both the result's
 // type, and without the splat the emitted call does not compile (found by the differentiation module).
-const SPLAT: ReadonlySet<Fn> = new Set<Fn>(["min", "max", "pow", "atan2", "step", "clamp", "smoothstep", "mix", "select"]);
-const INFIX: Partial<Record<Fn, string>> = { add: "+", sub: "-", mul: "*", div: "/", lt: "<", gt: ">", le: "<=", ge: ">=", eq: "==", ne: "!=", and: "&&", or: "||" };
+const SPLAT: ReadonlySet<Fn> = new Set<Fn>(["min", "max", "pow", "atan2", "step", "clamp", "smoothstep", "mix", "select", "rem"]);
+const INFIX: Partial<Record<Fn, string>> = { add: "+", sub: "-", mul: "*", div: "/", rem: "%", lt: "<", gt: ">", le: "<=", ge: ">=", eq: "==", ne: "!=", and: "&&", or: "||" };
 
 function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
   const n = e.node;
@@ -974,6 +1013,7 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
         case "not": return `(!${a[0]})`;
         case "mod": return `(${a[0]} - ${a[1]} * floor(${a[0]} / ${a[1]}))`;
         case "select": return `select(${a[2]}, ${a[1]}, ${a[0]})`; // WGSL order is (false, true, condition)
+        case "roundEven": return `round(${a[0]})`;
         default: return `${n.fn}(${a.join(", ")})`;
       }
     }
@@ -985,7 +1025,8 @@ function wgslNode(e: Expr, ref: (x: Expr) => string, bind: Bind): string {
  * `iterate`. Returns the statements, for each root the name (or inline source) that holds its value, and the library
  * functions the statements call.
  */
-export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: ReadonlyMap<number, string> = new Map()): { lines: string[]; out: string[]; libs: LibFn[]; names: ReadonlyMap<number, string> } {
+export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: ReadonlyMap<number, string> = new Map(), comment?: (e: Expr) => string | undefined): { lines: string[]; out: string[]; libs: LibFn[]; names: ReadonlyMap<number, string> } {
+  // `comment`: a note to end a node's statement with (src/text's sites: `// eel.ts:9 girth`); absent, the text is as before.
   // `pre`: nodes already computed by earlier statements (a scan hoists its loop-invariant work), by name.
   const names = new Map<number, string>(pre);
   const ref = (x: Expr): string => names.get(x.id)!;
@@ -998,7 +1039,8 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
       if (n.op === "const" || n.op === "var") names.set(e.id, src);
       else {
         const name = `${prefix}${e.id}`;
-        lines.push(`let ${name}: ${WGSL_TY[e.ty]} = ${src};`);
+        const note = comment?.(e);
+        lines.push(note === undefined ? `let ${name}: ${WGSL_TY[e.ty]} = ${src};` : `let ${name}: ${WGSL_TY[e.ty]} = ${src};   // ${note}`);
         names.set(e.id, name);
       }
     }
@@ -1024,6 +1066,74 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
   emit(topo(roots), lines);
   // `libs`: definitions the caller must place at module scope (once per module) for the statements to compile.
   return { lines, out: roots.map(ref), libs: libsOf(roots), names };
+}
+
+// ---- structural identity ------------------------------------------------------------------------------------------
+
+/** FNV-1a over a string, as 8 hex digits (no crypto: this module is reachable from scene code). */
+function fnv(text: string, seed = 0x811c9dc5): string {
+  let h = seed >>> 0;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, "0");
+}
+
+/**
+ * The graph reachable from `roots` as canonical text: one line per node, nodes numbered in walk order (not by id, which
+ * counts every node the process ever made), loop variables named by their loop's number and position (not by the
+ * loop's id). Two programs with the same text are the same program, whatever order or process built them: what
+ * src/text's per-call lowering is tested against (the call form and the text of one function give the same key).
+ */
+export function structuralKey(roots: readonly Expr[]): string {
+  const index = new Map<number, number>();
+  const loopVars = new Map<number, string>();
+  const loops: Loop[] = [];
+  const lines: string[] = [];
+  const ref = (e: Expr): string => {
+    const k = index.get(e.id);
+    if (k !== undefined) return `#${k}`;
+    const v = loopVars.get(e.id);
+    if (v !== undefined) return v;
+    throw new Error(`internal: structuralKey: node ${e.id} read before it was numbered`);
+  };
+  const rowKey = (r: Row): string => `${r.label}:${fnv(Array.from(r.samples).join(","))}`;
+  for (const e of everything(roots)) {
+    const n = e.node;
+    let line: string;
+    switch (n.op) {
+      case "const": line = `c ${n.ty} ${n.v.join(",")}`; break;
+      case "var": line = `v ${n.ty} ${n.name}`; break;
+      case "input": line = `i ${n.ty} ${n.spec.name} ${n.spec.def.join(",")}`; break;
+      case "param": line = `p ${n.spec.name} ${n.spec.def} ${n.spec.min} ${n.spec.max}`; break;
+      case "row": line = `r ${rowKey(n.row)} ${ref(n.x)}`; break;
+      case "call": line = `${n.fn} ${n.ty} ${n.args.map(ref).join(" ")}`; break;
+      case "vec": line = `${n.ty} ${n.args.map(ref).join(" ")}`; break;
+      case "lib": line = `lib ${n.fn.name} ${n.ty} ${n.args.map(ref).join(" ")}`; break;
+      case "get": line = `get ${n.sel} ${ref(n.a)}`; break;
+      case "fetch": line = `fetch ${n.table.name} ${n.table.lanes} ${n.table.entries} ${n.lane} ${ref(n.index)}`; break;
+      case "iterate": {
+        let k = loops.indexOf(n.loop);
+        if (k < 0) {
+          k = loops.push(n.loop) - 1;
+          n.loop.state.forEach((s, j) => loopVars.set(s.id, `L${k}s${j}`));
+          loopVars.set(n.loop.index.id, `L${k}i`);
+        }
+        line = `iterate L${k} ${n.k} ${n.ty}`;
+        break;
+      }
+    }
+    index.set(e.id, lines.length);
+    lines.push(line);
+  }
+  // Each loop's count, start, step and stop, once every node of its body is numbered.
+  loops.forEach((l, k) => lines.push(`L${k} ${ref(l.count)} [${l.init.map(ref).join(" ")}] -> [${l.next.map(ref).join(" ")}] until ${l.stop === undefined ? "-" : ref(l.stop)}`));
+  lines.push(`roots ${roots.map(ref).join(" ")}`);
+  return lines.join("\n");
+}
+
+/** `structuralKey`, hashed (16 hex digits). */
+export function structuralHash(roots: readonly Expr[]): string {
+  const key = structuralKey(roots);
+  return fnv(key) + fnv(key, 0x6c62272e);
 }
 
 // ---- rewriting ----------------------------------------------------------------------------------------------------
@@ -1105,12 +1215,17 @@ const jsLit = (x: Scalar): string => (typeof x === "boolean" ? String(x) : x < 0
 const src = (c: C): string => (typeof c === "string" ? c : jsLit(c));
 const allKnown = (cs: readonly C[]): cs is Scalar[] => cs.every((c) => typeof c !== "string");
 
+/** WGSL `round`: ties to even. */
+const roundHalfEven = (x: number): number => {
+  const r = Math.round(x);
+  return r - x === 0.5 && r % 2 !== 0 ? r - 1 : r;
+};
 const smooth = (lo: number, hi: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo)));
   return t * t * (3 - 2 * t);
 };
 /** Helpers the emitted code calls (functions too long to inline). */
-const HELPERS = { ss: smooth };
+const HELPERS = { ss: smooth, re: roundHalfEven };
 
 /** A scalar operation: its source form, and its value as the same function (used to fold). */
 type Op = { readonly js: (...a: string[]) => string; readonly f: (...a: never[]) => Scalar };
@@ -1140,6 +1255,13 @@ const EACH: Partial<Record<Fn, Op>> = {
   eq: op((a, b) => `(${a} === ${b})`, (a: number, b: number) => a === b), ne: op((a, b) => `(${a} !== ${b})`, (a: number, b: number) => a !== b),
   and: op((a, b) => `(${a} && ${b})`, (a: boolean, b: boolean) => a && b), or: op((a, b) => `(${a} || ${b})`, (a: boolean, b: boolean) => a || b),
   not: op((a) => `(!${a})`, (a: boolean) => !a),
+  ceil: math1("ceil", Math.ceil), trunc: math1("trunc", Math.trunc), roundEven: op((a) => `H.re(${a})`, roundHalfEven),
+  // JavaScript's % is the truncated remainder, as WGSL's on floats.
+  rem: op((a, b) => `(${a} % ${b})`, (a: number, b: number) => a % b),
+  inverseSqrt: op((a) => `(1 / Math.sqrt(${a}))`, (a: number) => 1 / Math.sqrt(a)),
+  exp2: op((a) => `Math.pow(2, ${a})`, (a: number) => Math.pow(2, a)), log2: math1("log2", Math.log2),
+  asin: math1("asin", Math.asin), acos: math1("acos", Math.acos), atan: math1("atan", Math.atan),
+  sinh: math1("sinh", Math.sinh), cosh: math1("cosh", Math.cosh), tanh: math1("tanh", Math.tanh),
 };
 const SELECT = op((c, y, n) => `(${c} ? ${y} : ${n})`, (c: boolean, y: number, n: number) => (c ? y : n));
 
@@ -1284,7 +1406,7 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
       case "get": { const a = kid(nd.a); return [...nd.sel].map((ch) => a["xyzw".indexOf(ch)]); }
       case "lib": {
         if (nd.fn.js === "gpu-only" && rawComputeOf(nd.fn) === undefined)
-          throw new Error(`library function "${nd.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
+          throw new Error(rawReasons.has(nd.fn) ? `${rawReasons.get(nd.fn)}: the CPU twin cannot evaluate it (it runs on the GPU only)` : `library function "${nd.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
         if (!fns.includes(nd.fn)) fns.push(nd.fn);
         const args = nd.args.map((a) => { const c = kid(a); return c.length === 1 ? src(c[0]) : `[${c.map(src).join(", ")}]`; });
         return leaf(`fns[${fns.indexOf(nd.fn)}](${args.join(", ")})`, nd.ty);

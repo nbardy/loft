@@ -9,6 +9,8 @@ export {
   swizzle, tan, time, variable, vec2, vec3, vec4, type Ty, type NumTy, type VecTy, type ParamSpec, type InputSpec,
   type Fn, type LibFn, type TableSource, type In, type Num, type Lit, type V, type Env,
 } from "./expr.ts";
+// WGSL text as functions of expressions (src/text): maths written as a shader writer writes it.
+export { wgsl, type WgslModule } from "./text/index.ts";
 // Symbolic derivatives of expressions (src/grad.ts): a bump's normal from a height, a field's normal.
 export { gradient } from "./grad.ts";
 export { keys, ramp, through, bspline, wave, retarded, response, pulse, ease, type Curve as KeyCurve, type Key } from "./curve.ts";

@@ -58,6 +58,10 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `draw.specks "grains": given speck.colour ...` | a speck field has the wrong expression type | return `at` and `colour` as vec3 expressions, `radius` and `opacity` as scalars |
 | `draw.specks "grains": given stretch ...` | a motion duration is negative or cannot fit a finite f32 | give a finite nonnegative duration in seconds or omit `stretch` |
 | `draw.specks "grains": given veil ...` | the cloud has to blend before the specks | pass the drawable from `draw.density` and list it before the specks in `things` |
+| `examples/x.ts:9:22: given unknown name "nois3"` (WGSL text) | a name the text cannot see; the line is quoted with a caret | the name suggested, or bring the value in through a hole: `${x}` |
+| `...: given an i32 with f32` (WGSL text) | `let n = 1` is an integer in WGSL | write `1.0`, or convert: `f32(n)` |
+| `...: given f, which can reach its end without returning` (WGSL text) | a path through the function has no `return` | end the function with a return |
+| `raw function f at x.ts:14: u32 integers: the CPU twin cannot evaluate it` | a check, `evaluate` or `solve` reached a function outside the text subset | write it in the subset, or measure it in a picture |
 
 `f32-fallback` is a successful mixed request on a device without `shader-f16`. The render and serve answer report
 that name. To render the mixed variant, select a device that grants the feature.
@@ -136,7 +140,7 @@ counts the two separately. Its table gives the proven margin bounds, the witness
 - `undecided: boxes` or `undecided: ms` means the shared enclosure count or wall-clock budget ran out. Raise the indicated budget or narrow the domain.
 - `undecided: width` identifies a box the search could no longer split. An unbounded operator is named when known. Narrow its operands or rewrite the condition around its domain.
 - `undecided: unbounded` names a range end that could not be evaluated, including numeric overflow. Supply finite, defined ends.
-- `undecided: recur` identifies the scene's baked recurrence. A ranged read of raw WGSL or a GPU-only function names the function. A library function without an enclosure, a CPU table and a skin target also report their respective reasons. Use a supported expression or a sampled measurement.
+- `undecided: recur` identifies the scene's baked recurrence. A ranged read of raw WGSL or a GPU-only function names the function (a raw function of WGSL text, its line and why it is raw). A library function without an enclosure, a CPU table and a skin target also report their respective reasons. Use a supported expression or a sampled measurement.
 
 A malformed range or comparison is a scene error (exit 4). Give the ends independently of every quantified leaf,
 bind free variables, and use `ge`, `gt`, `le` or `lt`. Express approximate equality as a band.

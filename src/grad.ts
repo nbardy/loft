@@ -16,7 +16,7 @@
 // constant and contribute zero; `fract` and `mod` contribute the derivative of their argument, because the function is
 // smooth between its jumps. That last rule is what makes footprints seam-free.
 import {
-  abs, add, and, CURVE_N, cos, cross, div, dot, f, floor, ge, gt, le, length, lib, lift, log, lt, max, min, mul, neg,
+  abs, add, and, CURVE_N, cos, cosh, cross, div, dot, f, floor, ge, gt, le, length, lib, lift, log, lt, max, min, mul, neg, sinh, trunc,
   iterate, mix, normalize, pow, row, saturate, select, sign, sin, sqrt, sub, substitute, TAU, topo, variable, vec2, vec3, vec4,
   type Expr, type Fn, type In, type LibFn, type Loop, type NumTy, type Row, type Ty, type VecTy,
 } from "./expr.ts";
@@ -66,6 +66,7 @@ const NEG = neg as unknown as Op1, ABS = abs as unknown as Op1, SIGN = sign as u
 const SQRT = sqrt as unknown as Op1, NORMALIZE = normalize as unknown as Op1;
 const SAT = saturate as unknown as Op1, LOG = log as unknown as Op1, SIN = sin as unknown as Op1, COS = cos as unknown as Op1;
 const SELECT = select as unknown as (c: Expr<"bool">, y: E, n: E) => E;
+const TRUNC = trunc as unknown as Op1, SINH = sinh as unknown as Op1, COSH = cosh as unknown as Op1;
 
 const SIZE: Record<NumTy, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
@@ -276,6 +277,21 @@ const CALL: Record<Fn, CallRule> = {
     return SELECT(a[0] as unknown as Expr<"bool">, widen(yes, e.ty), widen(no, e.ty));
   },
   lt: boolean, gt: boolean, le: boolean, ge: boolean, eq: boolean, ne: boolean, and: boolean, or: boolean, not: boolean,
+  // WGSL's own operators (src/text).
+  ceil: constant, trunc: constant, roundEven: constant,
+  // rem(a, b) = a - b trunc(a / b); trunc's derivative is zero between jumps (as mod's floor).
+  rem: (_e, a, d) => { const db = d(1); return isZero(db) ? d(0) : sSub(d(0), sMul(db, TRUNC(DIV(a[0], a[1])))); },
+  // (x^-1/2)' = -x^-3/2 / 2 = -e^3 / 2.
+  inverseSqrt: (e, _a, d) => sMul(MUL(MUL(e, MUL(e, e)), f(-0.5)), d(0)),
+  exp2: (e, _a, d) => sMul(MUL(e, f(Math.LN2)), d(0)),
+  log2: (_e, a, d) => sDiv(d(0), MUL(a[0], f(Math.LN2))),
+  // asin' = 1 / sqrt(1 - x^2), acos' = -asin'; floored as sqrt's is, so the ends of [-1, 1] give a large slope, not NaN.
+  asin: (_e, a, d) => sDiv(d(0), MAX(SQRT(SUB(f(1), MUL(a[0], a[0]))), f(TINY))),
+  acos: (_e, a, d) => sNeg(sDiv(d(0), MAX(SQRT(SUB(f(1), MUL(a[0], a[0]))), f(TINY)))),
+  atan: (_e, a, d) => sDiv(d(0), ADD(f(1), MUL(a[0], a[0]))),
+  sinh: (_e, a, d) => sMul(COSH(a[0]), d(0)),
+  cosh: (_e, a, d) => sMul(SINH(a[0]), d(0)),
+  tanh: (e, _a, d) => sMul(SUB(f(1), MUL(e, e)), d(0)),
 };
 
 /**

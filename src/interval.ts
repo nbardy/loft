@@ -25,7 +25,7 @@
 // Per-frame tables are read by inlining their programs: entry k of a `map` table is its run's closed form at k; entry
 // k of a `scan` is its step unrolled k times from the start, as expressions. The CPU fill computes the same thing.
 
-import { children, rawComputeOf, replace, CURVE_N, Expr, f, variable, type Fn, type LibFn, type Loop, type Node, type NumTy, type TableProgram, type TableSource } from "./expr.ts";
+import { children, rawComputeOf, rawReasonOf, replace, CURVE_N, Expr, f, variable, type Fn, type LibFn, type Loop, type Node, type NumTy, type TableProgram, type TableSource } from "./expr.ts";
 import type { Compiled } from "./compile/index.ts";
 import { SceneError } from "./errors.ts";
 import { recurTable } from "./map/recur.ts";
@@ -65,6 +65,7 @@ export type Refusal =
   | { readonly kind: "raw-compute"; readonly resource: string }
   | { readonly kind: "skin" }
   | { readonly kind: "dependent-end"; readonly leaf: string }
+  /** `fn`: the function's name, or for raw WGSL text (src/text) why it is raw: "raw function pcg at eel.ts:14: u32 integers". */
   | { readonly kind: "gpu-only"; readonly fn: string }
   | { readonly kind: "no-enclosure"; readonly fn: string }
   | { readonly kind: "cpu-table"; readonly table: string; readonly why: string }
@@ -451,6 +452,7 @@ const powSmooth = (p: number): Smooth => ({
 // index, k / span * span) into an interval across it, and `floor` of that into two entries of a table, at every box
 // however small: an enclosure splitting cannot tighten.
 
+const roundEvenTwin = (x: number): number => { const r = Math.round(x); return r - x === 0.5 && r % 2 !== 0 ? r - 1 : r; };
 const smoothTwin = (lo: number, hi: number, x: number): number => { const t = Math.min(1, Math.max(0, (x - lo) / (hi - lo))); return t * t * (3 - 2 * t); };
 const TWIN: Partial<Record<Fn, (...a: number[]) => number>> = {
   add: (a, b) => a! + b!, sub: (a, b) => a! - b!, mul: (a, b) => a! * b!, div: (a, b) => a! / b!, min: Math.min, max: Math.max,
@@ -458,6 +460,8 @@ const TWIN: Partial<Record<Fn, (...a: number[]) => number>> = {
   abs: Math.abs, sign: Math.sign, floor: Math.floor, sqrt: Math.sqrt, exp: Math.exp, log: Math.log, sin: Math.sin, cos: Math.cos, tan: Math.tan,
   fract: (a) => a! - Math.floor(a!), saturate: (a) => Math.min(1, Math.max(0, a!)), mix: (a, b, t) => a! + (b! - a!) * t!,
   clamp: (x, lo, hi) => Math.min(hi!, Math.max(lo!, x!)), smoothstep: smoothTwin,
+  ceil: Math.ceil, trunc: Math.trunc, roundEven: (a) => roundEvenTwin(a!), rem: (a, b) => a! % b!, inverseSqrt: (a) => 1 / Math.sqrt(a!),
+  exp2: (a) => Math.pow(2, a!), log2: Math.log2, asin: Math.asin, acos: Math.acos, atan: Math.atan, sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh,
 };
 const twinDot = (a: readonly number[], b: readonly number[]): number => a.reduce((s, x, i) => (i === 0 ? x * b[0]! : s + x * b[i]!), 0);
 function twin(fn: Fn, xs: readonly (readonly number[])[], width: number): number[] {
@@ -534,7 +538,7 @@ const libRules = new Map<string, LibRule>();
 function libRule(fn: LibFn, where: string): LibRule {
   const hit = libRules.get(fn.name);
   if (hit !== undefined) return hit;
-  if (fn.js === "gpu-only") throw new RangeRefusal(where, { kind: "gpu-only", fn: fn.name });
+  if (fn.js === "gpu-only") throw new RangeRefusal(where, { kind: "gpu-only", fn: rawReasonOf(fn) ?? fn.name });
   let rule: LibRule;
   switch (fn.name) {
     case "loft_hash2": rule = hashRule(fn, 2, 1); break;
@@ -1008,8 +1012,66 @@ function arith(fn: Fn, args: readonly Expr[], a: readonly (readonly C[])[], widt
     case "mix": return each(a, width, mixC);
     case "clamp": return each(a, width, clampC);
     case "smoothstep": return each(a, width, smoothstepC);
+    // WGSL's own operators (src/text). Monotone ones are their ends; the rest are bounded by their shape.
+    case "ceil": return each(a, width, byInterval(d, (x) => [Math.ceil(x[0]), Math.ceil(x[1])]));
+    case "trunc": return each(a, width, byInterval(d, (x) => [Math.trunc(x[0]), Math.trunc(x[1])]));
+    case "roundEven": return each(a, width, byInterval(d, (x) => [roundEvenTwin(x[0]), roundEvenTwin(x[1])]));
+    case "rem": return each(a, width, byInterval(d, irem));
+    case "inverseSqrt": return each(a, width, (x) => {
+      const X = bounds(x);
+      if (X[0] <= 0) throw new Unbounded("inverseSqrt", `its operand may be 0 or less (it lies in [${X[0]}, ${X[1]}])`);
+      return smoothC(x, X, RSQRT, rounded(1 / Math.sqrt(X[1]), 1 / Math.sqrt(X[0])));
+    });
+    case "exp2": return each(a, width, (x) => { const X = bounds(x); return smoothC(x, X, EXP2, ipow2(X)); });
+    case "log2": return each(a, width, (x) => { const X = bounds(x); return smoothC(x, X, LOG2, ilog2(X)); });
+    case "asin": return each(a, width, byInterval(d, (x) => iarc(x, "asin", Math.asin)));
+    case "acos": return each(a, width, byInterval(d, (x) => iarc(x, "acos", Math.acos)));
+    case "atan": return each(a, width, unitC(ATAN, iatan));
+    case "sinh": return each(a, width, unitC(SINH, (x) => rounded(Math.sinh(x[0]), Math.sinh(x[1]))));
+    case "cosh": return each(a, width, unitC(COSH, icosh));
+    case "tanh": return each(a, width, unitC(TANH, (x) => [Math.max(-1, down(Math.tanh(x[0]))), Math.min(1, up(Math.tanh(x[1])))]));
     default: throw new Error(`internal: interval: "${fn}" reached the arithmetic rules`);
   }
 }
 
 const isign = (a: I): I => [Math.sign(a[0]), Math.sign(a[1])];
+
+/** WGSL's float `%`: a - b trunc(a / b), which has a's sign and is smaller than |b|. Exact shift where trunc(a / b) is fixed. */
+function irem(a: I, b: I): I {
+  if (b[0] <= 0 && b[1] >= 0) throw new Unbounded("rem", `the divisor may be 0 (it lies in [${b[0]}, ${b[1]}])`);
+  const q = idiv(a, b), tq: I = [Math.trunc(q[0]), Math.trunc(q[1])];
+  if (tq[0] === tq[1]) return isub(a, imul(b, tq));
+  // |a % b| is below |b| and at most |a|.
+  const m = maxAbs(b) * (1 + 4 * EPS);
+  return [Math.max(Math.min(0, a[0]), -m), Math.min(Math.max(0, a[1]), m)];
+}
+function ipow2(x: I): I {
+  const hi = Math.pow(2, x[1]);
+  if (!Number.isFinite(hi)) throw new Unbounded("overflow", `exp2 overflows (its operand reaches ${x[1]})`);
+  return [Math.max(0, down(Math.pow(2, x[0]))), Math.max(up(hi), Number.MIN_VALUE)];
+}
+function ilog2(x: I): I {
+  if (x[0] <= 0) throw new Unbounded("log2", `its operand may be 0 or less (it lies in [${x[0]}, ${x[1]}])`);
+  return rounded(Math.log2(x[0]), Math.log2(x[1]));
+}
+/** asin or acos over [lo, hi] inside [-1, 1], as the function's values at the ends (each monotone). */
+function iarc(x: I, op: string, f: (v: number) => number): I {
+  if (x[0] < -1 || x[1] > 1) throw new Unbounded(op, `its operand may leave [-1, 1] (it lies in [${x[0]}, ${x[1]}])`);
+  const p = f(x[0]), q = f(x[1]);
+  return rounded(Math.min(p, q), Math.max(p, q));
+}
+function icosh(x: I): I {
+  const p = Math.cosh(x[0]), q = Math.cosh(x[1]);
+  if (!Number.isFinite(p) || !Number.isFinite(q)) throw new Unbounded("overflow", "cosh overflows");
+  return x[0] <= 0 && x[1] >= 0 ? [1, up(Math.max(p, q))] : rounded(Math.min(p, q), Math.max(p, q));
+}
+const LN2 = Math.LN2;
+/** 1 / sqrt(x): |f''| = 0.75 x^-2.5, largest at the low end. */
+const RSQRT: Smooth = { f: (m) => 1 / Math.sqrt(m), df: (m) => -0.5 * m ** -1.5, d2: (X) => 0.75 * X[0] ** -2.5 };
+const EXP2: Smooth = { f: (m) => Math.pow(2, m), df: (m) => LN2 * Math.pow(2, m), d2: (X) => LN2 * LN2 * Math.pow(2, X[1]) };
+const LOG2: Smooth = { f: Math.log2, df: (m) => 1 / (m * LN2), d2: (X) => 1 / (X[0] * X[0] * LN2) };
+/** |sinh''| = |sinh| and |cosh''| = cosh, largest at the end farther from 0. */
+const SINH: Smooth = { f: Math.sinh, df: Math.cosh, d2: (X) => Math.sinh(maxAbs(X)) };
+const COSH: Smooth = { f: Math.cosh, df: Math.sinh, d2: (X) => Math.cosh(maxAbs(X)) };
+/** |tanh''(x)| = 2 |tanh x| (1 - tanh^2 x) is at most 4 / (3 sqrt 3) < 0.77 everywhere. */
+const TANH: Smooth = { f: Math.tanh, df: (m) => 1 - Math.tanh(m) ** 2, d2: () => 0.77 };

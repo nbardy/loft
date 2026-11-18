@@ -192,6 +192,16 @@ Types:
 - **V**: A CPU value: a number, or the components of a vector. `type V = number | number[]`
 - **Env**: What the CPU evaluator reads leaves from. `type Env = { vars, inputs, params, curves?, tables? }`
 
+### src/text/index.ts
+
+`wgsl`: WGSL text as a module of functions of expressions (docs/proposals/2026-11-18_authoring_api.md section 2).
+
+- **wgsl**: WGSL text as a module of functions of expressions.
+  `function wgsl(strings: TemplateStringsArray | string, ...holes: unknown[]): WgslModule`
+
+Types:
+- **WgslModule**: A WGSL module: one callable per `fn` (an ordinary function of expressions: numbers, arrays and expressions in, an expression or a record of them out) and one per `struct` (its fields in order, a record out). `type WgslModule = { readonly [name: string]: (...args: any[]) => any } & { readonly [WGSL_STATE]: WgslState }`
+
 ### src/grad.ts
 
 Loft: symbolic differentiation of expressions.
@@ -3067,7 +3077,7 @@ Types:
 
 ## Coverage
 
-828 exports (468 values, 360 types) from src/index.ts and src/lib/index.ts.
+830 exports (469 values, 361 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 
