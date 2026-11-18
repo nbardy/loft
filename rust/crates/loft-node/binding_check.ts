@@ -1,12 +1,12 @@
 // Lane 1.1's binding checks (plan §8.2), the same script under Bun and Node 22:
-//   bun rust/crates/loft-node/tests/binding.ts ADDON
-//   node --experimental-transform-types rust/crates/loft-node/tests/binding.ts ADDON
+//   bun rust/crates/loft-node/binding_check.ts ADDON
+//   node --experimental-transform-types rust/crates/loft-node/binding_check.ts ADDON
 // ADDON is a build with `--features probe` (it adds `panic`). Prints one JSON line; exits 1 on any failed check.
 import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { NativeError, open } from "../../../../src/core/native.ts";
+import { NativeError, open } from "../../../src/core/native.ts";
 
 const addon = process.argv[2]!;
 const fails: string[] = [];

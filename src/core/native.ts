@@ -3,6 +3,8 @@
 // (src/cli/verdict.ts maps it in one line). A missing, unloadable or stale addon is `environment` (exit 6) and names
 // the build command that fixes it. Runs under Bun and Node 22 alike (process.dlopen, no Bun-only API).
 
+import { fileURLToPath } from "node:url";
+
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
 const STAMP = "loft-node abi 1 wire 1";
 const BUILD = "tools/dev.sh build loft-node --fast";
@@ -58,5 +60,6 @@ let loaded: Native | undefined;
 /** The addon of this checkout's lab build, or the file `LOFT_NATIVE` names (another profile, another platform's build). */
 export function native(): Native {
   const lib = process.platform === "darwin" ? "libloft_node.dylib" : "libloft_node.so";
-  return (loaded ??= open(process.env.LOFT_NATIVE ?? new URL(`../../rust/target/lab/${lib}`, import.meta.url).pathname));
+  // fileURLToPath, not URL.pathname: a checkout path with a space or non-ASCII byte is percent-encoded in .pathname.
+  return (loaded ??= open(process.env.LOFT_NATIVE ?? fileURLToPath(new URL(`../../rust/target/lab/${lib}`, import.meta.url))));
 }

@@ -292,6 +292,10 @@ impl Bundle {
             s.copy_from_slice(bytes.get(at..stop).ok_or_else(|| short(stop))?);
             at = stop;
         }
+        // Bytes after the last section would give the same Bundle a second file and a second `Identity::build`.
+        if at != bytes.len() {
+            return Err(Error::Load(LoadFault::Trailing { end: at as u64, have: bytes.len() as u64 }));
+        }
         Ok(b)
     }
 }

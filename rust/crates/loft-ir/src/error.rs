@@ -63,6 +63,8 @@ pub enum LoadFault {
     FormatMismatch { found: u32, expected: u32, compiler: Option<Box<str>> },
     /// The file ends before the header, JSON or a section it declares.
     Truncated { need: u64, have: u64 },
+    /// Bytes after the last section: the file ends at `end`.
+    Trailing { end: u64, have: u64 },
     /// The JSON does not decode as this format's `Bundle`.
     Json(Box<str>),
 }
@@ -150,6 +152,10 @@ pub enum Fault {
     },
     /// A decl whose roots do not have its kind's layout.
     Layout,
+    /// A Call or Loop of a decl with a root at or after the node itself: a cycle through the decl.
+    Order {
+        root: u32,
+    },
 }
 
 impl Error {

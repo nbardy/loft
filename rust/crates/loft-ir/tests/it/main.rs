@@ -160,6 +160,9 @@ fn faults_are_named() {
         (Box::new(|j| j.decls[0][3] = 2), Span::Decls, Fault::Layout),
         (Box::new(|j| j.node_sites.push(0)), Span::NodeSites, Fault::Length),
         (Box::new(|j| j.sites[0][0] = 7), Span::Sites, Fault::Sym { found: 7 }),
+        // A Fn whose result is its own call, and a Loop whose next value is its own result: cycles through a decl.
+        (Box::new(|j| j.roots[5] = 8), Span::Nodes, Fault::Order { root: 8 }),
+        (Box::new(|j| j.roots[10] = 13), Span::Nodes, Fault::Order { root: 13 }),
     ];
     for (k, (edit, span, fault)) in cases.into_iter().enumerate() {
         let mut j = base.clone();
@@ -328,6 +331,9 @@ fn bundle_round_trip_is_byte_identical() {
     for cut in [3, 15, 40, a.len() - 1] {
         assert!(matches!(Bundle::read(&a[..cut]), Err(Error::Load(_))), "cut at {cut}");
     }
+    let mut long = a.clone();
+    long.push(0);
+    assert!(matches!(Bundle::read(&long), Err(Error::Load(loft_ir::error::LoadFault::Trailing { .. }))));
 }
 
 #[test]

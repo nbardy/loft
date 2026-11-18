@@ -18,6 +18,7 @@
 //! Leaf flags: 0 time, 1 param (imm = Param decl), 2 input (imm = Input decl), 3 binder (imm = binder id).
 //! Fetch: imm = Kernel decl, flags = lane. Loop: imm = Loop decl, flags = component. Raw: imm = source sym.
 //! Swizzle: imm = len (bits 0..3, 1..=4) | comps << 3 (2 bits each). Lit: imm = first lit; a vector takes width lits.
+//! Call and Loop: every root of the named decl precedes the node, so the job is acyclic through decls too.
 use crate::error::{Error, Fault, Internal, Meter, SceneFault, Span, WireFault};
 use crate::graph::{Decl, Graph, Leaf, Node, Op, Prim, Program, Sel, Site, Tag, Ty};
 
@@ -156,6 +157,16 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         let d = decls.get(imm as usize).ok_or_else(|| bad(Span::Nodes, at, Fault::Ref { found: imm }))?;
         (d.tag == want).then_some(d).ok_or_else(|| bad(Span::Nodes, at, Fault::Tag { found: imm }))
     };
+    // A Call or Loop names a decl whose roots were all recorded before it. With operands before users this keeps the
+    // whole job acyclic: a Fn that calls itself or a Loop whose body reads its own result, which inlining or unrolling
+    // would chase forever, cannot be written. (The recorder records a body before the node that uses it.)
+    let body_before = |d: &Decl, at: usize| -> Result<(), Error> {
+        let r = &roots[d.roots as usize..(d.roots + d.n) as usize];
+        match r.iter().find(|x| **x as usize >= at) {
+            Some(x) => Err(bad(Span::Nodes, at, Fault::Order { root: *x })),
+            None => Ok(()),
+        }
+    };
     let node_words = words(nodes_b);
     let mut nodes: Vec<Node> = Vec::with_capacity(n_nodes);
     for (i, w) in node_words.as_chunks::<4>().0.iter().enumerate() {
@@ -194,10 +205,16 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
                     f => return Err(bad(Span::Nodes, i, Fault::Flags { found: f })),
                 })
             }
-            2 => decl_of(imm, Tag::Fn, i).and_then(|d| arity(n == d.arity)).and_then(|_| no_flags(Op::Call(imm)))?,
+            2 => {
+                let d = decl_of(imm, Tag::Fn, i)?;
+                body_before(d, i)?;
+                arity(n == d.arity)?;
+                no_flags(Op::Call(imm))?
+            }
             3 => decl_of(imm, Tag::Kernel, i).and(arity(n == 1)).map(|_| Op::Fetch { kernel: imm, lane: flags })?,
             4 => {
                 let d = decl_of(imm, Tag::Loop, i)?;
+                body_before(d, i)?;
                 arity(n == 0)?;
                 (u32::from(flags) < d.arity)
                     .then_some(Op::Loop { decl: imm, k: flags })
