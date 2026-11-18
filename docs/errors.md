@@ -86,13 +86,17 @@ something the CPU cannot evaluate (`unreadable`).
 Refused the same way, without a fixture each: a step reading a param, a curve row, a per-frame table or a checkpointed
 recurrence; a span that is not a whole number of steps; a history over 120 x 64 MiB; a checkpointed state read at a time
 other than `time`; a looping scene whose state span does not cover its loop (`scene() with period P`). A clip past the
-shortest `until` of a scene that does not loop is a usage error (exit 2). A scene with `recur` needs a GPU for `check`
-and `build` (exit 6 without one).
+shortest `until` of a scene that does not loop is a usage error (exit 2). Baking a recurrence for `build` or a sampled state check requires a GPU (exit 6 without one).
 
 ## Ranged checks
 
-A ranged check (`always`, `eventually`: `src/ranged.ts`) is a check like any other: exit 5 when it fails, and also
-when it is **undecided** (its row says `undecided (...)` and which budget ran out: the box budget, or boxes that could
-not be split further, naming the operator that stayed unbounded there); raise `boxes` or rewrite the condition. One that
-reads what it cannot enclose (a GPU-only function, cellular noise, a table filled on the CPU, a leaf no range binds, `eq`
-or `ne`) is refused before it is decided: exit 4, `loft: scene: always ...: given ...`.
+A ranged check can pass, fail, or finish **undecided**. `loft check` exits 5 for a failed or undecided check and
+counts the two separately. Its table gives the proven margin bounds, the witness when available, and the stop reason.
+
+- `undecided: boxes` or `undecided: ms` means the shared enclosure count or wall-clock budget ran out. Raise the indicated budget or narrow the domain.
+- `undecided: width` identifies a box the search could no longer split. An unbounded operator is named when known. Narrow its operands or rewrite the condition around its domain.
+- `undecided: unbounded` names a range end that could not be evaluated, including numeric overflow. Supply finite, defined ends.
+- `undecided: recur` identifies the scene's baked recurrence. A ranged read of raw WGSL or a GPU-only function names the function. A library function without an enclosure, a CPU table and a skin target also report their respective reasons. Use a supported expression or a sampled measurement.
+
+A malformed range or comparison is a scene error (exit 4). Give the ends independently of every quantified leaf,
+bind free variables, and use `ge`, `gt`, `le` or `lt`. Express approximate equality as a band.

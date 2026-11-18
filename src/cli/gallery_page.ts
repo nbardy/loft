@@ -199,7 +199,7 @@ function checks(c) {
     case "error": return el("div", { className: "errbox", textContent: c.error });
     case "table": return el("div", { className: "tablewrap" }, el("table", {},
       el("tr", {}, ...["check", "verdict", "measured", "limit"].map((h) => el("th", { textContent: h }))),
-      ...c.rows.map((r) => el("tr", {}, el("td", { textContent: r.name }), el("td", { className: r.pass ? "pass" : "fail", textContent: r.pass ? "pass" : "FAIL" }), el("td", { textContent: r.measured }), el("td", { textContent: r.limit })))));
+      ...c.rows.map((r) => el("tr", {}, el("td", { textContent: r.name }), el("td", { className: r.holds === "undecided" ? "" : r.pass ? "pass" : "fail", textContent: r.holds === "undecided" ? "undecided" : r.pass ? "pass" : "FAIL" }), el("td", { textContent: r.measured }), el("td", { textContent: r.limit })))));
   }
 }
 function closeDetail() { open = -1; $("detail").className = ""; $("detail").replaceChildren(); document.body.style.overflow = ""; focusCard(); }

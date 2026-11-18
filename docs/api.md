@@ -549,7 +549,7 @@ compile(scene) -> Artefact.
   `function compile(scene: Scene): Artefact`
 
 Types:
-- **Compiled**: The artefact, and the compiler's own view of it, for checks, tests and the baker. `type Compiled = { artefact, frame, cpu, poseProfile, table, programs }`
+- **Compiled**: The artefact, and the compiler's own view of it, for checks, tests and the baker. `type Compiled = { artefact, frame, cpu, poseProfile, table, tableFills, programs }`
 - **CpuFn**: CPU evaluation of expressions over a posed frame; free variables bound per call. `type CpuFn = (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[]`
 
 ### src/compile/context.ts
@@ -2385,7 +2385,7 @@ Checks: arithmetic on the CPU from the same description the GPU draws (DESIGN.md
 - **runChecks**: Run checks over a scene with inputs held at the given values (defaults otherwise).
   `function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[]`
 - **formatChecks**: The verdicts as a plain-text table.
-  `function formatChecks(vs: readonly Verdict[]): string`
+  `function formatChecks(vs: readonly ReturnType<Check["run"]>[]): string`
 - **Probe**: Measurements over one compiled scene, with inputs held at the given values (time aside).
   `class Probe`
 - **expressionsRead**: A score's expressions (src/geom/expression.ts) read from a camera.
@@ -2401,7 +2401,7 @@ Types:
 - **Check**: `interface Check { name, run }`
 - **CheckTime**: A time a check is given: seconds, or an attack's arming (`attack.arming`), which a check measures at its first arming time. `type CheckTime = In<"f32"> | Arming`
 - **Tolerance**: How far a measurement may be from what it should be: a distance in world units, or a share of a reference that the check taking it names (for `gripReaches`, the held thing's width). `type Tolerance = { readonly kind: "units"; readonly units: number } | { readonly kind: "share"; readonly share: number }`
-- **Verdict**: What a check reports. `type Verdict = { readonly name: string; readonly pass: boolean; readonly value: number; readonly measured: string; readonly limit: string }`
+- **Verdict**: A measured check result. `type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined })`
 - **Measured**: Something with a skeleton to measure: a whole body, or a part (its stretch of joints). `type Measured = Body | Part`
 - **Mark**: A drawn length: two world points (closed forms of the clock) whose difference a viewer sees: an eye's middle to its lid's edge, a stalk's root to its tip, an eye's middle to its pupil. `type Mark = { readonly from: In<"vec3">; readonly to: In<"vec3"> }`
 - **Reaching**: A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of (outboard of the root: a knee that crosses inward has folded under the body). `type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> }`

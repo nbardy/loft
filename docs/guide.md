@@ -242,6 +242,17 @@ The checks that exist: `landsInside`, `stopsAt`, `staysClear`, `warned`, `gripRe
 `budget`. `examples/strike.ts` is a serpent that bites one ship and sweeps its tail at another, with a smear and a
 wake; `examples/grab.ts` takes hold of a ship and carries it.
 
+For a continuous interval, import `always` and `eventually` from `src/ranged.ts`. For example,
+`always([time, 0, 2], gt(clearance, 0), { boxes: 2000, ms: 500 })` asks whether clearance is strictly positive
+throughout two seconds. Touching zero violates this condition. A range end may use a held input or parameter.
+Each decision shares its budgets across nested ranges, point evaluations and case splits.
+
+Read `holds` on the verdict from `runChecks`. Ranged checks return `true`, `false` or `"undecided"`, along with
+`bounds` on the extreme margin, the best sampled `witness`, its `margin`, `work`, and the stop reason in `spent.kind`.
+An empty witness means the check obtained no point measurement. In JSON, non-finite bounds and missing numerical
+measurements serialize as `null`. The enclosure follows the CPU twin's frame encoding and table stores.
+See [Ranged checks in the error guide](errors.md#ranged-checks).
+
 ## A creature with variants
 
 A design is one subject with a record of numbers, slots with named options, and named variants. A variant is valid

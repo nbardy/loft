@@ -32,6 +32,8 @@ export type Compiled = {
   poseProfile(state: FrameState): ReadonlyMap<string, number>;
   /** A per-frame table of the artefact, by name (for raw-WGSL tables, which no expression names). */
   table(name: string): TableSource;
+  /** Compiled table fills, including the f32 stores introduced by lowering. Used by the CPU interval evaluator. */
+  readonly tableFills: TableLayout["placed"];
   /** Every program the compiler lowered (src/compile/rates.ts), by group: for tools/rates_census.ts. */
   readonly programs: readonly (readonly Program[])[];
 };
@@ -194,7 +196,7 @@ export function compileScene(scene: Scene): Compiled {
     if (!t) throw new Error(`compile: no table named "${name}" (tables: ${[...byName.keys()].join(", ")})`);
     return t;
   };
-  return { artefact, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table, programs: tables.programs };
+  return { artefact, tableFills: layout.placed, frame: (state) => poseFrame(layout, envOf, state).frame, poseProfile: (state) => poseProfile(layout, envOf, state), cpu, table, programs: tables.programs };
 }
 
 /**
