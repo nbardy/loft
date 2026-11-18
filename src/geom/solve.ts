@@ -111,7 +111,7 @@ export function equal(a: In<NumTy>, b: In<NumTy>, within: number = TOLERANCE): E
 type Hold = Expr<"bool"> | Ranged;
 
 /** A hold as written, classified into lines (an `and` is two). `place` names it where it records no line of its own. */
-function holdsOf(c: Hold, place: string): HoldLine[] {
+export function holdsOf(c: Hold, place: string): HoldLine[] {
   if (c instanceof Expr) {
     if (c.ty !== "bool") throw new SceneError("solve", `a hold that is a ${c.ty}`, "a condition: ge(a, b), equal(a, b), ...", "compare: ge(distance(p, rail), 0.4)");
     return linesOf(c, { kind: "span" }, place);
@@ -292,7 +292,7 @@ export class SolveError extends SceneError {
  * cubic's fourth derivative is 0 within a knot gap). Never in a returned expression; its WGSL exists only because every
  * library function has one.
  */
-const JET: LibFn = { name: "loft_solve_jet", ret: "f32", wgsl: "fn loft_solve_jet(t: f32, a: f32, b: f32, c: f32, d: f32) -> f32 { return a; }", js: (_t: number, a: number) => a };
+export const JET: LibFn = { name: "loft_solve_jet", ret: "f32", wgsl: "fn loft_solve_jet(t: f32, a: f32, b: f32, c: f32, d: f32) -> f32 { return a; }", js: (_t: number, a: number) => a };
 defineDerivative(JET, (args, ds) => add(ds[1] as F, mul(lib<"f32">(JET, args[0]!, args[2]!, args[3]!, args[4]!, 0), ds[0] as F)));
 
 // ---- the problem in numbers ----------------------------------------------------------------------------------------

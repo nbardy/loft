@@ -27,6 +27,7 @@ pub mod layout;
 pub mod prim;
 pub mod rate;
 pub mod schedule;
+pub mod solve;
 pub mod tape;
 
 use loft_ir::bundle::{self, Bundle, F32, Format, InputDecl, Module, Origin, ParamDecl, Shape};
