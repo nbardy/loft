@@ -98,7 +98,7 @@ CPU (shared machine), wall time inside `solve`:
 
 | | base (deck at 3.2, top 0.7) | moved (deck at 4.0, top 1.0) |
 |---|---|---|
-| solve time | 5.0 s (816 steps, 16 rounds, 426 samples) | 5.6 s (968 steps, 19 rounds, 423 samples) |
+| solve time (predicted under 2 s: missed) | 5.0 s (816 steps, 16 rounds, 426 samples) | 5.6 s (968 steps, 19 rounds, 423 samples) |
 | worst hold miss on returned curves | 8.1e-7 | 5.3e-7 |
 | crouch (predicted 0.4 to 0.6 m below 1.9, near 0.3 s) | 0.68 m, at 0.375 s | 0.80 m, at 0.38 s |
 | takeoff vx (predicted 2.3 to 3) | 2.66 m/s | 3.39 m/s (+0.73; predicted +1.3) |
