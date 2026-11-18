@@ -1872,29 +1872,29 @@ Motion from stated constraints (docs/proposals/2026-11-18_next.md section 5): `s
   `function solve<K extends string>(spec: SolveSpec<K>): Solved<K>`
   cannot:
   - guarantee between fine-grid times: an interval hold is checked at h/64 spacing (h the knot gap), not proven. Ranged checks prove it.
-  - find a solution far from its start: the search is local, from each unknown's `spline(n, from)` (default 0). A hold says nothing of which side of an obstacle to pass ("clear of the rail" is met under it as well as over it): the start picks the side. Holds not linear in the unknowns may have solutions it does not find, and "infeasible" means none was found near where the search stopped.
+  - find a solution far from its start: the search is local, from each unknown's `spline(n, from)` (default 0). A hold says nothing of which side of an obstacle to pass ("clear of the rail" is met under it as well as over it): the start picks the side. A failed local search returns `unsolved` with a suggested starting curve.
   - read an unknown at another time than the hold's own (a delay): refused, naming the hold.
   - hold for every value of a param or input: they take their defaults while solving.
   - read raw WGSL or per-frame tables in a hold (refused, naming the hold).
   - change after the build: the result is numbers. A hold that should follow a host input at run time is a closed form, not a solve.
 - **spline**: An unknown curve for `solve`'s `vary`: a uniform cubic B-spline with `n` numbers (n - 3 cubic pieces) over the solve's span.
   `function spline(n: number, from: In<"f32"> = 0): Family`
-- **equal**: `a` equals `b` (numbers or vectors of one size, every component) at `when`: an instant `{ at }` (lands, reaches), an interval `{ from, to }` (planted), or the whole span when left out.
+- **equal**: Each component of `a - b` stays within ±`TOLERANCE` at `when`: an instant `{ at }` (lands, reaches), an interval `{ from, to }` (planted), or the whole span when left out.
   `function equal(a: In<NumTy>, b: In<NumTy>, when?: When): HoldLine`
 - **atLeast**: `a` is at least `b` (numbers) at `when` (as for `equal`): clear by a distance, above a floor, within a reach (`atLeast(reach, distance)`).
   `function atLeast(a: In<"f32">, b: In<"f32">, when?: When): HoldLine`
-- **SolveError**: `solve` could not return curves: the holds conflict (exit 4, with the conflicting lines), or the search did not settle.
+- **SolveError**: A solve refusal (exit 4).
   `class SolveError extends SceneError`
 
 Types:
 - **Family**: The family of an unknown curve, and where the search for it starts. `type Family = { readonly kind: "spline"; readonly n: number; readonly from: F }`
-- **HoldLine**: A stated constraint: `margin` is zero (`equal`, every component) or at least zero (`atLeast`) at the `times`. `type HoldLine = { kind, margin, times, site }`
+- **HoldLine**: A stated constraint. `type HoldLine = { times, site }`
 - **HoldReport**: How well one hold is met by the returned curves, measured on the fine grid (and its instant). `type HoldReport = { readonly kind: HoldLine["kind"]; readonly site: string | undefined; readonly when: string; readonly worst: number; readonly at: number }`
 - **Prefer**: What `solve` makes least, a weighted sum: `jerk` and `acceleration` (each the integral over the span of the squared third or second time derivative, summed over the unknowns) and `near` (the integral of the squared difference from given curves of time, for the unknowns named: least change from a curve you had). `type Prefer<K extends string> = { jerk?, acceleration?, near? }`
 - **Solved**: `type Solved<K extends string> = { curves, holds, report }`
-- **SolveFailure**: Why `solve` returned no curves. `type SolveFailure = /** No curve of the family meets these holds together (a minimal set: drop any one and the rest can be met). */ | { readonly kind: "infeasible"; readonly conflict: readonly HoldLine[]; readonly worst: number } /** A curve meeting every hold exists, but the search did not settl...`
-- **SolveReport**: `type SolveReport = { ms, steps, rounds, samples, holds }`
-- **SolveSpec**: `type SolveSpec<K extends string> = { over, vary, hold, prefer }`
+- **SolveFailure**: Why `solve` returned no curves. `type SolveFailure = /** A contradiction between the named linear bounds, including the equality tolerance. */ | { readonly kind: "infeasible"; readonly conflict: readonly HoldLine[]; readonly worst: number } /** The local search stopped without finding a verified curve. */ | { readonly kind: "uns...`
+- **SolveReport**: `type SolveReport = { delta, ms, steps, rounds, samples, holds }`
+- **SolveSpec**: `type SolveSpec<K extends string> = { over, vary, hold, prefer, delta?, budget? }`
 - **When**: When a hold applies: one instant, an interval, or (left out) the whole span of the solve. `type When = { readonly at: number } | { readonly from: number; readonly to: number }`
 
 ## Actions (src/actions.ts)

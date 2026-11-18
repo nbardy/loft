@@ -1,6 +1,9 @@
 // Motion from constraints (src/geom/solve.ts) and rigid parts between keys.
 import { expect, test } from "bun:test";
-import { add, evaluate, mul, sub, substitute, time, vec3, length, type Expr } from "../src/expr.ts";
+import { leap, NUMBERS } from "../examples/second/heron_leap.ts";
+import { compileScene } from "../src/compile/index.ts";
+import { plane, Probe, scene, toon } from "../src/index.ts";
+import { add, cos, evaluate, max, mul, sqrt, sub, substitute, time, vec3, length, type Expr } from "../src/expr.ts";
 import { derivative } from "../src/grad.ts";
 import { blendFrames, turnedAbout } from "../src/geom/placing.ts";
 import { atLeast, equal, solve, spline, SolveError, TOLERANCE, type HoldLine } from "../src/geom/solve.ts";
@@ -102,3 +105,77 @@ test("a hold that reads an unknown at another time is refused", () => {
   }));
   expect(e.failure.kind).toBe("unreadable");
 });
+
+test("a non-finite hold names the time, including between optimisation samples", () => {
+  const atSample = sqrt(sub(0.5, time));
+  const between = sqrt(sub(mul(sub(time, 0.5), sub(time, 0.5)), 0.01));
+  // The first golden-section point beside t=0 lies strictly between all verification grid points.
+  const offset = sub(time, (1 - (Math.sqrt(5) - 1) / 2) / 64);
+  const atPeak = add(mul(2, time), sqrt(sub(mul(offset, offset), 1e-15)));
+  for (const margin of [atSample, between, atPeak]) {
+    const e = failure(() => solve({
+      over: [0, 1], vary: { x: spline(4) },
+      hold: ({ x }) => [equal(x, 0, { at: 0 }), atLeast(margin, 0)], prefer: { jerk: 1 },
+    }));
+    expect(e.failure.kind).toBe("unreadable");
+    expect(e.message).toMatch(/atLeast.*t = [0-9.]+/);
+    expect(e.message).toContain("tests/solve.test.ts");
+  }
+});
+
+test("a finite margin with an overflowing Hessian is unreadable", () => {
+  const e = failure(() => solve({
+    over: [0, 1], vary: { x: spline(4) }, hold: ({ x }) => [atLeast(cos(mul(1e200, x)), -2)], prefer: { jerk: 1 },
+  }));
+  expect(e.failure).toMatchObject({ kind: "unreadable", at: 0 });
+  expect(e.message).toContain("non-finite derivative");
+});
+
+test("a stationary start for x squared is a local failure", () => {
+  const run = (from: number) => solve({
+    over: [0, 1], vary: { x: spline(4, from) }, hold: ({ x }) => [atLeast(mul(x, x), 1)], prefer: { jerk: 1 },
+  });
+  const e = failure(() => run(0));
+  expect(e.failure.kind).toBe("unsolved");
+  expect(e.message).toContain("start the curve on the other side");
+  expect(run(1).report.holds[0]!.worst).toBe(0);
+});
+
+test("the hop clears its bump and returns ranged checks on the authored windows", () => {
+  const bump = max(0, sub(0.3, mul(sub(time, 0.5), sub(time, 0.5), 4)));
+  const hop = solve({
+    over: [0, 1], vary: { y: spline(6) },
+    hold: ({ y }) => [equal(y, 0, { at: 0 }), equal(y, 0, { at: 1 }), atLeast(y, bump)],
+    prefer: { jerk: 1 },
+  });
+  const probe = new Probe(compileScene(scene({ ground: plane, things: [], style: toon(), sun: [0, 1, 0], cameras: {} })), {});
+  expect(hop.report.delta).toBe(1e-6);
+  for (const check of hop.holds) expect(check.decide(probe).holds).toBe(true);
+  // The inequalities still mean the authored bound, even beside a point equality at contact.
+  expect(at(hop.curves.y, 0)).toBeGreaterThan(0);
+  expect(at(hop.curves.y, 1)).toBeGreaterThan(0);
+});
+
+test("the heron rebuild reuses the structural solve and publishes its checks", () => {
+  // Scene modules share a process-wide parameter registry. The heron's toon outline has its own default.
+  const result = Bun.spawnSync([process.execPath, "-e", `
+    import { heronLeap, leap, NUMBERS } from "./examples/second/heron_leap.ts";
+    const built = heronLeap.build(heronLeap.resolve({ variant: "base", picks: [] }));
+    const { report } = leap(structuredClone(NUMBERS)).solved;
+    console.log(JSON.stringify({ ms: report.ms, steps: report.steps, checks: built.checks.length, holds: report.holds.length }));
+  `], { cwd: new URL("../", import.meta.url).pathname });
+  expect(result.stderr.toString()).toBe("");
+  expect(result.exitCode).toBe(0);
+  const { ms, steps, checks, holds } = JSON.parse(result.stdout.toString());
+  expect(ms).toBeLessThan(50);
+  expect(steps).toBe(0);
+  expect(checks).toBe(holds);
+  expect(checks).toBeGreaterThan(0);
+}, 120_000);
+
+test("the 9 m deck stops on the solve deadline", () => {
+  const start = performance.now();
+  const e = failure(() => leap({ ...NUMBERS, deck: { land: 9, top: 0.7, from: 8.4, to: 10.2 } }, { ms: 2000 }));
+  expect(e.failure).toMatchObject({ kind: "unsolved", reason: "budget" });
+  expect(performance.now() - start).toBeLessThan(2500);
+}, 120_000);

@@ -185,14 +185,19 @@ export default scene({
 });
 ```
 
-`hop.report` says how long it took and each hold's worst miss on the returned curves; `hop.holds` are the holds again,
-written over the solved curves, for checks. Holds that no curve meets together are refused (exit 4) with the smallest
-set of them that conflicts, each by its line. This one was, twice, as first written: flying until 1.4 s and still on
-the block from 1.4 s asks the acceleration to jump from -9.81 to 0, and the family is C2 (it named those three lines);
-with `spline(10)` (a knot every 0.29 s) still until 0.4 s and flying from 0.6 s left no piece to push in (it named those
-two). The family's knots are part of what you ask for. A hold says only what it says: "clear of the bar" is met under the bar as
-well as over it, and the search is local, so `spline(n, from)` starts each unknown on the side you mean. Rigid parts
-stay rigid: solve angles and targets (`turnedAbout`, `poseFrame`, `chain`), not the points of a part.
+Use `checks: hop.holds` in a design build, or `export const checks = hop.holds` beside a scene. Each check is an
+`always` over the authored window, including singleton instants. For `equal`, each component can differ by up to
+`TOLERANCE` (1e-5). For `atLeast`, the solver aims for an interior margin of `delta` (default 1e-6 in the
+margin's units). The ranged check compares the actual margin to zero. `hop.report` gives the target, the solve time
+and each hold's worst measured miss on the verification grid and at refined peaks.
+
+Identical problems reuse their verified curves in the same process. Set `budget: { ms: 2000 }` to give setup,
+optimisation, verification and conflict diagnosis a shared two seconds. Expiry raises `unsolved` with reason
+`budget`. A local search failure raises `unsolved` with reason `search`. A clearance constraint can be met on either
+side of a rail, so use `spline(n, from)` to start on the intended side. `infeasible` names a certified contradiction,
+such as two incompatible positions for a foot at the same time. For rigid motion, solve joint angles or targets
+and build the parts with `turnedAbout`, `poseFrame` or `chain`.
+
 `examples/second/heron_leap.ts` solves a heron's crouch, leap and landing; `agent_notes/2026-11-18_solve/NOTE.md` has
 the method.
 
