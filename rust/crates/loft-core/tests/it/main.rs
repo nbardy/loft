@@ -2,6 +2,7 @@
 //! central differences, (d) a digest of tape bits to compare across hosts. Heavy counts: run with `--release`.
 
 mod analyses;
+mod draws;
 mod emit;
 mod kernels;
 
