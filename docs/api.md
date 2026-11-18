@@ -32,7 +32,7 @@ unseen by checks); a `compute` pass whose outputs are made at build, at load, pe
 time. Holes (`${x}`) are how Loft values (params, inputs, compute outputs) reach raw text, and `loft show` prints what
 the GPU compiles. A `Style` value, fresh or spread from another. A library author's `Drawable` (`draws(ctx)` returning
 shaders and phased draws; `src/draw/sky.ts` is 30 lines). A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/`
-(`docs/artefact_format.md`), executed by `createHost` (`src/host/index.ts`) or `rust/loft-loader` on `wgpu`.
+(`docs/artefact_format.md`), executed by `createHost` (`src/host/index.ts`) or `rust/crates/loft-loader` on `wgpu`.
 
 **What it cannot do today.**
 - No ground but the sea: every scene has `sea({ swell })` (an empty list is flat water).

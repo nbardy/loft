@@ -37,7 +37,7 @@ All **library**, all domain-free. Nothing here knows about crabs or the sea exce
 | Curves from keys, ramps, waves, responses | `src/curve.ts` | 200 | |
 | Map algebra: charts, warps, sweeps, surfaces, tables, distance bricks, surface nets, transported frames | `src/map/` | 1,690 | |
 | Compiler: one pass to WGSL and tables; rates (what changes per build, per frame, per pixel) | `src/compile/` | 1,430 | |
-| The artefact contract; the artefact as files | `src/artefact.ts`, `src/host/files.ts`, `manifest.ts` | 640 | drawn without the compiler; a Rust loader exists (`rust/loft-loader`) |
+| The artefact contract; the artefact as files | `src/artefact.ts`, `src/host/files.ts`, `manifest.ts` | 640 | drawn without the compiler; a Rust loader exists (`rust/crates/loft-loader`) |
 | WebGPU host (browser and headless), level of detail, GPU profiling | `src/host/` | 2,330 | headless needs bun |
 | Mesh export to glTF | `src/bake/` | 290 | |
 | Scene | `src/scene.ts` | 76 | **a scene must have a sea** (see "What blocks an outsider") |

@@ -285,7 +285,7 @@ change it. The preludes are chunks, so changing them does not change the format.
 
 **The rule: a file with author compute is version 5. Otherwise, a mixed build is version 4, a file is version 3 when a draw command carries an `instanceBase`, version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
 It is decided in one place, `formatVersion` in src/host/lower.ts. A loader for n reads every version before it; the TypeScript loader and
-the Rust loader (rust/loft-loader) read all five. Versions 1–3 retain their existing layout for the directories produced by earlier builds.
+the Rust loader (rust/crates/loft-loader) read all five. Versions 1–3 retain their existing layout for the directories produced by earlier builds.
 
 - 1: the format above without `frame.replay` and without passes.
 - 2 (2026-11-14): `frame.replay` and the table fill `replay` (Replays); textures of a scaled or fixed size, render

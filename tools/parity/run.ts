@@ -17,10 +17,10 @@ import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "../..");
 const OUT = join(ROOT, "out/parity/R0");
-const VIEW = join(ROOT, "rust/loft-loader/target/release/loft-view");
+const VIEW = join(ROOT, "rust/target/release/loft-view");
 const DIFF = join(ROOT, "tools/parity/target/release/parity-diff");
-/** The paths that decide a reference picture. */
-const PICTURE = ["src", "examples", "rust/loft-loader", "tools/migrate.ts", "package.json"];
+/** The paths that decide a reference picture (the loader moved to rust/crates in lane 0.1; the workspace lock pins its wgpu). */
+const PICTURE = ["src", "examples", "rust/crates/loft-loader", "rust/Cargo.lock", "tools/migrate.ts", "package.json"];
 const corpus = JSON.parse(readFileSync(join(import.meta.dir, "corpus.json"), "utf8")) as Corpus;
 
 type Corpus = {
@@ -147,7 +147,7 @@ let adapter: string | undefined;
 async function reference(only: string) {
   const dirty = git("status", "--porcelain", "--", ...PICTURE);
   if (dirty !== "") throw new ParityError(`R0 must be a commit: the tree is dirty where it decides pictures:\n${dirty}\nFix: commit or stash first`);
-  if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: cargo build --release in rust/loft-loader`);
+  if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: tools/dev.sh build loft-loader --release`);
   // R0 is the last commit that decides pictures, so a run interrupted at that commit resumes: recorded entries are kept.
   const r0 = git("log", "-1", "--format=%H", "--", ...PICTURE), stamp = join(OUT, "r0");
   const held = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : r0;
@@ -180,7 +180,7 @@ async function reference(only: string) {
   const recs = list.map((e) => JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec);
   const count = <T,>(xs: T[], key: (x: T) => string) => xs.reduce<{ [k: string]: number }>((o, x) => ({ ...o, [key(x)]: (o[key(x)] ?? 0) + 1 }), {});
   const manifest = {
-    r0, head: git("rev-parse", "HEAD"), loftView: { sha256: sha(readFileSync(VIEW)), loader: git("log", "-1", "--format=%H", "--", "rust/loft-loader") },
+    r0, head: git("rev-parse", "HEAD"), loftView: { sha256: sha(readFileSync(VIEW)), loader: git("log", "-1", "--format=%H", "--", "rust/crates/loft-loader") },
     adapter, only, corpus: sha(readFileSync(join(import.meta.dir, "corpus.json"))), started, ended: { at: new Date().toISOString(), load1: loadavg()[0] }, cpus: cpus().length,
     entries: recs.length, origins: count(recs, (r) => r.entry.origin.kind),
     builds: count(recs, (r) => r.build.kind === "refused" ? `refused:${r.build.verdict}` : r.build.kind),

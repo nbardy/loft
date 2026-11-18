@@ -35,6 +35,14 @@
      `docs/art_direction/<round>/`, and show them to the owner before anything is built from them.
   Worked briefs: `docs/art_direction/crab_round4/prompt.md` and `crab_round4/others/prompt.md`. The local Flux script
   (`tools/crab_concepts.py`) is the fallback; it is slower, rougher, and another session may be using that repo.
+- **Freeze (from wave 0 of `docs/proposals/2026-11-19_lean_rust_loft.md`, §7):** no new feature lands in the TS
+  engine (`src/compile`, `src/draw`, `src/host`, `expr.ts`, `interval.ts`, `ranged.ts`, `check.ts`, `geom/solve.ts`).
+  A feature request during the port is written against the Rust types in that plan and lands in its lane. A fix that
+  changes a reference picture or refusal (`out/parity/R0`) says so in its commit.
+- Rust: one workspace in `rust/` (toolchain pinned by `rust/rust-toolchain.toml`). Edit loop `tools/dev.sh
+  check|lint|test|build|run CRATE`, gate `tools/check.sh static|quick|full`, lanes `tools/lane.sh`. Cargo goes
+  through the machine-wide compile lock shared with Keel; a waiter prints the holder. Picture parity:
+  `bun tools/parity/run.ts`, reference set in `out/parity/R0`.
 - Design as built: `DESIGN.md`. Research notes: `docs/`. Handoff prompts: `prompts/art_research/`.
 - A scene as files: `bun src/cli/main.ts build <scene> --out out/files/<name>`, drawn without the compiler by
   `render --artefact <dir>`. Format: `docs/artefact_format.md`. `bun tools/check_loader_closure.ts` fails if the file

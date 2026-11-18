@@ -65,7 +65,7 @@ falls back to WebGL 2 without an error when no adapter is found), `headless-gl` 
 native add-on built on `wgpu`.
 
 A Loft scene builds to plain files: WGSL, tables and a manifest. The command line draws them headlessly through Dawn,
-and a Rust loader in this repository (`rust/loft-loader`) draws the same files with `wgpu` and no JavaScript at run
+and a Rust loader in this repository (`rust/crates/loft-loader`) draws the same files with `wgpu` and no JavaScript at run
 time. Building the files needs the TypeScript step. The Rust loader has not been re-verified since the ground kinds
 and style parts landed.
 

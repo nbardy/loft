@@ -287,7 +287,7 @@ algorithm; phase 4 deletes it.
 
 ## Rust loader
 
-`rust/loft-loader` (library) and its binary `loft-view`, on wgpu 30.0.1: the version the game (Keel) pins, so the
+`rust/crates/loft-loader` (library) and its binary `loft-view`, on wgpu 30.0.1: the version the game (Keel) pins, so the
 loader can be handed the game's own `wgpu::Device`. Artefacts of commit c0959b4.
 
 ### Predictions (written before any Rust, 2026-11-11)
@@ -464,7 +464,7 @@ files use, by the same reasoning, and the document should say whether they may w
 the previous frame's values for the last passes' end-of-fragment samples, about half the time. Waiting for the frame
 before resolving fixed it; `loft-view` does.
 
-Format changes proposed (rust/loft-loader/README.md says each with its reason): `loft build` validates every module
+Format changes proposed (rust/crates/loft-loader/README.md says each with its reason): `loft build` validates every module
 with Naga as well as Tint; the document names the formats, view dimensions and topologies a file may use; the `time`
 input by slot; whether a bind group is made at load or per size, said rather than inferred; `Detail.bound.buffer` (a
 name, the one non-index reference) out of the file; and a frame that does not own the frame (matrices in, the caller's

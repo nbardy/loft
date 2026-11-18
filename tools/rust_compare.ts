@@ -1,4 +1,4 @@
-// The Rust loader (rust/loft-loader, `loft-view`) against the Dawn host, drawing the same artefact folders
+// The Rust loader (rust/crates/loft-loader, `loft-view`) against the Dawn host, drawing the same artefact folders
 // (docs/gpu_native.md, "Rust loader"). Per scene of tools/files_cases.ts, three frames (t = 1; t = 2.5; t = 2.5 with an
 // input or param changed), each from a fresh load on both sides (so no level-of-detail memory carries between frames),
 // one render at a time.

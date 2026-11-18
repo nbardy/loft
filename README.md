@@ -92,7 +92,7 @@ match. A scene refusal names your own thing, what was given, what was expected a
 - `docs/api.md`: every export by layer, generated from the source.
 - Examples, short to long: `examples/shell.ts`, `examples/brig.ts`, `examples/pearls.ts`, `examples/coral.ts`,
   `examples/storm.ts`, `examples/serpent.ts`, `examples/maelstrom.ts`, `examples/scenes/`.
-- `docs/artefact_format.md` and `rust/loft-loader/` for drawing a scene outside this repository. `DESIGN.md` and the
+- `docs/artefact_format.md` and `rust/crates/loft-loader/` for drawing a scene outside this repository. `DESIGN.md` and the
   rest of `docs/` are the record of how it was designed.
 
 Every snippet in these docs is run by `bun tools/check_snippets.ts`. Typecheck: `pnpm exec tsc --noEmit`.
