@@ -60,7 +60,7 @@ export { swellLines, type SwellLines } from "./sea.ts";
 export { contactFoam, marksFoam, printLayers, foam, marksAs, type ContactFoam, type FoamInk, type HeadSize, type InkLayers, type MarksPrint } from "./foam.ts";
 export { rollingFoam, curledHeads, crown, behind, joined, rollOf, slopeOf, along, pixelOn, type Lean, type Roll, type White, type WhiteOn } from "./whitewater.ts";
 export { paint, warmed, mottled, weighted, standsOut, type Hue, type LineWeight, type Mottle, type Warm } from "./paint.ts";
-export { paperGrain, bloom, reflection } from "./post.ts";
+export { depthOfField, filmGrain, paperGrain, bloom, reflection } from "./post.ts";
 export { edgeOf, pixelsInside, rgb, wgslRgb, POST_COMMON } from "./shared.ts";
 export { glossed } from "./gloss.ts";
 export { ggx, smithGgx, schlick, lambert, skyLight, daylight, aces, type PbrParts } from "./pbr_parts.ts";

@@ -187,6 +187,20 @@ sky nor the sea needed pixel coordinates.
 width) and `POST_COMMON` (WGSL for post passes, prefixed `sty_`: pixel hash and value noise, view depth, a normal
 reconstructed from neighbouring depths using the nearer of each pair, "is this pixel the sea", "is it submerged").
 
+`depthOfField({ focus, focalLength, fStop })` and `filmGrain({ amount })` are ordinary style post passes. For a
+perspective camera the signed thin-lens blur radius in pixels is `fy * (focalLength / (2 * fStop)) * (1/focus - 1/z)`,
+where `z` is axial depth and `fy = height / (2 tan(fovY / 2))` is the camera's focused projection scale. Focus and
+focal length use world units. An orthographic view models a telecentric lens with the same cone at focus and uses
+`(height / viewHeight) * (focalLength / (2 * fStop)) * (z/focus - 1)`. Cleared depth is infinity in both.
+
+A 32-tap disc gathers the current depth layer and reveals visible backing at a defocused silhouette. It rejects
+closer, mismatched layers. A 40-tap area-weighted gather tests which nearer source discs cover a receiver. Each tap
+fetches depth and colour from the same texel. The radius is capped at 16 px at 720p, scaled by image height.
+Soft media, spray, water and the style's ground plane are composited before post and take the opaque depth behind
+them, or infinity where it is clear. One colour and depth per pixel limit disocclusion and visibility through layers.
+Grain adds zero-mean monochrome noise shaped by `4 L (1 - L)` in display RGB and hashes the pixel with the f32 view
+time. Both passes preserve the pixel's alpha mark and use the existing artefact and host contracts.
+
 **The styles** (since 2026-11-12 each is composed from parts in `src/style/`, and `sketch` and `neon` join them: docs/styles.md is the current account; the descriptions below are of the pictures, which are unchanged).
 
 - `toon` (`src/style/toon.ts`): banded sun, rim, gloss, an ink hull, a translucent stylised sea.
@@ -330,6 +344,8 @@ line's only: N samples of one instant, each today's frame at time t + s (k + 0.5
 Halton (2, 3) point and through a lens disc point with the frustum sheared to keep the target's plane; summed in f32
 by a compute pass and averaged before the style's post passes run once. Each sample plans its level of detail with no
 memory, so a still is a function of (t, k, pixel) only. Nothing in the file format or the loader changes for it.
+The post passes see sample zero's depth and time. Use either the sampled lens or the depth-of-field post for a
+single lens blur. Subpixel and shutter sampling can be combined with the post.
 
 ### 3.1 Shared draw shaders and concurrent pipelines (ported from creative, 16 Nov)
 

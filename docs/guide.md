@@ -450,6 +450,28 @@ export const paint = (u: F) => mul(vec3(0.9, 0.7, 0.3), stripes(u));
   object to create, in WebGPU's own names, and the per-frame recipe), `wgsl/` and `bin/`. A loader executes the
   recipe and decides nothing about the scene (`docs/artefact_format.md`). Below.
 
+### Photographing a scene
+
+```ts check
+import { depthOfField, filmGrain, pbr } from "../src/index.ts";
+
+const look = pbr();
+export const style = {
+  ...look,
+  post: [...look.post, depthOfField({ focus: 4, focalLength: 0.16, fStop: 1.8 }), filmGrain()],
+};
+```
+
+Measure `focus` along the camera's forward axis. Give `focalLength` in the same world units and lower `fStop` for a
+wider aperture. The perspective camera's field of view supplies the framing. The orthographic camera models a
+telecentric lens. Both use a circular aperture and a blur radius capped at 16 pixels at 720p, scaled with height.
+Transparent layers, including fog, rain, sea and the flat ground, use the opaque depth behind each pixel. Where the
+opaque depth is clear they use infinity. `filmGrain()` uses frame time as the seed and adds the most grain around
+middle grey. Set `amount` for peak-to-peak strength there, default `0.045`.
+
+See `examples/materials/refocus.ts` for a copper-sphere study. For a still with multiple aperture views, render with
+`--samples N --aperture r` and omit the depth-of-field post pass so the lens is applied once.
+
 ## Drawing a scene elsewhere
 
 ```sh

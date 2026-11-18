@@ -49,6 +49,8 @@ The most likely refusals, each `given ...; expected ... Fix: ...`:
 | `artefact precision: the file contains only f32` | a mixed render was requested from an f32 build | rebuild with `loft build --precision mixed` |
 | `artefact precision: ...` (invalid or missing mixed descriptor) | the version-4 overlay is inconsistent | rebuild with `loft build --precision mixed` |
 | `tabulate "x": given a static shading sample outside [-1, 1]` | `"static-shading"` received a non-finite or out-of-range sample | normalize the shading values or use `"static"` |
+| `depthOfField: given focus ...` | invalid lens distances or f-stop | use world units with `0 < focalLength < focus` and a positive finite `fStop` |
+| `filmGrain: given amount ...` | strength outside 0 to 1 | give a small amount such as `0.045`, or omit it for the default |
 
 `f32-fallback` is a successful mixed request on a device without `shader-f16`. The render and serve answer report
 that name. To render the mixed variant, select a device that grants the feature.
