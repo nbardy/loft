@@ -67,7 +67,8 @@ fn scene(s: &Value) -> Scene {
         decls: Box::new([]),
         roots: Box::new([]),
     };
-    let (mut nodes, mut args, mut lits, mut rows, mut decls, mut roots) = (vec![], vec![], vec![], vec![], vec![], vec![]);
+    let (mut nodes, mut args, mut lits, mut rows, mut decls, mut roots) =
+        (vec![], vec![], vec![], vec![], vec![], vec![]);
     let mut names: HashMap<String, u32> = HashMap::new();
     let mut intern = |n: &str| {
         let k = names.len() as u32;
@@ -116,7 +117,10 @@ fn scene(s: &Value) -> Scene {
             "vec" => Op::Prim(Prim::Vec),
             "get" => {
                 let sel = ids(&n["sel"]);
-                Op::Swizzle(Sel { len: sel.len() as u8, comps: sel.iter().enumerate().fold(0, |c, (k, &x)| c | (x as u8) << (2 * k)) })
+                Op::Swizzle(Sel {
+                    len: sel.len() as u8,
+                    comps: sel.iter().enumerate().fold(0, |c, (k, &x)| c | (x as u8) << (2 * k)),
+                })
             }
             "fetch" => Op::Fetch { kernel: u(&n["res"]), lane: u(&n["lane"]) as u8 },
             "raw" => Op::Raw(0),
@@ -135,14 +139,21 @@ fn scene(s: &Value) -> Scene {
                 Source::Curve { at: (rows.len() - sm.len()) as u32, len: sm.len() as u32 }
             } else if let Some(o) = r["shape"].as_object() {
                 let e = ids(&o["texture"]);
-                Source::Made(Shape::Texture { extent: [e[0], e[1], *e.get(2).unwrap_or(&1)], format: TexFormat::R32Float })
+                Source::Made(Shape::Texture {
+                    extent: [e[0], e[1], *e.get(2).unwrap_or(&1)],
+                    format: TexFormat::R32Float,
+                })
             } else {
                 Source::Made(Shape::Rows { rows: u(&r["rows"]), lanes: u(&r["lanes"]) as u8 })
             }
         })
         .collect();
-    let role: HashMap<&str, &str> =
-        s["ts"]["tables"].as_array().unwrap().iter().map(|t| (t["name"].as_str().unwrap(), t["role"].as_str().unwrap())).collect();
+    let role: HashMap<&str, &str> = s["ts"]["tables"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| (t["name"].as_str().unwrap(), t["role"].as_str().unwrap()))
+        .collect();
     let (mut kd, mut kn, mut opaque) = (vec![], vec![], 0);
     for k in s["kernels"].as_array().unwrap() {
         let writes = u(&k["res"]);
@@ -165,7 +176,11 @@ fn scene(s: &Value) -> Scene {
             Fill::Scan { first: u(&sc["first"]), steps: u(&sc["steps"]), init, step }
         } else if let Some(r) = f.get("raw") {
             let d = ids(&r["dispatch"]);
-            Fill::Raw { module: 0, dispatch: [d[0], *d.get(1).unwrap_or(&1), *d.get(2).unwrap_or(&1)], reads: ids(&r["reads"]).into() }
+            Fill::Raw {
+                module: 0,
+                dispatch: [d[0], *d.get(1).unwrap_or(&1), *d.get(2).unwrap_or(&1)],
+                reads: ids(&r["reads"]).into(),
+            }
         } else {
             // A per-frame opaque fill stands in as a Map of `time` (per frame, the TS rows and lanes); a static one
             // as an unwritten resource.
@@ -175,7 +190,12 @@ fn scene(s: &Value) -> Scene {
             }
             let (r, lanes) = (u(&res[writes as usize]["rows"]), u(&res[writes as usize]["lanes"]));
             let at = nodes.len() as u32;
-            nodes.push(Node { op: Op::Leaf(Leaf::Bind(intern(&format!("_opaque_{name}")))), ty: Ty::F32, args: 0, n: 0 });
+            nodes.push(Node {
+                op: Op::Leaf(Leaf::Bind(intern(&format!("_opaque_{name}")))),
+                ty: Ty::F32,
+                args: 0,
+                n: 0,
+            });
             nodes.push(Node { op: Op::Leaf(Leaf::Time), ty: Ty::F32, args: 0, n: 0 });
             nodes.push(Node { op: Op::Prim(Prim::Vec), ty: Ty::V4, args: args.len() as u32, n: 1 });
             args.push(at + 1);
@@ -230,8 +250,9 @@ fn const_fills_within_1_ulp_of_ts() {
 fn measure() -> Report {
     let path = std::env::var("LR21_FIXTURE")
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../../out/lr21/kernels.jsonl").into());
-    let file = std::fs::File::open(&path)
-        .unwrap_or_else(|e| panic!("{path}: {e}. Write it first: bun rust/crates/loft-core/dump_kernels.ts > out/lr21/kernels.jsonl"));
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| {
+        panic!("{path}: {e}. Write it first: bun rust/crates/loft-core/dump_kernels.ts > out/lr21/kernels.jsonl")
+    });
     let (mut scenes, mut fails) = (0, Vec::<String>::new());
     let mut tot: HashMap<&str, u64> = HashMap::new();
     let mut worst: Vec<(u64, String)> = vec![];
@@ -262,7 +283,8 @@ fn measure() -> Report {
 
         // (1) every TS table, recurrence and compute output has a resource of the same rows and lanes.
         let res = s["resources"].as_array().unwrap();
-        let by_name: HashMap<&str, usize> = res.iter().enumerate().map(|(k, r)| (r["name"].as_str().unwrap(), k)).collect();
+        let by_name: HashMap<&str, usize> =
+            res.iter().enumerate().map(|(k, r)| (r["name"].as_str().unwrap(), k)).collect();
         let recur: HashMap<&str, &Value> =
             s["ts"]["recurrences"].as_array().unwrap().iter().map(|r| (r["name"].as_str().unwrap(), r)).collect();
         for t in s["ts"]["tables"].as_array().unwrap() {
@@ -302,7 +324,8 @@ fn measure() -> Report {
         }
 
         // (3) per-frame dispatches <= TS's (pose stages, replays included, plus per-frame compute passes).
-        let frame_stages = stages.iter().filter(|st| matches!(p.kernels[st[0] as usize].when, When::Frame)).count() as u64;
+        let frame_stages =
+            stages.iter().filter(|st| matches!(p.kernels[st[0] as usize].when, When::Frame)).count() as u64;
         let ts_frame = s["ts"]["stages"].as_array().unwrap().len() as u64
             + s["ts"]["compute"].as_array().unwrap().iter().filter(|c| c["when"] == "frame").count() as u64;
         *tot.entry("rust_frame_dispatches").or_default() += frame_stages;
@@ -332,7 +355,8 @@ fn measure() -> Report {
             if on_gpu[k] {
                 continue;
             }
-            let (Init::Bytes(sec), Some(want)) = (&p.resources[d.writes as usize].init, s["fills"].get(&sc.names[k])) else {
+            let (Init::Bytes(sec), Some(want)) = (&p.resources[d.writes as usize].init, s["fills"].get(&sc.names[k]))
+            else {
                 *tot.entry("compile_no_ts_fill").or_default() += 1;
                 println!("compiled without a TS fill to compare: {name} {}", sc.names[k]);
                 continue;
@@ -366,11 +390,18 @@ fn measure() -> Report {
             }
             *tot.entry("compile_compared").or_default() += 1;
             if far > 1 {
-                worst.push((far, format!("{name}: {} rows {:?}", sc.names[k], match d.fill {
-                    Fill::Map { start, count, .. } => (start, count),
-                    Fill::Scan { first, steps, .. } => (first, steps),
-                    Fill::Raw { .. } => (0, 0),
-                })));
+                worst.push((
+                    far,
+                    format!(
+                        "{name}: {} rows {:?}",
+                        sc.names[k],
+                        match d.fill {
+                            Fill::Map { start, count, .. } => (start, count),
+                            Fill::Scan { first, steps, .. } => (first, steps),
+                            Fill::Raw { .. } => (0, 0),
+                        }
+                    ),
+                ));
             }
         }
         *tot.entry("lifted").or_default() += p.lifted.len() as u64;
@@ -379,6 +410,10 @@ fn measure() -> Report {
     worst.sort_unstable_by(|a, b| b.cmp(a));
     let mut t: Vec<_> = tot.into_iter().collect();
     t.sort();
-    println!("scenes {scenes}\n{t:?}\nworst |got - want| / max(1, |want|): {worst_rel:e}\nfills over 1 ulp: {}\n{:?}", worst.len(), &worst[..worst.len().min(8)]);
+    println!(
+        "scenes {scenes}\n{t:?}\nworst |got - want| / max(1, |want|): {worst_rel:e}\nfills over 1 ulp: {}\n{:?}",
+        worst.len(),
+        &worst[..worst.len().min(8)]
+    );
     Report { fails, worst }
 }

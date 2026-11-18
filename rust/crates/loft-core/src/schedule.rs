@@ -29,12 +29,21 @@ pub fn levels(ks: &[Kernel], n_res: usize) -> Result<Vec<u32>, Error> {
     }
     let mut level: Vec<Option<u32>> = vec![None; ks.len()];
     let mut open = vec![false; ks.len()];
-    fn visit(k: usize, ks: &[Kernel], w: &[Vec<usize>], level: &mut [Option<u32>], open: &mut [bool]) -> Result<u32, Error> {
+    fn visit(
+        k: usize,
+        ks: &[Kernel],
+        w: &[Vec<usize>],
+        level: &mut [Option<u32>],
+        open: &mut [bool],
+    ) -> Result<u32, Error> {
         if let Some(l) = level[k] {
             return Ok(l);
         }
         if open[k] {
-            return Err(refuse(format!("resource {} is filled from itself through others in one phase: break the cycle with a stepped kernel", ks[k].writes)));
+            return Err(refuse(format!(
+                "resource {} is filled from itself through others in one phase: break the cycle with a stepped kernel",
+                ks[k].writes
+            )));
         }
         open[k] = true;
         let mut l = 0;
@@ -45,7 +54,9 @@ pub fn levels(ks: &[Kernel], n_res: usize) -> Result<Vec<u32>, Error> {
                     std::cmp::Ordering::Less => {}
                     std::cmp::Ordering::Equal => l = l.max(visit(j, ks, w, level, open)? + 1),
                     std::cmp::Ordering::Greater => {
-                        return Err(refuse(format!("a fill run {wk} reads resource {r}, which is filled {wj}: read it from a fill run {wj} or later")));
+                        return Err(refuse(format!(
+                            "a fill run {wk} reads resource {r}, which is filled {wj}: read it from a fill run {wj} or later"
+                        )));
                     }
                 }
             }
@@ -68,7 +79,8 @@ pub fn schedule(plan: &Plan, decls: &[Decl]) -> Result<Vec<Box<[u32]>>, Error> {
         },
         (Job::Lifted(_), When::Load | When::Frame) => false,
     };
-    let key = |k: usize| (phase(&plan.kernels[k].when).0, level[k], if alone(&plan.kernels[k]) { k } else { usize::MAX });
+    let key =
+        |k: usize| (phase(&plan.kernels[k].when).0, level[k], if alone(&plan.kernels[k]) { k } else { usize::MAX });
     let mut order: Vec<usize> = (0..plan.kernels.len()).collect();
     order.sort_by_key(|&k| key(k));
     Ok(order.chunk_by(|&a, &b| key(a) == key(b)).map(|s| s.iter().map(|&k| k as u32).collect()).collect())

@@ -49,7 +49,9 @@ pub fn layout(plan: &Plan) -> Result<Layout, Error> {
             }
         };
         if n > BINDING_VEC4S {
-            return Err(refuse(format!("resource {r} needs {n} vec4s; one storage binding holds {BINDING_VEC4S}: keep fewer states or rows")));
+            return Err(refuse(format!(
+                "resource {r} needs {n} vec4s; one storage binding holds {BINDING_VEC4S}: keep fewer states or rows"
+            )));
         }
         let b = match buffers.iter().position(|b| b.written == written[r] && b.vec4s + n <= BINDING_VEC4S) {
             Some(b) => b,
@@ -63,6 +65,8 @@ pub fn layout(plan: &Plan) -> Result<Layout, Error> {
     }
     match buffers.len() {
         0..=STORAGE_BUFFERS => Ok(Layout { buffers, at }),
-        n => Err(refuse(format!("the resources need {n} storage buffers; a shader stage binds {STORAGE_BUFFERS} beside the prelude: keep fewer states or rows"))),
+        n => Err(refuse(format!(
+            "the resources need {n} storage buffers; a shader stage binds {STORAGE_BUFFERS} beside the prelude: keep fewer states or rows"
+        ))),
     }
 }

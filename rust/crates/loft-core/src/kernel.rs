@@ -11,9 +11,9 @@
 use crate::prim::Prim as P;
 use crate::rate;
 use crate::tape::{self, Id, Ssa};
-use loft_ir::bundle::{Init, Resource, Shape, When};
 use loft_ir::Error;
-use loft_ir::graph::{Graph, Op, Prim};
+use loft_ir::bundle::{Init, Resource, Shape, When};
+use loft_ir::graph::{Graph, Op, Prim, Ty};
 use std::collections::HashMap;
 
 /// A declared resource: made by kernels, or an author curve (f32 samples `rows[at..at + len]`, one vec4 per row),
@@ -73,7 +73,8 @@ pub fn kept(when: &When) -> u32 {
             let first = (-f32::from_bits(from.0) / f32::from_bits(dt.0)).round().clamp(0.0, *count as f32) as u32;
             let every = match keep {
                 loft_ir::bundle::Keep::Latest => return 1,
-                loft_ir::bundle::Keep::Every(k) => (*k).max(1),
+                // Every(0) has no meaning; the wire decoder must refuse it (loft-ir). Here it divides by zero: Internal.
+                loft_ir::bundle::Keep::Every(k) => *k,
             };
             1 + (count - first) / every
         }
@@ -90,13 +91,16 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         }
     };
     let results = |f: u32| &g.roots_of(&g.decls[f as usize])[rate::binders(g, f).len()..];
-    let mut items: Vec<u32> = decls.iter().flat_map(|d| fns(d).into_iter().flat_map(|f| rate::binders(g, f).to_vec())).collect();
+    let mut items: Vec<u32> =
+        decls.iter().flat_map(|d| fns(d).into_iter().flat_map(|f| rate::binders(g, f).to_vec())).collect();
     items.sort_unstable();
     let reads: Vec<Box<[u32]>> = decls
         .iter()
         .map(|d| match &d.fill {
             Fill::Raw { reads, .. } => reads.clone(),
-            Fill::Map { .. } | Fill::Scan { .. } => fetched(g, &fns(d).iter().flat_map(|&f| results(f).to_vec()).collect::<Vec<_>>()),
+            Fill::Map { .. } | Fill::Scan { .. } => {
+                fetched(g, &fns(d).iter().flat_map(|&f| results(f).to_vec()).collect::<Vec<_>>())
+            }
         })
         .collect();
 
@@ -112,7 +116,13 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
                 let body = fns(d).iter().flat_map(|&f| results(f)).fold(false, |a, &x| a | rates[x as usize].frame);
                 match (&d.when, &d.fill) {
                     (When::Steps { .. }, _) | (_, Fill::Raw { .. }) | (When::Load, _) => d.when.clone(),
-                    (When::Frame, Fill::Map { .. } | Fill::Scan { .. }) => if body { When::Frame } else { When::Load },
+                    (When::Frame, Fill::Map { .. } | Fill::Scan { .. }) => {
+                        if body {
+                            When::Frame
+                        } else {
+                            When::Load
+                        }
+                    }
                 }
             })
             .collect();
@@ -129,7 +139,12 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
     // Compile fills: a Const Map/Scan whose resource has no other writer that must stay on the GPU before frames.
     let body_frame = |k: usize| fns(&decls[k]).iter().flat_map(|&f| results(f)).any(|&x| rates[x as usize].frame);
     let gpu_writer = |r: u32, k: usize| {
-        decls.iter().enumerate().any(|(j, d)| j != k && d.writes == r && !matches!(when[j], When::Steps { .. }) && (body_frame(j) || matches!(d.fill, Fill::Raw { .. })))
+        decls.iter().enumerate().any(|(j, d)| {
+            j != k
+                && d.writes == r
+                && !matches!(when[j], When::Steps { .. })
+                && (body_frame(j) || matches!(d.fill, Fill::Raw { .. }))
+        })
     };
     let mut bytes: Vec<Option<Vec<u8>>> = (0..sources.len()).map(|_| None).collect();
     let mut on_gpu = vec![true; decls.len()];
@@ -137,7 +152,9 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         if matches!(when[k], When::Load) && !body_frame(k) && !gpu_writer(d.writes, k) {
             let size = match &sources[d.writes as usize] {
                 Source::Made(Shape::Rows { rows, lanes }) => *rows as usize * *lanes as usize * 16,
-                Source::Made(Shape::Texture { .. } | Shape::ViewSized { .. } | Shape::Frame) | Source::Curve { .. } => continue,
+                Source::Made(Shape::Texture { .. } | Shape::ViewSized { .. } | Shape::Frame) | Source::Curve { .. } => {
+                    continue;
+                }
             };
             let out = bytes[d.writes as usize].get_or_insert_with(|| vec![0; size]);
             if fill(g, d, out).is_some() {
@@ -154,7 +171,12 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
 
     // Lift the per-frame frontier of every per-frame Map run over more than one row, grouped by the depth of what
     // each value reads, so a value waits only for the resources it reads.
-    let gpu = |k: usize| Kernel { job: Job::Decl(k as u32), writes: decls[k].writes, reads: reads[k].clone(), when: when[k].clone() };
+    let gpu = |k: usize| Kernel {
+        job: Job::Decl(k as u32),
+        writes: decls[k].writes,
+        reads: reads[k].clone(),
+        when: when[k].clone(),
+    };
     let pre: Vec<Kernel> = (0..decls.len()).filter(|&k| on_gpu[k]).map(gpu).collect();
     let level = crate::schedule::levels(&pre, sources.len())?;
     let mut depth = vec![0u32; sources.len()];
@@ -192,7 +214,9 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         .map(|(r, s)| match s {
             Source::Curve { at, len } => Resource {
                 shape: Shape::Rows { rows: len / 4, lanes: 1 },
-                init: Init::Bytes(section(g.rows[*at as usize..(at + len) as usize].iter().flat_map(|b| b.to_le_bytes()).collect())),
+                init: Init::Bytes(section(
+                    g.rows[*at as usize..(at + len) as usize].iter().flat_map(|b| b.to_le_bytes()).collect(),
+                )),
             },
             Source::Made(shape) => Resource {
                 shape: shape.clone(),
@@ -206,7 +230,17 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         .collect();
     // One frame-values resource per non-empty depth group, after the declared ones.
     let mut id = resources.len() as u32;
-    let res_of: Vec<u32> = groups.iter().map(|v| if v.is_empty() { u32::MAX } else { id += 1; id - 1 }).collect();
+    let res_of: Vec<u32> = groups
+        .iter()
+        .map(|v| {
+            if v.is_empty() {
+                u32::MAX
+            } else {
+                id += 1;
+                id - 1
+            }
+        })
+        .collect();
     let mut kernels: Vec<Kernel> = (0..decls.len())
         .filter(|&k| on_gpu[k])
         .map(|k| {
@@ -220,10 +254,14 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
         .collect();
     for values in groups.into_iter().filter(|v| !v.is_empty()) {
         let writes = resources.len() as u32;
-        resources.push(Resource { shape: Shape::Rows { rows: values.len() as u32, lanes: 1 }, init: Init::By(kernels.len() as u32) });
+        resources.push(Resource {
+            shape: Shape::Rows { rows: values.len() as u32, lanes: 1 },
+            init: Init::By(kernels.len() as u32),
+        });
         kernels.push(Kernel { reads: fetched(g, &values), job: Job::Lifted(values.into()), writes, when: When::Frame });
     }
-    let mut lifted: Vec<(u32, u32, u32)> = lifted.into_iter().map(|(x, (at, lane))| (x, res_of[at as usize], lane)).collect();
+    let mut lifted: Vec<(u32, u32, u32)> =
+        lifted.into_iter().map(|(x, (at, lane))| (x, res_of[at as usize], lane)).collect();
     lifted.sort_unstable();
     Ok(Plan { resources, kernels, sections, lifted })
 }
@@ -262,7 +300,7 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
             let lanes: Vec<Id> = l.lower(res, &[(bind[0], vec![i])])?.concat();
             let leaves: Vec<f32> = (0..count).map(|i| i as f32).collect();
             let mut regs = Vec::new();
-            tape::run(&l.ssa, count as usize, 1, &leaves, &mut regs).ok()?;
+            tape::run(&l.ssa, count as usize, 1, &leaves, &mut regs).expect(UNBOUND);
             let n = count as usize;
             for r in 0..n {
                 row(out, start as usize + r, &lanes.iter().map(|&x| regs[x as usize * n + r]).collect::<Vec<_>>());
@@ -276,7 +314,7 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
             let mut slot = 0;
             let mut binds = Vec::new();
             for &x in bind {
-                let w = g.nodes[x as usize].ty.width()? as u32;
+                let w = u32::from(tape_width(g.nodes[x as usize].ty)?);
                 binds.push((x, (slot..slot + w).map(|s| b.ssa.leaf(s)).collect::<Vec<_>>()));
                 slot += w;
             }
@@ -284,11 +322,11 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
             let n_state = bind.len() - 1;
             let (next, lanes): (Vec<Id>, Vec<Id>) = (outs[..n_state].concat(), outs[n_state..].concat());
             let mut regs = Vec::new();
-            tape::run(&a.ssa, 1, 0, &[], &mut regs).ok()?;
+            tape::run(&a.ssa, 1, 0, &[], &mut regs).expect(UNBOUND);
             let mut state: Vec<f32> = init_regs.iter().map(|&x| regs[x as usize]).collect();
             for k in 0..steps {
                 state.push(k as f32);
-                tape::run(&b.ssa, 1, slot as usize, &state, &mut regs).ok()?;
+                tape::run(&b.ssa, 1, slot as usize, &state, &mut regs).expect(UNBOUND);
                 row(out, (first + k) as usize, &lanes.iter().map(|&x| regs[x as usize]).collect::<Vec<_>>());
                 state = next.iter().map(|&x| regs[x as usize]).collect();
             }
@@ -296,6 +334,19 @@ fn fill(g: &Graph, d: &Decl, out: &mut [u8]) -> Option<()> {
         Fill::Raw { .. } => return None,
     }
     Some(())
+}
+
+/// The lowering leaves a tape only the slots it allocates, so an unbound slot is a Loft bug (Internal), not a reason to
+/// move a fill to the GPU.
+const UNBOUND: &str = "a lowered fill reads only the leaf slots it allocated";
+
+/// Tape registers a value of `ty` takes: one per component, one for a bool (0 or 1). A record is not on the tape yet.
+fn tape_width(ty: Ty) -> Option<u8> {
+    match ty {
+        Ty::Bool => Some(1),
+        Ty::F32 | Ty::V2 | Ty::V3 | Ty::V4 => ty.width(),
+        Ty::Rec(_) => None,
+    }
 }
 
 /// A `Fn` decl's binders and results.
@@ -329,7 +380,7 @@ impl Lower<'_> {
             let n = &g.nodes[x as usize];
             let args: Vec<&[Id]> = g.args_of(n).iter().map(|a| memo[a].as_slice()).collect();
             let v = match n.op {
-                Op::Lit(at) => (0..n.ty.width().unwrap_or(1) as usize)
+                Op::Lit(at) => (0..tape_width(n.ty)? as usize)
                     .map(|c| self.ssa.lit(f64::from_bits(g.lits[at as usize + c]) as f32))
                     .collect(),
                 Op::Prim(Prim::Vec) => match (args.as_slice(), n.ty.width()?) {
@@ -343,7 +394,8 @@ impl Lower<'_> {
                 Op::Swizzle(s) => (0..s.len).map(|k| args[0][((s.comps >> (2 * k)) & 3) as usize]).collect(),
                 Op::Call(d) => {
                     let (bind, res) = split(g, d);
-                    let given: Vec<(u32, Vec<Id>)> = bind.iter().copied().zip(args.iter().map(|a| a.to_vec())).collect();
+                    let given: Vec<(u32, Vec<Id>)> =
+                        bind.iter().copied().zip(args.iter().map(|a| a.to_vec())).collect();
                     match self.lower(res, &given)?.as_slice() {
                         [one] => one.clone(),
                         _ => return None,
