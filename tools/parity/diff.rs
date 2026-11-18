@@ -106,7 +106,7 @@ fn compare(r: &Image, c: &Image, rule: &Rule, envelope: u8) -> Report {
     let mut max_diff = 0u8;
     let over: Vec<bool> = (0..n)
         .map(|i| {
-            let d = (0..4).map(|k| px(r, i)[k].abs_diff(px(c, i)[k])).max().unwrap_or(0);
+            let d = (0..4).fold(0, |m, k| m.max(px(r, i)[k].abs_diff(px(c, i)[k])));
             max_diff = max_diff.max(d);
             d > tol
         })

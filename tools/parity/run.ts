@@ -199,6 +199,7 @@ async function repeat(only: string) {
   const differing: { id: string; frame: string; diff: unknown }[] = [];
   let refused = 0;
   for (const [i, { id, f }] of drawn.entries()) {
+    if (i % 200 === 0) console.log(`${i}/${drawn.length} frames, ${differing.length} differ`);
     const file = join(OUT, "repeat", id, frameName(f));
     mkdirSync(join(OUT, "repeat", id), { recursive: true });
     const again = await draw(id, f, file);
@@ -206,7 +207,6 @@ async function repeat(only: string) {
     if (again.sha256 === f.sha256) { rmSync(file); continue; }
     const d = await spawn([DIFF, join(OUT, f.file), file, "--envelope", "0"]);
     differing.push({ id, frame: frameName(f), diff: JSON.parse(d.stdout) });
-    if (i % 200 === 0) console.log(`${i}/${drawn.length} frames, ${differing.length} differ`);
   }
   const envelope = Math.max(0, ...differing.map((d) => (d.diff as { maxDiff: number }).maxDiff));
   const report = { r0: readFileSync(join(OUT, "r0"), "utf8").trim(), only, frames: drawn.length, identical: drawn.length - differing.length - refused, refused, envelope, differing };
