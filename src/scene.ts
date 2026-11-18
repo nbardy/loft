@@ -7,7 +7,7 @@ import { shadows } from "./draw/shadows.ts";
 import { sky } from "./draw/sky.ts";
 import type { Ground } from "./draw/ground.ts";
 import type { Style } from "./style.ts";
-import type { In } from "./expr.ts";
+import { Expr, evaluate, normalize, type In } from "./expr.ts";
 import type { Light, Lighting, Sun, SunAmount } from "./light.ts";
 import { SceneError } from "./errors.ts";
 import { refuseScene } from "./mistakes.ts";
@@ -19,8 +19,8 @@ export type SceneSpec = {
   readonly things: readonly Drawable[];
   readonly style: Style;
   /**
-   * Direction toward the sun (normalised here): a vector, fixed, or `movable([x, y, z])` (src/light.ts), which makes it
-   * the host input `sun` with that direction as its default. Either is the sun at full strength. `{ toward, amount }`:
+   * Direction toward the sun (normalised here): a vector, a frame expression of type vec3, or `movable([x, y, z])`
+   * (src/light.ts), the host input `sun` with that direction as its default. `{ toward, amount }`:
    * a dimmer or coloured sun, a moon, or none (`amount: [0, 0, 0]`); `amount` is a linear colour, 1 the sun at noon.
    */
   readonly sun: SunDirection | { readonly toward: SunDirection; readonly amount: In<"vec3"> };
@@ -37,8 +37,8 @@ export type SceneSpec = {
  * hull: every outlined surface drawn a second time, pushed out along its normal, front faces culled.
  * screen: one full-screen pass after the scene finds the outlined surfaces' silhouettes in the depth (src/draw/ink.ts).
  */
-/** A direction toward the sun: a vector, or `movable(dir)`. */
-type SunDirection = readonly [number, number, number] | Extract<Sun, { kind: "input" }>;
+/** A direction toward the sun: a vector, a frame expression, or `movable(dir)`. */
+type SunDirection = readonly [number, number, number] | Expr<"vec3"> | Extract<Sun, { kind: "input" }>;
 
 /** Lights besides the sun a scene may carry: each is a term in every lit fragment's shader (docs/lighting.md). */
 export const MOST_LIGHTS = 7;
@@ -51,9 +51,9 @@ export type Scene = {
   /** Everything drawn: the sky, the ground and the shadows the scene derives, then the spec's things. */
   readonly things: readonly Drawable[];
   readonly style: Style;
-  /** The sun as stated: the fixed direction, or a movable sun's default. */
+  /** The sun's default direction at time 0. */
   readonly sun: V3;
-  /** The sun as shaders read it: that literal, or a host input. */
+  /** The sun as shaders read it. */
   readonly sunAt: Sun;
   /** The sun, its amount and the scene's lights, as styles receive them (src/light.ts). */
   readonly lighting: Lighting;
@@ -71,13 +71,9 @@ export type Scene = {
 export function scene(spec: SceneSpec): Scene {
   refuseScene(spec);
   // Classified once: a direction alone is the sun at full strength; `{ toward, amount }` states its amount.
-  const given = "toward" in spec.sun ? spec.sun.toward : (spec.sun as SunDirection);
-  const amount: SunAmount = "toward" in spec.sun ? { kind: "given", amount: spec.sun.amount } : { kind: "full" };
-  const stated: readonly [number, number, number] = "kind" in given ? given.dir : given;
-  const l = Math.hypot(...stated);
-  if (!(stated[1] > 0.05 * l)) throw new Error(`scene: the sun must be above the horizon (sun.y > 0), got [${stated.join(", ")}]`);
-  const sun: V3 = [stated[0] / l, stated[1] / l, stated[2] / l];
-  const sunAt: Sun = "kind" in given ? { kind: "input", name: given.name, dir: sun } : { kind: "fixed", dir: sun };
+  const wrapped = typeof spec.sun === "object" && spec.sun !== null && "toward" in spec.sun;
+  const amount: SunAmount = wrapped ? { kind: "given", amount: spec.sun.amount } : { kind: "full" };
+  const { sun, sunAt } = classifySun(wrapped ? spec.sun.toward : spec.sun);
   const lights = spec.lights ?? [];
   if (lights.length > MOST_LIGHTS) {
     throw new SceneError("scene()", `lights: ${lights.length} lights`, `at most ${MOST_LIGHTS} besides the sun (each is a term in every lit fragment)`,
@@ -98,6 +94,27 @@ export function scene(spec: SceneSpec): Scene {
   if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);
   const loop: Loop = spec.period === undefined ? OPEN : { kind: "every", seconds: spec.period };
   return { ground: spec.ground, things, style: spec.style, sun, sunAt, lighting: { sun: sunAt, amount, lights, sampling: { kind: "point" }, shadows: new Map() }, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
+}
+
+/** Classify the authored direction, and evaluate its default for the readers that bake lighting at time 0. */
+function classifySun(given: unknown): { sun: V3; sunAt: Sun } {
+  const fail = (value: string) => new SceneError("scene() sun", value,
+    "a finite vec3 above the horizon at time 0 and default inputs, evaluable on the CPU",
+    "give [0.3, 0.8, 0.4], movable([0.3, 0.8, 0.4]), or a vec3 expression of time, params and inputs");
+  const expression = given instanceof Expr;
+  const movable = typeof given === "object" && given !== null && "kind" in given && given.kind === "input" && "dir" in given && "name" in given && typeof given.name === "string";
+  let stated: unknown = movable ? given.dir : given;
+  if (expression) {
+    if (given.ty !== "vec3") throw fail(`an expression of type ${given.ty}`);
+    try { stated = evaluate(given); } catch (e) { throw fail(`a direction expression the CPU cannot evaluate (${(e as Error).message})`); }
+  }
+  if (!Array.isArray(stated) || stated.length !== 3 || !stated.every(Number.isFinite)) throw fail(`direction ${String(stated)}`);
+  const length = Math.hypot(...stated);
+  if (!(stated[1] > 0.05 * length)) throw fail(`direction [${stated.join(", ")}], at or below the horizon threshold`);
+  const sun: V3 = [stated[0] / length, stated[1] / length, stated[2] / length];
+  const sunAt: Sun = expression ? { kind: "expression", direction: normalize(given as Expr<"vec3">) }
+    : movable ? { kind: "input", name: given.name as string, dir: sun } : { kind: "fixed", dir: sun };
+  return { sun, sunAt };
 }
 
 /** A style that prints its shadow as a block after the bodies (`Style.block`) has it drawn by `light` (src/draw/light.ts). */

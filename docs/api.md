@@ -726,7 +726,7 @@ Light: the sun, and any light an author writes as a function of a world point (d
 
 Types:
 - **Light**: A light: for a world point, what arrives there (`Arrival`). `type Light = ((p: Expr<"vec3">, xi?: Expr<"vec2">) => Arrival) & { readonly bound?: TraceBound`
-- **Sun**: `type Sun = | { readonly kind: "fixed"; readonly dir: V3 } /** `dir` is the input's default, a unit vector. */ | { readonly kind: "input"; readonly name: string; readonly dir: V3 }`
+- **Sun**: `type Sun = | { readonly kind: "fixed"; readonly dir: V3 } /** `dir` is the input's default, a unit vector. */ | { readonly kind: "input"; readonly name: string; readonly dir: V3 } /** A frame expression, already normalized by scene(). */ | { readonly kind: "expression"; readonly direction: Expr<"...`
 
 ### src/frame/pass.ts
 
@@ -2442,7 +2442,7 @@ A style is a program in the same expression language (DESIGN.md 2.6): it maps a 
 
 Types:
 - **Style**: `type Style = { name, shade, ink, mark, outline, water, shadow, post, ground, sky, clear, block?, lights? }`
-- **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, depth, uv, anchor, id, lights, sky, scatter }`
+- **ShadeCtx**: What a body fragment knows. `type ShadeCtx = { base, normal, sun, view, world, geometry, depth, uv, anchor, id, lights, sky, scatter }`
 - **WaterCtx**: What a sea fragment knows: its normal, and the foam the compiler derived for this pixel. `type WaterCtx = { normal, sun, view, world, crest, distance, foam, contact, marks, marksLean, lights, swell, phase, sky }`
 - **Contact**: How near a body is to a pixel of water. `type Contact = /** * No opaque surface lies within the sea's search of this pixel (or of the other pixels of its 2 x 2 quad): the * band would be below -800 here, where every contact term of every style is exactly 0. `foam` holds only the * deformations' marks. A style prints no contact foam. */ ...`
 - **LayerCtx**: A layer laid on the water after it is drawn (a cast shadow, a marker): where, and how much of it covers here. `type LayerCtx = { world, view, distance, amount }`
@@ -2704,8 +2704,6 @@ The parts a physically based look is built from (`pbr`, src/style/pbr.ts): each 
   `function lambert(albedo: P3, n_l: F, _n_v: F, _v_h: F, _rough: F): P3`
 - **skyLight**: Light from the sky in a body: `diffuse`, the radiance a white Lambert surface facing `normal` reflects (the sky's irradiance over pi), and `specular`, the sky as a mirror of roughness `rough` sees it along the reflected view ray.
   `function skyLight(at: { readonly normal: P3; readonly view: P3; readonly sun: P3 }, rough: F, sky: (dir: P3, sun: P3) => P3): { readonly diffuse: P3; readonly specular: P3 }`
-  cannot:
-  - Cannot: follow a moved sun except through the one tap (the projection is at the sun's stated direction, as a cloud's tables are); project a sky that reads time or a param (refused by name, `PbrError`: it would be stale); see the ground, other bodies or the body itself (a cavity is lit by open sky: no occlusion); blur a sharp sky feature smoothly at middle roughness (it fades as a whole rather than spreading).
 - **daylight**: A clear day's sky, linear radiance along `dir` with the sun toward `sun`: zenith (0.10, 0.22, 0.50) to horizon (0.50, 0.58, 0.66) by the square root of the height, a warm glow round the sun ((n.sun)^8 x (0.35, 0.27, 0.16)), and a ground (0.20, 0.19, 0.17) below the horizon, blended over 0.08 of height: about what a sunlit floor of albedo 0.2 sends up, so a mirror ball shows a floor rather than a hole.
   `function daylight(dir: P3, sun: P3): P3`
 - **aces**: ACES filmic, as Narkowicz's fit: x (2.51 x + 0.03) / (x (2.43 x + 0.59) + 0.14), clamped to [0, 1], then encoded for the picture (x^(1/2.2), the target is display sRGB).
@@ -2714,7 +2712,7 @@ The parts a physically based look is built from (`pbr`, src/style/pbr.ts): each 
   - Cannot: hold hue at the top (a bright saturated light goes toward white per channel, as film does).
 
 Types:
-- **PbrParts**: The slots of `pbr` (src/style/pbr.ts); `pbr(parts)` takes any of them in place of its default. `type PbrParts = { distribution, visibility, fresnel, diffuse, environment, sky, tone, lobeAlbedo, clear }`
+- **PbrParts**: The slots of `pbr` (src/style/pbr.ts); `pbr(parts)` takes any of them in place of its default. `type PbrParts = { distribution, visibility, fresnel, diffuse, environment, occlusion, sky, tone, lobeAlbedo, clear }`
 
 ### src/style/toon.ts
 

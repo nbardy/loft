@@ -128,14 +128,15 @@ loaders already read). No new pass, texture or uniform; `docs/artefact_format.md
 
 `scene({ sun: movable([0.15, 0.8, 0.6]) })` (`src/light.ts`) makes the sun the host input `sun`, that direction its
 default: `--input sun=x,y,z`, `--sweep sun=a..b` on a clip, or a game writing the input. A bare vector is a fixed sun,
-a literal in every shader, as before. The crab and the lineup use a movable sun; their default pictures are the same
-to the bit. A cloud's own light tables (`src/soft/`) are made on the CPU from the stated direction and do not follow a
-moved sun.
+a literal in every shader. A `vec3` expression can move the sun from `time`, params or inputs. Loft normalizes the
+direction and validates the default at time 0 on the CPU. Write directions that stay above the horizon throughout
+the animation. PBR projects the environment at the live direction. A cloud's own light tables (`src/soft/`) use
+the stated default direction.
 
 `sun: { toward, amount }` states the sun's strength: a linear colour, 1 the sun at noon. A moon is a dim blue amount
 (`[0.06, 0.07, 0.14]`); a night lit only by what is in it is `amount: [0, 0, 0]`, which keeps the key direction (the
 print's terminator, the sky's disc and the cast-shadow block are drawn from it) and adds no light. A bare vector or
-`movable` is the sun at full strength, and a scene that states nothing keeps its shader text byte for byte.
+`movable` or a direction expression without an explicit amount gives the sun full strength.
 
 ## Lights
 

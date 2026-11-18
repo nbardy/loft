@@ -325,8 +325,10 @@ loft gallery --scenes "examples/serpent.ts,examples/storm.ts" --styles toon,pape
 ```
 
 The named styles are `toon` (bands, an ink outline), `woodblock` (a print: flat inks, a printed shadow block, named
-lightings in `docs/lighting.md`), `biolume` (a night sea), `papercraft` (folded paper), `sketch`, `neon` and `pbr` (physically lit, from swappable parts:
-`docs/styles.md`; its sea and floor are not parts: replace them as members, `{ ...pbr(), water, ground }`). In code, `withStyle(scene,
+lightings in `docs/lighting.md`), `biolume` (a night sea), `papercraft` (folded paper), `sketch`, `neon` and `pbr`.
+`pbr()` darkens traced field creases with ambient occlusion and follows a sun supplied by `movable(...)` or a
+`vec3` frame expression. Swap the AO with `pbr({ occlusion: () => f(1) })` or replace water and floor with
+`{ ...pbr(), water, ground }`. See `docs/styles.md` and the relief and moving disc in `examples/materials/`. In code, `withStyle(scene,
 style)` and `withLight(scene, name)` do what the flags do, and `toon({ bands, outline, shadow, ink, water, sky, rim })`
 takes options. Writing your own style is writing a `Style` value (below); `src/style/biolume.ts` (about 110 lines) is
 the shortest complete one to copy.

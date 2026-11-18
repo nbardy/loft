@@ -94,18 +94,20 @@ export function withShading(paint: Shader, s: Shading): Shader {
  * style asks for and no wrap (byte-identical to before channels); otherwise its own copies, emitted into its own module.
  * `paintArgs` are the paint function's arguments (the channels are expressions of them).
  */
-export function lookFns(ctx: CompileContext, thing: string, c: Classified, paintArgs: FnSpec["args"]): Shading {
-  // A bare colour asks nothing of the style: the style is not evaluated here (its expressions would be made earlier
-  // than before, and every later name in the shader text would move).
-  if (c.said.channels.size === 0 && c.said.scatter === undefined && c.answer.kind === "styled") return { kind: "shared" };
-  const notes = notesOf(ctx, thing, c);
+export function lookFns(ctx: CompileContext, thing: string, c: Classified, paintArgs: FnSpec["args"], geometry?: ShadeCtx["geometry"]): Shading {
+  // Keep unadorned raster paint on the shared path without constructing the style's graph early.
+  const bare = c.said.channels.size === 0 && c.said.scatter === undefined && c.answer.kind === "styled";
+  if (bare && geometry === undefined) return { kind: "shared" };
+  const reads = styleReads(ctx.style, geometry?.kind);
+  const readsGeometry = geometry?.kind === "field" && reads.geometry;
+  if (bare && !readsGeometry) return { kind: "shared" };
+  const notes = notesOf(ctx, thing, c, geometry);
   for (const n of notes.unread) ctx.note(`${thing} gives "${n}", which no part of ${ctx.style.name} reads`);
   if (notes.ignoresStyle) ctx.note(`${thing}'s own shade never reads the style's answer: it no longer follows --style`);
-  const reads = styleReads(ctx.style);
   const readChannel = [...c.said.channels.keys()].some((n) => reads.channels.has(n));
   const readScatter = c.said.scatter !== undefined && reads.scatter;
-  if (!readChannel && !readScatter && c.answer.kind === "styled") return { kind: "shared" };
-  const look = shadeVariables(ctx.lighting, ctx.style, { thing, ...c.said });
+  if (!readsGeometry && !readChannel && !readScatter && c.answer.kind === "styled") return { kind: "shared" };
+  const look = shadeVariables(ctx.lighting, ctx.style, { thing, ...c.said, geometry });
   const answer = withIdentities(() => answered(c.answer, look, ctx.style.block === undefined ? ctx.style.shade(look) : ctx.style.block.body(look)));
   const args = [...SHADE_ARGS, ...paintArgs];
   const fn = (name: string, out: string, root: Expr): Shader => emitShaderFn(ctx.slots, { name, args, out, roots: [root], ret: (o) => o[0]! });
@@ -122,8 +124,8 @@ export function answered(a: Answer, ctx: ShadeCtx, styled: P3): P3 {
 }
 
 /** What no part of the style reads, and whether a wrap reads the style's answer at all. */
-function notesOf(ctx: CompileContext, thing: string, c: Classified): Notes {
-  const reads = styleReads(ctx.style);
+function notesOf(ctx: CompileContext, thing: string, c: Classified, geometry?: ShadeCtx["geometry"]): Notes {
+  const reads = styleReads(ctx.style, geometry?.kind);
   const unread = [...c.said.channels.keys()].filter((n) => !reads.channels.has(n));
   if (c.said.scatter !== undefined && !reads.scatter) unread.push("scatter");
   const ignoresStyle = ((): boolean => {
@@ -131,7 +133,7 @@ function notesOf(ctx: CompileContext, thing: string, c: Classified): Notes {
       case "styled": return false;
       case "wrapped": {
         const styled = variable(`wrap_styled_${thing}`, "vec3");
-        const look = shadeVariables(ctx.lighting, ctx.style, { thing, ...c.said });
+        const look = shadeVariables(ctx.lighting, ctx.style, { thing, ...c.said, geometry });
         return !leaves([c.answer.wrap(look, styled)]).vars.has(`wrap_styled_${thing}`);
       }
     }

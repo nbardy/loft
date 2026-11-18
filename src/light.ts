@@ -1,7 +1,7 @@
 // Light: the sun, and any light an author writes as a function of a world point (docs/lighting.md, "Lights").
 //
-// The sun is fixed when the scene is written, or a host input a game or a clip moves. A fixed sun is a literal in every
-// shader (as it always was). A movable one is the unit vector along a host input, whose default is the direction the
+// The sun is fixed, a direction expression, or a host input a game or a clip moves. A movable sun is the unit vector
+// along a host input, whose default is the direction the
 // scene states: `--input sun=x,y,z`, `--sweep sun=a..b`, or a game writing the input. What is computed on the CPU before
 // a frame (a cloud's own light tables, src/soft/medium.ts) reads the stated direction either way and does not follow a
 // moved sun. The sun also has an amount: full (1, the sun at noon) unless the scene states one (a moon, or none).
@@ -12,7 +12,7 @@
 
 import { LIGHT_SAMPLE_INPUT } from "./artefact.ts";
 import { hash22 } from "./lib/noise.ts";
-import { add, cos, cross, div, dot, fract, input, lift, max, mul, normalize, saturate, select, sin, sqrt, sub, vec2, vec3, abs, lt, type Expr, type In, type NumTy } from "./expr.ts";
+import { add, cos, cross, div, dot, Expr, fract, input, lift, max, mul, normalize, saturate, select, sin, sqrt, sub, vec2, vec3, abs, lt, type In, type NumTy } from "./expr.ts";
 import type { TraceBound } from "./draw/trace.ts";
 
 export type V3 = readonly [number, number, number];
@@ -20,7 +20,9 @@ export type V3 = readonly [number, number, number];
 export type Sun =
   | { readonly kind: "fixed"; readonly dir: V3 }
   /** `dir` is the input's default, a unit vector. */
-  | { readonly kind: "input"; readonly name: string; readonly dir: V3 };
+  | { readonly kind: "input"; readonly name: string; readonly dir: V3 }
+  /** A frame expression, already normalized by scene(). */
+  | { readonly kind: "expression"; readonly direction: Expr<"vec3"> };
 
 /** A sun a host can move: the input `name` (default "sun"), starting at `dir`. */
 export function movable(dir: V3, name = "sun"): { readonly kind: "input"; readonly name: string; readonly dir: V3 } {
@@ -28,19 +30,18 @@ export function movable(dir: V3, name = "sun"): { readonly kind: "input"; readon
 }
 
 /** The unit direction toward the sun, as shaders read it. */
-export function sunDir(s: Sun): In<"vec3"> {
+export function sunDir(s: Sun): V3 | Expr<"vec3"> {
   switch (s.kind) {
     case "fixed": return s.dir;
     case "input": return normalize(input(s.name, "vec3", s.dir));
+    case "expression": return s.direction;
   }
 }
 
 /** The same, by component (a table's program divides by the height). */
 export function sunParts(s: Sun): readonly [In<"f32">, In<"f32">, In<"f32">] {
-  switch (s.kind) {
-    case "fixed": return s.dir;
-    case "input": { const d = sunDir(s) as Expr<"vec3">; return [d.x, d.y, d.z]; }
-  }
+  const dir = sunDir(s);
+  return dir instanceof Expr ? [dir.x, dir.y, dir.z] : dir;
 }
 
 /**

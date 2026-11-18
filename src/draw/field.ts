@@ -331,14 +331,21 @@ ${union.map((_, k) => `  if ((keep & ${1 << k}u) != 0u) { d = min(d, field_u${k}
     };
     const field = p.kind === "brick" || p.kind === "switch" ? fieldOf(p.sampled.union) : fieldOf([d]);
     const said = classify(this.name, this.o.paint({ p: P, normal: N as Expr<"vec3"> }));
-    const shading = lookFns(ctx, this.name, said, FIELD_PAINT_ARGS);
-    const paint = withShading(emitShaderFn(ctx.slots, { name: "field_paint", args: FIELD_PAINT_ARGS, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0] }), shading);
+    const paint = emitShaderFn(ctx.slots, { name: "field_paint", args: FIELD_PAINT_ARGS, out: "vec3<f32>", roots: [said.base], ret: (v) => v[0] });
     const id = `const FIELD_ID: f32 = ${lit(nameId(this.name))};`;
-    const libs = [...new Set([...field.libs, ...paint.libs])];
     // The proxy and its march: the field's formula at every step, or steps by its brick.
     const traced = (skip: string, show: string): Emitted => {
       const key = `field.${this.name}`;
-      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, paint.code, skip, fragmentWgsl(safety, shading, (mark) => ctx.markOut(mark, false))].join("\n");
+      const box = aabbOf(this.o.bounds);
+      const shading = lookFns(ctx, this.name, said, FIELD_PAINT_ARGS, {
+        kind: "field", pixel: fieldPixel,
+        scale: Math.hypot(...box.max.map((hi, k) => hi - box.min[k]!)),
+        // Lighting taps can leave the proxy, where the brick's clamped union mask is no longer a bound.
+        distance: (at) => substitute([d], P, at)[0] as F,
+      });
+      const painted = withShading(paint, shading);
+      const code = [traceWgsl(this.o.bounds, show), outlineWgsl(this.o.outline), id, field.code, NORMAL_WGSL, painted.code, skip, fragmentWgsl(safety, shading, (mark) => ctx.markOut(mark, false))].join("\n");
+      const libs = [...new Set([...field.libs, ...painted.libs])];
       return {
         shaders: { [key]: { code, libs, depthEntry: depthFragmentWgsl(safety) } },
         draws: [drawSpec({ label: this.name, shader: key, vertices: PROXY_VERTICES, cull: "front", constants: { STEPS: this.o.steps }, depth: TRACE_DEPTH })],

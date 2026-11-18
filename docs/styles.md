@@ -87,7 +87,7 @@ Each part's file opens with its law, its parameters, what it cannot do, and wher
 
 `pbr()` (`src/style/pbr.ts`) lights bodies as physical surfaces: for the sun and every light (lamp shadows included,
 as the light fold delivers them) a GGX specular lobe and a Lambert body, the sky as an environment, then a filmic tone
-map. `--style pbr` draws any scene this way without editing it. It is built from nine slots: eight parts, each a plain function over
+map. `--style pbr` draws any scene this way without editing it. It is built from ten slots: nine parts, each a plain function over
 expressions (`src/style/pbr_parts.ts`), so each runs on the GPU and in the CPU twin and ports to another engine as
 the maths it is, and a clear colour:
 
@@ -98,6 +98,7 @@ the maths it is, and a clear colour:
 | `fresnel` | `(v_h, f0) => P3` | `schlick` | the share reflected, per colour; f0 is 0.04 or the metal's colour |
 | `diffuse` | `(albedo, n_l, n_v, v_h, rough) => P3` | `lambert` | the body's light per unit arrival, cosine included |
 | `environment` | `({ normal, view, sun }, rough, sky) => { diffuse, specular }` | `skyLight` | the sky in a body: what a white diffuse surface reflects, what a mirror of `rough` sees |
+| `occlusion` | `(ctx: ShadeCtx) => F` | four normal taps on traced fields, 1 for `unoccluded` geometry | share of a body's diffuse and specular environment light, clamped to [0, 1] |
 | `sky` | `(dir, sun) => P3` | `daylight` | linear radiance of the sky: the background and the environment |
 | `tone` | `(c) => P3` | `aces` | linear radiance to the picture (Narkowicz's ACES fit, then x^(1/2.2)) |
 | `lobeAlbedo` | `(n_v, rough) => { scale, bias }` | integrated from the `distribution` and `visibility` given | the environment's specular weight: under Schlick a uniform sky reflects f0 scale + bias |
@@ -109,16 +110,27 @@ until `tone`. The sky is radiance per unit of the sun's amount: the background, 
 `sky` times the sun's amount, so a moonlit sky is dark and a sun of 0 leaves any sky black (tested in
 `tests/style.pbr.gpu.test.ts`). A sky that glows with no sun (a studio) puts the sun at amount 1 below the horizon.
 
-What is built once, on the CPU twin, when the style is made: the sky's projection (at the sun's stated direction), the
-default clear colour, and the default `lobeAlbedo` (about 30 ms per new `distribution`/`visibility` pair; a lobe of 0
-reflects no sky, a swapped visibility reflects the sky by its own albedo, within 0.02). So those parts must evaluate
-on the CPU and must not read time or a param; one that does is refused by name (`pbr sky: given a sky that reads time`,
-exit 4). A sky only the GPU can evaluate is fine beside its own `environment` and a given `clear`.
+The default environment integrates 1,024 sky directions into nine RGB spherical-harmonic coefficients. A fixed sun
+uses a projection computed once on the CPU. A sky that depends on a changing sun direction uses a frame-rate GPU table
+shared by bodies, water and ground. A custom `sky(dir, sun)` can use the live `sun` argument. For the default
+projection, write the sky in terms of its arguments and constants so the compiler can share it across the frame.
+A sky that captures time or a param directly gets a named error (exit 4). A GPU-only sky can supply its own
+`environment` and `clear`.
+
+The default clear colour and `lobeAlbedo` are evaluated on the CPU. A new `distribution`/`visibility` pair takes
+about 30 ms to fit. A lobe of zero reflects zero sky. A swapped visibility reflects the sky by its own albedo
+within 0.02.
+
+The default AO reads the signed distance at the hit and at four offsets along the geometric normal, out to 9% of the
+proxy's diagonal. It scales only the sky's contribution to the body. Each field can occlude itself. Raster surfaces,
+meshed fields, copies and custom tracers use the `unoccluded` geometry variant. The `field` variant exposes
+`ctx.geometry.distance(p)`, `pixel` and `scale` to a custom part.
 
 **Swap one part**; the others stay:
 
 ```ts
 style: pbr({ fresnel: thinFilm(380) })                       // a film's colours in every reflection (examples/materials/thin_film.ts)
+style: pbr({ occlusion: () => f(1) })                       // open environment on every body
 style: pbr({ sky: (dir, sun) => mix(DUSK, GOLD, pow(saturate(dot(dir, sun)), 4)), tone: (c) => c })
 style: { ...pbr(), ink: () => vec3(0.05, 0.06, 0.08) }     // any member of the Style record, as with every style
 style: { ...pbr(), water: myWater, ground: myFloor }         // the sea and the floor: their colours, roughness and fog are not parts
@@ -147,13 +159,11 @@ const myShade = (ctx: ShadeCtx) => {
 style: { ...lit, shade: myShade }
 ```
 
-What it cannot do, and what it costs: `src/style/pbr.ts`'s top comment and `skyLight`'s (no occlusion, no
-inter-reflection; the sky is projected on spherical harmonics once per scene, so a moved sun lights bodies from the
-sky as it stood, except through the one direct tap a reflection takes; a sky that reads time or a param is refused).
 The default pair's environment weight is a fixed fit of its lobe albedo (within 0.06, kept so its pictures do not
 change); any other pair is integrated. A Fresnel law other than Schlick is read at one representative cosine. The
 sanity numbers (white furnace, roughness sweep, metal tint) and the cost against toon:
 `agent_notes/2026-11-18_pbr_style/NOTE.md`, rerun with `bun tools/pbr_sanity.ts`.
+Field AO and moving-sun measurements are in `agent_notes/2026-11-18_pbrsky/NOTE.md`.
 
 ## Writing one: `sketch`, all of it
 
