@@ -54,7 +54,7 @@ export function tabulate<T extends NumTy>(given: string, fn: (x: F) => Expr<T>, 
       case "static": case "static-shading": {
         const data = new Float32Array(n * 4);
         compileJs(roots)({ vars: {}, inputs: {}, params: {} }).forEach((v, k) => data.set(v as number[], k * 4));
-        const source: TableSource = { name, lanes: 1, entries: n, role: ROLE[when], prepare: () => (_frame, out) => out.set(data) };
+        const source: TableSource = { name, lanes: 1, entries: n, role: ROLE[when], data };
         if (when === "static-shading") {
           if (data.some((x) => !(x >= -1 && x <= 1))) throw new SceneError(`tabulate "${name}"`, "a static shading sample outside [-1, 1]", "finite values in [-1, 1]", 'use "static" for HDR or geometry data');
           shadingTables.add(source);

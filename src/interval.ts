@@ -271,7 +271,7 @@ function entries(t: TableSource, where: string, fills: Work["tableFills"]): Entr
     }
   } else {
     if (recurTable(t) !== undefined) throw new RangeRefusal(where, { kind: "recur", table: t.name });
-    if (!("program" in t)) throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: t.role === "static" ? "filled once, at build" : "a hand-written fill" });
+    if (!("program" in t)) throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: t.role === "static" ? "filled once, at build" : "supplied numbers" });
     program = t.program;
   }
   const result: Entries = { program, made: new Map() };
@@ -285,7 +285,6 @@ function entryOf(t: TableSource, k: number, where: string, work: Work): readonly
   if (hit !== undefined) return hit;
   const p = e.program;
   switch (p.kind) {
-    case "cpu": throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: p.why });
     case "map": {
       let start = 0;
       for (const r of p.runs) {

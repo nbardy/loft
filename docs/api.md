@@ -190,7 +190,7 @@ Types:
 - **InputSpec**: `type InputSpec = { readonly name: string; readonly ty: NumTy; readonly def: readonly number[] }`
 - **Fn**: `type Fn = | "add" | "sub" | "mul" | "div" | "neg" | "min" | "max" | "pow" | "mod" | "atan2" | "step" | "abs" | "sign" | "floor" | "fract" | "sqrt" | "exp" | "log" | "sin" | "cos" | "tan" | "saturate" | "normalize" | "mix" | "clamp" | "smoothstep" | "length" | "distance" | "dot" | "cross" | "lt" |...`
 - **LibFn**: A named function written once in each backend's language: the way to add vocabulary (noise, a custom falloff) that the built-in operators cannot express compactly. `type LibFn = { name, ret, wgsl, js, deps? }`
-- **TableSource**: A table of vec4s, filled once per frame (or once at build) and bound for every shader: `entries` entries of `lanes` vec4s each. `type TableSource = ProgramTable | FilledTable`
+- **TableSource**: A table of vec4s, filled once per frame (or once at build) and bound for every shader: `entries` entries of `lanes` vec4s each. `type TableSource = ProgramTable | DataTable | RecurrenceTable`
 - **In**: Anything accepted where an expression of type T is wanted: plain numbers lift to constants. `type In<T extends Ty = Ty> = Expr<T> | (T extends "f32" ? number : T extends "bool" ? boolean : readonly number[])`
 - **Num**: `type Num = Expr<NumTy> | number | readonly number[]`
 - **Lit**: A vector written as a plain array. `type Lit = readonly number[]`
@@ -206,6 +206,13 @@ Types:
 
 Types:
 - **WgslModule**: A WGSL module: one callable per `fn` (an ordinary function of expressions: numbers, arrays and expressions in, an expression or a record of them out) and one per `struct` (its fields in order, a record out). `type WgslModule = { readonly [name: string]: (...args: any[]) => any } & { readonly [WGSL_STATE]: WgslState }`
+
+### src/record/graph_fn.ts
+
+Library graph functions (docs/proposals/2026-11-19_lean_rust_loft.md section 3.2): a TypeScript function of expressions recorded once, over binders, and each call as one `Call` node, so a surface evaluated at 30 sites costs the recorder one body and 30 calls, not 30 bodies.
+
+- **graphFn**: `body` as a graph function named `name` over parameters of types `params`.
+  `function graphFn<P extends readonly NumTy[], R extends NumTy>(name: string, params: P, body: (...a: Args<P>) => Expr<R>): (...a: Args<P>) => Expr<R>`
 
 ### src/grad.ts
 
@@ -390,11 +397,11 @@ Surfaces written as maps, and the products that build them from curves (DESIGN.m
 - **loft**: Through a row of curves: v = 0 is the first, v = 1 the last, interpolated by a Catmull-Rom spline in between.
   `function loft(curves: readonly Curve[]): Surface`
 - **mapNormal**: The unit normal of a map, from central differences of the same expression: `d/du x d/dv`, normalised (a degenerate point, where the two derivatives are parallel, gives the zero vector rather than NaN).
-  `function mapNormal(point: (u: F, v: F) => P3): (u: F, v: F) => P3`
+  `function mapNormal(map: (u: F, v: F) => P3): (u: F, v: F) => P3`
 - **sheet**: The ruled surface from `root` (v = 0) to `edge` (v = 1): a membrane standing on a curve.
   `function sheet(root: Curve, edge: Curve): Surface`
 - **surface**: A surface written directly as a function of (u, v); its normal comes from the map itself.
-  `function surface(point: (u: F, v: F) => P3, topology: Topology): Surface`
+  `function surface(map: (u: F, v: F) => P3, topology: Topology): Surface`
 - **thicken**: A sheet made solid: a lens of half-thickness `half` round it. v goes once round the section (0 the sheet's v = 0 edge, 0.25 the front face at the middle, 0.5 the v = 1 edge, 0.75 the back face), so the result is periodic in v and thins to the sheet's two edges; free u ends become caps.
   `function thicken(s: Surface, half: In<"f32">): Surface`
 
@@ -3064,7 +3071,7 @@ Types:
 
 ## Coverage
 
-820 exports (462 values, 358 types) from src/index.ts and src/lib/index.ts.
+821 exports (463 values, 358 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

@@ -259,11 +259,11 @@ export function recur<const C extends Cells>(spec: RecurSpec<C>): Recurrence<C> 
   const kept: Kept = every === 1 ? { kind: "every" } : { kind: "checkpoints", every };
   const states = every === 1 ? steps + 1 : Math.floor(steps / every) + 1;
 
-  const table: TableSource = { name, lanes, entries: states * (entries + 1), role: "static", prepare: () => { throw new Error(`internal: recurrence "${name}" is filled by its bake, not prepared`); } };
-  const prev: TableSource = { name: `${name}_prev`, lanes, entries: entries + 1, role: "data", prepare: () => { throw new Error(`internal: recurrence "${name}": prev is bound where the step is emitted, never placed`); } };
+  const table: TableSource = { name, lanes, entries: states * (entries + 1), role: "static", recurrence: name };
+  const prev: TableSource = { name: `${name}_prev`, lanes, entries: entries + 1, role: "data", recurrence: name };
   const replay = kept.kind === "every" ? undefined : {
-    even: { name: `${name}_even`, lanes, entries: entries + 1, role: "data", prepare: () => { throw new Error("internal: a replay table is filled by its replay"); } } as TableSource,
-    odd: { name: `${name}_odd`, lanes, entries: entries + 1, role: "data", prepare: () => { throw new Error("internal: a replay table is filled by its replay"); } } as TableSource,
+    even: { name: `${name}_even`, lanes, entries: entries + 1, role: "data", recurrence: name } as TableSource,
+    odd: { name: `${name}_odd`, lanes, entries: entries + 1, role: "data", recurrence: name } as TableSource,
     // The step number n the frame replays to, written by the host from time (docs/artefact_format.md, "Replays"), so the
     // GPU and the CPU agree on n exactly.
     step: input(`loft_step.${name}`, "f32", [0]),

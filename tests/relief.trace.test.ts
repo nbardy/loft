@@ -2,10 +2,11 @@
 // shell tracer against analytic ray intersections on a flat patch and against the displaced surface on spheres of
 // falling radius, and the sculpt layer's interpolation and wrap.
 import { expect, test } from "bun:test";
-import { add, compileJs, mul, sin, variable } from "../src/expr.ts";
+import { add, compileJs, leaves, mul, sin, variable } from "../src/expr.ts";
 import { displace } from "../src/relief/displace.ts";
 import { bump, level, sum, type Height } from "../src/relief/height.ts";
-import { sampleGrid, sculptLayer, SculptTable } from "../src/relief/sculpt.ts";
+import { sampleGrid, sculptLayer } from "../src/relief/sculpt.ts";
+import { readTablesAlone } from "../src/compile/index.ts";
 import { firstCrossing, plane, sphere, sphereDirNum, sphereUv, tracer, v3, type V3 } from "./relief.fixture.ts";
 
 const U = variable("tu", "f32"), V = variable("tv", "f32");
@@ -167,20 +168,8 @@ test("relief on a sphere stays within C hMax (hMax/R)^2 of the displaced sphere,
 // ---- the sculpt layer ---------------------------------------------------------------------------------------------
 
 function sculptJs(h: Height) {
-  const run = compileJs([h(U, V)]);
-  const tables = new Map<unknown, Float32Array>();
-  return (u: number, v: number): number => run({
-    ...env(u, v),
-    tables: (t) => {
-      let data = tables.get(t);
-      if (!data) {
-        data = new Float32Array(t.entries * t.lanes * 4);
-        (t as SculptTable).prepare()({ env: env(0, 0), table: () => { throw new Error("no"); } }, data);
-        tables.set(t, data);
-      }
-      return data;
-    },
-  })[0] as number;
+  const root = h(U, V), run = compileJs([root]), read = readTablesAlone(leaves([root]).tables);
+  return (u: number, v: number): number => run({ ...env(u, v), tables: read })[0] as number;
 }
 
 // Catches: an off-by-one in the cell or the wrapped neighbour, slopes from the wrong neighbours, samples laid out

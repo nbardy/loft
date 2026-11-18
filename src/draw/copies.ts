@@ -81,7 +81,7 @@ const num = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 function copiesTable(name: string, copies: readonly Branch[]): TableSource {
   const data = new Float32Array(copies.length * 12);
   copies.forEach((c, i) => data.set([...c.a, c.ra, ...c.b, c.rb, ...c.id, c.level], i * 12));
-  return { name, lanes: 3, entries: copies.length, role: "static", prepare: () => (_frame, out) => out.set(data) };
+  return { name, lanes: 3, entries: copies.length, role: "static", data };
 }
 
 /** Points along each copy's axis per copy, for the shadow's fit. */

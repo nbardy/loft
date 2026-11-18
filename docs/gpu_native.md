@@ -33,15 +33,14 @@ Three consequences.
 type TableProgram =
   | { kind: "map"; runs: readonly { count: number; lanes: (i: F) => readonly Expr<"vec4">[] }[] }  // entry i: i, the frame, other tables
   | { kind: "scan"; first: number; steps: number; init: State; step: (s: State, i: F) => { next: State; lanes: readonly Expr<"vec4">[] } }
-  | { kind: "cpu"; why: string; prepare(p: TablePrep): TableFill }                                // not ported yet: named, counted, visible
 ```
 
 A map is a list of runs laid end to end, each a closed form in its own index (`mapOf(n, lanes)` is one run;
 `listOf(entries)` is runs of one). Changed from the first draft because about half the tables the code fills are
 lists of unrelated expressions (each rope's two ends, each listed pose, each shadow joint), which a single closed form
-in i could only write as a chain of selects that evaluates every entry in every invocation. A table with no program
-(`prepare` alone, as in `examples/bosses/tithe/kit.ts`) is read as `cpu` at the compiler's boundary. Static tables
-(filled once at build) keep `prepare`.
+in i could only write as a chain of selects that evaluates every entry in every invocation. Supplied numbers are not a
+program: such a table carries `data` (`DataTable`). The `cpu` program and `prepare` were deleted on 2026-11-19
+(lean-Rust lane 2.4), once the last hand-written fills (two medium tables, the sculpt layer) became maps or data.
 
 - `map` and `scan` are written in Loft's own expressions (which already have loops and table reads and already
   compile to both JavaScript and WGSL). Their CPU fill is derived, not hand-written.

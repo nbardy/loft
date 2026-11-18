@@ -403,8 +403,8 @@ frame replays into.
 
 Per-frame tables are `TableSource`s (`src/expr.ts`): `entries` entries of `lanes` vec4s, a `role`, and a `program`:
 a `map` (runs of entries, each a closed form in its index; `mapOf`, `listOf`), a `scan` (entries in order carrying a
-state; `step` called once with fresh variables, as `iterate`'s), or `cpu` (`prepare` and why). A table with `prepare`
-and no program is read as `cpu`; static tables keep `prepare`. The compiler finds tables by walking the expressions it
+state; `step` called once with fresh variables, as `iterate`'s). A table of supplied numbers (a mesh, a brick, a sculpt
+layer, a static `tabulate`) carries them as `data` instead, and is uploaded from the CPU. The compiler finds tables by walking the expressions it
 emits (`fetch`), or a raw-WGSL drawable declares one with `ctx.table`. They are packed, in declaration order, into as
 few storage buffers as hold them (`loft_tables_0`, ...), because a shader stage may bind 8 storage buffers and group 0
 uses 3; `fetch(t, i, lane)` reads `t_<name>(u32(i) * lanes + lane)`. More than 5 buffers' worth fails at compile time
@@ -731,7 +731,8 @@ area with the axis is refused by name. Before, a rising profile was drawn inside
 - **A table needs a compile-time hook.** Fills evaluate CPU expressions (a body's spine, a host's chart), and only the
   compiler knows the slots, so a table is prepared once (`prepare(p)`, with `p.compile(roots)`). Each table compiles its
   own CPU function; the pose pass lost the sharing of subexpressions across bodies it had as one program (best-case pose
-  0.31 -> 0.42 ms for the serpent).
+  0.31 -> 0.42 ms for the serpent). Superseded: a table is now a program (`map`, `scan`) or supplied `data`, and
+  `prepare` is gone (2026-11-19).
 - **Library functions that read scene depth cannot be shared.** `sceneWgsl` goes into every module, and scene depth is
   bound only for some draws, so each shader module carries its own library functions unless `sceneWgsl` already has them.
 - **A sheet is ruled.** `sheet(root, edge)` interpolates linearly from root to edge, so the crest's sideways flutter is

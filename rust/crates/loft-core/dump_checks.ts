@@ -60,7 +60,6 @@ const out = cases.map(({ name, check, boxes }) => {
         for (let j = 0; j < p.steps; j++) { const s = p.step(state, E.f(j)); if (p.first + j === k) return s.lanes; state = s.next; }
         throw new Error("outside the scan");
       }
-      case "cpu": throw new Error(`${name}: cpu table ${t.name}`);
     }
   };
   const walk = (e: Expr): number => {

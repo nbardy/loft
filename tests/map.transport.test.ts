@@ -8,7 +8,7 @@ import { qrot, quatFromColumns, SAMPLE_VEC4S, STATION_VEC4S, stationScan, v3, ty
 
 /** The interpolated station of a posed table at m, through the same expressions the vertex stage runs. */
 function stationAt(table: Float32Array, count: number, m: number): { p: V3; der: V3 } {
-  const t: TableSource = { name: "probe", lanes: STATION_VEC4S, entries: count, role: "stations", prepare: () => () => {} };
+  const t: TableSource = { name: "probe", lanes: STATION_VEC4S, entries: count, role: "stations", data: new Float32Array(STATION_VEC4S * count * 4) };
   const s = stationSample(t, variable("m", "f32"));
   const [p, der] = compileJs([s.p, s.der])({ vars: { m }, inputs: {}, params: {}, tables: () => table }) as V3[];
   return { p, der };

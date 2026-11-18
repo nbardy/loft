@@ -235,14 +235,14 @@ function rowsTable(name: string, m: Mesh): TableSource {
       data.set(m.normals.welded.subarray(i * 3, i * 3 + 3), (i * S + L + 1) * 4);
     }
   }
-  return { name, lanes: Math.max(1, S), entries: Math.max(1, m.count), role: "static", prepare: () => (_frame, out) => out.set(data) };
+  return { name, lanes: Math.max(1, S), entries: Math.max(1, m.count), role: "static", data };
 }
 
 /** A static table of the triangle corners, four point indices per vec4 (exact as f32 below 2^24). */
 function trianglesTable(name: string, m: Mesh): TableSource {
   const data = new Float32Array(Math.max(4, Math.ceil(m.triangles.length / 4) * 4));
   data.set(m.triangles);
-  return { name, lanes: 1, entries: data.length / 4, role: "static", prepare: () => (_frame, out) => out.set(data) };
+  return { name, lanes: 1, entries: data.length / 4, role: "static", data };
 }
 
 /**

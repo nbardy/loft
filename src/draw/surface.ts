@@ -17,6 +17,7 @@ import { fwidth } from "../lib/screen.ts";
 import { foldAt, sunDir, sunOnly, type LightFold } from "../light.ts";
 import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
+import { graphFn } from "../record/graph_fn.ts";
 import type { DrawDepth } from "../artefact.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
@@ -75,6 +76,18 @@ export type GlazedDetail = { readonly kind: "fixed" } | Extract<DetailSpec, { ki
 /** One copy, or one per pose (points are poses with an even size). */
 type Copies = { readonly kind: "one" } | { readonly kind: "poses"; readonly poses: Poses };
 
+/**
+ * The surface's maps as graph functions (src/record/graph_fn.ts): the compiler reads them at the vertex stage, the
+ * rest measurement, each copy and the constructor's own check, so each is recorded once and every read is a `Call`.
+ */
+const UV = ["f32", "f32"] as const;
+const recorded = (s: Surface): Surface => ({
+  point: graphFn("point", UV, (u, v) => s.point(u, v)), normal: graphFn("normal", UV, (u, v) => s.normal(u, v)),
+  anchor: graphFn("anchor", UV, (u, v) => s.anchor(u, v)),
+  // Read when asked: the constructor wraps before it refuses a value that is not a surface (src/mistakes.ts).
+  get topology() { return s.topology; }, get skeleton() { return s.skeleton; },
+});
+
 const S = variable("s", "f32"), T = variable("t", "f32"), I = variable("i", "f32");
 const U = variable("u", "f32"), V = variable("v", "f32");
 /** What paint is told besides (u, v), as the fragment stage binds it (`PaintAt`). */
@@ -87,20 +100,22 @@ const AT = { world: variable("p_world", "vec3"), normal: variable("p_normal", "v
 export class SurfaceDrawable implements Drawable {
   readonly skeletons: readonly Skeleton[];
   readonly forms: readonly Form[];
+  readonly surface: Surface;
 
   constructor(
     readonly name: string,
-    readonly surface: Surface,
+    surface: Surface,
     readonly grid: Grid,
     readonly look: Look,
     readonly copies: Copies,
   ) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.surface "${name}": names must be identifiers (they name shaders)`);
     this.name = scopedName(name);
+    this.surface = recorded(surface);
     // Refused here, by the user's name, before anything is built from them (src/mistakes.ts).
-    refuseSurface(name, surface, grid, look, () => surface.point(U, V), look.kind === "glazed" ? undefined : () => look.paint(U, V, AT));
+    refuseSurface(name, surface, grid, look, () => this.surface.point(U, V), look.kind === "glazed" ? undefined : () => look.paint(U, V, AT));
     if (look.kind === "lit" && look.sides === "two" && look.outline === "hull") throw new SceneError(`draw.surface "${name}"`, `sides "two" with outline "hull"`, "a hull outline only on a one-sided surface (it draws the back faces)", `outline: "border"`);
-    this.skeletons = skeletonsOf(surface, copies);
+    this.skeletons = skeletonsOf(this.surface, copies);
     this.forms = formsOf(this, copies);
   }
 

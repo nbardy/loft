@@ -13,7 +13,7 @@
 // frame cost 16 surface evaluations per drawable: the fleet's pose went from 0.45 to 3.9 ms. What this gives up: a
 // surface that grows or stretches far beyond its rest shape (a wing unfolding on an input) is sized by its rest shape.
 
-import { f, lift, listOf, mapOf, vec4, type TableProgram, type TableSource } from "../expr.ts";
+import { f, lift, listOf, mapOf, variable, vec4, type TableProgram, type TableSource } from "../expr.ts";
 import type { DetailSpec } from "../compile/context.ts";
 import { sizeBound } from "../map/chart.ts";
 import type { F, P3, Poses, Surface, Topology } from "../map/types.ts";
@@ -61,17 +61,35 @@ export function boundTable(name: string, surface: Surface, at: GridAt, copies: B
   return { name: `bound_${name}`, lanes: 1, entries: copies.kind === "one" ? 1 : copies.poses.count, role: "data", program: program() };
 }
 
+/** The grid coordinates the rest point is written over: `restPoints` gives their values. */
+export const GRID_S = variable("loft_grid_s", "f32"), GRID_T = variable("loft_grid_t", "f32");
+
 /**
- * The detail a lit surface states: its bound table, its levels, and the expressions the compiler measures at rest
- * (5 x 5 points of the grid, row-major with u fastest, and the anchor).
+ * The detail a lit surface states: its bound table, its levels, and the expressions the compiler measures at rest:
+ * the grid's point over (GRID_S, GRID_T), one expression the compiler evaluates at the 5 x 5 `restPoints`, and the
+ * anchor. One symbolic point, not 25 constant ones: the recorder holds one surface call, the tape 25 lanes.
  */
 export function gridDetail(bound: TableSource, surface: Surface, at: GridAt, copies: BoundCopies, nu: number, nv: number): DetailSpec {
-  const samples: P3[] = [];
-  for (let j = 0; j < SAMPLES; j++) for (let i = 0; i < SAMPLES; i++) samples.push(surface.point(at.u(f(i / (SAMPLES - 1))), at.v(f(j / (SAMPLES - 1)))));
-  return { kind: "grid", bound, counts: gridLevels(nu, nv, surface.topology), rest: { samples, anchor: anchorOf(surface, at, copies) } };
+  const point = surface.point(at.u(GRID_S), at.v(GRID_T));
+  return { kind: "grid", bound, counts: gridLevels(nu, nv, surface.topology), rest: { point, anchor: restAnchor(point, copies) } };
 }
 
-/** From the rest samples (as `gridDetail` orders them) and anchor: the longest grid line per axis, and the reach. */
+/** `anchorOf` over the grid coordinates, read at `REST_CENTRE`: for one copy, the grid's point itself. */
+function restAnchor(point: P3, copies: BoundCopies): P3 {
+  switch (copies.kind) {
+    case "one": return point;
+    case "poses": return lift<"vec3">([0, 0, 0]);
+  }
+}
+
+/** Where the rest anchor is read: the grid's centre. */
+export const REST_CENTRE = { loft_grid_s: 0.5, loft_grid_t: 0.5 };
+
+/** The 5 x 5 grid points the rest point is measured at, row-major with s fastest, as `measureRest` reads them. */
+export const restPoints: readonly { readonly loft_grid_s: number; readonly loft_grid_t: number }[] =
+  Array.from({ length: SAMPLES * SAMPLES }, (_, k) => ({ loft_grid_s: (k % SAMPLES) / (SAMPLES - 1), loft_grid_t: Math.floor(k / SAMPLES) / (SAMPLES - 1) }));
+
+/** From the rest samples (as `restPoints` orders them) and anchor: the longest grid line per axis, and the reach. */
 export function measureRest(samples: readonly (readonly number[])[], anchor: readonly number[]): { readonly lengths: readonly [number, number]; readonly radius: number } {
   const dist = (a: readonly number[], b: readonly number[]) => Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!, a[2]! - b[2]!);
   let lu = 0, lv = 0;

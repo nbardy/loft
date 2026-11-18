@@ -69,11 +69,10 @@ export type LibFn = {
  * (as it discovers params and curve rows).
  *
  * How a table is filled is its `program` (docs/gpu_native.md, phase 1): a `map` or a `scan` written in expressions,
- * from which the compiler derives both the GPU compute stage that fills it each frame and the CPU fill tools use; or
- * `cpu`, a hand-written fill, which is the named, counted state of a table not yet ported. A table written before
- * programs existed (`prepare` alone, as in examples/bosses/tithe/kit.ts) is read as `cpu` at the compiler's boundary.
+ * from which the compiler derives both the GPU compute stage that fills it each frame and the CPU fill tools use. A
+ * table of supplied numbers carries them (`data`), and a recurrence's tables are its own.
  */
-export type TableSource = ProgramTable | FilledTable;
+export type TableSource = ProgramTable | DataTable | RecurrenceTable;
 type TableShape = {
   /** An identifier, unique in a compiled scene. */
   readonly name: string;
@@ -87,8 +86,10 @@ type TableShape = {
   readonly role: "stations" | "data" | "static";
 };
 export type ProgramTable = TableShape & { readonly program: TableProgram };
-/** A hand-written fill. `prepare` is called once per compilation; `p.compile` gives CPU functions over a frame. */
-export type FilledTable = TableShape & { prepare(p: TablePrep): TableFill };
+/** Supplied numbers (a mesh, a distance brick, a sculpt layer, a static `tabulate`): `entries * lanes * 4` floats. */
+export type DataTable = TableShape & { readonly data: Float32Array };
+/** One of a recurrence's tables (src/map/recur.ts): filled by its bake or its replay, or bound where its step is emitted. */
+export type RecurrenceTable = TableShape & { readonly recurrence: string };
 
 /**
  * Entries `count` long, each a closed form in its index `i` within the run (0 .. count - 1, an f32 holding a whole
@@ -107,7 +108,6 @@ export type ScanStep = { readonly next: readonly Expr<NumTy>[]; readonly lanes: 
  * scan  entries `first .. first + steps - 1` in order, carrying a small state from one to the next (frames transported
  *       along a spine, an arc length). `step(state, i)` is called once, with fresh variables, as `iterate`'s is. On the
  *       GPU one invocation loops. Entries outside the range are never written (they stay zero).
- * cpu   a hand-written fill, with the reason it is not (yet) a map or a scan. Filled on the CPU and uploaded.
  */
 export type TableProgram =
   | { readonly kind: "map"; readonly runs: readonly MapRun[] }
@@ -117,8 +117,7 @@ export type TableProgram =
     readonly steps: number;
     readonly init: readonly Expr<NumTy>[];
     readonly step: (state: readonly Expr<NumTy>[], i: Expr<"f32">) => ScanStep;
-  }
-  | { readonly kind: "cpu"; readonly why: string; prepare(p: TablePrep): TableFill };
+  };
 
 /** A map whose every entry is the same closed form in the entry index. */
 export const mapOf = (entries: number, lanes: MapRun["lanes"]): TableProgram => ({ kind: "map", runs: [{ count: entries, lanes }] });
@@ -130,14 +129,6 @@ export type TableFill = (frame: TableFrame, out: Float32Array) => void;
 export interface TableFrame {
   readonly env: Env;
   table(t: TableSource): Float32Array;
-}
-/** What a table may ask of the compiler while it is prepared. */
-export interface TablePrep {
-  /**
-   * Compile expressions for the CPU, reading curves, inputs, params and tables from a frame; free variables are bound
-   * per call. Compiled once, here; called every frame.
-   */
-  compile(roots: readonly Expr[]): (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
 }
 
 const tableIds = new WeakMap<TableSource, number>();

@@ -3,15 +3,14 @@
 // section 3, docs/gpu_native.md phase 1).
 //
 // Programs. Each table is classified once, when it is declared, into one canonical form (`Canon`): a map, a scan, or a
-// `cpu` fill (a hand-written `prepare`, or a table with no program at all, which is read as one). A map or a scan is
+// `cpu` fill (a table of supplied numbers, `data`). A map or a scan is
 // expanded there, once: its run lanes and its scan step are called with fresh variables and the resulting expressions
 // registered, so every leaf they read (inputs, params, curve rows, other tables) has a slot before the layout. From
 // that one description come both the WGSL that fills the table at run time (`stageWgsl`) and the CPU fill (`cpuFill`).
 //
 // Schedule. A GPU table's level is one more than the deepest GPU table it reads; tables of one level are one compute
-// dispatch (one invocation per map entry, one per scan). A `cpu` table is filled and uploaded before the dispatches. A
-// `cpu` table may not wait on the GPU, so a map or scan that a `cpu` table reads is filled on the CPU too, and says so
-// (`TableFillKind` "cpu", why "read by ...").
+// dispatch (one invocation per map entry, one per scan). A `cpu` table (supplied numbers, which read no other table) is
+// uploaded before the dispatches.
 //
 // Packing: a shader stage may bind at most 8 storage buffers (WebGPU's default `maxStorageBuffersPerShaderStage`) and
 // the prelude's group 0 uses 3 (inputs, params, curves), so group 1 has 5. Tables are small and many, so they are
@@ -27,7 +26,7 @@
 import { Baked, POSE_WORKGROUP, type CpuUpload, type DynamicBuffer, type FrameState, type PoseStage, type Recurrence, type StaticBuffer, type TableFillKind, type TableInfo } from "../artefact.ts";
 import {
   children, emitWgsl, fetch, fold, leaves, listOf, replace, splitOn, variable, vec4, WGSL_TY, type Bind, type Env, type Expr, type InputSpec, type LibFn, type NumTy,
-  type ProgramTable, type TableFill, type TableFrame, type TablePrep, type TableProgram, type TableSource, type V,
+  type ProgramTable, type TableFill, type TableFrame, type TableProgram, type TableSource, type V,
 } from "../expr.ts";
 import { shadingTables } from "../precision.ts";
 import { recurTable, type RecurState } from "../map/recur.ts";
@@ -73,7 +72,7 @@ type Canon =
     readonly state: readonly Expr<NumTy>[]; readonly i: Expr<"f32">; readonly next: readonly Expr<NumTy>[]; readonly lanes: readonly Expr<"vec4">[];
     readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[];
   }
-  /** `reads`: the tables its fill compiles expressions over (a fill may also read others through `frame.table`). */
+  /** Supplied numbers: it reads no table (`reads` and `authored` are empty). */
   | { readonly kind: "cpu"; readonly why: string; readonly fill: TableFill; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] }
   /** A recurrence's kept states (static): filled by its bake, on a host's GPU (src/map/recur.ts). */
   | { readonly kind: "kept"; readonly state: RecurState; readonly reads: readonly TableSource[]; readonly authored: readonly TableSource[] }
@@ -178,9 +177,9 @@ const STATIC: TableFillKind = { kind: "cpu", why: "filled once, at build" };
 
 /**
  * Classify a declared table into its canonical form, once (the boundary: nothing after this asks what a table is).
- * `prep` is the compiler's, for hand-written fills; `c` registers a program's expressions.
+ * `c` registers a program's expressions.
  */
-function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: Program) => readonly Expr[], record: (g: readonly Program[]) => void): Canon {
+function classify(t: TableSource, c: TableCompiler, lower: (p: Program) => readonly Expr[], record: (g: readonly Program[]) => void): Canon {
   const r = recurTable(t);
   if (r !== undefined) {
     switch (r.part) {
@@ -195,11 +194,10 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: 
       case "prev": throw new Error(`internal: recurrence "${r.state.name}": prev is never declared`);
     }
   }
-  if (!("program" in t)) {
-    const reads: TableSource[] = [];
-    const fill = t.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
-    const why = t.role === "static" ? "filled once, at build" : "a hand-written fill with no program";
-    return { kind: "cpu", why, fill, reads, authored: reads };
+  if ("recurrence" in t) throw new Error(`internal: table "${t.name}" of recurrence "${t.recurrence}" was never registered (src/map/recur.ts)`);
+  if ("data" in t) {
+    const data = t.data, why = t.role === "static" ? "filled once, at build" : "supplied numbers";
+    return { kind: "cpu", why, fill: (_frame, out) => out.set(data), reads: [], authored: [] };
   }
   const p = t.program;
   const id = nextProgram++;
@@ -249,11 +247,6 @@ function classify(t: TableSource, prep: TablePrep, c: TableCompiler, lower: (p: 
       record([scanProgram(t.name, canon)]);
       // Once per frame: folded here, lowered scene-wide when the layout begins.
       return withScanRoots(canon, fold(authored));
-    }
-    case "cpu": {
-      const reads: TableSource[] = [];
-      const fill = p.prepare({ compile: (roots) => { reads.push(...leaves(roots).tables); return prep.compile(roots); } });
-      return { kind: "cpu", why: p.why, fill, reads, authored: reads };
     }
   }
 }
@@ -371,7 +364,7 @@ export class Tables {
   constructor(private readonly c: TableCompiler) {}
 
   /** Declare a table (once per object; later calls return the same accessor) and classify its program. */
-  declare(t: TableSource, prep: TablePrep): TableRef {
+  declare(t: TableSource): TableRef {
     const ref = { name: t.name, wgsl: accessor(t.name) };
     if (this.declared.has(t)) return ref;
     // A recurrence's previous state is read only inside its step, which binds it itself (src/compile/recur.ts).
@@ -387,7 +380,7 @@ export class Tables {
     const d: Declared = { kind: "declared", table: t, canon: undefined };
     this.declared.set(t, d);
     this.names.set(t.name, t);
-    d.canon = classify(t, prep, this.c, (p) => this.lowerItem(p), (g) => { this.programs.push(g); });
+    d.canon = classify(t, this.c, (p) => this.lowerItem(p), (g) => { this.programs.push(g); });
     return ref;
   }
 
@@ -649,21 +642,13 @@ function shadingHalf(value: number): number {
 }
 
 /**
- * Where each table is filled: a dynamic map or scan on the GPU at its level, unless a `cpu` table reads it (then on the
- * CPU, and so is everything it reads); a `cpu` table on the CPU. Throws on a cycle among GPU tables.
+ * Where each table is filled: a dynamic map or scan on the GPU at its level, a `cpu` table (supplied numbers, reading
+ * no table) on the CPU. Throws on a cycle among GPU tables.
  */
 function schedule(all: readonly { table: TableSource; canon: Canon }[]): Map<TableSource, TableFillKind> {
   const canonOf = new Map(all.map((d) => [d.table, d.canon]));
   const out = new Map<TableSource, TableFillKind>();
-  const force = (t: TableSource, by: string): void => {
-    if (t.role === "static" || out.has(t)) return;
-    const c = canonOf.get(t)!;
-    // Only the GPU replays a recurrence: a CPU table reading one would draw a second engine's trajectory.
-    if (c.kind === "replay") throw new Error(`table "${by}" is filled on the CPU but reads the recurrence "${c.state.name}", which only the GPU replays; read it from a map (an expression), not a hand-written fill`);
-    out.set(t, { kind: "cpu", why: c.kind === "cpu" ? c.why : `read by ${by}, which is filled on the CPU` });
-    for (const r of c.reads) force(r, t.name);
-  };
-  for (const { table, canon } of all) if (canon.kind === "cpu") force(table, table.name);
+  for (const { table, canon } of all) if (canon.kind === "cpu" && table.role !== "static") out.set(table, { kind: "cpu", why: canon.why });
   const level = new Map<TableSource, number>();
   const visiting: TableSource[] = [];
   const levelOf = (t: TableSource): number => {

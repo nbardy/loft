@@ -6,6 +6,7 @@ import {
   type Drawable, type TableSource,
 } from "../src/index.ts";
 import { compileScene } from "../src/compile/index.ts";
+import { mapOf, vec4 } from "../src/expr.ts";
 import { STATION_VEC4S, v3, type V3 } from "../src/map/transport.ts";
 import { stateAt } from "./compile.harness.ts";
 
@@ -88,7 +89,7 @@ test("an edited curve table moves the CPU pose", () => {
 // later as an opaque pipeline error on the host.
 test("a scene whose tables exceed what a shader stage can bind fails by name", () => {
   const hog: Drawable = { name: "hog", skeletons: [], forms: [], draws: (ctx) => {
-    for (let i = 0; i < 6; i++) ctx.table({ name: `hog${i}`, lanes: 1, entries: (128 * 1024 * 1024) / 16, role: "data", prepare: () => () => {} });
+    for (let i = 0; i < 6; i++) ctx.table({ name: `hog${i}`, lanes: 1, entries: (128 * 1024 * 1024) / 16, role: "data", program: mapOf((128 * 1024 * 1024) / 16, () => [vec4(0, 0, 0, 0)]) });
     return { shaders: {}, draws: [] };
   } };
   expect(() => compile(scene({ ground: flat, things: [hog], style: toon(), sun: [0, 1, 0] }))).toThrow(TableBudgetError);

@@ -87,7 +87,9 @@ function dump(path: string, mod_: Record<string, unknown>): unknown {
       continue;
     }
     const r = table(t);
-    if (!("program" in t)) { kernels.push({ res: r, when: "derived", fill: { opaque: `prepare (${t.role})` } }); continue; }
+    // Supplied numbers and a recurrence's own tables have no program to lower (lane 2.4 deleted FilledTable).
+    if ("data" in t) { kernels.push({ res: r, when: "derived", fill: { opaque: `data (${t.role})` } }); continue; }
+    if ("recurrence" in t) { kernels.push({ res: r, when: "derived", fill: { opaque: `recurrence ${t.recurrence}` } }); continue; }
     const prog = t.program;
     switch (prog.kind) {
       case "map": {
@@ -105,7 +107,6 @@ function dump(path: string, mod_: Record<string, unknown>): unknown {
         kernels.push({ res: r, when: "derived", fill: { scan: { first: prog.first, steps: prog.steps, init: prog.init.map(walk), state: state.map(walk), i: walk(i), next: step.next.map(walk), lanes: step.lanes.map(walk) } } });
         break;
       }
-      case "cpu": kernels.push({ res: r, when: "derived", fill: { opaque: `cpu: ${prog.why}` } }); break;
     }
     if (p.canon.kind === "map" || p.canon.kind === "scan") {
       // A table that reads unbaked state (a recurrence) has no CPU reading before a GPU bake: no reference fill.

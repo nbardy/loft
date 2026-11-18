@@ -27,7 +27,7 @@
 // write, never a recompile), a curve row or a per-frame table changes after the bake; one that calls a GPU-only
 // function cannot be sampled on the CPU.
 
-import { compileJs, leaves, type Expr, type TableFill, type TableSource, type V } from "../expr.ts";
+import { compileJs, leaves, type Expr, type TableSource, type V } from "../expr.ts";
 
 type V3 = readonly [number, number, number];
 
@@ -218,8 +218,7 @@ export function bakeBrick(name: string, d: Expr<"f32">, pvar: string, spec: Bric
   }
 
   const table: TableSource = {
-    name, lanes: 1, entries: data.length / 4, role: "static",
-    prepare: (): TableFill => (_frame, out) => out.set(data),
+    name, lanes: 1, entries: data.length / 4, role: "static", data,
   };
 
   const cellIndex = (p: V3): { idx: number; g: V3 } => {

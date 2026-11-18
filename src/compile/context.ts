@@ -49,8 +49,8 @@ export type DetailSpec =
     readonly bound: TableSource;
     /** Cell counts per level, finest first. */
     readonly counts: readonly (readonly [number, number])[];
-    /** What the compiler measures at rest: 5 x 5 grid points (u fastest) and the anchor point (src/draw/grid_detail.ts). */
-    readonly rest: { readonly samples: readonly Expr<"vec3">[]; readonly anchor: Expr<"vec3"> };
+    /** What the compiler measures at rest: the grid's point over (GRID_S, GRID_T), at `restPoints`, and the anchor (src/draw/grid_detail.ts). */
+    readonly rest: { readonly point: Expr<"vec3">; readonly anchor: Expr<"vec3"> };
   }
   | Omit<Extract<Detail, { kind: "projected" }>, "slot">;
 

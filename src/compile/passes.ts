@@ -51,7 +51,7 @@ export function discover(slots: Slots, roots: readonly LibFn[]): { readonly defs
 const laneRoots = (t: ProgramTable): Expr[] => {
   switch (t.program.kind) {
     case "map": return t.program.runs.flatMap((r) => [...r.lanes(variable("loft_pass_i", "f32"))]);
-    case "scan": case "cpu": throw new Error(`pass camera table "${t.name}" is not a map (src/frame/pass.ts builds one)`);
+    case "scan": throw new Error(`pass camera table "${t.name}" is not a map (src/frame/pass.ts builds one)`);
   }
 };
 const passesIn = (fns: readonly LibFn[]): string[] => fns.flatMap((fn) => { const d = passOf(fn); return d === undefined ? [] : [d.name]; });
