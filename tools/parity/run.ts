@@ -227,7 +227,8 @@ async function cross(other: string) {
   for (const [id, t] of theirs) {
     const o = ours.get(id);
     if (o?.build.kind !== t.build.kind) { builds.push(`${id}: ${t.build.kind} in ${other}, ${o?.build.kind ?? "absent"} here`); continue; }
-    for (const f of t.frames.filter((f) => f.kind === "drawn" && f.executor === "loft-draw")) {
+    // Native frames only: R0 predates the loft-view → loft-draw rename and records "loft-view"; Dawn frames are not crossed.
+    for (const f of t.frames.filter((f) => f.kind === "drawn" && f.executor !== "dawn")) {
       const g = o.frames.find((x) => frameName(x) === frameName(f)), frame = frameName(f);
       frames++;
       if (g?.kind !== "drawn" || f.kind !== "drawn") { fails.push({ id, frame, diff: g?.kind ?? "absent" }); continue; }
@@ -238,7 +239,7 @@ async function cross(other: string) {
   const report = { other, here: OUT, entries: theirs.size, builds, frames, fails: fails.length, failed: fails };
   writeFileSync(join(OUT, "cross.json"), json(report));
   console.log(`cross: ${theirs.size} entries, ${builds.length} build mismatches; ${frames - fails.length}/${frames} frames meet the cross rule`);
-  process.exit(builds.length + fails.length === 0 ? 0 : 1);
+  process.exit(builds.length + fails.length === 0 && frames > 0 ? 0 : 1); // no frame compared is no pass
 }
 
 /** Child: the verdicts `loft check` computes (src/cli/check.ts), for the variant `loft build` builds, whole. */
