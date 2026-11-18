@@ -13,6 +13,7 @@
 | 4 | `loft: scene:` | a constructor refused the scene; the message says given, expected and the fix, and ends `(at file:line)` | yes |
 | 5 | `loft: check:` | the scene drew, and the checks named on the line failed | yes |
 | 6 | `loft: environment (not the scene's fault):` | the GPU, the WebGPU binding, or a missing `cwebp`/`ffmpeg`; a shader or pipeline that failed to build was already tried on 3 fresh devices | no |
+| 7 | `loft: budget:` | (`loft serve` only) a stated limit ran out before an answer: a compile past `--compile-seconds`, a CPU limit, or `--pending` full; the line names it | no; decide whether it is a penalty |
 
 Does it type-check: `pnpm exec tsc --noEmit`. Does it render, and what to change:
 

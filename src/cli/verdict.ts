@@ -16,6 +16,11 @@ export type Verdict =
   | { readonly kind: "check"; readonly message: string }
   /** Not the scene: the GPU, the WebGPU binding, a missing tool. Already retried where retrying can help. */
   | { readonly kind: "environment"; readonly message: string }
+  /**
+   * A stated limit ran out before an answer: a deadline, a CPU limit, a full queue. The message names the limit. Not a
+   * verdict on the scene either way; the caller decides whether running out is a penalty.
+   */
+  | { readonly kind: "budget"; readonly message: string }
   /** An untyped error inside Loft: a bug in Loft, or a scene mistake no constructor catches yet. */
   | { readonly kind: "internal"; readonly message: string; readonly stack: string };
 
@@ -57,7 +62,7 @@ export async function verdictOf(e: unknown): Promise<Verdict> {
   return { kind: "internal", message: `${e.name === "Error" ? "" : `${e.name}: `}${e.message}`, stack: e.stack ?? "" };
 }
 
-const CODE: Readonly<Record<Verdict["kind"], number>> = { internal: 1, usage: 2, load: 3, scene: 4, check: 5, environment: 6 };
+const CODE: Readonly<Record<Verdict["kind"], number>> = { internal: 1, usage: 2, load: 3, scene: 4, check: 5, environment: 6, budget: 7 };
 const LINE: Readonly<Record<Verdict["kind"], string>> = {
   internal: "internal (a bug in Loft, or a scene mistake no constructor catches yet)",
   usage: "usage",
@@ -65,6 +70,7 @@ const LINE: Readonly<Record<Verdict["kind"], string>> = {
   scene: "scene",
   check: "check",
   environment: "environment (not the scene's fault)",
+  budget: "budget",
 };
 
 /**
@@ -92,7 +98,7 @@ export function exitWith(v: Verdict): never {
   switch (v.kind) {
     case "usage": console.error(USAGE); break;
     case "internal": console.error(v.stack); break;
-    case "scene": case "load": case "check": case "environment": break;
+    case "scene": case "load": case "check": case "environment": case "budget": break;
   }
   if (e.detail.length > 0) console.error(`${e.head}\n${e.detail.join("\n")}`);
   console.error(e.line);

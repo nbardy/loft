@@ -7,6 +7,7 @@ import { DesignError, parseVariantAsk, type VariantAsk } from "../design.ts";
 import type { OutlineMethod } from "../scene.ts";
 import { parseInputs, parseSweep, type InputValues, type Sweep } from "./inputs.ts";
 import type { StillSpec } from "../host/still.ts";
+import { ARTEFACT_LIMITS, type ArtefactLimits } from "../host/files.ts";
 
 export class UsageError extends Error {}
 
@@ -84,6 +85,8 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   serve  [--compiles 2] [--confine "cmd args"] [--check check.ts]   (one warm process owns the GPU and draws requests,
                     JSON lines on stdin and stdout; each scene compiles in a child with no GPU, inside --confine;
                     docs/handoff_training.md "loft serve")
+         [--pending 64] [--compile-seconds 120] [--limits manifest=BYTES,files=N,bytes=BYTES]   (requests admitted at
+                    once; a compile's deadline; what an artefact may hold. Running out of the first two is exit 7)
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)
          [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)`;
 
@@ -302,17 +305,40 @@ function parseServeArgs(rest: readonly string[]): ServeCommand {
   const values = new Map<string, string>();
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
-    if (!["--compiles", "--confine", "--check"].includes(a)) throw new UsageError(a.startsWith("--") ? `flag ${a} does not apply to "serve"` : `serve takes no scene (each request names its own), got "${a}"`);
+    if (!["--compiles", "--confine", "--check", "--pending", "--compile-seconds", "--limits"].includes(a)) throw new UsageError(a.startsWith("--") ? `flag ${a} does not apply to "serve"` : `serve takes no scene (each request names its own), got "${a}"`);
     const v = rest[++i];
     if (v === undefined) throw new UsageError(`flag ${a} needs a value`);
     if (values.has(a)) throw new UsageError(`flag ${a} given twice`);
     values.set(a, v);
   }
-  const compiles = values.get("--compiles") === undefined ? 2 : positive("--compiles", values.get("--compiles")!);
-  if (!Number.isInteger(compiles)) throw new UsageError(`--compiles: ${compiles} is not a whole number`);
+  const whole = (flag: string, def: number): number => {
+    const n = values.get(flag) === undefined ? def : positive(flag, values.get(flag)!);
+    if (!Number.isInteger(n)) throw new UsageError(`${flag}: ${n} is not a whole number`);
+    return n;
+  };
+  const compiles = whole("--compiles", 2), pending = whole("--pending", 64);
+  const compileSeconds = values.get("--compile-seconds") === undefined ? 120 : positive("--compile-seconds", values.get("--compile-seconds")!);
+  // setTimeout fires at once past 2^31 - 1 ms, which would kill every compile as `budget`.
+  if (compileSeconds * 1000 > 2 ** 31 - 1) throw new UsageError(`--compile-seconds: ${compileSeconds} is past the longest deadline, ${Math.floor((2 ** 31 - 1) / 1000)} s`);
   // Split on spaces, no quoting: a confinement whose path holds a space goes in a wrapper script.
   const confine = (values.get("--confine") ?? "").split(" ").filter((s) => s !== "");
-  return { kind: "serve", compiles, confine, check: values.get("--check") };
+  return { kind: "serve", compiles, confine, check: values.get("--check"), pending, compileSeconds, limits: parseLimits(values.get("--limits")) };
+}
+
+/** `--limits manifest=BYTES,files=N,bytes=BYTES`, any of the three; the rest keep ARTEFACT_LIMITS. */
+function parseLimits(text: string | undefined): ArtefactLimits {
+  if (text === undefined) return ARTEFACT_LIMITS;
+  const keys = { manifest: "manifestBytes", files: "files", bytes: "bytes" } as const;
+  const out: Record<keyof ArtefactLimits, number> = { ...ARTEFACT_LIMITS };
+  for (const part of text.split(",")) {
+    const [k, v] = part.split("=");
+    const key = keys[k as keyof typeof keys];
+    if (key === undefined || v === undefined) throw new UsageError(`--limits: "${part}" is not manifest=BYTES, files=N or bytes=BYTES`);
+    const n = positive(`--limits ${k}`, v);
+    if (!Number.isSafeInteger(n)) throw new UsageError(`--limits ${k}: ${v} is not a whole number`);
+    out[key] = n;
+  }
+  return out;
 }
 
 /** Still mode's flags, classified once: today's frame (no flags, or --samples 1), or a still. */

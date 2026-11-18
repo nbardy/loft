@@ -82,6 +82,7 @@ match. A scene refusal names your own thing, what was given, what was expected a
 | 4 | `loft: scene:` | a constructor refused the scene: `given ...; expected ... Fix: ... (at file:line)` |
 | 5 | `loft: check:` | the scene drew and the checks named on the line failed |
 | 6 | `loft: environment (not the scene's fault):` | GPU, WebGPU binding, or missing `cwebp`/`ffmpeg`; builds already retried on 3 fresh devices |
+| 7 | `loft: budget:` | (`loft serve` only) a limit ran out: compile deadline, CPU limit, pending requests; not about the scene |
 
 ## Where to go next
 

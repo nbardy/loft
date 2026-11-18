@@ -106,7 +106,8 @@ examples/strike.ts --views front,side` drew `side` with 63313 triangles and `--v
 
 ### `loft serve`: many programs, one warm GPU process
 
-`bun src/cli/main.ts serve [--compiles 2] [--confine "cmd args"] [--check check.ts]` keeps one process that owns the GPU
+`bun src/cli/main.ts serve [--compiles 2] [--confine "cmd args"] [--check check.ts] [--pending 64] [--compile-seconds 120]
+[--limits manifest=BYTES,files=N,bytes=BYTES]` keeps one process that owns the GPU
 device and draws requests one at a time. It is upstreamed from creative's training host (`training/loft/host/`,
 16 Nov). Each scene is compiled in a child process that has no GPU: `loft build`, run with `LOFT_NO_GPU=1` inside the
 `--confine` command. Only the built directory (`docs/artefact_format.md`) crosses into the server. The server reads
@@ -117,21 +118,40 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
 
 ```
 {"id": "s1", "scene": "train/s1.ts", "camera": "fixed", "times": [0, 0.37, 0.91, 1.53], "size": "512x512", "out": "out/s1"}
-{"id": "s2", "artefact": "out/files/s2", "camera": {"kind": "perspective", "eye": [4.5, 4.5, 8], "target": [0, 0.7, 0], "fovY": 0.62}, "times": [1], "size": "512x512", "out": "out/s2"}
+{"id": "s2", "artefact": "out/files/s2", "camera": {"kind": "perspective", "eye": [4.5, 4.5, 8], "target": [0, 0.7, 0], "fovY": 0.62}, "times": [1], "size": "512x512", "out": "out/s2", "params": {"stormwing.span": 1.4}, "inputs": {"strike": 0.5}}
 
-{"id": "s1", "ok": true, "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
-{"id": "s2", "ok": false, "exit": 4, "line": "loft: scene: …", "detail": ["…"]}
+{"id": "s1", "ok": true, "tier": "C", "frames": [{"time": 0, "file": "/abs/out/s1/0.rgba", "sha256": "…"}, …], "ms": {"compile": 540, "load": 308, "frames": 48}, "cache": {"hits": …, "misses": …, "entries": …}}
+{"id": "s2", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: …", "detail": ["…"]}
 ```
 
 - `scene` (compiled here) or `artefact` (a directory you built, for example in your own sandbox); `camera` is a name
   the scene declares (or `front`, `side`, `top`, `three`), or a camera object. A camera object is how a host keeps
   its own camera without trusting the artefact's. Frames are raw RGBA, `width x height x 4` bytes, at
-  `<out>/<k>.rgba`. A `scene` request also leaves its build in `<out>/artefact/`.
+  `<out>/<k>.rgba`.
+- `params` (`{"name": number}`) and `inputs` (`{"name": number}`, or a list for a vector input) are optional and
+  work as `--param` and `--input` do. A name the scene does not declare, or the wrong number of components, is
+  refused as `usage` (2) by name, with the names the scene has.
+- Each request owns what it writes. A `scene` builds in a private directory under `$TMPDIR`, removed after its
+  answer (the build is not kept). Two requests in flight may not name overlapping `out` directories (the same one,
+  or one inside the other): the later is refused as `usage` (2) and names the request holding it. Once a request is
+  answered its `out` is free again.
+- An artefact is checked before any WGSL or bin file is read: the manifest's size, its format and version, that every
+  file it names is one plain name (no `/`, `..`) and a regular file (no links), each bin file's declared size, and
+  the totals against `--limits` (defaults: manifest 64 MiB, 65536 files, 1 GiB in all). Anything wrong is `load` (3).
+  `--check` then sees the bundle before it reaches the GPU.
+- Every answer carries `tier`. Only `"C"` (the compiled scene) exists; the field is there before an interpreter is.
+  A frame's identity is (scene, camera, time, size, params, inputs, tier, library commit, adapter, driver). In
+  training the tier is chosen once per sample and never promoted within a run, so a frame never depends on what the
+  server saw before.
 - A failed request is answered and the server goes on. `exit` and `line` are what `loft render` would have ended
-  with, from the table above. A refusal by `--check`, or a directory that cannot be read, is `load` (3). A compile
-  child killed by a signal, such as a CPU limit set by your confinement, is `internal` (1), because nobody knows whose
-  fault it was. A lost device is answered with 6 and ends the server with exit 6: start a new one. Requests still in
-  flight then get no answer.
+  with, from the table above. A refusal by `--check`, or a directory that cannot be read, is `load` (3). The
+  server's own limits answer `budget` (7, `loft: budget: …`), naming the limit: a compile still running after
+  `--compile-seconds` (killed), a compile killed by `SIGXCPU` (a CPU limit your confinement set; a wrapper that does
+  not `exec` reports it as exit 152, which counts too), or a request arriving while `--pending` requests are already
+  unanswered (refused at once). `budget` is not a verdict on the scene; decide yourself whether it is a penalty. A
+  compile killed by any other signal is `internal` (1), because nobody knows whose fault it was. A lost device
+  answers every request in flight with 6, then ends the server with exit 6: start a new one. Lines not yet read
+  when the device was lost get no answer.
 - Why JSON lines: any language reads them with no framing code, a request can be typed by hand, and pixels go through
   files, which the caller already uses for scenes and builds. The server prints nothing else on stdout; logs go to
   stderr.
@@ -142,9 +162,10 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
   one module, and a pipeline is a pure function of its WGSL and descriptor, so the cache cannot change pixels. Past
   8192 objects it is emptied between requests.
 - What stays the host's policy: the sandbox (`--confine` is a command prefix, such as creative's `confine.py`, split
-  on spaces), the screening of programs and allowed imports, time and CPU limits (set them in the confinement, since
-  the server has no timeout), and limits on what an artefact may ask for (`--check`, a module whose default export
-  gets each `Bundle` before it reaches the GPU and throws to refuse it). A scene with `recur` bakes on the GPU, so its
+  on spaces; it should `exec` the build so the deadline's kill reaches it), the screening of programs and allowed
+  imports, CPU and memory limits (set them in the confinement), a deadline on draws (the server has none: kill and
+  restart it), and limits on what an artefact may ask for beyond `--limits` (`--check`, a module whose default
+  export gets each `Bundle` before it reaches the GPU and throws to refuse it). A scene with `recur` bakes on the GPU, so its
   compile fails with exit 6. Build it outside serve and send the directory.
 - A built directory has no loop period yet, so a looping scene's time is not wrapped, the same as `render --artefact`.
 
