@@ -26,9 +26,10 @@
 // requests in flight may name overlapping `out` directories (the later one is refused), so frames written to `out`
 // are the request's own. An artefact is checked (names, links, sizes against --limits) before its files are read.
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Camera, View } from "../artefact.ts";
 import { EnvironmentError, LoadError, SceneError } from "../errors.ts";
 import { cachingDevice, type CachingDevice } from "../host/cache.ts";
@@ -40,7 +41,7 @@ import { parsePrecision, parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
 import { checkInputs, type InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
-import { buildOf, deviceOf, frameOf, identityId, type Identity } from "../identity.ts";
+import { buildOf, canonical, deviceOf, frameOf, identityId, type Identity } from "../identity.ts";
 import { ending, exitWith, headed, type Verdict } from "./verdict.ts";
 
 export type ServeCommand = {
@@ -74,7 +75,7 @@ type Shared = Omit<Identity, "frame"> & { readonly frame: Omit<Identity["frame"]
 
 type Answer =
   | { readonly id: string | number | null; readonly ok: true; readonly identity: Shared; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string; readonly id: string }[];
-      readonly ms: { readonly compile?: number; readonly load: number; readonly frames: number }; readonly cache: ReturnType<CachingDevice["counts"]> }
+      readonly ms: { readonly compile?: number; readonly load: number; readonly frames: number }; readonly cache?: ReturnType<CachingDevice["counts"]> }
   | { readonly id: string | number | null; readonly ok: false; readonly exit: number; readonly line: string; readonly detail: readonly string[] };
 
 const MAIN = new URL("./main.ts", import.meta.url).pathname;
@@ -281,6 +282,92 @@ function startDrawWorker(check: string | undefined, stopped: (v: Verdict) => voi
   };
 }
 
+/** `loft-draw serve` (rust/crates/loft-draw), its protocol version, and where `tools/dev.sh build loft-draw --fast` puts it. */
+const LOFT_DRAW = fileURLToPath(new URL("../../rust/target/lab/loft-draw", import.meta.url));
+const DRAW_WIRE = 1;
+
+/**
+ * The draw child as `loft-draw serve`, with startDrawWorker's interface. This process reads and checks the artefact
+ * (limits, --check, names, camera) and builds each frame's identity; the child loads, draws and writes `out/k.rgba`.
+ * Only resolved request data crosses the pipe, as canonical JSON (it keeps -0).
+ */
+function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => void): ReturnType<typeof startDrawWorker> {
+  type Boot = Exclude<DrawMessage, { kind: "answer" }>;
+  let starting = true, retired = false, boot!: (message: Boot) => void;
+  const ready = new Promise<Boot>((go) => { boot = go; });
+  const stop = (verdict: Verdict) => {
+    if (retired) return;
+    retired = true;
+    if (starting) boot({ kind: "stop", verdict });
+    else stopped(verdict);
+  };
+  if (!existsSync(LOFT_DRAW)) {
+    stop({ kind: "environment", message: `${LOFT_DRAW} is missing. Fix: tools/dev.sh build loft-draw --fast` });
+    return { ready, draw: () => new Promise<Answer>(() => {}), kill: async () => {} };
+  }
+  const child = Bun.spawn([LOFT_DRAW, "serve"], {
+    stdin: "pipe", stdout: "pipe", stderr: "inherit",
+    onExit(child, code, signal) { stop({ kind: "environment", message: `loft-draw ${child.pid} ended (${signal ?? `exit ${code}`}); the server ends: start a new one` }); },
+  });
+  const reader = child.stdout.getReader(), decoder = new TextDecoder();
+  let buffered = "";
+  const line = async (): Promise<Record<string, any>> => {
+    for (let at = buffered.indexOf("\n"); at < 0; at = buffered.indexOf("\n")) {
+      const { value, done } = await reader.read();
+      if (done) return new Promise(() => {}); // onExit answers
+      buffered += decoder.decode(value, { stream: true });
+    }
+    const [head, rest] = [buffered.slice(0, buffered.indexOf("\n")), buffered.slice(buffered.indexOf("\n") + 1)];
+    buffered = rest;
+    return JSON.parse(head);
+  };
+  let check: (b: Bundle) => void = () => {};
+  let device: Identity["device"];
+  void (async () => {
+    try {
+      if (checkPath !== undefined) check = (await import(resolve(checkPath))).default;
+      if (typeof check !== "function") throw new UsageError(`--check ${checkPath}: its default export is not a function`);
+      const r = await line();
+      if (r.wire !== DRAW_WIRE) throw new EnvironmentError(`${LOFT_DRAW} speaks wire ${r.wire}, this checkout ${DRAW_WIRE}: it is stale. Fix: tools/dev.sh build loft-draw --fast`, false);
+      device = r.device;
+      starting = false;
+      boot({ kind: "ready", adapter: r.adapter });
+    } catch (e) {
+      stop(verdictHere(e));
+    }
+  })();
+  const draw = async ({ req, dir, limits }: Draw): Promise<Answer> => {
+    let bundle: Bundle, camera: Camera;
+    try {
+      try { bundle = readBundle(dir, limits); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
+      try { check(bundle); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
+      checkParams(req.params, bundle.manifest);
+      checkInputs(bundle.manifest, req.inputs, { kind: "none" }, "serve");
+      camera = cameraFor(req.camera, bundle);
+    } catch (e) {
+      return failed(req.id, verdictHere(e));
+    }
+    child.stdin.write(canonical({ dir, camera, times: req.times, size: [req.size.width, req.size.height], params: req.params, inputs: req.inputs, precision: req.precision ?? "mixed", out: req.out }) + "\n");
+    child.stdin.flush();
+    const r = await line();
+    if (!r.ok) return failed(req.id, r.verdict);
+    const build = buildOf(bundle), view = (time: number): View => ({ camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false });
+    const identities = req.times.map((time): Identity => ({ build, frame: frameOf(bundle.manifest, view(time), r.precision, { kind: "frame" }), device }));
+    const { time: _, ...frame } = identities[0]!.frame;
+    const frames = r.frames.map((f: { file: string; sha256: string }, k: number) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
+    return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };
+  };
+  return {
+    ready,
+    draw,
+    async kill() {
+      retired = true;
+      child.kill("SIGKILL");
+      await child.exited;
+    },
+  };
+}
+
 async function drawWorker(checkPath: string | undefined) {
   console.log = console.error;
   const send = (message: DrawMessage) => process.send!(message);
@@ -402,7 +489,11 @@ export async function serve(cmd: ServeCommand) {
     process.stdout.write(text, () => process.exit(code));
   };
 
-  worker = startDrawWorker(cmd.check, closeWith);
+  // INTEGRATOR: classify LOFT_ENGINE once at the CLI boundary (plan §8.2) and pass it in; this is the draw child's switch.
+  const engine = process.env.LOFT_ENGINE ?? "ts";
+  if (engine !== "ts" && engine !== "rust") exitWith({ kind: "usage", message: `LOFT_ENGINE=${engine}: serve draws on "ts" or "rust" ("shadow" is for the corpus tools)` });
+  const startDraw = engine === "rust" ? startRustDraw : startDrawWorker;
+  worker = startDraw(cmd.check, closeWith);
   const boot = await worker.ready;
   if (boot.kind === "stop") {
     await worker.kill();
@@ -429,7 +520,7 @@ export async function serve(cmd: ServeCommand) {
     const deadline = performance.now() + cmd.drawSeconds * 1000;
     const budget = new Budget(`draw of request ${JSON.stringify(req.id)}: ran out of ${cmd.drawSeconds} s (--draw-seconds); request fewer or smaller frames, or raise --draw-seconds`);
     const checkTime = () => { if (performance.now() >= deadline) throw budget; };
-    const current = worker ??= startDrawWorker(cmd.check, closeWith);
+    const current = worker ??= startDraw(cmd.check, closeWith);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       // Spawning a replacement can already have consumed a very short budget.

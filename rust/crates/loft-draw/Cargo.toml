@@ -1,0 +1,20 @@
+[package]
+name = "loft-draw"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The headless executor: loft serve's draw child and loft-view's stills and timings (plan 2026-11-19 §4.1)."
+
+# loft-loader becomes loft-gpu in lane 3.2 (moved, API kept): this dependency is the one line that renames.
+[dependencies]
+loft-loader = { path = "../loft-loader" }
+wgpu = { workspace = true, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
+pollster = "0.4"
+png = "0.18"
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

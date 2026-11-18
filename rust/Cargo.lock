@@ -381,6 +381,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loft-draw"
+version = "0.1.0"
+dependencies = [
+ "loft-loader",
+ "png",
+ "pollster",
+ "serde",
+ "serde_json",
+ "sha2",
+ "wgpu",
+]
+
+[[package]]
 name = "loft-ir"
 version = "0.1.0"
 dependencies = [
