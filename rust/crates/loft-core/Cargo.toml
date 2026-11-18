@@ -8,6 +8,8 @@ description = "Loft's compiler core (plan 2026-11-19 §1.2): the op table, tape,
 
 [dependencies]
 libm.workspace = true
+loft-ir = { path = "../loft-ir" }
+naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
 
 [dev-dependencies]
 serde_json.workspace = true

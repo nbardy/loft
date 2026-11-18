@@ -41,12 +41,17 @@ pub struct Emitted {
 /// resource index and lanes per row (`[res, lanes]`). The module is validated as f32 before it is returned.
 pub fn module(g: &Graph, exports: &[(&str, u32)], at: &[[u32; 2]]) -> Result<Emitted, Error> {
     let raws = raw_names(g)?;
-    let mut e = Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], reads: vec![], raw_used: vec![] };
+    let mut e =
+        Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], reads: vec![], raw_used: vec![] };
     let mut tail = vec![];
     for &(name, d) in exports {
         let (params, result) = signature(g, d)?;
         let f = e.function(d)?;
-        let ps: Vec<String> = params.iter().enumerate().map(|(k, &b)| format!("a{k}: {}", ty_name(g.nodes[b as usize].ty, "lf"))).collect();
+        let ps: Vec<String> = params
+            .iter()
+            .enumerate()
+            .map(|(k, &b)| format!("a{k}: {}", ty_name(g.nodes[b as usize].ty, "lf")))
+            .collect();
         let args: Vec<String> = (0..params.len()).map(|k| format!("a{k}")).collect();
         let ret = ty_name(g.nodes[result as usize].ty, "lf");
         tail.push(format!("fn {name}({}) -> {ret} {{ return {f}({}); }}", ps.join(", "), args.join(", ")));
@@ -54,18 +59,29 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &[[u32; 2]]) -> Result<Emi
     let (params, inputs) = (0..g.decls.len()).fold((0, 0), |(p, i), d| match g.decls[d].tag {
         Tag::Param => (p.max(at[d][0] / 4 + 1), i),
         Tag::Input => (p, i.max(at[d][0] + 1)),
-        Tag::Fn | Tag::Loop | Tag::Kernel | Tag::Draw | Tag::Pass | Tag::Medium | Tag::Check | Tag::Solve | Tag::Camera => (p, i),
+        Tag::Fn
+        | Tag::Loop
+        | Tag::Kernel
+        | Tag::Draw
+        | Tag::Pass
+        | Tag::Medium
+        | Tag::Check
+        | Tag::Solve
+        | Tag::Camera => (p, i),
     });
     let mut lines: Vec<(String, Src)> = vec![];
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
-    put(format!("struct Frame {{ time: f32, params: array<vec4<f32>, {}>, inputs: array<vec4<f32>, {}> }}", params.max(1), inputs.max(1)));
+    put(format!(
+        "struct Frame {{ time: f32, params: array<vec4<f32>, {}>, inputs: array<vec4<f32>, {}> }}",
+        params.max(1),
+        inputs.max(1)
+    ));
     put("@group(0) @binding(0) var<uniform> frame: Frame;".into());
     for (k, &kern) in e.reads.iter().enumerate() {
         put(format!("@group(1) @binding({k}) var<storage, read> r{}: array<vec4<f32>>;", at[kern as usize][0]));
     }
-    for &n in &e.raw_used {
-        let Some(loft_ir::graph::Node { op: loft_ir::graph::Op::Raw(sym), .. }) = g.nodes.get(n as usize) else { unreachable!("raw_used holds Raw nodes") };
-        lines.extend(g.sym(*sym).lines().enumerate().map(|(k, t)| (t.to_string(), Src::Raw(n, k as u32))));
+    for &(n, sym) in &e.raw_used {
+        lines.extend(g.sym(sym).lines().enumerate().map(|(k, t)| (t.to_string(), Src::Raw(n, k as u32))));
     }
     for &d in &e.order {
         lines.extend(e.fns[&d].1.iter().map(|l| (l.text.clone(), Src::Gen(l.node))));
@@ -92,7 +108,8 @@ pub fn validate(g: &Graph, m: &Emitted, f16: bool) -> Result<(), Error> {
         };
         Error::Scene { site, fault: SceneFault::Wgsl { line, msg: msg.into() } }
     };
-    let module = naga::front::wgsl::parse_str(&src).map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message().into()))?;
+    let module = naga::front::wgsl::parse_str(&src)
+        .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message().into()))?;
     let caps = naga::valid::Capabilities::default() | naga::valid::Capabilities::SHADER_FLOAT16;
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
         .validate(&module)
@@ -122,8 +139,14 @@ fn raw_names(g: &Graph) -> Result<HashMap<u32, String>, Error> {
             let k = line.unwrap_or(2).saturating_sub(2);
             Error::Scene { site: raw_site(g, n, k), fault: SceneFault::Wgsl { line: k + 1, msg: msg.into() } }
         };
-        let m = naga::front::wgsl::parse_str(&src).map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))?;
-        let name = m.functions.iter().last().and_then(|(_, f)| f.name.clone()).ok_or_else(|| refuse(None, "a raw function source declares no function"))?;
+        let m = naga::front::wgsl::parse_str(&src)
+            .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message()))?;
+        let name = m
+            .functions
+            .iter()
+            .last()
+            .and_then(|(_, f)| f.name.clone())
+            .ok_or_else(|| refuse(None, "a raw function source declares no function"))?;
         by_sym.insert(sym, name.clone());
         out.insert(n, name);
     }
@@ -150,7 +173,9 @@ struct Module<'g> {
     order: Vec<u32>,
     out: Vec<String>,
     reads: Vec<u32>,
-    raw_used: Vec<u32>,
+    /// One (first calling node, source) per distinct raw source. Deduplicated by source, not by function name: two
+    /// sources declaring one name both go in, and Naga refuses the redefinition at the second author's line.
+    raw_used: Vec<(u32, u32)>,
 }
 
 impl Module<'_> {
@@ -168,7 +193,11 @@ impl Module<'_> {
         }
         let r = b.need(result)?;
         let (lines, needs) = b.lines();
-        let ps: Vec<String> = params.iter().enumerate().map(|(k, &p)| format!("a{k}: {}", ty_name(g.nodes[p as usize].ty, "lf"))).collect();
+        let ps: Vec<String> = params
+            .iter()
+            .enumerate()
+            .map(|(k, &p)| format!("a{k}: {}", ty_name(g.nodes[p as usize].ty, "lf")))
+            .collect();
         let ret = ty_name(g.nodes[result as usize].ty, "lf");
         let sig = format!("({}) -> {ret} {{", ps.join(", "));
         let mut h = Fnv::default();
@@ -181,10 +210,9 @@ impl Module<'_> {
                 self.reads.push(k);
             }
         }
-        for n in needs.raws {
-            let first = self.raw_used.iter().all(|&m| self.raws[&m] != self.raws[&n]);
-            if first {
-                self.raw_used.push(n);
+        for (n, sym) in needs.raws {
+            if self.raw_used.iter().all(|&(_, s)| s != sym) {
+                self.raw_used.push((n, sym));
             }
         }
         if self.out.contains(&name) {
@@ -232,20 +260,27 @@ pub(crate) fn lit(g: &Graph, i: u32, ty: Ty) -> String {
     match ty.width() {
         None => (if at(0) == 0.0 { "false" } else { "true" }).into(),
         Some(1) => format!("lf({:?})", at(0) as f32),
-        Some(w) => format!("{}({})", ty_name(ty, "lf"), (0..u32::from(w)).map(|k| format!("{:?}", at(k) as f32)).collect::<Vec<_>>().join(", ")),
+        Some(w) => format!(
+            "{}({})",
+            ty_name(ty, "lf"),
+            (0..u32::from(w)).map(|k| format!("{:?}", at(k) as f32)).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
 /// An operator's WGSL from its operands' text and types. Spellings come from `prim::PRIMS`; `vec`, `pick` and the
 /// scalar forms WGSL lacks (`normalize`, `dot` of scalars) are written here.
 pub(crate) fn spell(p: Prim, xs: &[String], tys: &[Ty], ty: Ty) -> String {
-    let splat = |k: usize| if tys[k] == ty || tys[k] != Ty::F32 { xs[k].clone() } else { format!("{}({})", ty_name(ty, "lf"), xs[k]) };
+    let splat = |k: usize| {
+        if tys[k] == ty || tys[k] != Ty::F32 { xs[k].clone() } else { format!("{}({})", ty_name(ty, "lf"), xs[k]) }
+    };
     let c = match core(p) {
-        Some(c) => c,
-        None if p == Prim::Vec => return format!("{}({})", ty_name(ty, "lf"), xs.join(", ")),
+        Ok(c) => c,
+        Err(Own::Vec) => return format!("{}({})", ty_name(ty, "lf"), xs.join(", ")),
         // `pick` is a chain of selects on `i == k`, as src/expr.ts defines it: out of range reads the first value.
-        None => {
-            return (2..xs.len()).fold(splat(1), |acc, k| format!("select({acc}, {}, {} == lf({}.0))", splat(k), xs[0], k - 1));
+        Err(Own::Pick) => {
+            return (2..xs.len())
+                .fold(splat(1), |acc, k| format!("select({acc}, {}, {} == lf({}.0))", splat(k), xs[0], k - 1));
         }
     };
     let def = prim::def(c);
@@ -255,18 +290,26 @@ pub(crate) fn spell(p: Prim, xs: &[String], tys: &[Ty], ty: Ty) -> String {
         (Spell::Infix(op), _, _) => format!("({} {op} {})", xs[0], xs[1]),
         (Spell::Prefix(op), _, _) => format!("({op}{})", xs[0]),
         (Spell::Mod, _, _) => format!("({a} - {b} * floor({a} / {b}))", a = xs[0], b = xs[1]),
-        (Spell::Call(f), _, _) if def.splat => format!("{f}({})", (0..xs.len()).map(splat).collect::<Vec<_>>().join(", ")),
+        (Spell::Call(f), _, _) if def.splat => {
+            format!("{f}({})", (0..xs.len()).map(splat).collect::<Vec<_>>().join(", "))
+        }
         (Spell::Call(f), _, _) => format!("{f}({})", xs.join(", ")),
         (Spell::Select, _, _) => unreachable!("select is written by the body (branch-local if)"),
     }
 }
 
+/// The loft-ir operators with no row in loft-core's table: emit writes them itself.
+enum Own {
+    Vec,
+    Pick,
+}
+
 /// loft-ir's operator as loft-core's table row. Two enums for one operator set is a wave-1 seam (lane 1.1 and 1.3 each
 /// wrote one); when they become one `Prim` this match goes away.
 #[rustfmt::skip]
-fn core(p: Prim) -> Option<prim::Prim> {
+fn core(p: Prim) -> Result<prim::Prim, Own> {
     use prim::Prim as C;
-    Some(match p {
+    Ok(match p {
         Prim::Add => C::Add, Prim::Sub => C::Sub, Prim::Mul => C::Mul, Prim::Div => C::Div, Prim::Min => C::Min,
         Prim::Max => C::Max, Prim::Pow => C::Pow, Prim::Mod => C::Mod, Prim::Rem => C::Rem, Prim::Atan2 => C::Atan2,
         Prim::Step => C::Step, Prim::Neg => C::Neg, Prim::Abs => C::Abs, Prim::Sign => C::Sign, Prim::Floor => C::Floor,
@@ -279,6 +322,7 @@ fn core(p: Prim) -> Option<prim::Prim> {
         Prim::Dot => C::Dot, Prim::Cross => C::Cross, Prim::Lt => C::Lt, Prim::Gt => C::Gt, Prim::Le => C::Le,
         Prim::Ge => C::Ge, Prim::Eq => C::Eq, Prim::Ne => C::Ne, Prim::And => C::And, Prim::Or => C::Or, Prim::Not => C::Not,
         Prim::Select => C::Select,
-        Prim::Vec | Prim::Pick => return None,
+        Prim::Vec => return Err(Own::Vec),
+        Prim::Pick => return Err(Own::Pick),
     })
 }

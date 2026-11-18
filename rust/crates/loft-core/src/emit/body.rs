@@ -9,7 +9,7 @@
 use super::{Line, lit, spell, ty_name};
 use loft_ir::graph::{Graph, Leaf, Node, Op, Prim, Ty};
 use loft_ir::{Error, error::SceneFault};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,7 +37,8 @@ enum Use {
 #[derive(Default)]
 pub struct Needs {
     pub calls: Vec<u32>,
-    pub raws: Vec<u32>,
+    /// (calling node, source symbol) per raw call.
+    pub raws: Vec<(u32, u32)>,
     pub reads: Vec<u32>,
 }
 
@@ -70,12 +71,7 @@ pub fn unsupported(g: &Graph, n: u32, what: &str) -> Error {
 
 impl<'g> Body<'g> {
     /// Places and writes the body of `result` with parameters `params` (binder nodes, named `a0`, `a1`, ...).
-    pub fn new(
-        g: &'g Graph,
-        at: &'g [[u32; 2]],
-        raw_names: &'g HashMap<u32, String>,
-        params: &[u32],
-    ) -> Self {
+    pub fn new(g: &'g Graph, at: &'g [[u32; 2]], raw_names: &'g HashMap<u32, String>, params: &[u32]) -> Self {
         let names = params.iter().enumerate().map(|(k, &b)| (b, format!("a{k}"))).collect();
         let root = Block { parent: 0, depth: 0, kind: Kind::Root };
         #[rustfmt::skip]
@@ -136,7 +132,7 @@ impl<'g> Body<'g> {
     pub fn place(&mut self, result: u32) -> Vec<u32> {
         let g = self.g;
         let mut live = vec![result];
-        let mut seen: HashMap<u32, ()> = HashMap::from([(result, ())]);
+        let mut seen: HashSet<u32> = HashSet::from([result]);
         let mut binder_of: HashMap<u32, u32> = HashMap::new();
         let mut i = 0;
         while i < live.len() {
@@ -149,7 +145,7 @@ impl<'g> Body<'g> {
                 more.extend_from_slice(roots);
             }
             for m in more {
-                if seen.insert(m, ()).is_none() {
+                if seen.insert(m) {
                     live.push(m);
                 }
             }
@@ -164,16 +160,21 @@ impl<'g> Body<'g> {
                     let (roots, _) = loop_parts(g, decl);
                     roots.iter().flat_map(|r| deps[r].iter().copied()).filter(|&l| l != decl).collect()
                 }
-                Op::Lit(_) | Op::Leaf(_) | Op::Prim(_) | Op::Swizzle(_) | Op::Call(_) | Op::Fetch { .. } | Op::Grad | Op::Raw(_) => {
-                    g.args_of(self.node(n)).iter().flat_map(|a| deps[a].iter().copied()).collect()
-                }
+                Op::Lit(_)
+                | Op::Leaf(_)
+                | Op::Prim(_)
+                | Op::Swizzle(_)
+                | Op::Call(_)
+                | Op::Fetch { .. }
+                | Op::Grad
+                | Op::Raw(_) => g.args_of(self.node(n)).iter().flat_map(|a| deps[a].iter().copied()).collect(),
             };
             d.sort_unstable();
             d.dedup();
             deps.insert(n, d);
         }
         let mut uses: HashMap<u32, Vec<Use>> = HashMap::from([(result, vec![Use::At(0)])]);
-        let mut rooted: HashMap<u32, ()> = HashMap::new();
+        let mut rooted: HashSet<u32> = HashSet::new();
         for &n in live.iter().rev() {
             let node = self.node(n);
             if matches!(node.op, Op::Lit(_) | Op::Leaf(_)) {
@@ -204,21 +205,35 @@ impl<'g> Body<'g> {
                 Op::Loop { decl, .. } => {
                     let at = self.loop_at.get(&decl).map_or(b, |&x| self.lca(x, b));
                     self.loop_at.insert(decl, at);
-                    if rooted.insert(decl, ()).is_none() {
+                    if rooted.insert(decl) {
                         let (roots, a) = loop_parts(g, decl);
                         roots[..1 + a].iter().for_each(|&r| push(r, Use::Stmt(decl)));
                         roots[2 + 2 * a..].iter().for_each(|&r| push(r, Use::Body(decl)));
                     }
                 }
-                Op::Prim(_) | Op::Swizzle(_) | Op::Call(_) | Op::Fetch { .. } | Op::Grad | Op::Raw(_) | Op::Lit(_) | Op::Leaf(_) => {
-                    args.iter().for_each(|&m| push(m, Use::At(b)))
-                }
+                Op::Prim(_)
+                | Op::Swizzle(_)
+                | Op::Call(_)
+                | Op::Fetch { .. }
+                | Op::Grad
+                | Op::Raw(_)
+                | Op::Lit(_)
+                | Op::Leaf(_) => args.iter().for_each(|&m| push(m, Use::At(b))),
             }
         }
-        live.iter().filter_map(|&n| match self.node(n).op {
-            Op::Call(d) => Some(d),
-            Op::Lit(_) | Op::Leaf(_) | Op::Prim(_) | Op::Swizzle(_) | Op::Fetch { .. } | Op::Loop { .. } | Op::Grad | Op::Raw(_) => None,
-        }).collect()
+        live.iter()
+            .filter_map(|&n| match self.node(n).op {
+                Op::Call(d) => Some(d),
+                Op::Lit(_)
+                | Op::Leaf(_)
+                | Op::Prim(_)
+                | Op::Swizzle(_)
+                | Op::Fetch { .. }
+                | Op::Loop { .. }
+                | Op::Grad
+                | Op::Raw(_) => None,
+            })
+            .collect()
     }
 
     fn emit(&mut self, block: u32, text: String, node: Option<u32>) {
@@ -256,7 +271,9 @@ impl<'g> Body<'g> {
                 self.need_loop(decl)?;
                 return Ok(format!("s{}_{k}", self.loops[&decl]));
             }
-            Op::Grad => return Err(unsupported(g, n, "a gradient request (rewritten during interning, which has not run)")),
+            Op::Grad => {
+                return Err(unsupported(g, n, "a gradient request (rewritten during interning, which has not run)"));
+            }
             Op::Prim(Prim::Select) => return self.select(n, args, ty),
             Op::Prim(p) => {
                 let xs = args.iter().map(|&a| self.need(a)).collect::<Result<Vec<_>, _>>()?;
@@ -269,7 +286,8 @@ impl<'g> Body<'g> {
                     (Ty::F32, 1) => x,
                     (Ty::F32, _) => format!("{}({x})", ty_name(ty, "lf")),
                     (Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool | Ty::Rec(_), _) => {
-                        let c: String = (0..sel.len).map(|k| ["x", "y", "z", "w"][(sel.comps >> (2 * k)) as usize & 3]).collect();
+                        let c: String =
+                            (0..sel.len).map(|k| ["x", "y", "z", "w"][(sel.comps >> (2 * k)) as usize & 3]).collect();
                         format!("{x}.{c}")
                     }
                 }
@@ -279,10 +297,10 @@ impl<'g> Body<'g> {
                 self.needs.calls.push(d);
                 format!("{}({})", self.fn_names[&d], xs.join(", "))
             }
-            Op::Raw(_) => {
+            Op::Raw(sym) => {
                 let xs = args.iter().map(|&a| Ok(format!("{}({})", ty_name(self.node(a).ty, "f32"), self.need(a)?)));
                 let xs = xs.collect::<Result<Vec<_>, Error>>()?;
-                self.needs.raws.push(n);
+                self.needs.raws.push((n, sym));
                 format!("{}({}({}))", ty_name(ty, "lf"), self.raw_names[&n], xs.join(", "))
             }
             Op::Fetch { kernel, lane } => {
@@ -319,7 +337,8 @@ impl<'g> Body<'g> {
             true => {
                 self.emit(at, format!("var {name}: {};", ty_name(ty, "lf")), Some(n));
                 self.emit(at, format!("if ({c}) {{"), Some(n));
-                let [(t, tx), (f, fx)]: [_; 2] = arms.try_into().unwrap_or_else(|_| unreachable!("select has two arms"));
+                let [(t, tx), (f, fx)]: [_; 2] =
+                    arms.try_into().unwrap_or_else(|_| unreachable!("select has two arms"));
                 self.wrap(at, t, format!("{name} = {tx};"), n);
                 self.emit(at, "} else {".into(), Some(n));
                 self.wrap(at, f, format!("{name} = {fx};"), n);
@@ -358,8 +377,14 @@ impl<'g> Body<'g> {
             return Ok(());
         }
         let (roots, a) = loop_parts(self.g, l);
-        let (count, init, binders, index, next, stop) =
-            (roots[0], &roots[1..1 + a], &roots[1 + a..1 + 2 * a], roots[1 + 2 * a], &roots[2 + 2 * a..2 + 3 * a], roots.get(2 + 3 * a));
+        let (count, init, binders, index, next, stop) = (
+            roots[0],
+            &roots[1..1 + a],
+            &roots[1 + a..1 + 2 * a],
+            roots[1 + 2 * a],
+            &roots[2 + 2 * a..2 + 3 * a],
+            roots.get(2 + 3 * a),
+        );
         let at = self.loop_at[&l];
         let id = self.fresh("L");
         let starts = init.iter().map(|&i| self.need(i)).collect::<Result<Vec<_>, _>>()?;

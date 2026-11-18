@@ -159,7 +159,11 @@ fn program(seed: u64) -> (B, u32) {
     pool.push(b.node(Op::Raw(rs), Ty::V3, &[x, p]));
     // A march-like loop: state (f32 t, vec3 q), index i, stop when t passes a bound.
     let t0 = b.lit(&[0.0], Ty::F32);
-    let (st, sq, si) = (b.node(Op::Leaf(Leaf::Bind(50)), Ty::F32, &[]), b.node(Op::Leaf(Leaf::Bind(51)), Ty::V3, &[]), b.node(Op::Leaf(Leaf::Bind(52)), Ty::F32, &[]));
+    let (st, sq, si) = (
+        b.node(Op::Leaf(Leaf::Bind(50)), Ty::F32, &[]),
+        b.node(Op::Leaf(Leaf::Bind(51)), Ty::V3, &[]),
+        b.node(Op::Leaf(Leaf::Bind(52)), Ty::F32, &[]),
+    );
     let mut inner = pool.clone();
     inner.extend([st, sq, si]);
     grow(&mut b, &mut r, &mut inner, 60);
@@ -221,7 +225,9 @@ fn random_programs_validate_both_ways() {
         loops += t.matches("for (").count();
         lets += t.matches("let v").count();
     }
-    println!("1000 programs, {nodes} nodes, {lets} statements, {loops} loops, {ifs} branch-local ifs; all valid as f32 and f16");
+    println!(
+        "1000 programs, {nodes} nodes, {lets} statements, {loops} loops, {ifs} branch-local ifs; all valid as f32 and f16"
+    );
     assert_eq!(seen.len(), Prim::ALL.len(), "every operator is emitted");
 }
 
@@ -230,7 +236,9 @@ fn random_programs_validate_both_ways() {
 fn permute(b: &B, main: u32, seed: u64, dead: usize) -> (B, u32) {
     let mut r = Rng(seed | 1);
     let mut src = b.clone();
-    let mut pool: Vec<u32> = (0..src.nodes.len() as u32).filter(|&n| matches!(src.nodes[n as usize].op, Op::Lit(_) | Op::Leaf(Leaf::Time))).collect();
+    let mut pool: Vec<u32> = (0..src.nodes.len() as u32)
+        .filter(|&n| matches!(src.nodes[n as usize].op, Op::Lit(_) | Op::Leaf(Leaf::Time)))
+        .collect();
     grow(&mut src, &mut r, &mut pool, dead);
     let n = src.nodes.len();
     let deps = |x: usize| -> Vec<u32> {
@@ -268,7 +276,8 @@ fn permute(b: &B, main: u32, seed: u64, dead: usize) -> (B, u32) {
     let mut out = B { lits: src.lits.clone(), syms: src.syms.clone(), ends: src.ends.clone(), ..B::default() };
     for &o in &order {
         let node = src.nodes[o];
-        let args: Vec<u32> = src.args[node.args as usize..(node.args + node.n) as usize].iter().map(|&a| new_of[a as usize]).collect();
+        let args: Vec<u32> =
+            src.args[node.args as usize..(node.args + node.n) as usize].iter().map(|&a| new_of[a as usize]).collect();
         let d = |x: u32| dnew[x as usize];
         let op = match node.op {
             Op::Call(x) => Op::Call(d(x)),
@@ -282,7 +291,8 @@ fn permute(b: &B, main: u32, seed: u64, dead: usize) -> (B, u32) {
     }
     for &o in &dorder {
         let dl = src.decls[o];
-        let roots: Vec<u32> = src.roots[dl.roots as usize..(dl.roots + dl.n) as usize].iter().map(|&x| new_of[x as usize]).collect();
+        let roots: Vec<u32> =
+            src.roots[dl.roots as usize..(dl.roots + dl.n) as usize].iter().map(|&x| new_of[x as usize]).collect();
         out.decl(dl.tag, dl.arity, &roots, src.at[o]);
     }
     (out, dnew[main as usize])
@@ -333,4 +343,23 @@ fn a_value_one_arm_reads_is_computed_under_if() {
     let t = emit_text(&b, f);
     println!("{t}");
     assert!(t.contains("if (v0) {\n    let v1 = exp(a0);\n    let v2 = sin(v1);"), "exp and sin move under the if");
+}
+
+/// Two raw sources that declare the same function name are refused (Naga: redefinition), never silently merged so
+/// that the second author's calls run the first author's body.
+#[test]
+fn two_raw_sources_with_one_name_are_refused() {
+    let mut b = B::default();
+    let x = b.node(Op::Leaf(Leaf::Bind(0)), Ty::F32, &[]);
+    let s1 = b.sym("fn wobble(x: f32) -> f32 {\n  return x * 2.0;\n}");
+    let s2 = b.sym("fn wobble(x: f32) -> f32 {\n  return x * 3.0;\n}");
+    let c1 = b.node(Op::Raw(s1), Ty::F32, &[x]);
+    let c2 = b.node(Op::Raw(s2), Ty::F32, &[x]);
+    let sum = b.node(Op::Prim(Prim::Add), Ty::F32, &[c1, c2]);
+    let f = b.decl(Tag::Fn, 1, &[x, sum], [0, 0]);
+    let g = b.graph();
+    match module(&g, &[("paint", f)], &b.at) {
+        Err(Error::Scene { fault: SceneFault::Wgsl { msg, .. }, .. }) => println!("refused: {msg}"),
+        other => panic!("expected Scene{{Wgsl}}, got {:?}", other.map(|m| m.text)),
+    }
 }
