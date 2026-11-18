@@ -307,11 +307,47 @@ Rules the code keeps, each where it bites:
   raw code calls is emitted on its own over variables of its declared types. The twin's error and a ranged check's
   refusal quote `raw function pcg at eel.ts:14: u32 integers` (`markRaw`/`rawReasonOf` in `src/expr.ts`).
 - **Sites.** Each node first built from text records `file:line fn` off the interned key (`siteOfNode`); `emitWgsl`
-  takes an optional comment callback that ends a statement with it (for `loft show`, lane L4).
+  takes an optional comment callback that ends a statement with it (for `loft show`, lane L4, below).
 
 Not built here: holes holding functions or records inside raw text, and raw code calling prelude functions directly
 (refused with the fix: wrap it in a graph function of the module), both for lane L6; `wgslFn` stays until lane L5
 deletes `src/lib/wgsl.ts` with its callers; integer graph types (phase 2).
+
+#### Generated code made visible (lane L4, as built 2026-11-18)
+
+Author text reaches the GPU two ways, and each keeps its line:
+- **Raw functions are placed verbatim.** `src/text/index.ts` registers each raw function's library text with its first
+  line (`src/authored.ts`); `lower` finds the registered texts in each chunk it writes and records where they sit,
+  `Manifest.authored` (chunk name to `AuthorLines`: chunk lines `from` .. `from + lines - 1` are the author's lines
+  `line` ..). A registry rather than a field carried through the compiler: shaders are assembled by concatenation in
+  many places, and a text found where it ended up needs none of them to track offsets. The field is absent when a scene
+  has no raw text, so every other artefact is byte-identical.
+- **Graph functions are lowered to statements**, each node with its site. A compiler rewrite (`replace` when a
+  frame-uniform part is hoisted into a table, `fold` of a constant sub-graph) makes new nodes; `rebuild` remembers the
+  node each was made from (`rewrittenFrom`), so the rewritten statement keeps the author's line.
+
+**A GPU refusal is classified by its line.** When Tint refuses a module, the host (`src/host/host.ts`
+`authorRefusal`) reads the first `:line:col error:` of its message, finds the chunk that line starts in (chunks are
+concatenated with nothing between) and asks `Manifest.authored`. An author line is a `ShaderTextError`, a `SceneError`
+whose site is that line: `loft: scene: examples/x.ts:9: given raw function grain with a line the GPU refused
+(unresolved value 'hsh'); ...`, exit 4, never retried. Any other line is the library's and stays an
+`EnvironmentError` (exit 6, retried on fresh devices). Raw compute keeps its own rule (a module labelled `compute "..."`
+is the scene's) until lane L6 registers its texts. The same mapping runs on a built directory: the field is in the
+manifest, checked when the files are read.
+
+**`loft show <scene> [--thing name] [--variant v]`** (`src/cli/show.ts`) prints the f32 build's modules: without
+`--thing`, one line per module with its line count and how many lines are sited; with it, every module whose label
+names the thing, whole, so the printed text compiles as one module. A comment opens each chunk and says who wrote it
+(`no sites` for the library's text or the scene's call form, `92 statements lowered from the scene's text`,
+`raw function tint from x.ts:21`); a statement lowered from
+text ends `/* x.ts:12 flight */` (a block comment: some emitters join statements onto one line); a raw function's
+lines end `// x.ts:22`. It sets `noteStatements` before the scene is imported (drawables may emit as they are
+built), which changes only comments. On the section 3 dust burst (`tests/fixtures/show/dust_burst.ts`) all 8 modules
+compile as printed and all 22 computing lines of its text are cited (tests/show.gpu.test.ts).
+
+Two departures from the design: the prelude is printed whole, not as declarations, because the design's own check asks
+that the text compile as one module; and there is no `--stage`, because a draw's vertex and fragment entries are one
+module (pose and compute modules are selected by `--thing` on their labels).
 
 ## 3. The Artefact (`src/artefact.ts`, done)
 

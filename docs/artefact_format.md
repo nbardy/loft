@@ -110,7 +110,11 @@ and the Rust loader require a finished artefact and name the fix if handed the s
 6. **Pipeline layouts.** For each: `createPipelineLayout({ label, bindGroupLayouts: ids -> layouts })`.
 7. **Shader modules.** For each `modules[i]`: its code is the texts of `chunks` concatenated in order with nothing
    between them; `createShaderModule({ label, code })`. (A module's first chunk is normally the prelude: the format
-   carries it, a loader has no copy of its own.) Report a compile error with the module's label.
+   carries it, a loader has no copy of its own.) Report a compile error with the module's label. Optional
+   `authored` (any version; absent in most files) maps a chunk name to the lines of it the scene's author wrote, a list
+   of `{ from, lines, file, line, what }`: chunk lines `from` to `from + lines - 1` (from 0) are lines `line` onward of
+   `file`, in `what` (`raw function pcg`). A compile error whose first `:line:col error:` falls on such a line is the
+   scene's (Loft reports it at the author's line, exit 4); any other is the loader's or the GPU's.
 8. **Compute pipelines.** For each: `createComputePipeline({ label, layout, compute: { module, entryPoint } })`.
 9. **Render pipelines.** For each: `createRenderPipeline` with `layout`, `vertex: { module, entryPoint, constants }`,
    `fragment: { module, entryPoint, constants, targets }`, `primitive`, `depthStencil` when present, `multisample`.

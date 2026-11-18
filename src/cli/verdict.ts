@@ -37,6 +37,15 @@ async function isLibraryRefusal(e: Error): Promise<boolean> {
   return kinds.some((k) => e instanceof k);
 }
 
+/**
+ * The author's line a scene error names itself, where no stack frame can: the GPU refused the author's WGSL, raised by
+ * the host (src/host/host.ts `ShaderTextError`), whose stack is all Loft's.
+ */
+async function authorSite(e: SceneError): Promise<string | undefined> {
+  const { ShaderTextError } = await import("../host/host.ts");
+  return e instanceof ShaderTextError ? e.site : undefined;
+}
+
 /** A refusal the library raised on purpose, with a message meant for the scene's writer. */
 export async function isTypedRefusal(e: unknown): Promise<boolean> {
   return e instanceof SceneError || e instanceof DesignError || e instanceof LoadError || (e instanceof Error && await isLibraryRefusal(e));
@@ -55,7 +64,7 @@ export async function verdictOf(e: unknown): Promise<Verdict> {
     }
   }
   if (e instanceof LoadError) return { kind: "load", message: e.message };
-  if (e instanceof SceneError) return { kind: "scene", message: e.message, site: siteOf(e.stack) };
+  if (e instanceof SceneError) return { kind: "scene", message: e.message, site: await authorSite(e) ?? siteOf(e.stack) };
   if (e instanceof EnvironmentError) return { kind: "environment", message: e.message };
   if (e instanceof ChecksFailed) return { kind: "check", message: e.message };
   if (await isLibraryRefusal(e)) return { kind: "scene", message: e.message, site: siteOf(e.stack) };

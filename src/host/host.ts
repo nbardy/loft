@@ -16,13 +16,13 @@
 // This file imports no bun-only module, so a browser bundle of src/host (minus headless.ts and files.ts) stays clean.
 
 import { EnvironmentError, SceneError } from "../errors.ts";
-import { LIGHT_SAMPLE_INPUT, replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
+import { authorLineAt, LIGHT_SAMPLE_INPUT, replayClocks, replayStep, type ReplayClock, type Artefact, type CpuUpload, type FrameState, type FrameStats, type Host, type Loaded, type View } from "../artefact.ts";
 import { bakeRecurrences, readBake, recordSteps } from "./bake.ts";
 import { checkComputeData } from "./compute_data.ts";
 import { cameraMatrices } from "./camera.ts";
 import { planFrame, type Bounds, type Memory, type Plan } from "./detail.ts";
 import { FRAME_FLOATS, lower } from "./lower.ts";
-import { COLOR_FORMAT, COMPUTE_TEXEL_BYTES, type Bundle, type ComputeRun, type Dispatch, type RawDispatch, type TextureDesc, type FrameWrite, type FramePrecision, type Precision, type Manifest, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
+import { COLOR_FORMAT, COMPUTE_TEXEL_BYTES, type Bundle, type ComputeRun, type Dispatch, type RawDispatch, type TextureDesc, type FrameWrite, type FramePrecision, type Precision, type Manifest, type ModuleDesc, type RenderPassDesc, type Replay, type Target, type TextureSize } from "./manifest.ts";
 import { selectPrecision } from "./precision.ts";
 import { profileFrames, type Profile } from "./profile.ts";
 import { stillFrame, type StillSpec } from "./still.ts";
@@ -173,18 +173,56 @@ const bits = <K extends string>(table: Record<K, number>, names: readonly K[]): 
 type Settled<T> = { readonly ok: true; readonly v: T } | { readonly ok: false; readonly message: string };
 const settle = <T>(create: () => Promise<T>): Promise<Settled<T>> =>
   new Promise<T>((resolve) => resolve(create())).then((v) => ({ ok: true as const, v }), (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : String(e) }));
-// The WGSL and descriptors are the compiler's, already accepted from the scene: a refusal here is the GPU stack's
-// (or a compiler bug), never the scene's, and a fresh device may pass (src/cli/main.ts retries).
+// Except at the author's own lines (`Manifest.authored`, mapped by `authorRefusal`) and in raw compute, the WGSL and
+// descriptors are the compiler's, already accepted from the scene: a refusal is the GPU stack's (or a compiler bug),
+// never the scene's, and a fresh device may pass (src/cli/main.ts retries).
 const refused = (what: string, message: string) => what.startsWith('compute "')
   ? new SceneError(what, message, "valid WGSL and bindings for the declared compute entry", "correct the named WGSL entry or declaration")
   : new EnvironmentError(`${what}:\n${message}`, true);
+
+/**
+ * The GPU refused a line of WGSL the scene's author wrote (a raw function of `wgsl` text): the scene's mistake, at the
+ * author's line. `site` is that line (`examples/eel.ts:14`); the message quotes it as the GPU read it (holes replaced),
+ * the line of the module it sits at, and the GPU's own text.
+ */
+export class ShaderTextError extends SceneError {
+  constructor(readonly site: string, what: string, error: string, quoted: string, module: string, line: number, gpu: string) {
+    super(site, `${what} with a line the GPU refused (${error})`, "WGSL the GPU compiles: only the GPU reads a raw function", "correct that line (quoted above, with the GPU's message)");
+    this.message += `\n  ${quoted.trim()}\n  (line ${line} of ${module} as compiled; \`loft show <scene>\` prints it with your lines marked)\n${gpu.trim()}`;
+  }
+}
+
+/**
+ * The author's line a GPU refusal of a module points at, as a scene error; undefined when the refusal names no line,
+ * or a line the library wrote. The GPU (Tint) names the first error as `:line:column error: text` within the module,
+ * whose code is its chunks concatenated with nothing between (ModuleDesc).
+ */
+function authorRefusal(b: Bundle, mod: ModuleDesc, message: string): ShaderTextError | undefined {
+  const hit = /:(\d+):\d+ error: ([^\n]*)/.exec(message);
+  if (hit === null) return undefined;
+  const line = Number(hit[1]);
+  let before = 0;
+  for (const c of mod.chunks) {
+    const name = b.manifest.chunks[c]!, text = b.chunks.get(name) ?? "";
+    const lines = text.split("\n");
+    // Line `line` of the module starts in this chunk when it is at most `lines.length - 1` lines past the chunk's
+    // first full line (a chunk not ending in a newline shares its last line with the next chunk's first).
+    const k = line - 1 - before;
+    if (k < lines.length - (text.endsWith("\n") ? 1 : 0) || c === mod.chunks.at(-1)) {
+      const at = authorLineAt(b.manifest.authored?.[name] ?? [], k);
+      return at === undefined ? undefined : new ShaderTextError(`${at.file}:${at.line}`, at.what, hit[2]!, lines[k] ?? "", mod.label, line, message);
+    }
+    before += lines.length - 1;
+  }
+  return undefined;
+}
 
 /**
  * Creates every shader module, each inside its own validation scope; `what` names the module in the error.
  * createShaderModule is synchronous, so the scopes nest without overlap: module k's errors land in scope k, and
  * popping in reverse order hands each module its own scope. Reports the first failure in array order.
  */
-async function scopedModules(device: GPUDevice, creations: readonly { what: string; create: () => GPUShaderModule }[]): Promise<GPUShaderModule[]> {
+async function scopedModules(device: GPUDevice, creations: readonly { what: string; create: () => GPUShaderModule; author: (message: string) => ShaderTextError | undefined }[]): Promise<GPUShaderModule[]> {
   const results = creations.map((c): Settled<GPUShaderModule> => {
     device.pushErrorScope("validation");
     try { return { ok: true, v: c.create() }; } catch (e) { return { ok: false, message: e instanceof Error ? e.message : String(e) }; }
@@ -192,8 +230,8 @@ async function scopedModules(device: GPUDevice, creations: readonly { what: stri
   const errors = (await Promise.all(creations.map(() => device.popErrorScope()))).reverse();
   creations.forEach((c, k) => {
     const r = results[k]!, error = errors[k];
-    if (!r.ok) throw refused(c.what, r.message);
-    if (error) throw refused(c.what, error.message);
+    const message = !r.ok ? r.message : error?.message;
+    if (message !== undefined) throw c.author(message) ?? refused(c.what, message);
   });
   return results.map((r) => (r as { v: GPUShaderModule }).v);
 }
@@ -292,7 +330,7 @@ async function createObjects(device: GPUDevice, b: Bundle, mode: "all" | "bake" 
         if (text === undefined) throw new Error(`artefact: module ${mod.label} names chunk ${m.chunks[c]}, which the bundle lacks`);
         return text;
       }).join("");
-      return { what: `${mod.label} failed to compile`, create: () => device.createShaderModule({ label: mod.label, code }) };
+      return { what: `${mod.label} failed to compile`, create: () => device.createShaderModule({ label: mod.label, code }), author: (message: string) => authorRefusal(b, mod, message) };
     }));
     const modules = new Map(moduleSpecs.map(({ i }, j) => [i, made[j]!]));
     const computeSpecs = m.computePipelines.flatMap((p, i) => mode === "all" || buildPipelines.has(i) ? [{ p, i }] : []);

@@ -24,8 +24,9 @@
 //
 // Imports no bun-only module (the browser host uses it).
 
-import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, PASS_CAMERA_VEC4S, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Artefact, type ArtefactPass, type Draw, type DrawDepth, type TextureSize } from "../artefact.ts";
+import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, PASS_CAMERA_VEC4S, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Artefact, type ArtefactPass, type AuthorLines, type Draw, type DrawDepth, type TextureSize } from "../artefact.ts";
 import { SceneError } from "../errors.ts";
+import { authorLines } from "../authored.ts";
 import type { ComputeResource } from "../compute.ts";
 import { gridBounds, slotsUsed } from "./detail.ts";
 import { ROWS_BINDING, share } from "./share.ts";
@@ -305,6 +306,8 @@ export function lower(a: Artefact, precision: Precision = "f32", baked?: Readonl
   const sharing = share(a);
   const statics = a.statics ?? [];
 
+  /** Where the author's own WGSL sits, by chunk name (Manifest.authored). */
+  const authored: Record<string, readonly AuthorLines[]> = {};
   const chunkNames: string[] = [], chunkIds = new Map<string, Id>(), chunkText = new Map<string, string>();
   const chunk = (text: string): Id => {
     const name = chunkName(text);
@@ -315,6 +318,8 @@ export function lower(a: Artefact, precision: Precision = "f32", baked?: Readonl
     }
     chunkText.set(name, text);
     chunkIds.set(name, chunkNames.length);
+    const spans = authorLines(text);
+    if (spans.length > 0) authored[name] = spans;
     return chunkNames.push(name) - 1;
   };
   const blobs = new Map<string, Uint8Array>();
@@ -906,6 +911,7 @@ export function lower(a: Artefact, precision: Precision = "f32", baked?: Readonl
     version: formatVersion({ replay: replay.length > 0, passes: withPasses, shared: sharing.rows.length > 0, mixed: precision === "mixed", compute: a.compute !== undefined }),
     ...(precision === "mixed" ? { precision: { kind: "mixed", fallback: "f32-fallback", modules: mixedModules, buffers: mixedBuffers } as const } : {}),
     chunks: chunkNames,
+    ...(Object.keys(authored).length === 0 ? {} : { authored }),
     blobs: [...blobs].map(([name, b]) => ({ name, bytes: b.byteLength })),
     inputs: a.inputs,
     inputFloats: a.inputFloats,
