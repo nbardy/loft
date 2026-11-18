@@ -11,12 +11,12 @@
 // engine, and the result is aliased to the `Call`. `made` counts what a recorder that does not intern appends (R in section 8.1): each
 // construction outside a recorded call's inlining, plus one per call.
 
-import type { Expr, InputSpec, LibFn, Loop, ParamSpec, Row, TableSource, Ty } from "../expr.ts";
+import type { Expr, Fn, InputSpec, LibFn, Loop, ParamSpec, Row, TableSource, Ty } from "../expr.ts";
 import { BOUND, Decl, FREE, Op, PRIM0, PRIMS, ROLES, swizzleCode, TYS, type Job, type Program } from "./wire.ts";
 
-const PRIM = new Map<string, number>(PRIMS.map((p, k) => [p, PRIM0 + k]));
-const TY = new Map<string, number>(TYS.map((t, k) => [t, k]));
-const head = (op: number, ty: Ty, flags = 0): number => op | (TY.get(ty)! << 8) | (flags << 16);
+const PRIM = Object.fromEntries(PRIMS.map((p, k) => [p, PRIM0 + k])) as Record<Fn, number>;
+const TY = Object.fromEntries(TYS.map((t, k) => [t, k])) as Record<Ty, number>;
+const head = (op: number, ty: Ty, flags = 0): number => op | (TY[ty] << 8) | (flags << 16);
 
 /** What a node's `imm` names in the log, by node kind. */
 type Leaf = string | ParamSpec | InputSpec | Row | TableSource | LibFn;
@@ -72,7 +72,7 @@ export class Recorder {
       case "param": this.nodes.push(head(Op.Param, n.ty), 0, 0, leaf(n.spec)); break;
       case "row": this.nodes.push(head(Op.Fetch, n.ty), ids([n.x]), 1, leaf(n.row)); break;
       case "fetch": this.nodes.push(head(Op.Fetch, n.ty, n.lane), ids([n.index]), 1, leaf(n.table)); break;
-      case "call": this.nodes.push(head(PRIM.get(n.fn)!, n.ty), ids(n.args), n.args.length, 0); break;
+      case "call": this.nodes.push(head(PRIM[n.fn], n.ty), ids(n.args), n.args.length, 0); break;
       case "vec": this.nodes.push(head(Op.Vec, n.ty), ids(n.args), n.args.length, 0); break;
       case "get": this.nodes.push(head(Op.Swizzle, n.ty), ids([n.a]), 1, swizzleCode(n.sel)); break;
       case "lib": this.nodes.push(head(Op.Raw, n.ty), ids(n.args), n.args.length, leaf(n.fn)); break;
@@ -98,7 +98,8 @@ export class Recorder {
   fn(name: string, lower: () => FnBody): number { return this.fns.push({ name, lower, done: undefined }) - 1; }
   /** One call of graph function `fn`; `result` (its inlined value) is read as the call when it was made after `since`. */
   call(fn: number, args: readonly Expr[], result: Expr, since: number): void {
-    this.made++;
+    // Counted like a construction: a call nested in a recorded call's inlining is TS-engine work, not part of R.
+    this.construct();
     const k = this.calls.push({ fn, args: args.map((a) => a.id), result: result.id }) - 1;
     if (result.id >= since) this.alias.set(result.id, -1 - k);
   }
@@ -211,7 +212,7 @@ class Writer {
     // A function with no body over binders: this call is its inlined nodes, which the log kept.
     if (typeof f === "string") return this.logNode(c.result);
     const fn = this.graphFn(c.fn);
-    return this.emit(Op.Call | (TY.get(f.ret)! << 8), c.args.map((a) => this.visit(a)), fn);
+    return this.emit(Op.Call | (TY[f.ret] << 8), c.args.map((a) => this.visit(a)), fn);
   }
 
   private logNode(id: number): number {
@@ -259,7 +260,7 @@ class Writer {
     if (seen !== undefined) return seen;
     const deps = (f.deps ?? []).map((x) => this.rawFn(x));
     const { k, d } = this.reserve(Decl.Fn, f);
-    d.words.push(1, this.sym(f.name), TY.get(f.ret)!, this.sym(f.wgsl), deps.length, ...deps);
+    d.words.push(1, this.sym(f.name), TY[f.ret], this.sym(f.wgsl), deps.length, ...deps);
     return k;
   }
   private graphFn(fn: number): number {
@@ -268,7 +269,7 @@ class Writer {
     const f = key.done as Exclude<FnRec["done"], string | undefined>, { k, d } = this.reserve(Decl.Fn, key);
     f.binders.forEach((b, j) => this.binder(b, `F${k}a${j}`));
     d.roots.push(this.visit(f.body));
-    d.words.push(0, this.sym(key.name), TY.get(f.ret)!, f.binders.length, ...f.binders.map((b) => this.out.get(b)!));
+    d.words.push(0, this.sym(key.name), TY[f.ret], f.binders.length, ...f.binders.map((b) => this.out.get(b)!));
     return k;
   }
   private loop(rec: number): number {

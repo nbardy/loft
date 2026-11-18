@@ -23,6 +23,8 @@
 //   Kernel  table [0, name, lanes, entries, role]  rows [1, label, offset in `rows`, length]
 //   Param   [name, def lit, min lit, max lit]        Input  [name, ty, first def lit]
 
+import type { Fn, TableSource, Ty } from "../expr.ts";
+
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
 export const WIRE = 1;
 
@@ -30,8 +32,8 @@ export enum Program { Scene, Solve, Evaluate, Check }
 export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }
 export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec } // then PRIMS from PRIM0
 export const BOUND = 1, FREE = 0;
-export const TYS = ["f32", "vec2", "vec3", "vec4", "bool"] as const;
-export const ROLES = ["stations", "data", "static"] as const;
+export const TYS = ["f32", "vec2", "vec3", "vec4", "bool"] as const satisfies readonly Ty[];
+export const ROLES = ["stations", "data", "static"] as const satisfies readonly TableSource["role"][];
 
 /** The operators of src/expr.ts `Fn`, in code order: op = 16 + index. */
 export const PRIMS = [
@@ -40,8 +42,12 @@ export const PRIMS = [
   "mix", "clamp", "smoothstep", "length", "distance", "dot", "cross",
   "lt", "gt", "le", "ge", "eq", "ne", "and", "or", "not", "select",
   "ceil", "trunc", "roundEven", "rem", "inverseSqrt", "exp2", "log2", "asin", "acos", "atan", "sinh", "cosh", "tanh",
-] as const;
+] as const satisfies readonly Fn[];
 export const PRIM0 = 16;
+// Each table holds every member of its union, so no op, type or role can encode as a missing (zero) code.
+type Every<U, T extends readonly unknown[]> = [Exclude<U, T[number]>] extends [never] ? true : never;
+const _every: [Every<Fn, typeof PRIMS>, Every<Ty, typeof TYS>, Every<TableSource["role"], typeof ROLES>] = [true, true, true];
+void _every;
 
 export const swizzleCode = (sel: string): number => [...sel].reduce((c, ch, k) => c | ("xyzw".indexOf(ch) << (2 * k)), sel.length << 8);
 export const swizzleSel = (code: number): string => Array.from({ length: code >> 8 }, (_, k) => "xyzw"[(code >> (2 * k)) & 3]).join("");

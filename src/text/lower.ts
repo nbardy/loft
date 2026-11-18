@@ -208,7 +208,10 @@ export class Lowerer {
         const out = this.inline(item, binders.map(ex), item.sig.at, [], undefined);
         return out.k === "expr" ? { binders, body: out.e } : `${item.sig.name} returns a constant`;
       } catch (e) {
-        return `${item.sig.name} does not lower over binders: ${e instanceof Error ? e.message : String(e)}`;
+        // Only an authoring refusal over binders (say, a loop bound that must be constant) is a reason to inline; any
+        // other throw is a bug and surfaces.
+        if (!(e instanceof TextError)) throw e;
+        return `${item.sig.name} does not lower over binders: ${e.message}`;
       }
     });
     recordings.set(item, r);
