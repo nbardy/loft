@@ -3,7 +3,7 @@
 // unbaked artefact is refused by the CPU readings: `loft check` bakes on the GPU first).
 
 import { replayClocks, replayStep, type Loop, type Recurrence } from "./artefact.ts";
-import type { Probe, Verdict } from "./check.ts";
+import type { Probe, Check } from "./check.ts";
 
 /** A relative tolerance on f32 values, from its one constructor: never tighter than 1e-4 (f32 rounding fails correct runs). */
 type Relative = { readonly kind: "relative"; readonly of: number };
@@ -65,8 +65,8 @@ function worst(r: Recurrence, a: Float32Array, b: Float32Array, range: { lo: Flo
 }
 
 /** The seam of each recurrence over a loop, and the drift certificate of each that keeps checkpoints. */
-export function stateChecks(probe: Probe, loop: Loop): Verdict[] {
-  const out: Verdict[] = [];
+export function stateChecks(probe: Probe, loop: Loop): ReturnType<Check["run"]>[] {
+  const out: ReturnType<Check["run"]>[] = [];
   for (const r of probe.artefact.recurrences ?? []) {
     if (loop.kind === "every") {
       const P = loop.seconds;

@@ -12,14 +12,12 @@
 // the leaves through the chain, so its excess width shrinks as the square of the box's; the interval keeps what the
 // affine form cannot (a square is never negative, a unit vector's components lie in [-1, 1]).
 //
-// Sound means: for every point of the box, the value the expression has there in real arithmetic lies inside the
-// enclosure. Each operation's bounds are rounded outward by a stated epsilon (`pad`), so the enclosure also holds the
-// CPU twin's f64 value. The GPU's f32 value, and the CPU twin's f32 folding of constant sub-graphs, are not covered:
-// they differ from the real value by f32 rounding (about 1e-7 relative per operation).
+// Bounds cover the CPU twin: f64 operators with outward rounding and f32 frame slots and table stores.
+// Compiled table fills include the compiler's folded constants and intermediate stores. GPU operations may round
+// differently. A free variable takes the value supplied directly to the CPU function.
 //
-// Two ways an enclosure is not given, both typed, neither a silent wide interval:
-// - `RangeRefusal` (a SceneError, exit 4): the operator has no enclosure at all (a GPU-only or unknown library
-//   function, a table filled on the CPU, a free variable no range binds). Splitting the box cannot help.
+// - `RangeRefusal`: the graph or range is unsupported. The decision reports missing evaluator capabilities as
+//   undecided. Malformed domains are scene errors.
 // - `Unbounded` (thrown, caught by the solver per box): over this box the operator's value is not bounded (a divisor
 //   whose interval contains 0, the log of a value that may be 0). A smaller box may bound it; the solver splits, and
 //   reports the operator by name if its width budget runs out first.
@@ -27,7 +25,8 @@
 // Per-frame tables are read by inlining their programs: entry k of a `map` table is its run's closed form at k; entry
 // k of a `scan` is its step unrolled k times from the start, as expressions. The CPU fill computes the same thing.
 
-import { children, CURVE_N, Expr, f, variable, type Fn, type LibFn, type Loop, type Node, type NumTy, type TableProgram, type TableSource } from "./expr.ts";
+import { children, replace, CURVE_N, Expr, f, variable, type Fn, type LibFn, type Loop, type Node, type NumTy, type TableProgram, type TableSource } from "./expr.ts";
+import type { Compiled } from "./compile/index.ts";
 import { SceneError } from "./errors.ts";
 import { recurTable } from "./map/recur.ts";
 import { noise2Expr, noise3Expr } from "./grad.ts";
@@ -62,6 +61,9 @@ export class Unbounded extends Error {
 
 /** Why an expression has no enclosure at all. */
 export type Refusal =
+  | { readonly kind: "recur"; readonly table: string }
+  | { readonly kind: "skin" }
+  | { readonly kind: "dependent-end"; readonly leaf: string }
   | { readonly kind: "gpu-only"; readonly fn: string }
   | { readonly kind: "no-enclosure"; readonly fn: string }
   | { readonly kind: "cpu-table"; readonly table: string; readonly why: string }
@@ -70,6 +72,9 @@ export type Refusal =
 
 const refusalText = (r: Refusal): [string, string, string] => {
   switch (r.kind) {
+    case "recur": return [`the baked recurrence "${r.table}"`, "a closed-form scene", "measure the baked trajectory with a sampled check"];
+    case "skin": return ["a skin target", "a condition over expressions", "measure the skin with a sampled contact check"];
+    case "dependent-end": return [`a range end that reads the bound leaf ${r.leaf}`, "ends fixed throughout the search", "use fixed ends or parameterise the dependent interval over [0, 1]"];
     case "gpu-only": return [`the GPU-only function "${r.fn}"`, "functions with a CPU twin", "a ranged check cannot read what only the GPU computes; measure it in a picture"];
     case "no-enclosure": return [`the library function "${r.fn}", which has no interval enclosure`, "operators with enclosures (every built-in operator, the hashes and gradient noise)", "write it with built-in operators, or measure it with a sampled check"];
     case "cpu-table": return [`a read of the table "${r.table}" (${r.why})`, "tables filled by a map or a scan program", "a ranged check reads a table by inlining its program; a hand-written or baked fill has none: use a sampled check"];
@@ -90,6 +95,9 @@ export class RangeRefusal extends SceneError {
 
 /** An interval [lo, hi]. */
 export type I = readonly [number, number];
+function finite(lo: number, hi: number): void {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) throw new Unbounded("overflow", `non-finite enclosure [${lo}, ${hi}]`);
+}
 const hull = (a: I, b: I): I => [Math.min(a[0], b[0]), Math.max(a[1], b[1])];
 const rounded = (lo: number, hi: number): I => [down(lo), up(hi)];
 const iadd = (a: I, b: I): I => rounded(a[0] + b[0], a[1] + b[1]);
@@ -120,7 +128,7 @@ function isqrt(a: I): I {
 }
 function iexp(a: I): I {
   const hi = Math.exp(a[1]);
-  if (!Number.isFinite(hi)) throw new Unbounded("exp", `it overflows (its operand reaches ${a[1]})`);
+  if (!Number.isFinite(hi)) throw new Unbounded("overflow", `exp overflows (its operand reaches ${a[1]})`);
   return [Math.max(0, down(Math.exp(a[0]))), Math.max(up(hi), Number.MIN_VALUE)];
 }
 function ilog(a: I): I {
@@ -176,7 +184,7 @@ function ipow(x: I, y: I): I {
   if (x[0] === 0 && y[0] <= 0) throw new Unbounded("pow", `0 raised to a power that may be 0 or less`);
   // y ln x is extreme at the box's corners (a product of two intervals), so x^y is too.
   const c = [Math.pow(x[0], y[0]), Math.pow(x[0], y[1]), Math.pow(x[1], y[0]), Math.pow(x[1], y[1])];
-  if (!c.every(Number.isFinite)) throw new Unbounded("pow", "it overflows");
+  if (!c.every(Number.isFinite)) throw new Unbounded("overflow", "pow overflows");
   return [Math.max(0, down(Math.min(...c))), up(Math.max(...c))];
 }
 function ifloor(a: I): I { return [Math.floor(a[0]), Math.floor(a[1])]; }
@@ -190,17 +198,21 @@ function imod(a: I, b: I): I {
   if (b[0] <= 0 && b[1] >= 0) throw new Unbounded("mod", `the divisor may be 0 (it lies in [${b[0]}, ${b[1]}])`);
   const q = ifloor(idiv(a, b));
   if (q[0] === q[1]) return isub(a, imul(b, [q[0], q[0]]));
-  return b[0] > 0 ? [0, b[1]] : [b[0], 0];
+  // The rounded quotient and product can lose an ulp of the dividend before subtraction.
+  const error = EPS * (maxAbs(a) + maxAbs(b)) + Number.MIN_VALUE;
+  return rounded(Math.min(0, b[0]) - error, Math.max(0, b[1]) + error);
 }
 const istep = (e: I, x: I): I => (x[0] >= e[1] ? [1, 1] : x[1] < e[0] ? [0, 0] : [0, 1]);
 const isat = (a: I): I => [Math.min(1, Math.max(0, a[0])), Math.min(1, Math.max(0, a[1]))];
 const iclamp = (x: I, lo: I, hi: I): I => imin(hi, imax(lo, x));
-/** a + (b - a) t, as the CPU twin computes it; for t inside [0, 1] also within the hull of a and b. */
+/** a + (b - a) t, as the CPU twin computes it; for t inside [0, 1] near the hull of a and b. */
 function imix(a: I, b: I, t: I): I {
   const r = iadd(a, imul(isub(b, a), t));
   if (t[0] < 0 || t[1] > 1) return r;
   const h = hull(a, b);
-  return [Math.max(r[0], h[0]), Math.min(r[1], h[1])];
+  // Cancellation at t=1 can lose the entire smaller endpoint.
+  const error = EPS * maxAbs(h) + Number.MIN_VALUE;
+  return [Math.max(r[0], down(h[0] - error)), Math.min(r[1], up(h[1] + error))];
 }
 /** smoothstep(lo, hi, x): t = clamp((x - lo) / (hi - lo), 0, 1), then t^2 (3 - 2t), which rises on [0, 1]. */
 function ismooth(lo: I, hi: I, x: I): I {
@@ -227,17 +239,45 @@ function icompare(fn: "lt" | "gt" | "le" | "ge", a: I, b: I): Tri {
  * (a body's station table makes its samples table there), so it is read once per table.
  */
 type Entries = { readonly program: TableProgram; readonly made: Map<number, readonly Expr<"vec4">[]> };
-const inlined = new WeakMap<TableSource, Entries>();
+const inlined = new WeakMap<object, Entries>();
 const ZERO4: readonly Expr<"vec4">[] = [];
 
-function entryOf(t: TableSource, k: number, where: string): readonly Expr<"vec4">[] {
-  let e = inlined.get(t);
-  if (e === undefined) {
-    if (recurTable(t) !== undefined) throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: "a baked recurrence" });
+function entries(t: TableSource, where: string, fills: Work["tableFills"]): Entries {
+  const placed = fills?.get(t);
+  const key = placed ?? t;
+  const cached = inlined.get(key);
+  if (cached) return cached;
+  let program: TableProgram;
+  if (placed) {
+    // Lowering lifts shared expressions into additional f32 tables. Inline that same program.
+    const p = placed.canon;
+    switch (p.kind) {
+      case "kept": case "replay": throw new RangeRefusal(where, { kind: "recur", table: t.name });
+      case "cpu": throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: p.why });
+      case "map":
+        program = { kind: "map", runs: p.runs.map((r) => ({ count: r.count, lanes: (i) => replace(r.lanes, new Map([[r.i.id, i]])) as Expr<"vec4">[] })) };
+        break;
+      case "scan":
+        program = { ...p, step(state, i) {
+          const by = new Map<number, Expr>(p.state.map((v, j) => [v.id, state[j]!]));
+          by.set(p.i.id, i);
+          const out = replace([...p.next, ...p.lanes], by);
+          return { next: out.slice(0, state.length) as Expr<NumTy>[], lanes: out.slice(state.length) as Expr<"vec4">[] };
+        } };
+        break;
+    }
+  } else {
+    if (recurTable(t) !== undefined) throw new RangeRefusal(where, { kind: "recur", table: t.name });
     if (!("program" in t)) throw new RangeRefusal(where, { kind: "cpu-table", table: t.name, why: t.role === "static" ? "filled once, at build" : "a hand-written fill" });
-    e = { program: t.program, made: new Map() };
-    inlined.set(t, e);
+    program = t.program;
   }
+  const result: Entries = { program, made: new Map() };
+  inlined.set(key, result);
+  return result;
+}
+
+function entryOf(t: TableSource, k: number, where: string, work: Work): readonly Expr<"vec4">[] {
+  const e = entries(t, where, work.tableFills);
   const hit = e.made.get(k);
   if (hit !== undefined) return hit;
   const p = e.program;
@@ -255,6 +295,7 @@ function entryOf(t: TableSource, k: number, where: string): readonly Expr<"vec4"
       // Unrolled from the start once, keeping every entry (a station table is read at many of its entries).
       let state = p.init;
       for (let j = 0; j < p.steps; j++) {
+        work.checkTime?.();
         const s = p.step(state, f(j));
         e.made.set(p.first + j, s.lanes);
         state = s.next;
@@ -285,12 +326,14 @@ const size = (x: C): number => Math.abs(x[0]!) + spread(x);
 export function bounds(x: C): I {
   const s = spread(x), k = x.length;
   const lo = Math.max(x[k - 2]!, down(x[0]! - s)), hi = Math.min(x[k - 1]!, up(x[0]! + s));
+  finite(lo, hi);
   if (!(lo <= hi)) throw new Error(`internal: interval: an empty enclosure [${lo}, ${hi}]`);
   return [lo, hi];
 }
 const pointC = (d: number, x: number): C => { const c = new Float64Array(d + 4); c[0] = x; c[d + 2] = x; c[d + 3] = x; return c; };
 /** A form that knows only an interval: its middle, and its half width as the radius. */
 function fromI(d: number, i: I): C {
+  finite(i[0], i[1]);
   const c = new Float64Array(d + 4), m = i[0] / 2 + i[1] / 2;
   c[0] = m; c[d + 1] = up(Math.max(i[1] - m, m - i[0])); c[d + 2] = i[0]; c[d + 3] = i[1];
   return c;
@@ -302,10 +345,20 @@ function fromI(d: number, i: I): C {
  * rounding is charged, and replacing it there threw away every correlation with the leaves at the first operator.
  */
 function finish(x: C, iv: I): C {
+  finite(iv[0], iv[1]);
   const k = x.length;
   x[k - 2] = iv[0]; x[k - 1] = iv[1];
   if (spread(x) > iv[1] - iv[0]) return fromI(k - 4, iv);
   return x;
+}
+/** A Float32Array store rounds monotonically. Keep its exact endpoint image and charge half an ulp to the affine error. */
+function stored(x: C): C {
+  const [lo, hi] = bounds(x), a = Math.fround(lo), b = Math.fround(hi);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) throw new Unbounded("overflow", "the value exceeds f32 storage");
+  if (a === b) return pointC(x.length - 4, a);
+  const c = x.slice();
+  c[R(c)] = up(c[R(c)]! + Math.max(2 ** -150, Math.max(Math.abs(lo), Math.abs(hi)) * 2 ** -24));
+  return finish(c, [a, b]);
 }
 /** ka a + kb b + k0 (b may be absent): exact in the form, rounding charged to r. */
 function lin(a: C, ka: number, b: C | undefined, kb: number, k0: number): C {
@@ -511,7 +564,7 @@ const isTrack = (b: I | Track): b is Track => !Array.isArray(b);
 /** How many selects one enclosure may split cases on (2^CASES evaluations at most). */
 const CASES = 4;
 /** Counters a solver reports as its work. */
-export type Work = { nodes: number; codomain: number };
+export type Work = { tableFills?: Compiled["tableFills"]; nodes: number; codomain: number; checkTime?: () => void; charge?: () => void };
 /** A node's value over a box: a number's components as forms laid end to end, or a bool. */
 type Val = { readonly kind: "num"; readonly v: Float64Array } | { readonly kind: "bool"; readonly v: Tri };
 
@@ -554,7 +607,10 @@ export class Evaluator {
       // hull of q and -q holds 0, so every later nlerp's normalize was unbounded at every box holding that instant.
       const id = this.eithers[0];
       if (!(err instanceof Unbounded) || id === undefined || this.forced.size >= CASES) throw err;
-      const cases = [true, false].map((way) => new Evaluator(this.box, this.held, this.where, this.work, new Map([...this.forced, [id, way]])).scalar(e));
+      const cases = [true, false].map((way) => {
+        this.work.charge?.();
+        return new Evaluator(this.box, this.held, this.where, this.work, new Map([...this.forced, [id, way]])).scalar(e);
+      });
       return { at: hull(cases[0]!.at, cases[1]!.at), sensitivity: cases[0]!.sensitivity.map((x, k) => Math.max(x, cases[1]!.sensitivity[k]!)) };
     }
   }
@@ -590,13 +646,17 @@ export class Evaluator {
   private value(e: Expr): Val {
     const hit = this.memo.get(e.id);
     if (hit !== undefined) return hit;
+    if ((this.work.nodes & 127) === 0) this.work.checkTime?.();
     const v = this.node(e);
     this.work.nodes++;
     this.memo.set(e.id, v);
     return v;
   }
   private dep(e: Expr): boolean { return this.deps.has(e.id); }
-  private point(xs: readonly number[]): Float64Array { return this.join(xs.map((x) => pointC(this.d, x))); }
+  private point(xs: readonly number[]): Float64Array {
+    if (!xs.every(Number.isFinite)) throw new Unbounded("overflow", `non-finite point [${xs}]`);
+    return this.join(xs.map((x) => pointC(this.d, x)));
+  }
   /** The centres of a value read by no leaf: its exact components. */
   private centres(v: Float64Array): number[] { return this.split(v).map((c) => c[0]!); }
 
@@ -607,7 +667,12 @@ export class Evaluator {
       case "var": case "input": case "param": {
         const name = n.op === "var" ? n.name : n.spec.name, key = `${n.op}:${name}`;
         const bound = this.box.get(key);
-        if (bound !== undefined) { this.deps.add(e.id); return { kind: "num", v: isTrack(bound) ? this.track(bound) : this.leaf(this.names.indexOf(key)) }; }
+        if (bound !== undefined) {
+          if (!isTrack(bound) && bound[0] === bound[1]) return { kind: "num", v: this.point([n.op === "var" ? bound[0] : Math.fround(bound[0])]) };
+          this.deps.add(e.id);
+          const c = isTrack(bound) ? this.track(bound) : this.leaf(this.names.indexOf(key));
+          return { kind: "num", v: n.op === "var" ? c : stored(c) };
+        }
         const held = this.held(n);
         if (held === undefined) throw new RangeRefusal(this.where, { kind: "unbound", leaf: n.op === "input" && name === "time" ? "time" : `${n.op} "${name}"` });
         return { kind: "num", v: this.point(held) };
@@ -712,10 +777,10 @@ export class Evaluator {
     if (k0 < 0 || k1 >= t.entries) throw new Unbounded("fetch", `the index of "${t.name}" may leave its ${t.entries} entries (it lies in [${index[0]}, ${index[1]}])`);
     let out: C[] | undefined;
     for (let k = k0; k <= k1; k++) {
-      const lanes = entryOf(t, k, this.where);
+      const lanes = entryOf(t, k, this.where, this.work);
       const v = lanes === ZERO4 ? this.point([0, 0, 0, 0]) : this.numeric(lanes[lane]!);
       if (lanes !== ZERO4 && this.dep(lanes[lane]!)) this.deps.add(e.id);
-      const cs = this.split(v);
+      const cs = this.split(v).map(stored);
       out = out === undefined ? cs : out.map((c, i) => hullC(c, cs[i]!));
     }
     return this.join(out!);
@@ -744,6 +809,7 @@ export class Evaluator {
     };
     try {
       for (let i = 0; i < n1; i++) {
+        if ((i & 127) === 0) this.work.checkTime?.();
         forget();
         l.state.forEach((v, j) => { this.memo.set(v.id, { kind: "num", v: state[j]! }); if (stateDep[j]) this.deps.add(v.id); });
         this.memo.set(l.index.id, { kind: "num", v: this.point([i]) });
@@ -794,7 +860,7 @@ export class Evaluator {
         const a = n.args.map((x) => this.numeric(x)), width = comps(e.ty);
         if (!n.args.some((x) => this.dep(x))) {
           const r = twin(fn, a.map((x) => this.centres(x)), width);
-          if (!r.every(Number.isFinite)) throw new Unbounded(fn, `a sub-graph that reads no range is not finite (${r.join(", ")})`);
+          if (!r.every(Number.isFinite)) throw new Unbounded("overflow", `${fn}: a sub-graph that reads no range is not finite (${r.join(", ")})`);
           return { kind: "num", v: this.point(r) };
         }
         return { kind: "num", v: this.join(arith(fn, n.args, a.map((x) => this.split(x)), width, this.d)) };

@@ -24,12 +24,17 @@ import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_di
 import { RingWave } from "./geom/ring.ts";
 import { stateChecks } from "./check_state.ts";
 
+import type { Decision } from "./ranged.ts";
+
 type V3 = readonly [number, number, number];
 type Joint = { readonly p: V3; readonly r: number };
 type Inputs = Readonly<Record<string, number | readonly number[]>>;
 
-/** What a check reports. `value` is the measured number the verdict was taken on. */
-export type Verdict = { readonly name: string; readonly pass: boolean; readonly value: number; readonly measured: string; readonly limit: string };
+type Measurement = { readonly name: string; readonly value: number; readonly measured: string; readonly limit: string };
+type Sampled = Measurement & { readonly pass: boolean };
+
+/** A measured check result. Ranged results also carry proven bounds, witness, work and stop reason. */
+export type Verdict = (Sampled & { readonly holds: boolean }) | (Measurement & Decision & { readonly pass: boolean | undefined });
 
 /** Measurements over one compiled scene, with inputs held at the given values (time aside). */
 export class Probe {
@@ -84,7 +89,7 @@ export class Probe {
 
 export interface Check {
   readonly name: string;
-  run(probe: Probe): Verdict;
+  run(probe: Probe): Sampled | Verdict;
 }
 
 /** Something with a skeleton to measure: a whole body, or a part (its stretch of joints). */
@@ -931,12 +936,15 @@ export function budget(o: { readonly triangles: number }): Check {
  */
 export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[] {
   const probe = new Probe(o.compiled ?? compileScene(scene), o.inputs ?? {});
-  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)];
+  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)].map((v) => "holds" in v ? v : { ...v, holds: v.pass });
 }
 
 /** The verdicts as a plain-text table. */
-export function formatChecks(vs: readonly Verdict[]): string {
-  const rows = [["check", "verdict", "measured", "limit"], ...vs.map((v) => [v.name, v.pass ? "pass" : "FAIL", v.measured, v.limit])];
+export function formatChecks(vs: readonly ReturnType<Check["run"]>[]): string {
+  const rows = [["check", "verdict", "measured", "limit"], ...vs.map((v) => {
+    const holds = "holds" in v ? v.holds : v.pass;
+    return [v.name, holds === "undecided" ? "undecided" : holds ? "pass" : "FAIL", v.measured, v.limit];
+  })];
   const widths = rows[0].map((_, i) => Math.max(...rows.map((r) => r[i].length)));
   const line = (r: readonly string[]) => r.map((x, i) => x.padEnd(widths[i])).join("  ").trimEnd();
   return [line(rows[0]), widths.map((w) => "-".repeat(w)).join("  "), ...rows.slice(1).map(line)].join("\n");
