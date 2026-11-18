@@ -7,7 +7,7 @@
 //! - Scan: one invocation; the state starts at `init`, step j writes row `first + j`'s lanes from the state before
 //!   the step, then advances it by `next` (src/expr.ts `ScanStep`).
 use crate::emit::{self, Slots, ty_name};
-use crate::kernel;
+use crate::{Naga, kernel};
 use loft_ir::Error;
 use loft_ir::error::SceneFault;
 use loft_ir::graph::{Graph, GraphFn};
@@ -22,7 +22,7 @@ pub struct Module {
 }
 
 /// The module of decl `d`'s fill. `g` gains the graph functions it exports (as the driver's roots do).
-pub fn module(g: &mut Graph, at: &Slots, d: &kernel::Decl) -> Result<Module, Error> {
+pub fn module(g: &mut Graph, at: &Slots, d: &kernel::Decl, naga: Naga) -> Result<Module, Error> {
     let [_, lanes] = at.kernels[d.writes as usize];
     let first = g.fns.len() as u32;
     let add = |binders: &[u32], body: u32, g: &mut Graph| {
@@ -93,7 +93,12 @@ pub fn module(g: &mut Graph, at: &Slots, d: &kernel::Decl) -> Result<Module, Err
     let exports: Vec<(&str, u32)> = names.iter().map(String::as_str).zip(fns.iter().copied()).collect();
     let m = emit::module(g, &exports, at)?;
     let text = format!("{}\n{glue}", m.text);
-    // The graph part was validated by emit; this checks the entry around it, which only a template bug can fail.
+    // Validated once: here when the build asks for Naga at emit, else by the host at load (lib.rs `Naga`).
+    match naga {
+        Naga::Load => return Ok(Module { text, reads: m.reads, rows }),
+        Naga::Emit => emit::check(g, &m)?,
+    }
+    // The graph part was checked above; this checks the entry around it, which only a template bug can fail.
     let src = format!("alias lf = f32;\n{text}");
     let refuse = |msg: String| Error::Scene { site: None, fault: SceneFault::Wgsl { line: 0, msg: msg.into() } };
     let parsed = naga::front::wgsl::parse_str(&src).map_err(|e| refuse(e.emit_to_string(&src)))?;

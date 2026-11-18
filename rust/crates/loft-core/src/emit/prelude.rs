@@ -15,8 +15,10 @@
 //!
 //! A raw function that reads any other global is refused by `needs`: `Scene { Global { name, needs } }`, naming the
 //! decl or prelude change that would give it one. A module is never built with a global left out.
-use loft_ir::error::Needs;
+use loft_ir::Error;
+use loft_ir::error::{Needs, SceneFault};
 use loft_ir::frame;
+use loft_ir::graph::{Graph, Op};
 
 /// The prelude of a module whose frame holds `params` param vec4s and `inputs` input vec4s (each at least 1).
 pub fn text(params: u32, inputs: u32) -> String {
@@ -62,14 +64,42 @@ const CLEARANCE_SCALE: u32 = 64;
 pub fn needs(name: &str) -> Needs {
     match name {
         "loft_cast" | "soft_box" => Needs::Draw,
-        "shade" | "ink" | "mark" | "sky" | "outline_world" | "ink_width" | "sea_height" | "sea_gradient" | "sea_shadow"
-        | "ground_colour" | "SUN" => Needs::Style,
+        "shade" | "ink" | "mark" | "sky" | "outline_world" | "ink_width" | "sea_height" | "sea_gradient"
+        | "sea_shadow" | "ground_colour" | "SUN" => Needs::Style,
         n if n.starts_with("loft_cast_") || n.ends_with("_soft_box") => Needs::Draw,
         n if n.starts_with("loft_passtex_") => Needs::Pass,
         n if n.starts_with("loft_compute_") => Needs::Kernel,
         n if n.starts_with("t_") => Needs::Table,
         _ => Needs::Prelude,
     }
+}
+
+/// Every raw function's globals against the prelude, whether or not Naga runs at emit (`Naga::Load` leaves the rest
+/// of validation to the host): a raw function with no text (a name a TS draw module defines, `loft_cast`) or one that
+/// reads a name the prelude does not declare is `Scene { Global { name, needs } }`, at the first node calling it. Any
+/// other fault in its source is Naga's to report, at emit or at load.
+pub fn globals(g: &Graph) -> Result<(), Error> {
+    let caller = |r: u32| g.nodes.iter().position(|n| n.op == Op::Raw(r)).and_then(|n| g.site(n as u32).cloned());
+    let base = format!("alias lf = f32;\n{}\n", text(1, 1));
+    (0..g.raws.len() as u32).try_for_each(|r| {
+        let raw = &g.raws[r as usize];
+        let refuse = |name: &str| Error::Scene {
+            site: caller(r),
+            fault: SceneFault::Global { name: name.into(), needs: needs(name) },
+        };
+        if g.sym(raw.text).trim().is_empty() {
+            return Err(refuse(g.sym(raw.name)));
+        }
+        let mut src = base.clone();
+        for d in super::raw_closure(g, r) {
+            src.push_str(g.sym(g.raws[d as usize].text));
+            src.push('\n');
+        }
+        match naga::front::wgsl::parse_str(&src) {
+            Ok(_) => Ok(()),
+            Err(e) => unbound(e.message()).map_or(Ok(()), |name| Err(refuse(name))),
+        }
+    })
 }
 
 /// The identifier a Naga front-end message says has no definition (`no definition in scope for identifier: `X``).

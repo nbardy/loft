@@ -4,9 +4,10 @@
 // the build command that fixes it. Runs under Bun and Node 22 alike (process.dlopen, no Bun-only API).
 
 import { fileURLToPath } from "node:url";
+import type { Precision } from "../host/manifest.ts";
 
 /** The addon this checkout expects (rust/crates/loft-node STAMP): bump both with any change to run's arguments or answer. */
-const STAMP = "loft-node abi 3 wire 2";
+const STAMP = "loft-node abi 4 wire 2";
 const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
@@ -15,8 +16,9 @@ export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
 export type SceneReport = {
   readonly roots: number; readonly functions: number; readonly wgsl_bytes: number; readonly resources: number; readonly unfilled: number; readonly kernels: number;
   readonly storage_buffers: number; readonly dispatches: number; readonly draws: number; readonly bundle_bytes: number; readonly build: string;
-  /** "Valid", or Naga's refusal of the module under `alias lf = f16;` (a mixed load is then refused by the host). */
-  readonly mixed: "Valid" | { readonly Refused: string };
+  /** Under `precision: "mixed"`: "Valid", or Naga's refusal of the module under `alias lf = f16;` (a mixed load is then
+   * refused by the host). Under "f32": "NotAsked". */
+  readonly mixed: "Valid" | "NotAsked" | { readonly Refused: string };
 };
 /** Rust's own time per phase, ns (loft-core `Phases`). */
 export type Phases = { readonly decode: number; readonly plan: number; readonly emit: number; readonly f16: number; readonly bundle: number };
@@ -43,9 +45,15 @@ export class NativeError extends Error {
 export type Limits = { readonly nodes: bigint; readonly tapeOps: bigint; readonly boxes: bigint; readonly gpuNanos: bigint };
 export const UNLIMITED = 2n ** 64n - 1n;
 
+/** How to build (loft-core `Build`). `naga`: "load" leaves validation to the host's module creation (the default build;
+ * a bad module is refused at load, without the author's line); "emit" runs Naga at emit and refuses at the author's
+ * line (`loft check`, `loft build --naga`, the lab tools). `precision: "mixed"` adds the f16 check (`SceneReport.mixed`). */
+export type Build = { readonly naga: "load" | "emit"; readonly precision: Precision };
+export const DEFAULT_BUILD: Build = { naga: "load", precision: "f32" };
+
 /** `out`: where a Scene's bundle file is written; omitted, it is built and hashed but not written. */
-type Native = { run(job: Uint8Array, limits: Limits, out?: string): Report };
-type Addon = { run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array): string; stamp: unknown };
+type Native = { run(job: Uint8Array, limits: Limits, out?: string, build?: Build): Report };
+type Addon = { run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array, build: Uint8Array): string; stamp: unknown };
 type Answer = { Ok: Report } | { Err: { kind: Kind; code: number; message: string; error: unknown } };
 
 const environment = (message: string): NativeError => new NativeError("environment", 6, message, null);
@@ -64,8 +72,10 @@ export function open(path: string): Native {
   }
   const run = addon.run;
   return {
-    run(job, l, out) {
-      const a = JSON.parse(run(job, BigUint64Array.of(l.nodes, l.tapeOps, l.boxes, l.gpuNanos), new TextEncoder().encode(out ?? ""))) as Answer;
+    run(job, l, out, build = DEFAULT_BUILD) {
+      // loft-node `build_of`: [naga, precision], naga 0 load / 1 emit, precision 0 f32 / 1 mixed.
+      const bytes = Uint8Array.of(build.naga === "emit" ? 1 : 0, build.precision === "mixed" ? 1 : 0);
+      const a = JSON.parse(run(job, BigUint64Array.of(l.nodes, l.tapeOps, l.boxes, l.gpuNanos), new TextEncoder().encode(out ?? ""), bytes)) as Answer;
       if ("Ok" in a) return a.Ok;
       throw new NativeError(a.Err.kind, a.Err.code, a.Err.message, a.Err.error);
     },

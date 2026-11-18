@@ -309,9 +309,12 @@ impl Lowered {
     /// Emits the graph functions, appends the prelude, glue and templates, and checks the whole module with Naga.
     fn module(&mut self, g: &Graph, at: &Slots, gl: &Glue) -> Result<u32, Error> {
         let exports: Vec<(&str, u32)> = gl.exports.iter().map(|(n, d)| (n.as_str(), *d)).collect();
-        let emitted = emit::module(g, &exports, at)?;
-        self.reads.push(emitted.reads);
-        let mut text = emitted.text;
+        // Naga at emit first, so a refusal in a graph function or raw source names the author's line; `check` below
+        // then covers the glue and templates.
+        let m = emit::module(g, &exports, at)?;
+        emit::check(g, &m)?;
+        self.reads.push(m.reads);
+        let mut text = m.text;
         for s in [VIEW].into_iter().chain(std::iter::once(gl.text.as_str())) {
             text.push('\n');
             text.push_str(s);

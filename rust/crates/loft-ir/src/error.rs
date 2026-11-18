@@ -84,8 +84,12 @@ impl Needs {
             }
             Needs::Pass => "it is an offscreen pass's texture; record the pass as a Pass decl that targets it",
             Needs::Kernel => "it is an author compute pass's resource; record the pass as a Kernel decl",
-            Needs::Table => "it is a table accessor the TS compiler defines for raw WGSL; read the table with fetch in a graph expression",
-            Needs::Style => "it is the scene style's or ground's own function; record it as a graph function a draw or pass names",
+            Needs::Table => {
+                "it is a table accessor the TS compiler defines for raw WGSL; read the table with fetch in a graph expression"
+            }
+            Needs::Style => {
+                "it is the scene style's or ground's own function; record it as a graph function a draw or pass names"
+            }
             Needs::Prelude => {
                 "add it to emit's prelude (loft-core emit/prelude.rs, loft_ir::frame and the host), or pass it as an argument"
             }

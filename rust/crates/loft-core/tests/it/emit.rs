@@ -1,7 +1,7 @@
 //! Lane 2.2 checks (lean Rust plan §8.2): random typed programs over every operator, loops, selects, calls, fetches,
 //! params and inputs emit modules Naga accepts under both `lf` aliases; permuted jobs (shuffled node and decl order,
 //! discarded nodes) give byte-identical modules; a raw typo is refused at the author's line.
-use loft_core::emit::{Slots, module, validate};
+use loft_core::emit::{Slots, check, module, validate};
 use loft_ir::Error;
 use loft_ir::error::SceneFault;
 use loft_ir::graph::{Fill, Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, RawFn, Role, Sel, Site, Ty};
@@ -265,6 +265,7 @@ fn emit_text(b: &B, main: u32) -> String {
     let g = b.graph();
     match module(&g, &[("paint", main)], &b.slots()) {
         Ok(m) => {
+            check(&g, &m).unwrap_or_else(|e| panic!("f32 refused: {e}\n{}", m.text));
             validate(&g, &m, true).unwrap_or_else(|e| panic!("f16 refused: {e}\n{}", m.text));
             m.text
         }
@@ -437,7 +438,7 @@ fn raw_typo_is_refused_at_the_authors_line() {
     b.node_sites[call as usize] = 1;
     let f = b.func(&[x], call);
     let g = b.graph();
-    match module(&g, &[("paint", f)], &b.slots()) {
+    match module(&g, &[("paint", f)], &b.slots()).and_then(|m| check(&g, &m).map(|()| m)) {
         Err(Error::Scene { site: Some(site), fault: SceneFault::Wgsl { line, msg } }) => {
             println!("refused at {site}, raw line {line}: {msg}");
             // Naga points at the token after the missing `;`: `return` on line 3 of the raw source, the author's line 42.
@@ -475,7 +476,7 @@ fn two_raw_sources_with_one_name_are_refused() {
     let sum = b.node(Op::Prim(Prim::Add), Ty::F32, &[c1, c2]);
     let f = b.func(&[x], sum);
     let g = b.graph();
-    match module(&g, &[("paint", f)], &b.slots()) {
+    match module(&g, &[("paint", f)], &b.slots()).and_then(|m| check(&g, &m).map(|()| m)) {
         Err(Error::Scene { fault: SceneFault::Wgsl { msg, .. }, .. }) => println!("refused: {msg}"),
         other => panic!("expected Scene{{Wgsl}}, got {:?}", other.map(|m| m.text)),
     }

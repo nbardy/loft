@@ -1,17 +1,18 @@
 //! The N-API addon (plan §3.5), hand-written: one entry,
-//! `run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array) -> string` (limits per `Meter`, in its order, lane
-//! 4.2; `out` the UTF-8 path a Scene's bundle is written to, empty for none), plus `stamp`, the version handshake
+//! `run(job: Uint8Array, limits: BigUint64Array, out: Uint8Array, build: Uint8Array) -> string` (limits per `Meter`,
+//! in its order, lane 4.2; `out` the UTF-8 path a Scene's bundle is written to, empty for none; `build` two bytes,
+//! `[naga, precision]`: naga 0 `Load`, 1 `Emit`; precision 0 `F32`, 1 `Mixed`), plus `stamp`, the version handshake
 //! src/core/native.ts checks at load. The job is borrowed in place, never copied by the binding. The answer is JSON,
 //! `{"Ok": report}` or `{"Err": {kind, code, message, error}}`, and a panic inside is caught and answered as
 //! `Internal`, so the JS process lives. The work is loft-core's program driver, `loft_core::run`.
-use loft_core::Report;
+use loft_core::{Build, Naga, Precision, Report};
 use loft_ir::error::{Error, Internal, Limits};
 use loft_ir::wire::WIRE;
 use serde::Serialize;
 use std::panic::{self, AssertUnwindSafe};
 
 /// What native.ts expects, byte for byte. Bump the abi number with any change to `run`'s arguments or answer.
-const STAMP: &str = concat!("loft-node abi 3 wire ", 2);
+const STAMP: &str = concat!("loft-node abi 4 wire ", 2);
 const _: () = assert!(WIRE == 2, "STAMP names the wire version");
 /// The Loft commit this addon was built from (build.rs), written into every bundle as `compiler`.
 const COMMIT: &str = env!("LOFT_COMMIT");
@@ -22,14 +23,35 @@ enum Answer<T> {
     Err { kind: &'static str, code: u8, message: String, error: Error },
 }
 
-fn drive(job: &[u8], limits: Limits, out: &[u8]) -> Result<Report, Error> {
+fn drive(job: &[u8], limits: Limits, out: &[u8], build: &[u8]) -> Result<Report, Error> {
     let out = std::str::from_utf8(out).map_err(|_| Error::Usage("run(job, limits, out): out is not UTF-8".into()))?;
-    let (report, bundle) = loft_core::run(job, limits, COMMIT)?;
+    let (report, bundle) = loft_core::run(job, limits, build_of(build)?, COMMIT)?;
     if let (Some(bytes), false) = (bundle, out.is_empty()) {
         std::fs::write(out, bytes)
             .map_err(|e| Error::Environment(format!("writing the bundle to {out}: {e}").into()))?;
     }
     Ok(report)
+}
+
+/// `[naga, precision]` (src/core/native.ts `run`), classified here once.
+fn build_of(b: &[u8]) -> Result<Build, Error> {
+    let bad = |what: &str| {
+        Error::Usage(format!("run(..., build): {what}; expected 2 bytes [naga 0|1, precision 0|1]").into())
+    };
+    let naga = match b.first() {
+        Some(0) => Naga::Load,
+        Some(1) => Naga::Emit,
+        x => return Err(bad(&format!("naga byte {x:?}"))),
+    };
+    let precision = match b.get(1) {
+        Some(0) => Precision::F32,
+        Some(1) => Precision::Mixed,
+        x => return Err(bad(&format!("precision byte {x:?}"))),
+    };
+    match b.len() {
+        2 => Ok(Build { naga, precision }),
+        n => Err(bad(&format!("{n} bytes"))),
+    }
 }
 
 /// Runs `f` with panics caught, and answers in JSON.
@@ -100,19 +122,18 @@ mod napi {
         v
     }
 
-    /// Argument `k` of 3, a typed array of type `want`, borrowed for the duration of the call.
+    /// Argument `k` of 4, a typed array of type `want`, borrowed for the duration of the call.
     ///
     /// SAFETY: called only from an N-API callback with its own `env` and `info`; the slice is used before the callback
     /// returns, while the JS engine keeps the array alive and does not run JS (so nothing can detach or write it).
     unsafe fn array<'a>(env: Env, info: Info, k: usize, want: i32) -> Result<&'a [u8], &'static str> {
-        let (mut argc, mut argv) = (3usize, [ptr::null_mut(); 3]);
+        let (mut argc, mut argv) = (4usize, [ptr::null_mut(); 4]);
         let (mut ty, mut len, mut data, mut buf, mut off) = (-1, 0usize, ptr::null_mut(), ptr::null_mut(), 0usize);
-        const USAGE: &str =
-            "run(job, limits, out) takes a Uint8Array job, a BigUint64Array of 4 limits and a Uint8Array path";
-        // SAFETY: argv has room for argc = 3 values; the out-pointers are live locals.
+        const USAGE: &str = "run(job, limits, out, build) takes a Uint8Array job, a BigUint64Array of 4 limits, a Uint8Array path and a Uint8Array of 2 build bytes";
+        // SAFETY: argv has room for argc = 4 values; the out-pointers are live locals.
         unsafe {
             if napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), ptr::null_mut(), ptr::null_mut()) != OK
-                || argc < 3
+                || argc < 4
                 || napi_get_typedarray_info(env, argv[k], &mut ty, &mut len, &mut data, &mut buf, &mut off) != OK
                 || ty != want
             {
@@ -127,8 +148,13 @@ mod napi {
 
     unsafe extern "C" fn run(env: Env, info: Info) -> Value {
         // SAFETY: env and info come from N-API for this callback.
-        let (job, limits, out) = unsafe {
-            (array(env, info, 0, UINT8_ARRAY), array(env, info, 1, BIGUINT64_ARRAY), array(env, info, 2, UINT8_ARRAY))
+        let (job, limits, out, build) = unsafe {
+            (
+                array(env, info, 0, UINT8_ARRAY),
+                array(env, info, 1, BIGUINT64_ARRAY),
+                array(env, info, 2, UINT8_ARRAY),
+                array(env, info, 3, UINT8_ARRAY),
+            )
         };
         string(
             env,
@@ -139,7 +165,7 @@ mod napi {
                 let [nodes, tape_ops, boxes, gpu_nanos] =
                     std::array::from_fn(|k| u64::from_le_bytes(limits[8 * k..8 * k + 8].try_into().expect("8 bytes")));
                 let limits = super::Limits { nodes, tape_ops, boxes, gpu_nanos };
-                super::drive(job.map_err(binding)?, limits, out.map_err(binding)?)
+                super::drive(job.map_err(binding)?, limits, out.map_err(binding)?, build.map_err(binding)?)
             }),
         )
     }
