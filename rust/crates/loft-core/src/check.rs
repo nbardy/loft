@@ -211,7 +211,7 @@ fn sample(ssa: &Ssa, held: &[f32], f: &Formula, at: &[f32], n: u32) -> Option<Ve
     }
     let lanes = n as usize + 1;
     let mut regs = vec![];
-    tape::run(ssa, lanes, held.len(), &leaves, &mut regs).ok()?;
+    tape::run(ssa, lanes, held.len(), &leaves, &mut regs).expect("`check` refused a held vector shorter than the tape's slots");
     let (m, t) = (&regs[margin as usize * lanes..][..lanes], &regs[test as usize * lanes..][..lanes]);
     let best = (0..lanes).fold(0, |k, l| if sign * m[l] < sign * m[k] { l } else { k });
     let found = if sign > 0.0 { t.iter().all(|&v| v != 0.0) } else { t.iter().any(|&v| v != 0.0) };
@@ -464,9 +464,7 @@ impl<'a> Search<'a> {
         if env.iter().all(Arg::point) {
             let p: Vec<f32> = env.iter().map(|a| a.mid() as f32).collect();
             let mut regs = vec![];
-            if tape::run(self.ssa, 1, p.len(), &p, &mut regs).is_err() {
-                return none(None);
-            }
+            tape::run(self.ssa, 1, p.len(), &p, &mut regs).expect("`check` refused a held vector shorter than the tape's slots");
             let (m, t) = (regs[margin as usize] as f64, regs[test as usize]);
             let truth = if m > 0.0 { Tri::True } else if m < 0.0 { Tri::False } else if t != 0.0 { Tri::True } else { Tri::False };
             return Cell { at: vec![], lo: m, hi: m, sens: vec![], truth, margin: m, why: None, inner: Map::new() };
@@ -481,7 +479,8 @@ impl<'a> Search<'a> {
         });
         let nat = match interval::enclose(&self.pre, &x) {
             Ok(v) => v,
-            Err(u) => return none(Some(Unbounded { at: self.map.iter().position(|&r| r >= u.at).unwrap_or(0) as Id, ..u })),
+            // Report the caller's register: the first original instruction at or after the prelude's.
+            Err(u) => return none(Some(Unbounded { at: self.map.iter().position(|&r| r >= u.at).expect("the prelude ends at the last mapped register") as Id, ..u })),
         };
         let (pm, pt) = (self.map[margin as usize], self.map[test as usize]);
         let [mut lo, mut hi] = nat[pm as usize];
@@ -529,7 +528,8 @@ impl<'a> Search<'a> {
             if let Arg::Box(b) = a
                 && b[0] < b[1]
             {
-                total.insert(k as Slot, ext[*self.d.get(&(margin, k as Slot))? as usize]);
+                // Only bound slots are boxes wider than a point (held slots are [v, v]), and each has a derivative.
+                total.insert(k as Slot, ext[self.d[&(margin, k as Slot)] as usize]);
             }
         }
         let (mut lo, mut hi) = (p[0] - e, p[1] + e);

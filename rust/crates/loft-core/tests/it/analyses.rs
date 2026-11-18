@@ -79,7 +79,8 @@ fn analyses_same_verdicts_as_ranged_ts() {
             bad.push(format!("{name}: truth {got}, TS {want}"));
         }
         if let Some(m) = ts["margin"].as_f64()
-            && ((v.margin as f64 - m).abs() > 1e-4 * m.abs().max(1.0) || v.margin.is_nan())
+            // f32_rel(1e-4) with a floor of one f32 ulp at 1 for the zero margins (no `Tol` type exists yet).
+            && ((v.margin as f64 - m).abs() > 1e-4 * m.abs() + f32::EPSILON as f64 || v.margin.is_nan())
         {
             bad.push(format!("{name}: margin {} vs TS {m}", v.margin));
         }
