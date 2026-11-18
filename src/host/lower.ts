@@ -448,7 +448,7 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
   // Equal descriptors are one pipeline.
   const pipelineIds = new Map<string, Id>();
   // `k`: the draw's index, for its shared constants (sharing.drawOf); `format`: the colour target (a pass's own).
-  const drawPipeline = (d: Draw, k: number, format: GPUTextureFormat = COLOR_FORMAT): Id => {
+  const drawPipeline = (d: Draw, k: number, format: GPUTextureFormat = COLOR_FORMAT, fragment = "fs"): Id => {
     const v = drawVariant(d);
     const module = moduleOf(d.shader, v);
     const shaderKey = sharing.moduleOf(d.shader).key;
@@ -458,13 +458,13 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
       label: `${d.shader} (${d.label})`,
       layout: layoutOf(v),
       vertex: { module, entryPoint: "vs", constants: { ...c } },
-      fragment: { module, entryPoint: "fs", constants: { ...c }, targets: [blend ? { format, blend } : { format }] },
+      fragment: { module, entryPoint: fragment, constants: { ...c }, targets: [blend ? { format, blend } : { format }] },
       primitive: { topology: "triangle-list", frontFace: "ccw", cullMode: d.cull },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: d.depthWrite, depthCompare: "less" },
       multisample: { count: SAMPLES },
     };
     const constants = Object.keys(c).sort().map((n) => `${n}=${c[n]}`).join(",");
-    const key = `${shaderKey}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}${format === COLOR_FORMAT ? "" : `|${format}`}`;
+    const key = `${shaderKey}|${v}|${d.cull}|${d.blend}|${d.depthWrite}|${constants}|${format}|${fragment}`;
     const known = pipelineIds.get(key);
     if (known !== undefined) return known;
     const id = renders.add(desc);
@@ -688,7 +688,8 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
             }];
             case "colour": case "light": {
               const format = PASS_TEXTURE[w.keep].format;
-              const cmds = (pass: Draw["pass"]): DrawCommand[] => drawn.filter(({ d }) => d.pass === pass).map(({ d, k }) => plannedOf(drawPipeline(d, k, format), k));
+              const cmds = (pass: Draw["pass"]): DrawCommand[] => drawn.filter(({ d }) => d.pass === pass)
+                .map(({ d, k }) => plannedOf(drawPipeline(d, k, format, d.scenePassFragment), k));
               return colourPass(p, picture, format, frame, own, empty, cmds("opaque"), cmds("transparent"), drawn.some(({ d }) => d.sceneDepth === true));
             }
           }

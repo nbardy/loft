@@ -396,7 +396,7 @@ Loft is a rasteriser with per-pixel tracers inside bounds, not a path tracer. Wh
 - **Tracers inside a bound**, each drawn as its bounding box and solved per pixel: sphere-traced distance fields
   (`draw.field`), shell-traced relief on a surface (`draw.relief`), analytic impostors (one sphere, capsule or cone per
   lattice cell, `impostors`) and lists of solids (`drawCopies`).
-- **Media integrated in closed form**: clouds and mist (`draw.density`), glows, lightning and rain (`src/soft/`).
+- **Soft effects**: clouds and mist (`draw.density`), glows, lightning, rain, and many small specks (`draw.specks`).
 - **Derived layers**: the sky, cast shadows on the water (from capsules along each body's skeleton), contact foam, and
   the style's post passes.
 
@@ -404,6 +404,35 @@ Lighting is one sun and the style's own shading. There are no reflections or ref
 illumination, and no shadow maps: shadows are cast from capsule chains (so their shape follows the skeleton, not the
 exact surface), onto the water always and onto bodies only in styles that print a shadow block. Effects that look
 like these (biolume's reflection, papercraft's crease shading) are post passes reading the picture and its depth.
+
+### Many small specks on your own paths
+
+`draw.specks(name, count, speck, options?)` draws `count` specks; `speck(i, t)` returns each one's world centre,
+radius, colour and opacity. The index is fixed for each speck: hash it for stable variation, and write the path
+(ballistics, drag, a fan, an orbit) as your own equation of the seconds `t`.
+
+```ts check
+import { draw, hash22, mix, mul, vec2, vec3 } from "../src/index.ts";
+
+const dust = draw.specks("dust", 100_000, (i, t) => {
+  const h = hash22(vec2(i, 7));
+  return {
+    at: vec3(mul(t, mix(0.5, 4, h.x)), mul(t, mix(1, 2, h.y)), 0),
+    radius: mix(0.002, 0.008, h.y),
+    colour: [0.68, 0.27, 0.12],
+    opacity: 0.4,
+  };
+}, { stretch: 0.005 });
+```
+
+Radius is in world units. A zero radius or opacity hides a speck, and a speck under a plane or swell is clipped
+by its centre. A sub-pixel speck distributes its fading footprint over neighbouring pixels as it moves.
+Stretch in seconds elongates the footprint along projected travel. Omit it for specks.
+
+Give `veil` the drawable returned by `draw.density` and list that cloud before the specks in `things`. A speck takes
+on the colour of the cloud in front of it, with the sun and scene lights contributing to its own colour.
+Opaque bodies depth-test against the specks. Specks blend by instance order and write no depth.
+See `examples/spray_burst.ts` for a boot kicking up warm clay, with puffs and specks using the same flight equation (the burst, drag and fan are the example's own code).
 
 Where you can bring your own:
 

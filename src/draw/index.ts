@@ -15,7 +15,9 @@ import { drawMesh } from "./mesh.ts";
 import { drawTraced } from "./traced.ts";
 import { DensityDrawable, type DensityOptions } from "../soft/density.ts";
 import type { Medium } from "../soft/medium.ts";
+import { specks } from "../soft/specks.ts";
 export type { DensityOptions };
+export type { Speck, SpecksOptions } from "../soft/specks.ts";
 
 /** A drawable that can be drawn once per point of a `Points`. */
 export interface Instanceable {
@@ -72,6 +74,7 @@ function ribbon(curve: Curve, width: (u: F) => In<"f32">): Surface {
  * - `relief`: bumps, scales or spikes ray-marched on top of a surface, in its own coordinates.
  * - `copies`: a list of spheres, capsules or rounded cones, each intersected exactly per pixel.
  * - `density`: a cloud or fog (a `Medium`) integrated along each view ray.
+ * - `specks`: N small camera-facing specks, each placed and coloured by your expression of (index, time).
  * - `mesh`: triangles made by your own code (a hull, a shatter, a growth), moved by an expression.
  * - `traced`: any solid you can intersect, written as one `hit` function.
  */
@@ -116,8 +119,14 @@ export const draw = {
    * A medium (Gaussian puffs and fog banks: `src/soft/medium.ts`) integrated along each view ray in closed form, up to
    * the opaque scene, lit by the sun, the sky and the scene's lights (`src/soft/density.ts`).
    */
-  density(name: string, medium: Medium, o: DensityOptions): Drawable {
+  density(name: string, medium: Medium, o: DensityOptions): DensityDrawable {
     return new DensityDrawable(name, medium, o);
   },
+  /**
+   * `count` camera-facing specks (dust, sparks, spray, snow) in one instanced draw: `speck(index, seconds)` gives each
+   * one's centre, radius, colour and opacity; nothing is stored. Lit, depth-tested, sub-pixel faded, optionally
+   * stretched along its motion and veiled by a `draw.density` cloud (`src/soft/specks.ts`).
+   */
+  specks,
 };
 

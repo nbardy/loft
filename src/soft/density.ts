@@ -18,11 +18,11 @@
 // the next, and drew hard-edged discs into the cloud.) Alpha is exact: 1 - exp(-total depth).
 //
 // Lighting of a piece where the eye sees it (all closed forms): the other blobs' depth toward the sun and the zenith
-// (the CPU light pass, interpolated through the blob), plus a third of the blob's own depth from that point (its own
+// (the light pass, interpolated through the blob), plus a third of the blob's own depth from that point (its own
 // shadow at full strength drew every lump as a separate sphere). Sun light goes through octaves of extinction (single
 // scattering, plus softer lobes standing in for multiple scattering, so shadowed interiors are dark, not black) and a
 // forward-scattering phase (silver edges toward the sun); sky light is the style's sky at the zenith. The scene's lights are
-// per blob (CPU, through the medium) plus a small even share.
+// per blob (through the medium) plus a small even share.
 
 import { add, div, dot, exp, lift, max, mul, sub, variable, type Expr } from "../expr.ts";
 import { emitShaderFn } from "../compile/bind.ts";
@@ -86,15 +86,40 @@ export class DensityDrawable implements Drawable {
   }
 
   draws(ctx: CompileContext): Emitted {
-    const acc = accessMedium(this.medium, ctx.sun, ctx.lighting.lights, (t) => ctx.table(t));
     const key = `density.${this.name}`;
-    const detail = detailFn(ctx, this.o.detail);
-    const code = (mixed: boolean) => [detail.code, densityWgsl(this.medium, acc, this.o, ctx.sun, mixed)].join("\n");
+    const integral = densityIntegral(ctx, this);
+    const code = (body: string) => `${boxVertexWgsl(this.o.bounds)}
+${body}
+@fragment fn fs(in: VOut) -> @location(0) vec4<f32> {
+  let ray = soft_ray(in.world);
+  let o = ray[0];
+  let d = ray[1];
+  let box = soft_box(o, d);
+  let v = soft_integral(o, d, max(box.x, 0.0), min(box.y, soft_end(in.clip.xy, o, d)), sky(vec3<f32>(0.0, 1.0, 0.0)), ${this.o.haze > 0 ? "sky(d)" : "vec3<f32>(0.0)"});
+  if (v.a < 1e-4) { discard; }
+  return v;
+}`;
     return {
-      shaders: { [key]: { code: code(false), mixedCode: code(true), libs: [...detail.libs, ...(acc.banks.kind === "some" ? [GAUSS_LIB, BANK_LIB] : [GAUSS_LIB])] } },
+      shaders: { [key]: { code: code(integral.code), mixedCode: code(integral.mixedCode), libs: integral.libs } },
       draws: [drawSpec({ label: this.name, shader: key, vertices: 36, phase: "transparent", cull: "front", depthWrite: false, blend: "alpha", sceneDepth: true })],
     };
   }
+}
+
+/**
+ * The same coloured ray integral for the cloud draw and for a grain wherever the ray stops at it. `mixedCode` has
+ * half-precision light weights (densityWgsl's `mixed`); the specks' veil has no mixed variant and reads `code`.
+ */
+export function densityIntegral(ctx: CompileContext, density: DensityDrawable): Shader & { readonly mixedCode: string } {
+  const { medium, o } = density;
+  const acc = accessMedium(medium, ctx.sun, ctx.lighting.lights, (t) => ctx.table(t));
+  const detail = detailFn(ctx, o.detail);
+  const code = (mixed: boolean) => [softRayWgsl(o.bounds), detail.code, densityWgsl(medium, acc, o, ctx.sun, mixed)].join("\n");
+  return {
+    code: code(false),
+    mixedCode: code(true),
+    libs: [...detail.libs, ...(acc.banks.kind === "some" ? [GAUSS_LIB, BANK_LIB] : [GAUSS_LIB])],
+  };
 }
 
 /** A medium's colour at p for a reader of its form: its blobs' and layers' albedos weighted by their density there. */
@@ -136,8 +161,6 @@ export function boxVertexWgsl(b: Box): string {
   return /* wgsl */ `
 const BOX_C: vec3<f32> = ${v3(c)};
 const BOX_H: vec3<f32> = ${v3(h)};
-const BOX_MIN: vec3<f32> = ${v3(b.min)};
-const BOX_MAX: vec3<f32> = ${v3(b.max)};
 const BOX_N = array<vec3<f32>, 6>(${FACES.map((x) => v3(x[0])).join(", ")});
 const BOX_U = array<vec3<f32>, 6>(${FACES.map((x) => v3(x[1])).join(", ")});
 const BOX_V = array<vec3<f32>, 6>(${FACES.map((x) => v3(x[2])).join(", ")});
@@ -155,6 +178,23 @@ struct VOut { @builtin(position) clip: vec4<f32>, @location(0) world: vec3<f32> 
   out.world = p;
   return out;
 }
+/// Distance along the ray to the sea surface (three fixed-point steps on the swell), or far when it looks up.
+fn soft_sea(o: vec3<f32>, d: vec3<f32>) -> f32 {
+  if (d.y > -1e-4) { return 1e30; }
+  var t = -o.y / d.y;
+  for (var k = 0u; k < 3u; k++) { let p = o + d * max(t, 0.0); t = (sea_height(p.xz) - o.y) / d.y; }
+  return max(t, 0.0);
+}
+/// Where the ray ends: the opaque scene at this pixel, or the sea.
+fn soft_end(px: vec2<f32>, o: vec3<f32>, d: vec3<f32>) -> f32 {
+  return min(dot(scene_position(px) - o, d), soft_sea(o, d));
+}`;
+}
+
+function softRayWgsl(b: Box): string {
+  return /* wgsl */ `
+const BOX_MIN: vec3<f32> = ${v3(b.min)};
+const BOX_MAX: vec3<f32> = ${v3(b.max)};
 /// The ray through this pixel: origin on the eye (or the eye plane, orthographic) and unit direction.
 fn soft_ray(world: vec3<f32>) -> array<vec3<f32>, 2> {
   let d = view_dir(world);
@@ -168,17 +208,6 @@ fn soft_box(o: vec3<f32>, d: vec3<f32>) -> vec2<f32> {
   let lo = min(ta, tb);
   let hi = max(ta, tb);
   return vec2<f32>(max(max(lo.x, lo.y), lo.z), min(min(hi.x, hi.y), hi.z));
-}
-/// Distance along the ray to the sea surface (three fixed-point steps on the swell), or far when it looks up.
-fn soft_sea(o: vec3<f32>, d: vec3<f32>) -> f32 {
-  if (d.y > -1e-4) { return 1e30; }
-  var t = -o.y / d.y;
-  for (var k = 0u; k < 3u; k++) { let p = o + d * max(t, 0.0); t = (sea_height(p.xz) - o.y) / d.y; }
-  return max(t, 0.0);
-}
-/// Where the ray ends: the opaque scene at this pixel, or the sea.
-fn soft_end(px: vec2<f32>, o: vec3<f32>, d: vec3<f32>) -> f32 {
-  return min(dot(scene_position(px) - o, d), soft_sea(o, d));
 }`;
 }
 
@@ -233,7 +262,7 @@ function densityWgsl(m: Medium, acc: MediumAccess, o: DensityOptions, sun: V3, m
       let pc = O + D * clamp(tm, t0, t1);
       let qmin = dot(pc, pc);
       if (a0.w <= 0.0 || qmin > 16.0) { continue; }`;
-  return /* wgsl */ `${boxVertexWgsl(o.bounds)}
+  return /* wgsl */ `
 const BINS: u32 = ${BINS}u;
 const SUN_DIR: vec3<f32> = ${v3(sun)};
 const SUN_LIGHT: vec3<f32> = ${v3(o.sun)};
@@ -315,14 +344,8 @@ fn soft_extended(O: vec4<f32>, D: vec4<f32>, ia: f32, ib: f32, a0: vec4<f32>, k:
     soft_piece(O, D, mix(ia, ib, f32(j) / ${PIECES}.0), mix(ia, ib, f32(j + 1u) / ${PIECES}.0), a0, k, albedo, o, d);
   }
 }
-@fragment fn fs(in: VOut) -> @location(0) vec4<f32> {
-  let ray = soft_ray(in.world);
-  let o = ray[0];
-  let d = ray[1];
-  let box = soft_box(o, d);
-  let t0 = max(box.x, 0.0);
-  let t1 = min(box.y, soft_end(in.clip.xy, o, d));
-  if (t1 <= t0) { discard; }
+fn soft_integral(o: vec3<f32>, d: vec3<f32>, t0: f32, t1: f32, zenith: vec3<f32>, distant: vec3<f32>) -> vec4<f32> {
+  if (t1 <= t0) { return vec4<f32>(0.0); }
   // Pass 1 (closest approaches only, no erfc): where along the ray the blobs are, [lo, hi], and an estimate of each
   // blob's depth (its whole-line integral) in coarse bins over the segment, to find where the blobs become opaque
   // (estimated depth 8, transmission 3e-4). Pass 2 skips the blobs wholly behind that: they cannot be seen, and in a
@@ -350,7 +373,7 @@ fn soft_extended(O: vec4<f32>, D: vec4<f32>, ia: f32, ib: f32, a0: vec4<f32>, k:
   soft_t1 = t1;
   if (blobs) { for (var b = 0u; b < BINS; b++) { soft_bin[b] = vec4<f32>(0.0); } }
   for (var b = 0u; b < FOG; b++) { soft_fog[b] = vec4<f32>(0.0); }
-  soft_sky = ${f(o.sky)} * sky(vec3<f32>(0.0, 1.0, 0.0));
+  soft_sky = ${f(o.sky)} * zenith;
   soft_amb = ${acc.blobs}(${NB}u * 5u).xyz;
   let cosv = dot(d, SUN_DIR);
   // Pass 2: every blob's depth, where it is seen, its light there.
@@ -394,9 +417,9 @@ fn soft_extended(O: vec4<f32>, D: vec4<f32>, ia: f32, ib: f32, a0: vec4<f32>, k:
     trans *= exp(-e.x);
   }
   let alpha = 1.0 - trans;
-  if (alpha < 1e-4) { discard; }
+  if (alpha < 1e-4) { return vec4<f32>(0.0); }
   colour /= alpha;
-  ${o.haze > 0 ? `colour = mix(colour, sky(d), 1.0 - exp(-(seen / alpha) * ${f(o.haze)}));` : ""}
+  ${o.haze > 0 ? `colour = mix(colour, distant, 1.0 - exp(-(seen / alpha) * ${f(o.haze)}));` : ""}
   return vec4<f32>(colour, alpha);
 }`;
 }

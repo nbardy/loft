@@ -1,6 +1,6 @@
 // A medium: a soft volume made of Gaussian blobs, fog layers and fog banks, lit by the sun, the sky and the scene's
 // lights (`scene({ lights })`, src/light.ts). It is a few per-frame tables plus the closed forms of `src/soft/gauss.ts`; `draw.density` draws it, and
-// other soft things (glows, flares) read the same tables to be seen *through* it (`veil`).
+// other soft things (glows, flares, specks) read the same tables to be seen through it (`veil`).
 //
 // The kinds (each reduces to the canonical Gaussian density d0 exp(-|K (p - c)|^2), K the inverse radii):
 //   blob:  bounded on every axis. Blobs shadow each other and are grouped into clusters for culling.
@@ -9,16 +9,13 @@
 //          s the signed distance into the clear air. Along a ray s is linear, so on either side of the plane the exponent
 //          is still one quadratic (written as a 4D one): two closed-form pieces per ray.
 //
-// Every number may be an expression of time (centres drift, radii breathe, densities build). The pose pass evaluates
-// them and then, on the CPU:
-//   - sorts the blobs along a Morton curve of their centres and groups every CLUSTER consecutive ones under a bounding
-//     sphere, so a ray tests a sphere before the blobs in it (per pixel on the GPU, and in the light pass);
-//   - runs the light pass: for each blob, the optical depth of all the OTHER blobs toward the sun and toward the
-//     zenith, from one radius behind and one in front of its centre (the shader interpolates between them by where in
-//     the blob the eye sees it), and the light reaching its centre from each of the scene's lights through the medium.
+// Every number may be an expression of time (centres drift, radii breathe, densities build). The pose pass groups
+// every CLUSTER consecutive blobs under a sphere and computes the light reaching each centre from the scene's lamps.
+// It also finds the depth of the other blobs toward the sun and zenith from one radius either side of each centre.
+// Media of up to two clusters use GPU maps. Larger ones use the CPU with a Morton sort for tighter culling spheres.
 // The per-pixel shader adds each blob's own self-shadow at the point the ray sees, in closed form.
 
-import { div, dot, exp, lift, listOf, max, mul, sub, add, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
+import { add, div, dot, exp, fetch, iterate, length, lib, lift, listOf, max, min, mul, ne, select, sub, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
 import type { V3 } from "../compile/context.ts";
 import type { F, P3 } from "../map/types.ts";
 import { FAR, GAUSS_WGSL, gaussDepth, gaussTail } from "./gauss.ts";
@@ -66,7 +63,7 @@ export type BlobSpec = {
  * - have an edge: it fades smoothly for ever (cut at 3.6 radii for culling); a crisp silhouette comes only from many
  *   small dense blobs together, or from the drawable's noise detail.
  * - be anything but convex and single-peaked: a hollow, a ring or a long thin streak is many blobs.
- * - shade itself in full: the light it gets from the sun through the other blobs is computed at two points on the CPU
+ * - shade itself in full: the light it gets from the sun through the other blobs is computed at two points
  *   each frame (one radius either side of its centre), so shading within one large blob is approximate.
  *
  * Going past it: a list of blobs is the shape, so `billows` (boiling and drift for blobs you place) and `cloud` (a
@@ -227,8 +224,8 @@ export class Medium {
  *
  * The shape and its law: density(p) = sum of the puffs' and banks' Gaussians, so the optical depth along any ray is a
  * sum of closed forms (erf), integrated per pixel without marching. Lighting: each blob gets the other blobs' depth
- * toward the sun and the zenith, and its light from each of the scene's lights, from a CPU pass each frame; per pixel the depth is
- * deposited into depth bins and composited front to back. `density(p)` gives the same sum as an expression.
+ * toward the sun and zenith, and its light from each lamp, from a light pass each frame. Media with up to 16 blobs use
+ * GPU tables in a built artefact. Larger media use CPU tables. Per pixel the depth is deposited into bins and composited front to back. `density(p)` gives the same sum as an expression.
  *
  * Parameters: `name` (an identifier: it names tables), the `puffs` (blobs and layers) and `banks`, each with the
  * expressions it takes. The list itself is fixed at build: blobs can move, not appear.
@@ -236,13 +233,13 @@ export class Medium {
  * What it cannot do, because of the law and the light pass:
  * - be empty of blobs: fog alone needs one blob (of density 0).
  * - have blobs appear, split or vanish: the count is fixed; fade one in or out by its density.
- * - be cheap in large numbers: the light pass is O(N^2) on the CPU every frame, and each pixel loops over the blob
+ * - be cheap in large numbers: the light pass is O(N^2) every frame, and each pixel loops over the blob
  *   clusters its ray meets; hundreds of blobs, not tens of thousands.
  * - cast shadows on bodies or the ground.
  * - be lit by a light within a blob: each blob gets one light value from each light, at its centre (a large blob is lit
  *   evenly by a light touching its edge), with the light's transmission through the medium on the way (the same
  *   extinction octaves as sunlight, so a flash glows through thick cloud); 4% of the most of each light reaching any
- *   blob lights the whole medium evenly. Each frame the CPU traces from every blob to every light.
+ *   blob lights the whole medium evenly. Each frame the light pass traces from every blob to every light.
  * - draw outside its box: `draw.density` integrates only within `bounds` (keep it 3 radii past every puff; `cloud`
  *   and `billows` return one, and `unionBox` joins several).
  *
@@ -261,6 +258,28 @@ export function medium(name: string, parts: { readonly puffs?: readonly Puff[]; 
 type Frame = { n: number; c: Float64Array; k: Float64Array; d: Float64Array; col: Float64Array; seed: Float64Array; cc: Float64Array; cr: Float64Array };
 
 function makeTables(m: Medium, sun: V3, lights: readonly Light[]): MediumTables {
+  // Two clusters or fewer: a Morton sort buys little culling, so these media can be packed as plain GPU data.
+  const { blobs, clusters } = m.blobs.length <= 2 * CLUSTER ? smallMediumTables(m, sun, lights) : sortedMediumTables(m, sun, lights);
+  const layers: Optional = m.layers.length === 0 ? { kind: "none" } : (() => {
+    const table: TableSource = {
+      name: `${m.name}_layers`, lanes: 2, entries: m.layers.length, role: "data",
+      program: listOf(m.layers.map((l) => [vec4(0, l.height, 0, l.density), vec4(l.colour, l.inv)])),
+    };
+    return { kind: "some", table, count: m.layers.length };
+  })();
+  const banks: Optional = m.banks.length === 0 ? { kind: "none" } : (() => {
+    const table: TableSource = {
+      name: `${m.name}_banks`, lanes: 3, entries: m.banks.length, role: "data",
+      program: listOf(m.banks.map((b) => [
+        vec4(0, b.layer.height, 0, b.layer.density), vec4(b.layer.colour, b.layer.inv),
+        vec4(b.normal[0], b.normal[1], b.normal[0] * b.through[0] + b.normal[1] * b.through[1], 1 / b.softness),
+      ])),
+    };
+    return { kind: "some", table, count: m.banks.length };
+  })();
+  return { blobs, clusters, layers, banks };
+}
+function sortedMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<MediumTables, "blobs" | "clusters"> {
   const N = m.blobs.length, NC = Math.ceil(N / CLUSTER);
   const blobRoots = m.blobs.flatMap((q) => [vec4(q.centre, q.density), vec4(q.inv, 0), vec4(q.colour, 0)]);
   // Each light at each blob's centre, as authored (before the sort): (toward, distance) and the amount. A light at
@@ -289,24 +308,58 @@ function makeTables(m: Medium, sun: V3, lights: readonly Light[]): MediumTables 
       out.set(sph);
     } },
   };
-  const layers: Optional = m.layers.length === 0 ? { kind: "none" } : (() => {
-    const table: TableSource = {
-      name: `${m.name}_layers`, lanes: 2, entries: m.layers.length, role: "data",
-      program: listOf(m.layers.map((l) => [vec4(0, l.height, 0, l.density), vec4(l.colour, l.inv)])),
-    };
-    return { kind: "some", table, count: m.layers.length };
-  })();
-  const banks: Optional = m.banks.length === 0 ? { kind: "none" } : (() => {
-    const table: TableSource = {
-      name: `${m.name}_banks`, lanes: 3, entries: m.banks.length, role: "data",
-      program: listOf(m.banks.map((b) => [
-        vec4(0, b.layer.height, 0, b.layer.density), vec4(b.layer.colour, b.layer.inv),
-        vec4(b.normal[0], b.normal[1], b.normal[0] * b.through[0] + b.normal[1] * b.through[1], 1 / b.softness),
-      ])),
-    };
-    return { kind: "some", table, count: m.banks.length };
-  })();
-  return { blobs, clusters, layers, banks };
+  return { blobs, clusters };
+}
+
+function smallMediumTables(m: Medium, sun: V3, lights: readonly Light[]): Pick<MediumTables, "blobs" | "clusters"> {
+  const N = m.blobs.length;
+  const base: TableSource = {
+    name: `${m.name}_puffs`, lanes: 3, entries: N, role: "data",
+    program: listOf(m.blobs.map((q, i) => [vec4(q.centre, q.density), vec4(q.inv, i), vec4(q.colour, 0)])),
+  };
+  const zero = vec3(0, 0, 0);
+  const depths = (p: P3, d: V3 | P3, reach: In<"f32">, skip: F | number): F =>
+    iterate(N, [lift<"f32">(0)], ([tau], j) => {
+      const a = fetch(base, j, 0), k = fetch(base, j, 1).xyz;
+      const hit = lib<"f32">(LIGHT_DEPTH, mul(k, sub(p, a.xyz)), mul(k, d), reach, a.w);
+      return [add(tau, select(ne(j, skip), hit, 0))];
+    })[0];
+  const toward = (i: F, p: P3, k: P3, d: V3, side: number): F => {
+    const r = div(side, max(length(mul(k, d)), 1e-9));
+    return depths(add(p, mul(d, r)), d, FAR, i);
+  };
+  const ambient = lights.reduce((rgb, light) => {
+    const most = iterate(N, [zero], ([peak], j) => [max(peak, light(fetch(base, j, 0).xyz).amount)])[0];
+    return add(rgb, mul(most, LIGHT_AMBIENT));
+  }, zero);
+  const blobs: TableSource = {
+    name: `${m.name}_blobs`, lanes: BLOB_LANES, entries: N + 1, role: "data",
+    program: { kind: "map", runs: [
+      { count: N, lanes: (i) => {
+        const c = fetch(base, i, 0), pk = fetch(base, i, 1), k = pk.xyz, p = c.xyz;
+        const local = lights.reduce((rgb, light) => {
+          const a = light(p);
+          const tau = depths(p, a.toward, a.distance ?? FAR, -1);
+          const vis = div(add(add(exp(mul(tau, -1)), mul(exp(mul(tau, -0.3)), 0.5)), mul(exp(mul(tau, -0.09)), 0.25)), 1.75);
+          return add(rgb, mul(a.amount, vis));
+        }, zero);
+        return [c, pk, fetch(base, i, 2), vec4(local, 0), vec4(toward(i, p, k, sun, -1), toward(i, p, k, sun, 1),
+          toward(i, p, k, ZENITH, -1), toward(i, p, k, ZENITH, 1))];
+      } },
+      { count: 1, lanes: () => [vec4(ambient, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0), vec4(0, 0, 0, 0)] },
+    ] },
+  };
+  const entries = Math.ceil(N / CLUSTER);
+  const clusters: TableSource = {
+    name: `${m.name}_clusters`, lanes: 1, entries, role: "data",
+    program: listOf(Array.from({ length: entries }, (_, i) => {
+      const group = m.blobs.slice(i * CLUSTER, (i + 1) * CLUSTER);
+      const centre = div(group.reduce((a, b) => add(a, b.centre), zero), group.length);
+      const radius = group.reduce((r, b) => max(r, add(length(sub(centre, b.centre)), div(CLUSTER_EXTENT, min(b.inv.x, min(b.inv.y, b.inv.z))))), lift<"f32">(0));
+      return [vec4(centre, add(mul(radius, 1.001), 1e-3))];
+    })),
+  };
+  return { blobs, clusters };
 }
 
 /** Interleave the low 10 bits of x, y, z. */
@@ -431,6 +484,20 @@ function lightPass(fr: Frame, arrival: (i: number, j: number) => { readonly ray:
 
 /** The closed forms as a library entry, so every module that integrates a medium carries them once. */
 export const GAUSS_LIB: LibFn = { name: "loft_gauss_ray", ret: "vec3", wgsl: GAUSS_WGSL, js: "gpu-only" };
+const LIGHT_DEPTH: LibFn = {
+  name: "loft_medium_light_depth", ret: "f32", deps: [GAUSS_LIB],
+  js: (o: number[], d: number[], t: number, density: number) => {
+    if (density <= 0) return 0;
+    return density * (t >= FAR ? gaussTail(o, d) : gaussDepth([...o, 0], [...d, 0], 0, t));
+  },
+  wgsl: /* wgsl */ `
+fn loft_medium_light_depth(o: vec3<f32>, d: vec3<f32>, t: f32, density: f32) -> f32 {
+  if (density <= 0.0) { return 0.0; }
+  if (t >= ${FAR}.0) { return density * loft_gauss_tail(o, d); }
+  return density * loft_gauss_ray(vec4<f32>(o, 0.0), vec4<f32>(d, 0.0), 0.0, t).x;
+}`,
+};
+
 
 /** The edge of a bank along a ray: (inside from, inside to, outside from, outside to), before clipping. */
 const BANK_SPLIT_WGSL = /* wgsl */ `

@@ -1101,10 +1101,10 @@ draw.density("cloud", m, { bounds, sun: [2.1, 1.95, 1.75], sky: 0.9, forward: 0.
   vertical wall: on each side of the plane the exponent is still one quadratic, written in 4D). The scene's `lights`
   (src/light.ts; lightning is `boltFlash`/`sheetFlash`, each a `lamp`) light it from inside. Every number may follow time. `Medium.density(p)` is the same sum as an
   expression (the 7.1 `Density` signature).
-- Per frame on the CPU (the one library table still `cpu` after phase 1 of docs/gpu_native.md): blobs are evaluated, sorted on a Morton curve and grouped 8 to a bounding
-  sphere (`<name>_clusters`); the light pass computes each blob's optical depth through the *other* blobs toward the sun
-  and the zenith, one radius behind and in front of its centre, and each light's arrival at its centre through the medium.
-  O(N^2), culled by cluster spheres and closest approach.
+- Per frame the light pass computes each blob's optical depth through the other blobs toward the sun and zenith, one
+  radius behind and in front of its centre, and each lamp's arrival at its centre through the medium. Two clusters
+  or fewer (up to 16 blobs) use GPU maps and can build to files. Larger media use the Morton sort, cluster culling and
+  light pass on the CPU. Both group 8 blobs to a bounding sphere and have O(N²) light work.
 - Per pixel: the bound's back faces are drawn at depth 0 (so the camera may be inside), the ray is clipped to the box,
   to `scene_position` (bodies inside a cloud are veiled by exactly what is in front of them and the cloud has a soft
   edge on them) and to the swell. Pass 1 (no erfc) finds the blobs' depth range and an opacity cut; pass 2 integrates
@@ -1146,6 +1146,21 @@ the rain shaft into the fog (now: fixed fog bins).
 - `rain(name, spec)`: one camera-facing quad per streak, place and fall hashed from (index, cycle), slanted by wind,
   faded at both ends and below a pixel's width, cut at the swell; `splashes(name, rain, spec)`: the ring each streak
   made at its last landing, laid on the sea (`on-water`).
+- `draw.specks(name, count, speck, { stretch?, veil? })`: one instanced draw of camera-facing specks. The expression
+  `speck(index, seconds)` gives world centre and radius, colour and opacity. The tent footprint keeps a one-pixel
+  half-width and scales opacity by the ratio of projected areas. A sub-pixel speck distributes its energy by
+  bilinear weights, with the quad snapped to the four pixels' edges so MSAA cannot trim the tent a second time.
+  Optional stretch samples the path earlier and elongates along that projected motion.
+  The sun and lamps provide a forward-weighted light term. Grains test against opaque depth, clip by centre at the
+  ground, and blend in instance order.
+- The optional veil is a `draw.density` drawable listed before the specks. Given front in-scattering `Lfront` and
+  transmission `Tfront` to the grain centre, the source colour for alpha blending is `Lfront + Tfront * grain`.
+  This preserves the cloud already blended over the scene while replacing the part behind the grain at pixels it covers.
+  For at least 32,768 grains with no distance haze and a compute-safe sky, one GPU pose table per cloud samples its
+  integral in a 32³ grid in its world bounds (512 KiB). Grains interpolate eight
+  samples. Queries behind the box use the ray's exit point. Other cases use the direct integral, including a secondary
+  camera, which uses a separate fragment entry so the main pipeline can compile the grid lookup by itself.
+  The grid smooths veil changes below one cell.
 
 ### 8.4 Costs (best of 25, 1280x800, draw to texture without readback, heavily loaded machine; numbers vary ~2x run to run)
 
