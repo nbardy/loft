@@ -1,0 +1,21 @@
+{
+  "about": "The picture-parity corpus (docs/proposals/2026-11-19_lean_rust_loft.md §2.2). Read by tools/parity/run.ts.",
+  "examples": "examples/**/*.ts",
+  "seeds": {
+    "repo": "creative",
+    "default": "~/git/creative",
+    "env": "LOFT_CREATIVE",
+    "commit": "b7f79a82",
+    "sets": [
+      { "set": "crab-actions-v1", "path": "training/loft_envs/seed_programs/crab-actions-v1/seeds.jsonl", "rows": 103, "sha256": "26d2a9b1e3919e183b3737a53ad3390d79a3988416b7be58014cbaaa7b10fc99" },
+      { "set": "crab-improve-v1", "path": "training/loft_envs/seed_programs/crab-improve-v1/seeds.jsonl", "rows": 67, "sha256": "6e3e375c46d48082600ed4311b0c169b0405fe77fad62d703def4752ab614905" }
+    ]
+  },
+  "frames": {
+    "cameras": 3,
+    "times": [0, 0.5, 1.37, 2.9],
+    "size": [512, 512],
+    "stepsTime": 6.0,
+    "detail": { "time": 1.37, "size": [1280, 800] }
+  }
+}
