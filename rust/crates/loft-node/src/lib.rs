@@ -1,9 +1,10 @@
-//! The N-API addon (plan §3.5), hand-written: one entry, `run(job: Uint8Array) -> string`, plus `stamp`, the version
+//! The N-API addon (plan §3.5), hand-written: one entry, `run(job: Uint8Array, limits: BigUint64Array) -> string`
+//! (limits per `Meter`, in its order; lane 4.2), plus `stamp`, the version
 //! handshake src/core/native.ts checks at load. The job is borrowed in place, never copied by the binding. The answer
 //! is JSON, `{"Ok": report}` or `{"Err": {kind, code, message, error}}`, and a panic inside is caught and answered as
 //! `Internal`, so the JS process lives. Wave 1 decodes and validates; the integrator wires loft-core's program driver
 //! into `drive`.
-use loft_ir::error::{Error, Internal};
+use loft_ir::error::{Error, Internal, Limits, Meter};
 use loft_ir::graph::Program;
 use loft_ir::wire::{self, WIRE};
 use serde::Serialize;
@@ -11,7 +12,7 @@ use std::panic::{self, AssertUnwindSafe};
 use std::time::Instant;
 
 /// What native.ts expects, byte for byte. Bump the abi number with any change to `run`'s arguments or answer.
-const STAMP: &str = concat!("loft-node abi 1 wire ", 1);
+const STAMP: &str = concat!("loft-node abi 2 wire ", 1);
 const _: () = assert!(WIRE == 1, "STAMP names the wire version");
 
 #[derive(Serialize)]
@@ -29,11 +30,12 @@ enum Answer<T> {
     Err { kind: &'static str, code: u8, message: String, error: Error },
 }
 
-fn drive(job: &[u8]) -> Result<Report, Error> {
+fn drive(job: &[u8], limits: Limits) -> Result<Report, Error> {
     let t = Instant::now();
     let job = wire::decode(job)?;
     let decode_ns = t.elapsed().as_nanos() as u64;
     let g = &job.graph;
+    limits.spend(Meter::Nodes, g.nodes.len() as u64)?;
     let decls = g.fns.len() + g.raws.len() + g.loops.len() + g.kernels.len() + g.params.len() + g.inputs.len();
     let report = Report { program: job.program, nodes: g.nodes.len(), decls, decode_ns };
     match job.program {
@@ -68,6 +70,7 @@ mod napi {
     type Callback = unsafe extern "C" fn(Env, Info) -> Value;
     const OK: i32 = 0;
     const UINT8_ARRAY: i32 = 1;
+    const BIGUINT64_ARRAY: i32 = 10;
 
     // SAFETY: the N-API C ABI (node_api.h, version 1 functions only), resolved from the host process at load: Bun and
     // Node both export these symbols. On macOS build.rs links with `-undefined dynamic_lookup` for that reason.
@@ -108,37 +111,43 @@ mod napi {
         v
     }
 
-    /// The single Uint8Array argument, borrowed for the duration of the call.
+    /// Argument `k` of 2, a typed array of type `want`, borrowed for the duration of the call.
     ///
     /// SAFETY: called only from an N-API callback with its own `env` and `info`; the slice is used before the callback
     /// returns, while the JS engine keeps the array alive and does not run JS (so nothing can detach or write it).
-    unsafe fn bytes<'a>(env: Env, info: Info) -> Result<&'a [u8], &'static str> {
-        let (mut argc, mut argv) = (1usize, [ptr::null_mut(); 1]);
+    unsafe fn array<'a>(env: Env, info: Info, k: usize, want: i32) -> Result<&'a [u8], &'static str> {
+        let (mut argc, mut argv) = (2usize, [ptr::null_mut(); 2]);
         let (mut ty, mut len, mut data, mut buf, mut off) = (-1, 0usize, ptr::null_mut(), ptr::null_mut(), 0usize);
-        // SAFETY: argv has room for argc = 1 value; the out-pointers are live locals.
+        const USAGE: &str = "run(job, limits) takes a Uint8Array job and a BigUint64Array of 4 limits";
+        // SAFETY: argv has room for argc = 2 values; the out-pointers are live locals.
         unsafe {
             if napi_get_cb_info(env, info, &mut argc, argv.as_mut_ptr(), ptr::null_mut(), ptr::null_mut()) != OK
-                || argc < 1
+                || argc < 2
+                || napi_get_typedarray_info(env, argv[k], &mut ty, &mut len, &mut data, &mut buf, &mut off) != OK
+                || ty != want
             {
-                return Err("run(job) takes one Uint8Array");
-            }
-            if napi_get_typedarray_info(env, argv[0], &mut ty, &mut len, &mut data, &mut buf, &mut off) != OK
-                || ty != UINT8_ARRAY
-            {
-                return Err("run(job): job is not a Uint8Array");
+                return Err(USAGE);
             }
         }
-        // SAFETY: N-API gives `data` pointing at `len` bytes of the array's view; an empty view may have a null pointer.
-        Ok(if len == 0 { &[] } else { unsafe { std::slice::from_raw_parts(data.cast::<u8>(), len) } })
+        // `len` counts elements; a BigUint64Array's are 8 bytes.
+        let bytes = len * if want == BIGUINT64_ARRAY { 8 } else { 1 };
+        // SAFETY: N-API gives `data` pointing at `len` elements of the array's view; an empty view may be null.
+        Ok(if bytes == 0 { &[] } else { unsafe { std::slice::from_raw_parts(data.cast::<u8>(), bytes) } })
     }
 
     unsafe extern "C" fn run(env: Env, info: Info) -> Value {
         // SAFETY: env and info come from N-API for this callback.
-        let job = unsafe { bytes(env, info) };
+        let (job, limits) = unsafe { (array(env, info, 0, UINT8_ARRAY), array(env, info, 1, BIGUINT64_ARRAY)) };
         string(
             env,
             &super::guard(|| {
-                super::drive(job.map_err(|m| super::Error::Internal(super::Internal::Binding(m.into())))?)
+                let binding = |m: &str| super::Error::Internal(super::Internal::Binding(m.into()));
+                let limits = <[u8; 32]>::try_from(limits.map_err(binding)?)
+                    .map_err(|_| binding("run(job, limits): limits holds one u64 per Meter, 4"))?;
+                let limits = super::Limits(std::array::from_fn(|k| {
+                    u64::from_le_bytes(limits[8 * k..8 * k + 8].try_into().expect("8 bytes"))
+                }));
+                super::drive(job.map_err(binding)?, limits)
             }),
         )
     }
