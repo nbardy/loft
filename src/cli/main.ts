@@ -1,15 +1,17 @@
 // loft CLI. Dispatch only: each command is one function below.
 import { createHash } from "node:crypto";
 import { loopTime, OPEN, type Loop } from "../artefact.ts";
-import type { Artefact } from "../artefact.ts";
+import type { Artefact, View } from "../artefact.ts";
 import { baked } from "./state.ts";
-import type { Precision } from "../host/manifest.ts";
+import type { Bundle, Precision } from "../host/manifest.ts";
 import type { GpuLoaded } from "../host/host.ts";
+import type { StillSpec } from "../host/still.ts";
+import { buildOf, deviceOf, frameOf, identityId, type Identity } from "../identity.ts";
 import { parseArgs, USAGE, UsageError, type Command } from "./args.ts";
 import { resolveCamera } from "./cameras.ts";
 import { contactSheet, writeWebp, type Frame } from "./image.ts";
 import { checkInputs, viewInputs, type Sweep } from "./inputs.ts";
-import { headlessHost, loadArtefact } from "./load.ts";
+import { loadArtefact } from "./load.ts";
 import { openVideo } from "./video.ts";
 import { exitWith, headed, verdictOf } from "./verdict.ts";
 import { EnvironmentError } from "../errors.ts";
@@ -21,18 +23,25 @@ const ms = (t0: number) => `${(performance.now() - t0).toFixed(1)} ms`;
 /** What the CLI reads of an artefact, whichever way it came: compiled here, or a built directory. */
 type Info = Pick<Artefact, "cameras" | "inputs" | "stats">;
 
-async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }>, sweep: Sweep): Promise<{ info: Info; loaded: GpuLoaded }> {
+/**
+ * A loaded scene and what its frames' identities need (src/identity.ts): the bundle drawn and the device. A scene
+ * compiled here is lowered once, here, so its bundle is the one drawn (createHost's `load` would lower it again).
+ */
+type Opened = { readonly info: Info; readonly loaded: GpuLoaded; readonly bundle: Bundle; readonly identity: Omit<Identity, "frame"> };
+
+async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }>, sweep: Sweep): Promise<Opened> {
   let t = performance.now();
   switch (cmd.source.kind) {
     case "artefact": {
-      // Without the compiler: the loader reads the directory alone (src/cli/run_files.ts).
+      // Without the compiler: the loader reads the directory alone (src/cli/run_files.ts, whose closure
+      // tools/check_loader_closure.ts checks; opening the files anywhere else would leave that check guarding nothing).
       const { openFiles } = await import("./run_files.ts");
-      const { bundle, loaded } = await openFiles(cmd.source.dir, cmd.precision);
+      const { bundle, loaded, device } = await openFiles(cmd.source.dir, cmd.precision);
       const m = bundle.manifest;
       checkInputs(m, cmd.inputs, sweep);
       console.log(`files    ${ms(t)}  read and loaded ${cmd.source.dir}  (${fillCounts(m.tables)}; ${m.modules.length} modules, ${m.renderPipelines.length + m.computePipelines.length} pipelines)`);
       console.log(`precision ${loaded.precision}`);
-      return { info: m, loaded };
+      return identified({ info: m, loaded, bundle }, device);
     }
     case "file": case "fixture": {
       const artefact = await loadArtefact(cmd.source, cmd.still);
@@ -40,12 +49,26 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
       console.log(`compile  ${ms(t)}  (at most ${artefact.stats.maxTriangles} triangles, ${artefact.stats.draws} draws)`);
       for (const line of passNotes(artefact)) console.log(line);
       t = performance.now();
-      const loaded = await loadedWithRetries(artefact, cmd.precision);
+      const { loaded, bundle, device } = await loadedWithRetries(artefact, cmd.precision);
       console.log(`load     ${ms(t)}  precision ${loaded.precision}`);
       for (const r of artefact.recurrences ?? []) console.log(baked(r));
-      return { info: artefact, loaded };
+      return identified({ info: artefact, loaded, bundle }, device);
     }
   }
+}
+
+/** Prints the build and device parts once; each frame's line adds its `id` (`timed`). */
+function identified(o: Omit<Opened, "identity">, device: GPUDevice): Opened {
+  const identity = { build: buildOf(o.bundle), device: deviceOf(device) };
+  const p = identity.build.program;
+  const js = p.kind === "js-tables" ? `  (+ tables filled by JavaScript, not in the program hash: ${p.tables.join(", ")})` : "";
+  console.log(`identity program ${p.sha256.slice(0, 16)}  library ${identity.build.library.slice(0, 16)}  device ${identity.device.adapter}${js}`);
+  return { ...o, identity };
+}
+
+/** A frame's id (src/identity.ts), short, as printed beside its rgba hash. */
+function frameId(o: Opened, view: View, still: StillSpec): string {
+  return identityId({ ...o.identity, frame: frameOf(o.bundle.manifest, view, o.loaded.precision, still) }).slice(0, 16);
 }
 
 /**
@@ -53,11 +76,18 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
  * compiler wrote is the environment's (until 2026-11-12 it was bun-webgpu freeing descriptor strings early, now
  * patched: docs/reliable_render.md), and a fresh device is what can make it pass.
  */
-async function loadedWithRetries(artefact: Artefact, precision?: Precision): Promise<GpuLoaded> {
+async function loadedWithRetries(artefact: Artefact, precision?: Precision): Promise<{ loaded: GpuLoaded; bundle: Bundle; device: GPUDevice }> {
+  const [{ headlessDevice }, { bakeRecurrences }, { lower }, { loadBundle }] = await Promise.all([
+    import("../host/headless.ts"), import("../host/bake.ts"), import("../host/lower.ts"), import("../host/host.ts"),
+  ]);
   const seen: string[] = [];
   for (let attempt = 1; ; attempt++) {
     try {
-      return await (await headlessHost(precision)).load(artefact);
+      // What createHost's `load` does (src/host/host.ts), keeping the bundle: bake the recurrences on this device, lower, load.
+      const device = await headlessDevice();
+      await bakeRecurrences(device, artefact);
+      const bundle = lower(artefact, precision);
+      return { loaded: await loadBundle(device, bundle, { kind: "js", uploads: (state) => artefact.cpuPose(state) }, precision), bundle, device };
     } catch (e) {
       if (!(e instanceof EnvironmentError && e.transient)) throw e;
       seen.push(headed(e.message)[0]);
@@ -83,12 +113,13 @@ function fillCounts(tables: readonly { readonly fill: { readonly kind: "map" | "
   return `tables ${n.map} map, ${n.scan} scan, ${n.cpu} cpu (not data)${n.replay > 0 ? `, ${n.replay} replayed` : ""}`;
 }
 
-async function timed(label: string, draw: () => ReturnType<GpuLoaded["frameTimed"]>): Promise<Uint8Array> {
+/** Draws one frame and prints its line: time, what was drawn, the RGBA's hash and the frame's id. */
+async function timed(o: Opened, label: string, view: View, still: StillSpec): Promise<Uint8Array> {
   const t = performance.now();
-  const r = await draw();
+  const r = await drawFrame(o.loaded, view, still);
   // The hash names the exact RGBA, so two ways of drawing a frame can be compared without keeping a lossless picture.
   const sha = createHash("sha256").update(r.pixels).digest("hex").slice(0, 16);
-  console.log(`frame    ${ms(t)}  ${label}  (${r.drawn.triangles} triangles drawn, ${r.drawn.draws} draw calls)  rgba ${sha}`);
+  console.log(`frame    ${ms(t)}  ${label}  (${r.drawn.triangles} triangles drawn, ${r.drawn.draws} draw calls)  rgba ${sha}  id ${frameId(o, view, still)}`);
   return r.pixels;
 }
 
@@ -101,11 +132,12 @@ async function witness(cmd: Extract<Command, { kind: "render" | "frames" | "clip
 }
 
 async function render(cmd: Extract<Command, { kind: "render" }>) {
-  const { info: artefact, loaded } = await open(cmd, { kind: "none" });
+  const opened = await open(cmd, { kind: "none" });
+  const { info: artefact, loaded } = opened;
   const frames: Frame[] = [];
   for (const name of cmd.views) {
     const camera = resolveCamera(artefact, name);
-    const rgba = await timed(name, () => drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }, cmd.still));
+    const rgba = await timed(opened, name, { camera, ...cmd.size, time: loopTime(loopOf(artefact), cmd.time), params: cmd.params, inputs: cmd.inputs, construction: cmd.construction }, cmd.still);
     frames.push({ ...cmd.size, rgba });
   }
   loaded.destroy();
@@ -116,13 +148,14 @@ async function render(cmd: Extract<Command, { kind: "render" }>) {
 }
 
 async function frames(cmd: Extract<Command, { kind: "frames" }>) {
-  const { info: artefact, loaded } = await open(cmd, cmd.sweep);
+  const opened = await open(cmd, cmd.sweep);
+  const { info: artefact, loaded } = opened;
   const camera = resolveCamera(artefact, cmd.view);
   const out: Frame[] = [];
   for (const [k, time] of cmd.times.entries()) {
     const inputs = viewInputs(cmd.inputs, cmd.sweep, k, cmd.times.length);
     const label = cmd.sweep.kind === "linear" ? `t=${time} ${cmd.sweep.name}=${inputs[cmd.sweep.name]!.map((x) => +x.toFixed(4)).join(",")}` : `t=${time}`;
-    const rgba = await timed(label, () => drawFrame(loaded, { camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }, cmd.still));
+    const rgba = await timed(opened, label, { camera, ...cmd.size, time: loopTime(loopOf(artefact), time), params: cmd.params, inputs }, cmd.still);
     out.push({ ...cmd.size, rgba });
   }
   loaded.destroy();

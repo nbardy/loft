@@ -11,8 +11,11 @@
 //   {"id": "b", "artefact": "out/files/x", "camera": {"kind": "perspective", "eye": [4, 4, 8], "target": [0, 0.7, 0], "fovY": 0.62}, ...,
 //    "params": {"stormwing.span": 1.4}, "inputs": {"strike": 1, "ship.at": [14, 2]}}
 //
-//   {"id": "a", "ok": true, "tier": "C", "precision": "f32", "frames": [{"time": 0, "file": "out/a/0.rgba", "sha256": "..."}, ...], "ms": {...}, "cache": {...}}
-//   {"id": "a", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: ...", "detail": [...]}
+//   {"id": "a", "ok": true, "identity": {"build": ..., "frame": ..., "device": ...}, "frames": [{"time": 0, "file": "out/a/0.rgba", "sha256": "...", "id": "..."}, ...], "ms": {...}, "cache": {...}}
+//   {"id": "a", "ok": false, "exit": 4, "line": "loft: scene: ...", "detail": [...]}
+//
+// `identity` is src/identity.ts's record without the frame's time; frame k's `id` is the hash of that record with
+// `frame.time` set to its time. The same `id` is the same RGBA (docs/handoff_training.md "Identity").
 //
 // A failed request is answered and the server goes on; `exit` and `line` are what `loft render` would have ended with
 // (docs/errors.md), plus 7 (`budget`) for a limit of this server's: a compile or draw deadline, a compile CPU limit,
@@ -32,11 +35,12 @@ import { cachingDevice, type CachingDevice } from "../host/cache.ts";
 import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { loadBundle, NotDataError } from "../host/host.ts";
-import type { Bundle, FramePrecision, Precision } from "../host/manifest.ts";
+import type { Bundle, Precision } from "../host/manifest.ts";
 import { parsePrecision, parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
 import { checkInputs, type InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
+import { buildOf, deviceOf, frameOf, identityId, type Identity } from "../identity.ts";
 import { ending, exitWith, headed, type Verdict } from "./verdict.ts";
 
 export type ServeCommand = {
@@ -65,18 +69,13 @@ type Request = {
   readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues;
 };
 
-/**
- * The tier a frame was drawn in, part of its identity (with scene, camera, time, size, params, inputs, precision, library commit,
- * adapter and driver). Only "C", the compiled scene, exists today; the field is in every answer before an interpreter
- * ("I") exists. In training the tier is chosen once per sample and never promoted within a run.
- */
-type Tier = "C";
-const TIER: Tier = "C";
+/** An answer's identity: every part but the frame's time, which each frame carries. */
+type Shared = Omit<Identity, "frame"> & { readonly frame: Omit<Identity["frame"], "time"> };
 
 type Answer =
-  | { readonly id: string | number | null; readonly ok: true; readonly tier: Tier; readonly precision: FramePrecision; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string }[];
+  | { readonly id: string | number | null; readonly ok: true; readonly identity: Shared; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string; readonly id: string }[];
       readonly ms: { readonly compile?: number; readonly load: number; readonly frames: number }; readonly cache: ReturnType<CachingDevice["counts"]> }
-  | { readonly id: string | number | null; readonly ok: false; readonly tier: Tier; readonly exit: number; readonly line: string; readonly detail: readonly string[] };
+  | { readonly id: string | number | null; readonly ok: false; readonly exit: number; readonly line: string; readonly detail: readonly string[] };
 
 const MAIN = new URL("./main.ts", import.meta.url).pathname;
 
@@ -176,12 +175,12 @@ function verdictHere(e: unknown): Verdict {
 
 function failed(id: string | number | null, v: Verdict): Extract<Answer, { ok: false }> {
   const e = ending(v);
-  return { id, ok: false, tier: TIER, exit: e.code, line: e.line, detail: v.kind === "internal" ? [...e.detail, ...v.stack.split("\n")] : e.detail };
+  return { id, ok: false, exit: e.code, line: e.line, detail: v.kind === "internal" ? [...e.detail, ...v.stack.split("\n")] : e.detail };
 }
 
 /** The verdict a `loft build` child ended with: its exit code and its last `loft:` line, passed on as they are. */
 class ChildVerdict extends Error {
-  constructor(readonly response: Omit<Extract<Answer, { ok: false }>, "id" | "tier">) { super(response.line); }
+  constructor(readonly response: Omit<Extract<Answer, { ok: false }>, "id">) { super(response.line); }
 }
 
 /** A limit of this server's ran out (a deadline, a CPU limit, the pending bound): verdict `budget`, exit 7. */
@@ -217,7 +216,7 @@ async function compile(cmd: ServeCommand, scene: string, dir: string, precision:
 
 // ---- draw: the warm GPU child ----------------------------------------------------------------------------------
 
-type Gpu = { readonly cache: CachingDevice; readonly lost: () => string | undefined; readonly adapter: GPUAdapterInfo | undefined };
+type Gpu = { readonly cache: CachingDevice; readonly lost: () => string | undefined; readonly adapter: GPUAdapterInfo | undefined; readonly device: Identity["device"] };
 type Draw = { readonly req: Request; readonly dir: string; readonly limits: ArtefactLimits };
 type DrawMessage =
   | { readonly kind: "ready"; readonly adapter: Pick<GPUAdapterInfo, "vendor" | "architecture" | "device" | "description"> | null }
@@ -300,7 +299,7 @@ async function drawWorker(checkPath: string | undefined) {
     const freshGpu = async (): Promise<Gpu> => {
       const device = await headlessDevice();
       let lost: string | undefined;
-      const me: Gpu = { cache: cachingDevice(device), lost: () => lost, adapter: (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo };
+      const me: Gpu = { cache: cachingDevice(device), lost: () => lost, adapter: (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo, device: deviceOf(device) };
       // Only the current device's loss ends the server. A retry destroys the old one on purpose.
       void device.lost.then((info) => {
         lost = `device lost: ${info.reason}: ${info.message}`;
@@ -326,14 +325,19 @@ async function drawWorker(checkPath: string | undefined) {
           try {
             mkdirSync(req.out, { recursive: true });
             const frames = [];
+            const build = buildOf(bundle);
+            let shared: Shared | undefined;
             for (const [k, time] of req.times.entries()) {
               const view: View = { camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false };
               const pixels = await loaded.frame(view);
               const file = join(req.out, `${k}.rgba`);
               writeFileSync(file, pixels);
-              frames.push({ time, file, sha256: createHash("sha256").update(pixels).digest("hex") });
+              const identity: Identity = { build, frame: frameOf(bundle.manifest, view, loaded.precision, { kind: "frame" }), device: gpu.device };
+              const { time: _, ...frame } = identity.frame;
+              shared ??= { ...identity, frame };
+              frames.push({ time, file, sha256: createHash("sha256").update(pixels).digest("hex"), id: identityId(identity) });
             }
-            return { id: req.id, ok: true, tier: TIER, precision: loaded.precision, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
+            return { id: req.id, ok: true, identity: shared!, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
           } finally {
             loaded.destroy();
           }
@@ -495,7 +499,7 @@ export async function serve(cmd: ServeCommand) {
       outs.set(held = req.out, req.id);
       response = await run(req);
     } catch (e) {
-      response = e instanceof ChildVerdict ? { id, tier: TIER, ...e.response } : failed(id, verdictHere(e));
+      response = e instanceof ChildVerdict ? { id, ...e.response } : failed(id, verdictHere(e));
     } finally {
       if (held !== undefined) outs.delete(held);
     }

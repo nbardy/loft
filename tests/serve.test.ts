@@ -16,7 +16,7 @@ import { join, resolve } from "node:path";
 const ROOT = resolve(import.meta.dir, "..");
 const MAIN = join(ROOT, "src/cli/main.ts");
 
-type Answer = { id: string; ok: boolean; exit?: number; line?: string; tier?: string; frames?: { file: string; sha256: string }[] };
+type Answer = { id: string; ok: boolean; exit?: number; line?: string; identity?: { frame: { precision: string } }; frames?: { file: string; sha256: string; id: string }[] };
 
 /** Runs one server over `requests` (sent at once, then stdin closed): its exit code and its answers by id. */
 async function served(flags: readonly string[], requests: readonly object[]): Promise<{ code: number; by: Map<string, Answer>; count: number }> {
@@ -30,6 +30,7 @@ async function served(flags: readonly string[], requests: readonly object[]): Pr
 }
 
 const hashes = (a: Answer | undefined) => a!.frames!.map((f) => f.sha256.slice(0, 16));
+const ids = (a: Answer | undefined) => a!.frames!.map((f) => f.id.slice(0, 16));
 
 function build(scene: string, dir: string): void {
   const b = Bun.spawnSync([process.execPath, MAIN, "build", join(ROOT, scene), "--out", dir]);
@@ -45,16 +46,21 @@ test("serve: A, B, A draws A's pixels both times, as a fresh process does; a bad
     expect(code).toBe(0);
     expect(by.get("bad")).toMatchObject({ ok: false, exit: 2 });
     expect(by.get("bad")!.line).toStartWith("loft: usage: ");
-    // D7: every answer names the tier it was drawn in; only the compiled tier exists today.
-    for (const a of by.values()) expect(a.tier).toBe("C");
     expect(by.get("B")!.ok).toBe(true);
     expect(hashes(by.get("A2"))).toEqual(hashes(by.get("A1")));
+    // The same request twice: the same ids (src/identity.ts); each time its own id, another scene other ids.
+    expect(ids(by.get("A2"))).toEqual(ids(by.get("A1")));
+    expect(new Set(ids(by.get("A1"))).size).toBe(2);
+    expect(ids(by.get("B")).filter((id) => ids(by.get("A1")).includes(id))).toEqual([]);
+    expect(by.get("A1")!.identity!.frame.precision).toBe("f32");
     // B shares shader modules with A (the sea, the sky): the second A was drawn partly from the cache.
     expect((by.get("A2") as unknown as { cache: { hits: number } }).cache.hits).toBeGreaterThan((by.get("A1") as unknown as { cache: { hits: number } }).cache.hits);
 
     const fresh = Bun.spawnSync([process.execPath, MAIN, "frames", join(ROOT, "examples/shell.ts"), "--view", "three", "--times", "0.4,1.3", "--size", "96x64", "--out", join(out, "fresh.webp")]);
     expect(fresh.exitCode).toBe(0);
     expect([...fresh.stdout.toString().matchAll(/rgba ([0-9a-f]{16})/g)].map((m) => m[1])).toEqual(hashes(by.get("A1")));
+    // A scene compiled in the CLI and the directory serve built of it are one program: the same frames' ids agree.
+    expect([...fresh.stdout.toString().matchAll(/ id ([0-9a-f]{16})/g)].map((m) => m[1])).toEqual(ids(by.get("A1")));
   } finally {
     rmSync(out, { recursive: true, force: true });
   }
@@ -78,6 +84,7 @@ test("serve: params and inputs reach the frame, and a name the scene lacks is re
     for (const id of ["plain", "wide", "struck"]) expect(by.get(id)!.ok).toBe(true);
     expect(hashes(by.get("wide"))).not.toEqual(hashes(by.get("plain")));
     expect(hashes(by.get("struck"))).not.toEqual(hashes(by.get("plain")));
+    expect(new Set(["plain", "wide", "struck"].map((id) => ids(by.get(id))[0])).size).toBe(3);
     expect(by.get("typo")).toMatchObject({ ok: false, exit: 2 });
     expect(by.get("typo")!.line).toContain("stormwing.span");
     expect(by.get("vector")).toMatchObject({ ok: false, exit: 2 });
