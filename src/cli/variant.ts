@@ -5,8 +5,8 @@ import { BASE_ASK, subjectOf, type Subject } from "../design.ts";
 import type { Check } from "../check.ts";
 import type { Scene } from "../scene.ts";
 import { UsageError, type VariantArg } from "./args.ts";
-import { LoadError } from "../errors.ts";
-import { isTypedRefusal, siteOf } from "./verdict.ts";
+import { LoadError, siteOf } from "../errors.ts";
+import { isTypedRefusal } from "./verdict.ts";
 
 export async function subjectAt(path: string): Promise<Subject> {
   let mod: Record<string, unknown>;

@@ -3,9 +3,10 @@
 // closed-form functions of time with no state (DESIGN.md 2.1).
 
 import {
-  abs, add, clamp, cos, CURVE_N, div, exp, lift, lt, max, mul, row, Row, select, sin, smoothstep, step, sub, TAU, time,
+  abs, add, clamp, cos, CURVE_N, div, exp, lift, lt, max, mul, neg, row, Row, select, sin, smoothstep, step, sub, TAU, time,
   type Expr, type In,
 } from "./expr.ts";
+import { SceneError } from "./errors.ts";
 
 export type Curve<T extends "f32" | "vec2" | "vec3" | "vec4" = "vec4"> = (x: In<"f32">) => Expr<T>;
 
@@ -115,6 +116,52 @@ export function through(m: In<"f32">, points: readonly In<"vec3">[]): Expr<"vec3
   w[n - 1] = add(w[n - 1], mul(after, 2));
   w[n - 2] = sub(w[n - 2], after);
   return p.map((q, j) => mul(q, w[j])).reduce((s, x) => add(s, x)) as Expr<"vec3">;
+}
+
+/**
+ * Weight of the uniform cubic B-spline kernel at offset x: (4 - 6x^2 + 3|x|^3) / 6 within 1 of the centre,
+ * (2 - |x|)^3 / 6 within 2, 0 beyond. Twice continuously differentiable, and the weights of the four kernels that
+ * reach any point sum to 1.
+ */
+function bsplineKernel(x: Expr<"f32">): Expr<"f32"> {
+  // |x| as a select, not `abs`: the derivative of abs at 0 is sign(0) = 0, so the second time derivative of the
+  // curve read exactly at a knot came out 0 times the kernel's curvature there, not the curvature (found by solve's
+  // probe, 2026-11-18). A select takes one branch's derivative at the tie, which is the right one-sided value.
+  const a = select(lt(x, 0), neg(x), x), a2 = mul(a, a), a3 = mul(a2, a), out = sub(2, a);
+  const inner = div(add(sub(4, mul(a2, 6)), mul(a3, 3)), 6);
+  return select(lt(a, 1), inner, select(lt(a, 2), div(mul(mul(out, out), out), 6), 0));
+}
+
+/**
+ * A curve of time through `values` as a uniform cubic B-spline over `over` = [t0, t1]: value j weights the curve
+ * most at t0 + (j - 1) h, h = (t1 - t0) / (n - 3), and reaches 2 h either side of it. It is what `solve` returns, and
+ * the same thing written by hand: edit a value and the curve moves near that time only, by at most 2/3 of the edit.
+ *
+ * The law. With tau = clamp((t - t0) / h, 0, n - 3), the curve is sum_j values[j] B(tau - j + 1), B the cubic B-spline
+ * kernel. It is a cubic between neighbouring knots with continuous speed and acceleration (its jerk steps at knots),
+ * linear in the values, and lies within the least and greatest of the four values that reach any time (the convex
+ * hull: a bound on the whole curve read off its numbers). Outside [t0, t1] it holds its end value.
+ *
+ * Parameters: `t` (the clock; pass `time`) and every value take expressions; `over` and the count are fixed.
+ *
+ * What it cannot do, because of the law:
+ * - pass through its values: it is near them, not on them (at t0 it is (v0 + 4 v1 + v2) / 6). `through` interpolates.
+ * - corner or jump: a corner needs a knot repeated, which a uniform spline has no way to say.
+ * - change speed at its ends: outside [t0, t1] it is constant, so a curve still moving at t1 stops there in one frame
+ *   (hold its speed to 0 at the end, or end the span after the motion).
+ * - fewer than four values.
+ *
+ * Relatives: `keys` (a table row, monotone between keys: edits are buffer writes); `through` (Catmull-Rom through
+ * points, C1); `solve` (values chosen to meet stated holds).
+ */
+export function bspline(t: In<"f32">, over: readonly [number, number], values: readonly In<"f32">[]): Expr<"f32"> {
+  const n = values.length;
+  if (n < 4) throw new SceneError("bspline", `${n} values`, "at least 4", "add values: a cubic B-spline needs four to reach any time");
+  const [t0, t1] = over;
+  if (!(Number.isFinite(t0) && Number.isFinite(t1) && t1 > t0)) throw new SceneError("bspline", `over [${t0}, ${t1}]`, "a span [t0, t1] with t1 > t0", "give the times in increasing order");
+  const h = (t1 - t0) / (n - 3);
+  const tau = clamp(div(sub(t, t0), h), 0, n - 3);
+  return values.map((v, j) => mul(lift<"f32">(v), bsplineKernel(sub(tau, j - 1)))).reduce((s, x) => add(s, x));
 }
 
 // ---- stateless motion operators -----------------------------------------------------------------------------------

@@ -148,9 +148,53 @@ export default scene({
 `period: 4` says the scene loops every 4 seconds; `alive` takes a `period` (or wrap the build in `looping`) when idle
 motion must come round exactly. Other tools: `keys` and `through` (poses on a timeline or a path), `response` (a damped
 spring's answer to a step), `retarded` (a clock delayed down a body), `struck` (a pose struck and held dead still),
-`cast` and `score` (expressions as named poses scored against beats), `gait` and `footing` (feet planted while the
+`cast` and `score` (expressions as named poses scored against beats), `solve` (a curve from what must hold, below), `gait` and `footing` (feet planted while the
 body moves), `pendulum` and `dart` (hanging and nervous parts), `routine` (a group on counts: unison, canon, mirror,
 solos). Look at frames across an action before and after: `loft frames <scene> --times 0,0.4,0.8,1.2,1.6,2 --view side`.
+
+## Motion from constraints: `solve`
+
+When what you know is what must hold, not the curve (planted here until then, on the deck at 1.2 s, clear of the
+rail always), `solve` finds the curve: the smoothest one of a family that meets every hold. It runs once when the scene
+is built and returns ordinary expressions of `time` (`bspline(time, over, [numbers])`), so the result is edited, read
+at another time and composed like any other curve. Holds are `equal(a, b, when)` and `atLeast(a, b, when)` over any
+expressions of the unknowns, with `when` an instant `{ at }`, an interval `{ from, to }`, or the whole span.
+
+```ts run
+import { atLeast, distance, equal, plane, scene, solve, spline, strand, time, toon, vec2, vec3, type F } from "../src/index.ts";
+import { derivative } from "../src/grad.ts";
+
+const BAR = [1.5, 1.2] as const;   // a bar to hop over, end on (x, y)
+const hop = solve({
+  over: [0, 2],
+  vary: { x: spline(23), y: spline(23, 1) },   // a number per 0.1 s; `from`: start above the bar, not under it
+  hold: ({ x, y }) => [
+    equal(vec2(x, y), [0, 0.3], { from: 0, to: 0.4 }),                       // waits on the ground
+    equal(vec2(derivative(derivative(x, time), time), derivative(derivative(y, time), time)), [0, -9.81], { from: 0.6, to: 1.1 }),
+    equal(vec2(x, y), [3, 0.8], { from: 1.5, to: 2 }),                       // on the block, still
+    atLeast(distance(vec2(x, y), BAR), 0.45),                                // clear of the bar, always
+  ],
+  prefer: { jerk: 1 },
+});
+const ball = strand({ name: "ball", spine: (m: F) => vec3(hop.curves.x, hop.curves.y, m), stations: 4, girth: 0.3, tips: ["round", "round"], paint: [0.9, 0.4, 0.2] });
+const bar = strand({ name: "bar", spine: (m: F) => vec3(BAR[0], BAR[1], m), stations: 4, girth: 0.08, paint: [0.3, 0.3, 0.35] });
+
+export default scene({
+  ground: plane, things: [ball, bar], style: toon(), sun: [-0.4, 0.8, 0.45],
+  cameras: { side: { kind: "perspective", eye: [1.5, 1.5, 9], target: [1.5, 1, 0], fovY: 0.6 } },
+});
+```
+
+`hop.report` says how long it took and each hold's worst miss on the returned curves; `hop.holds` are the holds again,
+written over the solved curves, for checks. Holds that no curve meets together are refused (exit 4) with the smallest
+set of them that conflicts, each by its line. This one was, twice, as first written: flying until 1.4 s and still on
+the block from 1.4 s asks the acceleration to jump from -9.81 to 0, and the family is C2 (it named those three lines);
+with `spline(10)` (a knot every 0.29 s) still until 0.4 s and flying from 0.6 s left no piece to push in (it named those
+two). The family's knots are part of what you ask for. A hold says only what it says: "clear of the bar" is met under the bar as
+well as over it, and the search is local, so `spline(n, from)` starts each unknown on the side you mean. Rigid parts
+stay rigid: solve angles and targets (`turnedAbout`, `poseFrame`, `chain`), not the points of a part.
+`examples/second/heron_leap.ts` solves a heron's crouch, leap and landing; `agent_notes/2026-11-18_solve/NOTE.md` has
+the method.
 
 ## An action a game can read, with its checks
 
