@@ -15,7 +15,7 @@ export async function subjectAt(path: string): Promise<Subject> {
   } catch (e) {
     // A typed refusal raised at the module's top level is the scene's verdict; anything else stopped the module
     // loading (a syntax or import error, a throw in the user's own code): src/cli/verdict.ts.
-    if (await isTypedRefusal(e)) throw e;
+    if (isTypedRefusal(e)) throw e;
     const site = e instanceof Error ? siteOf(e.stack) : undefined;
     // Paths relative to where loft runs: the same message on every machine, and short enough to read.
     const said = (e instanceof Error ? e.message : String(e)).replaceAll(`${process.cwd()}/`, "").replace(/\.$/, "");

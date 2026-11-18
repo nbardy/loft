@@ -19,6 +19,7 @@
 import type { Check, Probe } from "../check.ts";
 import { add, clamp, cos, div, floor, ge, lift, lt, mul, select, sub, time, vec2, vec3, type Expr, type In } from "../expr.ts";
 import { anticipated, slowInOut } from "../geom/lively.ts";
+import { SceneError } from "../errors.ts";
 
 type F = Expr<"f32">;
 type V2 = Expr<"vec2">;
@@ -120,7 +121,7 @@ export type Readouts = {
  * overlap, a click while a struck pose holds, a canon that runs past the loop's end, a channel the score sets that a
  * member's readouts lack. It carries only its message, which names the member, the score index and the seconds.
  */
-export class RoutineError extends Error {}
+export class RoutineError extends SceneError {}
 
 type Channel = "lean" | "level" | "face" | "claw" | "small";
 /** A key's `who`, classified once. */

@@ -85,7 +85,7 @@ export interface GpuHost extends Host {
 export type CpuTables = { readonly kind: "none" } | { readonly kind: "js"; readonly uploads: (state: FrameState) => readonly CpuUpload[] };
 
 /** A bundle names a `cpu` table but nothing can fill it: a file artefact cannot hold JavaScript. */
-export class NotDataError extends Error {
+export class NotDataError extends SceneError {
   override readonly name = "NotDataError";
 }
 

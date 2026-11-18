@@ -35,7 +35,7 @@ import { EnvironmentError, LoadError, SceneError } from "../errors.ts";
 import { cachingDevice, type CachingDevice } from "../host/cache.ts";
 import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
-import { loadBundle, NotDataError } from "../host/host.ts";
+import { loadBundle } from "../host/host.ts";
 import type { Bundle, FramePrecision, Precision } from "../host/manifest.ts";
 import { parsePrecision, parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
@@ -162,9 +162,8 @@ function checkParams(params: Request["params"], m: Bundle["manifest"]): void {
 // ---- verdicts --------------------------------------------------------------------------------------------------
 
 /**
- * A failure in this process, classified. Nothing here runs scene code, so a scene's typed refusals cannot arise; the
- * classes that can are named. verdict.ts `verdictOf` would import the library to test for the rest, which this process
- * must not load.
+ * A failure in this process, classified. Nothing here runs scene code, so the only scene refusal is a bundle the host
+ * refuses (a SceneError, as every library refusal is); none of them carries an author's site here.
  */
 function verdictHere(e: unknown): Verdict {
   if (!(e instanceof Error)) return { kind: "internal", message: String(e), stack: "" };
@@ -172,7 +171,6 @@ function verdictHere(e: unknown): Verdict {
   if (e instanceof UsageError) return { kind: "usage", message: e.message };
   if (e instanceof LoadError) return { kind: "load", message: e.message };
   if (e instanceof SceneError) return { kind: "scene", message: e.message, site: undefined };
-  if (e instanceof NotDataError) return { kind: "scene", message: e.message, site: undefined };
   if (e instanceof EnvironmentError) return { kind: "environment", message: e.message };
   return { kind: "internal", message: `${e.name === "Error" ? "" : `${e.name}: `}${e.message}`, stack: e.stack ?? "" };
 }

@@ -21,6 +21,7 @@
 // the animation itself, so a hanging part's swing is derived from the rig's own sway and attack clocks rather than keyed.
 
 import { add, exp, lift, lt, max, mul, select, sin, type Expr, type In } from "../expr.ts";
+import { SceneError } from "../errors.ts";
 
 type F = Expr<"f32">;
 
@@ -89,7 +90,7 @@ export const jolt = (after: In<"f32">, speed: In<"f32">): Drive => ({ kind: "jol
  * `gain` (and so `answer` with a sway) for a sway period that is not a positive number. It carries only the message,
  * which names the value.
  */
-export class PendulumError extends Error {}
+export class PendulumError extends SceneError {}
 
 export type Pendulum = {
   /** Its own swings per second, and seconds per swing. */

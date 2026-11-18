@@ -1,6 +1,6 @@
 // Actions layer: attacks, hit shapes, telegraphs, smears, wakes, grabs, the lineup and the design (variants and slots).
 // What a subject does to the world and how a design is chosen.
-export { hit, hitSdf, hitPatch, type Hit, type Capsule, type Disc, type Arc } from "./spacetime/hit.ts";
+export { hit, hitSdf, hitPatch, hitContour, hitInradius, type Hit, type Capsule, type Disc, type Arc, type Contour } from "./spacetime/hit.ts";
 export { attack, animate, part, once, every, hold, ring, INSTANT, STILL, Attack, BodyAttack, type Aftermath, type Ring, type Still, type AttackSpec, type BodyAttackSpec, type RemoteAttackSpec, type RemoteSpec,
   type GripAttackSpec, type GripSpec, type Effect, type Instant, type Hold, type Carry, type CarrySpec, type AttackBeat, type BodyMotion, type Arming, type LungeSpec, type SweepSpec, type Motion, type Timing, type Target, type Part, type Strike, type Creature, type Animated, type Envelope, type Spine } from "./spacetime/attack.ts";
 export { telegraph, DANGER, type TelegraphStyle } from "./spacetime/telegraph.ts";

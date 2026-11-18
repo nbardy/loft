@@ -23,6 +23,7 @@
 // so an expression can say "bow left, crook right" (a recoil) in two numbers.
 
 import { add, cos, div, lift, max, mul, pow, sin, sqrt, sub, type Expr, type In } from "../expr.ts";
+import { SceneError } from "../errors.ts";
 
 type F = Expr<"f32">;
 type P3 = Expr<"vec3">;
@@ -51,7 +52,7 @@ export type Bent = {
 };
 
 /** Raised by `bent` when `sharp` is not a finite number at least 1; it carries only the message, which names the value. */
-export class BendError extends Error {}
+export class BendError extends SceneError {}
 
 /** Four-point Gauss-Legendre on [0, 1]: nodes and weights. */
 const GAUSS: readonly (readonly [number, number])[] = [[0.0694318442, 0.1739274226], [0.3300094782, 0.3260725774], [0.6699905218, 0.3260725774], [0.9305681558, 0.1739274226]];

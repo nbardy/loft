@@ -20,13 +20,13 @@
 //
 // Coordinates: y up, the cloud's axis on x = z = 0. The serpent's head is at its spine's m = 0.
 
-import { foam,
-  abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette,
-  points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, print, length, lt,
-  displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_PALETTE, WOODBLOCK_SEA, beats, dragged, slowInOut, swing, uneven, anticipated,
-  type Drawable, type F, type In, type P3, type PaintAt, wgsl,
+import {
+  foam, abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize,
+  palette, points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, print,
+  length, lt, displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_PALETTE, WOODBLOCK_SEA,
+  beats, dragged, slowInOut, swing, uneven, anticipated, type Drawable, type F, type In, type P3, type PaintAt, wgsl,
+  animate, attack, every, hit, part, telegraph,
 } from "../../src/index.ts";
-import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { wyrm, type Wyrm } from "../scenes/lib/wyrm.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
 import { impactFoam, impactPaint } from "./lib/impact.ts";

@@ -10,11 +10,10 @@
 // (world 9.4, above the body's top at 8.9) and 4.6 out.
 
 import {
-  abs, add, draw, floor, fract, hit, length, lift, chain, max, min, mix, mul, saturate, sin, smoothstep, spacing, sqrt, strand, sub, time, unit,
-  vec2, vec3, vec4, type Drawable, type F, type Sea,
+  abs, add, draw, floor, fract, hit, length, lift, chain, max, min, mix, mul, saturate, sin, smoothstep, spacing,
+  sqrt, strand, sub, time, unit, vec2, vec3, vec4, type Drawable, type F, type Sea, hitPatch,
 } from "../../../../src/index.ts";
 import { noise2 } from "../../../../src/lib/index.ts";
-import { hitPatch } from "../../../../src/spacetime/index.ts";
 import type { Expr } from "../../../../src/expr.ts";
 import { edgeOf, rgb } from "../../../../src/style/shared.ts";
 import { NO_SKELETON, type Surface } from "../../../../src/map/types.ts";

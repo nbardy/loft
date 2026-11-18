@@ -17,13 +17,14 @@
 // The ship is the game's size (about 4.5 long); the monster is drawn larger than the game brief's 6.5 u so it dwarfs
 // the ship, as DIRECTION.md asks.
 
-import { foam,
-  abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul, neg, normalize, pick, points,
-  lt, posed, pow, print, scene, sea, select, sign, sin, size, smoothstep, spacing, step, strand, sub, TAU, through, time, turn, vec2, vec3,
-  vec4, woodblock, anticipated, dragged, swing as follow, type Drawable, type Expr, type F, type In, type P3, type PaintAt, wgsl,
+import {
+  foam, abs, add, clamp, cos, cross, div, draw, dot, f, floor, fract, keys, length, lift, max, min, mix, mod, mul,
+  neg, normalize, pick, points, lt, posed, pow, print, scene, sea, select, sign, sin, size, smoothstep, spacing,
+  step, strand, sub, TAU, through, time, turn, vec2, vec3, vec4, woodblock, anticipated, dragged, swing as follow,
+  type Drawable, type Expr, type F, type In, type P3, type PaintAt, wgsl, hit, hitContour, hitInradius, hitPatch,
+  type Capsule,
 } from "../../src/index.ts";
 import { hash3, type Branch, type Frame as ListFrame, tree, gen } from "../../src/lib/index.ts";
-import { hit, hitContour, hitInradius, hitPatch, type Capsule } from "../../src/spacetime/index.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../../src/lib/sdf2.ts";
 import { NO_SKELETON, type Surface } from "../../src/map/types.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";

@@ -30,14 +30,6 @@ export class ChecksFailed extends Error {
   override readonly name = "ChecksFailed";
 }
 
-/** The library's typed errors that are the scene's fault, loaded only when an error needs classifying. */
-async function isLibraryRefusal(e: Error): Promise<boolean> {
-  const [lib, host, field] = await Promise.all([import("../index.ts"), import("../host/host.ts"), import("../draw/field.ts")]);
-  // DerivativeError is left out on purpose: a missing derivative rule is Loft's gap, not the scene's (internal).
-  const kinds = [lib.FieldSafetyError, field.FieldScheduleError, lib.GroundError, lib.TableBudgetError, lib.BendError, lib.PendulumError, lib.RestlessError, lib.ExpressionError, lib.StruckError, lib.RoutineError, host.NotDataError];
-  return kinds.some((k) => e instanceof k);
-}
-
 /**
  * The author's line a scene error names itself, where no stack frame can: the GPU refused the author's WGSL, raised by
  * the host (src/host/host.ts `ShaderTextError`), whose stack is all Loft's.
@@ -48,9 +40,7 @@ async function authorSite(e: SceneError): Promise<string | undefined> {
 }
 
 /** A refusal the library raised on purpose, with a message meant for the scene's writer. */
-export async function isTypedRefusal(e: unknown): Promise<boolean> {
-  return e instanceof SceneError || e instanceof DesignError || e instanceof LoadError || (e instanceof Error && await isLibraryRefusal(e));
-}
+export const isTypedRefusal = (e: unknown): boolean => e instanceof SceneError || e instanceof DesignError || e instanceof LoadError;
 
 /** The boundary: whatever was thrown, as a verdict. */
 export async function verdictOf(e: unknown): Promise<Verdict> {
@@ -76,7 +66,6 @@ export async function verdictOf(e: unknown): Promise<Verdict> {
   if (e instanceof SceneError) return { kind: "scene", message: e.message, site: await authorSite(e) ?? siteOf(e.stack) };
   if (e instanceof EnvironmentError) return { kind: "environment", message: e.message };
   if (e instanceof ChecksFailed) return { kind: "check", message: e.message };
-  if (await isLibraryRefusal(e)) return { kind: "scene", message: e.message, site: siteOf(e.stack) };
   return { kind: "internal", message: `${e.name === "Error" ? "" : `${e.name}: `}${e.message}`, stack: e.stack ?? "" };
 }
 

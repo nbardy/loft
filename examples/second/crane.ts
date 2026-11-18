@@ -18,10 +18,9 @@
 // same fight is not fixed: an attack fits its own aftermath into its period, and nothing fits a ring it did not make,
 // so the period here is set by hand. (The grip's `gap` is unused: a hook does not close by size; no harm.)
 import {
-  add, atan2, cos, every, hold, length, lift, max, mix, mul, placedBy, ringWave, scene, sea, sin, STAND_IN, strand, sub, thrown, time, toon, vec2, vec3,
-  type F, type P3,
+  add, atan2, cos, every, hold, length, lift, max, mix, mul, placedBy, ringWave, scene, sea, sin, STAND_IN, strand,
+  sub, thrown, time, toon, vec2, vec3, type F, type P3, attack, hit,
 } from "../../src/index.ts";
-import { attack, hit } from "../../src/spacetime/index.ts";
 import { frontFirst, shoves, throwLands, tolerance } from "../../src/check.ts";
 
 const CRATE = { at: [3.2, 0.3, 0.6] as const, half: 0.42 }, JIB = { height: 7, length: 6.5 };

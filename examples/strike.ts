@@ -7,12 +7,11 @@
 // the shape and the strike follows. Run `loft check examples/strike.ts` for the checks.
 
 import {
-  add, always, atan2, div, ge, input, le, length, lift, mod, mul, normalize, scene, sea, smoothstep, sub, time, toon, vec2,
-  type Expr,
+  add, always, atan2, div, ge, input, le, length, lift, mod, mul, normalize, scene, sea, smoothstep, sub, time, toon,
+  vec2, type Expr, animate, attack, hit, part, smear, telegraph, wake, type Target,
 } from "../src/index.ts";
 import { ship, type ShipSpec } from "./recipes/ship.ts";
 import { sloopSpec } from "./fleet.ts";
-import { animate, attack, hit, part, smear, telegraph, wake, type Target } from "../src/spacetime/index.ts";
 import { budget, clearance, landsInside, minScreenSize } from "../src/check.ts";
 import { restGape, restSpine, S, serpent } from "./serpent.ts";
 

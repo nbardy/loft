@@ -21,12 +21,13 @@
 // lit (`print.keys`). The sea, the key line and the paper are woodblock's own; the whirlpool's foam arms are printed
 // by the style from the whirlpool's own foam, and its eye in the key black (`water.eye`).
 
-import { foam,
-  abs, add, clamp, cos, sheetOn, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys, lift, lookAt, lt, max, mix,
-  mod, mul, normalize, on, pick, place, points, pow, print, scene, sea, select, sin, smoothstep, spacing, step, strand, sub, TAU, through,
-  time, vec2, vec3, whirlpool, length, woodblock, beats, dragged, slowInOut, swing, uneven, type Chart, type F, type Frame, type In, type P3,
+import {
+  foam, abs, add, clamp, cos, sheetOn, cross, distance, div, dot, draw, eq, fan, floor, fract, inFrame, input, keys,
+  lift, lookAt, lt, max, mix, mod, mul, normalize, on, pick, place, points, pow, print, scene, sea, select, sin,
+  smoothstep, spacing, step, strand, sub, TAU, through, time, vec2, vec3, whirlpool, length, woodblock, beats,
+  dragged, slowInOut, swing, uneven, type Chart, type F, type Frame, type In, type P3, animate, attack, every, hit,
+  part, telegraph,
 } from "../../src/index.ts";
-import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { landsInside } from "../../src/check.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
 import { impactFoam, impactPaint } from "./lib/impact.ts";

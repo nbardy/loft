@@ -5,10 +5,9 @@
 import { expect, test } from "bun:test";
 import { restGape, restSpine, serpent } from "../examples/serpent.ts";
 import { compileScene } from "../src/compile/index.ts";
-import { add, scene, sea, sub, time, toon, vec3, type TableSource } from "../src/index.ts";
+import { add, scene, sea, sub, time, toon, vec3, type TableSource, wake } from "../src/index.ts";
 import type { Drawable } from "../src/compile/context.ts";
 import { STATION_VEC4S, qrot } from "../src/map/transport.ts";
-import { wake } from "../src/spacetime/index.ts";
 import { stateAt } from "./compile.harness.ts";
 
 const s = serpent({ spine: restSpine, gape: restGape });
