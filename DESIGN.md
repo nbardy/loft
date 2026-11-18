@@ -266,6 +266,53 @@ moves there). Pictures: `out/polish/serpent_close_{papercraft,woodblock}_{before
 **Limits, as built.** Screen-space paper grain is fixed to the frame (the paper), so it does not swim with the camera but the picture moves
 under it. Bloom is one pass with no downsampled mips (40 taps out to 30 px at 800 px high).
 
+### 2.7 WGSL text (`src/text/`, as built 2026-11-18)
+
+`wgsl` (docs/proposals/2026-11-18_authoring_api.md section 2, lane L1) parses WGSL text once and returns a module: one
+callable per `fn`, one per `struct`. `src/text/tokens.ts` and `parse.ts` classify each function at the boundary: a
+**graph** function (the subset; its body parsed to statements), a **raw** function (outside the subset, with the first
+construct that put it there and its line), or an **entry** point (`@vertex`, `@fragment`, `@compute`, kept for raw
+drawables and compute passes). `lower.ts` lowers a graph function per call: parameters bound to the caller's
+expressions, `let` a name, `var` and assignment SSA, `if` a `select` per name a branch changed, `for` over a counter an
+`iterate` whose state is the outer `var`s the body assigns (in declaration order), `break` the loop's stop, `continue`
+and an early `return` masks (flags `$returned`, `$broke<d>`, `$continued<d>` held as bindings and merged like any
+other). Every value is built by `src/expr.ts`'s constructors, so the graph is the call form's: tests/text.test.ts builds
+five probe functions and six example functions both ways, each in a fresh process, and finds the same structural hash
+and byte-identical WGSL for all eleven. `examples/reeds_shadow.ts` moved its reed to text and its built artefact is
+byte-identical; `examples/stormwing.ts` moved its wing paint and draws the same pixels (`rgba a0d1fe6afbae19b9`).
+
+Rules the code keeps, each where it bites:
+- **Constants stay plain** (a number, an array) until an operation needs them, as in call form, so they are lifted
+  inside the constructor that reads them and nodes come in the call form's order. A `var` lifts its constant where it
+  is declared (the call form's `let x: F = f(0)`). Constant bools stay JavaScript booleans: a `true` node made for a
+  flag would shift the number of every node after it, and the WGSL names values by node number.
+- **`vec3(0.1, 0.2, 0.3)` of constants is one constant node**, the call form's `[0.1, 0.2, 0.3]`. The call form's
+  `vec3(0.1, 0.2, 0.3)` is a vector node of three scalar constants: the same value as another graph, emitted as a `let`.
+  Text has one spelling and takes the constant; the probes write call-form constant vectors as arrays, and stormwing's
+  artefact differs from its call form only by this (and the node numbers that follow), with identical pixels.
+- **Byte identity follows order.** The hash ignores the order nodes were made in; the WGSL does not. The call form's
+  `mul(a, b, c)` evaluates `c` before the first product, so text that wants the same bytes names `c` in a `let` first.
+- **A loop's step is re-entrant.** `iterate`'s step is called again by `replace`, `fold` and grad's loop tangents with
+  fresh variables, long after lowering. The step re-lowers the body from a snapshot of the scope at the loop, and
+  `until` hands back the stop of the step just taken (every caller calls `until` right after `step`).
+- **Every path returns** is WGSL's rule read from the statements, not from the flags' algebra.
+- **WGSL meanings.** Thirteen ops joined `Fn`: `roundEven` (WGSL `round`), `rem` (WGSL `%`), `ceil`, `trunc`,
+  `inverseSqrt`, `exp2`, `log2`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`, each with its WGSL emission,
+  JavaScript twin, interval enclosure (`src/interval.ts`) and derivative (`src/grad.ts`). They are not on the call
+  form's public surface. `fma`, `radians`, `degrees`, `reflect`, `refract`, `faceForward` and matrix products lower to
+  existing nodes. The twin and the GPU agree within 6.4e-7 on all of them (tests/text.gpu.test.ts).
+- **Raw functions** are library functions named `<fn>_<hash of their text>`, GPU-only. What they read from outside the
+  text (holes holding expressions, `time`, module constants that are expressions, and what the functions they call
+  read) arrives as added parameters `loft_h<k>`, so they need nothing from the scene's bindings. A graph function that
+  raw code calls is emitted on its own over variables of its declared types. The twin's error and a ranged check's
+  refusal quote `raw function pcg at eel.ts:14: u32 integers` (`markRaw`/`rawReasonOf` in `src/expr.ts`).
+- **Sites.** Each node first built from text records `file:line fn` off the interned key (`siteOfNode`); `emitWgsl`
+  takes an optional comment callback that ends a statement with it (for `loft show`, lane L4).
+
+Not built here: holes holding functions or records inside raw text, and raw code calling prelude functions directly
+(refused with the fix: wrap it in a graph function of the module), both for lane L6; `wgslFn` stays until lane L5
+deletes `src/lib/wgsl.ts` with its callers; integer graph types (phase 2).
+
 ## 3. The Artefact (`src/artefact.ts`, done)
 
 Read that file; it is the host contract. In short: a fixed prelude (bind group 0: frame, inputs, params, curves), an

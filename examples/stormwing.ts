@@ -6,8 +6,8 @@
 // and placed on it (`rigid`), so the left side is the mirror of the right.
 
 import {
-  add, max, min, fract, beat, breathe, cos, draw, fan, spiralTube, input, keys, lift, chain, mirror, mix, mul, on, palette, param, place, polyline, rotateAbout,
-  scene, sea, sin, smoothstep, spacing, strike, strand, sub, through, time, toon, vec3, abs, framed, surface, retarded,
+  add, max, min, beat, breathe, cos, draw, fan, spiralTube, input, keys, lift, chain, mirror, mix, mul, on, palette, param, place, polyline, rotateAbout,
+  scene, sea, sin, smoothstep, spacing, strike, strand, sub, through, time, toon, vec3, abs, framed, surface, retarded, wgsl,
   type Expr, type F, type Frame, type P3,
 } from "../src/index.ts";
 import { rigid } from "../src/geom/rig.ts";
@@ -68,10 +68,11 @@ const rays = [
 ];
 const membrane = fan({ rays, sag: S.sag, scallop: S.scallop, slack: 2.5 });
 // Dark membrane, a pale band along the scalloped edge, and electric veins running out between the rays.
-const wingPaint = (u: F, v: F) => {
-  const vein = mul(smoothstep(0.06, 0.0, abs(sub(fract(mul(u, 6)), 0.5))), smoothstep(0.25, 0.55, v));
-  return mix(mix(vec3(...S.membrane), vec3(...S.vein), mul(vein, 0.6)), vec3(...S.edge), smoothstep(0.82, 0.97, v));
-};
+const wingPaint = wgsl`
+fn paint(u: f32, v: f32) -> vec3f {
+  let vein = smoothstep(0.06, 0.0, abs(fract(u * 6.0) - 0.5)) * smoothstep(0.25, 0.55, v);
+  return mix(mix(${S.membrane}, ${S.vein}, vein * 0.6), ${S.edge}, smoothstep(0.82, 0.97, v));
+}`.paint;
 const wingGrid = { u: spacing.even(3 * 14), v: spacing.even(24) };
 const wingR = framed(membrane, { frame: root, scale: lift<"f32">(1) });
 const wingL = framed(mirror.surface(membrane), { frame: root, scale: lift<"f32">(1) });

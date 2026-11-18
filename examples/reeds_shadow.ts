@@ -2,7 +2,7 @@
 // every shape the sun sees casts, not only the skeletons' capsules. A reed shades its neighbour and the stone (a
 // distance field, traced per pixel) shades the floor by its own depth entry. The picture covers a 12-unit square round
 // the origin; the shadow part is a style, so `--style woodblock` drops the pass with the style that read it.
-import { add, bound, draw, f, ge, le, length, mix, mul, normalize, pass, plane, scene, select, sin, strand, sub, time, toon, vec2, vec3, type Check, type F, type P3, type Style } from "../src/index.ts";
+import { add, bound, draw, f, ge, le, length, mix, mul, normalize, pass, plane, scene, select, strand, sub, toon, vec2, vec3, wgsl, type Check, type F, type P3, type Style } from "../src/index.ts";
 
 const SUN: readonly [number, number, number] = [-0.4, 0.8, 0.45];
 const TEXELS = 2048;
@@ -35,11 +35,16 @@ const shadowed: Style = {
   ground: (ctx) => base.ground({ ...ctx, shadow: sub(1, sunlit(ctx.world, vec3(0, 1, 0))) }),
 };
 
-const spine = (k: number) => (m: F) => vec3(add(k * 0.7 - 2, mul(mul(m, m), mul(sin(add(time, k)), 0.5))), mul(m, 3.5), k % 2 ? 0.3 : -0.3);
+// Reed k sways with its own phase; odd reeds stand behind the even ones.
+const reeds = wgsl`
+fn spine(m: f32, k: f32) -> vec3f {
+  return vec3(k * 0.7 - 2.0 + m * m * (sin(time + k) * 0.5), m * 3.5, select(-0.3, 0.3, k % 2.0 != 0.0));
+}
+fn girth(m: f32) -> f32 { return 0.2 + m * -0.17; }`;
 const reed = (k: number) => strand({
   name: `reed${k}`,
-  spine: spine(k),
-  girth: (m: F) => add(0.2, mul(m, -0.17)),
+  spine: (m: F) => reeds.spine(m, k),
+  girth: reeds.girth,
   tips: ["open", "point"],
   paint: [0.85, 0.55, 0.2],
 });
@@ -56,7 +61,7 @@ const stone = draw.field("stone", (p: P3) => sub(length(sub(p, vec3(...STONE))),
 export const checks: readonly Check[] = [{
   name: "every caster inside the sun's picture",
   run(probe) {
-    const points = [...[0, 1, 2, 3, 4, 5].flatMap((k) => [spine(k)(f(0)), spine(k)(f(1))]), add(vec3(...STONE), vec3(0, 0.55, 0)), sub(vec3(...STONE), vec3(0, 0.55, 0))];
+    const points = [...[0, 1, 2, 3, 4, 5].flatMap((k) => [reeds.spine(0, k), reeds.spine(1, k)]), add(vec3(...STONE), vec3(0, 0.55, 0)), sub(vec3(...STONE), vec3(0, 0.55, 0))];
     let worst = 0;
     for (let t = 0; t < 6.3; t += 0.35) {
       for (const q of probe.eval(points.map((p) => fromSun.project(p)), t) as number[][]) worst = Math.max(worst, Math.abs(q[0]! - 0.5) * 2, Math.abs(q[1]! - 0.5) * 2, q[2]!);

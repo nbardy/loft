@@ -133,6 +133,57 @@ form on a surface), `impostors` and `drawCopies` (many small solids), and `hull`
 `examples/coral.ts` and `examples/nest.ts` (traced folds), `examples/shell_relief.ts` (relief), `examples/brig.ts`
 (a ship from numbers).
 
+## Maths as WGSL text: `wgsl`
+
+Maths inside a function can be written as a shader writer writes it. `wgsl` takes WGSL text and returns one callable
+per `fn`: an ordinary function of expressions, so it fills any slot a TypeScript function fills.
+
+```ts run
+import { plane, scene, strand, toon, wgsl } from "../src/index.ts";
+
+const eel = wgsl`
+fn spine(m: f32) -> vec3f {                     // m: 0 head .. 1 tail
+  let wave = sin(6.0 * m - 3.0 * time) * 0.25 * m;
+  return vec3(2.0 - 4.0 * m, 0.6 + 0.2 * m, wave);
+}
+fn girth(m: f32) -> f32 { return 0.24 * sqrt(4.0 * m * (1.0 - m)) * (1.0 - 0.5 * m) + 0.02; }
+fn paint(m: f32, v: f32) -> vec3f {
+  let back = smoothstep(-0.3, -0.12, sin(v * 6.2832));
+  let spot = step(0.25, noise3(vec3(m * 18.0, v * 4.0, 0.0)));
+  return mix(vec3(0.85, 0.8, 0.6), mix(vec3(0.1, 0.25, 0.2), vec3(0.9, 0.7, 0.2), spot), back);
+}`;
+
+export default scene({
+  ground: plane, style: toon(), sun: [-0.4, 0.8, 0.45],
+  things: [strand({ name: "eel", spine: eel.spine, girth: eel.girth, paint: eel.paint })],
+  cameras: { side: { kind: "perspective", eye: [1, 4.5, 5.5], target: [0, 0.6, 0], fovY: 0.6 } },
+});
+```
+
+- **The same graph.** Each call lowers the function's body with the arguments it was given, through the same
+  constructors the call form uses: `eel.girth` is the graph `add(mul(...), 0.02)` would be, with the same CPU twin,
+  checks, intervals and `gradient`. Text holds what the call form cannot write well: loops with state, `if`, `break`,
+  early `return`, swizzles (`p.zxy`, `v.xz = ...`) and operator precedence.
+- **Names in scope**, in order: locals; the module's own `fn`s, `struct`s and `const`s; holes; `time`; the library's
+  expression functions by their exported names (`noise3`, `hash22`, `sdRoundBox`, `smin`, `fold3`, `mod`, ...).
+  `gradient(h, p)` differentiates `h` with respect to the vector `p`.
+- **Holes** bring in what the text cannot name: `${param("reach", 1.2, { min: 0.8, max: 1.6 })}`, an input, a solved
+  curve, a TypeScript function of expressions (callable in the text), a number or an array (a constant). A string is
+  refused: the template splices values, never text. `wgsl(source)` reads text kept in a file.
+- **The subset** is `f32`, `vec2f`..`vec4f`, `bool`, `mat2x2f`, `mat3x3f`, constant arrays and structs of these; `let`,
+  `var`, assignment, `if`/`else`, `for (var i = 0; i < N; i++)` (any `N`, or `i32(expression)`), `break`, `continue`,
+  `return`, and the numeric builtins. A struct return fills a record slot by field name; a function may take fewer
+  parameters than its slot passes.
+- **WGSL text means WGSL.** `round` ties to even and `%` is the truncated remainder, as on the GPU (Loft's call-form
+  `round` and `mod` floor). `fma` is a multiply and an add on both sides. `1` is an integer: `let n = 1; n * 0.5` is
+  refused, with the fix `1.0`.
+- **Raw functions.** A function using anything outside the subset (integers, bit operations, textures, `dpdx`,
+  `while`, atomics, pointers) is emitted as written and still renders when graph code calls it; holes and `time` reach
+  it as added parameters. The CPU twin and ranged checks refuse it by name and line: `raw function pcg at
+  eel.ts:14: u32 integers`.
+- **Errors** point at the text: `examples/eel.ts:9:22: given unknown name "nois3"; ... Fix: did you mean noise3?`, the
+  line quoted with a caret, and the TypeScript line that called into it.
+
 ## Adding motion
 
 Motion is a function of `time`. The library's motion helpers are the twelve principles of animation as formulas
