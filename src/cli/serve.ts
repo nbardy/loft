@@ -9,25 +9,34 @@
 // stderr. At the end of stdin the server finishes what it has and exits 0. docs/handoff_training.md "loft serve".
 //
 //   {"id": "a", "scene": "train/x.ts", "camera": "fixed", "times": [0, 1.5], "size": "512x512", "out": "out/a"}
-//   {"id": "b", "artefact": "out/files/x", "camera": {"kind": "perspective", "eye": [4, 4, 8], "target": [0, 0.7, 0], "fovY": 0.62}, ...}
+//   {"id": "b", "artefact": "out/files/x", "camera": {"kind": "perspective", "eye": [4, 4, 8], "target": [0, 0.7, 0], "fovY": 0.62}, ...,
+//    "params": {"stormwing.span": 1.4}, "inputs": {"strike": 1, "ship.at": [14, 2]}}
 //
-//   {"id": "a", "ok": true, "frames": [{"time": 0, "file": "out/a/0.rgba", "sha256": "..."}, ...], "ms": {...}, "cache": {...}}
-//   {"id": "a", "ok": false, "exit": 4, "line": "loft: scene: ...", "detail": [...]}
+//   {"id": "a", "ok": true, "tier": "C", "frames": [{"time": 0, "file": "out/a/0.rgba", "sha256": "..."}, ...], "ms": {...}, "cache": {...}}
+//   {"id": "a", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: ...", "detail": [...]}
 //
 // A failed request is answered and the server goes on; `exit` and `line` are what `loft render` would have ended with
-// (docs/errors.md). A lost device is answered with exit 6 and ends the server with exit 6: start a new one.
+// (docs/errors.md), plus 7 (`budget`) for a limit of this server's: a compile past --compile-seconds or killed by a CPU
+// limit, or more than --pending requests at once. A lost device answers every request in flight with exit 6, then
+// ends the server with exit 6: start a new one.
+//
+// Ownership: a scene builds in its own private directory (under $TMPDIR, removed after its answer), and no two
+// requests in flight may name overlapping `out` directories (the later one is refused), so frames written to `out`
+// are the request's own. An artefact is checked (names, links, sizes against --limits) before its files are read.
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { constants, tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
 import type { Camera, View } from "../artefact.ts";
 import { EnvironmentError, LoadError } from "../errors.ts";
 import { cachingDevice, type CachingDevice } from "../host/cache.ts";
-import { readBundle } from "../host/files.ts";
+import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { loadBundle, NotDataError } from "../host/host.ts";
 import type { Bundle } from "../host/manifest.ts";
 import { parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
+import type { InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
 import { ending, headed, type Verdict } from "./verdict.ts";
 
@@ -39,16 +48,33 @@ export type ServeCommand = {
   readonly confine: readonly string[];
   /** A module whose default export is called with each artefact before it reaches the GPU; it throws to refuse one. */
   readonly check: string | undefined;
+  /** Requests admitted and not yet answered, at most; one more is refused at once as `budget`. */
+  readonly pending: number;
+  /** A compile child still running after this many seconds is killed and answered as `budget`. */
+  readonly compileSeconds: number;
+  /** What an artefact (given, or built here) may hold; checked before its files are read. */
+  readonly limits: ArtefactLimits;
 };
 
 type Source = { readonly kind: "scene"; readonly path: string } | { readonly kind: "artefact"; readonly dir: string };
 type CameraAsk = { readonly kind: "named"; readonly name: string } | { readonly kind: "given"; readonly camera: Camera };
-type Request = { readonly id: string | number; readonly source: Source; readonly camera: CameraAsk; readonly times: readonly number[]; readonly size: Size; readonly out: string };
+type Request = {
+  readonly id: string | number; readonly source: Source; readonly camera: CameraAsk; readonly times: readonly number[]; readonly size: Size; readonly out: string;
+  readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues;
+};
+
+/**
+ * The tier a frame was drawn in, part of its identity (with scene, camera, time, size, params, inputs, library commit,
+ * adapter and driver). Only "C", the compiled scene, exists today; the field is in every answer before an interpreter
+ * ("I") exists. In training the tier is chosen once per sample and never promoted within a run.
+ */
+type Tier = "C";
+const TIER: Tier = "C";
 
 type Answer =
-  | { readonly id: string | number | null; readonly ok: true; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string }[];
+  | { readonly id: string | number | null; readonly ok: true; readonly tier: Tier; readonly frames: readonly { readonly time: number; readonly file: string; readonly sha256: string }[];
       readonly ms: { readonly compile?: number; readonly load: number; readonly frames: number }; readonly cache: ReturnType<CachingDevice["counts"]> }
-  | { readonly id: string | number | null; readonly ok: false; readonly exit: number; readonly line: string; readonly detail: readonly string[]; readonly deviceLost?: true };
+  | { readonly id: string | number | null; readonly ok: false; readonly tier: Tier; readonly exit: number; readonly line: string; readonly detail: readonly string[] };
 
 const MAIN = new URL("./main.ts", import.meta.url).pathname;
 
@@ -81,7 +107,7 @@ function requestOf(line: string): Request {
   let r: Record<string, unknown>;
   try { r = JSON.parse(line); } catch (e) { throw new UsageError(`request: not JSON: ${e instanceof Error ? e.message : String(e)}`); }
   if (typeof r !== "object" || r === null || Array.isArray(r)) throw new UsageError("request: expected a JSON object");
-  const known = ["id", "scene", "artefact", "camera", "times", "size", "out"];
+  const known = ["id", "scene", "artefact", "camera", "times", "size", "out", "params", "inputs"];
   const stray = Object.keys(r).filter((k) => !known.includes(k));
   if (stray.length > 0) throw new UsageError(`request: unknown field ${stray.map((k) => `"${k}"`).join(", ")} (fields: ${known.join(", ")})`);
   const id = idOf(r);
@@ -95,7 +121,44 @@ function requestOf(line: string): Request {
   if (!Array.isArray(r.times) || r.times.length === 0 || !r.times.every((t) => typeof t === "number" && Number.isFinite(t))) throw new UsageError("request: \"times\" must be a non-empty list of numbers (seconds)");
   if (typeof r.size !== "string") throw new UsageError("request: \"size\" must be WIDTHxHEIGHT, e.g. \"512x512\"");
   if (r.camera === undefined) throw new UsageError("request: needs a \"camera\": a name the scene declares (or front, side, top, three), or a camera object");
-  return { id, source, camera: cameraOf(r.camera), times: r.times as number[], size: parseSize(r.size), out: path("out", r.out) };
+  return { id, source, camera: cameraOf(r.camera), times: r.times as number[], size: parseSize(r.size), out: path("out", r.out), params: paramsOf(r.params), inputs: inputsOf(r.inputs) };
+}
+
+/** `{name: value}` as given, or `{}` when absent; anything but a plain object is refused. */
+function namedOf(field: string, v: unknown): Record<string, unknown> {
+  if (v === undefined) return {};
+  if (typeof v !== "object" || v === null || Array.isArray(v)) throw new UsageError(`request: "${field}" must be an object of name: value, given ${JSON.stringify(v)}`);
+  return v as Record<string, unknown>;
+}
+
+function paramsOf(v: unknown): Record<string, number> {
+  return Object.fromEntries(Object.entries(namedOf("params", v)).map(([name, x]) => {
+    if (typeof x !== "number" || !Number.isFinite(x)) throw new UsageError(`request: params "${name}": ${JSON.stringify(x)} is not a number`);
+    return [name, x];
+  }));
+}
+
+/** An input is a number, or a list of numbers for a vector input (as `--input name=x,y,z`). */
+function inputsOf(v: unknown): InputValues {
+  return Object.fromEntries(Object.entries(namedOf("inputs", v)).map(([name, x]) => {
+    const xs = typeof x === "number" ? [x] : x;
+    if (!Array.isArray(xs) || xs.length === 0 || !xs.every((n) => typeof n === "number" && Number.isFinite(n))) throw new UsageError(`request: inputs "${name}": ${JSON.stringify(x)} is not a number or a list of numbers`);
+    return [name, xs as number[]];
+  }));
+}
+
+/** The request's params and inputs against what the artefact declares, before a draw: a typo fails by name. */
+function checkNames(req: Request, m: Bundle["manifest"]): void {
+  for (const name of Object.keys(req.params)) {
+    if (!m.params.some((p) => p.name === name)) throw new UsageError(`params "${name}": the scene declares no such param (it has: ${m.params.map((p) => p.name).join(", ") || "none"}). Fix: drop it from "params", or declare it: param("${name}", 1)`);
+  }
+  const replayed = new Set((m.frame.replay ?? []).map((r) => r.slot));
+  for (const [name, value] of Object.entries(req.inputs)) {
+    if (name === "time") throw new UsageError(`inputs "time": give the times in "times" instead`);
+    const s = m.inputs.find((i) => i.name === name);
+    if (s === undefined || replayed.has(s.slot)) throw new UsageError(`inputs "${name}": the scene declares no such input (it has: ${m.inputs.filter((i) => i.name !== "time" && !replayed.has(i.slot)).map((i) => `${i.name} (${i.def.length})`).join(", ") || "none"}). Fix: drop it from "inputs", or declare it: input("${name}", "f32", 0)`);
+    if (s.def.length !== value.length) throw new UsageError(`inputs "${name}": takes ${s.def.length} number(s), got ${value.length}`);
+  }
 }
 
 // ---- verdicts --------------------------------------------------------------------------------------------------
@@ -107,6 +170,7 @@ function requestOf(line: string): Request {
  */
 function verdictHere(e: unknown): Verdict {
   if (!(e instanceof Error)) return { kind: "internal", message: String(e), stack: "" };
+  if (e instanceof Budget) return { kind: "budget", message: e.message };
   if (e instanceof UsageError) return { kind: "usage", message: e.message };
   if (e instanceof LoadError) return { kind: "load", message: e.message };
   if (e instanceof NotDataError) return { kind: "scene", message: e.message, site: undefined };
@@ -114,30 +178,43 @@ function verdictHere(e: unknown): Verdict {
   return { kind: "internal", message: `${e.name === "Error" ? "" : `${e.name}: `}${e.message}`, stack: e.stack ?? "" };
 }
 
-function failed(id: string | number | null, v: Verdict): Answer {
+function failed(id: string | number | null, v: Verdict): Extract<Answer, { ok: false }> {
   const e = ending(v);
-  return { id, ok: false, exit: e.code, line: e.line, detail: v.kind === "internal" ? [...e.detail, ...v.stack.split("\n")] : e.detail };
+  return { id, ok: false, tier: TIER, exit: e.code, line: e.line, detail: v.kind === "internal" ? [...e.detail, ...v.stack.split("\n")] : e.detail };
 }
 
 /** The verdict a `loft build` child ended with: its exit code and its last `loft:` line, passed on as they are. */
 class ChildVerdict extends Error {
-  constructor(readonly response: Omit<Extract<Answer, { ok: false }>, "id">) { super(response.line); }
+  constructor(readonly response: Omit<Extract<Answer, { ok: false }>, "id" | "tier">) { super(response.line); }
 }
+
+/** A limit of this server's ran out (a deadline, a CPU limit, the pending bound): verdict `budget`, exit 7. */
+class Budget extends Error {}
 
 // ---- compile: a child process, no GPU --------------------------------------------------------------------------
 
-async function compile(cmd: ServeCommand, scene: string, dir: string): Promise<void> {
+async function compile(cmd: ServeCommand, scene: string, dir: string, children: Set<{ kill(signal?: number | NodeJS.Signals): void }>): Promise<void> {
   const child = Bun.spawn([...cmd.confine, process.execPath, MAIN, "build", scene, "--out", dir], {
     env: { ...process.env, LOFT_NO_GPU: "1" }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
   });
-  const [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
-  if (code === 0) return;
+  children.add(child);
+  // The deadline kills the direct child. A --confine wrapper should exec the build (or forward the signal), or the
+  // build outlives it; the answer is `budget` either way.
+  let late = false;
+  const timer = setTimeout(() => { late = true; child.kill("SIGKILL"); }, cmd.compileSeconds * 1000);
+  let stderr: string, code: number;
+  try { [stderr, code] = await Promise.all([new Response(child.stderr).text(), child.exited]); } finally { clearTimeout(timer); children.delete(child); }
+  if (code === 0 && !late) return;
   const lines = stderr.trimEnd().split("\n");
   const last = lines.at(-1) ?? "";
-  // A child that died by a signal (a confinement's CPU limit) or ended without Loft's last line has no verdict of its
-  // own; exit 1 is the taxonomy's "unknown" (neither the scene's fault nor the machine's, for certain).
-  if (child.signalCode !== null || !/^loft: /.test(last) || code < 1 || code > 6) {
-    throw new ChildVerdict({ ok: false, exit: 1, line: `loft: internal (a bug in Loft, or a scene mistake no constructor catches yet): the compile ended ${child.signalCode !== null ? `by signal ${child.signalCode}` : `with exit ${code}`} and no verdict`, detail: lines.slice(-20) });
+  if (late) throw new Budget(`compile of ${scene}: still running after ${cmd.compileSeconds} s (--compile-seconds), killed`);
+  // A wrapper that does not exec reports a signal as 128 + its number, as a shell does.
+  const signal = child.signalCode ?? (code > 128 ? Object.entries(constants.signals).find(([, n]) => n === code - 128)?.[0] : undefined);
+  if (signal === "SIGXCPU") throw new Budget(`compile of ${scene}: killed by SIGXCPU, the CPU-time limit --confine set`);
+  // Any other signal, or an end without Loft's last line, has no verdict of its own; exit 1 is the taxonomy's
+  // "unknown" (neither the scene's fault nor the machine's, for certain).
+  if (signal !== undefined || !/^loft: /.test(last) || code < 1 || code > 7) {
+    throw new ChildVerdict({ ok: false, exit: 1, line: `loft: internal (a bug in Loft, or a scene mistake no constructor catches yet): the compile ended ${signal !== undefined ? `by signal ${signal}` : `with exit ${code}`} and no verdict`, detail: lines.slice(-20) });
   }
   throw new ChildVerdict({ ok: false, exit: code, line: last, detail: lines.slice(0, -1).slice(-20) });
 }
@@ -146,12 +223,8 @@ async function compile(cmd: ServeCommand, scene: string, dir: string): Promise<v
 
 type Gpu = { readonly cache: CachingDevice; readonly lost: () => string | undefined; readonly adapter: GPUAdapterInfo | undefined };
 
-async function freshGpu(): Promise<Gpu> {
-  const device = await headlessDevice();
-  let lost: string | undefined;
-  void device.lost.then((info) => { lost = `device lost: ${info.reason}: ${info.message}`; });
-  return { cache: cachingDevice(device), lost: () => lost, adapter: (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo };
-}
+/** Two `out` directories overlap when they are one, or one holds the other. */
+const overlaps = (a: string, b: string) => a === b || a.startsWith(b + sep) || b.startsWith(a + sep);
 
 function cameraFor(ask: CameraAsk, bundle: Bundle): Camera {
   switch (ask.kind) {
@@ -171,7 +244,43 @@ export async function serve(cmd: ServeCommand) {
   const check: (b: Bundle) => void = cmd.check === undefined ? () => {} : (await import(resolve(cmd.check))).default;
   if (typeof check !== "function") throw new UsageError(`--check ${cmd.check}: its default export is not a function`);
 
-  let gpu = await freshGpu();
+  /** Requests admitted and not yet answered, by a token of their own (ids are the caller's and may repeat). */
+  const open = new Map<object, string | number | null>();
+  /** The `out` of each request in flight. */
+  const outs = new Map<string, string | number>();
+  const children = new Set<{ kill(signal?: number | NodeJS.Signals): void }>();
+  /** Private build directories of the scenes in flight. */
+  const builds = new Set<string>();
+  let closing = false;
+  /**
+   * Ends the server: every request in flight is answered with `v` first, then the process exits with its code. A
+   * device loss used to answer only the request that noticed it; the rest got end of file.
+   */
+  const closeWith = (v: Verdict) => {
+    if (closing) return;
+    closing = true;
+    for (const c of children) c.kill("SIGKILL");
+    // process.exit skips the `finally` that removes a build directory; remove the ones in flight here.
+    for (const d of builds) rmSync(d, { recursive: true, force: true });
+    const text = [...open.values()].map((id) => JSON.stringify(failed(id, v)) + "\n").join("");
+    const code = ending(v).code;
+    if (text === "") process.exit(code);
+    process.stdout.write(text, () => process.exit(code));
+  };
+
+  let gpu: Gpu;
+  const freshGpu = async (): Promise<Gpu> => {
+    const device = await headlessDevice();
+    let lost: string | undefined;
+    const me: Gpu = { cache: cachingDevice(device), lost: () => lost, adapter: (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo };
+    // Only the current device's loss ends the server: a retry destroys the device it replaces on purpose.
+    void device.lost.then((info) => {
+      lost = `device lost: ${info.reason}: ${info.message}`;
+      if (gpu === me) closeWith({ kind: "environment", message: `${lost}; the server ends: start a new one` });
+    });
+    return me;
+  };
+  gpu = await freshGpu();
   const a = gpu.adapter;
   write({ ready: true, adapter: a === undefined ? null : { vendor: a.vendor, architecture: a.architecture, device: a.device, description: a.description } });
 
@@ -193,8 +302,9 @@ export async function serve(cmd: ServeCommand) {
   /** Loads and draws one built directory, retrying a transient GPU refusal on a fresh device as `render` does. */
   const draw = async (req: Request, dir: string): Promise<Extract<Answer, { ok: true }>> => {
     let bundle: Bundle;
-    try { bundle = readBundle(dir); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
+    try { bundle = readBundle(dir, cmd.limits); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
     try { check(bundle); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
+    checkNames(req, bundle.manifest);
     const camera = cameraFor(req.camera, bundle);
     const t0 = performance.now();
     for (let attempt = 1; ; attempt++) {
@@ -205,13 +315,13 @@ export async function serve(cmd: ServeCommand) {
           mkdirSync(req.out, { recursive: true });
           const frames = [];
           for (const [k, time] of req.times.entries()) {
-            const view: View = { camera, ...req.size, time, params: {}, inputs: {}, construction: false };
+            const view: View = { camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false };
             const pixels = await loaded.frame(view);
             const file = join(req.out, `${k}.rgba`);
             writeFileSync(file, pixels);
             frames.push({ time, file, sha256: createHash("sha256").update(pixels).digest("hex") });
           }
-          return { id: req.id, ok: true, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
+          return { id: req.id, ok: true, tier: TIER, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
         } finally {
           loaded.destroy();
         }
@@ -225,59 +335,79 @@ export async function serve(cmd: ServeCommand) {
     }
   };
 
-  /** The directory a request draws: built here in a child (timed, without the wait for a slot), or given. */
-  const builtFrom = async (req: Request): Promise<{ readonly dir: string; readonly compileMs: number | undefined }> => {
-    switch (req.source.kind) {
-      case "artefact": return { dir: req.source.dir, compileMs: undefined };
+  /** Compiles (if a scene) and draws one request. A scene builds in a private directory, removed afterwards. */
+  const run = async (req: Request): Promise<Answer> => {
+    const source = req.source;
+    switch (source.kind) {
+      case "artefact": return await drawSlot(() => drawBounded(req, source.dir));
       case "scene": {
-        const scene = req.source.path, dir = join(req.out, "artefact");
-        const compileMs = await compileSlot(async () => {
-          const t0 = performance.now();
-          await compile(cmd, scene, dir);
-          return performance.now() - t0;
-        });
-        return { dir, compileMs };
+        const scene = source.path, dir = mkdtempSync(join(tmpdir(), "loft-serve-build-"));
+        builds.add(dir);
+        try {
+          const compileMs = await compileSlot(async () => {
+            const t0 = performance.now();
+            await compile(cmd, scene, dir, children);
+            return performance.now() - t0;
+          });
+          const drawn = await drawSlot(() => drawBounded(req, dir));
+          return { ...drawn, ms: { compile: compileMs, ...drawn.ms } };
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+          builds.delete(dir);
+        }
       }
     }
   };
+  const drawBounded = async (req: Request, dir: string) => {
+    try { return await draw(req, dir); } finally {
+      // Inside the slot: the cache is emptied between loads, never during one.
+      if (gpu.cache.bound()) console.error("loft serve: the GPU object cache passed its bound and was emptied");
+    }
+  };
 
-  const handle = async (line: string): Promise<void> => {
+  const handle = async (line: string, token: object): Promise<void> => {
     let id: string | number | null = null;
     try { id = idOf(JSON.parse(line)); } catch { /* answered below as a usage error */ }
+    open.set(token, id);
     let response: Answer;
+    let held: string | undefined;
     try {
       const req = requestOf(line);
-      const built = await builtFrom(req);
-      const drawn = await drawSlot(async () => {
-        try { return await draw(req, built.dir); } finally {
-          // Inside the slot: the cache is emptied between loads, never during one.
-          if (gpu.cache.bound()) console.error("loft serve: the GPU object cache passed its bound and was emptied");
-        }
-      });
-      response = built.compileMs === undefined ? drawn : { ...drawn, ms: { compile: built.compileMs, ...drawn.ms } };
+      // Reserved before the first await, so of two overlapping requests in flight the later is the one refused.
+      for (const [o, other] of outs) {
+        if (overlaps(o, req.out)) throw new UsageError(`request: "out" ${req.out} overlaps ${o}, the out of request ${JSON.stringify(other)}, still in flight; give each request in flight its own out`);
+      }
+      outs.set(held = req.out, req.id);
+      response = await run(req);
     } catch (e) {
-      response = e instanceof ChildVerdict ? { id, ...e.response } : failed(id, verdictHere(e));
+      response = e instanceof ChildVerdict ? { id, tier: TIER, ...e.response } : failed(id, verdictHere(e));
+    } finally {
+      if (held !== undefined) outs.delete(held);
     }
+    if (closing) return; // closeWith has answered this request
     const lost = gpu.lost();
-    if (lost !== undefined) {
-      write(failed(id, { kind: "environment", message: `${lost}; the server ends: start a new one` }));
-      process.exit(6);
-    }
+    if (lost !== undefined) return closeWith({ kind: "environment", message: `${lost}; the server ends: start a new one` });
     // Witness, from what this process actually loaded: scene code and the compiler stay in the child.
     const loadedNow = compilerModulesLoaded();
-    if (loadedNow.length > 0) {
-      write(failed(id, { kind: "internal", message: `loft serve loaded the compiler (${loadedNow.join(", ")}); the server ends`, stack: "" }));
-      process.exit(1);
-    }
+    if (loadedNow.length > 0) return closeWith({ kind: "internal", message: `loft serve loaded the compiler (${loadedNow.join(", ")}); the server ends`, stack: "" });
     write(response);
+    open.delete(token);
   };
 
   const inflight = new Set<Promise<void>>();
   for await (const line of console) {
+    if (closing) break;
     if (line.trim() === "") continue;
-    const p = handle(line).finally(() => inflight.delete(p));
+    if (open.size >= cmd.pending) {
+      let id: string | number | null = null;
+      try { id = idOf(JSON.parse(line)); } catch { /* answered with no id */ }
+      write(failed(id, { kind: "budget", message: `serve: ${open.size} requests already pending (--pending ${cmd.pending}); wait for an answer before sending more, or raise --pending` }));
+      continue;
+    }
+    const token = {};
+    const p = handle(line, token).finally(() => inflight.delete(p));
     inflight.add(p);
   }
   await Promise.all(inflight);
-  process.exit(0);
+  if (!closing) process.exit(0);
 }
