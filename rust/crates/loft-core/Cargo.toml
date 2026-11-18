@@ -1,0 +1,20 @@
+[package]
+name = "loft-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Loft's compiler core (plan 2026-11-19 §1.2): the op table, tape, grad and intervals today; the program driver is the integrator's."
+
+[dependencies]
+libm.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "it"
+path = "tests/it/main.rs"

@@ -370,6 +370,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "loft-core"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "serde_json",
+]
+
+[[package]]
 name = "loft-ir"
 version = "0.1.0"
 dependencies = [
