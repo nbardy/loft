@@ -144,7 +144,7 @@ fn scene(s: &Value) -> Scene {
                     format: TexFormat::R32Float,
                 })
             } else {
-                Source::Made(Shape::Rows { rows: u(&r["rows"]), lanes: u(&r["lanes"]) as u8 })
+                Source::Made(Shape::Rows { rows: u(&r["rows"]), lanes: u(&r["lanes"]) as u16 })
             }
         })
         .collect();

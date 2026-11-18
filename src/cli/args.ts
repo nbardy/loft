@@ -52,7 +52,7 @@ export type Command =
     readonly views: { readonly kind: "design" } | { readonly kind: "given"; readonly names: readonly ViewName[] };
     readonly only: { readonly kind: "all" } | { readonly kind: "given"; readonly names: readonly string[] };
   }
-  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string }
+  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string; readonly engine: "ts" | "rust" }
   | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: "ts" | "rust" }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
@@ -293,7 +293,9 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind !== "file") throw new UsageError("build: needs a scene file");
     const dir = one("--out");
     if (dir === undefined) throw new UsageError("build: --out dir is required");
-    return { kind: "build", source, out: dir, precision: precision ?? "f32" };
+    const engine = parseEngine(process.env.LOFT_ENGINE);
+    if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: build writes one engine's files, "ts" or "rust"`);
+    return { kind: "build", source, out: dir, precision: precision ?? "f32", engine };
   }
   if (name === "dev" && source.kind === "artefact") throw new UsageError("dev: needs a scene file or --fixture");
   if (name === "dev" && source.kind !== "artefact") return { kind: "dev", source, precision: precision ?? "f32", port: one("--port") === undefined ? 5173 : positive("--port", one("--port")!) };

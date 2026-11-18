@@ -192,7 +192,9 @@ class Budget extends Error {}
 
 async function compile(cmd: ServeCommand, scene: string, dir: string, precision: Precision, children: Set<{ kill(signal?: number | NodeJS.Signals): void }>): Promise<void> {
   const child = Bun.spawn([...cmd.confine, process.execPath, MAIN, "build", scene, "--out", dir, "--precision", precision], {
-    env: { ...process.env, LOFT_NO_GPU: "1" }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
+    // LOFT_ENGINE=ts: both executors draw the TS artefact directory until the wave 3 cutover (loft-draw reads it
+    // through loft-loader), so the compile child must not take `loft build`'s Rust route, which writes scene.loft.
+    env: { ...process.env, LOFT_NO_GPU: "1", LOFT_ENGINE: "ts" }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
   });
   children.add(child);
   // The deadline kills the direct child. A --confine wrapper should exec the build (or forward the signal), or the

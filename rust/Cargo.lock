@@ -464,6 +464,7 @@ dependencies = [
  "libm",
  "loft-ir",
  "naga",
+ "serde",
  "serde_json",
  "sha2",
 ]
@@ -516,6 +517,7 @@ dependencies = [
 name = "loft-node"
 version = "0.1.0"
 dependencies = [
+ "loft-core",
  "loft-ir",
  "serde",
  "serde_json",

@@ -19,8 +19,21 @@ import { Op, pack, Program } from "./wire.ts";
 
 const SRC = resolve(import.meta.dir, "..");
 
+/** Imports a scene with `load` and scores it in this process; prints one JSON line. A scene that throws at import
+ * (heron_leap_refused: its `solve` refuses while the module runs) is a recorded refusal with the error's class and
+ * first line, not a crash, so the corpus counts it. */
+export async function scoreScene(path: string, load: () => Promise<Record<string, unknown>>, dump?: string, print?: string): Promise<void> {
+  let mod: Record<string, unknown>;
+  try { mod = await load(); } catch (e) {
+    const what = e instanceof Error ? e.constructor.name : "throw", message = (e instanceof Error ? e.message : String(e)).split("\n")[0];
+    console.log(JSON.stringify({ scene: path, outcome: `refused at import: ${what}`, message }));
+    return;
+  }
+  await scoreModule(mod, path, dump, print);
+}
+
 /** Score the scene module `mod` (already imported) in this process; prints one JSON line. */
-export async function scoreModule(mod: Record<string, unknown>, path: string, dump?: string, print?: string): Promise<void> {
+async function scoreModule(mod: Record<string, unknown>, path: string, dump?: string, print?: string): Promise<void> {
   const [{ subjectOf }, { choose }, { compile }] = await Promise.all([import("../design.ts"), import("../cli/variant.ts"), import("../compile/index.ts")]);
   const at = () => ({ R: rec.made, U: rec.size, rewrite: rec.rewritten });
   const loaded = at(), t0 = performance.now(), stop = rec.watch();
@@ -66,7 +79,7 @@ async function one(argv: readonly string[]): Promise<void> {
   const path = argv[0]!, at = (flag: string): string | undefined => { const k = argv.indexOf(flag); return k < 0 ? undefined : argv[k + 1]; };
   const seed = at("--perturb");
   if (seed !== undefined) await perturb(Number(seed));
-  await scoreModule(await import(resolve(path)) as Record<string, unknown>, path, at("--dump"), at("--print"));
+  await scoreScene(path, () => import(resolve(path)) as Promise<Record<string, unknown>>, at("--dump"), at("--print"));
 }
 
 /** Source, perturbed and bytecode runs of each scene, in fresh processes; one JSON line per run, then whether the hashes agree. */
@@ -82,7 +95,7 @@ async function compare(scenes: readonly string[]): Promise<void> {
     const dir = resolve("out/record", basename(scene, ".ts"));
     mkdirSync(dir, { recursive: true });
     const entry = join(dir, "entry.ts");
-    writeFileSync(entry, `import * as mod from ${JSON.stringify(resolve(scene))};\nimport { scoreModule } from ${JSON.stringify(join(SRC, "record/score.ts"))};\nawait scoreModule(mod, ${JSON.stringify(scene)});\n`);
+    writeFileSync(entry, `import { scoreScene } from ${JSON.stringify(join(SRC, "record/score.ts"))};\nawait scoreScene(${JSON.stringify(scene)}, () => import(${JSON.stringify(resolve(scene))}));\n`);
     // Bun gives ESM bytecode only to a compiled executable (1.3.10), so the bundle is one; it is deleted after its run.
     const exe = join(dir, "bytecode"), build = Bun.spawnSync(["bun", "build", "--compile", "--bytecode", "--format=esm", "--outfile", exe, entry], { stdout: "pipe", stderr: "pipe" });
     const runs = {
