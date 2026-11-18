@@ -50,7 +50,8 @@ fn invert(m: &Mat4) -> Result<Mat4, Error> {
     let (b06, b07, b08) = (a20 * a31 - a21 * a30, a20 * a32 - a22 * a30, a20 * a33 - a23 * a30);
     let (b09, b10, b11) = (a21 * a32 - a22 * a31, a21 * a33 - a23 * a31, a22 * a33 - a23 * a32);
     let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
-    if !(det.abs() > 0.0) {
+    // partial_cmp, not `<= 0.0`: a NaN determinant must be refused too.
+    if det.abs().partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         return Err(Error::Camera(format!("singular view-projection (det = {det})")));
     }
     let d = 1.0 / det;
@@ -79,7 +80,7 @@ pub fn matrices(camera: &Camera, aspect: f64) -> Result<Matrices, Error> {
         Camera::Perspective { eye, target, .. } | Camera::Orthographic { eye, target, .. } => (eye, target),
     };
     let distance = dot(sub(target, eye), sub(target, eye)).sqrt();
-    if !(distance > 0.0) {
+    if distance.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         return Err(Error::Camera(format!("eye and target coincide at {eye:?}")));
     }
     let (near, far) = (distance / 100.0, distance * 100.0);

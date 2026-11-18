@@ -880,8 +880,10 @@ impl Loft {
                 let floats = b
                     .get_mapped_range(..)
                     .map_err(|e| Error::Map(e.to_string()))?
-                    .chunks_exact(4)
-                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|c| f32::from_le_bytes(*c))
                     .collect();
                 b.unmap();
                 self.last_bounds = Some(floats);
@@ -985,7 +987,7 @@ fn select_precision(
         let i = id("buffer", &key, m.buffers.len())?;
         let original = &mut m.buffers[i];
         let length = blobs.get(&b.init).ok_or_else(|| invalid(&format!("missing mixed buffer {i} data")))?.len() as u64;
-        if b.size < 4 || b.size % 4 != 0 || b.size > original.size || length > b.size || length % 4 != 0 {
+        if b.size < 4 || b.size % 4 != 0 || b.size > original.size || length > b.size || !length.is_multiple_of(4) {
             return Err(invalid(&format!("invalid mixed buffer {i}")));
         }
         if shader_f16 {
@@ -1207,7 +1209,7 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
             ));
         }
     }
-    for p in m.params.iter().filter(|p| p.slot >= m.param_floats) {
+    if let Some(p) = m.params.iter().find(|p| p.slot >= m.param_floats) {
         return bad(format!("param \"{}\" at slot {} is past paramFloats = {}", p.name, p.slot, m.param_floats));
     }
     let slots = m.frame.detail.floats / 4;

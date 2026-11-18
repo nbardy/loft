@@ -139,7 +139,8 @@ fn main() {
         let load_ms = t.elapsed().as_secs_f64() * 1e3;
         eprintln!("load {i}: read {read_ms:.3} ms, pipelines {warm_ms:.3} ms, resources {:.3} ms, load {load_ms:.3} ms, precision {}", load_ms - warm_ms, loft.precision().as_str());
         loft
-    }).last().expect("positive load count");
+    // reduce, not next_back (Clippy's suggestion for last): every load must run; only the last one is kept.
+    }).reduce(|_, next| next).expect("positive load count");
     if let Some(cache) = cache {
         let t = Instant::now();
         let saved_bytes = cache.save().unwrap_or_else(|e| fail(e.to_string()));
@@ -250,8 +251,10 @@ impl Clock {
             .read
             .get_mapped_range(..)
             .expect("timestamp range")
-            .chunks_exact(8)
-            .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|c| u64::from_le_bytes(*c))
             .collect();
         self.read.unmap();
         t

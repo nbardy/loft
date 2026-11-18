@@ -619,6 +619,7 @@ pub enum StepCopy {
 }
 
 #[derive(Debug, Deserialize)]
+#[expect(clippy::large_enum_variant, reason = "one per compute in a parsed manifest; size does not matter")]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ComputeRun {
     Once(RawDispatch),

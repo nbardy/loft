@@ -68,7 +68,7 @@ impl View<'_> {
             return None;
         }
         let t = (h - a[1]) / dy;
-        if !(t > 0.0) {
+        if t.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             return None;
         }
         let p = [a[0] + t * (b[0] - a[0]), h, a[2] + t * (b[2] - a[2])];
@@ -163,6 +163,7 @@ fn grid_runs(
     runs
 }
 
+#[expect(clippy::too_many_arguments, reason = "moved unchanged; loft-gpu (lane 3.2) replaces this planner")]
 fn projected_runs(
     slot: usize,
     cell: f64,
