@@ -1,6 +1,6 @@
 # loft-loader
 
-Loads a Loft artefact folder (`docs/artefact_format.md`, format versions 1 through 4) onto a `wgpu` 30 device and draws its
+Loads a Loft artefact folder (`docs/artefact_format.md`, format versions 1 through 5) onto a `wgpu` 30 device and draws its
 frames. It is an executor of the manifest: it creates the objects the manifest lists, in order, and per frame runs the
 recipe (frame writes, the pose compute pass, the level-of-detail bounds read and plan, the render passes). It knows
 nothing about scenes. `loft-view` is a small headless binary on top of it, for pictures and timing.

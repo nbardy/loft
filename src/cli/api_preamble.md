@@ -25,14 +25,15 @@ shadows onto the ground and onto bodies in styles that print a shadow block.
 
 **What you can bring.** A `Drawable` (`name`, `draws(ctx)` returning WGSL shaders and phased draws, `skeletons`,
 `surfaces`; `ctx.table` for a per-frame table, `ctx.post` for a full-screen pass; `src/draw/sky.ts` is 30 lines). A
-WGSL function inside expressions (`wgslFn`; GPU only, so checks cannot evaluate it). A `Style` value, fresh or spread
+WGSL function inside expressions (`wgslFn`; GPU only, so checks cannot evaluate it). A WGSL `compute` pass whose
+outputs are made at build, at load, per frame or as a stepped state read by time. A `Style` value, fresh or spread
 from another. A host: `loft build` writes `manifest.json`, `wgsl/`, `bin/` (`docs/artefact_format.md`), executed by
 `createHost` (`src/host/index.ts`) or `rust/loft-loader` on `wgpu`.
 
 **What it cannot do today.**
 - No ground but the sea: every scene has `sea({ swell })` (an empty list is flat water).
 - No path tracing (above). One sun.
-- No simulation: everything is a closed form of time and inputs; nothing carries state from frame to frame.
+- Frames are independent. Simulations use a baked or load-time stepped history read by time.
 - No meshes in: shapes are functions (`loft bake` writes glTF out).
 - Headless rendering needs bun; the package is not published; a large subject is megabytes of WGSL and seconds to load.
 - Several components take only numbers, so their family is fixed (`whirlpool`, `sea`): leave them by

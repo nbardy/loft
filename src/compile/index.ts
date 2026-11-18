@@ -17,6 +17,7 @@ import { lampShadows, refuseSpread } from "../frame/lamp_shadow.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 import { discover, planPasses } from "./passes.ts";
 import { SceneError } from "../errors.ts";
+import { compileCompute } from "./compute.ts";
 
 /** CPU evaluation of expressions over a posed frame; free variables bound per call. */
 export type CpuFn = (frame: TableFrame, vars?: Env["vars"]) => (V | boolean)[];
@@ -59,6 +60,7 @@ export function compileScene(scene: Scene): Compiled {
     return (frame, vars = {}) => run({ ...frame.env, vars });
   };
   const prep: TablePrep = { compile: cpu };
+  const resourcesOf = compileCompute(scene.compute, slots);
   const posts: PostSpec[] = [...scene.style.post];
   let screenInk = false;
   const notes: string[] = [];
@@ -111,6 +113,10 @@ export function compileScene(scene: Scene): Compiled {
   }
   slots.seal();
   const shared = slots.libs();
+  const allModules = [...Object.values(modules), ...found.screens.values()];
+  const compute = resourcesOf(layout.dynamic.length + layout.statics.length,
+    [...shared, ...allModules.flatMap((m) => m.libs)],
+    [style, ...allModules.flatMap((m) => [m.code, m.depthEntry ?? ""]), ...posts.map((p) => p.wgsl), ...layout.stages.map((s) => s.wgsl)]);
   const leaves = slots.tables();
   const readEnv = slots.envReader();
   const envOf = (state: FrameState): Omit<Env, "tables"> => ({ vars: {}, ...readEnv(state.inputs, state.params), curves: state.curves });
@@ -131,7 +137,9 @@ export function compileScene(scene: Scene): Compiled {
   const castText = casting === undefined ? "" : casting.wgsl(cpu, restFrame);
   /** A library function's text: its own, or for the cast functions the scene's (written once, with the first of them). */
   const textOf = (l: LibFn): string => (casting !== undefined && casting.libs.includes(l) ? (l === casting.libs[0] ? castText : "") : l.wgsl);
-  const sharedCode = [CORE_WGSL, MARK_WGSL, style, ...shared.map(textOf)].join("\n");
+  // Author compute's bindings and readers sit between the layout's declarations and the shared library, in the f32
+  // and the mixed scene alike.
+  const sharedCode = [...(compute === undefined ? [] : [compute.wgsl]), CORE_WGSL, MARK_WGSL, style, ...shared.map(textOf)].join("\n");
   const sceneWgsl = `${layout.wgsl}\n${sharedCode}`;
   const mixedScene = layout.mixed === undefined ? undefined : `${layout.mixed.draw}\n${sharedCode}`;
   const shaders: Record<string, string> = {}, mixedShaders: Record<string, string> = {};
@@ -171,6 +179,8 @@ export function compileScene(scene: Scene): Compiled {
     },
   });
   const mixedTables = layout.mixed;
+  // The pose stages also read author compute; the mixed stages keep that tail, as they keep the rest after the pose.
+  const stages = compute === undefined ? layout.stages : layout.stages.map((s) => ({ ...s, wgsl: s.wgsl + "\n" + compute.wgsl }));
   const triangles = draws.filter((d) => d.layer === "scene").reduce((n, d) => n + (d.vertices / 3) * d.instances, 0);
   const artefact: Artefact = {
     version: 1,
@@ -187,7 +197,7 @@ export function compileScene(scene: Scene): Compiled {
         ...(mixedScene === undefined ? {} : { sceneWgsl: mixedScene }),
         shaders: mixedShaders,
         statics: mixedTables?.statics ?? {},
-        stages: mixedTables === undefined ? {} : Object.fromEntries(layout.stages.map((st, i) => [
+        stages: mixedTables === undefined ? {} : Object.fromEntries(stages.map((st, i) => [
           i, mixedTables.pose + st.wgsl.slice(layout.poseWgsl.length),
         ])),
       } } : {}),
@@ -196,7 +206,8 @@ export function compileScene(scene: Scene): Compiled {
     draws,
     ...(post.length > 0 ? { post } : {}),
     ...(passes.length > 0 ? { passes } : {}),
-    stages: layout.stages,
+    stages,
+    ...(compute === undefined ? {} : { compute }),
     tables: layout.info,
     cpuPose: cpuPoseFunction(layout, envOf),
     pose: poseFunction(layout, envOf),

@@ -115,6 +115,19 @@ recurrence; a span that is not a whole number of steps; a history over 120 x 64 
 other than `time`; a looping scene whose state span does not cover its loop (`scene() with period P`). A clip past the
 shortest `until` of a scene that does not loop is a usage error (exit 2). Baking a recurrence for `build` or a sampled state check requires a GPU (exit 6 without one).
 
+## Raw compute
+
+A malformed declaration, unknown producer, later-phase read, or over-budget resource is a scene error (exit 4).
+The error names the declaration and the change to make. Compute is bounded to 64 passes, 64 MiB per output including
+its kept history, and 256 MiB of declared GPU allocations per scene. A dispatch has one to three workgroup counts,
+each at most 65,535, and at most 1,048,576 workgroups total. A step job has at most 4,096 steps and 4,194,304
+workgroups counting its seed. Texture sides are at most 8,192 for 2D and 256 for 3D, including an atlas of kept
+states. Layouts obey baseline WebGPU per-stage binding limits.
+
+Invalid WGSL in a compute entry is named at the first command that compiles that entry on the GPU. An expression
+read in a check yields `undecided: raw compute "<pass>.<output>"`. The solver reports the same resource as an
+`undecided` failure reason. Supply a CPU-readable expression when a check or solve needs that value.
+
 ## Ranged checks
 
 A ranged check can pass, fail, or finish **undecided**. `loft check` exits 5 for a failed or undecided check and

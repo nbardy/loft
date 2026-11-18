@@ -1841,3 +1841,26 @@ Corrections found on the way:
 The heron (examples/light/heron_lamp.ts, pictures under out/lamp_shadow/): half-angle 52 degrees at rest. Under toon
 the penumbra is printed as one of the pool's rings (toon bands light), so its edge reads hard; under biolume the same
 map shows the soft edge and the body shading itself underneath.
+
+## 18. Author compute
+
+`compute(name, spec)` binds the author's raw WGSL to named resources and a schedule. The compiler orders reads within
+each phase, rejects reads of a later phase, and emits WebGPU objects plus a command recipe. The GPU owns the contents.
+A raw drawable can read the resource's WGSL name, and expression code can use `fetch` or `.sample` wherever its consumer
+can run on the GPU. The CPU check and solver paths identify the resource as `undecided: raw compute`.
+
+| Phase | Contents of an ordinary artefact | When it runs |
+|---|---|---|
+| Build | Packed buffer or texture bytes | During `loft build`. The GPU-less training compile emits a temporary recipe for its server. |
+| Load | Kernel and resource descriptors | Once at load, before the first frame |
+| Frame | Kernel and resource descriptors | After input and parameter uploads, before pose and the draws |
+| Steps | Seed and step kernels, state layout, count and stride | Once at load. Frames select from the kept history. |
+
+Frame destinations are zeroed before dispatch. Outputs feed their declared readers in order within the same
+submission. They can read time, inputs, parameters and predecessor outputs. Load and step kernels see only their
+declared resources and constants. Portable WGSL with race-free writes is the author's determinism contract.
+
+Raw steps and `recur` share the alternating dispatch schedule. The expression compiler for `recur` writes kept
+states in its kernel, supports replay, and supplies CPU arithmetic, drift and seam checks. Raw kernels use GPU
+copies to keep complete states for time-indexed reads. Keep `recur` as the expression construct. A future change
+can share its lowered execution recipe if it preserves direct kept writes, replay and the CPU twin.

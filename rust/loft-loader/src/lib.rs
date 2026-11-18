@@ -21,7 +21,7 @@ pub use cache::PipelineCache;
 pub use manifest::Camera;
 pub use read::{read_dir, Artefact, Error};
 
-use manifest::{BoundsRead, Dispatch, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
+use manifest::{BoundsRead, ComputeRun, Dispatch, RawDispatch, StepCopy, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, Target};
 use plan::{Memory, Run};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -90,6 +90,8 @@ pub struct Loft {
     m: Manifest,
     buffers: Vec<wgpu::Buffer>,
     textures: Vec<wgpu::TextureDescriptor<'static>>,
+    fixed_textures: Vec<Option<wgpu::Texture>>,
+    fixed_views: Vec<Option<wgpu::TextureView>>,
     layouts: Vec<wgpu::BindGroupLayout>,
     samplers: Vec<wgpu::Sampler>,
     compute: Vec<wgpu::ComputePipeline>,
@@ -191,6 +193,17 @@ impl Artefact {
         let precision = select_precision(&mut manifest, &blobs, device.features().contains(wgpu::Features::SHADER_F16))?;
         let m = &manifest;
         let ops = check(m)?;
+        for d in &m.textures {
+            if let Some(name) = &d.init {
+                let e = d.extent.expect("texture init checked").extent();
+                let row = e.width * d.format.compute_texel_bytes().expect("compute format checked");
+                let bytes = u64::from(row) * u64::from(e.height) * u64::from(e.depth_or_array_layers);
+                let got = blobs.get(name).map(Vec::len);
+                if got.map(|n| n as u64) != Some(bytes) {
+                    return Err(Error::Invalid(format!("texture \"{}\" needs a {bytes}-byte blob \"{name}\", got {got:?}; rebuild with loft build", d.label)));
+                }
+            }
+        }
         let layouts: Vec<wgpu::BindGroupLayout> = m
             .bind_group_layouts
             .iter()
@@ -343,20 +356,36 @@ impl WarmedArtefact {
                 })
             })
             .collect();
-        let textures = m
+        let textures: Vec<wgpu::TextureDescriptor<'static>> = m
             .textures
             .iter()
             .map(|t| wgpu::TextureDescriptor {
                 label: None,
-                size: wgpu::Extent3d::default(),
+                size: t.extent.map_or_else(wgpu::Extent3d::default, |e| e.extent()),
                 mip_level_count: 1,
                 sample_count: t.sample_count,
-                dimension: wgpu::TextureDimension::D2,
+                dimension: t.extent.map_or(wgpu::TextureDimension::D2, |e| e.dimension()),
                 format: t.format.wgpu(),
                 usage: manifest::texture_usage(&t.usage),
                 view_formats: &[],
             })
             .collect();
+        let fixed_textures = m.textures.iter().zip(&textures).map(|(t, d)| {
+            let Some(e) = t.extent else { return Ok(None) };
+            let texture = scoped(device, || format!("compute texture \"{}\"", t.label), || {
+                device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), ..d.clone() })
+            })?;
+            if let Some(name) = &t.init {
+                let e = e.extent();
+                queue.write_texture(texture.as_image_copy(), &blobs[name], wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(e.width * t.format.compute_texel_bytes().expect("compute format checked")),
+                    rows_per_image: Some(e.height),
+                }, e);
+            }
+            Ok::<_, Error>(Some(texture))
+        }).collect::<Result<Vec<_>, _>>()?;
+        let fixed_views = fixed_textures.iter().map(|t| t.as_ref().map(|t| t.create_view(&Default::default()))).collect();
         let bounds_at = match &m.frame.bounds {
             BoundsRead::None => HashMap::new(),
             BoundsRead::Read { grids, .. } => grids.iter().map(|g| (g.slot, g.at)).collect(),
@@ -365,6 +394,8 @@ impl WarmedArtefact {
             precision,
             buffers,
             textures,
+            fixed_textures,
+            fixed_views,
             layouts,
             samplers,
             compute,
@@ -394,6 +425,16 @@ impl WarmedArtefact {
             loft.params[p.slot] = p.def;
         }
         loft.fixed_groups = (0..loft.m.bind_groups.len()).map(|k| loft.fixed_group(device, k)).collect();
+        if !loft.m.load.is_empty() {
+            scoped(device, || "loft compute at load".into(), || {
+                let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft compute at load") });
+                for job in &loft.m.load {
+                    loft.encode_load(&mut encoder, job);
+                }
+                queue.submit([encoder.finish()])
+            })?;
+            device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Error::Gpu { what: "loft compute at load".into(), message: e.to_string() })?;
+        }
         Ok(loft)
     }
 }
@@ -415,7 +456,7 @@ impl Loft {
                 binding: e.binding,
                 resource: match e.resource {
                     GroupResource::Buffer(b) => self.buffers[b].as_entire_binding(),
-                    GroupResource::Texture(t) => wgpu::BindingResource::TextureView(&views[t]),
+                    GroupResource::Texture(t) => wgpu::BindingResource::TextureView(self.fixed_views[t].as_ref().unwrap_or_else(|| &views[t])),
                     GroupResource::Sampler(s) => wgpu::BindingResource::Sampler(&self.samplers[s]),
                 },
             })
@@ -426,7 +467,7 @@ impl Loft {
     /// FORMAT: whether a group is made at load or per view size is inferred from its entries (proposal in the README).
     fn fixed_group(&self, device: &wgpu::Device, k: usize) -> Option<wgpu::BindGroup> {
         let names_texture = self.m.bind_groups[k].entries.iter().any(|e| match e.resource {
-            GroupResource::Texture(_) => true,
+            GroupResource::Texture(t) => self.fixed_views[t].is_none(),
             GroupResource::Buffer(_) | GroupResource::Sampler(_) => false,
         });
         (!names_texture).then(|| self.group(device, k, &[]))
@@ -442,7 +483,9 @@ impl Loft {
             .textures
             .iter()
             .zip(&self.m.textures)
-            .map(|(d, t)| {
+            .enumerate()
+            .map(|(i, (d, t))| {
+                if let Some(view) = &self.fixed_views[i] { return view.clone(); }
                 let (width, height) = manifest::TextureSize::pixels(t.size, size);
                 let extent = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
                 device.create_texture(&wgpu::TextureDescriptor { label: Some(&t.label), size: extent, ..d.clone() }).create_view(&Default::default())
@@ -568,13 +611,21 @@ impl Loft {
             (BoundsRead::Read { .. }, Read::InFlight(_)) | (BoundsRead::None, _) => false,
         };
         let mut pose = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft pose") });
-        if !self.m.frame.pose.is_empty() || !self.m.frame.replay.is_empty() {
+        let author = &self.m.frame.compute;
+        // Distinct frame writers let us clear everything before opening the shared compute pass.
+        for cmd in author {
+            self.clear_compute(&mut pose, cmd);
+        }
+        if !author.is_empty() || !self.m.frame.pose.is_empty() || !self.m.frame.replay.is_empty() {
             let timestamp_writes = self.timestamps.as_ref().map(|t| wgpu::ComputePassTimestampWrites {
                 query_set: &t.set,
                 beginning_of_pass_write_index: Some(0),
                 end_of_pass_write_index: Some(1),
             });
             let mut pass = pose.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft pose"), timestamp_writes });
+            for cmd in author {
+                self.dispatch(&mut pass, &cmd.run);
+            }
             self.encode_pose(&mut pass);
         }
         // Each pass's camera, from its table into its frame uniform, before any pass draws (version 2).
@@ -632,10 +683,60 @@ impl Loft {
     fn dispatch(&self, pass: &mut wgpu::ComputePass, d: &Dispatch) {
         pass.set_pipeline(&self.compute[d.pipeline]);
         for (i, &g) in d.bind_groups.iter().enumerate() {
-            // Pose groups name no texture (checked at load).
+            // Compute groups name only resources that exist before the first frame.
             pass.set_bind_group(i as u32, self.fixed_groups[g].as_ref(), &[]);
         }
-        pass.dispatch_workgroups(d.workgroups, 1, 1);
+        let [x, y, z] = d.workgroups.xyz();
+        pass.dispatch_workgroups(x, y, z);
+    }
+
+    fn clear_compute(&self, encoder: &mut wgpu::CommandEncoder, cmd: &RawDispatch) {
+        for &id in &cmd.clear_buffers {
+            encoder.clear_buffer(&self.buffers[id], 0, None);
+        }
+        for c in &cmd.clear_textures {
+            let src = self.fixed_textures[c.from].as_ref().expect("fixed texture checked");
+            let dst = self.fixed_textures[c.to].as_ref().expect("fixed texture checked");
+            encoder.copy_texture_to_texture(src.as_image_copy(), dst.as_image_copy(), dst.size());
+        }
+    }
+
+    fn encode_compute(&self, encoder: &mut wgpu::CommandEncoder, cmd: &RawDispatch) {
+        self.clear_compute(encoder, cmd);
+        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(&cmd.run.label), timestamp_writes: None });
+        self.dispatch(&mut pass, &cmd.run);
+    }
+
+    fn encode_load(&self, encoder: &mut wgpu::CommandEncoder, job: &ComputeRun) {
+        match job {
+            ComputeRun::Once(run) => self.encode_compute(encoder, run),
+            ComputeRun::Steps { start, odd, even, count, keep, history } => {
+                for n in 0..=*count {
+                    let run = if n == 0 { start } else if n % 2 == 0 { even } else { odd };
+                    self.encode_compute(encoder, run);
+                    if n % keep != 0 && n != *count { continue; }
+                    let at = u64::from(n.div_ceil(*keep));
+                    for c in history {
+                        match *c {
+                            StepCopy::Buffer { a, b, to, bytes } => {
+                                let from = if n % 2 == 0 { a } else { b };
+                                encoder.copy_buffer_to_buffer(&self.buffers[from], 0, &self.buffers[to], at * bytes, Some(bytes));
+                            }
+                            StepCopy::Texture { a, b, to } => {
+                                let from = if n % 2 == 0 { a } else { b };
+                                let src = self.fixed_textures[from].as_ref().expect("fixed texture checked");
+                                let dst = self.fixed_textures[to].as_ref().expect("fixed texture checked");
+                                let size = src.size();
+                                let mut copy = dst.as_image_copy();
+                                if src.dimension() == wgpu::TextureDimension::D2 { copy.origin.y = at as u32 * size.height; }
+                                else { copy.origin.z = at as u32 * size.depth_or_array_layers; }
+                                encoder.copy_texture_to_texture(src.as_image_copy(), copy, size);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Completes the bounds read in flight: waiting for it (`wait`), or only if it is done. Returns the time waited.
@@ -722,9 +823,10 @@ fn select_precision(
 ) -> Result<Precision, Error> {
     let invalid = |reason: &str| Error::Invalid(format!("precision: {reason}. Fix: rebuild with loft build --precision mixed"));
     let (modules, buffers) = match (m.version, m.precision.take()) {
-        (1..=3, None) => return Ok(Precision::F32),
-        (4, Some(manifest::MixedPrecision::Mixed { fallback: manifest::Fallback::F32Fallback, modules, buffers })) => (modules, buffers),
-        _ => return Err(invalid("expected the mixed variant and its f32 fallback in format 4")),
+        // Version 4 always carries the overlay; version 5 (author compute) may or may not.
+        (1..=3 | 5, None) => return Ok(Precision::F32),
+        (4 | 5, Some(manifest::MixedPrecision::Mixed { fallback: manifest::Fallback::F32Fallback, modules, buffers })) => (modules, buffers),
+        _ => return Err(invalid("expected the mixed variant and its f32 fallback in format 4 or 5")),
     };
     let id = |kind: &str, key: &str, limit: usize| {
         key.parse::<usize>().ok().filter(|&i| i < limit && i.to_string() == key)
@@ -796,12 +898,110 @@ fn check(m: &Manifest) -> Result<Vec<PassOps>, Error> {
         let (FrameWrite::Frame { buffer } | FrameWrite::Inputs { buffer } | FrameWrite::Params { buffer }) = *w;
         id("frame write", "buffer", buffer, m.buffers.len())?;
     }
-    for d in m.frame.pose.iter().chain(m.frame.replay.iter().flat_map(|r| [&r.first, &r.ping, &r.pong])) {
+    if m.build.is_some() {
+        return Err(Error::Invalid("the GPU-less child left build jobs; run loft build on a GPU to finish the directory".into()));
+    }
+    let invalid = |label: &str, fix: &str| Error::Invalid(format!("{label}: {fix}; rebuild with loft build"));
+    if m.version < 5 && (!m.load.is_empty() || !m.frame.compute.is_empty() || m.textures.iter().any(|t| t.extent.is_some() || t.init.is_some())) {
+        return Err(invalid("compute", "author compute requires format version 5"));
+    }
+    if m.load.len() > 64 || m.frame.compute.len() > 64 {
+        return Err(invalid("compute", "too many compute jobs"));
+    }
+    let compute_bytes = 64 * 1024 * 1024;
+    let mut total_compute_textures = 0;
+    for t in &m.textures {
+        let Some(e) = t.extent else {
+            if t.init.is_some() { return Err(invalid(&t.label, "view-sized textures cannot have initial data")); }
+            continue;
+        };
+        let n = e.extent();
+        let max = if e.dimension() == wgpu::TextureDimension::D3 { 256 } else { 8192 };
+        if t.size.is_some() || t.sample_count != 1 || [n.width, n.height, n.depth_or_array_layers].iter().any(|&k| k == 0 || k > max) {
+            return Err(invalid(&t.label, "invalid compute texture dimensions"));
+        }
+        let b = t.format.compute_texel_bytes().ok_or_else(|| invalid(&t.label, "invalid compute texture format"))?;
+        let bytes = u64::from(n.width) * u64::from(n.height) * u64::from(n.depth_or_array_layers) * u64::from(b);
+        total_compute_textures += bytes;
+        if bytes > compute_bytes || total_compute_textures > 4 * compute_bytes {
+            return Err(invalid(&t.label, "compute texture exceeds allocation limits"));
+        }
+    }
+    let dispatch = |d: &Dispatch| {
         id(&d.label, "compute pipeline", d.pipeline, m.compute_pipelines.len())?;
+        let xyz = d.workgroups.xyz();
+        if xyz.iter().any(|&n| n == 0 || n > 65535) || matches!(d.workgroups, manifest::Workgroups::Xyz(_)) && xyz.iter().copied().map(u64::from).product::<u64>() > 1_048_576 {
+            return Err(invalid(&d.label, "invalid dispatch dimensions"));
+        }
         for &g in &d.bind_groups {
             id(&d.label, "bind group", g, m.bind_groups.len())?;
-            if m.bind_groups[g].entries.iter().any(|e| matches!(e.resource, GroupResource::Texture(_))) {
-                return Err(Error::BadId { what: format!("{} (a pose group must name no texture)", d.label), kind: "bind group", id: g });
+            if m.bind_groups[g].entries.iter().any(|e| matches!(e.resource, GroupResource::Texture(t) if m.textures[t].extent.is_none())) {
+                return Err(invalid(&d.label, "a compute group names a view-sized texture"));
+            }
+        }
+        Ok(())
+    };
+    let raw_dispatch = |d: &RawDispatch| {
+        dispatch(&d.run)?;
+        for &b in &d.clear_buffers {
+            id(&d.run.label, "buffer", b, m.buffers.len())?;
+        }
+        for c in &d.clear_textures {
+            id(&d.run.label, "texture", c.from, m.textures.len())?;
+            id(&d.run.label, "texture", c.to, m.textures.len())?;
+            let a = &m.textures[c.from];
+            let b = &m.textures[c.to];
+            if c.from == c.to || a.extent.is_none() || a.extent != b.extent || a.format != b.format {
+                return Err(invalid(&d.run.label, "invalid compute texture copy"));
+            }
+        }
+        Ok::<_, Error>(())
+    };
+    for d in m.frame.pose.iter().chain(m.frame.replay.iter().flat_map(|r| [&r.first, &r.ping, &r.pong])) {
+        dispatch(d)?;
+    }
+    for d in &m.frame.compute {
+        raw_dispatch(d)?;
+    }
+    for job in &m.load {
+        match job {
+            ComputeRun::Once(d) => raw_dispatch(d)?,
+            ComputeRun::Steps { start, odd, even, count, keep, history } => {
+                raw_dispatch(start)?;
+                raw_dispatch(odd)?;
+                raw_dispatch(even)?;
+                if *count == 0 || *count > 4096 || *keep == 0 || keep > count {
+                    return Err(invalid(&start.run.label, "invalid step count or keep interval"));
+                }
+                let groups = |d: &RawDispatch| d.run.workgroups.xyz().iter().copied().map(u64::from).product::<u64>();
+                if groups(start) + u64::from(count.div_ceil(2)) * groups(odd) + u64::from(count / 2) * groups(even) > 4_194_304 {
+                    return Err(invalid(&start.run.label, "too many workgroups across steps"));
+                }
+                let states = 1 + u64::from(count.div_ceil(*keep));
+                for c in history {
+                    match *c {
+                        StepCopy::Buffer { a, b, to, bytes } => {
+                            for k in [a, b, to] { id(&start.run.label, "buffer", k, m.buffers.len())?; }
+                            if a == b || a == to || b == to || bytes == 0 || bytes % 16 != 0 || bytes > compute_bytes
+                                || bytes > m.buffers[a].size || bytes > m.buffers[b].size || bytes * states > m.buffers[to].size {
+                                return Err(invalid(&start.run.label, "invalid kept-state buffer copy"));
+                            }
+                        }
+                        StepCopy::Texture { a, b, to } => {
+                            for k in [a, b, to] { id(&start.run.label, "texture", k, m.textures.len())?; }
+                            let [src, alt, dst] = [a, b, to].map(|k| &m.textures[k]);
+                            use manifest::FixedExtent::{D2, D3};
+                            let size = |e| match e {
+                                D2([w, h]) => D2([w, h * states as u32]),
+                                D3([w, h, z]) => D3([w, h, z * states as u32]),
+                            };
+                            if a == b || a == to || b == to || src.extent.is_none() || src.extent != alt.extent
+                                || src.extent.map(size) != dst.extent || src.format != alt.format || src.format != dst.format {
+                                return Err(invalid(&start.run.label, "invalid kept-state texture copy"));
+                            }
+                        }
+                    }
+                }
             }
         }
     }

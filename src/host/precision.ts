@@ -1,20 +1,21 @@
 import { LoadError } from "../errors.ts";
 import type { Bundle, FramePrecision, Precision } from "./manifest.ts";
 
-/** Pick the format-4 alternatives as a unit before allocating buffers or compiling shaders. */
+/** Pick the format-4 (or 5) alternatives as a unit before allocating buffers or compiling shaders. */
 export function selectPrecision(bundle: Bundle, shaderF16: boolean, ask?: Precision): { bundle: Bundle; precision: FramePrecision } {
   const m = bundle.manifest;
   const variant = m.precision;
   const fail = (message: string): never => {
     throw new LoadError(`artefact precision: ${message}. Fix: rebuild with \`loft build --precision mixed\``);
   };
+  // Version 4 always carries the overlay; version 5 (author compute) may or may not.
   if (variant === undefined && m.version !== 4) {
     if (ask === "mixed") fail("the file contains only f32");
     return { bundle, precision: "f32" };
   }
   const record = (v: unknown) => typeof v === "object" && v !== null && !Array.isArray(v);
-  if (m.version !== 4 || variant?.kind !== "mixed" || variant.fallback !== "f32-fallback" || !record(variant.modules) || !record(variant.buffers)) {
-    return fail("expected the mixed variant and its f32 fallback in format 4");
+  if ((m.version !== 4 && m.version !== 5) || variant?.kind !== "mixed" || variant.fallback !== "f32-fallback" || !record(variant.modules) || !record(variant.buffers)) {
+    return fail("expected the mixed variant and its f32 fallback in format 4 or 5");
   }
   const id = (k: string, count: number) => /^(0|[1-9]\d*)$/.test(k) && Number(k) < count;
   for (const [key, chunks] of Object.entries(variant.modules)) {

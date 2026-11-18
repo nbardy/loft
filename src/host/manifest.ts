@@ -17,9 +17,10 @@ export const FORMAT_VERSION = 1;
  * written as version 1, byte for byte what it was. Each version-2 field is optional; `formatVersion` (src/host/lower.ts)
  * decides which legacy version to write. 3 adds `instanceBase` on planned draws (shared draw shaders, src/host/share.ts):
  * a version-1 or -2 loader would ignore it and draw every shared draw with another draw's numbers.
- * 4 adds mixed shader and buffer alternatives.
+ * 4 adds mixed shader and buffer alternatives (`precision`). 5 adds author compute (`build`, `load`, `frame.compute`,
+ * compute texture extents and initializers), and may also carry the version-4 `precision` overlay.
  */
-export const FORMAT_VERSIONS = [1, 2, 3, 4] as const;
+export const FORMAT_VERSIONS = [1, 2, 3, 4, 5] as const;
 export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 export type Precision = "f32" | "mixed";
 export type FramePrecision = Precision | "f32-fallback";
@@ -29,7 +30,7 @@ export type Id = number;
 
 /** GPUBufferUsage / GPUTextureUsage flag names; the value is their bitwise or. */
 export type BufferUsage = "MAP_READ" | "COPY_SRC" | "COPY_DST" | "UNIFORM" | "STORAGE";
-export type TextureUsage = "COPY_SRC" | "RENDER_ATTACHMENT" | "TEXTURE_BINDING";
+export type TextureUsage = "COPY_SRC" | "COPY_DST" | "STORAGE_BINDING" | "RENDER_ATTACHMENT" | "TEXTURE_BINDING";
 export type Stage = "VERTEX" | "FRAGMENT" | "COMPUTE";
 
 /** `init`: a blob uploaded once at load, at offset 0 (a blob of 0 bytes is not written). */
@@ -38,7 +39,18 @@ export type BufferDesc = { readonly label: string; readonly size: number; readon
  * Created at the first frame and again whenever the view's width or height changes. `size` absent: the view's size;
  * `view`: the view's size times `scale`, each side rounded to the nearest pixel and at least 1; `fixed`: those pixels.
  */
-export type TextureDesc = { readonly label: string; readonly size?: TextureSize; readonly format: GPUTextureFormat; readonly sampleCount: number; readonly usage: readonly TextureUsage[] };
+export type TextureDesc = {
+  readonly label: string; readonly size?: TextureSize; readonly format: GPUTextureFormat; readonly sampleCount: number; readonly usage: readonly TextureUsage[];
+  /** Fixed compute texture, allocated at load. A two-element extent is 2D, a three-element extent is 3D. */
+  readonly extent?: readonly [number, number] | readonly [number, number, number];
+  /** Tightly packed texels, x fastest, then y, then z. */
+  readonly init?: string;
+};
+/** A history stacks 2D states down the image and 3D states along z, keeping copy dimensions equal. */
+export function computeHistorySize(size: NonNullable<TextureDesc["extent"]>, states: number): NonNullable<TextureDesc["extent"]> {
+  return size.length === 2 ? [size[0], size[1] * states] : [size[0], size[1], size[2] * states];
+}
+export const COMPUTE_TEXEL_BYTES = { r32float: 4, rgba8unorm: 4, rgba16float: 8, rgba32float: 16 } as const;
 export type SamplerDesc = {
   readonly label: string; readonly magFilter: GPUFilterMode; readonly minFilter: GPUFilterMode;
   readonly addressModeU: GPUAddressMode; readonly addressModeV: GPUAddressMode;
@@ -46,7 +58,8 @@ export type SamplerDesc = {
 
 export type LayoutEntry =
   | { readonly binding: number; readonly visibility: readonly Stage[]; readonly buffer: { readonly type: GPUBufferBindingType } }
-  | { readonly binding: number; readonly visibility: readonly Stage[]; readonly texture: { readonly sampleType: GPUTextureSampleType; readonly viewDimension: "2d"; readonly multisampled: boolean } }
+  | { readonly binding: number; readonly visibility: readonly Stage[]; readonly texture: { readonly sampleType: GPUTextureSampleType; readonly viewDimension: "2d" | "3d"; readonly multisampled: boolean } }
+  | { readonly binding: number; readonly visibility: readonly Stage[]; readonly storageTexture: { readonly access: "write-only"; readonly format: GPUTextureFormat; readonly viewDimension: "2d" | "3d" } }
   | { readonly binding: number; readonly visibility: readonly Stage[]; readonly sampler: { readonly type: GPUSamplerBindingType } };
 export type BindGroupLayoutDesc = { readonly label: string; readonly entries: readonly LayoutEntry[] };
 export type PipelineLayoutDesc = { readonly label: string; readonly bindGroupLayouts: readonly Id[] };
@@ -87,7 +100,27 @@ export type FrameWrite =
   | { readonly kind: "params"; readonly buffer: Id };
 
 /** A dispatch of the pose pass: x workgroups of POSE_WORKGROUP invocations, bind groups set at 0, 1, ... */
-export type Dispatch = { readonly label: string; readonly pipeline: Id; readonly bindGroups: readonly Id[]; readonly workgroups: number };
+export type Dispatch = { readonly label: string; readonly pipeline: Id; readonly bindGroups: readonly Id[]; readonly workgroups: number | readonly [number, number, number] };
+
+export type RawDispatch = {
+  readonly run: Dispatch;
+  readonly clearBuffers?: readonly Id[];
+  readonly clearTextures?: readonly { readonly from: Id; readonly to: Id }[];
+};
+export type ComputeRun =
+  | ({ readonly kind: "once" } & RawDispatch)
+  | {
+    readonly kind: "steps";
+    readonly start: RawDispatch;
+    readonly odd: RawDispatch;
+    readonly even: RawDispatch;
+    readonly count: number;
+    readonly keep: number;
+    readonly history: readonly StepCopy[];
+  };
+export type StepCopy = { readonly a: Id; readonly b: Id; readonly to: Id } &
+  ({ readonly kind: "buffer"; readonly bytes: number } | { readonly kind: "texture" });
+export type BuildOutput = { readonly name: string } & ({ readonly kind: "buffer"; readonly id: Id; readonly bytes: number } | { readonly kind: "texture"; readonly id: Id });
 
 /** `bytes` copied from `from` at byte `fromOffset` to `to` at byte 0 (copyBufferToBuffer), after the pose pass. */
 export type BufferCopy = { readonly from: Id; readonly fromOffset: number; readonly to: Id; readonly bytes: number };
@@ -152,7 +185,7 @@ export type TableEntry = { readonly name: string; readonly buffer: Id; readonly 
 export type Manifest = {
   readonly format: typeof FORMAT;
   readonly version: FormatVersion;
-  /** Version 4 overlays the f32 descriptors when the device grants shader-f16. */
+  /** Version 4 (or 5) overlays the f32 descriptors when the device grants shader-f16. */
   readonly precision?: {
     readonly kind: "mixed";
     readonly fallback: "f32-fallback";
@@ -182,10 +215,14 @@ export type Manifest = {
   readonly renderPipelines: readonly RenderPipelineDesc[];
   readonly bindGroups: readonly BindGroupDesc[];
 
+  /** Build-only WGSL, emitted by the GPU-less child and consumed by the GPU owner. Absent in a finished build. */
+  readonly build?: { readonly runs: readonly RawDispatch[]; readonly outputs: readonly BuildOutput[] };
+  readonly load?: readonly ComputeRun[];
   readonly frame: {
     readonly writes: readonly FrameWrite[];
     /** One compute pass, in order; empty: no pass. */
     readonly pose: readonly Dispatch[];
+    readonly compute?: readonly RawDispatch[];
     /** Version 2: replays recorded in the pose pass before `pose`. Absent means none. */
     readonly replay?: readonly Replay[];
     readonly bounds: BoundsRead;

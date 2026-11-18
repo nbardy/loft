@@ -39,7 +39,7 @@ export type Decision = {
 /** How a search ended. */
 export type Spent =
   | { readonly kind: "finished" }
-  | Extract<Refusal, { kind: "gpu-only" | "no-enclosure" | "cpu-table" | "recur" | "skin" }>
+  | Extract<Refusal, { kind: "gpu-only" | "no-enclosure" | "cpu-table" | "recur" | "raw-compute" | "skin" }>
   | { readonly kind: "ms"; readonly ms: number }
   | { readonly kind: "unbounded"; readonly op: string; readonly why: string }
   /** The box budget ran out. */
@@ -189,6 +189,7 @@ function spentText(s: Spent): string {
     case "ms": return `ms (${s.ms} ms; raise ms)`;
     case "gpu-only": case "no-enclosure": return `${s.kind} (${s.fn}; use an expression with an enclosure)`;
     case "cpu-table": return `cpu-table (${s.table}, ${s.why}; use a sampled check)`;
+    case "raw-compute": return `raw compute "${s.resource}"`;
     case "recur": return `recur (${s.table}; measure the baked trajectory with a sampled check)`;
     case "skin": return "skin (measure the skin with a sampled contact check)";
     case "width": return `width: boxes ${s.width.toExponential(1)} wide could not be split further${s.op === undefined ? "" : `; unbounded there: ${s.op}`}`;

@@ -13,6 +13,19 @@ export async function bakeRecurrences(device: GPUDevice, a: Artefact): Promise<v
   for (const r of a.recurrences ?? []) if (r.baked.done === undefined) await bakeOne(device, a, r);
 }
 
+/** Record seed, then the alternating destinations. Recur writes its kept entries in WGSL; raw steps copy them. */
+export function recordSteps<T>(count: number, start: T, odd: T, even: T, dispatch: (next: T, step: number) => void): void {
+  dispatch(start, 0);
+  for (let step = 1; step <= count; step++) dispatch(step % 2 === 1 ? odd : even, step);
+}
+
+/** Read a completed bake before its staging buffer is destroyed. */
+export async function readBake(buffer: GPUBuffer): Promise<Uint8Array<ArrayBuffer>> {
+  await buffer.mapAsync(GPUMapMode.READ);
+  try { return new Uint8Array(buffer.getMappedRange().slice(0)); }
+  finally { buffer.unmap(); }
+}
+
 const STORAGE = 0x80, COPY_SRC = 0x4, COPY_DST = 0x8, MAP_READ = 0x1, COMPUTE = 0x4;
 
 async function bakeOne(device: GPUDevice, a: Artefact, r: Recurrence): Promise<void> {
@@ -66,16 +79,12 @@ async function bakeOne(device: GPUDevice, a: Artefact, r: Recurrence): Promise<v
     const stampBuf = timed ? buffer(`bake ${r.name} stamps`, 16, 0x200 | COPY_SRC) : undefined; // QUERY_RESOLVE
     const stampRead = timed ? buffer(`bake ${r.name} stamps read`, 16, MAP_READ | COPY_DST) : undefined;
     const pass = encoder.beginComputePass({ label: `bake ${r.name}`, ...(stamps === undefined ? {} : { timestampWrites: { querySet: stamps, beginningOfPassWriteIndex: 0, endOfPassWriteIndex: 1 } }) });
-    pass.setPipeline(start);
-    pass.setBindGroup(0, intoA);
-    pass.dispatchWorkgroups(workgroups);
-    pass.setPipeline(step);
-    // Dispatches in one pass are ordered: each sees what the one before it wrote. Its step number is in the state
-    // itself (the clock entry, src/compile/recur.ts), not written between dispatches.
-    for (let a = 0; a < r.total; a++) {
-      pass.setBindGroup(0, a % 2 === 0 ? intoB : intoA);
+    // Dispatches in one pass are ordered. The recurrence stores its clock and kept states in WGSL.
+    recordSteps(r.total, intoA, intoB, intoA, (binding, n) => {
+      if (n <= 1) pass.setPipeline(n === 0 ? start : step);
+      pass.setBindGroup(0, binding);
       pass.dispatchWorkgroups(workgroups);
-    }
+    });
     pass.end();
     if (stamps !== undefined) { encoder.resolveQuerySet(stamps, 0, 2, stampBuf!, 0); encoder.copyBufferToBuffer(stampBuf!, 0, stampRead!, 0, 16); }
     device.queue.submit([encoder.finish()]);
@@ -86,9 +95,7 @@ async function bakeOne(device: GPUDevice, a: Artefact, r: Recurrence): Promise<v
     copy.copyBufferToBuffer(kept, 0, read, 0, r.data.byteLength);
     device.queue.submit([copy.finish()]);
     await refused();
-    await read.mapAsync(GPUMapMode.READ);
-    r.data.set(new Float32Array(read.getMappedRange()));
-    read.unmap();
+    r.data.set(new Float32Array((await readBake(read)).buffer));
     const readback = performance.now() - t2;
     let gpu: BakeRecord["gpu"] = { kind: "untimed" };
     if (stampRead !== undefined) {

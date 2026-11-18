@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 pub const FORMAT: &str = "loft-artefact";
 /// The versions this loader reads: 2 adds `frame.replay` (a scene whose state keeps checkpoints) and pictures drawn off
 /// screen (sized textures, depth-only passes, pipelines with no fragment stage, `frame.copies`; docs/artefact_format.md);
-/// 3 adds a planned draw's `instanceBase` (shared draw shaders); 4 adds a mixed-precision overlay.
-pub const VERSIONS: [u32; 4] = [1, 2, 3, 4];
+/// 3 adds a planned draw's `instanceBase` (shared draw shaders); 4 adds a mixed-precision overlay; 5 adds author
+/// compute jobs and persistent textures, and may also carry the version-4 overlay.
+pub const VERSIONS: [u32; 5] = [1, 2, 3, 4, 5];
 
 pub type Id = usize;
 
@@ -39,6 +40,10 @@ pub struct Manifest {
     pub compute_pipelines: Vec<ComputePipelineDesc>,
     pub render_pipelines: Vec<RenderPipelineDesc>,
     pub bind_groups: Vec<BindGroupDesc>,
+    /// A temporary GPU-less build; the training server, or a normal loft build, must finish it.
+    pub build: Option<serde::de::IgnoredAny>,
+    #[serde(default)]
+    pub load: Vec<ComputeRun>,
     pub frame: Frame,
     pub plan: Vec<PlanDraw>,
     pub tables: Vec<TableEntry>,
@@ -150,6 +155,8 @@ pub struct BufferDesc {
 #[allow(non_camel_case_types)]
 pub enum TextureUsage {
     COPY_SRC,
+    COPY_DST,
+    STORAGE_BINDING,
     TEXTURE_BINDING,
     RENDER_ATTACHMENT,
 }
@@ -195,9 +202,34 @@ pub struct TextureDesc {
     /// Absent: the view's size (version 1's only size).
     #[serde(default)]
     pub size: Option<TextureSize>,
+    pub extent: Option<FixedExtent>,
+    pub init: Option<String>,
     pub format: Format,
     pub sample_count: u32,
     pub usage: Vec<TextureUsage>,
+}
+
+/// Persistent compute texture extents have exactly two or three sides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum FixedExtent {
+    D2([u32; 2]),
+    D3([u32; 3]),
+}
+impl FixedExtent {
+    pub fn extent(self) -> wgpu::Extent3d {
+        let [width, height, depth_or_array_layers] = match self {
+            Self::D2([w, h]) => [w, h, 1],
+            Self::D3(sides) => sides,
+        };
+        wgpu::Extent3d { width, height, depth_or_array_layers }
+    }
+    pub fn dimension(self) -> wgpu::TextureDimension {
+        match self {
+            Self::D2(_) => wgpu::TextureDimension::D2,
+            Self::D3(_) => wgpu::TextureDimension::D3,
+        }
+    }
 }
 
 /// A texture's size: a share of the view's (each side rounded, at least 1), or fixed pixels.
@@ -273,12 +305,28 @@ pub enum SampleType {
 pub enum ViewDimension {
     #[serde(rename = "2d")]
     D2,
+    #[serde(rename = "3d")]
+    D3,
+}
+impl ViewDimension {
+    fn wgpu(self) -> wgpu::TextureViewDimension {
+        match self {
+            Self::D2 => wgpu::TextureViewDimension::D2,
+            Self::D3 => wgpu::TextureViewDimension::D3,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SamplerBinding {
     Filtering,
     NonFiltering,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum StorageAccess {
+    WriteOnly,
 }
 
 /// One of `buffer`, `texture`, `sampler`: serde's untagged matching on which key is present.
@@ -291,6 +339,8 @@ pub enum LayoutResource {
     },
     #[serde(rename_all = "camelCase")]
     Texture { sample_type: SampleType, view_dimension: ViewDimension, multisampled: bool },
+    #[serde(rename_all = "camelCase")]
+    StorageTexture { access: StorageAccess, format: Format, view_dimension: ViewDimension },
     Sampler {
         #[serde(rename = "type")]
         ty: SamplerBinding,
@@ -489,7 +539,53 @@ pub struct Dispatch {
     pub label: String,
     pub pipeline: Id,
     pub bind_groups: Vec<Id>,
-    pub workgroups: u32,
+    pub workgroups: Workgroups,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(untagged)]
+pub enum Workgroups {
+    X(u32),
+    Xyz([u32; 3]),
+}
+
+impl Workgroups {
+    pub fn xyz(self) -> [u32; 3] {
+        match self {
+            Self::X(x) => [x, 1, 1],
+            Self::Xyz(xyz) => xyz,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawDispatch {
+    pub run: Dispatch,
+    #[serde(default)]
+    pub clear_buffers: Vec<Id>,
+    #[serde(default)]
+    pub clear_textures: Vec<TextureCopy>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TextureCopy {
+    pub from: Id,
+    pub to: Id,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum StepCopy {
+    Buffer { a: Id, b: Id, to: Id, bytes: u64 },
+    Texture { a: Id, b: Id, to: Id },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ComputeRun {
+    Once(RawDispatch),
+    Steps { start: RawDispatch, odd: RawDispatch, even: RawDispatch, count: u32, keep: u32, history: Vec<StepCopy> },
 }
 
 #[derive(Debug, Deserialize)]
@@ -606,6 +702,8 @@ impl Replay {
 pub struct Frame {
     pub writes: Vec<FrameWrite>,
     pub pose: Vec<Dispatch>,
+    #[serde(default)]
+    pub compute: Vec<RawDispatch>,
     /// Version 2; absent in version 1.
     #[serde(default)]
     pub replay: Vec<Replay>,
@@ -679,6 +777,14 @@ impl Format {
     pub fn wgpu(self) -> wgpu::TextureFormat {
         self.0
     }
+    pub fn compute_texel_bytes(self) -> Option<u32> {
+        match self.0 {
+            wgpu::TextureFormat::R32Float | wgpu::TextureFormat::Rgba8Unorm => Some(4),
+            wgpu::TextureFormat::Rgba16Float => Some(8),
+            wgpu::TextureFormat::Rgba32Float => Some(16),
+            _ => None,
+        }
+    }
 }
 
 pub fn buffer_usage(u: &[BufferUsage]) -> wgpu::BufferUsages {
@@ -697,6 +803,8 @@ pub fn texture_usage(u: &[TextureUsage]) -> wgpu::TextureUsages {
     u.iter().fold(wgpu::TextureUsages::empty(), |n, u| {
         n | match u {
             TextureUsage::COPY_SRC => wgpu::TextureUsages::COPY_SRC,
+            TextureUsage::COPY_DST => wgpu::TextureUsages::COPY_DST,
+            TextureUsage::STORAGE_BINDING => wgpu::TextureUsages::STORAGE_BINDING,
             TextureUsage::TEXTURE_BINDING => wgpu::TextureUsages::TEXTURE_BINDING,
             TextureUsage::RENDER_ATTACHMENT => wgpu::TextureUsages::RENDER_ATTACHMENT,
         }
@@ -749,10 +857,13 @@ impl LayoutResource {
                     SampleType::UnfilterableFloat => wgpu::TextureSampleType::Float { filterable: false },
                     SampleType::Depth => wgpu::TextureSampleType::Depth,
                 },
-                view_dimension: match view_dimension {
-                    ViewDimension::D2 => wgpu::TextureViewDimension::D2,
-                },
+                view_dimension: view_dimension.wgpu(),
                 multisampled,
+            },
+            LayoutResource::StorageTexture { access, format, view_dimension } => wgpu::BindingType::StorageTexture {
+                access: match access { StorageAccess::WriteOnly => wgpu::StorageTextureAccess::WriteOnly },
+                format: format.wgpu(),
+                view_dimension: view_dimension.wgpu(),
             },
             LayoutResource::Sampler { ty } => wgpu::BindingType::Sampler(match ty {
                 SamplerBinding::Filtering => wgpu::SamplerBindingType::Filtering,

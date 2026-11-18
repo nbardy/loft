@@ -24,6 +24,7 @@ import { skinBoxDistance, skinDistance, type SkinDistance } from "./geom/skin_di
 import { RingWave } from "./geom/ring.ts";
 import { stateChecks } from "./check_state.ts";
 
+import { RawComputeError } from "./errors.ts";
 import type { Decision } from "./ranged.ts";
 
 type V3 = readonly [number, number, number];
@@ -33,15 +34,20 @@ type Inputs = Readonly<Record<string, number | readonly number[]>>;
 type Measurement = { readonly name: string; readonly value: number; readonly measured: string; readonly limit: string };
 type Sampled = Measurement & { readonly pass: boolean; readonly kind?: never };
 
-/** A check result tagged as sampled or ranged. Only ranged results can be undecided, and they carry bounds, witness, work and stop reason. */
+/**
+ * A check result: sampled, ranged (with bounds, witness, work and stop reason), or a sampled check that reads a raw
+ * WGSL compute output, which has no CPU twin and so is undecided by name. Only the last two can be undecided.
+ */
 export type Verdict =
   | (Measurement & { readonly kind: "sampled"; readonly holds: boolean; readonly pass: boolean })
-  | (Measurement & Decision & { readonly kind: "ranged"; readonly pass: boolean | undefined });
+  | (Measurement & Decision & { readonly kind: "ranged"; readonly pass: boolean | undefined })
+  | (Measurement & { readonly kind: "raw-compute"; readonly holds: "undecided"; readonly pass: undefined; readonly resource: string });
 
 export function checkOutcome(v: Verdict): "pass" | "fail" | "undecided" {
   switch (v.kind) {
     case "sampled": return v.holds ? "pass" : "fail";
     case "ranged": return v.holds === "undecided" ? "undecided" : v.holds ? "pass" : "fail";
+    case "raw-compute": return "undecided";
   }
 }
 
@@ -946,7 +952,14 @@ export function budget(o: { readonly triangles: number }): Check {
  */
 export function runChecks(scene: Scene, checks: readonly Check[], o: { readonly inputs?: Inputs; readonly compiled?: Compiled } = {}): Verdict[] {
   const probe = new Probe(o.compiled ?? compileScene(scene), o.inputs ?? {});
-  return [...checks.map((c) => c.run(probe)), ...stateChecks(probe, scene.loop)].map(asVerdict);
+  const results = checks.map((c): Verdict => {
+    try { return asVerdict(c.run(probe)); }
+    catch (e) {
+      if (!(e instanceof RawComputeError)) throw e;
+      return { kind: "raw-compute", name: c.name, holds: "undecided", pass: undefined, resource: e.resource, value: NaN, measured: e.message, limit: "an expression with a CPU twin" };
+    }
+  });
+  return [...results, ...stateChecks(probe, scene.loop).map(asVerdict)];
 }
 
 function asVerdict(v: ReturnType<Check["run"]>): Verdict {

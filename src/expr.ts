@@ -19,7 +19,7 @@ const TY_OF_SIZE: readonly NumTy[] = ["f32", "f32", "vec2", "vec3", "vec4"];
 
 // Defined beside the host contract, which the file loader imports without this module (docs/artefact_format.md).
 import { CURVE_N } from "./artefact.ts";
-import { SceneError } from "./errors.ts";
+import { RawComputeError, SceneError } from "./errors.ts";
 export { CURVE_N };
 
 /** A table-backed curve: CURVE_N vec4 samples over x in [0, 1], linearly interpolated, clamped at the ends. */
@@ -397,11 +397,15 @@ export function row(r: Row, x: In<"f32">): Expr<"vec4"> {
   return Expr.make({ op: "row", ty: "vec4", row: r, x: xe }, `r:${r.id}:${xe.id}`);
 }
 
+export const computeFetch = Symbol("compute fetch");
+export type RawComputeFetch = { readonly [computeFetch]: (index: In<"f32">, lane: number) => Expr<"vec4"> };
+
 /**
- * Entry `index` of a per-frame table, vec4 number `lane` of that entry. `index` must lie in [0, entries) (it is
- * truncated to an integer; out of range is undefined on the GPU and throws nowhere, so callers clamp).
+ * Entry `index` of a table or compute buffer, vec4 number `lane` of that entry. The index is truncated to a whole
+ * number. Keep it within the declared entry count.
  */
-export function fetch(table: TableSource, index: In<"f32">, lane: number): Expr<"vec4"> {
+export function fetch(table: TableSource | RawComputeFetch, index: In<"f32">, lane: number): Expr<"vec4"> {
+  if (computeFetch in table) return table[computeFetch](index, lane);
   if (!(Number.isInteger(lane) && lane >= 0 && lane < table.lanes)) throw new Error(`fetch: table "${table.name}" has ${table.lanes} lanes, asked for lane ${lane}`);
   const ie = lift<"f32">(index);
   return Expr.make({ op: "fetch", ty: "vec4", table, lane, index: ie }, `F:${tableId(table)}:${lane}:${ie.id}`);
@@ -452,13 +456,26 @@ export function iterate<const S extends readonly Expr<NumTy>[]>(count: In<"f32">
 }
 
 const libs = new Map<string, LibFn>();
+const rawCompute = new WeakMap<LibFn, { readonly resource: string; readonly id: number }>();
+let nextRawCompute = 0;
+
+export function rawComputeOf(fn: LibFn): string | undefined { return rawCompute.get(fn)?.resource; }
+
+export function rawComputeExpression(fn: LibFn, resource: string, ...args: In[]): Expr<"vec4"> {
+  if (!rawCompute.has(fn)) rawCompute.set(fn, { resource, id: nextRawCompute++ });
+  return lib<"vec4">(fn, ...args);
+}
+
 /** Call a library function. Two different functions may not share a name. */
 export function lib<T extends Ty>(fn: LibFn, ...args: In[]): Expr<T> {
-  const seen = libs.get(fn.name);
-  if (seen && seen !== fn) throw new Error(`library function "${fn.name}" is defined twice`);
-  libs.set(fn.name, fn);
+  const raw = rawCompute.get(fn);
+  if (raw === undefined) {
+    const seen = libs.get(fn.name);
+    if (seen && seen !== fn) throw new Error(`library function "${fn.name}" is defined twice`);
+    libs.set(fn.name, fn);
+  }
   const xs = args.map((a) => lift(a));
-  const leaf = leafOf(trieOf(libCalls, fn.name), xs);
+  const leaf = leafOf(trieOf(libCalls, raw === undefined ? fn.name : `rawCompute:${raw.id}`), xs);
   return (leaf.e ??= Expr.fresh({ op: "lib", ty: fn.ret, fn, args: xs })) as Expr<T>;
 }
 
@@ -1266,7 +1283,8 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
       }
       case "get": { const a = kid(nd.a); return [...nd.sel].map((ch) => a["xyzw".indexOf(ch)]); }
       case "lib": {
-        if (nd.fn.js === "gpu-only") throw new Error(`library function "${nd.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
+        if (nd.fn.js === "gpu-only" && rawComputeOf(nd.fn) === undefined)
+          throw new Error(`library function "${nd.fn.name}" is GPU-only and cannot be evaluated on the CPU`);
         if (!fns.includes(nd.fn)) fns.push(nd.fn);
         const args = nd.args.map((a) => { const c = kid(a); return c.length === 1 ? src(c[0]) : `[${c.map(src).join(", ")}]`; });
         return leaf(`fns[${fns.indexOf(nd.fn)}](${args.join(", ")})`, nd.ty);
@@ -1304,7 +1322,11 @@ export function compileJs(roots: readonly Expr[], rows: RowSource = OWN_ROWS): (
   const run = new Function("H", "rows", "fns", "vars", "inputs", "params", "curves", "tables", "tsrc", [...head, ...top].join("\n")) as
     (h: typeof HELPERS, rows: Float32Array[], fns: LibFn["js"][], vars: Env["vars"], inputs: Env["inputs"], params: Env["params"], curves: Float32Array | undefined, tables: Env["tables"], tsrc: TableSource[]) => (V | boolean)[];
   const samples = ownRows.map((r) => r.samples);
-  const impls = fns.map((fn) => fn.js);
+  const impls = fns.map((fn) => {
+    const raw = rawComputeOf(fn);
+    // Pose maps also compile an optional CPU reader. Refuse only when that reader actually evaluates raw compute.
+    return raw === undefined ? fn.js : () => { throw new RawComputeError(raw); };
+  });
   const needCurves = rows.kind === "table" && /\bcurves\[/.test(top.join("\n"));
   return (env) => {
     if (needCurves && !env.curves) throw new Error("compileJs: this function reads curves from a table; pass Env.curves");

@@ -25,11 +25,13 @@
 // Imports no bun-only module (the browser host uses it).
 
 import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, PASS_CAMERA_VEC4S, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Artefact, type ArtefactPass, type Draw, type DrawDepth, type TextureSize } from "../artefact.ts";
+import { SceneError } from "../errors.ts";
+import type { ComputeResource } from "../compute.ts";
 import { gridBounds, slotsUsed } from "./detail.ts";
 import { ROWS_BINDING, share } from "./share.ts";
 import {
-  COLOR_FORMAT, DEPTH_FORMAT, FORMAT, FORMAT_VERSION, LIGHT_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT,
-  type BindGroupDesc, type BindGroupLayoutDesc, type BufferCopy, type BufferDesc, type Bundle, type ComputePipelineDesc, type Dispatch, type DrawCommand, type FormatVersion, type Id, type LayoutEntry, type Replay,
+  COLOR_FORMAT, DEPTH_FORMAT, FORMAT, computeHistorySize, FORMAT_VERSION, LIGHT_FORMAT, SAMPLES, SCENE_DEPTH_FORMAT,
+  type BuildOutput, type ComputeRun, type RawDispatch, type StepCopy, type BindGroupDesc, type BindGroupLayoutDesc, type BufferCopy, type BufferDesc, type Bundle, type ComputePipelineDesc, type Dispatch, type DrawCommand, type FormatVersion, type Id, type LayoutEntry, type Replay,
   type Manifest, type Precision, type ModuleDesc, type PipelineLayoutDesc, type RenderPassDesc, type RenderPipelineDesc, type SamplerDesc, type Stage, type TextureDesc,
 } from "./manifest.ts";
 
@@ -238,9 +240,13 @@ export function checkArtefact(a: Artefact): { paramFloats: number } {
 /**
  * The file's format version, decided here and nowhere else (docs/artefact_format.md, "Versions"): 2 when it carries what
  * a version-1 loader would draw wrongly (a replay, a pass), else 1, so a file with neither is byte for byte what it was;
- * 3 when a draw command carries an `instanceBase` (shared draw shaders), which a loader for 1 or 2 would ignore.
+ * 3 when a draw command carries an `instanceBase` (shared draw shaders), which a loader for 1 or 2 would ignore;
+ * 4 when it carries the mixed-precision overlay; 5 when it carries author compute (with or without that overlay).
+ * feat/f16 and feat/compute each chose 4 on their branches; f16 merged first, so compute moved to 5.
  */
-export function formatVersion(has: { readonly replay: boolean; readonly passes: boolean; readonly shared: boolean }): FormatVersion {
+export function formatVersion(has: { readonly replay: boolean; readonly passes: boolean; readonly shared: boolean; readonly mixed: boolean; readonly compute: boolean }): FormatVersion {
+  if (has.compute) return 5;
+  if (has.mixed) return 4;
   if (has.shared) return 3;
   return has.replay || has.passes ? 2 : FORMAT_VERSION;
 }
@@ -290,7 +296,7 @@ class List<T> {
   add(x: T): Id { return this.items.push(x) - 1; }
 }
 
-export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
+export function lower(a: Artefact, precision: Precision = "f32", baked?: ReadonlyMap<string, Uint8Array>): Bundle {
   const mixed = precision === "mixed" ? a.mixed : undefined;
   const mixedModules: Record<number, readonly Id[]> = {};
   const mixedBuffers: Record<number, { size: number; init: string }> = {};
@@ -341,6 +347,37 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
     mixedBuffers[staticBufs[i]!.id] = { size: Math.max(MIN_BUFFER_BYTES, data.byteLength), init };
   }
   const group1Buffers = [...dynamic, ...staticBufs];
+  type RawId = { readonly buffer: Id } | { readonly texture: Id };
+  const rawData = new Map<string, RawId>();
+  const bakedKey = (r: ComputeResource): string | undefined => {
+    if (baked === undefined) return undefined;
+    const bytes = baked.get(r.key);
+    if (bytes === undefined || bytes.byteLength !== r.bytes) throw new Error(`compute "${r.key}": missing or wrong-sized bake data`);
+    const name = `compute.${r.key}`;
+    blobs.set(name, bytes);
+    return name;
+  };
+  const rawTexture = (r: Extract<ComputeResource, { kind: "texture" }>, label: string, usage: TextureDesc["usage"], init?: string): Id =>
+    textures.add({ label, extent: r.size, format: r.format, sampleCount: 1, usage, ...(init === undefined ? {} : { init }) });
+  for (const p of a.compute?.passes ?? []) for (const [, r] of p.writes) {
+    const init = p.when.kind === "build" ? bakedKey(r) : undefined;
+    switch (r.kind) {
+      case "buffer": {
+        const states = r.steps === undefined ? 1 : 1 + Math.ceil(r.steps.count / r.steps.keep);
+        const usage: BufferDesc["usage"] = p.when.kind === "build" && init === undefined ? ["STORAGE", "COPY_SRC"] : STORAGE;
+        rawData.set(r.key, { buffer: buffer(r.key, r.bytes * states, usage, init) });
+        break;
+      }
+      case "texture": {
+        const usage: TextureDesc["usage"] = init !== undefined ? ["TEXTURE_BINDING", "COPY_DST"]
+          : ["TEXTURE_BINDING", "STORAGE_BINDING", ...(p.when.kind === "build" ? ["COPY_SRC"] as const : p.when.kind === "frame" ? ["COPY_DST"] as const : [])];
+        const id = r.steps === undefined ? rawTexture(r, r.key, usage, init)
+          : rawTexture({ ...r, size: computeHistorySize(r.size, 1 + Math.ceil(r.steps.count / r.steps.keep)) }, r.key, ["TEXTURE_BINDING", "COPY_DST"]);
+        rawData.set(r.key, { texture: id });
+        break;
+      }
+    }
+  }
   // Shared shaders' rows (src/host/share.ts): bound at group 0 only when some shader is shared.
   const rowsBuf = sharing.rows.length > 0 ? [buffer("loft rows", sharing.rows.byteLength, STORAGE, blob("loft rows", sharing.rows))] : [];
   const bufferOf = new Map(dynamic.map((d) => [d.name, d.id]));
@@ -354,15 +391,29 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
     entries: [{ binding: 0, visibility: ALL, buffer: { type: "uniform" } }, storage(1, ALL), storage(2, ALL), storage(3, ALL), { binding: 4, visibility: ALL, buffer: { type: "uniform" } },
       ...rowsBuf.map(() => storage(ROWS_BINDING, ALL))],
   });
-  const layout1 = bgls.add({ label: "loft scene tables", entries: group1Buffers.map((d) => storage(d.binding, DRAWN)) });
+  const rawLayout = (r: ComputeResource, binding: number, visibility: readonly Stage[], write = false): LayoutEntry => {
+    switch (r.kind) {
+      case "buffer": return write ? { binding, visibility, buffer: { type: "storage" } } : storage(binding, visibility);
+      case "texture": {
+        const viewDimension = r.size.length === 2 ? "2d" : "3d";
+        return write
+          ? { binding, visibility, storageTexture: { access: "write-only", format: r.format, viewDimension } }
+          : { binding, visibility, texture: { sampleType: "unfilterable-float", viewDimension, multisampled: false } };
+      }
+    }
+  };
+  const rawResources = a.compute?.resources ?? [];
+  const rawEntries = (visibility: readonly Stage[]) => rawResources.map(({ resource, binding }) => rawLayout(resource, binding, visibility));
+  const rawGroups = rawResources.map(({ resource, binding }) => ({ binding, ...rawData.get(resource.key)! }));
+  const layout1 = bgls.add({ label: "loft scene tables", entries: [...group1Buffers.map((d) => storage(d.binding, DRAWN)), ...rawEntries(DRAWN)] });
   // The pose stages' group 1: the dynamic buffers writable, the static ones read-only (PoseStage).
   const poseLayout1 = bgls.add({
     label: "loft pose tables",
-    entries: [...dynamic.map((d): LayoutEntry => ({ binding: d.binding, visibility: ["COMPUTE"], buffer: { type: "storage" } })), ...staticBufs.map((d) => storage(d.binding, ["COMPUTE"]))],
+    entries: [...dynamic.map((d): LayoutEntry => ({ binding: d.binding, visibility: ["COMPUTE"], buffer: { type: "storage" } })), ...staticBufs.map((d) => storage(d.binding, ["COMPUTE"])), ...rawEntries(["COMPUTE"])],
   });
   const group0 = groups.add({ label: "loft prelude", layout: layout0, entries: [frameBuf, inputBuf, paramBuf, curveBuf, detailBuf, ...rowsBuf].map((b, binding) => ({ binding, buffer: b })) });
-  const group1 = groups.add({ label: "loft scene tables", layout: layout1, entries: group1Buffers.map((d) => ({ binding: d.binding, buffer: d.id })) });
-  const poseGroup1 = groups.add({ label: "loft pose tables", layout: poseLayout1, entries: group1Buffers.map((d) => ({ binding: d.binding, buffer: d.id })) });
+  const group1 = groups.add({ label: "loft scene tables", layout: layout1, entries: [...group1Buffers.map((d) => ({ binding: d.binding, buffer: d.id })), ...rawGroups] });
+  const poseGroup1 = groups.add({ label: "loft pose tables", layout: poseLayout1, entries: [...group1Buffers.map((d) => ({ binding: d.binding, buffer: d.id })), ...rawGroups] });
 
   const split = post.length > 0 || a.draws.some((d) => d.sceneDepth === true);
   // Group 2 layouts: exactly the ones documented on SCENE_DEPTH_WGSL and POST_WGSL; only a split frame has them.
@@ -421,6 +472,87 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
     label: `replay ${r.name}`, slot: p.slot, rate: r.rate, start: r.start, steps: r.steps, every: r.kept.kind === "checkpoints" ? r.kept.every : 1,
     first: dispatch(p.first, "replay stage"), ping: dispatch(p.ping, "replay stage"), pong: dispatch(p.pong, "replay stage"),
   }));
+
+  // ---- author compute ---------------------------------------------------------------------------------------------
+  const buildRuns: RawDispatch[] = [], buildOutputs: BuildOutput[] = [], loadRuns: ComputeRun[] = [], frameRuns: RawDispatch[] = [];
+  let emptyCompute: { group: Id; layout: Id } | undefined, frameCompute: { group: Id; layout: Id } | undefined;
+  for (const p of a.compute?.passes ?? []) {
+    if (p.when.kind === "build" && baked !== undefined) continue;
+    const stepped = p.when.kind === "steps";
+    const descriptors = [
+      ...p.writes.map(([, r]) => ({ r, write: true })),
+      ...(stepped ? p.writes.map(([, r]) => ({ r, write: false })) : []),
+      ...p.reads.map(([, r]) => ({ r, write: false })),
+    ];
+    const l1 = bgls.add({ label: p.name, entries: descriptors.map(({ r, write }, binding) => rawLayout(r, binding, ["COMPUTE"], write)) });
+    const l0 = p.when.kind === "frame" ? frameCompute ??= (() => {
+      const l = bgls.add({ label: "compute frame values", entries: [storage(0, ["COMPUTE"]), storage(1, ["COMPUTE"])] });
+      return { layout: l, group: groups.add({ label: "compute frame values", layout: l, entries: [{ binding: 0, buffer: inputBuf }, { binding: 1, buffer: paramBuf }] }) };
+    })() : emptyCompute ??= (() => {
+      const l = bgls.add({ label: "compute no frame values", entries: [] });
+      return { layout: l, group: groups.add({ label: "compute no frame values", layout: l, entries: [] }) };
+    })();
+    const label = `compute "${p.name}"`;
+    const module = modules.add({ label, chunks: [chunk(p.wgsl)] });
+    const layout = pls.add({ label, bindGroupLayouts: [l0.layout, l1] });
+    const pipelineOf = (entryPoint: string) => computes.add({ label: `${label} ${entryPoint}`, layout, module, entryPoint });
+    const pipeline = pipelineOf(p.entry);
+    const inputs = p.reads.map(([, r]) => rawData.get(r.key)!);
+    const makeDispatch = (pipe: Id, bindings: readonly RawId[]): Dispatch => {
+      const group = groups.add({ label, layout: l1, entries: [...bindings, ...inputs].map((r, binding) => ({ binding, ...r })) });
+      return { label, pipeline: pipe, bindGroups: [l0.group, group], workgroups: p.dispatch };
+    };
+    const outputs = p.writes.map(([, r]) => rawData.get(r.key)!);
+    switch (p.when.kind) {
+      case "build": {
+        buildRuns.push({ run: makeDispatch(pipeline, outputs) });
+        p.writes.forEach(([, r], i) => {
+          const out = outputs[i]!;
+          buildOutputs.push("buffer" in out ? { name: r.key, kind: "buffer", id: out.buffer, bytes: r.bytes } : { name: r.key, kind: "texture", id: out.texture });
+        });
+        break;
+      }
+      case "load": loadRuns.push({ kind: "once", run: makeDispatch(pipeline, outputs) }); break;
+      case "frame": {
+        const clearBuffers: Id[] = [], clearTextures: { from: Id; to: Id }[] = [];
+        for (const [, r] of p.writes) {
+          const out = rawData.get(r.key)!;
+          if (r.kind === "texture" && "texture" in out) clearTextures.push({ from: rawTexture(r, `${r.key} zero`, ["COPY_SRC"]), to: out.texture });
+          if ("buffer" in out) clearBuffers.push(out.buffer);
+        }
+        frameRuns.push({ run: makeDispatch(pipeline, outputs), clearBuffers, clearTextures });
+        break;
+      }
+      case "steps": {
+        const state = p.writes.map(([, r]): { copy: StepCopy; zero?: Id } => {
+          const out = rawData.get(r.key)!;
+          switch (r.kind) {
+            case "buffer": {
+              const usage = ["STORAGE", "COPY_SRC", "COPY_DST"] as const;
+              if (!("buffer" in out)) throw new Error(`compute "${r.key}": expected buffer state`);
+              return { copy: { kind: "buffer", a: buffer(`${r.key} A`, r.bytes, usage), b: buffer(`${r.key} B`, r.bytes, usage), to: out.buffer, bytes: r.bytes } };
+            }
+            case "texture": {
+              const usage = ["STORAGE_BINDING", "TEXTURE_BINDING", "COPY_SRC", "COPY_DST"] as const;
+              if (!("texture" in out)) throw new Error(`compute "${r.key}": expected texture state`);
+              return {
+                copy: { kind: "texture", a: rawTexture(r, `${r.key} A`, usage), b: rawTexture(r, `${r.key} B`, usage), to: out.texture },
+                zero: rawTexture(r, `${r.key} zero`, ["COPY_SRC"]),
+              };
+            }
+          }
+        });
+        const pair = (k: "a" | "b"): RawId[] => state.map(({ copy: c }) => c.kind === "buffer" ? { buffer: c[k] } : { texture: c[k] });
+        const run = (pipe: Id, to: "a" | "b", from: "a" | "b"): RawDispatch => ({
+          run: makeDispatch(pipe, [...pair(to), ...pair(from)]),
+          clearBuffers: state.flatMap(({ copy: c }) => c.kind === "buffer" ? [c[to]] : []),
+          clearTextures: state.flatMap(({ copy: c, zero }) => c.kind === "texture" ? [{ from: zero!, to: c[to] }] : []),
+        });
+        loadRuns.push({ kind: "steps", start: run(pipelineOf(p.when.start), "a", "b"), odd: run(pipeline, "b", "a"), even: run(pipeline, "a", "b"), count: p.when.count, keep: p.when.keep, history: state.map(({ copy }) => copy) });
+        break;
+      }
+    }
+  }
 
   // ---- modules and render pipelines ---------------------------------------------------------------------------------
   // One module per (shader, way it is used). A shader nothing uses is not written: which host WGSL it expects depends on
@@ -757,9 +889,21 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
     ? { kind: "none" }
     : { kind: "read", buffer: buffer("loft bounds", at * 16, ["MAP_READ", "COPY_DST"]), grids: copies };
 
+  if (a.compute !== undefined) {
+    for (const p of pls.items) for (const stage of ALL) {
+      const entries = p.bindGroupLayouts.flatMap((id) => bgls.items[id]!.entries).filter((e) => e.visibility.includes(stage));
+      const counts = [
+        [entries.filter((e) => "buffer" in e && e.buffer.type !== "uniform").length, 8, "storage buffers"],
+        [entries.filter((e) => "texture" in e).length, 16, "sampled textures"],
+        [entries.filter((e) => "storageTexture" in e).length, 4, "storage textures"],
+      ] as const;
+      for (const [count, max, what] of counts) if (count > max)
+        throw new SceneError(p.label, `${count} ${what} in the ${stage.toLowerCase()} layout`, `at most ${max}`, "pack related outputs into one resource or remove a binding");
+    }
+  }
   const manifest: Manifest = {
     format: FORMAT,
-    version: precision === "mixed" ? 4 : formatVersion({ replay: replay.length > 0, passes: withPasses, shared: sharing.rows.length > 0 }),
+    version: formatVersion({ replay: replay.length > 0, passes: withPasses, shared: sharing.rows.length > 0, mixed: precision === "mixed", compute: a.compute !== undefined }),
     ...(precision === "mixed" ? { precision: { kind: "mixed", fallback: "f32-fallback", modules: mixedModules, buffers: mixedBuffers } as const } : {}),
     chunks: chunkNames,
     blobs: [...blobs].map(([name, b]) => ({ name, bytes: b.byteLength })),
@@ -778,7 +922,10 @@ export function lower(a: Artefact, precision: Precision = "f32"): Bundle {
     computePipelines: computes.items,
     renderPipelines: renders.items,
     bindGroups: groups.items,
+    ...(buildRuns.length === 0 ? {} : { build: { runs: buildRuns, outputs: buildOutputs } }),
+    ...(loadRuns.length === 0 ? {} : { load: loadRuns }),
     frame: {
+      ...(frameRuns.length === 0 ? {} : { compute: frameRuns }),
       writes: [{ kind: "frame", buffer: frameBuf }, { kind: "inputs", buffer: inputBuf }, { kind: "params", buffer: paramBuf }],
       pose,
       bounds,

@@ -1,4 +1,4 @@
-# The Loft artefact as files (format versions 1 through 4)
+# The Loft artefact as files (format versions 1 through 5)
 
 A built Loft scene is a directory that a client draws with no JavaScript from the compiler and no scene module. It is
 the host, lowered: every WebGPU object a loader creates is an entry in a list of `manifest.json`, described with
@@ -61,11 +61,43 @@ replacement `{size, init}` pair. Its blob may include binary16 and binary32 fiel
 Ids, bindings, pass recipes and frame writes stay the same. Both variants refer to the shared chunk and blob lists.
 
 Before creating any objects, check whether the device grants `shader-f16`. If granted, apply both maps and report
-`mixed`. Otherwise use the main descriptors and report `f32-fallback`. The TypeScript renderer also accepts an explicit f32 override, which uses the main descriptors and reports `f32`. Versions 1–3 have only the f32 path and no `precision` field.
+`mixed`. Otherwise use the main descriptors and report `f32-fallback`. The TypeScript renderer also accepts an explicit f32 override, which uses the main descriptors and reports `f32`. Versions 1–3 have only the f32 path and no `precision` field. Version 4 always has it; version 5 may.
+
+## Author compute (version 5)
+
+Version 5 is version 4 plus the fields below; a version-5 file may also carry the version-4 `precision` overlay.
+
+A `textures[i].extent` of `[w, h]` or `[w, h, d]` declares a persistent 2D or 3D texture with one mip and one
+sample. Allocate it at load. If it has an `init` blob, upload tightly packed native texels through `writeTexture`,
+with x fastest, then y, then z. The formats are r32float, rgba8unorm, rgba16float and rgba32float. Bind groups that
+refer only to buffers, samplers and persistent textures are also created at load. Storage texture bindings carry
+`storageTexture: { access: "write-only", format, viewDimension }`. A dispatch's `workgroups` may be a three-element
+array `[x, y, z]`, or the original scalar x count.
+
+`load` is an ordered list. After uploads and pipeline creation, record its jobs into one encoder, submit and complete
+them before returning the loaded scene. `frame.compute` is an ordered list of single dispatches. Record those after
+frame writes and before replay, pose and drawing. Each single dispatch (`run`) has optional `clearBuffers` (zero the
+entire buffer) and `clearTextures` (copy the same-sized zero texture from `from` to `to`). Frame outputs have
+distinct writers. Record all frame clears first, then bind and dispatch the frame jobs in the same compute pass as
+replay and pose. A load job or simulation step records its clears, its own compute pass and any history copies.
+
+A load job has `kind: "once"` and a single dispatch, or `kind: "steps"` with `start`, `odd`, `even`, `count`,
+`keep` and `history`. Dispatch `start` for state 0, then `odd` and `even` according to the parity of the new state.
+After state 0, each multiple of `keep` and the last state, write its snapshot at index `ceil(step / keep)`.
+Each history entry gives the resource kind, two alternating source IDs `a`, `b` (even and odd), and the destination
+`to`. For a buffer, copy `bytes` from offset 0 to `index * bytes`. For a texture, copy its full extent to
+origin `(0, index * height, 0)` in a 2D history or `(0, 0, index * depth)` in a 3D history. The accessors in the
+shaders compute snapshot indices from time. Resizing a viewport preserves persistent textures and histories.
+
+A finished build has initial blobs for build outputs and omits their kernel modules, pipelines and dispatches.
+The GPU-less training subprocess emits a private bundle with `build: { runs, outputs }`. The Bun server runs those
+dispatches before the load jobs. Each output names the resource ID and kind, plus byte length for buffers. A normal
+GPU build uses the same recipe to read back packed bytes and writes a finished artefact. The Bun file-render path
+and the Rust loader require a finished artefact and name the fix if handed the subprocess bundle.
 
 ## Load, call by call
 
-1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1, 2, 3 or 4. Read each
+1. **Read.** Parse `manifest.json`. Refuse unless `format == "loft-artefact"` and `version` is 1 through 5. Read each
    `wgsl/<chunks[i]>.wgsl` and each `bin/<blobs[i].name>.bin` (check its length against `blobs[i].bytes`).
 2. **Refuse JavaScript.** If any `tables[i].fill.kind == "cpu"`, refuse to load and name the tables (`loft build`
    never writes such a file; this guards hand-made ones). (`fill.kind` is `map`, `scan`, `cpu` or, in version 2,
@@ -247,9 +279,9 @@ The plan is the one per-frame procedure a loader runs on the CPU; phase 4 moves 
 loader must act on, a changed meaning, a new `FrameWrite` or command kind. A field a loader may ignore does not
 change it. The preludes are chunks, so changing them does not change the format.
 
-**The rule: a mixed build is version 4. Otherwise, a file is version 3 when a draw command carries an `instanceBase`, else version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
-`src/host/lower.ts` selects the version. A loader for n reads every version before it; the TypeScript loader and
-the Rust loader (rust/loft-loader) read all four.
+**The rule: a file with author compute is version 5. Otherwise, a mixed build is version 4, a file is version 3 when a draw command carries an `instanceBase`, version 2 when it carries a replay or a pass, and version 1 otherwise, byte for byte as before.**
+It is decided in one place, `formatVersion` in src/host/lower.ts. A loader for n reads every version before it; the TypeScript loader and
+the Rust loader (rust/loft-loader) read all five. Versions 1–3 retain their existing layout for the directories produced by earlier builds.
 
 - 1: the format above without `frame.replay` and without passes.
 - 2 (2026-11-14): `frame.replay` and the table fill `replay` (Replays); textures of a scaled or fixed size, render
@@ -260,3 +292,5 @@ the Rust loader (rust/loft-loader) read all four.
   draw's numbers. Written only when not 0; a file holding one uses version 3.
 
 - 4 (2026-11-18): mixed shader and storage alternatives, plus the named f32 fallback.
+- 5 (2026-11-18): author compute dispatches, persistent textures, and build-output texture blobs; may carry the
+  version-4 overlay. (feat/compute was written as version 4 in parallel with feat/f16; it was renumbered at merge.)

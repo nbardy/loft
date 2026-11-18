@@ -182,7 +182,18 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
   }
   t = performance.now();
   const [{ lower }, { writeBundle }] = await Promise.all([import("../host/lower.ts"), import("../host/files.ts")]);
-  const bundle = lower(artefact, cmd.precision);
+  const emitted = lower(artefact, cmd.precision);
+  let bundle = emitted;
+  if (emitted.manifest.build !== undefined && process.env.LOFT_NO_GPU !== "1") {
+    const [{ headlessDevice }, { bakeRawBuild }] = await Promise.all([import("../host/headless.ts"), import("../host/host.ts")]);
+    const device = await headlessDevice();
+    const started = performance.now();
+    try {
+      const data = await bakeRawBuild(device, emitted);
+      bundle = lower(artefact, cmd.precision, data);
+      console.log(`compute build  ${ms(started)}  ${[...data.values()].reduce((n, bytes) => n + bytes.byteLength, 0)} bytes`);
+    } finally { device.destroy(); }
+  }
   const sizes = writeBundle(cmd.out, bundle);
   const m = bundle.manifest;
   const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;

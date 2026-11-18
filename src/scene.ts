@@ -18,6 +18,8 @@ export type SceneSpec = {
   /** Strands, crests, drawn surfaces and points, or any other `Drawable`. */
   readonly things: readonly Drawable[];
   readonly style: Style;
+  /** Raw WGSL passes declared with compute. */
+  readonly compute?: readonly object[];
   /**
    * Direction toward the sun (normalised here): a vector, a frame expression of type vec3, or `movable([x, y, z])`
    * (src/light.ts), the host input `sun` with that direction as its default. `{ toward, amount }`:
@@ -51,6 +53,8 @@ export type Scene = {
   /** Everything drawn: the sky, the ground and the shadows the scene derives, then the spec's things. */
   readonly things: readonly Drawable[];
   readonly style: Style;
+  /** Raw WGSL passes declared with compute. */
+  readonly compute?: readonly object[];
   /** The sun's default direction at time 0. */
   readonly sun: V3;
   /** The sun as shaders read it. */
@@ -93,7 +97,7 @@ export function scene(spec: SceneSpec): Scene {
   }
   if (spec.period !== undefined && !(spec.period > 0 && Number.isFinite(spec.period))) throw new Error(`scene: the period must be a positive number of seconds, got ${spec.period}`);
   const loop: Loop = spec.period === undefined ? OPEN : { kind: "every", seconds: spec.period };
-  return { ground: spec.ground, things, style: spec.style, sun, sunAt, lighting: { sun: sunAt, amount, lights, sampling: { kind: "point" }, shadows: new Map() }, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
+  return { ground: spec.ground, things, style: spec.style, compute: spec.compute, sun, sunAt, lighting: { sun: sunAt, amount, lights, sampling: { kind: "point" }, shadows: new Map() }, cameras: spec.cameras ?? {}, outline: spec.outline ?? DEFAULT_OUTLINE, loop };
 }
 
 /** Classify the authored direction, and evaluate its default for the readers that bake lighting at time 0. */
