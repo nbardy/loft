@@ -53,9 +53,12 @@ pub fn enclose(s: &Ssa, leaves: &[I]) -> Result<Vec<I>, Unbounded> {
     Ok(v)
 }
 
+/// 2^-23 and 2^-149 (the least f32 subnormal).
+const F32_EPS: f64 = f32::EPSILON as f64;
+const F32_TINY: f64 = 1.401298464324817e-45;
 fn pad(x: I, ulps: u8) -> I {
     let k = ulps as f64 * 2.0;
-    let e = |b: f64| k * (b.abs() * f64::powi(2.0, -23)).max(f64::powi(2.0, -149));
+    let e = |b: f64| k * (b.abs() * F32_EPS).max(F32_TINY);
     if ulps == 0 { x } else { [x[0] - e(x[0]), x[1] + e(x[1])] }
 }
 

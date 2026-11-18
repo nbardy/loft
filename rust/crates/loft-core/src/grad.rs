@@ -26,9 +26,12 @@ impl G<'_> {
     /// a / k for a value k.
     pub fn div(&mut self, a: Option<Id>, k: Id) -> Option<Id> { a.map(|a| self.op(Atom::Div, [a, k, 0])) }
     pub fn select(&mut self, c: Id, y: Option<Id>, n: Option<Id>) -> Option<Id> {
-        if y.is_none() && n.is_none() { return None; }
-        let y = match y { Some(v) => v, None => self.lit(0.0) };
-        let n = match n { Some(v) => v, None => self.lit(0.0) };
+        let (y, n) = match (y, n) {
+            (None, None) => return None,
+            (Some(y), Some(n)) => (y, n),
+            (Some(y), None) => (y, self.lit(0.0)),
+            (None, Some(n)) => (self.lit(0.0), n),
+        };
         Some(self.op(Atom::Select, [c, y, n]))
     }
 }

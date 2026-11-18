@@ -191,11 +191,10 @@ pub static ATOMS: [AtomDef; 40] = [
     at(2, |a, b, _| a * b, 1, iv::mul, |g, [a, b, _], [da, db, _], _| { let (x, y) = (g.mul(b, da), g.mul(a, db)); g.add(x, y) }),
     at(2, |a, b, _| a / b, 1, iv::div, |g, [_, b, _], [da, db, _], o| { let t = g.mul(o, db); let n = g.sub(da, t); g.div(n, b) }),
     at(1, |a, _, _| -a, 0, iv::neg, |g, _, [da, _, _], _| g.neg(da)),
-    // JS Math.min/max: NaN if either is NaN.
-    at(2, |a, b, _| if a.is_nan() || b.is_nan() { f32::NAN } else { a.min(b) }, 0, iv::min, |g, [a, b, _], [da, db, _], _| {
+    at(2, js_min, 0, iv::min, |g, [a, b, _], [da, db, _], _| {
         let c = g.op(Atom::Le, [a, b, 0]); g.select(c, da, db)
     }),
-    at(2, |a, b, _| if a.is_nan() || b.is_nan() { f32::NAN } else { a.max(b) }, 0, iv::max, |g, [a, b, _], [da, db, _], _| {
+    at(2, js_max, 0, iv::max, |g, [a, b, _], [da, db, _], _| {
         let c = g.op(Atom::Ge, [a, b, 0]); g.select(c, da, db)
     }),
     at(2, |a, b, _| m::powf(a, b), T, iv::pow, |g, [a, b, _], [da, db, _], o| {
@@ -261,6 +260,15 @@ pub static ATOMS: [AtomDef; 40] = [
     at(1, |a, _, _| bit(!truthy(a)), 0, iv::not, |_, _, _, _| None),
     at(3, |c, y, n| if truthy(c) { y } else { n }, 0, iv::select, |g, [c, _, _], [_, dy, dn], _| g.select(c, dy, dn)),
 ];
+
+// JS Math.min/max: NaN if either is NaN, and -0 < +0. Rust's `f32::min`/`max` leave the sign of an equal zero to
+// the target: aarch64 (fminnm) and x86 (minss) disagree on min(-0, +0), which broke check (d) across hosts.
+fn js_min(a: f32, b: f32, _: f32) -> f32 {
+    if a.is_nan() || b.is_nan() { f32::NAN } else if a < b || (a == b && a.is_sign_negative()) { a } else { b }
+}
+fn js_max(a: f32, b: f32, _: f32) -> f32 {
+    if a.is_nan() || b.is_nan() { f32::NAN } else if a > b || (a == b && a.is_sign_positive()) { a } else { b }
+}
 
 fn one_minus_sq_root(g: &mut G, a: Id) -> Id {
     let aa = g.op(Atom::Mul, [a, a, 0]);

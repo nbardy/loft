@@ -77,7 +77,11 @@ pub fn run(ssa: &Ssa, lanes: usize, slots: usize, leaves: &[f32], regs: &mut Vec
                 // Operands are earlier instructions (decode validates the order; a later one is an index panic, i.e. Internal).
                 let reg = |k: Id| &done[k as usize * lanes..k as usize * lanes + lanes];
                 let (x, y, z) = (reg(x), reg(y), reg(z));
-                for l in 0..lanes { out[l] = f(x[l], y[l], z[l]); }
+                // One NaN for every host: x86 makes the sign bit of a fresh NaN 1 (sqrtss, 0/0 in musl's log, asin, pow),
+                // aarch64 makes it 0, and propagation keeps payloads. Without this the tape bits of any program that
+                // touches a NaN differ between macOS (arm) and the x86 Linux host (check (d)). Measured: x86_64 and
+                // aarch64 digests differed before, and every atom agrees bit for bit after.
+                for l in 0..lanes { let v = f(x[l], y[l], z[l]); out[l] = if v.is_nan() { f32::NAN } else { v }; }
             }
         }
     }

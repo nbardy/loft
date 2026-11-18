@@ -62,6 +62,9 @@ fn ulps(got: f32, want: f64) -> f64 {
     (got as f64 - want).abs() / ulp as f64
 }
 
+/// 10^e through `libm`, not the host's `pow`, so the random inputs (and the digest of (d)) are the same everywhere.
+fn p10(e: f64) -> f64 { libm::pow(10.0, e) }
+
 struct Rng(u64);
 impl Rng {
     fn u(&mut self) -> f64 {
@@ -162,7 +165,7 @@ fn a_atom_ulps_hold() {
         let mut worst = 0.0f64;
         for _ in 0..200_000 {
             let mut x = [0f32; 3];
-            for v in &mut x { *v = (r.range(-1.0, 1.0) * 10f64.powf(r.range(-3.0, 1.6))) as f32; }
+            for v in &mut x { *v = (r.range(-1.0, 1.0) * p10(r.range(-3.0, 1.6))) as f32; }
             if matches!(a, Atom::Pow | Atom::Log | Atom::Log2 | Atom::Sqrt) { x[0] = x[0].abs() }
             if matches!(a, Atom::Asin | Atom::Acos) { x[0] = x[0].clamp(-1.0, 1.0) }
             let want = exact(a, x[0] as f64, x[1] as f64, x[2] as f64);
@@ -178,16 +181,12 @@ fn a_atom_ulps_hold() {
 // ---- random programs for (b) and (c) ---------------------------------------------------------------------------------
 
 /// A random program over `leaves` leaves through authored operators (expansions included), `n` operators deep.
-fn random_program(r: &mut Rng, leaves: u32, n: usize, smooth: bool) -> Ssa {
+fn random_program(r: &mut Rng, leaves: u32, n: usize) -> Ssa {
     let mut s = Ssa::default();
     let mut pool: Vec<Id> = (0..leaves).map(|k| s.leaf(k)).collect();
     for _ in 0..3 { let c = s.lit(r.range(-3.0, 3.0) as f32); pool.push(c); }
-    let rough = [Prim::Floor, Prim::Fract, Prim::Sign, Prim::Step, Prim::Mod, Prim::Rem, Prim::Ceil, Prim::Trunc, Prim::RoundEven,
-                 Prim::Lt, Prim::Gt, Prim::Le, Prim::Ge, Prim::Eq, Prim::Ne, Prim::And, Prim::Or, Prim::Not, Prim::Select,
-                 Prim::Abs, Prim::Min, Prim::Max, Prim::Clamp, Prim::Saturate, Prim::Smoothstep, Prim::Tan, Prim::Pow];
     for _ in 0..n {
         let p = ALL_PRIMS[r.n(ALL_PRIMS.len())];
-        if smooth && rough.contains(&p) { continue; }
         let pick = |r: &mut Rng, pool: &Vec<Id>| pool[pool.len() - 1 - r.n(pool.len().min(6))];
         // Vector builtins get vector operands of one width; the rest are componentwise, so scalars suffice.
         let width = match PRIMS[p as usize].ty { TyRule::Vec3 => 3, TyRule::Same | TyRule::Scalar => 1 + r.n(3),
@@ -206,8 +205,8 @@ fn boxes_check(s: &Ssa, leaves: usize, r: &mut Rng, boxes: usize, esc: &mut u64,
     let mut regs = Vec::new();
     for _ in 0..boxes {
         let bx: Vec<I> = (0..leaves).map(|_| {
-            let c = r.range(-1.0, 1.0) * 10f64.powf(r.range(-2.0, 1.0));
-            let w = 10f64.powf(r.range(-6.0, 0.7));
+            let c = r.range(-1.0, 1.0) * p10(r.range(-2.0, 1.0));
+            let w = p10(r.range(-6.0, 0.7));
             let (lo, hi) = ((c - w) as f32 as f64, (c + w) as f32 as f64);
             [lo, hi]
         }).collect();
@@ -245,7 +244,7 @@ fn b_intervals_enclose_the_tape() {
         total += 12_000;
     }
     for _ in 0..26_000 {
-        let s = random_program(&mut r, 3, 12, false);
+        let s = random_program(&mut r, 3, 12);
         boxes_check(&s, 3, &mut r, 20, &mut esc, &mut unb, &mut names);
         total += 20;
     }
@@ -259,7 +258,7 @@ fn b_intervals_enclose_the_tape() {
 fn c_grad_matches_central_differences() {
     let mut r = Rng(13);
     let (mut n, mut skipped, mut fails) = (0usize, 0usize, Vec::new());
-    let mut progs: Vec<Ssa> = (0..2000).map(|_| random_program(&mut r, 2, 10, false)).collect();
+    let mut progs: Vec<Ssa> = (0..2000).map(|_| random_program(&mut r, 2, 10)).collect();
     // Every atom alone too.
     for a in ALL_ATOMS { let mut s = Ssa::default(); let x = [s.leaf(0), s.leaf(1), s.leaf(2)]; s.op(a, x); progs.push(s); }
     for s0 in &progs {
@@ -297,8 +296,8 @@ fn d_tape_digest() {
     let mut regs = Vec::new();
     let mut r = Rng(17);
     for _ in 0..500 {
-        let s = random_program(&mut r, 3, 16, false);
-        let pts: Vec<f32> = (0..64 * 3).map(|_| (r.range(-1.0, 1.0) * 10f64.powf(r.range(-3.0, 2.0))) as f32).collect();
+        let s = random_program(&mut r, 3, 16);
+        let pts: Vec<f32> = (0..64 * 3).map(|_| (r.range(-1.0, 1.0) * p10(r.range(-3.0, 2.0))) as f32).collect();
         run(&s, 64, 3, &pts, &mut regs).unwrap();
         regs.iter().for_each(|&x| eat(x));
     }
