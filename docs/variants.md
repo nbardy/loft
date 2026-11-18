@@ -186,11 +186,10 @@ its base option instead of multiplying by it.
 - **The draw order is the design's**: carapace, back, face, legs, claws, then the world.
 - **Cameras are fixed in the world**: a variant that raises or grows the crab can leave a close camera's frame (the
   stilt crab's face sits 1.25 higher in `face`).
-- **Params**: the crab declares none. Loft's parameter registry is global (`src/expr.ts`, `param`): two variants built in
-  one process (the sheet, `check`) that declared one param with different defaults would fail with "declared twice".
-  The fix, in `src/expr.ts`: intern a param by its whole spec (`p:${name}:${def}:${min}:${max}`, not `p:${name}`), drop
-  the process-wide `params` map, and do the "declared twice with different defaults" check in `leaves()`, where `ps`
-  is filled per compiled scene. Then a clash is an error within one scene, not across a process.
+- **Params**: the crab declares none. A param is interned by name and default (`src/expr.ts`, `param`), and two
+  defaults for one name are refused only within one scene, where its params are bound (`src/compile/bind.ts`), so two
+  variants built in one process (the sheet, `check`) may give one param different defaults. (Fixed 2026-11-18; it was
+  a process-wide registry. Two declarations with one default and different ranges still share the first's range.)
 
 ## Scored against the build (2026-11-11)
 

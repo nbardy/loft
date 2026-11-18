@@ -152,7 +152,7 @@ export type PbrFailure =
 const failureParts = (x: PbrFailure): [string, string, string, string] => {
   switch (x.kind) {
     case "varies": return [`pbr ${x.part}`, `a ${x.part} that reads ${x.reads}`, `a ${x.part} of its arguments and constants alone: it is evaluated once, when the style is built`,
-      x.part === "sky" ? "make the sky a function of its direction and the sun alone (a moving sun is the sun's input), or pass an `environment` that does not project the sky" : `make the ${x.part} a function of its arguments alone, or pass \`lobeAlbedo\` for it`];
+      x.part === "sky" ? "make the sky a function of its direction and the sun alone, or pass `clear: [r, g, b]` and an `environment` that does not project the sky" : `make the ${x.part} a function of its arguments alone, or pass \`lobeAlbedo\` for it`];
     case "gpu-only": return [`pbr ${x.part}`, `a ${x.part} the CPU cannot evaluate (${x.detail})`, `a ${x.part} the JS twin evaluates: it is evaluated once, when the style is built`,
       x.part === "sky" || x.part === "tone" ? "write it without raw WGSL; or pass `clear: [r, g, b]` and an `environment` that does not project the sky" : "write it without raw WGSL, or pass `lobeAlbedo` for it"];
     case "unfitted": return ["pbr lobeAlbedo", `a distribution and visibility whose albedo the environment's fit misses by ${x.worst.toFixed(3)}`, "a fit within 0.02", "pass `lobeAlbedo: (n_v, rough) => ({ scale, bias })` for these parts"];
