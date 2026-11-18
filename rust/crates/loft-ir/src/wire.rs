@@ -698,7 +698,9 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                     }
                     (4, [part, rest @ ..]) => {
                         let mut c = Cur { w: rest, r: rs, wi: 0, ri: 0, z };
-                        Fill::Recurrence(recur(&mut c, *part, n_lanes).map_err(|()| bad(Span::Decls, at, Fault::Layout))?)
+                        Fill::Recurrence(
+                            recur(&mut c, *part, n_lanes).map_err(|()| bad(Span::Decls, at, Fault::Layout))?,
+                        )
                     }
                     _ => return Err(bad(Span::Decls, at, Fault::Layout)),
                 };

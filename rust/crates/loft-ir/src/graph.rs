@@ -262,9 +262,19 @@ impl Loop {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Kernel {
     /// `entries` rows of `lanes` vec4s, filled by `fill`, read for `role`.
-    Table { name: u32, lanes: u32, entries: u32, role: Role, fill: Fill },
+    Table {
+        name: u32,
+        lanes: u32,
+        entries: u32,
+        role: Role,
+        fill: Fill,
+    },
     /// Supplied samples `rows[at..at + len]`, read as one lane.
-    Rows { label: u32, at: u32, len: u32 },
+    Rows {
+        label: u32,
+        at: u32,
+        len: u32,
+    },
     Compute(Box<Compute>),
 }
 /// An author compute pass (src/compute.ts `compute`): WGSL text with `@compute` entries, run on a schedule, writing
@@ -288,7 +298,12 @@ pub enum When {
     Load,
     Frame,
     /// `count` steps at `rate` (a lit) a second from the entry `start` seeds, every `keep`-th state kept.
-    Steps { start: u32, count: u32, rate: u32, keep: u32 },
+    Steps {
+        start: u32,
+        count: u32,
+        rate: u32,
+        keep: u32,
+    },
 }
 /// One output of a compute pass: the text's variable `key`, bound under `symbol` for readers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -299,9 +314,16 @@ pub struct Output {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutShape {
-    Buffer { entries: u32, lanes: u32 },
+    Buffer {
+        entries: u32,
+        lanes: u32,
+    },
     /// `dims` 2 or 3; `size[2]` is 1 for a 2D texture. `format` a symbol (`rgba8unorm`, `r32float`, ...).
-    Texture { dims: u32, size: [u32; 3], format: u32 },
+    Texture {
+        dims: u32,
+        size: [u32; 3],
+        format: u32,
+    },
 }
 
 /// How a table is filled (src/expr.ts `TableSource`). Bodies are the decl's own roots over its own binders (`Op::Bind`),
@@ -323,7 +345,10 @@ pub enum Fill {
 pub enum Recur {
     Kept(Box<Kept>),
     /// The previous state (what `prev` fetches inside the step) or a checkpoint replay's pair, of kernel `kept`.
-    Part { part: Part, kept: u32 },
+    Part {
+        part: Part,
+        kept: u32,
+    },
 }
 /// Wire code = the order here, from 1 (0 is the kept states).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -523,7 +548,12 @@ pub enum Target {
     View,
     /// An offscreen texture `loft_passtex_<name>` that raw text reads (`Read::Pass`). `scene`: it also draws every
     /// subject draw of the view passes (an author pass of the scene, src/frame/pass.ts), seen by its own camera.
-    Texture { name: u32, size: Size, keep: Keep, scene: bool },
+    Texture {
+        name: u32,
+        size: Size,
+        keep: Keep,
+        scene: bool,
+    },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Size {

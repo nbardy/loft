@@ -4,7 +4,9 @@
 use loft_core::emit::{Slots, check, module, validate};
 use loft_ir::Error;
 use loft_ir::error::SceneFault;
-use loft_ir::graph::{Fill, Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Prim, RawFn, Role, Sel, Site, Ty};
+use loft_ir::graph::{
+    Fill, Graph, GraphFn, Input, Kernel, Loop, Node, Op, Param, Part, Prim, RawFn, Recur, Role, Sel, Site, Ty,
+};
 
 struct Rng(u64);
 impl Rng {
@@ -84,7 +86,7 @@ impl B {
     /// A raw function named `name` with source `text`.
     fn raw(&mut self, name: &str, text: &str, ret: Ty) -> u32 {
         let (name, text) = (self.sym(name), self.sym(text));
-        self.raws.push(RawFn { name, ret, text, deps: Box::new([]) });
+        self.raws.push(RawFn { name, ret, text, deps: Box::new([]), reads: Box::new([]) });
         (self.raws.len() - 1) as u32
     }
     fn graph(&self) -> Graph {
@@ -211,7 +213,8 @@ fn program(seed: u64) -> (B, u32) {
         lanes: 3,
         entries: 1,
         role: Role::Data,
-        fill: Fill::Recurrence { recurrence: 0 },
+        // A table the job fills elsewhere (a recurrence's previous state): made, with no fill body here.
+        fill: Fill::Recurrence(Recur::Part { part: Part::Prev, kept: 0 }),
     });
     b.at_kernels.push([7, 3]);
     let kernel = 0;
