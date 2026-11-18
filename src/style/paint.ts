@@ -26,7 +26,7 @@
 
 import { add, div, dot, max, min, mix, mul, saturate, smoothstep, sub, vec3, type Expr } from "../expr.ts";
 import { noise3 } from "../lib/noise.ts";
-import { pixelWorld } from "../lib/wgsl.ts";
+import { pixelWorld } from "../lib/screen.ts";
 import type { Rgb, ShadeCtx } from "../style.ts";
 import { keyOf, light, type Key } from "./light.ts";
 import { edgeOf, pixelsInside, rgb } from "./shared.ts";

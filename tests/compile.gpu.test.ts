@@ -7,7 +7,7 @@ import shell from "../examples/shell.ts";
 import scales from "../examples/serpent_scales.ts";
 import {
   add, cos, draw, keys, lift, mul, param, place, points, scene, sea, sin, spacing, strand, surface, through, time,
-  toon, variable, vec3, wave, framed, type Compiled, type Drawable, type F, type Surface, type TableSource,
+  toon, variable, vec3, wave, framedPose, type Compiled, type Drawable, type F, type Surface, type TableSource,
 } from "../src/index.ts";
 import { compileScene } from "../src/compile/index.ts";
 import { FRAGMENT, gpu, layouts, probe, relErr, stateAt, VERTEX } from "./compile.harness.ts";
@@ -77,7 +77,7 @@ const torusDrawn = draw.surface("torus", torus, { paint: () => vec3(1, 1, 1), gr
 /** Teeth: copies of a small strand at points placed on the probe, each scaled. */
 const bump = strand({ name: "bump", spine: (m) => through(m, [[0, 0, 0], [0.1, 0.3, 0]]), stations: 4, girth: 0.05, up: [1, 0, 0], paint: [1, 1, 1] });
 const studs = place(points(9, (i) => ({ at: vec3(add(0.1, mul(i, 0.1)), add(0.2, mul(i, 0.17)), add(0.9, mul(time, 0.01))), scale: add(1, i) })), body);
-const bumps = draw.points("bumps", studs, bump);
+const bumps = draw.posed("bumps", studs, bump);
 
 /**
  * Run a drawn surface's own vertex function (`surf_<name>(s, t, i)` in its shader module) on the GPU at grid corners
@@ -115,7 +115,7 @@ test("drawn surfaces land where a CPU evaluation of the same expressions says", 
   const ends = spacing.ends(1).at, round = spacing.from(1, 0.25).at, even = (x: F) => x;
   const b = await agreement(c, "probe", () => body, { u: ends, v: round }, 1, 1.37);
   const tor = await agreement(c, "torus", () => torus, { u: even, v: even }, 1, 0.8);
-  const inst = await agreement(c, "bumps", (i) => framed(bump, studs.at(lift<"f32">(i))), { u: ends, v: round }, 9, 0.8);
+  const inst = await agreement(c, "bumps", (i) => framedPose(bump, studs.at(lift<"f32">(i))), { u: ends, v: round }, 9, 0.8);
   expect(b.worstPos).toBeLessThan(1e-4);
   expect(tor.worstPos).toBeLessThan(1e-4);
   expect(inst.worstPos).toBeLessThan(1e-4);

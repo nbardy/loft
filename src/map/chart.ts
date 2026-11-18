@@ -4,7 +4,7 @@
 
 import { abs, add, cos, cross, dot, fetch, lift, listOf, max, mul, sin, sub, vec3, vec4, type In, type TableSource } from "../expr.ts";
 import { scopedName } from "../expr.ts";
-import type { Chart, F, Frame, P3, Placeable, Placed, Points, Posed, Poses, Size } from "./types.ts";
+import type { Chart, F, Frame, P3, Placeable, Posed, Poses, Size } from "./types.ts";
 
 const X = lift<"vec3">([1, 0, 0]), Y = lift<"vec3">([0, 1, 0]), Z = lift<"vec3">([0, 0, 1]);
 
@@ -67,23 +67,14 @@ export function place<T>(shape: Placeable<T>, chart: Chart): T {
 
 export type PointSpec = { readonly at: In<"vec3">; readonly scale: In<"f32"> };
 
-/** Points with local frames at `at(i)` (axes of the coordinate system they are placed in) and scales. */
-class PointSet implements Points, Placeable<PointSet> {
-  constructor(readonly count: number, private readonly chart: Chart, private readonly spec: (i: F) => PointSpec) {}
-  at(i: F): Placed {
-    const s = this.spec(i);
-    return { frame: carry(this.chart, { o: lift<"vec3">(s.at), x: X, y: Y, z: Z }), scale: lift<"f32">(s.scale) };
-  }
-  placed(chart: Chart): PointSet { return new PointSet(this.count, compose(chart, this.chart), this.spec); }
-}
-
 /**
- * `count` points at local coordinates `at(i)` with scale `scale(i)`. Placed on a body (`place(points(...), body)`),
- * the coordinates are body coordinates (m, v, rho) and each frame is the body's frame there.
+ * `count` copies at local coordinates `at(i)` with an even scale `scale(i)`, unturned: `posed` without a turn or a size
+ * along each axis, drawn by `draw.posed`. Placed on a body (`place(points(...), body)`), the coordinates are body
+ * coordinates (m, v, rho) and each frame is the body's frame there.
  */
-export function points(count: number, spec: (i: F) => PointSpec): PointSet {
+export function points(count: number, spec: (i: F) => PointSpec): PoseSet {
   if (!(Number.isInteger(count) && count >= 1)) throw new Error(`points: count must be a positive integer, got ${count}`);
-  return new PointSet(count, world, spec);
+  return new PoseSet(count, world, (i) => { const s = spec(i); return { at: s.at, turn: turn.none, size: size.even(s.scale) }; });
 }
 
 // ---- posed copies: turned and scaled along each axis ---------------------------------------------------------------
@@ -179,11 +170,6 @@ export function posedList(given: string, specs: readonly PoseSpec[]): Poses {
     count: specs.length,
     at: (i) => ({ frame: { o: fetch(table, i, 0).xyz, x: fetch(table, i, 1).xyz, y: fetch(table, i, 2).xyz, z: fetch(table, i, 3).xyz }, size: sizeAt(i) }),
   };
-}
-
-/** Points as poses: each copy's even scale. */
-export function posesOf(points: Points): Poses {
-  return { count: points.count, at: (i) => { const p = points.at(i); return { frame: p.frame, size: { kind: "even", k: p.scale } }; } };
 }
 
 /** The one length that bounds a copy's size (for its level of detail and its shadow's radius): the largest axis. */

@@ -85,7 +85,7 @@ taps on a cone of half-angle 0.02 + 0.5 max(0.02, (1 - gloss)^2), Fresnel-weight
 | `warmed`, `mottled`, `weighted`, `paint.*` | repaint before lighting (hotter reds, blotches that ride the body); a line inside the hull whose weight follows the light (`swelling`) or wanders (`wandering`) |
 | `depthOfField`, `filmGrain`, `paperGrain`, `bloom`, `reflection` | composable post passes with their numbers as options |
 | `edgeOf`, `pixelsInside`, `rgb`, `POST_COMMON` | an edge antialiased by a pixel; pixels in from the silhouette; WGSL helpers for post passes |
-| `noise2`, `noise3`, `hash2`, `hash22`, `cellular2`, `luminance`, `fwidth`, `pixelWorld`, `wgslFn` | what patterns are made of |
+| `noise2`, `noise3`, `hash2`, `hash22`, `cellular2`, `luminance` | what patterns are made of (screen derivatives such as `fwidth` are a raw function in `wgsl` text) |
 
 Each part's file opens with its law, its parameters, what it cannot do, and where to go past it.
 

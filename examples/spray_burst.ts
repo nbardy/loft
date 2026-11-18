@@ -29,10 +29,10 @@ function burst(count: number) {
   }) });
   const cloud = draw.density("dust", dust, {
     bounds: { min: [-2, 0, -5.5], max: [6, 4.8, 5.5] },
-    sun: [0.85, 0.65, 0.52], sky: 0.3, forward: 0.42, shadowing: 0.75, detail: { kind: "none" }, haze: 0,
+    sun: [0.85, 0.65, 0.52], sky: 0.3, forward: 0.42, shadowing: 0.75,
   });
-  const grains = draw.specks("grains", count, (i, t) => {
-    const q = flight(i, t);
+  const grains = draw.points("grains", count, (i) => {
+    const q = flight(i, time);
     const size = hash22(vec2(i, 111));
     const coarse = mul(size.x, mul(size.x, size.x));
     return {

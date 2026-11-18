@@ -34,9 +34,9 @@ test("a raised bar casts one linked chain of capsules along the sun onto the wat
 // Catches: copies drawn with draw.points casting nothing (they did, until 2026-11-11: a fleet or a ring of posts left no
 // shadow), or casting from the prototype's place instead of each copy's. Three posts lifted to height 2 at x = -4, 0, 4,
 // each a short bar along z; under the same sun each shadow lands 1 unit toward -x of its own copy.
-test("copies made with draw.points each cast their own chain, carried by their placement", () => {
+test("copies made with draw.posed each cast their own chain, carried by their placement", () => {
   const post = strand({ name: "post", spine: (m) => through(m, [[0, 0, -1], [0, 0, 1]]), stations: 6, girth: 0.3, tips: "open", paint: [1, 1, 1] });
-  const posts = draw.points("posts", points(3, (i) => ({ at: vec3(mul(sub(i, 1), 4), 2, 0), scale: 1 })), post);
+  const posts = draw.posed("posts", points(3, (i) => ({ at: vec3(mul(sub(i, 1), 4), 2, 0), scale: 1 })), post);
   const c = compileScene(scene({ ground: sea({ swell: [] }), things: [posts], style: toon(), sun: [0.5, 1, 0] }));
   const t = c.frame(stateAt(c.artefact, 0)).table(c.table("shadows"));
   const s = capsules(t);

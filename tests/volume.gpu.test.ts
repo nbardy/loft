@@ -1,6 +1,6 @@
 import { beforeAll, expect, test } from "bun:test";
 import {
-  compile, draw, mul, nothing, scene, toon, vec3, type Camera, type Drawable, type Light, type Style, type VolumeOptions,
+  compile, draw, mul, nothing, scene, time, toon, vec3, type Camera, type Drawable, type Light, type Style, type VolumeOptions,
 } from "../src/index.ts";
 import { headlessDevice } from "../src/host/headless.ts";
 import { createHost, type GpuHost } from "../src/host/index.ts";
@@ -25,7 +25,7 @@ test("a homogeneous emissive slab integrates only the visible path length", asyn
     points: [[-3, -2, 0], [0, -2, 0], [0, 2, 0], [-3, 2, 0]], triangles: [[0, 1, 2], [0, 2, 3]],
   }, { sides: "one", outline: "none", paint: black, skeletons: [] });
   const sigma = Math.log(2) / 2;
-  const slab = draw.volume("slab", (_, t) => mul(sigma, t), { bounds, steps: 64, emission: [2, 0, 0.4] });
+  const slab = draw.volume("slab", () => mul(sigma, time), { bounds, steps: 64, emission: [2, 0, 0.4] });
   const s = scene({ ground: nothing, things: [wall, slab], style, sun: { toward: [0, 1, 0], amount: [0, 0, 0] } });
   const loaded = await host.load(compile(s));
   try {

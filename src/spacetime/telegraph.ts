@@ -15,7 +15,7 @@ import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment } from "../draw/surface.ts";
 import { surfaceOf } from "../draw/ground.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../lib/sdf2.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import { NO_SKELETON, type Surface } from "../map/types.ts";
 import type { Attack } from "./attack.ts";
 import { hitContour, hitInradius, hitPatch } from "./hit.ts";

@@ -1,10 +1,14 @@
 // The serpent's body with scales painted by folding its body coordinates: (m, v) stretched to cells about as long as
 // they are wide on this body, alternate rows offset by half a cell, and one scale drawn in one cell. The pattern
 // follows every bend of the body because it is written in the body's own coordinates.
-import { abs, add, floor, length, max, mix, mod, mul, palette, scene, sea, smoothstep, strand, sub, toon, vec2, vec3, type Expr } from "../src/index.ts";
+import { abs, add, floor, length, max, mix, mod, mul, palette, scene, sea, smoothstep, strand, sub, toon, vec2, vec3, wgsl, type Expr, type F, type In } from "../src/index.ts";
 import { fold2 } from "../src/lib/fold.ts";
-import { coverage, fwidth, sdCircle } from "../src/lib/index.ts";
+import { coverage, sdCircle } from "../src/lib/index.ts";
 import serpent, { bodySpec } from "./serpent.ts";
+
+// The screen-space rate of a value (WGSL fwidth): a raw function, GPU-only, for antialiased edges.
+const screen = wgsl`fn pixel_rate(x: f32) -> f32 { return fwidth(x); }`;
+const fwidth = (x: In<"f32">): F => screen.pixel_rate!(x);
 
 /** Scale rows along the body and scales round it: cells about 0.25 units square on a 15-unit body of girth ~0.6. */
 const ALONG = 72, ROUND = 18;

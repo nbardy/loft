@@ -1,8 +1,8 @@
 // A bounded march of the author's extinction field. Both rays sample the same field and time.
 import { emitShaderFn } from "../compile/bind.ts";
-import { drawSpec, type CompileContext, type Drawable, type Form, type Shader } from "../compile/context.ts";
+import { drawSpec, type CompileContext, type Drawable, type Emitted, type Form, type Shader } from "../compile/context.ts";
 import { SceneError, shown } from "../errors.ts";
-import { add, clamp, div, dot, Expr, gt, lib, lift, max, mul, neg, pow, select, sub, time, variable, withIdentities, type In, type LibFn } from "../expr.ts";
+import { add, clamp, div, dot, Expr, gt, lib, lift, max, mul, neg, pow, leaves, select, sub, substitute, time, variable, withIdentities, type In, type LibFn } from "../expr.ts";
 import { hash2 } from "../lib/noise.ts";
 import { foldAt, type LightFold } from "../light.ts";
 import type { F, P3 } from "../map/types.ts";
@@ -10,17 +10,17 @@ import { boxVertexWgsl, softRayWgsl } from "../soft/density.ts";
 import type { VolumeCtx } from "../style.ts";
 import type { Bounds } from "./index.ts";
 
-type Sample<T extends "f32" | "vec3"> = (p: P3, t: F) => In<T>;
+type Sample<T extends "f32" | "vec3"> = (p: P3) => In<T>;
 
-/** What a raymarch integrates, sampled in world coordinates and at the frame's time in seconds. */
+/** What a raymarch integrates, sampled in world coordinates (read `time` for motion). */
 export type VolumeOptions = {
   readonly bounds: Bounds;
   /** Maximum number of view-ray samples per pixel inside the bound. */
   readonly steps: number;
   /** Single-scattering albedo, clamped to [0, 1] by channel. Default white. */
-  readonly albedo?: In<"vec3"> | ((p: P3, t: F) => In<"vec3">);
+  readonly albedo?: In<"vec3"> | ((p: P3) => In<"vec3">);
   /** Emitted radiance per unit extinction, default black. Values above 1 are allowed. */
-  readonly emission?: In<"vec3"> | ((p: P3, t: F) => In<"vec3">);
+  readonly emission?: In<"vec3"> | ((p: P3) => In<"vec3">);
   /** Henyey–Greenstein anisotropy in (-1, 1), default 0. Positive is forward scattering. */
   readonly g?: number;
   /** Self-shadow rays toward the sun and each lamp, or unshadowed scattering (the default). */
@@ -40,23 +40,27 @@ function stepsOf(where: string, field: string, steps: number): number {
 const finiteF32 = (x: unknown): x is number => typeof x === "number" && Number.isFinite(Math.fround(x));
 const finiteVec3 = (x: unknown): x is Bounds["min"] => Array.isArray(x) && x.length === 3 && finiteF32(x[0]) && finiteF32(x[1]) && finiteF32(x[2]);
 
+/**
+ * A slot read at p and at a time t: the author's expression reads `time`, which is replaced by t (the shadow march and
+ * the specks' veil sample the field at the frame's time through a parameter, as the view march does).
+ */
 function fieldOf<T extends "f32" | "vec3">(where: string, name: string, ty: T, value: Sample<T> | In<T>): (p: P3, t: F) => Expr<T> {
   return (p, t) => {
-    const x = typeof value === "function" ? value(p, t) : value;
-    if (x instanceof Expr && x.ty === ty) return x;
-    if (ty === "f32" ? finiteF32(x) : finiteVec3(x)) return lift<T>(x);
-    throw new SceneError(where, `${name} as ${x instanceof Expr ? x.ty : shown(x)}`, `a ${ty} expression for ${name}`, ty === "f32" ? "return a number or an f32 expression from density(p, t)" : `give ${name} as [r, g, b] or return vec3(r, g, b) from its function`);
+    const x = typeof value === "function" ? value(p) : value;
+    const e = x instanceof Expr && x.ty === ty ? x : (ty === "f32" ? finiteF32(x) : finiteVec3(x)) ? lift<T>(x as In<T>) : undefined;
+    if (e === undefined) throw new SceneError(where, `${name} as ${x instanceof Expr ? x.ty : shown(x)}`, `a ${ty} expression for ${name}`, ty === "f32" ? "return a number or an f32 expression from density(p)" : `give ${name} as [r, g, b] or return vec3(r, g, b) from its function`);
+    return t === time ? e : substitute([e], time, t)[0] as Expr<T>;
   };
 }
 
 /** March extinction (inverse world units) from the eye to opaque depth inside a box, with single scattering and emission. */
-export function drawVolume(name: string, density: (p: P3, t: F) => In<"f32">, o: VolumeOptions): Drawable {
+export function drawVolume(name: string, density: (p: P3) => In<"f32">, o: VolumeOptions): VolumeDrawable {
   const where = typeof name === "string" ? `draw.volume ${shown(name)}` : "draw.volume";
   if (typeof name !== "string" || !/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) {
     throw new SceneError(where, `name ${shown(name)}`, "an identifier beginning with a letter", 'name the volume e.g. "dust"');
   }
   if (typeof density !== "function") {
-    throw new SceneError(where, `density ${shown(density)}`, "a function of position and time", "write (p, t) => expression, or () => 0.4 for constant density");
+    throw new SceneError(where, `density ${shown(density)}`, "a function of position", "write (p) => expression (read time for motion), or () => 0.4 for constant density");
   }
   const bounds = o?.bounds;
   if (!finiteVec3(bounds?.min) || !finiteVec3(bounds.max) || bounds.min.some((x, i) => !(Math.fround(x) < Math.fround(bounds.max[i]!)) || !finiteF32(bounds.max[i]! - x))) {
@@ -78,43 +82,65 @@ export function drawVolume(name: string, density: (p: P3, t: F) => In<"f32">, o:
     }
   })();
 
-  const field = fieldOf(where, "density", "f32", density);
-  const colour = fieldOf(where, "albedo", "vec3", o.albedo === undefined ? [1, 1, 1] : o.albedo);
-  const emits = fieldOf(where, "emission", "vec3", o.emission === undefined ? [0, 0, 0] : o.emission);
-  const extinction = (p: P3, t: F) => max(field(p, t), 0);
-  const albedo = (p: P3, t: F) => clamp(colour(p, t), 0, 1);
-  const emission = (p: P3, t: F) => max(emits(p, t), 0);
-  const forms: readonly Form[] = [{
-    kind: "medium", name, bound: { kind: "box", min: [...box.min], max: [...box.max] },
-    density: (p) => extinction(p, time), colour: (p) => albedo(p, time),
-  }];
+  return new VolumeDrawable(name, box, steps, Math.fround(g), shadowSteps, {
+    density: fieldOf(where, "density", "f32", density),
+    albedo: fieldOf(where, "albedo", "vec3", o.albedo === undefined ? [1, 1, 1] : o.albedo),
+    emission: fieldOf(where, "emission", "vec3", o.emission === undefined ? [0, 0, 0] : o.emission),
+  });
+}
 
-  return {
-    name, skeletons: [], forms,
-    draws(ctx) {
-      const key = `volume.${name}`;
-      // Allocate expression identities only when a volume is emitted, so unused volume code leaves other shaders alone.
-      const p = variable("p", "vec3"), t = variable("t", "f32"), ray = variable("ray", "vec3");
-      const source: VolumeCtx = {
-        world: p, time: t, view: neg(ray), density: variable("sigma", "f32"), albedo: albedo(p, t), emission: emission(p, t),
-        lights: scatteredLights(ctx, p, t, ray, Math.fround(g), shadowSteps > 0),
-      };
-      const shaded = withIdentities(() => ctx.style.volume === undefined ? linearVolume(source) : ctx.style.volume(source));
-      if (!(shaded instanceof Expr) || shaded.ty !== "vec3") {
-        throw new SceneError(`style ${JSON.stringify(ctx.style.name)} volume`, shown(shaded), "a vec3 expression for the sample's source colour", "return vec3(r, g, b) or an expression of the volume context");
-      }
-      const fns = [
-        emit(ctx, "volume_density", SAMPLE_ARGS, extinction(p, t)),
-        emit(ctx, "volume_source", [...SAMPLE_ARGS, ["ray", "vec3"], ["sigma", "f32"]], shaded),
-        emit(ctx, "volume_jitter", [["px", "vec2"]], hash2(variable("px", "vec2"))),
-      ];
-      const code = [boxVertexWgsl(box), softRayWgsl(box), ...fns.map((f) => f.code), fragment(ctx.ground.kind, steps, shadowSteps)].join("\n");
-      return {
-        shaders: { [key]: { code, libs: [...new Set(fns.flatMap((f) => f.libs))] } },
-        draws: [drawSpec({ label: name, shader: key, vertices: 36, phase: "transparent", cull: "front", depthWrite: false, blend: "premultiplied", sceneDepth: true })],
-      };
-    },
-  };
+type Fields = { readonly [K in "density" | "albedo" | "emission"]: (p: P3, t: F) => Expr<K extends "density" ? "f32" : "vec3"> };
+
+/**
+ * The `Drawable` that `draw.volume` returns: a march of the author's extinction field in a box. `draw.points` reads it
+ * as a veil (its `veil` option), so grains inside the volume are dimmed and tinted by the same field.
+ */
+export class VolumeDrawable implements Drawable {
+  readonly skeletons = [];
+  readonly forms: readonly Form[];
+
+  constructor(readonly name: string, readonly box: Bounds, readonly steps: number, readonly g: number, readonly shadowSteps: number, private readonly f: Fields) {
+    this.forms = [{
+      kind: "medium", name, bound: { kind: "box", min: [...box.min], max: [...box.max] },
+      density: (p) => this.extinction(p, time), colour: (p) => this.albedo(p, time),
+    }];
+  }
+
+  private extinction(p: P3, t: F): F { return max(this.f.density(p, t), 0); }
+  private albedo(p: P3, t: F): P3 { return clamp(this.f.albedo(p, t), 0, 1); }
+  private emission(p: P3, t: F): P3 { return max(this.f.emission(p, t), 0); }
+
+  /**
+   * `volume_density(p, t)` and `volume_source(p, t, ray, sigma)`: what the view march and a grain's veil sample.
+   * `closed`: they read nothing but their arguments and library functions a compute stage can run (no table, row,
+   * input or param; no derivative, texture sample or scene depth), so a pose stage can sample them (the specks' veil grid).
+   */
+  sampling(ctx: CompileContext): { readonly fns: readonly Shader[]; readonly closed: boolean } {
+    // Allocate expression identities only when a volume is emitted, so unused volume code leaves other shaders alone.
+    const p = variable("p", "vec3"), t = variable("t", "f32"), ray = variable("ray", "vec3");
+    const source: VolumeCtx = {
+      world: p, time: t, view: neg(ray), density: variable("sigma", "f32"), albedo: this.albedo(p, t), emission: this.emission(p, t),
+      lights: scatteredLights(ctx, p, t, ray, this.g, this.shadowSteps > 0),
+    };
+    const shaded = withIdentities(() => ctx.style.volume === undefined ? linearVolume(source) : ctx.style.volume(source));
+    if (!(shaded instanceof Expr) || shaded.ty !== "vec3") {
+      throw new SceneError(`style ${JSON.stringify(ctx.style.name)} volume`, shown(shaded), "a vec3 expression for the sample's source colour", "return vec3(r, g, b) or an expression of the volume context");
+    }
+    const density = this.extinction(p, t);
+    const read = leaves([density, shaded]);
+    const closed = read.tables.length + read.rows.length + read.inputs.length + read.params.length === 0 && !read.libs.some(fragmentOnly);
+    return { fns: [emit(ctx, "volume_density", SAMPLE_ARGS, density), emit(ctx, "volume_source", [...SAMPLE_ARGS, ["ray", "vec3"], ["sigma", "f32"]], shaded)], closed };
+  }
+
+  draws(ctx: CompileContext): Emitted {
+    const key = `volume.${this.name}`;
+    const fns = [...this.sampling(ctx).fns, emit(ctx, "volume_jitter", [["px", "vec2"]], hash2(variable("px", "vec2")))];
+    const code = [boxVertexWgsl(this.box), softRayWgsl(this.box), ...fns.map((f) => f.code), fragment(ctx.ground.kind, this.steps, this.shadowSteps)].join("\n");
+    return {
+      shaders: { [key]: { code, libs: [...new Set(fns.flatMap((f) => f.libs))] } },
+      draws: [drawSpec({ label: this.name, shader: key, vertices: 36, phase: "transparent", cull: "front", depthWrite: false, blend: "premultiplied", sceneDepth: true })],
+    };
+  }
 }
 
 function linearVolume(ctx: VolumeCtx): P3 {
@@ -142,7 +168,10 @@ function scatteredLights(ctx: CompileContext, p: P3, t: F, ray: P3, g: number, m
   });
 }
 
-const TRANSMITTANCE: LibFn = {
+/** A library function only a fragment stage can run: it (or a function it calls) takes derivatives or reads the screen. */
+const fragmentOnly = (l: LibFn): boolean => /\b(fwidth|dpdx|dpdy|textureSample|scene_depth|scene_position|scene_clearance)\w*\s*\(/.test(l.wgsl) || (l.deps ?? []).some(fragmentOnly);
+
+export const TRANSMITTANCE: LibFn = {
   name: "loft_volume_transmittance", ret: "f32", js: "gpu-only",
   wgsl: /* wgsl */ `
 fn loft_volume_transmittance(p: vec3<f32>, t: f32, toward: vec3<f32>, distance: f32) -> f32 {

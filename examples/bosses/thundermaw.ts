@@ -24,14 +24,17 @@ import { foam,
   abs, add, atan2, cos, dot, draw, fan, floor, fract, input, lathe, lift, max, min, mix, mul, normalize, palette,
   points, rain, scene, sea, select, sin, smoothstep, spacing, step, sub, time, vec2, vec3, woodblock, print, length, lt,
   displaced, flicker, afterglow, strikeAt, saturate, pow, through, WOODBLOCK_PALETTE, WOODBLOCK_SEA, beats, dragged, slowInOut, swing, uneven, anticipated,
-  type Drawable, type F, type P3, type PaintAt,
+  type Drawable, type F, type In, type P3, type PaintAt, wgsl,
 } from "../../src/index.ts";
-import { fwidth } from "../../src/lib/wgsl.ts";
 import { animate, attack, every, hit, part, telegraph } from "../../src/spacetime/index.ts";
 import { wyrm, type Wyrm } from "../scenes/lib/wyrm.ts";
 import { SAIL, scaleShip } from "./lib/scale_ship.ts";
 import { impactFoam, impactPaint } from "./lib/impact.ts";
 import { PRINT_WARNING } from "./lib/warning.ts";
+
+// The screen-space rate of a value (WGSL fwidth): a raw function, GPU-only, for antialiased edges.
+const screen = wgsl`fn pixel_rate(x: f32) -> f32 { return fwidth(x); }`;
+const fwidth = (x: In<"f32">): F => screen.pixel_rate!(x);
 
 // ---- the numbers an art director would change ---------------------------------------------------------------------
 
@@ -200,10 +203,10 @@ function heap(n: number, o: { readonly y: number; readonly rise: number; readonl
 const lobeGrid = { u: spacing.even(14), v: spacing.even(22) };
 const crownLobe = draw.surface("tmLobe", LOBE, { paint: lobePaint(crownShade, 1), grid: lobeGrid, sides: "one", outline: "none" });
 const bellyLobe = draw.surface("tmLobeDark", LOBE, { paint: lobePaint(bellyShade, 2), grid: lobeGrid, sides: "one", outline: "none" });
-const crownLobes = draw.points("tmCrown", heap(CLOUD.crownLobes, { y: CLOUD.height + 1, rise: CLOUD.crown, inner: 0.05, size: CLOUD.crownSize }), crownLobe);
+const crownLobes = draw.posed("tmCrown", heap(CLOUD.crownLobes, { y: CLOUD.height + 1, rise: CLOUD.crown, inner: 0.05, size: CLOUD.crownSize }), crownLobe);
 const rimLobe = draw.surface("tmLobeRim", LOBE, { paint: lobePaint(add(0.15, crownShade), 3), grid: { u: spacing.even(10), v: spacing.even(16) }, sides: "one", outline: "none" });
-const rimLobes = draw.points("tmRim", heap(CLOUD.rimLobes, { y: CLOUD.height + 0.6, rise: 0.5, inner: 0.97, size: CLOUD.rimSize }), rimLobe);
-const bellyLobes = draw.points("tmBelly", heap(CLOUD.bellyLobes, { y: CLOUD.height - 2.2, rise: 0.8, inner: 0.35, size: CLOUD.bellySize }), bellyLobe);
+const rimLobes = draw.posed("tmRim", heap(CLOUD.rimLobes, { y: CLOUD.height + 0.6, rise: 0.5, inner: 0.97, size: CLOUD.rimSize }), rimLobe);
+const bellyLobes = draw.posed("tmBelly", heap(CLOUD.bellyLobes, { y: CLOUD.height - 2.2, rise: 0.8, inner: 0.35, size: CLOUD.bellySize }), bellyLobe);
 
 // ---- the serpent's path: a loop threaded through the heap ----------------------------------------------------------
 
@@ -310,7 +313,7 @@ const wings = [1, -1].map((side) => draw.surface(side > 0 ? "tmWingR" : "tmWingL
 // ---- the mane: cloud lobes riding the back, growing into the tail ---------------------------------------------------
 
 const maneLobe = draw.surface("tmManeLobe", LOBE, { paint: lobePaint(add(mul(warning, 0.4), mul(breath, 1.0)), 4), grid: { u: spacing.even(10), v: spacing.even(16) }, sides: "one", outline: "none" });
-const mane = draw.points("tmMane", points(SERPENT.maneLobes, (i) => {
+const mane = draw.posed("tmMane", points(SERPENT.maneLobes, (i) => {
   const s = mul(i, 1 / (SERPENT.maneLobes - 1));
   const m = mix(sub(0.32, mul(breath, 0.12)), 1.0, s);
   const at = maw.body.frame(vec3(m, add(0.25, mul(sin(mul(i, 2.3)), 0.11)), 0.5)).o;

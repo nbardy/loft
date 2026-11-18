@@ -19,7 +19,7 @@
 
 import { abs, add, fract, lift, max, mix, mul, saturate, smoothstep, sub, type Expr } from "../expr.ts";
 import { noise2 } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { WaterCtx } from "../style.ts";
 
 /**

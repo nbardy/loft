@@ -36,7 +36,12 @@ test("loft show: every module compiles as one module, and every computing line o
   // The lines of the fixture's text that compute: a let, an assignment or a return (struct and fn headers do not).
   const file = readFileSync(DUST, "utf8").split("\n");
   const open = file.findIndex((l) => l.includes("wgsl`")), close = file.findIndex((l, k) => k > open && l.includes("}`;"));
-  const computing = file.flatMap((l, k) => k > open && k <= close && /\b(let|return)\b|^\s*\w+ = /.test(l) ? [k + 1] : []);
+  // A `let` that only binds a call of the text's own function to plain names (`let q = flight(i, time);`) computes
+  // nothing itself: the call is inlined, its work is sited at the callee's lines, and since lane L5 `time` in a speck
+  // is the shader's parameter `t` (no statement). Under L4 alone that line was cited only through `time`'s input read.
+  const fns = new Set(file.slice(open, close + 1).flatMap((l) => [...l.matchAll(/\bfn (\w+)\(/g)].map((x) => x[1]!)));
+  const forwards = (l: string): boolean => { const m = /^\s*let \w+ = (\w+)\(([\w\s,]*)\);\s*$/.exec(l); return m !== null && fns.has(m[1]!); };
+  const computing = file.flatMap((l, k) => k > open && k <= close && /\b(let|return)\b|^\s*\w+ = /.test(l) && !forwards(l) ? [k + 1] : []);
   const cited = new Set(modules.flatMap((m) => [...m.text.matchAll(/dust_burst\.ts:(\d+)/g)].map((x) => Number(x[1]))));
   const missed = computing.filter((n) => !cited.has(n));
   const sited = modules.reduce((n, m) => n + m.sited, 0);

@@ -156,11 +156,11 @@ export function wyrm(s: WyrmSpec): Wyrm {
   const TEETH = 6, tl = 0.2 * k;
   const tooth = cone(n("Tooth"), tl, tl * 0.24, 0.1, C.bone);
   const row = (i: F, count: number) => ({ j: mod(i, count), side: select(lt(i, count), -1, 1) });
-  const teethUp = draw.points(n("TeethUp"), place(points(2 * TEETH, (i) => {
+  const teethUp = draw.posed(n("TeethUp"), place(points(2 * TEETH, (i) => {
     const { j, side } = row(i, TEETH);
     return { at: vec3(add(0.45, mul(add(j, 0.5), 0.42 / TEETH)), add(0.75, mul(side, 0.1)), 0.92), scale: add(0.8, mul(j, 0.45 / TEETH)) };
   }), head), tooth);
-  const teethDown = draw.points(n("TeethDown"), place(points(2 * TEETH, (i) => {
+  const teethDown = draw.posed(n("TeethDown"), place(points(2 * TEETH, (i) => {
     const { j, side } = row(i, TEETH);
     return { at: vec3(add(0.34, mul(add(j, 0.5), 0.5 / TEETH)), add(0.25, mul(side, 0.12)), 0.92), scale: add(0.7, mul(j, 0.3 / TEETH)) };
   }), jaw), tooth);

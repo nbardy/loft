@@ -12,14 +12,14 @@
 // cells c across a wave of length L and amplitude A (0.003 for a swell 2 units high and 40 long, at 1-unit cells).
 
 import {
-  add, cross, distance, gt, lift, max, mul, normalize, or, select, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, type Expr, type In,
+  add, cross, distance, gt, lift, max, mul, normalize, or, select, sin, smoothstep, sub, substitute, time, variable, vec2, vec3, lib, type Expr, type In, type LibFn,
 } from "../expr.ts";
 import { gradient } from "../grad.ts";
 import { CELL_PIXELS } from "../artefact.ts";
 import type { Form, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
 import type { Contact } from "../style.ts";
-import { eyePosition, viewDir, wgslFn } from "../lib/wgsl.ts";
+import { eyePosition, viewDir } from "../lib/screen.ts";
 import { NO_SKELETON, type Chart, type F, type Frame, type Skeleton, type Surface } from "../map/types.ts";
 
 export type SwellSpec = {
@@ -90,7 +90,7 @@ const SEA_CELL = 2.25;
  * widened by the host's margin, NDC y over the rows the host found meeting the water (src/host/detail.ts).
  * `LOFT_DETAIL_SLOT` is the sea draw's override; the host chose only rows whose rays meet the water ahead.
  */
-const seaPlane = wgslFn<"vec2">({
+const SEA_PLANE: LibFn = { js: "gpu-only",
   name: "loft_sea_plane", ret: "vec2", wgsl: /* wgsl */ `
 fn loft_sea_plane(u: f32, v: f32) -> vec2<f32> {
   let rows = loft_detail[LOFT_DETAIL_SLOT];
@@ -102,10 +102,12 @@ fn loft_sea_plane(u: f32, v: f32) -> vec2<f32> {
   let d = b.xyz / b.w - o;
   return (o + d * (-o.y / d.y)).xz;
 }`,
-});
+};
+const seaPlane = (...args: In[]): Expr<"vec2"> => lib<"vec2">(SEA_PLANE, ...args);
 
 /** Longest extent of one pixel's footprint on the sea at p (`sea_footprint` in sceneWgsl). */
-const seaFootprint = wgslFn<"f32">({ name: "loft_sea_footprint", ret: "f32", wgsl: "fn loft_sea_footprint(p: vec3<f32>) -> f32 { return sea_footprint(p); }" });
+const SEA_FOOTPRINT: LibFn = { js: "gpu-only", name: "loft_sea_footprint", ret: "f32", wgsl: "fn loft_sea_footprint(p: vec3<f32>) -> f32 { return sea_footprint(p); }" };
+const seaFootprint = (...args: In[]): Expr<"f32"> => lib<"f32">(SEA_FOOTPRINT, ...args);
 
 /**
  * Tap offsets, in units of the band's width on screen: 8 round the outer edge, then 8 at 0.55 turned by half a step,
@@ -125,7 +127,7 @@ const fl = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
  * with the scene. It reads the scene's depth, so it may only be called from a draw with `sceneDepth` (its definition
  * goes in that draw's module, not in sceneWgsl).
  */
-const contactBand = wgslFn<"f32">({
+const CONTACT_BAND: LibFn = { js: "gpu-only",
   name: "loft_contact_band", ret: "f32", wgsl: /* wgsl */ `
 const LOFT_FOAM_RING = array<vec2<f32>, 16>(${RING.map(([x, y]) => `vec2<f32>(${fl(+x.toFixed(6))}, ${fl(+y.toFixed(6))})`).join(", ")});
 fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
@@ -143,7 +145,8 @@ fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   }
   return 1.0 - gap / width;
 }`,
-});
+};
+const contactBand = (...args: In[]): Expr<"f32"> => lib<"f32">(CONTACT_BAND, ...args);
 
 /**
  * The same closeness as `loft_contact_band` (1 at a body, 0 at `width`, below 0 beyond), measured so that a style can
@@ -167,7 +170,7 @@ fn loft_contact_band(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
  * takes derivatives of values all four pixels of the quad computed: only in a draw whose case is constant on each quad
  * (the sea's), and only with `sceneDepth`.
  */
-const contactLevel = wgslFn<"vec3">({
+const CONTACT_LEVEL: LibFn = { js: "gpu-only",
   name: "loft_contact_level", ret: "vec3", wgsl: /* wgsl */ `
 const LOFT_LEVEL_RING = array<vec2<f32>, 16>(${RING.map(([x, y]) => `vec2<f32>(${fl(+x.toFixed(6))}, ${fl(+y.toFixed(6))})`).join(", ")});
 /// How far the water at p is from the body point q, for the level: across the water in full; up and down, nothing for
@@ -249,13 +252,14 @@ fn loft_contact_level(p: vec3<f32>, px: vec2<f32>, width: f32) -> vec3<f32> {
   let dir = select(vec2<f32>(0.0), quad_reach / max(far, 1e-6), far > 0.02 * width && quad_gap < 3.9 * width);
   return vec3<f32>(1.0 - (quad_gap - tilt * pixel_world(p)) / width, dir);
 }`,
-});
+};
+const contactLevel = (...args: In[]): Expr<"vec3"> => lib<"vec3">(CONTACT_LEVEL, ...args);
 
 /**
  * Foam from the contact band, 0..1, antialiased by the pixel footprint fp: full at the body, gone at the foam width;
  * the threshold wobbles slowly so the edge reads as lapping foam.
  */
-const contactFoam = wgslFn<"f32">({
+const CONTACT_FOAM: LibFn = { js: "gpu-only",
   name: "loft_contact_foam", ret: "f32", wgsl: /* wgsl */ `
 fn loft_contact_foam(p: vec3<f32>, band: f32, fp: f32, width: f32) -> f32 {
   let t = frame.time.x;
@@ -265,7 +269,8 @@ fn loft_contact_foam(p: vec3<f32>, band: f32, fp: f32, width: f32) -> f32 {
   let fringe = smoothstep(0.12 + wobble - aa, 0.12 + wobble + aa, band);
   return core * 0.85 + fringe * 0.15;
 }`,
-});
+};
+const contactFoam = (...args: In[]): Expr<"f32"> => lib<"f32">(CONTACT_FOAM, ...args);
 
 /**
  * 1 where the contact band at p (seen at pixel px) may see an opaque surface, 0 where it cannot: its taps reach at most
@@ -274,25 +279,27 @@ fn loft_contact_foam(p: vec3<f32>, band: f32, fp: f32, width: f32) -> f32 {
  * opaque and the band is 1 - (distance to the far plane) / width, below -800 in every camera. Same constraint as
  * loft_contact_band: only in a draw with `sceneDepth`.
  */
-const seaNear = wgslFn<"f32">({
+const SEA_NEAR: LibFn = { js: "gpu-only",
   name: "loft_sea_near", ret: "f32", wgsl: /* wgsl */ `
 fn loft_sea_near(p: vec3<f32>, px: vec2<f32>, width: f32) -> f32 {
   return select(1.0, 0.0, scene_clearance(px) > clamp(width / pixel_world(p), 1.0, 40.0) + 1.0);
 }`,
-});
+};
+const seaNear = (...args: In[]): Expr<"f32"> => lib<"f32">(SEA_NEAR, ...args);
 
 /**
  * The larger of x (0 or 1) over the pixel's 2 x 2 quad, so a choice made from it is the same on all four pixels. Each
  * fine derivative is the difference between the two pixels of a pair: x + |dx| is the pair's larger, then down the
  * column the same. Fragment stage, in uniform control flow.
  */
-const quadMax = wgslFn<"f32">({
+const QUAD_MAX: LibFn = { js: "gpu-only",
   name: "loft_quad_max", ret: "f32", wgsl: /* wgsl */ `
 fn loft_quad_max(x: f32) -> f32 {
   let a = min(x + abs(dpdxFine(x)), 1.0);
   return min(a + abs(dpdyFine(a)), 1.0);
 }`,
-});
+};
+const quadMax = (...args: In[]): Expr<"f32"> => lib<"f32">(QUAD_MAX, ...args);
 
 /**
  * The cases the water is drawn in, per 2 x 2 quad (docs/gpu_native.md "The sea"): whether a body may be near (the

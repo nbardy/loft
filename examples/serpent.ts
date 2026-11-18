@@ -201,11 +201,11 @@ export function serpent(o: { readonly spine: (m: Expr<"f32">) => Expr<"vec3">; r
 
   /** Instance i of `n` per side: which side (-1, 1) and its index along the row. */
   const row = (i: Expr<"f32">, n: number) => ({ j: mod(i, n), side: select(lt(i, n), -1, 1) });
-  const teethUp = draw.points("teethUp", place(points(2 * S.teeth, (i) => {
+  const teethUp = draw.posed("teethUp", place(points(2 * S.teeth, (i) => {
     const { j, side } = row(i, S.teeth);
     return { at: vec3(add(0.45, mul(add(j, 0.5), 0.42 / S.teeth)), add(0.75, mul(side, 0.1)), 0.92), scale: add(0.8, mul(j, 0.45 / S.teeth)) };
   }), head), tooth);
-  const teethDown = draw.points("teethDown", place(points(2 * S.teeth, (i) => {
+  const teethDown = draw.posed("teethDown", place(points(2 * S.teeth, (i) => {
     const { j, side } = row(i, S.teeth);
     return { at: vec3(add(0.34, mul(add(j, 0.5), 0.5 / S.teeth)), add(0.25, mul(side, 0.12)), 0.92), scale: add(0.7, mul(j, 0.3 / S.teeth)) };
   }), jaw), tooth);
@@ -213,7 +213,7 @@ export function serpent(o: { readonly spine: (m: Expr<"f32">) => Expr<"vec3">; r
   const SPIKES = 7;
   const spike = cone("spike", 0.55, 0.13, 0.7, [0.86, 0.26, 0.34]);
   // Smaller toward the tail.
-  const spikes = draw.points("spikes", place(points(SPIKES, (i) => ({ at: vec3(add(0.63, mul(i, 0.19 / (SPIKES - 1))), 0.25, 0.9), scale: sub(1.1, mul(floor(i), 0.45 / (SPIKES - 1))) })), body), spike);
+  const spikes = draw.posed("spikes", place(points(SPIKES, (i) => ({ at: vec3(add(0.63, mul(i, 0.19 / (SPIKES - 1))), 0.25, 0.9), scale: sub(1.1, mul(floor(i), 0.45 / (SPIKES - 1))) })), body), spike);
 
   // ---- fins ---------------------------------------------------------------------------------------------------------
 

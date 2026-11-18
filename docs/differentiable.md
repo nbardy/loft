@@ -40,7 +40,7 @@ Could gradients of a picture, or of any measurement, with respect to a scene's n
 ## What a user would have to supply
 
 Nothing, for anything written as expressions. A derivative by hand only where the expression language is bypassed:
-a raw WGSL function (`wgslFn`) or a custom drawable with its own shader.
+a raw function in `wgsl` text or a custom drawable with its own shader.
 
 ## What stays outside gradients
 

@@ -16,7 +16,7 @@
 
 import { add, div, dot, exp, lift, max, mix, mul, normalize, param, pow, saturate, smoothstep, sub, vec3, vec4, type Expr, type In } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { Rgb, ShadeCtx, Style } from "../style.ts";
 import { LIGHT, litBodies, type Bodies, type LightRecipe } from "./light.ts";
 import { glossed } from "./gloss.ts";

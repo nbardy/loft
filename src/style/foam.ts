@@ -33,7 +33,7 @@
 
 import { abs, add, and, atan2, f, floor, fract, gt, length, lt, max, mix, mul, saturate, select, sin, smoothstep, step, sub, time, vec2, type Expr } from "../expr.ts";
 import { hash22, noise2 } from "../lib/index.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import type { Rgb, WaterCtx } from "../style.ts";
 import type { SwellLines } from "./sea.ts";
 import { edgeOf, rgb } from "./shared.ts";

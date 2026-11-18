@@ -8,7 +8,7 @@ import { add, clamp, f, fetch, floor, lift, listOf, max, mix, mul, step, sub, ve
 import { scopedName } from "../expr.ts";
 import { draw } from "../draw/index.ts";
 import type { Drawable } from "../compile/context.ts";
-import { pixelWorld } from "../lib/wgsl.ts";
+import { pixelWorld } from "../lib/screen.ts";
 import type { F, P3 } from "../map/types.ts";
 
 /** One rope: from a to b, sagging by `sag` (world units, at its middle, downward; an expression, so it can tighten). */

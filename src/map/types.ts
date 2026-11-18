@@ -15,12 +15,6 @@ export type Frame = { readonly o: P3; readonly x: P3; readonly y: P3; readonly z
 /** A frame and a uniform scale: where one instance of something goes. */
 export type Placed = { readonly frame: Frame; readonly scale: F };
 
-/** index -> frame. Drawn by instancing a drawable (`draw.points`). `i` is 0 .. count - 1, as an f32. */
-export interface Points {
-  readonly count: number;
-  at(i: F): Placed;
-}
-
 /**
  * How a copy is scaled: evenly, or by its own length along each axis of its frame (a spar's length and girth, a rag's
  * width, drop and belly). Along each axis the size is positive; a negative one would mirror the copy and turn it inside
@@ -32,8 +26,8 @@ export type Size = { readonly kind: "even"; readonly k: F } | { readonly kind: "
 export type Posed = { readonly frame: Frame; readonly size: Size };
 
 /**
- * index -> posed copy: `Points` whose copies may also be scaled along each axis. Drawn by `draw.posed`. `i` is
- * 0 .. count - 1, as an f32. `Points` are poses with an even size (`posesOf`).
+ * index -> posed copy: a frame (turned as the copy is) and a size. Drawn by `draw.posed`. `i` is 0 .. count - 1, as an
+ * f32. `points(...)` makes poses with no turn and an even size.
  */
 export interface Poses {
   readonly count: number;

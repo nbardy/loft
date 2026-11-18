@@ -33,8 +33,12 @@
 
 import {
   abs, add, atan2, clamp, cos, div, fract, lift, lt, mapNormal, max, min, mix, mul, NO_SKELETON, pow, select, sheet, sign, sin, smoothstep, sqrt, sub,
-  through, vec2, vec3, fwidth, length, type Expr, type F, type In, type P3, type Paint, type Rgb, type Skeleton, type Surface,
+  through, vec2, vec3, wgsl, length, type Expr, type F, type In, type P3, type Paint, type Rgb, type Skeleton, type Surface,
 } from "../../src/index.ts";
+
+// The screen-space rate of a value (WGSL fwidth): a raw function, GPU-only, for antialiased edges.
+const screen = wgsl`fn pixel_rate(x: f32) -> f32 { return fwidth(x); }`;
+const fwidth = (x: In<"f32">): F => screen.pixel_rate!(x);
 
 export type { Rgb };
 

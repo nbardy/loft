@@ -41,8 +41,8 @@ fn film(v_h: f32, f0: vec3f) -> vec3f {
   return f0 + 0.25 * (1.0 + cos(phase));
 }`;
 
-const cloud = draw.volume("dust", fx.dust, { bounds: { min: [-2, 0, -5], max: [6, 5, 5] }, steps: 64, g: 0.6, albedo: [0.6, 0.25, 0.1] });
-const grains = draw.specks("grains", 100_000, fx.grain, { stretch: 0.004 });
+const cloud = draw.volume("dust", fx.dust!, { bounds: { min: [-2, 0, -5], max: [6, 5, 5] }, steps: 64, g: 0.6, albedo: [0.6, 0.25, 0.1] });
+const grains = draw.points("grains", 100_000, fx.grain!, { stretch: 0.004 });
 
 export default scene({
   ground: plane, things: [cloud, grains], sun: [0.55, 0.38, -0.75],

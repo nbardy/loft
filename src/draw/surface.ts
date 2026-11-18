@@ -8,12 +8,12 @@ import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
 import { drawSpec, type Form, type CompileContext, type DetailSpec, type Drawable, type DrawSpec, type Emitted, type Phase, type Shader, type V3 } from "../compile/context.ts";
 import { boundTable, gridDetail } from "./grid_detail.ts";
-import { carry, posesOf, rotate, sizeBound } from "../map/chart.ts";
+import { carry, rotate, sizeBound } from "../map/chart.ts";
 import { framedPose } from "../map/surface.ts";
-import type { Chart, F, P3, Paint, Painted, Points, Posed, Poses, Skeleton, Surface } from "../map/types.ts";
+import type { Chart, F, P3, Paint, Painted, Posed, Poses, Skeleton, Surface } from "../map/types.ts";
 import { readsBody, type Style } from "../style.ts";
 import { lit } from "../compile/scene_wgsl.ts";
-import { fwidth } from "../lib/wgsl.ts";
+import { fwidth } from "../lib/screen.ts";
 import { foldAt, sunDir, sunOnly, type LightFold } from "../light.ts";
 import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
@@ -102,11 +102,6 @@ export class SurfaceDrawable implements Drawable {
     if (look.kind === "lit" && look.sides === "two" && look.outline === "hull") throw new SceneError(`draw.surface "${name}"`, `sides "two" with outline "hull"`, "a hull outline only on a one-sided surface (it draws the back faces)", `outline: "border"`);
     this.skeletons = skeletonsOf(surface, copies);
     this.forms = formsOf(this, copies);
-  }
-
-  /** The same surface and look, one copy per point. */
-  instanced(name: string, points: Points): SurfaceDrawable {
-    return new SurfaceDrawable(name, this.surface, this.grid, this.look, { kind: "poses", poses: posesOf(points) });
   }
 
   /** The same surface and look, one copy per pose: turned, and scaled along each axis (normals included). */
@@ -419,7 +414,7 @@ function quadDerivatives(name: string, s: Shader): Shader {
   // the quad computes (FWIDTH_QUAD; the sea's contact level): it is covered.
   const reaches = (l: LibFn): boolean => !QUAD_COVERED.test(l.wgsl) && (DERIVATIVE.test(l.wgsl) || (l.deps ?? []).some(reaches));
   const bad = s.libs.filter(reaches).map((l) => l.name);
-  if (bad.length > 0 || /\bloft_fwidth\(/.test(s.code)) throw new Error(`draw.surface: case function "${name}" takes a derivative quadSafe does not cover (${bad.join(", ") || "loft_fwidth in a loop"}); give it a quad-safe twin`);
+  if (bad.length > 0 || s.code.includes(`${FWIDTH.name}(`)) throw new Error(`draw.surface: case function "${name}" takes a derivative quadSafe does not cover (${bad.join(", ") || `${FWIDTH.name} in a loop`}); give it a quad-safe twin`);
   return s;
 }
 

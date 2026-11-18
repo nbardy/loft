@@ -107,14 +107,14 @@ const barnacle = strand({
 });
 // The shell covers the top of the carapace, so the crust grows round its rim (v near 0 and 0.5, the sides) in
 // irregular clumps, and over the back of the great claw, which is carried at the front where the camera sees it.
-const crust = draw.points("crust", place(points(BARNACLES, (i: F) => {
+const crust = draw.posed("crust", place(points(BARNACLES, (i: F) => {
   const m = add(0.08, mul(fract(mul(i, 0.618034)), 0.84));
   const side = select(lt(mod(i, 2), 1), 0.02, 0.48);
   const v = add(side, mul(sub(fract(mul(i, 0.3819)), 0.5), 0.16));
   return { at: vec3(m, v, 0.97), scale: add(0.5, mul(fract(mul(i, 0.7548)), 1.3)) };
 }), carapace), barnacle);
 const crusher = crab.find((t) => t.name === "crusherPalm") as unknown as Strand & Drawable;
-const clawCrust = draw.points("clawCrust", place(points(CLAW_BARNACLES, (i: F) => ({
+const clawCrust = draw.posed("clawCrust", place(points(CLAW_BARNACLES, (i: F) => ({
   at: vec3(add(0.15, mul(fract(mul(i, 0.618034)), 0.6)), add(0.25, mul(sub(fract(mul(i, 0.3819)), 0.5), 0.3)), 0.97),
   scale: add(0.45, mul(fract(mul(i, 0.7548)), 0.8)),
 })), crusher), barnacle);

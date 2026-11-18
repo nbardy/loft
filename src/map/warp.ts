@@ -6,7 +6,7 @@
 import { vec2 } from "../expr.ts";
 import { SceneError } from "../errors.ts";
 import { compose as composeFolds, type Folded } from "../lib/fold.ts";
-import type { Curve, F, Field, P3, Paint, Placed, Points, Surface, Warp } from "./types.ts";
+import type { Curve, F, Field, P3, Paint, Posed, Poses, Surface, Warp } from "./types.ts";
 
 /**
  * Applies a fold (a `Warp`: a map from a point to its folded point, with the cell it fell in) to something that is a
@@ -28,8 +28,8 @@ export const warp = {
   }),
   /** A curve reparametrised by a map of [0, 1] (to concentrate samples toward a tip, say). */
   curve: (c: Curve, w: (u: F) => F): Curve => (u) => c(w(u as F)),
-  /** Points whose index is mapped (a generator: index i becomes copy w(i)). */
-  points: (p: Points, count: number, w: (i: F) => F): Points => ({ count, at: (i): Placed => p.at(w(i)) }),
+  /** Poses whose index is mapped (a generator: index i becomes copy w(i)). */
+  points: (p: Poses, count: number, w: (i: F) => F): Poses => ({ count, at: (i): Posed => p.at(w(i)) }),
 };
 
 /**
