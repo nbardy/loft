@@ -4,6 +4,7 @@
 import { EnvironmentError, LoadError, SceneError, siteOf } from "../errors.ts";
 import { DesignError } from "../design.ts";
 import { UsageError, USAGE } from "./args.ts";
+import { NativeError } from "../core/native.ts";
 
 export type Verdict =
   /** The command line asked for something wrong or absent (a flag, a camera, a variant, an input, a style). */
@@ -64,6 +65,14 @@ export async function verdictOf(e: unknown): Promise<Verdict> {
     }
   }
   if (e instanceof LoadError) return { kind: "load", message: e.message };
+  // The Rust engine already classified its refusal (rust/crates/loft-ir Error::kind); its exit codes equal CODE's.
+  if (e instanceof NativeError) {
+    switch (e.kind) {
+      case "scene": return { kind: "scene", message: e.message, site: undefined };
+      case "internal": return { kind: "internal", message: e.message, stack: e.stack ?? "" };
+      case "usage": case "load": case "budget": case "environment": return { kind: e.kind, message: e.message };
+    }
+  }
   if (e instanceof SceneError) return { kind: "scene", message: e.message, site: await authorSite(e) ?? siteOf(e.stack) };
   if (e instanceof EnvironmentError) return { kind: "environment", message: e.message };
   if (e instanceof ChecksFailed) return { kind: "check", message: e.message };
