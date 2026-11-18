@@ -33,10 +33,10 @@ async function open(cmd: Extract<Command, { kind: "render" | "frames" | "clip" }
   let t = performance.now();
   switch (cmd.source.kind) {
     case "artefact": {
-      // Without the compiler: the loader reads the directory alone (src/cli/run_files.ts's closure).
-      const [{ headlessDevice }, { loadArtefactFiles }] = await Promise.all([import("../host/headless.ts"), import("../host/files.ts")]);
-      const device = await headlessDevice();
-      const { bundle, loaded } = await loadArtefactFiles(device, cmd.source.dir, cmd.precision);
+      // Without the compiler: the loader reads the directory alone (src/cli/run_files.ts, whose closure
+      // tools/check_loader_closure.ts checks; opening the files anywhere else would leave that check guarding nothing).
+      const { openFiles } = await import("./run_files.ts");
+      const { bundle, loaded, device } = await openFiles(cmd.source.dir, cmd.precision);
       const m = bundle.manifest;
       checkInputs(m, cmd.inputs, sweep);
       console.log(`files    ${ms(t)}  read and loaded ${cmd.source.dir}  (${fillCounts(m.tables)}; ${m.modules.length} modules, ${m.renderPipelines.length + m.computePipelines.length} pipelines)`);

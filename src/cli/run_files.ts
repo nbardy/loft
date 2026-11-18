@@ -14,8 +14,10 @@ export const FORBIDDEN: readonly { readonly name: string; readonly test: (path: 
   { name: "examples/**", test: (p) => /\/examples\//.test(p) },
 ];
 
+/** The directory loaded on a fresh headless device; the device is returned too, for the frames' identity (src/identity.ts). */
 export async function openFiles(dir: string, precision?: Precision) {
-  return loadArtefactFiles(await headlessDevice(), dir, precision);
+  const device = await headlessDevice();
+  return { ...(await loadArtefactFiles(device, dir, precision)), device };
 }
 
 /** The forbidden modules this process has loaded so far (Bun's module registry: what actually ran, not what could). */
