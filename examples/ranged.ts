@@ -6,7 +6,7 @@
 import {
   abs, add, and, distance, ge, le, max, mul, param, plane, scene, smoothstep, sqrt, strand, sub, time, toon, vec3, type F,
 } from "../src/index.ts";
-import { always, eventually } from "../src/checks.ts";
+import { always, budget, eventually } from "../src/checks.ts";
 
 // ---- a claw through a shell -------------------------------------------------------------------------------------
 
@@ -79,4 +79,5 @@ export const checks = [
   always([time, 0, 1], ge(distance(tip.p, SHELL.centre), add(SHELL.radius, tip.r)), { label: "claw tip stays out of the shell" }),
   // Holds: for every speed the stone comes down on the pad, within 2 cm of the ground at some instant.
   always([speed, 4, 6], eventually([time, 0, 2], and(le(abs(stone.y), 0.02), le(abs(sub(stone.x, PAD.middle)), PAD.half))), { label: "the stone lands on the pad at any speed" }),
-];
+  budget({ triangles: 100_000 }),
+] as const;

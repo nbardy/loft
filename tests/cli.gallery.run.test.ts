@@ -11,7 +11,7 @@ import { pageFiles, type GalleryData } from "../src/cli/gallery_page.ts";
 let dir: string;
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "loft-gallery-run-"));
-  writeFileSync(join(dir, "good.ts"), `export { default } from ${JSON.stringify(resolve("examples/pearls.ts"))};\n`);
+  writeFileSync(join(dir, "good.ts"), `export { default, checks } from ${JSON.stringify(resolve("examples/ranged.ts"))};\n`);
   writeFileSync(join(dir, "badcompile.ts"), "export default { things: [{}], ground: {}, sun: [0, 1, 0], cameras: {} };\n");
   writeFileSync(join(dir, "boom.ts"), 'throw new Error("boom at import");\n');
   writeFileSync(join(dir, "helper.ts"), "export const x = 1;\n");
@@ -26,7 +26,9 @@ test("failures are recorded and the run goes on; the page references only files 
   expect(first.failed).toBe(2);
   const data = pageData();
   const by = Object.fromEntries(data.entries.map((e) => [e.name, e]));
-  expect(by.good!.kind).toBe("scene");
+  expect(by.good).toMatchObject({ kind: "scene", checks: { kind: "table", rows: [
+    { kind: "ranged", outcome: "fail" }, { kind: "ranged", outcome: "pass" }, { kind: "sampled", outcome: "pass" },
+  ] } });
   expect(by.badcompile).toMatchObject({ kind: "failed" });
   expect(by.boom).toMatchObject({ kind: "failed", error: expect.stringContaining("boom at import") });
   expect(data.skipped.map((s) => s.name)).toEqual(["helper"]);

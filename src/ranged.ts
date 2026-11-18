@@ -50,7 +50,7 @@ export type Spent =
 /** A ranged check: a `Check` for `loft check`, and `decide(probe)` for the numbers. */
 export interface Ranged extends Check {
   readonly formula: Quantified;
-  run(probe: Probe): Verdict & Decision;
+  run(probe: Probe): Extract<Verdict, { kind: "ranged" }>;
   decide(probe: Probe): Decision;
 }
 
@@ -167,12 +167,12 @@ function ranged(kind: "always" | "eventually", range: Range, condition: Conditio
   return {
     name, formula,
     decide: (probe) => decide(formula, probe, name, precision, boxes, o.ms, keys),
-    run(probe): Verdict & Decision {
+    run(probe) {
       const d = decide(formula, probe, name, precision, boxes, o.ms, keys);
       const at = Object.entries(d.witness).map(([k, v]) => `${k}=${v}`).join(", ");
       const said = `bounds [${d.bounds.join(", ")}], ${at ? `witness ${at}, margin ${d.margin}` : "no witness"}; ${d.work.boxes} boxes, ${fmt(d.work.ms, 0)} ms`;
       return {
-        ...d, name, pass: d.holds === "undecided" ? undefined : d.holds, value: d.margin,
+        ...d, kind: "ranged", name, pass: d.holds === "undecided" ? undefined : d.holds, value: d.margin,
         measured: `${d.holds === "undecided" ? "undecided: " : ""}${spentText(d.spent)}; ${said}`,
         limit: `condition true ${kind === "always" ? "everywhere" : "somewhere"} in range`,
       };

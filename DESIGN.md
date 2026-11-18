@@ -896,7 +896,15 @@ export const checks = [landsInside(serpent.strikes.bite), stopsAt(serpent.strike
   `staysClear` is the least capsule-to-target distance at 60 Hz over a range (target: a vertical disc or a body's
   skeleton); `stopsAt` asks for contact at arming and no penetration over the attack's span; `minScreenSize` projects the
   feature's joint spheres through a named camera and takes the narrower side of their bounds; `budget` reads
-  `stats.maxTriangles` (the declared maximum, so it holds for every view). `loft check <scene.ts>` runs the module's exported `checks` and exits 1 on any failure.
+  `stats.maxTriangles` (the declared maximum, so it holds for every view). `runChecks` returns tagged `sampled`
+  and `ranged` verdicts. A ranged verdict can be undecided and also carries bounds, witness, work and stop reason.
+  `loft check <scene.ts>` runs the module's exported checks and exits 5 for a failure or an undecided check.
+- **Solve cache** (`src/geom/solve.ts`). The process keeps the 128 most recently used verified solutions, keyed by
+  the structural problem and its row data. A hit rebuilds the authored holds from the cached curves and checks their
+  margin IDs and windows.
+- **Serve deadlines** (`src/cli/serve.ts`). The protocol process supervises parallel GPU-less compile children and
+  one warm draw child. `--draw-seconds` bounds one occupied draw slot, covering load through its last frame. Expiry
+  returns `budget` (7) after killing the GPU child. Queued draws proceed on a new child and cache.
 
 Where the plan met the code:
 

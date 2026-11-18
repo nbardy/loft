@@ -559,6 +559,7 @@ class Problem {
 
 // The graph interns a node by its operation and children. Stable jet leaves make the root IDs structural keys
 // even when two builds allocate fresh hold callbacks. Only successful, verified solutions are cached.
+const CACHE_ENTRIES = 128;
 const cache = new Map<string, { curves: Readonly<Record<string, F>>; reports: readonly HoldReport[]; margins: readonly number[] }>();
 
 function checkedEvaluator(hold: HoldLine, roots: readonly Expr[], first: number, check: () => void): Line["value"] {
@@ -625,7 +626,8 @@ function rangedHold(hold: HoldLine, over: readonly [number, number]): HoldLine &
  * times coarser than the verification grid. The search adds samples around breaks and repeats up to 24 times.
  * Final verification reads the returned f32 controls at stored frame times, with the frame's f32 input and param defaults.
  * Pass `checks: leap.holds` to check the entire windows. The report gives the sampled worst misses and `delta`.
- * Identical problems reuse verified curves within a process. A cache hit reports the time of this call and zero steps.
+ * Identical problems reuse verified curves within a process. The cache keeps the 128 most recently used solutions.
+ * A cache hit reports the time of this call and zero steps.
  *
  * Parameters: `hold` is a function of the unknown curves, so any expression of them is a hold (positions through a
  * rig, distances, `derivative(c.y, time)` for a speed or an acceleration); `over`, the families and the preference's
@@ -713,6 +715,9 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
       const checks = current.map(h => { check(); return rangedHold(h, spec.over); });
       const reports = hit.reports.map((r, i) => ({ ...r, site: current[i]!.site }));
       check();
+      // Map order is insertion order. Only a verified hit makes the entry newest.
+      cache.delete(key);
+      cache.set(key, hit);
       return { curves, holds: checks, report: { ms: performance.now() - start, delta, steps: 0, samples: 0, rounds: 0, holds: reports } };
     }
   }
@@ -876,7 +881,9 @@ export function solve<K extends string>(spec: SolveSpec<K>): Solved<K> {
   check();
   const checks = solvedHolds.map(h => { check(); return rangedHold(h, spec.over); });
   check();
+  cache.delete(key);
   cache.set(key, { curves, reports, margins: solvedHolds.map(h => h.margin.id) });
+  if (cache.size > CACHE_ENTRIES) cache.delete(cache.keys().next().value!);
   return {
     curves, holds: checks,
     report: { delta, ms: performance.now() - start, steps: problem.steps, rounds, samples: lines.reduce((s, l) => s + l.samples.length, 0), holds: reports },

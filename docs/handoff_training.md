@@ -57,11 +57,16 @@ The last line on stderr matches `^loft: (internal|usage|load|scene|check|environ
 | 2 | `loft: usage:` | the command line asked for something absent (a camera, a style, an input) | the harness, or the scene's camera names |
 | 3 | `loft: load:` | the module did not load: syntax, an unknown import, a throw at top level, a wrong default export | the scene |
 | 4 | `loft: scene:` | a typed refusal: `given …; expected … Fix: … (at file:line)` | the scene |
-| 5 | `loft: check:` | it drew, and the named checks failed | the scene |
+| 5 | `loft: check:` | the named checks failed or a ranged check could not decide | use the check's result and reason |
 | 6 | `loft: environment (not the scene's fault):` | the GPU, the WebGPU binding, or a missing tool | the machine: retry once, else discard the sample |
 
 A refusal's last line is written to be fed back to the model as it stands: it says what was given, what was expected
 and the smallest fix. `docs/errors.md` has the table of the 23 mistakes we test (`bun tests/fixtures/mistakes/run.ts`).
+
+`runChecks(scene, checks)` returns tagged results. `kind: "sampled"` has a boolean `holds`. `kind: "ranged"` also
+has `bounds`, `witness`, `work` and `spent`, and its `holds` can be `"undecided"`. Read `spent` for the reason a
+proof stopped. For example, `examples/ranged.ts` pairs two ranged motion checks with a sampled triangle budget.
+The CLI counts undecided results separately. The CLI and gallery both label them `undecided`.
 
 ### What each kind of failure prints
 
@@ -107,11 +112,11 @@ examples/strike.ts --views front,side` drew `side` with 63313 triangles and `--v
 ### `loft serve`: many programs, one warm GPU process
 
 `bun src/cli/main.ts serve [--compiles 2] [--confine "cmd args"] [--check check.ts] [--pending 64] [--compile-seconds 120]
-[--limits manifest=BYTES,files=N,bytes=BYTES]` keeps one process that owns the GPU
-device and draws requests one at a time. It is upstreamed from creative's training host (`training/loft/host/`,
-16 Nov). Each scene is compiled in a child process that has no GPU: `loft build`, run with `LOFT_NO_GPU=1` inside the
-`--confine` command. Only the built directory (`docs/artefact_format.md`) crosses into the server. The server reads
-files, as `render --artefact` does, and after every request checks that it never loaded the compiler or a scene.
+[--draw-seconds 120] [--limits manifest=BYTES,files=N,bytes=BYTES]` supervises one warm GPU child that draws requests
+one at a time. It is upstreamed from creative's training host (`training/loft/host/`, 16 Nov). Each scene compiles
+in a separate GPU-less child running `loft build` with `LOFT_NO_GPU=1` inside `--confine`. The GPU child reads the
+built directory (`docs/artefact_format.md`) as `render --artefact` does. Both the supervisor and GPU child check that
+the compiler and scene code stay in the build child.
 
 Protocol: JSON lines. Each line on stdin is a request; each line on stdout is an answer tagged with the request's `id`,
 in the order the requests finish. The first line out, unasked, is `{"ready": true, "adapter": ...}`.
@@ -146,12 +151,13 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
 - A failed request is answered and the server goes on. `exit` and `line` are what `loft render` would have ended
   with, from the table above. A refusal by `--check`, or a directory that cannot be read, is `load` (3). The
   server's own limits answer `budget` (7, `loft: budget: …`), naming the limit: a compile still running after
-  `--compile-seconds` (killed), a compile killed by `SIGXCPU` (a CPU limit your confinement set; a wrapper that does
-  not `exec` reports it as exit 152, which counts too), or a request arriving while `--pending` requests are already
-  unanswered (refused at once). `budget` is not a verdict on the scene; decide yourself whether it is a penalty. A
-  compile killed by any other signal is `internal` (1), because nobody knows whose fault it was. A lost device
-  answers every request in flight with 6, then ends the server with exit 6: start a new one. Lines not yet read
-  when the device was lost get no answer.
+  `--compile-seconds` (killed), a compile killed by `SIGXCPU` (a CPU limit your confinement set, also reported as
+  exit 152 by some wrappers), a draw that exceeds `--draw-seconds`, or a full `--pending` queue (refused at once).
+  The draw deadline starts at the front of the draw queue and covers artefact loading and all frames. On expiry
+  the supervisor kills the GPU child, answers that request with 7, and starts a fresh child and cache for the
+  next draw. Discard any files a failed request already wrote to its `out`. An unexpected device loss answers
+  every admitted request with 6 and ends the server with exit 6. Start a new server in that case. A compile killed
+  by another signal is `internal` (1), because its cause is unknown.
 - Why JSON lines: any language reads them with no framing code, a request can be typed by hand, and pixels go through
   files, which the caller already uses for scenes and builds. The server prints nothing else on stdout; logs go to
   stderr.
@@ -160,11 +166,11 @@ in the order the requests finish. The first line out, unasked, is `{"ready": tru
   and measure.
 - Shader modules, layouts and pipelines are cached by content across requests (`src/host/cache.ts`). Equal WGSL is
   one module, and a pipeline is a pure function of its WGSL and descriptor, so the cache cannot change pixels. Past
-  8192 objects it is emptied between requests.
+  8192 objects it is emptied between requests. A draw deadline also resets the cache and any state in `--check`.
 - What stays the host's policy: the sandbox (`--confine` is a command prefix, such as creative's `confine.py`, split
   on spaces; it should `exec` the build so the deadline's kill reaches it), the screening of programs and allowed
-  imports, CPU and memory limits (set them in the confinement), a deadline on draws (the server has none: kill and
-  restart it), and limits on what an artefact may ask for beyond `--limits` (`--check`, a module whose default
+  imports, CPU and memory limits (set them in the confinement), and limits on what an artefact may ask for beyond
+  `--limits` (`--check`, a module whose default
   export gets each `Bundle` before it reaches the GPU and throws to refuse it). A scene with `recur` bakes on the GPU, so its
   compile fails with exit 6. Build it outside serve and send the directory.
 - A built directory has no loop period yet, so a looping scene's time is not wrapped, the same as `render --artefact`.

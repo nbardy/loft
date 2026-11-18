@@ -11,9 +11,9 @@
 | 2 | `loft: usage:` | the command line asked for something absent: a flag, camera, variant, option, input, style | no, the command |
 | 3 | `loft: load:` | the module did not load as a scene: syntax, an unknown import, a throw at top level, wrong exports | yes |
 | 4 | `loft: scene:` | a constructor refused the scene; the message says given, expected and the fix, and ends `(at file:line)` | yes |
-| 5 | `loft: check:` | the scene drew, and the checks named on the line failed | yes |
+| 5 | `loft: check:` | the named checks failed or remained undecided | follow the check's result and reason |
 | 6 | `loft: environment (not the scene's fault):` | the GPU, the WebGPU binding, or a missing `cwebp`/`ffmpeg`; a shader or pipeline that failed to build was already tried on 3 fresh devices | no |
-| 7 | `loft: budget:` | (`loft serve` only) a stated limit ran out before an answer: a compile past `--compile-seconds`, a CPU limit, or `--pending` full; the line names it | no; decide whether it is a penalty |
+| 7 | `loft: budget:` | (`loft serve` only) a compile or draw exceeded `--compile-seconds` or `--draw-seconds`, a compile hit its CPU limit, or `--pending` was full. The line names the limit | no; decide whether it is a penalty |
 
 Does it type-check: `pnpm exec tsc --noEmit`. Does it render, and what to change:
 

@@ -15,7 +15,7 @@ type Outcome = { readonly label: string; readonly about: string; readonly result
 
 export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<void> {
   const subject = await subjectAt(cmd.path);
-  const { runChecks, formatChecks, Probe } = await import("../check.ts");
+  const { runChecks, formatChecks, checkOutcome, Probe } = await import("../check.ts");
   const { compileScene } = await import("../compile/index.ts");
   let device: GPUDevice | undefined;
 
@@ -43,8 +43,14 @@ export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<v
       }
       const rest = runChecks(c.scene, remaining, { compiled });
       const verdicts = [...early, ...rest];
-      const failing = verdicts.filter((v) => v.holds === false).map((v) => v.name);
-      const undecided = verdicts.filter((v) => v.holds === "undecided").map((v) => `${v.name} (${v.measured})`);
+      const failing: string[] = [], undecided: string[] = [];
+      for (const v of verdicts) {
+        switch (checkOutcome(v)) {
+          case "pass": break;
+          case "fail": failing.push(v.name); break;
+          case "undecided": undecided.push(`${v.name} (${v.measured})`); break;
+        }
+      }
       if (rest.length || !early.length) console.log(formatChecks(rest));
       console.log(`\n${verdicts.length - failing.length - undecided.length} passed, ${failing.length} failed${undecided.length ? `, ${undecided.length} undecided` : ""}  (${(performance.now() - t).toFixed(0)} ms, including compile)`);
       return { label: c.label, about, result: { kind: "built", failed: failing.length, undecided, total: verdicts.length, failing } };

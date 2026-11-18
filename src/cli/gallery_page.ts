@@ -1,6 +1,6 @@
 // The gallery's data model and the one HTML file that shows it. The page is static: the data is embedded as JSON and a
 // small script builds the DOM, so it opens from disk with no network and no framework.
-import type { Verdict } from "../check.ts";
+import type { Verdict, checkOutcome } from "../check.ts";
 
 /** A picture or clip that was made, or the reason it was not. File paths are relative to the page. */
 export type Media = { readonly kind: "ok"; readonly file: string } | { readonly kind: "failed"; readonly error: string };
@@ -9,7 +9,7 @@ export type Media = { readonly kind: "ok"; readonly file: string } | { readonly 
 export type Numbers = { readonly triangles: number; readonly draws: number; readonly compileMs: number; readonly loadMs: number; readonly msPerFrame: number };
 
 /** `none`: the module exports no `checks`. */
-export type Checks = { readonly kind: "none" } | { readonly kind: "table"; readonly rows: readonly Verdict[] } | { readonly kind: "error"; readonly error: string };
+export type Checks = { readonly kind: "none" } | { readonly kind: "table"; readonly rows: readonly (Verdict & { readonly outcome: ReturnType<typeof checkOutcome> })[] } | { readonly kind: "error"; readonly error: string };
 
 export type Entry =
   | {
@@ -199,7 +199,7 @@ function checks(c) {
     case "error": return el("div", { className: "errbox", textContent: c.error });
     case "table": return el("div", { className: "tablewrap" }, el("table", {},
       el("tr", {}, ...["check", "verdict", "measured", "limit"].map((h) => el("th", { textContent: h }))),
-      ...c.rows.map((r) => el("tr", {}, el("td", { textContent: r.name }), el("td", { className: r.holds === "undecided" ? "" : r.pass ? "pass" : "fail", textContent: r.holds === "undecided" ? "undecided" : r.pass ? "pass" : "FAIL" }), el("td", { textContent: r.measured }), el("td", { textContent: r.limit })))));
+      ...c.rows.map((r) => el("tr", {}, el("td", { textContent: r.name }), el("td", { className: r.outcome, textContent: r.outcome === "fail" ? "FAIL" : r.outcome }), el("td", { textContent: r.measured }), el("td", { textContent: r.limit })))));
   }
 }
 function closeDetail() { open = -1; $("detail").className = ""; $("detail").replaceChildren(); document.body.style.overflow = ""; focusCard(); }

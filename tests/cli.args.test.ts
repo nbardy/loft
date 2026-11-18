@@ -18,6 +18,8 @@ test.each([
   [["render", "--out", "o.webp"], "scene"],
   [["spin", "a.ts"], "spin"],
   [["dev", "a.ts", "--port"], "--port"],
+  [["serve", "--draw-seconds", "0"], "--draw-seconds"],
+  [["serve", "--draw-seconds", "2147484"], "--draw-seconds"],
 ])("%j is rejected naming %s", (argv, name) => {
   expect(() => parseArgs(argv)).toThrow(name);
 });

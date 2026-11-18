@@ -66,7 +66,7 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   frames <scene> --out f.webp --times 0,0.5,1 [--view three] [--size 1280x800]
   dev    <scene> [--port 5173]
   profile <scene> [--view game] [--size 1280x800] [--frames 30] [--time 1.0] [--style name] [--outline hull|screen]   (GPU ms per draw, best of frames)
-  check  <scene> [--variant v | --combinations]   (runs the checks on the CPU; exits 1 if any fails. A design: every
+  check  <scene> [--variant v | --combinations]   (runs the checks; exits 5 on failures or undecided checks. A design: every
                     named variant, or the one given, or every combination of slot options)
   variants <design> [--views far,face] [--only base,stilt] [--time 1.0] [--size 640x400] [--out out/variants/<name>]
                     (every named variant through the design's comparison cameras: one picture each, and a labelled sheet)
@@ -85,8 +85,8 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
   serve  [--compiles 2] [--confine "cmd args"] [--check check.ts]   (one warm process owns the GPU and draws requests,
                     JSON lines on stdin and stdout; each scene compiles in a child with no GPU, inside --confine;
                     docs/handoff_training.md "loft serve")
-         [--pending 64] [--compile-seconds 120] [--limits manifest=BYTES,files=N,bytes=BYTES]   (requests admitted at
-                    once; a compile's deadline; what an artefact may hold. Running out of the first two is exit 7)
+         [--pending 64] [--compile-seconds 120] [--draw-seconds 120] [--limits manifest=BYTES,files=N,bytes=BYTES]
+                    (requests admitted at once; compile and draw deadlines; what an artefact may hold. Budget limits answer exit 7)
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)
          [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)`;
 
@@ -305,7 +305,7 @@ function parseServeArgs(rest: readonly string[]): ServeCommand {
   const values = new Map<string, string>();
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i]!;
-    if (!["--compiles", "--confine", "--check", "--pending", "--compile-seconds", "--limits"].includes(a)) throw new UsageError(a.startsWith("--") ? `flag ${a} does not apply to "serve"` : `serve takes no scene (each request names its own), got "${a}"`);
+    if (!["--compiles", "--confine", "--check", "--pending", "--compile-seconds", "--draw-seconds", "--limits"].includes(a)) throw new UsageError(a.startsWith("--") ? `flag ${a} does not apply to "serve"` : `serve takes no scene (each request names its own), got "${a}"`);
     const v = rest[++i];
     if (v === undefined) throw new UsageError(`flag ${a} needs a value`);
     if (values.has(a)) throw new UsageError(`flag ${a} given twice`);
@@ -317,12 +317,15 @@ function parseServeArgs(rest: readonly string[]): ServeCommand {
     return n;
   };
   const compiles = whole("--compiles", 2), pending = whole("--pending", 64);
-  const compileSeconds = values.get("--compile-seconds") === undefined ? 120 : positive("--compile-seconds", values.get("--compile-seconds")!);
-  // setTimeout fires at once past 2^31 - 1 ms, which would kill every compile as `budget`.
-  if (compileSeconds * 1000 > 2 ** 31 - 1) throw new UsageError(`--compile-seconds: ${compileSeconds} is past the longest deadline, ${Math.floor((2 ** 31 - 1) / 1000)} s`);
+  const seconds = (flag: string): number => {
+    const n = values.get(flag) === undefined ? 120 : positive(flag, values.get(flag)!);
+    // setTimeout fires at once past 2^31 - 1 ms.
+    if (n * 1000 > 2 ** 31 - 1) throw new UsageError(`${flag}: ${n} is past the longest deadline, ${Math.floor((2 ** 31 - 1) / 1000)} s`);
+    return n;
+  };
   // Split on spaces, no quoting: a confinement whose path holds a space goes in a wrapper script.
   const confine = (values.get("--confine") ?? "").split(" ").filter((s) => s !== "");
-  return { kind: "serve", compiles, confine, check: values.get("--check"), pending, compileSeconds, limits: parseLimits(values.get("--limits")) };
+  return { kind: "serve", compiles, confine, check: values.get("--check"), pending, compileSeconds: seconds("--compile-seconds"), drawSeconds: seconds("--draw-seconds"), limits: parseLimits(values.get("--limits")) };
 }
 
 /** `--limits manifest=BYTES,files=N,bytes=BYTES`, any of the three; the rest keep ARTEFACT_LIMITS. */

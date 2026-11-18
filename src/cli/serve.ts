@@ -1,7 +1,6 @@
-// `loft serve`: one long-lived process that owns the GPU device and draws requests, one at a time. A scene is compiled
-// in a child process that has no GPU (`loft build` with LOFT_NO_GPU=1, wrapped in the caller's `--confine` command);
-// only the built directory (docs/artefact_format.md) crosses into this process, which never runs scene code: it reads
-// files, as `render --artefact` does, and checks after every request that no compiler module was loaded.
+// `loft serve`: one warm child owns the GPU device and draws requests, one at a time. A scene compiles in a separate
+// GPU-less child (`loft build` with LOFT_NO_GPU=1, wrapped in the caller's `--confine` command). The GPU child reads
+// the built directory as `render --artefact` does. Neither it nor the server loads the compiler or scene code.
 //
 // Protocol: JSON lines. Each line on stdin is one request; each line on stdout is one response, tagged with the
 // request's id, in the order requests finish. The first line out, unasked, is {"ready": true, "adapter": ...}. Requests
@@ -16,9 +15,9 @@
 //   {"id": "a", "ok": false, "tier": "C", "exit": 4, "line": "loft: scene: ...", "detail": [...]}
 //
 // A failed request is answered and the server goes on; `exit` and `line` are what `loft render` would have ended with
-// (docs/errors.md), plus 7 (`budget`) for a limit of this server's: a compile past --compile-seconds or killed by a CPU
-// limit, or more than --pending requests at once. A lost device answers every request in flight with exit 6, then
-// ends the server with exit 6: start a new one.
+// (docs/errors.md), plus 7 (`budget`) for a limit of this server's: a compile or draw deadline, a compile CPU limit,
+// or more than --pending requests at once. An unexpected device loss answers every request in flight with exit 6,
+// then ends the server with exit 6: start a new one.
 //
 // Ownership: a scene builds in its own private directory (under $TMPDIR, removed after its answer), and no two
 // requests in flight may name overlapping `out` directories (the later one is refused), so frames written to `out`
@@ -36,9 +35,9 @@ import { loadBundle, NotDataError } from "../host/host.ts";
 import type { Bundle } from "../host/manifest.ts";
 import { parseSize, UsageError, type Size } from "./args.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
-import type { InputValues } from "./inputs.ts";
+import { checkInputs, type InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
-import { ending, headed, type Verdict } from "./verdict.ts";
+import { ending, exitWith, headed, type Verdict } from "./verdict.ts";
 
 export type ServeCommand = {
   readonly kind: "serve";
@@ -52,6 +51,8 @@ export type ServeCommand = {
   readonly pending: number;
   /** A compile child still running after this many seconds is killed and answered as `budget`. */
   readonly compileSeconds: number;
+  /** Time per draw slot, including artefact loading and all its frames. Expiry kills the GPU child and answers `budget`. */
+  readonly drawSeconds: number;
   /** What an artefact (given, or built here) may hold; checked before its files are read. */
   readonly limits: ArtefactLimits;
 };
@@ -147,17 +148,10 @@ function inputsOf(v: unknown): InputValues {
   }));
 }
 
-/** The request's params and inputs against what the artefact declares, before a draw: a typo fails by name. */
-function checkNames(req: Request, m: Bundle["manifest"]): void {
-  for (const name of Object.keys(req.params)) {
+/** The request's overrides against the artefact, before a draw: a typo fails by name. */
+function checkParams(params: Request["params"], m: Bundle["manifest"]): void {
+  for (const name of Object.keys(params)) {
     if (!m.params.some((p) => p.name === name)) throw new UsageError(`params "${name}": the scene declares no such param (it has: ${m.params.map((p) => p.name).join(", ") || "none"}). Fix: drop it from "params", or declare it: param("${name}", 1)`);
-  }
-  const replayed = new Set((m.frame.replay ?? []).map((r) => r.slot));
-  for (const [name, value] of Object.entries(req.inputs)) {
-    if (name === "time") throw new UsageError(`inputs "time": give the times in "times" instead`);
-    const s = m.inputs.find((i) => i.name === name);
-    if (s === undefined || replayed.has(s.slot)) throw new UsageError(`inputs "${name}": the scene declares no such input (it has: ${m.inputs.filter((i) => i.name !== "time" && !replayed.has(i.slot)).map((i) => `${i.name} (${i.def.length})`).join(", ") || "none"}). Fix: drop it from "inputs", or declare it: input("${name}", "f32", 0)`);
-    if (s.def.length !== value.length) throw new UsageError(`inputs "${name}": takes ${s.def.length} number(s), got ${value.length}`);
   }
 }
 
@@ -219,9 +213,14 @@ async function compile(cmd: ServeCommand, scene: string, dir: string, children: 
   throw new ChildVerdict({ ok: false, exit: code, line: last, detail: lines.slice(0, -1).slice(-20) });
 }
 
-// ---- draw: this process, one at a time -------------------------------------------------------------------------
+// ---- draw: the warm GPU child ----------------------------------------------------------------------------------
 
 type Gpu = { readonly cache: CachingDevice; readonly lost: () => string | undefined; readonly adapter: GPUAdapterInfo | undefined };
+type Draw = { readonly req: Request; readonly dir: string; readonly limits: ArtefactLimits };
+type DrawMessage =
+  | { readonly kind: "ready"; readonly adapter: Pick<GPUAdapterInfo, "vendor" | "architecture" | "device" | "description"> | null }
+  | { readonly kind: "answer"; readonly answer: Answer }
+  | { readonly kind: "stop"; readonly verdict: Verdict };
 
 /** Two `out` directories overlap when they are one, or one holds the other. */
 const overlaps = (a: string, b: string) => a === b || a.startsWith(b + sep) || b.startsWith(a + sep);
@@ -237,12 +236,139 @@ function cameraFor(ask: CameraAsk, bundle: Bundle): Camera {
   }
 }
 
+/** Keeps the deadline outside Dawn, including synchronous native calls. Only artefact paths and request data cross IPC. */
+function startDrawWorker(check: string | undefined, stopped: (v: Verdict) => void) {
+  type Boot = Exclude<DrawMessage, { kind: "answer" }>;
+  let boot!: (message: Boot) => void;
+  const ready = new Promise<Boot>((resolve) => { boot = resolve; });
+  let answer: ((value: Answer) => void) | undefined;
+  let starting = true, retired = false;
+  const stop = (verdict: Verdict) => {
+    if (retired) return;
+    retired = true;
+    if (starting) boot({ kind: "stop", verdict });
+    else stopped(verdict);
+  };
+  const child = Bun.spawn([process.execPath, import.meta.path, ...(check === undefined ? [] : [resolve(check)])], {
+    // Structured cloning preserves signed zero in scene inputs and times.
+    stdin: "ignore", stdout: "ignore", stderr: "inherit", serialization: "advanced",
+    ipc(message: DrawMessage) {
+      if (retired) return;
+      switch (message.kind) {
+        case "ready": starting = false; boot(message); break;
+        case "answer": {
+          const finish = answer;
+          answer = undefined;
+          finish?.(message.answer);
+          break;
+        }
+        case "stop": stop(message.verdict); break;
+      }
+    },
+    onExit(child, code, signal) {
+      stop({ kind: "environment", message: `GPU process ${child.pid} ended (${signal ?? `exit ${code}`}); the server ends: start a new one` });
+    },
+  });
+  return {
+    ready,
+    draw: (work: Draw) => new Promise<Answer>((resolve) => { answer = resolve; child.send(work); }),
+    async kill() {
+      retired = true;
+      child.kill("SIGKILL");
+      await child.exited;
+    },
+  };
+}
+
+async function drawWorker(checkPath: string | undefined) {
+  console.log = console.error;
+  const send = (message: DrawMessage) => process.send!(message);
+  let stopping = false;
+  const stop = (verdict: Verdict) => {
+    if (stopping) return;
+    stopping = true;
+    send({ kind: "stop", verdict });
+  };
+  process.on("disconnect", () => process.exit(0));
+  try {
+    const check: (b: Bundle) => void = checkPath === undefined ? () => {} : (await import(checkPath)).default;
+    if (typeof check !== "function") throw new UsageError(`--check ${checkPath}: its default export is not a function`);
+
+    let gpu: Gpu;
+    const freshGpu = async (): Promise<Gpu> => {
+      const device = await headlessDevice();
+      let lost: string | undefined;
+      const me: Gpu = { cache: cachingDevice(device), lost: () => lost, adapter: (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo };
+      // Only the current device's loss ends the server. A retry destroys the old one on purpose.
+      void device.lost.then((info) => {
+        lost = `device lost: ${info.reason}: ${info.message}`;
+        if (gpu === me) stop({ kind: "environment", message: `${lost}; the server ends: start a new one` });
+      });
+      return me;
+    };
+    gpu = await freshGpu();
+
+    /** Loads and draws one directory, retrying a transient GPU refusal on a fresh device as `render` does. */
+    const draw = async ({ req, dir, limits }: Draw): Promise<Answer> => {
+      let bundle: Bundle;
+      try { bundle = readBundle(dir, limits); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
+      try { check(bundle); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
+      checkParams(req.params, bundle.manifest);
+      checkInputs(bundle.manifest, req.inputs, { kind: "none" }, "serve");
+      const camera = cameraFor(req.camera, bundle);
+      const t0 = performance.now();
+      for (let attempt = 1; ; attempt++) {
+        try {
+          const loaded = await gpu.cache.settle(() => loadBundle(gpu.cache.device, bundle, { kind: "none" }));
+          const t1 = performance.now();
+          try {
+            mkdirSync(req.out, { recursive: true });
+            const frames = [];
+            for (const [k, time] of req.times.entries()) {
+              const view: View = { camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false };
+              const pixels = await loaded.frame(view);
+              const file = join(req.out, `${k}.rgba`);
+              writeFileSync(file, pixels);
+              frames.push({ time, file, sha256: createHash("sha256").update(pixels).digest("hex") });
+            }
+            return { id: req.id, ok: true, tier: TIER, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
+          } finally {
+            loaded.destroy();
+          }
+        } catch (e) {
+          if (!(e instanceof EnvironmentError && e.transient) || attempt === 3 || gpu.lost() !== undefined) throw e;
+          console.error(`loft serve: request ${JSON.stringify(req.id)}: load attempt ${attempt} failed in the GPU (not the scene): ${headed(e.message)[0]}`);
+          const old = gpu;
+          gpu = await freshGpu();
+          old.cache.device.destroy();
+        }
+      }
+    };
+
+    process.on("message", async (work: Draw) => {
+      let answer: Answer;
+      try { answer = await draw(work); } catch (e) { answer = failed(work.req.id, verdictHere(e)); }
+      if (stopping) return;
+      const lost = gpu.lost();
+      if (lost !== undefined) return stop({ kind: "environment", message: `${lost}; the server ends: start a new one` });
+      const loaded = compilerModulesLoaded();
+      if (loaded.length > 0) return stop({ kind: "internal", message: `loft serve loaded the compiler (${loaded.join(", ")}); the server ends`, stack: "" });
+      if (gpu.cache.bound()) console.error("loft serve: the GPU object cache passed its bound and was emptied");
+      send({ kind: "answer", answer });
+    });
+    const a = gpu.adapter;
+    send({ kind: "ready", adapter: a === undefined ? null : { vendor: a.vendor, architecture: a.architecture, device: a.device, description: a.description } });
+  } catch (e) {
+    stop(verdictHere(e));
+  }
+}
+
+// ---- supervise the protocol and compile children ------------------------------------------------------------
+
 export async function serve(cmd: ServeCommand) {
   // The protocol owns stdout; anything the library prints goes to stderr.
   const write = (r: Answer | object) => process.stdout.write(JSON.stringify(r) + "\n");
   console.log = console.error;
-  const check: (b: Bundle) => void = cmd.check === undefined ? () => {} : (await import(resolve(cmd.check))).default;
-  if (typeof check !== "function") throw new UsageError(`--check ${cmd.check}: its default export is not a function`);
 
   /** Requests admitted and not yet answered, by a token of their own (ids are the caller's and may repeat). */
   const open = new Map<object, string | number | null>();
@@ -252,6 +378,7 @@ export async function serve(cmd: ServeCommand) {
   /** Private build directories of the scenes in flight. */
   const builds = new Set<string>();
   let closing = false;
+  let worker: ReturnType<typeof startDrawWorker> | undefined;
   /**
    * Ends the server: every request in flight is answered with `v` first, then the process exits with its code. A
    * device loss used to answer only the request that noticed it; the rest got end of file.
@@ -259,6 +386,7 @@ export async function serve(cmd: ServeCommand) {
   const closeWith = (v: Verdict) => {
     if (closing) return;
     closing = true;
+    void worker?.kill();
     for (const c of children) c.kill("SIGKILL");
     // process.exit skips the `finally` that removes a build directory; remove the ones in flight here.
     for (const d of builds) rmSync(d, { recursive: true, force: true });
@@ -268,21 +396,13 @@ export async function serve(cmd: ServeCommand) {
     process.stdout.write(text, () => process.exit(code));
   };
 
-  let gpu: Gpu;
-  const freshGpu = async (): Promise<Gpu> => {
-    const device = await headlessDevice();
-    let lost: string | undefined;
-    const me: Gpu = { cache: cachingDevice(device), lost: () => lost, adapter: (device as GPUDevice & { adapterInfo?: GPUAdapterInfo }).adapterInfo };
-    // Only the current device's loss ends the server: a retry destroys the device it replaces on purpose.
-    void device.lost.then((info) => {
-      lost = `device lost: ${info.reason}: ${info.message}`;
-      if (gpu === me) closeWith({ kind: "environment", message: `${lost}; the server ends: start a new one` });
-    });
-    return me;
-  };
-  gpu = await freshGpu();
-  const a = gpu.adapter;
-  write({ ready: true, adapter: a === undefined ? null : { vendor: a.vendor, architecture: a.architecture, device: a.device, description: a.description } });
+  worker = startDrawWorker(cmd.check, closeWith);
+  const boot = await worker.ready;
+  if (boot.kind === "stop") {
+    await worker.kill();
+    exitWith(boot.verdict);
+  }
+  write({ ready: true, adapter: boot.adapter });
 
   let compiling = 0;
   const waiting: (() => void)[] = [];
@@ -299,39 +419,38 @@ export async function serve(cmd: ServeCommand) {
     return turn;
   };
 
-  /** Loads and draws one built directory, retrying a transient GPU refusal on a fresh device as `render` does. */
-  const draw = async (req: Request, dir: string): Promise<Extract<Answer, { ok: true }>> => {
-    let bundle: Bundle;
-    try { bundle = readBundle(dir, cmd.limits); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
-    try { check(bundle); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
-    checkNames(req, bundle.manifest);
-    const camera = cameraFor(req.camera, bundle);
-    const t0 = performance.now();
-    for (let attempt = 1; ; attempt++) {
-      try {
-        const loaded = await gpu.cache.settle(() => loadBundle(gpu.cache.device, bundle, { kind: "none" }));
-        const t1 = performance.now();
-        try {
-          mkdirSync(req.out, { recursive: true });
-          const frames = [];
-          for (const [k, time] of req.times.entries()) {
-            const view: View = { camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false };
-            const pixels = await loaded.frame(view);
-            const file = join(req.out, `${k}.rgba`);
-            writeFileSync(file, pixels);
-            frames.push({ time, file, sha256: createHash("sha256").update(pixels).digest("hex") });
-          }
-          return { id: req.id, ok: true, tier: TIER, frames, ms: { load: t1 - t0, frames: performance.now() - t1 }, cache: gpu.cache.counts() };
-        } finally {
-          loaded.destroy();
-        }
-      } catch (e) {
-        if (!(e instanceof EnvironmentError && e.transient) || attempt === 3 || gpu.lost() !== undefined) throw e;
-        console.error(`loft serve: request ${JSON.stringify(req.id)}: load attempt ${attempt} failed in the GPU (not the scene): ${headed(e.message)[0]}`);
-        const old = gpu;
-        gpu = await freshGpu();
-        old.cache.device.destroy();
+  const drawBounded = async (req: Request, dir: string): Promise<Answer> => {
+    const deadline = performance.now() + cmd.drawSeconds * 1000;
+    const budget = new Budget(`draw of request ${JSON.stringify(req.id)}: ran out of ${cmd.drawSeconds} s (--draw-seconds); request fewer or smaller frames, or raise --draw-seconds`);
+    const checkTime = () => { if (performance.now() >= deadline) throw budget; };
+    const current = worker ??= startDrawWorker(cmd.check, closeWith);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      // Spawning a replacement can already have consumed a very short budget.
+      timer = setTimeout(() => reject(budget), Math.max(1, Math.ceil(deadline - performance.now())));
+    });
+    const drawing = current.ready.then(async (boot) => {
+      checkTime();
+      if (boot.kind === "stop") return boot;
+      const answer = await current.draw({ req, dir, limits: cmd.limits });
+      return { kind: "answer", answer } as const;
+    });
+    try {
+      const result = await Promise.race([drawing, timeout]);
+      checkTime();
+      if (result.kind === "answer") return result.answer;
+      await current.kill();
+      worker = undefined;
+      return failed(req.id, result.verdict);
+    } catch (e) {
+      if (e === budget) {
+        // Reap the child before releasing the slot and output reservation. A late frame cannot write to that path.
+        await current.kill();
+        worker = undefined;
       }
+      throw e;
+    } finally {
+      clearTimeout(timer);
     }
   };
 
@@ -350,18 +469,12 @@ export async function serve(cmd: ServeCommand) {
             return performance.now() - t0;
           });
           const drawn = await drawSlot(() => drawBounded(req, dir));
-          return { ...drawn, ms: { compile: compileMs, ...drawn.ms } };
+          return drawn.ok ? { ...drawn, ms: { compile: compileMs, ...drawn.ms } } : drawn;
         } finally {
           rmSync(dir, { recursive: true, force: true });
           builds.delete(dir);
         }
       }
-    }
-  };
-  const drawBounded = async (req: Request, dir: string) => {
-    try { return await draw(req, dir); } finally {
-      // Inside the slot: the cache is emptied between loads, never during one.
-      if (gpu.cache.bound()) console.error("loft serve: the GPU object cache passed its bound and was emptied");
     }
   };
 
@@ -385,9 +498,7 @@ export async function serve(cmd: ServeCommand) {
       if (held !== undefined) outs.delete(held);
     }
     if (closing) return; // closeWith has answered this request
-    const lost = gpu.lost();
-    if (lost !== undefined) return closeWith({ kind: "environment", message: `${lost}; the server ends: start a new one` });
-    // Witness, from what this process actually loaded: scene code and the compiler stay in the child.
+    // The supervisor also keeps the compiler out. The GPU worker checks its own modules before each answer.
     const loadedNow = compilerModulesLoaded();
     if (loadedNow.length > 0) return closeWith({ kind: "internal", message: `loft serve loaded the compiler (${loadedNow.join(", ")}); the server ends`, stack: "" });
     write(response);
@@ -409,5 +520,10 @@ export async function serve(cmd: ServeCommand) {
     inflight.add(p);
   }
   await Promise.all(inflight);
-  if (!closing) process.exit(0);
+  if (!closing) {
+    await worker?.kill();
+    process.exit(0);
+  }
 }
+
+if (import.meta.main) await drawWorker(Bun.argv[2]);
