@@ -480,6 +480,7 @@ fn bundle() -> Bundle {
             Resource { shape: Shape::Frame, init: Init::Zero },
         ]
         .into(),
+        packs: [Pack { access: Access::Write, vec4s: 64 * 2 * 91, holds: [(0, 0)].into() }].into(),
         kernels: [
             Kernel {
                 writes: [1].into(),
@@ -496,8 +497,8 @@ fn bundle() -> Bundle {
         ]
         .into(),
         modules: [
-            Module { wgsl: 1, origin: Origin::Library, precision_alias: true, reads: Box::new([0]) },
-            Module { wgsl: 2, origin: Origin::Author, precision_alias: false, reads: Box::new([]) },
+            Module { wgsl: 1, origin: Origin::Library, precision_alias: true },
+            Module { wgsl: 2, origin: Origin::Author, precision_alias: false },
         ]
         .into(),
         draws: [
@@ -526,7 +527,7 @@ fn bundle() -> Bundle {
         }]
         .into(),
         media: [Medium { transmittance: (0, 1), integrate: Integrate::March { steps: 64, shadow_steps: 16 } }].into(),
-        cameras: [(0, 0)].into(),
+        cameras: [Camera { name: 0, lens: (0, 0) }].into(),
         params: [ParamDecl { name: 1, def: f(0.5), min: f(0.0), max: f(1.0) }].into(),
         inputs: [InputDecl { name: 0, ty: Ty::V3, def: [f(0.0), f(1.0), f(-0.0)].into() }].into(),
         sites: [Site { file: "examples/owl.ts".into(), line: 3, col: 1 }].into(),

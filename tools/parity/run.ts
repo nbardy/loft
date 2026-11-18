@@ -1,12 +1,16 @@
-// The reference set of the picture-parity gate (docs/proposals/2026-11-19_lean_rust_loft.md §2.2, §2.3), lane 0.2.
+// The picture-parity gate (docs/proposals/2026-11-19_lean_rust_loft.md §2.2, §2.3).
 //
-//   bun tools/parity/run.ts reference [--only text]   build, check and draw every corpus entry into out/parity/R0
-//   bun tools/parity/run.ts repeat [--only text]      draw every recorded frame again: byte-identical, or the envelope
+//   bun tools/parity/run.ts rust [--only text]        every entry through `LOFT_ENGINE=rust loft build` (loft-core's
+//                                                     program driver), each ending against R0's build, and every
+//                                                     bundle with draws drawn by loft-draw at R0's frames and compared
+//                                                     under the §2.2a picture rule: out/parity/rust
 //   bun tools/parity/run.ts checks <scene.ts>         (child) one scene's check verdicts as JSON on stdout
 //   bun tools/parity/run.ts dawn <scene.ts> <id>      (child) a scene `loft build` refuses, drawn as `loft render` draws it
 //   bun tools/parity/run.ts cross <R0 dir>            this set's frames against another backend's R0 (§2.3 cross rule)
-//   bun tools/parity/run.ts rust [--only text]        every entry through `LOFT_ENGINE=rust loft build` (loft-core's
-//                                                     program driver), each ending against R0's build: out/parity/rust
+//
+// R0 (out/parity/R0) is recorded data: lane 0.2's `reference` and `repeat` modes drew TS artefact directories with
+// loft-draw on loft-loader, and loft-draw now draws Bundle V1 files on loft-gpu (lean Rust draw note, 2026-11-19). To
+// draw a reference set again, check out the commit that last had them (7f48109) and run `reference` there.
 //
 // LOFT_PARITY_OUT names the set (default out/parity/R0): the Linux runner (tools/parity/linux.sh) draws its own set on
 // Vulkan and crosses it with the macOS R0.
@@ -17,7 +21,7 @@
 // Dawn when it can be, and its frames are marked `dawn`: they are compared under the cross-executor rule. R0 is the commit of the tree, which must be clean where it decides pictures.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { cpus, homedir, loadavg } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const ROOT = join(import.meta.dir, "../..");
@@ -25,7 +29,6 @@ const OUT = join(ROOT, process.env.LOFT_PARITY_OUT ?? "out/parity/R0");
 const VIEW = join(ROOT, "rust/target/lab/loft-draw");
 const DIFF = join(ROOT, "tools/parity/target/release/parity-diff");
 /** The paths that decide a reference picture (the loader moved to rust/crates in lane 0.1; the workspace lock pins its wgpu). */
-const PICTURE = ["src", "examples", "rust/crates/loft-loader", "rust/crates/loft-draw", "rust/Cargo.lock", "tools/migrate.ts", "package.json"];
 const corpus = JSON.parse(readFileSync(join(import.meta.dir, "corpus.json"), "utf8")) as Corpus;
 
 type Corpus = {
@@ -33,7 +36,7 @@ type Corpus = {
   seeds: { default: string; env: string; commit: string; sets: { set: string; path: string; rows: number; sha256: string }[] };
   frames: { cameras: number; times: number[]; size: [number, number]; stepsTime: number; detail: { time: number; size: [number, number] } };
 };
-type Mode = { kind: "reference" | "repeat" | "rust"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
+type Mode = { kind: "rust"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
 type Origin = { kind: "example" } | { kind: "seed"; set: string; seed: string; unported: number };
 type Entry = { id: string; path: string; origin: Origin };
 /** How `loft build` ended: the CLI's verdict kinds (src/cli/verdict.ts, docs/errors.md), or a process that died outside them. */
@@ -57,7 +60,9 @@ class ParityError extends Error {}
 function parse(argv: string[]): Mode {
   const [cmd, ...rest] = argv;
   switch (cmd) {
-    case "reference": case "repeat": case "rust": {
+    case "reference": case "repeat":
+      throw new ParityError(`${cmd}: R0 is recorded data, and loft-draw no longer draws TS artefact directories. Fix: check out 7f48109 (the last commit with loft-loader's loft-draw) to draw a reference set`);
+    case "rust": {
       const i = rest.indexOf("--only");
       if (rest.length !== (i < 0 ? 0 : 2) || (i >= 0 && !rest[i + 1])) throw new ParityError(`${cmd} takes only --only <text>`);
       return { kind: cmd, only: i < 0 ? "" : rest[i + 1]! };
@@ -68,7 +73,7 @@ function parse(argv: string[]): Mode {
     case "dawn":
       if (rest.length !== 2) throw new ParityError("dawn takes a scene path and its entry id");
       return { kind: "dawn", path: rest[0]!, id: rest[1]! };
-    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: reference | repeat | rust | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
+    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: rust | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
   }
 }
 
@@ -141,82 +146,11 @@ function plan(b: { steps: boolean; cameras: string[] }): Shot[] {
 
 const frameName = (f: Shot) => `${f.camera}@${f.time}@${f.size.join("x")}.png`;
 
-async function draw(id: string, f: Shot, file: string): Promise<Frame> {
-  const r = await spawn([VIEW, "still", join(OUT, "build", id), "--view", f.camera, "--time", String(f.time), "--size", f.size.join("x"), "--out", file]);
-  adapter ??= r.stderr.match(/^adapter (.*)$/m)?.[1];
+/** One frame of a bundle (`dir/scene.loft`) by `loft-draw still`, lossless. */
+async function draw(dir: string, f: Shot, file: string): Promise<Frame> {
+  const r = await spawn([VIEW, "still", dir, "--view", f.camera, "--time", String(f.time), "--size", f.size.join("x"), "--out", file]);
   if (r.exit !== 0) return { ...f, kind: "refused", executor: "loft-draw", exit: r.exit, stderr: r.stderr.slice(-2000) };
-  return { ...f, kind: "drawn", executor: "loft-draw", file: file.slice(OUT.length + 1), sha256: sha(readFileSync(file)) };
-}
-let adapter: string | undefined;
-
-async function reference(only: string) {
-  const dirty = git("status", "--porcelain", "--", ...PICTURE);
-  if (dirty !== "") throw new ParityError(`R0 must be a commit: the tree is dirty where it decides pictures:\n${dirty}\nFix: commit or stash first`);
-  if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: tools/dev.sh build loft-draw --fast`);
-  // R0 is the last commit that decides pictures, so a run interrupted at that commit resumes: recorded entries are kept.
-  const r0 = git("log", "-1", "--format=%H", "--", ...PICTURE), stamp = join(OUT, "r0");
-  const held = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : r0;
-  if (held !== r0) throw new ParityError(`${OUT} holds R0 ${held}, this tree's is ${r0}. Fix: check out ${held} to resume, or move ${OUT} aside for a new reference`);
-  mkdirSync(OUT, { recursive: true });
-  writeFileSync(stamp, `${r0}\n`);
-  const started = { at: new Date().toISOString(), load1: loadavg()[0] };
-  const list = await entries(only);
-  mkdirSync(join(OUT, "entries"), { recursive: true });
-  let next = 0;
-  const worker = async () => {
-    for (let i = next++; i < list.length; i = next++) {
-      const entry = list[i]!;
-      if (existsSync(join(OUT, "entries", `${entry.id}.json`))) continue;
-      const b = await build(entry);
-      const frames: Frame[] = [];
-      if (b.kind === "built") {
-        mkdirSync(join(OUT, "frames", entry.id), { recursive: true });
-        for (const f of plan(b)) frames.push(await draw(entry.id, f, join(OUT, "frames", entry.id, frameName(f))));
-      }
-      const dawn = b.kind === "refused" && b.verdict === "scene" ? await dawnFrames(entry) : null;
-      if (dawn?.kind === "drawn") frames.push(...dawn.frames);
-      const rec: Rec = { entry, build: b, checks: b.kind === "built" ? await checks(entry) : null, frames, dawn };
-      writeFileSync(join(OUT, "entries", `${entry.id}.json`), json(rec));
-      const bad = frames.filter((f) => f.kind === "refused").length;
-      console.log(`${String(i + 1).padStart(3)}/${list.length} ${b.kind === "refused" ? `${b.verdict}(${b.exit})` : b.kind} ${rec.checks?.kind ?? "-"} ${frames.length - bad}/${frames.length} frames ${entry.id}`);
-    }
-  };
-  await Promise.all([worker(), worker()]);
-  const recs = list.map((e) => JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec);
-  const count = <T,>(xs: T[], key: (x: T) => string) => xs.reduce<{ [k: string]: number }>((o, x) => ({ ...o, [key(x)]: (o[key(x)] ?? 0) + 1 }), {});
-  const manifest = {
-    r0, head: git("rev-parse", "HEAD"), loftDraw: { sha256: sha(readFileSync(VIEW)), source: git("log", "-1", "--format=%H", "--", "rust/crates/loft-loader", "rust/crates/loft-draw") },
-    adapter, only, corpus: sha(readFileSync(join(import.meta.dir, "corpus.json"))), started, ended: { at: new Date().toISOString(), load1: loadavg()[0] }, cpus: cpus().length,
-    entries: recs.length, origins: count(recs, (r) => r.entry.origin.kind),
-    builds: count(recs, (r) => r.build.kind === "refused" ? `refused:${r.build.verdict}` : r.build.kind),
-    checks: count(recs, (r) => r.checks?.kind ?? "unbuilt"),
-    frames: count(recs.flatMap((r) => r.frames), (f) => `${f.kind}:${f.executor}`),
-  };
-  writeFileSync(join(OUT, only === "" ? "manifest.json" : `manifest.only-${only}.json`), json(manifest));
-  console.log(json(manifest));
-}
-
-/** §2.3 precondition: every recorded frame drawn again; differing ones are kept and measured by the comparator. */
-async function repeat(only: string) {
-  const recs = (await entries(only)).flatMap((e) => existsSync(join(OUT, "entries", `${e.id}.json`)) ? [JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec] : []);
-  // Dawn frames are drawn per scene by their child, so the repeat covers the loft-draw references only.
-  const drawn = recs.flatMap((r) => r.frames.flatMap((f) => f.kind === "drawn" && f.executor === "loft-draw" ? [{ id: r.entry.id, f }] : []));
-  const differing: { id: string; frame: string; diff: unknown }[] = [];
-  let refused = 0;
-  for (const [i, { id, f }] of drawn.entries()) {
-    if (i % 200 === 0) console.log(`${i}/${drawn.length} frames, ${differing.length} differ`);
-    const file = join(OUT, "repeat", id, frameName(f));
-    mkdirSync(join(OUT, "repeat", id), { recursive: true });
-    const again = await draw(id, f, file);
-    if (again.kind === "refused") { refused++; continue; }
-    if (again.sha256 === f.sha256) { rmSync(file); continue; }
-    const d = await spawn([DIFF, join(OUT, f.file), file, "--envelope", "0"]);
-    differing.push({ id, frame: frameName(f), diff: JSON.parse(d.stdout) });
-  }
-  const envelope = Math.max(0, ...differing.map((d) => (d.diff as { maxDiff: number }).maxDiff));
-  const report = { r0: readFileSync(join(OUT, "r0"), "utf8").trim(), only, frames: drawn.length, identical: drawn.length - differing.length - refused, refused, envelope, differing };
-  writeFileSync(join(OUT, only === "" ? "repeat.json" : `repeat.only-${only}.json`), json(report));
-  console.log(`${report.identical}/${drawn.length} frames byte-identical; ${differing.length} differ (envelope ${envelope} codes); ${refused} refused`);
+  return { ...f, kind: "drawn", executor: "loft-draw", file, sha256: sha(readFileSync(file)) };
 }
 
 /** Lane 4.2: every loft-draw frame of `other` (the macOS R0) against this set's (OUT, another backend) under the
@@ -248,11 +182,15 @@ async function cross(other: string) {
  * Every entry through the Rust program driver (`LOFT_ENGINE=rust loft build`), in its own process, against how R0's
  * build ended: built against built (the bundle's sha256 and its draw count recorded), a refusal against a refusal of the
  * same verdict and head. Built with `--naga --precision mixed`: exit 0 is a bundle whose module Naga accepted as f32,
- * with its f16 verdict printed. Pictures need draws, which the wire cannot carry yet, so no frame is drawn here.
+ * with its f16 verdict printed. A bundle with draws is drawn by loft-draw at R0's frames (R0's camera names: the bundle
+ * must carry them) and each frame compared with R0's under the picture rule (a Dawn reference under the cross rule).
  */
 async function rust(only: string) {
   const out = join(ROOT, "out/parity/rust"), list = await entries(only);
-  const rows: { id: string; r0: string; rust: string; same: boolean; build?: string; draws?: number; bytes?: number; ms: number }[] = [];
+  if (!existsSync(VIEW)) throw new ParityError(`${VIEW} is missing. Fix: tools/dev.sh build loft-draw --fast`);
+  if (!existsSync(DIFF)) throw new ParityError(`${DIFF} is missing. Fix: cargo build --release --manifest-path tools/parity/Cargo.toml`);
+  type Compared = Frame & { pass?: boolean; diff?: unknown };
+  const rows: { id: string; r0: string; rust: string; same: boolean; build?: string; draws?: number; bytes?: number; ms: number; frames?: Compared[] }[] = [];
   const outcome = (b: Built) => b.kind === "refused" ? `refused:${b.verdict}:${b.head}` : b.kind === "built" ? "built" : `crashed:${b.exit}`;
   const queue = [...list];
   const worker = async () => {
@@ -265,7 +203,17 @@ async function rust(only: string) {
       if (r.exit === 0) {
         const bytes = readFileSync(join(dir, "scene.loft")), n = Number(new DataView(bytes.buffer, bytes.byteOffset).getBigUint64(8, true));
         const draws = (JSON.parse(new TextDecoder().decode(bytes.subarray(16, 16 + n))) as { draws: unknown[] }).draws.length;
-        rows.push({ id: e.id, r0, rust: "built", same: r0 === "built", build: sha(bytes), draws, bytes: bytes.length, ms });
+        // R0's frames (§2.2), drawn only when the bundle draws anything; each compared under the picture rule.
+        const rec = existsSync(join(OUT, "entries", `${e.id}.json`)) ? JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec : null;
+        const frames: Compared[] = [];
+        for (const ref of draws === 0 ? [] : (rec?.frames ?? []).filter((f) => f.kind === "drawn")) {
+          mkdirSync(join(out, "frames", e.id), { recursive: true });
+          const f = await draw(dir, ref, join(out, "frames", e.id, frameName(ref)));
+          if (f.kind !== "drawn" || ref.kind !== "drawn") { frames.push(f); continue; }
+          const d = await spawn([DIFF, join(OUT, ref.file), f.file, "--rule", ref.executor === "dawn" ? "cross" : "picture"]);
+          frames.push({ ...f, pass: d.exit === 0, diff: d.exit <= 1 ? JSON.parse(d.stdout) : d.stderr.trim() });
+        }
+        rows.push({ id: e.id, r0, rust: "built", same: r0 === "built", build: sha(bytes), draws, bytes: bytes.length, ms, frames });
       } else {
         const verdict = KIND[r.exit as keyof typeof KIND], last = r.stderr.trimEnd().split("\n").at(-1) ?? "";
         const rust = verdict === undefined ? `crashed:${r.exit}` : `refused:${verdict}:${last.replace(/^loft: [^:]+: /, "").replace(/ \(at [^()]+\)$/, "")}`;
@@ -277,12 +225,15 @@ async function rust(only: string) {
   };
   await Promise.all([worker(), worker(), worker()]);
   rows.sort((a, b) => a.id.localeCompare(b.id));
-  const count = (k: (r: (typeof rows)[number]) => string) => rows.reduce<{ [k: string]: number }>((o, r) => ({ ...o, [k(r)]: (o[k(r)] ?? 0) + 1 }), {});
+  const count = <T,>(xs: T[], k: (x: T) => string) => xs.reduce<{ [k: string]: number }>((o, x) => ({ ...o, [k(x)]: (o[k(x)] ?? 0) + 1 }), {});
   const report = { head: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain", "--", "src", "rust", "tools/parity") !== "", r0: OUT, only, entries: rows.length, same: rows.filter((r) => r.same).length,
-    outcomes: count((r) => r.rust.split(":").slice(0, 2).join(":")), drawable: rows.filter((r) => (r.draws ?? 0) > 0).length, rows };
+    outcomes: count(rows, (r) => r.rust.split(":").slice(0, 2).join(":")), drawable: rows.filter((r) => (r.draws ?? 0) > 0).length,
+    drawn: rows.filter((r) => (r.frames ?? []).some((f) => f.kind === "drawn")).length,
+    passing: rows.filter((r) => (r.frames ?? []).length > 0 && r.frames!.every((f) => f.pass === true)).length,
+    frames: count(rows.flatMap((r) => r.frames ?? []), (f) => f.kind === "refused" ? "refused" : f.pass ? "pass" : "fail"), rows };
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, only === "" ? "rust.json" : `rust.only-${only}.json`), json(report));
-  console.log(`rust: ${report.entries} entries, ${report.same} end as R0 did; ${json(report.outcomes, 0).trim()}; ${report.drawable} drawable`);
+  console.log(`rust: ${report.entries} entries, ${report.same} end as R0 did; ${json(report.outcomes, 0).trim()}; ${report.drawable} with draws, ${report.drawn} drawn, ${report.passing} passing; frames ${json(report.frames, 0).trim()}`);
 }
 
 /** Child: the verdicts `loft check` computes (src/cli/check.ts), for the variant `loft build` builds, whole. */
@@ -342,8 +293,6 @@ const json = (x: unknown, indent = 1) => JSON.stringify(x, (_, v) => typeof v ==
 try {
   const mode = parse(Bun.argv.slice(2));
   switch (mode.kind) {
-    case "reference": await reference(mode.only); break;
-    case "repeat": await repeat(mode.only); break;
     case "rust": await rust(mode.only); break;
     case "checks": process.stdout.write(json(await verdicts(mode.path), 0)); process.exit(0);
     case "cross": await cross(resolve(mode.path)); break;

@@ -3,7 +3,9 @@
 //! module through Naga under the precision that will run.
 use crate::{Stepping, entry_of, prelude, state_bytes};
 use loft_ir::Error;
-use loft_ir::bundle::{Bundle, Cover, Find, Id, Init, Origin, Proxy, RasterPrim, Shape, Target, TexFormat, When};
+use loft_ir::bundle::{
+    Access, Bundle, Cover, Find, Id, Init, Origin, Proxy, RasterPrim, Shape, Target, TexFormat, When,
+};
 use loft_ir::error::{LoadFault, SceneFault};
 use loft_ir::identity::Precision;
 
@@ -31,6 +33,70 @@ fn texture(b: &Bundle, r: Id, depth: bool, what: &str) -> Result<(), Error> {
         true => Ok(()),
         false => Err(bad(format!("{what} {r} is {format:?}; it needs {}", if depth { "depth" } else { "colour" }))),
     }
+}
+
+/// The packs: every rows resource in exactly one, inside it and overlapping nothing; a stepped resource alone in a
+/// written pack at offset 0 (the host swaps the whole buffer per step); a kernel's rows in a written pack; and every
+/// stage's storage bindings within the device's limit (a kernel binds its writes once more at group 2).
+fn packs(b: &Bundle, limits: &wgpu::Limits) -> Result<(), Error> {
+    let kept = |r: usize| b.kernels.iter().find(|k| k.writes.contains(&(r as Id))).and_then(Stepping::of);
+    let mut seen = vec![None; b.resources.len()];
+    for (p, pack) in b.packs.iter().enumerate() {
+        let size = pack.vec4s.checked_mul(16).filter(|&n| n > 0);
+        let max = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
+        if size.is_none_or(|n| n > max) {
+            return Err(bad(format!(
+                "pack {p} is {} vec4s; this device binds 1..={} : fewer or smaller tables",
+                pack.vec4s,
+                max / 16
+            )));
+        }
+        let mut spans = Vec::with_capacity(pack.holds.len());
+        for &(r, offset) in pack.holds.iter() {
+            let res = at(&b.resources, r, "pack resource")?;
+            if !matches!(res.shape, Shape::Rows { .. }) {
+                return Err(bad(format!("pack {p} holds resource {r}, which is not rows")));
+            }
+            if seen[r as usize].replace(p).is_some() {
+                return Err(bad(format!("resource {r} is in two packs")));
+            }
+            let vec4s = state_bytes(&res.shape) / 16 * u64::from(kept(r as usize).map_or(1, |s| s.kept));
+            let end = offset.checked_add(vec4s).filter(|&e| e <= pack.vec4s);
+            let end = end.ok_or_else(|| bad(format!("resource {r} at vec4 {offset} overruns pack {p}")))?;
+            spans.push((offset, end, r));
+            if kept(r as usize).is_some() && (pack.holds.len() != 1 || offset != 0 || pack.access != Access::Write) {
+                return Err(bad(format!("stepped resource {r} must be alone in a written pack, at offset 0")));
+            }
+        }
+        spans.sort_unstable();
+        if let Some(w) = spans.windows(2).find(|w| w[0].1 > w[1].0) {
+            return Err(bad(format!("resources {} and {} overlap in pack {p}", w[0].2, w[1].2)));
+        }
+    }
+    for (r, res) in b.resources.iter().enumerate() {
+        if matches!(res.shape, Shape::Rows { .. }) && seen[r].is_none() {
+            return Err(bad(format!("rows resource {r} is in no pack")));
+        }
+    }
+    let stage = limits.max_storage_buffers_per_shader_stage as usize;
+    for (k, kern) in b.kernels.iter().enumerate() {
+        for &r in kern.writes.iter() {
+            if let Some(p) = seen[r as usize].filter(|&p| b.packs[p].access != Access::Write) {
+                return Err(bad(format!("kernel {k} writes resource {r} in pack {p}, which is read-only")));
+            }
+        }
+        if b.packs.len() + kern.writes.len() > stage {
+            return Err(bad(format!(
+                "kernel {k} binds {} packs and {} writes; this device binds {stage} storage buffers per stage",
+                b.packs.len(),
+                kern.writes.len()
+            )));
+        }
+    }
+    if b.packs.len() > stage {
+        return Err(bad(format!("{} packs; this device binds {stage} storage buffers per stage", b.packs.len())));
+    }
+    Ok(())
 }
 
 pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Result<(), Error> {
@@ -159,18 +225,12 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
     for p in b.params.iter() {
         at(&b.names, p.name, "param name")?;
     }
-    for (n, _) in b.cameras.iter() {
-        at(&b.names, *n, "camera name")?;
+    for c in b.cameras.iter() {
+        at(&b.names, c.name, "camera name")?;
+        entry(c.lens, "camera lens module")?;
     }
+    packs(b, limits)?;
     for (k, m) in b.modules.iter().enumerate() {
-        for &r in m.reads.iter() {
-            match at(&b.resources, r, "module read")?.shape {
-                Shape::Rows { .. } | Shape::Texture { .. } | Shape::ViewSized { .. } => {}
-                Shape::Frame => {
-                    return Err(bad(format!("module {k} reads the frame uniform at group 1; it is group 0")));
-                }
-            }
-        }
         let text = std::str::from_utf8(at(&b.sections, m.wgsl, "module text")?)
             .map_err(|e| bad(format!("module {k}'s text is not UTF-8: {e}")))?;
         let pre = prelude(m, precision);

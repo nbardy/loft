@@ -27,10 +27,20 @@ export type Program =
   | { readonly kind: "files"; readonly sha256: string }
   | { readonly kind: "js-tables"; readonly sha256: string; readonly tables: readonly string[] };
 
+/**
+ * The camera a frame was drawn with: a TS host camera (resolved), or, drawn from a Bundle V1 file by loft-draw, one of
+ * the bundle's cameras by name (the file's hash and the time fix where it is: it is evaluated on the GPU) or a host
+ * look camera.
+ */
+export type FrameCamera =
+  | Camera
+  | { readonly kind: "named"; readonly name: string }
+  | { readonly kind: "look"; readonly eye: readonly number[]; readonly target: readonly number[]; readonly up: readonly number[]; readonly fovY: number };
+
 export type Identity = {
   readonly build: { readonly program: Program; readonly library: string; readonly tier: "compiled"; readonly precision: "f32" | "mixed" };
   readonly frame: {
-    readonly camera: Camera; readonly time: number; readonly size: readonly [number, number];
+    readonly camera: FrameCamera; readonly time: number; readonly size: readonly [number, number];
     readonly params: Readonly<Record<string, number>>; readonly inputs: Readonly<Record<string, readonly number[]>>;
     readonly precision: FramePrecision;
     /** `frame` (one draw) or a still (`--samples`: accumulated samples, shutter, aperture). */
