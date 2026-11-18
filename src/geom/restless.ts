@@ -12,6 +12,7 @@
 import { add, clamp, floor, fract, lift, mod, mul, sin, sub, vec3, type Expr, type In } from "../expr.ts";
 import { hash3 } from "../lib/noise.ts";
 import { overshot } from "./lively.ts";
+import { SceneError } from "../errors.ts";
 
 type F = Expr<"f32">;
 const TAU = Math.PI * 2;
@@ -45,7 +46,7 @@ export type Dart = {
  * `uneven` that would stop or reverse the warped clock (the message gives the largest that works). It carries only
  * the message.
  */
-export class RestlessError extends Error {}
+export class RestlessError extends SceneError {}
 
 /**
  * A nervous rhythm: still, then somewhere else, at intervals that are never quite even, overshooting on arrival. It

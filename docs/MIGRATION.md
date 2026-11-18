@@ -13,11 +13,11 @@ Everything in the public scene-authoring API that is not listed below works as b
 - Gaits, poses, attacks, telegraphs, grabs, routines and `design` slots, variants and comparison cameras.
 - The `scene` constructor, `ground`, named cameras, `period` and default scene export. Export `checks` beside a scene or return checks from a design build.
 - `draw.surface`, `draw.glazed`, `draw.curve`, `draw.field`, `draw.relief`, `draw.copies` and `draw.posed`. Existing paint functions can keep returning a plain colour.
-- The six original styles, the layer package subpaths (`loft/core` through `loft/styles`), and the build-to-files workflow. Rebuild directories from source to pick up compiler changes. [Guide](guide.md) · [Artefact format](artefact_format.md)
+- The six original styles and the build-to-files workflow. Rebuild directories from source to pick up compiler changes. [Guide](guide.md) · [Artefact format](artefact_format.md)
 
 ## Renamed
 
-- Creative's absolute `…/frozen-loft/src/index.ts` or `…/training/loft/library/src/index.ts` → `loft`. Archived layer imports such as `…/src/core.ts` → `loft/core`. Public deep imports can use `loft` when it exports the same declaration. The SDF `round` and `extrude`, fold `compose`, and overlapping similarity types still have their own meanings under `src/lib/`.
+- Creative's absolute `…/frozen-loft/src/index.ts` or `…/training/loft/library/src/index.ts` → `loft`. Archived layer imports such as `…/src/core.ts`, and the layer subpaths `loft/core` through `loft/styles`, → `loft`: the package has one entry, and every layer name is its name. Public deep imports can use `loft` when it exports the same declaration. The SDF `round` and `extrude`, fold `compose`, and overlapping similarity types still have their own meanings under `src/lib/`.
 - `src/sun.ts` public imports `movable` and `Sun` → `loft`, now declared in [`src/light.ts`](../src/light.ts).
 - `draw.points(name, points, thing)` → `draw.posed(name, points, thing)`. Keep the `points(count, spec)` constructor. [Copies and specks](guide.md#many-small-specks-on-your-own-paths)
 - `Points` → `Poses`. Code that constructs poses by hand must return `{ frame, size: size.even(scale) }` from `at(i)` in place of `{ frame, scale }`. Code that reads `at(i)` must account for both size variants. [Pose declarations](../src/map/types.ts)

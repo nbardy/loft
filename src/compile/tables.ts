@@ -33,6 +33,7 @@ import { recurTable, type RecurState } from "../map/recur.ts";
 import type { TableRef } from "./context.ts";
 import { plan, type Program, type Rate } from "./rates.ts";
 import { bakeWgsl, cpuStart, cpuStep, replayWgsl, stepCode, type StaticRead } from "./recur.ts";
+import { SceneError } from "../errors.ts";
 
 /** WebGPU's default limits, which every adapter supports. */
 export const STORAGE_BUFFERS_PER_STAGE = 8;
@@ -42,7 +43,7 @@ export const TABLE_BUFFERS = STORAGE_BUFFERS_PER_STAGE - PRELUDE_STORAGE_BUFFERS
 export const BINDING_VEC4S = (128 * 1024 * 1024) / 16;
 
 /** The scene's per-frame tables do not fit the storage buffers a shader stage can bind. */
-export class TableBudgetError extends Error {
+export class TableBudgetError extends SceneError {
   override readonly name = "TableBudgetError";
 }
 

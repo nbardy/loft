@@ -1,8 +1,7 @@
 // One scene, two precision choices.
 //   bun src/cli/main.ts render examples/mixed_precision.ts --precision mixed --views three --out out/mixed.webp
 //   bun src/cli/main.ts build examples/mixed_precision.ts --precision mixed --out out/mixed
-import { mul, nothing, pbr, scene, sqrt, strand, sub, tabulate, vec3 } from "../src/index.ts";
-import { budget } from "../src/checks.ts";
+import { mul, nothing, pbr, scene, sqrt, strand, sub, tabulate, vec3, budget } from "../src/index.ts";
 import { bloom } from "../src/style/post.ts";
 
 const copper = tabulate("copper_paint", (x) => vec3(x.mul(0.42).add(0.47), x.mul(0.38).add(0.22), x.mul(0.29).add(0.17)), 256, "static-shading");

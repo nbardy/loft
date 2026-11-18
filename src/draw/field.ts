@@ -49,6 +49,7 @@ import type { F, Field, P3, Painted, Skeleton } from "../map/types.ts";
 import { aabbOf, outlineWgsl, PROXY_VERTICES, TRACE_DEPTH, TRACE_DEPTH_OUT, traceWgsl, type TraceBound, type TraceOutline } from "./trace.ts";
 import { bakeBrick, varianceOf, type Brick, type Variance } from "../map/brick.ts";
 import { surfaceNets, type TriangleMesh } from "../map/nets.ts";
+import { SceneError } from "../errors.ts";
 
 /**
  * The world size of one pixel at the point the field is evaluated at. A field may read it to choose its level of detail
@@ -115,7 +116,7 @@ const describe = (field: string, by: FieldChecker, r: FieldSafetyFailure): strin
 };
 
 /** A schedule that needs a static field was asked of one that is not. */
-export class FieldScheduleError extends Error {
+export class FieldScheduleError extends SceneError {
   override readonly name = "FieldScheduleError";
   constructor(readonly field: string, readonly schedule: FieldSchedule, readonly variance: Exclude<Variance, { kind: "static" }>) {
     super(`draw.field "${field}": schedule "${schedule}" samples the field once, but ${variance.kind === "changing" ? `it reads ${variance.reads.join(", ")}, which can change after compilation` : `it calls the GPU-only function "${variance.fn}", which the CPU cannot sample`}. Use schedule "trace".`);
@@ -127,7 +128,7 @@ export class FieldScheduleError extends Error {
  * constant is above 1 (steps could pass through the surface), or it calls a GPU-only function the CPU cannot sample.
  * Carries the field's name and `reason` (a `FieldSafetyFailure`, with the measured constant and a suggested `safety`).
  */
-export class FieldSafetyError extends Error {
+export class FieldSafetyError extends SceneError {
   override readonly name = "FieldSafetyError";
   constructor(readonly field: string, readonly reason: FieldSafetyFailure, readonly by: FieldChecker = "draw.field") {
     super(describe(field, by, reason));

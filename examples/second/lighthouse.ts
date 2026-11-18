@@ -21,8 +21,10 @@
 // frames (it lands 0.02 short). Not fixed, as predicted: on the way back the band is a linear mix of the swept and
 // rest postures, so it shrinks across the chord (frame at t = 6.2) instead of turning back; and a beam that keeps turning,
 // hitting each place as it passes, is not one attack. Warning 3.9 s against 3.2 s of movement, as predicted.
-import { add, always, atan2, clearance, cos, every, ge, le, lift, mix, mul, place, rigid, scene, sea, sin, strand, sub, time, toon, vec3, type F, type P3 } from "../../src/index.ts";
-import { animate, attack, hit, part, telegraph, type Target } from "../../src/spacetime/index.ts";
+import {
+  add, always, atan2, clearance, cos, every, ge, le, lift, mix, mul, place, rigid, scene, sea, sin, strand, sub,
+  time, toon, vec3, type F, type P3, animate, attack, hit, part, telegraph, type Target,
+} from "../../src/index.ts";
 import { landsInside, warned } from "../../src/check.ts";
 
 const BAY = sea({ swell: [] }); // the bay's water

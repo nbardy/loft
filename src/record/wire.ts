@@ -26,7 +26,7 @@
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
-export const WIRE = 1;
+const WIRE = 1;
 
 export enum Program { Scene, Solve, Evaluate, Check }
 export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }
@@ -76,7 +76,7 @@ export function pack(job: Job): Uint8Array {
 export const symOf = (job: Job, k: number): string => new TextDecoder().decode(job.syms.subarray(job.symAt[k], job.symAt[k + 1]));
 
 /** The decls of a job, parsed: each with its words and roots. */
-export type DeclRec = { readonly tag: Decl; readonly words: Uint32Array; readonly roots: Uint32Array };
+type DeclRec = { readonly tag: Decl; readonly words: Uint32Array; readonly roots: Uint32Array };
 export function declsOf(job: Job): { programRoots: Uint32Array; decls: DeclRec[] } {
   const d = job.decls, decls: DeclRec[] = [];
   let at = 1, root = d[0]!;

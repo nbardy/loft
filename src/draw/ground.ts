@@ -14,6 +14,7 @@ import { lift, type Expr, type In } from "../expr.ts";
 import { drawSpec, type Drawable } from "../compile/context.ts";
 import type { Sea } from "../geom/sea.ts";
 import type { F } from "../map/types.ts";
+import { SceneError } from "../errors.ts";
 
 /** The flat ground y = 0, to the horizon, in the style's ground colour (`Style.ground`), taking cast shadows. */
 export type Plane = Drawable & { readonly kind: "plane" };
@@ -26,10 +27,10 @@ export type Ground = Sea | Plane | Nothing;
 export const BOTTOMLESS = -1e9;
 
 /** A thing that needs a particular ground, in a scene that stands on another. */
-export class GroundError extends Error {
+export class GroundError extends SceneError {
+  override readonly name = "GroundError";
   constructor(who: string, needs: string, ground: Ground["kind"]) {
     super(`${who} needs ${needs}; this scene's ground is ${ground === "nothing" ? "nothing" : `a ${ground}`}. Fix: ${needs === "a sea" ? "ground: sea({ swell: [...] })" : "ground: plane or ground: sea({ swell: [...] })"}, or take ${who} out of the scene`);
-    this.name = "GroundError";
   }
 }
 

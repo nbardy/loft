@@ -4,8 +4,7 @@
 //
 //   bun tools/pbr_sanity.ts
 
-import { compileJs, lift, mul, variable, vec3, type Expr, type NumTy } from "../src/index.ts";
-import { ggx, pbr, smithGgx } from "../src/styles.ts";
+import { compileJs, lift, mul, variable, vec3, type Expr, type NumTy, ggx, pbr, smithGgx } from "../src/index.ts";
 import { shadeVariables } from "../src/style.ts";
 import type { Lighting } from "../src/light.ts";
 import { runGpu, rng, toF32, type Sample } from "../tests/lib.harness.ts";

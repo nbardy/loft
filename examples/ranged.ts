@@ -4,9 +4,9 @@
 //   frames fail for most speeds; the ranged check holds).
 //   bun src/cli/main.ts check examples/ranged.ts
 import {
-  abs, add, and, distance, ge, le, max, mul, param, plane, scene, smoothstep, sqrt, strand, sub, time, toon, vec3, type F,
+  abs, add, and, distance, ge, le, max, mul, param, plane, scene, smoothstep, sqrt, strand, sub, time, toon, vec3,
+  type F, always, budget, eventually,
 } from "../src/index.ts";
-import { always, budget, eventually } from "../src/checks.ts";
 
 // ---- a claw through a shell -------------------------------------------------------------------------------------
 

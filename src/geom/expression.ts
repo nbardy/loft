@@ -9,6 +9,7 @@
 
 import { add, lift, mix, mul, smoothstep, sub, type In } from "../expr.ts";
 import type { F } from "../map/types.ts";
+import { SceneError } from "../errors.ts";
 
 /** An expression: one number per channel. */
 export type Expression<K extends string> = Readonly<Record<K, number>>;
@@ -28,7 +29,7 @@ export type Cast<K extends string, N extends string> = {
  * (raised when the score is read), or a `during` window with no rise, no fall or an end before its start. It carries
  * only the message, which names the expression, the channel and the ones that exist.
  */
-export class ExpressionError extends Error {}
+export class ExpressionError extends SceneError {}
 
 /**
  * A cast from its rest expression and each named expression's departures from rest: a channel a named expression does

@@ -22,7 +22,7 @@ const head = (op: number, ty: Ty, flags = 0): number => op | (TY[ty] << 8) | (fl
 type Leaf = string | ParamSpec | InputSpec | Row | TableSource | LibFn;
 type LoopRec = { readonly count: number; readonly init: readonly number[]; readonly binders: readonly number[]; readonly next: readonly number[]; readonly stop: number | undefined };
 /** A graph function's body over fresh binders, or why it has none (its calls are then written inlined). */
-export type FnBody = { readonly kind: "body"; readonly binders: readonly Expr[]; readonly body: Expr } | { readonly kind: "inline"; readonly why: string };
+type FnBody = { readonly kind: "body"; readonly binders: readonly Expr[]; readonly body: Expr } | { readonly kind: "inline"; readonly why: string };
 type Lowered = { readonly kind: "body"; readonly ret: Ty; readonly binders: readonly number[]; readonly body: number } | { readonly kind: "inline"; readonly why: string };
 type FnRec = { readonly name: string; readonly lower: () => FnBody; done: Lowered | undefined };
 type CallRec = { readonly fn: number; readonly args: readonly number[]; readonly result: number };

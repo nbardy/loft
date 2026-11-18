@@ -11,7 +11,7 @@ const BUILD = "tools/dev.sh build loft-node --fast";
 
 export type Program = "Scene" | "Solve" | "Evaluate" | "Check";
 /** Wave 1's answer: the job decoded and validated. */
-export type Report = { readonly program: Program; readonly nodes: number; readonly decls: number; readonly decode_ns: number };
+type Report = { readonly program: Program; readonly nodes: number; readonly decls: number; readonly decode_ns: number };
 type Kind = "usage" | "load" | "scene" | "budget" | "environment" | "internal";
 
 /** A typed refusal from the engine, or from loading it. `error` is the Rust `Error` as serde JSON (null for load faults). */
@@ -28,7 +28,7 @@ export class NativeError extends Error {
   }
 }
 
-export type Native = { run(job: Uint8Array): Report };
+type Native = { run(job: Uint8Array): Report };
 type Addon = { run(job: Uint8Array): string; stamp: unknown };
 type Answer = { Ok: Report } | { Err: { kind: Kind; code: number; message: string; error: unknown } };
 

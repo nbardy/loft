@@ -1,4 +1,5 @@
-// The two kinds of failure a caller must tell apart, as types. A leaf module: it imports nothing of Loft's, so any
+// The kinds of failure a caller must tell apart, as types: every refusal that is the scene's fault is a SceneError
+// (exit 4), whatever constructor raised it. A leaf module: it imports nothing of Loft's, so any
 // constructor can raise these without an import cycle. The CLI maps them to exit codes in src/cli/verdict.ts.
 
 /**
@@ -6,9 +7,10 @@
  * and the smallest change that fixes it, with the user's own thing named in `where` (`draw.surface "ball"`).
  */
 export class SceneError extends Error {
-  override readonly name = "SceneError";
-  constructor(readonly where: string, readonly given: string, readonly expected: string, readonly fix: string) {
-    super(`${where}: given ${given}; expected ${expected}. Fix: ${fix}`);
+  override readonly name: string = "SceneError";
+  // Written either as its four parts or, by a constructor whose message already names the value and the fix, whole.
+  constructor(...said: [message: string] | [where: string, given: string, expected: string, fix: string]) {
+    super(said.length === 1 ? said[0] : `${said[0]}: given ${said[1]}; expected ${said[2]}. Fix: ${said[3]}`);
   }
 }
 

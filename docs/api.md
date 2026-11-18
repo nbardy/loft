@@ -469,7 +469,7 @@ draw.field: a solid defined by a distance function, sphere-traced per pixel insi
 - **fieldPixel**: The world size of one pixel at the point the field is evaluated at.
   `const fieldPixel: F`
 - **FieldSafetyError**: Raised at compile time when a `draw.field` field cannot be certified for sphere tracing: its measured Lipschitz constant is above 1 (steps could pass through the surface), or it calls a GPU-only function the CPU cannot sample.
-  `class FieldSafetyError extends Error`
+  `class FieldSafetyError extends SceneError`
   cannot:
   - Raised at compile time when a `draw.field` field cannot be certified for sphere tracing: its measured Lipschitz constant is above 1 (steps could pass through the surface), or it calls a GPU-only function the CPU cannot sample.
 
@@ -589,7 +589,7 @@ What a scene stands on (DESIGN.md 13): a sea, a plane, or nothing.
   - `nothing.forms`: (undocumented)
   - `nothing.draws`: (undocumented)
 - **GroundError**: A thing that needs a particular ground, in a scene that stands on another.
-  `class GroundError extends Error`
+  `class GroundError extends SceneError`
 
 Types:
 - **Ground**: What `scene({ ground })` takes. `type Ground = Sea | Plane | Nothing`
@@ -639,7 +639,7 @@ Slots: where each leaf of the expression graph lives at run time.
 Per-frame tables: the registry they are declared into (by expressions that `fetch` them, or explicitly by raw WGSL), their packing into storage buffers, the schedule that fills them on the GPU, and the CPU reading of them (DESIGN.md section 3, docs/gpu_native.md phase 1).
 
 - **TableBudgetError**: The scene's per-frame tables do not fit the storage buffers a shader stage can bind.
-  `class TableBudgetError extends Error`
+  `class TableBudgetError extends SceneError`
 
 ### src/artefact.ts
 
@@ -1736,7 +1736,7 @@ A stalk that bends by a pose (docs/animation_principles.md, "Stalks and hanging 
   cannot:
   - It cannot take expressions (every input is a number), and unlike `bent` it does not check `sharp`.
 - **BendError**: Raised by `bent` when `sharp` is not a finite number at least 1; it carries only the message, which names the value.
-  `class BendError extends Error {} /** Four-point Gauss-Legendre on [0, 1]: nodes and weights. */ const GAUSS: readonly (readonly [number, number])[] = [[0.0694318442, 0.1739274226], [0.3300094782, 0.3260725774], [0.6699905218, 0.3260725774], [0.9305681558, 0.1739274226]]`
+  `class BendError extends SceneError {} /** Four-point Gauss-Legendre on [0, 1]: nodes and weights. */ const GAUSS: readonly (readonly [number, number])[] = [[0.0694318442, 0.1739274226], [0.3300094782, 0.3260725774], [0.6699905218, 0.3260725774], [0.9305681558, 0.1739274226]]`
 
 Types:
 - **Bend**: A bend: radians toward the stalk's `a`, and toward its `b`. `type Bend = readonly [In<"f32">, In<"f32">]`
@@ -1778,7 +1778,7 @@ A hanging thing's swing, in closed form (docs/animation_principles.md, "Stalks a
   - a `swing` from `lively.ts`: the same ringing with a chosen rate, for a part that has no length to derive one from.
   - a stop: a jolt whose speed is minus the speed the pivot had, so a part swings forward when its carrier halts.
 - **PendulumError**: Raised by `pendulum` for a length or gravity that is not a positive number, a damping outside [0, 1), and by its `gain` (and so `answer` with a sway) for a sway period that is not a positive number.
-  `class PendulumError extends Error {} export type Pendulum =`
+  `class PendulumError extends SceneError {} export type Pendulum =`
 
 Types:
 - **Drive**: What moves the pivot. `type Drive = /** The pivot sways `amplitude` sin(2 pi t / period + phase), world units, and has for a long time. */ | { readonly kind: "sway"; readonly amplitude: In<"f32">; readonly period: number; readonly phase?: number } /** The pivot's velocity changed by `speed` (units / s) when `after` (se...`
@@ -1810,7 +1810,7 @@ Restless motion: what a twitchy body does between its actions (docs/animation_pr
   cannot:
   - It cannot loop in a short chosen period (the two rates come back into step only every 100 / hz seconds), and cannot jerk: it is smooth at every instant; `hz` and `seed` are fixed numbers.
 - **RestlessError**: Raised by `dart` when its timing would not run: snap not between 0 and `every`, a period shorter than one hold, or an `uneven` that would stop or reverse the warped clock (the message gives the largest that works).
-  `class RestlessError extends Error {} /** * A nervous rhythm: still, then somewhere else, at intervals that are never quite even, overshooting on arrival. It * returns which hold it is in and which it came from, not a value: the caller says what each hold means (a place to * look, a pose, a colour...`
+  `class RestlessError extends SceneError {} /** * A nervous rhythm: still, then somewhere else, at intervals that are never quite even, overshooting on arrival. It * returns which hold it is in and which it came from, not a value: the caller says what each hold means (a place to * look, a pose, a c...`
 
 Types:
 - **Dart**: `type Dart = { now, arrive, since, holds }`
@@ -1879,7 +1879,7 @@ Expressions as values (docs/animation_principles.md, Appeal).
   - a window that repeats: the clock passed through mod(t, period).
   - an action's beats on the same clock: `beats`, three ramps instead of one window.
 - **ExpressionError**: Raised when a cast or a score is given something it does not know: a named expression with a channel the rest lacks, a number that is not finite, an expression named "rest", a layer naming an expression or channel the cast lacks (raised when the score is read), or a `during` window with no rise, no fall or an end before its start.
-  `class ExpressionError extends Error {} /** * A cast from its rest expression and each named expression's departures from rest: a channel a named expression does * not mention is the rest's. A named expression that mentions a channel the rest lacks, or a number that is not finite, * is an `Express...`
+  `class ExpressionError extends SceneError {} /** * A cast from its rest expression and each named expression's departures from rest: a channel a named expression does * not mention is the rest's. A named expression that mentions a channel the rest lacks, or a number that is not finite, * is an `Ex...`
 
 Types:
 - **Cast**: A cast: the rest expression and the named ones, each complete (one number for every channel). `type Cast<K extends string, N extends string> = { channels, rest, named }`
@@ -1913,7 +1913,7 @@ A pose struck and held (docs/animation_principles.md, Expressions; the timing of
   - a check that the pose is reached at all, whenever it is shown: the same sampling, with the weight above a threshold in place of `still`.
   - a check that loose parts do move during the hold: the same samples, measuring their spread instead of a bound.
 - **StruckError**: Raised by `struck` for a snap or release that is not a positive number of seconds, a hold below 0, a cue that is not finite or a recoil below 0; and by `holdsStill` when given no poses or a pose the cast does not name.
-  `class StruckError extends Error {} /** A struck pose's timing on its clock, seconds. */ export type StruckSpec =`
+  `class StruckError extends SceneError {} /** A struck pose's timing on its clock, seconds. */ export type StruckSpec =`
 
 Types:
 - **Struck**: `type Struck = { spec, weight, still, since }`
@@ -1986,12 +1986,17 @@ The simulation's hit shapes on the water (DESIGN.md 8).
   - follow the ground's height: it is a patch of the plane; lift it onto a sea or a plane yourself (the telegraph does).
   relatives:
   - a patch with relief: lift the points by a function of `hitSdf` (a rim that stands up at the edge).
+- **hitContour**: Signed distance and the position along the nearest edge, in teeth about `spacing` apart.
+  `function hitContour(h: Hit, p: V2, spacing: In<"f32">): Contour`
+- **hitInradius**: Half the shape's narrowest width: how deep inward teeth may reach before they meet.
+  `function hitInradius(h: Hit): F`
 
 Types:
 - **Hit**: `type Hit = Capsule | Disc | Arc`
 - **Capsule**: A capsule: the segment a to b, widened by `radius` (a lunge's lane). `type Capsule = { readonly kind: "capsule"; readonly a: V2; readonly b: V2; readonly radius: F }`
 - **Disc**: A disc (a slam). `type Disc = { readonly kind: "disc"; readonly centre: V2; readonly radius: F }`
 - **Arc**: An annular sector (a sweep): radii `inner` to `outer` round `centre`, angles `from` to `to` (radians, from < to, at most a half turn apart). `type Arc = { readonly kind: "arc"; readonly centre: V2; readonly inner: F; readonly outer: F; readonly from: F; readonly to: F }`
+- **Contour**: Where a point is relative to the nearest edge: signed distance, position along the edge in teeth, world length of one tooth. `type Contour = { readonly d: F; readonly phase: F; readonly pitch: F }`
 
 ### src/spacetime/attack.ts
 
@@ -2336,7 +2341,7 @@ A routine: one dance for a group, as a score of key poses on counts (docs/lineup
 - **Routine**: A group dance as `routine` builds it: `member(m)` is member m's dance as closed forms of a clock (a `Dancer`), `inSync(readouts, limits)` the check that measures the members as drawn against each other, `period` the loop's seconds and `members` how many dance.
   `class Routine`
 - **RoutineError**: The error `routine`, `Routine.member` and `inSync` raise when a score cannot be danced as written: a key outside the loop or on a formation not in `places`, a travel or turn shorter than a count, two keys on one channel whose moves overlap, a click while a struck pose holds, a canon that runs past the loop's end, a channel the score sets that a member's readouts lack.
-  `class RoutineError extends Error {} type Channel = "lean" | "level" | "face" | "claw" | "small"`
+  `class RoutineError extends SceneError {} type Channel = "lean" | "level" | "face" | "claw" | "small"`
   cannot:
   - The error `routine`, `Routine.member` and `inSync` raise when a score cannot be danced as written: a key outside the loop or on a formation not in `places`, a travel or turn shorter than a count, two keys on one channel whose moves overlap, a click while a struck pose holds, a canon that runs past the loop's end, a channel the score sets that a member's readouts lack.
 
@@ -3071,7 +3076,7 @@ Types:
 
 ## Coverage
 
-821 exports (463 values, 358 types) from src/index.ts and src/lib/index.ts.
+824 exports (465 values, 359 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

@@ -20,7 +20,7 @@ import { round } from "${frozen}lib/sdf3.ts";
 import { movable } from "${frozen}sun.ts";
 import { strand as own } from "./other.ts";`, [
     'import { strand } from "loft";',
-    'import { scene } from "loft/core";',
+    'import { scene } from "loft";',
     'import { sdSphere } from "loft";',
     'import { round } from "./src/lib/sdf3.ts";',
     'import { movable } from "loft";',

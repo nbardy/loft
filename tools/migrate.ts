@@ -558,10 +558,8 @@ export function migrate(code: string, filename = "scene.ts", output: string | nu
 
   function target(i: Import, names: readonly string[]) {
     const { file: entry, path, archived } = i.module;
-    if (path === "loft" || path.startsWith("loft/")) return path;
-    if (entry === "index.ts" || entry === "lib/wgsl.ts" || entry === "sun.ts") return "loft";
-    const layer = entry.slice(0, -3);
-    if (layers.has(layer)) return "loft/" + layer;
+    // One entry: every layer file's names are the entry's, with the same declarations (lane 4.3 checked all six).
+    if (path === "loft" || entry === "index.ts" || entry === "lib/wgsl.ts" || entry === "sun.ts" || layers.has(entry.slice(0, -3))) return "loft";
     const abs = resolve(root, "src", entry);
     if (!existsSync(abs) || !abs.startsWith(resolve(root, "src") + "/")) {
       report(i.node, "loft-import-path");

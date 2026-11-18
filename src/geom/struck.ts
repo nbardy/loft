@@ -17,6 +17,7 @@ import type { Check, Tolerance } from "../check.ts";
 import { div, lift, lt, mul, select, smoothstep, sub, time, type Expr, type In } from "../expr.ts";
 import type { Score } from "./expression.ts";
 import { anticipated } from "./lively.ts";
+import { SceneError } from "../errors.ts";
 
 type F = Expr<"f32">;
 
@@ -25,7 +26,7 @@ type F = Expr<"f32">;
  * finite or a recoil below 0; and by `holdsStill` when given no poses or a pose the cast does not name. It carries only
  * the message, which names the value.
  */
-export class StruckError extends Error {}
+export class StruckError extends SceneError {}
 
 /** A struck pose's timing on its clock, seconds. */
 export type StruckSpec = {

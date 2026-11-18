@@ -7,8 +7,10 @@
 // a sky that read time was projected at time 0 without a word; a sky the CPU cannot evaluate crashed the constructor
 // with a plain Error even beside an `environment` that never projects it; the sky's scaling by the sun was untested.
 import { expect, test } from "bun:test";
-import { add, div, dot, lamp, lib, lift, max, mul, normalize, saturate, sub, time, variable, vec3, type Expr, type NumTy } from "../src/index.ts";
-import { aces, ggx, lambert, pbr, schlick, skyLight, smithGgx, daylight } from "../src/styles.ts";
+import {
+  add, div, dot, lamp, lib, lift, max, mul, normalize, saturate, sub, time, variable, vec3, type Expr, type NumTy,
+  aces, ggx, lambert, pbr, schlick, skyLight, smithGgx, daylight,
+} from "../src/index.ts";
 import { shadeVariables } from "../src/style.ts";
 import { foldAt, type Arrived, type Lighting } from "../src/light.ts";
 import { PbrError } from "../src/style/pbr_parts.ts";
