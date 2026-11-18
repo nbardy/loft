@@ -191,6 +191,13 @@ Types:
 - **V**: A CPU value: a number, or the components of a vector. `type V = number | number[]`
 - **Env**: What the CPU evaluator reads leaves from. `type Env = { vars, inputs, params, curves?, tables? }`
 
+### src/grad.ts
+
+Loft: symbolic differentiation of expressions.
+
+- **gradient**: The gradient of a scalar e with respect to a vec2 or vec3 leaf p.
+  `function gradient(e: Expr<"f32">, p: Expr<"vec2">): Expr<"vec2">`
+
 ### src/curve.ts
 
 Curves are the atoms: any function of one variable.
@@ -704,9 +711,9 @@ Displacement in the vertex stage, and the local frame a shell tracer needs: both
 Light: the sun, and any light an author writes as a function of a world point (docs/lighting.md, "Lights").
 
 - **lamp**: A point light: `colour` x reach^2 / (reach^2 + d^2) x (1 - x^2)^2, x = d / (4 reach), nothing past 4 reaches.
-  `function lamp(at: In<"vec3">, o: { readonly colour: In<"vec3">; readonly reach: number; readonly size?: number }): Light`
+  `function lamp(at: In<"vec3">, o: { readonly colour: In<"vec3">; readonly reach: number; readonly size?: number; readonly shadow?: boolean }): Light`
   cannot:
-  - Cannot: cast shadows (the floor under a body standing in its pool is lit; light passes through every thing); light the outside of a thing it is inside (the paper of a lantern: give the paper `emits`); be soft in a frame (its size is sampled only in a still).
+  - Cannot: cast shadows without `shadow` (light passes through every thing); be shadowed by a transparent or soft thing, a thing behind the view's camera, or one more than 70 degrees off the picture's axis; be shadowed on the CPU (a cloud lit at its blobs, `litBy`); light the outside of a thing it is inside (the paper of a lantern: give the paper `emits`); be soft in a frame without `shadow` (its size is otherwise sampled only in a still).
 - **movable**: A sun a host can move: the input `name` (default "sun"), starting at `dir`.
   `function movable(dir: V3, name = "sun"): { readonly kind: "input"; readonly name: string; readonly dir: V3 }`
 
@@ -2400,7 +2407,8 @@ Styles by name, and a scene drawn in another style.
   - `STYLES.papercraft`: (undocumented)
   - `STYLES.sketch`: (undocumented)
   - `STYLES.neon`: (undocumented)
-- **STYLE_NAMES**: The names of the built-in styles, as the keys of `STYLES` (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`); what `styleNamed` and the gallery's `--styles` accept.
+  - `STYLES.pbr`: (undocumented)
+- **STYLE_NAMES**: The names of the built-in styles, as the keys of `STYLES` (`toon`, `woodblock`, `biolume`, `papercraft`, `sketch`, `neon`, `pbr`); what `styleNamed` and the gallery's `--styles` accept.
   `const STYLE_NAMES = Object.keys(STYLES) as readonly StyleName[]`
 - **styleNamed**: The named style; an unknown name throws, listing the known ones.
   `function styleNamed(name: string): Style`
@@ -2621,6 +2629,36 @@ A body reflecting the scene's sky: four taps of the sky round the reflected view
   cannot:
   - Cannot: reflect the ground as itself (a ray below the horizon sees the sky's own colour below the horizon), other bodies, or the body itself (a cavity reflects open sky); a blur wider than four taps can hold (near gloss 0 the four taps show as faint ghosts of a sharp sky feature); antialias a sharp feature reflected by a curved body near gloss 1 (a sun disc sparkles: keep gloss under 0.95, or give the sky no sharp feature).
 
+### src/style/pbr_parts.ts
+
+The parts a physically based look is built from (`pbr`, src/style/pbr.ts): each a plain function over expressions, so it runs on the GPU and in the JS twin alike and ports to another engine as the maths it is.
+
+- **ggx**: The GGX (Trowbridge-Reitz) distribution of microfacet normals: D = alpha^2 / (pi ((n.h)^2 (alpha^2 - 1) + 1)^2).
+  `function ggx(n_h: F, rough: F): F`
+  cannot:
+  - Cannot: anisotropy (one alpha; brushed metal wants two, along the body's own m and around it).
+- **smithGgx**: Smith's visibility for GGX, height-correlated: Vis = G / (4 n.l n.v) = 0.5 / (n.l sqrt(n.v^2 (1 - alpha^2) + alpha^2) + n.v sqrt(n.l^2 (1 - alpha^2) + alpha^2)).
+  `function smithGgx(n_l: F, n_v: F, rough: F): F`
+  cannot:
+  - Cannot: account for light that scatters between microfacets more than once (energy is lost at high roughness: the lobe's albedo face on is 1.00 at rough 0.25, 0.92 at 0.5, 0.31 at 1; agent_notes/2026-11-18_pbr_style/NOTE.md).
+- **schlick**: Schlick's Fresnel: F = f0 + (1 - f0)(1 - v.h)^5, per colour channel.
+  `function schlick(v_h: F, f0: P3): P3`
+- **lambert**: Lambert: the diffuse colour times n.l (the pi of the BRDF cancels the amount's).
+  `function lambert(albedo: P3, n_l: F, _n_v: F, _v_h: F, _rough: F): P3`
+- **skyLight**: Light from the sky in a body: `diffuse`, the radiance a white Lambert surface facing `normal` reflects (the sky's irradiance over pi), and `specular`, the sky as a mirror of roughness `rough` sees it along the reflected view ray.
+  `function skyLight(at: { readonly normal: P3; readonly view: P3; readonly sun: P3 }, rough: F, sky: (dir: P3, sun: P3) => P3): { readonly diffuse: P3; readonly specular: P3 }`
+  cannot:
+  - Cannot: follow a sky that changes with time or a moved sun except through the one tap (the projection is at the stated sun and time 0, as a cloud's tables are); see the ground, other bodies or the body itself (a cavity is lit by open sky: no occlusion); blur a sharp sky feature smoothly at middle roughness (it fades as a whole rather than spreading).
+- **daylight**: A clear day's sky, linear radiance along `dir` with the sun toward `sun`: zenith (0.10, 0.22, 0.50) to horizon (0.50, 0.58, 0.66) by the square root of the height, a warm glow round the sun ((n.sun)^8 x (0.35, 0.27, 0.16)), and a ground (0.20, 0.19, 0.17) below the horizon, blended over 0.08 of height: about what a sunlit floor of albedo 0.2 sends up, so a mirror ball shows a floor rather than a hole.
+  `function daylight(dir: P3, sun: P3): P3`
+- **aces**: ACES filmic, as Narkowicz's fit: x (2.51 x + 0.03) / (x (2.43 x + 0.59) + 0.14), clamped to [0, 1], then encoded for the picture (x^(1/2.2), the target is display sRGB).
+  `function aces(c: P3): P3`
+  cannot:
+  - Cannot: hold hue at the top (a bright saturated light goes toward white per channel, as film does).
+
+Types:
+- **PbrParts**: The slots of `pbr` (src/style/pbr.ts), each a function; `pbr(parts)` takes any of them in place of its default. `type PbrParts = { distribution, visibility, fresnel, diffuse, environment, sky, tone }`
+
 ### src/style/toon.ts
 
 Toon: banded light from the sun, a rim, a gloss, an ink hull, a translucent stylised sea.
@@ -2702,6 +2740,13 @@ Neon: a dark ground and light from tubes.
 
 - **neon**: The neon-tube style: a dark ground where each body is near black and its paint becomes a saturated light, shown as the outline, an inner glow and a sheen.
   `function neon(): Style`
+
+### src/style/pbr.ts
+
+pbr: bodies lit as physical surfaces.
+
+- **pbr**: A physically based style from parts.
+  `function pbr(parts: Partial<PbrParts> = {}): Style`
 
 ### src/lib/noise.ts
 
@@ -2935,7 +2980,7 @@ Types:
 
 ## Coverage
 
-790 exports (448 values, 342 types) from src/index.ts and src/lib/index.ts.
+800 exports (457 values, 343 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

@@ -72,6 +72,8 @@ every boss (woodblock), and `bosses/crab_lineup.ts`, whose `--look` switches bet
 | `materials/lacquer.ts` | 28 | wet lacquer: `gloss` and a darker `base`, words every glossy style reads |
 | `materials/beetle.ts` | 36 | a thin-film shell: the surface's own answer to each light (`scatter`) |
 | `materials/poker.ts` | 37 | a word you invent (`kelvin`) and the style part that reads it |
+| `materials/thin_film.ts` | 34 | the beetle in `pbr` with one part swapped (`pbr({ fresnel })`, a thin film) and its ink overridden |
+| `materials/spheres.ts` | 36 | balls by `rough` in copper (`metal: 1`) and as a dielectric, and hammered copper (`normal`, a bump by `gradient`) |
 
 ## Soft things
 

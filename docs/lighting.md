@@ -162,7 +162,8 @@ so a lamp prints as a hard pool whose edge is where the luminance arriving is `p
 number: two reaches from a lamp of colour 1), its ink tinted by the lamp's hue. The sun is cut the same way only when
 its amount is stated. The `offLens` and `camera` keys apply to the sun only. How each built-in style prints lights is
 the "Lights" paragraph at the top of its file; in short: toon in rings (where 0.1 and 0.3 arrive), woodblock and
-sketch in cut pools, biolume and neon softly, papercraft a facet at a time.
+sketch in cut pools, biolume and neon softly, papercraft a facet at a time, pbr as physics (each light through the same
+GGX and Lambert terms, a lamp's shadow map multiplied in, the sky scaled by the sun's amount).
 
 `litBy(light, body, { least, from?, to?, at? })` checks on the CPU that a stretch of a body receives at least `least`
 in luminance: the subject in the dark is the night scene's commonest failure. Scenes: `examples/light/`.
