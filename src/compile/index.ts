@@ -11,7 +11,7 @@ import type { Program } from "./rates.ts";
 import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
-import { measureRest } from "../draw/grid_detail.ts";
+import { measureRest, REST_CENTRE, restPoints } from "../draw/grid_detail.ts";
 import { castPlan } from "../draw/cast.ts";
 import { lampShadows, refuseSpread } from "../frame/lamp_shadow.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
@@ -160,7 +160,7 @@ export function compileScene(scene: Scene): Compiled {
   });
 
   // Stable sort by phase: within a phase, the order drawables emitted.
-  const detailOf = detailSlots(layout.placed, (roots) => cpu(roots)(restFrame));
+  const detailOf = detailSlots(layout.placed, (roots) => { const run = cpu(roots); return (vars) => run(restFrame, vars); });
   const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, depth, ...d }) => {
     const resolved = detailOf(detail, d);
     // The shader reads its level from `loft_detail[LOFT_DETAIL_SLOT + instance]` (an override, so one module serves
@@ -246,7 +246,7 @@ function refuseSpans(rs: readonly Recurrence[], loop: Loop): readonly Recurrence
  * shape measured at rest (`rest` evaluates expressions in the rest frame). One choice per bound table (a surface and its
  * ink outline name the same one), one per projected spec.
  */
-function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[]) => (V | boolean)[]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
+function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[]) => (vars: Env["vars"]) => (V | boolean)[]): (spec: DetailSpec, d: Pick<Draw, "label" | "instances">) => Detail {
   const slots = new Map<object, number>();
   const measured = new Map<object, ReturnType<typeof measureRest>>();
   let next = 0;
@@ -266,8 +266,8 @@ function detailSlots(placed: TableLayout["placed"], rest: (roots: readonly Expr[
         if (!p) throw new Error(`compile: draw "${d.label}" states bounds in table "${spec.bound.name}", which was never declared (ctx.table)`);
         if (spec.bound.entries !== d.instances || spec.bound.lanes !== 1) throw new Error(`compile: draw "${d.label}": its bound table must have 1 lane and one entry per instance (${d.instances}), got ${spec.bound.lanes} x ${spec.bound.entries}`);
         const m = measured.get(spec.bound) ?? (() => {
-          const values = rest([...spec.rest.samples, spec.rest.anchor]) as number[][];
-          const r = measureRest(values.slice(0, -1), values[values.length - 1]!);
+          const run = rest([spec.rest.point, spec.rest.anchor]);
+          const r = measureRest(restPoints.map((at) => run(at)[0] as number[]), run(REST_CENTRE)[1] as number[]);
           measured.set(spec.bound, r);
           return r;
         })();

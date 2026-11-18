@@ -4,18 +4,22 @@
 import { add, clamp, compileJs, cos, cross, div, f, length, lift, max, mix, mul, normalize, sin, sub, substitute, TAU, time, variable, vec3, type In } from "../expr.ts";
 import { through } from "../curve.ts";
 import { SceneError } from "../errors.ts";
+import { graphFn } from "../record/graph_fn.ts";
 import { rotate } from "./chart.ts";
 import { NO_SKELETON, type Curve, type End, type F, type Frame, type P3, type Placed, type Posed, type Surface, type Topology } from "./types.ts";
 
 /** Parameter step of the finite differences that give a map's normal. Small against [0, 1], large against f32 noise. */
 const FD = 1e-3;
+const UV = ["f32", "f32"] as const;
 
 /**
  * The unit normal of a map, from central differences of the same expression: `d/du x d/dv`, normalised (a degenerate
  * point, where the two derivatives are parallel, gives the zero vector rather than NaN). Symbolic differentiation
  * (src/grad.ts) can replace this without changing any caller.
  */
-export function mapNormal(point: (u: F, v: F) => P3): (u: F, v: F) => P3 {
+export function mapNormal(map: (u: F, v: F) => P3): (u: F, v: F) => P3 {
+  // Four reads of the map: recorded once, each read a `Call` (src/record/graph_fn.ts).
+  const point = graphFn("point", UV, map);
   return (u, v) => {
     const du = sub(point(add(u, FD), v), point(sub(u, FD), v));
     const dv = sub(point(u, add(v, FD)), point(u, sub(v, FD)));
@@ -50,8 +54,9 @@ function checkTopology(t: Topology): void {
 }
 
 /** A surface written directly as a function of (u, v); its normal comes from the map itself. */
-export function surface(point: (u: F, v: F) => P3, topology: Topology): Surface {
+export function surface(map: (u: F, v: F) => P3, topology: Topology): Surface {
   checkTopology(topology);
+  const point = graphFn("point", UV, map);
   return { point, normal: mapNormal(point), anchor: atRest(point), topology, skeleton: NO_SKELETON };
 }
 
