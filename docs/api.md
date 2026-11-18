@@ -2406,6 +2406,23 @@ Types:
 - **Mark**: A drawn length: two world points (closed forms of the clock) whose difference a viewer sees: an eye's middle to its lid's edge, a stalk's root to its tip, an eye's middle to its pupil. `type Mark = { readonly from: In<"vec3">; readonly to: In<"vec3"> }`
 - **Reaching**: A leg (or arm) as its solve is given, for `limbsReach`: its spec, and the direction its knee must stay to the side of (outboard of the root: a knee that crosses inward has folded under the body). `type Reaching = { readonly name: string; readonly limb: ChainSpec; readonly outward: In<"vec3"> }`
 
+### src/ranged.ts
+
+Ranged checks: a condition that holds for every time in [a, b] and every value of a param in [lo, hi], decided by enclosing the condition over whole boxes of those leaves (src/interval.ts) rather than at sampled frames, graded by how far it is from failing (the margin), with the point where it comes nearest (the witness).
+
+- **always**: The condition holds for every value of the range's leaf in [lo, hi]: `always([time, 0, 4], ge(gap, 0.1))`.
+  `function always(range: Range, condition: Condition, o: Settings = {}): Ranged`
+  cannot:
+  - Its margin is the least of the condition's margin over the range, found within `precision`, with the leaf values where it is least. cannot: compare with `eq` or `ne` (no margin); read a GPU-only function, a cellular noise, or a table filled on the CPU (refused by name when the check runs). relatives: eventually, staysClear (the sampled check it replaces where the scene is a closed form).
+- **eventually**: The condition holds for some value of the range's leaf in [lo, hi]: `eventually([time, 0, 3], le(height, 0))`.
+  `function eventually(range: Range, condition: Condition, o: Settings = {}): Ranged`
+
+Types:
+- **Ranged**: A ranged check: a `Check` for `loft check`, and `decide(probe)` for the numbers. `interface Ranged extends Check { formula, run, decide }`
+- **Range**: A leaf and the range it takes: `[time, 0, 4]`, `[param("crab.reach", 1), 0.8, 1.2]`. `type Range = readonly [Expr<"f32">, In<"f32">, In<"f32">]`
+- **RangedSettings**: Search settings. `type Settings = { label?, precision?, boxes?, ms? }`
+- **Decision**: Truth of the quantified condition, bounds on its extreme, and the best point observed. `type Decision = { holds, margin, bounds, witness, work, spent }`
+
 ## Styles (src/styles.ts)
 
 how a scene is painted.
@@ -3020,7 +3037,7 @@ Types:
 
 ## Coverage
 
-815 exports (463 values, 352 types) from src/index.ts and src/lib/index.ts.
+821 exports (465 values, 356 types) from src/index.ts and src/lib/index.ts.
 
 Values with no doc comment (0): .
 

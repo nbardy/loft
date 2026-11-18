@@ -6,7 +6,7 @@
 import {
   abs, add, and, distance, ge, le, max, mul, param, plane, scene, smoothstep, sqrt, strand, sub, time, toon, vec3, type F,
 } from "../src/index.ts";
-import { always, eventually } from "../src/ranged.ts";
+import { always, eventually } from "../src/checks.ts";
 
 // ---- a claw through a shell -------------------------------------------------------------------------------------
 
