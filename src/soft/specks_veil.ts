@@ -1,5 +1,5 @@
 // Many specks amortise the cloud integral over a small view-dependent grid in the cloud's world box.
-import type { CompileContext, Shader } from "../compile/context.ts";
+import type { CompileContext, Drawable, Shader } from "../compile/context.ts";
 import { fetch, leaves, lib, lift, mapOf, type Expr, type LibFn, type TableSource } from "../expr.ts";
 import { foldAt, sunDir, sunOnly } from "../light.ts";
 import { TRANSMITTANCE, type VolumeDrawable } from "../draw/volume.ts";
@@ -7,7 +7,7 @@ import { densityIntegral, softRayWgsl, type DensityDrawable } from "./density.ts
 
 const EDGE = 32;
 const CELLS = EDGE ** 3;
-const caches = new WeakMap<CompileContext, Map<DensityDrawable, TableSource>>();
+const caches = new WeakMap<CompileContext, Map<Drawable, TableSource>>();
 const samplers = new Map<string, LibFn>();
 
 const RAY_TO_GRAIN = /* wgsl */ `
@@ -50,9 +50,9 @@ export function specksVolumeVeil(ctx: CompileContext, v: VolumeDrawable, count: 
   if (!cached) return { code, libs, cached };
   // The pose stage's copy: the same text, its declarations prefixed, the shadow march inlined so it is prefixed too.
   const own = [code, TRANSMITTANCE.wgsl].join("\n");
-  const table = veilTableOf(ctx, v, () => {
+  const table = tableOnce(ctx, v, () => {
     const name = `${v.name}_specksVeil`;
-    const sample = samplerOf(name, own, libs.filter((l) => l !== TRANSMITTANCE), (n) => `
+    const sample = samplerOf(name, `${name}\n${own}`, own, "", libs.filter((l) => l !== TRANSMITTANCE), (n) => `
   let ray = ${n}_soft_ray(p);
   let box = ${n}_soft_box(ray[0], ray[1]);
   return ${n}_volume_front(ray[0], ray[1], max(0.0, box.x), min(box.y, dot(p - ray[0], ray[1])));`);
@@ -115,61 +115,39 @@ fn grain_grid(p: vec3<f32>) -> vec4<f32> {
 }
 
 function veilTable(ctx: CompileContext, cloud: DensityDrawable, integral: Shader, zenith: Expr<"vec3">): TableSource {
-  let tables = caches.get(ctx);
-  if (tables === undefined) { tables = new Map(); caches.set(ctx, tables); }
-  const seen = tables.get(cloud);
-  if (seen !== undefined) return seen;
-  const { blobs, clusters, layers, banks } = cloud.medium.tables(ctx.sun, ctx.lighting.lights);
-  const sources = [blobs, clusters, ...[layers, banks].flatMap((o) => o.kind === "some" ? [o.table] : [])];
-  const name = `${cloud.name}_specksVeil`;
-  // The accessors are in the integral's raw WGSL. These arguments tell the pose scheduler which tables it reads.
-  const reads = sources.map((source) => fetch(source, 0, 0));
-  const sample = sampler(name, integral, reads.length);
-  const table: TableSource = { name, entries: CELLS, lanes: 1, role: "data", program: mapOf(CELLS, (i) => [lib<"vec4">(sample, i, zenith, ...reads)]) };
-  tables.set(cloud, table);
-  return table;
-}
-
-function sampler(label: string, integral: Shader, reads: number): LibFn {
-  const key = `${label} ${reads}\n${integral.code}`;
-  const seen = samplers.get(key);
-  if (seen !== undefined) return seen;
-  // The expression arena interns library functions process-wide. Reuse identical code across builds and keep
-  // differing options or bindings distinct, even when variants call their clouds by the same name.
-  let hash = 0xcbf29ce484222325n;
-  for (let i = 0; i < key.length; i++) hash = BigInt.asUintN(64, (hash ^ BigInt(key.charCodeAt(i))) * 0x100000001b3n);
-  const name = `${label}_${hash.toString(16)}`;
-  const sample: LibFn = {
-    name, ret: "vec4", js: "gpu-only", deps: integral.libs,
-    wgsl: /* wgsl */ `${namespace(integral.code + RAY_TO_GRAIN, name)}
-fn ${name}(entry: f32, zenith: vec3<f32>${Array.from({ length: reads }, (_, i) => `, read${i}: vec4<f32>`).join("")}) -> vec4<f32> {
-  let i = u32(entry);
-  let xyz = vec3<f32>(f32(i % ${EDGE}u), f32(i / ${EDGE}u % ${EDGE}u), f32(i / ${EDGE * EDGE}u)) / ${EDGE - 1}.0;
-  let p = mix(${name}_BOX_MIN, ${name}_BOX_MAX, clamp(xyz, vec3<f32>(1e-5), vec3<f32>(0.99999)));
-  let ray = ${name}_soft_ray(p);
-  let box = ${name}_soft_box(ray[0], ray[1]);
-  return ${name}_grain_front(ray[0], ray[1], max(0.0, box.x), min(box.y, dot(p - ray[0], ray[1])), zenith, vec3<f32>(0.0));
-}`,
-  };
-  samplers.set(key, sample);
-  return sample;
+  return tableOnce(ctx, cloud, () => {
+    const { blobs, clusters, layers, banks } = cloud.medium.tables(ctx.sun, ctx.lighting.lights);
+    const sources = [blobs, clusters, ...[layers, banks].flatMap((o) => o.kind === "some" ? [o.table] : [])];
+    const name = `${cloud.name}_specksVeil`;
+    // The accessors are in the integral's raw WGSL. These arguments tell the pose scheduler which tables it reads.
+    const reads = sources.map((source) => fetch(source, 0, 0));
+    const params = `, zenith: vec3<f32>${reads.map((_, i) => `, read${i}: vec4<f32>`).join("")}`;
+    const sample = samplerOf(name, `${name} ${reads.length}\n${integral.code}`, integral.code + RAY_TO_GRAIN, params, integral.libs, (n) => `
+  let ray = ${n}_soft_ray(p);
+  let box = ${n}_soft_box(ray[0], ray[1]);
+  return ${n}_grain_front(ray[0], ray[1], max(0.0, box.x), min(box.y, dot(p - ray[0], ray[1])), zenith, vec3<f32>(0.0));`);
+    return { name, entries: CELLS, lanes: 1, role: "data", program: mapOf(CELLS, (i) => [lib<"vec4">(sample, i, zenith, ...reads)]) };
+  });
 }
 
 /** A cloud's veil grid, made once per compile. */
-function veilTableOf(ctx: CompileContext, cloud: VolumeDrawable, make: () => TableSource): TableSource {
-  let tables = volumeCaches.get(ctx);
-  if (tables === undefined) { tables = new Map(); volumeCaches.set(ctx, tables); }
+function tableOnce(ctx: CompileContext, cloud: Drawable, make: () => TableSource): TableSource {
+  let tables = caches.get(ctx);
+  if (tables === undefined) { tables = new Map(); caches.set(ctx, tables); }
   const seen = tables.get(cloud);
   if (seen !== undefined) return seen;
   const table = make();
   tables.set(cloud, table);
   return table;
 }
-const volumeCaches = new WeakMap<CompileContext, Map<VolumeDrawable, TableSource>>();
 
-/** A grid cell's sampler: `code` with its declarations prefixed, then the cell's point p and `body` (given the prefix). */
-function samplerOf(label: string, code: string, deps: readonly LibFn[], body: (prefix: string) => string): LibFn {
-  const key = `${label}\n${code}`;
+/**
+ * A grid cell's sampler, `fn <label>_<hash>(entry: f32<params>)`: `code` with its declarations prefixed, then the
+ * cell's point p and `body` (given the prefix). The expression arena interns library functions process-wide: `key`
+ * reuses identical code across builds and keeps differing options or bindings distinct, even when variants call their
+ * clouds by the same name.
+ */
+function samplerOf(label: string, key: string, code: string, params: string, deps: readonly LibFn[], body: (prefix: string) => string): LibFn {
   const seen = samplers.get(key);
   if (seen !== undefined) return seen;
   let hash = 0xcbf29ce484222325n;
@@ -178,7 +156,7 @@ function samplerOf(label: string, code: string, deps: readonly LibFn[], body: (p
   const sample: LibFn = {
     name, ret: "vec4", js: "gpu-only", deps,
     wgsl: /* wgsl */ `${namespace(code, name)}
-fn ${name}(entry: f32) -> vec4<f32> {
+fn ${name}(entry: f32${params}) -> vec4<f32> {
   let i = u32(entry);
   let xyz = vec3<f32>(f32(i % ${EDGE}u), f32(i / ${EDGE}u % ${EDGE}u), f32(i / ${EDGE * EDGE}u)) / ${EDGE - 1}.0;
   let p = mix(${name}_BOX_MIN, ${name}_BOX_MAX, clamp(xyz, vec3<f32>(1e-5), vec3<f32>(0.99999)));${body(name)}

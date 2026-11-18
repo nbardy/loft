@@ -30,7 +30,7 @@ and not a function, and when **going past the menu means changing language**.
    natural coordinate where that means anything. Wherever it accepts one of several named kinds, one of the kinds is
    "your own function".
 2. **No cliffs.** Every level is a few lines over the level below, and that level is exported: a component over a
-   mechanism, a mechanism over expressions, expressions over raw WGSL (`wgslFn`), a scene over drawables you can write
+   mechanism, a mechanism over expressions, expressions over raw WGSL (a raw function in `wgsl` text), a scene over drawables you can write
    (`Drawable`, `CompileContext`), drawing over files any host can load. Going past something is one step, never a
    rewrite and never a different language until the very bottom.
 3. **Mechanisms, not looks.** The library owns what has one right answer (frames along a curve, inverse kinematics,
@@ -59,7 +59,7 @@ answers light. So a thing cannot say "I am metal" or "I glow": only the style sp
 | Classes of material | `material: metal({ roughness: 0.2 })` | No: a menu. | Every style must know every class. |
 | Parameters only | paint returns `{ colour, gloss, emission }` | Half: a fixed list of channels. | Each new idea needs a library change. |
 | Function only | a thing carries its own `shade(ctx)` | Fully. | The thing ignores the scene's style, so restyling a scene stops working for it. |
-| Shader only | `wgslFn` in the paint | Fully, at the bottom level. | Exists today. No CPU twin. |
+| Shader only | a raw `wgsl` function in the paint | Fully, at the bottom level. | Exists today. No CPU twin. |
 | **Channels and a wrap** | paint returns a colour and any **named expressions** the author likes (`{ colour, gloss: 0.8, wet: …, emits: … }`); a style reads a channel by name with a default, and ignores names it does not know; a thing may also **wrap** the style: `shade: (ctx, styled) => …`, receiving the style's answer and returning its own | Fully: the vocabulary of channels is the author's, a style honours what it understands, and a wrap composes with the style instead of replacing it. | A small change to what paint returns and what a style receives. |
 
 **Recommendation: channels and a wrap.** No material types. `gloss`, `emits` and whatever comes next are words, not

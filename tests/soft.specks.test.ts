@@ -95,7 +95,10 @@ test("a draw.volume veil dims grains by its transmittance to each grain, marched
     }), { veil: slab });
     // The sun alone lights the grains, the same for each (a lamp's falloff would differ between them).
     const s = scene({ ground: nothing, things: [slab, grains], style, sun: { toward: [0, 1, 0], amount: [1.8, 1.8, 1.8] } });
-    const loaded = await host.load(compile(s));
+    const built = compile(s);
+    // The second pass must read the grid, not fall back to the per-fragment march.
+    expect((built.notes ?? []).some((n) => n.includes("32³ samples"))).toBe(count >= 32768);
+    const loaded = await host.load(built);
     try {
       const white = await loaded.frame(view);
       const black = await loaded.frame({ ...view, inputs: { testVolumePigment: 0 } });

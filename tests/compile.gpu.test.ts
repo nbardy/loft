@@ -7,7 +7,7 @@ import shell from "../examples/shell.ts";
 import scales from "../examples/serpent_scales.ts";
 import {
   add, cos, draw, keys, lift, mul, param, place, points, scene, sea, sin, spacing, strand, surface, through, time,
-  toon, variable, vec3, wave, framed, type Compiled, type Drawable, type F, type Surface, type TableSource,
+  toon, variable, vec3, wave, framedPose, type Compiled, type Drawable, type F, type Surface, type TableSource,
 } from "../src/index.ts";
 import { compileScene } from "../src/compile/index.ts";
 import { FRAGMENT, gpu, layouts, probe, relErr, stateAt, VERTEX } from "./compile.harness.ts";
@@ -115,7 +115,7 @@ test("drawn surfaces land where a CPU evaluation of the same expressions says", 
   const ends = spacing.ends(1).at, round = spacing.from(1, 0.25).at, even = (x: F) => x;
   const b = await agreement(c, "probe", () => body, { u: ends, v: round }, 1, 1.37);
   const tor = await agreement(c, "torus", () => torus, { u: even, v: even }, 1, 0.8);
-  const inst = await agreement(c, "bumps", (i) => { const at = studs.at(lift<"f32">(i)); return framed(bump, { frame: at.frame, scale: at.size.kind === "even" ? at.size.k : lift<"f32">(NaN) }); }, { u: ends, v: round }, 9, 0.8);
+  const inst = await agreement(c, "bumps", (i) => framedPose(bump, studs.at(lift<"f32">(i))), { u: ends, v: round }, 9, 0.8);
   expect(b.worstPos).toBeLessThan(1e-4);
   expect(tor.worstPos).toBeLessThan(1e-4);
   expect(inst.worstPos).toBeLessThan(1e-4);
