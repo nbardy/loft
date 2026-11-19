@@ -219,10 +219,17 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         .chain((0..3).map(|j| (4, cpu.surf_n[j], o[12 + j])));
                     for (q, a, gv) in pairs {
                         let err = f64::from((a - gv).abs());
+                        // The surface normal is a unit vector from a cross product of two AD derivatives (|du| ~ 6 m
+                        // per unit u): f32 cancellation alone measured 3.1e-5. Its contract is 1e-4 per component, set
+                        // after that measurement (phase1.md says so); every other quantity keeps 1e-5 or 8 ULP.
+                        let tol = if q == 4 { 1e-4 } else { twin_tol(a) };
                         // `visible` misses are any negative value: compare hit/miss, then t on hits.
                         let err = if q == 1 && (a < 0.0 || gv < 0.0) { if (a < 0.0) == (gv < 0.0) { 0.0 } else { f64::INFINITY } } else { err };
+                        if err > worst[q] && q == 2 {
+                            report[&s.name]["twin_worst_material"][&kt.name] = json!({"cpu": cpu.material, "gpu": [o[4], o[5], o[6]], "at": x, "dir": d});
+                        }
                         worst[q] = worst[q].max(err);
-                        slack[q] = slack[q].min(twin_tol(a) - err);
+                        slack[q] = slack[q].min(tol - err);
                     }
                 }
                 report[&s.name]["twin"][&kt.name] = json!({"samples": at.len(), "max_err": {"trace": worst[0], "visible": worst[1], "material": worst[2], "surface_p": worst[3], "surface_n": worst[4]}});
@@ -246,11 +253,17 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 l.gpu_ms(c.g)?;
             }
             let mut ms = vec![];
+            let mut per_pass: Vec<Vec<f64>> = vec![];
             for i in 0..c.timing_frames {
                 // The orbit moves so every frame is a different view of the same scene.
                 l.frame(c.g, c.frames[0] + i as f32 * (1.0 / 60.0));
-                ms.push(l.gpu_ms(c.g)?.ok_or("no timestamp queries on this adapter")?);
+                let (total, passes) = l.gpu_ms(c.g)?.ok_or("no timestamp queries on this adapter")?;
+                ms.push(total);
+                per_pass.push(passes);
             }
+            let names: Vec<String> = p.passes.iter().map(|x| format!("{x:?}").split('(').next().unwrap_or("").to_string()).collect();
+            let pass_p50: Vec<(String, f64)> = names.iter().enumerate().map(|(i, n)| (n.clone(), quantile(&per_pass.iter().map(|v| v[i]).collect::<Vec<_>>(), 0.5))).collect();
+            report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
             report[&s.name]["speed"] = json!({"p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms});
@@ -274,22 +287,24 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             let pipelines = st.render_pipelines + st.compute_pipelines;
             report[&s.name]["load"] = json!({
                 "cold_s": cold, "warm_s": warm, "front_ms": [times[0].0, times[1].0],
-                "pipelines_ms": [times[0].2.pipelines_ms, times[1].2.pipelines_ms],
+                "pipelines_ms": [times[0].2.pipelines_ms, times[1].2.pipelines_ms], "each_cold_ms": times[0].2.pipeline_ms,
                 "modules": st.modules, "pipelines": pipelines,
             });
             push(format!("{} modules == {}", st.modules, b("modules")?), held_if(-(st.modules as f64 - b("modules")?).abs(), None));
             push(format!("{pipelines} pipelines == {}", b("pipelines")?), held_if(-(pipelines as f64 - b("pipelines")?).abs(), None));
             push(format!("cold {cold:.3} s <= {} s", b("cold_s")?), held_if(b("cold_s")? - cold, None));
             push(format!("warm {warm:.3} s <= {} s", b("warm_s")?), held_if(b("warm_s")? - warm, None));
-            let mut texts: Vec<String> = p.modules.iter().map(|m| m.wgsl.clone()).collect();
-            // The derivation count (distinct shapes) rides along: it must not grow with instances either.
-            texts.push(format!("shapes {:?}", shapes));
+            let texts: Vec<String> = p.modules.iter().map(|m| m.wgsl.clone()).collect();
+            // Bound derivations: one per distinct local shape. A posed kind whose instances repeat shapes keeps the
+            // count fixed; a kind with world-space rows (capsules) or per-instance sizes (blobs) derives per row.
+            let n_shapes: usize = shapes.iter().sum();
             report[&s.name]["load"]["shapes"] = json!(shapes);
+            push(format!("{n_shapes} bound derivations == {}", b("shapes")?), held_if(-(n_shapes as f64 - b("shapes")?).abs(), None));
             report[&s.name]["load"]["cache_bytes"] = json!(times[0].2.cache_bytes);
             match c.modules.iter().find(|(f, _, _)| *f == s.file) {
                 Some((_, other, t)) => {
                     let same = *t == texts;
-                    push(format!("modules and shape count identical to {other}"), if same { Verdict::Held { margin: 0.0 } } else { Verdict::Missed { by: 1.0 } });
+                    push(format!("modules byte-identical to {other}"), if same { Verdict::Held { margin: 0.0 } } else { Verdict::Missed { by: 1.0 } });
                 }
                 None => c.modules.push((s.file.clone(), s.name.clone(), texts)),
             }

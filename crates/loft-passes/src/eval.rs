@@ -903,6 +903,15 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Val::I(i) => Val::S(S::c(f64::from(*i))),
                 other @ Val::Void | other @ Val::S(_) | other @ Val::V(..) | other @ Val::B(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => other.clone(),
             },
+            // Between integers WGSL reinterprets the bits (u32(-1) is 0xffffffff); from f32 it saturates.
+            "u32" if matches!(v[0], Val::I(_)) => match v[0] {
+                Val::I(i) => Val::U(i as u32),
+                _ => unreachable!("matched"),
+            },
+            "i32" if matches!(v[0], Val::U(_)) => match v[0] {
+                Val::U(u) => Val::I(u as i32),
+                _ => unreachable!("matched"),
+            },
             "u32" | "i32" => {
                 let x = match &v[0] {
                     Val::U(u) => f64::from(*u),

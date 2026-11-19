@@ -670,6 +670,9 @@ struct FsOut {{ @location(0) vis: vec2<u32>, @builtin(frag_depth) depth: f32 }}
   return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), wp, r);
 }}
 
+const LOFT_TETRA: array<vec3<f32>, 4> = array<vec3<f32>, 4>(vec3<f32>(1.0, -1.0, -1.0), vec3<f32>(-1.0, -1.0, 1.0),
+  vec3<f32>(-1.0, 1.0, -1.0), vec3<f32>(1.0, 1.0, 1.0));
+
 fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<f32> {{
   let inv = 1.0 / rd;
   let a = (lo - ro) * inv;
@@ -701,17 +704,23 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
                 "  let t = bitcast<f32>(v.y);
   let p = frame.eye.xyz + rd * t;
   let pl = loft_xf_pt(xf, p);
-  // Normal from the field (tetrahedron differences), occlusion from the field along it, in the kind's space.
+  // Normal from the field (tetrahedron differences, i < 4), then occlusion along it (i >= 4), in the kind's space.
+  // One loop, one call site: Metal inlines every call site of the field, and compile time follows (phase1.md).
   let e = 5e-4 * max(1.0, 0.25 * t);
-  let k = vec2<f32>(1.0, -1.0);
-  let nl = normalize(k.xyy * q_trace(row, pl + k.xyy * e) + k.yyx * q_trace(row, pl + k.yyx * e)
-    + k.yxy * q_trace(row, pl + k.yxy * e) + k.xxx * q_trace(row, pl + k.xxx * e));
+  var g = vec3<f32>(0.0);
+  var nl = vec3<f32>(0.0, 1.0, 0.0);
   var occ = 0.0;
   var w = 1.0;
-  for (var i = 0u; i < 5u; i++) {
-    let h = 0.02 + 0.06 * f32(i);
-    occ += (h - q_trace(row, pl + nl * h)) * w;
-    w *= 0.8;
+  for (var i = 0u; i < 9u; i++) {
+    var q = pl + LOFT_TETRA[min(i, 3u)] * e;
+    var h = 0.0;
+    if i >= 4u {
+      if i == 4u { nl = normalize(g); }
+      h = 0.02 + 0.06 * f32(i - 4u);
+      q = pl + nl * h;
+    }
+    let d = q_trace(row, q);
+    if i < 4u { g += LOFT_TETRA[i] * d; } else { occ += (h - d) * w; w *= 0.8; }
   }
   let ao = clamp(1.0 - 2.0 * occ, 0.0, 1.0);
   let n = normalize(loft_xf_vec(pose, nl));
@@ -787,7 +796,9 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   let row = load_row(bitcast<u32>(a.w));
   let pose = loft_pose(row);
   let xf = loft_xf_inv(pose);
-{twin_geo}  let m = eval_bsdf(bs, nw, nw, vec3<f32>({l0}, {l1}, {l2})) + eval_bsdf(bs, nw, nw, vec3<f32>(0.0));
+{twin_geo}  // Lit 60 degrees off the normal, away from any specular peak (where a 1e-7 change moves D by 1e-3).
+  let lt = nw * 0.5 + normalize(cross(nw, vec3<f32>({l0}, {l1}, {l2}))) * 0.8660254;
+  let m = eval_bsdf(bs, nw, nw, lt) + eval_bsdf(bs, nw, nw, vec3<f32>(0.0));
   twin_out[4u * i] = o0;
   twin_out[4u * i + 1u] = vec4<f32>(m, 0.0);
   twin_out[4u * i + 2u] = o2;

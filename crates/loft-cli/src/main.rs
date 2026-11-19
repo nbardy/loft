@@ -108,14 +108,16 @@ fn run() -> Result<(), String> {
             l.frame(&g, 0.0);
             l.gpu_ms(&g)?;
             let st = &l.stats;
+            let gpu = l.gpu_ms(&g)?.map_or(0.0, |x| x.0);
             println!(
-                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  disk cache {}  ({})",
+                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  frame {gpu:.2} ms  disk cache {}  ({})",
                 t.elapsed().as_secs_f64(),
                 front,
                 st.pipelines_ms,
                 g.cache_key.as_ref().map_or("none on this backend".to_string(), |k| format!("{k}: {} bytes read", st.cache_bytes)),
                 g.adapter
             );
+            println!("{}", st.pipeline_ms.iter().map(|(n, t)| format!("{n} {t:.0}")).collect::<Vec<_>>().join(", "));
             Ok(())
         }
         _ => Err("usage: loft check|show|still|gate (see crates/loft-cli/src/main.rs)".into()),

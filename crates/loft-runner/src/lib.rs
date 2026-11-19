@@ -64,6 +64,15 @@ pub struct LoadStats {
     pub resources_ms: f64,
     /// Bytes read from the disk pipeline cache (0: none on this backend, or a cold cache).
     pub cache_bytes: usize,
+    /// Each pipeline's own creation time on its thread (ms), to see which one sets the cold load.
+    pub pipeline_ms: Vec<(String, f64)>,
+}
+
+/// Runs `f` and returns its result with its wall time in ms.
+fn timed<T>(f: impl FnOnce() -> T) -> (T, f64) {
+    let t = Instant::now();
+    let x = f();
+    (x, t.elapsed().as_secs_f64() * 1e3)
 }
 
 struct KindGpu {
@@ -297,20 +306,27 @@ impl Loaded {
                         Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front),
                         Draw::Surface { .. } => None,
                     };
-                    let r = sc.spawn(move || render(d, &kt.name, &[bgl0, bgl_kind], m, ("vs", "fs"), VIS, true, face, cache));
-                    let s = sc.spawn(move || compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade", cache));
+                    let r = sc.spawn(move || timed(|| render(d, &kt.name, &[bgl0, bgl_kind], m, ("vs", "fs"), VIS, true, face, cache)));
+                    let s = sc.spawn(move || timed(|| compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade", cache)));
                     (r, s)
                 })
                 .collect();
-            let cull = sc.spawn(|| compute(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull", cache));
-            let classify = sc.spawn(|| compute(d, "classify", &[&bgl0, &bgl_classify], &modules[p.classify], "classify", cache));
-            let present = sc.spawn(|| render(d, "present", &[&bgl0, &bgl_present], &modules[p.present], ("vs_present", "fs_present"), COLOR, false, None, cache));
+            let cull = sc.spawn(|| timed(|| compute(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull", cache)));
+            let classify = sc.spawn(|| timed(|| compute(d, "classify", &[&bgl0, &bgl_classify], &modules[p.classify], "classify", cache)));
+            let present = sc.spawn(|| timed(|| render(d, "present", &[&bgl0, &bgl_present], &modules[p.present], ("vs_present", "fs_present"), COLOR, false, None, cache)));
             fn join<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
                 h.join().expect("pipeline thread")
             }
             let kinds: Vec<_> = kinds.into_iter().enumerate().map(|(k, (r, s))| (k, join(r), join(s))).collect();
             (kinds, join(cull), join(classify), join(present))
         });
+        for (k, r, s) in &kinds_pl {
+            stats.pipeline_ms.push((format!("{} vis", p.kinds[*k].name), r.1));
+            stats.pipeline_ms.push((format!("{} shade", p.kinds[*k].name), s.1));
+        }
+        stats.pipeline_ms.extend([("cull".into(), cull_pl.1), ("classify".into(), classify_pl.1), ("present".into(), present_pl.1)]);
+        let kinds_pl: Vec<_> = kinds_pl.into_iter().map(|(k, r, s)| (k, r.0, s.0)).collect();
+        let (cull_pl, classify_pl, present_pl) = (cull_pl.0, classify_pl.0, present_pl.0);
         // Metal compiles at creation; wait so the time is the compile, not a deferred one inside the first frame.
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         stats.pipelines_ms = t.elapsed().as_secs_f64() * 1e3;
@@ -634,10 +650,11 @@ impl Loaded {
         commands
     }
 
-    /// After `frame`: waits, then the GPU time from the first pass's start to the last pass's end, in ms.
+    /// After `frame`: waits, then the GPU time from the first pass's start to the last pass's end, in ms, and each
+    /// pass's share of it in schedule order.
     /// The resolve goes in its own submit after the frame completes (19 Nov: resolving before Metal had written the
     /// last passes' end samples read the previous frame's values).
-    pub fn gpu_ms(&self, g: &Gpu) -> Result<Option<f64>, String> {
+    pub fn gpu_ms(&self, g: &Gpu) -> Result<Option<(f64, Vec<f64>)>, String> {
         let poll = || g.device.poll(wgpu::PollType::wait_indefinitely()).map(|_| ()).map_err(|e| e.to_string());
         poll()?;
         let Some(c) = &self.clock else { return Ok(None) };
@@ -656,7 +673,11 @@ impl Loaded {
         if first == 0 || last <= first {
             return Err(format!("timestamps unusable: first {first}, last {last}"));
         }
-        Ok(Some((last - first) as f64 * c.period_ns / 1e6))
+        let ms = |a: u64, b: u64| b.saturating_sub(a) as f64 * c.period_ns / 1e6;
+        // A pass's cost is its end minus the previous pass's end: passes overlap on the GPU, so begin stamps of
+        // later passes come early (a present pass "took" 4 ms of a 5 ms frame), while ends follow the dependencies.
+        let ends: Vec<u64> = std::iter::once(first).chain(ticks.chunks(2).map(|p| p[1])).collect();
+        Ok(Some((ms(first, last), ends.windows(2).map(|w| ms(w[0], w[1])).collect())))
     }
 
     /// The presented picture, tightly packed RGBA8 (sRGB), top row first.

@@ -210,7 +210,8 @@ pub struct Compiled {
 }
 
 /// One kind's queries on the CPU in f32 (the twin). Traced and analytic kinds take a world point and direction;
-/// surface kinds take (u, v) in `p[0..2]`. `material` is the Bsdf lit by `TWIN_LIGHT` plus its emission.
+/// surface kinds take (u, v) in `p[0..2]`. `material` is the Bsdf seen along its normal, lit 60 degrees off it (in
+/// the plane of the normal and `TWIN_LIGHT`), plus its emission.
 pub struct CpuQuery {
     pub trace: f32,
     pub visible: f32,
@@ -300,7 +301,10 @@ impl Compiled {
             args.push(Val::V(vec![uv[0], uv[1]], 0.0));
         }
         let b = ev.call_fn(k.query(QueryKind::Material).expect("checked"), args, sp)?;
-        let lit = of_v3(ev.eval_bsdf(&b, &v3(nw), &v3(nw), &v3(unit(TWIN_LIGHT)), sp)?);
+        let (a, k) = (unit(TWIN_LIGHT), nw);
+        let t = unit([k[1] * a[2] - k[2] * a[1], k[2] * a[0] - k[0] * a[2], k[0] * a[1] - k[1] * a[0]]);
+        let lt = [0, 1, 2].map(|i| k[i] * 0.5 + t[i] * 0.866_025_4);
+        let lit = of_v3(ev.eval_bsdf(&b, &v3(nw), &v3(nw), &v3(lt), sp)?);
         let glow = of_v3(ev.eval_bsdf(&b, &v3(nw), &v3(nw), &v3([0.0; 3]), sp)?);
         out.material = [0, 1, 2].map(|i| lit[i] + glow[i]);
         Ok(out)
