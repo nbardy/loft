@@ -516,6 +516,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "loft-lower"
+version = "0.1.0"
+dependencies = [
+ "loft-ir",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "loft-node"
 version = "0.1.0"
 dependencies = [
