@@ -8,7 +8,7 @@ fn intersect(i: u32,r: Ray) -> Hit {
 fn trace_world(r: Ray,world: u32) -> Point {
   var ray=r; var x=Point(vec3f(0),vec3f(0),vec2f(0),-1,0u);
   for(var i=0u;i<arrayLength(&rows);i++){
-    if (rows[i].worlds & world)==0u {continue;}
+    if ((rows[i].worlds & world)==0u) {continue;}
     let h=intersect(i,ray);
     if h.t>=0 {ray.t1=h.t;x=Point(r.o+h.t*r.d,h.n,h.uv,h.t,i);}
   }
@@ -19,7 +19,7 @@ fn visible_world(a: vec3f,b: vec3f,world: u32) -> vec3f {
   let delta=b-a; let dist=length(delta);
   let ray=Ray(a,delta/dist,1e-4,dist-1e-4,vec2f(0));
   for(var i=0u;i<arrayLength(&rows);i++){
-    if (rows[i].worlds & world)!=0u && intersect(i,ray).t>=0 {return vec3f(0);}
+    if ((rows[i].worlds & world)!=0u && intersect(i,ray).t>=0) {return vec3f(0);}
   }
   return vec3f(1);
 }

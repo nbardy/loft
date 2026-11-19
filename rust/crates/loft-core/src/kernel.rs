@@ -308,6 +308,7 @@ pub fn fetched(g: &Graph, roots: &[u32]) -> Box<[u32]> {
         stack.extend(g.args_of(n));
         match n.op {
             Op::Fetch { kernel, .. } => out.push(kernel),
+            Op::Open(k) => stack.extend(g.opens[k as usize].targets().map(|f| g.fns[f as usize].body)),
             Op::Call(f) => stack.push(g.fns[f as usize].body),
             Op::Loop { decl, .. } => stack.extend(g.loops[decl as usize].nodes()),
             Op::Lit(_)
@@ -317,6 +318,8 @@ pub fn fetched(g: &Graph, roots: &[u32]) -> Box<[u32]> {
             | Op::Bind(_)
             | Op::Var(_)
             | Op::Prim(_)
+            | Op::Field(_)
+            | Op::Make(_)
             | Op::Swizzle(_)
             | Op::Vec
             | Op::Grad
@@ -411,6 +414,46 @@ impl Lower<'_> {
             let n = &g.nodes[x as usize];
             let args: Vec<&[Id]> = g.args_of(n).iter().map(|a| memo[a].as_slice()).collect();
             let v = match n.op {
+                Op::Lit(at) if n.ty == Ty::U32 => {
+                    let v = f64::from_bits(g.lits[at as usize]) as u32;
+                    vec![self.ssa.lit((v >> 16) as f32), self.ssa.lit((v & 65535) as f32)]
+                }
+                Op::Make(_) => args.concat(),
+                Op::Field(j) => {
+                    let Ty::Kind(k) = g.nodes[g.args_of(n)[0] as usize].ty else { return None };
+                    let fields = &g.kinds[k as usize].fields;
+                    let offset = fields[..usize::from(j)]
+                        .iter()
+                        .try_fold(0usize, |off, (_, t)| off.checked_add(g.slots(*t)?))?;
+                    args[0].get(offset..offset.checked_add(g.slots(fields[j as usize].1)?)?)?.to_vec()
+                }
+                Op::Open(k) => {
+                    let open = &g.opens[k as usize];
+                    let mut apply = |target: u32| {
+                        let f = &g.fns[target as usize];
+                        let given =
+                            f.binders.iter().copied().zip(args[1..].iter().map(|v| v.to_vec())).collect::<Vec<_>>();
+                        Some(self.lower(&[f.body], &given)?.swap_remove(0))
+                    };
+                    if let Op::Lit(at) = g.nodes[g.args_of(n)[0] as usize].op {
+                        apply(open.at(f64::from_bits(g.lits[at as usize]) as u32))?
+                    } else {
+                        let mut result = apply(open.otherwise)?;
+                        let branches =
+                            open.cases.iter().map(|&(t, f)| Some((t, apply(f)?))).collect::<Option<Vec<_>>>()?;
+                        for (tag, values) in branches {
+                            let hi = self.ssa.lit((tag >> 16) as f32);
+                            let lo = self.ssa.lit((tag & 65535) as f32);
+                            let eq_hi = self.ssa.apply(twin(loft_ir::graph::Prim::Eq), &[&args[0][..1], &[hi]]);
+                            let eq_lo = self.ssa.apply(twin(loft_ir::graph::Prim::Eq), &[&args[0][1..], &[lo]]);
+                            let eq = self.ssa.apply(twin(loft_ir::graph::Prim::And), &[&eq_hi, &eq_lo]);
+                            for (a, b) in result.iter_mut().zip(values) {
+                                *a = self.ssa.apply(twin(loft_ir::graph::Prim::Select), &[&eq, &[b], &[*a]])[0];
+                            }
+                        }
+                        result
+                    }
+                }
                 Op::Lit(at) => (0..tape_width(n.ty) as usize)
                     .map(|c| self.ssa.lit(f64::from_bits(g.lits[at as usize + c]) as f32))
                     .collect(),
@@ -459,5 +502,40 @@ fn twin(p: Prim) -> P {
         Prim::Dot => P::Dot, Prim::Cross => P::Cross, Prim::Lt => P::Lt, Prim::Gt => P::Gt, Prim::Le => P::Le,
         Prim::Ge => P::Ge, Prim::Eq => P::Eq, Prim::Ne => P::Ne, Prim::And => P::And, Prim::Or => P::Or, Prim::Not => P::Not,
         Prim::Select => P::Select,
+    }
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::*;
+    use loft_ir::graph::{GraphFn, Kind, Node, Open};
+    #[test]
+    fn nearby_large_tags_remain_distinct_in_the_cpu_tape() {
+        let node = |op, ty, args, n| Node { op, ty, args, n };
+        let g = Graph {
+            nodes: vec![
+                node(Op::Bind(0), Ty::U32, 0, 0),
+                node(Op::Lit(0), Ty::F32, 0, 0),
+                node(Op::Lit(1), Ty::F32, 0, 0),
+                node(Op::Make(0), Ty::Kind(0), 0, 1),
+                node(Op::Field(0), Ty::U32, 1, 1),
+                node(Op::Open(0), Ty::F32, 2, 1),
+            ]
+            .into(),
+            args: [0, 3, 4].into(),
+            lits: [0f64.to_bits(), 1f64.to_bits()].into(),
+            kinds: [Kind { name: 0, fields: [(0, Ty::U32)].into() }].into(),
+            fns: [1, 2].map(|body| GraphFn { name: 0, ret: Ty::F32, body, binders: Box::new([]) }).into(),
+            opens: [Open { name: 0, cases: [(u32::MAX, 1)].into(), otherwise: 0 }].into(),
+            ..Graph::default()
+        };
+        let mut l = Lower { g: &g, ssa: Ssa::default() };
+        let tag = vec![l.ssa.leaf(0), l.ssa.leaf(1)];
+        let out = l.lower(&[5], &[(0, tag)]).unwrap()[0][0] as usize;
+        for (lo, expected) in [(65534., 0.), (65535., 1.)] {
+            let mut regs = Vec::new();
+            crate::tape::run(&l.ssa, 1, 2, &[65535., lo], &mut regs).unwrap();
+            assert_eq!(regs[out], expected);
+        }
     }
 }

@@ -1099,9 +1099,13 @@ impl Loft {
         self.select_aim(Aim::Named(k));
         Ok(())
     }
-    fn select_aim(&mut self, next:Aim) {
-        if self.aim != next && let Some(p)=&mut self.ordered {p.reset_history();}
-        self.aim=next;
+    fn select_aim(&mut self, next: Aim) {
+        if self.aim != next
+            && let Some(p) = &mut self.ordered
+        {
+            p.reset_history();
+        }
+        self.aim = next;
     }
     /// The bundle's camera names, in order.
     pub fn cameras(&self) -> impl Iterator<Item = &str> {
@@ -1161,7 +1165,10 @@ impl Loft {
             .flat_map(|(k, d)| self.inputs[k * 4..k * 4 + d.def.len()].to_vec())
             .collect();
         FrameKey {
-            previous: self.ordered.as_ref().and_then(|o| o.previous.map(|prefix| if o.extent()==size {prefix} else {[0;32]})),
+            previous: self
+                .ordered
+                .as_ref()
+                .and_then(|o| o.previous.map(|prefix| if o.extent() == size { prefix } else { [0; 32] })),
             camera,
             time: self.time.to_bits(),
             size,
@@ -1206,7 +1213,14 @@ impl Loft {
             self.group0s(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame], if self.ordered.is_some() {self.timestamps.as_ref()} else {None});
+        self.cameras.encode(
+            queue,
+            enc,
+            &self.aim,
+            (&self.g0[0], &self.g1.render),
+            &[&self.frame],
+            if self.ordered.is_some() { self.timestamps.as_ref() } else { None },
+        );
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
@@ -1233,13 +1247,18 @@ impl Loft {
         }
         if self.ordered.is_some() {
             let next = self.ordered.as_ref().and_then(|o| o.previous).map(|_| {
-                let camera = match self.aim { Aim::Named(i) => i as u32, Aim::Look(_) | Aim::Matrices(_) => u32::MAX };
-                self.frame_key(camera,view.size).prefix()
+                let camera = match self.aim {
+                    Aim::Named(i) => i as u32,
+                    Aim::Look(_) | Aim::Matrices(_) => u32::MAX,
+                };
+                self.frame_key(camera, view.size).prefix()
             });
-            let ordered=self.ordered.as_mut().expect("checked above");
-            let loft_ir::bundle::Format::V2(s)=&self.b.format else {unreachable!("ordered bundles carry a schedule")};
-            ordered.encode(device,enc,view,s,[&self.g0[0],&self.g1.render],self.timestamps.as_ref())?;
-            ordered.previous=next;
+            let ordered = self.ordered.as_mut().expect("checked above");
+            let loft_ir::bundle::Format::V2(s) = &self.b.format else {
+                unreachable!("ordered bundles carry a schedule")
+            };
+            ordered.encode(device, enc, view, s, [&self.g0[0], &self.g1.render], self.timestamps.as_ref())?;
+            ordered.previous = next;
             return Ok(());
         }
         for (p, pass) in self.b.passes.iter().enumerate() {
@@ -1457,7 +1476,7 @@ impl Loft {
         // A GPU camera is built once, on the loft's own frame, and copied into every copy's.
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
         let frames: Vec<&Buffer> = instances.iter().map(|i| &i.frame).collect();
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames,None);
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames, None);
         let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1.compute, &i.g2[..])).collect();
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
     }

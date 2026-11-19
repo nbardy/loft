@@ -86,7 +86,16 @@ pub fn packs(at: &Slots, stage: Stage) -> String {
 /// validated: `check` is Naga's pass over it.
 pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots, stage: Stage) -> Result<Emitted, Error> {
     let raws: Vec<String> = g.raws.iter().map(|r| g.sym(r.name).to_string()).collect();
-    let mut e = Module { g, at, raws: &raws, fns: HashMap::new(), order: vec![], out: vec![], raw_used: vec![] };
+    let mut e = Module {
+        g,
+        at,
+        raws: &raws,
+        fns: HashMap::new(),
+        order: vec![],
+        out: vec![],
+        opens: Default::default(),
+        raw_used: vec![],
+    };
     let mut tail = vec![];
     for &(name, d) in exports {
         let (params, result) = signature(g, d);
@@ -105,6 +114,35 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots, stage: Stage) -> R
     let mut lines: Vec<(String, Src)> = vec![];
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
     prelude::text(params, inputs).lines().for_each(|l| put(l.into()));
+    for (k, kind) in g.kinds.iter().enumerate() {
+        let members = kind
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(j, &(_, ty))| format!("v{j}: {}", ty_name(ty, "lf")))
+            .collect::<Vec<_>>();
+        put(format!("struct loft_kind{k} {{ {} }}", members.join(", ")));
+    }
+    for &k in &e.opens {
+        let o = &g.opens[k as usize];
+        let f = &g.fns[o.otherwise as usize];
+        let params = std::iter::once("tag: u32".to_owned())
+            .chain(
+                f.binders.iter().enumerate().map(|(j, &b)| format!("a{j}: {}", ty_name(g.nodes[b as usize].ty, "lf"))),
+            )
+            .collect::<Vec<_>>()
+            .join(", ");
+        let args = (0..f.binders.len()).map(|j| format!("a{j}")).collect::<Vec<_>>().join(", ");
+        let call = |target: u32| format!("{}({args})", e.fns[&target].0);
+        crate::open::dispatch(loft_ir::pass::Open {
+            signature: format!("fn loft_open{k}({params}) -> {}", ty_name(f.ret, "lf")),
+            selector: "tag".into(),
+            cases: o.cases.iter().map(|&(t, f)| (t, call(f))).collect(),
+            otherwise: call(o.otherwise),
+        })?
+        .lines()
+        .for_each(|l| put(l.into()));
+    }
     packs(at, stage).lines().for_each(|l| put(l.into()));
     // A table a raw function reads by its accessor (TS `ctx.table(t).wgsl`): `t_<name>(i)`, vec4 i of its rows.
     let mut tables: Vec<u32> = vec![];
@@ -252,6 +290,7 @@ struct Module<'g> {
     /// One (first calling node, raw function) per distinct raw source, callees first. Deduplicated by source, not by
     /// function name: two sources declaring one name both go in, and Naga refuses the redefinition at the second
     /// author's line.
+    opens: std::collections::BTreeSet<u32>,
     raw_used: Vec<(u32, u32)>,
 }
 
@@ -270,6 +309,7 @@ impl Module<'_> {
         }
         let r = b.need(result)?;
         let (lines, needs) = b.lines();
+        self.opens.extend(needs.opens);
         let ps: Vec<String> = params
             .iter()
             .enumerate()
@@ -325,12 +365,17 @@ pub(crate) fn ty_name(t: Ty, float: &str) -> String {
         Ty::V3 => format!("vec3<{float}>"),
         Ty::V4 => format!("vec4<{float}>"),
         Ty::Bool => "bool".into(),
+        Ty::U32 => "u32".into(),
+        Ty::Kind(k) => format!("loft_kind{k}"),
     }
 }
 
 /// A literal: `width(ty)` authored f64s rounded once to f32 (a bool is 0 or 1).
 pub(crate) fn lit(g: &Graph, i: u32, ty: Ty) -> String {
     let at = |k: u32| f64::from_bits(g.lits[(i + k) as usize]);
+    if ty == Ty::U32 {
+        return format!("{}u", at(0) as u32);
+    }
     match ty.width() {
         None => (if at(0) == 0.0 { "false" } else { "true" }).into(),
         Some(1) => format!("lf({:?})", at(0) as f32),

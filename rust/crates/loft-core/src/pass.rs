@@ -3,21 +3,7 @@ use super::{Build, Naga, unsupported};
 use loft_ir::Error;
 use loft_ir::bundle::{Access, Bundle, Format, Init, Module, Origin, Pack, Resource, Shape};
 use loft_ir::bundle::{Body, Kernel, When};
-use loft_ir::pass::{Declarations, Open, Table};
-
-fn dispatch(open: Open) -> Result<String, Error> {
-    let mut cases = open.cases;
-    cases.sort_by_key(|c| c.0);
-    if cases.windows(2).any(|pair| pair[0].0 == pair[1].0) {
-        return Err(unsupported(format!("{} has duplicate cases; assign each kind a distinct tag", open.signature)));
-    }
-    let mut text = format!("\n{} {{\n  switch {} {{\n", open.signature, open.selector);
-    for (tag, expr) in cases {
-        text.push_str(&format!("    case {tag}u: {{ return {expr}; }}\n"));
-    }
-    text.push_str(&format!("    default: {{ return {}; }}\n  }}\n}}\n", open.otherwise));
-    Ok(text)
-}
+use loft_ir::pass::{Declarations, Table};
 
 pub fn link(b: &mut Bundle, mut d: Declarations, build: Build) -> Result<usize, Error> {
     if !b.packs.is_empty() || !b.passes.is_empty() {
@@ -30,10 +16,7 @@ pub fn link(b: &mut Bundle, mut d: Declarations, build: Build) -> Result<usize, 
     let mut total = 0;
     let offset = modules.len() as u32;
     for src in d.modules {
-        let mut text = src.text;
-        for open in src.opens {
-            text.push_str(&dispatch(open)?);
-        }
+        let text = crate::link_source(src)?;
         if let Naga::Emit = build.naga {
             let module = naga::front::wgsl::parse_str(&text).map_err(|e| unsupported(e.emit_to_string(&text)))?;
             naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())

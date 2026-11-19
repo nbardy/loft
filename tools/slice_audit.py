@@ -41,7 +41,8 @@ for line in added.splitlines():
         parts = re.sub(r'([a-z])([A-Z])',r'\1_\2',word).lower().split('_')
         if vocab.intersection(parts):
             hits.add(word)
+# Decl.Medium is repeated on the existing wire enum line extended by Kind and Open.
 # Existing Resource.shape and Shape describe buffer/texture layout. The other two names belong to naga/wgpu.
-inherited = {"Shape","shape","Emit","emit_to_string","occlusion_query_set"}
+inherited = {"Medium","Shape","shape","Emit","emit_to_string","occlusion_query_set"}
 print(json.dumps({"16":{"vocabulary":sorted(vocab),"hits":sorted(hits),"domain_identifiers":sorted(hits-inherited),"passed":not (hits-inherited)},
                   "17":counts},indent=2))

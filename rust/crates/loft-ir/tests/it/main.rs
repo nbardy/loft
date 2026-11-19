@@ -589,3 +589,35 @@ fn every_identity_field_moves_the_hash() {
         assert!(seen.insert(i.hash()), "edit {k} left the hash unchanged");
     }
 }
+
+#[test]
+fn wire_five_checks_nominal_members_and_the_open_selector() {
+    let mut j = Job::default();
+    let name = j.sym("Pair");
+    let member = j.sym("key");
+    let tag = j.lit(ty(5), &[4294967295.0]);
+    let val = j.node(13 | ty(6), &[tag], 0);
+    let proj = j.node(12 | ty(5), &[val], 0);
+    let one = j.lit(F32, &[1.0]);
+    j.decl(12, &[name, member, 5], &[val]);
+    j.decl(0, &[0, name, 0, 0], &[one]);
+    j.decl(13, &[member, 0, u32::MAX, 0], &[]);
+    let open = j.node(14 | F32, &[proj], 0);
+    j.roots.push(open);
+    let bytes = |j: &Job| {
+        let mut b = j.bytes(0);
+        b[4] = 5;
+        b
+    };
+    let got = wire::decode(&bytes(&j)).unwrap().graph;
+    assert_eq!(got.nodes[val as usize].ty, Ty::Kind(0));
+    assert_eq!(got.nodes[open as usize].op, Op::Open(0));
+    j.nodes[proj as usize][3] = 1;
+    assert!(wire::decode(&bytes(&j)).is_err());
+    j.nodes[proj as usize][3] = 0;
+    j.args[2] = one;
+    assert!(matches!(
+        wire::decode(&bytes(&j)),
+        Err(Error::Scene { fault: SceneFault::Type { want: Ty::U32, .. }, .. })
+    ));
+}

@@ -12,6 +12,10 @@ patchedDependencies:
 importers:
 
   .:
+    dependencies:
+      wgsl_reflect:
+        specifier: 1.6.0
+        version: 1.6.0
     devDependencies:
       '@types/bun':
         specifier: ^1.4.4
@@ -31,9 +35,6 @@ importers:
       typescript-ast:
         specifier: npm:typescript@5.9.3
         version: typescript@5.9.3
-      wgsl_reflect:
-        specifier: 1.6.0
-        version: 1.6.0
 
 packages:
 

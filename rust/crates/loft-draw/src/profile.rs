@@ -204,9 +204,9 @@ fn frames(f: &Flags, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<Times,
             }
             t.pose.push(kernels);
             t.passes.push(passes);
-            let elapsed=match &loft.bundle().format {
-                loft_ir::bundle::Format::V2(_) if k[0]!=0 => c.ms(k[0],k[last]),
-                loft_ir::bundle::Format::V2(_) | loft_ir::bundle::Format::V1 => kernels+passes,
+            let elapsed = match &loft.bundle().format {
+                loft_ir::bundle::Format::V2(_) if k[0] != 0 => c.ms(k[0], k[last]),
+                loft_ir::bundle::Format::V2(_) | loft_ir::bundle::Format::V1 => kernels + passes,
             };
             t.gpu.push(elapsed);
         }

@@ -341,6 +341,7 @@ class Writer {
       case Op.Raw: { const ks = kids(); return this.emit(h, ks, this.rawFn(L.leaves[imm] as LibFn)); }
       case Op.Loop: return this.emit(h, NONE, this.loop(imm));
       case Op.Swizzle: case Op.Vec: return this.emit(h, kids(), imm);
+      case Op.Make: case Op.Field: case Op.Open: throw new Unrecorded("typed record operations use the wire 5 kind and open declarations");
       case Op.Call: case Op.Grad: throw new Error(`internal: the log holds no ${Op[op]} node (calls live beside it)`);
     }
   }

@@ -1,5 +1,5 @@
 // bun tools/slice_oracle.ts   Integer masks, explicit axis/inside rays and the two-camera record check.
-import {WgslExec,WgslParser} from "wgsl_reflect";
+import {twin} from "../src/render/twin.ts";
 import {writeFileSync} from "node:fs";
 import {build,picture,out} from "./slice_measure.ts";
 import {ring,card} from "../examples/slice/washer.ts";
@@ -8,7 +8,6 @@ import {thing,world,raster,screenDraw,write,type Scene} from "../src/render/reco
 import {inspect} from "../src/engines/inspect.ts";
 import {print} from "../src/engines/print.ts";
 import {find} from "../src/render/find.ts";
-import base from "../src/render/interface.wgsl" with {type:"text"};
 const cameras:Scene["cameras"]={front:{kind:"orthographic",eye:[0,0,3],target:[0,0,0],height:8},side:{kind:"perspective",eye:[2,3,4],target:[0,0,0],fovY:1}};
 const report:Record<string,unknown>={};
 let ok=true;
@@ -52,16 +51,18 @@ const rays=`fn probe_ray(k:u32)->Ray {
   return Ray(origins[k],select(vec3f(0,-1,0),vec3f(1,0,0),k>=2u),0,10,vec2f(0));
 }`;
 const probe=`fn pixel(px:vec2f)->vec4f {let h=intersect(0,probe_ray(u32(px.x)));let v=vec4f(h.t,h.n);return unpack4x8unorm(bitcast<u32>(v[u32(px.y)]));}`;
-const {rgba}=picture(build("bore",{things:[thing(value,ring.material)],cameras,engine:inspect(rays+probe)}),"4x4");
+const bore=build("bore",{things:[thing(value,ring.material)],cameras,engine:inspect(rays+probe)});
+const {rgba}=picture(bore,"4x4");
 const gpu=Array.from(new Float32Array(rgba.buffer,rgba.byteOffset,16));
 const cpu=new Float32Array(16).fill(NaN);
-const shader=base+value.kind.source+rays+`
-@group(2) @binding(0) var<storage,read_write> res:array<f32,16>;
-@compute @workgroup_size(1) fn probe(@builtin(global_invocation_id) gid:vec3u) {
-  let k=gid.x;let h=Bead_hit(load_Bead(0u),probe_ray(k));res[k]=h.t;res[k+4u]=h.n.x;res[k+8u]=h.n.y;res[k+12u]=h.n.z;
-}`;
-const exec=new WgslExec(new WgslParser().parse(shader));
-exec.dispatchWorkgroups("probe",4,{1:{1:Uint32Array.from(value.words)},2:{0:cpu}});
+const observer=await twin({things:[thing(value,ring.material,[0,1,0])]});
+for (let i=0;i<4;i++) {
+  const origins=[[0,4,0],[0.6,4,0],[0,1,0],[0.6,1,0]] as const;
+  const hit=observer.trace(origins[i],i<2?[0,-1,0]:[1,0,0],0,10);
+  cpu[i]=hit.kind==="hit"?hit.t:-1;
+  const n=hit.kind==="hit"?hit.normal:[0,0,0];
+  for(let j=0;j<3;j++) cpu[i+4*(j+1)]=n[j];
+}
 const exact=[-1,2.2,0.35,0.4,0,0.6,-1,1,0,0.8,0,0,0,0,0,0];
 score("7",{cpu:Array.from(cpu),gpu},[...cpu,...gpu].every((n,i)=>Math.abs(n-exact[i%16])<1e-5));
 

@@ -124,12 +124,14 @@ fn draw(g: &Gpu, req: &Request) -> Result<Value, Verdict> {
     let mut frames = Vec::with_capacity(req.times.len());
     for (k, &time) in req.times.iter().enumerate() {
         loft.set_time(time as f32);
-        let previous=loft.frame_key(0,[req.size[0].get(),req.size[1].get()]).previous;
+        let previous = loft.frame_key(0, [req.size[0].get(), req.size[1].get()]).previous;
         let rgba = target.picture(g, &mut loft)?;
         let file = req.out.join(format!("{k}.rgba"));
         std::fs::write(&file, &rgba).map_err(env)?;
-        let mut frame=json!({"file": file, "sha256": format!("{:x}", Sha256::digest(&rgba))});
-        if let Some(prefix)=previous {frame["previous"]=json!(prefix);}
+        let mut frame = json!({"file": file, "sha256": format!("{:x}", Sha256::digest(&rgba))});
+        if let Some(prefix) = previous {
+            frame["previous"] = json!(prefix);
+        }
         frames.push(frame);
     }
     Ok(json!({"ok": true, "precision": precision, "frames": frames, "ms": {"load": load, "frames": ms(t1)}}))

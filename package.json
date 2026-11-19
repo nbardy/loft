@@ -19,7 +19,9 @@
     "bun-webgpu": "0.1.7",
     "playwright": "^1.65.0",
     "typescript": "^7.0.2",
-    "typescript-ast": "npm:typescript@5.9.3",
+    "typescript-ast": "npm:typescript@5.9.3"
+  },
+  "dependencies": {
     "wgsl_reflect": "1.6.0"
   }
 }

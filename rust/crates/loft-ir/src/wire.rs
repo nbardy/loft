@@ -184,6 +184,9 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11], Option<crate::pass::Declar
 /// The decls of a job, classified into `Graph`'s per-kind arrays, with each Fn ordinal's kind and each decl's word
 /// offset (for the layout pass, which needs the nodes).
 struct Decls {
+    kinds: Vec<crate::graph::Kind>,
+    kind_nodes: std::collections::HashMap<u32, u32>,
+    opens: Vec<crate::graph::Open>,
     fns: Vec<GraphFn>,
     raws: Vec<RawFn>,
     loops: Vec<Loop>,
@@ -448,6 +451,7 @@ fn solve(c: &mut Cur) -> Result<Solve, ()> {
 
 /// The counts the decl words are checked against.
 struct Sizes {
+    typed: bool,
     nodes: usize,
     lits: usize,
     rows: usize,
@@ -596,6 +600,9 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
     let r0 = *d.first().ok_or_else(|| bad(Span::Decls, 0, Fault::Length))?;
     (r0 as usize <= roots.len()).then_some(()).ok_or_else(|| bad(Span::Decls, 0, Fault::Ref { found: r0 }))?;
     let mut out = Decls {
+        kinds: vec![],
+        kind_nodes: Default::default(),
+        opens: vec![],
         fns: Vec::new(),
         raws: Vec::new(),
         loops: Vec::new(),
@@ -630,8 +637,13 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
             |x: u32| ((x as usize) < z.nodes).then_some(x).ok_or_else(|| bad(Span::Decls, at, Fault::Ref { found: x }));
         let lit =
             |k: u32, n: u8| fits(k, u32::from(n), z.lits).then_some(k).ok_or_else(|| bad(Span::Decls, at, Fault::Lit));
-        let ty = |c: u32| {
-            Ty::ALL.get(c as usize).copied().ok_or_else(|| bad(Span::Decls, at, Fault::Ty { code: c.min(255) as u8 }))
+        let ty = |c: u32| match c {
+            5 if z.typed => Ok(Ty::U32),
+            6.. if z.typed && (c - 6) < out.kinds.len() as u32 => Ok(Ty::Kind(c - 6)),
+            _ => Ty::ALL
+                .get(c as usize)
+                .copied()
+                .ok_or_else(|| bad(Span::Decls, at, Fault::Ty { code: c.min(255) as u8 })),
         };
         match (tag, w) {
             (0, [0, name, ret, n, binders @ ..]) => {
@@ -774,6 +786,31 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 }
             }
             (0..=2 | 8 | 9, _) => layout(false)?,
+            (12, [name, fields @ ..]) if z.typed => {
+                layout(!fields.is_empty() && fields.len() % 2 == 0 && fields.len() / 2 <= u16::MAX as usize)?;
+                let id = out.kinds.len() as u32;
+                let fields =
+                    fields.chunks_exact(2).map(|f| Ok((sym(f[0])?, ty(f[1])?))).collect::<Result<Vec<_>, Error>>()?;
+                let unique: std::collections::HashSet<_> = fields.iter().map(|f| f.0).collect();
+                layout(unique.len() == fields.len())?;
+                for &r in rs {
+                    layout(out.kind_nodes.insert(node(r)?, id).is_none())?;
+                }
+                out.kinds.push(crate::graph::Kind { name: sym(*name)?, fields: fields.into() });
+            }
+            (13, [name, fallback, cases @ ..]) if z.typed => {
+                layout(rs.is_empty() && cases.len() % 2 == 0)?;
+                let graph_fn = |f: u32| match out.fn_slots.get(f as usize) {
+                    Some(FnSlot::Graph(k)) => Ok(*k),
+                    _ => Err(bad(Span::Decls, at, Fault::Ref { found: f })),
+                };
+                let otherwise = graph_fn(*fallback)?;
+                let mut cases =
+                    cases.chunks_exact(2).map(|c| Ok((c[0], graph_fn(c[1])?))).collect::<Result<Vec<_>, Error>>()?;
+                cases.sort_by_key(|c| c.0);
+                layout(!cases.windows(2).any(|p| p[0].0 == p[1].0))?;
+                out.opens.push(crate::graph::Open { name: sym(*name)?, cases: cases.into(), otherwise });
+            }
             (_, _) => return Err(bad(Span::Decls, at, Fault::Tag { found: tag })),
         }
         at += 3 + nw;
@@ -891,11 +928,13 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     if let Some(i) = roots.iter().position(|r| *r as usize >= n_nodes) {
         return Err(bad(Span::Roots, i, Fault::Ref { found: roots[i] }));
     }
-    let sizes = Sizes { nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
+    let sizes = Sizes { typed: buf[4] == 5, nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
     let d = decls(&words(decls_b), &roots, &sizes)?;
 
     let nodes = nodes(&words(nodes_b), &args, &d, &sizes)?;
     let graph = Graph {
+        kinds: d.kinds.into(),
+        opens: d.opens.into(),
         nodes,
         args,
         lits,
@@ -932,6 +971,12 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         top_layout(&graph, *top).map_err(|()| bad(Span::Decls, *at, Fault::Layout))?;
     }
     for i in 0..graph.nodes.len() {
+        if let Node { op: Op::Lit(at), ty: Ty::U32, .. } = graph.nodes[i] {
+            let v = f64::from_bits(graph.lits[at as usize]);
+            if v != f64::from(v as u32) {
+                return Err(bad(Span::Nodes, i, Fault::Lit));
+            }
+        }
         typed(&graph, i).map_err(|(want, got)| Error::Scene {
             site: graph.site(i as u32).cloned(),
             fault: SceneFault::Type { want, got },
@@ -947,7 +992,13 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
         let fault = |what: Fault| bad(Span::Nodes, i, what);
         // flags is 16 bits: a table's lane reaches 632 in the corpus (the_strike), past the 8 bits §3.2 first drew.
         let (code, ty_code, flags) = ((head & 0xff) as u8, ((head >> 8) & 0xff) as u8, (head >> 16) as u16);
-        let ty = *Ty::ALL.get(usize::from(ty_code)).ok_or_else(|| fault(Fault::Ty { code: ty_code }))?;
+        let nominal = d.kind_nodes.get(&(i as u32));
+        let ty = match (ty_code, nominal) {
+            (6, Some(k)) => Ty::Kind(*k),
+            (5, None) if z.typed => Ty::U32,
+            (code, None) => *Ty::ALL.get(usize::from(code)).ok_or_else(|| fault(Fault::Ty { code }))?,
+            _ => return Err(fault(Fault::Ty { code: ty_code })),
+        };
         // A Lit's count is its literal entries, not args.
         let n_args = if code == 0 { 0 } else { n };
         fits(a, n_args, args.len()).then_some(()).ok_or_else(|| fault(Fault::Ref { found: a }))?;
@@ -970,6 +1021,9 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
         let op = match code {
             0 => {
                 no_flags()?;
+                if matches!(ty, Ty::Kind(_)) {
+                    return Err(fault(Fault::Lit));
+                }
                 (n == u32::from(ty.lits()) && fits(imm, n, z.lits)).then_some(()).ok_or_else(|| fault(Fault::Lit))?;
                 Op::Lit(imm)
             }
@@ -1037,6 +1091,32 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
                 Op::Swizzle(Sel { len: len as u8, comps: (imm & 0xff) as u8 })
             }
             11 => no_flags().and(no_imm()).and(arity((1..=4).contains(&n))).map(|()| Op::Vec)?,
+            12 if z.typed => {
+                no_flags().and(arity(n == 1))?;
+                let Ty::Kind(k) = out[operands[0] as usize].ty else {
+                    return Err(fault(Fault::Layout));
+                };
+                ordinal(d.kinds[k as usize].fields.len())?;
+                Op::Field(imm as u16)
+            }
+            13 if z.typed => {
+                no_flags()?;
+                ordinal(d.kinds.len())?;
+                arity(n as usize == d.kinds[imm as usize].fields.len())?;
+                Op::Make(imm)
+            }
+            14 if z.typed => {
+                no_flags()?;
+                ordinal(d.opens.len())?;
+                let open = &d.opens[imm as usize];
+                arity(n as usize == 1 + d.fns[open.otherwise as usize].binders.len())?;
+                for k in open.targets() {
+                    let f = &d.fns[k as usize];
+                    arity(1 + f.binders.len() == n as usize)?;
+                    before(late(f.binders.iter().copied().chain([f.body]), i))?;
+                }
+                Op::Open(imm)
+            }
             12..PRIM0 => return Err(fault(Fault::Op { code })),
             PRIM0.. => {
                 let p = *Prim::ALL.get(usize::from(code - PRIM0)).ok_or_else(|| fault(Fault::Op { code }))?;
@@ -1067,6 +1147,9 @@ fn binder(g: &Graph, x: u32) -> Result<Ty, ()> {
         | Op::Loop { .. }
         | Op::Grad
         | Op::Raw(_)
+        | Op::Field(_)
+        | Op::Make(_)
+        | Op::Open(_)
         | Op::Swizzle(_)
         | Op::Vec
         | Op::Prim(_) => Err(()),
@@ -1245,6 +1328,40 @@ fn typed(g: &Graph, i: usize) -> Result<(), (Ty, Ty)> {
     let rec = node.ty;
     let want = match node.op {
         Op::Lit(_) | Op::Bind(_) | Op::Var(_) => rec,
+        Op::Make(k) => {
+            for (j, &(_, t)) in g.kinds[k as usize].fields.iter().enumerate() {
+                if arg(j) != t {
+                    return Err((t, arg(j)));
+                }
+            }
+            Ty::Kind(k)
+        }
+        Op::Field(j) => {
+            let Ty::Kind(k) = arg(0) else {
+                return Err((Ty::Kind(0), arg(0)));
+            };
+            g.kinds[k as usize].fields[j as usize].1
+        }
+        Op::Open(k) => {
+            let open = &g.opens[k as usize];
+            if arg(0) != Ty::U32 {
+                return Err((Ty::U32, arg(0)));
+            }
+            let result = g.fns[open.otherwise as usize].ret;
+            for target in open.targets() {
+                let f = &g.fns[target as usize];
+                if f.ret != result {
+                    return Err((result, f.ret));
+                }
+                for (j, &b) in f.binders.iter().enumerate() {
+                    let t = g.nodes[b as usize].ty;
+                    if t != arg(j + 1) {
+                        return Err((t, arg(j + 1)));
+                    }
+                }
+            }
+            result
+        }
         Op::Time | Op::Param(_) => Ty::F32,
         Op::Input(d) => g.inputs[d as usize].ty,
         Op::Prim(p) => {

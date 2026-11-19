@@ -65,7 +65,6 @@ impl Identity {
     }
 }
 
-
 impl FrameKey {
     /// Includes the previous digest, so two orders of the same observations remain distinct.
     pub fn prefix(&self) -> [u8; 32] {

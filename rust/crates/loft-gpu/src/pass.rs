@@ -194,7 +194,7 @@ impl Ordered {
                 }),
             }],
         });
-        let paired:Vec<bool> =
+        let paired: Vec<bool> =
             (0..s.images.len()).map(|i| s.passes.iter().any(|p| p.reads.contains(&Read::Previous(i as u32)))).collect();
         let mut by_canvas = vec![];
         for c in canvases {
@@ -335,11 +335,15 @@ impl Ordered {
                 .collect();
             by_canvas.push((c.color, entries));
         }
-        let previous = paired.iter().any(|p| *p).then_some([0;32]);
+        let previous = paired.iter().any(|p| *p).then_some([0; 32]);
         Self { by_canvas, images: vec![], paired, size: [0, 0], frame: 0, previous, iteration, stride }
     }
 
-    pub fn reset_history(&mut self) { self.size=[0,0];self.frame=0;self.previous=self.previous.map(|_|[0;32]); }
+    pub fn reset_history(&mut self) {
+        self.size = [0, 0];
+        self.frame = 0;
+        self.previous = self.previous.map(|_| [0; 32]);
+    }
 
     pub fn extent(&self) -> [u32; 2] {
         self.size
@@ -523,7 +527,9 @@ impl Ordered {
                 }
             }
         }
-        if self.previous.is_some() {self.frame = self.frame.wrapping_add(1); }
+        if self.previous.is_some() {
+            self.frame = self.frame.wrapping_add(1);
+        }
         Ok(())
     }
 }

@@ -1,4 +1,4 @@
-import { bits, reading, type Kind } from "../text/kind.ts";
+import { bits, reading, layout, type Kind } from "../text/kind.ts";
 import { SceneError } from "../errors.ts";
 import type { Declarations } from "../record/passes.ts";
 import { world, type Scene } from "../render/record.ts";
@@ -48,5 +48,5 @@ export function lighting(s:Scene,w:ReturnType<typeof world>,fillModule:number) {
   const hasMetal=ks.some(k=>k.source.includes("directional_albedo("));
   if(hasMetal) tables.push({lanes:1,rows:1024,module:fillModule,entry:"fill",extent:[32,1,1]});
   const laws=bindings+key+ggx+(hasMetal?lookup:"")+ks.map(k=>k.source).join("\n")+(s.sky??defaultSky)+transport;
-  return {tables,hasMetal,module:(body:string)=>w.query(laws+body,opens)};
+  return {tables,hasMetal,module:(body:string)=>w.query(laws+body,opens,ks.map(k=>layout(k,"words")))};
 }

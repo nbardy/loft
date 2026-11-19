@@ -27,7 +27,9 @@ pub mod grad;
 pub mod interval;
 pub mod kernel;
 pub mod layout;
+mod open;
 mod pass;
+pub use open::source as link_source;
 pub mod prim;
 pub mod rate;
 pub mod schedule;
@@ -135,6 +137,8 @@ pub fn run(job: &[u8], limits: Limits, build: Build, compiler: &str) -> Result<(
     limits.spend(Meter::Nodes, g.nodes.len() as u64)?;
     let decls = [
         g.fns.len(),
+        g.kinds.len(),
+        g.opens.len(),
         g.raws.len(),
         g.loops.len(),
         g.kernels.len(),
@@ -282,7 +286,9 @@ fn scene(
                 Ty::F32 => continue, // fovy: in row 0
                 Ty::V3 => format!("vec4<f32>(vec3<f32>(loft_camera{k}_{part}()), 0.0)"),
                 Ty::V4 => format!("vec4<f32>(loft_camera{k}_{part}())"),
-                Ty::V2 | Ty::Bool => unreachable!("the wire types a camera's parts (loft-ir decode)"),
+                Ty::V2 | Ty::Bool | Ty::U32 | Ty::Kind(_) => {
+                    unreachable!("the wire types a camera's parts (loft-ir decode)")
+                }
             };
             body.push_str(&format!("  loft_lens[{at}] = {row};\n"));
             at += 1;
@@ -643,6 +649,9 @@ fn free_vars(g: &Graph, r: u32) -> Box<[u32]> {
             | Op::Grad
             | Op::Raw(_)
             | Op::Swizzle(_)
+            | Op::Make(_)
+            | Op::Field(_)
+            | Op::Open(_)
             | Op::Vec
             | Op::Prim(_) => {}
         }

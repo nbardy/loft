@@ -8,5 +8,6 @@ export type Pass = {
   run: { Raster: { draws: Draw[] } } | { Compute: { entry: string; extent: [number, number, number] } };
 };
 export type Open = { signature: string; selector: string; cases: [number, string][]; otherwise: string };
-export type Source = { text: string; opens: Open[] };
+export type RowType = {name:string; storage:string; fields:{ty:"F32"|"U32";width:number}[]};
+export type Source = { kinds?: RowType[]; text: string; opens: Open[] };
 export type Declarations = { tables: ({ lanes: number; words: number[] } | { lanes:number; rows:number; module:number; entry:string; extent:[number,number,number] })[]; modules: Source[]; schedule: { images: Image[]; passes: Pass[] } };

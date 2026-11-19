@@ -85,6 +85,8 @@ pub enum Table {
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Source {
+    #[serde(default)]
+    pub kinds: Vec<RowType>,
     pub text: String,
     pub opens: Vec<Open>,
 }
@@ -95,4 +97,22 @@ pub struct Open {
     pub cases: Vec<(u32, String)>,
     /// The caller supplies the observation of an empty or unknown row.
     pub otherwise: String,
+}
+
+/// One constructor backed by densely packed words. The row address and storage name belong to its caller.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct RowType {
+    pub name: String,
+    pub storage: String,
+    pub fields: Vec<Member>,
+}
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Member {
+    pub ty: WordType,
+    pub width: u8,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub enum WordType {
+    F32,
+    U32,
 }

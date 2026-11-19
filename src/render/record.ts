@@ -1,7 +1,7 @@
 import type { Camera } from "../artefact.ts";
 import { SceneError } from "../errors.ts";
 import type { Declarations, Open, Source, Pass, Write, Draw } from "../record/passes.ts";
-import { bits, reading, type Value } from "../text/kind.ts";
+import { bits, reading, layout, type Value } from "../text/kind.ts";
 import base from "./interface.wgsl" with { type: "text" };
 import queries from "./world.wgsl" with { type: "text" };
 import screen from "./covers/screen.wgsl" with { type: "text" };
@@ -37,11 +37,12 @@ export function world(s: World) {
     reading(shapes,"hit","r: Ray","r","Hit","miss"),
     reading(shapes,"bound","","","Box","Box(vec3f(0),vec3f(0))"),
   ];
+  const layouts=shapes.map(k=>layout(k,"words"));
   const geometry = base+"\n"+shapes.map(k=>k.source).join("\n");
   return {
     things, tables:[{lanes:3,words:rows},{lanes:1,words}],
-    cover(body:string):Source { return {text:geometry+body,opens:[...opens,reading(shapes,"gap","r: Ray","r","vec2f","vec2f(-1,1e30)",()=> "vec2f(-1,1e30)")]}; },
-    query(body:string, extra:Open[]=[]):Source { return {text:geometry+queries+screen+body,opens:[...opens,...extra]}; },
+    cover(body:string):Source { return {kinds:layouts,text:geometry+body,opens:[...opens,reading(shapes,"gap","r: Ray","r","vec2f","vec2f(-1,1e30)",()=> "vec2f(-1,1e30)")]}; },
+    query(body:string, extra:Open[]=[], kinds:typeof layouts=[]):Source { return {kinds:[...layouts,...kinds],text:geometry+queries+screen+body,opens:[...opens,...extra]}; },
     materials,
   };
 }

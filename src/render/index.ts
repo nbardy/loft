@@ -9,3 +9,4 @@ export { print, flat, toon } from "../engines/print.ts";
 export { reference, film, resolve } from "../engines/reference.ts";
 export { lighting, albedoFill } from "../light/queries.ts";
 export { inspect } from "../engines/inspect.ts";
+export { twin, type Pick } from "./twin.ts";
