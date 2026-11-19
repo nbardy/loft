@@ -29,6 +29,9 @@
 // anchor, their radius from the same terminator measure: the stipple foam's law moved onto the body); a hatch whose
 // spacing follows the paint's value (darker paints closer lines, which is how an etcher holds local colour without ink).
 
+import towardEyeWgsl from "../wgsl/loft_toward_eye.wgsl" with { type: "text" };
+import longDirWgsl from "../wgsl/loft_long_dir.wgsl" with { type: "text" };
+import screenRateWgsl from "../wgsl/loft_screen_rate.wgsl" with { type: "text" };
 import { abs, add, cross, div, dot, exp, f, floor, fract, gt, lift, log, max, min, mix, mul, normalize, saturate, select, smoothstep, sqrt, sub, vec2, vec3, lib, type Expr, type In, type LibFn } from "../expr.ts";
 import { luminance } from "../lib/index.ts";
 import { hash2 } from "../lib/noise.ts";
@@ -259,7 +262,7 @@ export type LightName = keyof typeof LIGHT;
 // ---- what a camera and a surface know ---------------------------------------------------------------------------------
 
 /** The unit direction from the picture toward the eye, one for the whole frame (minus the camera's forward). GPU-only. */
-const TOWARD_EYE: LibFn = { js: "gpu-only", name: "loft_toward_eye", ret: "vec3", wgsl: "fn loft_toward_eye() -> vec3<f32> { return -frame.forward.xyz; }" };
+export const TOWARD_EYE: LibFn = { js: "gpu-only", name: "loft_toward_eye", ret: "vec3", wgsl: towardEyeWgsl };
 const towardEye = (...args: In[]): Expr<"vec3"> => lib<"vec3">(TOWARD_EYE, ...args);
 
 /**
@@ -270,23 +273,14 @@ const towardEye = (...args: In[]): Expr<"vec3"> => lib<"vec3">(TOWARD_EYE, ...ar
  * (First tried as dP/dm from the derivatives of the body coordinates: on an end cap that is radial, not the spine, and
  * it stepped from triangle to triangle; the face printed sawteeth. 2026-11-12.)
  */
-const LONG_DIR: LibFn = { js: "gpu-only",
+export const LONG_DIR: LibFn = { js: "gpu-only",
   name: "loft_long_dir", ret: "vec3",
-  wgsl: /* wgsl */ `fn loft_long_dir(p: vec3<f32>, n: vec3<f32>, s: f32) -> vec3<f32> {
-  let px = dpdx(p);
-  let py = dpdy(p);
-  let det = dot(n, cross(px, py));
-  let g = (cross(py, n) * dpdx(s) + cross(n, px) * dpdy(s)) / select(1.0, det, abs(det) > 1e-12);
-  let l = length(g);
-  // Its direction, weighted by how much of a shaft this is: the gradient's size wanders with every bulge of the skin
-  // (and from one triangle to the next), and a threshold scaled by it stepped along the grid.
-  return select(vec3<f32>(0.0), g / max(l, 1e-6) * smoothstep(0.25, 0.6, l), abs(det) > 1e-12 && l < 4.0);
-}`,
+  wgsl: longDirWgsl,
 };
 const longDir = (...args: In[]): Expr<"vec3"> => lib<"vec3">(LONG_DIR, ...args);
 
 /** How fast a value changes across the screen, per pixel (the length of its screen gradient). Fragment stage only. */
-const SCREEN_RATE: LibFn = { js: "gpu-only", name: "loft_screen_rate", ret: "f32", wgsl: "fn loft_screen_rate(x: f32) -> f32 { return length(vec2<f32>(dpdx(x), dpdy(x))); }" };
+export const SCREEN_RATE: LibFn = { js: "gpu-only", name: "loft_screen_rate", ret: "f32", wgsl: screenRateWgsl };
 const screenRate = (...args: In[]): Expr<"f32"> => lib<"f32">(SCREEN_RATE, ...args);
 
 /** The key light's direction. One handler per kind. */

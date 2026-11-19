@@ -1,0 +1,1 @@
+fn loft_screen_rate(x: f32) -> f32 { return length(vec2<f32>(dpdx(x), dpdy(x))); }

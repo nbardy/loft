@@ -1,0 +1,1 @@
+fn loft_corner3(i: vec3<u32>, d: vec3<f32>) -> f32 { return dot(loft_grad3(loft_h3(i.x, i.y, i.z)), d); }

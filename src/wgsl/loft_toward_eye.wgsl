@@ -1,0 +1,1 @@
+fn loft_toward_eye() -> vec3<f32> { return -frame.forward.xyz; }

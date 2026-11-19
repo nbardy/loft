@@ -1,0 +1,1 @@
+fn loft_h2(x: u32, y: u32) -> u32 { return loft_pcg(x + loft_pcg(y)); }

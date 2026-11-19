@@ -24,6 +24,9 @@
 //
 // Imports no bun-only module (the browser host uses it).
 
+import depthResolveWgsl from "../wgsl/depth_resolve.wgsl" with { type: "text" };
+import clearanceWgsl from "../wgsl/clearance.wgsl" with { type: "text" };
+import { assertWgslNumbers } from "../wgsl/assert_numbers.ts";
 import { CLEARANCE_MAX, CLEARANCE_SCALE, CLEARANCE_TILE, CURVE_N, DETAIL_SLOTS, PASS_CAMERA_VEC4S, POSE_WORKGROUP, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, passBindingsWgsl, type Artefact, type ArtefactPass, type AuthorLines, type Draw, type DrawDepth, type TextureSize } from "../artefact.ts";
 import { SceneError } from "../errors.ts";
 import { authorLines } from "../authored.ts";
@@ -45,19 +48,8 @@ const DRAWN: readonly Stage[] = ["VERTEX", "FRAGMENT"];
 const ALL: readonly Stage[] = ["VERTEX", "FRAGMENT", "COMPUTE"];
 
 // The nearest of each pixel's samples (SCENE_DEPTH_WGSL's comment says why the minimum and not the mean).
-const DEPTH_RESOLVE_WGSL = /* wgsl */ `
-@group(0) @binding(0) var depth_x4: texture_depth_multisampled_2d;
-@vertex fn vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
-  let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-  return vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-}
-@fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-  let c = vec2<i32>(floor(p.xy));
-  var d = textureLoad(depth_x4, c, 0);
-  for (var i = 1; i < ${SAMPLES}; i++) { d = min(d, textureLoad(depth_x4, c, i)); }
-  return vec4<f32>(d, 0.0, 0.0, 1.0);
-}
-`;
+export const DEPTH_RESOLVE_WGSL = depthResolveWgsl;
+assertWgslNumbers("depth_resolve.wgsl", DEPTH_RESOLVE_WGSL, `i < ${SAMPLES};`);
 
 /** cover_vs draws one full-screen triangle: these many vertices, in every clearance pass (view and colour passes). */
 const CLEARANCE_VERTICES = 3;
@@ -81,58 +73,12 @@ const CLEARANCE_VERTICES = 3;
  * own, and is read at its own offset too). Measured: with one fragment per 8 x 8 tile reading 64 depths the first pass
  * was the largest (16,000 fragments too few to hide the reads' latency); per 4 x 4, four times as many fragments.
  */
-const CLEARANCE_WGSL = /* wgsl */ `
-@group(0) @binding(0) var src: texture_2d<f32>;
-@group(0) @binding(1) var near: sampler;
-const TILE: i32 = ${CLEARANCE_TILE};
-const QUAD: i32 = ${CLEARANCE_TILE / 2};
-const REACH: i32 = 7;
-fn view() -> vec2<i32> { return vec2<i32>(textureDimensions(src)); }
-fn cells(side: i32) -> vec2<i32> { return (view() + side - 1) / side; }
-fn tiles() -> vec2<i32> { return cells(TILE); }
-fn gap(d: i32) -> f32 { return max(0.0, f32(TILE * abs(d) - (TILE - 1))); }
-@vertex fn cover_vs(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
-  let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-  return vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-}
-@fragment fn quads_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-  if (any(vec2<i32>(floor(p.xy)) >= cells(QUAD))) { discard; }
-  // Four gathers of 2 x 2 depths, at the corners between them; clamp-to-edge repeats the image's last texels.
-  let o = floor(p.xy) * f32(QUAD);
-  let size = vec2<f32>(view());
-  let m = min(min(textureGather(0, src, near, (o + vec2<f32>(1.0, 1.0)) / size), textureGather(0, src, near, (o + vec2<f32>(3.0, 1.0)) / size)),
-              min(textureGather(0, src, near, (o + vec2<f32>(1.0, 3.0)) / size), textureGather(0, src, near, (o + vec2<f32>(3.0, 3.0)) / size)));
-  return vec4<f32>(select(0.0, 1.0, min(min(m.x, m.y), min(m.z, m.w)) < 1.0), 0.0, 0.0, 1.0);
-}
-@fragment fn rows_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-  let t = vec2<i32>(floor(p.xy));
-  if (any(t >= tiles())) { discard; }
-  let last = tiles() - 1;
-  let size = vec2<f32>(view());
-  var k = REACH + 1;
-  for (var dx = -REACH; dx <= REACH; dx++) {
-    // Tile s's four quads (quads past the image's edge were never drawn and read 0).
-    let s = clamp(t + vec2<i32>(dx, 0), vec2<i32>(0), last);
-    let q = textureGather(0, src, near, (vec2<f32>(s * 2) + 1.0) / size);
-    let opaque = max(max(q.x, q.y), max(q.z, q.w)) > 0.5;
-    k = min(k, select(REACH + 1, abs(dx), opaque));
-  }
-  // The tile offset, an integer, exact in 8 bits.
-  return vec4<f32>(f32(k) / 255.0, 0.0, 0.0, 1.0);
-}
-@fragment fn clear_fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
-  let t = vec2<i32>(floor(p.xy));
-  if (any(t >= tiles())) { discard; }
-  let last = tiles() - 1;
-  var d2 = 1e8;
-  for (var dy = -REACH; dy <= REACH; dy++) {
-    let k = i32(round(textureLoad(src, clamp(t + vec2<i32>(0, dy), vec2<i32>(0), last), 0).x * 255.0));
-    let gx = gap(k);
-    d2 = min(d2, select(1e8, gx * gx + gap(dy) * gap(dy), k <= REACH));
-  }
-  return vec4<f32>(min(sqrt(d2), ${CLEARANCE_MAX}.0) / ${CLEARANCE_SCALE}.0, 0.0, 0.0, 1.0);
-}
-`;
+export const CLEARANCE_WGSL = clearanceWgsl;
+assertWgslNumbers("clearance.wgsl", CLEARANCE_WGSL,
+  `const TILE: i32 = ${CLEARANCE_TILE};`,
+  `const QUAD: i32 = ${CLEARANCE_TILE / 2};`,
+  `min(sqrt(d2), ${CLEARANCE_MAX}.0) / ${CLEARANCE_SCALE}.0,`,
+);
 
 const BLEND: Record<Draw["blend"], GPUBlendState | undefined> = {
   none: undefined,

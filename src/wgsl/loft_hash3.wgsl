@@ -1,0 +1,1 @@
+fn loft_hash3(p: vec3<f32>) -> f32 { return loft_unit(loft_h3(loft_lat(p.x), loft_lat(p.y), loft_lat(p.z))); }

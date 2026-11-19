@@ -15,6 +15,11 @@
 //   (`sceneWgsl`) and holds its per-frame tables. Hosts build EXPLICIT bind group layouts for both groups, with
 //   every binding visible to vertex and fragment stages, because a shader may use any subset.
 
+import preludeWgsl from "./wgsl/prelude.wgsl" with { type: "text" };
+import sceneDepthWgsl from "./wgsl/scene_depth.wgsl" with { type: "text" };
+import sceneClearanceWgsl from "./wgsl/scene_clearance.wgsl" with { type: "text" };
+import postWgsl from "./wgsl/post.wgsl" with { type: "text" };
+import { assertWgslNumbers } from "./wgsl/assert_numbers.ts";
 import type { NumTy } from "./expr.ts";
 import type { CompiledCompute } from "./compile/compute.ts";
 
@@ -28,33 +33,11 @@ export const CURVE_N = 64;
 export const DETAIL_SLOTS = 4096;
 
 /** Prepended by the host to every shader module, before `Artefact.sceneWgsl` and the shader itself. */
-export const PRELUDE_WGSL = /* wgsl */ `
-struct Frame {
-  view_proj: mat4x4<f32>,
-  inv_view_proj: mat4x4<f32>,
-  eye: vec4<f32>,       // xyz: eye position in world space. w: 1 perspective, 0 orthographic
-  forward: vec4<f32>,   // xyz: unit view direction (the ray direction for an orthographic camera)
-  viewport: vec4<f32>,  // width, height, 1 / width, 1 / height, in pixels
-  time: vec4<f32>,      // x: seconds
-};
-@group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var<storage, read> inputs: array<f32>;        // host inputs, by slot
-@group(0) @binding(2) var<storage, read> params: array<f32>;        // tunable numbers, by slot
-@group(0) @binding(3) var<storage, read> curves: array<vec4<f32>>;  // rows of CURVE_N samples
-@group(0) @binding(4) var<uniform> loft_detail: array<vec4<f32>, ${DETAIL_SLOTS}>;  // per-frame level of detail (Draw.detail)
-
-const CURVE_N: u32 = ${CURVE_N}u;
-/// Sample curve row \`r\` at x in [0, 1]: linear interpolation, clamped at the ends.
-fn curve(r: u32, x: f32) -> vec4<f32> {
-  let s = clamp(x, 0.0, 1.0) * f32(CURVE_N - 1u);
-  let i = min(u32(floor(s)), CURVE_N - 2u);
-  return mix(curves[r * CURVE_N + i], curves[r * CURVE_N + i + 1u], s - f32(i));
-}
-/// Unit direction from the eye toward a world point (the camera's forward direction when orthographic).
-fn view_dir(world: vec3<f32>) -> vec3<f32> {
-  return normalize(mix(frame.forward.xyz, world - frame.eye.xyz, frame.eye.w));
-}
-`;
+export const PRELUDE_WGSL = preludeWgsl;
+assertWgslNumbers("prelude.wgsl", PRELUDE_WGSL,
+  `loft_detail: array<vec4<f32>, ${DETAIL_SLOTS}>;`,
+  `const CURVE_N: u32 = ${CURVE_N}u;`,
+);
 
 /**
  * Prepended by the host to the shader of a draw with `sceneDepth` set, right after PRELUDE_WGSL (it reads `frame`)
@@ -74,21 +57,7 @@ fn view_dir(world: vec3<f32>) -> vec3<f32> {
  * neighbour lookup at the border repeats the edge pixel instead of reading out of bounds.
  * `scene_position` reconstructs with `frame.inv_view_proj`; where scene_depth is 1 it returns a point on the far plane.
  */
-export const SCENE_DEPTH_WGSL = /* wgsl */ `
-@group(2) @binding(0) var loft_scene_depth: texture_2d<f32>;
-
-/// Opaque scene depth at pixel px: 0 near to 1 far; 1 where no opaque surface is.
-fn scene_depth(px: vec2<f32>) -> f32 {
-  let size = vec2<i32>(textureDimensions(loft_scene_depth));
-  return textureLoad(loft_scene_depth, clamp(vec2<i32>(floor(px)), vec2<i32>(0), size - 1), 0).x;
-}
-/// World position of the opaque surface seen at pixel px (on the far plane where there is none).
-fn scene_position(px: vec2<f32>) -> vec3<f32> {
-  let ndc = vec2<f32>(px.x * frame.viewport.z * 2.0 - 1.0, 1.0 - px.y * frame.viewport.w * 2.0);
-  let h = frame.inv_view_proj * vec4<f32>(ndc, scene_depth(px), 1.0);
-  return h.xyz / h.w;
-}
-`;
+export const SCENE_DEPTH_WGSL = sceneDepthWgsl;
 
 /** Side of the clearance map's tiles, pixels (SCENE_CLEARANCE_WGSL). */
 export const CLEARANCE_TILE = 8;
@@ -112,16 +81,12 @@ export const CLEARANCE_SCALE = 64;
  * (src/host/lower.ts). A reader that looks at scene depth only within distance d of px may skip the looking where
  * scene_clearance(px) > d: nothing opaque is there (the sea's contact band, src/geom/sea.ts).
  */
-export const SCENE_CLEARANCE_WGSL = /* wgsl */ `
-@group(2) @binding(1) var loft_scene_clearance: texture_2d<f32>;
-
-/// Lower bound on the distance in pixels from pixel px to any opaque pixel (at most ${CLEARANCE_MAX}.0).
-fn scene_clearance(px: vec2<f32>) -> f32 {
-  let size = vec2<i32>(textureDimensions(loft_scene_depth));
-  let c = textureLoad(loft_scene_clearance, clamp(vec2<i32>(floor(px)), vec2<i32>(0), size - 1) / ${CLEARANCE_TILE}, 0).x;
-  return c * ${CLEARANCE_SCALE}.0 - ${(0.5 / 255) * CLEARANCE_SCALE + 0.005};
-}
-`;
+export const SCENE_CLEARANCE_WGSL = sceneClearanceWgsl;
+assertWgslNumbers("scene_clearance.wgsl", SCENE_CLEARANCE_WGSL,
+  `(at most ${CLEARANCE_MAX}.0).`,
+  `/ ${CLEARANCE_TILE}, 0).x;`,
+  `return c * ${CLEARANCE_SCALE}.0 - ${(0.5 / 255) * CLEARANCE_SCALE + 0.005};`,
+);
 
 /**
  * Prepended by the host to the shader of every post pass, right after PRELUDE_WGSL and before `Artefact.sceneWgsl`.
@@ -139,22 +104,7 @@ fn scene_clearance(px: vec2<f32>) -> f32 {
  * Groups 0 and 1 are bound as for draws. The output target is rgba8unorm, single-sampled, view-sized; the last
  * pass writes the frame. `post_color` at a pixel centre returns that pixel exactly (bilinear weights are 1 and 0).
  */
-export const POST_WGSL = /* wgsl */ `${SCENE_DEPTH_WGSL}
-@group(2) @binding(1) var loft_post_colour: texture_2d<f32>;
-@group(2) @binding(2) var loft_post_sampler: sampler;
-
-struct PostIn { @builtin(position) px: vec4<f32>, @location(0) uv: vec2<f32> };
-
-@vertex fn post_vs(@builtin(vertex_index) vi: u32) -> PostIn {
-  // (0,0), (2,0), (0,2) in uv: one triangle whose inside covers the whole viewport.
-  let uv = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
-  return PostIn(vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0), uv);
-}
-/// The picture so far at uv (0..1, v down), bilinearly filtered, clamped at the edges.
-fn post_color(uv: vec2<f32>) -> vec4<f32> {
-  return textureSampleLevel(loft_post_colour, loft_post_sampler, uv, 0.0);
-}
-`;
+export const POST_WGSL = SCENE_DEPTH_WGSL + postWgsl;
 
 export type Camera =
   | { readonly kind: "perspective"; readonly eye: readonly [number, number, number]; readonly target: readonly [number, number, number]; readonly fovY: number }

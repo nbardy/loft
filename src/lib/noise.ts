@@ -4,6 +4,23 @@
 // Lattice coordinates are `floor(p)` cast through i32 (then reinterpreted as u32), so negative cells hash the same on
 // both sides. The CPU twin uses `Math.imul` and `>>> 0` for the u32 wrap-around. Coordinates beyond +-2^31 are out of
 // range (WGSL saturates the cast, JavaScript wraps); nothing in a scene is that far from the origin.
+import loftPcg from "../wgsl/loft_pcg.wgsl" with { type: "text" };
+import loftUnit from "../wgsl/loft_unit.wgsl" with { type: "text" };
+import loftLat from "../wgsl/loft_lat.wgsl" with { type: "text" };
+import loftH2 from "../wgsl/loft_h2.wgsl" with { type: "text" };
+import loftH3 from "../wgsl/loft_h3.wgsl" with { type: "text" };
+import loftGrad2 from "../wgsl/loft_grad2.wgsl" with { type: "text" };
+import loftGrad3 from "../wgsl/loft_grad3.wgsl" with { type: "text" };
+import loftCorner3 from "../wgsl/loft_corner3.wgsl" with { type: "text" };
+import loftHash2 from "../wgsl/loft_hash2.wgsl" with { type: "text" };
+import loftHash3 from "../wgsl/loft_hash3.wgsl" with { type: "text" };
+import loftHash22 from "../wgsl/loft_hash22.wgsl" with { type: "text" };
+import loftHash33 from "../wgsl/loft_hash33.wgsl" with { type: "text" };
+import loftNoise2 from "../wgsl/loft_noise2.wgsl" with { type: "text" };
+import loftNoise3 from "../wgsl/loft_noise3.wgsl" with { type: "text" };
+import loftCellular2 from "../wgsl/loft_cellular2.wgsl" with { type: "text" };
+import loftCellular3 from "../wgsl/loft_cellular3.wgsl" with { type: "text" };
+import { assertWgslNumbers } from "../wgsl/assert_numbers.ts";
 import { add, div, f, lift, lib, mul, TAU, type Expr, type In, type LibFn } from "../expr.ts";
 
 // ---- integer hash, twice ------------------------------------------------------------------------------------------
@@ -22,27 +39,15 @@ const h3u = (x: number, y: number, z: number): number => pcg((x + pcg((y + pcg(z
 // Helper functions the public ones call. They are never called from an expression, so their CPU twin is "gpu-only".
 const helper = (name: string, ret: LibFn["ret"], wgsl: string, deps: readonly LibFn[] = []): LibFn => ({ name, ret, wgsl, js: "gpu-only", deps });
 
-const PCG = helper("loft_pcg", "f32", `fn loft_pcg(v: u32) -> u32 {
-  let s = v * 747796405u + 2891336453u;
-  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
-  return (w >> 22u) ^ w;
-}`);
-const UNIT = helper("loft_unit", "f32", `fn loft_unit(h: u32) -> f32 { return f32(h >> 8u) * (1.0 / 16777216.0); }`);
-const LAT = helper("loft_lat", "f32", `fn loft_lat(x: f32) -> u32 { return bitcast<u32>(i32(floor(x))); }`);
-const H2 = helper("loft_h2", "f32", `fn loft_h2(x: u32, y: u32) -> u32 { return loft_pcg(x + loft_pcg(y)); }`, [PCG]);
-const H3 = helper("loft_h3", "f32", `fn loft_h3(x: u32, y: u32, z: u32) -> u32 { return loft_pcg(x + loft_pcg(y + loft_pcg(z))); }`, [PCG]);
-const GRAD2 = helper("loft_grad2", "vec2", `fn loft_grad2(h: u32) -> vec2<f32> {
-  let a = loft_unit(h) * 6.283185307179586;
-  return vec2<f32>(cos(a), sin(a));
-}`, [UNIT]);
+const PCG = helper("loft_pcg", "f32", loftPcg);
+const UNIT = helper("loft_unit", "f32", loftUnit);
+const LAT = helper("loft_lat", "f32", loftLat);
+const H2 = helper("loft_h2", "f32", loftH2, [PCG]);
+const H3 = helper("loft_h3", "f32", loftH3, [PCG]);
+const GRAD2 = helper("loft_grad2", "vec2", loftGrad2, [UNIT]);
 // A direction uniform on the sphere: z uniform in [-1, 1], azimuth uniform. (1-z)(1+z) rather than 1-z*z keeps the
 // radius accurate in f32 near the poles, where 1-z*z cancels.
-const GRAD3 = helper("loft_grad3", "vec3", `fn loft_grad3(h: u32) -> vec3<f32> {
-  let z = 1.0 - 2.0 * loft_unit(h);
-  let a = loft_unit(loft_pcg(h)) * 6.283185307179586;
-  let r = sqrt((1.0 - z) * (1.0 + z));
-  return vec3<f32>(r * cos(a), r * sin(a), z);
-}`, [UNIT, PCG]);
+const GRAD3 = helper("loft_grad3", "vec3", loftGrad3, [UNIT, PCG]);
 const grad2 = (h: number): [number, number] => { const a = unit(h) * TAU; return [Math.cos(a), Math.sin(a)]; };
 const grad3 = (h: number): [number, number, number] => {
   const z = 1 - 2 * unit(h), a = unit(pcg(h)) * TAU, r = Math.sqrt((1 - z) * (1 + z));
@@ -53,29 +58,22 @@ const grad3 = (h: number): [number, number, number] => {
 
 const HASH2 = {
   name: "loft_hash2", ret: "f32", deps: [H2, LAT, UNIT],
-  wgsl: `fn loft_hash2(p: vec2<f32>) -> f32 { return loft_unit(loft_h2(loft_lat(p.x), loft_lat(p.y))); }`,
+  wgsl: loftHash2,
   js: (p: number[]) => unit(h2u(lat(p[0]), lat(p[1]))),
 } satisfies LibFn;
 const HASH3 = {
   name: "loft_hash3", ret: "f32", deps: [H3, LAT, UNIT],
-  wgsl: `fn loft_hash3(p: vec3<f32>) -> f32 { return loft_unit(loft_h3(loft_lat(p.x), loft_lat(p.y), loft_lat(p.z))); }`,
+  wgsl: loftHash3,
   js: (p: number[]) => unit(h3u(lat(p[0]), lat(p[1]), lat(p[2]))),
 } satisfies LibFn;
 const HASH22 = {
   name: "loft_hash22", ret: "vec2", deps: [H2, LAT, UNIT, PCG],
-  wgsl: `fn loft_hash22(p: vec2<f32>) -> vec2<f32> {
-  let h = loft_h2(loft_lat(p.x), loft_lat(p.y));
-  return vec2<f32>(loft_unit(h), loft_unit(loft_pcg(h)));
-}`,
+  wgsl: loftHash22,
   js: (p: number[]) => { const h = h2u(lat(p[0]), lat(p[1])); return [unit(h), unit(pcg(h))]; },
 } satisfies LibFn;
 const HASH33 = {
   name: "loft_hash33", ret: "vec3", deps: [H3, LAT, UNIT, PCG],
-  wgsl: `fn loft_hash33(p: vec3<f32>) -> vec3<f32> {
-  let h = loft_h3(loft_lat(p.x), loft_lat(p.y), loft_lat(p.z));
-  let h1 = loft_pcg(h);
-  return vec3<f32>(loft_unit(h), loft_unit(h1), loft_unit(loft_pcg(h1)));
-}`,
+  wgsl: loftHash33,
   js: (p: number[]) => { const h = h3u(lat(p[0]), lat(p[1]), lat(p[2])), h1 = pcg(h); return [unit(h), unit(h1), unit(pcg(h1))]; },
 } satisfies LibFn;
 
@@ -93,22 +91,14 @@ export const hash33 = (p: In<"vec3">): Expr<"vec3"> => lib<"vec3">(HASH33, p);
 // With unit gradients the 2D maximum is sqrt(2)/2 and the 3D maximum is sqrt(3)/2; these scales bring both to 1.
 const SCALE2 = Math.SQRT2;
 const SCALE3 = 2 / Math.sqrt(3);
+assertWgslNumbers("loft_noise2.wgsl", loftNoise2, `u.y) * ${SCALE2};`);
+assertWgslNumbers("loft_noise3.wgsl", loftNoise3, `u.z) * ${SCALE3};`);
 const quintic = (t: number): number => t * t * t * (t * (t * 6 - 15) + 10);
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
 const NOISE2 = {
   name: "loft_noise2", ret: "f32", deps: [H2, LAT, GRAD2],
-  wgsl: `fn loft_noise2(p: vec2<f32>) -> f32 {
-  let ix = loft_lat(p.x);
-  let iy = loft_lat(p.y);
-  let f = p - floor(p);
-  let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  let a = dot(loft_grad2(loft_h2(ix, iy)), f);
-  let b = dot(loft_grad2(loft_h2(ix + 1u, iy)), f - vec2<f32>(1.0, 0.0));
-  let c = dot(loft_grad2(loft_h2(ix, iy + 1u)), f - vec2<f32>(0.0, 1.0));
-  let d = dot(loft_grad2(loft_h2(ix + 1u, iy + 1u)), f - vec2<f32>(1.0, 1.0));
-  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y) * ${SCALE2};
-}`,
+  wgsl: loftNoise2,
   js: (p: number[]) => {
     const ix = lat(p[0]), iy = lat(p[1]);
     const x = p[0] - Math.floor(p[0]), y = p[1] - Math.floor(p[1]);
@@ -121,25 +111,10 @@ const NOISE2 = {
   },
 } satisfies LibFn;
 
-const CORNER3 = helper("loft_corner3", "f32", `fn loft_corner3(i: vec3<u32>, d: vec3<f32>) -> f32 { return dot(loft_grad3(loft_h3(i.x, i.y, i.z)), d); }`, [H3, GRAD3]);
+const CORNER3 = helper("loft_corner3", "f32", loftCorner3, [H3, GRAD3]);
 const NOISE3 = {
   name: "loft_noise3", ret: "f32", deps: [CORNER3, LAT],
-  wgsl: `fn loft_noise3(p: vec3<f32>) -> f32 {
-  let i = vec3<u32>(loft_lat(p.x), loft_lat(p.y), loft_lat(p.z));
-  let f = p - floor(p);
-  let u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-  let c000 = loft_corner3(i, f);
-  let c100 = loft_corner3(i + vec3<u32>(1u, 0u, 0u), f - vec3<f32>(1.0, 0.0, 0.0));
-  let c010 = loft_corner3(i + vec3<u32>(0u, 1u, 0u), f - vec3<f32>(0.0, 1.0, 0.0));
-  let c110 = loft_corner3(i + vec3<u32>(1u, 1u, 0u), f - vec3<f32>(1.0, 1.0, 0.0));
-  let c001 = loft_corner3(i + vec3<u32>(0u, 0u, 1u), f - vec3<f32>(0.0, 0.0, 1.0));
-  let c101 = loft_corner3(i + vec3<u32>(1u, 0u, 1u), f - vec3<f32>(1.0, 0.0, 1.0));
-  let c011 = loft_corner3(i + vec3<u32>(0u, 1u, 1u), f - vec3<f32>(0.0, 1.0, 1.0));
-  let c111 = loft_corner3(i + vec3<u32>(1u, 1u, 1u), f - vec3<f32>(1.0, 1.0, 1.0));
-  let z0 = mix(mix(c000, c100, u.x), mix(c010, c110, u.x), u.y);
-  let z1 = mix(mix(c001, c101, u.x), mix(c011, c111, u.x), u.y);
-  return mix(z0, z1, u.z) * ${SCALE3};
-}`,
+  wgsl: loftNoise3,
   js: (p: number[]) => {
     const ix = lat(p[0]), iy = lat(p[1]), iz = lat(p[2]);
     const x = p[0] - Math.floor(p[0]), y = p[1] - Math.floor(p[1]), z = p[2] - Math.floor(p[2]);
@@ -211,25 +186,7 @@ export function fbm3(p: In<"vec3">, spec: Fbm): Expr<"f32"> {
 // true second-nearest point when the jitter is extreme; both backends search identically, so they still agree.
 const CELLULAR2 = {
   name: "loft_cellular2", ret: "vec4", deps: [H2, LAT, UNIT, PCG],
-  wgsl: `fn loft_cellular2(p: vec2<f32>) -> vec4<f32> {
-  let ix = loft_lat(p.x);
-  let iy = loft_lat(p.y);
-  let f = p - floor(p);
-  var d1 = 8.0;
-  var d2 = 8.0;
-  var near = vec2<f32>(0.0);
-  for (var j = -1; j <= 1; j++) {
-    for (var i = -1; i <= 1; i++) {
-      let h = loft_h2(ix + bitcast<u32>(i), iy + bitcast<u32>(j));
-      let site = vec2<f32>(f32(i), f32(j)) + vec2<f32>(loft_unit(h), loft_unit(loft_pcg(h)));
-      let r = site - f;
-      let d = dot(r, r);
-      // floor(p) + site, not p + r: the same bits at every pixel of the cell, so a hash of it is one colour.
-      if (d < d1) { d2 = d1; d1 = d; near = floor(p) + site; } else if (d < d2) { d2 = d; }
-    }
-  }
-  return vec4<f32>(sqrt(d1), sqrt(d2), near);
-}`,
+  wgsl: loftCellular2,
   js: (p: number[]) => {
     const ix = lat(p[0]), iy = lat(p[1]);
     const x = p[0] - Math.floor(p[0]), y = p[1] - Math.floor(p[1]);
@@ -247,26 +204,7 @@ const CELLULAR2 = {
 
 const CELLULAR3 = {
   name: "loft_cellular3", ret: "vec2", deps: [H3, LAT, UNIT, PCG],
-  wgsl: `fn loft_cellular3(p: vec3<f32>) -> vec2<f32> {
-  let ix = loft_lat(p.x);
-  let iy = loft_lat(p.y);
-  let iz = loft_lat(p.z);
-  let f = p - floor(p);
-  var d1 = 8.0;
-  var d2 = 8.0;
-  for (var k = -1; k <= 1; k++) {
-    for (var j = -1; j <= 1; j++) {
-      for (var i = -1; i <= 1; i++) {
-        let h = loft_h3(ix + bitcast<u32>(i), iy + bitcast<u32>(j), iz + bitcast<u32>(k));
-        let h1 = loft_pcg(h);
-        let r = vec3<f32>(f32(i), f32(j), f32(k)) + vec3<f32>(loft_unit(h), loft_unit(h1), loft_unit(loft_pcg(h1))) - f;
-        let d = dot(r, r);
-        if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) { d2 = d; }
-      }
-    }
-  }
-  return vec2<f32>(sqrt(d1), sqrt(d2));
-}`,
+  wgsl: loftCellular3,
   js: (p: number[]) => {
     const ix = lat(p[0]), iy = lat(p[1]), iz = lat(p[2]);
     const x = p[0] - Math.floor(p[0]), y = p[1] - Math.floor(p[1]), z = p[2] - Math.floor(p[2]);
