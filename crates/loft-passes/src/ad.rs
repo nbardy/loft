@@ -528,7 +528,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::Kernel(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::Kernel(_) | Item::Bake(_) | Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }

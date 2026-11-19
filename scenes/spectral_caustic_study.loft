@@ -1,0 +1,91 @@
+# A still life using the reference path schedule with spectral transport and
+# light tracing for paths through transmissive objects onto the paper.
+space World
+use engines::spectral_caustic
+
+fn study_curve(a: v2, b: v2, c: v2, d: v2, t: f) -> v2 {
+  mix(mix(mix(a, b, t), mix(b, c, t), t), mix(mix(b, c, t), mix(c, d, t), t), t)
+}
+
+fn study_stroke(p: v2, a: v2, b: v2, c: v2, d: v2) -> f {
+  var best = 100.0
+  var prev = a
+  for i in 1..17 {
+    let q = study_curve(a, b, c, d, f32(i) / 16.0)
+    let v = q - prev
+    let u = clamp(dot(p - prev, v) / max(dot(v, v), 0.000001), 0.0, 1.0)
+    best = min(best, length(p - (prev + u * v)))
+    prev = q
+  }
+  best
+}
+
+fn study_ink(p: v2) -> f {
+  let a = study_stroke(p, [-0.83, 0.43], [-0.64, 0.32], [-0.62, 0.04], [-0.77, 0.26])
+  let b = study_stroke(p, [-0.77, 0.26], [-0.58, 0.55], [-0.49, 0.14], [-0.57, 0.36])
+  let c = study_stroke(p, [-0.57, 0.36], [-0.31, 0.64], [-0.59, 0.48], [-0.42, 0.39])
+  let d = study_stroke(p, [-0.42, 0.39], [-0.18, 0.26], [-0.34, 0.61], [-0.15, 0.4])
+  min(min(a,b), min(c,d)) - 0.008
+}
+
+bake_tex StudyInk 512x512 r16float on load mips(true) (uv: v2) {
+  study_ink(2.0 * uv - [1.0, 1.0])
+}
+
+kind StudyOptic @World (center: p3@World, half: rgb, bevel: f > 0, ior: f, dispersion: f, absorb: rgb) {
+  trace(p) = round_box(p - center, half, bevel)
+  material(p, n) = spectral_dielectric(ior, dispersion, absorb)
+}
+
+kind StudyBead @World (center: p3@World, radius: f > 0, ior: f, dispersion: f, absorb: rgb) {
+  trace(p) = sphere(p - center, radius)
+  material(p, n) = spectral_dielectric(ior, dispersion, absorb)
+}
+
+kind StudyPaper @World () {
+  trace(p) = box_sdf(p - [0, -0.011, 0]@World, [1.11, 0.011, 0.93])
+  material(p, n) {
+    let spot = p.xz - [0.42, 0.29]
+    let drip = p.xz - [0.66, 0.42]
+    let wetness = clamp(exp(-20.0 * dot(spot, spot)) + 0.5 * exp(-75.0 * dot(drip, drip)), 0.0, 1.0)
+    let stroke = study_ink(p.xz)
+    let ink = 1.0 - smoothstep(-0.006, 0.005 + 0.024 * wetness, stroke)
+    let pigment = mix([0.86, 0.75, 0.53], [0.022, 0.014, 0.023], ink)
+    mix_bsdf(ggx(pigment, 0.89, 0), ggx(pigment * [0.63, 0.58, 0.48], 0.23, 0), wetness)
+  }
+}
+
+kind StudyDesk @World () {
+  trace(p) = box_sdf(p - [0, -0.11, 0]@World, [1.96, 0.08, 1.53])
+  material(p, n) {
+    let vein = 0.5 + 0.5 * sin(34.0 * p.x + 3.8 * sin(3.4 * p.z) + 0.5 * sin(17.5 * p.x))
+    let grain = vein * vein * vein
+    ggx(mix([0.049, 0.027, 0.012], [0.17, 0.074, 0.029], grain), 0.43, 0)
+  }
+}
+
+build {
+  emit StudyDesk()
+  emit StudyPaper()
+  emit StudyOptic(center: [0.03, 0.51, -0.10]@World, half: [0.40, 0.506, 0.40], bevel: 0.054,
+    ior: 1.50, dispersion: 0.006, absorb: [2.3, 0.14, 1.02])
+  emit StudyOptic(center: [0.03, 0.39, -0.10]@World, half: [0.33, 0.31, 0.33], bevel: 0.033,
+    ior: 1.32, dispersion: 0.003, absorb: [0.25, 0.008, 0.11])
+  emit StudyBead(center: [0.18, 0.56, 0.09]@World, radius: 0.052, ior: 1.0, dispersion: 0, absorb: [0.0, 0.0, 0.0])
+  emit StudyBead(center: [-0.13, 0.35, 0.14]@World, radius: 0.028, ior: 1.0, dispersion: 0, absorb: [0.0, 0.0, 0.0])
+  emit StudyBead(center: [0.42, 0.079, 0.29]@World, radius: 0.075, ior: 1.32, dispersion: 0.003, absorb: [0.23, 0.01, 0.1])
+  emit StudyBead(center: [0.66, 0.033, 0.42]@World, radius: 0.031, ior: 1.32, dispersion: 0.003, absorb: [0.23, 0.01, 0.1])
+  emit Sun(dir: dir([-0.55, 0.86, -0.24]@World), color: [7.1, 6.0, 4.4])
+  emit Sky(zenith: [0.14, 0.23, 0.37], horizon: [0.34, 0.3, 0.25])
+}
+
+schedule Study {
+  type Radiance = v4
+  orbit(at: [0.0, 0.30, 0.0], radius: 3.15, height: 1.57, period: 24, fov: 37deg)
+  cull_indirect(StudyDesk, StudyPaper, StudyOptic, StudyBead)
+  render_bundle(Vis64) { draw_indirect(StudyDesk, StudyPaper, StudyOptic, StudyBead) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.55, 0.86, -0.24])
+  screen_pass(spectral_sample, bounces: 16, lens_radius: 0.014, focus: 3.49)
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

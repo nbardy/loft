@@ -378,6 +378,9 @@ impl<'src> Parser<'src, '_> {
                 value,
             }));
         }
+        if self.eat("bake_tex") {
+            return self.bake_tex().map(Item::Bake);
+        }
         if self.eat("kind") {
             return self.kind().map(Item::Kind);
         }
@@ -580,6 +583,54 @@ impl<'src> Parser<'src, '_> {
             "declare a v1 item or put row generation inside build { ... }",
         ))
     }
+    fn bake_tex(&mut self) -> Res<BakeDecl> {
+        let name = self.upper_ident()?;
+        let cube = self.eat("cube");
+        let grid = self.cur();
+        let size = grid.text.split('x').map(str::parse::<u32>).collect::<Result<Vec<_>, _>>();
+        let err = || Diag::new(Code::E001, grid.span, "invalid bake dimensions", "use WxH, WxHxD or cube NxN with positive sides");
+        let size = size.map_err(|_| err())?;
+        let dim = match (cube, size.as_slice()) {
+            (true, [w, h]) if w == h && *w > 0 => TexDim::Cube(*w),
+            (false, [w, h]) if *w > 0 && *h > 0 => TexDim::D2(*w, *h),
+            (false, [w, h, d]) if *w > 0 && *h > 0 && *d > 0 => TexDim::D3(*w, *h, *d),
+            _ => return Err(err()),
+        };
+        self.pop();
+        let format = self.ident()?;
+        let ret = match format.name.as_str() {
+            "r8unorm" | "r16float" | "r32float" => "f32",
+            "rgba8unorm" | "rgba16float" => "vec4f",
+            _ => return Err(Diag::new(Code::E405, format.span, "unsupported bake format", "use r8unorm, r16float, r32float, rgba8unorm or rgba16float")),
+        };
+        self.expect("on")?;
+        let clock = if self.eat("load") {
+            BakeClock::Load
+        } else {
+            self.expect("dirty")?;
+            self.expect("(")?;
+            let mut names = vec![self.ident()?];
+            while self.eat(",") {
+                names.push(self.ident()?);
+            }
+            self.expect(")")?;
+            BakeClock::Dirty(names)
+        };
+        self.expect("mips")?;
+        self.expect("(")?;
+        let mips = if self.eat("true") { true } else { self.expect("false")?; false };
+        self.expect(")")?;
+        let params = self.params()?;
+        if params.len() != 1 || params[0].ty.is_none() {
+            return Err(Diag::new(Code::E003, name.span, "bake needs one typed coordinate", "use v2, v3 or d3@World for a 2D, 3D or cube bake"));
+        }
+        self.locals = params.iter().map(|p| p.name.name.clone()).collect();
+        let body = self.block(true)?;
+        self.locals.clear();
+        let texel = FnDecl { comptime: false, attrs: vec![], ret: Some(ty(ret, format.span)), name, params, body, raw: None };
+        Ok(BakeDecl { texel, dim, format, clock, mips })
+    }
+
     fn params(&mut self) -> Res<Vec<Param>> {
         self.expect("(")?;
         let mut out = vec![];

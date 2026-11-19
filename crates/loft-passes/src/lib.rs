@@ -79,12 +79,16 @@ impl<'a> Prog<'a> {
                 }
                 Item::Use(path) => {
                     let parts: Vec<_> = path.iter().map(|n| n.name.as_str()).collect();
-                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise" | "quant"] | ["engines", "realtime"]) {
+                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise" | "quant"] | ["engines", "realtime" | "reference" | "woodblock" | "spectral_caustic"]) {
                         let span = path.first().unwrap().span.to(path.last().unwrap().span);
                         return Err(Diag::new(Code::E011, span, format!("unresolved import {}", parts.join("::")), "use a module supplied by the loaded prelude"));
                     }
                 }
                 Item::Camera(_) => {}
+                Item::Bake(b) => {
+                    name(&b.texel.name)?;
+                    p.fns.insert(&b.texel.name.name, &b.texel);
+                }
                 Item::Kernel(k) => {
                     name(&k.f.name)?;
                     p.kernels.insert(&k.f.name.name, k);
@@ -158,6 +162,10 @@ impl<'a> Prog<'a> {
             pending.extend(refs.names.into_iter().map(|(n, _)| n).filter(|n| self.consts.contains_key(n)));
         }
         false
+    }
+
+    pub fn param_word(&self, name: &str) -> Option<usize> {
+        self.param_slot(name).map(|slot| slot * 4)
     }
 
     pub fn kind_index(&self, name: &str) -> usize {
@@ -557,16 +565,20 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
 }
 
 pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
-    compile_impl(src, overrides, &[], cache, loft_ir::GpuFeatures::empty())
+    compile_impl(src, overrides, &[], cache, emit::Aov::Beauty, loft_ir::GpuFeatures::empty())
 }
 
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
 pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
-    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), loft_ir::GpuFeatures::empty())
+    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), emit::Aov::Beauty, loft_ir::GpuFeatures::empty())
 }
 
-fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
+pub fn compile_aov(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
+    compile_impl(src, overrides, &[], std::path::Path::new("target/loft_cache"), aov, loft_ir::GpuFeatures::empty())
+}
+
+fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, aov: emit::Aov, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
@@ -605,7 +617,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
     }
     refine::check(&p,&types,overrides)?;
-    if let Some(span) = pending_lowering {
+    if let Some(span) = pending_lowering && !p.kernels.get("deposit_caustic").is_some_and(|k| k.f.name.span == span) {
         return Err(Diag::new(Code::E405, span, "Phase 4 lowering is pending for this checked program",
             "use the typed front end to inspect the Phase 4 contract"));
     }
@@ -620,6 +632,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     let mut culled: Vec<&str> = vec![];
     let mut casters: Vec<&str> = vec![];
     let mut shadow_size = 0u32;
+    let mut path = None;
+    let mut print = false;
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
@@ -701,6 +715,34 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
                 passes.push(Pass::Shade(vec![]));
             }
+            "screen_pass" => {
+                let first = pd.args.first().map(|a| &a.value.kind);
+                let integrator = match first {
+                    Some(ExprKind::Name(n)) if n == "reference_sample" => emit::paths::Integrator::Reference,
+                    Some(ExprKind::Name(n)) if n == "spectral_sample" => emit::paths::Integrator::Spectral,
+                    _ => return Err(Diag::new(Code::E405, pd.verb.span, "unsupported screen pass signature", "supply reference_sample or spectral_sample")),
+                };
+                let e = arg(pd, "bounces")?;
+                let bounces = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)?;
+                if bounces.fract() != 0.0 || !(0.0..=64.0).contains(&bounces) {
+                    return Err(Diag::new(Code::E602, e.span, "invalid path bounce count", "use an integer from 0 to 64"));
+                }
+                let lens_value = |name: &str, fallback, types: &mut Vec<Ty>| -> Res<f32> {
+                    let Some(a) = pd.args.iter().find(|a| a.name.as_ref().is_some_and(|key| key.name == name)) else { return Ok(fallback); };
+                    let e = &a.value;
+                    as_f32(stage0(&p, types, e, overrides)?, e.span)
+                };
+                let radius = lens_value("lens_radius", 0.0, &mut types)?;
+                let focus = lens_value("focus", 1.0, &mut types)?;
+                if !radius.is_finite() || radius < 0.0 || !focus.is_finite() || focus <= 0.0 {
+                    return Err(Diag::new(Code::E602, pd.verb.span, "invalid thin lens", "use a nonnegative lens radius and positive focus distance"));
+                }
+                let lens = [radius, focus];
+                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![] }).is_some() {
+                    return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
+                }
+            }
+            "outline_and_paper" => { print = true; }
             "tonemap_aces" => {
                 sky = Some(fn_name_arg(&p, pd, "sky")?);
                 passes.push(Pass::Present);
@@ -724,6 +766,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             "tile_classify" => (&["Vis64"], &["TileLists"]),
             "shade_tiles" if has_shadow_pass => (&["Vis64", "DepthBuf", "TileLists", "ShadowMap"], &["ColorHdr"]),
             "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
+            "outline_and_paper" => (&["ColorHdr", "Vis64"], &["ColorHdr"]),
+            "screen_pass" => (&["CameraSlot"], &["ColorHdr"]),
             "tonemap_aces" => (&["ColorHdr"], &["Swapchain"]),
             _ => (&[], &[]),
         };
@@ -806,6 +850,18 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             _=>Err(Diag::new(Code::E602,k.name.span,format!("expected one {} environment row",kind),"emit one environment for this view")),
         }
     };
+    if aov != emit::Aov::Beauty { path = None; }
+    if let Some(path) = &mut path {
+        path.lamps.push([[0.0; 4]; 2]); // index zero is the directional sun
+        if let Some(lamp) = p.kinds.get("PointLamp") {
+            for row in &tables[p.kind_index("PointLamp")] {
+                let [pos, color, reach] = row.as_slice() else { return Err(Diag::new(Code::E003, lamp.name.span, "invalid light layout", "use the PointLamp from the light prelude")); };
+                let [x,y,z] = as_v3(pos.clone(), lamp.name.span)?;
+                let [r,g,b] = as_v3(color.clone(), lamp.name.span)?;
+                path.lamps.push([[x,y,z,as_f32(reach.clone(),lamp.name.span)?],[r,g,b,0.0]]);
+            }
+        }
+    }
     let sky_colors=environment("Sky")?;
     let sun_row=environment("Sun")?;
     let [default_sun, default_zenith, default_horizon] = environment_defaults;
@@ -960,7 +1016,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     }
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(&kinds) {
-        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?;
+        let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw, aov)?;
         texts.push((name.to_string(), shader));
     }
     let mut dispatches = vec![];
@@ -998,10 +1054,25 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             }
         }
     }
+    let present = if let Some(path) = &path {
+        passes.retain(|pass| matches!(pass, Pass::Present));
+        shadow_size = 0;
+        emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path)?
+    } else {
+        emit::paths::present(&p, &types, sky, aov, print)
+    };
     let shared = texts.len();
     texts.push(("cull".into(), emit::cull_module()));
     texts.push(("classify".into(), emit::classify_module()));
-    texts.push(("present".into(), emit::present_module(&p, &types, sky)));
+    texts.push(("present".into(), present));
+    let mut bakes = Vec::new();
+    for item in modules.iter().flat_map(|m| &m.items) {
+        if let Item::Bake(decl) = item {
+            let (bake, wgsl) = emit::bake_module(&p, &types, decl, texts.len())?;
+            texts.push((bake.name.clone(), wgsl));
+            bakes.push(bake);
+        }
+    }
     lap("emit", &mut ms);
     let shader_modules = texts.into_iter().map(|(n,w)| {
         let mut m=naga_module(&n, w, src, features)?;
@@ -1011,6 +1082,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     lap("naga", &mut ms);
 
     let program = Program {
+        bakes,
+        path,
         dispatches,
         modules: shader_modules,
         kinds,

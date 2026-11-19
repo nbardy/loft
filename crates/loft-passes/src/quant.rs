@@ -299,6 +299,7 @@ pub fn compile(
         overrides,
         &[],
         std::path::Path::new("target/loft_cache"),
+        crate::emit::Aov::Beauty,
         caps.features,
     )
 }
