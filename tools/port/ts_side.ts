@@ -19,6 +19,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { plain } from "./sections.ts";
+import { LoadError } from "../../src/errors.ts";
 import type { Artefact } from "../../src/artefact.ts";
 import type { Scene } from "../../src/scene.ts";
 
@@ -45,7 +46,13 @@ try {
   const stop = rec.watch();
   let roots: ReturnType<typeof stop>, compiled: { scene: Scene; artefact: Artefact };
   try {
-    const drawn = await styled((await chosenAt(scene, { kind: "default" })).scene, { kind: "scene" }, { kind: "scene" }) as Scene;
+    const chosen = await chosenAt(scene, { kind: "default" });
+    const subject: unknown = chosen.scene;
+    // The corpus also includes modules for other tools, such as Film exports for tools/film.ts.
+    if (typeof subject !== "object" || subject === null || !("style" in subject && "lighting" in subject && "things" in subject)) {
+      throw new LoadError(`${scene} does not export a scene. Fix: export default scene({ ... })`);
+    }
+    const drawn = await styled(chosen.scene, { kind: "scene" }, { kind: "scene" }) as Scene;
     stage = "compile";
     compiled = { scene: drawn, artefact: compile(drawn) };
   } finally { roots = stop(); }
