@@ -613,11 +613,13 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
 // The record carries (u, v); shading rebuilds the point and the AD normal from them.
 @fragment fn fs(v: VsOut) -> FsOut {{
   if frame.cold.x == LOFT_NONCE {{ discard; }}
-  return FsOut(vec2<u32>((kp.kind_id << 24u) | v.row, pack2x16unorm(v.uv)));
+  // Packed by hand: Metal's pack/unpack2x16unorm round trip through naga garbled u on the M4 (19 Nov 2026).
+  let q = vec2<u32>(round(clamp(v.uv, vec2<f32>(0.0), vec2<f32>(1.0)) * 65535.0));
+  return FsOut(vec2<u32>((kp.kind_id << 24u) | v.row, q.x | (q.y << 16u)));
 }}
 "
             ),
-            "  let uv = unpack2x16unorm(v.y);
+            "  let uv = vec2<f32>(f32(v.y & 0xffffu), f32(v.y >> 16u)) / 65535.0;
   let pl = q_surface(row, uv.x, uv.y);
   let cr = cross(surface__jvp(row, uv.x, uv.y, 1.0, 0.0), surface__jvp(row, uv.x, uv.y, 0.0, 1.0));
   let nl = cr * inverseSqrt(max(dot(cr, cr), 1e-30));

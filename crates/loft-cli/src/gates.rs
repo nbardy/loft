@@ -426,7 +426,9 @@ pub fn run(approve: bool) -> Result<(), String> {
     };
     let mut checks = vec![];
     let mut report = json!({"adapter": g.adapter, "device_ms": device_ms});
-    for s in &scenes {
+    // `--only NAME,...` gates those scenes (a debugging aid; a phase is scored on all of them).
+    let only: Option<Vec<String>> = std::env::args().skip_while(|a| a != "--only").nth(1).map(|v| v.split(',').map(String::from).collect());
+    for s in scenes.iter().filter(|s| only.as_ref().is_none_or(|o| o.contains(&s.name))) {
         let (p, r, comp, _) = compile(&s.file, &s.set)?;
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());

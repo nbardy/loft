@@ -4,6 +4,7 @@
 //!   loft show SCENE [MODULE] [--set ...]        print the generated WGSL (every module, or the one named)
 //!   loft still SCENE OUT.png [--t SECONDS] [--set ...]
 //!   loft gate [--approve]                       the five gates on every scene in engines/gates.json
+//!   loft load SCENE --nonce N [--set ...]       one load in this process with driver nonce N (cache experiments)
 //!
 //! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
 
@@ -95,6 +96,28 @@ fn run() -> Result<(), String> {
             gates::still(&scene, &set, t, &out)
         }
         "gate" => gates::run(args.iter().any(|a| a == "--approve")),
+        "load" => {
+            let nonce: u32 = flag(&mut args, "--nonce").ok_or("load needs --nonce N")?.parse().map_err(|_| "--nonce takes a u32")?;
+            let scene = PathBuf::from(args.get(1).ok_or("usage: loft load SCENE --nonce N")?);
+            let g = loft_runner::gpu()?;
+            let t = std::time::Instant::now();
+            let src = sources(&scene)?;
+            let (p, _, _) = loft_passes::compile(&src, &set).map_err(|d| render(&d, &src))?;
+            let front = t.elapsed().as_secs_f64();
+            let l = loft_runner::Loaded::new(&g, &p, (1280, 800), Some(nonce))?;
+            l.frame(&g, 0.0);
+            l.gpu_ms(&g)?;
+            let st = &l.stats;
+            println!(
+                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  disk cache {}  ({})",
+                t.elapsed().as_secs_f64(),
+                front,
+                st.pipelines_ms,
+                g.cache_key.as_ref().map_or("none on this backend".to_string(), |k| format!("{k}: {} bytes read", st.cache_bytes)),
+                g.adapter
+            );
+            Ok(())
+        }
         _ => Err("usage: loft check|show|still|gate (see crates/loft-cli/src/main.rs)".into()),
     }
 }

@@ -275,7 +275,8 @@ impl Loaded {
         let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k));
         let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
         stats.cache_bytes = cache_data.as_ref().map_or(0, Vec::len);
-        // SAFETY-free: the data came from `get_data` of this adapter's key; wgpu validates the header and falls back.
+        // Unsafe by wgpu's contract: the bytes must come from `get_data` on a compatible adapter. They do (the file name
+        // is the adapter's cache key), and `fallback: true` makes wgpu discard a mismatched header instead of failing.
         let cache = cache_path.as_ref().map(|_| {
             #[allow(unsafe_code)]
             unsafe {

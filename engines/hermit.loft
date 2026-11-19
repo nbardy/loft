@@ -9,12 +9,13 @@ fn whorl_axis() -> vec3<f32> {
   return vec3(0.0, 0.9578, -0.2873);
 }
 
-// The spine at u in [0, 1]: apex at 0, aperture at 1, 2.5 turns (the aperture faces forward).
+// The spine at u in [0, 1]: a helico-spiral (radius and drop grow together, so the shell is self-similar), apex at
+// 0, aperture at 1, 2.5 turns; the last whorl's tangent faces forward.
 fn spine(u: f32) -> Pt[Shell] {
-  let r = 0.42 * exp(3.0 * (u - 1.0));
-  let a = 15.707963 * u;
+  let r = 0.42 * exp(2.6 * (u - 1.0));
+  let a = 22.0 * u;
   let e2 = vec3(0.0, -0.2873, -0.9578);
-  let x = vec3(r * cos(a), 0.0, 0.0) + e2 * (r * sin(a)) + whorl_axis() * (0.8 * (1.0 - u));
+  let x = vec3(r * cos(a), 0.0, 0.0) + e2 * (r * sin(a)) + whorl_axis() * (1.5 * (0.42 - r));
   return Pt[Shell](x.x, x.y, x.z);
 }
 
@@ -25,17 +26,19 @@ scan whorl(u: f32 in 0.0..1.0, steps: 256u) @schedule(bake_lut) -> Table[Frame[S
 
 // Growth ribs along the spine and five ridges around it.
 fn rib(u: f32, a: f32) -> f32 {
-  let c = 0.5 + 0.5 * cos(60.0 * u);
-  return 0.05 * c * c * c * c * (0.6 + 0.4 * cos(5.0 * a));
+  let c = 0.5 + 0.5 * cos(28.0 * u);
+  return 0.06 * c * c * c * c * (0.6 + 0.4 * cos(5.0 * a));
 }
 
 // The tube around the spine (C2: the frames are a cubic B-spline of the scan).
 fn shell_at(u: f32, v: f32) -> Pt[Shell] {
   let f = sample_c2(whorl, u);
   let a = 6.2831853 * v;
-  let r = 0.34 * exp(3.0 * (u - 1.0));
+  // Tube radius 0.78 of the spine's: neighbouring whorls nearly touch, leaving a suture (heavier overlap makes two
+  // surfaces meet at a grazing angle, and their facets z-fight in bands).
+  let r = 0.26 * exp(2.6 * (u - 1.0));
   let k = rib(u, a);
-  return f.origin + f.normal * (r * (1.0 + k) * cos(a)) + f.binormal * (r * (0.85 + k) * sin(a));
+  return f.origin + f.normal * (r * (1.0 + k) * cos(a)) + f.binormal * (r * (0.9 + k) * sin(a));
 }
 
 kind HermitShell {
@@ -47,14 +50,14 @@ kind HermitShell {
   }
 
   query material(self, p: Pt[Shell], n: Norm[Shell], uv: vec2<f32>) -> Bsdf {
-    let band = 0.5 + 0.5 * sin(31.0 * uv.x + 3.0 * sin(6.2831853 * uv.y));
+    let band = 0.5 + 0.5 * sin(12.0 * uv.x + 3.0 * sin(6.2831853 * uv.y));
     let mottle = fbm2(p.xyz * 7.0);
     let ridge = rib(uv.x, 6.2831853 * uv.y) * 20.0;
-    let base = mix(vec3(0.70, 0.55, 0.40), vec3(0.32, 0.17, 0.10), band * 0.7 + 0.3 * mottle) * self.tint;
+    let base = mix(vec3(0.80, 0.62, 0.42), vec3(0.42, 0.20, 0.09), band * 0.7 + 0.3 * mottle) * self.tint;
     let grime = saturate(1.0 - ridge) * smoothstep(0.35, 0.75, mottle);
     let lip = smoothstep(0.93, 1.0, uv.x);
     return ggx(mix(base, vec3(0.12, 0.16, 0.10), grime * 0.6), 0.45 + 0.3 * grime, 0.0)
-         + thin_film(0.3 + 0.7 * lip, 1.42, 380.0)
+         + thin_film(0.08 + 0.6 * lip, 1.42, 380.0)
          + clearcoat(0.5 * (1.0 - grime), 0.12);
   }
 }
@@ -88,7 +91,7 @@ kind CrabFace {
     let r = distance(sym, eye_c);
     let in_eye = 1.0 - smoothstep(0.088, 0.095, r);
     let pupil = smoothstep(0.80, 0.90, dot(normalize(sym - eye_c), look)) * in_eye;
-    let shell = mix(vec3(0.78, 0.36, 0.16), vec3(0.95, 0.72, 0.42), smoothstep(0.55, 0.8, q.y)) * self.tint;
+    let shell = mix(vec3(0.55, 0.12, 0.05), vec3(0.85, 0.42, 0.18), smoothstep(0.45, 0.8, q.y)) * self.tint;
     let speck = fbm2(q.xyz * 11.0);
     let skin = shell * (0.75 + 0.5 * speck);
     let iris = mix(vec3(0.85, 0.62, 0.15), vec3(0.01, 0.01, 0.012), pupil);
@@ -122,10 +125,10 @@ kind CrusherClaw {
     let pit = fbm2(q.xyz * 9.0);
     let tip = smoothstep(1.0, 1.45, q.z);
     let base = mix(vec3(0.62, 0.11, 0.05), vec3(0.08, 0.03, 0.02), tip) * self.tint * (0.8 + 0.4 * pit);
-    let vein = smoothstep(0.62, 0.72, fbm2(q.xyz * 4.0)) * self.aggro * (1.0 - tip);
+    let vein = smoothstep(0.70, 0.78, fbm2(q.xyz * 4.0)) * self.aggro * (1.0 - tip);
     return ggx(base, 0.22 + 0.25 * pit, 0.0)
          + sss(vec3(0.9, 0.25, 0.08), 0.1)
-         + emission(vec3(1.0, 0.32, 0.04) * vein * 1.5)
+         + emission(vec3(1.0, 0.32, 0.04) * vein * 0.8)
          + clearcoat(0.85, 0.06);
   }
 }
@@ -150,7 +153,7 @@ kind CrabLeg {
   query material(self, p: Pt[Leg], n: Norm[Leg]) -> Bsdf {
     let along = length(p - self.j0);
     let band = smoothstep(0.35, 0.65, 0.5 + 0.5 * sin(9.0 * along));
-    let base = mix(vec3(0.70, 0.22, 0.08), vec3(0.95, 0.80, 0.55), band * 0.6) * self.tint;
+    let base = mix(vec3(0.62, 0.14, 0.05), vec3(0.88, 0.55, 0.30), band * 0.5) * self.tint;
     return ggx(base, 0.35, 0.0) + sss(vec3(0.9, 0.3, 0.1), 0.08) + clearcoat(0.7, 0.07);
   }
 }
@@ -176,8 +179,8 @@ kind Ground {
   }
   query material(self, p: Pt[World], n: Norm[World]) -> Bsdf {
     let grain = fbm2(p.xyz * 6.0);
-    let ripple = 0.5 + 0.5 * sin(5.0 * p.x + 2.0 * fbm2(p.xyz * 0.7));
-    let sand = mix(vec3(0.62, 0.55, 0.42), vec3(0.78, 0.71, 0.56), 0.6 * grain + 0.4 * ripple);
+    let ripple = 0.5 + 0.5 * sin(5.0 * p.x + 4.0 * fbm2(p.xyz * 0.4));
+    let sand = mix(vec3(0.36, 0.31, 0.23), vec3(0.52, 0.45, 0.34), 0.75 * grain + 0.25 * ripple);
     return ggx(sand, 0.9, 0.0);
   }
 }
@@ -189,13 +192,13 @@ comptime const COUNT: u32 = 20u;
 comptime fn leg(crab: Xform[Body -> World], j: u32, side: f32, tint: vec3<f32>) {
   let fj = f32(j);
   let femur = 0.40 + 0.07 * fj - 0.012 * fj * fj;
-  let tibia = 1.25 * femur;
-  let h = 0.5;
-  let spread = 0.5 - 0.2 * fj;
+  let tibia = 1.7 * femur;
+  let h = 0.42;
+  let spread = 0.85 - 0.34 * fj;
   let yaw = select(-spread, 3.1415927 + spread, side < 0.0);
-  let socket = Xform[Leg -> Body](Pt[Body](0.30 * side, h, 0.36 - 0.15 * fj), yaw);
-  let kx = 0.18 + femur * cos(0.9);
-  let ky = 0.04 + femur * sin(0.9);
+  let socket = Xform[Leg -> Body](Pt[Body](0.30 * side, h, 0.30 - 0.12 * fj), yaw);
+  let kx = 0.18 + femur * cos(0.6);
+  let ky = 0.04 + femur * sin(0.6);
   let drop = ky + h;
   let reach = sqrt(max(tibia * tibia - drop * drop, 0.01));
   emit CrabLeg {
@@ -216,10 +219,10 @@ comptime fn crab(i: u32) {
   let aggro = 0.5 + 0.5 * sin(fi * 1.7);
   // Rows a geometry query reads make a shape (one bound derivation each); the face's brow reads `aggro`, so it is
   // the same on every crab here, while the claws' glow (material only) varies freely.
-  emit HermitShell { pose: body * Xform[Shell -> Body](Pt[Body](0.42, 0.62, -0.42), 0.0), tint: tint };
+  emit HermitShell { pose: body * Xform[Shell -> Body](Pt[Body](0.36, 0.55, -0.55), 0.0), tint: tint };
   emit CrabFace { pose: body * Xform[Face -> Body](Pt[Body](0.0, 0.0, 0.0), 0.0), aggro: 0.6, gaze: Pt[World](0.0, 2.2, 9.0), tint: tint };
-  emit CrusherClaw { pose: body * Xform[Claw -> Body](Pt[Body](0.42, 0.42, 0.62), -0.25), jaw_open: 0.35, scale: 0.62, aggro: aggro, tint: tint };
-  emit CrusherClaw { pose: body * Xform[Claw -> Body](Pt[Body](-0.40, 0.40, 0.60), 0.3), jaw_open: 0.5, scale: 0.42, aggro: aggro, tint: tint };
+  emit CrusherClaw { pose: body * Xform[Claw -> Body](Pt[Body](0.40, 0.36, 0.72), -0.2), jaw_open: 0.35, scale: 0.72, aggro: aggro, tint: tint };
+  emit CrusherClaw { pose: body * Xform[Claw -> Body](Pt[Body](-0.38, 0.40, 0.66), 0.3), jaw_open: 0.5, scale: 0.48, aggro: aggro, tint: tint };
   comptime for j in 0u..6u {
     leg(body, j, 1.0, tint);
     leg(body, j, -1.0, tint);
@@ -227,7 +230,7 @@ comptime fn crab(i: u32) {
 }
 
 comptime fn crabs() {
-  emit Ground { radius: 12.0 + 6.0 * sqrt(f32(COUNT)) };
+  emit Ground { radius: 60.0 };
   comptime for i in 0u..COUNT {
     crab(i);
   }
@@ -235,7 +238,7 @@ comptime fn crabs() {
 
 schedule Main {
   pass rows: crabs();
-  pass camera: orbit(at: Pt[World](0.0, 0.55, 0.1), radius: 4.0m + 2.4m * sqrt(f32(COUNT)), height: 1.3m + 1.0m * sqrt(f32(COUNT)), period: 24.0s, fov: 40deg);
+  pass camera: orbit(at: Pt[World](0.0, 0.45, 0.0), radius: 2.6m + 2.4m * sqrt(f32(COUNT)), height: 1.1m + 1.0m * sqrt(f32(COUNT)), period: 24.0s, fov: 40deg);
   pass cull: build_indirect(Ground, HermitShell, CrabFace, CrusherClaw, CrabLeg);
   pass vis: render_bundle(Vis64) { draw_indirect(Ground, HermitShell, CrabFace, CrusherClaw, CrabLeg); };
   pass shadow: shadow_map(HermitShell, CrabFace, CrusherClaw, CrabLeg, size: 1024u);

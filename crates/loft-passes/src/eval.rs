@@ -233,7 +233,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             Flow::Ret(v) => v,
             Flow::Next => Val::Void,
         };
-        if let Some(a) = f.attrs.first() {
+        if let Some(a) = f.attrs.iter().find(|a| a.name.name == "lipschitz") {
             v = self.axiom(a, f, &args, v, span);
         }
         Ok(v)
