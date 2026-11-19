@@ -177,7 +177,7 @@ fn time_edit_and_compare_native_promotion() {
             });
             cp.set_pipeline(pipeline);
             cp.set_bind_group(0, &cache.fixed, &[]);
-            for (g, b) in pass.groups().iter().enumerate() {
+            for (g, b) in pass.groups.iter().enumerate() {
                 cp.set_bind_group(g as u32 + 1, &b.cached.as_ref().unwrap().1, &[]);
             }
             cp.dispatch_workgroups(PIXELS.div_ceil(32), 1, 1);

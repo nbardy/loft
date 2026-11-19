@@ -1,9 +1,11 @@
 //! Match each declared slot to the resource type used by this entry point.
-use super::*;
+use crate::error::*;
+use loft_ir::*;
 use naga::{AddressSpace, ImageClass, ImageDimension, StorageAccess, TypeInner};
+use std::collections::BTreeMap;
 use wgpu::{BindGroupLayoutEntry as Entry, BindingType as Binding};
 
-pub(super) fn reflect(
+pub fn reflect(
     ir: &naga::Module,
     usage: &naga::valid::FunctionInfo,
     pass: &PassDecl,
@@ -18,10 +20,8 @@ pub(super) fn reflect(
         }
         let address = (binding.group, binding.binding);
         let mut entry = match var.space {
-            AddressSpace::Uniform => {
-                super::encode::slot(binding.binding, wgpu::BufferBindingType::Uniform)
-            }
-            AddressSpace::Storage { access } => super::encode::slot(
+            AddressSpace::Uniform => slot(binding.binding, wgpu::BufferBindingType::Uniform),
+            AddressSpace::Storage { access } => slot(
                 binding.binding,
                 wgpu::BufferBindingType::Storage {
                     read_only: access == StorageAccess::LOAD,
@@ -44,11 +44,7 @@ pub(super) fn reflect(
                     } else {
                         wgpu::SamplerBindingType::Filtering
                     }),
-                    TypeInner::Image {
-                        dim,
-                        arrayed,
-                        class,
-                    } => {
+                    TypeInner::Image { dim, arrayed, class } => {
                         let view_dimension = match (dim, arrayed) {
                             (ImageDimension::D1, false) => wgpu::TextureViewDimension::D1,
                             (ImageDimension::D2, false) => wgpu::TextureViewDimension::D2,
@@ -62,10 +58,7 @@ pub(super) fn reflect(
                             ImageClass::Sampled { kind, multi } => {
                                 let sample_type = match kind {
                                     naga::ScalarKind::Float => wgpu::TextureSampleType::Float {
-                                        filterable: usage
-                                            .sampling_set
-                                            .iter()
-                                            .any(|s| s.image == handle),
+                                        filterable: usage.sampling_set.iter().any(|s| s.image == handle),
                                     },
                                     naga::ScalarKind::Sint => wgpu::TextureSampleType::Sint,
                                     naga::ScalarKind::Uint => wgpu::TextureSampleType::Uint,
@@ -142,14 +135,39 @@ pub(super) fn reflect(
             return Err(RunnerError::AbiMismatch);
         }
         if binding.group != 0
-            && let Binding::Buffer {
-                min_binding_size, ..
-            } = &mut entry.ty
+            && let Binding::Buffer { min_binding_size, .. } = &mut entry.ty
         {
-            *min_binding_size =
-                wgpu::BufferSize::new(u64::from(ir.types[var.ty].inner.size(ir.to_ctx())));
+            *min_binding_size = wgpu::BufferSize::new(u64::from(ir.types[var.ty].inner.size(ir.to_ctx())));
         }
         entries.insert(address, entry);
     }
     Ok(entries)
+}
+pub fn slot(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+pub fn merge_bindings(
+    reflected: &mut BTreeMap<(u32, u32), wgpu::BindGroupLayoutEntry>,
+    stage: BTreeMap<(u32, u32), wgpu::BindGroupLayoutEntry>,
+    visibility: wgpu::ShaderStages,
+) -> Result<()> {
+    for (address, mut entry) in stage {
+        entry.visibility = visibility;
+        let merged = reflected.entry(address).or_insert(entry);
+        if merged.ty != entry.ty || merged.count != entry.count {
+            return Err(RunnerError::AbiMismatch);
+        }
+        merged.visibility |= visibility;
+    }
+    Ok(())
 }

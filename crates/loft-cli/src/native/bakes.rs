@@ -9,10 +9,7 @@ pub(super) struct TextureBake {
     pub(super) texture: wgpu::Texture,
     pub(super) clock: BakeClock,
     pub(super) mips: Option<Mips>,
-    pipeline: wgpu::ComputePipeline,
-    group: wgpu::BindGroup,
-    empty: wgpu::BindGroup,
-    work: [u32; 3],
+    base: command::Pass,
 }
 
 impl TextureBake {
@@ -20,7 +17,7 @@ impl TextureBake {
         if self.mips.is_some() { 4 } else { 2 }
     }
 
-    pub(super) fn prepare(g: &Gpu, bake: &Bake, modules: &[wgpu::ShaderModule], fixed: &wgpu::BindGroupLayout, cache: &mut Pipelines) -> Result<Self, String> {
+    pub(super) fn prepare(g: &Gpu, bake: &Bake, modules: &[wgpu::ShaderModule], fixed: &wgpu::BindGroupLayout, cache: &mut Pipelines, g0: &wgpu::BindGroup) -> Result<Self, String> {
         let format = match bake.format {
             naga::StorageFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
             naga::StorageFormat::R16Float => wgpu::TextureFormat::R16Float,
@@ -78,23 +75,14 @@ impl TextureBake {
             DeclClock::Load => BakeClock::Load { done: false },
             DeclClock::Dirty(words) => BakeClock::Dirty { words: words.clone(), last: None },
         };
-        Ok(Self { name: bake.name.clone(), texture, clock, mips, pipeline, group, empty, work: *work })
+        let base = command::Pass::Compute(vec![Dispatch {
+            pipeline, groups: vec![g0.clone(), empty.clone(), empty, group], work: Work::Direct(*work)
+        }]);
+        Ok(Self { name: bake.name.clone(), texture, clock, mips, base })
     }
 
-    pub(super) fn encode(&self, g0: &wgpu::BindGroup, enc: &mut wgpu::CommandEncoder, timestamps: Option<(&wgpu::QuerySet, u32)>) -> u32 {
-        {
-            let timestamp_writes = timestamps.map(|(query_set, start)| wgpu::ComputePassTimestampWrites {
-                query_set, beginning_of_pass_write_index: Some(start), end_of_pass_write_index: Some(start + 1),
-            });
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(&self.name), timestamp_writes });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, g0, &[]);
-            pass.set_bind_group(1, &self.empty, &[]);
-            pass.set_bind_group(2, &self.empty, &[]);
-            pass.set_bind_group(3, &self.group, &[]);
-            let [x, y, z] = self.work;
-            pass.dispatch_workgroups(x, y, z);
-        }
+    pub(super) fn encode(&self, enc: &mut wgpu::CommandEncoder, timestamps: Option<(&wgpu::QuerySet, u32)>) -> u32 {
+        self.base.record(enc, timestamps.map(|(set, i)| Stamps { set, start: Some(i), end: Some(i + 1) }));
         1 + self.mips.as_ref().map_or(0, |mips| mips.encode(enc, timestamps.map(|(set, start)| (set, start + 2))))
     }
 }

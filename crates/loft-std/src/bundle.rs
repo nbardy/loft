@@ -157,21 +157,6 @@ pub fn distinct_passes(decls: &[PassDecl]) -> bool {
     passes(decls).all(|pass| ids.insert(pass.id))
 }
 
-pub const MIP_2D: &str = r"
-@group(0) @binding(0) var src: texture_2d<f32>;
-@group(0) @binding(1) var dst: texture_storage_2d<rgba16float, write>;
-@compute @workgroup_size(8, 8) fn reduce(@builtin(global_invocation_id) id: vec3u) {
-  if any(id.xy >= textureDimensions(dst)) { return; }
-  let at = vec2i(id.xy);
-  let last = vec2i(textureDimensions(src)) - 1;
-  var sum = vec4f(0.);
-  for (var i = 0; i < 4; i++) {
-    sum += textureLoad(src, min(2 * at + vec2i(i & 1, i >> 1), last), 0);
-  }
-  textureStore(dst, at, sum * 0.25);
-}
-";
-
 pub fn children(run: &PassRun) -> &[PassDecl] {
     match run {
         PassRun::PassLoop { body, .. } => body,

@@ -19,7 +19,7 @@ fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &loft_passes::b
 
 pub(super) struct PathGpu {
     pub(super) group: wgpu::BindGroup,
-    photons: Option<(wgpu::ComputePipeline, wgpu::Buffer)>,
+    pub(super) photons: Option<(wgpu::Buffer, command::Pass)>,
 }
 
 impl PathGpu {
@@ -51,7 +51,7 @@ impl PathGpu {
     }
 
     pub(super) fn prepare(g: &Gpu, p: &Program, fixed: &wgpu::BindGroupLayout, present: &wgpu::BindGroupLayout,
-                      path_layout: &wgpu::BindGroupLayout, shader: &wgpu::ShaderModule) -> Result<Self, String> {
+                      path_layout: &wgpu::BindGroupLayout, shader: &wgpu::ShaderModule, g0: &wgpu::BindGroup, g1: &wgpu::BindGroup) -> Result<Self, String> {
         use wgpu::{BufferUsages as U, util::DeviceExt};
         let path = p.path.as_ref().expect("path layout needs a path");
         let d = &g.device;
@@ -95,23 +95,11 @@ impl PathGpu {
         let group = bind(d, path_layout, &resources);
         let photons = bins.map(|bins| {
             let kernel = compute(d, "caustic photons", &[fixed, present, path_layout], shader, "photons", None);
-            (kernel, bins)
+            (bins, command::Pass::Compute(vec![Dispatch { pipeline: kernel, groups: vec![g0.clone(), g1.clone(), group.clone()], work: Work::Direct([1024, 1, 1]) }]))
         });
         Ok(Self { group, photons })
     }
 
     pub(super) fn has_photons(&self) -> bool { self.photons.is_some() }
 
-    pub(super) fn encode_photons(&self, enc: &mut wgpu::CommandEncoder, fixed: &wgpu::BindGroup,
-        present: &wgpu::BindGroup, timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>) -> u32 {
-        let Some((kernel, bins)) = &self.photons else { return 0; };
-        enc.clear_buffer(bins, 0, None);
-        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("caustic photons"), timestamp_writes });
-        pass.set_pipeline(kernel);
-        pass.set_bind_group(0, fixed, &[]);
-        pass.set_bind_group(1, present, &[]);
-        pass.set_bind_group(2, &self.group, &[]);
-        pass.dispatch_workgroups(1024, 1, 1);
-        1
-    }
 }

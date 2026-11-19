@@ -1,5 +1,5 @@
 //! The browser host supplies the same GPUDevice it uses for its own WebGPU work.
-use super::*;
+use loft_format::bundle::{decode, validate_wgsl};
 use loft_ir::*;
 use std::collections::BTreeMap;
 use web_sys::{

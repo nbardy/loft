@@ -3,8 +3,9 @@ mod motion;
 mod edit;
 pub use edit::TraceSession;
 mod bakes;
-mod mips;
+use loft_runner::mips;
 mod paths;
+use loft_runner::command::{self, Dispatch, Stamps, Work};
 use paths::PathGpu;
 use bakes::TextureBake;
 use loft_passes::emit::Aov;
@@ -84,6 +85,7 @@ pub struct Loaded {
     tiles: (u32, u32),
     kinds: Vec<KindGpu>,
     passes: Vec<Pass>,
+    commands: Vec<command::Pass>,
     camera: loft_passes::program::Orbit,
     sun: [f32; 3],
     n_inst: u32,
@@ -99,7 +101,7 @@ pub struct Loaded {
     shade_reset: Vec<u8>,
     cull: (wgpu::ComputePipeline, wgpu::BindGroup),
     classify: (wgpu::ComputePipeline, wgpu::BindGroup),
-    present: (wgpu::RenderPipeline, wgpu::BindGroup),
+    present: wgpu::RenderBundle,
     bundle: wgpu::RenderBundle,
     /// The sun's view: its uniform, bundle, targets, and the texel size in metres; `None` without a shadow pass.
     shadow: Option<Shadow>,
@@ -287,6 +289,9 @@ fn render_blended(
 }
 
 impl Clock {
+    fn stamps(&self, pass: u32) -> Stamps<'_> {
+        Stamps { set: &self.set, start: Some(pass * 2), end: Some(pass * 2 + 1) }
+    }
     fn new(g: &Gpu, n: u32) -> Self {
         use wgpu::BufferUsages as U;
         Self {
@@ -706,13 +711,9 @@ impl Loaded {
                     ));
                     stats.compute_pipelines += 1;
                     stats.pipeline_ms.push((format!("{} bake surface", kt.name), ms));
-                    let mut pass = grid_encoder.as_mut().expect("indexed surface encoder")
-                        .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("bake surface"), timestamp_writes: None });
-                    pass.set_pipeline(&pipeline);
-                    pass.set_bind_group(0, &g0, &[]);
-                    pass.set_bind_group(1, &g1, &[]);
-                    pass.set_bind_group(2, &out, &[]);
-                    pass.dispatch_workgroups((grid_size as u32).div_ceil(64), 1, 1);
+                    command::Pass::Compute(vec![Dispatch { pipeline, groups: vec![g0.clone(), g1.clone(), out],
+                        work: Work::Direct([(grid_size as u32).div_ceil(64),1,1]) }])
+                        .record(grid_encoder.as_mut().expect("indexed surface encoder"),None);
                     // Keep the original vertex order and both sides of the UV seam.
                     let indices = (0..nu * nv).flat_map(|cell| (0..6).map(move |corner| {
                         let u = cell % nu + ((0x16u32 >> corner) & 1);
@@ -769,7 +770,7 @@ impl Loaded {
         });
 
         let mut bake_cache = mips::Pipelines::default();
-        let mut bake_textures = p.bakes.iter().map(|b| TextureBake::prepare(g, b, &modules, &bgl0, &mut bake_cache))
+        let mut bake_textures = p.bakes.iter().map(|b| TextureBake::prepare(g, b, &modules, &bgl0, &mut bake_cache, &g0))
             .collect::<Result<Vec<_>, _>>()?;
         let load_stamps = bake_textures.iter().filter(|b| b.clock.due(true, &p.params))
             .map(TextureBake::timestamp_count).sum();
@@ -780,7 +781,7 @@ impl Loaded {
             let mut names = Vec::new();
             for bake in bake_textures.iter_mut().filter(|b| b.clock.due(true, &p.params)) {
                 let stamp = clock.as_ref().map(|c| (&c.set, next_stamp));
-                stats.load_bake_commands += bake.encode(&g0, &mut enc, stamp);
+                stats.load_bake_commands += bake.encode(&mut enc, stamp);
                 next_stamp += bake.timestamp_count();
                 bake.clock.complete(&p.params);
                 names.push(format!("{} base", bake.name));
@@ -798,12 +799,22 @@ impl Loaded {
                 stats.load_bake_ticks = times;
             }
         }
-        let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present])).transpose()?;
+        let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present], &g0, &present_bg)).transpose()?;
+        let mut present_bundle = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+            color_formats: &[Some(color_format)], sample_count: 1, ..Default::default()
+        });
+        present_bundle.set_pipeline(&present_pl);
+        present_bundle.set_bind_group(0, &g0, &[]);
+        present_bundle.set_bind_group(1, &present_bg, &[]);
+        if let Some(path) = &path { present_bundle.set_bind_group(2, &path.group, &[]); }
+        present_bundle.draw(0..3, 0..1);
+        let present_bundle = present_bundle.finish(&Default::default());
         let n = 2 * (p.passes.len() as u32 + u32::from(path.as_ref().is_some_and(PathGpu::has_photons)));
         let clock = g.timestamps.then(|| Clock::new(g, n));
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         stats.resources_ms = t.elapsed().as_secs_f64() * 1e3;
-        Ok(Loaded {
+        let mut scene = Loaded {
+            commands: Vec::new(),
             size,
             tiles,
             kinds,
@@ -823,7 +834,7 @@ impl Loaded {
             shade_reset,
             cull: (cull_pl, cull_bg),
             classify: (classify_pl, classify_bg),
-            present: (present_pl, present_bg),
+            present: present_bundle,
             bundle,
             shadow,
             vis,
@@ -837,7 +848,51 @@ impl Loaded {
             overdraw,
             path,
             stats,
-        })
+        };
+        scene.prepare_passes();
+        Ok(scene)
+    }
+
+    fn prepare_passes(&mut self) {
+        self.commands = self.passes.iter().map(|pass| match pass {
+            Pass::Cull => self.direct(&self.cull, [self.n_inst.div_ceil(64), 1, 1]),
+            Pass::Vis(ids) => self.visibility(ids, &self.bundle, &self.vis, &self.depth,
+                wgpu::StoreOp::Store, wgpu::StoreOp::Discard),
+            Pass::Shadow(ids) => {
+                let sun = self.shadow.as_ref().expect("validated caster pass");
+                self.visibility(ids, &sun.bundle, &sun.vis, &sun.depth, wgpu::StoreOp::Discard, wgpu::StoreOp::Store)
+            }
+            Pass::Classify => self.direct(&self.classify, [self.tiles.0, self.tiles.1, 1]),
+            Pass::Shade(ids) => self.shading(ids),
+            Pass::Present => color_pass(&self.color_view, wgpu::Color::BLACK, &self.present, 1),
+        }).collect();
+    }
+
+    fn direct(&self, kernel: &(wgpu::ComputePipeline, wgpu::BindGroup), size: [u32; 3]) -> command::Pass {
+        command::Pass::Compute(vec![Dispatch {
+            pipeline: kernel.0.clone(), groups: vec![self.g0.clone(), kernel.1.clone()], work: Work::Direct(size),
+        }])
+    }
+
+    fn visibility(&self, ids: &[u32], bundle: &wgpu::RenderBundle, color: &wgpu::TextureView,
+        depth: &wgpu::TextureView, store: wgpu::StoreOp, depth_store: wgpu::StoreOp) -> command::Pass {
+        let clear = wgpu::Color { r: f64::from(abi::EMPTY), g: 0., b: 0., a: 0. };
+        command::Pass::Render {
+            colors: vec![command::Color { view: color.clone(), ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store } }],
+            depth: Some(command::Depth { view: depth.clone(), ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.), store: depth_store }) }),
+            bundle: bundle.clone(), draws: ids.len() as u32,
+        }
+    }
+
+    fn shading(&self, ids: &[u32]) -> command::Pass {
+        if let Some((bundle, hdr)) = &self.overdraw {
+            return color_pass(hdr, wgpu::Color::TRANSPARENT, bundle, ids.len() as u32);
+        }
+        command::Pass::Compute(ids.iter().map(|&id| {
+            let kind = &self.kinds[id as usize];
+            Dispatch { pipeline: kind.shade.clone(), groups: vec![self.g0.clone(), kind.g1.clone(), kind.g2.clone()],
+                work: Work::Indirect(self.shade_args.clone(), u64::from(id) * 12) }
+        }).collect())
     }
 
     /// The camera's frame uniform at time t, or the sun's (`sun`: orthographic, `eye` holds the ray direction).
@@ -890,139 +945,17 @@ impl Loaded {
             params.1 = false;
         }
         for bake in self.bake_textures.lock().unwrap().iter_mut().filter(|b| b.clock.due(false, &params.0)) {
-            commands += bake.encode(&self.g0, &mut enc, None);
+            commands += bake.encode(&mut enc, None);
             bake.clock.complete(&params.0);
         }
         let mut head = 0;
-        if let Some(path) = &self.path {
-            let timestamp_writes = clock.map(|c| wgpu::ComputePassTimestampWrites {
-                query_set: &c.set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
-            });
-            head = path.encode_photons(&mut enc, &self.g0, &self.present.1, timestamp_writes);
+        if let Some((bins, photons)) = self.path.as_ref().and_then(|p| p.photons.as_ref()) {
+            enc.clear_buffer(bins, 0, None);
+            head = photons.record(&mut enc, clock.map(|c| c.stamps(0)));
             commands += head;
         }
-        for (i, pass) in self.passes.iter().enumerate() {
-            let ts = |i: usize| clock.map(|c| (&c.set, 2 * (head + i as u32)));
-            let cts = ts(i).map(|(query_set, b)| wgpu::ComputePassTimestampWrites {
-                query_set,
-                beginning_of_pass_write_index: Some(b),
-                end_of_pass_write_index: Some(b + 1),
-            });
-            let rts = ts(i).map(|(query_set, b)| wgpu::RenderPassTimestampWrites {
-                query_set,
-                beginning_of_pass_write_index: Some(b),
-                end_of_pass_write_index: Some(b + 1),
-            });
-            match pass {
-                Pass::Cull => {
-                    let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("cull"), timestamp_writes: cts });
-                    cp.set_pipeline(&self.cull.0);
-                    cp.set_bind_group(0, &self.g0, &[]);
-                    cp.set_bind_group(1, &self.cull.1, &[]);
-                    cp.dispatch_workgroups(self.n_inst.div_ceil(64), 1, 1);
-                    commands += 1;
-                }
-                Pass::Vis(ks) => {
-                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("vis64"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &self.vis,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color { r: f64::from(abi::EMPTY), g: 0.0, b: 0.0, a: 0.0 }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.depth,
-                            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Discard }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: rts,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    rp.execute_bundles([&self.bundle]);
-                    commands += ks.len() as u32;
-                }
-                Pass::Shadow(ks) => {
-                    let sh = self.shadow.as_ref().expect("a shadow pass has its targets");
-                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("sun"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &sh.vis,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r: f64::from(abi::EMPTY), g: 0.0, b: 0.0, a: 0.0 }), store: wgpu::StoreOp::Discard },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &sh.depth,
-                            depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: rts,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    rp.execute_bundles([&sh.bundle]);
-                    commands += ks.len() as u32;
-                }
-                Pass::Classify => {
-                    let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("classify"), timestamp_writes: cts });
-                    cp.set_pipeline(&self.classify.0);
-                    cp.set_bind_group(0, &self.g0, &[]);
-                    cp.set_bind_group(1, &self.classify.1, &[]);
-                    cp.dispatch_workgroups(self.tiles.0, self.tiles.1, 1);
-                    commands += 1;
-                }
-                Pass::Shade(ks) => {
-                    if let Some((bundle, hdr)) = &self.overdraw {
-                        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("overdraw"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: hdr, depth_slice: None, resolve_target: None,
-                                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
-                            })],
-                            depth_stencil_attachment: None, timestamp_writes: rts, occlusion_query_set: None, multiview_mask: None,
-                        });
-                        rp.execute_bundles([bundle]);
-                        commands += ks.len() as u32;
-                        continue;
-                    }
-                    let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("shade"), timestamp_writes: cts });
-                    cp.set_bind_group(0, &self.g0, &[]);
-                    for &k in ks {
-                        let kg = &self.kinds[k as usize];
-                        cp.set_pipeline(&kg.shade);
-                        cp.set_bind_group(1, &kg.g1, &[]);
-                        cp.set_bind_group(2, &kg.g2, &[]);
-                        cp.dispatch_workgroups_indirect(&self.shade_args, u64::from(k) * 12);
-                        commands += 1;
-                    }
-                }
-                Pass::Present => {
-                    let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("present"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &self.color_view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: rts,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    rp.set_pipeline(&self.present.0);
-                    rp.set_bind_group(0, &self.g0, &[]);
-                    rp.set_bind_group(1, &self.present.1, &[]);
-                    if let Some(path) = &self.path { rp.set_bind_group(2, &path.group, &[]); }
-                    rp.draw(0..3, 0..1);
-                    commands += 1;
-                }
-            }
+        for (i, pass) in self.commands.iter().enumerate() {
+            commands += pass.record(&mut enc, clock.map(|c| c.stamps(head + i as u32)));
         }
         (commands, g.queue.submit([enc.finish()]))
     }
@@ -1136,15 +1069,8 @@ impl Loaded {
         let g3 = bind(d, &bgl_twin, &[input.as_entire_binding(), output.as_entire_binding()]);
         let g2 = bind(d, &empty, &[]);
         let mut enc = d.create_command_encoder(&Default::default());
-        {
-            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("twin"), timestamp_writes: None });
-            cp.set_pipeline(&pl);
-            cp.set_bind_group(0, &self.g0, &[]);
-            cp.set_bind_group(1, &kg.g1, &[]);
-            cp.set_bind_group(2, &g2, &[]);
-            cp.set_bind_group(3, &g3, &[]);
-            cp.dispatch_workgroups(((samples.len() / 8) as u32).div_ceil(64), 1, 1);
-        }
+        command::Pass::Compute(vec![Dispatch { pipeline: pl, groups: vec![self.g0.clone(),kg.g1.clone(),g2,g3],
+            work: Work::Direct([((samples.len()/8) as u32).div_ceil(64),1,1]) }]).record(&mut enc,None);
         enc.copy_buffer_to_buffer(&output, 0, &read, 0, None);
         g.queue.submit([enc.finish()]);
         read.map_async(wgpu::MapMode::Read, .., |r| r.expect("twin map"));
@@ -1153,6 +1079,12 @@ impl Loaded {
         let out = view.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect();
         Ok(out)
     }
+}
+
+fn color_pass(view: &wgpu::TextureView, clear: wgpu::Color, bundle: &wgpu::RenderBundle, draws: u32) -> command::Pass {
+    command::Pass::Render { colors: vec![command::Color { view: view.clone(),
+        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store } }],
+        depth: None, bundle: bundle.clone(), draws }
 }
 
 pub fn frame_bytes(

@@ -301,6 +301,7 @@ impl TraceSession {
                 Some(&shadow.groups.1),
             );
         }
+        l.prepare_passes();
     }
 
     /// A preparation failure leaves the last validated tape installed.
