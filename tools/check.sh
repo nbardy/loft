@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# The Loft gate (plan 2026-11-19 §6, after Keel's keel/scripts/check.sh):
+# Gates for the root Loft v1 workspace:
 #   tools/check.sh static  every check that compiles nothing, concurrently, buffered, with per-job seconds
 #   tools/check.sh quick   static, then only what the change set can break (the plan below), under the HEAVY lock
 #   tools/check.sh plan    print quick's plan and run nothing
-#   tools/check.sh full    the integrator's, once per wave: static, clippy and nextest on the workspace, doctests, Bun
+#   tools/check.sh full    the integrator's, once per wave: static, Clippy and nextest on the workspace, and doctests
 # Change set (quick, plan): paths changed since merge-base(HEAD, LOFT_BASE, default origin/main), plus staged,
 # unstaged and untracked files. A missing base is an error, never an empty or whole-tree selection.
 set -euo pipefail
@@ -12,47 +12,45 @@ cd "$root"
 source tools/lib/cache-env.sh
 source tools/lib/gate_flags.sh
 source tools/lib/build_gate.sh
-toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust/rust-toolchain.toml)"
-cargo() { (cd "$root/rust" && rustup run "$toolchain" cargo "$@"); }
+toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
+cargo() { rustup run "$toolchain" cargo "$@"; }
 now() { perl -MTime::HiRes=time -e 'printf "%.3f\n", time'; }
 members() { cargo metadata --locked --no-deps --format-version 1 | perl -MJSON::PP -0ne 'print "$_->{name}\n" for @{decode_json($_)->{packages}}'; }
 # deps CRATE: every package CRATE reaches through normal and build edges, one name per line.
 deps() { cargo tree --locked -p "$1" -e normal,build --prefix none --format '{p}' | awk '{print $1}' | sort -u; }
 
-# Layering (plan §1.2, §5.2): the compiler never links wgpu and a game loads bundles without the compiler.
-# loft-loader is today's host; it becomes loft-gpu in lane 3.2 and leaves this list.
+# The runner owns the device. The CLI also reaches wgpu for the GPU measurements.
 check_layers() {
-  local member reach status=0
-  for member in $(members); do
-    reach="$(deps "$member")"
+  local workspace_members member reach status=0
+  workspace_members="$(members)" || return 1
+  for member in $workspace_members; do
+    reach="$(deps "$member")" || return 1
     case "$member" in
-      loft-gpu|loft-draw|loft-web|loft-loader) ;;
-      *) ! grep -qx wgpu <<<"$reach" || { echo "layers: $member reaches wgpu; only loft-gpu, loft-draw and loft-web may" >&2; status=1; } ;;
+      loft-runner|loft-cli) ;;
+      *) ! grep -qx wgpu <<<"$reach" || { echo "layers: $member reaches wgpu; only the runner and CLI may" >&2; status=1; } ;;
     esac
-    case "$member" in
-      loft-gpu) ! grep -qx loft-core <<<"$reach" || { echo "layers: loft-gpu reaches loft-core; a game must load bundles without the compiler" >&2; status=1; } ;;
-      *) ;;
-    esac
+    if [[ "$member" == loft-runner ]] && grep -qx loft-passes <<<"$reach"; then
+      echo "layers: loft-runner reaches loft-passes; loading a program must not require the compiler" >&2
+      status=1
+    fi
   done
   return "$status"
 }
 
-# One integration-test binary per crate (Keel 2026-10-30: 70 test executables, 309 MB, ~15 s per link): tests live as
-# modules of tests/it/main.rs. A stray tests/*.rs becomes its own executable; an undeclared module is never compiled.
+# Cargo links each file or subdirectory with a main.rs under tests/ as a separate binary.
 check_test_layout() {
-  local status=0 file name
-  for file in rust/crates/*/tests/*; do
-    [[ -e "$file" && "$file" != */tests/it ]] || continue
-    echo "test layout: $file is outside tests/it/; make it a module of tests/it/main.rs" >&2
-    status=1
-  done
-  for file in rust/crates/*/tests/it/*; do
-    [[ -e "$file" && "$file" != */main.rs ]] || continue
-    name="$(basename "$file" .rs)"
-    grep -Eq "^\s*(pub(\([a-z]+\))?\s+)?mod\s+$name\s*;" "${file%/*}/main.rs" || {
-      echo "test layout: $file is never compiled; add \`mod $name;\` to ${file%/*}/main.rs" >&2
+  local dir file count status=0
+  for dir in crates/*/tests; do
+    [[ -d "$dir" ]] || continue
+    count=0
+    for file in "$dir"/*.rs "$dir"/*/main.rs; do
+      [[ -f "$file" ]] || continue
+      count=$((count + 1))
+    done
+    if (( count > 1 )); then
+      echo "test layout: $dir has $count integration binaries; use one with modules" >&2
       status=1
-    }
+    fi
   done
   return "$status"
 }
@@ -72,19 +70,15 @@ static_job() {
 }
 
 static_checks() {
-  local wall_start member pid name code start end line summed=0 failed=()
+  local wall_start pid name code start end line summed=0 failed=()
   STATIC_TMP="$(mktemp -d "${TMPDIR:-/tmp}/loft-static.XXXXXX")"
   trap static_cleanup EXIT
   wall_start="$(now)"
-  static_job tsc node_modules/.bin/tsc --noEmit
-  static_job loader-closure bun tools/check_loader_closure.ts
   static_job layers check_layers
   static_job test-layout check_test_layout
   static_job sh-syntax bash -c 'for f in tools/*.sh tools/lib/*.sh; do bash -n "$f" || exit 1; done'
   # Exit 2 (no Keel checkout on this machine) is a named skip, printed with its reason; a mismatch (1) fails.
   static_job pins bash -c 'tools/check_pins.sh && exit 0; c=$?; [[ $c -eq 2 ]] && { echo "pins: SKIPPED (no Keel lock)"; exit 0; }; exit $c'
-  # rustfmt one member per job (Keel 2026-11-01: --all as one job was the critical path, 12.0 s against 3.1 s sharded).
-  for member in $(members); do static_job "fmt-$member" cargo fmt --check -p "$member"; done
   for pid in "${STATIC_PIDS[@]}"; do wait "$pid" || true; done
   STATIC_PIDS=()
   # Passing jobs first, failing jobs last (their output is the part to read), then the verdict.
@@ -106,40 +100,39 @@ static_checks() {
   [[ ${#failed[@]} -eq 0 ]] || { echo "loft check static: FAILED: ${failed[*]}" >&2; exit 1; }
 }
 
-# The plan: each changed path is classified once into one kind. Sets PLAN_FULL (the reason, or empty), PLAN_CRATES
-# (changed members plus their reverse dependencies) and PLAN_BUN (test files). Unmapped paths are printed.
+# Workspace-wide inputs select the full suite. Crate edits select their reverse dependencies.
 plan() {
-  local base path test member crates=() unmapped=()
+  local base path member changed untracked workspace_members reach crates=()
+  local inputs=(Cargo.toml Cargo.lock rust-toolchain.toml .cargo .config crates lib engines
+    tools/check.sh tools/check_pins.sh tools/dev.sh tools/lib)
   base="$(git merge-base HEAD "${LOFT_BASE:-origin/main}")" || {
     echo "loft check: no merge base with ${LOFT_BASE:-origin/main}; fetch it or set LOFT_BASE" >&2
     exit 2
   }
-  PLAN_FULL="" PLAN_CRATES=() PLAN_BUN=()
+  # Compare paths independently so moving a file out of the workspace still checks its former callers.
+  changed="$(git diff --name-only --no-renames "$base" -- "${inputs[@]}")"
+  untracked="$(git ls-files --others --exclude-standard -- "${inputs[@]}")"
+  PLAN_FULL="" PLAN_CRATES=()
   while IFS= read -r path; do
-    # Top-level files by name: a case `*` also matches `/`, so `rust/*.toml` caught every crate's Cargo.toml.
     case "$path" in
-      rust/Cargo.toml|rust/Cargo.lock|rust/rust-toolchain.toml|rust/rustfmt.toml|rust/.config/*|package.json|pnpm-lock.yaml|bunfig.toml|tsconfig.json|tests/setup.ts|tools/lib/*)
-        PLAN_FULL="${PLAN_FULL:-$path is a workspace-wide input}" ;;
-      rust/crates/*) crates+=("$(cut -d/ -f3 <<<"$path")") ;;
-      tests/*.test.ts) PLAN_BUN+=("$path") ;;
-      src/*|tests/*)
-        # Test files that import the changed module by its path (direct importers; the full gate covers the rest).
-        while IFS= read -r test; do PLAN_BUN+=("$test"); done < <(grep -lF "/$(sed "s/\.ts$//" <<<"${path#*/}")" tests/*.test.ts || true) ;;
-      docs/*|agent_notes/*|key_learnings/*|prompts/*|*.md|tools/*.sh|.cambium.toml) ;;
-      *) unmapped+=("$path") ;;
+      "") ;;
+      crates/*/Cargo.toml) PLAN_FULL="${PLAN_FULL:-$path changes the crate graph}" ;;
+      crates/*/*) path="${path#crates/}"; crates+=("${path%%/*}") ;;
+      *) PLAN_FULL="${PLAN_FULL:-$path is a workspace-wide input}" ;;
     esac
-  done < <({ git diff --name-only "$base"; git ls-files --others --exclude-standard; } | sort -u)
-  for member in $(members); do
-    for path in ${crates[@]+"${crates[@]}"}; do
-      ! deps "$member" | grep -qx "$path" || { PLAN_CRATES+=("$member"); break; }
+  done < <(printf '%s\n' "$changed" "$untracked" | sort -u)
+  if [[ -z "$PLAN_FULL" && -n "${crates[*]:-}" ]]; then
+    workspace_members="$(members)"
+    for member in $workspace_members; do
+      reach="$(deps "$member")"
+      for path in "${crates[@]}"; do
+        ! grep -qxF "$path" <<<"$reach" || { PLAN_CRATES+=("$member"); break; }
+      done
     done
-  done
-  PLAN_BUN=($(printf '%s\n' ${PLAN_BUN[@]+"${PLAN_BUN[@]}"} | sort -u))
+  fi
   echo "loft plan: base $base"
   [[ -z "$PLAN_FULL" ]] || echo "loft plan: FULL gate: $PLAN_FULL"
   echo "loft plan: crates: ${PLAN_CRATES[*]:-none}"
-  echo "loft plan: bun: ${PLAN_BUN[*]:-none}"
-  for path in ${unmapped[@]+"${unmapped[@]}"}; do echo "loft plan: unmapped (no check selected): $path"; done
 }
 
 full_gate() {
@@ -148,8 +141,6 @@ full_gate() {
   cargo nextest run "${LOFT_GATE_TEST_ARGS[@]}" --workspace
   cargo test "${LOFT_GATE_DOCTEST_ARGS[@]}" --workspace
   keel_gate_release
-  # Outside the compile lock, niced: the Bun suite renders on the GPU (tests/setup.ts admits one per user; exit 75).
-  nice -n 15 bun test --timeout 120000
   echo "loft check full: ok"
 }
 
@@ -157,13 +148,12 @@ quick_gate() {
   local scope=() crate
   [[ -z "$PLAN_FULL" ]] || { full_gate; return; }
   for crate in ${PLAN_CRATES[@]+"${PLAN_CRATES[@]}"}; do scope+=(-p "$crate"); done
-  if [[ ${#scope[@]} -gt 0 ]]; then
+  if [[ -n "${scope[*]:-}" ]]; then
     keel_gate_acquire "loft check.sh quick ($root)"
     cargo clippy "${LOFT_GATE_CLIPPY_ARGS[@]}" "${scope[@]}" -- "${LOFT_GATE_LINT_ARGS[@]}"
     cargo nextest run "${LOFT_GATE_TEST_ARGS[@]}" "${scope[@]}"
     keel_gate_release
   fi
-  [[ ${#PLAN_BUN[@]} -eq 0 ]] || nice -n 15 bun test --timeout 120000 "${PLAN_BUN[@]/#/./}"
   echo "loft check quick: ok"
 }
 

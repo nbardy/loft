@@ -156,7 +156,7 @@ are not doctrine. Skip this section if you would rather form your own view first
 
 ## Pointers
 
-- The previous attempt: `~/git/loft` (`README.md`, `DESIGN.md`, `examples/`).
+- The previous attempt: `~/git/loft` (`docs/legacy/DESIGN.md`, `examples/`, source tag `legacy/2026-11-19`).
 - The game: `~/git/room-runners-arena-lib`. Its client is Rust, under `keel/`. The older hand-written boss art is
   under `keel/games/art/`.
 - The design note that led to the previous attempt: branch `art/boss-fable-pass` of the game repository,

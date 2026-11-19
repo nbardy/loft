@@ -1,6 +1,6 @@
 # Geometry an author makes, and rays an author casts
 
-A design proposal, written 2026-11-13. Nothing here is built. It obeys the nine rules of `docs/open_design.md`
+A design proposal, written 2026-11-13. Nothing here is built. It obeys the nine rules of `docs/legacy/open_design.md`
 and argues against none of them. Numbers marked *measured* come from the throwaway experiments in `out/mesh_probe/`
 (not committed), run on this machine with the load average near 10. Frame times swing about 2x between the GPU's
 clock states, so every number is "best of 30 or 40 frames". *Predicted* numbers are what a build will be scored
@@ -505,7 +505,7 @@ Nothing else changes for existing scenes. No existing constructor's signature ch
 
 - **File import.** A mesh from a modelling tool has no body coordinates, no parameters and no closed form, so it
   loses paint in its own coordinates, checks and variants: everything Loft is for. three.js serves assets better
-  (`docs/vs_threejs.md`). An author **can** parse a file in their own module and pass rows, because `points` are
+  (`docs/legacy/vs_threejs.md`). An author **can** parse a file in their own module and pass rows, because `points` are
   numbers from anywhere. Loft neither stops that nor helps with it. No loader, no format, no material import.
 - **A general path tracer.** It needs a hierarchy over moving triangles, rebuilt each frame. That build is a sort,
   which Loft's GPU table programs (map, scan) cannot express, and on this scene it costs about as much as the whole

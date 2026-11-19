@@ -5,13 +5,8 @@ description: Make a Loft creature, ship or attack move with life (Disney's twelv
 
 # Lively motion
 
-Read `docs/animation_principles.md` first. It lists the twelve principles, the helper for each, and an eight-step
-order of work for a monster.
-
-The helpers are in `src/geom/lively.ts`: `beats`, `anticipated`, `overshot`, `slowInOut`, `slowIn`, `slowOut`,
-`squash`, `stretchOf`, `impact`, `arc`, `swing`, `dragged`, `echo`, `alive`, `exaggerated`, `uneven`. Existing ones
-they build on: `response`, `retarded`, `pulse`, `ease` (`src/curve.ts`) and `breathe`, `strike`, `lookAt`
-(`src/geom/motion.ts`).
+Read `docs/design/motion.md` and `docs/spec/03_SUB_ENGINES_AND_STDLIB.md` for the v1.0 motion model.
+`docs/legacy/animation_principles.md` preserves pose and timing recipes to port from the earlier engine.
 
 Rules of thumb:
 
@@ -26,6 +21,5 @@ checklist at the end of the reference.
 
 ## Grabs
 
-For a monster that takes hold of something (a claw on a ship, a coil round a hull), use `grab`, `fingerAngle` and
-`wrap` from `src/geom/grab.ts`; `examples/grab.ts` is the worked scene and `docs/animation_principles.md` has the
-section. Drive every gripper from the grab's `gap`, and draw the held thing at `thing` with `squeezed(base)`.
+For a grasp, drive all the fingers from the same grip state. Carry the held object from that contact frame and
+check that it stays anchored until release. The legacy `examples/grab.ts` records the worked scene to port.

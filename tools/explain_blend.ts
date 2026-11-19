@@ -1,4 +1,4 @@
-// A figure and a measurement for docs/tracing_sota.md section 6: a smooth blend drawn with each part's own triangles.
+// A figure and a measurement for docs/legacy/tracing_sota.md section 6: a smooth blend drawn with each part's own triangles.
 //   bun tools/explain_blend.ts
 // Two parts (a disc and a capsule) keep their own outlines. Each vertex is pushed along its own outward normal until
 // it lies on the zero set of the smooth union of the two distance fields. The outlines still overlap inside; the union

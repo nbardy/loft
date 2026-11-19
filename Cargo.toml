@@ -1,16 +1,15 @@
 # The meta engine workspace (plan 2026-11-20 §1): runner (layer 0), ir and gates (layer 1), compiler passes (layer 2),
-# cli. Independent of the legacy rust/ workspace beside it; build through tools/dev.sh, which takes the compile lock.
+# CLI. Build through tools/dev.sh, which takes the shared compile lock.
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["rust"]
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.99.1"
 publish = false
 
-# Same pins as the legacy workspace and Keel.
+# Same pins as Keel.
 [workspace.dependencies]
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl", "naga-ir"] }
 naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }

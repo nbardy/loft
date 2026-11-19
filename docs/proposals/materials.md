@@ -1,6 +1,6 @@
 # How a surface answers light
 
-A design proposal, 2026-11-13. Nothing here is built. It follows the rules in `docs/open_design.md` and tests the
+A design proposal, 2026-11-13. Nothing here is built. It follows the rules in `docs/legacy/open_design.md` and tests the
 direction sketched there ("channels and a wrap"). It keeps that direction and changes five things about it:
 
 1. The wrap goes inside the paint (a key named `shade`) and does not become a new option on every drawable.
@@ -455,7 +455,7 @@ Toon's three changes are written so that the defaults fold back to today's nodes
 - **Styles written outside the library:** unchanged. They read no channel, and `ShadeCtx` only gains members.
 - **Shaders:** every scene's WGSL in biolume, neon and papercraft is byte-identical. Toon, woodblock and sketch lose
   one identity node each in their shared shade (step 4 above), and the channel terms then fold away.
-- **Pictures:** the 17 `rgba` hashes in `docs/styles.md` are predicted identical (§7).
+- **Pictures:** the 17 `rgba` hashes in `docs/legacy/styles.md` are predicted identical (§7).
 
 ### Translucency and `draw.glazed`
 
@@ -553,7 +553,7 @@ comment, above.
 
 | | Predicted |
 |---|---|
-| Pictures of today's scenes, after stage 1 and after stage 4 | The 17 `rgba` hashes in `docs/styles.md` are identical. If one moves, it will be because a dropped `add 0` let the GPU compiler fuse a multiply-add, changing a few pixels by one level. The fallback is to apply the identities only inside the emitted style functions (3 lines). |
+| Pictures of today's scenes, after stage 1 and after stage 4 | The 17 `rgba` hashes in `docs/legacy/styles.md` are identical. If one moves, it will be because a dropped `add 0` let the GPU compiler fuse a multiply-add, changing a few pixels by one level. The fallback is to apply the identities only inside the emitted style functions (3 lines). |
 | WGSL of today's scenes | Byte-identical in biolume, neon and papercraft. One line shorter in the shared shade of toon, woodblock and sketch. |
 | Frame time, crab `game` 1280x800, no channels | Unchanged (within the 0.07 ms timer tick, alternating rounds). |
 | Frame time, crab with every body glossy in toon | +0.13 ms ±0.05 in the fast state (prototype measured; the built part should match). |

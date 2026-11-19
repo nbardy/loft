@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# Loft's half of the shared pin check (plan 2026-11-19 §5.1 step 3, §5.2): wgpu, its core, hal and types crates (which
-# carry the code a game links; `=30.0.1` on wgpu alone does not pin them) and naga each resolve to one version, the same
-# as in Keel's lock, because a Keel game links loft-gpu into its own wgpu. A bump happens in both repos in one change;
-# this fails the side that lags. Keel's mirror script runs the same comparison from its side.
+# Verify the wgpu and naga versions shared by Loft and a host-owned Keel device. Compare the full set of wgpu
+# crates used by both workspaces. Keel runs the corresponding comparison from its side.
 #   tools/check_pins.sh [KEEL_LOCK]     (default $KEEL_LOCK, else ~/git/room-runners-arena-lib/keel/Cargo.lock)
 # Exit 0: equal. 1: a mismatch, or a crate resolved twice. 2: a lock is missing (named, with the fix).
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
-loft="$root/rust/Cargo.lock"
+loft="$root/Cargo.lock"
 keel="${1:-${KEEL_LOCK:-$HOME/git/room-runners-arena-lib/keel/Cargo.lock}}"
 for lock in "$loft" "$keel"; do
   [[ -f "$lock" ]] || { echo "pins: no lock at $lock. Fix: pass Keel's Cargo.lock as the argument or set KEEL_LOCK" >&2; exit 2; }

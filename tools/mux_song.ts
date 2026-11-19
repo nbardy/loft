@@ -1,4 +1,4 @@
-// Put a song on an already rendered clip, without rendering again (docs/lineup.md, "The song"): the video stream copied
+// Put a song on an already rendered clip, without rendering again (docs/legacy/lineup.md, "The song"): the video stream copied
 // as it is, the WAV as AAC 48 kHz stereo. The clip and the song must be the same length (one period each).
 //
 //   bun tools/mux_song.ts <clip.mp4> <song.wav> <out.mp4>

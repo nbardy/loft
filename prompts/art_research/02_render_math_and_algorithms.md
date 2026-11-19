@@ -111,7 +111,7 @@ Ours. Test them, extend them or break them. Each is labelled with how far it was
 
 ## Literature
 
-The fuller notes, with how each source was checked, are in `docs/tracing_sota.md`. Read it as a starting list, not
+The fuller notes, with how each source was checked, are in `docs/legacy/tracing_sota.md`. Read it as a starting list, not
 as a survey.
 
 - Marching, per-region pruning: Keeter 2020 and 2025; Zanni 2023; Barbier and others, Lipschitz Pruning, 2025.
@@ -150,7 +150,7 @@ as a survey.
 
 ## Pointers
 
-- Notes and sources: `~/git/loft/docs/tracing_sota.md`; pictures: `~/git/loft/docs/marching/index.html`.
+- Notes and sources: `~/git/loft/docs/legacy/tracing_sota.md`; pictures: `~/git/loft/docs/marching/index.html`.
 - The figure and count tools: `~/git/loft/tools/explain_marching*.ts`, `tools/explain_blend.ts`.
-- GPU timing: `bun src/cli/main.ts profile <scene>` and `tools/tracer_bench.ts` in `~/git/loft`.
-- The two readings of a fold: `~/git/loft/src/lib/similar.ts`, `src/draw/copies.ts`, `examples/coral_list.ts`.
+- GPU timing for v1.0: `tools/dev.sh run loft-cli -- gate`. The original tracer benchmark is at tag `legacy/2026-11-19`.
+- The two readings of a fold: `examples/coral_list.ts` and the files `src/lib/similar.ts` and `src/draw/copies.ts` at tag `legacy/2026-11-19`.

@@ -14,7 +14,7 @@ mechanism here earns or loses its place, with the date and the numbers.
 - 2026-11-02 (Keel): a 70-minute batch held the compile lock and stalled every lane. Long runs (renders, parity,
   benches) start after the build, outside the lock, under `nice -n 15`; `dev.sh run` releases the lock before exec.
 - 2026-10-30 (Keel): a fresh `CARGO_TARGET_DIR` per task made ~100 folders and 64 GB of private rebuilds. Only
-  `rust/target` is admitted; another folder needs `LOFT_TARGET_OWNER` and its owner deletes it.
+  `target` is admitted; another folder needs `LOFT_TARGET_OWNER` and its owner deletes it.
 - 2026-10-30 (Keel): a target cloned into another checkout reported every crate Fresh and ran the other tree's code
   (unit hashes ignore the checkout path). Never share or copy a target; sccache is the cross-worktree reuse.
 - 2026-11-01 (Keel): Homebrew's cargo came first on PATH and its newer Clippy failed crates the pinned 1.99.1 passes.

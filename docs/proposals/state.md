@@ -1,6 +1,6 @@
 # State: a recurrence that stays a function of time
 
-Written 2026-11-13. A design proposal: nothing here is built. It answers the "largest box" of `docs/open_design.md`.
+Written 2026-11-13. A design proposal: nothing here is built. It answers the "largest box" of `docs/legacy/open_design.md`.
 
 **In one paragraph.** The author writes one step function over entries (a list or a grid) in Loft's own expressions.
 Loft runs it on the GPU once, from `from` to `until`, and keeps the result as a table. That table is the truth: it is
@@ -174,9 +174,9 @@ below 3. Key events to the step index, or better, use the closed form (section 6
 | Table programs: `map` (one invocation per entry), `scan` (one invocation loops, carrying a small state), `cpu` (named, unported). Tables are scheduled in dependency levels, one dispatch per level. | `src/expr.ts:108`, `src/compile/tables.ts` |
 | Static tables are filled once on the CPU at compile and uploaded once (`Artefact.statics`). Storage limits: one binding holds at most 128 MiB (`BINDING_VEC4S`), and 5 table buffers per stage. | `src/compile/tables.ts:36-40,463` |
 | `tabulate(name, fn, n, "static" \| "frame")` returns an interpolant. Distance bricks sample a static field once. `varianceOf` classifies an expression as static, changing (names what it reads) or unevaluable (GPU-only). | `src/map/table.ts`, `src/map/brick.ts` |
-| Rates: build < frame < copy < item. Per-frame work read by faster programs is lifted into frame-values tables. | `src/compile/rates.ts`, `docs/gpu_native.md` "Rates" |
+| Rates: build < frame < copy < item. Per-frame work read by faster programs is lifted into frame-values tables. | `src/compile/rates.ts`, `docs/legacy/gpu_native.md` "Rates" |
 | Checks evaluate expressions at a time through `Probe.eval` → `compiled.frame(state)`, which fills every table on the CPU. | `src/check.ts:52` |
-| The file format: a fixed list of dispatches per frame; a loader refuses `cpu` tables. | `docs/artefact_format.md` |
+| The file format: a fixed list of dispatches per frame; a loader refuses `cpu` tables. | `docs/legacy/artefact_format.md` |
 | `draw.points(name, points(n, i => ({ at, scale })), thing)` draws n copies at expressions of the index (and of time). | `src/draw/index.ts:83`, `src/map/chart.ts:84` |
 
 So nothing in Loft is simulated, with one exception the docs do not mention: a state of a few numbers can already be
@@ -335,7 +335,7 @@ refused with the bytes that keeping every step would need.
 | A table program kind for a recurrence's stored states, and the compiler's choice of what is kept, a sum type: `Kept = { kind: "every"; states } \| { kind: "checkpoints"; every: number; states }` | `src/expr.ts` (`TableProgram`), `src/compile/tables.ts` (`classify`, `schedule`, `poseStages`): the step lowered twice (ping and pong), the replay as a repeated map stage | 150 |
 | Bake on the GPU (ping-pong pipelines, clock entry, checkpoint copies, readback); per-frame replay count and the hidden step input | `src/host/host.ts`, `src/artefact.ts` (optional `recurrences` field) | 120 |
 | CPU reading: from the stored table directly (K = 1), or the `compileJs` twin replaying at most K steps from a checkpoint (Probe and `Artefact.pose`) | `src/compile/tables.ts` (`cpuFill`) | 40 |
-| Format: a dispatch may carry `repeat: { recurrence }`; the loader computes k from time, rate, `from` and K, and writes n to the named input slot. Manifest version 2 only when present | `src/host/manifest.ts`, `docs/artefact_format.md`, `rust/loft-loader` | 30 TS + 40 Rust |
+| Format: a dispatch may carry `repeat: { recurrence }`; the loader computes k from time, rate, `from` and K, and writes n to the named input slot. Manifest version 2 only when present | `src/host/manifest.ts`, `docs/legacy/artefact_format.md`, `rust/loft-loader` | 30 TS + 40 Rust |
 | The seam and drift checks, the clip-length refusal, `loft profile` lines (bake ms, replay ms, MB) | `src/cli/check.ts`, `src/cli/video.ts`, `src/host/profile.ts` | 60 |
 
 **What changes for existing scenes: nothing.** A scene without `recur` compiles to byte-identical WGSL and a
@@ -513,7 +513,7 @@ copies or a distance field can draw.
 3. **Checkpoints for grids (4 days).** `Kept` with checkpoints, the repeat dispatch and step input, manifest version 2
    when present, the Rust loader, the `when` refusal. The skin scene and a creeping pattern.
 4. **Measured loops (1 day).** Seam and drift checks, the clip-length refusal, `loft profile` lines, the context lines,
-   `docs/artefact_format.md`.
+   `docs/legacy/artefact_format.md`.
 5. **Resume (1 day, optional).** A host keeps its last replayed state.
 
 About 10 days in all.

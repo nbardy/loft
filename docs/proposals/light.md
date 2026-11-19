@@ -1,6 +1,6 @@
 # Light: a function of a world point
 
-Written 2026-11-13. A design proposal: nothing here is built. It obeys the nine rules of `docs/open_design.md` and
+Written 2026-11-13. A design proposal: nothing here is built. It obeys the nine rules of `docs/legacy/open_design.md` and
 argues with one sentence of it ("things that glow provide one"; section 3).
 
 The short form. A light is a function: for a point in the world, the unit direction toward the light, how much arrives
@@ -289,7 +289,7 @@ About **290 lines of library code**. A drawable needs no change: every one calls
 
 **What stays byte-identical.** A scene with no `lights` and a sun as a vector or `movable`: every shader's text (the
 list holds the sun alone, with the literal amount; the union over lights of one light is that light's measure, built
-by the same expression), so every picture. The 17 `rgba` hashes of `docs/styles.md` are the test.
+by the same expression), so every picture. The 17 `rgba` hashes of `docs/legacy/styles.md` are the test.
 
 **What changes for existing scenes.** Nothing. `flash` and `Flash` go; their four users (`storm.ts`, `stormwing.ts`,
 `stormfront.ts`, `tithe_fleet.ts`) change `flash(...)` to `lamp(...)` and `flashes:` to the scene's `lights` in the

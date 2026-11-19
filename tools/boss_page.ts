@@ -1,6 +1,6 @@
 // out/bosses/index.html: each of the five monsters beside its old version in the game.
 //   bun tools/boss_page.ts
-// The new pictures are whatever is in out/bosses/<name>/ (render them with `loft render|frames|clip`). The old ones
+// The new pictures are whatever is in out/bosses/<name>/. The old ones
 // are copied from the game repository's baseline renders, when that folder is present.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";

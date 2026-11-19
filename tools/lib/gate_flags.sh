@@ -4,7 +4,7 @@
 # units on every switch to the gate. A crate lint, quick and full must spell these the same way, so only here.
 LOFT_GATE_CLIPPY_ARGS=(--locked --all-targets)
 LOFT_GATE_LINT_ARGS=(-D warnings)
-# --no-tests=warn: a member with no tests yet (loft-loader) is not a failure of the workspace run.
+# --no-tests=warn: a member with no tests yet is not a failure of the workspace run.
 LOFT_GATE_TEST_ARGS=(--locked --no-tests=warn)
 LOFT_GATE_DOCTEST_ARGS=(--locked --doc)
 LOFT_GATE_WASM_CHECK_ARGS=(--locked --target wasm32-unknown-unknown)

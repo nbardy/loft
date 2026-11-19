@@ -1,8 +1,8 @@
 # Loft: core
 
 What Loft is for, what we want from it, and how we judge a change. The stance behind it is `docs/PHILOSOPHY.md`;
-the design goals are `docs/design/render.md` and `docs/design/motion.md`. Everything else (DESIGN.md, the proposals, the
-lane notes) serves this page. When a design and this page disagree, change the design or argue here.
+the design goals are `docs/design/render.md` and `docs/design/motion.md`. The v1.0 specification is in `docs/spec/`.
+When a design and this page disagree, change the design or argue here.
 
 ## The aim
 
@@ -82,8 +82,8 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 
 - **Checks and `solve` never say something false**. A build solves and reports holds as `Unproved`; `loft check`
   proves; a margin finer than the arithmetic is `Undecided` by name.
-- **Picture parity is the gate** for engine changes (`tools/parity`, rules in the lean Rust plan §2.2), not byte
-  identity.
+- **Picture parity is the gate** for engine changes. Use the approved v1.0 pictures and the tolerance in the
+  Phase 1 picture gate (`tools/dev.sh run loft-cli -- gate`).
 - **One identity record** for a picture: source, precision, parameters, inputs, format.
 
 ## How a change is judged
@@ -103,21 +103,7 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 
 ## Where we are (19 Nov 2026)
 
-| Want | State | Owner |
-|---|---|---|
-| Analytic impostors, raymarching, raster surfaces, instancing, media, post | Built in the TS engine | DESIGN.md |
-| Rust path | Builds 233/295 corpus entries, loads and draws 233; 13 pass picture parity in every frame (full run at 963c667, before the grain fix) | lean Rust plan, `agent_notes/2026-11-19_lean_rust_draws.md` |
-| Ordered render (`loft/render`) | Kinds, six queries over a world, print/realtime/reference/inspect engines, indexed indirect grids; same 6 pipelines at 10–1,000 things; 13/17 slice checks pass (cold load, one-bounce bias, time model, consumer tokens open) | `agent_notes/2026-11-19_design/render_step3_impl.md` |
-| Motion (`loft/motion`) | BODY/STATE/POSE rows, one fused dispatch per frame, baked and live takes; the crab plays, seeks and draws on the Rust path; 0/481 state differences across tick groupings; owner verdict on the look pending | `agent_notes/2026-11-19_design/motion_step3_impl.md` |
-| Render reads motion | Ordered scenes take row steps; the live post-IK POSE drives record and ray observers through playback, seek and rewind with zero snapshot or off-edge pixel errors. Wire-4 grid draws still bake row counts into shader text | `agent_notes/2026-11-19_design/integration.md` |
-| Compact graph | Not yet: the TS engine inlines every call (Titan records 308k nodes) | switch-to-Rust lane |
-| Spatial lookup for many-part fields | Not yet | — |
-| State-of-the-art PBR | PBR with AO and a moving sun; gap to the state of the art not assessed | — |
-| Frame time on the Rust path | Scored per entry at 960×540: median p95 6.1 ms; five-crab lineup 97/109 ms p50/p95, 5,538 modules, 23 s load | parity run |
-| Checks and solve never false | Rust solve built (holds `Unproved` in builds, proofs in `loft check`); heron "moved" is a named ill-conditioned exception | `agent_notes/2026-11-19_lean_rust_solve2.md` |
-| Keel embedding | loft-gpu instances and pins built; Keel side not wired | `docs/keel.md` |
-| Creative training on latest Loft | Pinned at c8502c2; re-pin after the switch | creative `vendor/loft` |
-
-Next, in order: the switch
-to Rust with the compact graph (TS engine, host and old loader deleted), with grid draws reading row counts as data;
-GPU work from the measured frame times; the PBR audit.
+The root Rust workspace runs the Phase 1 rendering slice. Capsules, blobs and the hermit crab exercise the five gates
+at one and twenty instances. See the [Phase 1 results](agent_notes/2026-11-20_meta/phase1.md) and the
+[v1.0 build order](docs/spec/05_NUMBERS_AND_BUILD_ORDER.md). The retired engines and their measurements are recorded
+in [DEPRECATED.md](DEPRECATED.md) and [docs/legacy/](docs/legacy/).

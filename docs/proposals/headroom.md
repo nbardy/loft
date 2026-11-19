@@ -1,7 +1,7 @@
 # Headroom: what the four proposals and the renderer under them still rule out
 
 A design proposal and a review, 2026-11-13. Nothing here is built. It reads the three proposals now on main
-(`materials.md`, `state.md`, `geometry_and_rays.md`) and the light sketch in `docs/open_design.md` (the light proposal
+(`materials.md`, `state.md`, `geometry_and_rays.md`) and the light sketch in `docs/legacy/open_design.md` (the light proposal
 was not written when this was: where I need it, I work from the sketch and say so). Claims about the code were
 checked at `29594fb`. Numbers marked *measured* were measured by the proposals I cite; numbers marked *estimate* are
 mine, with the arithmetic shown, and are what a build will be scored against.
@@ -120,7 +120,7 @@ addition away, and the additions concentrate in two places: the pass (eight rows
 ## 3. What an author writes with the new piece
 
 Three scenes, written before the design in §5 and then read cold. The first two use `pass`; the third uses still
-mode, which needs no new name in a scene. Lights in the third follow the sketch in `docs/open_design.md` with the
+mode, which needs no new name in a scene. Lights in the third follow the sketch in `docs/legacy/open_design.md` with the
 shape amendment A2, since the light proposal did not exist when this was written.
 
 ### 3.1 Shadows from every shape the sun sees (a style part)
@@ -363,7 +363,7 @@ run as written. `Rgb` is the existing `readonly [number, number, number]`.
 | The camera: lifted by the existing rates machinery into a frame-values computation, written by one dispatch into a 48-float buffer laid out as `struct Frame` (with the pass's own `viewport`) and bound as that pass's group 0 | `src/compile/tables.ts`, `src/host/lower.ts` | 60 |
 | Lowering: per pass, its textures, its group-0 bind group (its own `frame`), a group-3 bind group with every other pass's texture (a 1 x 1 stand-in in its own place, because WebGPU forbids a texture as attachment and binding in one pass), and its draw commands: the view's commands minus readers; for `depth`, the depth pipelines | `src/host/lower.ts` | 150 |
 | Group 3 declarations prepended to modules and post passes that read passes (as `SCENE_DEPTH_WGSL` is for group 2) | `src/artefact.ts` | 30 |
-| Format: `TextureDesc.size` becomes a sum (below); `Draw.depth` (5.3); manifest version 2 only when a pass exists | `src/host/manifest.ts`, `docs/artefact_format.md` | 40 |
+| Format: `TextureDesc.size` becomes a sum (below); `Draw.depth` (5.3); manifest version 2 only when a pass exists | `src/host/manifest.ts`, `docs/legacy/artefact_format.md` | 40 |
 | Rust loader: fixed and scaled textures, the extra bind groups and passes (it already runs dispatches and passes from lists) | `rust/loft-loader` | 90 |
 | Still mode in the TS host and the command line (5.4) | `src/host/host.ts`, `src/cli/` | 70 |
 
@@ -494,7 +494,7 @@ Cost: one reserved word in `loft context` (counted in §11), one export (`standa
 
 ### A2. Light: distance, size, a sample, and families
 
-Working from the sketch in `docs/open_design.md` (`(p) => ({ toward, colour })`), since the light proposal was not
+Working from the sketch in `docs/legacy/open_design.md` (`(p) => ({ toward, colour })`), since the light proposal was not
 written:
 
 ```ts
@@ -679,7 +679,7 @@ its 150 lines:
 - **Baking** reads `surface` and `mesh` today and could mesh a `field` by surface nets (which exists) instead of
   skipping it.
 - **The CPU checks** could test the exact `hit` or `field` of a named thing, where `staysInView` now uses capsules.
-- **Differentiation** (`docs/differentiable.md`): forms are expressions, so `grad.ts` reaches them; the implicit-function
+- **Differentiation** (`docs/legacy/differentiable.md`): forms are expressions, so `grad.ts` reaches them; the implicit-function
   derivative of a field's hit needs the field, which today no reader but the rasteriser can see.
 
 **What it must not become.** A closed menu of shape kinds that every new idea must join: the `hit` variant is the
@@ -703,7 +703,7 @@ has at least two readers in sight; that is the test.
 | **Real-time path tracing and real-time global illumination** | 30 to 80 ms per sample on the largest example (§7.3): two orders of magnitude over the frame budget, and the looks Loft exists for (toon, woodblock, print, neon) are decided by a style, not by converged light. |
 | **Deferred shading** | Its benefit is many lights; clustered forward gets that without a G-buffer, keeps 4x MSAA cheap, and keeps per-thing `scatter` and wraps in per-thing modules. |
 | **Virtual shadow maps, virtual textures, mesh streaming** | Feedback from the previous frame (history), page tables and streaming exist for asset-scale worlds. Loft's scenes are code-scale. |
-| **A material graph, a node editor, a material library** | Channels, `scatter` and functions are the vocabulary (rule 1). A menu of materials is the box `docs/open_design.md` exists to avoid. |
+| **A material graph, a node editor, a material library** | Channels, `scatter` and functions are the vocabulary (rule 1). A menu of materials is the box `docs/legacy/open_design.md` exists to avoid. |
 | **Physically based camera exposure, tone-mapping pipelines, colour management beyond sRGB** | A style decides how light becomes ink; a single `emits` compression per style is enough. A colour-managed pipeline is a large surface in `loft context` for no look Loft draws. |
 | **Hardware ray tracing** | Not in browser WebGPU; experimental in native `wgpu` only. Revisit when it ships in Dawn, through `forms`, without any scene changing. |
 
@@ -754,7 +754,7 @@ reported apart; "largest example" is `examples/bosses/reefback_titan.ts`, `game`
 
 | Quantity | Prediction | Wrong if |
 |---|---|---|
-| Scenes that read no pass, after every stage | Byte-identical WGSL, manifest (version 1) and pixels; the 17 `rgba` hashes in `docs/styles.md` unchanged | any byte differs |
+| Scenes that read no pass, after every stage | Byte-identical WGSL, manifest (version 1) and pixels; the 17 `rgba` hashes in `docs/legacy/styles.md` unchanged | any byte differs |
 | A1 with no `scatter` given | Byte-identical (the `otherwise` node is the style's own) | any byte differs |
 | A 2048² depth pass on the largest example (§3.1's part) | +0.4 to 1.0 ms fast (vertex work about that of the view's opaque bodies, 0.3 to 0.7 ms; unshaded depth fragments 0.1 to 0.3 ms); 16.8 MB of depth | over 2 ms fast |
 | Load time with that depth pass | +15 to 40% (one depth pipeline per drawn shader; no shading code in it) | over +50% |

@@ -416,7 +416,7 @@ ring wave is being put.
 
 ### Predicted cost
 
-Today's foam is priced in `docs/gpu_native.md` ("The sea"): the style's contact foam was 0.16 ms over the whole sea
+Today's foam is priced in `docs/legacy/gpu_native.md` ("The sea"): the style's contact foam was 0.16 ms over the whole sea
 beside 0.33 for the band, and near quads now cost 0.20 ms a frame in total, so the pattern is about 0.065 ms of the
 frame (one timer tick), of which the gradient noise is about 0.04. No new pattern evaluates a gradient noise; `stipple`
 has two cell hashes (today: one), the others none. Predicted difference from `ridge`, fast clock state:

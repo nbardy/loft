@@ -1,3 +1,0 @@
-[test]
-# See tests/setup.ts: it sets the per-test timeout for GPU tests.
-preload = ["./tests/setup.ts"]

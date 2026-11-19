@@ -27,7 +27,7 @@ across launches. wgpu 30 does not expose `MTLBinaryArchive` in its Metal pipelin
 The existing `loft serve` content cache retains Dawn objects on one device. The installed bun-webgpu 0.1.7 has
 the sType for a native cache descriptor and a raw descriptor-chain pointer. It lacks the callbacks and cache
 userdata needed for persistence. The native bridge and its smallest workable storage contract are specified in
-[Persistent Dawn cache](../docs/reliable_render.md#persistent-dawn-cache).
+[Persistent Dawn cache](../docs/legacy/reliable_render.md#persistent-dawn-cache).
 
 ## Work counted
 

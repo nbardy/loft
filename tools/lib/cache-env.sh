@@ -8,11 +8,11 @@ fi
 loft_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
 
-# Pinned compiler: bare `cargo` must be the rustup proxy so rust/rust-toolchain.toml applies. 2026-11-01 (Keel):
+# Pinned compiler: bare `cargo` must be the rustup proxy so rust-toolchain.toml applies. 2026-11-01 (Keel):
 # Homebrew's cargo came first on PATH and its newer Clippy failed two crates the pinned toolchain passes.
 loft_rustup_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
 [[ -x "$loft_rustup_bin/rustup" ]] || {
-  echo "cache-env.sh: no rustup at $loft_rustup_bin, so rust/rust-toolchain.toml cannot be enforced; install rustup (https://rustup.rs)" >&2
+  echo "cache-env.sh: no rustup at $loft_rustup_bin, so rust-toolchain.toml cannot be enforced; install rustup (https://rustup.rs)" >&2
   return 2
 }
 export PATH="$loft_rustup_bin:$PATH"
@@ -47,28 +47,28 @@ loft_realpath() {
 # One build folder per worktree. 2026-10-30 (Keel): agents exported a fresh CARGO_TARGET_DIR per task; ~100 folders
 # held 64 GB, each a private full rebuild nothing reused. And a target shared between checkouts is unsafe: Cargo's
 # unit hashes ignore the checkout path, so a cloned target reports the other tree's crates Fresh.
-#   primary  rust/target (legacy workspace) or target (the meta workspace in crates/, chosen by tools/dev.sh)
-#   owned    rust/target/<sub>, only with LOFT_TARGET_OWNER=<task>; that owner deletes it at lane end
-#   unowned  rust/target/<sub> without an owner: refused
+#   primary  target
+#   owned    target/<sub>, only with LOFT_TARGET_OWNER=<task>; that owner deletes it at lane end
+#   unowned  target/<sub> without an owner: refused
 #   outside  anything else: refused
 loft_admit_target() {
   local dir
   dir="$(loft_realpath "$1")" || return 2
   case "$dir" in
-    "$loft_root/rust/target"|"$loft_root/target") ;;
-    "$loft_root/rust/target/"*)
+    "$loft_root/target") ;;
+    "$loft_root/target/"*)
       [[ "${LOFT_TARGET_OWNER:-}" =~ ^[A-Za-z0-9._-]+$ ]] || {
         echo "CARGO_TARGET_DIR=$dir: per-task build folders are refused (Keel 2026-10-30: ~100 of them, 64 GB). Unset it, or set LOFT_TARGET_OWNER=<task> and delete the folder at lane end." >&2
         return 2
       }
       echo "CARGO_TARGET_DIR=$dir is owned by task '$LOFT_TARGET_OWNER', which removes it at lane end." >&2 ;;
     *)
-      echo "CARGO_TARGET_DIR=$dir: Cargo outputs stay in this worktree's rust/target (unset CARGO_TARGET_DIR); sccache shares compatible units across worktrees." >&2
+      echo "CARGO_TARGET_DIR=$dir: Cargo outputs stay in this worktree's target (unset CARGO_TARGET_DIR); sccache shares compatible units across worktrees." >&2
       return 2 ;;
   esac
   printf '%s\n' "$dir"
 }
-CARGO_TARGET_DIR="$(loft_admit_target "${CARGO_TARGET_DIR:-$loft_root/rust/target}")" || return 2
+CARGO_TARGET_DIR="$(loft_admit_target "${CARGO_TARGET_DIR:-$loft_root/target}")" || return 2
 export CARGO_TARGET_DIR
 export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-6G}"
 # sccache refuses incremental units: CARGO_INCREMENTAL=1 is an explicit edit-loop opt-in that drops the wrapper.

@@ -37,7 +37,7 @@ session does not.
 | 10 Nov, 21:29 JST | **Loft repo first commit.** DESIGN v0 reads "authoring code (TypeScript) → the compiler (TypeScript) → a host … later: Rust/wgpu inside the game". The artefact holds WGSL plus **a generated JavaScript per-frame pose function** | **TS compiler** | loft `be38e3a` (`DESIGN.md:11-18`) |
 | 10 Nov, 12:31 UTC | The agent explains the switch: "Our compiler, also written in TypeScript … Rust comes in later, and only as a small loader … **Earlier I said the compiler would be Rust. I've changed that**: keeping the compiler in TypeScript means the Rust side needs no compiler at all." | — | transcript 2026-11-10T12:31 |
 | 10 Nov, 12:46 UTC | The agent offers the owner a choice, framed as Rust *authoring*: "if you'd rather have the whole thing in Rust, authoring included … a creature edit would cost the 0.4–0.8 s Rust compile … I'd stay with TypeScript authoring and a Rust loader … Say so if you want it all-Rust." The owner never answers it. His next messages ask about Unity and Blender, then "Lets ge it all implimented". | — | transcript 2026-11-10T12:46, 12:59 |
-| 11 Nov | First redesign. `docs/redesign_proposals.md` lists the problems: "Runs in the game's Rust client: no: an artefact contains a JavaScript function". Owner: "no not on 3 js, gpu native loft sseems right". **The pose moves to GPU compute** (`gpu/pose`) and the artefact becomes files (`gpu/files`) | TS compiler, WGSL runtime | loft `9dfc603`, `fbe6242`, `f85a079`, `2776620`; transcript 2026-11-11T07:03 |
+| 11 Nov | First redesign. `docs/legacy/redesign_proposals.md` lists the problems: "Runs in the game's Rust client: no: an artefact contains a JavaScript function". Owner: "no not on 3 js, gpu native loft sseems right". **The pose moves to GPU compute** (`gpu/pose`) and the artefact becomes files (`gpu/files`) | TS compiler, WGSL runtime | loft `9dfc603`, `fbe6242`, `f85a079`, `2776620`; transcript 2026-11-11T07:03 |
 | 11 Nov, 08:10–08:58 UTC | Owner: "so we compile to sahders now? from a TS lang? Any reason to not just write the shaders directly then?" Then: "**load and compile isn't bad we're mostly worried about runtime right now**." Compile speed is deprioritised from here on | — | transcript 2026-11-11T08:10, 08:58 |
 | 11 Nov | **Rust loader**: `rust/loft-loader` (wgpu 30) plus `loft-view`. Same pictures as the Dawn host to within 98 edge pixels; GPU frame 8–14% slower, cause not measured | **Rust** (loader only) | loft `15a6b0d`, `b75a2c5`, `8b6249a` |
 | 12–13 Nov | Library extraction, a second subject, and the `loft context` training surface; README and a comparison with three.js. Tag `train-1` = `a2d82a2` (13 Nov) | TS | loft `dca8074`, `1c3d0ac`, `ef4033b` |
@@ -107,7 +107,7 @@ Each item is marked as deliberate (D) or drift (R).
    after the fact. The choice it then offered mixed up the authoring language with the compiler language. That one
    choice decided where every later line of code went.
 2. **(D, then a rewrite) The first artefact carried a JavaScript pose function.** The Rust client could not run it
-   ("Runs in the game's Rust client: no", `docs/redesign_proposals.md`). Day 2 went into GPU pose and artefacts as
+   ("Runs in the game's Rust client: no", `docs/legacy/redesign_proposals.md`). Day 2 went into GPU pose and artefacts as
    files (`f85a079`, `2776620`). That was the right move, but it was a rewrite of a day-1 shortcut.
 3. **(D, owner) Runtime over compile.** On 11 Nov the owner said "load and compile isn't bad". So compile cost in TS was
    never a gate while 38k lines were added. It came back on 18 Nov as the training bottleneck: about 1–1.5 CPU s per
@@ -162,10 +162,10 @@ Each item is marked as deliberate (D) or drift (R).
 | `training-host-contract` (view cameras resolved before GPU load) | unmerged, 5 commits | branch `training-host-contract` |
 | Body plans art direction (paused work) | unmerged, 2 commits | branch `art/body-plans` (`docs/art_direction/DIRECTION.md`) |
 | Explain the Rust loader's 8–14% slower GPU frame | open | `8b6249a` |
-| Outsider blockers: 380-name flat entry point, no reader ladder, private package, load time grows with content, history names in public types | open | `docs/inventory.md` §10 items 2–7 |
-| Extractions: shots/deliverables (`src/film/`), style parts, legged body kit, creature kit, one shell, tool checks, predict-before-render helper, music | open (item 1 done) | `docs/inventory.md` §9 |
-| Missing short examples (custom style, scene as files incl. the Rust loader, clip to share) | open | `docs/inventory.md` §11 |
-| Differentiable Loft | deferred | `docs/differentiable.md`; `docs/handoff_training.md` "Deferred" |
+| Outsider blockers: 380-name flat entry point, no reader ladder, private package, load time grows with content, history names in public types | open | `docs/legacy/inventory.md` §10 items 2–7 |
+| Extractions: shots/deliverables (`src/film/`), style parts, legged body kit, creature kit, one shell, tool checks, predict-before-render helper, music | open (item 1 done) | `docs/legacy/inventory.md` §9 |
+| Missing short examples (custom style, scene as files incl. the Rust loader, clip to share) | open | `docs/legacy/inventory.md` §11 |
+| Differentiable Loft | deferred | `docs/legacy/differentiable.md`; `docs/legacy/handoff_training.md` "Deferred" |
 | Not doing: space-time convex hulls, Bevy authoring, path tracer, checks as reward | decided | `2026-11-18_next.md` §9 |
 | Restart-review experiment (64 engineer-hours, exact-and-affordable test of D10) | proposed, unfunded | `~/git/_designs/2026-11-18_loft_restart/judge/VERDICT.md` |
 | LOFT vs LOFT-Scene split (objects vs rendering; glTF/three.js export) | raised by owner 14 Nov, unresolved | transcript 2026-11-14T04:18, 04:24 |

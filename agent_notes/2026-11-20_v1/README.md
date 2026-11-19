@@ -21,10 +21,10 @@ stops the chain (`chain.stopped`). Restart after a reboot: `nohup agent_notes/20
 | Briefs, logs, final messages | `agent_notes/2026-11-20_codex/` (`p*` implement, `r*` review, `f*` fix) |
 | Phase notes (predictions, scores) | `agent_notes/2026-11-20_meta/<phase>.md` |
 | Reviews | `reviews/` (here) |
-| Deprecated trees | `DEPRECATED.md` |
+| Retired engine and Phase 5 inputs | [DEPRECATED.md](../../DEPRECATED.md) |
 
 ## Update: fan-out pipeline (`chain3.sh`, replaces chain2)
-Per the scientist's fan-out handoff (`fanout_handoff.md` here): Phase 1.5 → review → fix → **Step 0 artifacts** (golden
+Per the scientist's fan-out handoff (`fanout_handoff.md` here): Phase 1.5 → review → fix → **legacy engine cleanup** → **Step 0 artifacts** (golden
 vectors crate `loft-abi`, `docs/spec/QUIRKS.md`, contention canary, gate mutants, `AGENT_CARD.md`, CARGO_BUILD_JOBS=2,
 GPU lock) → for Phases 2+3, 4 and 5: **freeze** shared types (Astra) → **parallel Sol lanes** (CPU twin + naga only,
 ≤3 Rust-heavy at once, each pushes its own branch, ESCALATE after two failed attempts) → **Astra audit + integrate**

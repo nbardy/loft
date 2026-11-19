@@ -13,6 +13,6 @@ different tool. Each tells its reader to override the other's limiting decisions
 the owner's constraints and budgets bind both.
 
 To reuse one: give the model the file and access to the repositories it points to. For a model you expect to do
-better than the previous attempt, hand over prompt 1 without `DESIGN.md` first, and let it read that afterwards.
+better than the previous attempt, hand over prompt 1 without `docs/legacy/DESIGN.md` first, and let it read that afterwards.
 
 The measured figures in both are dated. Re-measure before relying on them.

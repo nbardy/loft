@@ -1,23 +1,20 @@
 # Loft: agent guide
 
-Start with `CORE.md`: what Loft is for, the priorities (picture, GPU frame time, tokens, truth, lean) and how a change
-is judged.
+Start with [CORE.md](CORE.md) for the project's priorities and [docs/spec/](docs/spec/) for the v1.0 specification.
+The Rust workspace is at the repository root. The compiler, runner and CLI are in `crates/`, with `.loft` libraries
+in `lib/` and render schedules in `engines/`.
 
-- Parallel work: a disposable Cambium workspace, `git cambium add -b BRANCH -name NAME -ephemeral` (root `~/git/_wt` and the sweep come from `.cambium.toml`; `add` first removes workspaces already merged into origin/main). From the primary checkout, run `cambium prune --merged origin/main` or `cambium maintain` after a merge: it removes every clean workspace merged into origin/main and keeps the rest with the reason. `cambium remove NAME` refuses a dirty or in-use workspace and checkpoints before deleting. Pass the base commit explicitly if you need one other than this checkout's HEAD.
-- `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
-- Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
-  not there.
-- `pnpm test` is the suite (`bun test --timeout 120000`: a bare `bun test` gives some GPU tests bun's 5 s limit, which
-  they miss when the whole suite runs at once, although `tests/setup.ts` asks for 60 s). The old note: Under a loaded machine it can time out or fail once and pass on the next run; the intermittent shader-module
-  failure was bun-webgpu freeing descriptor strings early, patched (`docs/reliable_render.md`). Exit codes: `docs/errors.md`.
-- For parallel worktrees, each worker runs its focused checks. The integrating reviewer owns one full suite on the
-  combined revision. On macOS the test preload admits one LOFT Bun test process per user across worktrees. Exit 75
-  means another check is running. Record the pending check for the reviewer.
-- GPU time per draw: `bun src/cli/main.ts profile <scene> --view <camera>`. It also prints the pose stages (the
-  per-frame tables, computed on the GPU since phase 1 of `docs/gpu_native.md`), the CPU pose time, and every table
-  still filled on the CPU (`cpu`) with its reason. Pose stages alone: `bun tools/pose_time.ts [scene.ts:view ...]`. The GPU clock ticks in 0.065 ms steps; a reading below that is unresolved.
-- Comparing two ways of drawing one thing in the same timing rounds: `bun tools/tracer_bench.ts`.
-- Pictures and other output go under `out/`, which git ignores.
+- Use `tools/dev.sh check|lint|test|build|run CRATE` for the edit loop and `tools/check.sh static|quick|full` for
+  workspace checks. Cargo uses the root toolchain pin and a compile lock shared with Keel. Each workspace builds
+  in its own `target/`.
+- Run the five Phase 1 gates with `tools/dev.sh run loft-cli -- gate`. Read the budgets and approved hashes in
+  `engines/gates.json`. The gate reads the lossless owner-approved frames from `out/meta/refs/` and writes its
+  report to `out/meta/gate.json`.
+- For parallel work, use a disposable workspace with `git cambium add -b BRANCH -name NAME -ephemeral`.
+  Cambium uses `~/git/_wt` and skips `out/`. Pass the base commit explicitly if it differs from this checkout's HEAD.
+  After merging and preserving the deliverables, run `cambium remove --safe NAME` from the primary checkout.
+- Generated pictures and reports go under `out/`. The [legacy examples](examples/) and Creative seed references
+  are Phase 5 corpus inputs. See [DEPRECATED.md](DEPRECATED.md) for the source tag and archive.
 - Reference pictures (concepts, model sheets, storyboards, paint-overs of our renders) come from GPT image through the
   Codex CLI's `$imagegen` skill. It runs on the server, costs nothing extra and takes a few minutes for ten pictures:
   1. Make a scratch directory under `out/` with the brief in `brief.md` and any pictures to look at or paint over in
@@ -39,15 +36,3 @@ is judged.
      `docs/art_direction/<round>/`, and show them to the owner before anything is built from them.
   Worked briefs: `docs/art_direction/crab_round4/prompt.md` and `crab_round4/others/prompt.md`. The local Flux script
   (`tools/crab_concepts.py`) is the fallback; it is slower, rougher, and another session may be using that repo.
-- **Freeze (from wave 0 of `docs/proposals/2026-11-19_lean_rust_loft.md`, §7):** no new feature lands in the TS
-  engine (`src/compile`, `src/draw`, `src/host`, `expr.ts`, `interval.ts`, `ranged.ts`, `check.ts`, `geom/solve.ts`).
-  A feature request during the port is written against the Rust types in that plan and lands in its lane. A fix that
-  changes a reference picture or refusal (`out/parity/R0`) says so in its commit.
-- Rust: one workspace in `rust/` (toolchain pinned by `rust/rust-toolchain.toml`). Edit loop `tools/dev.sh
-  check|lint|test|build|run CRATE`, gate `tools/check.sh static|quick|full`, workspaces `git cambium add -ephemeral`. Cargo goes
-  through the machine-wide compile lock shared with Keel; a waiter prints the holder. Picture parity:
-  `bun tools/parity/run.ts`, reference set in `out/parity/R0`.
-- Design as built: `DESIGN.md`. Research notes: `docs/`. Handoff prompts: `prompts/art_research/`.
-- A scene as files: `bun src/cli/main.ts build <scene> --out out/files/<name>`, drawn without the compiler by
-  `render --artefact <dir>`. Format: `docs/artefact_format.md`. `bun tools/check_loader_closure.ts` fails if the file
-  loader's imports reach the compiler; `bun tools/files_proof.ts` compares files, scene and phase-1 pixels.

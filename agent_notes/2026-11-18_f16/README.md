@@ -40,7 +40,7 @@ keep their static layout for replay and bake even when they read an eligible sha
 1280×800 at 1 s, 31 paired GPU timestamp samples, alternating order after four discarded rounds. Each timestamp
 sum covers the ordinary pose and render passes. It excludes CPU work, readback and the wait between submits.
 The timestamp quantum was 0.065536 ms. The Mac was shared during the run. Time and lossless pixel results come
-from [bench.ts](bench.ts). Each WebP q95 pair shows f32 on the left and mixed on the right at 384×240 per panel.
+from [bench.ts](https://github.com/nbardy/loft/blob/legacy/2026-11-19/agent_notes/2026-11-18_f16/bench.ts). Each WebP q95 pair shows f32 on the left and mixed on the right at 384×240 per panel.
 
 | Scene | GPU median f32 → mixed, ms | GPU p10–p90 f32 / mixed, ms | GPU buffer bytes f32 → mixed | Total logical bytes f32 → mixed | Max RGB delta / 255 | Changed pixels |
 |---|---:|---|---:|---:|---:|---:|
