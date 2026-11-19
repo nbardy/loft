@@ -24,4 +24,6 @@ Write agent_notes/2026-11-20_v1/lanes/l4c.md covering: what you built, the proof
 
 File ownership: change only files your lane owns, together with the new files it creates. Step 0 pre-declared the hub entries in Cargo.toml, lib.rs and the CLI; fill in the stubs and do not add new ones. The integrator runs tools/lane_check.sh and rejects a lane that touches unowned files, adds crates or `#[ignore]`, or edits crates/loft-abi or tests/golden*.
 
+Stretch, attempted only after your proof passes: build scenes/spectral_caustic_study.loft as described in agent_notes/2026-11-20_v1/use_cases.md §1, as a fork of engines/reference.loft. It needs a caustic photon kernel with integer atomics, Radiance = v4 hero wavelengths, a nested dielectric stack, and mix_bsdf wet paper. CPU-twin and naga checks only; the integrator renders it.
+
 Final message ≤120 words.
