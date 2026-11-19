@@ -94,3 +94,27 @@ Deferred packs (`std::fluid` MLS-MPM/CFD, `std::splat` 3D/4DGS, `std::diff` reve
 `std::spectral`, `std::ecs`) ship later as ordinary `.loft` libraries and optional Layer 2 passes, with zero Layer 0/1
 rewrites. They use the same terse surface: `build fn` constructs tables and rows, and `schedule` wires the passes.
 None of them is built during Phases 1.5–5.
+
+## 7. Custom types, precisions and the integrator shelf (20 Nov)
+- **Grammar.** `loft.lark` and the parser gain explicit top-level `struct` and `type` declarations, so authors can
+  define payloads such as `MediumEntry`, `SpectralSample`, `MpmParticle` or `Stokes4`:
+  ```lark
+  struct_decl: "struct" UIDENT "{" (_NL? col (_SEP col)* _SEP?)? "}"
+  type_alias:  "type" UIDENT "=" type_expr
+  ```
+- **Precision.**
+  - `f32` is the default everywhere.
+  - `f16`, `v2h` and `v4h` are gated by `HostCaps::F16`, and frozen until a scene proves at least a 15% speed-up.
+  - `u32`, `i32` and packed `u16`/`u8` are supported now, for VisRec, fixed-point atomics, Philox and quantised data.
+  - `f64` runs on the CPU only on Apple Silicon and WebGPU: Stage 0 build, interval proofs, `plan` Hessians and BVH
+    builds. On the GPU it needs Vulkan `SHADER_F64` or a future backend.
+  - `std::math::df32` is an emulated double-float (`vec2f(hi, lo)`, about 48 bits, pure f32 `fma`, ~40 lines) for
+    deep zooms, planetary origins and extreme grazing caustics. It needs no compiler change.
+- **The integrator shelf.** Ship a few reusable integrators of 80–150 lines each, never one uber-megakernel (register
+  pressure) and never one per scene. Every scene exposes the same six World queries, so an integrator is picked with
+  a one-line import and forked only when a scene changes the laws of physics.
+  - `engines::reference`: unbiased RGB path tracer.
+  - `engines::spectral_caustic`: hero-wavelength spectral path tracer, a caustic photon pass and a nested dielectric
+    stack, for any glass, water, gem or prism study.
+  - `engines::realtime`: fast interactive schedule.
+  - `engines::woodblock`: stylised schedule.

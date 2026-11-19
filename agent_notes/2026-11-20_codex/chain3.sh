@@ -11,6 +11,7 @@ lanes() { for l in "$@"; do run $l gpt-6.2-sol high & sleep 20; done; wait; }   
 if pgrep -f "run.sh p15 " >/dev/null; then wait_done p15; else run p15 gpt-6.2-astra xhigh; fi; ok p15
 run rp15 gpt-6.2-astra xhigh; ok rp15
 run fp15 gpt-6.2-sol high; ok fp15
+run d0 gpt-6.2-sol high; ok d0   # delete legacy code before Step 0
 disk
 # Step 0 artifacts
 run s0 gpt-6.2-astra xhigh; ok s0
