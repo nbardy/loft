@@ -2,17 +2,75 @@
 use super::*;
 use loft_passes::emit::paths::{Integrator, PathTrace};
 
+fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &loft_passes::bvh::Bvh2) -> Result<u32, String> {
+    let node_base = u32::try_from(nodes.len() / 8).map_err(|_| "World BVH node address overflow")?;
+    let leaf_base = u32::try_from(leaves.len() / 2).map_err(|_| "World BVH leaf address overflow")?;
+    let root = if tree.nodes().is_empty() { 0 } else { node_base.checked_add(1).ok_or("World root overflow")? };
+    for n in tree.nodes() {
+        nodes.extend(n.lo.map(f32::to_bits));
+        let base = if n.count == 0 { node_base } else { leaf_base };
+        nodes.push(n.left_or_first.checked_add(base).ok_or("World BVH offset overflow")?);
+        nodes.extend(n.hi.map(f32::to_bits));
+        nodes.push(n.count);
+    }
+    leaves.extend(tree.leaves().iter().flat_map(|r| [r.kind_id, r.row_id]));
+    Ok(root)
+}
+
+pub(super) fn shadow_buffers(g: &Gpu, p: &Program, casters: &[u32]) -> Result<[wgpu::Buffer; 3], String> {
+    use wgpu::{BufferUsages as U, util::DeviceExt};
+    let mut rows = Vec::new();
+    let mut instances = Vec::new();
+    for &id in casters {
+        let kind = &p.kinds[id as usize];
+        let key = loft_passes::emit::paths::shadow_kind_key(&kind.name);
+        let base = u32::try_from(rows.len()).map_err(|_| "shadow world exceeds the word address range")?;
+        rows.extend(kind.rows.iter().map(|v| v.to_bits()));
+        for instance in p.instances.iter().filter(|r| r.kind == id) {
+            let offset = instance.row.checked_mul(kind.stride).and_then(|r| r.checked_add(base))
+                .ok_or("shadow row address overflow")?;
+            instances.push(loft_passes::program::Instance { kind: key, row: offset, ..*instance });
+        }
+    }
+    let tree = loft_passes::bvh::Bvh2::build(&instances).map_err(|e| format!("invalid shadow world BVH: {e:?}"))?;
+    let (mut nodes, mut leaves) = (Vec::new(), Vec::new());
+    if append_bvh(&mut nodes, &mut leaves, &tree)? == 0 { return Err("shadow world has no instances".into()); }
+    Ok([rows, nodes, leaves].map(|words| g.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("shadow world"), contents: &bytes_of(&words), usage: U::STORAGE,
+    })))
+}
+
 pub(super) struct PathGpu {
     pub(super) group: wgpu::BindGroup,
     photons: Option<(wgpu::ComputePipeline, wgpu::Buffer)>,
 }
 
 impl PathGpu {
-    pub(super) fn layout(d: &wgpu::Device, path: &PathTrace) -> wgpu::BindGroupLayout {
-        let stages = CS | FS;
-        let mut entries = vec![(stages, storage(true)); 6];
-        if matches!(path.integrator, Integrator::Spectral) { entries.push((stages, storage(false))); }
-        layout(d, "path world", &entries)
+    pub(super) fn layout(d: &wgpu::Device, path: &PathTrace, shader: &naga::Module) -> Result<wgpu::BindGroupLayout, String> {
+        let spectral = matches!(path.integrator, Integrator::Spectral);
+        let mut entries = vec![(wgpu::ShaderStages::empty(), storage(true)); 5];
+        if spectral { entries.push((wgpu::ShaderStages::empty(), storage(false))); }
+        if shader.global_variables.iter().any(|(_, v)| v.name.as_deref() == Some("world_data")) {
+            return Err("serialized World shader uses a separate descriptor buffer; rebuild from source".into());
+        }
+        for entry in loft_passes::telemetry::storage_entries(shader)? {
+            let stage = match (entry.entry.as_str(), entry.stage) {
+                ("fs_present", naga::ShaderStage::Fragment) => FS,
+                ("photons", naga::ShaderStage::Compute) if spectral => CS,
+                _ => continue,
+            };
+            for (_, slot) in entry.bindings.into_iter().filter(|&(group, _)| group == 2) {
+                entries.get_mut(slot as usize).ok_or("unexpected World storage binding")?.0 |= stage;
+            }
+        }
+        for stage in [FS, CS] {
+            // Group zero's inputs and parameters are visible in both stages.
+            let count = 2 + entries.iter().filter(|(stages, _)| stages.contains(stage)).count();
+            if count > d.limits().max_storage_buffers_per_shader_stage as usize {
+                return Err(format!("World {stage:?} needs {count} storage bindings"));
+            }
+        }
+        Ok(layout(d, "path world", &entries))
     }
 
     pub(super) fn prepare(g: &Gpu, p: &Program, fixed: &wgpu::BindGroupLayout, present: &wgpu::BindGroupLayout,
@@ -24,28 +82,26 @@ impl PathGpu {
         let mut words = vec![0u32; 1 + 2 * p.kinds.len()];
         let mut nodes = Vec::new();
         let mut leaves = Vec::new();
-        let mut world_data = vec![path.worlds.len() as u32, path.media.len() as u32];
+        let word = |n: usize| u32::try_from(n).map_err(|_| "World arena exceeds its word address range");
+        let media_count = word(path.media.len())?;
+        let mut world_data = vec![word(path.worlds.len())?, media_count];
         for world in &path.worlds {
             let instances = p.instances.iter().filter(|r| world.kinds.contains(&r.kind)).copied().collect::<Vec<_>>();
             let tree = loft_passes::bvh::Bvh2::build(&instances).map_err(|e| format!("invalid world BVH: {e:?}"))?;
-            let node_base = (nodes.len() / 8) as u32;
-            let leaf_base = (leaves.len() / 2) as u32;
-            let root = if tree.nodes().is_empty() { u32::MAX } else { node_base };
-            world_data.extend([root, if world.media { path.media.len() as u32 } else { 0 }]);
-            for n in tree.nodes() {
-                nodes.extend(n.lo.map(f32::to_bits));
-                nodes.push(n.left_or_first + if n.count == 0 { node_base } else { leaf_base });
-                nodes.extend(n.hi.map(f32::to_bits));
-                nodes.push(n.count);
-            }
-            leaves.extend(tree.leaves().iter().flat_map(|r| [r.kind_id, r.row_id]));
+            let root = append_bvh(&mut nodes, &mut leaves, &tree)?;
+            world_data.extend([root, if world.media { media_count } else { 0 }]);
         }
         world_data.extend(path.media.as_flattened().as_flattened().iter().map(|v| v.to_bits()));
-        let world_data = init(&bytes_of(&world_data));
         for (i, kind) in p.kinds.iter().enumerate() {
-            words[1 + i * 2] = words.len() as u32;
+            words[1 + i * 2] = word(words.len())?;
             words[2 + i * 2] = kind.stride;
             words.extend(kind.rows.iter().map(|v| v.to_bits()));
+        }
+        words[0] = word(words.len())?;
+        words.extend(world_data);
+        let count = word(words.len())?;
+        if u64::from(count) * 4 > u64::from(d.limits().max_storage_buffer_binding_size) {
+            return Err("World word arena exceeds the device storage binding limit".into());
         }
         let packed = init(&bytes_of(&words));
         if nodes.is_empty() { nodes.resize(8, 0); }
@@ -54,7 +110,7 @@ impl PathGpu {
         let leaves = init(&bytes_of(&leaves));
         let luts = init(&f32_bytes(if p.luts.is_empty() { &[0.0; 4] } else { &p.luts }));
         let lights = init(&f32_bytes(path.lamps.as_flattened().as_flattened()));
-        let mut resources = vec![packed.as_entire_binding(), nodes.as_entire_binding(), luts.as_entire_binding(), lights.as_entire_binding(), leaves.as_entire_binding(), world_data.as_entire_binding()];
+        let mut resources = vec![packed.as_entire_binding(), nodes.as_entire_binding(), luts.as_entire_binding(), lights.as_entire_binding(), leaves.as_entire_binding()];
         let bins = matches!(path.integrator, Integrator::Spectral).then(|| {
             buffer(d, "fixed photon bins", 16 * 128 * 128, U::STORAGE | U::COPY_DST)
         });

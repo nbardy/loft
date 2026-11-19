@@ -52,6 +52,8 @@ pub struct LoadStats {
     pub resources_ms: f64,
     pub load_bake_commands: u32,
     pub load_bake_gpu_ms: Option<f64>,
+    pub load_bake_pass_ms: Vec<(String, f64)>,
+    pub load_bake_ticks: Vec<u64>,
     /// Bytes read from the disk pipeline cache (0: none on this backend, or a cold cache).
     pub cache_bytes: usize,
     /// Each pipeline's own creation time on its thread (ms), to see which one sets the cold load.
@@ -74,6 +76,7 @@ struct KindGpu {
     _params: wgpu::Buffer,
     g1: wgpu::BindGroup,
     g2: wgpu::BindGroup,
+    grid: Option<(wgpu::Buffer, wgpu::BindGroup)>,
 }
 
 pub struct Loaded {
@@ -123,6 +126,7 @@ struct Shadow {
     view_proj: [[f32; 4]; 4],
     texel: f32,
     dir: [f32; 3],
+    draws: bool,
 }
 
 /// Timestamps at the start and end of every pass, resolved after the frame.
@@ -132,6 +136,21 @@ struct Clock {
     read: wgpu::Buffer,
     n: u32,
     period_ns: f64,
+}
+
+/// One submitted frame's GPU timestamps in pass order.
+#[derive(serde::Serialize)]
+pub struct FrameTiming {
+    pub serial: usize,
+    pub commands: u32,
+    pub gpu_ms: f64,
+    pub pass_ms: Vec<f64>,
+    pub ticks: Vec<u64>,
+}
+
+struct ClockRead {
+    submission: wgpu::SubmissionIndex,
+    mapped: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
 }
 
 fn bytes_of(words: &[u32]) -> Vec<u8> {
@@ -198,6 +217,10 @@ fn shader(device: &wgpu::Device, m: &loft_passes::program::ShaderModule, nonce: 
 }
 
 fn compute(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout], module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>) -> wgpu::ComputePipeline {
+    compute_constants(device, label, layouts, module, entry, cache, &[])
+}
+
+fn compute_constants(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout], module: &wgpu::ShaderModule, entry: &str, cache: Option<&wgpu::PipelineCache>, constants: &[(&str, f64)]) -> wgpu::ComputePipeline {
     let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -205,7 +228,7 @@ fn compute(device: &wgpu::Device, label: &str, layouts: &[&wgpu::BindGroupLayout
         layout: Some(&pl),
         module,
         entry_point: Some(entry),
-        compilation_options: Default::default(),
+        compilation_options: wgpu::PipelineCompilationOptions { constants, ..Default::default() },
         cache,
     })
 }
@@ -276,23 +299,54 @@ impl Clock {
             n, period_ns: f64::from(g.queue.get_timestamp_period()),
         }
     }
+
+    // Metal exposes stale end samples if the resolve is encoded before the render
+    // submission completes. Each slot keeps its own query set until after unmap.
+    fn resolve_completed(&self, g: &Gpu) -> ClockRead {
+        let mut enc = g.device.create_command_encoder(&Default::default());
+        enc.resolve_query_set(&self.set, 0..self.n, &self.resolve, 0);
+        enc.copy_buffer_to_buffer(&self.resolve, 0, &self.read, 0, None);
+        let submission = g.queue.submit([enc.finish()]);
+        let (tx, mapped) = std::sync::mpsc::channel();
+        self.read.map_async(wgpu::MapMode::Read, .., move |result| { let _ = tx.send(result); });
+        ClockRead { submission, mapped }
+    }
+
+    fn collect(&self, g: &Gpu, read: ClockRead) -> Result<Vec<u64>, String> {
+        wait_for(g, Some(read.submission))?;
+        read.mapped.try_recv().map_err(|e| format!("timestamp callback: {e}"))?
+            .map_err(|e| format!("timestamp map: {e}"))?;
+        let ticks = {
+            let view = self.read.get_mapped_range(..).map_err(|e| e.to_string())?;
+            view.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect()
+        };
+        self.read.unmap();
+        Ok(ticks)
+    }
+
+    fn timing(&self, serial: usize, commands: u32, ticks: Vec<u64>) -> Result<FrameTiming, String> {
+        let (first, last) = (ticks[0], ticks[self.n as usize - 1]);
+        if first == 0 || last <= first || ticks.contains(&0) {
+            return Err(format!("frame {serial}: unusable timestamps {ticks:?}"));
+        }
+        let ms = |a: u64, b: u64| b.saturating_sub(a) as f64 * self.period_ns / 1e6;
+        // Pass starts can overlap on Metal. Use consecutive ends to attribute
+        // costs, and preserve the original pairs so every span can be inspected.
+        let ends = ticks.chunks_exact(2).map(|pair| pair[1]);
+        let pass_ms = std::iter::once(first).chain(ends.clone()).zip(ends)
+            .map(|(a, b)| ms(a, b)).collect();
+        Ok(FrameTiming { serial, commands, gpu_ms: ms(first, last), pass_ms, ticks })
+    }
+}
+
+fn wait_for(g: &Gpu, submission_index: Option<wgpu::SubmissionIndex>) -> Result<(), String> {
+    g.device.poll(wgpu::PollType::Wait { submission_index, timeout: None })
+        .map(|_| ()).map_err(|e| e.to_string())
 }
 
 fn read_clock(g: &Gpu, c: &Clock) -> Result<Vec<u64>, String> {
-    let poll = || g.device.poll(wgpu::PollType::wait_indefinitely()).map(|_| ()).map_err(|e| e.to_string());
-    poll()?;
-    let mut enc = g.device.create_command_encoder(&Default::default());
-    enc.resolve_query_set(&c.set, 0..c.n, &c.resolve, 0);
-    enc.copy_buffer_to_buffer(&c.resolve, 0, &c.read, 0, None);
-    g.queue.submit([enc.finish()]);
-    c.read.map_async(wgpu::MapMode::Read, .., |r| r.expect("timestamp map"));
-    poll()?;
-    let ticks: Vec<u64> = {
-        let view = c.read.get_mapped_range(..).map_err(|e| e.to_string())?;
-        view.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect()
-    };
-    c.read.unmap();
-    Ok(ticks)
+    wait_for(g, None)?;
+    c.collect(g, c.resolve_completed(g))
 }
 
 impl Gpu {
@@ -344,7 +398,7 @@ impl Gpu {
 
 fn draw_bundle(
     d: &wgpu::Device, main: &wgpu::BindGroup, kinds: &[KindGpu], pass: &[u32],
-    args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>,
+    args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>, arg_words: u32,
 ) -> wgpu::RenderBundle {
     let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
         label: Some("visibility"),
@@ -359,9 +413,36 @@ fn draw_bundle(
         let kg = &kinds[k as usize];
         be.set_pipeline(&kg.render);
         be.set_bind_group(1, overrides.map_or(&kg.g1, |groups| &groups[k as usize]), &[]);
-        be.draw_indirect(args, u64::from(k) * 16);
+        let offset = u64::from(k) * u64::from(arg_words) * 4;
+        if let Some((indices, group)) = &kg.grid {
+            be.set_bind_group(2, group, &[]);
+            be.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+            be.draw_indexed_indirect(args, offset);
+        } else {
+            be.draw_indirect(args, offset);
+        }
     }
     be.finish(&wgpu::RenderBundleDescriptor { label: Some("visibility") })
+}
+
+fn grid_layout(device: &wgpu::Device, write: bool) -> wgpu::BindGroupLayout {
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("parametric grid"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: if write { 6 } else { 5 },
+            visibility: if write { CS } else { wgpu::ShaderStages::VERTEX },
+            ty: storage(!write),
+            count: None,
+        }],
+    })
+}
+
+fn grid_group(device: &wgpu::Device, bind_layout: &wgpu::BindGroupLayout, binding: u32, grid: &wgpu::Buffer) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("parametric grid"),
+        layout: bind_layout,
+        entries: &[wgpu::BindGroupEntry { binding, resource: grid.as_entire_binding() }],
+    })
 }
 
 fn instance_bytes(p: &Program) -> Vec<u8> {
@@ -428,24 +509,37 @@ impl Loaded {
 
         let t = Instant::now();
         let bgl0 = layout(d, "frame", &[(ALL, UNIFORM),(ALL,storage(true)),(ALL,storage(true))]);
-        let bgl_kind = layout(d, "kind", &[(ALL, storage(true)), (ALL, storage(true)), (ALL, UNIFORM), (ALL, storage(true))]);
-        let bgl_shade = layout(
-            d,
-            "shade",
-            &[
+        let bgl_kind = layout(d, "kind", &[(ALL, storage(true)), (wgpu::ShaderStages::VERTEX, storage(true)), (ALL, UNIFORM), (ALL, storage(true))]);
+        let shade_entries = [
                 (CS, texture(wgpu::TextureSampleType::Uint)),
                 (CS, wgpu::BindingType::StorageTexture { access: wgpu::StorageTextureAccess::WriteOnly, format: HDR, view_dimension: wgpu::TextureViewDimension::D2 }),
                 (CS, storage(true)),
                 (CS, texture(wgpu::TextureSampleType::Depth)),
                 (CS, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)),
-            ],
-        );
+            ];
+        let bgl_shade = layout(d, "shade", &shade_entries);
+        let world_shade = |kind: &loft_passes::program::KindTable| {
+            p.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "shade_world")
+        };
+        let bgl_world_shade = p.kinds.iter().any(world_shade).then(|| {
+            let mut entries = shade_entries.into_iter().enumerate().map(|(binding, (visibility, ty))|
+                wgpu::BindGroupLayoutEntry { binding: binding as u32, visibility, ty, count: None }).collect::<Vec<_>>();
+            entries.extend((8..11).map(|binding| wgpu::BindGroupLayoutEntry {
+                binding, visibility: CS, ty: storage(true), count: None,
+            }));
+            d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some("shade world"), entries: &entries })
+        });
         let bgl_cull = layout(d, "cull", &[(CS, storage(true)), (CS, storage(false)), (CS, storage(false)), (CS, storage(true))]);
         let bgl_classify = layout(d, "classify", &[(CS, texture(wgpu::TextureSampleType::Uint)), (CS, storage(false)), (CS, storage(false))]);
         let bgl_present =
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
-        let path_layout = p.path.as_ref().map(|path| PathGpu::layout(d, path));
+        let path_layout = p.path.as_ref().map(|path| PathGpu::layout(d, path, &p.modules[p.present].naga)).transpose()?;
         let present_layouts = [&bgl0, &bgl_present].into_iter().chain(path_layout.iter()).collect::<Vec<_>>();
+        let indexed = |kt: &loft_passes::program::KindTable| {
+            aov != Aov::Overdraw && p.modules[kt.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed")
+        };
+        let arg_words = if p.kinds.iter().any(indexed) { 5u32 } else { 4 };
+        let bgl_grid = (arg_words == 5).then(|| grid_layout(d, false));
         // The disk pipeline cache, where the backend has one (see `gpu`).
         let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k).with_extension(format!("{nonce}.bin")));
         let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
@@ -472,12 +566,25 @@ impl Loaded {
                         Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front),
                         Draw::Surface { .. } | Draw::Mesh { .. } => None,
                     };
-                    let r = sc.spawn(move || timed(|| render(d, &kt.name, &[bgl0, bgl_kind], m, ("vs", "fs"), VIS, true, face, cache)));
-                    let s = sc.spawn(move || timed(|| compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade", cache)));
+                    let grid = bgl_grid.as_ref().filter(|_| indexed(kt));
+                    let r = sc.spawn(move || timed(|| {
+                        let layouts = [bgl0, bgl_kind].into_iter().chain(grid).collect::<Vec<_>>();
+                        let entry = if grid.is_some() { "vs_indexed" } else { "vs" };
+                        render(d, &kt.name, &layouts, m, (entry, "fs"), VIS, true, face, cache)
+                    }));
+                    let world = bgl_world_shade.as_ref().filter(|_| world_shade(kt));
+                    let s = sc.spawn(move || timed(|| {
+                        let entry = if world.is_some() { "shade_world" } else { "shade" };
+                        compute(d, &kt.name, &[bgl0, bgl_kind, world.unwrap_or(bgl_shade)], m, entry, cache)
+                    }));
                     (r, s)
                 })
                 .collect();
-            let cull = sc.spawn(|| timed(|| compute(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull", cache)));
+            let cull = sc.spawn(|| timed(|| {
+                let words = [("loft_draw_words", f64::from(arg_words))];
+                let constants = if arg_words == 5 { &words[..] } else { &[] };
+                compute_constants(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull", cache, constants)
+            }));
             let classify = sc.spawn(|| timed(|| compute(d, "classify", &[&bgl0, &bgl_classify], &modules[p.classify], "classify", cache)));
             let present = sc.spawn(|| timed(|| render(d, "present", &present_layouts, &modules[p.present], ("vs_present", "fs_present"), color_format, false, None, cache)));
             fn join<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
@@ -530,7 +637,10 @@ impl Loaded {
         let insts = init("instances", &inst, U::STORAGE);
         let bases_buf = init("bases", &bytes_of(&bases), U::STORAGE);
         let visible = buffer(d, "visible", u64::from(n_inst.max(1)) * 4, U::STORAGE);
-        let draw_reset = bytes_of(&p.kinds.iter().flat_map(|k| [k.draw.vertices(), 0, 0, 0]).collect::<Vec<_>>());
+        let args = |all: bool| bytes_of(&p.kinds.iter().flat_map(|k| {
+            [k.draw.vertices(), if all { k.n_rows } else { 0 }, 0, 0, 0].into_iter().take(arg_words as usize)
+        }).collect::<Vec<_>>());
+        let draw_reset = args(false);
         let luts = init("luts", &f32_bytes(if p.luts.is_empty() { &[0.0] } else { &p.luts }), U::STORAGE);
         let shade_reset = bytes_of(&(0..k_n).flat_map(|_| [0u32, 1, 1]).collect::<Vec<_>>());
         let draw_args = init("draw args", &draw_reset, U::STORAGE | U::INDIRECT);
@@ -546,7 +656,11 @@ impl Loaded {
         let (vis, depth, hdr, color_view) = (view(&vis_tex), view(&depth_tex), view(&hdr_tex), view(&color));
         // The sun's view: an orthographic box around every caster row, deep enough to reach the receivers below.
         let casters: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Shadow(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
-        let side = p.shadow_size.max(1);
+        let draw_shadow = p.passes.iter().any(|pass| match pass {
+            Pass::Shade(kinds) => kinds.iter().any(|&i| !world_shade(&p.kinds[i as usize])),
+            _ => false,
+        });
+        let side = if draw_shadow { p.shadow_size.max(1) } else { 1 };
         let shadow_depth = tex(d, "shadow depth", (side, side), DEPTH, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);
         let shadow_view = view(&shadow_depth);
         let smp = d.create_sampler(&wgpu::SamplerDescriptor {
@@ -556,23 +670,32 @@ impl Loaded {
             compare: Some(wgpu::CompareFunction::LessEqual),
             ..Default::default()
         });
-        let g2 = bind(
-            d,
-            &bgl_shade,
-            &[
+        let shade_resources = [
                 wgpu::BindingResource::TextureView(&vis),
                 wgpu::BindingResource::TextureView(&hdr),
                 tile_lists.as_entire_binding(),
                 wgpu::BindingResource::TextureView(&shadow_view),
                 wgpu::BindingResource::Sampler(&smp),
-            ],
-        );
+            ];
+        let g2 = bind(d, &bgl_shade, &shade_resources);
+        let g2_world = bgl_world_shade.as_ref().map(|layout| -> Result<_, String> {
+            let storage = paths::shadow_buffers(g, p, &casters)?;
+            let mut entries = shade_resources.into_iter().enumerate()
+                .map(|(binding, resource)| wgpu::BindGroupEntry { binding: binding as u32, resource })
+                .collect::<Vec<_>>();
+            entries.extend(storage.iter().zip(8..11).map(|(buffer, binding)| wgpu::BindGroupEntry {
+                binding, resource: buffer.as_entire_binding(),
+            }));
+            Ok(d.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("shade world"), layout, entries: &entries }))
+        }).transpose()?;
         // Every row of every kind, for the sun's bundle (identity row lists; the camera's cull does not apply).
         let all: Vec<u32> = p.kinds.iter().flat_map(|k| 0..k.n_rows).collect();
         let all_rows = init("all rows", &bytes_of(&all), U::STORAGE);
-        let shadow_args = init("shadow args", &bytes_of(&p.kinds.iter().flat_map(|k| [k.draw.vertices(), k.n_rows, 0, 0]).collect::<Vec<_>>()), U::INDIRECT);
+        let shadow_args = init("shadow args", &args(true), U::INDIRECT);
         let mut kinds = vec![];
         let mut g1_sun = vec![];
+        let mut grid_encoder = bgl_grid.as_ref().map(|_| d.create_command_encoder(&Default::default()));
+        let bgl_grid_out = bgl_grid.as_ref().map(|_| grid_layout(d, true));
         for (k, render, shade) in kinds_pl {
             let kt = &p.kinds[k];
             let bytes = f32_bytes(&kt.rows);
@@ -592,7 +715,44 @@ impl Loaded {
             let params = init("kind params", &bytes_of(&[k as u32, bases[k], kt.n_rows, 0]), U::UNIFORM);
             let g1 = bind(d, &bgl_kind, &[rows.as_entire_binding(), visible.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]);
             g1_sun.push(bind(d, &bgl_kind, &[rows.as_entire_binding(), all_rows.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]));
-            kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), rows, _params: params, g1, g2: g2.clone() });
+            let grid = match kt.draw {
+                Draw::Surface { nu, nv } if indexed(kt) => {
+                    let grid_size = u64::from(nu + 1) * u64::from(nv + 1);
+                    if grid_size * 16 > d.limits().max_storage_buffer_binding_size {
+                        return Err(format!("{}: surface grid exceeds the device storage limit", kt.name));
+                    }
+                    let points = buffer(d, "surface grid", grid_size * 16, U::STORAGE);
+                    let write = bgl_grid_out.as_ref().expect("indexed surface layout");
+                    let out = grid_group(d, write, 6, &points);
+                    let (pipeline, ms) = timed(|| compute(
+                        d, "bake surface", &[&bgl0, &bgl_kind, write], &modules[kt.module], "bake_surface", cache,
+                    ));
+                    stats.compute_pipelines += 1;
+                    stats.pipeline_ms.push((format!("{} bake surface", kt.name), ms));
+                    let mut pass = grid_encoder.as_mut().expect("indexed surface encoder")
+                        .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("bake surface"), timestamp_writes: None });
+                    pass.set_pipeline(&pipeline);
+                    pass.set_bind_group(0, &g0, &[]);
+                    pass.set_bind_group(1, &g1, &[]);
+                    pass.set_bind_group(2, &out, &[]);
+                    pass.dispatch_workgroups((grid_size as u32).div_ceil(64), 1, 1);
+                    // Keep the original vertex order and both sides of the UV seam.
+                    let indices = (0..nu * nv).flat_map(|cell| (0..6).map(move |corner| {
+                        let u = cell % nu + ((0x16u32 >> corner) & 1);
+                        let v = cell / nu + ((0x34u32 >> corner) & 1);
+                        v * (nu + 1) + u
+                    })).collect::<Vec<_>>();
+                    let index = init("surface indices", &bytes_of(&indices), U::INDEX);
+                    let group = grid_group(d, bgl_grid.as_ref().expect("indexed surface layout"), 5, &points);
+                    Some((index, group))
+                }
+                _ => None,
+            };
+            let g2 = g2_world.as_ref().filter(|_| world_shade(kt)).unwrap_or(&g2).clone();
+            kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), rows, _params: params, g1, g2, grid });
+        }
+        if let Some(encoder) = grid_encoder {
+            wait_for(g, Some(g.queue.submit([encoder.finish()])))?;
         }
         let cull_bg = bind(d, &bgl_cull, &[insts.as_entire_binding(), draw_args.as_entire_binding(), visible.as_entire_binding(), bases_buf.as_entire_binding()]);
         let classify_bg =
@@ -601,7 +761,7 @@ impl Loaded {
 
         // The bundle: recorded once, replayed every frame. Per kind: set pipeline, bind, one drawIndirect.
         let vis_kinds: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Vis(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
-        let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None);
+        let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None, arg_words);
         let overdraw = (aov == Aov::Overdraw).then(|| {
             let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
                 label: Some("overdraw"), color_formats: &[Some(HDR)], depth_stencil: None,
@@ -610,7 +770,7 @@ impl Loaded {
             let component = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
             let pipelines: Vec<_> = vis_kinds.iter().map(|&k| {
                 let kt = &p.kinds[k as usize];
-                let face = match kt.draw { Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front), Draw::Surface { .. } => None };
+                let face = match kt.draw { Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front), Draw::Surface { .. } | Draw::Mesh { .. } => None };
                 render_blended(d, &kt.name, &[&bgl0, &bgl_kind], &modules[kt.module], ("vs", "fs_overdraw"),
                     HDR, false, face, cache, Some(wgpu::BlendState { color: component, alpha: component }))
             }).collect();
@@ -625,30 +785,42 @@ impl Loaded {
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
             let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
-            let bundle = draw_bundle(d, &g0s, &kinds, &casters, &shadow_args, Some(&g1_sun));
+            let scheduled = if draw_shadow { casters.as_slice() } else { &[] };
+            let bundle = draw_bundle(d, &g0s, &kinds, scheduled, &shadow_args, Some(&g1_sun), arg_words);
             let (lo, hi) = caster_bounds(p, &casters);
             let (view_proj, texel, dir) = sun_camera(p.sun, lo, hi, side);
             let vis_t = tex(d, "sun vis", (side, side), VIS, T::RENDER_ATTACHMENT);
-            Shadow { frame_buf, bundle, groups: (g0s, g1_sun), args: shadow_args, vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
+            Shadow { frame_buf, bundle, groups: (g0s, g1_sun), args: shadow_args, vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir, draws: draw_shadow }
         });
 
         let mut bake_cache = mips::Pipelines::default();
         let mut bake_textures = p.bakes.iter().map(|b| TextureBake::prepare(g, b, &modules, &bgl0, &mut bake_cache))
             .collect::<Result<Vec<_>, _>>()?;
-        let n_load = bake_textures.iter().filter(|b| b.clock.due(true, &p.params)).count() as u32;
-        if n_load != 0 {
-            let clock = g.timestamps.then(|| Clock::new(g, 2 * n_load));
+        let load_stamps = bake_textures.iter().filter(|b| b.clock.due(true, &p.params))
+            .map(TextureBake::timestamp_count).sum();
+        if load_stamps != 0 {
+            let clock = g.timestamps.then(|| Clock::new(g, load_stamps));
             let mut enc = d.create_command_encoder(&Default::default());
-            for (i, bake) in bake_textures.iter_mut().filter(|b| b.clock.due(true, &p.params)).enumerate() {
-                let stamp = clock.as_ref().map(|c| (&c.set, i as u32 * 2));
+            let mut next_stamp = 0;
+            let mut names = Vec::new();
+            for bake in bake_textures.iter_mut().filter(|b| b.clock.due(true, &p.params)) {
+                let stamp = clock.as_ref().map(|c| (&c.set, next_stamp));
                 stats.load_bake_commands += bake.encode(&g0, &mut enc, stamp);
+                next_stamp += bake.timestamp_count();
                 bake.clock.complete(&p.params);
+                names.push(format!("{} base", bake.name));
+                if bake.mips.is_some() { names.push(format!("{} mips", bake.name)); }
             }
             g.queue.submit([enc.finish()]);
             if let Some(c) = clock {
                 let times = read_clock(g, &c)?;
                 let ticks = times[times.len()-1].checked_sub(times[0]).ok_or("unordered load-bake timestamps")?;
                 stats.load_bake_gpu_ms = Some(ticks as f64 * c.period_ns / 1e6);
+                stats.load_bake_pass_ms = names.into_iter().zip(times.chunks_exact(2)).map(|(name, pair)| {
+                    let span = pair[1].checked_sub(pair[0]).ok_or("unordered bake pass timestamps")?;
+                    Ok::<_, &str>((name, span as f64 * c.period_ns / 1e6))
+                }).collect::<Result<_, _>>()?;
+                stats.load_bake_ticks = times;
             }
         }
         let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present])).transpose()?;
@@ -725,6 +897,10 @@ impl Loaded {
     }
 
     pub fn frame_samples(&self, g: &Gpu, t: f32, samples: u32) -> u32 {
+        self.submit_frame(g, t, samples, self.clock.as_ref()).0
+    }
+
+    fn submit_frame(&self, g: &Gpu, t: f32, samples: u32, clock: Option<&Clock>) -> (u32, wgpu::SubmissionIndex) {
         g.queue.write_buffer(&self.frame_buf, 0, &self.frame_uniform(t, false, samples));
         if let Some(sh) = &self.shadow {
             g.queue.write_buffer(&sh.frame_buf, 0, &self.frame_uniform(t, true, samples));
@@ -744,14 +920,14 @@ impl Loaded {
         }
         let mut head = 0;
         if let Some(path) = &self.path {
-            let timestamp_writes = self.clock.as_ref().map(|c| wgpu::ComputePassTimestampWrites {
+            let timestamp_writes = clock.map(|c| wgpu::ComputePassTimestampWrites {
                 query_set: &c.set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
             });
             head = path.encode_photons(&mut enc, &self.g0, &self.present.1, timestamp_writes);
             commands += head;
         }
         for (i, pass) in self.passes.iter().enumerate() {
-            let ts = |i: usize| self.clock.as_ref().map(|c| (&c.set, 2 * (head + i as u32)));
+            let ts = |i: usize| clock.map(|c| (&c.set, 2 * (head + i as u32)));
             let cts = ts(i).map(|(query_set, b)| wgpu::ComputePassTimestampWrites {
                 query_set,
                 beginning_of_pass_write_index: Some(b),
@@ -814,8 +990,10 @@ impl Loaded {
                         occlusion_query_set: None,
                         multiview_mask: None,
                     });
-                    rp.execute_bundles([&sh.bundle]);
-                    commands += ks.len() as u32;
+                    if sh.draws {
+                        rp.execute_bundles([&sh.bundle]);
+                        commands += ks.len() as u32;
+                    }
                 }
                 Pass::Classify => {
                     let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("classify"), timestamp_writes: cts });
@@ -873,8 +1051,69 @@ impl Loaded {
                 }
             }
         }
-        g.queue.submit([enc.finish()]);
-        commands
+        (commands, g.queue.submit([enc.finish()]))
+    }
+
+    /// Profile a finite stream on this device's queue. Immediate reads use one
+    /// slot. Deferred reads keep up to eight serials live with identical markers.
+    pub fn profile_frames(
+        &self,
+        g: &Gpu,
+        times: impl IntoIterator<Item = f32>,
+        deferred: bool,
+    ) -> Result<Vec<FrameTiming>, String> {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+
+        let clock = self.clock.as_ref().ok_or("GPU timestamps are unavailable")?;
+        let depth = if deferred { 8 } else { 1 };
+        let clocks = (0..depth).map(|_| Clock::new(g, clock.n)).collect::<Vec<_>>();
+        let mut submitted = VecDeque::<(usize, u32, wgpu::SubmissionIndex, Arc<AtomicBool>)>::new();
+        let mut resolving = VecDeque::new();
+        let mut timings = Vec::new();
+        let resolve_ready = |submitted: &mut VecDeque<(_, _, _, Arc<AtomicBool>)>, resolving: &mut VecDeque<_>| {
+            while submitted.front().is_some_and(|frame| frame.3.load(Ordering::Acquire)) {
+                let (serial, commands, _, _) = submitted.pop_front().expect("completed frame");
+                resolving.push_back((serial, commands, clocks[serial % depth].resolve_completed(g)));
+            }
+        };
+        let collect_oldest = |resolving: &mut VecDeque<(usize, u32, ClockRead)>, timings: &mut Vec<_>| {
+            let (serial, commands, read) = resolving.pop_front().ok_or("timestamp slot did not resolve")?;
+            let clock = &clocks[serial % depth];
+            let ticks = clock.collect(g, read)?;
+            timings.push(clock.timing(serial, commands, ticks)?);
+            Ok::<_, String>(())
+        };
+        for (serial, t) in times.into_iter().enumerate() {
+            if submitted.len() + resolving.len() == depth {
+                if resolving.is_empty() {
+                    let (_, _, submission, _) = submitted.front().expect("full timestamp ring");
+                    wait_for(g, Some(submission.clone()))?;
+                    resolve_ready(&mut submitted, &mut resolving);
+                }
+                collect_oldest(&mut resolving, &mut timings)?;
+            }
+            let (commands, submission) = self.submit_frame(g, t, 1, Some(&clocks[serial % depth]));
+            let complete = Arc::new(AtomicBool::new(false));
+            let flag = Arc::clone(&complete);
+            g.queue.on_submitted_work_done(move || flag.store(true, Ordering::Release));
+            submitted.push_back((serial, commands, submission, complete));
+            if deferred {
+                g.device.poll(wgpu::PollType::Poll).map_err(|e| e.to_string())?;
+                resolve_ready(&mut submitted, &mut resolving);
+            }
+        }
+        if let Some((_, _, submission, _)) = submitted.back() {
+            wait_for(g, Some(submission.clone()))?;
+            resolve_ready(&mut submitted, &mut resolving);
+        }
+        if !submitted.is_empty() {
+            return Err("frame completion callback did not run".into());
+        }
+        while !resolving.is_empty() {
+            collect_oldest(&mut resolving, &mut timings)?;
+        }
+        Ok(timings)
     }
 
     /// After `frame`: waits, then the GPU time from the first pass's start to the last pass's end, in ms, and each
@@ -883,16 +1122,8 @@ impl Loaded {
     /// last passes' end samples read the previous frame's values).
     pub fn gpu_ms(&self, g: &Gpu) -> Result<Option<(f64, Vec<f64>)>, String> {
         let Some(c) = &self.clock else { return Ok(None) };
-        let ticks = read_clock(g, c)?;
-        let (first, last) = (ticks[0], ticks[c.n as usize - 1]);
-        if first == 0 || last <= first {
-            return Err(format!("timestamps unusable: first {first}, last {last}"));
-        }
-        let ms = |a: u64, b: u64| b.saturating_sub(a) as f64 * c.period_ns / 1e6;
-        // A pass's cost is its end minus the previous pass's end: passes overlap on the GPU, so begin stamps of
-        // later passes come early (a present pass "took" 4 ms of a 5 ms frame), while ends follow the dependencies.
-        let ends: Vec<u64> = std::iter::once(first).chain(ticks.chunks(2).map(|p| p[1])).collect();
-        Ok(Some((ms(first, last), ends.windows(2).map(|w| ms(w[0], w[1])).collect())))
+        let timing = c.timing(0, 0, read_clock(g, c)?)?;
+        Ok(Some((timing.gpu_ms, timing.pass_ms)))
     }
 
     /// The presented picture, tightly packed RGBA8 (sRGB), top row first.

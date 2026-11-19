@@ -385,27 +385,21 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
         Gate::Speed => {
             let control = c.g.triangle_control_ms(c.size)?;
             let l = Loaded::new(c.g, p, c.size, None)?;
-            let mut commands = 0;
-            for i in 0..30 {
-                commands = l.frame(c.g, i as f32 / 30.0);
-                l.gpu_ms(c.g)?;
-            }
-            let mut ms = vec![];
-            let mut per_pass: Vec<Vec<f64>> = vec![];
-            for i in 0..c.timing_frames {
-                // The orbit moves so every frame is a different view of the same scene.
-                l.frame(c.g, c.frames[0] + i as f32 * (1.0 / 60.0));
-                let (total, passes) = l.gpu_ms(c.g)?.ok_or("no timestamp queries on this adapter")?;
-                ms.push(total);
-                per_pass.push(passes);
-            }
+            let times = (0..30).map(|i| i as f32 / 30.0)
+                .chain((0..c.timing_frames).map(|i| c.frames[0] + i as f32 * (1.0 / 60.0)));
+            let timing = l.profile_frames(c.g, times, true)?;
+            let measured = &timing[30..];
+            let commands = measured.iter().map(|f| f.commands)
+                .max_by_key(|n| n.abs_diff(b.commands)).ok_or("missing speed frames")?;
+            let ms = measured.iter().map(|f| f.gpu_ms).collect::<Vec<_>>();
             let names: Vec<String> = p.passes.iter().map(|x| format!("{x:?}").split('(').next().unwrap_or("").to_string()).collect();
-            let pass_p50: Vec<(String, f64)> = names.iter().enumerate().map(|(i, n)| (n.clone(), quantile(&per_pass.iter().map(|v| v[i]).collect::<Vec<_>>(), 0.5))).collect();
+            let pass_p50: Vec<(String, f64)> = names.iter().enumerate().map(|(i, n)| (n.clone(), quantile(&measured.iter().map(|f| f.pass_ms[i]).collect::<Vec<_>>(), 0.5))).collect();
             report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
             let contended = control > 0.35;
-            report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms});
+            report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms,
+                "frame_stamps": measured, "shader_sha256": crate::profile::shader_hashes(p)?});
             push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
             out.push(Check {
                 gate, scene: s.name.clone(), contended,

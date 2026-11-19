@@ -17,7 +17,13 @@ pub struct Bake {
     pub clock: Clock,
     pub mips: bool,
     pub module: usize,
+    /// Rows produced by one shader invocation. Archived programs bake one.
+    #[serde(default = "one_row", skip_serializing_if = "one_row_only")]
+    pub rows_per_invocation: u32,
 }
+
+fn one_row() -> u32 { 1 }
+fn one_row_only(rows: &u32) -> bool { *rows == 1 }
 
 impl Bake {
     pub fn size(&self) -> [u32; 3] {
@@ -48,7 +54,8 @@ impl Bake {
 
     pub fn passes(&self, table: TableId, first: PassId) -> Vec<PassDecl> {
         let size = self.size();
-        let group = self.workgroup();
+        let mut group = self.workgroup();
+        group[1] *= self.rows_per_invocation;
         let mut passes = vec![PassDecl {
             id: first, wave: 0, queue: QueueClass::Graphics,
             bindings: Box::new([PassBinding { group: 3, slot: 0, resource: table, access: loft_ir::BindAccess::StorageTex }]),

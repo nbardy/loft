@@ -16,6 +16,10 @@ pub(super) struct TextureBake {
 }
 
 impl TextureBake {
+    pub(super) fn timestamp_count(&self) -> u32 {
+        if self.mips.is_some() { 4 } else { 2 }
+    }
+
     pub(super) fn prepare(g: &Gpu, bake: &Bake, modules: &[wgpu::ShaderModule], fixed: &wgpu::BindGroupLayout, cache: &mut Pipelines) -> Result<Self, String> {
         let format = match bake.format {
             naga::StorageFormat::R8Unorm => wgpu::TextureFormat::R8Unorm,
@@ -80,7 +84,7 @@ impl TextureBake {
     pub(super) fn encode(&self, g0: &wgpu::BindGroup, enc: &mut wgpu::CommandEncoder, timestamps: Option<(&wgpu::QuerySet, u32)>) -> u32 {
         {
             let timestamp_writes = timestamps.map(|(query_set, start)| wgpu::ComputePassTimestampWrites {
-                query_set, beginning_of_pass_write_index: Some(start), end_of_pass_write_index: self.mips.is_none().then_some(start + 1),
+                query_set, beginning_of_pass_write_index: Some(start), end_of_pass_write_index: Some(start + 1),
             });
             let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some(&self.name), timestamp_writes });
             pass.set_pipeline(&self.pipeline);
@@ -91,6 +95,6 @@ impl TextureBake {
             let [x, y, z] = self.work;
             pass.dispatch_workgroups(x, y, z);
         }
-        1 + self.mips.as_ref().map_or(0, |mips| mips.encode(enc, timestamps.map(|(set, start)| (set, start + 1))))
+        1 + self.mips.as_ref().map_or(0, |mips| mips.encode(enc, timestamps.map(|(set, start)| (set, start + 2))))
     }
 }

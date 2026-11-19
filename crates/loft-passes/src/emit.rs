@@ -13,6 +13,8 @@ pub use aov::Aov;
 pub mod paths;
 #[path="material_shape.rs"]
 mod material_shape;
+mod surface;
+mod lighting;
 use material_shape::Layout;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw};
@@ -154,6 +156,8 @@ pub struct Emitter<'p, 'a> {
     priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     locals: Vec<String>,
     temp: u32,
+    prepare_light: bool,
+    in_prepared_light: bool,
 }
 
 #[derive(Default)]
@@ -314,7 +318,8 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,priors:None,locals:vec![],temp:0 }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,priors:None,locals:vec![],temp:0,
+            prepare_light: false, in_prepared_light: false }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -345,7 +350,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
         self.maps.clear();
         self.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
+        self.in_prepared_light = self.prepare_light && f.name.name == "sun_sky"
+            && self.locals.get(..3).is_some_and(|keys| keys == ["b", "n", "v"]);
+        if self.in_prepared_light {
+            self.line(1, "let loft_lighting = loft_prepare_bsdf(loft_local_b, loft_local_n, loft_local_v);");
+        }
         self.block_body(&f.body, 1);
+        self.in_prepared_light = false;
         self.out += "}\n\n";
     }
 
@@ -598,6 +609,14 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
             }
             ExprKind::Call { callee, args } if callee.name == "loft_vec" => self.expr(&args[0].value),
+            ExprKind::Call { callee, args } if self.in_prepared_light && callee.name == "eval_bsdf"
+                && args.len() == 4 && args.iter().zip(["b", "n", "v"]).all(|(arg, key)|
+                    matches!(&arg.value.kind, ExprKind::Name(name) if name == key)
+                    && self.locals.iter().filter(|name| name.as_str() == key).count() == 1) =>
+            {
+                let l = self.expr(&args[3].value);
+                format!("loft_eval_prepared(loft_local_b, loft_local_n, loft_local_v, {l}, loft_lighting)")
+            }
             ExprKind::Call { callee, args } => {
                 if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
                     let ExprKind::Name(reason) = &args[0].value.kind else { unreachable!("checked reason") };
@@ -811,8 +830,12 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     let layout = if mesh { Layout::default() } else { material_layout(p, k)? };
     let mut lobes: Vec<_> = layout.lobes.iter().map(|(name, args)| (*name, args.len())).collect();
     if mesh { lobes.push(("ggx", 3)); }
+    let invariants = lobes.iter().map(|(name, _)| {
+        if light == "sun_sky" { lighting::invariant_lets(p, p.fns[name]) } else { Vec::new() }
+    }).collect::<Vec<_>>();
     let mut bfields = vec![];
     let mut evals = String::new();
+    let mut replacements = Vec::new();
     for (i, (name, arity)) in lobes.iter().enumerate() {
         let f = p.fns[name];
         let mut names = vec![];
@@ -821,7 +844,12 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
             names.push(format!("b.l{i}_{j}"));
         }
         names.extend(["n".into(), "v".into(), "l".into()]);
-        let _ = writeln!(evals, "  let r{i} = {}({});", fn_symbol(name), names.join(", "));
+        let args = names.join(", ");
+        let call = format!("  let r{i} = {}({args});", fn_symbol(name));
+        if !invariants[i].is_empty() {
+            replacements.push((call.clone(), format!("  let r{i} = loft_prepared_lobe_{i}({args}, prepared);")));
+        }
+        let _ = writeln!(evals, "{call}");
         if !layout.weights.is_empty() { continue; }
         if *name == "emit_lobe" {
             let _ = writeln!(evals, "  emission += r{i}.xyz;");
@@ -854,6 +882,15 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
          fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n{support}  var c = vec3<f32>(0.0);\n  var emission = vec3<f32>(0.0);\n{evals}  return {result};\n}}\n\n",
         bfields.join("\n")
     );
+    if !replacements.is_empty() {
+        let mut prepared_evals = evals;
+        for (call, replacement) in replacements {
+            prepared_evals = prepared_evals.replace(&call, &replacement);
+        }
+        let body = format!("{support}  var c = vec3f(0.0);\n  var emission = vec3f(0.0);\n{prepared_evals}  return {result};\n");
+        lighting::emit_prepared(&mut em, &lobes, &invariants, &body);
+        em.prepare_light = true;
+    }
     em.library(&lib, &consts);
     for f in &k.fns {
         em.func(f, "loft_surface_jvp");
@@ -1019,6 +1056,9 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
         }
     };
     let mut diagnostics = "";
+    if let Draw::Surface { nu, nv } = draw {
+        vis.push_str(&surface::cached_grid(p, k.query(QueryKind::Surface).expect("surface query"), nu, nv));
+    }
     let shade = match aov {
         // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
         Aov::Beauty if light == "sun_sky" && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
@@ -1086,6 +1126,30 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
         }
     };
     let tl = crate::unit(crate::TWIN_LIGHT);
+    let write_shade = |entry: &str, shade: &str| format!(r"
+// One workgroup per 8x8 tile that classify listed for this kind.
+@compute @workgroup_size(8, 8) fn {entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
+  if frame.cold.x == LOFT_NONCE {{ return; }}
+  let tile = tiles[kp.kind_id * frame.size.w + wg.x];
+  let px = vec2<u32>(tile & 0xffffu, tile >> 16u) * 8u + lid.xy;
+  if px.x >= frame.size.x || px.y >= frame.size.y {{ return; }}
+  let v = textureLoad(vis_tex, px, 0).xy;
+  if v.x == LOFT_EMPTY || (v.x >> 24u) != kp.kind_id {{ return; }}
+  let row = load_row(v.x & 0xffffffu);
+  let rd = loft_ray(vec2<f32>(px) + 0.5);
+  let pose = loft_pose(row);
+  let xf = loft_xf_inv(pose);
+{geometry}  let sun = normalize(frame.sun.xyz);
+  textureStore(hdr, px, vec4<f32>({shade}, 1.0));
+}}
+");
+    let shade_kernel = write_shade("shade", &shade);
+    let world_shade = if aov == Aov::Beauty {
+        paths::shadow_visibility(p, types, luts, light)?.map(|world| {
+            let light = shade.replace("loft_shadow(p, n)", "loft_shadow_world(p, n, sun)");
+            world + &write_shade("shade_world", &light)
+        }).unwrap_or_default()
+    } else { String::new() };
     let _ = write!(
         em.out,
         r"{queries_end}
@@ -1113,21 +1177,8 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   return s / 9.0;
 }}
 
-// One workgroup per 8x8 tile that classify listed for this kind.
-@compute @workgroup_size(8, 8) fn shade(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {{
-  if frame.cold.x == LOFT_NONCE {{ return; }}
-  let tile = tiles[kp.kind_id * frame.size.w + wg.x];
-  let px = vec2<u32>(tile & 0xffffu, tile >> 16u) * 8u + lid.xy;
-  if px.x >= frame.size.x || px.y >= frame.size.y {{ return; }}
-  let v = textureLoad(vis_tex, px, 0).xy;
-  if v.x == LOFT_EMPTY || (v.x >> 24u) != kp.kind_id {{ return; }}
-  let row = load_row(v.x & 0xffffffu);
-  let rd = loft_ray(vec2<f32>(px) + 0.5);
-  let pose = loft_pose(row);
-  let xf = loft_xf_inv(pose);
-{geometry}  let sun = normalize(frame.sun.xyz);
-  textureStore(hdr, px, vec4<f32>({shade}, 1.0));
-}}
+{shade_kernel}
+{world_shade}
 
 @group(3) @binding(0) var<storage, read> twin_in: array<vec4<f32>>;
 @group(3) @binding(1) var<storage, read_write> twin_out: array<vec4<f32>>;
@@ -1202,6 +1253,7 @@ struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
 @group(1) @binding(1) var<storage, read_write> draw_args: array<atomic<u32>>;
 @group(1) @binding(2) var<storage, read_write> visible: array<u32>;
 @group(1) @binding(3) var<storage, read> bases: array<u32>;
+override loft_draw_words: u32 = 4u;
 
 // Every row of every kind: frustum-test its derived AABB, append visible rows, count one draw per kind.
 @compute @workgroup_size(64) fn cull(@builtin(global_invocation_id) g: vec3<u32>) {
@@ -1223,7 +1275,7 @@ struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
     outside &= bits;
   }
   if outside != 0u { return; }
-  let slot = atomicAdd(&draw_args[b.kind * 4u + 1u], 1u);
+  let slot = atomicAdd(&draw_args[b.kind * loft_draw_words + 1u], 1u);
   visible[bases[b.kind] + slot] = b.row;
 }
 ";
@@ -1355,7 +1407,8 @@ pub(crate) fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl, module: usize
             Clock::Dirty(words.into_iter().collect())
         }
     };
-    let bake = Bake { name: decl.texel.name.name.clone(), dim: decl.dim, format, clock, mips: decl.mips, module };
+    let rows_per_invocation = if matches!(decl.dim, TexDim::D2(_, h) if h >= 64) { 4 } else { 1 };
+    let bake = Bake { name: decl.texel.name.name.clone(), dim: decl.dim, format, clock, mips: decl.mips, module, rows_per_invocation };
     em.header(abi::NONCE_PLACEHOLDER);
     let (functions, constants) = reachable(p, &[&decl.texel], &[]);
     em.library(&functions, &constants);
@@ -1383,15 +1436,28 @@ fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
         _ => "texel",
     };
     let format_name = &decl.format.name;
+    let (invocation, end) = if rows_per_invocation > 1 {
+        // Keep x fixed across the strip so the backend can lift x-only
+        // arithmetic out of the loop without changing each texel's coordinates.
+        (format!(r"  let x = (f32(gid.x) + 0.5) / f32(extent.x);
+  for (var dy = 0u; dy < {rows_per_invocation}u; dy++) {{
+    let id = vec3(gid.x, gid.y * {rows_per_invocation}u + dy, gid.z);
+    if any(id >= extent) {{ break; }}
+    let u = vec3(x, (f32(id.y) + 0.5) / f32(extent.y), 0.5);"), "  }")
+    } else {
+        (r"  let id = gid;
+  if any(id >= extent) { return; }
+  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);".to_owned(), "")
+    };
     let _ = write!(em.out, r"
 @group(3) @binding(0) var baked: texture_storage_{storage}<{format_name}, write>;
 @compute @workgroup_size({wx}, {wy}, {wz})
-fn bake(@builtin(global_invocation_id) id: vec3<u32>) {{
+fn bake(@builtin(global_invocation_id) gid: vec3<u32>) {{
   let extent = vec3<u32>({x}u, {y}u, {z}u);
-  if any(id >= extent) {{ return; }}
-  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);
+{invocation}
   let texel = texel_value({arg});
   textureStore(baked, {index}, {encoding});
+{end}
 }}
 ");
     Ok((bake, em.out))

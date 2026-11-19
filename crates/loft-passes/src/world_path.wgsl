@@ -10,6 +10,27 @@ struct PathRay { o: vec3<f32>, d: vec3<f32> }
 
 @group(2) @binding(4) var<storage, read> loft_bvh_leaves: array<LoftLeafRef>;
 
+// Word zero addresses the descriptor suffix. The kind headers and row
+// offsets keep their layout so the same arena serves intersection and media.
+fn world_descriptor_base() -> u32 {
+  return bitcast<u32>(world_words[0]);
+}
+fn world_root(world: u32) -> u32 {
+  let base = world_descriptor_base();
+  if world >= bitcast<u32>(world_words[base]) { return 0xffffffffu; }
+  return bitcast<u32>(world_words[base + 2u + 2u * world]) - 1u;
+}
+fn world_medium_count(world: u32) -> u32 {
+  let base = world_descriptor_base();
+  if world >= bitcast<u32>(world_words[base]) { return 0u; }
+  return bitcast<u32>(world_words[base + 3u + 2u * world]);
+}
+fn medium_row(i: u32, field: u32) -> vec4<f32> {
+  let base = world_descriptor_base();
+  let start = base + 2u + 2u * bitcast<u32>(world_words[base]) + 20u * i + 4u * field;
+  return vec4(world_words[start], world_words[start+1u], world_words[start+2u], world_words[start+3u]);
+}
+
 fn path_hash(input: u32) -> u32 {
   var h = (input ^ (input >> 16u)) * 0x7feb352du;
   h = (h ^ (h >> 15u)) * 0x846ca68bu;

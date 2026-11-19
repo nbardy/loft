@@ -83,13 +83,13 @@ lobe film(weight: f, ior: f, thickness_nm: f, n: rgb, v: rgb, l: rgb) {
   let nv = max(dot(n, v), 0.0)
   let eo = ggx_energy(0.3, nv)
   let fv = airy(ior, thickness_nm, nv)
+  # Three-point Gauss integration in mu^2 for the cosine-weighted Fresnel.
+  let favg = (5.0 * airy(ior, thickness_nm, 0.335711) + 8.0 * airy(ior, thickness_nm, 0.707107) + 5.0 * airy(ior, thickness_nm, 0.941965)) / 18.0
   var spec = rgb(0.0)
   let nl = dot(n, l)
   if nl > 0.0 && nv > 0.0 {
     let h = normalize(v + l)
     let f = airy(ior, thickness_nm, clamp(dot(v, h), 0.0, 1.0))
-    # Three-point Gauss integration in mu^2 for the cosine-weighted Fresnel.
-    let favg = (5.0 * airy(ior, thickness_nm, 0.335711) + 8.0 * airy(ior, thickness_nm, 0.707107) + 5.0 * airy(ior, thickness_nm, 0.941965)) / 18.0
     spec = ggx_reflect(clamp(dot(n, h), 0.0, 1.0), nv, nl, 0.3, f, favg, eo)
   }
   v4(weight * spec, 1.0 - weight * eo.x * dot(fv, [0.2126, 0.7152, 0.0722]))

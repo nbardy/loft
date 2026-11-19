@@ -5,6 +5,9 @@ use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::{QueryKind, Ty};
 #[path="path_twin.rs"]
 pub mod cpu;
+mod shadow;
+pub use shadow::shadow_kind_key;
+pub(super) use shadow::visibility as shadow_visibility;
 use std::{collections::BTreeSet, fmt::Write};
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
@@ -53,6 +56,14 @@ fn namespace(text: &str, kind: usize) -> String {
 
 pub(super) const QUERIES_END: &str = "// --- generated entry points ---";
 
+fn row_arena_source(text: &str) -> String {
+    text.lines().filter(|line| !line.starts_with("@group(1)") && !line.starts_with("struct KindParams"))
+        .collect::<Vec<_>>().join("\n")
+        .replace("let o = i * STRIDE;", "let o = i;")
+        .replace("rows[o +", "world_words[o +")
+        .replace("luts[", "world_luts[")
+}
+
 pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: &str) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
@@ -60,7 +71,11 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     em.out.push_str(crate::bvh::WGSL);
     em.out.push_str(WORLD);
     em.out.push_str(crate::bsdf::VOLUME_STEP_WGSL);
-    em.out.push_str(include_str!("world_medium.wgsl"));
+    // The authored medium arithmetic uses the arena accessors in WORLD.
+    let (_, medium) = include_str!("world_medium.wgsl").split_once("struct WorldSigma")
+        .expect("world medium math");
+    em.out.push_str("struct WorldSigma");
+    em.out.push_str(medium);
     for name in ["Ray", "Hit", "Sigma", "Vol"] {
         let mut fields = Vec::new();
         for field in p.structs[name].1 {
@@ -96,9 +111,7 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
                 "supply a trace kind or use the raster schedule for parametric surfaces"));
         }
         let (head, _) = whole.split_once(QUERIES_END).expect("kind query section");
-        let mut body = head[prefix_len..].lines().filter(|line| !line.starts_with("@group(1)") && !line.starts_with("struct KindParams"))
-            .collect::<Vec<_>>().join("\n");
-        body = body.replace("let o = i * STRIDE;", "let o = i;").replace("rows[o +", "world_words[o +").replace("luts[", "world_luts[");
+        let body = row_arena_source(&head[prefix_len..]);
         em.out.push_str(&namespace(&body, i));
         em.out.push('\n');
         local_cases.push(format!(r"

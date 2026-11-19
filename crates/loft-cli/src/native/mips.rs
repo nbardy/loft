@@ -55,12 +55,12 @@ impl Clock {
 }
 
 pub fn source(dim: Dimension, format: TextureFormat) -> Result<String, &'static str> {
-    let format = match format {
-        TextureFormat::R8Unorm => "r8unorm",
-        TextureFormat::R16Float => "r16float",
-        TextureFormat::R32Float => "r32float",
-        TextureFormat::Rgba8Unorm => "rgba8unorm",
-        TextureFormat::Rgba16Float => "rgba16float",
+    let (format, scalar) = match format {
+        TextureFormat::R8Unorm => ("r8unorm", true),
+        TextureFormat::R16Float => ("r16float", true),
+        TextureFormat::R32Float => ("r32float", true),
+        TextureFormat::Rgba8Unorm => ("rgba8unorm", false),
+        TextureFormat::Rgba16Float => ("rgba16float", false),
         _ => return Err("unsupported compute mip format"),
     };
     let (kind, projection, vector, load, store, count) = match dim {
@@ -69,11 +69,19 @@ pub fn source(dim: Dimension, format: TextureFormat) -> Result<String, &'static 
         Dimension::Cube => ("2d_array", "id.xy", "vec2", "p, i32(id.z), 0", "at, i32(id.z)", 4),
     };
     let [wx, wy, wz] = dim.group();
-    let offset = if dim == Dimension::D3 {
-        "vec3<i32>(vec3<u32>(i & 1u, (i >> 1u) & 1u, i >> 2u))"
-    } else {
-        "vec2<i32>(vec2<u32>(i & 1u, i >> 1u))"
-    };
+    let zero = if scalar { "0.0" } else { "vec4<f32>(0.0)" };
+    let channel = if scalar { ".x" } else { "" };
+    let average = if scalar { format!("vec4(sum / {count}.0, 0.0, 0.0, 1.0)") } else { format!("sum / {count}.0") };
+    let mut taps = String::new();
+    // Match the original left-to-right sum and perform a texture store at each
+    // level, including the quantization of an immediately consumed level.
+    for i in 0..count {
+        let x = i & 1;
+        let y = (i >> 1) & 1;
+        let offset = if dim == Dimension::D3 { format!("vec3({x}, {y}, {})", i >> 2) }
+            else { format!("vec2({x}, {y})") };
+        let _ = writeln!(taps, "  {{ let p = min(2*at + {offset}, last); sum += textureLoad(src, {load}){channel}; }}");
+    }
     let mut src = String::new();
     let _ = write!(src, r"
 @group(0) @binding(0) var src: texture_{kind}<f32>;
@@ -82,12 +90,8 @@ pub fn source(dim: Dimension, format: TextureFormat) -> Result<String, &'static 
   let at = {vector}<i32>({projection});
   if any({projection} >= textureDimensions(dst)) {{ return; }}
   let last = {vector}<i32>(textureDimensions(src)) - 1;
-  var sum = vec4<f32>(0.0);
-  for (var i = 0u; i < {count}u; i++) {{
-    let p = min(2*at + {offset}, last);
-    sum += textureLoad(src, {load});
-  }}
-  textureStore(dst, {store}, sum / {count}.0);
+  var sum = {zero};
+{taps}  textureStore(dst, {store}, {average});
 }}
 ");
     Ok(src)
@@ -130,20 +134,18 @@ impl Pipelines {
         let size = texture.size();
         let size = [size.width, size.height, size.depth_or_array_layers];
         let group = dim.group();
-        let view = |level| texture.create_view(&TextureViewDescriptor {
+        let views = (0..texture.mip_level_count()).map(|level| texture.create_view(&TextureViewDescriptor {
             dimension: Some(dim.storage_view()), base_mip_level: level, mip_level_count: Some(1), ..Default::default()
-        });
-        let work = (1..texture.mip_level_count()).map(|level| {
-            let src = view(level - 1);
-            let dst = view(level);
+        })).collect::<Vec<_>>();
+        let work = views.windows(2).enumerate().map(|(level, pair)| {
             let bg = device.create_bind_group(&BindGroupDescriptor {
                 label: None, layout,
                 entries: &[
-                    BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&src) },
-                    BindGroupEntry { binding: 1, resource: BindingResource::TextureView(&dst) },
+                    BindGroupEntry { binding: 0, resource: BindingResource::TextureView(&pair[0]) },
+                    BindGroupEntry { binding: 1, resource: BindingResource::TextureView(&pair[1]) },
                 ],
             });
-            let extent = dim.extent(size, level);
+            let extent = dim.extent(size, level as u32 + 1);
             (bg, std::array::from_fn(|i| extent[i].div_ceil(group[i])))
         }).collect();
         Ok(Mips { pipeline: pipeline.clone(), work })
@@ -151,10 +153,11 @@ impl Pipelines {
 }
 
 impl Mips {
-    pub fn encode(&self, enc: &mut CommandEncoder, last_timestamp: Option<(&QuerySet, u32)>) -> u32 {
+    pub fn encode(&self, enc: &mut CommandEncoder, timestamps: Option<(&QuerySet, u32)>) -> u32 {
         for (index, (group, [x, y, z])) in self.work.iter().enumerate() {
-            let timestamp_writes = last_timestamp.filter(|_| index + 1 == self.work.len()).map(|(query_set, end)| ComputePassTimestampWrites {
-                query_set, beginning_of_pass_write_index: None, end_of_pass_write_index: Some(end),
+            let last = index + 1 == self.work.len();
+            let timestamp_writes = timestamps.filter(|_| index == 0 || last).map(|(query_set, start)| ComputePassTimestampWrites {
+                query_set, beginning_of_pass_write_index: (index == 0).then_some(start), end_of_pass_write_index: last.then_some(start + 1),
             });
             let mut pass = enc.begin_compute_pass(&ComputePassDescriptor { label: Some("generate mips"), timestamp_writes });
             pass.set_pipeline(&self.pipeline);

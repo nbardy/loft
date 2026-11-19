@@ -3,6 +3,28 @@ use crate::program::{Program, ShaderModule};
 use naga::{AddressSpace, Block, Expression, Function, MathFunction, Statement, TypeInner};
 use serde::Serialize;
 
+#[derive(Debug, Serialize)]
+pub struct StorageEntry {
+    pub entry: String,
+    pub stage: naga::ShaderStage,
+    pub bindings: Vec<(u32, u32)>,
+}
+
+pub fn storage_entries(module: &naga::Module) -> Result<Vec<StorageEntry>, String> {
+    let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
+        .validate(module).map_err(|e| e.to_string())?;
+    Ok(module.entry_points.iter().enumerate().map(|(i, entry)| {
+        let uses = info.get_entry_point(i);
+        let mut bindings = module.global_variables.iter().filter_map(|(handle, var)| {
+            let binding = var.binding.as_ref()?;
+            (matches!(var.space, AddressSpace::Storage { .. }) && !uses[handle].is_empty())
+                .then_some((binding.group, binding.binding))
+        }).collect::<Vec<_>>();
+        bindings.sort_unstable();
+        StorageEntry { entry: entry.name.clone(), stage: entry.stage, bindings }
+    }).collect())
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct ModuleTelemetry {
     pub module_id: String,

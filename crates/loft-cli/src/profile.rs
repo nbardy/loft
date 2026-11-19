@@ -1,8 +1,9 @@
 use crate::{budget::Failure, flag, sources};
-use loft_cli::native::{self, Loaded};
+use loft_cli::native::{self, FrameTiming, Loaded};
 use loft_passes::program::Program;
 use loft_passes::telemetry::{self, ModuleTelemetry};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 #[derive(Serialize)]
@@ -13,6 +14,16 @@ struct Profile {
     passes: Vec<String>,
     gpu_frame_ms: Vec<f64>,
     gpu_pass_ms: Vec<Vec<f64>>,
+    frame_time_bits: Vec<u32>,
+    frame_stamps: Vec<FrameTiming>,
+    shader_sha256: Vec<(String, String)>,
+}
+
+pub(crate) fn shader_hashes(program: &Program) -> Result<Vec<(String, String)>, String> {
+    program.modules.iter().map(|module| {
+        let bytes = serde_json::to_vec(&module.naga).map_err(|err| err.to_string())?;
+        Ok((module.name.clone(), format!("{:x}", Sha256::digest(bytes))))
+    }).collect()
 }
 
 pub(crate) fn write_json(path: &str, value: &impl Serialize) -> Result<(), Failure> {
@@ -28,6 +39,10 @@ pub(crate) fn write_json(path: &str, value: &impl Serialize) -> Result<(), Failu
 pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
     let mut args = args.to_vec();
     let json = flag(&mut args, "--json")?;
+    let timestamps = flag(&mut args, "--timestamps")?.unwrap_or_else(|| "immediate".into());
+    if !matches!(timestamps.as_str(), "immediate" | "ring" | "ab") {
+        return Err(Failure::Usage("--timestamps takes immediate, ring or ab".into()));
+    }
     let size = flag(&mut args, "--size")?.unwrap_or_else(|| "512x512".into());
     let count = |s: &str| s.parse::<u32>().ok().filter(|&n| n != 0);
     let size = size
@@ -46,7 +61,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         .transpose()?;
     let [scene] = args.as_slice() else {
         return Err(Failure::Usage(
-            "usage: loft profile SCENE --size WxH [--frames N] [--nonce N] [--json OUT]".into(),
+            "usage: loft profile SCENE --size WxH [--frames N] [--nonce N] [--timestamps immediate|ring|ab] [--json OUT]".into(),
         ));
     };
     let path = Path::new(scene);
@@ -60,30 +75,34 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
         let src = sources(path).map_err(Failure::Usage)?;
         loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0
     };
-    let modules = telemetry::collect(&program);
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;
-    let control_p50_ms = gpu.triangle_control_ms(size).map_err(Failure::Device)?;
     let loaded = Loaded::new(&gpu, &program, size, nonce).map_err(Failure::Device)?;
-    let mut report = Profile {
-        adapter: gpu.adapter.clone(),
-        modules,
-        control_p50_ms,
-        passes: program.passes.iter().map(|p| format!("{p:?}")).collect(),
-        gpu_frame_ms: vec![],
-        gpu_pass_ms: vec![],
+    let times = (0..warmup).map(|i| time.unwrap_or(i as f32 / 30.0))
+        .chain((0..frames).map(|i| time.unwrap_or(i as f32 * (1.0 / 60.0))))
+        .collect::<Vec<_>>();
+    let run = |deferred| -> Result<Profile, Failure> {
+        let control_p50_ms = gpu.triangle_control_ms(size).map_err(Failure::Device)?;
+        let frame_stamps = loaded.profile_frames(&gpu, times.iter().copied(), deferred)
+            .map_err(Failure::Device)?.into_iter().skip(warmup as usize).collect::<Vec<_>>();
+        Ok(Profile {
+            adapter: gpu.adapter.clone(),
+            modules: telemetry::collect(&program),
+            control_p50_ms,
+            passes: program.passes.iter().map(|p| format!("{p:?}")).collect(),
+            gpu_frame_ms: frame_stamps.iter().map(|f| f.gpu_ms).collect(),
+            gpu_pass_ms: frame_stamps.iter().map(|f| f.pass_ms.clone()).collect(),
+            frame_time_bits: times[warmup as usize..].iter().map(|t| t.to_bits()).collect(),
+            frame_stamps,
+            shader_sha256: shader_hashes(&program).map_err(Failure::Device)?,
+        })
     };
-    for frame in 0..u64::from(frames) + u64::from(warmup) {
-        loaded.frame(&gpu, time.unwrap_or_else(|| frame.saturating_sub(u64::from(warmup)) as f32 / 60.));
-        let (total, passes) = loaded
-            .gpu_ms(&gpu)
-            .map_err(Failure::Device)?
-            .ok_or_else(|| Failure::Device("GPU timestamps are unavailable".into()))?;
-        if frame >= u64::from(warmup) {
-            report.gpu_frame_ms.push(total);
-            report.gpu_pass_ms.push(passes);
-        }
+    if timestamps == "ab" {
+        let immediate = run(false)?;
+        let ring = run(true)?;
+        return write_json(json.as_deref().unwrap_or("-"), &serde_json::json!({ "immediate": immediate, "ring": ring }));
     }
+    let report = run(timestamps == "ring")?;
     if let Some(path) = json {
         write_json(&path, &report)
     } else {

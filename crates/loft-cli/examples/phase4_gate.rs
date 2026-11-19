@@ -54,32 +54,81 @@ fn bake(g: &Gpu) -> Result<Value, String> {
     }
     Ok(
         json!({"load_ms":l.stats.load_bake_gpu_ms,"load_dispatches":l.stats.load_bake_commands,
+        "load_pass_ms":l.stats.load_bake_pass_ms,"load_ticks":l.stats.load_bake_ticks,
         "commands_first_clean_unrelated_changed_repeated":counts,"expected_dirty_dispatches":5}),
     )
 }
 
 fn shrine(g: &Gpu) -> Result<Value, String> {
-    let (p, _) = scene("engines/coral_shrine.loft")?;
+    let (p, compiled) = scene("engines/coral_shrine.loft")?;
+    let prog = compiled.prog();
+    let kinds = |name| p.kinds.iter().position(|k| k.name == name)
+        .map(|i| i as u32).ok_or_else(|| format!("missing Shrine kind {name}"));
+    let bore = |kind| -> Result<_, String> {
+        let mut world = loft_passes::bvh::CpuWorld::new(&prog, &compiled, &p, &[kinds(kind)?])
+            .map_err(|e| format!("build {kind} world: {e:?}"))?;
+        world.visible([0.0, 0.05, 0.0], [0.0, 2.2, 0.0], |_, _| Ok([1.0; 3]))
+            .map_err(|e| format!("trace {kind} bore: {e:?}"))
+    };
+    let carved = bore("FoldedLantern")?;
+    let solid = bore("SolidLanternProxy")?;
+    if carved != [1.0; 3] || solid != [0.0; 3] {
+        return Err(format!("Shrine bore visibility: carved {carved:?}, solid {solid:?}"));
+    }
     let size = (1280, 800);
     let control = g.triangle_control_ms(size)?;
     let l = Loaded::new(g, &p, size, None)?;
-    let mut times = Vec::new();
-    let mut pass_times = Vec::new();
-    for i in 0..130 {
-        l.frame(g, 0.);
-        let (ms, passes) = l.gpu_ms(g)?.ok_or("missing GPU timestamps")?;
-        if i >= 30 {
-            times.push(ms);
-            pass_times.push(passes);
-        }
-    }
+    let samples = l.profile_frames(g, std::iter::repeat_n(0., 130), true)?;
+    let measured = &samples[30..];
+    let mut times = measured.iter().map(|sample| sample.gpu_ms).collect::<Vec<_>>();
     times.sort_by(f64::total_cmp);
     Ok(
         json!({"control_p50_ms":control,"p50_ms":times[49],"p95_ms":times[94],
-        "frames":100,"warmup":30,"camera_radius":p.camera.radius,"instances":p.instances.len(),"schedule":"two-world woodblock",
+        "frames":100,"warmup":30,"camera_radius":p.camera.radius,"camera_eye":p.camera.eye(0.0),"instances":p.instances.len(),"schedule":"two-world woodblock",
+        "bore_carved":carved,"bore_solid":solid,
         "passes":p.passes.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
-        "gpu_pass_ms":pass_times,"modules":loft_passes::telemetry::collect(&p)}),
+        "gpu_pass_ms":measured.iter().map(|s| &s.pass_ms).collect::<Vec<_>>(),"frame_stamps":measured,
+        "modules":loft_passes::telemetry::collect(&p)}),
     )
+}
+
+fn hermit_grid(g: &Gpu, dir: &Path) -> Result<Value, String> {
+    let mut src = prelude();
+    let file = "engines/hermit.loft";
+    src.add(file, fs::read_to_string(file).map_err(|e| e.to_string())?);
+    let size = (1280, 800);
+    let mut reports = Vec::new();
+    for (label, aov) in [("beauty", Aov::Beauty), ("depth", Aov::Depth), ("id", Aov::Id)] {
+        let (mut program, _, _) = loft_passes::compile_aov(&src, &[], aov).map_err(|e| e.render(&src))?;
+        let shell = program.kinds.iter().find(|k| k.name == "HermitShell").ok_or("missing Hermit shell")?.module;
+        if !program.modules[shell].naga.entry_points.iter().any(|e| e.name == "vs_indexed") {
+            return Err("Hermit shell failed the grid dependency analysis".into());
+        }
+        let candidate = Loaded::with_aov(g, &program, size, None, aov)?;
+        candidate.frame(g, 0.0);
+        let now = candidate.pixels(g)?;
+        program.modules[shell].naga.entry_points.retain(|e| e.name != "vs_indexed");
+        let original = Loaded::with_aov(g, &program, size, None, aov)?;
+        original.frame(g, 0.0);
+        let old = original.pixels(g)?;
+        for (variant, data) in [("indexed", &now), ("original", &old)] {
+            let file = fs::File::create(dir.join(format!("hermit-grid-{label}-{variant}.png")))
+                .map_err(|e| e.to_string())?;
+            let mut png = png::Encoder::new(file, size.0, size.1);
+            png.set_color(png::ColorType::Rgba);
+            png.set_depth(png::BitDepth::Eight);
+            png.write_header().and_then(|mut writer| writer.write_image_data(data)).map_err(|e| e.to_string())?;
+        }
+        let diff = now.chunks_exact(4).zip(old.chunks_exact(4))
+            .map(|(now, old)| now.iter().zip(old).map(|(a, b)| a.abs_diff(*b)).max().unwrap()).collect::<Vec<_>>();
+        reports.push(json!({
+            "mode": label,
+            "different_pixels": diff.iter().filter(|&&v| v != 0).count(),
+            "pixels_over_2": diff.iter().filter(|&&v| v > 2).count(),
+            "max_channel_difference": diff.iter().max(),
+        }));
+    }
+    Ok(json!({"count":20,"frames":[0],"vertices":193 * 33,"indices":192 * 32 * 6,"frames_compared":reports}))
 }
 
 fn observe(
@@ -232,6 +281,15 @@ fn measure(g: &Gpu, gate: &str) -> Result<Value, String> {
         "quant" => quant(g),
         "bake" => bake(g),
         "shrine" => shrine(g),
+        "spectral-slots" => {
+            let (program, _) = scene("scenes/spectral_caustic_study.loft")?;
+            let usage = loft_passes::telemetry::storage_entries(&program.modules[program.present].naga)?;
+            let loaded = Loaded::new(g, &program, (128, 128), None)?;
+            let commands = loaded.frame_samples(g, 0.0, 4);
+            let bytes = loaded.pixels(g)?;
+            Ok(json!({"device_limit":g.device.limits().max_storage_buffers_per_shader_stage,
+                "entry_storage":usage, "rendered_rgba_bytes":bytes.len(), "samples":4, "commands":commands}))
+        }
         "closed" => observe(g,&mut compile(WALL)?.0,
             "let depth = select(select(1u,2u,test==1u),16u,test==2u);
              let value = loft_user_reference_sample(vec3(0.),normalize(vec3(0.1,0.3,1.)),seed,depth)[ch];",1024,3),
@@ -322,9 +380,10 @@ schedule Main {
 
 fn main() -> Result<(), String> {
     let gate = std::env::args().nth(1).ok_or("supply an observation")?;
-    let result = measure(&native::gpu()?, &gate)?;
     let dir = std::env::args().nth(2).unwrap_or_else(|| "out/meta/i4".into());
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let gpu = native::gpu()?;
+    let result = if gate == "hermit-grid" { hermit_grid(&gpu, Path::new(&dir))? } else { measure(&gpu, &gate)? };
     fs::write(
         Path::new(&dir).join(format!("{gate}.json")),
         result.to_string(),
