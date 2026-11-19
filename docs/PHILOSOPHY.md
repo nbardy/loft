@@ -5,8 +5,25 @@ rewriting. Loft should support a loop of recursive self-improvement: every consu
 part, from a single shading term to the whole engine, and is helped to do so. The best version of each part wins
 because replacing a part is cheap, local and safe.
 
-`CORE.md` turns this into priorities and a definition of done. `docs/design/render.md` and `docs/design/motion.md`
-are the two design goals. This page is the stance they share.
+`CORE.md` turns this into priorities and a definition of done. `docs/design/render.md` (render and light) and
+`docs/design/motion.md` are the design goals for the sub meta engines. This page is the stance they share.
+
+## 0. A meta engine
+
+Loft is a **meta engine**: an engine for writing engines.
+
+- **The meta engine** is the small core: one graph of maths and GPU programs, the compiler that turns a composition
+  into fast GPU work, the runtime that runs it, and the analysis (CPU twin, checks, solve, scheduling) it offers
+  every part. It is the only part that must stay tiny and stable.
+- **Sub meta engines** specialise it for a domain: **render** (how things are intersected, rasterised, marched and
+  shaded), **light** (how light is transported: direct, shadows, global illumination, media), and **motion** (state,
+  laws and constraints over bodies). Each provides interfaces, orchestration and library functions for writing
+  engines in that domain.
+- **Engines** are programs written in the sub meta engines: a PBR path tracer, a toon renderer, a demoscene raymarcher,
+  a Spore-like locomotion engine, a Disney-style performance engine. The ones Loft ships are example engines: useful
+  defaults, written only with public pieces, that any person or model can read, copy, mix and rewrite.
+- **Lines live in the library and the example engines**, which may be large. The meta engine and the sub meta
+  engines' interfaces stay small. Size is judged per layer.
 
 ## 1. No baked engine
 

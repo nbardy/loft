@@ -1,6 +1,6 @@
 # Design goal: motion
 
-Read `docs/PHILOSOPHY.md` first. This page states what motion must be able to do and how it is judged, not how to
+Read `docs/PHILOSOPHY.md` first. This is the design goal for the motion sub meta engine: the interfaces, orchestration and library for writing motion engines, and the example engines Loft ships in it. This page states what motion must be able to do and how it is judged, not how to
 build it. Evidence so far: `agent_notes/2026-11-19_motion.md` and the look rounds (heron hop, crab walk, crab
 scramble), `agent_notes/2026-11-19_audits/motion_audit_astra.md`.
 
