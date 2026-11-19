@@ -294,6 +294,7 @@ impl Parser<'_, '_> {
             self.expect("=")?;
             let value = self.expr(0)?;
             return Ok(Item::Const(ConstDecl {
+                range: if parameter { self.range()? } else { None },
                 comptime: parameter,
                 name,
                 ty: t,
@@ -521,6 +522,29 @@ impl Parser<'_, '_> {
             raw: None,
         })
     }
+    fn range(&mut self) -> Res<Option<RowRange>> {
+        Ok(if self.eat("in") {
+            let lo = self.expr(0)?;
+            self.expect("..")?;
+            Some(RowRange {
+                lo,
+                hi: Some(self.expr(0)?),
+                strict: false,
+            })
+        } else if self.is(">") || self.is(">=") {
+            let strict = self.eat(">");
+            if !strict {
+                self.expect(">=")?;
+            }
+            Some(RowRange {
+                lo: self.expr(0)?,
+                hi: None,
+                strict,
+            })
+        } else {
+            None
+        })
+    }
     fn kind(&mut self) -> Res<KindDecl> {
         let name = self.ident()?;
         let mut params = vec![];
@@ -532,7 +556,13 @@ impl Parser<'_, '_> {
                 params.push(KindParam {
                     name: n.clone(),
                     ty: t,
-                    range: None,
+                    range: if self.eat("in") {
+                        let lo = self.expr(0)?;
+                        self.expect("..")?;
+                        Some((lo, self.expr(0)?))
+                    } else {
+                        None
+                    },
                     span: n.span,
                 });
                 if !self.eat(",") {
@@ -549,27 +579,7 @@ impl Parser<'_, '_> {
             let name = self.ident()?;
             self.expect(":")?;
             let t = self.ty()?;
-            let range = if self.eat("in") {
-                let lo = self.expr(0)?;
-                self.expect("..")?;
-                Some(RowRange {
-                    lo,
-                    hi: Some(self.expr(0)?),
-                    strict: false,
-                })
-            } else if self.is(">") || self.is(">=") {
-                let strict = self.eat(">");
-                if !strict {
-                    self.expect(">=")?;
-                }
-                Some(RowRange {
-                    lo: self.expr(0)?,
-                    hi: None,
-                    strict,
-                })
-            } else {
-                None
-            };
+            let range = self.range()?;
             let default = if self.eat("=") {
                 Some(self.expr(0)?)
             } else {
@@ -744,12 +754,27 @@ impl Parser<'_, '_> {
             self.end()?;
             stmts.push(s)
         }
-        if value
-            && let Some(Stmt::Expr(_)) = stmts.last()
-            && let Some(Stmt::Expr(e)) = stmts.pop()
-        {
-            let s = e.span;
-            stmts.push(Stmt::Return(Some(e), s))
+        fn tail(stmts: &mut [Stmt]) {
+            match stmts.last_mut() {
+                Some(s @ Stmt::Expr(_)) => {
+                    let Stmt::Expr(e) = std::mem::replace(s, Stmt::Return(None, Span::NONE)) else {
+                        unreachable!()
+                    };
+                    *s = Stmt::Return(Some(e.clone()), e.span);
+                }
+                Some(Stmt::If {
+                    then,
+                    otherwise: Some(no),
+                    ..
+                }) => {
+                    tail(&mut then.stmts);
+                    tail(&mut no.stmts);
+                }
+                _ => {}
+            }
+        }
+        if value {
+            tail(&mut stmts);
         }
         self.locals = locals;
         self.maps = maps;
@@ -824,6 +849,16 @@ impl Parser<'_, '_> {
             self.expect("for")?;
             let var = self.ident()?;
             self.expect("in")?;
+            if build && self.eat("[") {
+                let values = self.list("]")?.into_iter().map(|arg| arg.value).collect();
+                let body = self.block(false)?;
+                return Ok(Stmt::Each {
+                    var,
+                    values,
+                    body,
+                    span: sp,
+                });
+            }
             let lo = self.expr(0)?;
             self.expect("..")?;
             let hi = self.expr(0)?;
@@ -986,6 +1021,31 @@ impl Parser<'_, '_> {
     }
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
+        if self.eat("if") {
+            let cond = self.expr(0)?;
+            let arm = |p: &mut Self| -> Res<Expr> {
+                p.expect("{")?;
+                p.seps();
+                let v = p.expr(0)?;
+                p.seps();
+                p.expect("}")?;
+                Ok(v)
+            };
+            let yes = arm(self)?;
+            self.expect("else")?;
+            let no = arm(self)?;
+            let args = [no, yes, cond]
+                .into_iter()
+                .map(|value| Arg { name: None, value })
+                .collect();
+            return Ok(self.node(
+                span,
+                ExprKind::Call {
+                    callee: named("loft_conditional", span),
+                    args,
+                },
+            ));
+        }
         if self.eat("(") {
             let e = self.expr(0)?;
             self.expect(")")?;

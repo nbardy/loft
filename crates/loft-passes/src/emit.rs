@@ -155,6 +155,7 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
                     walk_block(then, calls, names);
                     otherwise.iter().for_each(|o| walk_block(o, calls, names));
                 }
+                Stmt::Each {values,body,..}=>{for e in values{walk_expr(e,calls,names);}walk_block(body,calls,names);}
                 Stmt::For { lo, hi, body, .. } => {
                     walk_expr(lo, calls, names);
                     walk_expr(hi, calls, names);
@@ -331,7 +332,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.block_body(body, d + 1);
                 self.line(d, "}");
             }
-            Stmt::Emit { .. } => unreachable!("checked: stage 0 only, never emitted"),
+            Stmt::Each{..} | Stmt::Emit { .. } => unreachable!("checked: stage 0 only, never emitted"),
             Stmt::Expr(e) => {
                 let v = self.expr(e);
                 if matches!(e.kind, ExprKind::Call { .. }) && *self.ty_of(e) == Ty::Void {
@@ -376,6 +377,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             },
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Name(n) if n == "self" => "self_".into(),
+            ExprKind::Name(n) if n=="time"=>"frame.eye.w".into(),
             ExprKind::Name(n) => n.clone(),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
@@ -447,6 +449,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     "smootherstep" => "loft_smootherstep".to_string(),
                     "inv" => "loft_xf_inv".to_string(),
                     "vec2" | "vec2f" => "vec2<f32>".into(),
+                    "loft_conditional" => "select".into(),
                     "vec3" | "vec3f" => "vec3<f32>".into(),
                     "vec4" | "vec4f" => "vec4<f32>".into(),
                     other => other.into(),
@@ -484,7 +487,7 @@ fn material_layout<'k>(p: &Prog, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg]
                     returns(then, out);
                     otherwise.iter().for_each(|o| returns(o, out));
                 }
-                Stmt::For { body, .. } => returns(body, out),
+                Stmt::Each{body,..} | Stmt::For { body, .. } => returns(body, out),
                 Stmt::Return(None, _) | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. } | Stmt::Emit { .. } | Stmt::Expr(_) => {}
             }
         }

@@ -71,6 +71,7 @@ pub struct ScanDecl {
 /// `const X: T = e;` (stage 1, plain WGSL) or `comptime const X: T = e;` (stage 0, overridable by the CLI).
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ConstDecl {
+    pub range: Option<RowRange>,
     pub comptime: bool,
     pub name: Ident,
     pub ty: Option<TyExpr>,
@@ -186,6 +187,7 @@ pub enum Stmt {
     Map { name: Ident, head: Expr, stages: Vec<(Ident, Vec<Expr>)> },
     Return(Option<Expr>, Span),
     If { cond: Expr, then: Block, otherwise: Option<Block> },
+    Each { var: Ident, values: Vec<Expr>, body: Block, span: Span },
     For { comptime: bool, var: Ident, lo: Expr, hi: Expr, body: Block, span: Span },
     /// `emit K(f: e, ...)`, or `let b = emit K(...)` binding the new row's id.
     Emit { kind: Ident, fields: Vec<(Ident, Expr)>, span: Span, bind: Option<Ident> },

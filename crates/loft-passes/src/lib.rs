@@ -7,6 +7,8 @@
 pub mod ad;
 pub mod check;
 mod cache;
+mod defaults;
+mod infer;
 pub mod emit;
 pub mod eval;
 pub mod lip;
@@ -31,6 +33,8 @@ pub struct Prog<'a> {
     pub units: HashSet<&'a str>,
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
+    pub laws:BTreeMap<&'a str,&'a LawDecl>,
+    pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
 
 impl<'a> Prog<'a> {
@@ -43,7 +47,7 @@ impl<'a> Prog<'a> {
             spaces: HashSet::new(),
             units: HashSet::new(),
             scans: BTreeMap::new(),
-            schedule: None,
+            schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
         let mut name = |n: &'a Ident| -> Res<()> {
@@ -63,7 +67,9 @@ impl<'a> Prog<'a> {
                         }
                     }
                 }
-                Item::Use(_) | Item::Camera(_) | Item::Law(_) | Item::Check(_) => {}
+                Item::Use(_) | Item::Camera(_) => {}
+                Item::Law(l)=>{name(&l.f.name)?;p.laws.insert(&l.f.name.name,l);}
+                Item::Check(f)=>{name(&f.name)?;p.checks.insert(&f.name.name,f);}
                 Item::Unit(n) => {
                     name(n)?;
                     p.units.insert(&n.name);
@@ -123,6 +129,8 @@ pub fn parse_all(src: &Sources) -> Res<Vec<Module>> {
             f.attrs.push(Attr{name:Ident{name:"lipschitz".into(),span:sp},args:vec![ax]});
         }
     }
+    defaults::schedule(&mut modules,&mut next)?;
+    infer::run(&mut modules)?;
     ad::run(&mut modules, &mut next)?;
     Ok(modules)
 }
@@ -182,6 +190,7 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
                     block(then, out);
                     otherwise.iter().for_each(|o| block(o, out));
                 }
+                Stmt::Each{values,body,..}=>{for e in values{walk(e,out)}block(body,out);}
                 Stmt::For { lo, hi, body, .. } => {
                     walk(lo, out);
                     walk(hi, out);
@@ -444,6 +453,14 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
             }
         }
     }
+    for c in p.consts.values(){
+        if let Some(range)=&c.range{
+            let mut ev:Eval<f32>=Eval::new(&p,&types,vec![],overrides);
+            let provided=overrides.iter().find(|(n,_)|n==&c.name.name).map(|(_,v)|*v as f32);
+            let x=match provided{Some(v)=>v,None=>as_f32(eval::concrete(&ev.expr(&c.value)?,c.value.span)?,c.value.span)?};
+            ev.validate_range(&c.name,range,x,c.value.span)?;
+        }
+    }
     lap("check", &mut ms);
 
     // The schedule: stage-0 passes, the camera, and the GPU passes in dependency order.
@@ -473,8 +490,8 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                 camera = Some(Orbit {
                     at: as_v3(stage0(&p, &mut types, at, overrides)?, at.span)?,
                     radius: f("radius", &mut types)?,
-                    height: f("height", &mut types)?,
-                    period: f("period", &mut types)?,
+                    height: if pd.args.iter().any(|a|a.name.as_ref().is_some_and(|n|n.name=="height")){f("height",&mut types)?}else{0.5},
+                    period: if pd.args.iter().any(|a|a.name.as_ref().is_some_and(|n|n.name=="period")){f("period",&mut types)?}else{24.0},
                     fov: f("fov", &mut types)?,
                 });
             }

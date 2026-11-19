@@ -411,7 +411,7 @@ impl Ad<'_> {
             Stmt::Map { name, .. } => {
                 return Err(Diag::new(Code::E405, name.span, "`diff` through a `map` statement is not lowered yet", "differentiate a fn without maps"));
             }
-            Stmt::Emit { span, .. } => return Err(Diag::new(Code::E403, *span, "`emit` in a differentiated fn", "differentiate stage-1 code")),
+            Stmt::Each{span,..} | Stmt::Emit { span, .. } => return Err(Diag::new(Code::E403, *span, "`emit` in a differentiated fn", "differentiate stage-1 code")),
         })
     }
 

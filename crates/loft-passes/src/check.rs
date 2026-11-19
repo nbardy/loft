@@ -17,7 +17,9 @@ struct Local {
     span: Span,
 }
 
-struct Ck<'p, 'a> {
+pub(crate) struct Ck<'p, 'a> {
+    pub(crate) hints: Option<&'p mut crate::infer::Hints>,
+    ownership: Option<(String,Vec<String>)>,
     p: &'p Prog<'a>,
     types: &'p mut Vec<Ty>,
     scopes: Vec<HashMap<String, Local>>,
@@ -33,11 +35,12 @@ struct Ck<'p, 'a> {
 pub const VARIANT_BUDGET: u64 = 4;
 
 pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
-    let mut ck = Ck { p, types, scopes: vec![], comptime: false, ret: Ty::Void, fresh: 0, sig_vars: vec![] };
+    let mut ck = Ck::new(p,types);
     for c in p.consts.values() {
         ck.comptime = c.comptime;
         ck.scopes = vec![HashMap::new()];
         let t = ck.expr(&c.value)?;
+        if let Some(r)=&c.range {ck.range(r)?;}
         if let Some(ty) = &c.ty {
             let want = ck.resolve(ty, true)?;
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
@@ -48,12 +51,26 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
     for k in p.kinds.values() {
         ck.kind(k)?;
     }
+    if let Some(s)=p.schedule {
+        let mut owners=HashMap::new();
+        for pd in s.passes.iter().filter(|pd| pd.verb.name=="run_laws"){
+            for a in &pd.args{
+                let ExprKind::Name(n)=&a.value.kind else{return Err(e003(a.value.span,"expected a law name","name a declared law"))};
+                let law=p.laws.get(n.as_str()).ok_or_else(||Diag::new(Code::E011,a.value.span,"unknown scheduled law","declare the law before scheduling it"))?;
+                if let Some(TyExpr::Name(k))=law.f.params.first().and_then(|prm|prm.ty.as_ref()){
+                    for f in &law.writes{if let Some(prev)=owners.insert((&k.name,&f.name),f.span){return Err(Diag::new(Code::E502,f.span,format!("conflicting writes on {}.{}",k.name,f.name),"give one scheduled law ownership of this field").note(prev,"first writer declared here"));}}
+                }
+            }
+        }
+    }
+    for law in p.laws.values(){ck.motion(&law.f,Some(&law.writes))?;}
+    for f in p.checks.values(){ck.motion(f,None)?;}
     Ok(())
 }
 
 /// Types one stage-0 expression (a schedule argument): it may read `comptime const`s and call any fn.
 pub fn check_stage0_expr(p: &Prog, types: &mut Vec<Ty>, e: &Expr) -> Res<Ty> {
-    let mut ck = Ck { p, types, scopes: vec![HashMap::new()], comptime: true, ret: Ty::Void, fresh: 0, sig_vars: vec![] };
+    let mut ck = Ck { hints:None,ownership:None,p, types, scopes: vec![HashMap::new()], comptime: true, ret: Ty::Void, fresh: 0, sig_vars: vec![] };
     ck.expr(e)
 }
 
@@ -74,7 +91,11 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
     Diag::new(Code::E003, span, msg, fix)
 }
 
-impl Ck<'_, '_> {
+impl<'p,'a> Ck<'p,'a> {
+    pub(crate) fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None}
+    }
+
     fn lookup(&self, n: &str) -> Option<&Local> {
         self.scopes.iter().rev().find_map(|s| s.get(n))
     }
@@ -130,6 +151,7 @@ impl Ck<'_, '_> {
                 "vec3f" => Ok(Ty::VecN(3)),
                 "vec4f" => Ok(Ty::VecN(4)),
                 "Bsdf" => Ok(Ty::Bsdf),
+                "Verdict"=>Ok(Ty::Verdict),
                 n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
                 n if self.p.units.contains(n) => Ok(Ty::F32),
                 n => Err(Diag::new(
@@ -159,7 +181,7 @@ impl Ck<'_, '_> {
     }
 
     /// A scan is stage 0: its init and step run once at load.
-    fn scan(&mut self, sc: &ScanDecl) -> Res<()> {
+    pub(crate) fn scan(&mut self, sc: &ScanDecl) -> Res<()> {
         self.comptime = true;
         self.scopes = vec![HashMap::new()];
         let vt = self.resolve(&sc.var_ty, true)?;
@@ -213,8 +235,9 @@ impl Ck<'_, '_> {
         })
     }
 
-    fn func(&mut self, f: &FnDecl, kind: Option<&str>) -> Res<()> {
+    pub(crate) fn func(&mut self, f: &FnDecl, kind: Option<&str>) -> Res<()> {
         self.comptime = f.comptime;
+        if let Some(h)=&mut self.hints {h.current=if f.ret.is_none(){Some(f.name.name.clone())}else{None};}
         self.scopes = vec![HashMap::new()];
         self.sig_vars.clear();
         let mut note = |t: &TyExpr| match t {
@@ -225,11 +248,12 @@ impl Ck<'_, '_> {
         for prm in &f.params {
             let ty = match (&prm.ty, kind) {
                 (Some(t), _) => self.resolve(t, true)?,
-                (None, Some(k)) => Ty::Row(k.into()),
-                (None, None) => {
-                    return Err(e003(prm.name.span, "`self` outside a kind", "give the parameter a type"));
+                (None, Some(k)) if prm.name.name=="self" => Ty::Row(k.into()),
+                (None, _) => {
+                    return Err(e003(prm.name.span, "parameter type could not be inferred", "annotate the parameter or call this helper with typed arguments"));
                 }
             };
+            let ty=if let Ty::Id(k)=ty {Ty::Row(k)}else{ty};
             self.bind(&prm.name.name, Local { ty, mutable: false, map: None, span: prm.name.span });
         }
         self.ret = match &f.ret {
@@ -240,6 +264,21 @@ impl Ck<'_, '_> {
             self.attr(a, f, kind.is_some())?;
         }
         self.block(&f.body)
+    }
+
+    pub(crate) fn motion(&mut self,f:&FnDecl,writes:Option<&[Ident]>)->Res<()>{
+        let mut checked=f.clone();
+        let Some(first)=checked.params.first() else{return Err(e003(f.name.span,"a law or check needs its target row","give the first parameter its kind type"))};
+        let Some(TyExpr::Name(k))=&first.ty else{return Err(e003(first.name.span,"missing target kind","annotate the first parameter with its kind"))};
+        let kind=self.p.kinds.get(k.name.as_str()).ok_or_else(||Diag::new(Code::E011,k.span,"unknown target kind","declare this kind first"))?;
+        for field in writes.into_iter().flatten(){if !kind.row.iter().any(|f|f.name.name==field.name){return Err(Diag::new(Code::E501,field.span,"writes names an unknown column","use a field of the target kind"))}}
+        self.ownership=writes.map(|w|(first.name.name.clone(),w.iter().map(|i|i.name.clone()).collect()));
+        for p in checked.params.iter_mut().skip(1){
+            if p.name.name=="dt" && p.ty.is_none(){p.ty=Some(TyExpr::Name(Ident{name:"f32".into(),span:p.name.span}));}
+            if matches!(&p.ty,Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())) {return Err(Diag::new(Code::E108,p.name.span,"read-only rows require a table parameter","write [Kind] instead of Kind"));}
+        }
+        if writes.is_none(){checked.ret=Some(TyExpr::Name(Ident{name:"Verdict".into(),span:f.name.span}));}
+        let result=self.func(&checked,None);self.ownership=None;result
     }
 
     /// `@lipschitz(param)` or `@lipschitz(max(a, b))`, naming the fn's own parameters; `@lobe` on a library fn
@@ -281,6 +320,13 @@ impl Ck<'_, '_> {
         }
     }
 
+    fn range(&mut self,r:&RowRange)->Res<()>{
+        for e in std::iter::once(&r.lo).chain(r.hi.as_ref()){
+            let t=self.expr(e)?;
+            if !num(&t){return Err(e003(e.span,"range endpoint must be a number","use a scalar build-time expression"))}
+        }
+        Ok(())
+    }
     fn kind(&mut self, k: &KindDecl) -> Res<()> {
         let mut variants: u64 = 1;
         for prm in &k.params {
@@ -328,8 +374,11 @@ impl Ck<'_, '_> {
                 ));
             }
         }
+        self.scopes=vec![HashMap::new()];self.comptime=true;
         for f in &k.row {
             let t = self.resolve(&f.ty, true)?;
+            if let Some(r)=&f.range {if !num(&t){return Err(e003(f.name.span,"range on a non-scalar row field","refine a numeric column"))}self.range(r)?;}
+            if let Some(e)=&f.default{let from=self.expr(e)?;self.assignable(&from,&t,e.span)?;if from==Ty::AbstractInt{self.set(e,t.clone());}}
             if t.words().is_none() {
                 return Err(e003(f.ty.span(), format!("`{t}` cannot be stored in a row"), "use a scalar, vector, point or Xform"));
             }
@@ -448,6 +497,12 @@ impl Ck<'_, '_> {
                 self.bind(&name.name, Local { ty: t, mutable: *mutable, map: None, span: name.span });
             }
             Stmt::Assign { target, op: _, value } => {
+                if let ExprKind::Member(base,field)=&target.kind {
+                    let owned=self.ownership.as_ref().is_some_and(|(row,fields)|matches!(&base.kind,ExprKind::Name(n) if n==row) && fields.contains(&field.name));
+                    if !owned{return Err(Diag::new(Code::E501,field.span,"field assignment outside its declared writes set","declare the target field in the owning law’s writes clause"))}
+                    let want=self.expr(target)?;let t=self.expr(value)?;self.assignable(&t,&want,value.span)?;if t==Ty::AbstractInt{self.set(value,want);}
+                    return Ok(());
+                }
                 let ExprKind::Name(n) = &target.kind else {
                     return Err(e003(target.span, "Phase 0 assigns to names only", "assign the whole variable"));
                 };
@@ -468,6 +523,7 @@ impl Ck<'_, '_> {
                     Some(e) => self.expr(e)?,
                     None => Ty::Void,
                 };
+                if let Some(h)=&mut self.hints && let Some(n)=&h.current && t!=Ty::Void {h.returns.insert(n.clone(),t);return Ok(());}
                 let want = self.ret.clone();
                 self.assignable(&t, &want, v.as_ref().map_or(*span, |e| e.span))?;
                 if let Some(e)=v && t==Ty::AbstractInt { self.set(e,want); }
@@ -479,6 +535,15 @@ impl Ck<'_, '_> {
                 if let Some(o) = otherwise {
                     self.block(o)?;
                 }
+            }
+            Stmt::Each { var,values,body,span }=>{
+                if !self.comptime{return Err(Diag::new(Code::E404,*span,"build loop outside build code","move the loop into a build block"))}
+                let first=values.first().ok_or_else(||e003(*span,"empty untyped iteration list","supply at least one value"))?;
+                let mut ty=self.expr(first)?;
+                if ty==Ty::AbstractInt{ty=Ty::F32}
+                for e in values{let t=self.expr(e)?;self.assignable(&t,&ty,e.span)?;if t==Ty::AbstractInt{self.set(e,ty.clone());}}
+                self.scopes.push(HashMap::new());self.bind(&var.name,Local{ty,mutable:false,map:None,span:var.span});
+                self.block(body)?;self.scopes.pop();
             }
             Stmt::For { comptime, var, lo, hi, body, span } => {
                 if *comptime && !self.comptime {
@@ -518,7 +583,9 @@ impl Ck<'_, '_> {
                 let Some(k) = self.p.kinds.get(kind.name.as_str()) else {
                     return Err(Diag::new(Code::E011, kind.span, format!("unknown kind `{}`", kind.name), "declare the kind"));
                 };
+                let mut supplied=std::collections::HashSet::new();
                 for (f, e) in fields {
+                    if !supplied.insert(&f.name){return Err(Diag::new(Code::E602,f.span,"row field supplied twice","keep one value for this field"))}
                     let Some(rf) = k.row.iter().find(|r| r.name.name == f.name) else {
                         return Err(Diag::new(
                             Code::E602,
@@ -636,6 +703,7 @@ impl Ck<'_, '_> {
                 if let Some(l) = self.lookup(n) {
                     return Ok(l.ty.clone());
                 }
+                if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
                     if c.comptime && !self.comptime {
                         return Err(Diag::new(
@@ -795,11 +863,11 @@ impl Ck<'_, '_> {
         {
             // A lobe call binds its own parameters; the shade pass supplies `n, v, l`.
             if self.comptime || ts.len() + 3 != f.params.len() {
-                return Err(e003(span, format!("lobe `{}` takes {} argument(s) here (the last three, n, v, l, come from the light)", callee.name, f.params.len() - 3), "pass the lobe's own parameters")
+                return Err(e003(span, format!("lobe `{}` takes {} argument(s) here (the last three, n, v, l, come from the light)", callee.name, f.params.len().saturating_sub(3)), "pass the lobe's own parameters")
                     .note(f.name.span, "declared here"));
             }
             for (index, ((prm, t), s)) in f.params.iter().zip(&ts).zip(&sp).enumerate() {
-                let want = self.resolve(prm.ty.as_ref().expect("typed"), true)?;
+                let want = self.resolve(prm.ty.as_ref().ok_or_else(||e003(prm.name.span,"lobe parameter has no type","annotate the lobe parameter"))?, true)?;
                 self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
             }
             return Ok(Ty::Bsdf);
@@ -818,9 +886,14 @@ impl Ck<'_, '_> {
                 return Err(e003(span, format!("`{}` takes {} argument(s), got {}", callee.name, f.params.len(), ts.len()), "match the signature")
                     .note(f.name.span, "declared here"));
             }
+            if f.params.iter().any(|p|p.ty.is_none()){
+                if let Some(h)=&mut self.hints {h.args.entry(f.name.name.clone()).or_insert_with(||ts.clone());}
+                return Err(e003(f.name.span,"parameter type has not been inferred","annotate the parameter or call the helper with a typed argument"));
+            }
             let mut vars: HashMap<String, Space> = HashMap::new();
             for (index, ((prm, t), s)) in f.params.iter().zip(&ts).zip(&sp).enumerate() {
                 let want = self.resolve(prm.ty.as_ref().expect("free fns type every parameter"), true)?;
+                let want=if let (Ty::Id(k),Ty::Row(_))=(&want,t){Ty::Row(k.clone())}else{want};
                 let want = self.unify(&want, t, &mut vars, *s, &prm.name)?;
                 self.assignable(t, &want, *s)?; if *t==Ty::AbstractInt {self.set(&args[index].value,want);}
             }
@@ -1039,6 +1112,8 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
         Ok(if t == Ty::AbstractInt { Ty::F32 } else { t })
     };
     match name {
+        "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
+        "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
         "place" => match ts { [Ty::Geo(Pt,s)] | [Ty::Geo(Pt,s),Ty::F32|Ty::AbstractInt] => Ok(Ty::Xform(Space::Open,s.clone())),_=>Err(e003(span,"placement requires a point and optional yaw","write place([x,y,z]@World, yaw)")) },
         "dir" => match ts { [Ty::Geo(_,s)]=>Ok(Ty::Geo(Dir,s.clone())), _=>Err(e003(span,"direction requires a space","supply a vector in the requested space")) },
         "coords" => match ts { [Ty::Geo(..)]=>Ok(Ty::VecN(3)),_=>Err(e003(span,"expected a spatial value","pass a point or vector")) },
@@ -1075,7 +1150,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
             [Ty::Geo(g, x), Ty::Geo(h, y), t] if g == h && num(t) => same_space(x, y).map(|_| ts[0].clone()),
             _ => componentwise(3),
         },
-        "select" => {
+        "select" | "loft_conditional" => {
             arity(3)?;
             if ts[2] != Ty::Bool {
                 return Err(e003(sp[2], "`select(f, t, cond)` needs a bool", "compare to get a bool"));

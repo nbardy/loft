@@ -9,6 +9,7 @@ use loft_ir::{Code, Diag, Res, Span};
 /// A scalar domain. `lip` is the scalar's Lipschitz bound in the traced point (always 0 for `f32`).
 pub trait Scalar: Clone + std::fmt::Debug {
     fn c(x: f64) -> Self;
+    fn frame_time()->Self;
     fn add(&self, o: &Self) -> Self;
     fn sub(&self, o: &Self) -> Self;
     fn mul(&self, o: &Self) -> Self;
@@ -182,6 +183,7 @@ pub struct Eval<'p, 'a, S> {
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
     pub steps: u64,
+    pub time: S,
     /// Baked scans, for `sample_c2`.
     pub luts: &'p [Lut],
 }
@@ -197,7 +199,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, luts: &[] }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, time:S::frame_time(), luts: &[] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -356,6 +358,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return self.block(blk);
                 }
             }
+            Stmt::Each { var, values, body, .. }=>{
+                for e in values{let value=self.expr(e)?; self.bind(&var.name,value); let flow=self.block(body)?;self.unbind();if let Flow::Ret(_)=flow{return Ok(flow)}}
+            }
             Stmt::For { var, lo, hi, body, .. } => {
                 let (a, b) = (self.expr(lo)?, self.expr(hi)?);
                 let (a, b, unsigned) = match (a, b) {
@@ -374,15 +379,18 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     }
                 }
             }
-            Stmt::Emit { kind, fields, .. } => {
+            Stmt::Emit { kind, fields, bind, .. } => {
                 let k = self.p.kind_index(&kind.name);
                 let decl = self.p.kinds[kind.name.as_str()];
                 let mut row = vec![];
                 for rf in &decl.row {
-                    let (_, e) = fields.iter().find(|(f, _)| f.name == rf.name.name).expect("checked: every field");
+                    let e=fields.iter().find(|(f,_)|f.name==rf.name.name).map(|(_,e)|e).or(rf.default.as_ref()).expect("checked required field");
                     let v = self.expr(e)?;
-                    row.push(concrete(&v, e.span)?);
+                    let v=concrete(&v,e.span)?;
+                    if let Some(range)=&rf.range {self.validate_range(&rf.name,range,crate::as_f32(v.clone(),e.span)?,e.span)?;}
+                    row.push(v);
                 }
+                if let Some(n)=bind{self.bind(&n.name,Val::U(self.tables[k].len() as u32));}
                 self.tables[k].push(row);
             }
             Stmt::Expr(e) => {
@@ -390,6 +398,15 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
         }
         Ok(Flow::Next)
+    }
+
+    pub(crate) fn validate_range(&mut self,name:&Ident,r:&'a RowRange,x:f32,sp:Span)->Res<()>{
+        let lo=crate::as_f32(concrete(&self.expr(&r.lo)?,r.lo.span)?,r.lo.span)?;
+        let hi=match &r.hi{Some(e)=>crate::as_f32(concrete(&self.expr(e)?,e.span)?,e.span)?,None=>f32::INFINITY};
+        if !x.is_finite() || !(if r.strict{x>lo}else{x>=lo}) || !(x<=hi){
+            return Err(Diag::new(Code::E602,sp,format!("{} = {x} outside declared range",name.name),format!("supply a value {} {lo} and <= {hi}",if r.strict{">"}else{">="})).note(r.lo.span,"declared here"))
+        }
+        Ok(())
     }
 
     /// One map stage, forward (`fwd`) or inverse, on a point or a direction. `fold`: the map statement itself,
@@ -464,6 +481,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         Slot::Val(v) | Slot::Map { p: v, .. } => v.clone(),
                     });
                 }
+                if n=="time"{return Ok(Val::S(self.time.clone()))}
                 let c = self.p.consts[n.as_str()];
                 if let Some((_, x)) = self.overrides.iter().find(|(k, _)| k == n) {
                     return Ok(match self.types[c.value.id as usize] {
@@ -558,6 +576,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 }
             }
             ExprKind::Call { callee, args } => {
+                if callee.name=="loft_conditional" && let Val::B(Some(b))=self.expr(&args[2].value)? {
+                    return self.expr(&args[usize::from(b)].value);
+                }
                 if callee.name=="place" {
                     let Val::V(o,_)=self.expr(&args[0].value)? else {unreachable!("typed placement")};
                     let exact=|s:&S|s.exact().map(|v|v as f32).ok_or_else(||err(e.span,"placement varies across the query","store it in a row"));
@@ -863,7 +884,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let k = self.arith(BinOp::Sub, Val::S(S::c(3.0)), two_t);
                 self.arith(BinOp::Mul, tt, k)
             }
-            "select" => match &v[2] {
+            "select" | "loft_conditional" => match &v[2] {
                 Val::B(Some(true)) => v[1].clone(),
                 Val::B(Some(false)) => v[0].clone(),
                 Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {
@@ -1031,6 +1052,7 @@ pub fn concrete<S: Scalar>(v: &Val<S>, span: Span) -> Res<RowVal> {
 }
 
 impl Scalar for f32 {
+    fn frame_time()->Self{0.0}
     fn c(x: f64) -> f32 {
         x as f32
     }

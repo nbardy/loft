@@ -16,7 +16,7 @@ pub enum Kind {
     #[regex(r"[0-9]+x[0-9]+")]
     Grid,
     #[regex(r"0x[0-9a-fA-F]+", priority = 5)]
-    #[regex(r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?([a-zA-Z]+(\^-?[0-9]+)?([*/](mm|m|s|kg|deg|rad|N|Hz|J)(\^-?[0-9]+)?)*)?")]
+    #[regex(r"[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?([a-zA-Z]+(\^-?[0-9]+)?)?")]
     Number,
     #[regex(r#""([^"\\\n]|\\.)*""#)]
     String,
@@ -149,6 +149,21 @@ impl Cst {
                     prev.trailing.append(&mut pending);
                 }
                 continue;
+            }
+            if k==Kind::Number && lexer.slice().bytes().any(|b|b.is_ascii_alphabetic()) {
+                // Consume a whole unit atom: the s of sin after a product is an identifier.
+                while let Some(rest)=lexer.remainder().strip_prefix(['*','/']) {
+                    let len=rest.bytes().take_while(|c|c.is_ascii_alphanumeric()||*c==b'_').count();
+                    if !matches!(&rest[..len],"m"|"mm"|"s"|"kg"|"rad"|"deg"|"N"|"Hz"|"J"){break;}
+                    let mut n=1+len;
+                    if let Some(pow)=rest[len..].strip_prefix('^'){
+                        let digits=pow.strip_prefix('-').unwrap_or(pow);
+                        let count=digits.bytes().take_while(u8::is_ascii_digit).count();
+                        if count>0{n+=1+pow.len()-digits.len()+count;}
+                    }
+                    lexer.bump(n);
+                }
+                s.hi=lexer.span().end as u32;
             }
             if island && lexer.slice() == "{" {
                 let end = raw_end(&text[r.start..]).ok_or_else(|| {

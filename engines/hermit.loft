@@ -31,6 +31,30 @@ fn shell_at(u: f, v: f) -> p3@Shell {
   f.origin + f.normal * (r * (1 + k) * cos(a)) + f.binormal * (r * (0.9 + k) * sin(a))
 }
 
+kind Ground @World (radius: f) {
+
+  visible(ro, rd) {
+    if rd.y >= 0 {
+      return -1
+    }
+    let t = -ro.y / rd.y
+    let p = ro + rd * t
+    if max(abs(p.x), abs(p.z)) > radius {
+      return -1
+    }
+    t
+  }
+  trace(p) {
+    box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  }
+  material(p, n) {
+    let grain = fbm2(p.xyz * 6)
+    let ripple = 0.5 + 0.5 * sin(5 * p.x + 4 * fbm2(p.xyz * 0.4))
+    let sand = mix([0.36, 0.31, 0.23], [0.52, 0.45, 0.34], 0.75 * grain + 0.25 * ripple)
+    ggx(sand, 0.9, 0)
+  }
+}
+
 kind HermitShell @Shell (pose: xf@Shell>World, tint: rgb) {
 
   surface(u, v) grid 192x32 {
@@ -73,7 +97,7 @@ kind CrabFace @Face (pose: xf@Face>World, aggro: f, gaze: p3@World, tint: rgb) {
 
     let eye_c = sym.pt(0.03, 0.30, 0.07)
 
-    let eye_w = pose * (sym.out(eye_c))
+    let eye_w = pose * sym.out(eye_c)
     let look = sym.in(inv(pose) * normalize(gaze - eye_w))
     let r = distance(sym.p, eye_c)
     let in_eye = 1 - smoothstep(0.088, 0.095, r)
@@ -139,30 +163,6 @@ kind CrabLeg @Leg (pose: xf@Leg>World, j0: p3@Leg, j1: p3@Leg, j2: p3@Leg, j3: p
   }
 }
 
-kind Ground @World (radius: f) {
-
-  visible(ro, rd) {
-    if rd.y >= 0 {
-      return -1
-    }
-    let t = -ro.y / rd.y
-    let p = ro + rd * t
-    if max(abs(p.x), abs(p.z)) > radius {
-      return -1
-    }
-    t
-  }
-  trace(p) {
-    box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
-  }
-  material(p, n) {
-    let grain = fbm2(p.xyz * 6)
-    let ripple = 0.5 + 0.5 * sin(5 * p.x + 4 * fbm2(p.xyz * 0.4))
-    let sand = mix([0.36, 0.31, 0.23], [0.52, 0.45, 0.34], 0.75 * grain + 0.25 * ripple)
-    ggx(sand, 0.9, 0)
-  }
-}
-
 param count: u = 20
 
 build fn leg(crab: xf@Body>World, j: u, side: f, tint: rgb) {
@@ -211,12 +211,5 @@ build {
   }
 }
 
-schedule Main {
-  orbit(at: [0, 0.45, 0]@World, radius: 2.6m + 2.4m * sqrt(f32(count)), height: 1.1m + 1.0m * sqrt(f32(count)), period: 24.0s, fov: 40deg)
-  cull_indirect(Ground, HermitShell, CrabFace, CrusherClaw, CrabLeg)
-  render_bundle(Vis64) { draw_indirect(Ground, HermitShell, CrabFace, CrusherClaw, CrabLeg) }
-  find_shadow_map(HermitShell, CrabFace, CrusherClaw, CrabLeg, size: 1024)
-  tile_classify(Vis64, tile: 8)
-  shade_tiles(Vis64, light: sun_sky, sun: [0.5, 0.75, 0.35])
-  tonemap_aces(ColorHdr, sky: sky_color)
-}
+camera Main { at: [0, 0.45, 0]@World, radius: 2.6m + 2.4m * sqrt(f32(count)),
+  height: 1.1m + 1m * sqrt(f32(count)), period: 24s, fov: 40deg }
