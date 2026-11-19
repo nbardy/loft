@@ -18,7 +18,7 @@
 // Scored: agent_notes/2026-11-18_solve/NOTE.md.
 import {
   add, always, clamp, design, div, dot, ge, length, lift, max, mix, mul, plane, pose, sin, smoothstep, poseFrame, scene, strand, sub, through, time, toon, vec2, vec3,
-  type F, type P3,
+  type Drawable, type F, type P3,
 } from "../../src/index.ts";
 import { derivative } from "../../src/grad.ts";
 import { chain } from "../../src/geom/limb.ts";
@@ -31,7 +31,7 @@ export const NUMBERS = {
   /** The rail: a bar along z at (x, y), its radius. */
   rail: { x: 1.7, y: 1.0, r: 0.06 },
 };
-type N = { readonly deck: { readonly from: number; readonly to: number; readonly top: number; readonly land: number }; readonly rail: { readonly x: number; readonly y: number; readonly r: number } };
+export type N = { readonly deck: { readonly from: number; readonly to: number; readonly top: number; readonly land: number }; readonly rail: { readonly x: number; readonly y: number; readonly r: number } };
 
 const HIP = 1.9, SPAN = LEGS[0] + LEGS[1], T = { off: 0.6, land: 1.2, end: 1.8 }, G = 9.81;
 const brown = [0.42, 0.3, 0.2] as const, steel = [0.35, 0.37, 0.4] as const;
@@ -115,8 +115,8 @@ export function leap(n: N, budget?: { readonly ms: number }) {
   return { solved, body, foot, bird };
 }
 
-function built(n: N) {
-  const { bird, solved: leapMotion } = leap(n);
+/** The leap's set (deck, rail, light, cameras, 2.4 s loop) around any bird: what a keyed or solved motion is drawn in. */
+export function stage(n: N, bird: readonly Drawable[]) {
   const box = strand({
     name: "deck", spine: (m) => vec3(mix(n.deck.from, n.deck.to, m), n.deck.top / 2, 0), stations: 4, girth: 1.2,
     section: { aspect: n.deck.top / 2 / 1.2, squareness: 8 }, tips: [{ round: 0.04 }, { round: 0.04 }], paint: brown, detail: { along: 8, around: 32 }, up: [0, 1, 0],
@@ -124,15 +124,21 @@ function built(n: N) {
   const bar = (name: string, a: readonly [number, number, number], b: readonly [number, number, number], r: number) =>
     strand({ name, spine: (m) => mix(vec3(...a), vec3(...b), m), stations: 4, girth: r, tips: ["round", "round"], paint: steel, detail: { along: 12, around: 12 } });
   const { x, y, r } = n.rail;
-  const things = [...bird.things, box, bar("rail", [x, y, -1.4], [x, y, 1.4], r), bar("postL", [x, 0, -1.4], [x, y, -1.4], r), bar("postR", [x, 0, 1.4], [x, y, 1.4], r)];
-  const world = scene({
+  const things = [...bird, box, bar("rail", [x, y, -1.4], [x, y, 1.4], r), bar("postL", [x, 0, -1.4], [x, y, -1.4], r), bar("postR", [x, 0, 1.4], [x, y, 1.4], r)];
+  return scene({
     ground: plane, things, style: toon({ bands: 3, outline: 0.03 }), sun: [-0.4, 0.8, 0.45], period: 2.4,
     cameras: {
       side: { kind: "perspective", eye: [0.5, 2.6, 10], target: [2.2, 1.4, 0], fovY: 0.62 },
       game: { kind: "perspective", eye: [7.5, 5.5, 7], target: [2.0, 1.3, 0], fovY: 0.6 },
+      // A square frame (512x512) holding the whole hop, start to deck: the motion comparison (examples/motion).
+      square: { kind: "perspective", eye: [1.9, 2.4, 12.5], target: [1.9, 1.55, 0], fovY: 0.62 },
     },
   });
-  return { scene: world, checks: leapMotion.holds };
+}
+
+function built(n: N) {
+  const { bird, solved: leapMotion } = leap(n);
+  return { scene: stage(n, bird.things), checks: leapMotion.holds };
 }
 
 export const heronLeap = design({
