@@ -1,6 +1,10 @@
 //! Execution on a caller-owned device.
 pub mod backend;
 mod encode;
+#[path = "../../loft-passes/src/execution.rs"]
+mod execution;
+mod initialize;
+pub mod frame;
 pub use loft_std::interop::render_bundle_stale;
 mod interop;
 pub mod mips;
@@ -37,6 +41,7 @@ struct Instance {
     outbox: Option<events::Outbox>,
     pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
+    initializers: initialize::Initializers,
     edits: tier0::Edits,
 }
 fn allocate(d: &wgpu::Device, size: u64) -> Arc<wgpu::Buffer> {
@@ -54,7 +59,12 @@ impl std::ops::Deref for Table {
 }
 impl Instance {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle) -> Result<Self> {
-        let tables = storage::allocations(decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
+        let mut decl = decl.clone();
+        let descriptor = decl.tables.iter().position(|t| t.id == execution::DESCRIPTOR);
+        let exec = descriptor.map(|i| execution::Execution::read(&decl.tables.remove(i))
+            .ok_or(RunnerError::AbiMismatch)).transpose()?.unwrap_or_default();
+        if decl.tables.iter().any(|t| t.id == execution::DESCRIPTOR) { return Err(RunnerError::AbiMismatch); }
+        let mut tables = storage::allocations(&decl, &device.limits())?.into_iter().map(|(t,active,alloc)| {
             let resource = resources::create(device,queue,t,alloc)?;
             Ok((t.id, Table { decl:t.clone(), resource, active, epoch:0 }))
         }).collect::<Result<BTreeMap<_,_>>>()?;
@@ -65,8 +75,9 @@ impl Instance {
         } else {
             Vec::new()
         };
-        let compute = encode::ComputeCache::new(device, decl)?;
-        Ok(Self { tables, decl:decl.clone(), compute, checkpoints, resource_epoch:0,
+        let compute = encode::ComputeCache::prepare(device, &decl, &exec.additive)?;
+        let initializers = initialize::Initializers::prepare(exec, &decl, &mut tables, &compute, device)?;
+        Ok(Self { tables, decl, compute, initializers, checkpoints, resource_epoch:0,
             edits:Default::default(), history:Default::default(), outbox:None, pick_source:None })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {

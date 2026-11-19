@@ -1,0 +1,44 @@
+//! Frame entry points for hosts that also own presentation and timestamp readback.
+use super::*;
+pub use encode::{FrameOptions, FrameRecord, ModulePipelines, ModuleRecipe};
+
+impl Runner {
+    pub fn prepare_frame(&mut self, id: InstanceId, view: &wgpu::TextureView) -> Result<()> {
+        let (device, caps) = (self.device.clone(), self.caps);
+        self.instance(id)?.prepare(&device, Some(&embed::Target { color: view, depth: None, caps }), 0)
+    }
+
+    pub fn load_stage_count(&mut self, id: InstanceId) -> Result<u32> {
+        let instance = self.instance(id)?;
+        Ok(instance.initializers.clocks.iter()
+            .filter(|i| matches!(i.clock, mips::Clock::Load { done: false }))
+            .map(|i| i.passes.len() as u32).sum())
+    }
+
+    pub fn encode_load(&mut self, id: InstanceId, enc: &mut wgpu::CommandEncoder, timer: Option<&wgpu::QuerySet>) -> Result<FrameRecord> {
+        let device = self.device.clone();
+        self.instance(id)?.record_initializers(&device, enc, timer, true)
+    }
+
+    pub fn image(&self, id: InstanceId, name: &str) -> Option<Arc<wgpu::Texture>> {
+        let inst = self.instances.get(id.0 as usize)?;
+        inst.tables.get(inst.initializers.images.get(name)?)?.texture()
+    }
+
+    pub fn encode_frame(&mut self, id: InstanceId, enc: &mut wgpu::CommandEncoder, view: &wgpu::TextureView,
+        time: f64, options: FrameOptions<'_>) -> Result<FrameRecord> {
+        let (device, caps) = (self.device.clone(), self.caps);
+        let clock = encode::Clock { id, time, dt: loft_abi::AdvanceArgs::DT, to: (time * 120.).round() as u32,
+            keep: 0, timer: None };
+        self.instance(id)?.record_frame(&device, enc, clock, Some(&embed::Target { color: view, depth: None, caps }), options)
+    }
+
+    pub fn module_pipelines(&mut self, id: InstanceId, module: ModuleId) -> Result<(ModuleRecipe, ModulePipelines)> {
+        self.instance(id)?.compute.recipe(module)
+    }
+
+    pub fn install_module_pipelines(&mut self, id: InstanceId, module: ModuleId, pipes: &ModulePipelines) -> Result<()> {
+        self.instance(id)?.compute.install(module, pipes);
+        Ok(())
+    }
+}

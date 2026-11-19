@@ -1,6 +1,7 @@
 //! Convert the existing lowered schedule to the pass-derived bundle ABI.
 use crate::{
     Compiled,
+    execution::{self, Execution, Initializer, Image},
     program::{DispatchRows, Draw, Pass, Program},
 };
 use loft_ir::*;
@@ -14,95 +15,118 @@ type Bindings = BTreeMap<(String, ShaderStage), Vec<(String, PassBinding)>>;
 struct Builder {
     bundle: Bundle,
     bindings: Vec<Bindings>,
+    wave: u16,
+}
+
+fn shader(mut ir: naga::Module, name: &str, nonce: Option<u32>, draw_words: u32) -> Result<(String, Bindings)> {
+    if let Some(nonce) = nonce
+        && let Some((_, c)) = ir.constants.iter().find(|(_, c)| c.name.as_deref() == Some("LOFT_NONCE"))
+    {
+        ir.global_expressions[c.init] = naga::Expression::Literal(naga::Literal::U32(nonce));
+    }
+    if let Some((_, v)) = ir.overrides.iter().find(|(_, v)| v.name.as_deref() == Some("loft_draw_words")) {
+        let init = v.init.ok_or("missing cull stride override default")?;
+        ir.global_expressions[init] = naga::Expression::Literal(naga::Literal::U32(draw_words));
+    }
+    let mut slots = [0; 4];
+    let mut resources = Vec::new();
+    for (handle, global) in ir.global_variables.iter_mut() {
+        let Some(binding) = &mut global.binding else {
+            continue;
+        };
+        if binding.group == 0 {
+            continue;
+        }
+        let access = match global.space {
+            // Only the fixed group has a uniform slot in the bundle ABI.
+            AddressSpace::Uniform => {
+                global.space = AddressSpace::Storage {
+                    access: StorageAccess::LOAD,
+                };
+                BindAccess::ReadStorage
+            }
+            AddressSpace::Storage { access } if access == StorageAccess::LOAD => {
+                BindAccess::ReadStorage
+            }
+            AddressSpace::Storage { .. } => BindAccess::ReadWriteStorage,
+            AddressSpace::Handle => match ir.types[global.ty].inner {
+                TypeInner::Sampler { .. } => BindAccess::Sampler,
+                TypeInner::Image {
+                    class: naga::ImageClass::Storage { .. },
+                    ..
+                } => BindAccess::StorageTex,
+                TypeInner::Image { .. } => BindAccess::SampledTex,
+                TypeInner::BindingArray { .. } => BindAccess::BindlessTexArray,
+                _ => return Err(format!("unsupported resource type in {}", name)),
+            },
+            _ => {
+                return Err(format!(
+                    "unsupported resource address space in {}",
+                    name
+                ));
+            }
+        };
+        let group = access.group();
+        let slot = &mut slots[group as usize];
+        binding.group = u32::from(group);
+        binding.binding = *slot;
+        let name = global.name.clone().ok_or("unnamed shader resource")?;
+        resources.push((
+            handle,
+            name,
+            PassBinding {
+                group,
+                slot: *slot,
+                resource: TableId(0),
+                access,
+            },
+        ));
+        *slot += 1;
+    }
+    let info = valid::Validator::new(
+        valid::ValidationFlags::all(),
+        valid::Capabilities::default(),
+    )
+    .validate(&ir)
+    .map_err(|e| format!("{}: {e:?}", name))?;
+    let bindings = ir.entry_points
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                let usage = info.get_entry_point(index);
+                (
+                    (entry.name.clone(), entry.stage),
+                    resources
+                        .iter()
+                        .filter(|(handle, _, _)| !usage[*handle].is_empty())
+                        .map(|(_, name, binding)| (name.clone(), *binding))
+                        .collect(),
+                )
+            })
+            .collect();
+    let code =
+        naga::back::wgsl::write_string(&ir, &info, naga::back::wgsl::WriterFlags::empty())
+            .map_err(|e| format!("{}: {e}", name))?;
+    Ok((code, bindings))
+}
+
+pub fn replacement(source: &str) -> Result<String> {
+    let ir = naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?;
+    Ok(shader(ir, "replacement", None, 4)?.0)
 }
 
 impl Builder {
-    fn new(program: &Program) -> Result<Self> {
+    fn new(program: &Program, nonce: Option<u32>, draw_words: u32, edit: Option<(usize, &str)>) -> Result<Self> {
         let mut bundle = Bundle::default();
         let mut bindings = Vec::new();
         for (i, module) in program.modules.iter().enumerate() {
-            let mut ir = module.naga.clone();
-            let mut slots = [0; 4];
-            let mut resources = Vec::new();
-            for (handle, global) in ir.global_variables.iter_mut() {
-                let Some(binding) = &mut global.binding else {
-                    continue;
-                };
-                if binding.group == 0 {
-                    continue;
-                }
-                let access = match global.space {
-                    // Only the fixed group has a uniform slot in the bundle ABI.
-                    AddressSpace::Uniform => {
-                        global.space = AddressSpace::Storage {
-                            access: StorageAccess::LOAD,
-                        };
-                        BindAccess::ReadStorage
-                    }
-                    AddressSpace::Storage { access } if access == StorageAccess::LOAD => {
-                        BindAccess::ReadStorage
-                    }
-                    AddressSpace::Storage { .. } => BindAccess::ReadWriteStorage,
-                    AddressSpace::Handle => match ir.types[global.ty].inner {
-                        TypeInner::Sampler { .. } => BindAccess::Sampler,
-                        TypeInner::Image {
-                            class: naga::ImageClass::Storage { .. },
-                            ..
-                        } => BindAccess::StorageTex,
-                        TypeInner::Image { .. } => BindAccess::SampledTex,
-                        TypeInner::BindingArray { .. } => BindAccess::BindlessTexArray,
-                        _ => return Err(format!("unsupported resource type in {}", module.name)),
-                    },
-                    _ => {
-                        return Err(format!(
-                            "unsupported resource address space in {}",
-                            module.name
-                        ));
-                    }
-                };
-                let group = access.group();
-                let slot = &mut slots[group as usize];
-                binding.group = u32::from(group);
-                binding.binding = *slot;
-                let name = global.name.clone().ok_or("unnamed shader resource")?;
-                resources.push((
-                    handle,
-                    name,
-                    PassBinding {
-                        group,
-                        slot: *slot,
-                        resource: TableId(0),
-                        access,
-                    },
-                ));
-                *slot += 1;
-            }
-            let info = valid::Validator::new(
-                valid::ValidationFlags::all(),
-                valid::Capabilities::default(),
-            )
-            .validate(&ir)
-            .map_err(|e| format!("{}: {e:?}", module.name))?;
-            bindings.push(
-                ir.entry_points
-                    .iter()
-                    .enumerate()
-                    .map(|(index, entry)| {
-                        let usage = info.get_entry_point(index);
-                        (
-                            (entry.name.clone(), entry.stage),
-                            resources
-                                .iter()
-                                .filter(|(handle, _, _)| !usage[*handle].is_empty())
-                                .map(|(_, name, binding)| (name.clone(), *binding))
-                                .collect(),
-                        )
-                    })
-                    .collect(),
-            );
-            let code =
-                naga::back::wgsl::write_string(&ir, &info, naga::back::wgsl::WriterFlags::empty())
-                    .map_err(|e| format!("{}: {e}", module.name))?;
+            let ir = if let Some((_, source)) = edit.filter(|(id, _)| *id == i) {
+                naga::front::wgsl::parse_str(source).map_err(|e| e.emit_to_string(source))?
+            } else {
+                module.naga.clone()
+            };
+            let (code, reflected) = shader(ir, &module.name, nonce, draw_words)?;
+            bindings.push(reflected);
             bundle.modules.push(ModuleBlob {
                 id: ModuleId(i as u32),
                 hash: *blake3::hash(code.as_bytes()).as_bytes(),
@@ -110,7 +134,7 @@ impl Builder {
                 bytes: code.into_bytes().into_boxed_slice(),
             });
         }
-        Ok(Self { bundle, bindings })
+        Ok(Self { bundle, bindings, wave: 0 })
     }
 
     fn table(
@@ -195,7 +219,7 @@ impl Builder {
         let index = self.bundle.passes.len();
         self.bundle.passes.push(PassDecl {
             id: PassId(index.try_into().map_err(|_| "too many passes")?),
-            wave: index.try_into().map_err(|_| "too many pass waves")?,
+            wave: self.wave,
             queue: QueueClass::Graphics,
             bindings: bindings.into_values().collect(),
             run,
@@ -226,7 +250,7 @@ impl Builder {
         &mut self,
         module: usize,
         entries: (&str, &str),
-        args: (TableId, u32),
+        args: (TableId, u32, Option<TableId>),
         targets: (TableId, Option<TableId>),
         resources: &Resources<'_>,
     ) -> Result<()> {
@@ -241,7 +265,7 @@ impl Builder {
                     args: args.0,
                     offset_bytes: args.1,
                     vertex: None,
-                    index: None,
+                    index: args.2,
                 }]),
                 color_targets: Box::new([TargetDesc { table: targets.0 }]),
                 depth: targets.1.map(|table| DepthDesc { table, write: true }),
@@ -322,16 +346,50 @@ pub fn lower(
     size: (u32, u32),
     frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
 ) -> Result<Bundle> {
-    if !program.bakes.is_empty() || program.path.is_some() {
-        return Err("portable bundles require a typed bake or path resource descriptor".into());
-    }
-    let mut b = Builder::new(program)?;
-    b.bundle.params = parameters(program, compiled)?;
+    lower_program(program, parameters(program, compiled)?, size, Options::default(), frame).map(|p| p.bundle)
+}
+
+#[derive(Default)]
+pub struct Options<'a> {
+    pub nonce: Option<u32>,
+    pub overdraw: bool,
+    pub edit: Option<(usize, &'a str, &'a [u8])>,
+    /// Native motion sampling has its own absolute tick and readback API.
+    pub picture_only: bool,
+}
+
+pub struct Prepared {
+    pub bundle: Bundle,
+    pub instances: TableId,
+    pub modules: Vec<ModuleId>,
+    pub shadow: Option<([f32; 3], [f32; 3], u32)>,
+}
+
+pub fn lower_program(
+    program: &Program, params: Vec<ParamMeta>, size: (u32, u32), opts: Options<'_>,
+    frame: impl Fn(bool, Option<([f32; 3], [f32; 3], u32)>) -> Vec<u8>,
+) -> Result<Prepared> {
+    let indexed = |kind: &crate::program::KindTable| {
+        !opts.overdraw && program.modules[kind.module].naga.entry_points.iter().any(|e| e.name == "vs_indexed")
+    };
+    let arg_words = if program.kinds.iter().any(indexed) { 5 } else { 4 };
+    let mut b = Builder::new(program, opts.nonce, arg_words,
+        opts.edit.map(|(i, source, _)| (program.kinds[i].module, source)))?;
+    b.bundle.params = params;
+    let mut execution = Execution::default();
     let mut kinds = Vec::new();
     let mut bases = Vec::new();
     let mut base = 0;
     for (i, kind) in program.kinds.iter().enumerate() {
-        let rows = b.words(kind.stride, kind.rows.iter().map(|x| x.to_bits()));
+        let tape = opts.edit.filter(|(id, _, _)| *id == i).map_or(&[][..], |(_, _, tape)| tape);
+        let rows = b.words(1, kind.rows.iter().map(|x| x.to_bits()).chain(
+            tape.as_chunks::<4>().0.iter().copied().map(u32::from_le_bytes)));
+        // Rows retain their stride for fused stepping. Editable rows have a trailing word-addressed tape.
+        if tape.is_empty() {
+            let table = &mut b.bundle.tables[rows.0 as usize];
+            table.stride_bytes = kind.stride * 4;
+            table.capacity = kind.n_rows;
+        }
         let params = b.words(4, [i as u32, base, kind.n_rows, 0]);
         bases.push(base);
         base += kind.n_rows;
@@ -340,7 +398,7 @@ pub fn lower(
     }
 
     let luts = b.words(1, program.luts.iter().map(|x| x.to_bits()));
-    for step in &program.dispatches {
+    for step in program.dispatches.iter().filter(|_| !opts.picture_only) {
         let mut motion = crate::fusion::motion_bundle(program, step, 0);
         let mut resources = Resources::new();
         for table in motion.tables.drain(..) {
@@ -395,6 +453,7 @@ pub fn lower(
             &[(module, &step.entry, ShaderStage::Compute)],
             &resources,
         )?;
+        b.wave += 1;
     }
 
     let count = program.kinds.len() as u32;
@@ -411,22 +470,16 @@ pub fn lower(
                 i.hi[2].to_bits(),
                 i.row,
             ]
-        }),
+        }).chain(program.instances.is_empty().then_some([0; 8]).into_iter().flatten()),
     );
     let bases = b.words(1, bases);
     let draw_args = b.words(
-        4,
-        program
-            .kinds
-            .iter()
-            .flat_map(|k| [k.draw.vertices(), 0, 0, 0]),
+        arg_words,
+        program.kinds.iter().flat_map(|k| [k.draw.vertices(), 0, 0, 0, 0].into_iter().take(arg_words as usize)),
     );
     let shadow_args = b.words(
-        4,
-        program
-            .kinds
-            .iter()
-            .flat_map(|k| [k.draw.vertices(), k.n_rows, 0, 0]),
+        arg_words,
+        program.kinds.iter().flat_map(|k| [k.draw.vertices(), k.n_rows, 0, 0, 0].into_iter().take(arg_words as usize)),
     );
     let shade_args = b.words(3, (0..count).flat_map(|_| [0, 1, 1]));
     let present_args = b.words(4, [3, 1, 0, 0]);
@@ -443,9 +496,9 @@ pub fn lower(
     let shadow_vis = b.texture(ImageFormat::Rg32Uint, (side, side), empty);
     let sampler = b.external();
     b.bundle.resources.comparison_samplers.push(sampler);
-    let hdr = b.texture(ImageFormat::Rgba16Float, size, None);
+    let hdr = b.texture(ImageFormat::Rgba16Float, size, opts.overdraw.then_some([0.; 4]));
     let target = b.external();
-    let alternate = program.passes.iter().find_map(|pass| match pass {
+    let shadow_bounds = program.passes.iter().find_map(|pass| match pass {
         Pass::Shadow(ids) => {
             let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
             for instance in program.instances.iter().filter(|i| ids.contains(&i.kind)) {
@@ -459,23 +512,72 @@ pub fn lower(
         _ => None,
     });
     let mut frame_table = |sun| {
-        let bytes = frame(sun, alternate);
+        let bytes = frame(sun, shadow_bounds);
         b.table(bytes.len() as u32, 1, bytes, TableLifetime::Static)
     };
     let main = frame_table(false);
-    let alternate = alternate.map(|_| frame_table(true));
+    let alternate = shadow_bounds.map(|_| frame_table(true));
     let mut variants = Vec::new();
-    b.bundle.resources.resets = vec![draw_args, shade_args];
+    let mut grid_data = BTreeMap::new();
+    for (k, kind) in program.kinds.iter().enumerate().filter(|(_, kind)| indexed(kind)) {
+        let Draw::Surface { nu, nv } = kind.draw else { return Err("indexed draw needs a parametric surface".into()); };
+        let count = (nu + 1) * (nv + 1);
+        let points = b.transient(16, count);
+        let index = b.words(1, (0..nu * nv).flat_map(|cell| (0..6).map(move |corner| {
+            let u = cell % nu + ((0x16_u32 >> corner) & 1);
+            let v = cell / nu + ((0x34_u32 >> corner) & 1);
+            v * (nu + 1) + u
+        })));
+        let (rows, kp) = kinds[k];
+        execution.initializers.push(Initializer { name: format!("{} bake surface", kind.name),
+            passes: vec![PassId(b.bundle.passes.len() as u32)], clock: execution::Clock::Load, image: None });
+        b.compute(kind.module, "bake_surface", DispatchExtent::Fixed([count.div_ceil(64), 1, 1]),
+            &Resources::from([("rows", rows), ("kp", kp), ("luts", luts), ("loft_grid_out", points)]))?;
+        grid_data.insert(k, (points, index));
+        b.wave += 1;
+    }
+
+    for bake in &program.bakes {
+        let texture = b.transient(4, 0);
+        let first = PassId(b.bundle.passes.len() as u32);
+        let mut passes = bake.passes(texture, first);
+        let ids = passes.iter().map(|p| p.id).collect();
+        for pass in &mut passes { pass.wave = b.wave; b.wave += 1; }
+        b.bundle.passes.extend(passes);
+        use crate::bake_tex::{Clock, TexDim};
+        let dimension = match bake.dim {
+            TexDim::D2(..) => execution::Dimension::Plane,
+            TexDim::D3(..) => execution::Dimension::Volume,
+            TexDim::Cube(_) => execution::Dimension::Cube,
+        };
+        let clock = match &bake.clock {
+            Clock::Load => execution::Clock::Load,
+            Clock::Dirty(words) => execution::Clock::Dirty(words.clone()),
+        };
+        execution.initializers.push(Initializer { name: bake.name.clone(), passes: ids, clock,
+            image: Some(Image { table: texture, dimension, extent: bake.size(), levels: bake.mip_count() }) });
+    }
+    let mut present = Resources::from([("hdr_tex", hdr), ("vis_tex", vis)]);
+    if let Some(path) = &program.path {
+        for (symbol, data) in crate::bundle::path_words(program, path)? {
+            present.insert(symbol, b.words(1, data));
+        }
+        if matches!(path.integrator, crate::emit::paths::Integrator::Spectral) {
+            let bins = b.transient(4, 4 * 128 * 128);
+            present.insert("loft_local_bins", bins);
+            b.bundle.resources.resets.push(bins);
+            b.compute(program.present, "photons", DispatchExtent::Fixed([1024, 1, 1]), &present)?;
+            b.wave += 1;
+        }
+    }
+    b.bundle.resources.resets.extend([draw_args, shade_args]);
 
     for pass in &program.passes {
         match pass {
             Pass::Cull => b.compute(
                 program.cull,
                 "cull",
-                DispatchExtent::FromRowCount {
-                    table: instances,
-                    workgroup_x: 64,
-                },
+                DispatchExtent::Fixed([(program.instances.len() as u32).div_ceil(64), 1, 1]),
                 &Resources::from([
                     ("insts", instances),
                     ("bases", bases),
@@ -499,7 +601,8 @@ pub fn lower(
                     let (rows, kp) = kinds[k];
                     let mut resources =
                         Resources::from([("rows", rows), ("kp", kp), ("luts", luts)]);
-                    if matches!(pass, Pass::Vis(_) | Pass::Shadow(_))
+                    if let Some(&(points, _)) = grid_data.get(&k) { resources.insert("loft_grid", points); }
+                    if (matches!(pass, Pass::Vis(_) | Pass::Shadow(_)) || opts.overdraw)
                         && matches!(program.kinds[k].draw, Draw::Analytic | Draw::Traced)
                     {
                         b.bundle
@@ -507,13 +610,16 @@ pub fn lower(
                             .cull_front
                             .push(PassId(b.bundle.passes.len() as u32));
                     }
+                    let index = grid_data.get(&k).map(|&(_, index)| index);
+                    let vs = if index.is_some() { "vs_indexed" } else { "vs" };
+                    let offset = id * arg_words * 4;
                     match pass {
                         Pass::Vis(_) => {
                             resources.insert("visible", visible);
                             b.draw(
                                 program.kinds[k].module,
-                                ("vs", "fs"),
-                                (draw_args, id * 16),
+                                (vs, "fs"),
+                                (draw_args, offset, index),
                                 (vis, Some(depth)),
                                 &resources,
                             )?;
@@ -526,11 +632,17 @@ pub fn lower(
                             resources.insert("visible", all_rows);
                             b.draw(
                                 program.kinds[k].module,
-                                ("vs", "fs"),
-                                (shadow_args, id * 16),
+                                (vs, "fs"),
+                                (shadow_args, offset, index),
                                 (shadow_vis, Some(shadow)),
                                 &resources,
                             )?;
+                        }
+                        Pass::Shade(_) if opts.overdraw => {
+                            resources.insert("visible", visible);
+                            execution.additive.push(PassId(b.bundle.passes.len() as u32));
+                            b.draw(program.kinds[k].module, ("vs", "fs_overdraw"),
+                                (draw_args, offset, None), (hdr, None), &resources)?;
                         }
                         Pass::Shade(_) => {
                             resources.extend([
@@ -558,16 +670,65 @@ pub fn lower(
             Pass::Present => b.draw(
                 program.present,
                 ("vs_present", "fs_present"),
-                (present_args, 0),
+                (present_args, 0, None),
                 (target, None),
-                &Resources::from([("hdr_tex", hdr), ("vis_tex", vis)]),
+                &present,
             )?,
         }
+        b.wave += 1;
     }
     b.bundle.resources.frame = Some(FrameData {
         main,
         variants,
         time_offset: 140,
     });
-    Ok(b.bundle)
+    b.bundle.tables.extend(execution.table());
+    Ok(Prepared { bundle: b.bundle, instances, shadow: shadow_bounds,
+        modules: program.kinds.iter().map(|k| ModuleId(k.module as u32)).collect() })
+}
+
+fn append_bvh(nodes: &mut Vec<u32>, leaves: &mut Vec<u32>, tree: &crate::bvh::Bvh2) -> Result<u32> {
+    let node_base = u32::try_from(nodes.len() / 8).map_err(|_| "World BVH node address overflow")?;
+    let leaf_base = u32::try_from(leaves.len() / 2).map_err(|_| "World BVH leaf address overflow")?;
+    let root = if tree.nodes().is_empty() { 0 } else { node_base.checked_add(1).ok_or("World root overflow")? };
+    for n in tree.nodes() {
+        nodes.extend(n.lo.map(f32::to_bits));
+        let base = if n.count == 0 { node_base } else { leaf_base };
+        nodes.push(n.left_or_first.checked_add(base).ok_or("World BVH offset overflow")?);
+        nodes.extend(n.hi.map(f32::to_bits));
+        nodes.push(n.count);
+    }
+    leaves.extend(tree.leaves().iter().flat_map(|r| [r.kind_id, r.row_id]));
+    Ok(root)
+}
+
+fn path_words(program: &Program, path: &crate::emit::paths::PathTrace) -> Result<[(&'static str, Vec<u32>); 5]> {
+    let p = program;
+    let mut words = vec![0u32; 1 + 2 * p.kinds.len()];
+    let mut nodes = Vec::new();
+    let mut leaves = Vec::new();
+    let word = |n: usize| u32::try_from(n).map_err(|_| "World arena exceeds its word address range");
+    let media_count = word(path.media.len())?;
+    let mut world_data = vec![word(path.worlds.len())?, media_count];
+    for world in &path.worlds {
+        let instances = p.instances.iter().filter(|r| world.kinds.contains(&r.kind)).copied().collect::<Vec<_>>();
+        let tree = crate::bvh::Bvh2::build(&instances).map_err(|e| format!("invalid world BVH: {e:?}"))?;
+        let root = append_bvh(&mut nodes, &mut leaves, &tree)?;
+        world_data.extend([root, if world.media { media_count } else { 0 }]);
+    }
+    world_data.extend(path.media.as_flattened().as_flattened().iter().map(|v| v.to_bits()));
+    for (i, kind) in p.kinds.iter().enumerate() {
+        words[1 + i * 2] = word(words.len())?;
+        words[2 + i * 2] = kind.stride;
+        words.extend(kind.rows.iter().map(|v| v.to_bits()));
+    }
+    words[0] = word(words.len())?;
+    words.extend(world_data);
+    if nodes.is_empty() { nodes.resize(8, 0); }
+    if leaves.is_empty() { leaves.resize(2, 0); }
+    Ok([
+        ("world_words", words), ("loft_bvh_nodes", nodes), ("loft_bvh_leaves", leaves),
+        ("world_luts", p.luts.iter().map(|v| v.to_bits()).collect()),
+        ("world_lamps", path.lamps.as_flattened().as_flattened().iter().map(|v| v.to_bits()).collect()),
+    ])
 }

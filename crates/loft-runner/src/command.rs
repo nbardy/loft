@@ -60,22 +60,34 @@ impl Raster {
     }
 
     pub fn attach(&self, colors: Vec<Color>, depth: Option<Depth>) -> Pass {
-        Pass::Render { colors, depth, raster: self.clone() }
+        Pass::Render { colors, depth, rasters: vec![self.clone()] }
     }
 }
 
 pub enum Pass {
     Compute(Vec<Dispatch>),
-    Render { colors: Vec<Color>, depth: Option<Depth>, raster: Raster },
+    Render { colors: Vec<Color>, depth: Option<Depth>, rasters: Vec<Raster> },
 }
 
 impl Pass {
+    pub(crate) fn append(&mut self, next: Self) -> std::result::Result<(), Self> {
+        match (self, next) {
+            (Self::Compute(a), Self::Compute(b)) => a.extend(b),
+            (Self::Render { colors: a, depth: x, rasters: r },
+             Self::Render { colors: b, depth: y, rasters: s })
+                if a.iter().map(|c| &c.view).eq(b.iter().map(|c| &c.view))
+                    && x.as_ref().map(|d| &d.view) == y.as_ref().map(|d| &d.view) => r.extend(s),
+            (_, next) => return Err(next),
+        }
+        Ok(())
+    }
+
     pub fn record(&self, encoder: &mut CommandEncoder, stamps: Option<Stamps<'_>>) -> u32 {
         match self {
             Self::Compute(kernels) => record_compute(encoder, kernels, stamps),
-            Self::Render { colors, depth, raster } => {
-                record_render(encoder, colors, depth.as_ref(), &raster.bundle, stamps);
-                raster.draws
+            Self::Render { colors, depth, rasters } => {
+                record_render(encoder, colors, depth.as_ref(), rasters, stamps);
+                rasters.iter().map(|r| r.draws).sum()
             }
         }
     }
@@ -100,7 +112,7 @@ fn record_compute(enc: &mut CommandEncoder, kernels: &[Dispatch], stamps: Option
 }
 
 fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Depth>,
-                 bundle: &RenderBundle, stamps: Option<Stamps<'_>>) {
+                 rasters: &[Raster], stamps: Option<Stamps<'_>>) {
     let colors: Vec<_> = colors.iter().map(|c| Some(RenderPassColorAttachment {
         view: &c.view, ops: c.ops, resolve_target: None, depth_slice: None,
     })).collect();
@@ -113,5 +125,5 @@ fn record_render(enc: &mut CommandEncoder, colors: &[Color], depth: Option<&Dept
     let mut pass = enc.begin_render_pass(&RenderPassDescriptor {
         color_attachments: &colors, depth_stencil_attachment, timestamp_writes, ..Default::default()
     });
-    pass.execute_bundles([bundle]);
+    pass.execute_bundles(rasters.iter().map(|r| &r.bundle));
 }
