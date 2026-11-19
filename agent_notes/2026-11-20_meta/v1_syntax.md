@@ -66,3 +66,33 @@ The Hermit reduction was 35.05% against a 36% prediction and a 35% gate. Three-s
 - The crab probe sampled both material branches at 141 angles and two times. All 564 results matched the independently computed rays from the reflected eye centers. Substituting the right origin on the left changes 62 decisions. The heron probe read GPU state and verdicts after 132 ticks. Positive and negative fish paths produced yaw +0.52000040 and −0.52000040 radians, a positive missed angle during takeoff, then held gaze and posture.
 - Milestone renders are WebP quality 95. [Crab](v1_syntax/crab.webp), [reeds](v1_syntax/reeds.webp), [positive fish](v1_syntax/heron-side-1.webp), [negative fish](v1_syntax/heron-side--1.webp).
 - Physical source lines, including comments and blank lines, against the row's estimates: `loft-parse/src` 1,631 vs 1,390, `loft-passes/src` net +540 vs +450, `lib/*.loft` 288 vs 280. The passes delta includes deleting all 741 lines of the Syntax A parser. The new parser count includes the lossless CST and its regressions. The passes also lower the executable bakeoff motion and preserve SSA author locations.
+
+## Scored revision and merge decision
+
+Implementation `ca21dbd`, Apple M4 (Metal), 1,280 × 800, 30 warm-up frames and 300 measured frames per scene. [Scored report, including every timestamp](v1_syntax/gate.json). Original reference PNGs were recovered from the Phase 1 compiler and verified against all 18 already-approved RGBA hashes. The Twin material tolerance is the ABI's 2e-5, the claw measured 1.115e-5.
+
+| Gate | Predicted | Scored |
+|---|---:|---:|
+| Pictures | 18/18 | 18/18. 17 frames have exact RGB. Two of 1,024,000 pixels exceeded 2/255 on capsules-20 at t=0, within the specified 0.1%. |
+| Twin | 36/36 | 36/36 |
+| Speed | 12/12 | 6/12. All six command counts held. |
+| Load | 33/33 | 33/33. Hermit had identical module text at 1 and 20, 8 modules, 13 pipelines and 11 distinct shapes at either count. |
+| Truth | 34/34 | 34/34 |
+| Hermit warm, 1 / 20 | 45 / 55 ms, cap 60 | 31.56 / 23.42 ms |
+| Whole-file Hermit token reduction | 36%, gate 35% | 35.05% |
+| Lark / lossless CST | 100% / byte exact | 14/14 / 14/14 |
+| Typed IR encode/decode/encode | exact | exact; crab pixels also match after decoding |
+| First successful compiler round: crab / reeds / heron | 3 / 2 / 3 | 3 / 3 / 4; heron behavior corrected in round 5 |
+| Mirrored pupils / mirrored turn | independent origins / opposite sign | 564/564 samples, 62 discriminate / ±0.52000040 rad |
+| Full Rust workspace | all pass | 24/24 in seven test binaries |
+
+| Speed case | p95 budget (ms) | Measured p50 (ms) | Measured p95 (ms) | GPU commands |
+|---|---:|---:|---:|---:|
+| Capsules ×1 | 0.8 | 0.343 | 4.149 | 5 |
+| Capsules ×20 | 1.1 | 0.588 | 4.400 | 5 |
+| Blobs ×1 | 1.1 | 0.402 | 4.329 | 5 |
+| Blobs ×20 | 2.4 | 1.311 | 6.223 | 5 |
+| Hermit ×1 | 5.0 | 3.847 | 8.426 | 17 |
+| Hermit ×20 | 5.6 | 10.469 | 12.785 | 17 |
+
+**Branch retained, merge pending.** The shared M4 was also running a 3D game. A separate run of the original Phase 1 renderer on the same GPU missed both control budgets: capsules ×1 at 3.485 ms vs 0.8 and Hermit ×20 at 7.820 ms vs 5.6. An earlier unscored E+ run passed 11 of 12 Speed checks, missing capsules ×1 by 0.064 ms. The measurements establish sensitivity to machine load; they do not establish a passing quiet-device score. Acceptance still requires a green 300-frame gate on a quiet M4, then an upstream integration and repeat of the gates. Use `tools/dev.sh run loft-cli --fast -- gate` in this workspace. The verified PNG references are in `out/meta/refs/`. No reference approval was issued.
