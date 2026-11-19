@@ -1,0 +1,127 @@
+space World
+
+const BOSS_HIT1 = 0.50s
+const BOSS_HIT2 = 0.625s
+const BOSS_MASS = 420kg
+const BOSS_REST = 1.35m
+const BOSS_TOE_R = 0.06m
+const BOSS_MU_STATIC = 0.65
+const BOSS_MU_SLIP = 0.35
+
+kind HermitBoss @World (
+  x: f = 0.0, z: f = 0.0, vx: f = 0.0, vz: f = 0.0,
+  foot_x: f = 0.0, foot_z: f = 0.0, pin_x: f = 0.0, pin_z: f = 0.0,
+  slipping: f = 0.0, hits: f = 0.0, composure: f = 1.0, windup: f = 0.0
+) {
+  trace(p) {
+    let trunk = [x, BOSS_REST, z]@World
+    let body = round_box(p - trunk, [1.10, 0.50, 0.91], 0.35)
+    let shell = capsule(p, trunk + [-0.12, 0.30, -0.82], trunk + [-0.28, 1.19, -1.03], 0.90)
+    var d = smin(shell, body, 0.17)
+    for i in 0..8 {
+      let hip = boss_hip(self, i)
+      let toe = boss_leg_end(self, i)
+      let knee = solve_2bone_ik(hip, toe, 1.25m, 1.35m, boss_pole(i))
+      d = min(d, min(capsule(p, hip, knee, 0.155), capsule(p, knee, toe, BOSS_TOE_R)))
+    }
+    for i in 0..2 {
+      let side = select(-1.0, 1.0, i == 1)
+      let heavy = select(0.62, 1.0, i == 1)
+      let socket = trunk + [side * 0.71, -0.07, 0.71]
+      let palm = trunk + [side * 1.06, -0.15 + heavy * windup, 1.50]
+      let wrist = smin(capsule(p, socket, palm, heavy * 0.24), sphere(p - palm, heavy * 0.35), 0.12)
+      let pincer = min(capsule(p, palm, palm + [side * 0.17, -0.18, 0.72] * heavy, heavy * 0.17),
+                       capsule(p, palm, palm + [side * -0.09, 0.06, 0.64] * heavy, heavy * 0.17))
+      d = min(d, min(wrist, pincer))
+      let eye = trunk + [side * 0.39, 0.55, 0.85]
+      d = min(d, capsule(p, trunk + [side * 0.35, 0.13, 0.73], eye, 0.069))
+      d = min(d, sphere(p - eye, 0.12))
+      for j in 0..2 {
+        let fan = f32(j) * 0.15
+        let elbow = eye + [side * (0.28 + fan), 0.33, 0.24]
+        let tip = elbow + [side * (0.39 + fan), 0.38 + 0.32 * composure, 0.43]
+        d = min(d, min(capsule(p, eye, elbow, 0.030), capsule(p, elbow, tip, 0.019)))
+      }
+    }
+    d
+  }
+  material(p, n) {
+    let q = p - [x, BOSS_REST, z]@World
+    let rims = 0.5 + 0.5 * cos(18.0 * length(q.yz))
+    let grain = fbm2([q.x, 0.0, q.z] * 7.0)
+    let brass = mix([0.22, 0.073, 0.029], [0.70, 0.38, 0.15], rims * (0.45 + 0.50 * grain))
+    let chitin = mix([0.23, 0.029, 0.017], [0.72, 0.15, 0.045], grain)
+    let shell = smoothstep(0.16, 0.52, q.y - q.z * 0.45)
+    let heat = (1.0 - composure) * smoothstep(0.68, 0.82, grain) * (1.0 - shell)
+    ggx(mix(chitin, brass, shell), 0.28 + 0.2 * grain, 0.03) + coat(0.52, 0.10) +
+      emit_lobe([1.0, 0.25, 0.035] * heat)
+  }
+}
+
+fn boss_side(i: u) -> f = select(-1.0, 1.0, i >= 4)
+fn boss_depth(i: u) -> f = (f32(i % 4) - 1.5) * 0.48m
+fn boss_hip(h: HermitBoss, i: u) -> p3@World = [h.x + boss_side(i) * 0.95, BOSS_REST - 0.1, h.z + boss_depth(i)]@World
+fn boss_pole(i: u) -> d3@World = dir([boss_side(i) * 0.36, 1.0, 0.0]@World)
+fn boss_pin(x: m, z: m, i: u) -> p3@World = [x + boss_side(i) * 2.3, BOSS_TOE_R, z + boss_depth(i) * 1.3]@World
+fn boss_leg_end(h: HermitBoss, i: u) -> p3@World =
+  ik_reachable_end(boss_hip(h, i), boss_pin(h.foot_x, h.foot_z, i), 1.25m, 1.35m, boss_pole(i))
+
+law boss_impact(h: HermitBoss, dt) writes h.{x, z, vx, vz, foot_x, foot_z, pin_x, pin_z, slipping, hits, composure, windup} {
+  let first = act_hit_due(BOSS_HIT1, time, dt)
+  let second = act_hit_due(BOSS_HIT2, time, dt)
+  let impact = first || second
+  let impulse = if first { [-1800.0, -900.0] } else { select(v2(0.0), [-1400.0, -600.0], second) }
+  let force_limit = BOSS_MU_STATIC * BOSS_MASS * 9.81 * dt
+  let sheared = length(impulse) > force_limit
+  let velocity = [h.vx, h.vz] + impulse / BOSS_MASS
+  let sliding = h.slipping > 0.0 || sheared
+  let slide = if sliding { act_slip(velocity, BOSS_MU_SLIP, dt) } else { v4(0.0) }
+  let planted = length(slide.zw) == 0.0
+  let foot_x = h.foot_x + slide.x
+  let foot_z = h.foot_z + slide.y
+  h.x = h.x + slide.x
+  h.z = h.z + slide.y
+  h.vx = slide.z
+  h.vz = slide.w
+  h.foot_x = foot_x
+  h.foot_z = foot_z
+  h.pin_x = select(h.pin_x, foot_x, planted)
+  h.pin_z = select(h.pin_z, foot_z, planted)
+  h.slipping = select(1.0, 0.0, planted)
+  h.hits = h.hits + select(0.0, 1.0, impact)
+  let recovery = min(1.0, h.composure + 0.55 * dt)
+  h.composure = select(recovery, 0.44 * h.composure, impact)
+  h.windup = if time <= BOSS_HIT1 {
+    quintic_plan(0.69m, 0.0, BOSS_HIT1, time).x
+  } else {
+    0.69 - quintic_plan(0.69m, 0.0, 0.19s, time - BOSS_HIT1).x
+  }
+}
+
+check boss_pins(h: HermitBoss) -> m {
+  var error = 0.0
+  for i in 0..8 {
+    let drawn = boss_leg_end(h, i)
+    let drift = dist(drawn, boss_pin(h.pin_x, h.pin_z, i))
+    error = max(error, select(drift, 0.0, h.slipping > 0.0))
+  }
+  return if error > 0.5mm { missed(error) } else { held(0.5mm - error) }
+}
+
+check boss_contact(h: HermitBoss) -> m {
+  var floor = BOSS_REST
+  for i in 0..8 { floor = min(floor, boss_leg_end(h, i).y - BOSS_TOE_R) }
+  return if floor < -2mm { missed(-floor) } else { held(floor + 2mm) }
+}
+
+kind BossStage @World () {
+  trace(p) = box_sdf(p - [-5.0, -0.14, -2.0]@World, [13.0, 0.14, 8.0])
+  material(p, n) = ggx([0.23, 0.21, 0.18] * (0.76 + 0.38 * fbm2([p.x, 0.0, p.z] * 3.2)), 0.82, 0)
+}
+
+camera Main { at: [-2.2, 1.8, -0.3]@World, radius: 9.3m, height: 2.6m, period: 28s, fov: 45deg }
+build { emit HermitBoss(); emit BossStage() }
+schedule Main {
+  run_laws(boss_impact)
+  check(boss_pins, boss_contact)
+}
