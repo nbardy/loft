@@ -5,8 +5,51 @@ rewriting. Loft should support a loop of recursive self-improvement: every consu
 part, from a single shading term to the whole engine, and is helped to do so. The best version of each part wins
 because replacing a part is cheap, local and safe.
 
-`CORE.md` turns this into priorities and a definition of done. `docs/design/render.md` and `docs/design/motion.md`
-are the two design goals. This page is the stance they share.
+`CORE.md` turns this into priorities and a definition of done. `docs/design/render.md` (render and light) and
+`docs/design/motion.md` are the design goals for the sub meta engines. This page is the stance they share.
+
+## 0. A meta engine
+
+Loft is a **meta engine**: an engine for writing engines.
+
+- **The meta engine** is the small core: one graph of maths and GPU programs, the compiler that turns a composition
+  into fast GPU work, the runtime that runs it, and the analysis (CPU twin, checks, solve, scheduling) it offers
+  every part. It is the only part that must stay tiny and stable.
+- **Sub meta engines** specialise it for a domain: **render** (how things are intersected, rasterised, marched and
+  shaded), **light** (how light is transported: direct, shadows, global illumination, media), and **motion** (state,
+  laws and constraints over bodies). Each provides interfaces, orchestration and library functions for writing
+  engines in that domain.
+- **Engines** are programs written in the sub meta engines: a PBR path tracer, a toon renderer, a demoscene raymarcher,
+  a Spore-like locomotion engine, a Disney-style performance engine. The ones Loft ships are example engines: useful
+  defaults, written only with public pieces, that any person or model can read, copy, mix and rewrite.
+- **Lines live in the library and the example engines**, which may be large. The meta engine and the sub meta
+  engines' interfaces stay small. Size is judged per layer.
+
+## 0.5 Agentic development inverts the old trade
+
+Engines and frameworks were built for a world where hard code was expensive: hide the difficult parts (intersection,
+light transport, solvers, schedulers, animation systems) behind a framework, and accept its trade-offs in return.
+That advice is in most of what models have read: use the framework, let it do the heavy lifting, write as little
+code as possible.
+
+For us the trade has flipped. Highly technical code is now cheap: an agent writes a ray-quadric intersector, a
+ReSTIR estimator, a capture-point stepper or a sparse solver in minutes, and rewrites it when it is wrong. What is
+expensive is **lock-in**: the trade-offs a framework made for everyone, which we cannot remove because the hard part
+is sealed inside it. Those trade-offs are what hold the picture, the speed and the motion back.
+
+So Loft does the opposite of a classic engine:
+
+- **Expose the hard parts; never seal them.** Every intersector, estimator, solver, scheduler and controller is
+  ordinary, readable code in the library, written to be rewritten. "This is hard, leave it to the engine" is not a
+  reason to hide anything.
+- **Prefer writing the specific thing over configuring the general thing.** A purpose-built function for this scene
+  or this body beats a flag on a general system. Options and settings are a smell when a few lines of code would say
+  it exactly.
+- **Judge a design by what it lets the consumer change**, not by how much code it saves them from writing. Code
+  volume in the library and in consumer code is cheap; a trade-off the consumer cannot undo is not.
+- **The meta engine provides leverage, not walls**: shared representation, compilation to fast GPU work, analysis
+  (CPU twin, checks, solve), orchestration and good interfaces. It never decides on the consumer's behalf something
+  the consumer cannot override.
 
 ## 1. No baked engine
 

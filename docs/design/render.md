@@ -1,6 +1,6 @@
 # Design goal: rendering
 
-Read `docs/PHILOSOPHY.md` first. This page states what the renderer must be able to do and how it is judged, not how
+Read `docs/PHILOSOPHY.md` first. This is the design goal for the render and light sub meta engines: the interfaces, orchestration and library for writing render and light engines, and the example engines Loft ships in it. This page states what the renderer must be able to do and how it is judged, not how
 to build it.
 
 ## What it draws, all in one frame
