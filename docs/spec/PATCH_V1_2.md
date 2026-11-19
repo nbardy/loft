@@ -52,3 +52,25 @@ fallback.
 ## 4. Phase 5 scope
 Drop glTF export (keep import and retargeting). Add the `.loftb` zero-compiler round trip, the wasm32 runner gate
 (active from Step 0), and `out/meta/training_contract.json` with the exit-7 canary.
+
+## 5. GPU-driven indirect compute, the ray-query bit, and state-preserving hot swap (Step 0)
+- Add `const RAY_QUERY = 1 << 7;` to `GpuFeatures`. It is consumed in Phase 5 (hardware ray queries).
+- Extend `DispatchExtent` in loft-ir. `Indirect` unlocks GPU-driven wavefront path tracing, sparse active-brick
+  culling and GPU-compacted particle/MPM workgroups, on native and browser alike.
+  ```rust
+  pub enum DispatchExtent {
+      Fixed([u32; 3]),
+      FromRowCount { table: TableId, workgroup_x: u32 },
+      Indirect { buf: TableId, offset_bytes: u32 }, // 12-byte DispatchIndirectArgs; (0,0,0) is a GPU no-op
+  }
+  ```
+- `Runner::hot_swap_module` (and `hot_swap_bundle`) applies to `law`, `solver` and `schedule` modules as well as
+  render kinds. Tier 1 compiles asynchronously (~100 ms). If the `StateStoreDecl` layout hash is unchanged, the live
+  `StateBuf` and checkpoint rings survive the swap. They reset cleanly only when the state's fields changed.
+
+## 6. Explicit non-goals (also in `00_OVERVIEW_AND_DECISIONS.md`)
+- **The host owns gameplay ECS.** Dynamic component composition lives in the host (Keel, Three.js, game code), which
+  drives Loft through `upsert_rows` and `push_input`.
+- **No multi-pass reverse-mode GPU AD or tensor-core MMA in v1.** Inverse rendering and neural training run
+  externally (PyTorch, MLX, CUDA) and exchange data through buffers and assets.
+- **A single-queue wgpu substrate.** Layer 0 has no custom Vulkan/Metal multi-queue or mesh-shader backends.

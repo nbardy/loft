@@ -27,3 +27,11 @@ Loft is a **meta engine**: a tiny, slow-changing GPU runner and typed SSA IR (`c
 17. **Default `schedule` + prelude `Sun`/`Sky`.** Omitting `schedule Main` runs `engines::realtime::realtime` over all emitted drawable kinds, cutting ~120–150 tokens of scene boilerplate and preventing omitted-kind bugs.
 
 ---
+
+## 3. Explicit Non-Goals (Layer 0)
+
+- **Host owns gameplay ECS.** Dynamic component composition lives in the host (Keel, Three.js, game code) and drives
+  Loft via `upsert_rows` and `push_input`.
+- **No multi-pass reverse-mode GPU AD or tensor-core MMA in v1.** Inverse rendering and neural training run externally
+  (PyTorch/MLX/CUDA) and exchange data through shared buffers and assets.
+- **Single-queue wgpu substrate.** No custom Vulkan/Metal multi-queue or mesh-shader backends in Layer 0.
