@@ -580,7 +580,7 @@ fn snapshots(
             let fields = step
                 .fields
                 .iter()
-                .map(|name| {
+                .map(|(name, _)| {
                     let column = column(ev.p, kind, name)?;
                     let values = ev.tables[table]
                         .iter()
