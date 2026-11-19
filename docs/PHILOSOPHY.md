@@ -25,6 +25,32 @@ Loft is a **meta engine**: an engine for writing engines.
 - **Lines live in the library and the example engines**, which may be large. The meta engine and the sub meta
   engines' interfaces stay small. Size is judged per layer.
 
+## 0.5 Agentic development inverts the old trade
+
+Engines and frameworks were built for a world where hard code was expensive: hide the difficult parts (intersection,
+light transport, solvers, schedulers, animation systems) behind a framework, and accept its trade-offs in return.
+That advice is in most of what models have read: use the framework, let it do the heavy lifting, write as little
+code as possible.
+
+For us the trade has flipped. Highly technical code is now cheap: an agent writes a ray-quadric intersector, a
+ReSTIR estimator, a capture-point stepper or a sparse solver in minutes, and rewrites it when it is wrong. What is
+expensive is **lock-in**: the trade-offs a framework made for everyone, which we cannot remove because the hard part
+is sealed inside it. Those trade-offs are what hold the picture, the speed and the motion back.
+
+So Loft does the opposite of a classic engine:
+
+- **Expose the hard parts; never seal them.** Every intersector, estimator, solver, scheduler and controller is
+  ordinary, readable code in the library, written to be rewritten. "This is hard, leave it to the engine" is not a
+  reason to hide anything.
+- **Prefer writing the specific thing over configuring the general thing.** A purpose-built function for this scene
+  or this body beats a flag on a general system. Options and settings are a smell when a few lines of code would say
+  it exactly.
+- **Judge a design by what it lets the consumer change**, not by how much code it saves them from writing. Code
+  volume in the library and in consumer code is cheap; a trade-off the consumer cannot undo is not.
+- **The meta engine provides leverage, not walls**: shared representation, compilation to fast GPU work, analysis
+  (CPU twin, checks, solve), orchestration and good interfaces. It never decides on the consumer's behalf something
+  the consumer cannot override.
+
 ## 1. No baked engine
 
 An engine here is a default composition of small functions, not a framework that owns the program.
