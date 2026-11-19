@@ -35,7 +35,7 @@ impl<'a> Layout<'a> {
             }
             ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. }
             | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. }
-            | ExprKind::Binary(..) | ExprKind::Unary(..) => return false,
+            | ExprKind::Binary(..) | ExprKind::Unary(..) | ExprKind::String(_) => return false,
         }
         true
     }

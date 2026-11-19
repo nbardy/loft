@@ -200,11 +200,11 @@ impl<'p, 'a> CpuWorld<'p, 'a> {
                     Intersect::Analytic(decl.query(QueryKind::Visible).expect("checked visible"))
                 }
                 Draw::Traced => Intersect::Traced,
-                Draw::Surface { .. } => {
+                Draw::Surface { .. } | Draw::Mesh { .. } => {
                     return Err(Diag::new(
                         Code::E405,
                         decl.name.span,
-                        "grid surfaces have no world ray intersector",
+                        "raster surfaces and mesh assets have no CPU World intersector",
                         "supply a trace or analytic proxy for this world",
                     ));
                 }

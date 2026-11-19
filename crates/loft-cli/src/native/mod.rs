@@ -610,7 +610,7 @@ impl Loaded {
             let component = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
             let pipelines: Vec<_> = vis_kinds.iter().map(|&k| {
                 let kt = &p.kinds[k as usize];
-                let face = match kt.draw { Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front), Draw::Surface { .. } => None };
+                let face = match kt.draw { Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front), Draw::Surface { .. } | Draw::Mesh { .. } => None };
                 render_blended(d, &kt.name, &[&bgl0, &bgl_kind], &modules[kt.module], ("vs", "fs_overdraw"),
                     HDR, false, face, cache, Some(wgpu::BlendState { color: component, alpha: component }))
             }).collect();

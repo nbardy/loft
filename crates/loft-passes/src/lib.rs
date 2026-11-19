@@ -493,7 +493,7 @@ impl Compiled {
             let a = unit(TWIN_LIGHT);
             let t = unit([n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0]]);
             let lt = std::array::from_fn(|i| n[i] * 0.5 + t[i] * 0.866_025_4);
-            let b = Val::Bsdf(vec![("ggx".into(), vec![v3(mesh.color), Val::S(mesh.roughness), Val::S(mesh.metal)])]);
+            let b = Val::Bsdf(vec![eval::Layer::Lobe("ggx".into(), vec![v3(mesh.color), Val::S(mesh.roughness), Val::S(mesh.metal)])]);
             out.material = of_v3(ev.eval_bsdf(&b, &v3(n), &v3(n), &v3(lt), sp)?);
             return Ok(out);
         }
