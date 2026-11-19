@@ -31,9 +31,9 @@ export function headFrame(body: Frame, angle: F): Frame {
 
 /**
  * The heron drawn at `body` (x ahead, y up through the back) with feet at `foot(i)`, the toes splayed along `ahead`
- * (the ground's forward direction). The neck, bill and plume ride `head` (default the body; `headFrame` turns them). The legs reach from the hips to the feet by `chain`, the joint bent backward.
+ * (the ground's forward direction). The neck, bill and plume ride `head` (default the body; `headFrame` turns them); `neckSpine`, a world curve from the shoulder to the head, replaces the rigid neck. The legs reach from the hips to the feet by `chain`, the joint bent backward.
  */
-export function heron(body: Frame, foot: (i: number) => P3, ahead: { readonly x: P3; readonly z: P3 }, head: Frame = body) {
+export function heron(body: Frame, foot: (i: number) => P3, ahead: { readonly x: P3; readonly z: P3 }, head: Frame = body, neckSpine?: (m: F) => P3) {
   const torso = place(strand({
     name: "torso", spine: (m) => through(m, [[0.55, 0.15, 0], [0, 0, 0], [-0.7, -0.05, 0], [-1.05, -0.2, 0]]), stations: 8,
     girth: (m) => mul(0.34, sub(1, mul(m, 0.55))), section: { aspect: 1.15 }, tips: ["round", { point: 0.3 }],
@@ -44,6 +44,10 @@ export function heron(body: Frame, foot: (i: number) => P3, ahead: { readonly x:
     name: "neck", spine: (m) => through(m, neckPts), stations: 16, girth: (m) => mix(0.14, 0.08, m), tips: ["open", "round"],
     paint: white, detail: { along: 40, around: 12 }, up: [0, 1, 0],
   }), rigid(head));
+  // A neck given as a world curve (shoulder to head, e.g. per-frame IK) replaces the rigid one.
+  const neckDrawn = neckSpine === undefined ? neck : strand({
+    name: "neck", spine: neckSpine, stations: 16, girth: (m) => mix(0.14, 0.08, m), tips: ["open", "round"], paint: white, detail: { along: 40, around: 12 },
+  });
   const beak = place(strand({
     name: "bill", spine: (m) => vec3(add(1.0, mul(m, 0.75)), sub(1.38, mul(m, 0.1)), 0), stations: 4,
     girth: (m) => mix(0.075, 0.01, m), section: { aspect: 0.7 }, tips: ["round", "point"], paint: bill, detail: { along: 12, around: 10 }, up: [0, 1, 0],
@@ -62,5 +66,5 @@ export function heron(body: Frame, foot: (i: number) => P3, ahead: { readonly x:
     name: `toe${i}${k}`, spine: (m) => add(foot(i), mul(add(mul(ahead.x, Math.cos(a)), mul(ahead.z, Math.sin(a))), mul(m, 0.28))),
     stations: 4, girth: 0.025, tips: ["round", "point"], paint: dark, detail: { along: 4, around: 6 },
   })));
-  return { things: [torso, neck, beak, crest, ...legDrawn, ...toes], legs };
+  return { things: [torso, neckDrawn, beak, crest, ...legDrawn, ...toes], legs };
 }

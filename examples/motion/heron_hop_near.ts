@@ -5,7 +5,7 @@
 import { add, always, clamp, div, dot, ge, le, length, lift, max, mul, poseFrame, pose, solve, spline, sub, through, time, vec2, vec3, type F, type P3 } from "../../src/index.ts";
 import { derivative } from "../../src/grad.ts";
 import { chain } from "../../src/geom/limb.ts";
-import { equal } from "../../src/geom/solve.ts";
+import { equal, type Family } from "../../src/geom/solve.ts";
 import { headFrame, heron, hipOf, HOMES, inBody, LEGS } from "../second/lib/heron.ts";
 import { NUMBERS, stage } from "../second/heron_leap.ts";
 import { KEYS } from "./heron_hop_keys.ts";
@@ -13,11 +13,17 @@ import { KEYS } from "./heron_hop_keys.ts";
 const HIP = 1.9, SPAN = LEGS[0] + LEGS[1], T = { off: 0.6, land: 1.2, end: 1.8 }, G = 9.81, n = NUMBERS;
 /** Weights: near the keys 1, jerk JERK (crossover (1 / JERK)^(1/6) rad/s). */
 export const JERK = Number(process.env.HERON_JERK ?? 1e-7);
-type C = { readonly x: F; readonly y: F; readonly pitch: F; readonly fx: F; readonly fy: F; readonly head: F };
+type C = { readonly x: F; readonly y: F; readonly pitch: F; readonly fx: F; readonly fy: F; readonly head?: F };
+/**
+ * Where the head comes from. `solved` (panel c): an unknown, the neck's turn, held level, the neck and bill held clear
+ * of the rail, the body's pitch within 20 degrees. `placed` (panel d, heron_hop_gaze.ts): no head unknown (the head is
+ * placed per frame after the solve), the pitch bound relaxed to `pitch` radians, and only the body and legs held clear.
+ */
+export type Head = { readonly kind: "solved" } | { readonly kind: "placed"; readonly pitch: number };
 
-function rig(c: C) {
+export function rig(c: C) {
   const body = poseFrame(pose({ at: vec3(c.x, c.y, 0), heading: 0, pitch: c.pitch, heel: 0 }));
-  return { body, head: headFrame(body, c.head), foot: (i: number): P3 => vec3(c.fx, c.fy, HOMES[i]![2]) };
+  return { body, head: headFrame(body, c.head ?? lift<"f32">(0)), foot: (i: number): P3 => vec3(c.fx, c.fy, HOMES[i]![2]) };
 }
 function apart(r: readonly [number, number], a: P3, b: P3): F {
   const A = vec2(a.x, a.y), B = vec2(b.x, b.y), R = vec2(r[0], r[1]), ab = sub(B, A);
@@ -25,11 +31,14 @@ function apart(r: readonly [number, number], a: P3, b: P3): F {
   return length(sub(R, add(A, mul(ab, s))));
 }
 
-export const solved = solve({
+export function hop(how: Head) {
+  const solvesHead = how.kind === "solved", bound = how.kind === "solved" ? 0.35 : how.pitch;
+  return solve({
   over: [0, T.end],
   // spline(27): a knot every 0.075 s, so 0.6 and 1.2 stay knots and acceleration can ramp within 0.075 s.
-  vary: { x: spline(27, KEYS.x), y: spline(27, KEYS.y), pitch: spline(27, KEYS.pitch), fx: spline(27, KEYS.fx), fy: spline(27, KEYS.fy), head: spline(27, mul(KEYS.pitch, -1)) },
-  hold: (c: C) => {
+  vary: { x: spline(27, KEYS.x), y: spline(27, KEYS.y), pitch: spline(27, KEYS.pitch), fx: spline(27, KEYS.fx), fy: spline(27, KEYS.fy), ...(solvesHead ? { head: spline(27, mul(KEYS.pitch, -1)) } : {}) } as Readonly<Record<string, Family>>,
+  hold: (cs) => {
+    const c = cs as unknown as C;
     const { body, head, foot } = rig(c);
     const d = (e: F) => derivative(e, time);
     const velocity = vec3(d(c.x), d(c.y), d(c.pitch)), accel3 = vec3(d(d(c.x)), d(d(c.y)), d(d(c.pitch)));
@@ -53,18 +62,20 @@ export const solved = solve({
       always([time, T.end, T.end], equal(vec3(c.x, c.y, c.pitch), [n.deck.land, n.deck.top + HIP, 0])),
       always([time, T.end, T.end], equal(velocity, [0, 0, 0])),
       always([time, T.end, T.end], equal(accel3, [0, 0, 0], 0.001)),                             // and stops without a snap
-      ge(c.pitch, -0.35), le(c.pitch, 0.35),                                                    // |pitch| <= 20 degrees
-      equal(add(c.pitch, c.head), 0, 0.03),                                                     // the head level in the world
+      ge(c.pitch, -bound), le(c.pitch, bound),                                                  // |pitch| bounded (20 degrees for c)
+      ...(solvesHead ? [equal(add(c.pitch, c.head!), 0, 0.03)] : []),                          // the head level in the world
       ge(0.97 * SPAN, reach), ge(reach, 0.6), ge(c.fy, 0),
-      ...clear(torso), ...clear(neck), ...clear(bill),
+      ...clear(torso), ...(solvesHead ? [...clear(neck), ...clear(bill)] : []),
       ge(apart(rail, leg[0]!, leg[1]!), 0.045 + pad),
       ge(apart(rail, leg[1]!, leg[2]!), 0.045 + pad),
       ge(apart(rail, foot(0), add(foot(0), vec3(0.28, 0, 0))), 0.025 + pad),
     ];
   },
-  prefer: { near: { to: { ...KEYS, head: mul(KEYS.pitch, -1) }, weight: 1 }, jerk: JERK },
-});
+  prefer: { near: { to: solvesHead ? { ...KEYS, head: mul(KEYS.pitch, -1) } : KEYS, weight: 1 }, jerk: JERK },
+  });
+}
+export const solved = hop({ kind: "solved" });
 
 console.error(`heron near: ${solved.report.ms.toFixed(0)} ms, ${solved.report.steps} steps, ${solved.report.rounds} rounds (jerk ${JERK})`);
-const { body, head, foot } = rig(solved.curves);
+const { body, head, foot } = rig(solved.curves as C);
 export default stage(n, heron(body, foot, { x: vec3(1, 0, 0), z: vec3(0, 0, 1) }, head).things);
