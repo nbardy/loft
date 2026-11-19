@@ -80,3 +80,12 @@ def module_hashes(name):
 
 for name in ["one", "low", "5"]:
     print("13/17 module hashes", name, *module_hashes(name))
+
+deck = frames("deck", "pose", 232)
+carry = [site(deck[120], i)[0]-site(deck[0], i)[0] for i in range(8)]
+deck_error = max(abs(0.0001-p[200+4*i]) for p in deck for i in range(8))
+loads = frames("pads", "pose", 232)[0][200:203]
+print("Phase 2 deck: world carry range m / worst deck-frame hold mm", min(carry), max(carry), 1000*deck_error)
+print("Phase 2 four pads: feasible range and least-norm share", loads)
+assert max(abs(v-0.5) for v in carry) <= 0.001 and deck_error <= 0.0001
+assert max(abs(v-w) for v,w in zip(loads,(.25,.5,.375))) <= 1e-5

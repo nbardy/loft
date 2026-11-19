@@ -2,10 +2,11 @@
 // two-link triangle. Limit the distal angle by the reachable cone when a chain approaches extension.
 fn observed(f:Frame,l:f32)->vec3f {return f.t.xyz+rot(f.q,vec3f(0,l,0));}
 fn present(s:ptr<function,State>,b:ptr<function,Plan>,fraction:f32,dt:f32)->Pose {
+  let deck=deck_at(((*s).stamps.x+fraction)*dt);
   var p:Pose;let v=(*s).motion.zw;let t=fraction*dt;
   let c=(*s).motion.xy+t*(v+0.5*t*(*s).drive.xy);
   let angle=(*s).tilt.xy+t*(*s).spin.xy;
-  p.joints[0]=Frame(vec4f(c.x,(*b).laws.x,c.y,1),lean_q(angle));
+  p.joints[0]=placed(deck,Frame(vec4f(c.x,(*b).laws.x,c.y,1),lean_q(angle)));
   for(var i=0u;i<u32((*b).dims.w);i++){
     let chain=(*b).chain[i];let pin=(*s).pin[i];
     var pad=pin.at.xyz;
@@ -21,10 +22,10 @@ fn present(s:ptr<function,State>,b:ptr<function,Plan>,fraction:f32,dt:f32)->Pose
     let along=clamp((lens.x*lens.x-lens.y*lens.y+span*span)/(2.0*span),-lens.x,lens.x);
     let knee=root+line*along+normalize(pole-line*dot(pole,line))*sqrt(max(0.0,lens.x*lens.x-along*along));
     let k=1u+3u*i;
-    p.joints[k]=axis_frame(root,knee);p.joints[k+1]=axis_frame(knee,ankle);
-    var distal=axis_frame(ankle,pad);
+    p.joints[k]=placed(deck,axis_frame(root,knee));p.joints[k+1]=placed(deck,axis_frame(knee,ankle));
+    var distal=placed(deck,axis_frame(ankle,pad));
     p.joints[k+2]=distal;
-    let site=observed(distal,lens.z);
+    let site=deck_site(deck,observed(distal,lens.z));
     p.margins[i]=vec4f(0.0001-distance(site,pin.at.xyz),pin.at.w,pin.shape.z,site.y);
   }
   return p;

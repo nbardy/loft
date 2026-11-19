@@ -58,12 +58,12 @@ impl Run {
         )
         .unwrap();
     }
-    fn spans(&self) -> [f64; 6] {
+    fn spans(&self) -> [f64; 4] {
         self.d.poll(wgpu::PollType::wait_indefinitely()).unwrap();
         let mut e = self.d.create_command_encoder(&Default::default());
-        let dst = self.stage(48);
-        let r = self.buffer(48, wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC);
-        e.resolve_query_set(&self.queries, 0..6, &r, 0);
+        let dst = self.stage(32);
+        let r = self.buffer(32, wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC);
+        e.resolve_query_set(&self.queries, 0..4, &r, 0);
         e.copy_buffer_to_buffer(&r, 0, &dst, 0, None);
         self.q.submit([e.finish()]);
         let bytes = self.bytes(&dst);
@@ -128,6 +128,7 @@ impl Run {
         if !alternate {
             assert_eq!(diff, 0, "regrouping changed a state");
         }
+        l.use_camera("game").unwrap();
         let key = l.frame_key(0, SIZE);
         let rgba = self.picture(&mut l);
         if !alternate && group == 4 {
@@ -143,7 +144,6 @@ impl Run {
         (bytes, key, rgba)
     }
     fn picture(&self, l: &mut Loft) -> Vec<u8> {
-        l.use_camera("game").unwrap();
         let mut e = self.d.create_command_encoder(&Default::default());
         self.encode(l, &mut e);
         let size = wgpu::Extent3d { width: SIZE[0], height: SIZE[1], depth_or_array_layers: 1 };
@@ -212,8 +212,13 @@ impl Run {
         let spec = b.row_steps.pop().unwrap();
         let mut frozen = self.load(&b);
         let poses = fs::read(self.dir.join("one.pose")).unwrap();
+        let words: Vec<_> = fs::read(self.dir.join("game.camera")).unwrap().chunks_exact(4)
+            .map(|v| f32::from_le_bytes(v.try_into().unwrap())).collect();
         for loft in [&mut live, &mut frozen] {
-            loft.use_camera("game").unwrap();
+            loft.set_camera(loft_ir::frame::Camera {
+                view_proj: words[0..16].try_into().unwrap(), inv_view_proj: words[16..32].try_into().unwrap(),
+                eye: words[32..36].try_into().unwrap(), forward: words[36..40].try_into().unwrap(), sun:[0.,1.,0.,0.]
+            });
             loft.set_timestamps(Some(self.queries.clone()));
         }
         for (k, v) in [(1, 0.0), (24, 1.2), (204, -2.1)] {
@@ -230,12 +235,10 @@ impl Run {
                 let loft = if arm == 0 { &mut live } else { &mut frozen };
                 loft.set_time(k as f32 / 120.0);
                 let mut e = self.d.create_command_encoder(&Default::default());
-                e.write_timestamp(&self.queries, 4);
                 self.encode(loft, &mut e);
-                e.write_timestamp(&self.queries, 5);
                 self.q.submit([e.finish()]);
                 let t = self.spans();
-                pair[arm] = t[5] - t[4];
+                pair[arm] = if arm == 0 { t[3].max(t[1]) - t[0].min(t[2]) } else { t[3] - t[2] };
             }
             if i >= 8 {
                 normal.push(pair[0]);
@@ -266,12 +269,12 @@ fn quantiles(mut values: Vec<f64>) -> Vec<f64> {
 fn recorded_take_score() {
     let adapter = pollster::block_on(wgpu::Instance::default().request_adapter(&Default::default())).unwrap();
     let (d, q) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-        required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+        required_features: wgpu::Features::TIMESTAMP_QUERY,
         ..Default::default()
     }))
     .unwrap();
     let queries =
-        d.create_query_set(&wgpu::QuerySetDescriptor { label: None, ty: wgpu::QueryType::Timestamp, count: 6 });
+        d.create_query_set(&wgpu::QuerySetDescriptor { label: None, ty: wgpu::QueryType::Timestamp, count: 4 });
     let targets = [CANVAS.color, CANVAS.depth].map(|format| {
         d.create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -292,6 +295,8 @@ fn recorded_take_score() {
     let base = r.trace("one");
     r.trace("low");
     r.trace("broken");
+    r.trace("deck");
+    r.trace("pads");
     let (_, key, rgba) = r.replay(4, false, &base);
     assert!(rgba.chunks_exact(4).any(|p| p != &rgba[..4]));
     for group in [2, 1, 6] {
