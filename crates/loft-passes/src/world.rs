@@ -1,5 +1,7 @@
 //! World calls at the Layer 2 lowering boundary (06 §6). V is the operand
 //! representation of the consumer, e.g. a checked type, expression or SSA id.
+pub(crate) mod mesh;
+
 use loft_ir::{Code, Diag, Res, Span};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

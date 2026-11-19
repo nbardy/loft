@@ -8,6 +8,7 @@
 //!
 //! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
 
+mod edit_cmd;
 mod gates;
 mod build;
 mod render;
@@ -174,7 +175,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             if let Some(edit) = edit {
                 exact(&args, 3, 3)?;
                 let kind = kind.ok_or_else(|| Failure::Usage("still --edit needs --kind K".into()))?;
-                return gates::edited_still(&scene(&args)?, Path::new(&edit), &kind, &set, time, Path::new(&args[2]), max_frame);
+                return edit_cmd::edited_still(&scene(&args)?, Path::new(&edit), &kind, &set, time, Path::new(&args[2]), max_frame);
             }
             if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }
             exact(&args, 3, 3)?;

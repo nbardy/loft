@@ -51,3 +51,59 @@ fn mesh_ray_query(tree: acceleration_structure, origin: vec3f, dir: vec3f, far: 
     return select(hit.t, -1.0, hit.kind == 0u);
 }
 "#;
+
+use super::Gpu;
+
+pub(super) fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    }))
+    .map_err(|e| format!("no adapter: {e}"))?;
+    // PIPELINE_CACHE exists on Vulkan only: wgpu 30's Metal backend stubs `create_pipeline_cache` (it never uses
+    // MTLBinaryArchive), so on Metal the only cache across processes is the OS's own Metal shader cache.
+    let mut requested = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::PIPELINE_CACHE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    if ray_query { requested |= wgpu::Features::EXPERIMENTAL_RAY_QUERY; }
+    let features = adapter.features() & requested;
+    // Opt in only for callers that request the unstable native traversal feature.
+    let experimental_features = if features.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
+        #[allow(unsafe_code)]
+        unsafe { wgpu::ExperimentalFeatures::enabled() }
+    } else {
+        Default::default()
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("loft-runner"),
+        required_features: features,
+        experimental_features,
+        // The cube kernel covers six 8x8 faces. wgpu otherwise grants only the default 256 lanes.
+        required_limits: wgpu::Limits {
+            max_compute_invocations_per_workgroup: adapter.limits().max_compute_invocations_per_workgroup.min(384),
+            ..Default::default()
+        },
+        ..Default::default()
+    }))
+    .map_err(|e| format!("no device: {e}"))?;
+    let info = adapter.get_info();
+    use wgpu::TextureFormat as F;
+    let bake_formats = [F::R8Unorm, F::R16Float, F::R32Float, F::Rgba8Unorm, F::Rgba16Float].into_iter()
+        .filter(|f| {
+            let ff = if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+                adapter.get_texture_format_features(*f)
+            } else {
+                f.guaranteed_format_features(features)
+            };
+            ff.allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING)
+                && ff.flags.contains(wgpu::TextureFormatFeatureFlags::STORAGE_WRITE_ONLY)
+        }).collect();
+    Ok(Gpu {
+        bake_formats,
+        device,
+        queue,
+        device_signature: format!("{} ({:?}) {} {}", info.name, info.backend, info.driver, info.driver_info),
+        adapter: format!("{} ({:?})", info.name, info.backend),
+        timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
+        cache_key: features.contains(wgpu::Features::PIPELINE_CACHE).then(|| wgpu::util::pipeline_cache_key(&info)).flatten(),
+    })
+}
