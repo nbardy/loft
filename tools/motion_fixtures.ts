@@ -6,7 +6,7 @@ import { stage, stick } from "../examples/motion/stage.ts";
 import { body, foot, gaze, hop, move, roam } from "../src/motion/index.ts";
 import { cameraMatrices } from "../src/host/camera.ts";
 import { input } from "../src/expr.ts";
-import { native, UNLIMITED } from "../src/core/native.ts";
+import { native, NativeError, UNLIMITED } from "../src/core/native.ts";
 import { rec } from "../src/record/recorder.ts";
 import { pack, Program } from "../src/record/wire.ts";
 import type { Scene } from "../src/record/decls.ts";
@@ -72,4 +72,13 @@ fn present(s:ptr<function,State>,b:ptr<function,Plan>,f:f32,dt:f32)->Pose {
 const law=roam({step:follow,present:measure});
 for(const [name,rate,ground] of [["tracking",1,true],["saturated",2,true],["flight",1,false]] as const) {
   save(name,headless(move(pads,law,{go,script:k=>[Math.atan2(Math.sin(rate*k/120),Math.cos(rate*k/120)),Number(ground)]})));
+}
+
+for (const [source, expected] of [
+  ["var<private> hidden:f32;\n" + normal, "mutable values in State"],
+  [normal + "\nfn sync_rows(){workgroupBarrier();}", "synchronize invocations"],
+] as const) {
+  try { save("invalid",headless(move(crab,source,parked))); }
+  catch (e) { if (e instanceof NativeError && e.kind==="scene" && e.message.includes(expected)) continue; throw e; }
+  throw new Error("row-locality check accepted a stateful global or cross-row operation");
 }

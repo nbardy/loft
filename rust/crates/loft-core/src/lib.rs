@@ -417,10 +417,20 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
                 (format!("struct TickEvents {{ count:u32, values:array<vec4f,{slots}> }}\n{authored}"), "TickEvents")
             }
         };
-        // Only value/private arguments enter an island. Raw cross-row kernels retain the existing per-tick schedule.
+        // Module-private variables also reset at a dispatch boundary. Keeping them across fused ticks
+        // would change a recurrence when a player changes presentation cadence.
         let parsed = naga::front::wgsl::parse_str(&source).map_err(|e| unsupported(e.emit_to_string(&source)))?;
-        if !parsed.entry_points.is_empty() || parsed.global_variables.iter().any(|(_, v)| v.binding.is_some()) {
-            return Err(unsupported("row-local laws must read only their arguments and private variables; use a raw pass for shared storage".into()));
+        if !parsed.entry_points.is_empty() || !parsed.global_variables.is_empty() {
+            return Err(unsupported("row-local laws must keep mutable values in State or function locals: use a shared-row Steps kernel in a Rust bundle for global or shared storage".into()));
+        }
+        let info =
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
+                .validate(&parsed)
+                .map_err(|e| unsupported(e.emit_to_string(&source)))?;
+        if parsed.functions.iter().any(|(id, _)| !info[id].uniformity.requirements.is_empty()) {
+            return Err(unsupported(
+                "row-local laws cannot synchronize invocations: use a shared-row Steps kernel in a Rust bundle for a barrier or collective".into(),
+            ));
         }
         let text = format!("{source}\n{}", include_str!("../wgsl/advance.wgsl").replace("PACKET_TYPE", packet));
         if matches!(build.naga, Naga::Emit) {
