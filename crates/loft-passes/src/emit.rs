@@ -15,6 +15,7 @@ pub mod paths;
 mod material_shape;
 mod surface;
 mod lighting;
+mod column;
 use material_shape::Layout;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw};
@@ -158,6 +159,7 @@ pub struct Emitter<'p, 'a> {
     temp: u32,
     prepare_light: bool,
     in_prepared_light: bool,
+    baked_column: Option<u32>,
 }
 
 #[derive(Default)]
@@ -319,7 +321,7 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
         Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,priors:None,locals:vec![],temp:0,
-            prepare_light: false, in_prepared_light: false }
+            prepare_light: false, in_prepared_light: false, baked_column: None }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -331,7 +333,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     fn func(&mut self, f: &FnDecl, name: &str) {
-        let params: Vec<String> = f
+        let mut params: Vec<String> = f
             .params
             .iter()
             .map(|prm| match &prm.ty {
@@ -343,6 +345,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 None => format!("{}: Row", wgsl_name(&prm.name.name)),
             })
             .collect();
+        if self.baked_column.is_some() {
+            params.push("loft_column_value: f32".into());
+        }
         let ret = f.ret.as_ref().map(|t| format!(" -> {}", wty(&self.resolve(t)))).unwrap_or_default();
         let _ = writeln!(self.out, "fn {name}({}){ret} {{", params.join(", "));
         if let Some(raw)=&f.raw{
@@ -485,6 +490,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
     pub fn expr(&mut self,e:&Expr)->String{crate::provenance::expression(e.span,self.expression(e))}
 
     fn expression(&mut self, e: &Expr) -> String {
+        if self.baked_column == Some(e.id) {
+            return "loft_column_value".into();
+        }
         // A Bsdf value is the struct of its lobes' bound arguments, in the module's one layout (checked per kind).
         let is_lobe = |callee: &Ident| self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
         if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
@@ -1407,11 +1415,15 @@ pub(crate) fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl, module: usize
             Clock::Dirty(words.into_iter().collect())
         }
     };
-    let rows_per_invocation = if matches!(decl.dim, TexDim::D2(_, h) if h >= 64) { 4 } else { 1 };
-    let bake = Bake { name: decl.texel.name.name.clone(), dim: decl.dim, format, clock, mips: decl.mips, module, rows_per_invocation };
     em.header(abi::NONCE_PLACEHOLDER);
     let (functions, constants) = reachable(p, &[&decl.texel], &[]);
     em.library(&functions, &constants);
+    let column = if matches!(decl.dim, TexDim::D2(_, h) if h >= 64) {
+        column::emit(&mut em, &decl.texel)
+    } else { None };
+    let rows_per_invocation = if column.is_some() { 4 } else { 1 };
+    let bake = Bake { name: decl.texel.name.name.clone(), dim: decl.dim, format, clock, mips: decl.mips, module, rows_per_invocation };
+    em.baked_column = column;
     em.func(&decl.texel, "texel_value");
     if let TexDim::Cube(_) = decl.dim {
         em.out.push_str(r"
@@ -1436,18 +1448,17 @@ fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
         _ => "texel",
     };
     let format_name = &decl.format.name;
-    let (invocation, end) = if rows_per_invocation > 1 {
-        // Keep x fixed across the strip so the backend can lift x-only
-        // arithmetic out of the loop without changing each texel's coordinates.
+    let (invocation, column_arg, end) = if column.is_some() {
         (format!(r"  let x = (f32(gid.x) + 0.5) / f32(extent.x);
+  let column = loft_bake_column(vec2f(x, 0.0));
   for (var dy = 0u; dy < {rows_per_invocation}u; dy++) {{
     let id = vec3(gid.x, gid.y * {rows_per_invocation}u + dy, gid.z);
     if any(id >= extent) {{ break; }}
-    let u = vec3(x, (f32(id.y) + 0.5) / f32(extent.y), 0.5);"), "  }")
+    let u = vec3(x, (f32(id.y) + 0.5) / f32(extent.y), 0.5);"), ", column", "  }")
     } else {
         (r"  let id = gid;
   if any(id >= extent) { return; }
-  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);".to_owned(), "")
+  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);".to_owned(), "", "")
     };
     let _ = write!(em.out, r"
 @group(3) @binding(0) var baked: texture_storage_{storage}<{format_name}, write>;
@@ -1455,7 +1466,7 @@ fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
 fn bake(@builtin(global_invocation_id) gid: vec3<u32>) {{
   let extent = vec3<u32>({x}u, {y}u, {z}u);
 {invocation}
-  let texel = texel_value({arg});
+  let texel = texel_value({arg}{column_arg});
   textureStore(baked, {index}, {encoding});
 {end}
 }}

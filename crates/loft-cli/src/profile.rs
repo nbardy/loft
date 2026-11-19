@@ -37,6 +37,9 @@ pub(crate) fn write_json(path: &str, value: &impl Serialize) -> Result<(), Failu
 }
 
 pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
+    if args == ["--speed-gate"] && set.is_empty() {
+        return crate::gates::speed_gate();
+    }
     let mut args = args.to_vec();
     let json = flag(&mut args, "--json")?;
     let timestamps = flag(&mut args, "--timestamps")?.unwrap_or_else(|| "immediate".into());

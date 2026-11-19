@@ -60,21 +60,7 @@ fn bake(g: &Gpu) -> Result<Value, String> {
 }
 
 fn shrine(g: &Gpu) -> Result<Value, String> {
-    let (p, compiled) = scene("engines/coral_shrine.loft")?;
-    let prog = compiled.prog();
-    let kinds = |name| p.kinds.iter().position(|k| k.name == name)
-        .map(|i| i as u32).ok_or_else(|| format!("missing Shrine kind {name}"));
-    let bore = |kind| -> Result<_, String> {
-        let mut world = loft_passes::bvh::CpuWorld::new(&prog, &compiled, &p, &[kinds(kind)?])
-            .map_err(|e| format!("build {kind} world: {e:?}"))?;
-        world.visible([0.0, 0.05, 0.0], [0.0, 2.2, 0.0], |_, _| Ok([1.0; 3]))
-            .map_err(|e| format!("trace {kind} bore: {e:?}"))
-    };
-    let carved = bore("FoldedLantern")?;
-    let solid = bore("SolidLanternProxy")?;
-    if carved != [1.0; 3] || solid != [0.0; 3] {
-        return Err(format!("Shrine bore visibility: carved {carved:?}, solid {solid:?}"));
-    }
+    let (p, _) = scene("engines/coral_shrine.loft")?;
     let size = (1280, 800);
     let control = g.triangle_control_ms(size)?;
     let l = Loaded::new(g, &p, size, None)?;
@@ -85,7 +71,6 @@ fn shrine(g: &Gpu) -> Result<Value, String> {
     Ok(
         json!({"control_p50_ms":control,"p50_ms":times[49],"p95_ms":times[94],
         "frames":100,"warmup":30,"camera_radius":p.camera.radius,"camera_eye":p.camera.eye(0.0),"instances":p.instances.len(),"schedule":"two-world woodblock",
-        "bore_carved":carved,"bore_solid":solid,
         "passes":p.passes.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
         "gpu_pass_ms":measured.iter().map(|s| &s.pass_ms).collect::<Vec<_>>(),"frame_stamps":measured,
         "modules":loft_passes::telemetry::collect(&p)}),

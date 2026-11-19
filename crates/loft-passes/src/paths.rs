@@ -5,6 +5,7 @@ use loft_ir::{Code, Diag, Res, Span};
 use loft_parse::ast::{QueryKind, Ty};
 #[path="path_twin.rs"]
 pub mod cpu;
+#[path = "paths/shadow.rs"]
 mod shadow;
 pub use shadow::shadow_kind_key;
 pub(super) use shadow::visibility as shadow_visibility;

@@ -560,6 +560,14 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
 }
 
 pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
+    run_selected(approve, only, &GATES)
+}
+
+pub(crate) fn speed_gate() -> Result<(), Failure> {
+    run_selected(false, None, &[Gate::Speed])
+}
+
+fn run_selected(approve: bool, only: Option<&str>, selected: &[Gate]) -> Result<(), Failure> {
     let root = root().map_err(Failure::Usage)?;
     let path = root.join("engines/gates.json");
     let text = std::fs::read_to_string(&path).map_err(|e| Failure::Usage(e.to_string()))?;
@@ -591,12 +599,14 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
         let shapes: Vec<usize> = r.kinds.iter().map(|k| k.shapes).collect();
-        gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
+        if selected.contains(&Gate::Load) {
+            gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
+        }
         compiled.push((s, p, comp, shapes));
     }
     // Measure all cold/warm loads before the long timestamped frame batches.
     for (s, p, comp, shapes) in compiled {
-        for gt in GATES.into_iter().filter(|g| *g != Gate::Load) {
+        for gt in selected.iter().copied().filter(|g| *g != Gate::Load) {
             gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
         }
     }
@@ -605,7 +615,7 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
         std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| Failure::Usage(e.to_string()))? + "\n").map_err(|e| Failure::Usage(e.to_string()))?;
         println!("approved {} references into engines/gates.json and out/meta/refs/", c.refs.len());
     }
-    for gt in GATES {
+    for &gt in selected {
         let mine: Vec<&Check> = checks.iter().filter(|x| x.gate == gt).collect();
         let held = mine.iter().filter(|x| matches!(x.verdict, Verdict::Held { .. })).count();
         let warnings = mine.iter().filter(|x| x.contended).count();

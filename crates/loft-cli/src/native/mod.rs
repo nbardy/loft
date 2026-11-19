@@ -398,8 +398,9 @@ impl Gpu {
 
 fn draw_bundle(
     d: &wgpu::Device, main: &wgpu::BindGroup, kinds: &[KindGpu], pass: &[u32],
-    args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>, arg_words: u32,
+    args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>,
 ) -> wgpu::RenderBundle {
+    let arg_stride = if kinds.iter().any(|kind| kind.grid.is_some()) { 20 } else { 16 };
     let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
         label: Some("visibility"),
         color_formats: &[Some(VIS)],
@@ -413,7 +414,7 @@ fn draw_bundle(
         let kg = &kinds[k as usize];
         be.set_pipeline(&kg.render);
         be.set_bind_group(1, overrides.map_or(&kg.g1, |groups| &groups[k as usize]), &[]);
-        let offset = u64::from(k) * u64::from(arg_words) * 4;
+        let offset = u64::from(k) * arg_stride;
         if let Some((indices, group)) = &kg.grid {
             be.set_bind_group(2, group, &[]);
             be.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -761,7 +762,7 @@ impl Loaded {
 
         // The bundle: recorded once, replayed every frame. Per kind: set pipeline, bind, one drawIndirect.
         let vis_kinds: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Vis(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
-        let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None, arg_words);
+        let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None);
         let overdraw = (aov == Aov::Overdraw).then(|| {
             let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
                 label: Some("overdraw"), color_formats: &[Some(HDR)], depth_stencil: None,
@@ -786,7 +787,7 @@ impl Loaded {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
             let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
             let scheduled = if draw_shadow { casters.as_slice() } else { &[] };
-            let bundle = draw_bundle(d, &g0s, &kinds, scheduled, &shadow_args, Some(&g1_sun), arg_words);
+            let bundle = draw_bundle(d, &g0s, &kinds, scheduled, &shadow_args, Some(&g1_sun));
             let (lo, hi) = caster_bounds(p, &casters);
             let (view_proj, texel, dir) = sun_camera(p.sun, lo, hi, side);
             let vis_t = tex(d, "sun vis", (side, side), VIS, T::RENDER_ATTACHMENT);
@@ -1066,12 +1067,13 @@ impl Loaded {
         use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
         let clock = self.clock.as_ref().ok_or("GPU timestamps are unavailable")?;
-        let depth = if deferred { 8 } else { 1 };
+        let depth: usize = if deferred { 8 } else { 1 };
         let clocks = (0..depth).map(|_| Clock::new(g, clock.n)).collect::<Vec<_>>();
-        let mut submitted = VecDeque::<(usize, u32, wgpu::SubmissionIndex, Arc<AtomicBool>)>::new();
-        let mut resolving = VecDeque::new();
+        type Submitted = (usize, u32, wgpu::SubmissionIndex, Arc<AtomicBool>);
+        let mut submitted = VecDeque::<Submitted>::new();
+        let mut resolving = VecDeque::<(usize, u32, ClockRead)>::new();
         let mut timings = Vec::new();
-        let resolve_ready = |submitted: &mut VecDeque<(_, _, _, Arc<AtomicBool>)>, resolving: &mut VecDeque<_>| {
+        let resolve_ready = |submitted: &mut VecDeque<Submitted>, resolving: &mut VecDeque<(usize, u32, ClockRead)>| {
             while submitted.front().is_some_and(|frame| frame.3.load(Ordering::Acquire)) {
                 let (serial, commands, _, _) = submitted.pop_front().expect("completed frame");
                 resolving.push_back((serial, commands, clocks[serial % depth].resolve_completed(g)));

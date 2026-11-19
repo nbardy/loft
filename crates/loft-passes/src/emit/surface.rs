@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn cached_grid(p: &Prog<'_>, query: &FnDecl, nu: u32, nv: u32) -> String {
+pub(super) fn cached_grid<'a>(p: &Prog<'a>, query: &'a FnDecl, nu: u32, nv: u32) -> String {
     let mut refs = References::default();
     let mut local = query.params.iter().skip(1).map(|p| p.name.name.as_str()).collect();
     refs.block(&query.body, &mut local);
