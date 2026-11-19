@@ -754,9 +754,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 }
                 rows_fns.push(p.fns[v]);
             }
-            "run_solver" => return Err(Diag::new(Code::E405, pd.verb.span,
-                "the checked solver has no execution lowering", "use a lowered schedule")),
-            "run_laws" | "check" => {}, // lowered together in schedule order by motion_module
+            "run_laws" | "run_solver" | "check" => {}, // Lowered to fixed-tick dispatches below.
             "orbit" => {
                 let f = |n: &str, types: &mut Vec<Ty>| -> Res<f32> {
                     let e = arg(pd, n)?;
@@ -965,6 +963,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         ev.call_fn(f, vec![], f.name.span)?;
     }
     for sample in samples{
+        if p.states.contains_key(sample.kind.as_str()) { continue; }
         let k=p.kinds.get(sample.kind.as_str()).ok_or_else(||Diag::new(Code::E602,Span::NONE,"snapshot names an unknown kind","sample the same scene revision"))?;
         let t=p.kind_index(&sample.kind);
         for (field,values) in &sample.fields{
@@ -1239,7 +1238,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     lut_words.extend(luts.iter().flat_map(|l| l.frames.iter().flatten().copied()));
     let mut priors = BTreeMap::new();
     for (name, decl) in &p.plans {
-        if let Some(prior) = plan::lower_source(decl, &mut lut_words)? {
+        if let Some(prior) = plan::lower_source(&p, decl, &mut lut_words)? {
             priors.insert((*name).to_string(), prior.header_word);
         }
     }
@@ -1275,6 +1274,19 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
+        }
+        let mut solver_tables = HashSet::new();
+        for pass in sched.passes.iter().filter(|p| p.verb.name == "run_solver") {
+            let ExprKind::Name(name) = &pass.args[0].value.kind else { unreachable!("checked solver name"); };
+            let solver = p.solvers[name.as_str()];
+            let table = &solver.table[0];
+            if p.kinds.contains_key(table.name.as_str()) || !solver_tables.insert(table.name.as_str()) {
+                return Err(Diag::new(Code::E502, table.span, "the scheduled solver state table has multiple owners",
+                    "use one scheduled solver per dedicated state table"));
+            }
+            let (entry, dispatch) = emit::solver::lower(&p, &mut types, texts.len(), solver, overrides)?;
+            texts.push((format!("{name}.advance"), entry));
+            dispatches.push(dispatch);
         }
     }
     let present = if let Some(path) = &path {

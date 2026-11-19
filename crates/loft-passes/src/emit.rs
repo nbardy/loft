@@ -5,6 +5,8 @@
 use crate::Prog;
 #[path="motion.rs"]
 mod motion;
+#[path = "solver.rs"]
+pub(crate) mod solver;
 pub use motion::motion_module;
 #[path="aov.rs"]
 mod aov;

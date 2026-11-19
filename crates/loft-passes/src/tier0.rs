@@ -468,3 +468,7 @@ fn voronoi(p: V) -> f32 {
 #[cfg(test)]
 #[path = "tier0_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "tier0/diagnostics.rs"]
+mod diagnostics;

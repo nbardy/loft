@@ -349,3 +349,250 @@ fn solver_statement<'a>(
     }
     Ok(())
 }
+
+#[derive(Clone, Copy)]
+pub(crate) enum Strategy {
+    Symmetric,
+    Colored(u32),
+}
+
+pub(crate) enum StateMemory {
+    Private,
+    Workgroup,
+}
+
+pub(crate) struct SolverConfig {
+    pub strategy: Strategy,
+    pub memory: StateMemory,
+    pub substeps: u32,
+    pub iterations: u32,
+}
+
+pub(crate) struct Distance<'a> {
+    pub field: &'a str,
+    pub endpoints: [&'a Ident; 2],
+    pub start: u32,
+    pub end: u32,
+    pub args: [&'a Expr; 4],
+}
+
+pub(crate) enum Step<'a> {
+    Statement(&'a Stmt),
+    Distance(Distance<'a>),
+}
+
+pub(crate) fn scheduled<'a>(
+    p: &Prog<'a>,
+    types: &mut Vec<Ty>,
+    decl: &'a SolverDecl,
+) -> Res<(&'a StateDecl, SolverConfig, Vec<Step<'a>>)> {
+    let mut ck = Ck::new(p, types);
+    ck.scopes.push(HashMap::new());
+    let table = p.states[decl.table[0].name.as_str()];
+    if table.home.as_ref().is_some_and(|home| home.name == "cpu") {
+        return Err(solver_error(
+            table.name.span,
+            "a GPU solver cannot write CPU state",
+        ));
+    }
+    let writes = |name: &str| {
+        decl.writes
+            .as_ref()
+            .is_some_and(|(_, fields)| fields.is_empty() || fields.iter().any(|f| f.name == name))
+    };
+    for field in &table.fields {
+        let ty = ck.resolve(&field.ty, true)?;
+        ck.bind(
+            &field.name.name,
+            Local {
+                ty,
+                mutable: writes(&field.name.name),
+                map: None,
+                span: field.name.span,
+            },
+        );
+    }
+    ck.bind(
+        "dt",
+        Local {
+            ty: Ty::F32,
+            mutable: false,
+            map: None,
+            span: decl.name.span,
+        },
+    );
+    let mut config = SolverConfig {
+        strategy: Strategy::Symmetric,
+        memory: StateMemory::Private,
+        substeps: 1,
+        iterations: 1,
+    };
+    for (key, value) in &decl.config {
+        match key.name.as_str() {
+            "strategy" => {
+                config.strategy = match &value.kind {
+                    ExprKind::Name(_) => Strategy::Symmetric,
+                    ExprKind::Call { args, .. } => Strategy::Colored(small_count(&args[0].value)?),
+                    _ => unreachable!("checked solver strategy"),
+                }
+            }
+            "substeps" => config.substeps = small_count(value)?,
+            "iters" => config.iterations = small_count(value)?,
+            "shared_mem" => {
+                config.memory = match value.kind {
+                    ExprKind::Bool(true) => StateMemory::Workgroup,
+                    ExprKind::Bool(false) => StateMemory::Private,
+                    _ => unreachable!("checked solver storage"),
+                }
+            }
+            _ => unreachable!("checked solver config"),
+        }
+    }
+    let mut steps = Vec::new();
+    for step in &decl.steps {
+        steps.push(match step {
+            SolverStep::Statement(stmt) => {
+                ck.stmt(stmt)?;
+                Step::Statement(stmt)
+            }
+            SolverStep::Constraint {
+                a,
+                b,
+                lo,
+                hi,
+                block,
+                ..
+            } => Step::Distance(distance(&mut ck, [a, b], [lo, hi], block)?),
+        });
+    }
+    Ok((table, config, steps))
+}
+
+fn solver_error(span: Span, message: &str) -> Diag {
+    Diag::new(
+        Code::E405,
+        span,
+        message,
+        "use GPU state and a bounded distance constraint",
+    )
+}
+
+fn small_count(e: &Expr) -> Res<u32> {
+    match e.kind {
+        ExprKind::Num { value, .. } if (1.0..=64.0).contains(&value) => Ok(value as u32),
+        _ => Err(solver_error(
+            e.span,
+            "solver configuration exceeds 64 steps",
+        )),
+    }
+}
+
+fn distance<'a>(
+    ck: &mut Ck<'_, '_>,
+    endpoints: [&'a Ident; 2],
+    [lo, hi]: [&Expr; 2],
+    block: &'a Block,
+) -> Res<Distance<'a>> {
+    let integer = |e: &Expr| match e.kind {
+        ExprKind::Num {
+            value,
+            float: false,
+            ..
+        } if (0.0..=4096.0).contains(&value) => Ok(value as u32),
+        _ => Err(solver_error(
+            e.span,
+            "the edge range needs bounded integer literals",
+        )),
+    };
+    let (start, end) = (integer(lo)?, integer(hi)?);
+    let unsupported = || {
+        solver_error(
+            lo.span,
+            "constrain expects solve_dist_edge(a, b, im_a, im_b, rest, alpha)",
+        )
+    };
+    let [
+        Stmt::Expr(Expr {
+            kind: ExprKind::Call { callee, args },
+            ..
+        }),
+    ] = block.stmts.as_slice()
+    else {
+        return Err(unsupported());
+    };
+    let [pa, pb, ma, mb, rest, alpha] = args.as_slice() else {
+        return Err(unsupported());
+    };
+    if callee.name != "solve_dist_edge" || args.iter().any(|arg| arg.name.is_some()) {
+        return Err(unsupported());
+    }
+    let field = |p: &'a Expr, binder: &Ident| -> Res<&'a str> {
+        if let ExprKind::Index(base, i) = &p.kind
+            && let (ExprKind::Name(f), ExprKind::Name(n)) = (&base.kind, &i.kind)
+            && *n == binder.name
+        {
+            return Ok(f);
+        }
+        Err(solver_error(
+            p.span,
+            "edge positions must index the authored endpoint binders",
+        ))
+    };
+    let f = field(&pa.value, endpoints[0])?;
+    let g = field(&pb.value, endpoints[1])?;
+    let Some(Local {
+        ty: Ty::Array(ty, count),
+        mutable,
+        ..
+    }) = ck.lookup(f)
+    else {
+        return Err(solver_error(
+            pa.value.span,
+            "edge positions require an array field",
+        ));
+    };
+    if !mutable {
+        return Err(Diag::new(
+            Code::E501,
+            pa.value.span,
+            "edge writes outside the solver's writes set",
+            "declare the point array in writes",
+        ));
+    }
+    if f != g || !matches!(ty.as_ref(), Ty::Geo(Geo::Pt, _)) || start >= end || end >= *count {
+        return Err(Diag::new(
+            Code::E503,
+            lo.span,
+            "adjacent edges must fit in one point array",
+            "use a nonempty half-open range of left endpoints with a successor in the array",
+        ));
+    }
+    let args = [ma, mb, rest, alpha].map(|arg| &arg.value);
+    ck.scopes.push(HashMap::new());
+    for binder in endpoints {
+        ck.bind(
+            &binder.name,
+            Local {
+                ty: Ty::U32,
+                mutable: false,
+                map: None,
+                span: binder.span,
+            },
+        );
+    }
+    for arg in args {
+        let ty = ck.expr(arg)?;
+        ck.assignable(&ty, &Ty::F32, arg.span)?;
+        if ty == Ty::AbstractInt {
+            ck.set(arg, Ty::F32);
+        }
+    }
+    ck.scopes.pop();
+    Ok(Distance {
+        field: f,
+        endpoints,
+        start,
+        end,
+        args,
+    })
+}

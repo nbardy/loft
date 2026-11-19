@@ -27,6 +27,7 @@ pub struct PreparedEdit {
     pub shader: String,
     /// Replacement hidden columns and culling entries, in the kind's row order.
     pub bounds: Vec<Instance>,
+    pub local_bounds: Vec<[[f32; 3]; 2]>,
     pub lips: Vec<f32>,
     pub parse_check: Duration,
     pub bounds_lowering: Duration,
@@ -270,9 +271,9 @@ impl TraceSource {
         let parse_check = start.elapsed();
         let mark = Instant::now();
         let tape = lower_trace(&p, &types, &kind, &self.certificates)?;
-        let (bounds, lips) = self.bounds(&p, &types, &kind, &tape, overrides)?;
+        let (bounds, local_bounds, lips) = self.bounds(&p, &types, &kind, &tape, overrides)?;
         let (light, luts) = render_inputs(&self.compiled, &p)?;
-        let shader = emit::kind_module(
+        let shader = device_shader(emit::kind_module(
             &p,
             &types,
             &kind,
@@ -280,11 +281,12 @@ impl TraceSource {
             &luts,
             Draw::Traced,
             emit::Aov::Beauty,
-        )?;
+        )?);
         Ok(PreparedEdit {
             tape,
             shader,
             bounds,
+            local_bounds,
             lips,
             parse_check,
             bounds_lowering: mark.elapsed(),
@@ -298,7 +300,7 @@ impl TraceSource {
         kind: &KindDecl,
         tape: &TraceEdit,
         overrides: &[(String, f64)],
-    ) -> Res<(Vec<Instance>, Vec<f32>)> {
+    ) -> Res<(Vec<Instance>, Vec<[[f32; 3]; 2]>, Vec<f32>)> {
         let (table, _) = &self.compiled.drawn[self.kind];
         let rows = &self.compiled.tables[*table];
         let span = kind.name.span;
@@ -308,10 +310,11 @@ impl TraceSource {
         let mut derived: Vec<(Vec<&RowVal>, lip::Derived)> = Vec::new();
         let mut instances = Vec::with_capacity(rows.len());
         let mut lips = Vec::with_capacity(rows.len());
+        let mut local_bounds = Vec::with_capacity(rows.len());
         for (r, row) in rows.iter().enumerate() {
             let key = fields.iter().map(|&field| &row[field]).collect::<Vec<_>>();
-            let sphere = sphere_bound(tape, row);
-            let d = if let Some(d) = &sphere {
+            let primitive = primitive_bound(tape, row);
+            let d = if let Some(d) = &primitive {
                 d
             } else if let Some(i) = derived.iter().position(|(k, _)| *k == key) {
                 &derived[i].1
@@ -350,16 +353,16 @@ impl TraceSource {
                 kind: self.kind as u32,
                 row: r as u32,
             });
+            // Marching reads local coordinates. Only the culling table uses
+            // the transformed AABB.
+            local_bounds.push([d.lo, d.hi].map(|v| v.map(|x| x as f32)));
             lips.push(d.l as f32);
         }
-        Ok((instances, lips))
+        Ok((instances, local_bounds, lips))
     }
 }
 
-fn sphere_bound(tape: &TraceEdit, row: &[RowVal]) -> Option<lip::Derived> {
-    let Residual::Sphere { center, radius } = tape.residual else {
-        return None;
-    };
+fn primitive_bound(tape: &TraceEdit, row: &[RowVal]) -> Option<lip::Derived> {
     let load = |op| match op {
         Operand::Zero => Some([0.; 4]),
         Operand::Constant(i) => Some(tape.constants[usize::from(i)]),
@@ -372,16 +375,22 @@ fn sphere_bound(tape: &TraceEdit, row: &[RowVal]) -> Option<lip::Derived> {
         },
         Operand::Frame(_) => None,
     };
-    let c = load(center)?;
-    let r = f64::from(load(radius)?[0]);
-    if !(0.0..=1.25).contains(&r) || r == 0.0 {
+    let (c, half) = match tape.residual {
+        Residual::Tape => return None,
+        Residual::Sphere { center, radius } => (load(center)?, [load(radius)?[0]; 3]),
+        Residual::Box { center, half } => {
+            let [x, y, z, _] = load(half)?;
+            (load(center)?, [x, y, z])
+        }
+    };
+    if !half.iter().all(|r| (0.0..=1.25).contains(r) && *r != 0.0) {
         return None;
     }
-    // Match the interval prover's leaf grid for short spheres. Rounding
-    // outward preserves the proxy and march's start at the edited silhouette.
-    let round = |x: f64| (x / lip::CELL).ceil() * lip::CELL;
-    let mut lo = std::array::from_fn(|i| -round(r - f64::from(c[i])));
-    let mut hi = std::array::from_fn(|i| round(f64::from(c[i]) + r));
+    // Use the interval prover's leaf grid, including cells that touch a
+    // zero exactly on their face. Small certified primitives have L=1.
+    let round = |x: f64| ((x / lip::CELL).floor() + 1.0) * lip::CELL;
+    let mut lo = std::array::from_fn(|i| -round(f64::from(half[i]) - f64::from(c[i])));
+    let mut hi = std::array::from_fn(|i| round(f64::from(c[i]) + f64::from(half[i])));
     for (lo, hi) in lo.iter_mut().zip(&mut hi) {
         if lo.abs().max(hi.abs()) >= lip::REACH {
             return None;
@@ -407,7 +416,7 @@ fn light<'a>(p: &Prog<'a>) -> Res<&'a str> {
 }
 
 fn render_inputs<'a>(compiled: &Compiled, p: &Prog<'a>) -> Res<(&'a str, Vec<emit::LutRef>)> {
-    let mut offset = 0;
+    let mut offset = crate::gltf::words(&compiled.meshes).len().div_ceil(12) as u32;
     let luts = compiled
         .luts
         .iter()
@@ -435,7 +444,7 @@ pub(super) fn render_shader(
 ) -> Res<String> {
     let (light, luts) = render_inputs(compiled, p)?;
     let edit = shader_queries(p, kind, tape)?;
-    emit::kind_module_edit(
+    Ok(device_shader(emit::kind_module_edit(
         p,
         &compiled.types,
         kind,
@@ -444,7 +453,18 @@ pub(super) fn render_shader(
         Draw::Traced,
         emit::Aov::Beauty,
         &edit,
-    )
+    )?))
+}
+
+fn device_shader(wgsl: String) -> String {
+    let mut text = crate::quant::wgsl_prelude(&wgsl, loft_ir::GpuFeatures::empty());
+    if wgsl.contains("loft_ggx_energy(") {
+        let table = wgsl.contains("var<storage, read> luts:").then_some("luts");
+        text.push_str(&crate::bsdf::energy_wgsl(table));
+    }
+    text.push_str(&wgsl);
+    // These paths go straight to wgpu, bypassing compile's provenance map.
+    crate::provenance::Map::new(text).shader
 }
 
 fn body_range(nodes: &[Node], text: &str, name: Span) -> Option<Range<usize>> {

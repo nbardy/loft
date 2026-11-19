@@ -6,6 +6,7 @@ use loft_plan::{Hold, Objective, Plan};
 use std::collections::{BTreeMap, HashSet};
 
 use super::PriorRef;
+use crate::Prog;
 
 fn invalid(span: Span, message: &str) -> Diag {
     Diag::new(
@@ -161,13 +162,87 @@ pub(crate) fn check_source(plan: &PlanDecl) -> Res<()> {
     Ok(())
 }
 
-type Defaults<'a> = BTreeMap<&'a str, f64>;
+enum Asset {
+    Scalar(f64),
+    Spline(Vec<[f64; 3]>),
+    Box { center: [f64; 3], half: [f64; 3] },
+    Surface { height: f64, velocity: [f64; 3] },
+}
+
+type Defaults<'a> = BTreeMap<&'a str, Asset>;
+
+fn asset_args<'a>(e: &'a Expr, ctor: &str) -> Res<&'a [Arg]> {
+    match &e.kind {
+        ExprKind::Call { callee, args } if callee.name == ctor => Ok(args),
+        _ => Err(invalid(
+            e.span,
+            &format!("expected {ctor}(...) for this plan input"),
+        )),
+    }
+}
+
+fn asset(e: &Expr, ty: &TyExpr, defaults: &Defaults<'_>) -> Res<Asset> {
+    let name = match ty {
+        TyExpr::Name(name) => name.name.as_str(),
+        _ => return Err(invalid(ty.span(), "expected a scalar or plan asset type")),
+    };
+    Ok(match name {
+        "PriorSpline" => {
+            let args = asset_args(e, name)?;
+            if args.len() < 4 || args.iter().any(|arg| arg.name.is_some()) {
+                return Err(invalid(
+                    e.span,
+                    "a prior spline needs at least four control points",
+                ));
+            }
+            Asset::Spline(
+                args.iter()
+                    .map(|arg| vector(&arg.value, defaults))
+                    .collect::<Res<_>>()?,
+            )
+        }
+        "Box" => {
+            let [center, half] = bind(["center", "half"], 2, asset_args(e, name)?, e.span)?;
+            Asset::Box {
+                center: vector(center.unwrap(), defaults)?,
+                half: vector(half.unwrap(), defaults)?,
+            }
+        }
+        "SurfaceRow" => {
+            let [height, velocity] = bind(["height", "velocity"], 2, asset_args(e, name)?, e.span)?;
+            Asset::Surface {
+                height: scalar(height.unwrap(), defaults)?,
+                velocity: vector(velocity.unwrap(), defaults)?,
+            }
+        }
+        "m" | "s" | "f" | "f32" | "rad" => Asset::Scalar(scalar(e, defaults)?),
+        _ => return Err(invalid(ty.span(), "unknown plan input type")),
+    })
+}
+
+fn named_asset<'a>(e: &Expr, defaults: &'a Defaults<'_>) -> Res<&'a Asset> {
+    match &e.kind {
+        ExprKind::Name(name) => defaults.get(name.as_str()),
+        _ => None,
+    }
+    .ok_or_else(|| invalid(e.span, "expected a named plan asset parameter"))
+}
+
+pub(crate) fn closed(p: &Prog<'_>, plan: &PlanDecl) -> bool {
+    plan.params.iter().all(|param| {
+        param.default.is_some()
+            || p.consts
+                .get(param.name.name.as_str())
+                .is_some_and(|c| c.comptime)
+    })
+}
 
 fn scalar(e: &Expr, defaults: &Defaults<'_>) -> Res<f64> {
     let value = match &e.kind {
-        ExprKind::Name(name) => *defaults
-            .get(name.as_str())
-            .ok_or_else(|| invalid(e.span, "unbound plan scalar"))?,
+        ExprKind::Name(_) => match named_asset(e, defaults)? {
+            Asset::Scalar(value) => *value,
+            _ => return Err(invalid(e.span, "expected a scalar plan parameter")),
+        },
         ExprKind::Num {
             value,
             suffix: NumSuffix::Deg,
@@ -207,26 +282,23 @@ fn vector(e: &Expr, defaults: &Defaults<'_>) -> Res<[f64; 3]> {
     Err(invalid(e.span, "expected a three-component plan vector"))
 }
 
-fn needs_input(e: &Expr) -> Diag {
-    Diag::new(
-        Code::E405,
-        e.span,
-        "plan asset input has no Stage 0 value binding",
-        "supply spline, box and surface values at a lowered plan call",
-    )
-}
-
-pub(crate) fn lower_source(decl: &PlanDecl, words: &mut Vec<f32>) -> Res<Option<PriorRef>> {
-    if decl.params.iter().any(|p| p.default.is_none()) {
+pub(crate) fn lower_source(
+    p: &Prog<'_>,
+    decl: &PlanDecl,
+    words: &mut Vec<f32>,
+) -> Res<Option<PriorRef>> {
+    if !closed(p, decl) {
         // An uninstantiated template has no curve or Truth verdict yet.
         return Ok(None);
     }
     let mut defaults = Defaults::new();
-    for p in &decl.params {
-        defaults.insert(
-            &p.name.name,
-            scalar(p.default.as_ref().unwrap(), &defaults)?,
-        );
+    for param in &decl.params {
+        let name = param.name.name.as_str();
+        let value = param
+            .default
+            .as_ref()
+            .unwrap_or_else(|| &p.consts[name].value);
+        defaults.insert(name, asset(value, &param.ty, &defaults)?);
     }
     let (_, duration) = decl
         .horizon
@@ -248,10 +320,18 @@ pub(crate) fn lower_source(decl: &PlanDecl, words: &mut Vec<f32>) -> Res<Option<
             Weight::Effort(w) => Objective::Effort(num(w)?),
             Weight::Jerk(w) => Objective::Jerk(num(w)?),
             Weight::Near(spline, weights) => {
-                for w in weights.into_iter().flatten() {
-                    num(w)?;
+                let Asset::Spline(controls) = named_asset(spline, &defaults)? else {
+                    return Err(invalid(spline.span, "near requires a PriorSpline"));
+                };
+                let [pos, vel, acc] = weights;
+                Objective::Near {
+                    controls,
+                    weights: [
+                        num(pos.unwrap())?,
+                        vel.map(num).transpose()?.unwrap_or(0.0),
+                        acc.map(num).transpose()?.unwrap_or(0.0),
+                    ],
                 }
-                return Err(needs_input(spline));
             }
         });
     }
@@ -285,9 +365,25 @@ pub(crate) fn lower_source(decl: &PlanDecl, words: &mut Vec<f32>) -> Res<Option<
                 flight = Some([num(a)?, num(b)?]);
                 continue;
             }
-            Constraint::Clearance(b, m) | Constraint::Landing(b, m) => {
-                num(m)?;
-                return Err(needs_input(b));
+            Constraint::Clearance(b, margin) => {
+                let Asset::Box { center, half } = named_asset(b, &defaults)? else {
+                    return Err(invalid(b.span, "clear requires a Box"));
+                };
+                Hold::Clear {
+                    center: *center,
+                    half: *half,
+                    margin: num(margin)?,
+                }
+            }
+            Constraint::Landing(surface, time) => {
+                let Asset::Surface { height, velocity } = named_asset(surface, &defaults)? else {
+                    return Err(invalid(surface.span, "land_on requires a SurfaceRow"));
+                };
+                Hold::LandOn {
+                    time: num(time)?,
+                    height: *height,
+                    surface_velocity: *velocity,
+                }
             }
         });
     }
@@ -311,4 +407,56 @@ pub(crate) fn lower_source(decl: &PlanDecl, words: &mut Vec<f32>) -> Res<Option<
             "reduce the number of baked tables",
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use loft_abi::VerdictTag;
+
+    #[test]
+    fn authored_hop_binds_assets_and_retains_the_crouch() {
+        let text = r"
+plan HeronHop(
+  keys: PriorSpline = PriorSpline([0, 0.85m, 0]@World, [0, 0.26m, 0]@World,
+                                  [0, 1.62m, 0]@World, [0, 0.85m, 0]@World),
+  rail: Box = Box([2.0m, 0, 0]@World, [0.1m, 0.3m, 0.1m]),
+  block: SurfaceRow = SurfaceRow(0.85m, [0, 0, 0]),
+  dur: s = 2.4s
+) -> PriorTable {
+  knots: 24, duration: dur
+  minimize effort(1.0) + jerk(0.25) + near(keys, pos: 1e-8)
+  subject_to {
+    pos_at(0s, [0, 0.85m, 0]@World, tol: 0m)
+    vel_at(0s, [0, 0, 0]@World, tol: 0m)
+    acc_at(0s, [0, 0, 0]@World)
+    arrive_at(0.770112s, [0, 0.85m, 0]@World, [0, 3.876, 0]@World)
+    acc_at(0.7701119999999999s, [0, 0, 0]@World)
+    clear(rail, margin: 0.08m)
+    land_on(block, at: dur)
+    pitch_in(-12deg, 12deg)
+    flight_ballistic(from: 0.770112s, to: 1.550112s)
+  }
+}";
+        let module = loft_parse::parse(0, text, &mut 0).unwrap();
+        let p = Prog::index(std::slice::from_ref(&module)).unwrap();
+        let mut words = Vec::new();
+        let prior = lower_source(&p, p.plans["HeronHop"], &mut words)
+            .unwrap()
+            .unwrap();
+        assert_eq!(prior.verdict.tag, VerdictTag::Held as u32);
+        let min = (0..=1200)
+            .map(|i| {
+                super::super::sample_prior_cpu(
+                    &words,
+                    prior.header_word,
+                    0.770112 * i as f32 / 1200.0,
+                )
+                .unwrap()[0][1]
+            })
+            .fold(f32::INFINITY, f32::min);
+        let depth = 0.85 - min;
+        println!("authored HeronHop crouch {depth:.9} m");
+        assert!((depth - 0.59).abs() < 0.005);
+    }
 }

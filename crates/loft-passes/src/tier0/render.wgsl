@@ -25,33 +25,41 @@ fn tier_operand(ctx: TierContext, word: u32) -> vec4f {
         default: { return vec4f(bitcast<f32>(0x7fc00000u)); }
     }
 }
-fn tier_sphere_operands(ctx: TierContext) -> vec4f {
-    return vec4f(tier_operand(ctx, 2u).xyz, tier_operand(ctx, 4u).x);
+struct TierShape { center: vec3f, extent: vec3f }
+fn tier_shape(ctx: TierContext) -> TierShape {
+    return TierShape(tier_operand(ctx, 2u).xyz, tier_operand(ctx, 4u).xyz);
 }
 
 fn q_trace(row: Row, point: vec3f) -> f32 {
     let base = kp.n_rows * STRIDE;
     let ctx = tier_stage(row, base);
-    // The mode is shared by the entire dirty kind.
-    if bitcast<u32>(rows[base + 1u]) == 42u {
-        let sphere = tier_sphere_operands(ctx);
-        return tier_sphere(point - sphere.xyz, sphere.w);
+    switch bitcast<u32>(rows[base + 1u]) {
+        case 42u: {
+            let shape = tier_shape(ctx);
+            return tier_sphere(point - shape.center, shape.extent.x);
+        }
+        case 43u: {
+            let shape = tier_shape(ctx);
+            return tier_box(point - shape.center, shape.extent);
+        }
+        default: { return tier_eval(ctx, point).x; }
     }
-    return tier_eval(ctx, point).x;
 }
 fn loft_edit_march(row: Row, ro: vec3f, rd: vec3f, span: vec2f) -> f32 {
     let base = kp.n_rows * STRIDE;
     let ctx = tier_stage(row, base);
-    if bitcast<u32>(rows[base + 1u]) == 42u {
-        return tier_march_sphere(tier_sphere_operands(ctx), ro, rd, span, row.loft_lip);
+    switch bitcast<u32>(rows[base + 1u]) {
+        case 42u: { return tier_march_sphere(tier_shape(ctx), ro, rd, span, row.loft_lip); }
+        case 43u: { return tier_march_box(tier_shape(ctx), ro, rd, span, row.loft_lip); }
+        default: { return tier_march_tape(ctx, ro, rd, span, row.loft_lip); }
     }
-    return tier_march_tape(ctx, ro, rd, span, row.loft_lip);
 }
 fn loft_edit_normal_ao(row: Row, p: vec3f, t: f32) -> vec4f {
     let base = kp.n_rows * STRIDE;
     let ctx = tier_stage(row, base);
-    if bitcast<u32>(rows[base + 1u]) == 42u {
-        return tier_shade_sphere(tier_sphere_operands(ctx), p, t);
+    switch bitcast<u32>(rows[base + 1u]) {
+        case 42u: { return tier_shade_sphere(tier_shape(ctx), p, t); }
+        case 43u: { return tier_shade_box(tier_shape(ctx), p, t); }
+        default: { return tier_shade_tape(ctx, p, t); }
     }
-    return tier_shade_tape(ctx, p, t);
 }

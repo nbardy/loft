@@ -10,7 +10,8 @@ use std::{
 };
 
 const SIZE: (u32, u32) = (1280, 800);
-const TIMING_FRAMES: usize = 12;
+const TIMING_FRAMES: usize = 120;
+const WARMUP_FRAMES: usize = 12;
 
 pub fn edited_still(
     base: &Path,
@@ -129,7 +130,6 @@ pub fn edited_still(
             "GPU p95 Tier 0 {a:.6} ms, Tier 1 {b:.6} ms, overhead {:.6} ms",
             a - b
         );
-        println!("GPU frames Tier 0 {timing:?}, Tier 1 {promoted:?}");
         let paired = session
             .measure_paired(&gpu, t, TIMING_FRAMES)
             .map_err(Failure::Device)?;
@@ -140,7 +140,8 @@ pub fn edited_still(
         let delta: Vec<_> = paired.iter().map(|[a, b]| a - b).collect();
         if !delta.is_empty() {
             println!(
-                "paired GPU frames {paired:?}, paired p95 overhead {:.6} ms",
+                "{} paired GPU frames, paired p95 overhead {:.6} ms",
+                paired.len(),
                 quantile(&delta, 0.95)
             );
         }
@@ -156,9 +157,11 @@ pub fn edited_still(
 
 fn timed_frames(loaded: &Loaded, gpu: &Gpu, t: f32) -> Result<Vec<f64>, Failure> {
     let mut samples = Vec::new();
-    for _ in 0..TIMING_FRAMES {
+    for i in 0..WARMUP_FRAMES + TIMING_FRAMES {
         loaded.frame(gpu, t);
-        if let Some((ms, _)) = loaded.gpu_ms(gpu).map_err(Failure::Device)? {
+        if let Some((ms, _)) = loaded.gpu_ms(gpu).map_err(Failure::Device)?
+            && i >= WARMUP_FRAMES
+        {
             samples.push(ms);
         }
     }
@@ -244,7 +247,7 @@ mod tests {
             .prepare(&edited, &[])
             .unwrap_or_else(|d| panic!("{}", d.render(&edited)));
         assert_eq!(structural.class(&literal.tape), EditClass::StructuralTape);
-        assert!(structural.tape.describe().starts_with("Tape"));
+        assert!(structural.tape.describe().starts_with("Box"));
         println!("generation 2 {}", structural.tape.describe());
         let edited_loop = crate::sources(&fixture.join("loop.loft")).unwrap();
         let loop_edit = session

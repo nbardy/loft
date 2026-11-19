@@ -36,53 +36,103 @@ impl Operand {
 pub(super) enum Residual {
     Tape,
     Sphere { center: Operand, radius: Operand },
+    Box { center: Operand, half: Operand },
+}
+
+#[derive(Clone, Copy)]
+enum Value {
+    Unknown,
+    Uniform(Operand),
+    Point(Operand),
+    Distance(Residual),
 }
 
 impl Residual {
-    fn from_code(code: &[Instruction]) -> Self {
-        let get = |i: u32| &code[i as usize];
-        let input = |i| get(i).op == Op::LoadInput;
-        let operand = |i| {
-            let ins = get(i);
-            match ins.op {
-                Op::LoadConst => Some(Operand::Constant(ins.imm)),
-                Op::LoadRow => Some(Operand::Row(ins.imm)),
-                Op::LoadFrame => Some(Operand::Frame(ins.imm)),
+    fn from_code(code: &[Instruction], constants: &mut Vec<[f32; 4]>) -> Self {
+        let mut values = vec![Value::Unknown; code.len()];
+        let mut loops = Vec::<(usize, u32)>::new();
+        let mut pc = 0;
+        // Only values proved independent of both the sample position and the
+        // row/frame data can be folded. The original tape still records loops.
+        while let Some(ins) = code.get(pc) {
+            let [a, b, _] = ins.args.map(|i| values[i as usize]);
+            let constant = |v| match v {
+                Value::Uniform(Operand::Constant(i)) => Some(constants[usize::from(i)]),
                 _ => None,
-            }
-        };
-        if code
-            .iter()
-            .enumerate()
-            .any(|(i, instruction)| instruction.dst != i as u32)
-        {
-            return Self::Tape;
+            };
+            let value = match (ins.op, a, b) {
+                (Op::LoadConst, ..) => Value::Uniform(Operand::Constant(ins.imm)),
+                (Op::LoadRow, ..) => Value::Uniform(Operand::Row(ins.imm)),
+                (Op::LoadFrame, ..) => Value::Uniform(Operand::Frame(ins.imm)),
+                (Op::LoadInput, ..) => Value::Point(Operand::Zero),
+                (Op::Mov, a, _) => a,
+                (Op::Sub, Value::Point(Operand::Zero), Value::Uniform(center)) => {
+                    Value::Point(center)
+                }
+                (Op::SdSphere, Value::Point(center), Value::Uniform(radius)) => {
+                    Value::Distance(Self::Sphere { center, radius })
+                }
+                (Op::SdBox, Value::Point(center), Value::Uniform(half)) => {
+                    Value::Distance(Self::Box { center, half })
+                }
+                (Op::Ret, Value::Distance(residual), _) => return residual,
+                (Op::Ret, ..) => return Self::Tape,
+                (Op::LoopBegin, a, _) => {
+                    let Some(trips) = constant(a) else {
+                        return Self::Tape;
+                    };
+                    loops.push((pc, trips[0] as u32));
+                    Value::Unknown
+                }
+                (Op::LoopEnd, ..) => {
+                    let Some((start, trips)) = loops.last_mut() else {
+                        return Self::Tape;
+                    };
+                    *trips -= 1;
+                    if *trips != 0 {
+                        pc = *start + 1;
+                        continue;
+                    }
+                    loops.pop();
+                    Value::Unknown
+                }
+                (op @ (Op::Add | Op::Sub | Op::Mul | Op::Div), a, b) => {
+                    match (constant(a), constant(b)) {
+                        (Some(a), Some(b)) => {
+                            let v = std::array::from_fn(|i| match op {
+                                Op::Add => a[i] + b[i],
+                                Op::Sub => a[i] - b[i],
+                                Op::Mul => a[i] * b[i],
+                                Op::Div => a[i] / b[i],
+                                _ => unreachable!("classified arithmetic"),
+                            });
+                            if constants.len() == CONSTANTS || !v.into_iter().all(f32::is_finite) {
+                                return Self::Tape;
+                            }
+                            let slot = constants.len() as u16;
+                            constants.push(v);
+                            Value::Uniform(Operand::Constant(slot))
+                        }
+                        _ => Value::Unknown,
+                    }
+                }
+                _ => Value::Unknown,
+            };
+            values[ins.dst as usize] = value;
+            pc += 1;
         }
-        let out = get(code.last().expect("lowered return").args[0]);
-        if out.op != Op::SdSphere {
-            return Self::Tape;
-        }
-        let point = get(out.args[0]);
-        let center = match point.op {
-            Op::LoadInput => Some(Operand::Zero),
-            Op::Sub if input(point.args[0]) => operand(point.args[1]),
-            _ => None,
-        };
-        match (center, operand(out.args[1])) {
-            (Some(center), Some(radius)) => Self::Sphere { center, radius },
-            _ => Self::Tape,
-        }
+        Self::Tape
     }
 
     fn encode(self) -> [u32; 5] {
-        match self {
-            Self::Tape => [0; 5],
-            Self::Sphere { center, radius } => {
-                let [ck, cs] = center.encode();
-                let [rk, rs] = radius.encode();
-                [Op::SdSphere as u32, ck, cs, rk, rs]
-            }
-        }
+        let (op, center, extent) = match self {
+            Self::Tape => return [0; 5],
+            Self::Sphere { center, radius } => (Op::SdSphere, center, radius),
+            Self::Box { center, half } => (Op::SdBox, center, half),
+        };
+        let [ck, cs] = center.encode();
+        let [ek, es] = extent.encode();
+        [op as u32, ck, cs, ek, es]
     }
 }
 
@@ -231,7 +281,7 @@ pub(super) fn lower_trace(
     let point_reg = lower.push(Op::LoadInput, &[], 0, point.name.span)?;
     let out = lower.function(f, BTreeMap::from([(point.name.name.as_str(), point_reg)]))?;
     lower.push(Op::Ret, &[out], 0, f.name.span)?;
-    let residual = Residual::from_code(&lower.code);
+    let residual = Residual::from_code(&lower.code, &mut lower.constants);
     let words = allocate(&lower.code).map_err(|err| {
         Diag::new(
             Code::E602,
@@ -280,8 +330,13 @@ pub(super) fn shader_queries(prog: &Prog<'_>, kind: &KindDecl, tape: &TraceEdit)
     for (suffix, arg, eval) in [
         (
             "sphere",
-            "sphere: vec4f",
-            "tier_sphere({point} - sphere.xyz, sphere.w)",
+            "shape: TierShape",
+            "tier_sphere({point} - shape.center, shape.extent.x)",
+        ),
+        (
+            "box",
+            "shape: TierShape",
+            "tier_box({point} - shape.center, shape.extent)",
         ),
         ("tape", "ctx: TierContext", "tier_eval(ctx, {point}).x"),
     ] {

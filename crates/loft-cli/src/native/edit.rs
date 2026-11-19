@@ -188,17 +188,9 @@ impl TraceSession {
         let tape_writes = changed_ranges(&self.tape.bytes(), &tape);
         let dirty_columns = self.stride - abi::HIDDEN_WORDS as usize;
         let mut row_patches = Vec::new();
-        for (i, (bound, lip)) in next.bounds.iter().zip(&next.lips).enumerate() {
+        for (i, ([lo, hi], lip)) in next.local_bounds.iter().zip(&next.lips).enumerate() {
             let begin = i * self.stride + dirty_columns;
-            let words = [
-                bound.lo[0],
-                bound.lo[1],
-                bound.lo[2],
-                bound.hi[0],
-                bound.hi[1],
-                bound.hi[2],
-                *lip,
-            ];
+            let words = [lo[0], lo[1], lo[2], hi[0], hi[1], hi[2], *lip];
             if self.rows[begin..begin + words.len()]
                 .iter()
                 .map(|w| w.to_bits())
