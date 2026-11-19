@@ -241,6 +241,7 @@ pub struct Loft {
     params: Vec<f32>,
     inputs: Vec<f32>,
     timestamps: Option<wgpu::QuerySet>,
+    frame_dispatches: usize,
 }
 
 pub(crate) fn prelude(m: &Module, p: Precision) -> &'static str {
@@ -768,6 +769,7 @@ impl Loft {
             params,
             inputs,
             timestamps: None,
+            frame_dispatches: 0,
             b,
         };
         loft.res = (0..loft.b.resources.len()).map(|r| loft.resource(device, r)).collect();
@@ -1051,6 +1053,11 @@ impl Loft {
         [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()]
     }
 
+    /// Frame-rate kernels dispatched in the most recent encode, excluding lens and step passes.
+    pub fn frame_dispatches(&self) -> usize {
+        self.frame_dispatches
+    }
+
     pub fn precision(&self) -> Precision {
         self.precision
     }
@@ -1177,7 +1184,9 @@ impl Loft {
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
         self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame]);
-        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
+        let kernels = self.frame_kernels();
+        self.frame_dispatches = kernels.len();
+        self.dispatch_all(enc, &kernels, self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
             let Keep::Latest = st.s.keep else { continue };
