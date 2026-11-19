@@ -1,0 +1,6 @@
+build {
+  let glb = import_gltf("anchor.glb")
+  build for i in 0..20 {
+    emit Mesh(pose: place([i * 2m, 0m, 0m]@World), asset: glb.mesh("Anchor"))
+  }
+}

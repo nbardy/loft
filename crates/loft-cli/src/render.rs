@@ -4,20 +4,12 @@ use loft_cli::native::{self, Gpu, Loaded};
 use loft_passes::emit::Aov;
 use std::{path::{Path, PathBuf}, process::Command, time::Instant};
 
-#[derive(Clone, Copy)]
-pub(crate) enum Output {
-    Still,
-    Clip,
-}
-
 struct Options {
     scene: PathBuf,
     out: PathBuf,
     size: (u32, u32),
     samples: u32,
     start: f32,
-    frames: u32,
-    fps: f32,
     aov: Aov,
     engine: Option<String>,
     live: Vec<(String, f32)>,
@@ -27,7 +19,7 @@ struct Options {
 }
 
 impl Options {
-    fn read(args: &[String], output: Output) -> Result<Self, Failure> {
+    fn read(args: &[String]) -> Result<Self, Failure> {
         let mut args = args.to_vec();
         let required = |value: Option<String>, opt: &str| value.ok_or_else(|| Failure::Usage(format!("{opt} is required")));
         let out = PathBuf::from(required(flag(&mut args, "--out")?, "--out")?);
@@ -51,30 +43,17 @@ impl Options {
         }
         let max_build = flag(&mut args, "--max-build-ms")?.map(|v| finite(v, "--max-build-ms")).transpose()?;
         let max_frame = flag(&mut args, "--max-frame-ms")?.map(|v| finite(v, "--max-frame-ms")).transpose()?;
-        let (start, frames, fps) = match output {
-            Output::Still => {
-                let time = flag(&mut args, "--time")?.map_or(Ok(0.), |v| finite(v, "--time"))?;
-                (time as f32, 1, 1.)
-            }
-            Output::Clip => {
-                let start = flag(&mut args, "--start")?.map_or(Ok(0.), |v| finite(v, "--start"))?;
-                let frames = required(flag(&mut args, "--frames")?, "--frames")?;
-                let frames = positive(&frames).ok_or_else(|| Failure::Usage("--frames requires a positive count".into()))?;
-                let fps = finite(required(flag(&mut args, "--fps")?, "--fps")?, "--fps")? as f32;
-                if fps <= 0.0 || !fps.is_finite() { return Err(Failure::Usage("--fps requires a positive finite rate".into())); }
-                (start as f32, frames, fps)
-            }
-        };
+        let start = flag(&mut args, "--time")?.map_or(Ok(0.), |v| finite(v, "--time"))? as f32;
         let [scene] = args.as_slice() else { return Err(Failure::Usage("supply one scene and the output options".into())); };
-        if scene.starts_with('-') || !start.is_finite() || !(start + (frames - 1) as f32 / fps).is_finite() {
+        if scene.starts_with('-') || !start.is_finite() {
             return Err(Failure::Usage("expected a scene path and finite frame times".into()));
         }
-        Ok(Self { scene: scene.into(), out, size, samples, start, frames, fps, aov, engine, live, view, max_build, max_frame })
+        Ok(Self { scene: scene.into(), out, size, samples, start, aov, engine, live, view, max_build, max_frame })
     }
 }
 
-pub(crate) fn run(args: &[String], set: &[(String, f64)], output: Output) -> Result<(), Failure> {
-    let opts = Options::read(args, output)?;
+pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure> {
+    let opts = Options::read(args)?;
     let began = Instant::now();
     let mut src = sources(&opts.scene).map_err(Failure::Usage)?;
     if let Some(engine) = &opts.engine {
@@ -109,10 +88,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], output: Output) -> Res
     if let Some(ms) = loaded.stats.load_bake_gpu_ms {
         println!("load bake and mips {ms:.3} ms GPU, {} dispatches", loaded.stats.load_bake_commands);
     }
-    match output {
-        Output::Still => still(&g, &loaded, &opts),
-        Output::Clip => clip(&g, &loaded, &opts),
-    }
+    still(&g, &loaded, &opts)
 }
 
 fn frame(g: &Gpu, loaded: &Loaded, opts: &Options, t: f32) -> Result<(Vec<u8>, Option<f64>), Failure> {
@@ -140,30 +116,6 @@ fn still(g: &Gpu, loaded: &Loaded, opts: &Options) -> Result<(), Failure> {
     }
 }
 
-fn clip(g: &Gpu, loaded: &Loaded, opts: &Options) -> Result<(), Failure> {
-    let video = opts.out.extension().is_some_and(|s| s == "mp4");
-    let temp = video.then(tempfile::tempdir).transpose().map_err(|e| Failure::Usage(e.to_string()))?;
-    let dir = temp.as_ref().map_or(opts.out.as_path(), tempfile::TempDir::path);
-    let mut times = Vec::new();
-    for i in 0..opts.frames {
-        let (pixels, ms) = frame(g, loaded, opts, opts.start + i as f32 / opts.fps)?;
-        let path = dir.join(format!("{i:06}.png"));
-        write_png(&path, opts.size, &pixels).map_err(Failure::Usage)?;
-        if let Some(ms) = ms { times.push(ms); }
-    }
-    if let Some(limit) = opts.max_frame {
-        times.sort_by(f64::total_cmp);
-        budget::measured(times[(times.len() * 95).div_ceil(100) - 1], limit)?;
-    }
-    if video {
-        create_parent(&opts.out)?;
-        ffmpeg(Command::new("ffmpeg").args(["-y", "-v", "error", "-framerate", &opts.fps.to_string(), "-i"])
-            .arg(dir.join("%06d.png")).args(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-pix_fmt", "yuv420p",
-                "-c:v", "libsvtav1", "-preset", "10", "-crf", "42"]).arg(&opts.out))?;
-    }
-    Ok(())
-}
-
 fn create_parent(path: &Path) -> Result<(), Failure> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         std::fs::create_dir_all(parent).map_err(|e| Failure::Usage(e.to_string()))?;
@@ -183,12 +135,8 @@ fn ffmpeg(cmd: &mut Command) -> Result<(), Failure> {
 mod tests {
     use super::*;
     #[test]
-    fn still_and_clip_share_aov_parsing() {
-        for output in [Output::Still, Output::Clip] {
-            let mut args = vec!["scene.loft", "--out", "out.png", "--aov", "lipschitz_ratio"];
-            if matches!(output, Output::Clip) { args.extend(["--frames", "2", "--fps", "24"]); }
-            let args: Vec<_> = args.into_iter().map(str::to_owned).collect();
-            assert_eq!(Options::read(&args, output).unwrap().aov, Aov::LipschitzRatio);
-        }
+    fn still_accepts_diagnostic_aov() {
+        let args = ["scene.loft", "--out", "out.png", "--aov", "lipschitz_ratio"].map(str::to_owned);
+        assert_eq!(Options::read(&args).unwrap().aov, Aov::LipschitzRatio);
     }
 }

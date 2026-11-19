@@ -199,7 +199,7 @@ fn decode_verdict(record: Option<[f32; 2]>) -> Verdict {
     }
 }
 
-fn check_records(p: &Program, samples: &[loft_passes::program::MotionSample]) -> Vec<(String, Verdict)> {
+pub(crate) fn check_records(p: &Program, samples: &[loft_passes::program::MotionSample]) -> Vec<(String, Verdict)> {
     let mut results = vec![];
     for step in &p.dispatches {
         let (kind, rows, _, _) = step.input.view(&p.kinds).expect("compiled dispatch input");

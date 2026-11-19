@@ -3,6 +3,18 @@ use super::*;
 use loft_passes::program::{DispatchResource, MotionSample};
 
 pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSample>, String> {
+    Ok(sample(g, p, seconds, None)?.0)
+}
+
+/// The same submitted law/check dispatches, timed in GPU milliseconds for clip scoring.
+pub fn sample_motion_timed(g: &Gpu, p: &Program, seconds: f32) -> Result<(Vec<MotionSample>, f64), String> {
+    let clock = (g.timestamps && !p.dispatches.is_empty()).then(|| Clock::new(g, 2));
+    sample(g, p, seconds, clock.as_ref())
+}
+
+fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(Vec<MotionSample>, f64), String> {
+    let mut ms = 0.0;
+    if p.dispatches.is_empty() { return Ok((vec![], ms)); }
     if !seconds.is_finite() || seconds < 0. || f64::from(seconds) * 120. >= f64::from(u32::MAX) {
         return Err(
             "motion time must be finite, nonnegative and representable in 120 Hz ticks".into(),
@@ -66,7 +78,12 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
         let pipe = compute(d, &step.entry, &layouts, &m, &step.entry, None);
         let mut enc = d.create_command_encoder(&Default::default());
         {
-            let mut cp = enc.begin_compute_pass(&Default::default());
+            let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some(&step.entry),
+                timestamp_writes: clock.map(|c| wgpu::ComputePassTimestampWrites {
+                    query_set: &c.set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
+                }),
+            });
             cp.set_pipeline(&pipe);
             for (i, (_, group)) in groups.iter().enumerate() {
                 cp.set_bind_group(i as u32, group, &[]);
@@ -75,6 +92,12 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
         }
         enc.copy_buffer_to_buffer(&out, 0, &read, 0, Some(len));
         g.queue.submit([enc.finish()]);
+        if let Some(c) = clock {
+            let ticks = read_clock(g, c)?;
+            let dt = ticks[1].checked_sub(ticks[0]).filter(|_| ticks[0] != 0)
+                .ok_or("motion GPU timestamps are unavailable")?;
+            ms += dt as f64 * c.period_ns / 1e6;
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         read.map_async(wgpu::MapMode::Read, .., move |r| {
             let _ = tx.send(r);
@@ -114,5 +137,5 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
             checks,
         });
     }
-    Ok(samples)
+    Ok((samples, ms))
 }

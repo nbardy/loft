@@ -571,7 +571,11 @@ pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::p
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
 pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
-    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), emit::Aov::Beauty, loft_ir::GpuFeatures::empty())
+    compile_snapshot_aov(src, overrides, samples, emit::Aov::Beauty)
+}
+
+pub fn compile_snapshot_aov(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
+    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), aov, loft_ir::GpuFeatures::empty())
 }
 
 pub fn compile_aov(src: &Sources, overrides: &[(String, f64)], aov: emit::Aov) -> Res<(Program, Report, Compiled)> {
@@ -842,6 +846,13 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         *color = as_v3(eval::concrete(&ev.module_expr(&decl.value)?, decl.name.span)?, decl.name.span)?;
     }
     let tables = ev.tables;
+    // A declared Mesh with no importer yet must never render as an empty data-only table.
+    if let Some(mesh) = p.kinds.get("Mesh")
+        && mesh.queries.is_empty() && !tables[p.kind_index("Mesh")].is_empty()
+    {
+        return Err(Diag::new(Code::E405, mesh.name.span, "imported Mesh drawing is not lowered yet",
+            "supply Mesh asset lowering in the glTF adapter"));
+    }
     let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
         let Some(k)=p.kinds.get(kind) else{return Ok(None)};
         match tables[p.kind_index(kind)].as_slice(){
