@@ -1077,6 +1077,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
   // `comment`: a note to end a node's statement with (src/text's sites: `/* eel.ts:9 girth */`); absent, the text is as before.
   // `pre`: nodes already computed by earlier statements (a scan hoists its loop-invariant work), by name.
   const names = new Map<number, string>(pre);
+  let lets = 0, loops = 0;
   const ref = (x: Expr): string => names.get(x.id)!;
   const emit = (list: readonly Expr[], lines: string[]): void => {
     for (const e of list) {
@@ -1086,7 +1087,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
       const src = wgslNode(e, ref, bind);
       if (n.op === "const" || n.op === "var") names.set(e.id, src);
       else {
-        const name = `${prefix}${e.id}`;
+        const name = `${prefix}${lets++}`;
         const note = (comment ?? statementNote)?.(e);
         // A block comment, not `//`: some emitters join statements onto one line (src/compile/compute.ts).
         lines.push(note === undefined ? `let ${name}: ${WGSL_TY[e.ty]} = ${src};` : `let ${name}: ${WGSL_TY[e.ty]} = ${src};   /* ${note.replaceAll("*/", "* /")} */`);
@@ -1095,7 +1096,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
     }
   };
   const loop = (l: Loop, lines: string[]): void => {
-    const L = `${prefix}L${l.id}`;
+    const L = `${prefix}L${loops++}`;
     l.init.forEach((e, j) => lines.push(`var ${L}s${j}: ${WGSL_TY[e.ty]} = ${ref(e)};`));
     lines.push(`for (var ${L}i = 0u; ${L}i < u32(${ref(l.count)}); ${L}i++) {`);
     l.state.forEach((v, j) => names.set(v.id, `${L}s${j}`));
@@ -1104,6 +1105,7 @@ export function emitWgsl(roots: readonly Expr[], bind: Bind, prefix = "e", pre: 
     emit(l.inner, body);
     // Read every next value before assigning any: a step may return one state variable as another (a swap).
     l.next.forEach((e, j) => body.push(`let ${L}n${j}: ${WGSL_TY[e.ty]} = ${ref(e)};`));
+    lets += l.next.length; // The next-state lets have their own names but still occupy emission ordinals.
     l.next.forEach((_, j) => body.push(`${L}s${j} = ${L}n${j};`));
     if (l.stop !== undefined) body.push(`if (${ref(l.stop)}) { break; }`);
     lines.push(...body.map((b) => `  ${b}`), "}");

@@ -151,7 +151,10 @@ function fnSource(slots: Slots, f: FnSpec): { code: string; libs: LibFn[] } {
   // Every argument varies per vertex or pixel (or per copy, which a function does not state; "item" is the safe
   // reading: nothing that reads an argument is lifted).
   const roots = slots.lower({ name: f.name, roots: f.roots, vars: new Map(f.args.map(([a]) => [a, "item"])), runs: "item" });
-  const { lines, out: values, libs } = emitWgsl(roots, slots.wgsl(vars));
+  // A generated name such as e0 must not shadow an argument still read by later statements.
+  let prefix = "e";
+  while (f.args.some(([a]) => a.startsWith(prefix) && /^(?:\d+|L\d+(?:i|[sn]\d+))$/.test(a.slice(prefix.length)))) prefix += "e";
+  const { lines, out: values, libs } = emitWgsl(roots, slots.wgsl(vars), prefix);
   const sig = f.args.map(([a, t]) => `${a}: ${WGSL_TY[t]}`).join(", ");
   return { code: [`fn ${f.name}(${sig}) -> ${f.out} {`, ...lines.map((l) => `  ${l}`), `  return ${f.ret(values)};`, `}`].join("\n"), libs };
 }

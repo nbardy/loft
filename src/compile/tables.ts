@@ -172,7 +172,6 @@ function pack(tables: readonly TableSource[]): { at: ReadonlyMap<TableSource, { 
   return { at, sizes };
 }
 
-let nextProgram = 0;
 /** A static table's fill: on the CPU, once, at build. */
 const STATIC: TableFillKind = { kind: "cpu", why: "filled once, at build" };
 
@@ -201,7 +200,8 @@ function classify(t: TableSource, c: TableCompiler, lower: (p: Program) => reado
     return { kind: "cpu", why, fill: (_frame, out) => out.set(data), reads: [], authored: [] };
   }
   const p = t.program;
-  const id = nextProgram++;
+  // Table names are unique in the scene. Their binders also appear verbatim in the graph probe.
+  const binder = `_T${t.name}_`;
   const checkLanes = (lanes: readonly Expr[], what: string): void => {
     if (lanes.length !== t.lanes) throw new Error(`table "${t.name}": ${what} gives ${lanes.length} lanes; the table has ${t.lanes}`);
     lanes.forEach((l, k) => { if (l.ty !== "vec4") throw new Error(`table "${t.name}": ${what} lane ${k} is ${l.ty}, not vec4`); });
@@ -211,7 +211,7 @@ function classify(t: TableSource, c: TableCompiler, lower: (p: Program) => reado
       let start = 0;
       const runs = p.runs.map((r, k): Run => {
         if (!(Number.isInteger(r.count) && r.count >= 1)) throw new Error(`table "${t.name}": run ${k} has count ${r.count}`);
-        const i = variable(`_T${id}r${k}`, "f32");
+        const i = variable(`${binder}r${k}`, "f32");
         const lanes = r.lanes(i);
         checkLanes(lanes, `run ${k}`);
         const run = { start, count: r.count, i, lanes };
@@ -236,8 +236,8 @@ function classify(t: TableSource, c: TableCompiler, lower: (p: Program) => reado
       if (!(Number.isInteger(p.first) && Number.isInteger(p.steps) && p.first >= 0 && p.steps >= 1 && p.first + p.steps <= t.entries)) {
         throw new Error(`table "${t.name}": a scan over entries ${p.first} .. ${p.first + p.steps - 1} does not fit its ${t.entries}`);
       }
-      const state = p.init.map((e, j) => variable(`_T${id}s${j}`, e.ty));
-      const i = variable(`_T${id}i`, "f32");
+      const state = p.init.map((e, j) => variable(`${binder}s${j}`, e.ty));
+      const i = variable(`${binder}i`, "f32");
       const { next, lanes } = p.step(state, i);
       if (next.length !== p.init.length) throw new Error(`table "${t.name}": the scan's step returned ${next.length} state components; it has ${p.init.length}`);
       next.forEach((e, j) => { if (e.ty !== p.init[j]!.ty) throw new Error(`table "${t.name}": state component ${j} is ${p.init[j]!.ty} but the step returned ${e.ty}`); });
