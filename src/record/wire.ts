@@ -40,13 +40,21 @@
 //   Field, Make, Open (ops 12/13/14) carry a member ordinal, kind ordinal and open ordinal respectively.
 //   Param   [name, def lit, min lit, max lit]        Input  [name, ty, first def lit]
 
+// Wire 5 port declarations (14–27) have six column counts followed by the columns in order:
+// words, f64 literal offsets, symbol IDs, Fn ordinals, Kernel ordinals, then blob (offset, length) pairs.
+// Expression IDs share the declaration's root span. See tape.ts and loft-lower/input for each typed layout.
+export const PORT_TAGS = ["scene", "thing", "effect", "style", "lighting", "lamp", "posts", "compute",
+  "recurrence", "pass", "authored", "cast", "raw", "camera"] as const;
+
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
 const WIRE = 4;
 
 export enum Program { Scene, Solve, Evaluate, Check }
-export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, RowStep, Kind, Open }
+export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, RowStep, Kind, Open,
+  PortScene, Thing, Effect, StyleEmit, Lighting, LampPass, Posts, ComputePass, Recurrence, PortPass, Authored, Cast, RawFlags, NumericCamera,
+}
 /** How a Kernel decl fills its resource: the first word of its layout. */
 export enum Fill { Map, Rows, Scan, Data, Recurrence, Compute }
 export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec, Field, Make, Open } // then PRIMS from PRIM0

@@ -43,7 +43,7 @@ import { variable, type Expr, type LibFn, type LibRead, type Loop, type NumTy, t
 import type { ComputePass } from "../compute.ts";
 import type { PassDef } from "../frame/pass.ts";
 import { recurTable } from "../map/recur.ts";
-import { BOUND, Decl, declsOf, Fill, Op, PRIM0, PRIMS, ROLES, swizzleSel, symOf, TYS, type Job } from "./wire.ts";
+import { BOUND, Decl, declsOf, Fill, Op, PORT_TAGS, PRIM0, PRIMS, ROLES, swizzleSel, symOf, TYS, type Job } from "./wire.ts";
 
 const fnv = (xs: ArrayLike<number>): string => {
   let h = 0x811c9dc5;
@@ -323,6 +323,8 @@ export function printJob(job: Job): string {
   const tyOf = (b: number): Ty => TYS[(N[4 * b]! >> 8) & 0xff]!;
   const lits1 = (at: number): string => hex([job.lits[at]!]);
   const scene = sceneLines(job, decls, (x, s) => walk(x, s ?? root(), false), (word, b) => c.scoped(word, b.map(([id, slot]) => [id, tyOf(id), slot] as const)));
+  const port = decls.filter((d) => d.tag >= Decl.PortScene);
+  if (port.length > 0) kernels.forEach((d, k) => { if (d.words[0] !== Fill.Rows) listed(k); });
   for (let j = 0; j < tables.length; j++) {
     const d = kernels[tables[j]!]!, w = d.words, r = d.roots, lanes = w[2]!;
     if (w[0] === Fill.Compute) {
@@ -366,7 +368,32 @@ export function printJob(job: Job): string {
       case Fill.Rows: case Fill.Compute: throw new Error("internal: a rows or compute kernel is not a table");
     }
   }
-  return c.text(top, [...out, ...scene]);
+  const rawDecls: string[] = [];
+  if (port.length > 0) {
+    // A tape shader can name a raw function without any graph node calling it.
+    const rawOrdinals = new Map<number, number>();
+    fns.forEach(({ words: w }, k) => {
+      if (w[0] !== 1) return;
+      rawOrdinals.set(k, rawOrdinals.size);
+      const deps = Array.from(w.subarray(5, 5 + w[4]!), (d) => rawOrdinals.get(d)).join(" ");
+      const reads = readsAt(k).map((r) => r.join(":")).join(" ");
+      rawDecls.push(`port raw-fn ${sym(w[1]!)} ${TYS[w[2]!]} ${fnv(codes(sym(w[3]!)))} deps[${deps}] reads[${reads}]`);
+    });
+  }
+  return c.text(top, [...out, ...scene, ...rawDecls, ...port.map((d) => portLine(job, d))]);
+}
+
+/** Exact f64 bits, wire ordinals and the hashes of variable-length words of text or binary assets. */
+function portLine(job: Job, d: ReturnType<typeof declsOf>["decls"][number]): string {
+  const [nw, nl, ns, nf, nk, nb] = d.words;
+  let at = 6;
+  const take = (n: number): Uint32Array => { const part = d.words.subarray(at, at + n); at += n; return part; };
+  const bytes = (b: Uint8Array): string => `${b.length}:${fnv(b)}`;
+  const words = take(nw).join(" "), lits = hex(Array.from(take(nl), (k) => job.lits[k]!));
+  const syms = Array.from(take(ns), (k) => bytes(job.syms.subarray(job.symAt[k], job.symAt[k + 1]))).join(" ");
+  const fns = take(nf).join(" "), kernels = take(nk).join(" ");
+  const bs = take(2 * nb), blobs = Array.from({ length: nb }, (_, k) => bytes(job.blobs.subarray(bs[k * 2], bs[k * 2]! + bs[k * 2 + 1]!))).join(" ");
+  return `port ${PORT_TAGS[d.tag - Decl.PortScene]} w[${words}] l[${lits}] s[${syms}] f[${fns}] k[${kernels}] b[${blobs}] r[${d.roots.join(" ")}]`;
 }
 
 type Walk = (node: number, s?: Scope) => number;
@@ -413,9 +440,11 @@ function sceneLines(job: Job, decls: ReturnType<typeof declsOf>["decls"], walk: 
     const ground = w[at++] === 0 ? "none" : `${fnRef(w[at++]!)} ${fnRef(w[at++]!)}`;
     const outline = w[at++] === 0 ? "none" : fnRef(w[at++]!);
     let target = "view";
-    if (w[at++] === 1) {
+    const kind = w[at++]!;
+    if (kind === 1 || kind === 2) {
       const name = sym(w[at++]!), size = w[at++] === 0 ? `view ${lits(w[at++]!, 1)}` : `fixed ${w[at++]} ${w[at++]}`;
-      target = `texture ${name} ${size} ${["colour", "depth", "light"][w[at++]!]} ${w[at++]}`;
+      target = kind === 1 ? `texture ${name} ${size} ${["colour", "depth", "light"][w[at++]!]} ${w[at++]}`
+        : `screen ${name} ${size} ${sym(w[at]!)} ${bare(d.roots)}`;
     }
     lines.push(`pass camera ${w[0]} draws ${w[1]} ${w[2]} clear ${clear} ground ${ground} outline ${outline} target ${target}`);
   }

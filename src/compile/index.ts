@@ -5,15 +5,17 @@
 
 import { DETAIL_SLOTS, POST_WGSL, PRELUDE_WGSL, SCENE_CLEARANCE_WGSL, SCENE_DEPTH_WGSL, type Artefact, type ArtefactPass, type Detail, type Draw, type FrameState, type Loop, type PostPass, type Recurrence } from "../artefact.ts";
 import { compileJs, type Env, type Expr, type LibFn, type RowSource, type TableFrame, type TableSource, type V } from "../expr.ts";
+import type { Lighting } from "../light.ts";
+import type { PassDef } from "../frame/pass.ts";
 import type { Scene } from "../scene.ts";
-import { Slots } from "./bind.ts";
+import { Slots, type FnSpec } from "./bind.ts";
 import type { Program } from "./rates.ts";
-import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
+import { PASS_OF, PHASES, type CompileContext, type DetailSpec, type Drawable, type Emitted, type DrawSpec, type PostSpec, type Shader } from "./context.ts";
 import { CORE_WGSL, styleWgsl } from "./scene_wgsl.ts";
 import { INK_POST, MARK_WGSL } from "../draw/ink.ts";
 import { measureRest, REST_CENTRE, restPoints } from "../draw/grid_detail.ts";
 import { castPlan } from "../draw/cast.ts";
-import { lampShadows, refuseSpread } from "../frame/lamp_shadow.ts";
+import { lampShadows, refuseSpread, type Spread } from "../frame/lamp_shadow.ts";
 import { cpuPoseFunction, poseFrame, poseFunction, poseProfile, Tables, bufferName, type TableLayout } from "./tables.ts";
 import { discover, planPasses } from "./passes.ts";
 import { SceneError } from "../errors.ts";
@@ -48,18 +50,36 @@ export function compile(scene: Scene): Artefact {
   return compileScene(scene).artefact;
 }
 
-export function compileScene(scene: Scene): Compiled {
+export type CompileStage = "compute" | "things" | "style" | "passes" | "cast" | "layout" | "rest" | "details";
+export type CompileObserver = {
+  stage(stage: CompileStage): void;
+  register(roots: readonly Expr[]): void;
+  declare(table: TableSource): void;
+  lower(program: Program): void;
+  thing(thing: Drawable, emitted: Emitted): void;
+  post(post: PostSpec): void;
+  note(note: string): void;
+  style(fn: FnSpec): void;
+  lamps(lighting: Lighting, spreads: readonly Spread[]): void;
+  passes(defs: readonly PassDef[], screens: ReadonlyMap<string, Shader>): void;
+  posts(posts: readonly PostSpec[], screenInk: boolean): void;
+  cast(wgsl: string, libs: readonly LibFn[]): void;
+};
+
+export function compileScene(scene: Scene, observe?: CompileObserver): Compiled {
   // The slots and the table registry need each other: a fetched table is declared on first sight, and classifying it
   // registers the leaves of its program (or compiles the CPU expressions of a hand-written fill).
-  const slots: Slots = new Slots((t) => tables.declare(t), (p) => tables.lower(p));
+  const slots: Slots = new Slots((t) => tables.declare(t), (p) => { observe?.lower(p); return tables.lower(p); }, observe?.register);
   const rows: RowSource = { kind: "table", slot: (r) => slots.row(r) };
-  const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars), input: (spec) => slots.input(spec).slot });
+  const tables = new Tables({ register: (roots) => slots.register(roots), cpu: (roots) => compileJs(roots, rows), wgsl: (vars) => slots.wgsl(vars), input: (spec) => slots.input(spec).slot }, observe?.declare);
   const cpu = (roots: readonly Expr[]): CpuFn => {
     slots.register(roots);
     const run = compileJs(roots, rows);
     return (frame, vars = {}) => run({ ...frame.env, vars });
   };
+  observe?.stage("compute");
   const resourcesOf = compileCompute(scene.compute, slots);
+  observe?.stage("things");
   const posts: PostSpec[] = [...scene.style.post];
   let screenInk = false;
   const notes: string[] = [];
@@ -73,18 +93,20 @@ export function compileScene(scene: Scene): Compiled {
   // A lamp that asked for a shadow gets its depth pass and test here, before anything folds the lights (DESIGN.md 17).
   const lamps = lampShadows(scene.lighting, scene.things);
   const lighting = lamps.lighting;
+  observe?.lamps(lighting, lamps.spreads);
   const ctx: CompileContext = {
     slots, style: scene.style, ground: scene.ground, sun: scene.sun, sunAt: scene.sunAt, lighting, things: scene.things,
     table: (t) => tables.declare(t),
-    post: (p) => { posts.push(p); },
+    post: (p) => { posts.push(p); observe?.post(p); },
     outline: scene.outline, markOut,
-    note: (line) => { if (!notes.includes(line)) notes.push(line); },
+    note: (line) => { if (!notes.includes(line)) notes.push(line); observe?.note(line); },
   };
 
   const modules: Record<string, Shader> = {};
   const specs: DrawSpec[] = [];
   for (const t of scene.things) {
     const e = t.draws(ctx);
+    observe?.thing(t, e);
     for (const [k, shader] of Object.entries(e.shaders)) {
       if (k in modules) throw new Error(`compile: two drawables emit a shader named "${k}"`);
       modules[k] = shader;
@@ -97,15 +119,22 @@ export function compileScene(scene: Scene): Compiled {
   }
   // The ink pass runs first: it restores the plain mark in alpha for the style's own passes.
   if (screenInk) posts.unshift({ label: "ink outline", wgsl: INK_POST });
-  const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, lighting);
+  observe?.posts(posts, screenInk);
+  observe?.stage("style");
+  const style = styleWgsl(slots, scene.style, scene.ground, scene.sun, lighting, observe?.style);
+  observe?.stage("passes");
   // Passes are found from what the shaders call (src/compile/passes.ts); a scene that reads none finds none here, and
   // every step below that is about passes then does nothing.
   const found = discover(slots, [...slots.libs(), ...Object.values(modules).flatMap((m) => m.libs)]);
+  observe?.passes(found.defs, found.screens);
   for (const d of found.defs) if (d.what.kind === "scene") tables.declare(d.what.camera);
   const depthPasses = found.defs.some((d) => d.what.kind === "scene" && d.what.keep === "depth");
   // castRay: its tables and functions exist only in a scene whose code calls it (src/draw/cast.ts).
+  observe?.stage("cast");
   const casting = castPlan(ctx, [...Object.values(modules).flatMap((m) => m.libs), ...slots.libs()]);
+  observe?.stage("layout");
   const layout = tables.layout();
+  observe?.stage("rest");
   if (found.defs.length > 0) {
     const reader = layout.stages.find((st) => /\bloft_passtex_/.test(st.wgsl));
     if (reader !== undefined) throw new SceneError(`table stage "${reader.label}"`, "a table that reads a pass", "tables that are closed forms of the frame (a table filled from a picture would carry pictures from frame to frame)", "read the pass in a shader's paint or style, not in a table");
@@ -134,6 +163,7 @@ export function compileScene(scene: Scene): Compiled {
     refuseSpread(s, at, half);
   }
   const castText = casting === undefined ? "" : casting.wgsl(cpu, restFrame);
+  if (casting !== undefined) observe?.cast(castText, casting.libs);
   /** A library function's text: its own, or for the cast functions the scene's (written once, with the first of them). */
   const textOf = (l: LibFn): string => (casting !== undefined && casting.libs.includes(l) ? (l === casting.libs[0] ? castText : "") : l.wgsl);
   // Author compute's bindings and readers sit between the layout's declarations and the shared library, in the f32
@@ -159,6 +189,7 @@ export function compileScene(scene: Scene): Compiled {
   });
 
   // Stable sort by phase: within a phase, the order drawables emitted.
+  observe?.stage("details");
   const detailOf = detailSlots(layout.placed, (roots) => { const run = cpu(roots); return (vars) => run(restFrame, vars); });
   const draws: Draw[] = PHASES.flatMap((phase) => specs.filter((d) => d.phase === phase)).map(({ phase, detail, depth, ...d }) => {
     const resolved = detailOf(detail, d);

@@ -19,6 +19,9 @@ export function authored(t: AuthorText): void {
   if (t.text.trim() !== "" && !texts.has(t.text)) texts.set(t.text, t);
 }
 
+/** The texts in registration order, for recording them before the lowerer searches the shader chunks. */
+export function authoredTexts(): Iterable<AuthorText> { return texts.values(); }
+
 /** Where registered author texts sit in `code`, by line from 0, in order. Empty for text the library wrote alone. */
 export function authorLines(code: string): AuthorLines[] {
   const out: AuthorLines[] = [];

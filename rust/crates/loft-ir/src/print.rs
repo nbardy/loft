@@ -13,12 +13,22 @@ use crate::graph::{
     Blend, Cells, Clear, Cover, Fill, Find, Formula, Graph, Ground, HoldKind, Keep, Kernel, Layer, Lens, Medium, Op,
     OutShape, Outline, Part, Proxy, Read, Recur, Size, Strategy, Target, Times, When,
 };
+use crate::wire::{Job, PortRecord};
 use std::collections::HashMap;
 use std::fmt::Write;
 
 /// The canonical print of `g`'s program roots. Err names the node it cannot print: a binder read outside its loop or
 /// function (`Fault::Scope`), or a `Grad` (the wave-1 recorder writes derivatives expanded).
 pub fn print(g: &Graph) -> Result<String, Error> {
+    print_graph(g, &[])
+}
+
+/// The graph print and the port declarations if the job carries them.
+pub fn print_job(job: &Job) -> Result<String, Error> {
+    print_graph(&job.graph, &job.port)
+}
+
+fn print_graph(g: &Graph, port: &[PortRecord]) -> Result<String, Error> {
     let mut p = Printer {
         g,
         lines: Vec::new(),
@@ -33,6 +43,13 @@ pub fn print(g: &Graph) -> Result<String, Error> {
     };
     let roots = g.roots.iter().map(|r| p.walk(*r, 0, false)).collect::<Result<Vec<u32>, Error>>()?;
     let decls = p.decls()?;
+    if !port.is_empty() {
+        for (k, kernel) in g.kernels.iter().enumerate() {
+            if !matches!(kernel, Kernel::Rows { .. }) && !p.tables.contains(&(k as u32)) {
+                p.tables.push(k as u32);
+            }
+        }
+    }
     // Each fetched table's fill (`tables` grows while fills are walked).
     let mut kernels = Vec::new();
     let mut j = 0;
@@ -52,7 +69,36 @@ pub fn print(g: &Graph) -> Result<String, Error> {
         out.push('\n');
         out.push_str(k);
     }
+    if !port.is_empty() {
+        for raw in &g.raws {
+            let deps = raw.deps.iter().map(u32::to_string).collect::<Vec<_>>().join(" ");
+            let reads = raw.reads.iter().map(|read| match *read {
+                Read::Table(k) => format!("0:{k}"),
+                Read::Output { kernel, output } => format!("1:{kernel}:{output}"),
+                Read::Pass(k) => format!("2:{k}"),
+            }).collect::<Vec<_>>().join(" ");
+            let name = g.sym(raw.name);
+            let ty = raw.ret.name();
+            let hash = fnv(code_units(g.sym(raw.text)));
+            let _ = write!(out, "\nport raw-fn {name} {ty} {hash} deps[{deps}] reads[{reads}]");
+        }
+    }
+    for d in port {
+        out.push('\n');
+        out.push_str(&port_line(g, d));
+    }
     Ok(out)
+}
+
+fn port_line(g: &Graph, d: &PortRecord) -> String {
+    let words = |xs: &[u32]| xs.iter().map(u32::to_string).collect::<Vec<_>>().join(" ");
+    let bytes = |xs: &[u8]| format!("{}:{}", xs.len(), fnv(xs.iter().map(|b| u32::from(*b))));
+    let lits = d.lits.iter().map(|k| format!("{:x}", g.lits[*k as usize])).collect::<Vec<_>>().join(" ");
+    let syms = d.syms.iter().map(|k| bytes(g.sym(*k).as_bytes())).collect::<Vec<_>>().join(" ");
+    let blobs = d.blobs.iter().map(|[at, n]| bytes(&g.blobs[*at as usize..(*at as usize + *n as usize)]))
+        .collect::<Vec<_>>().join(" ");
+    format!("port {} w[{}] l[{lits}] s[{syms}] f[{}] k[{}] b[{blobs}] r[{}]",
+        d.tag.name(), words(&d.words), words(&d.fns), words(&d.kernels), words(&d.roots))
 }
 
 /// One walk position: its loop level, the loop binders it reads (node -> line), its call frame and its memo. A loop
@@ -289,7 +335,7 @@ impl Printer<'_> {
                 Kernel::Table { .. } | Kernel::Rows { .. } => unreachable!("decode checked a read output's kernel"),
             },
             Read::Pass(p) => match g.passes[p as usize].target {
-                Target::Texture { name, .. } => format!("pass:{}", g.sym(name)),
+                Target::Texture { name, .. } | Target::Screen { name, .. } => format!("pass:{}", g.sym(name)),
                 Target::View => unreachable!("decode checked a read pass's target"),
             },
         }
@@ -434,6 +480,14 @@ impl Printer<'_> {
                         Keep::Light => "light",
                     };
                     format!("texture {} {size} {keep} {}", g.sym(name), u8::from(scene))
+                }
+                Target::Screen { name, size, uv, colour } => {
+                    let size = match size {
+                        Size::View(scale) => format!("view {}", self.lits(scale, 1)),
+                        Size::Fixed(w, h) => format!("fixed {w} {h}"),
+                    };
+                    let colour = self.walk(colour, 0, false)?;
+                    format!("screen {} {size} {} {}", g.sym(name), g.sym(uv), refs(&[colour]))
                 }
             };
             out.push(format!(

@@ -6,13 +6,13 @@ import { SceneError } from "../errors.ts";
 import { levelOf, type Ground } from "../draw/ground.ts";
 import { shadeVariables, type Style } from "../style.ts";
 import { foldAt, sunDir, sunOnly, type Lighting } from "../light.ts";
-import { emitFn, type Slots } from "./bind.ts";
+import { emitFn, type FnSpec, type Slots } from "./bind.ts";
 
 export const lit = (x: number): string => (Number.isInteger(x) ? `${x}.0` : String(x));
 export const vec3Lit = (v: readonly number[]): string => `vec3<f32>(${v.map(lit).join(", ")})`;
 
 /** The style's and the ground's functions. Emitted once, before the drawables' shared code is collected. */
-export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: readonly [number, number, number], lighting: Lighting): string {
+export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: readonly [number, number, number], lighting: Lighting, observe?: (fn: FnSpec) => void): string {
   const at = lighting.sun;
   const c = <T extends "f32" | "vec3">(name: string, ty: T) => variable(`c_${name}`, ty);
   const shadeCtx = shadeVariables(lighting, style);
@@ -27,10 +27,10 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
   // or the plane's own colour at the shadow's coverage (src/draw/shadows.ts); nothing has no surface to colour.
   const onGround = (): string[] => {
     switch (ground.kind) {
-      case "sea": return [emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0])];
+      case "sea": return [emitFn(slots, "sea_shadow", layerArgs, "vec4<f32>", [style.shadow(layerCtx)], (v) => v[0], observe)];
       case "plane": {
         const groundCtx = { world: c("world", "vec3"), view: c("view", "vec3"), distance: c("distance", "f32"), sun: lift<"vec3">(sunDir(at)), shadow: c("shadow", "f32"), lights: foldAt(lighting, { kind: "surface", at: c("world", "vec3"), normal: lift<"vec3">([0, 1, 0]) }) };
-        return [emitFn(slots, "ground_colour", [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_shadow", "f32"]], "vec3<f32>", [style.ground(groundCtx)], (v) => v[0])];
+        return [emitFn(slots, "ground_colour", [["c_world", "vec3"], ["c_view", "vec3"], ["c_distance", "f32"], ["c_shadow", "f32"]], "vec3<f32>", [style.ground(groundCtx)], (v) => v[0], observe)];
       }
       case "nothing": return [];
     }
@@ -43,14 +43,14 @@ export function styleWgsl(slots: Slots, style: Style, ground: Ground, sun: reado
   };
   return [
     `const SUN: vec3<f32> = ${vec3Lit(sun)};`,
-    emitFn(slots, "sea_height", [["xz", "vec2"]], "f32", [levelOf(ground)(xz)], (v) => v[0]),
-    emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [gradient()], (v) => v[0]),
-    emitFn(slots, "shade", shadeArgs, "vec3<f32>", [body], (v) => v[0]),
-    emitFn(slots, "ink", shadeArgs, "vec3<f32>", [withIdentities(() => style.ink(shadeCtx))], (v) => v[0]),
-    emitFn(slots, "mark", shadeArgs, "f32", [withIdentities(() => style.mark(shadeCtx))], (v) => v[0]),
+    emitFn(slots, "sea_height", [["xz", "vec2"]], "f32", [levelOf(ground)(xz)], (v) => v[0], observe),
+    emitFn(slots, "sea_gradient", [["xz", "vec2"]], "vec2<f32>", [gradient()], (v) => v[0], observe),
+    emitFn(slots, "shade", shadeArgs, "vec3<f32>", [body], (v) => v[0], observe),
+    emitFn(slots, "ink", shadeArgs, "vec3<f32>", [withIdentities(() => style.ink(shadeCtx))], (v) => v[0], observe),
+    emitFn(slots, "mark", shadeArgs, "f32", [withIdentities(() => style.mark(shadeCtx))], (v) => v[0], observe),
     ...onGround(),
-    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)), lights: foldAt(sunOnly(lighting), { kind: "point", at: c("dir", "vec3") }) })], (v) => v[0]),
-    emitFn(slots, "outline_world", [], "f32", [outlineOf(style)], (v) => v[0]),
+    emitFn(slots, "sky", [["c_dir", "vec3"]], "vec3<f32>", [style.sky({ dir: c("dir", "vec3"), sun: lift<"vec3">(sunDir(at)), lights: foldAt(sunOnly(lighting), { kind: "point", at: c("dir", "vec3") }) })], (v) => v[0], observe),
+    emitFn(slots, "outline_world", [], "f32", [outlineOf(style)], (v) => v[0], observe),
   ].join("\n");
 }
 

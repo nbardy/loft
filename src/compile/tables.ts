@@ -362,10 +362,11 @@ export class Tables {
   private readonly names = new Map<string, TableSource>();
   private sealed = false;
 
-  constructor(private readonly c: TableCompiler) {}
+  constructor(private readonly c: TableCompiler, private readonly onDeclare?: (table: TableSource) => void) {}
 
   /** Declare a table (once per object; later calls return the same accessor) and classify its program. */
   declare(t: TableSource): TableRef {
+    this.onDeclare?.(t);
     const ref = { name: t.name, wgsl: accessor(t.name) };
     if (this.declared.has(t)) return ref;
     // A recurrence's previous state is read only inside its step, which binds it itself (src/compile/recur.ts).

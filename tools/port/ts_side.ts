@@ -19,7 +19,8 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { plain } from "./sections.ts";
-import type { Artefact } from "../../src/artefact.ts";
+import type { Expr } from "../../src/expr.ts";
+import type { Tape } from "../../src/record/tape.ts";
 import type { Scene } from "../../src/scene.ts";
 
 const [scene, out, ...rest] = Bun.argv.slice(2);
@@ -34,23 +35,47 @@ const write = (name: string, x: unknown) => writeFileSync(join(out, name), JSON.
 /** Where a refusal came from: the author's module (`author`: no lowering ran, so the port has nothing to match), the
  * compiler, or bake, lower and write. */
 let stage: "author" | "compile" | "lower" = "author";
+let drawn: Scene | undefined;
+let tape: Tape | undefined;
+let roots: readonly Expr[] = [];
+async function writeInput(compiled: boolean): Promise<void> {
+  if (drawn === undefined || tape === undefined) return;
+  try {
+    const { portInput } = await import("../../src/record/port.ts");
+    const input = portInput(drawn, tape, roots, compiled);
+    switch (input.kind) {
+      case "job":
+        mkdirSync(join(out, "probe"), { recursive: true });
+        writeFileSync(join(out, "input", "job.bin"), input.bytes);
+        writeFileSync(join(out, "probe", "wire.txt"), input.print);
+        for (const [name, text] of input.probes) writeFileSync(join(out, "probe", `${name}.txt`), text);
+        break;
+      case "refused": write("input/refused.json", { why: input.why }); break;
+    }
+  } catch (e) {
+    // Recording runs after the build. Keep the TS outcome independent of any failure at the port boundary.
+    write("input/refused.json", { why: e instanceof Error ? e.stack ?? e.message : String(e) });
+  }
+}
+
 try {
   const { lift } = await import("../../src/expr.ts");
   for (let i = 0; i < shift; i++) lift(1e9 + i + 0.5);
-  const [{ rec }, { styled }, { chosenAt }, { compile }, { lower }, { writeBundle }] = await Promise.all([
+  const [{ rec }, { styled }, { chosenAt }, { compileScene }, { lower }, { writeBundle }, { Tape }] = await Promise.all([
     import("../../src/record/recorder.ts"), import("../../src/cli/load.ts"), import("../../src/cli/variant.ts"), import("../../src/compile/index.ts"),
-    import("../../src/host/lower.ts"), import("../../src/host/files.ts")]);
+    import("../../src/host/lower.ts"), import("../../src/host/files.ts"), import("../../src/record/tape.ts")]);
   // As src/cli/load.ts `compiledScene` (a frame, the scene's own style and light, the default variant), in two stages:
   // the author's module (loading, constructing, styling: TS forever) and the compiler (what the port translates).
   const stop = rec.watch();
-  let roots: ReturnType<typeof stop>, compiled: { scene: Scene; artefact: Artefact };
-  try {
-    const drawn = await styled((await chosenAt(scene, { kind: "default" })).scene, { kind: "scene" }, { kind: "scene" }) as Scene;
-    stage = "compile";
-    compiled = { scene: drawn, artefact: compile(drawn) };
-  } finally { roots = stop(); }
+  const artefact = await (async () => {
+    try {
+      drawn = await styled((await chosenAt(scene, { kind: "default" })).scene, { kind: "scene" }, { kind: "scene" }) as Scene;
+      stage = "compile";
+      tape = new Tape();
+      return compileScene(drawn, tape.observe).artefact;
+    } finally { roots = stop(); }
+  })();
   stage = "lower";
-  const { artefact } = compiled;
   write("compile.json", plain(artefact));
 
   // As buildTs: bake recurrences on this GPU, lower, run a compute build's raw dispatches and lower again with them.
@@ -77,18 +102,14 @@ try {
   writeFileSync(join(out, "probe", "eval.txt"), evalProbe(roots));
 
   // The Rust side's input, written after the artefact so nothing it makes can move an id the artefact used.
-  const { portInput } = await import("../../src/record/port.ts");
-  const input = portInput(compiled, roots);
-  switch (input.kind) {
-    case "job": writeFileSync(join(out, "input", "job.bin"), input.bytes); writeFileSync(join(out, "probe", "wire.txt"), input.print); break;
-    case "refused": write("input/refused.json", { why: input.why }); break;
-  }
+  await writeInput(true);
   write("outcome.json", { kind: "built" });
   process.exit(0);
 } catch (e) {
   const { verdictOf, ending } = await import("../../src/cli/verdict.ts");
   const v = await verdictOf(e);
   const end = ending(v);
+  if (stage !== "author" && v.kind !== "internal") await writeInput(stage === "lower");
   // An untyped throw inside Loft is the TS compiler's bug, not an outcome the port must copy: the entry fails by name.
   write("outcome.json", v.kind === "internal" ? { kind: "crashed", message: v.message, stack: v.stack } : { kind: "refused", stage, verdict: v.kind, code: end.code, head: end.head });
   process.exit(0);

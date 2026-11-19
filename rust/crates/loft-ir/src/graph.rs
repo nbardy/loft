@@ -565,6 +565,8 @@ pub enum Target {
         keep: Keep,
         scene: bool,
     },
+    /// A wire-5 screen pass evaluates its colour at a free uv (no scene camera).
+    Screen { name: u32, size: Size, uv: u32, colour: u32 },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Size {

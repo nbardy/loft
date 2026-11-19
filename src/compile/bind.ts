@@ -25,7 +25,7 @@ export class Slots {
    * `table`: the compiler's registry, which declares (and prepares) a table the first time it is seen. `lower`: the
    * registry's lowering of a function's roots (src/compile/rates.ts), given the rate of each argument.
    */
-  constructor(private readonly table: (t: TableSource) => TableRef, readonly lower: (p: Program) => readonly Expr[]) {}
+  constructor(private readonly table: (t: TableSource) => TableRef, readonly lower: (p: Program) => readonly Expr[], private readonly onRegister?: (roots: readonly Expr[]) => void) {}
 
   /** After this, a leaf that has no slot yet is an error (it would not be in the artefact). */
   seal(): void { this.sealed = true; }
@@ -77,6 +77,7 @@ export class Slots {
 
   /** Give every leaf of these (CPU-evaluated) expressions a slot. Returns `leaves(roots)`, for callers that need it too. */
   register(roots: readonly Expr[]): ReturnType<typeof leaves> {
+    this.onRegister?.(roots);
     const l = leaves(roots);
     for (const s of l.inputs) this.input(s);
     for (const p of l.params) this.param(p);
@@ -160,8 +161,10 @@ function fnSource(slots: Slots, f: FnSpec): { code: string; libs: LibFn[] } {
  * Emits a WGSL function from expressions and returns its source, to be shared by every shader in the scene (its library
  * functions go to the shared scene code). For authors of their own drawable or style; a scene author does not need it.
  */
-export function emitFn(slots: Slots, name: string, args: FnSpec["args"], out: string, roots: readonly Expr[], ret: FnSpec["ret"]): string {
-  const s = fnSource(slots, { name, args, out, roots, ret });
+export function emitFn(slots: Slots, name: string, args: FnSpec["args"], out: string, roots: readonly Expr[], ret: FnSpec["ret"], observe?: (fn: FnSpec) => void): string {
+  const fn = { name, args, out, roots, ret };
+  observe?.(fn);
+  const s = fnSource(slots, fn);
   slots.lib(s.libs);
   return s.code;
 }

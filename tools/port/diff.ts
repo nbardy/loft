@@ -178,7 +178,7 @@ type Row = { id: string; path: string; result: "pass" | "fail"; ts: string; rust
 
 /** The comparison of two sides' sections, in the TS side's order (sections only the other side has come last). */
 function compare(ts: readonly Section[], rust: readonly Section[], scope: readonly string[], other: string): { first: Diff | undefined; differing: number; compared: number; byOwner: Record<string, number> } {
-  const inScope = (s: Section) => scope.length === 0 || scope.includes(s.owner);
+  const inScope = (s: Section) => scope.length === 0 || scope.includes(s.owner) || s.owner.startsWith("unowned tape kind");
   const theirs = new Map(rust.map((s) => [s.name, s]));
   const ours = new Set(ts.map((s) => s.name));
   const diffs: Diff[] = [];
@@ -227,10 +227,12 @@ async function entry(a: Args, e: Entry, base: string): Promise<Row & { byOwner: 
       const prev = join(a.baseline!, "entries", e.id, "ts");
       if (!existsSync(join(prev, "outcome.json"))) return row("fail", undefined, `the baseline ${a.baseline} has no TS side for this entry`);
       other = recorded(prev);
+      which = { probes: false, compile: true };
       rmSync(otherDir, { recursive: true, force: true });
       break;
     }
   }
+  if (a.mode === "port" && other.kind === "failed") return row("fail", other, other.why);
   const otherSide = a.mode === "ts" ? join(a.baseline!, "entries", e.id, "ts") : otherDir;
   const c = compare(sectionsOf(tsDir, ts, which), sectionsOf(otherSide, other, which), a.scope, OTHER[a.mode]);
   // Nothing in scope on either side (a lane's kind the entry does not use) is a pass: neither side wrote any of it.
@@ -243,7 +245,8 @@ async function entry(a: Args, e: Entry, base: string): Promise<Row & { byOwner: 
 async function main(a: Args) {
   const base = join(ROOT, "out/port", a.run);
   if ((a.mode === "port" || a.mode === "lower") && !existsSync(RUST)) throw new HarnessError(`${RUST} is missing. Fix: tools/dev.sh build loft-lower --fast`);
-  const all = await corpusEntries(a.only, "out/port/seeds");
+  // This fixture is a shot list for tools/film.ts. Its underlying scene is already a separate corpus entry.
+  const all = (await corpusEntries(a.only, "out/port/seeds")).filter((e) => e.path !== "examples/serpent_clip.ts");
   const list = all.filter((_, i) => i % a.shard[1] === a.shard[0]);
   if (list.length === 0) throw new HarnessError(`no corpus entry matches --only ${JSON.stringify(a.only)} in shard ${a.shard.join("/")}`);
   mkdirSync(join(base, "entries"), { recursive: true });

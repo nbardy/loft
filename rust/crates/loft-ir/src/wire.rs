@@ -102,6 +102,48 @@ pub struct Job {
     pub program: Program,
     pub graph: Graph,
     pub declarations: Option<crate::pass::Declarations>,
+    pub port: Box<[PortRecord]>,
+    fn_slots: Box<[FnRef]>,
+}
+
+impl Job {
+    /// Resolve a shared wire Fn ordinal to an index in the appropriate graph array.
+    pub fn fn_ref(&self, ordinal: u32) -> Option<FnRef> {
+        self.fn_slots.get(ordinal as usize).copied()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PortTag {
+    Scene, Thing, Effect, Style, Lighting, Lamp, Posts, Compute, Recurrence, Pass, Authored, Cast, Raw, Camera,
+}
+
+impl PortTag {
+    const ALL: [Self; 14] = [Self::Scene, Self::Thing, Self::Effect, Self::Style, Self::Lighting, Self::Lamp,
+        Self::Posts, Self::Compute, Self::Recurrence, Self::Pass, Self::Authored, Self::Cast, Self::Raw, Self::Camera];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Scene => "scene", Self::Thing => "thing", Self::Effect => "effect", Self::Style => "style",
+            Self::Lighting => "lighting", Self::Lamp => "lamp", Self::Posts => "posts", Self::Compute => "compute",
+            Self::Recurrence => "recurrence", Self::Pass => "pass", Self::Authored => "authored", Self::Cast => "cast",
+            Self::Raw => "raw", Self::Camera => "camera",
+        }
+    }
+}
+
+/// Validated wire-5 columns. The lowering owns their per-tag schemas (loft-lower::input).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PortRecord {
+    pub tag: PortTag,
+    pub words: Box<[u32]>,
+    pub lits: Box<[u32]>,
+    pub syms: Box<[u32]>,
+    pub fns: Box<[u32]>,
+    pub kernels: Box<[u32]>,
+    pub blobs: Box<[[u32; 2]]>,
+    pub roots: Box<[u32]>,
+
 }
 
 fn bad(span: Span, at: usize, what: Fault) -> Error {
@@ -118,8 +160,8 @@ fn fits(off: u32, len: u32, total: usize) -> bool {
 }
 
 /// What an Fn ordinal names: the wire numbers graph and raw functions together, `Graph` keeps them apart.
-#[derive(Clone, Copy)]
-enum FnSlot {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FnRef {
     Graph(u32),
     Raw(u32),
 }
@@ -196,7 +238,7 @@ struct Decls {
     kernels: Vec<Kernel>,
     params: Vec<Param>,
     inputs: Vec<Input>,
-    fn_slots: Vec<FnSlot>,
+    fn_slots: Vec<FnRef>,
     fn_at: Vec<usize>,
     raw_at: Vec<usize>,
     loop_at: Vec<usize>,
@@ -210,6 +252,7 @@ struct Decls {
     solves: Vec<Solve>,
     /// Each scene-level decl's word offset, for refusing a reference checked after all decls are read.
     top_at: Vec<(Top, usize)>,
+    port: Vec<(PortRecord, usize)>,
     program_roots: u32,
 }
 
@@ -325,15 +368,23 @@ fn pass(c: &mut Cur) -> Result<Pass, ()> {
     };
     let target = match c.word()? {
         0 => Target::View,
-        1 => {
+        kind @ (1 | 2) => {
             let name = c.sym()?;
             let size = match c.word()? {
                 0 => Size::View(c.lits(1)?),
                 1 => Size::Fixed(c.word()?, c.word()?),
                 _ => return Err(()),
             };
-            let keep = [Keep::Colour, Keep::Depth, Keep::Light].get(c.word()? as usize).copied().ok_or(())?;
-            Target::Texture { name, size, keep, scene: c.flag()? }
+            if kind == 2 {
+                if !c.z.typed || camera != u32::MAX || draws != [0, 0] || clear != Clear::Load
+                    || ground != Ground::None || outline != Outline::None {
+                    return Err(());
+                }
+                Target::Screen { name, size, uv: c.sym()?, colour: c.root()? }
+            } else {
+                let keep = [Keep::Colour, Keep::Depth, Keep::Light].get(c.word()? as usize).copied().ok_or(())?;
+                Target::Texture { name, size, keep, scene: c.flag()? }
+            }
         }
         _ => return Err(()),
     };
@@ -460,6 +511,7 @@ struct Sizes {
     lits: usize,
     rows: usize,
     syms: usize,
+    blobs: usize,
 }
 
 /// A raw function's reads (`Read`), to the end of its words; references are checked in `late_refs`.
@@ -566,7 +618,7 @@ fn late_refs(out: &mut Decls) -> Result<(), Error> {
             Read::Output { kernel, output } => {
                 matches!(kernels.get(kernel as usize), Some(Kernel::Compute(c)) if (output as usize) < c.writes.len())
             }
-            Read::Pass(p) => matches!(out.passes.get(p as usize), Some(Pass { target: Target::Texture { .. }, .. })),
+            Read::Pass(p) => matches!(out.passes.get(p as usize), Some(Pass { target: Target::Texture { .. } | Target::Screen { .. }, .. })),
         });
         ok.then_some(()).ok_or_else(|| bad(Span::Decls, *at, Fault::Layout))?;
     }
@@ -591,13 +643,31 @@ fn late_refs(out: &mut Decls) -> Result<(), Error> {
     for (k, at) in out.kernels.iter_mut().zip(&out.kernel_at) {
         let Kernel::Compute(c) = k else { continue };
         let libs = c.libs.iter().map(|f| match slots.get(*f as usize) {
-            Some(FnSlot::Raw(r)) => Ok(*r),
-            Some(FnSlot::Graph(_)) => Err(bad(Span::Decls, *at, Fault::Tag { found: *f })),
+            Some(FnRef::Raw(r)) => Ok(*r),
+            Some(FnRef::Graph(_)) => Err(bad(Span::Decls, *at, Fault::Tag { found: *f })),
             None => Err(bad(Span::Decls, *at, Fault::Ref { found: *f })),
         });
         c.libs = libs.collect::<Result<_, _>>()?;
     }
     Ok(())
+}
+
+fn port_record(tag: PortTag, words: &[u32], roots: &[u32], z: &Sizes) -> Option<PortRecord> {
+    let [nw, nl, ns, nf, nk, nb, body @ ..] = words else { return None };
+    let (words, body) = body.split_at_checked(*nw as usize)?;
+    let (lits, body) = body.split_at_checked(*nl as usize)?;
+    let (syms, body) = body.split_at_checked(*ns as usize)?;
+    let (fns, body) = body.split_at_checked(*nf as usize)?;
+    let (kernels, body) = body.split_at_checked(*nk as usize)?;
+    let (blobs, extra) = body.as_chunks::<2>();
+    if blobs.len() != *nb as usize || !extra.is_empty()
+        || lits.iter().any(|k| *k as usize >= z.lits)
+        || syms.iter().any(|k| *k as usize >= z.syms)
+        || blobs.iter().any(|[offset, length]| !fits(*offset, *length, z.blobs)) {
+        return None;
+    }
+    Some(PortRecord { tag, words: words.into(), lits: lits.into(), syms: syms.into(),
+        fns: fns.into(), kernels: kernels.into(), blobs: blobs.into(), roots: roots.into() })
 }
 
 fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
@@ -626,6 +696,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
         checks: Vec::new(),
         solves: Vec::new(),
         top_at: Vec::new(),
+        port: Vec::new(),
         program_roots: r0,
     };
     let (mut at, mut r) = (1usize, r0 as usize);
@@ -654,7 +725,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
             (0, [0, name, ret, n, binders @ ..]) => {
                 layout(binders.len() == *n as usize && rs.len() == 1)?;
                 let binders = binders.iter().map(|b| node(*b)).collect::<Result<_, _>>()?;
-                out.fn_slots.push(FnSlot::Graph(out.fns.len() as u32));
+                out.fn_slots.push(FnRef::Graph(out.fns.len() as u32));
                 out.fn_at.push(at);
                 out.fns.push(GraphFn { name: sym(*name)?, ret: ty(*ret)?, binders, body: node(rs[0])? });
             }
@@ -663,8 +734,8 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 layout(rest.len() > n && rs.is_empty())?;
                 // A dep is a raw function declared earlier, so the raw functions are acyclic.
                 let raw = |k: &u32| match out.fn_slots.get(*k as usize) {
-                    Some(FnSlot::Raw(i)) => Ok(*i),
-                    Some(FnSlot::Graph(_)) => Err(bad(Span::Decls, at, Fault::Tag { found: *k })),
+                    Some(FnRef::Raw(i)) => Ok(*i),
+                    Some(FnRef::Graph(_)) => Err(bad(Span::Decls, at, Fault::Tag { found: *k })),
                     None => Err(bad(Span::Decls, at, Fault::Ref { found: *k })),
                 };
                 let deps = rest[..n].iter().map(raw).collect::<Result<_, _>>()?;
@@ -672,7 +743,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 let mut c = Cur { w: &rest[n..], r: &[], wi: 0, ri: 0, z };
                 let reads = raw_reads(&mut c).map_err(|()| bad(Span::Decls, at, Fault::Layout))?;
                 out.raw_at.push(at);
-                out.fn_slots.push(FnSlot::Raw(out.raws.len() as u32));
+                out.fn_slots.push(FnRef::Raw(out.raws.len() as u32));
                 out.raws.push(RawFn { name: sym(*name)?, ret: ty(*ret)?, text: sym(*text)?, deps, reads });
             }
             (1, [n, stop, binders @ ..]) => {
@@ -841,7 +912,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
             (13, [name, fallback, cases @ ..]) if z.typed => {
                 layout(rs.is_empty() && cases.len() % 2 == 0)?;
                 let graph_fn = |f: u32| match out.fn_slots.get(f as usize) {
-                    Some(FnSlot::Graph(k)) => Ok(*k),
+                    Some(FnRef::Graph(k)) => Ok(*k),
                     _ => Err(bad(Span::Decls, at, Fault::Ref { found: f })),
                 };
                 let otherwise = graph_fn(*fallback)?;
@@ -854,6 +925,11 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 layout(!cases.windows(2).any(|p| p[0].0 == p[1].0))?;
                 out.opens.push(crate::graph::Open { name: sym(*name)?, cases: cases.into(), otherwise });
             }
+            (14..=27, _) if z.typed => {
+                let tag = PortTag::ALL[(tag - 14) as usize];
+                let rec = port_record(tag, w, rs, z).ok_or_else(|| bad(Span::Decls, at, Fault::Layout))?;
+                out.port.push((rec, at));
+            }
             (_, _) => return Err(bad(Span::Decls, at, Fault::Tag { found: tag })),
         }
         at += 3 + nw;
@@ -862,6 +938,13 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
     (r == roots.len()).then_some(()).ok_or_else(|| bad(Span::Roots, r, Fault::Length))?;
     graph_fns(&mut out)?;
     late_refs(&mut out)?;
+    for (p, at) in &out.port {
+        let refs = p.fns.iter().find(|k| **k as usize >= out.fn_slots.len())
+            .or_else(|| p.kernels.iter().find(|k| **k as usize >= out.kernels.len()));
+        if let Some(&found) = refs {
+            return Err(bad(Span::Decls, *at, Fault::Ref { found }));
+        }
+    }
     Ok(out)
 }
 
@@ -871,11 +954,11 @@ fn graph_fns(out: &mut Decls) -> Result<(), Error> {
     let slots = &out.fn_slots;
     let at = |top: Top| out.top_at.iter().find(|(t, _)| t.same(top)).map_or(0, |(_, a)| *a);
     let map = |f: &mut u32, top: Top| match slots.get(*f as usize) {
-        Some(FnSlot::Graph(g)) => {
+        Some(FnRef::Graph(g)) => {
             *f = *g;
             Ok(())
         }
-        Some(FnSlot::Raw(_)) | None => Err(bad(Span::Decls, at(top), Fault::Layout)),
+        Some(FnRef::Raw(_)) | None => Err(bad(Span::Decls, at(top), Fault::Layout)),
     };
     for (k, d) in out.draws.iter_mut().enumerate() {
         let top = Top::Draw(k);
@@ -971,7 +1054,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
     if let Some(i) = roots.iter().position(|r| *r as usize >= n_nodes) {
         return Err(bad(Span::Roots, i, Fault::Ref { found: roots[i] }));
     }
-    let sizes = Sizes { typed: wire == WIRE, nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
+    let sizes = Sizes { typed: wire == WIRE, nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms, blobs: blobs_b.len() };
     let d = decls(&words(decls_b), &roots, &sizes)?;
 
     let nodes = nodes(&words(nodes_b), &args, &d, &sizes)?;
@@ -1026,7 +1109,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
             fault: SceneFault::Type { want, got },
         })?;
     }
-    Ok(Job { program, graph, declarations })
+    Ok(Job { program, graph, declarations, fn_slots: d.fn_slots.into(), port: d.port.into_iter().map(|(p, _)| p).collect() })
 }
 
 /// The node words, each classified into its `Op` with its references, counts and flags checked.
@@ -1086,8 +1169,8 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
             5 => {
                 no_flags()?;
                 let f = match d.fn_slots.get(imm as usize) {
-                    Some(FnSlot::Graph(f)) => *f,
-                    Some(FnSlot::Raw(_)) => return Err(fault(Fault::Tag { found: imm })),
+                    Some(FnRef::Graph(f)) => *f,
+                    Some(FnRef::Raw(_)) => return Err(fault(Fault::Tag { found: imm })),
                     None => return Err(fault(Fault::Ref { found: imm })),
                 };
                 let g = &d.fns[f as usize];
@@ -1122,8 +1205,8 @@ fn nodes(w: &[u32], args: &[u32], d: &Decls, z: &Sizes) -> Result<Box<[Node]>, E
             9 => {
                 no_flags()?;
                 match d.fn_slots.get(imm as usize) {
-                    Some(FnSlot::Raw(r)) => Op::Raw(*r),
-                    Some(FnSlot::Graph(_)) => return Err(fault(Fault::Tag { found: imm })),
+                    Some(FnRef::Raw(r)) => Op::Raw(*r),
+                    Some(FnRef::Graph(_)) => return Err(fault(Fault::Tag { found: imm })),
                     None => return Err(fault(Fault::Ref { found: imm })),
                 }
             }
@@ -1295,6 +1378,9 @@ fn top_layout(g: &Graph, top: Top) -> Result<(), ()> {
         }
         Top::Pass(k) => {
             let p = &g.passes[k];
+            if let Target::Screen { colour, .. } = p.target {
+                return is(colour, V4);
+            }
             ((p.camera as usize) < g.cameras.len() && p.draws[1] as usize <= g.draws.len()).then_some(()).ok_or(())?;
             match p.ground {
                 Ground::None => {}

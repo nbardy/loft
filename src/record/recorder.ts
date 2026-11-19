@@ -18,6 +18,10 @@ import type { RecurPart, RecurState } from "../map/recur.ts";
 import { BOUND, Decl, FREE, Fill, Op, PRIM0, PRIMS, ROLES, swizzleCode, TYS, type Job, type Program } from "./wire.ts";
 import type { Camera, Check, Cover, Draw, Formula, Medium, Pass, Role, Scene, Solve } from "./decls.ts";
 
+import type { PortRecord, PortTag, Tape } from "./tape.ts";
+
+type Port = { tape: Tape; scene: import("../scene.ts").Scene; compiled: boolean };
+
 const PRIM = Object.fromEntries(PRIMS.map((p, k) => [p, PRIM0 + k])) as Record<Fn, number>;
 const TY = Object.fromEntries(TYS.map((t, k) => [t, k])) as Record<Ty, number>;
 const head = (op: number, ty: Ty, flags = 0): number => op | (TY[ty] << 8) | (flags << 16);
@@ -32,7 +36,7 @@ type FnRec = { readonly name: string; readonly lower: () => FnBody; done: Lowere
 type CallRec = { readonly fn: number; readonly args: readonly number[]; readonly result: number };
 
 /** A typed array appended to in place: no rest arguments, so a push allocates nothing (the recorder's hot path). */
-class Grow<A extends Uint32Array | Int32Array | Float64Array | Float32Array> {
+class Grow<A extends Uint8Array | Uint32Array | Int32Array | Float64Array | Float32Array> {
   n = 0;
   constructor(public a: A) {}
   private room(k: number): void {
@@ -171,11 +175,11 @@ export class Recorder {
   }
 
   /** The job for `program` over these roots, with the scene-level decls `scene` (none by default). */
-  job(program: Program, roots: readonly Expr[], scene: Scene = { cameras: [], passes: [], checks: [], solves: [] }): Job {
+  job(program: Program, roots: readonly Expr[], scene: Scene = { cameras: [], passes: [], checks: [], solves: [] }, port?: Port): Job {
     this.settle();
     const variable = this.variable;
     if (variable === undefined) throw new Error("internal: src/expr.ts has not handed the recorder `variable`");
-    return new Writer(this.view(), { settle: () => this.settle(), quiet: (f) => this.muted(f), variable, recurrences: this.recurrences }).write(program, roots.map((r) => r.id), scene);
+    return new Writer(this.view(), { settle: () => this.settle(), quiet: (f) => this.muted(f), variable, recurrences: this.recurrences }, port).write(program, roots.map((r) => r.id), scene);
   }
 
   /** Lower every graph function not yet lowered. Lowering a body may call (and so record) further functions: the loop runs until none is pending. */
@@ -241,6 +245,7 @@ class Writer {
   private readonly args = new Grow(new Uint32Array(1 << 14));
   private readonly lits = new Grow(new Float64Array(1 << 10));
   private readonly rows = new Grow(new Float32Array(1 << 10));
+  private readonly blobs = new Grow(new Uint8Array(0));
   private readonly syms = new Map<string, number>();
   private readonly decls: DeclOut[] = [];
   private readonly count = new Map<Decl, number>();
@@ -248,7 +253,8 @@ class Writer {
   private readonly out = new Ints();
   private readonly outCall = new Ints();
   private readonly declOf = new Map<unknown, number>();
-  constructor(private readonly log: LogView, private readonly host: Host) {}
+  private readonly portPasses: { def: PassDef; k: number; d: DeclOut }[] = [];
+  constructor(private readonly log: LogView, private readonly host: Host, private readonly port: Port | undefined) {}
 
   write(program: Program, roots: readonly number[], scene: Scene): Job {
     const top = roots.map((r) => this.visit(r));
@@ -266,6 +272,17 @@ class Writer {
     for (const p of scene.passes) this.pass(p);
     for (const c of scene.checks) this.check(c);
     for (const s of scene.solves) this.solve(s);
+    if (this.port !== undefined) {
+      const { tape, scene, compiled } = this.port;
+      for (const [tag, r] of tape.records(scene, compiled)) this.extend(tag, r);
+      for (const def of tape.passDefs()) this.offscreen(def);
+      // A screen's colour can read another pass, including a cycle the compiler refuses. Give each pass its own
+      // ordinal before walking its roots, so raw readers finish recording before a pass can reach them again.
+      for (const { def, k, d } of this.portPasses) {
+        this.portPass(def, d);
+        this.extend(Decl.PortPass, tape.passRecord(def, k));
+      }
+    }
     // Symbols: one UTF-8 encoding of them all, its offsets per symbol (each symbol's length in UTF-8 bytes).
     const symList = [...this.syms.keys()], all = new TextEncoder().encode(symList.join(""));
     const symAt = new Uint32Array(symList.length + 1);
@@ -275,11 +292,22 @@ class Writer {
     declRoots.pushAll(top);
     for (const d of this.decls) { decls.push1(d.tag); decls.push1(d.roots.length); decls.push1(d.words.length); decls.pushAll(d.words); declRoots.pushAll(d.roots); }
     return {
-      ...(scene.rowSteps?.length ? { wire: 5 as const } : {}),
+      ...(this.port !== undefined || scene.rowSteps?.length ? { wire: 5 as const } : {}),
       program, nodes: this.nodes.done(), args: this.args.done(), lits: this.lits.done(), rows: this.rows.done(),
-      blobs: new Uint8Array(0), syms: all, symAt, sites: new Uint32Array(0), siteOf: new Uint32Array(this.nodes.n >> 2),
+      blobs: this.blobs.done(), syms: all, symAt, sites: new Uint32Array(0), siteOf: new Uint32Array(this.nodes.n >> 2),
       decls: decls.done(), roots: declRoots.done(),
     };
+  }
+
+  private extend(tag: PortTag, r: PortRecord): void {
+    const { d } = this.reserve(tag, r);
+    const ls = r.lits.map((x) => this.lit(x)), syms = r.syms.map((s) => this.sym(s));
+    const fns = r.fns.map((f) => "fn" in f ? this.role(f) : this.rawFn(f));
+    const kernels = r.kernels.map((k) => "code" in k ? this.compute(k) : this.kernel(k));
+    const blobs = r.blobs.flatMap((b) => [this.blobs.pushAll(b), b.length]);
+    d.words = [r.words.length, ls.length, syms.length, fns.length, kernels.length, r.blobs.length,
+      ...r.words, ...ls, ...syms, ...fns, ...kernels, ...blobs];
+    d.roots = r.roots.map((e) => this.visit(e.id));
   }
 
   private sym(s: string): number {
@@ -416,6 +444,7 @@ class Writer {
     d.words.push(Fill.Recurrence, ...head, 0, ...cells, this.lit(state.rate), this.lit(state.from), this.lit(state.until), state.first, state.steps, every,
       this.kernel(state.prev), this.outOf(state.index.id), this.outOf(state.clock.id));
     d.roots.push(...start, ...step);
+    if (this.port !== undefined) this.extend(Decl.Recurrence, this.port.tape.recurRecord(state));
   }
   /** An author compute pass (src/compute.ts): a Kernel decl with no table head, reached through its readers. */
   private compute(p: ComputePass): number {
@@ -436,6 +465,11 @@ class Writer {
     const seen = this.declOf.get(def);
     if (seen !== undefined) return seen;
     const what = def.what;
+    if (this.port !== undefined) {
+      const { k, d } = this.reserve(Decl.Pass, def);
+      this.portPasses.push({ def, k, d });
+      return k;
+    }
     switch (what.kind) {
       case "screen": throw new Unrecorded(`the screen pass "${def.name}": the wire has no layout for a pass drawn by a colour over its uv yet`);
       case "scene": {
@@ -448,6 +482,23 @@ class Writer {
         d.words.push(camera, draws, draws, 0, 0, 0, 1, this.sym(def.name), ...size, KEEP[what.keep], 1);
         return k;
       }
+    }
+  }
+  private portPass(def: PassDef, d: DeclOut): void {
+    const what = def.what;
+    const size = def.size.kind === "view" ? [0, this.lit(def.size.scale)] : [1, def.size.width, def.size.height];
+    switch (what.kind) {
+      case "scene": {
+        const kernel = this.kernel(what.camera);
+        const { k: camera, d: cam } = this.reserve(Decl.Camera, {});
+        cam.words.push(this.sym(def.name), 2, kernel);
+        d.words.push(camera, 0, 0, 0, 0, 0, 1, this.sym(def.name), ...size, KEEP[what.keep], 1);
+        break;
+      }
+      case "screen":
+        d.words.push(0xffffffff, 0, 0, 0, 0, 0, 2, this.sym(def.name), ...size, this.sym(what.uv));
+        d.roots.push(this.visit(what.colour.id));
+        break;
     }
   }
   private read(r: LibRead): number[] {
@@ -571,6 +622,7 @@ class Writer {
     const words = reads.flatMap((r) => this.read(r));
     const { k, d } = this.reserve(Decl.Fn, f);
     d.words.push(1, this.sym(f.name), TY[f.ret], this.sym(f.wgsl), deps.length, ...deps, reads.length, ...words);
+    if (this.port !== undefined) this.extend(Decl.RawFlags, this.port.tape.rawRecord(f, k));
     return k;
   }
   private graphFn(fn: number, f: Lowered & { kind: "body" }): number {
