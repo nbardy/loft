@@ -15,9 +15,9 @@ enum Tok {
     Eof,
 }
 
-const PUNCT: [&str; 37] = [
+const PUNCT: [&str; 38] = [
     "|>", "->", "..", "<=", ">=", "==", "!=", "&&", "||", "<<", ">>", "+=", "-=", "*=", "/=", "{", "}", "(", ")", "[",
-    "]", "<", ">", ",", ";", ":", ".", "=", "+", "-", "*", "/", "%", "!", "@", "&", "|",
+    "]", "<", ">", ",", ";", ":", ".", "=", "+", "-", "*", "/", "%", "!", "@", "&", "|", "^",
 ];
 
 fn lex(file: u16, text: &str) -> Res<Vec<(Tok, Span)>> {
@@ -129,15 +129,17 @@ pub struct Parser<'a> {
     toks: Vec<(Tok, Span)>,
     at: usize,
     next_id: &'a mut u32,
+    diffs: Vec<(Ident, Ident)>,
 }
 
 /// Parses one file; expression ids continue from `next_id` so a whole program shares one id space.
 pub fn parse(file: u16, text: &str, next_id: &mut u32) -> Res<Module> {
-    let mut p = Parser { toks: lex(file, text)?, at: 0, next_id };
+    let mut p = Parser { toks: lex(file, text)?, at: 0, next_id, diffs: vec![] };
     let mut m = Module::default();
     while p.peek() != &Tok::Eof {
         m.items.push(p.item()?);
     }
+    m.diffs = p.diffs;
     Ok(m)
 }
 
@@ -252,7 +254,60 @@ impl Parser<'_> {
         if self.eat_word("schedule") {
             return Ok(Item::Schedule(self.schedule()?));
         }
-        self.err("an item (`space`, `unit`, `const`, `fn`, `kind`, `schedule`)")
+        if self.eat_word("scan") {
+            return Ok(Item::Scan(self.scan()?));
+        }
+        self.err("an item (`space`, `unit`, `const`, `fn`, `kind`, `scan`, `schedule`)")
+    }
+
+    /// `scan s(t: f32 in lo..hi, steps: N) @schedule(bake_lut) -> Table[T] { init: e; step(prev, t_i): e; }`
+    fn scan(&mut self) -> Res<ScanDecl> {
+        let name = self.ident()?;
+        self.expect("(")?;
+        let var = self.ident()?;
+        self.expect(":")?;
+        let var_ty = self.ty()?;
+        self.expect_word("in")?;
+        let lo = self.expr_bp(7)?;
+        self.expect("..")?;
+        let hi = self.expr_bp(7)?;
+        self.expect(",")?;
+        self.expect_word("steps")?;
+        self.expect(":")?;
+        let steps = self.expr()?;
+        self.expect(")")?;
+        self.expect("@")?;
+        self.expect_word("schedule")?;
+        self.expect("(")?;
+        let mode = self.ident()?;
+        if mode.name != "bake_lut" {
+            return Err(Diag::new(Code::E405, mode.span, "Phase 1 bakes scans at load only", "write `@schedule(bake_lut)`; per-frame scans arrive with motion"));
+        }
+        self.expect(")")?;
+        self.expect("->")?;
+        let table = self.ident()?;
+        if table.name != "Table" {
+            return self.err("`Table[T]`");
+        }
+        self.expect("[")?;
+        let elem = self.ty()?;
+        self.expect("]")?;
+        self.expect("{")?;
+        self.expect_word("init")?;
+        self.expect(":")?;
+        let init = self.expr()?;
+        self.expect(";")?;
+        self.expect_word("step")?;
+        self.expect("(")?;
+        let prev = self.ident()?;
+        self.expect(",")?;
+        let at = self.ident()?;
+        self.expect(")")?;
+        self.expect(":")?;
+        let step = self.expr()?;
+        self.expect(";")?;
+        self.expect("}")?;
+        Ok(ScanDecl { name, var, var_ty, lo, hi, steps, elem, init, prev, at, step })
     }
 
     fn fn_rest(&mut self, comptime: bool, attrs: Vec<Attr>) -> Res<FnDecl> {
@@ -307,6 +362,15 @@ impl Parser<'_> {
         self.expect("{")?;
         let mut k = KindDecl { name, params, row: vec![], queries: vec![], fns: vec![] };
         while !self.eat("}") {
+            let mut attrs = vec![];
+            while self.eat("@") {
+                let name = self.ident()?;
+                let args = if self.is("(") { self.args()?.into_iter().map(|a| a.value).collect() } else { vec![] };
+                attrs.push(Attr { name, args });
+            }
+            if !attrs.is_empty() && !self.is_word("query") {
+                return self.err("`query` after an attribute");
+            }
             if self.eat_word("row") {
                 self.expect("{")?;
                 while !self.eat("}") {
@@ -326,17 +390,18 @@ impl Parser<'_> {
                     "visible" => QueryKind::Visible,
                     "trace" => QueryKind::Trace,
                     "material" => QueryKind::Material,
+                    "surface" => QueryKind::Surface,
                     _ => {
                         return Err(Diag::new(
                             Code::E405,
                             self.span(),
-                            "Phase 0 lowers the queries `visible`, `trace` and `material` only",
+                            "Phase 1 lowers the queries `visible`, `trace`, `surface` and `material` only",
                             "write one of those; `light`, `sky` and `medium` arrive with the light phase",
                         ));
                     }
                 };
                 // `query trace(self, ...)`: the query's name is its fn's name (draft §6).
-                k.queries.push((which, self.fn_rest(false, vec![])?));
+                k.queries.push((which, self.fn_rest(false, attrs)?));
             } else if self.eat_word("fn") {
                 k.fns.push(self.fn_rest(false, vec![])?);
             } else {
@@ -406,6 +471,12 @@ impl Parser<'_> {
                     ));
                 }
                 Ok(TyExpr::Xform(a, b))
+            }
+            "Frame" => {
+                self.expect("[")?;
+                let s = self.space_ref()?;
+                self.expect("]")?;
+                Ok(TyExpr::Frame(s))
             }
             "Field" => {
                 self.expect("[")?;
@@ -632,7 +703,7 @@ impl Parser<'_> {
                 Ok(e)
             }
             Tok::Ident(name) => {
-                let is_ctor = (GEO.iter().any(|(n, _)| *n == name) || name == "Xform") && self.peek2() == &Tok::Punct("[")
+                let is_ctor = (GEO.iter().any(|(n, _)| *n == name) || name == "Xform" || name == "Frame") && self.peek2() == &Tok::Punct("[")
                     || (name.starts_with("vec") || name == "array") && self.peek2() == &Tok::Punct("<");
                 if is_ctor {
                     let ty = self.ty()?;
@@ -641,6 +712,19 @@ impl Parser<'_> {
                     return Ok(Expr { id: self.id(), span, kind: ExprKind::Ctor { ty, args } });
                 }
                 let callee = self.ident()?;
+                // `diff(f, x)(args)`: the derivative of fn `f` in its parameter `x`, a fn the AD pass generates.
+                if name == "diff" && self.is("(") {
+                    self.expect("(")?;
+                    let f = self.ident()?;
+                    self.expect(",")?;
+                    let x = self.ident()?;
+                    self.expect(")")?;
+                    let args = self.args()?;
+                    let span = start.to(self.prev_span());
+                    let callee = Ident { name: format!("{}__d_{}", f.name, x.name), span: f.span };
+                    self.diffs.push((f, x));
+                    return Ok(Expr { id: self.id(), span, kind: ExprKind::Call { callee, args } });
+                }
                 match name.as_str() {
                     "true" | "false" => Ok(Expr { id: self.id(), span: start, kind: ExprKind::Bool(name == "true") }),
                     _ if self.is("(") => {

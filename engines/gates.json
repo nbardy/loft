@@ -5,18 +5,24 @@
     9.0
   ],
   "refs": {
-    "blobs-1@0": "3014418b7637eeca8d5988b916ce04e392b91ec4ada70b0636e7bd91f972e4b0",
-    "blobs-1@4": "34e1b49856bccc5bff3dfb09113e8432100571822ee9703aa27274d17a68ef4d",
-    "blobs-1@9": "b7b12f969716b2d2be627565dc117f00538bc476cd5cea661791adfa1aab218b",
-    "blobs-20@0": "0fd5163ad45ab07c01aca1dc1fe70d7a781e859e93e5d76dfe246efaa1bb1f5a",
-    "blobs-20@4": "e6453bab202729d6b9437093118b35c7b8a07b064133aeecb5496a4fd234369e",
-    "blobs-20@9": "5ce90aa4e6406358011377d07baeea70240d52a8b691da4c5747d07ba3a8e503",
-    "capsules-1@0": "435756ea694d2368d89cda5bb8b7e5df96095eb9cb78383f8beef7d866cc6fc5",
-    "capsules-1@4": "70d0499855f75d18bbfac2c5996fa5e9c93ce9bc7ae80cdbc25ee788fd01358a",
-    "capsules-1@9": "91fc5bfd1c9fd16884990250d2c316774719d67223b25c3a51665fe34ff249dd",
-    "capsules-20@0": "535926ba2387d6c3b224e28c98d85d5cbe554ce4982c46c993052f559c9305c5",
-    "capsules-20@4": "9b3b9c17e602690fbf5e630b38031042b38333893201bd95c835819b6ae2b581",
-    "capsules-20@9": "9c57ee138aed8f11005e2936878e3705b35c81a55c159bcb3beeab44afcbd381"
+    "blobs-1@0": "8967b648732448ac56377c7271e72137fc8dd2c0925b0ac8f6a47452b8bca59f",
+    "blobs-1@4": "c97c1fbef2373bf3bc44abb347d5a6f975f47d458182591d290c624e51005664",
+    "blobs-1@9": "9092326d7bb10340204bab316a577b6177828fe6b440f3834073004e7ff6c6b2",
+    "blobs-20@0": "364ac637c758bde63a8806581b137baa2c19583a1c1fe02c1a6bd81648f3819e",
+    "blobs-20@4": "ab5d1bf7dc8e80c499ae9d74f50944ecdec7836cd754d33ee5f32e08d89c9771",
+    "blobs-20@9": "0320e385ede6dd60f274f86e7cc49b8ecff855015154058bb895d6612749a631",
+    "capsules-1@0": "0117400a6935786ad9d3512b71a923243aeaa586c3c22af88db12e8f05efb25c",
+    "capsules-1@4": "ee87ff2cdfb0c0f47ba16706ea6bcd16c7488bade1296a3b091b05731effe5f1",
+    "capsules-1@9": "8d27a65bf2ac8b301f89bb971ad78780c7c768bee4350e60dc216ae85d6f05b5",
+    "capsules-20@0": "b628c9e789fe84b97e1cdd4389a3f783a4187d2efeaec59cb148f80becdcf9de",
+    "capsules-20@4": "69e41f6dfde5ab454e59075ab7882f23ddbfd4148165dd7271bd8d02bff1c8e0",
+    "capsules-20@9": "174f33a66c4bf5ba1efe72880a915ca407f9183ac9e2282a9916b151c7eece28",
+    "hermit-1@0": "2ce23b0221cda002ec6ea408511bbe83e0cf27f306d39d77d716c108505aa311",
+    "hermit-1@4": "dc0a228412a3c23cb843cee9c9d86cd5b7d0417c1b6f09700cc75bacffa0c3cb",
+    "hermit-1@9": "434aba038da102dbbe3354565294c2fe3458430a4b2181f309928753d21d05f0",
+    "hermit-20@0": "b3fd278945cb6779c2d3c1c36b8a7ff21c6748c75222046f4330c65bdff053c1",
+    "hermit-20@4": "e849f4118746686e2105629b91db673e2216599d652ce65af56e4b62e67ff984",
+    "hermit-20@9": "ded05ade15319a46420aba8763dfb2b9e9b5874720866df1c6a630c499ae4754"
   },
   "scenes": [
     {
@@ -26,6 +32,7 @@
         "modules": 4,
         "p95_ms": 0.8,
         "pipelines": 5,
+        "shapes": 7,
         "warm_s": 0.2
       },
       "file": "engines/capsules.loft",
@@ -41,6 +48,7 @@
         "modules": 4,
         "p95_ms": 1.1,
         "pipelines": 5,
+        "shapes": 140,
         "warm_s": 0.4
       },
       "file": "engines/capsules.loft",
@@ -56,6 +64,7 @@
         "modules": 4,
         "p95_ms": 1.1,
         "pipelines": 5,
+        "shapes": 1,
         "warm_s": 0.2
       },
       "file": "engines/blobs.loft",
@@ -71,10 +80,43 @@
         "modules": 4,
         "p95_ms": 2.4,
         "pipelines": 5,
+        "shapes": 20,
         "warm_s": 0.3
       },
       "file": "engines/blobs.loft",
       "name": "blobs-20",
+      "set": {
+        "COUNT": 20
+      }
+    },
+    {
+      "budget": {
+        "cold_s": 1.5,
+        "commands": 17,
+        "modules": 8,
+        "p95_ms": 5.0,
+        "pipelines": 13,
+        "shapes": 11,
+        "warm_s": 0.25
+      },
+      "file": "engines/hermit.loft",
+      "name": "hermit-1",
+      "set": {
+        "COUNT": 1
+      }
+    },
+    {
+      "budget": {
+        "cold_s": 1.5,
+        "commands": 17,
+        "modules": 8,
+        "p95_ms": 5.6,
+        "pipelines": 13,
+        "shapes": 11,
+        "warm_s": 0.3
+      },
+      "file": "engines/hermit.loft",
+      "name": "hermit-20",
       "set": {
         "COUNT": 20
       }

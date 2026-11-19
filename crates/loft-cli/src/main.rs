@@ -4,6 +4,7 @@
 //!   loft show SCENE [MODULE] [--set ...]        print the generated WGSL (every module, or the one named)
 //!   loft still SCENE OUT.png [--t SECONDS] [--set ...]
 //!   loft gate [--approve]                       the five gates on every scene in engines/gates.json
+//!   loft load SCENE --nonce N [--set ...]       one load in this process with driver nonce N (cache experiments)
 //!
 //! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
 
@@ -79,8 +80,8 @@ fn run() -> Result<(), String> {
             }
             for k in &report.kinds {
                 println!(
-                    "kind {:<10} {:?}  rows {:>4}  derived L {:.4}..{:.4}  bound evals {}",
-                    k.name, k.draw, k.rows, k.l_min, k.l_max, k.evals
+                    "kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
+                    k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals
                 );
             }
             let modules = program.modules.len();
@@ -95,6 +96,30 @@ fn run() -> Result<(), String> {
             gates::still(&scene, &set, t, &out)
         }
         "gate" => gates::run(args.iter().any(|a| a == "--approve")),
+        "load" => {
+            let nonce: u32 = flag(&mut args, "--nonce").ok_or("load needs --nonce N")?.parse().map_err(|_| "--nonce takes a u32")?;
+            let scene = PathBuf::from(args.get(1).ok_or("usage: loft load SCENE --nonce N")?);
+            let g = loft_runner::gpu()?;
+            let t = std::time::Instant::now();
+            let src = sources(&scene)?;
+            let (p, _, _) = loft_passes::compile(&src, &set).map_err(|d| render(&d, &src))?;
+            let front = t.elapsed().as_secs_f64();
+            let l = loft_runner::Loaded::new(&g, &p, (1280, 800), Some(nonce))?;
+            l.frame(&g, 0.0);
+            l.gpu_ms(&g)?;
+            let st = &l.stats;
+            let gpu = l.gpu_ms(&g)?.map_or(0.0, |x| x.0);
+            println!(
+                "load {:.3} s  front {:.3} s  pipelines {:.1} ms  frame {gpu:.2} ms  disk cache {}  ({})",
+                t.elapsed().as_secs_f64(),
+                front,
+                st.pipelines_ms,
+                g.cache_key.as_ref().map_or("none on this backend".to_string(), |k| format!("{k}: {} bytes read", st.cache_bytes)),
+                g.adapter
+            );
+            println!("{}", st.pipeline_ms.iter().map(|(n, t)| format!("{n} {t:.0}")).collect::<Vec<_>>().join(", "));
+            Ok(())
+        }
         _ => Err("usage: loft check|show|still|gate (see crates/loft-cli/src/main.rs)".into()),
     }
 }

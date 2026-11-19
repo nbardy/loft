@@ -4,11 +4,14 @@
 
 /// Fixed binding contract between the passes' generated WGSL and the runner (plan §1 layer 0).
 pub mod abi {
-    /// Every module: group 0, binding 0, the `Frame` uniform (`FRAME_BYTES`).
-    pub const FRAME_BYTES: u64 = 192;
-    /// Kind modules, group 1: 0 rows (`array<f32>`), 1 visible row ids (`array<u32>`), 2 the kind's `KindParams`.
-    /// Shade, group 2: 0 Vis64 (`texture_2d<u32>`), 1 HDR colour (storage `rgba16float`, write), 2 tile lists.
-    /// Twin, group 2: 0 samples in (`array<vec4<f32>>`), 1 results out (`array<vec4<f32>>`).
+    /// Every module: group 0, binding 0, the `Frame` uniform (`FRAME_BYTES`): camera, inverse, eye, sun, size,
+    /// cold (x nonce guard, y 1 for the sun's orthographic shadow view, z 1 when a shadow map is bound), sun camera.
+    pub const FRAME_BYTES: u64 = 256;
+    /// Kind modules, group 1: 0 rows (`array<f32>`), 1 visible row ids (`array<u32>`), 2 the kind's `KindParams`,
+    /// 3 the program's scan tables (`array<f32>`).
+    /// Shade, group 2: 0 Vis64 (`texture_2d<u32>`), 1 HDR colour (storage `rgba16float`, write), 2 tile lists,
+    /// 3 the sun's shadow depth (`texture_depth_2d`), 4 its comparison sampler.
+    /// Twin, group 3: 0 samples in (`array<vec4<f32>>`), 1 results out (`array<vec4<f32>>`, 4 per sample).
     pub const KIND_PARAMS_BYTES: u64 = 16;
     /// Words of the hidden row columns the compiler appends: derived AABB lo (3), hi (3), Lipschitz L (1).
     pub const HIDDEN_WORDS: u32 = 7;
@@ -49,6 +52,18 @@ pub enum Draw {
     Analytic,
     /// `query trace` only: sphere traced with the row's derived L.
     Traced,
+    /// `query surface`: a `nu × nv` grid evaluated in the vertex stage; the record carries (u, v).
+    Surface { nu: u32, nv: u32 },
+}
+
+impl Draw {
+    /// Vertices of one row's draw: the proxy box, or two triangles per grid cell.
+    pub fn vertices(self) -> u32 {
+        match self {
+            Draw::Analytic | Draw::Traced => 36,
+            Draw::Surface { nu, nv } => 6 * nu * nv,
+        }
+    }
 }
 
 /// One row's derived world AABB, for the shared cull.
@@ -84,6 +99,8 @@ pub enum Pass {
     Cull,
     /// The RenderBundle: per kind, set pipeline and one `drawIndirect`, into Vis64 + depth.
     Vis(Vec<u32>),
+    /// The sun's shadow map: a second bundle replaying these kinds' own vis pipelines, every row, from the sun.
+    Shadow(Vec<u32>),
     /// One dispatch over 8×8 tiles: per kind, append the tile and bump its indirect dispatch.
     Classify,
     /// Per kind, one `dispatchWorkgroupsIndirect` over its tiles.
@@ -98,6 +115,10 @@ pub struct Program {
     pub instances: Vec<Instance>,
     pub camera: Orbit,
     pub sun: [f32; 3],
+    /// Shadow-map side in texels (0 without a shadow pass).
+    pub shadow_size: u32,
+    /// Every scan's baked table, concatenated (12 words per frame).
+    pub luts: Vec<f32>,
     pub passes: Vec<Pass>,
     /// Indices into `modules` of the three shared modules.
     pub cull: usize,
