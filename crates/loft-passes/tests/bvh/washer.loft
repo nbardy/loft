@@ -1,0 +1,44 @@
+space World WasherLocal
+
+param washer_inner: f = 0.5 in 0..1
+
+kind Washer @WasherLocal (pose: xf@WasherLocal>World, r0: f, r1: f) {
+  trace(p) = {
+    let radial = length([p.x, p.y, 0]@WasherLocal - [0, 0, 0]@WasherLocal)
+    max(max(p.z, -p.z - 0.002), max(radial - r1, r0 - radial))
+  }
+  visible(ro, rd) = {
+    if rd.z == 0 {
+      return -1
+    }
+    let t = -ro.z / rd.z
+    let p = ro + rd * t
+    let r2 = p.x * p.x + p.y * p.y
+    if r2 < r0 * r0 || r2 > r1 * r1 {
+      return -1
+    }
+    t
+  }
+  material(p, n) = ggx([0.8, 0.3, 0.1], 0.55, 0)
+}
+
+kind Card @World () {
+  trace(p) = box_sdf(p - [0, 0, -0.01]@World, [4, 4, 0.01])
+  visible(ro, rd) = {
+    if rd.z >= 0 {
+      return -1
+    }
+    let t = -ro.z / rd.z
+    let p = ro + rd * t
+    if max(abs(p.x), abs(p.y)) > 4 {
+      return -1
+    }
+    t
+  }
+  material(p, n) = ggx([0.7, 0.7, 0.7], 0.55, 0)
+}
+
+build {
+  emit Washer(pose: place([0, 0, 1]@World), r0: washer_inner, r1: 1)
+  emit Card()
+}
