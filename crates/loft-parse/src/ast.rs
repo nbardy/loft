@@ -41,6 +41,29 @@ pub enum Item {
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
+    Bake(BakeDecl),
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TexDim {
+    D2(u32, u32),
+    D3(u32, u32, u32),
+    Cube(u32),
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub enum BakeClock {
+    Load,
+    Dirty(Vec<Ident>),
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct BakeDecl {
+    pub texel: FnDecl,
+    pub dim: TexDim,
+    pub format: Ident,
+    pub clock: BakeClock,
+    pub mips: bool,
 }
 
 /// Permissions checked at a kernel's typed boundary.

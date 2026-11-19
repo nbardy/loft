@@ -6,6 +6,11 @@ use crate::Prog;
 #[path="motion.rs"]
 mod motion;
 pub use motion::motion_module;
+#[path="aov.rs"]
+mod aov;
+pub use aov::Aov;
+#[path="paths.rs"]
+pub mod paths;
 use loft_parse::ast::*;
 use crate::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res, Span};
@@ -585,6 +590,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
                 match callee.name.as_str(){
+                    "atomic_add" => return format!("atomicAdd(&{}, {})", a[0], a[1]),
                     "sky_zenith"=>return "loft_params[1u].xyz".into(),
                     "sky_horizon"=>return "loft_params[2u].xyz".into(),
                     "has_sky"=>return "(loft_params[1u].w != 0.0)".into(),
@@ -750,7 +756,7 @@ pub fn table_module(p: &Prog, types: &[Ty], kind: &KindDecl) -> String {
 }
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
-pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw) -> Res<String> {
+pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
     em.header(abi::NONCE_PLACEHOLDER);
@@ -792,7 +798,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
         em.func(f, n);
     }
     // Draw-form glue: the vis entry points, how shade rebuilds the hit, and the twin's geometry.
-    let (vis, geometry, twin_geo) = match draw {
+    let (mut vis, mut geometry, twin_geo) = match draw {
         Draw::Surface { nu, nv } => (
             format!(
                 r"struct VsOut {{ @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) @interpolate(flat) row: u32 }}
@@ -941,11 +947,63 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             )
         }
     };
+    let mut diagnostics = "";
+    let shade = match aov {
+        Aov::Beauty => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
+        Aov::Albedo => layout.iter().enumerate().find_map(|(i, (name, _))| {
+            let f = p.fns[*name];
+            f.params.iter().take(f.params.len().saturating_sub(3))
+                .position(|p| p.name.name == "albedo").map(|j| format!("b.l{i}_{j}"))
+        }).unwrap_or_else(|| "vec3<f32>(0.0)".into()),
+        Aov::Normal => "n * 0.5 + 0.5".into(),
+        Aov::Depth => "vec3<f32>(min(log2(1.0 + distance(p, frame.eye.xyz)) / 10.0, 254.0 / 255.0))".into(),
+        Aov::Id => {
+            diagnostics = aov::ID_HASH;
+            "loft_id(v.x)".into()
+        }
+        Aov::SdfSteps => {
+            diagnostics = aov::TRACE_STEPS;
+            if draw == Draw::Traced {
+                // Diagnostic-only Vis word: 24 high distance bits and the 8-bit step count.
+                vis = vis.replace("var hit = false;", "var hit = false; var steps = 0u;")
+                    .replace("let d = q_trace(row, lro + lrd * t);", "steps += 1u; let d = q_trace(row, lro + lrd * t);")
+                    .replace("bitcast<u32>(t)", "((bitcast<u32>(t) & 0xffffff00u) | steps)");
+                geometry = geometry.replace("bitcast<f32>(v.y)", "bitcast<f32>(v.y & 0xffffff00u)");
+                "loft_steps(f32(v.y & 255u) / 192.0)".into()
+            } else {
+                "loft_steps(0.0)".into()
+            }
+        }
+        Aov::LipschitzRatio => {
+            diagnostics = aov::LIPSCHITZ_RATIO;
+            if matches!(draw, Draw::Surface { .. }) {
+                "vec3<f32>(0.0)".into()
+            } else {
+                // Central differences cancel the first-order truncation error of the tetrahedral stencil.
+                geometry.push_str(r"
+  var grad = vec3<f32>(0.0);
+  for (var j = 0u; j < 6u; j++) {
+    let axis = j / 2u;
+    var q = pl;
+    let side = select(-1.0, 1.0, (j & 1u) == 0u);
+    q[axis] += side * e;
+    grad[axis] += side * q_trace(row, q);
+  }
+");
+                "loft_ratio(length(grad) / (2.0 * e * row.loft_lip))".into()
+            }
+        }
+        Aov::Overdraw => {
+            diagnostics = aov::OVERDRAW;
+            "vec3<f32>(0.0)".into()
+        }
+    };
     let tl = crate::unit(crate::TWIN_LIGHT);
     let _ = write!(
         em.out,
-        r"// --- generated entry points ---
+        r"{queries_end}
 {vis}
+{diagnostics}
 @group(2) @binding(0) var vis_tex: texture_2d<u32>;
 @group(2) @binding(1) var hdr: texture_storage_2d<rgba16float, write>;
 @group(2) @binding(2) var<storage, read> tiles: array<u32>;
@@ -981,7 +1039,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   let pose = loft_pose(row);
   let xf = loft_xf_inv(pose);
 {geometry}  let sun = normalize(frame.sun.xyz);
-  textureStore(hdr, px, vec4<f32>({light}(b, n, -rd, sun, loft_shadow(p, n), ao), 1.0));
+  textureStore(hdr, px, vec4<f32>({shade}, 1.0));
 }}
 
 @group(3) @binding(0) var<storage, read> twin_in: array<vec4<f32>>;
@@ -1005,7 +1063,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   twin_out[4u * i + 3u] = o3;
 }}
 ",
-        light = fn_symbol(light),
+        queries_end = paths::QUERIES_END,
         l0 = f32_lit(f64::from(tl[0])),
         l1 = f32_lit(f64::from(tl[1])),
         l2 = f32_lit(f64::from(tl[2])),
@@ -1120,12 +1178,35 @@ var<workgroup> mask: atomic<u32>;
 }
 
 /// `sky` is the library fn named by the schedule's present pass.
-pub fn present_module(p: &Prog, types: &[Ty], sky: &str) -> String {
+pub fn present_module(p: &Prog, types: &[Ty], sky: &str, aov: Aov, print: bool) -> String {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
-    let (lib, consts) = reachable(p, &[], &[sky]);
+    let roots = if print && aov == Aov::Beauty { vec![sky, "paper_grain"] } else { vec![sky] };
+    let (lib, consts) = reachable(p, &[], &roots);
     em.library(&lib, &consts);
     let sky=fn_symbol(sky);
+    let resolve = match aov {
+        Aov::Beauty if print => format!(r"
+  let center = textureLoad(vis_tex, px, 0).x;
+  if center == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
+  let size = vec2<i32>(textureDimensions(vis_tex));
+  var line = 0.0;
+  for (var i=0u; i<4u; i++) {{
+    let sign = select(-1, 1, (i & 1u) == 0u);
+    let step = select(vec2<i32>(0,sign),vec2<i32>(sign,0),i<2u);
+    let q = clamp(vec2<i32>(px)+step,vec2<i32>(0),size-1);
+    if textureLoad(vis_tex,q,0).x!=center {{ line += 0.33; }}
+  }}
+  let hatch = smoothstep(0.74,0.98,cos((pos.x+pos.y)*1.256637)) * (1.0-smoothstep(0.08,0.32,dot(c,vec3<f32>(0.2126,0.7152,0.0722))));
+  c = mix(c, vec3<f32>(0.025,0.02,0.035), min(line + 0.42*hatch,1.0));
+  return vec4<f32>(loft_user_paper_grain(loft_aces(c),pos.xy,0.04,0.03),1.0);
+"),
+        Aov::Beauty => format!("if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }} return vec4<f32>(loft_aces(c), 1.0);"),
+        Aov::Overdraw => "return vec4<f32>(c, 1.0);".into(),
+        Aov::Depth => "return vec4<f32>(select(c, vec3<f32>(1.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+        Aov::Albedo | Aov::Normal | Aov::Id | Aov::SdfSteps | Aov::LipschitzRatio =>
+            "return vec4<f32>(select(c, vec3<f32>(0.0), textureLoad(vis_tex, px, 0).x == LOFT_EMPTY), 1.0);".into(),
+    };
     em.out += &format!(
         r"@group(1) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(1) @binding(1) var vis_tex: texture_2d<u32>;
@@ -1144,10 +1225,87 @@ fn loft_aces(x: vec3<f32>) -> vec3<f32> {{
   if frame.cold.x == LOFT_NONCE {{ discard; }}
   let px = vec2<u32>(pos.xy);
   var c = textureLoad(hdr_tex, px, 0).rgb;
-  if textureLoad(vis_tex, px, 0).x == LOFT_EMPTY {{ c = {sky}(loft_ray(pos.xy), normalize(frame.sun.xyz)); }}
-  return vec4<f32>(loft_aces(c), 1.0);
+  {resolve}
 }}
 "
     );
     em.out
+}
+
+
+pub(crate) fn bake_module(p: &Prog, types: &[Ty], decl: &BakeDecl, module: usize) -> Res<(crate::bake_tex::Bake, String)> {
+    use crate::bake_tex::{Bake, Clock};
+    use naga::StorageFormat as F;
+    let format = match decl.format.name.as_str() {
+        "r8unorm" => F::R8Unorm,
+        "r16float" => F::R16Float,
+        "r32float" => F::R32Float,
+        "rgba8unorm" => F::Rgba8Unorm,
+        "rgba16float" => F::Rgba16Float,
+        _ => unreachable!("parser checks the bake format"),
+    };
+    let mut em = Emitter::new(p, types);
+    let (coord, storage, index, arg) = match decl.dim {
+        TexDim::D2(..) => (Ty::VecN(2), "2d", "vec2<i32>(id.xy)", "u.xy"),
+        TexDim::D3(..) => (Ty::VecN(3), "3d", "vec3<i32>(id)", "u"),
+        TexDim::Cube(_) => (Ty::Geo(Geo::Dir, Space::Named("World".into())), "2d_array", "vec2<i32>(id.xy), i32(id.z)", "bake_direction(id.z, u.xy)"),
+    };
+    let prm = &decl.texel.params[0];
+    if em.resolve(prm.ty.as_ref().expect("typed bake coordinate")) != coord {
+        return Err(Diag::new(Code::E003, prm.name.span, "bake coordinate has the wrong type", "use v2 for 2D, v3 for 3D or d3@World for cube"));
+    }
+    let clock = match &decl.clock {
+        BakeClock::Load => Clock::Load,
+        BakeClock::Dirty(names) => {
+            let mut words = BTreeSet::new();
+            for name in names {
+                let word = p.param_word(&name.name).ok_or_else(|| Diag::new(Code::E011, name.span,
+                    "dirty bake watches an unknown live parameter", "name a live scalar param"))?;
+                if !words.insert(word) {
+                    return Err(Diag::new(Code::E011, name.span, "duplicate dirty parameter", "watch each parameter once"));
+                }
+            }
+            Clock::Dirty(words.into_iter().collect())
+        }
+    };
+    let bake = Bake { name: decl.texel.name.name.clone(), dim: decl.dim, format, clock, mips: decl.mips, module };
+    em.header(abi::NONCE_PLACEHOLDER);
+    let (functions, constants) = reachable(p, &[&decl.texel], &[]);
+    em.library(&functions, &constants);
+    em.func(&decl.texel, "texel_value");
+    if let TexDim::Cube(_) = decl.dim {
+        em.out.push_str(r"
+fn bake_direction(face: u32, uv: vec2<f32>) -> vec3<f32> {
+  let h = uv * 2.0 - 1.0;
+  var d: vec3<f32>;
+  switch face {
+    case 0u: { d = vec3<f32>( 1.0, -h.y, -h.x); }
+    case 1u: { d = vec3<f32>(-1.0, -h.y,  h.x); }
+    case 2u: { d = vec3<f32>( h.x,  1.0,  h.y); }
+    case 3u: { d = vec3<f32>( h.x, -1.0, -h.y); }
+    case 4u: { d = vec3<f32>( h.x, -h.y,  1.0); }
+    default: { d = vec3<f32>(-h.x, -h.y, -1.0); }
+  }
+  return normalize(d);
+}");
+    }
+    let [x, y, z] = bake.size();
+    let [wx, wy, wz] = bake.workgroup();
+    let encoding = match decl.format.name.as_str() {
+        "r8unorm" | "r16float" | "r32float" => "vec4<f32>(texel, 0.0, 0.0, 1.0)",
+        _ => "texel",
+    };
+    let format_name = &decl.format.name;
+    let _ = write!(em.out, r"
+@group(3) @binding(0) var baked: texture_storage_{storage}<{format_name}, write>;
+@compute @workgroup_size({wx}, {wy}, {wz})
+fn bake(@builtin(global_invocation_id) id: vec3<u32>) {{
+  let extent = vec3<u32>({x}u, {y}u, {z}u);
+  if any(id >= extent) {{ return; }}
+  let u = (vec3<f32>(id) + 0.5) / vec3<f32>(extent);
+  let texel = texel_value({arg});
+  textureStore(baked, {index}, {encoding});
+}}
+");
+    Ok((bake, em.out))
 }

@@ -1,5 +1,11 @@
 //! Native execution of the Phase 1.5 picture and motion fixtures.
 mod motion;
+mod bakes;
+mod paths;
+use paths::PathGpu;
+use bakes::TextureBake;
+use loft_passes::emit::Aov;
+use std::sync::Mutex;
 pub use motion::sample_motion;
 
 use loft_passes::program::{abi, Draw, Pass, Program};
@@ -13,6 +19,7 @@ pub struct Gpu {
     pub timestamps: bool,
     /// The disk pipeline cache's file name, when the backend has one (Vulkan); `None` on Metal.
     pub cache_key: Option<String>,
+    bake_formats: Vec<wgpu::TextureFormat>,
 }
 
 /// A high-performance device; timestamps when the adapter grants them.
@@ -25,7 +32,7 @@ pub fn gpu() -> Result<Gpu, String> {
     .map_err(|e| format!("no adapter: {e}"))?;
     // PIPELINE_CACHE exists on Vulkan only: wgpu 30's Metal backend stubs `create_pipeline_cache` (it never uses
     // MTLBinaryArchive), so on Metal the only cache across processes is the OS's own Metal shader cache.
-    let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_CACHE);
+    let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_CACHE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-runner"),
         required_features: features,
@@ -33,7 +40,19 @@ pub fn gpu() -> Result<Gpu, String> {
     }))
     .map_err(|e| format!("no device: {e}"))?;
     let info = adapter.get_info();
+    use wgpu::TextureFormat as F;
+    let bake_formats = [F::R8Unorm, F::R16Float, F::R32Float, F::Rgba8Unorm, F::Rgba16Float].into_iter()
+        .filter(|f| {
+            let ff = if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+                adapter.get_texture_format_features(*f)
+            } else {
+                f.guaranteed_format_features(features)
+            };
+            ff.allowed_usages.contains(wgpu::TextureUsages::STORAGE_BINDING)
+                && ff.flags.contains(wgpu::TextureFormatFeatureFlags::STORAGE_WRITE_ONLY)
+        }).collect();
     Ok(Gpu {
+        bake_formats,
         device,
         queue,
         adapter: format!("{} ({:?})", info.name, info.backend),
@@ -56,6 +75,8 @@ pub struct LoadStats {
     pub modules_ms: f64,
     pub pipelines_ms: f64,
     pub resources_ms: f64,
+    pub load_bake_commands: u32,
+    pub load_bake_gpu_ms: Option<f64>,
     /// Bytes read from the disk pipeline cache (0: none on this backend, or a cold cache).
     pub cache_bytes: usize,
     /// Each pipeline's own creation time on its thread (ms), to see which one sets the cold load.
@@ -107,6 +128,11 @@ pub struct Loaded {
     color: wgpu::Texture,
     color_view: wgpu::TextureView,
     clock: Option<Clock>,
+    bake_textures: Mutex<Vec<TextureBake>>,
+    params: wgpu::Buffer,
+    param_values: Mutex<(Vec<f32>, bool)>,
+    overdraw: Option<(wgpu::RenderBundle, wgpu::TextureView)>,
+    path: Option<PathGpu>,
     pub stats: LoadStats,
 }
 
@@ -217,6 +243,22 @@ fn render(
     cull: Option<wgpu::Face>,
     cache: Option<&wgpu::PipelineCache>,
 ) -> wgpu::RenderPipeline {
+    render_blended(device, label, layouts, module, entries, target, depth, cull, cache, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_blended(
+    device: &wgpu::Device,
+    label: &str,
+    layouts: &[&wgpu::BindGroupLayout],
+    module: &wgpu::ShaderModule,
+    entries: (&str, &str),
+    target: wgpu::TextureFormat,
+    depth: bool,
+    cull: Option<wgpu::Face>,
+    cache: Option<&wgpu::PipelineCache>,
+    blend: Option<wgpu::BlendState>,
+) -> wgpu::RenderPipeline {
     let layouts: Vec<Option<&wgpu::BindGroupLayout>> = layouts.iter().map(|l| Some(*l)).collect();
     let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &layouts, immediate_size: 0 });
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -227,7 +269,7 @@ fn render(
             module,
             entry_point: Some(entries.1),
             compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState { format: target, blend: None, write_mask: wgpu::ColorWrites::ALL })],
+            targets: &[Some(wgpu::ColorTargetState { format: target, blend, write_mask: wgpu::ColorWrites::ALL })],
         }),
         primitive: wgpu::PrimitiveState { cull_mode: cull, front_face: wgpu::FrontFace::Ccw, ..Default::default() },
         depth_stencil: depth.then(|| wgpu::DepthStencilState {
@@ -241,6 +283,18 @@ fn render(
         multiview_mask: None,
         cache,
     })
+}
+
+fn make_clock(g: &Gpu, n: u32) -> Clock {
+    use wgpu::BufferUsages as U;
+    let d = &g.device;
+    Clock {
+        set: d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("bake timestamps"), ty: wgpu::QueryType::Timestamp, count: n }),
+        resolve: buffer(d, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
+        read: buffer(d, "ts read", u64::from(n) * 8, U::MAP_READ | U::COPY_DST),
+        n,
+        period_ns: f64::from(g.queue.get_timestamp_period()),
+    }
 }
 
 fn read_clock(g: &Gpu, c: &Clock) -> Result<Vec<u64>, String> {
@@ -316,7 +370,16 @@ impl Gpu {
 impl Loaded {
     /// Builds every GPU object for `p` at `size`. `nonce` (any value but `u32::MAX`) forces a cold driver compile.
     pub fn new(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>) -> Result<Loaded, String> {
+        Self::with_aov(g, p, size, nonce, Aov::Beauty)
+    }
+
+    pub fn with_aov(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>, aov: Aov) -> Result<Loaded, String> {
         let d = &g.device;
+        let color_format = if aov == Aov::Beauty { COLOR } else { wgpu::TextureFormat::Rgba8Unorm };
+        let limits = d.limits();
+        if size.0 == 0 || size.1 == 0 || size.0.max(size.1) > limits.max_texture_dimension_2d {
+            return Err("frame dimensions exceed device limits".into());
+        }
         let nonce = nonce.unwrap_or(u32::MAX);
         let k_n = p.kinds.len();
         let tiles = (size.0.div_ceil(abi::TILE), size.1.div_ceil(abi::TILE));
@@ -344,6 +407,8 @@ impl Loaded {
         let bgl_classify = layout(d, "classify", &[(CS, texture(wgpu::TextureSampleType::Uint)), (CS, storage(false)), (CS, storage(false))]);
         let bgl_present =
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
+        let path_layout = p.path.as_ref().map(|path| PathGpu::layout(d, path));
+        let present_layouts = [&bgl0, &bgl_present].into_iter().chain(path_layout.iter()).collect::<Vec<_>>();
         // The disk pipeline cache, where the backend has one (see `gpu`).
         let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k).with_extension(format!("{nonce}.bin")));
         let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
@@ -377,7 +442,7 @@ impl Loaded {
                 .collect();
             let cull = sc.spawn(|| timed(|| compute(d, "cull", &[&bgl0, &bgl_cull], &modules[p.cull], "cull", cache)));
             let classify = sc.spawn(|| timed(|| compute(d, "classify", &[&bgl0, &bgl_classify], &modules[p.classify], "classify", cache)));
-            let present = sc.spawn(|| timed(|| render(d, "present", &[&bgl0, &bgl_present], &modules[p.present], ("vs_present", "fs_present"), COLOR, false, None, cache)));
+            let present = sc.spawn(|| timed(|| render(d, "present", &present_layouts, &modules[p.present], ("vs_present", "fs_present"), color_format, false, None, cache)));
             fn join<T>(h: std::thread::ScopedJoinHandle<'_, T>) -> T {
                 h.join().expect("pipeline thread")
             }
@@ -442,8 +507,8 @@ impl Loaded {
         use wgpu::TextureUsages as T;
         let vis_tex = tex(d, "vis64", size, VIS, T::RENDER_ATTACHMENT | T::TEXTURE_BINDING);
         let depth_tex = tex(d, "depth", size, DEPTH, T::RENDER_ATTACHMENT);
-        let hdr_tex = tex(d, "hdr", size, HDR, T::STORAGE_BINDING | T::TEXTURE_BINDING);
-        let color = tex(d, "color", size, COLOR, T::RENDER_ATTACHMENT | T::COPY_SRC);
+        let hdr_tex = tex(d, "hdr", size, HDR, T::STORAGE_BINDING | T::TEXTURE_BINDING | T::RENDER_ATTACHMENT);
+        let color = tex(d, "color", size, color_format, T::RENDER_ATTACHMENT | T::COPY_SRC);
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
         let (vis, depth, hdr, color_view) = (view(&vis_tex), view(&depth_tex), view(&hdr_tex), view(&color));
         // The sun's view: an orthographic box around every caster row, deep enough to reach the receivers below.
@@ -505,6 +570,26 @@ impl Loaded {
             be.draw_indirect(&draw_args, u64::from(k) * 16);
         }
         let bundle = be.finish(&wgpu::RenderBundleDescriptor { label: Some("vis64") });
+        let overdraw = (aov == Aov::Overdraw).then(|| {
+            let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+                label: Some("overdraw"), color_formats: &[Some(HDR)], depth_stencil: None,
+                sample_count: 1, multiview: None,
+            });
+            let component = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
+            let pipelines: Vec<_> = vis_kinds.iter().map(|&k| {
+                let kt = &p.kinds[k as usize];
+                let face = match kt.draw { Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front), Draw::Surface { .. } => None };
+                render_blended(d, &kt.name, &[&bgl0, &bgl_kind], &modules[kt.module], ("vs", "fs_overdraw"),
+                    HDR, false, face, cache, Some(wgpu::BlendState { color: component, alpha: component }))
+            }).collect();
+            be.set_bind_group(0, &g0, &[]);
+            for (&kind, pipeline) in vis_kinds.iter().zip(&pipelines) {
+                be.set_pipeline(pipeline);
+                be.set_bind_group(1, &kinds[kind as usize].g1, &[]);
+                be.draw_indirect(&draw_args, u64::from(kind) * 16);
+            }
+            (be.finish(&wgpu::RenderBundleDescriptor { label: Some("overdraw") }), hdr)
+        });
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
             let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
@@ -533,7 +618,27 @@ impl Loaded {
             Shadow { frame_buf, bundle: be.finish(&wgpu::RenderBundleDescriptor { label: Some("sun") }), vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
         });
 
-        let n = 2 * p.passes.len() as u32;
+        let mut bake_cache = loft_runner::mips::Pipelines::default();
+        let mut bake_textures = p.bakes.iter().map(|b| TextureBake::prepare(g, b, &modules, &bgl0, &mut bake_cache))
+            .collect::<Result<Vec<_>, _>>()?;
+        let n_load = bake_textures.iter().filter(|b| b.clock.due(true, &p.params)).count() as u32;
+        if n_load != 0 {
+            let clock = g.timestamps.then(|| make_clock(g, 2 * n_load));
+            let mut enc = d.create_command_encoder(&Default::default());
+            for (i, bake) in bake_textures.iter_mut().filter(|b| b.clock.due(true, &p.params)).enumerate() {
+                let stamp = clock.as_ref().map(|c| (&c.set, i as u32 * 2));
+                stats.load_bake_commands += bake.encode(&g0, &mut enc, stamp);
+                bake.clock.complete(&p.params);
+            }
+            g.queue.submit([enc.finish()]);
+            if let Some(c) = clock {
+                let times = read_clock(g, &c)?;
+                let ticks: u64 = times.chunks_exact(2).map(|pair| pair[1].saturating_sub(pair[0])).sum();
+                stats.load_bake_gpu_ms = Some(ticks as f64 * c.period_ns / 1e6);
+            }
+        }
+        let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present]));
+        let n = 2 * (p.passes.len() as u32 + u32::from(path.as_ref().is_some_and(PathGpu::has_photons)));
         let clock = g.timestamps.then(|| Clock {
             set: d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("frame"), ty: wgpu::QueryType::Timestamp, count: n }),
             resolve: buffer(d, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
@@ -569,12 +674,17 @@ impl Loaded {
             color,
             color_view,
             clock,
+            bake_textures: Mutex::new(bake_textures),
+            params,
+            param_values: Mutex::new((p.params.clone(), false)),
+            overdraw,
+            path,
             stats,
         })
     }
 
     /// The camera's frame uniform at time t, or the sun's (`sun`: orthographic, `eye` holds the ray direction).
-    fn frame_uniform(&self, t: f32, sun: bool) -> Vec<u8> {
+    fn frame_uniform(&self, t: f32, sun: bool, samples: u32) -> Vec<u8> {
         let eye = self.camera.eye(t);
         let aspect = self.size.0 as f32 / self.size.1 as f32;
         let vp = mul(perspective(self.camera.fov, aspect, 0.05, 400.0), look_at(eye, self.camera.at));
@@ -588,24 +698,60 @@ impl Loaded {
         w.extend([eye[0], eye[1], eye[2], t, s[0] / l, s[1] / l, s[2] / l, texel]);
         let mut b = f32_bytes(&w);
         let tiles = [self.size.0, self.size.1, self.tiles.0, self.tiles.0 * self.tiles.1];
-        b.extend(bytes_of(&[tiles[0], tiles[1], tiles[2], tiles[3], 0, u32::from(sun), u32::from(self.shadow.is_some()), 0]));
+        b.extend(bytes_of(&[tiles[0], tiles[1], tiles[2], tiles[3], 0, u32::from(sun), u32::from(self.shadow.is_some()), samples]));
         b.extend(f32_bytes(&light_vp.iter().flatten().copied().collect::<Vec<_>>()));
         debug_assert_eq!(b.len() as u64, abi::FRAME_BYTES);
         b
     }
 
+    pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {
+        let mut params = self.param_values.lock().unwrap();
+        let slot = params.0.get_mut(word).ok_or("unknown parameter word")?;
+        if slot.to_bits() != value.to_bits() {
+            *slot = value;
+            params.1 = true;
+        }
+        Ok(())
+    }
+
+    /// Texture contents are available after the queue finishes the load or first dirty bake.
+    pub fn baked_texture(&self, name: &str) -> Option<wgpu::Texture> {
+        self.bake_textures.lock().unwrap().iter().find(|b| b.name == name).map(|b| b.texture.clone())
+    }
+
     /// Encodes and submits one frame at time `t`. Returns the GPU commands recorded (dispatches + draws).
     pub fn frame(&self, g: &Gpu, t: f32) -> u32 {
-        g.queue.write_buffer(&self.frame_buf, 0, &self.frame_uniform(t, false));
+        self.frame_samples(g, t, 1)
+    }
+
+    pub fn frame_samples(&self, g: &Gpu, t: f32, samples: u32) -> u32 {
+        g.queue.write_buffer(&self.frame_buf, 0, &self.frame_uniform(t, false, samples));
         if let Some(sh) = &self.shadow {
-            g.queue.write_buffer(&sh.frame_buf, 0, &self.frame_uniform(t, true));
+            g.queue.write_buffer(&sh.frame_buf, 0, &self.frame_uniform(t, true, samples));
         }
         g.queue.write_buffer(&self.draw_args, 0, &self.draw_reset);
         g.queue.write_buffer(&self.shade_args, 0, &self.shade_reset);
         let mut enc = g.device.create_command_encoder(&Default::default());
         let mut commands = 0;
+        let mut params = self.param_values.lock().unwrap();
+        if params.1 {
+            g.queue.write_buffer(&self.params, 0, &f32_bytes(&params.0));
+            params.1 = false;
+        }
+        for bake in self.bake_textures.lock().unwrap().iter_mut().filter(|b| b.clock.due(false, &params.0)) {
+            commands += bake.encode(&self.g0, &mut enc, None);
+            bake.clock.complete(&params.0);
+        }
+        let mut head = 0;
+        if let Some(path) = &self.path {
+            let timestamp_writes = self.clock.as_ref().map(|c| wgpu::ComputePassTimestampWrites {
+                query_set: &c.set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
+            });
+            head = path.encode_photons(&mut enc, &self.g0, &self.present.1, timestamp_writes);
+            commands += head;
+        }
         for (i, pass) in self.passes.iter().enumerate() {
-            let ts = |i: usize| self.clock.as_ref().map(|c| (&c.set, 2 * i as u32));
+            let ts = |i: usize| self.clock.as_ref().map(|c| (&c.set, 2 * (head + i as u32)));
             let cts = ts(i).map(|(query_set, b)| wgpu::ComputePassTimestampWrites {
                 query_set,
                 beginning_of_pass_write_index: Some(b),
@@ -680,6 +826,19 @@ impl Loaded {
                     commands += 1;
                 }
                 Pass::Shade(ks) => {
+                    if let Some((bundle, hdr)) = &self.overdraw {
+                        let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("overdraw"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: hdr, depth_slice: None, resolve_target: None,
+                                ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                            })],
+                            depth_stencil_attachment: None, timestamp_writes: rts, occlusion_query_set: None, multiview_mask: None,
+                        });
+                        rp.execute_bundles([bundle]);
+                        commands += ks.len() as u32;
+                        continue;
+                    }
                     let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("shade"), timestamp_writes: cts });
                     cp.set_bind_group(0, &self.g0, &[]);
                     for &k in ks {
@@ -708,6 +867,7 @@ impl Loaded {
                     rp.set_pipeline(&self.present.0);
                     rp.set_bind_group(0, &self.g0, &[]);
                     rp.set_bind_group(1, &self.present.1, &[]);
+                    if let Some(path) = &self.path { rp.set_bind_group(2, &path.group, &[]); }
                     rp.draw(0..3, 0..1);
                     commands += 1;
                 }

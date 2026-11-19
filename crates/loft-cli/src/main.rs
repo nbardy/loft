@@ -113,8 +113,8 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             Ok(())
         }
         "build" => build::run(&args[1..]),
-        "render" => render::run(&args[1..]),
-        "clip" => clip::run(&args[1..]),
+        "render" => render::run(&args[1..], &set, render::Output::Still),
+        "clip" => clip::run(&args[1..], &set),
         "profile" => profile::run(&args[1..]),
         "fmt" => fmt::run(&args[1..]),
         "fork" => fork::run(&args[1..]),
