@@ -1,5 +1,8 @@
 # Loft: agent guide
 
+Start with `CORE.md`: what Loft is for, the priorities (picture, GPU frame time, tokens, truth, lean) and how a change
+is judged.
+
 - `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
 - Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
   not there.
