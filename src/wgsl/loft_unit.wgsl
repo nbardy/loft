@@ -1,0 +1,1 @@
+fn loft_unit(h: u32) -> f32 { return f32(h >> 8u) * (1.0 / 16777216.0); }

@@ -1,0 +1,1 @@
+fn loft_lat(x: f32) -> u32 { return bitcast<u32>(i32(floor(x))); }

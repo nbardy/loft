@@ -15,6 +15,7 @@
 // Every table is a GPU map. Media of more than two clusters are sorted along a Morton curve first, for tighter culling spheres.
 // The per-pixel shader adds each blob's own self-shadow at the point the ray sees, in closed form.
 
+import bankSplitWgsl from "../wgsl/bank_split.wgsl" with { type: "text" };
 import { add, and, div, dot, eq, exp, fetch, floor, iterate, length, lib, lift, listOf, lt, mapOf, max, min, mul, ne, or, select, sub, vec3, vec4, type Expr, type In, type LibFn, type TableSource } from "../expr.ts";
 import type { V3 } from "../compile/context.ts";
 import type { F, P3 } from "../map/types.ts";
@@ -407,18 +408,7 @@ fn loft_medium_light_depth(o: vec3<f32>, d: vec3<f32>, t: f32, density: f32) -> 
 
 
 /** The edge of a bank along a ray: (inside from, inside to, outside from, outside to), before clipping. */
-const BANK_SPLIT_WGSL = /* wgsl */ `
-fn loft_bank_split(s0: f32, s1: f32) -> vec4<f32> {
-  let par = abs(s1) < 1e-7;
-  let tc = -s0 / select(s1, 1.0, par);
-  let up = s1 > 0.0;
-  let fogAll = s0 <= 0.0;
-  let inLo = select(select(tc, -1e30, up), select(1e30, -1e30, fogAll), par);
-  let inHi = select(select(1e30, tc, up), select(-1e30, 1e30, fogAll), par);
-  let outLo = select(select(-1e30, tc, up), select(-1e30, 1e30, fogAll), par);
-  let outHi = select(select(tc, 1e30, up), select(1e30, -1e30, fogAll), par);
-  return vec4<f32>(inLo, inHi, outLo, outHi);
-}`;
+const BANK_SPLIT_WGSL = bankSplitWgsl;
 export const BANK_LIB: LibFn = { name: "loft_bank_split", ret: "vec4", wgsl: BANK_SPLIT_WGSL, js: "gpu-only" };
 
 /** WGSL accessors of a medium's tables in one shader module (from `ctx.table`). */

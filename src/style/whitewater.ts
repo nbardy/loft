@@ -18,6 +18,7 @@
 // round a splash, as `crown` does with fingers); droplets whose cell size follows the mass (finer spray far from the
 // body); the roll's lobes cut by the swell's printed lines (`swellLines.off`) so the foam rides the lines.
 
+import slopeOnWaterWgsl from "../wgsl/loft_slope_on_water.wgsl" with { type: "text" };
 import { abs, add, and, atan2, dot, f, floor, fract, gt, length, lt, max, min, mix, mul, saturate, select, smoothstep, step, sub, vec2, lib, type Expr, type In, type LibFn } from "../expr.ts";
 import { hash22 } from "../lib/index.ts";
 import { fwidth } from "../lib/screen.ts";
@@ -37,14 +38,7 @@ export type Lean = { readonly kind: "none" } | { readonly kind: "toward"; readon
 export type WhiteOn = { readonly xz: V2; readonly mass: F; readonly slope: V2; readonly lean: Lean };
 
 const SLOPE_OF: LibFn = { js: "gpu-only",
-  name: "loft_slope_on_water", ret: "vec2", wgsl: /* wgsl */ `
-@diagnostic(off, derivative_uniformity)
-fn loft_slope_on_water(m: f32, xz: vec2<f32>) -> vec2<f32> {
-  let a = dpdx(xz); let b = dpdy(xz);
-  let det = a.x * b.y - a.y * b.x;
-  let dm = vec2<f32>(dpdx(m), dpdy(m));
-  return select(vec2<f32>(0.0), vec2<f32>(dm.x * b.y - dm.y * a.y, dm.y * a.x - dm.x * b.x) / det, abs(det) > 1e-12);
-}`,
+  name: "loft_slope_on_water", ret: "vec2", wgsl: slopeOnWaterWgsl,
 };
 /**
  * How a value on the water changes across it, per world unit (x, z), from its screen derivatives and the position's:
