@@ -11,17 +11,16 @@ pub struct Ident {
     pub span: Span,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Module {
     pub items: Vec<Item>,
-    /// `#` comments with their spans, so a rewrite through the s-expression form keeps them.
-    pub comments: Vec<(Span, String)>,
     /// `diff(f, x)` sites, as written: the AD pass generates `f__d_x` (the parser already called it).
     pub diffs: Vec<(Ident, Ident)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Item {
+    Use(Vec<Ident>),
     Space(Vec<Ident>),
     Unit(Ident),
     Const(ConstDecl),
@@ -38,14 +37,14 @@ pub enum Item {
 }
 
 /// `law name(h: K, dt, tbl: [T]) writes h.{a, b} { ... }`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct LawDecl {
     pub f: FnDecl,
     pub writes: Vec<Ident>,
 }
 
 /// `camera Main { at: ..., radius: ..., height: ..., period: ..., fov: ... }`: build-stage values.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct CameraDecl {
     pub name: Ident,
     pub fields: Vec<(Ident, Expr)>,
@@ -53,7 +52,7 @@ pub struct CameraDecl {
 
 /// `scan name(t: f32 in lo..hi, steps: N) @schedule(bake_lut) -> Table[T] { init: e; step(prev, t_i): e; }`:
 /// a sequential integration baked at load into an N-entry table, read with `sample_c2(name, t)`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ScanDecl {
     pub name: Ident,
     pub var: Ident,
@@ -70,7 +69,7 @@ pub struct ScanDecl {
 }
 
 /// `const X: T = e;` (stage 1, plain WGSL) or `comptime const X: T = e;` (stage 0, overridable by the CLI).
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConstDecl {
     pub comptime: bool,
     pub name: Ident,
@@ -80,13 +79,13 @@ pub struct ConstDecl {
 
 /// `@name(args)` before a fn. Phase 0 knows one: `@lipschitz(param)` or `@lipschitz(max(a, b))`, a library axiom
 /// the truth gate samples.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Attr {
     pub name: Ident,
     pub args: Vec<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FnDecl {
     pub comptime: bool,
     pub attrs: Vec<Attr>,
@@ -98,7 +97,7 @@ pub struct FnDecl {
     pub raw: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Param {
     pub name: Ident,
     /// `None` for a query's `self`, and for an unannotated parameter until elaboration infers it.
@@ -117,7 +116,7 @@ pub enum QueryKind {
     Surface,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct KindDecl {
     pub name: Ident,
     pub params: Vec<KindParam>,
@@ -133,7 +132,7 @@ impl KindDecl {
 }
 
 /// `comptime name: T` or `comptime name: u32 in lo..hi`.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct KindParam {
     pub name: Ident,
     pub ty: TyExpr,
@@ -141,7 +140,7 @@ pub struct KindParam {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RowField {
     pub name: Ident,
     pub ty: TyExpr,
@@ -151,7 +150,7 @@ pub struct RowField {
     pub default: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RowRange {
     pub lo: Expr,
     pub hi: Option<Expr>,
@@ -159,14 +158,14 @@ pub struct RowRange {
     pub strict: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ScheduleDecl {
     pub name: Ident,
     pub passes: Vec<PassDecl>,
 }
 
 /// `pass label: verb(args) { body calls };`
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PassDecl {
     pub label: Ident,
     pub verb: Ident,
@@ -174,12 +173,12 @@ pub struct PassDecl {
     pub body: Vec<(Ident, Vec<Arg>)>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Stmt {
     Let { mutable: bool, name: Ident, ty: Option<TyExpr>, value: Expr },
     Assign { target: Expr, op: Option<BinOp>, value: Expr },
@@ -193,7 +192,7 @@ pub enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Expr {
     pub id: u32,
     pub span: Span,
@@ -210,7 +209,7 @@ pub enum NumSuffix {
     Unit,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind {
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),
@@ -226,7 +225,7 @@ pub enum ExprKind {
     List(Vec<Expr>, Option<SpaceRef>),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Arg {
     pub name: Option<Ident>,
     pub value: Expr,

@@ -1,0 +1,146 @@
+// Loft v1.0 Context-Free Grammar (Lark / llguidance compatible)
+start: _SEP? (top_item (_SEP top_item)* _SEP?)?
+
+top_item: use_decl
+        | "pub"? ( space_decl | const_decl | input_decl | param_decl
+                 | camera_decl | target_decl | fn_decl | lobe_decl
+                 | scan_decl | kind_decl | body_decl | state_decl
+                 | law_decl | solver_decl | plan_decl | check_decl
+                 | retarget_decl | world_decl | build_fn | build_blk | sched_decl )
+
+use_decl: "use" mod_path ("::" ( "*" | "{" ident_list "}" ))? ("as" LIDENT)?
+mod_path: LIDENT ("::" LIDENT)*
+
+space_decl:  "space" UIDENT+
+const_decl:  "const" IDENT (":" type_expr)? "=" expr
+input_decl:  "input" LIDENT ":" type_expr ("=" expr)?
+param_decl:  "param" LIDENT ":" type_expr "=" expr ("in" expr ".." expr)?
+camera_decl: "camera" UIDENT "{" field_inits "}"
+target_decl: "target" UIDENT ":" LIDENT (INT "x" INT | "view" ("*" NUMBER)?)? ("msaa" INT)?
+
+fn_decl:     "fn" LIDENT gen_params? "(" params? ")" ("->" type_expr)? fn_body
+lobe_decl:   "lobe" LIDENT "(" params? ")" fn_body
+fn_body:     "=" (expr | block) | block
+
+scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _SEP "step" LIDENT "=" expr _SEP? "}"
+
+kind_decl:   "kind" UIDENT var_params? "@" UIDENT "(" col_list? ")" "{" (_NL? kind_item (_SEP kind_item)* _SEP?)? "}"
+var_params:  "[" param ("," param)* ","? "]"
+col_list:    col ("," col)* ","?
+col:         LIDENT ":" type_expr range_ref? ("=" expr)?
+range_ref:   "in" expr ".." expr | (">" | ">=") expr
+kind_item:   map_decl | query_decl | fn_decl
+map_decl:    "map" LIDENT "(" LIDENT ")" "=" expr
+query_decl:  QUERY_NAME "(" params? ")" fn_body
+           | "surface" "(" params? ")" "grid" GRID_DIM fn_body
+
+body_decl:   "body" UIDENT "{" (_NL? body_item (_SEP body_item)* _SEP?)? "}"
+body_item:   waive_stmt
+           | "trunk" "{" field_inits "}"
+           | "chain" LIDENT ("[" expr "]")? ":" LIDENT "{" field_inits "}"
+           | "segment" LIDENT "{" field_inits "}"
+           | "build" "for" for_bind ("," for_bind)* "{" _NL? (body_item | stmt) (_SEP (body_item | stmt))* _SEP? "}"
+
+state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _SEP) col)* ("," | _SEP)?)? "}"
+
+law_decl:    "law" LIDENT "(" params ")" "writes" write_set block
+write_set:   LIDENT ("." "{" ident_list "}")?
+
+solver_decl: "solver" UIDENT "over" path_ref ("writes" write_set)? "config" "{" field_inits "}" block
+path_ref:    IDENT ("." LIDENT)*
+
+plan_decl:   "plan" UIDENT "(" params? ")" "->" type_expr "{" _NL? ("knots" ":" INT "," "duration" ":" expr _SEP)? "minimize" expr _SEP "subject_to" block _SEP? "}"
+check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
+retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
+
+world_decl:  "world" UIDENT "{" field_inits "}"
+build_fn:    "build" "fn" LIDENT "(" params? ")" fn_body
+build_blk:   "build" block
+sched_decl:  "schedule" IDENT ("(" params? ")")? "{" (_NL? sched_stmt (_SEP sched_stmt)* _SEP?)? "}"
+sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block
+           | waive_stmt
+           | expr block?
+waive_stmt: "waive" UIDENT STRING
+resource_list: IDENT ("," IDENT)* ","?
+
+// --- Types (only after ':' or '->') ---
+type_expr:   unit_expr
+           | PRIM_TY ("@" IDENT)?
+           | "xf" "@" IDENT ">" IDENT
+           | ("attach" | "target" | "frame") "@" IDENT
+           | "[" UIDENT "]"
+           | "array" "[" type_expr "," INT "]"
+           | UIDENT
+
+gen_params:  "[" UIDENT ("," UIDENT)* ","? "]"
+params:      param ("," param)* ","?
+param:       LIDENT (":" type_expr)? ("=" expr)?
+ident_list:  LIDENT ("," LIDENT)* ","?
+field_inits: (_NL? field_init (("," | _SEP) field_init)* ("," | _SEP)?)?
+field_init:  LIDENT ":" expr
+
+// --- Statements & Blocks ---
+block:       "{" (_NL? stmt (_SEP stmt)* _SEP?)? "}"
+stmt:        "let" LIDENT (":" type_expr)? "=" expr
+           | "var" LIDENT (":" type_expr)? "=" expr
+           | "map" LIDENT "=" expr
+           | build_for_stmt
+           | "for" LIDENT "in" expr ".." expr block
+           | "constrain" LIDENT "(" LIDENT "," LIDENT ")" "in" expr ".." expr block
+           | "yield" expr
+           | "return" expr
+           | lhs "=" expr
+           | expr
+
+build_for_stmt: "build" "for" for_bind ("," for_bind)* block
+for_bind:    LIDENT "in" (expr ".." expr | "[" expr_list "]")
+lhs:         LIDENT ("." LIDENT | "[" expr "]")*
+
+// --- Expressions (Pratt precedence encoded cleanly) ---
+expr:        pipe_expr
+pipe_expr:   or_expr ("|>" pipe_rhs)*
+pipe_rhs:    LIDENT ("(" call_args? ")")?
+or_expr:     and_expr ("||" and_expr)*
+and_expr:    cmp_expr ("&&" cmp_expr)*
+cmp_expr:    add_expr (("==" | "!=" | "<" | "<=" | ">" | ">=") add_expr)?
+add_expr:    mul_expr (("+" | "-") mul_expr)*
+mul_expr:    unary_expr (("*" | "/" | "%") unary_expr)*
+unary_expr:  ("-" | "!") unary_expr | postfix_expr
+
+postfix_expr: primary ( "." LIDENT | "(" call_args? ")" | "[" expr "]" | "'" )*
+
+primary:     NUM_UNIT | NUMBER | "true" | "false" | IDENT
+           | "(" expr ")"
+           | "[" expr_list? "]" ("@" IDENT)?
+           | "if" expr block ("else" "if" expr block)* ("else" block)?
+           | "emit" UIDENT ("[" expr_list "]")? "(" named_args? ")"
+           | "wgsl" "det"? "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
+
+call_args:   arg ("," arg)* ","?
+arg:         (LIDENT ":")? expr
+named_args:  field_init ("," field_init)* ","?
+expr_list:   expr ("," expr)* ","?
+
+// --- Terminals ---
+QUERY_NAME:  "trace" | "visible" | "material" | "light" | "sky" | "medium" | "hit" | "bound" | "sigma" | "tau"
+PRIM_TY:     "p3" | "v3" | "d3" | "n3" | "v2" | "v4" | "rgb" | "quat" | "f" | "u" | "i" | "bool" 
+GRID_DIM:    /[0-9]+x[0-9]+/
+unit_expr: unit_atom (("*" | "/") unit_atom)*
+unit_atom: (UNIT_SYM | "1") ("^" "-"? INT)?
+UNIT_SYM: "mm" | "m" | "rad" | "deg" | "s" | "kg" | "N" | "J" | "Hz"
+NUM_UNIT: /[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?(mm|m|rad|deg|s|kg|N|J|Hz)(\^-?[0-9]+)?([*\/](mm|m|rad|deg|s|kg|N|J|Hz)(\^-?[0-9]+)?)*(?![a-zA-Z_0-9])/
+NUMBER:      /[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?/
+UIDENT:      /[A-Z][a-zA-Z0-9_]*/
+LIDENT:      /[a-z_][a-zA-Z0-9_]*/
+IDENT:       UIDENT | LIDENT
+RAW_WGSL_BLOCK: /\{[^{}]*(\{[^{}]*\}[^{}]*)*\}/
+
+_NL:         /(\r?\n)+/
+_SEP:        (_NL | ";")+
+COMMENT:     /#[^\n]*/
+%ignore /[ \t]+/
+%ignore COMMENT
+
+
+%import common.INT
+%import common.ESCAPED_STRING -> STRING
