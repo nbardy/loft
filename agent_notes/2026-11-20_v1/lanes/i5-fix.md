@@ -23,7 +23,7 @@
 | L5e corpus | All 75 existing sources pass the standalone CPU CLI check. Their archived geometry sampling still uses seven motion keys and simplified materials and water. Generator can publish complete new batches by rename. **OWNER APPROVAL NEEDED** R0g references are absent for this cohort. |
 | L5f corpus | All 70 pinned seeds were generated with the fixed eye, target, and FOV. The default schedule resolves a camera through `use_camera`, also accepted in an explicit schedule. All 70 pass CPU CLI check. **ESCALATE** the direct compiled CPU Twin proof and exact legacy look. |
 | Hardware ray queries | Added native triangle BLAS/TLAS construction and a hardware WGSL query plus an imported-triangle hit/miss comparison example. **ESCALATE** execution on the M4 and dispatch integration into the World queries. No hardware timing or parity claim. |
-| Core constraints | The prescribed core word scan passes. File and replay serialization moved into the compiler-free format crate. **ESCALATE** Runner remains 1,992 physical lines against 1,000 by the integration count. No Phase 5.5 code added. |
+| Core constraints | The prescribed core word scan passes. File and replay serialization moved into the compiler-free format crate. **ESCALATE** Runner remains 1,993 physical lines against 1,000 by the integration count. No Phase 5.5 code added. |
 | Compiler and runner diagnostics | The runner preserves .loftb decode error kinds. **ESCALATE** compiler artifact Naga lowering still transports failures as formatted strings. |
 
 ## Corpus and approvals
