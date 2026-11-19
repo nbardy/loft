@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashSet};
 fn tty(t: &TyExpr) -> TyExpr {
     match t {
         TyExpr::Geo(Geo::Pt | Geo::Dir | Geo::Norm, s) => TyExpr::Geo(Geo::Vec, s.clone()),
-        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_)) => other.clone(),
+        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_)) => other.clone(),
     }
 }
 
@@ -55,6 +55,7 @@ impl Ad<'_> {
     /// A deep copy with fresh ids (the checker types every node by id).
     fn cp(&mut self, x: &Expr) -> Expr {
         let kind = match &x.kind {
+            ExprKind::If { .. } => x.kind.clone(),
             ExprKind::Num { value, suffix, text, float } => ExprKind::Num { value: *value, suffix: *suffix, text: text.clone(), float: *float },
             ExprKind::Bool(b) => ExprKind::Bool(*b),
             ExprKind::Name(n) => ExprKind::Name(n.clone()),
@@ -71,6 +72,7 @@ impl Ad<'_> {
     fn dz(&mut self, x: &Expr) -> Res<Expr> {
         match self.d(x)? {
             Some(d) => Ok(d),
+            None if matches!(x.kind, ExprKind::Num { .. }) => Ok(self.num(0.0,x.span)),
             None => {
                 let c = self.cp(x);
                 Ok(self.call("loft_zero", vec![c], x.span))
@@ -91,6 +93,7 @@ impl Ad<'_> {
         let sp = x.span;
         let refuse = |what: &str| Diag::new(Code::E405, sp, format!("`diff` through {what} is not lowered yet"), "differentiate a fn written with arithmetic, calls and the smooth builtins");
         Ok(match &x.kind {
+            ExprKind::If { .. } => return Err(Diag::new(Code::E307, x.span, "conditional expression has no smooth derivative", "use a smooth blend")),
             ExprKind::Num { .. } | ExprKind::Bool(_) => None,
             ExprKind::Name(n) => self.live.contains(n).then(|| self.name(&format!("{n}__t"), sp)),
             ExprKind::Member(b, m) => {
@@ -102,7 +105,7 @@ impl Ad<'_> {
                     Some(db) => {
                         let mem = self.e(sp, ExprKind::Member(Box::new(db), m.clone()));
                         // A tangent frame's `origin` holds a displacement; say so to the checker.
-                        Some(if m.name == "origin" { self.call("loft_vec", vec![mem], sp) } else { mem })
+                        Some(if frame_field(&m.name) == "origin" { self.call("loft_vec", vec![mem], sp) } else { mem })
                     }
                 }
             }
@@ -169,7 +172,7 @@ impl Ad<'_> {
                 let ty = match ty {
                     TyExpr::Geo(Geo::Pt | Geo::Vec, s) => TyExpr::Geo(Geo::Vec, s.clone()),
                     TyExpr::Name(_) | TyExpr::Generic(..) => ty.clone(),
-                    TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
+                    TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Table(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
                 };
                 let mut out = vec![];
                 for (a, d) in args.iter().zip(ds) {
@@ -410,12 +413,13 @@ impl Ad<'_> {
             Stmt::Map { name, .. } => {
                 return Err(Diag::new(Code::E405, name.span, "`diff` through a `map` statement is not lowered yet", "differentiate a fn without maps"));
             }
-            Stmt::Emit { span, .. } => return Err(Diag::new(Code::E403, *span, "`emit` in a differentiated fn", "differentiate stage-1 code")),
+            Stmt::Each{span,..} | Stmt::Emit { span, .. } => return Err(Diag::new(Code::E403, *span, "`emit` in a differentiated fn", "differentiate stage-1 code")),
         })
     }
 
     /// `f__jvp(params..., tangents...)`: f's value derivative along the given tangents.
     fn jvp(&mut self, f: &FnDecl) -> Res<FnDecl> {
+        if f.raw.is_some(){return Err(Diag::new(Code::E307,f.name.span,"raw WGSL has no symbolic derivative","write the differentiated function in Loft"))}
         self.live.clear();
         let mut params: Vec<Param> = f.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect();
         for p in &f.params {
@@ -425,7 +429,7 @@ impl Ad<'_> {
             }
         }
         let body = self.block(&f.body)?;
-        Ok(FnDecl {
+        Ok(FnDecl { raw: None,
             comptime: false,
             attrs: vec![],
             name: Ident { name: format!("{}__jvp", f.name.name), span: f.name.span },
@@ -454,10 +458,11 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 continue;
             }
             let Some(decl) = ad.orig.get(f.name.as_str()).copied() else {
-                return Err(Diag::new(Code::E002, f.span, format!("`diff` of unknown fn `{}`", f.name), "differentiate a top-level fn"));
+                return Err(Diag::new(Code::E011, f.span, format!("`diff` of unknown fn `{}`", f.name), "differentiate a top-level fn"));
             };
-            if !decl.params.iter().any(|p| p.name.name == x.name) {
-                return Err(Diag::new(Code::E002, x.span, format!("`{}` has no parameter `{}`", f.name, x.name), "name one of its parameters"));
+            let derivative = if x.name.is_empty() { decl.params.first().map(|p| &p.name.name) } else { Some(&x.name) };
+            if !decl.params.iter().any(|p| Some(&p.name.name) == derivative) {
+                return Err(Diag::new(Code::E011, x.span, format!("`{}` has no parameter `{}`", f.name, x.name), "name one of its parameters"));
             }
             // f__d_x(p...) = f__jvp(p..., [1 in x, 0 elsewhere])
             let sp = f.span;
@@ -466,7 +471,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 args.push(ad.name(&p.name.name, sp));
             }
             for p in &decl.params {
-                let t = if p.name.name == x.name {
+                let t = if Some(&p.name.name) == derivative {
                     ad.num(1.0, sp)
                 } else {
                     let n = ad.name(&p.name.name, sp);
@@ -475,7 +480,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 args.push(t);
             }
             let call = ad.call(&format!("{}__jvp", f.name), args, sp);
-            top.push(FnDecl {
+            top.push(FnDecl { raw: None,
                 comptime: false,
                 attrs: vec![],
                 name: Ident { name: format!("{}__d_{}", f.name, x.name), span: sp },
@@ -508,7 +513,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                     let Some(i) = top.iter().position(|f| f.name.name == name) else {
                         return Err(Diag::new(Code::E405, Span::NONE, format!("`diff` reaches `{name}`, which has no body to differentiate"), "differentiate fns with bodies"));
                     };
-                    let f = std::mem::replace(&mut top[i], FnDecl { comptime: false, attrs: vec![], name: Ident { name: String::new(), span: Span::NONE }, params: vec![], ret: None, body: Block { stmts: vec![] } });
+                    let f = std::mem::replace(&mut top[i], FnDecl { raw: None, comptime: false, attrs: vec![], name: Ident { name: String::new(), span: Span::NONE }, params: vec![], ret: None, body: Block { stmts: vec![] } });
                     let j = ad.jvp(&f);
                     top[i] = f;
                     j?
@@ -520,7 +525,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::Struct(..) | Item::TypeAlias(..) | Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }

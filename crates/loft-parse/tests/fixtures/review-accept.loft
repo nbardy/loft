@@ -1,0 +1,20 @@
+# The CST keeps the raw bytes, the decoder sees a single balanced island.
+type WavelengthBins = array[vec4f, 4]
+type Acceleration = m/s^2
+struct Sample {
+  a: Acceleration = 9.81m/s^2
+  count: u
+}
+fn pick(x: f) -> f = max(
+  0, if x < 0 { let v = -x; v }
+  else if x > 1 { 2.0 }
+  else { x }
+)
+fn shader(x: f) -> f = wgsl(x: f) -> f {
+  /* { /* nested */ } */
+  return x; // }
+}
+schedule Demo {
+  waive MissingCut "intentional"
+  pass overlay reads [ColorHdr] writes [Swapchain] { raster(verts: 3) }
+}

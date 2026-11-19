@@ -8,6 +8,9 @@
 //! view into a depth map the shade pass compares against. The bundles are recorded once at load; per frame only the
 //! two frame uniforms and the indirect-argument resets are written. Pipelines are O(kinds): 2 per kind plus 3 shared.
 
+mod motion;
+pub use motion::sample_motion;
+
 use loft_ir::program::{abi, Draw, Pass, Program};
 use std::borrow::Cow;
 use std::time::Instant;
@@ -249,6 +252,76 @@ fn render(
     })
 }
 
+fn read_clock(g: &Gpu, c: &Clock) -> Result<Vec<u64>, String> {
+    let poll = || g.device.poll(wgpu::PollType::wait_indefinitely()).map(|_| ()).map_err(|e| e.to_string());
+    poll()?;
+    let mut enc = g.device.create_command_encoder(&Default::default());
+    enc.resolve_query_set(&c.set, 0..c.n, &c.resolve, 0);
+    enc.copy_buffer_to_buffer(&c.resolve, 0, &c.read, 0, None);
+    g.queue.submit([enc.finish()]);
+    c.read.map_async(wgpu::MapMode::Read, .., |r| r.expect("timestamp map"));
+    poll()?;
+    let ticks: Vec<u64> = {
+        let view = c.read.get_mapped_range(..).map_err(|e| e.to_string())?;
+        view.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect()
+    };
+    c.read.unmap();
+    Ok(ticks)
+}
+
+impl Gpu {
+    pub fn triangle_control_ms(&self, size: (u32, u32)) -> Result<f64, String> {
+        if !self.timestamps { return Err("the speed control needs GPU timestamps".into()); }
+        let d = &self.device;
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        let image = tex(d, "speed control", size, format, wgpu::TextureUsages::RENDER_ATTACHMENT);
+        let view = image.create_view(&Default::default());
+        let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("speed control"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(
+                "@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+                   let p = array(vec2(-1., -1.), vec2(3., -1.), vec2(-1., 3.));
+                   return vec4(p[i], 0., 1.);
+                 }
+                 @fragment fn fs() -> @location(0) vec4<f32> { return vec4(0.25, 0.5, 0.75, 1.); }",
+            )),
+        });
+        let pipe = render(d, "speed control", &[], &module, ("vs", "fs"), format, false, None, None);
+        use wgpu::BufferUsages as U;
+        let c = Clock {
+            set: d.create_query_set(&wgpu::QuerySetDescriptor { label: None, ty: wgpu::QueryType::Timestamp, count: 2 }),
+            resolve: buffer(d, "control resolve", 16, U::QUERY_RESOLVE | U::COPY_SRC),
+            read: buffer(d, "control read", 16, U::MAP_READ | U::COPY_DST),
+            n: 2, period_ns: f64::from(self.queue.get_timestamp_period()),
+        };
+        let mut times = [0.; 11];
+        for ms in &mut times {
+            let mut encoder = d.create_command_encoder(&Default::default());
+            {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view, depth_slice: None, resolve_target: None,
+                        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+                    })],
+                    timestamp_writes: Some(wgpu::RenderPassTimestampWrites {
+                        query_set: &c.set, beginning_of_pass_write_index: Some(0), end_of_pass_write_index: Some(1),
+                    }),
+                    ..Default::default()
+                });
+                pass.set_pipeline(&pipe);
+                pass.draw(0..3, 0..1);
+            }
+            self.queue.submit([encoder.finish()]);
+            let ticks = read_clock(self, &c)?;
+            let duration = ticks[1].checked_sub(ticks[0]).filter(|&x| x > 0 && ticks[0] != 0)
+                .ok_or("speed control has unusable timestamps")?;
+            *ms = duration as f64 * c.period_ns / 1e6;
+        }
+        times[2..].sort_by(f64::total_cmp);
+        Ok(times[6])
+    }
+}
+
 impl Loaded {
     /// Builds every GPU object for `p` at `size`. `nonce` (any value but `u32::MAX`) forces a cold driver compile.
     pub fn new(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>) -> Result<Loaded, String> {
@@ -263,7 +336,7 @@ impl Loaded {
         stats.modules_ms = t.elapsed().as_secs_f64() * 1e3;
 
         let t = Instant::now();
-        let bgl0 = layout(d, "frame", &[(ALL, UNIFORM)]);
+        let bgl0 = layout(d, "frame", &[(ALL, UNIFORM),(ALL,storage(true)),(ALL,storage(true))]);
         let bgl_kind = layout(d, "kind", &[(ALL, storage(true)), (ALL, storage(true)), (ALL, UNIFORM), (ALL, storage(true))]);
         let bgl_shade = layout(
             d,
@@ -281,7 +354,7 @@ impl Loaded {
         let bgl_present =
             layout(d, "present", &[(FS, texture(wgpu::TextureSampleType::Float { filterable: false })), (FS, texture(wgpu::TextureSampleType::Uint))]);
         // The disk pipeline cache, where the backend has one (see `gpu`).
-        let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k));
+        let cache_path = g.cache_key.as_ref().map(|k| std::path::Path::new("out/meta/pipeline_cache").join(k).with_extension(format!("{nonce}.bin")));
         let cache_data = cache_path.as_ref().and_then(|p| std::fs::read(p).ok());
         stats.cache_bytes = cache_data.as_ref().map_or(0, Vec::len);
         // Unsafe by wgpu's contract: the bytes must come from `get_data` on a compatible adapter. They do (the file name
@@ -342,7 +415,10 @@ impl Loaded {
         let t = Instant::now();
         use wgpu::BufferUsages as U;
         let frame_buf = buffer(d, "frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
-        let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding()]);
+        let inputs = buffer(d, "empty input table", 16, U::STORAGE);
+        let params = buffer(d, "parameters", (p.params.len() as u64 * 4).max(16), U::STORAGE | U::COPY_DST);
+        if !p.params.is_empty() { g.queue.write_buffer(&params, 0, &f32_bytes(&p.params)); }
+        let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding(), inputs.as_entire_binding(), params.as_entire_binding()]);
         let n_inst = p.instances.len() as u32;
         let mut inst = vec![];
         let mut bases = vec![];
@@ -440,7 +516,7 @@ impl Loaded {
         let bundle = be.finish(&wgpu::RenderBundleDescriptor { label: Some("vis64") });
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
-            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding()]);
+            let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
             let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
                 label: Some("sun"),
                 color_formats: &[Some(VIS)],
@@ -655,20 +731,8 @@ impl Loaded {
     /// The resolve goes in its own submit after the frame completes (19 Nov: resolving before Metal had written the
     /// last passes' end samples read the previous frame's values).
     pub fn gpu_ms(&self, g: &Gpu) -> Result<Option<(f64, Vec<f64>)>, String> {
-        let poll = || g.device.poll(wgpu::PollType::wait_indefinitely()).map(|_| ()).map_err(|e| e.to_string());
-        poll()?;
         let Some(c) = &self.clock else { return Ok(None) };
-        let mut enc = g.device.create_command_encoder(&Default::default());
-        enc.resolve_query_set(&c.set, 0..c.n, &c.resolve, 0);
-        enc.copy_buffer_to_buffer(&c.resolve, 0, &c.read, 0, None);
-        g.queue.submit([enc.finish()]);
-        c.read.map_async(wgpu::MapMode::Read, .., |r| r.expect("timestamp map"));
-        poll()?;
-        let ticks: Vec<u64> = {
-            let view = c.read.get_mapped_range(..).map_err(|e| e.to_string())?;
-            view.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect()
-        };
-        c.read.unmap();
+        let ticks = read_clock(g, c)?;
         let (first, last) = (ticks[0], ticks[c.n as usize - 1]);
         if first == 0 || last <= first {
             return Err(format!("timestamps unusable: first {first}, last {last}"));

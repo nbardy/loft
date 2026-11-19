@@ -38,7 +38,7 @@
       "file": "engines/capsules.loft",
       "name": "capsules-1",
       "set": {
-        "COUNT": 1
+        "count": 1
       }
     },
     {
@@ -54,7 +54,7 @@
       "file": "engines/capsules.loft",
       "name": "capsules-20",
       "set": {
-        "COUNT": 20
+        "count": 20
       }
     },
     {
@@ -70,7 +70,7 @@
       "file": "engines/blobs.loft",
       "name": "blobs-1",
       "set": {
-        "COUNT": 1
+        "count": 1
       }
     },
     {
@@ -86,7 +86,7 @@
       "file": "engines/blobs.loft",
       "name": "blobs-20",
       "set": {
-        "COUNT": 20
+        "count": 20
       }
     },
     {
@@ -97,12 +97,12 @@
         "p95_ms": 5.0,
         "pipelines": 13,
         "shapes": 11,
-        "warm_s": 0.25
+        "warm_s": 0.06
       },
       "file": "engines/hermit.loft",
       "name": "hermit-1",
       "set": {
-        "COUNT": 1
+        "count": 1
       }
     },
     {
@@ -113,12 +113,12 @@
         "p95_ms": 5.6,
         "pipelines": 13,
         "shapes": 11,
-        "warm_s": 0.3
+        "warm_s": 0.06
       },
       "file": "engines/hermit.loft",
       "name": "hermit-20",
       "set": {
-        "COUNT": 20
+        "count": 20
       }
     }
   ],

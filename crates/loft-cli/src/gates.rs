@@ -9,12 +9,15 @@
 //! `--approve` writes the current renders as references (and their hashes into gates.json), then gates strictly.
 //! Every check is a `Verdict`; a gate passes only when all of its verdicts are `Held`.
 
+use crate::budget::{self, Failure};
 use loft_ir::Verdict;
 use loft_ir::program::{Draw, Program};
 use loft_passes::Compiled;
 use loft_runner::{Gpu, Loaded};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -29,11 +32,87 @@ enum Gate {
 
 const GATES: [Gate; 5] = [Gate::Pictures, Gate::Twin, Gate::Speed, Gate::Load, Gate::Truth];
 
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Manifest {
+    size: (u32, u32),
+    frames: Vec<f32>,
+    timing_frames: usize,
+    #[serde(deserialize_with = "unique_map")]
+    refs: BTreeMap<String, String>,
+    scenes: Vec<Scene>,
+}
+
+fn unique_map<'de, D, V>(d: D) -> Result<BTreeMap<String, V>, D::Error>
+where D: serde::Deserializer<'de>, V: Deserialize<'de> {
+    struct Visitor<V>(std::marker::PhantomData<V>);
+    impl<'de, V: Deserialize<'de>> serde::de::Visitor<'de> for Visitor<V> {
+        type Value = BTreeMap<String, V>;
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("an object with unique keys")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, mut a: A) -> Result<Self::Value, A::Error> {
+            let mut result = BTreeMap::new();
+            while let Some((k, v)) = a.next_entry::<String, V>()? {
+                if result.insert(k.clone(), v).is_some() {
+                    return Err(serde::de::Error::custom(format!("duplicate key {k}")));
+                }
+            }
+            Ok(result)
+        }
+    }
+    d.deserialize_map(Visitor(std::marker::PhantomData))
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct Scene {
     name: String,
     file: PathBuf,
-    set: Vec<(String, f64)>,
-    budget: Value,
+    #[serde(deserialize_with = "unique_map")]
+    set: BTreeMap<String, f64>,
+    budget: Budget,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct Budget {
+    p95_ms: f64,
+    commands: u32,
+    modules: u32,
+    pipelines: u32,
+    shapes: usize,
+    cold_s: f64,
+    warm_s: f64,
+}
+
+impl Manifest {
+    fn select(&self, only: Option<&str>, approve: bool) -> Result<Vec<&Scene>, Failure> {
+        let mut names = BTreeSet::new();
+        let mut times = BTreeSet::new();
+        if self.size.0 == 0 || self.size.1 == 0 || self.timing_frames == 0
+            || self.scenes.is_empty() || self.frames.is_empty()
+            || self.scenes.iter().any(|s| s.name.is_empty() || !names.insert(s.name.as_str()))
+            || self.frames.iter().any(|t| !t.is_finite() || !times.insert(if *t == 0.0 { 0 } else { t.to_bits() }))
+        {
+            return Err(Failure::Parity("gates.json: invalid size or empty, duplicate, or invalid scene/frame list".into()));
+        }
+        let mut selected = BTreeSet::new();
+        if let Some(only) = only {
+            for name in only.split(',') {
+                if !names.contains(name) || !selected.insert(name) {
+                    return Err(Failure::Usage(format!("invalid or duplicate gate selection {name:?}")));
+                }
+            }
+        }
+        let scenes: Vec<_> = self.scenes.iter().filter(|s| selected.is_empty() || selected.contains(s.name.as_str())).collect();
+        let expected: BTreeSet<_> = scenes.iter().flat_map(|s| self.frames.iter().map(move |t| format!("{}@{t}", s.name))).collect();
+        let actual: BTreeSet<_> = self.refs.keys().filter(|key| selected.is_empty() || key.split_once('@').is_some_and(|(s, _)| selected.contains(s))).cloned().collect();
+        if !approve && expected != actual {
+            return Err(Failure::Parity(format!("gates.json: approved frame keys differ. Missing {:?}, extra {:?}", expected.difference(&actual), actual.difference(&expected))));
+        }
+        Ok(scenes)
+    }
 }
 
 struct Check {
@@ -41,19 +120,46 @@ struct Check {
     scene: String,
     what: String,
     verdict: Verdict,
+    contended: bool,
 }
 
-/// Tolerances of the twin (draft §4.4): |Δ| <= 1e-5 abs or 8 ULP, whichever is larger.
-fn twin_tol(v: f32) -> f64 {
-    1e-5f64.max(8.0 * f64::from(v.abs()) * f64::from(f32::EPSILON))
-}
+const TWIN_TOL: [f64; 5] = [1e-5, 1e-5, 2e-5, 1e-5, 1e-4];
 
 fn held_if(slack: f64, unknown: Option<String>) -> Verdict {
     match unknown {
         Some(reason) => Verdict::Unknown { reason },
+        None if !slack.is_finite() => Verdict::Unknown { reason: "missing or nonfinite evidence".into() },
         None if slack >= 0.0 => Verdict::Held { margin: slack },
         None => Verdict::Missed { by: -slack },
     }
+}
+
+#[derive(Default)]
+struct Evidence {
+    min: Option<f64>,
+    invalid: bool,
+}
+impl Evidence {
+    fn add(&mut self, margin: f64) {
+        self.invalid |= !margin.is_finite();
+        self.min = Some(self.min.map_or(margin, |old| old.min(margin)));
+    }
+    fn verdict(&self) -> Verdict {
+        held_if(self.min.unwrap_or(f64::NAN), self.invalid.then(|| "nonfinite evidence".into()))
+    }
+}
+
+fn twin_error(quantity: usize, cpu: f32, gpu: f32) -> f64 {
+    if !cpu.is_finite() || !gpu.is_finite() { return f64::NAN; }
+    // Two misses agree regardless of their negative sentinel.
+    if quantity == 1 && (cpu < 0.0 || gpu < 0.0) {
+        return if cpu < 0.0 && gpu < 0.0 { 0.0 } else { 1.0 };
+    }
+    (f64::from(cpu) - f64::from(gpu)).abs()
+}
+
+fn rgba_len(size: (u32, u32), pixels: &[u8]) -> bool {
+    (size.0 as usize).checked_mul(size.1 as usize).and_then(|n| n.checked_mul(4)) == Some(pixels.len())
 }
 
 fn root() -> Result<PathBuf, String> {
@@ -62,13 +168,6 @@ fn root() -> Result<PathBuf, String> {
         .find(|d| d.join("engines/gates.json").is_file())
         .map(Path::to_path_buf)
         .ok_or_else(|| "run from inside the repository: no engines/gates.json above the current directory".into())
-}
-
-fn compile(file: &Path, set: &[(String, f64)]) -> Result<(Program, loft_passes::Report, Compiled, f64), String> {
-    let src = crate::sources(file)?;
-    let t = Instant::now();
-    let (p, r, c) = loft_passes::compile(&src, set).map_err(|d| crate::render(&d, &src))?;
-    Ok((p, r, c, t.elapsed().as_secs_f64() * 1e3))
 }
 
 fn write_png(path: &Path, size: (u32, u32), rgba: &[u8]) -> Result<(), String> {
@@ -91,14 +190,55 @@ fn read_png(path: &Path) -> Result<((u32, u32), Vec<u8>), String> {
     Ok(((info.width, info.height), buf))
 }
 
-pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path) -> Result<(), String> {
-    let g = loft_runner::gpu()?;
-    let (p, _, _, _) = compile(scene, set)?;
+fn decode_verdict(record: Option<[f32; 2]>) -> Verdict {
+    match record {
+        Some([1.0, value]) if value.is_finite() && value >= 0.0 => Verdict::Held { margin: value.into() },
+        Some([2.0, value]) if value.is_finite() && value >= 0.0 => Verdict::Missed { by: value.into() },
+        Some([3.0, _]) => Verdict::Unknown { reason: "authored check returned Unknown".into() },
+        _ => Verdict::Unknown { reason: "missing or nonfinite check record".into() },
+    }
+}
+
+fn check_records(p: &Program, samples: &[loft_ir::program::MotionSample]) -> Vec<(String, Verdict)> {
+    let mut results = vec![];
+    for step in &p.dispatches {
+        let (kind, rows, _, _) = step.input.view(&p.kinds).expect("compiled dispatch input");
+        for name in &step.checks {
+            let mut records = samples.iter().filter(|s| s.kind == kind)
+                .flat_map(|s| &s.checks).filter(|(n, _)| n == name).map(|(_, v)| v);
+            let values = records.next().filter(|v| records.next().is_none() && v.len() == rows as usize);
+            for row in 0..rows as usize {
+                results.push((format!("{kind}[{row}].{name}"), decode_verdict(values.map(|v| v[row]))));
+            }
+        }
+    }
+    results
+}
+
+pub fn authored_checks(g: &Gpu, p: &Program, t: f32) -> Result<Vec<(String, Verdict)>, String> {
+    if p.dispatches.iter().all(|m| m.checks.is_empty()) { return Ok(vec![]); }
+    loft_runner::sample_motion(g, p, t).map(|samples| check_records(p, &samples))
+}
+
+pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame: Option<f64>) -> Result<(), Failure> {
+    let src = crate::sources(scene).map_err(Failure::Usage)?;
+    let (mut p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    let g = loft_runner::gpu().map_err(Failure::Device)?;
+    if max_frame.is_some() { budget::timestamps(g.timestamps)?; }
+    if !p.dispatches.is_empty() {
+        let sampled = loft_runner::sample_motion(&g, &p, t).map_err(Failure::Device)?;
+        for kind in &sampled {
+            for (n, values) in &kind.fields { println!("{}.{} {:?}", kind.kind, n, values); }
+            for (n, values) in &kind.checks { println!("check {} {:?}", n, values); }
+        }
+        p = loft_passes::compile_snapshot(&src, set, &sampled).map_err(|d| Failure::Compile(d.render(&src)))?.0;
+    }
     let size = (1280, 800);
-    let l = Loaded::new(&g, &p, size, None)?;
+    let l = Loaded::new(&g, &p, size, None).map_err(Failure::Device)?;
     l.frame(&g, t);
-    let px = l.pixels(&g)?;
-    write_png(out, size, &px)?;
+    if let Some(max) = max_frame { budget::check(&g, &l, max)?; }
+    let px = l.pixels(&g).map_err(Failure::Device)?;
+    write_png(out, size, &px).map_err(Failure::Usage)?;
     println!("wrote {}", out.display());
     Ok(())
 }
@@ -137,7 +277,7 @@ struct Ctx<'a> {
     frames: Vec<f32>,
     timing_frames: usize,
     approve: bool,
-    refs: serde_json::Map<String, Value>,
+    refs: BTreeMap<String, String>,
     /// Module texts per scene file, to check identity across instance counts.
     modules: Vec<(PathBuf, String, Vec<String>)>,
 }
@@ -145,8 +285,8 @@ struct Ctx<'a> {
 /// One gate on one scene: its verdicts, plus numbers for the report.
 #[allow(clippy::too_many_arguments)]
 fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes: &[usize], out: &mut Vec<Check>, report: &mut Value) -> Result<(), String> {
-    let mut push = |what: String, verdict: Verdict| out.push(Check { gate, scene: s.name.clone(), what, verdict });
-    let b = |k: &str| s.budget.get(k).and_then(Value::as_f64).ok_or_else(|| format!("{}: budget has no `{k}`", s.name));
+    let mut push = |what: String, verdict: Verdict| out.push(Check { gate, scene: s.name.clone(), what, verdict, contended: false });
+    let b = &s.budget;
     match gate {
         Gate::Pictures => {
             let l = Loaded::new(c.g, p, c.size, None)?;
@@ -157,7 +297,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 let path = c.root.join(format!("out/meta/refs/{}_t{t}.png", s.name));
                 if c.approve {
                     write_png(&path, c.size, &px)?;
-                    c.refs.insert(key.clone(), json!(format!("{:x}", Sha256::digest(&px))));
+                    c.refs.insert(key.clone(), format!("{:x}", Sha256::digest(&px)));
                     if t == c.frames[0] {
                         let still = c.root.join(format!("agent_notes/2026-11-20_meta/phase1/{}.webp", s.name));
                         std::fs::create_dir_all(still.parent().expect("dir")).map_err(|e| e.to_string())?;
@@ -167,12 +307,12 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         }
                     }
                 }
-                let verdict = match (c.refs.get(&key).and_then(Value::as_str), read_png(&path)) {
+                let verdict = match (c.refs.get(&key), read_png(&path)) {
                     (None, _) => Verdict::Unknown { reason: "no approved reference hash in gates.json".into() },
                     (Some(_), Err(e)) => Verdict::Unknown { reason: format!("reference missing: {e}") },
                     (Some(h), Ok((size, r))) => {
                         let file_hash = format!("{:x}", Sha256::digest(&r));
-                        if size != c.size || file_hash != h {
+                        if size != c.size || &file_hash != h || !rgba_len(c.size, &px) || !rgba_len(c.size, &r) {
                             Verdict::Unknown { reason: "reference file does not match its approved hash".into() }
                         } else {
                             // Perceptual tolerance: at most 0.1% of pixels may differ by more than 2/255 in a channel.
@@ -208,7 +348,9 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 }
                 let gpu = l.twin(c.g, k, &samples)?;
                 // trace, visible, material, surface point, surface normal
-                let (mut slack, mut worst) = ([f64::INFINITY; 5], [0.0f64; 5]);
+                let mut evidence: [Evidence; 5] = std::array::from_fn(|_| Evidence::default());
+                let mut worst = [0.0f64; 5];
+                if gpu.len() != 16 * at.len() { return Err("invalid Twin readback length".into()); }
                 for (i, (row, x, d)) in at.iter().enumerate() {
                     let cpu = comp.cpu_query(k, *row, *x, *d).map_err(|e| format!("{e:?}"))?;
                     let o = &gpu[16 * i..16 * i + 16];
@@ -218,18 +360,12 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         .chain((0..3).map(|j| (3, cpu.surf_p[j], o[8 + j])))
                         .chain((0..3).map(|j| (4, cpu.surf_n[j], o[12 + j])));
                     for (q, a, gv) in pairs {
-                        let err = f64::from((a - gv).abs());
-                        // The surface normal is a unit vector from a cross product of two AD derivatives (|du| ~ 6 m
-                        // per unit u): f32 cancellation alone measured 3.1e-5. Its contract is 1e-4 per component, set
-                        // after that measurement (phase1.md says so); every other quantity keeps 1e-5 or 8 ULP.
-                        let tol = if q == 4 { 1e-4 } else { twin_tol(a) };
-                        // `visible` misses are any negative value: compare hit/miss, then t on hits.
-                        let err = if q == 1 && (a < 0.0 || gv < 0.0) { if (a < 0.0) == (gv < 0.0) { 0.0 } else { f64::INFINITY } } else { err };
+                        let err = twin_error(q, a, gv);
                         if err > worst[q] && q == 2 {
                             report[&s.name]["twin_worst_material"][&kt.name] = json!({"cpu": cpu.material, "gpu": [o[4], o[5], o[6]], "at": x, "dir": d});
                         }
                         worst[q] = worst[q].max(err);
-                        slack[q] = slack[q].min(tol - err);
+                        evidence[q].add(TWIN_TOL[q] - err);
                     }
                 }
                 report[&s.name]["twin"][&kt.name] = json!({"samples": at.len(), "max_err": {"trace": worst[0], "visible": worst[1], "material": worst[2], "surface_p": worst[3], "surface_n": worst[4]}});
@@ -240,12 +376,13 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         Draw::Surface { .. } => q >= 2,
                     };
                     if used {
-                        push(format!("{}.{name} (max err {:.2e}, {} samples)", kt.name, worst[q], at.len()), held_if(slack[q], None));
+                        push(format!("{}.{name} (max err {:.2e}, {} samples)", kt.name, worst[q], at.len()), evidence[q].verdict());
                     }
                 }
             }
         }
         Gate::Speed => {
+            let control = c.g.triangle_control_ms(c.size)?;
             let l = Loaded::new(c.g, p, c.size, None)?;
             let mut commands = 0;
             for i in 0..30 {
@@ -266,40 +403,51 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
-            report[&s.name]["speed"] = json!({"p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms});
-            push(format!("p95 {p95:.3} ms (p50 {p50:.3}) <= {} ms", b("p95_ms")?), held_if(b("p95_ms")? - p95, None));
-            push(format!("{commands} GPU commands == {}", b("commands")?), held_if(-(f64::from(commands) - b("commands")?).abs(), None));
+            let contended = p95 > b.p95_ms && control > 0.35;
+            report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms});
+            push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
+            out.push(Check {
+                gate, scene: s.name.clone(), contended,
+                what: format!("p95 {p95:.3} ms <= {} ms (control p50 {control:.3} ms)", b.p95_ms),
+                verdict: held_if(b.p95_ms - p95, None),
+            });
         }
         Gate::Load => {
-            // Cold: a nonce the driver has never seen; warm: the same nonce again in this process.
+            // Each pair starts with empty derivations and a fresh driver compilation key.
             let nonce = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(7, |d| d.as_nanos()) as u32) & 0x7fff_ffff;
+            let cache = tempfile::tempdir().map_err(|e| e.to_string())?;
             let mut times = vec![];
             for _ in 0..2 {
-                let (p2, _, _, front) = compile(&s.file, &s.set)?;
                 let t = Instant::now();
+                let src = crate::sources(&c.root.join(&s.file))?;
+                let set: Vec<_> = s.set.iter().map(|(k, &v)| (k.clone(), v)).collect();
+                let (p2, r, _) = loft_passes::compile_cached(&src, &set, cache.path()).map_err(|d| crate::render(&d, &src))?;
+                let front = t.elapsed().as_secs_f64() * 1e3;
+                let device = Instant::now();
                 let l = Loaded::new(c.g, &p2, c.size, Some(nonce))?;
-                l.frame(c.g, 0.0);
-                l.gpu_ms(c.g)?;
-                times.push((front, t.elapsed().as_secs_f64() * 1e3, l.stats.clone()));
+                // Loaded::new waits for device compilation and resource creation.
+                let hits: usize = r.kinds.iter().map(|k| k.cache_hits).sum();
+                times.push((front, device.elapsed().as_secs_f64() * 1e3, l.stats.clone(), hits));
             }
             let (cold, warm) = ((times[0].0 + times[0].1) / 1e3, (times[1].0 + times[1].1) / 1e3);
             let st = &times[0].2;
             let pipelines = st.render_pipelines + st.compute_pipelines;
             report[&s.name]["load"] = json!({
                 "cold_s": cold, "warm_s": warm, "front_ms": [times[0].0, times[1].0],
+                "device_ms": [times[0].1, times[1].1], "derivation_hits": [times[0].3, times[1].3],
                 "pipelines_ms": [times[0].2.pipelines_ms, times[1].2.pipelines_ms], "each_cold_ms": times[0].2.pipeline_ms,
                 "modules": st.modules, "pipelines": pipelines,
             });
-            push(format!("{} modules == {}", st.modules, b("modules")?), held_if(-(st.modules as f64 - b("modules")?).abs(), None));
-            push(format!("{pipelines} pipelines == {}", b("pipelines")?), held_if(-(pipelines as f64 - b("pipelines")?).abs(), None));
-            push(format!("cold {cold:.3} s <= {} s", b("cold_s")?), held_if(b("cold_s")? - cold, None));
-            push(format!("warm {warm:.3} s <= {} s", b("warm_s")?), held_if(b("warm_s")? - warm, None));
+            push(format!("{} modules == {}", st.modules, (b.modules as f64)), held_if(-(st.modules as f64 - (b.modules as f64)).abs(), None));
+            push(format!("{pipelines} pipelines == {}", (b.pipelines as f64)), held_if(-(pipelines as f64 - (b.pipelines as f64)).abs(), None));
+            push(format!("cold {cold:.3} s <= {} s", b.cold_s), held_if(b.cold_s - cold, None));
+            push(format!("warm {warm:.3} s <= {} s", b.warm_s), held_if(b.warm_s - warm, None));
             let texts: Vec<String> = p.modules.iter().map(|m| m.wgsl.clone()).collect();
             // Bound derivations: one per distinct local shape. A posed kind whose instances repeat shapes keeps the
             // count fixed; a kind with world-space rows (capsules) or per-instance sizes (blobs) derives per row.
             let n_shapes: usize = shapes.iter().sum();
             report[&s.name]["load"]["shapes"] = json!(shapes);
-            push(format!("{n_shapes} bound derivations == {}", b("shapes")?), held_if(-(n_shapes as f64 - b("shapes")?).abs(), None));
+            push(format!("{n_shapes} bound derivations == {}", (b.shapes as f64)), held_if(-(n_shapes as f64 - (b.shapes as f64)).abs(), None));
             report[&s.name]["load"]["cache_bytes"] = json!(times[0].2.cache_bytes);
             match c.modules.iter().find(|(f, _, _)| *f == s.file) {
                 Some((_, other, t)) => {
@@ -310,16 +458,22 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             }
         }
         Gate::Truth => {
+            for &t in &c.frames {
+                for (name, value) in authored_checks(c.g, p, t)? {
+                    report[&s.name]["authored_checks"][format!("{t}")][&name] = json!(value.to_string());
+                    push(format!("authored {name} at t={t}"), value);
+                }
+            }
             let eye = p.camera.eye(c.frames[0]);
             for (k, kt) in p.kinds.iter().enumerate() {
                 let mut rng = Rng(0x7a17 + k as u64);
-                let (mut lip_slack, mut lip_worst) = (f64::INFINITY, 0.0f64);
-                let (mut out_slack, mut agree_slack, mut hits) = (f64::INFINITY, f64::INFINITY, 0);
+                let (mut lip, mut lip_worst) = (Evidence::default(), 0.0f64);
+                let (mut outside, mut agree, mut hits) = (Evidence::default(), Evidence::default(), 0);
                 let cq = |row: usize, x: [f32; 3], d: [f32; 3]| comp.cpu_query(k, row, x, d).map_err(|e| format!("{e:?}"));
                 if let Draw::Surface { .. } = kt.draw {
                     // The derived bound holds sampled surface points; the AD normal agrees with independent central
                     // differences of the CPU surface (h = 1e-3 in u and v) wherever the chart is regular.
-                    let (mut in_slack, mut worst_angle, mut regular) = (f64::INFINITY, 0.0f64, 0);
+                    let (mut inside, mut normal, mut worst_angle, mut regular) = (Evidence::default(), Evidence::default(), 0.0f64, 0);
                     let h = 1e-3f32;
                     for inst in p.instances.iter().filter(|i| i.kind == k as u32).take(4) {
                         let row = inst.row as usize;
@@ -327,7 +481,8 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                             let (u, v) = (h + (1.0 - 2.0 * h) * rng.next(), h + (1.0 - 2.0 * h) * rng.next());
                             let q = cq(row, [u, v, 0.0], [0.0, 0.0, 1.0])?;
                             for i in 0..3 {
-                                in_slack = in_slack.min(f64::from((q.surf_p[i] - inst.lo[i]).min(inst.hi[i] - q.surf_p[i])));
+                                inside.add(f64::from(q.surf_p[i] - inst.lo[i]));
+                                inside.add(f64::from(inst.hi[i] - q.surf_p[i]));
                             }
                             let at = |u: f32, v: f32| cq(row, [u, v, 0.0], [0.0, 0.0, 1.0]).map(|x| x.surf_p);
                             let (pu0, pu1, pv0, pv1) = (at(u - h, v)?, at(u + h, v)?, at(u, v - h)?, at(u, v + h)?);
@@ -337,18 +492,23 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                             let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
                             let scale = (du.iter().map(|x| x * x).sum::<f64>() * dv.iter().map(|x| x * x).sum::<f64>()).sqrt();
                             // A near-degenerate chart (the apex, a pole) has no stable difference normal: skip it.
+                            if !len.is_finite() || !scale.is_finite() || !q.surf_n.iter().all(|x| x.is_finite()) {
+                                normal.add(f64::NAN);
+                                continue;
+                            }
                             if len < 0.05 * scale || scale < 1e-12 {
                                 continue;
                             }
                             regular += 1;
                             let cosang = (0..3).map(|i| n[i] / len * f64::from(q.surf_n[i])).sum::<f64>();
-                            worst_angle = worst_angle.max(cosang.clamp(-1.0, 1.0).acos());
+                            let angle = cosang.clamp(-1.0, 1.0).acos();
+                            normal.add(1e-2 - angle);
+                            worst_angle = worst_angle.max(angle);
                         }
                     }
-                    report[&s.name]["truth"][&kt.name] = json!({"inside_min": in_slack, "normal_angle_max": worst_angle, "regular_samples": regular});
-                    push(format!("{}: sampled surface points inside every derived bound", kt.name), held_if(in_slack, None));
-                    let unknown = (regular == 0).then(|| "no regular sample".to_string());
-                    push(format!("{}: AD normal vs differences, worst {worst_angle:.2e} rad <= 1e-2 ({regular} samples)", kt.name), held_if(1e-2 - worst_angle, unknown));
+                    report[&s.name]["truth"][&kt.name] = json!({"inside_min": inside.min, "normal_angle_max": worst_angle, "regular_samples": regular});
+                    push(format!("{}: sampled surface points inside every derived bound", kt.name), inside.verdict());
+                    push(format!("{}: AD normal vs differences, worst {worst_angle:.2e} rad <= 1e-2 ({regular} samples)", kt.name), normal.verdict());
                     continue;
                 }
                 for inst in p.instances.iter().filter(|i| i.kind == k as u32).take(20) {
@@ -363,7 +523,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         let ratio = f64::from((cq(row, a, [0.0, 0.0, 1.0])?.trace - cq(row, bb, [0.0, 0.0, 1.0])?.trace).abs()) / dist;
                         lip_worst = lip_worst.max(ratio);
                         // f32 evaluation noise on both ends, 2e-6 per metre of distance.
-                        lip_slack = lip_slack.min(l + 2e-6 / dist - ratio);
+                        lip.add(l + 2e-6 / dist - ratio);
                     }
                     // Derived bound: the field is positive just outside the AABB (a shell 0..0.5 m out).
                     for _ in 0..64 {
@@ -373,7 +533,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         // Push the ray from the centre to the box surface, then out by 0..0.5 m.
                         let s_box = (0..3).map(|i| if d[i].abs() > 1e-6 { half[i] / d[i].abs() } else { f32::INFINITY }).fold(f32::INFINITY, f32::min);
                         let x = [0, 1, 2].map(|i| c0[i] + d[i] * (s_box + 1e-3 + 0.5 * rng.next()));
-                        out_slack = out_slack.min(f64::from(cq(row, x, d)?.trace));
+                        outside.add(f64::from(cq(row, x, d)?.trace));
                     }
                     // `visible` agrees with `trace`: where the closed form hits, the field is ~0 there.
                     if kt.draw == loft_ir::program::Draw::Analytic {
@@ -383,20 +543,21 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                             let len = (rd[0] * rd[0] + rd[1] * rd[1] + rd[2] * rd[2]).sqrt();
                             let rd = rd.map(|v| v / len);
                             let t = cq(row, eye, rd)?.visible;
-                            if t > 0.0 {
+                            if !t.is_finite() {
+                                agree.add(f64::NAN);
+                            } else if t > 0.0 {
                                 hits += 1;
                                 let x = [0, 1, 2].map(|i| eye[i] + rd[i] * t);
-                                agree_slack = agree_slack.min(1e-3 - f64::from(cq(row, x, rd)?.trace.abs()));
+                                agree.add(1e-3 - f64::from(cq(row, x, rd)?.trace.abs()));
                             }
                         }
                     }
                 }
-                report[&s.name]["truth"][&kt.name] = json!({"derived_L": kt.lipschitz.iter().copied().fold(0.0f32, f32::max), "max_ratio": lip_worst, "outside_min_f": out_slack, "visible_hits": hits});
-                push(format!("{}: derived L bounds sampled slopes (max {lip_worst:.4})", kt.name), held_if(lip_slack, None));
-                push(format!("{}: field > 0 outside every derived bound", kt.name), held_if(out_slack, None));
+                report[&s.name]["truth"][&kt.name] = json!({"derived_L": kt.lipschitz.iter().copied().fold(0.0f32, f32::max), "max_ratio": lip_worst, "outside_min_f": outside.min, "visible_hits": hits});
+                push(format!("{}: derived L bounds sampled slopes (max {lip_worst:.4})", kt.name), lip.verdict());
+                push(format!("{}: field > 0 outside every derived bound", kt.name), outside.verdict());
                 if kt.draw == loft_ir::program::Draw::Analytic {
-                    let unknown = (hits == 0).then(|| "no sampled ray hit".to_string());
-                    push(format!("{}: visible agrees with trace on {hits} hits (|f| <= 1e-3)", kt.name), held_if(agree_slack, unknown));
+                    push(format!("{}: visible agrees with trace on {hits} hits (|f| <= 1e-3)", kt.name), agree.verdict());
                 }
             }
         }
@@ -404,73 +565,115 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
     Ok(())
 }
 
-pub fn run(approve: bool) -> Result<(), String> {
-    let root = root()?;
+pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
+    let root = root().map_err(Failure::Usage)?;
     let path = root.join("engines/gates.json");
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut cfg: Value = serde_json::from_str(&text).map_err(|e| format!("gates.json: {e}"))?;
-    let size = cfg["size"].as_array().and_then(|a| Some((a.first()?.as_u64()? as u32, a.get(1)?.as_u64()? as u32))).ok_or("gates.json: size [w, h]")?;
-    let frames: Vec<f32> = cfg["frames"].as_array().ok_or("gates.json: frames")?.iter().filter_map(Value::as_f64).map(|x| x as f32).collect();
-    let scenes: Vec<Scene> = cfg["scenes"]
-        .as_array()
-        .ok_or("gates.json: scenes")?
-        .iter()
-        .map(|s| {
-            Some(Scene {
-                name: s["name"].as_str()?.into(),
-                file: root.join(s["file"].as_str()?),
-                set: s["set"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_f64()?))).collect()).unwrap_or_default(),
-                budget: s["budget"].clone(),
-            })
-        })
-        .collect::<Option<_>>()
-        .ok_or("gates.json: each scene needs name, file, budget")?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Failure::Usage(e.to_string()))?;
+    let mut cfg: Manifest = serde_json::from_str(&text).map_err(|e| Failure::Parity(format!("gates.json: {e}")))?;
+    let scenes = cfg.select(only, approve)?;
+    let size = cfg.size;
     let t = Instant::now();
-    let g = loft_runner::gpu()?;
+    let g = loft_runner::gpu().map_err(Failure::Device)?;
     let device_ms = t.elapsed().as_secs_f64() * 1e3;
     println!("adapter {}  device {device_ms:.0} ms  {}x{}", g.adapter, size.0, size.1);
     let mut c = Ctx {
         g: &g,
         root: root.clone(),
         size,
-        frames,
-        timing_frames: cfg["timing_frames"].as_u64().unwrap_or(300) as usize,
+        frames: cfg.frames.clone(),
+        timing_frames: cfg.timing_frames,
         approve,
-        refs: cfg["refs"].as_object().cloned().unwrap_or_default(),
+        refs: cfg.refs.clone(),
         modules: vec![],
     };
     let mut checks = vec![];
     let mut report = json!({"adapter": g.adapter, "device_ms": device_ms});
-    // `--only NAME,...` gates those scenes (a debugging aid; a phase is scored on all of them).
-    let only: Option<Vec<String>> = std::env::args().skip_while(|a| a != "--only").nth(1).map(|v| v.split(',').map(String::from).collect());
-    for s in scenes.iter().filter(|s| only.as_ref().is_none_or(|o| o.contains(&s.name))) {
-        let (p, r, comp, _) = compile(&s.file, &s.set)?;
+    let mut compiled = vec![];
+    for s in scenes {
+        let file = root.join(&s.file);
+        let set: Vec<_> = s.set.iter().map(|(k, &v)| (k.clone(), v)).collect();
+        let src = crate::sources(&file).map_err(Failure::Usage)?;
+        let (p, r, comp) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(d.render(&src)))?;
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
         let shapes: Vec<usize> = r.kinds.iter().map(|k| k.shapes).collect();
-        for gt in GATES {
-            gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report)?;
+        gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
+        compiled.push((s, p, comp, shapes));
+    }
+    // Measure all cold/warm loads before the long timestamped frame batches.
+    for (s, p, comp, shapes) in compiled {
+        for gt in GATES.into_iter().filter(|g| *g != Gate::Load) {
+            gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
         }
     }
     if approve {
-        cfg["refs"] = Value::Object(c.refs.clone());
-        std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())? + "\n").map_err(|e| e.to_string())?;
+        cfg.refs = c.refs.clone();
+        std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| Failure::Usage(e.to_string()))? + "\n").map_err(|e| Failure::Usage(e.to_string()))?;
         println!("approved {} references into engines/gates.json and out/meta/refs/", c.refs.len());
     }
     let mut failed = 0;
     for gt in GATES {
         let mine: Vec<&Check> = checks.iter().filter(|x| x.gate == gt).collect();
         let held = mine.iter().filter(|x| matches!(x.verdict, Verdict::Held { .. })).count();
-        println!("\n{gt:?}: {held}/{} held", mine.len());
+        let warnings = mine.iter().filter(|x| x.contended).count();
+        println!("\n{gt:?}: {held}/{} held, {warnings} contended", mine.len());
         for x in &mine {
-            let mark = if matches!(x.verdict, Verdict::Held { .. }) { "ok  " } else { "FAIL" };
+            let mark = if x.contended { "CONTENDED" } else if matches!(x.verdict, Verdict::Held { .. }) { "ok  " } else { "FAIL" };
             println!("  {mark} {:<12} {:<64} {}", x.scene, x.what, x.verdict);
         }
-        failed += mine.len() - held;
+        failed += mine.len() - held - warnings;
     }
     let out = root.join("out/meta/gate.json");
-    std::fs::create_dir_all(out.parent().expect("out/meta")).map_err(|e| e.to_string())?;
-    std::fs::write(&out, serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(out.parent().expect("out/meta")).map_err(|e| Failure::Usage(e.to_string()))?;
+    std::fs::write(&out, serde_json::to_string_pretty(&report).map_err(|e| Failure::Usage(e.to_string()))?).map_err(|e| Failure::Usage(e.to_string()))?;
     println!("\nreport: {}", out.display());
-    if failed == 0 { Ok(()) } else { Err(format!("{failed} checks not Held")) }
+    let failed_in = |gate| checks.iter().any(|c| c.gate == gate && !c.contended && !matches!(c.verdict, Verdict::Held { .. }));
+    let message = format!("{failed} checks failed");
+    if failed_in(Gate::Truth) { Err(Failure::Truth(message)) }
+    else if failed_in(Gate::Pictures) || failed_in(Gate::Twin) { Err(Failure::Parity(message)) }
+    else if failed_in(Gate::Load) { Err(Failure::Load(message)) }
+    else if failed != 0 { Err(Failure::Budget(message)) }
+    else { Ok(()) }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_frames_and_selections_are_strict() {
+        let recorded = include_str!("../../../engines/gates.json");
+        let manifest: Manifest = serde_json::from_str(recorded).unwrap();
+        assert_eq!(manifest.select(None, false).unwrap().len(), 6);
+        for selection in ["capsule-1", "", "capsules-1,capsules-1"] {
+            assert!(manifest.select(Some(selection), false).is_err());
+        }
+        let malformed = recorded.replacen("4.0", "\"4.0\"", 1);
+        assert!(serde_json::from_str::<Manifest>(&malformed).is_err());
+        let deleted = recorded.replacen("    4.0,\n", "", 1);
+        let missing: Manifest = serde_json::from_str(&deleted).unwrap();
+        assert!(missing.select(Some("capsules-1"), false).is_err());
+        assert!(!rgba_len((2, 3), &[0; 23]));
+        assert!(rgba_len((2, 3), &[0; 24]));
+    }
+
+    #[test]
+    fn authored_verdicts_require_a_record_and_finite_evidence() {
+        for record in [None, Some([0.0, 0.0]), Some([1.0, f32::NAN]), Some([3.0, 0.0])] {
+            assert!(matches!(decode_verdict(record), Verdict::Unknown { .. }));
+        }
+        assert!(matches!(decode_verdict(Some([2.0, 1.0])), Verdict::Missed { .. }));
+        assert!(matches!(decode_verdict(Some([1.0, 1.0])), Verdict::Held { .. }));
+    }
+
+    #[test]
+    fn parity_uses_absolute_limits_and_requires_finite_samples() {
+        let mut e = Evidence::default();
+        assert!(matches!(e.verdict(), Verdict::Unknown { .. }));
+        e.add(TWIN_TOL[2] - twin_error(2, 100., 100.00006));
+        assert!(matches!(e.verdict(), Verdict::Missed { .. }));
+        e.add(TWIN_TOL[2] - twin_error(2, f32::NAN, 100.));
+        assert!(matches!(e.verdict(), Verdict::Unknown { .. }));
+    }
 }

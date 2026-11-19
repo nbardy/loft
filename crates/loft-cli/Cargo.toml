@@ -17,6 +17,8 @@ loft-runner = { path = "../loft-runner" }
 wgpu.workspace = true
 pollster.workspace = true
 png.workspace = true
+serde = { version = "1", features = ["derive"] }
+tempfile = "3"
 serde_json.workspace = true
 sha2.workspace = true
 

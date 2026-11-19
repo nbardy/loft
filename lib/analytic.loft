@@ -1,62 +1,82 @@
-// Closed-form ray intersections (after iq). `rd` is unit length; a negative result is a miss. Each first moves the
-// origin along the ray to the point nearest the shape, so f32 keeps its digits for a far camera (a 4.5 cm leg seen
-// from 15 m missed its own surface by 2 mm when solved from the eye).
+# Closed-form ray intersections (after iq). `rd` is unit length; a negative result is a miss. Each first moves the
+# origin along the ray to the point nearest the shape, so f keeps its digits for a far camera (a 4.5 cm leg seen
+# from 15 m missed its own surface by 2 mm when solved from the eye).
 
-fn ray_sphere(ro: Pt['s], rd: Dir['s], c: Pt['s], r: f32) -> f32 {
-  let oc = ro - c;
-  let b = dot(oc, rd);
-  let h = b * b - (dot(oc, oc) - r * r);
+fn ray_sphere[S](ro: p3@S, rd: d3@S, c: p3@S, r: f) -> f {
+  let oc = ro - c
+  let b = dot(oc, rd)
+  let h = b * b - (dot(oc, oc) - r * r)
   if h < 0.0 {
-    return -1.0;
+    return -1.0
   }
-  return -b - sqrt(h);
+  -b - sqrt(h)
 }
 
-fn ray_capsule(ro0: Pt['s], rd: Dir['s], a: Pt['s], b: Pt['s], r: f32) -> f32 {
-  let t0 = dot(mix(a, b, 0.5) - ro0, rd);
-  let ro = ro0 + rd * t0;
-  let ba = b - a;
-  let oa = ro - a;
-  let baba = dot(ba, ba);
-  var h = -1.0;
-  var t = 0.0;
-  var y = 0.0;
+fn ray_capsule[S](ro0: p3@S, rd: d3@S, a: p3@S, b: p3@S, r: f) -> f {
+  let t0 = dot(mix(a, b, 0.5) - ro0, rd)
+  let ro = ro0 + rd * t0
+  let ba = b - a
+  let oa = ro - a
+  let baba = dot(ba, ba)
+  var h = -1.0
+  var t = 0.0
+  var y = 0.0
   if baba >= 1e-12 {
-    let bard = dot(ba, rd);
-    let baoa = dot(ba, oa);
-    let qa = baba - bard * bard;
-    let qb = baba * dot(rd, oa) - baoa * bard;
-    let qc = baba * dot(oa, oa) - baoa * baoa - r * r * baba;
-    h = qb * qb - qa * qc;
+    let bard = dot(ba, rd)
+    let baoa = dot(ba, oa)
+    let qa = baba - bard * bard
+    let qb = baba * dot(rd, oa) - baoa * bard
+    let qc = baba * dot(oa, oa) - baoa * baoa - r * r * baba
+    h = qb * qb - qa * qc
     if h >= 0.0 {
-      t = (-qb - sqrt(h)) / qa;
-      y = baoa + t * bard;
+      t = (-qb - sqrt(h)) / qa
+      y = baoa + t * bard
     }
   }
-  // The cylinder body; outside its span (or for a point capsule) the hit is on a cap sphere.
+  # The cylinder body; outside its span (or for a point capsule) the hit is on a cap sphere.
   if h >= 0.0 && y > 0.0 && y < baba {
-    return t0 + t;
+    return t0 + t
   }
-  var cap = b;
+  var cap = b
   if y <= 0.0 {
-    cap = a;
+    cap = a
   }
-  let oc = ro - cap;
-  let sb = dot(oc, rd);
-  let sh = sb * sb - (dot(oc, oc) - r * r);
+  let oc = ro - cap
+  let sb = dot(oc, rd)
+  let sh = sb * sb - (dot(oc, oc) - r * r)
   if sh < 0.0 {
-    return -1.0;
+    return -1.0
   }
-  return t0 - sb - sqrt(sh);
+  t0 - sb - sqrt(sh)
 }
 
-// The nearer of two hits (a negative value is a miss).
-fn hit_min(a: f32, b: f32) -> f32 {
+# The nearer of two hits (a negative value is a miss).
+fn hit_min(a: f, b: f) -> f {
   if a < 0.0 {
-    return b;
+    return b
   }
   if b < 0.0 {
-    return a;
+    return a
   }
-  return min(a, b);
+  min(a, b)
 }
+
+# Upper face of a square ground plane, centered on the origin.
+fn ray_ground[S](ro: p3@S, rd: d3@S, radius: m) -> f {
+  if rd.y >= 0 {
+    return -1
+  }
+  let t = -ro.y / rd.y
+  let p = ro + rd * t
+  if max(abs(p.x), abs(p.z)) > radius {
+    return -1
+  }
+  t
+}
+
+# Three capsule segments sharing their endpoints and one radius per segment.
+fn capsule_chain[S](p: p3@S, a: p3@S, b: p3@S, c: p3@S, d: p3@S, r: v3) -> m =
+  min(min(capsule(p, a, b, r.x), capsule(p, b, c, r.y)), capsule(p, c, d, r.z))
+
+fn ray_capsule_chain[S](p: p3@S, rd: d3@S, a: p3@S, b: p3@S, c: p3@S, d: p3@S, r: v3) -> f =
+  hit_min(hit_min(ray_capsule(p, rd, a, b, r.x), ray_capsule(p, rd, b, c, r.y)), ray_capsule(p, rd, c, d, r.z))

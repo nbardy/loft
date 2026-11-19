@@ -32,6 +32,7 @@ impl Iv {
 }
 
 impl Scalar for Iv {
+    fn frame_time()->Self{Iv::new(f64::NEG_INFINITY,f64::INFINITY,0.0)}
     fn c(x: f64) -> Iv {
         Iv { lo: x, hi: x, l: 0.0 }
     }

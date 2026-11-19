@@ -3,9 +3,12 @@
 //! count are data in `KindParams`. The author's structure is kept: their fns stay fns, their loops stay loops.
 
 use crate::Prog;
+#[path="motion.rs"]
+mod motion;
+pub use motion::motion_module;
 use loft_ir::ast::*;
 use loft_ir::program::{abi, Draw};
-use loft_ir::{Code, Diag, Res};
+use loft_ir::{Code, Diag, Res, Span};
 use std::collections::BTreeSet;
 use std::fmt::Write;
 
@@ -19,6 +22,8 @@ const PRELUDE: &str = r"struct Frame {
   light_vp: mat4x4<f32>,
 }
 @group(0) @binding(0) var<uniform> frame: Frame;
+
+@group(0) @binding(2) var<storage, read> loft_params: array<vec4<f32>>;
 const LOFT_NONCE: u32 = {{NONCE}};
 const LOFT_EMPTY: u32 = 0xffffffffu;
 
@@ -70,7 +75,34 @@ fn wty(t: &Ty) -> String {
         Ty::Row(_) => "Row".into(),
         Ty::Frame(_) => "LoftFrame".into(),
         Ty::Bsdf => "Bsdf".into(),
+        Ty::Id(_) => "u32".into(),
+        Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
+        Ty::Struct(k) => format!("loft_type_{k}"),
+        Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
         Ty::Map(..) => unreachable!("maps are not values"),
+    }
+}
+
+// Typed Loft locals and generated WGSL symbols use separate namespaces.
+fn wgsl_name(n: &str) -> String { format!("loft_local_{n}") }
+fn map_symbol(n: &str) -> String { format!("loft_map_{}_{}", n.len(), n) }
+
+#[derive(Clone, Copy)]
+pub(crate) enum MotionMath { Native, Fixed, Unavailable }
+
+pub(crate) fn motion_math(name: &str) -> MotionMath {
+    match name {
+        "sin" | "cos" | "atan2" | "acos" | "exp" | "log" => MotionMath::Fixed,
+        "tan" | "asin" | "atan" | "exp2" | "log2" | "pow" => MotionMath::Unavailable,
+        _ => MotionMath::Native,
+    }
+}
+
+fn fn_symbol(n: &str) -> String {
+    match n.split_once('#') {
+        Some(("", internal)) => format!("loft_internal_{internal}"),
+        Some((kind, helper)) => format!("loft_kind_{}_{}_{}", kind.len(), kind, helper),
+        None => format!("loft_user_{n}"),
     }
 }
 
@@ -103,6 +135,9 @@ pub struct Emitter<'p, 'a> {
     out: String,
     maps: Vec<(String, Vec<MapStage>)>,
     luts: &'p [LutRef],
+    motion:bool,
+    locals: Vec<String>,
+    temp: u32,
 }
 
 /// The lobe calls of a `Bsdf` sum, bottom first.
@@ -113,56 +148,111 @@ fn lobes<'e>(e: &'e Expr, out: &mut Vec<(&'e str, &'e [Arg])>) -> bool {
             out.push((&callee.name, args));
             true
         }
-        ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
+        ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct References<'a> {
+    pub names: Vec<(&'a str, Span)>,
+    pub calls: Vec<&'a Ident>,
+    pub scans: BTreeSet<&'a str>,
+}
+impl<'a> References<'a> {
+    pub fn function(f: &'a FnDecl) -> Self {
+        let mut refs = Self::default();
+        let mut locals = f.params.iter().map(|p| p.name.name.as_str()).collect();
+        refs.block(&f.body, &mut locals);
+        refs
+    }
+
+    pub fn expr(&mut self, e: &'a Expr, locals: &[&'a str]) {
+        match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                self.expr(condition, locals);
+                for arm in [then, otherwise] {
+                    let mut arm_locals = locals.to_vec();
+                    self.statements(&arm.body, &mut arm_locals);
+                    self.expr(&arm.value, &arm_locals);
+                }
+            }
+            ExprKind::Call { callee, args } => {
+                self.calls.push(callee);
+                if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") &&
+                    let Some(Arg { value: Expr { kind: ExprKind::Name(n), .. }, .. }) = args.first()
+                {
+                    self.scans.insert(n);
+                }
+                self.args(args, locals);
+            }
+            ExprKind::Ctor { args, .. } => self.args(args, locals),
+            ExprKind::Name(n) if !locals.contains(&n.as_str()) => self.names.push((n, e.span)),
+            ExprKind::Name(_) | ExprKind::Num { .. } | ExprKind::Bool(_) => {}
+            ExprKind::Member(b, _) | ExprKind::Unary(_, b) => self.expr(b, locals),
+            ExprKind::Index(a, b) | ExprKind::Binary(_, a, b) => {
+                self.expr(a, locals);
+                self.expr(b, locals);
+            }
+        }
+    }
+
+    fn args(&mut self, args: &'a [Arg], locals: &[&'a str]) {
+        for arg in args { self.expr(&arg.value, locals); }
+    }
+
+    fn block(&mut self, b: &'a Block, locals: &mut Vec<&'a str>) {
+        let mark = locals.len();
+        self.statements(b, locals);
+        locals.truncate(mark);
+    }
+
+    fn statements(&mut self, b: &'a Block, locals: &mut Vec<&'a str>) {
+        for s in &b.stmts {
+            match s {
+                Stmt::Let { name, value, .. } => {
+                    self.expr(value, locals);
+                    locals.push(&name.name);
+                }
+                Stmt::Assign { target, value, .. } => {
+                    self.expr(target, locals);
+                    self.expr(value, locals);
+                }
+                Stmt::Map { name, head, stages, .. } => {
+                    self.expr(head, locals);
+                    for e in stages.iter().flat_map(|(_, args)| args) { self.expr(e, locals); }
+                    locals.push(&name.name);
+                }
+                Stmt::Return(v, _) => v.iter().for_each(|e| self.expr(e, locals)),
+                Stmt::If { cond, then, otherwise } => {
+                    self.expr(cond, locals);
+                    self.block(then, locals);
+                    otherwise.iter().for_each(|o| self.block(o, locals));
+                }
+                Stmt::Each { var, values, body, .. } => {
+                    for e in values { self.expr(e, locals); }
+                    locals.push(&var.name);
+                    self.block(body, locals);
+                    locals.pop();
+                }
+                Stmt::For { var, lo, hi, body, .. } => {
+                    self.expr(lo, locals);
+                    self.expr(hi, locals);
+                    locals.push(&var.name);
+                    self.block(body, locals);
+                    locals.pop();
+                }
+                Stmt::Emit { fields, bind, .. } => {
+                    for (_, e) in fields { self.expr(e, locals); }
+                    if let Some(n) = bind { locals.push(&n.name); }
+                }
+                Stmt::Expr(e) => self.expr(e, locals),
+            }
+        }
     }
 }
 
 /// The fns, user and library, reachable from a kind's queries and the shade glue's light fn.
-fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a FnDecl>, BTreeSet<String>) {
-    fn walk_expr(e: &Expr, calls: &mut Vec<String>, names: &mut Vec<String>) {
-        match &e.kind {
-            ExprKind::Call { callee, args } => {
-                calls.push(callee.name.clone());
-                args.iter().for_each(|a| walk_expr(&a.value, calls, names));
-            }
-            ExprKind::Ctor { args, .. } => args.iter().for_each(|a| walk_expr(&a.value, calls, names)),
-            ExprKind::Name(n) => names.push(n.clone()),
-            ExprKind::Member(b, _) | ExprKind::Unary(_, b) => walk_expr(b, calls, names),
-            ExprKind::Index(a, b) | ExprKind::Binary(_, a, b) => {
-                walk_expr(a, calls, names);
-                walk_expr(b, calls, names);
-            }
-            ExprKind::Num { .. } | ExprKind::Bool(_) => {}
-        }
-    }
-    fn walk_block(b: &Block, calls: &mut Vec<String>, names: &mut Vec<String>) {
-        for s in &b.stmts {
-            match s {
-                Stmt::Let { value, .. } => walk_expr(value, calls, names),
-                Stmt::Assign { target, value, .. } => {
-                    walk_expr(target, calls, names);
-                    walk_expr(value, calls, names);
-                }
-                Stmt::Map { head, stages, .. } => {
-                    walk_expr(head, calls, names);
-                    stages.iter().flat_map(|(_, a)| a).for_each(|a| walk_expr(a, calls, names));
-                }
-                Stmt::Return(v, _) => v.iter().for_each(|e| walk_expr(e, calls, names)),
-                Stmt::If { cond, then, otherwise } => {
-                    walk_expr(cond, calls, names);
-                    walk_block(then, calls, names);
-                    otherwise.iter().for_each(|o| walk_block(o, calls, names));
-                }
-                Stmt::For { lo, hi, body, .. } => {
-                    walk_expr(lo, calls, names);
-                    walk_expr(hi, calls, names);
-                    walk_block(body, calls, names);
-                }
-                Stmt::Emit { fields, .. } => fields.iter().for_each(|(_, e)| walk_expr(e, calls, names)),
-                Stmt::Expr(e) => walk_expr(e, calls, names),
-            }
-        }
-    }
+pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a FnDecl>, BTreeSet<String>) {
     let mut seen: Vec<&FnDecl> = vec![];
     let mut consts = BTreeSet::new();
     let mut todo: Vec<&FnDecl> = roots.to_vec();
@@ -171,10 +261,14 @@ fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a
         todo.push(f);
     }
     while let Some(f) = todo.pop() {
-        let (mut calls, mut names) = (vec![], vec![]);
-        walk_block(&f.body, &mut calls, &mut names);
-        for c in calls {
-            if let Some(g) = p.fns.get(c.as_str())
+        let mut refs = References::function(f);
+        while let Some((n, _)) = refs.names.pop() {
+            if let Some(c) = p.consts.get(n) && consts.insert(n.to_owned()) {
+                refs.expr(&c.value, &[]);
+            }
+        }
+        for c in refs.calls {
+            if let Some(g) = p.fns.get(c.name.as_str())
                 && !seen.iter().any(|s| std::ptr::eq(*s, *g))
                 && !roots.iter().any(|s| std::ptr::eq(*s, *g))
             {
@@ -182,11 +276,7 @@ fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a
                 todo.push(g);
             }
         }
-        for n in names {
-            if p.consts.get(n.as_str()).is_some_and(|c| !c.comptime) {
-                consts.insert(n);
-            }
-        }
+
     }
     // Callees before callers: WGSL allows any order, but readers expect it.
     seen.reverse();
@@ -195,7 +285,7 @@ fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[] }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,locals:vec![],temp:0 }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -203,24 +293,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
     }
 
     fn resolve(&self, t: &TyExpr) -> Ty {
-        // Signature types never mention a map space, so erasure needs no scope.
-        match t {
-            TyExpr::Name(i) => match i.name.as_str() {
-                "u32" => Ty::U32,
-                "i32" => Ty::I32,
-                "bool" => Ty::Bool,
-                "vec2f" => Ty::VecN(2),
-                "vec3f" => Ty::VecN(3),
-                "vec4f" => Ty::VecN(4),
-                "Bsdf" => Ty::Bsdf,
-                _ => Ty::F32,
-            },
-            TyExpr::Generic(i, _) => Ty::VecN(i.name.as_bytes()[3] - b'0'),
-            TyExpr::Geo(g, _) => Ty::Geo(*g, Space::Var(String::new())),
-            TyExpr::Xform(..) => Ty::Xform(Space::Var(String::new()), Space::Var(String::new())),
-            TyExpr::Field(_) => Ty::F32,
-            TyExpr::Frame(_) => Ty::Frame(Space::Var(String::new())),
-        }
+        crate::check::Ck::new(self.p, &mut vec![]).resolve(t, true).expect("checked signature")
     }
 
     fn func(&mut self, f: &FnDecl, name: &str) {
@@ -228,23 +301,33 @@ impl<'p, 'a> Emitter<'p, 'a> {
             .params
             .iter()
             .map(|prm| match &prm.ty {
-                Some(t) => format!("{}: {}", prm.name.name, wty(&self.resolve(t))),
-                None => "self_: Row".into(),
+                Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())=>format!("{}: Row",wgsl_name(&prm.name.name)),
+                Some(t) => {
+                    let name = if f.raw.is_some() { prm.name.name.clone() } else { wgsl_name(&prm.name.name) };
+                    format!("{name}: {}", wty(&self.resolve(t)))
+                }
+                None => format!("{}: Row", wgsl_name(&prm.name.name)),
             })
             .collect();
         let ret = f.ret.as_ref().map(|t| format!(" -> {}", wty(&self.resolve(t)))).unwrap_or_default();
         let _ = writeln!(self.out, "fn {name}({}){ret} {{", params.join(", "));
+        if let Some(raw)=&f.raw{
+            self.out.push_str(&crate::provenance::raw(f.name.span,&raw.body[1..raw.body.len()-1]));self.out.push_str("\n}\n");return;
+        }
         self.maps.clear();
+        self.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         self.block_body(&f.body, 1);
         self.out += "}\n\n";
     }
 
     fn block_body(&mut self, b: &Block, depth: usize) {
         let mark = self.maps.len();
+        let local_mark = self.locals.len();
         for s in &b.stmts {
             self.stmt(s, depth);
         }
         self.maps.truncate(mark);
+        self.locals.truncate(local_mark);
     }
 
     fn line(&mut self, depth: usize, s: &str) {
@@ -257,7 +340,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let v = self.expr(value);
                 let t = wty(self.ty_of(value));
                 let kw = if *mutable { "var" } else { "let" };
-                self.line(d, &format!("{kw} {}: {t} = {v};", name.name));
+                self.line(d, &format!("{kw} {}: {t} = {v};", wgsl_name(&name.name)));
+                self.locals.push(name.name.clone());
             }
             Stmt::Assign { target, op, value } => {
                 let (t, v) = (self.expr(target), self.expr(value));
@@ -265,12 +349,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.line(d, &format!("{t} {op} {v};"));
             }
             Stmt::Map { name, head, stages } => {
-                let n = &name.name;
+                let n = &map_symbol(&name.name);
                 let (point, mut all): (String, Vec<(&str, Vec<String>)>) = match &head.kind {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value), vec![(callee.name.as_str(), vec![])])
                     }
-                    ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
+                    ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
                 };
                 for (op, args) in stages {
                     let a = args.iter().map(|x| self.expr(x)).collect();
@@ -300,7 +384,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
                         other => unreachable!("checked map stage {other}"),
                     }
                 }
-                self.line(d, &format!("let {n}: vec3<f32> = {n}_s{};", all.len()));
+                self.line(d, &format!("let {}: vec3<f32> = {n}_s{};", wgsl_name(&name.name), all.len()));
+                self.locals.push(name.name.clone());
                 self.maps.push((n.clone(), recorded));
             }
             Stmt::Return(v, _) => {
@@ -320,15 +405,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
             Stmt::For { var, lo, hi, body, .. } => {
                 let t = wty(self.ty_of(lo)).replace("i32", match self.ty_of(hi) {
                     Ty::U32 => "u32",
-                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => "i32",
+                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => "i32",
                 });
                 let (a, b) = (self.expr(lo), self.expr(hi));
-                let v = &var.name;
+                let v = wgsl_name(&var.name);
                 self.line(d, &format!("for (var {v}: {t} = {a}; {v} < {b}; {v}++) {{"));
+                self.locals.push(var.name.clone());
                 self.block_body(body, d + 1);
+                self.locals.pop();
                 self.line(d, "}");
             }
-            Stmt::Emit { .. } => unreachable!("checked: stage 0 only, never emitted"),
+            Stmt::Each{..} | Stmt::Emit { .. } => unreachable!("checked: stage 0 only, never emitted"),
             Stmt::Expr(e) => {
                 let v = self.expr(e);
                 if matches!(e.kind, ExprKind::Call { .. }) && *self.ty_of(e) == Ty::Void {
@@ -355,9 +442,13 @@ impl<'p, 'a> Emitter<'p, 'a> {
         v
     }
 
-    pub fn expr(&mut self, e: &Expr) -> String {
+    pub fn expr(&mut self,e:&Expr)->String{crate::provenance::expression(e.span,self.expression(e))}
+
+    fn expression(&mut self, e: &Expr) -> String {
         // A Bsdf value is the struct of its lobes' bound arguments, in the module's one layout (checked per kind).
-        if *self.ty_of(e) == Ty::Bsdf && !matches!(e.kind, ExprKind::Name(_)) {
+        let is_lobe = |callee: &Ident| self.p.fns.get(callee.name.as_str()).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
+        if *self.ty_of(e) == Ty::Bsdf && (matches!(&e.kind, ExprKind::Binary(BinOp::Add, ..))
+            || matches!(&e.kind, ExprKind::Call { callee, .. } if is_lobe(callee))) {
             let mut ls = vec![];
             let all = lobes(e, &mut ls) && ls.iter().all(|(n, _)| self.p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
             assert!(all, "checked: a Bsdf expression is a sum of lobe calls or a name");
@@ -365,23 +456,50 @@ impl<'p, 'a> Emitter<'p, 'a> {
             return format!("Bsdf({})", a.join(", "));
         }
         match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                let name = format!("loft_tmp_{}", self.temp);
+                self.temp += 1;
+                let condition = self.expr(condition);
+                let ty = if self.ty_of(e) == &Ty::Verdict { "vec2<f32>".into() } else { wty(self.ty_of(e)) };
+                self.line(1, &format!("var {name}: {ty};"));
+                self.line(1, &format!("if {condition} {{"));
+                for (i, arm) in [then, otherwise].into_iter().enumerate() {
+                    let (locals, maps) = (self.locals.len(), self.maps.len());
+                    if i != 0 { self.line(1, "} else {"); }
+                    for stmt in &arm.body.stmts { self.stmt(stmt, 2); }
+                    let value = self.expr(&arm.value);
+                    self.line(2, &format!("{name} = {value};"));
+                    self.locals.truncate(locals);
+                    self.maps.truncate(maps);
+                }
+                self.line(1, "}");
+                name
+            }
             ExprKind::Num { value, suffix, text, .. } => match self.ty_of(e) {
                 Ty::U32 => format!("{}u", *value as u32),
                 Ty::I32 => format!("{}i", *value as i32),
                 Ty::AbstractInt => text.clone(),
-                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
+                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
             },
             ExprKind::Bool(b) => b.to_string(),
-            ExprKind::Name(n) if n == "self" => "self_".into(),
-            ExprKind::Name(n) => n.clone(),
+            ExprKind::Name(n) if n=="time" && !self.locals.contains(n)=>if self.motion{"loft_tick_time"}else{"frame.eye.w"}.into(),
+            ExprKind::Name(n) if !self.locals.contains(n) && self.p.consts.contains_key(n.as_str()) => {
+                if let Some(i) = self.p.param_slot(n) {
+                    format!("loft_params[{i}u].x")
+                } else {
+                    let suffix = if self.p.runtime_constant(n) { "()" } else { "" };
+                    format!("{}_{}{suffix}", if self.motion { "motion_const" } else { "loft_const" }, n)
+                }
+            }
+            ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
                     && m.name == "cell"
-                    && self.maps.iter().any(|(k, _)| k == n)
+                    && self.maps.iter().any(|(k, _)| k == &map_symbol(n))
                 {
-                    return format!("{n}_cell");
+                    return format!("{}_cell",map_symbol(n));
                 }
-                format!("{}.{}", self.expr(base), m.name)
+                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -397,7 +515,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     (Ty::Map(..), ExprKind::Member(base, m)) => {
                         let ExprKind::Name(n) = &base.kind else { unreachable!("checked map ref") };
                         let x = self.expr(b);
-                        self.map_apply(n, m.name == "to_parent", x, point)
+                        self.map_apply(&map_symbol(n), m.name == "to_parent", x, point)
                     }
                     (Ty::Xform(..), _) if matches!(self.ty_of(b), Ty::Xform(..)) => format!("loft_xf_mul({}, {})", self.expr(a), self.expr(b)),
                     (Ty::Xform(..), _) => {
@@ -412,7 +530,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 match self.ty_of(e) {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => format!("normalize(vec3<f32>({}))", a.join(", ")),
                     Ty::Xform(..) => format!("loft_xform_yaw({}, {})", a[0], a[1]),
-                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
+                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Table(_) | t @ Ty::Verdict | t @ Ty::Struct(_) | t @ Ty::Array(..) | t @ Ty::Id(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
                 }
             }
             ExprKind::Call { callee, args } if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") => {
@@ -430,16 +548,35 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     Ty::Frame(_) => "LoftFrame(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0))".into(),
                     Ty::F32 => "0.0".into(),
                     t @ Ty::VecN(_) | t @ Ty::Geo(..) => format!("{}(0.0)", wty(t)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Bsdf => unreachable!("checked zero of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked zero of {other}"),
                 }
             }
             ExprKind::Call { callee, args } if callee.name == "loft_vec" => self.expr(&args[0].value),
             ExprKind::Call { callee, args } => {
+                if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
+                    return "vec2<f32>(3.0, 0.0)".into();
+                }
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
+                if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
+                match callee.name.as_str(){
+                    "sky_zenith"=>return "loft_params[1u].xyz".into(),
+                    "sky_horizon"=>return "loft_params[2u].xyz".into(),
+                    "has_sky"=>return "(loft_params[1u].w != 0.0)".into(),
+                    "sun_color"=>return "loft_params[0u].xyz".into(),
+                    _=>{}
+                }
+                if callee.name=="coords"{return a[0].clone()}
+                if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
+                if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
+                if matches!(callee.name.as_str(),"held"|"missed"){return format!("vec2<f32>({}, {})",if callee.name=="held"{"1.0"}else{"2.0"},a[0]);}
                 let name = match callee.name.as_str() {
+                    "frame_axes" => "LoftFrame".into(),
+                    "dir" => "normalize".into(),
+                    "dist"=>"distance".into(),
                     "smootherstep" => "loft_smootherstep".to_string(),
                     "inv" => "loft_xf_inv".to_string(),
                     "vec2" | "vec2f" => "vec2<f32>".into(),
+                    "loft_conditional" => "select".into(),
                     "vec3" | "vec3f" => "vec3<f32>".into(),
                     "vec4" | "vec4f" => "vec4<f32>".into(),
                     other => other.into(),
@@ -454,21 +591,89 @@ impl<'p, 'a> Emitter<'p, 'a> {
         self.out += "fn loft_xform_yaw(o: vec3<f32>, yaw: f32) -> LoftXform {\n  let s = sin(yaw);\n  let c = cos(yaw);\n  return LoftXform(mat3x3<f32>(vec3<f32>(c, 0.0, -s), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(s, 0.0, c)), o);\n}\n\n";
     }
 
-    fn library(&mut self, fns: &[&FnDecl], consts: &BTreeSet<String>) {
-        for c in consts {
-            let decl = self.p.consts[c.as_str()];
-            let v = self.expr(&decl.value);
-            let t = wty(&self.types[decl.value.id as usize]);
-            let _ = writeln!(self.out, "const {c}: {t} = {v};");
+    fn row_header(&mut self, k: &KindDecl) {
+        // The row: the author's fields, then the compiler's hidden columns.
+        let mut fields = vec![];
+        let mut loads = vec![];
+        let mut o = 0u32;
+        for rf in &k.row {
+            let t = self.resolve(&rf.ty);
+            let w = |i: u32| format!("rows[o + {}u]", o + i);
+            let load = match &t {
+                Ty::F32 => w(0),
+                Ty::U32 | Ty::Id(_) => format!("bitcast<u32>({})", w(0)),
+                Ty::I32 => format!("bitcast<i32>({})", w(0)),
+                Ty::Bool => format!("({} != 0.0)", w(0)),
+                Ty::VecN(n) => format!("vec{n}<f32>({})", (0..u32::from(*n)).map(w).collect::<Vec<_>>().join(", ")),
+                Ty::Geo(..) => format!("vec3<f32>({}, {}, {})", w(0), w(1), w(2)),
+                Ty::Xform(..) => format!(
+                    "LoftXform(mat3x3<f32>({}), vec3<f32>({}, {}, {}))",
+                    (0..9).map(w).collect::<Vec<_>>().join(", "),
+                    w(9),
+                    w(10),
+                    w(11)
+                ),
+                other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
+            };
+            fields.push(format!("  r_{}: {},", rf.name.name, wty(&t)));
+            loads.push(load);
+            o += t.words().expect("checked storable");
         }
+        let stride = o + abi::HIDDEN_WORDS;
+        fields.push("  loft_lo: vec3<f32>,\n  loft_hi: vec3<f32>,\n  loft_lip: f32,".into());
+        loads.push(format!("vec3<f32>(rows[o + {o}u], rows[o + {}u], rows[o + {}u])", o + 1, o + 2));
+        loads.push(format!("vec3<f32>(rows[o + {}u], rows[o + {}u], rows[o + {}u])", o + 3, o + 4, o + 5));
+        loads.push(format!("rows[o + {}u]", o + 6));
+        let pose = match crate::pose_field(k) {
+            Some(i) => format!("r.r_{}", k.row[i].name.name),
+            None => "LoftXform(mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0), vec3<f32>(0.0))".into(),
+        };
+        let _ = write!(
+            self.out,
+            "// kind {name}: one module for every instance; rows are data.\nstruct Row {{\n{fields}\n}}\n\
+             struct KindParams {{ kind_id: u32, base: u32, n_rows: u32, pad: u32 }}\n\
+             @group(1) @binding(0) var<storage, read> rows: array<f32>;\n\
+             @group(1) @binding(1) var<storage, read> visible: array<u32>;\n\
+             @group(1) @binding(2) var<uniform> kp: KindParams;\n\
+             @group(1) @binding(3) var<storage, read> luts: array<f32>;\n\
+             const STRIDE: u32 = {stride}u;\n\
+             fn load_row(i: u32) -> Row {{\n  let o = i * STRIDE;\n  return Row(\n    {loads}\n  );\n}}\n\
+             // The row's placement in World: the compiler applies it, so queries are written in the kind's own space.\n\
+             fn loft_pose(r: Row) -> LoftXform {{ return {pose}; }}\n\n{LUTS}",
+            name = k.name.name,
+            fields = fields.join("\n"),
+            loads = loads.join(",\n    "),
+        );
+    }
+
+    fn constants(&mut self, constants: &BTreeSet<String>) {
+        self.locals.clear();
+        for name in constants {
+            if self.p.param_slot(name).is_some() { continue; }
+            let decl = self.p.consts[name.as_str()];
+            let t = wty(self.ty_of(&decl.value));
+            let prefix = if self.motion { "motion_const" } else { "loft_const" };
+            if self.p.runtime_constant(name) {
+                let _ = writeln!(self.out, "fn {prefix}_{name}() -> {t} {{");
+                let v = self.expr(&decl.value);
+                let _ = writeln!(self.out, "  return {v};\n}}");
+            } else {
+                let v = self.expr(&decl.value);
+                let _ = writeln!(self.out, "const {prefix}_{name}: {t} = {v};");
+            }
+        }
+    }
+
+    fn library(&mut self, fns: &[&FnDecl], consts: &BTreeSet<String>) {
+        self.constants(consts);
         for f in fns {
-            self.func(f, &f.name.name);
+            self.func(f, &fn_symbol(&f.name.name));
         }
     }
 }
 
 /// The lobe sequence of a kind's material: every `return` must build the same one (it fixes the `Bsdf` struct).
-fn material_layout<'k>(p: &Prog, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg])>> {
+fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg])>> {
     fn returns<'b>(b: &'b Block, out: &mut Vec<&'b Expr>) {
         for s in &b.stmts {
             match s {
@@ -477,25 +682,45 @@ fn material_layout<'k>(p: &Prog, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [Arg]
                     returns(then, out);
                     otherwise.iter().for_each(|o| returns(o, out));
                 }
-                Stmt::For { body, .. } => returns(body, out),
+                Stmt::Each{body,..} | Stmt::For { body, .. } => returns(body, out),
                 Stmt::Return(None, _) | Stmt::Let { .. } | Stmt::Assign { .. } | Stmt::Map { .. } | Stmt::Emit { .. } | Stmt::Expr(_) => {}
             }
         }
     }
-    let m = k.query(QueryKind::Material).expect("checked material");
-    let mut rs = vec![];
-    returns(&m.body, &mut rs);
-    let mut layout: Option<Vec<(&str, &[Arg])>> = None;
-    for e in rs {
-        let mut ls = vec![];
-        let ok = lobes(e, &mut ls) && ls.iter().all(|(n, _)| p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe")));
-        let same = layout.as_ref().is_none_or(|l| l.iter().map(|x| x.0).eq(ls.iter().map(|x| x.0)));
-        if !ok || !same {
-            return Err(Diag::new(Code::E405, e.span, "a material returns one sum of lobe calls, the same lobes on every path", "return `ggx(...) + clearcoat(...)` directly; vary the lobes' weights, not which lobes"));
+    fn resolve<'a>(p: &Prog<'a>, f: &'a FnDecl, stack: &mut BTreeSet<String>) -> Res<Vec<(&'a str, &'a [Arg])>> {
+        if !stack.insert(f.name.name.clone()) {
+            return Err(Diag::new(Code::E405, f.name.span, "recursive material helper", "return a finite lobe stack"));
         }
-        layout = Some(ls);
+        let mut rs = vec![];
+        returns(&f.body, &mut rs);
+        let mut layout: Option<Vec<(&str, &[Arg])>> = None;
+        for e in rs {
+            let mut ls = vec![];
+            let is_lobe = |n: &str| p.fns.get(n).is_some_and(|f| f.attrs.iter().any(|a| a.name.name == "lobe"));
+            if let ExprKind::Call { callee, .. } = &e.kind
+                && let Some(helper) = p.fns.get(callee.name.as_str()).filter(|_| !is_lobe(&callee.name))
+            {
+                ls = resolve(p, helper, stack)?;
+            } else if !lobes(e, &mut ls) || !ls.iter().all(|(n, _)| is_lobe(n)) {
+                return Err(Diag::new(Code::E405, e.span, "material has no static lobe layout", "return a lobe sum or call a helper that returns one"));
+            }
+            if !layout.as_ref().is_none_or(|l| l.iter().map(|x| x.0).eq(ls.iter().map(|x| x.0))) {
+                return Err(Diag::new(Code::E405, e.span, "material paths use different lobes", "keep the same lobes on every path and vary their weights"));
+            }
+            layout = Some(ls);
+        }
+        stack.remove(&f.name.name);
+        layout.ok_or_else(|| Diag::new(Code::E003, f.name.span, "the material returns nothing", "return a sum of lobes"))
     }
-    layout.ok_or_else(|| Diag::new(Code::E003, m.name.span, "the material returns nothing", "return a sum of lobes"))
+    resolve(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
+}
+
+pub fn table_module(p: &Prog, types: &[Ty], kind: &KindDecl) -> String {
+    let mut em = Emitter::new(p, types);
+    em.header(abi::NONCE_PLACEHOLDER);
+    em.row_header(kind);
+    em.out.push_str("@group(3) @binding(0) var<storage, read> twin_in: array<vec4<f32>>;\n@group(3) @binding(1) var<storage, read_write> twin_out: array<vec4<f32>>;\n");
+    em.out
 }
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
@@ -507,58 +732,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     let mut roots: Vec<&FnDecl> = k.queries.iter().map(|(_, f)| f).collect();
     roots.extend(k.fns.iter());
     let (lib, consts) = reachable(p, &roots, &[light]);
-    // The row: the author's fields, then the compiler's hidden columns.
-    let mut fields = vec![];
-    let mut loads = vec![];
-    let mut o = 0u32;
-    for rf in &k.row {
-        let t = em.resolve(&rf.ty);
-        let w = |i: u32| format!("rows[o + {}u]", o + i);
-        let load = match &t {
-            Ty::F32 => w(0),
-            Ty::U32 => format!("bitcast<u32>({})", w(0)),
-            Ty::I32 => format!("bitcast<i32>({})", w(0)),
-            Ty::Bool => format!("({} != 0.0)", w(0)),
-            Ty::VecN(n) => format!("vec{n}<f32>({})", (0..u32::from(*n)).map(w).collect::<Vec<_>>().join(", ")),
-            Ty::Geo(..) => format!("vec3<f32>({}, {}, {})", w(0), w(1), w(2)),
-            Ty::Xform(..) => format!(
-                "LoftXform(mat3x3<f32>({}), vec3<f32>({}, {}, {}))",
-                (0..9).map(w).collect::<Vec<_>>().join(", "),
-                w(9),
-                w(10),
-                w(11)
-            ),
-            other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
-        };
-        fields.push(format!("  {}: {},", rf.name.name, wty(&t)));
-        loads.push(load);
-        o += t.words().expect("checked storable");
-    }
-    let stride = o + abi::HIDDEN_WORDS;
-    fields.push("  loft_lo: vec3<f32>,\n  loft_hi: vec3<f32>,\n  loft_lip: f32,".into());
-    loads.push(format!("vec3<f32>(rows[o + {o}u], rows[o + {}u], rows[o + {}u])", o + 1, o + 2));
-    loads.push(format!("vec3<f32>(rows[o + {}u], rows[o + {}u], rows[o + {}u])", o + 3, o + 4, o + 5));
-    loads.push(format!("rows[o + {}u]", o + 6));
-    let pose = match crate::pose_field(k) {
-        Some(i) => format!("r.{}", k.row[i].name.name),
-        None => "LoftXform(mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0), vec3<f32>(0.0))".into(),
-    };
-    let _ = write!(
-        em.out,
-        "// kind {name}: one module for every instance; rows are data.\nstruct Row {{\n{fields}\n}}\n\
-         struct KindParams {{ kind_id: u32, base: u32, n_rows: u32, pad: u32 }}\n\
-         @group(1) @binding(0) var<storage, read> rows: array<f32>;\n\
-         @group(1) @binding(1) var<storage, read> visible: array<u32>;\n\
-         @group(1) @binding(2) var<uniform> kp: KindParams;\n\
-         @group(1) @binding(3) var<storage, read> luts: array<f32>;\n\
-         const STRIDE: u32 = {stride}u;\n\
-         fn load_row(i: u32) -> Row {{\n  let o = i * STRIDE;\n  return Row(\n    {loads}\n  );\n}}\n\
-         // The row's placement in World: the compiler applies it, so queries are written in the kind's own space.\n\
-         fn loft_pose(r: Row) -> LoftXform {{ return {pose}; }}\n\n{LUTS}",
-        name = k.name.name,
-        fields = fields.join("\n"),
-        loads = loads.join(",\n    "),
-    );
+    em.row_header(k);
     // The Bsdf struct: one field per bound lobe argument, in the material's lobe order.
     let layout = material_layout(p, k)?;
     let mut bfields = vec![];
@@ -570,7 +744,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
             bfields.push(format!("  l{i}_{j}: {},", wty(&em.resolve(prm.ty.as_ref().expect("typed")))));
             names.push(format!("b.l{i}_{j}"));
         }
-        let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
+        let name=fn_symbol(name);let _ = write!(evals, "  let r{i} = {name}({}, n, v, l);\n  c = c * r{i}.w + r{i}.xyz;\n", names.join(", "));
     }
     let _ = write!(
         em.out,
@@ -580,7 +754,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     );
     em.library(&lib, &consts);
     for f in &k.fns {
-        em.func(f, &f.name.name);
+        em.func(f, "loft_surface_jvp");
     }
     for (which, f) in &k.queries {
         let n = match which {
@@ -621,7 +795,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
             ),
             "  let uv = vec2<f32>(f32(v.y & 0xffffu), f32(v.y >> 16u)) / 65535.0;
   let pl = q_surface(row, uv.x, uv.y);
-  let cr = cross(surface__jvp(row, uv.x, uv.y, 1.0, 0.0), surface__jvp(row, uv.x, uv.y, 0.0, 1.0));
+  let cr = cross(loft_surface_jvp(row, uv.x, uv.y, 1.0, 0.0), loft_surface_jvp(row, uv.x, uv.y, 0.0, 1.0));
   let nl = cr * inverseSqrt(max(dot(cr, cr), 1e-30));
   let p = loft_xf_pt(pose, pl);
   var n = normalize(loft_xf_vec(pose, nl));
@@ -632,7 +806,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
 "
             .to_string(),
             "  let pl = q_surface(row, a.x, a.y);
-  let cr = cross(surface__jvp(row, a.x, a.y, 1.0, 0.0), surface__jvp(row, a.x, a.y, 0.0, 1.0));
+  let cr = cross(loft_surface_jvp(row, a.x, a.y, 1.0, 0.0), loft_surface_jvp(row, a.x, a.y, 0.0, 1.0));
   let nl = normalize(cr);
   let nw = loft_xf_vec(pose, nl);
   let o0 = vec4<f32>(0.0);
@@ -805,6 +979,7 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   twin_out[4u * i + 3u] = o3;
 }}
 ",
+        light = fn_symbol(light),
         l0 = f32_lit(f64::from(tl[0])),
         l1 = f32_lit(f64::from(tl[1])),
         l2 = f32_lit(f64::from(tl[2])),
@@ -924,6 +1099,7 @@ pub fn present_module(p: &Prog, types: &[Ty], sky: &str) -> String {
     em.header(abi::NONCE_PLACEHOLDER);
     let (lib, consts) = reachable(p, &[], &[sky]);
     em.library(&lib, &consts);
+    let sky=fn_symbol(sky);
     em.out += &format!(
         r"@group(1) @binding(0) var hdr_tex: texture_2d<f32>;
 @group(1) @binding(1) var vis_tex: texture_2d<u32>;

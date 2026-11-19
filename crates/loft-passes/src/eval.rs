@@ -9,6 +9,7 @@ use loft_ir::{Code, Diag, Res, Span};
 /// A scalar domain. `lip` is the scalar's Lipschitz bound in the traced point (always 0 for `f32`).
 pub trait Scalar: Clone + std::fmt::Debug {
     fn c(x: f64) -> Self;
+    fn frame_time()->Self;
     fn add(&self, o: &Self) -> Self;
     fn sub(&self, o: &Self) -> Self;
     fn mul(&self, o: &Self) -> Self;
@@ -182,6 +183,7 @@ pub struct Eval<'p, 'a, S> {
     /// The first expression that made a Lipschitz bound unbounded: where, and why.
     pub cause: Option<(Span, String)>,
     pub steps: u64,
+    pub time: S,
     /// Baked scans, for `sample_c2`.
     pub luts: &'p [Lut],
 }
@@ -197,7 +199,7 @@ fn norm<S: Scalar>(v: &[S]) -> f64 {
 
 impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty], tables: Tables, overrides: &'p [(String, f64)]) -> Self {
-        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, luts: &[] }
+        Eval { p, types, tables, overrides, env: vec![], cause: None, steps: 0, time:S::frame_time(), luts: &[] }
     }
 
     /// Binds a name for the expressions evaluated next (a scan's parameter); `unbind` drops the latest.
@@ -221,6 +223,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
 
     /// Calls `f` with arguments; a query's `self` is `Val::Row`.
     pub fn call_fn(&mut self, f: &'a FnDecl, args: Vec<Val<S>>, span: Span) -> Res<Val<S>> {
+        if f.raw.is_some(){return Err(Diag::new(Code::E405,span,"raw WGSL has no CPU evaluation","use a Loft expression for build-time evaluation or CPU twin queries"))}
         let mark = self.env.len();
         let saved = std::mem::take(&mut self.env);
         for (prm, a) in f.params.iter().zip(args.iter()) {
@@ -247,7 +250,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             ExprKind::Call { args, .. } => {
                 args.iter().filter_map(|x| if let ExprKind::Name(n) = &x.value.kind { Some(n.as_str()) } else { None }).collect()
             }
-            ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
+            ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => vec![],
         };
         let lip_of = |x: &Val<S>| match x {
             Val::S(s) => s.lip(),
@@ -312,7 +315,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value)?, vec![(callee.name.as_str(), vec![])])
                     }
-                    ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
+                    ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head)?, vec![]),
                 };
                 for (op, args) in stages {
                     let vals = args.iter().map(|a| self.expr(a)).collect::<Res<Vec<_>>>()?;
@@ -356,6 +359,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return self.block(blk);
                 }
             }
+            Stmt::Each { var, values, body, .. }=>{
+                for e in values{let value=self.expr(e)?; self.bind(&var.name,value); let flow=self.block(body)?;self.unbind();if let Flow::Ret(_)=flow{return Ok(flow)}}
+            }
             Stmt::For { var, lo, hi, body, .. } => {
                 let (a, b) = (self.expr(lo)?, self.expr(hi)?);
                 let (a, b, unsigned) = match (a, b) {
@@ -374,15 +380,23 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     }
                 }
             }
-            Stmt::Emit { kind, fields, .. } => {
+            Stmt::Emit { kind, fields, bind, .. } => {
                 let k = self.p.kind_index(&kind.name);
                 let decl = self.p.kinds[kind.name.as_str()];
                 let mut row = vec![];
                 for rf in &decl.row {
-                    let (_, e) = fields.iter().find(|(f, _)| f.name == rf.name.name).expect("checked: every field");
-                    let v = self.expr(e)?;
-                    row.push(concrete(&v, e.span)?);
+                    let supplied = fields.iter().find(|(f, _)| f.name == rf.name.name);
+                    let (e, v) = if let Some((_, e)) = supplied {
+                        (e, self.expr(e)?)
+                    } else {
+                        let e = rf.default.as_ref().expect("checked required field");
+                        (e, self.module_expr(e)?)
+                    };
+                    let v=concrete(&v,e.span)?;
+                    if let Some(range)=&rf.range {self.validate_range(&rf.name,range,crate::as_f32(v.clone(),e.span)?,e.span)?;}
+                    row.push(v);
                 }
+                if let Some(n)=bind{self.bind(&n.name,Val::U(self.tables[k].len() as u32));}
                 self.tables[k].push(row);
             }
             Stmt::Expr(e) => {
@@ -390,6 +404,23 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
         }
         Ok(Flow::Next)
+    }
+
+    /// Defaults, refinements and module constants cannot see the emitting caller's locals.
+    pub(crate) fn module_expr(&mut self, e: &'a Expr) -> Res<Val<S>> {
+        let saved = std::mem::take(&mut self.env);
+        let result = self.expr(e);
+        self.env = saved;
+        result
+    }
+
+    pub(crate) fn validate_range(&mut self,name:&Ident,r:&'a RowRange,x:f32,sp:Span)->Res<()>{
+        let lo=crate::as_f32(concrete(&self.module_expr(&r.lo)?,r.lo.span)?,r.lo.span)?;
+        let hi=match &r.hi{Some(e)=>crate::as_f32(concrete(&self.module_expr(e)?,e.span)?,e.span)?,None=>f32::INFINITY};
+        if !x.is_finite() || !(if r.strict{x>lo}else{x>=lo}) || !(x<=hi){
+            return Err(Diag::new(Code::E602,sp,format!("{} = {x} outside declared range",name.name),format!("supply a value {} {lo} and <= {hi}",if r.strict{">"}else{">="})).note(r.lo.span,"declared here"))
+        }
+        Ok(())
     }
 
     /// One map stage, forward (`fwd`) or inverse, on a point or a direction. `fold`: the map statement itself,
@@ -418,7 +449,8 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 // The plane (i, j) turns by a: i' = cos i + sin j, j' = cos j - sin i (matches loft_rot_* in emit).
                 let (i, j) = match axis {
                     0 => (1, 2),
-                    1 => (2, 0),
+                    // Match loft_rot_y in WGSL: the inverse of +90° takes +Z to −X.
+                    1 => (0, 2),
                     _ => (0, 1),
                 };
                 let (s, co) = (a.un(Un::Sin), a.un(Un::Cos));
@@ -431,7 +463,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     }
 
     pub fn expr(&mut self, e: &'a Expr) -> Res<Val<S>> {
-        let v = self.expr_inner(e)?;
+        // A composite abstract integer (for example -1 or 1 + 2) can
+        // acquire a concrete type at its return or argument boundary.
+        let v = match (self.ty(e).clone(),self.expr_inner(e)?) {
+            (Ty::F32,Val::I(x))=>Val::S(S::c(f64::from(x))),
+            (Ty::F32,Val::U(x))=>Val::S(S::c(f64::from(x))),
+            (Ty::U32,Val::I(x))=>Val::U(x as u32),
+            (_,v)=>v,
+        };
         let inf = match &v {
             Val::S(s) => s.lip().is_infinite(),
             Val::V(_, l) => l.is_infinite(),
@@ -447,14 +486,43 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         &self.types[e.id as usize]
     }
 
+    fn expr_arm(&mut self, arm: &'a ExprBlock) -> Res<Val<S>> {
+        let mark = self.env.len();
+        let result = (|| {
+            for stmt in &arm.body.stmts {
+                if let Flow::Ret(value) = self.stmt(stmt)? { return Ok(value); }
+            }
+            self.expr(&arm.value)
+        })();
+        self.env.truncate(mark);
+        result
+    }
+
     fn expr_inner(&mut self, e: &'a Expr) -> Res<Val<S>> {
         match &e.kind {
+            ExprKind::If { condition, then, otherwise } => {
+                match self.expr(condition)? {
+                    Val::B(Some(true)) => self.expr_arm(then),
+                    Val::B(Some(false)) => self.expr_arm(otherwise),
+                    Val::B(None) if then.body.stmts.is_empty() && otherwise.body.stmts.is_empty() => {
+                        let a = self.expr(&then.value)?;
+                        let b = self.expr(&otherwise.value)?;
+                        Ok(match (a, b) {
+                            (Val::S(a), Val::S(b)) => Val::S(a.join(&b)),
+                            (Val::V(a, al), Val::V(b, bl)) => Val::V(a.into_iter().zip(b).map(|(a, b)| a.join(&b)).collect(), al.max(bl)),
+                            (Val::B(a), Val::B(b)) => Val::B(if a == b { a } else { None }),
+                            (_, _) => return Err(err(e.span, "incompatible interval branches", "use a continuous field expression")),
+                        })
+                    }
+                    _ => Err(Diag::new(Code::E211, condition.span, "conditional block cannot be bounded over both paths", "use a continuous field expression")),
+                }
+            }
             ExprKind::Num { value, suffix, .. } => {
                 let v = if *suffix == NumSuffix::Deg { value.to_radians() } else { *value };
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
-                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
+                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
@@ -464,18 +532,16 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         Slot::Val(v) | Slot::Map { p: v, .. } => v.clone(),
                     });
                 }
+                if n=="time"{return Ok(Val::S(self.time.clone()))}
                 let c = self.p.consts[n.as_str()];
                 if let Some((_, x)) = self.overrides.iter().find(|(k, _)| k == n) {
                     return Ok(match self.types[c.value.id as usize] {
                         Ty::U32 => Val::U(*x as u32),
                         Ty::I32 | Ty::AbstractInt => Val::I(*x as i32),
-                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => Val::S(S::c(*x)),
+                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(*x)),
                     });
                 }
-                let saved = std::mem::take(&mut self.env);
-                let v = self.expr(&c.value);
-                self.env = saved;
-                v
+                self.module_expr(&c.value)
             }
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
@@ -496,7 +562,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                         Ok(Self::lift(&self.tables[k][r][i]))
                     }
                     Val::V(c, l) if c.len() == 12 => {
-                        let o = match m.name.as_str() {
+                        let o = match frame_field(&m.name) {
                             "origin" => 0,
                             "tangent" => 3,
                             "normal" => 6,
@@ -554,10 +620,19 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
                     Ty::Geo(..) => Ok(build(vals, 3)),
                     Ty::VecN(n) => Ok(build(vals, n as usize)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
                 }
             }
             ExprKind::Call { callee, args } => {
+                if callee.name=="loft_conditional" && let Val::B(Some(b))=self.expr(&args[2].value)? {
+                    return self.expr(&args[usize::from(b)].value);
+                }
+                if callee.name=="place" {
+                    let Val::V(o,_)=self.expr(&args[0].value)? else {unreachable!("typed placement")};
+                    let exact=|s:&S|s.exact().map(|v|v as f32).ok_or_else(||err(e.span,"placement varies across the query","store it in a row"));
+                    let yaw=match args.get(1) {Some(a)=>match self.expr(&a.value)?{Val::S(x)=>exact(&x)?,Val::I(n)=>n as f32,_=>unreachable!("typed yaw")},None=>0.};
+                    return Ok(Val::X(Rigid::yaw([exact(&o[0])?,exact(&o[1])?,exact(&o[2])?],yaw)));
+                }
                 if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
                     let ExprKind::Name(n) = &args[0].value.kind else { unreachable!("checked scan name") };
                     let lut = self.luts.iter().find(|l| &l.name == n).ok_or_else(|| err(e.span, format!("scan `{n}` is not baked yet"), "a scan reads only scans declared before it"))?;
@@ -753,6 +828,24 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
         };
         match name {
+            "frame_axes" => build(v,12),
+            "has_sky"=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
+            "sky_zenith" | "sky_horizon" | "sun_color" => {
+                let (kind, column, default) = match name {
+                    "sky_zenith" => ("Sky", 0, crate::defaults::ENV_DEFAULTS[1]),
+                    "sky_horizon" => ("Sky", 1, crate::defaults::ENV_DEFAULTS[2]),
+                    _ => ("Sun", 1, crate::defaults::ENV_DEFAULTS[0]),
+                };
+                if let Some(row) = self.p.kind_order.iter().position(|k| *k == kind)
+                    .and_then(|i| self.tables.get(i)).and_then(|rows| rows.first())
+                {
+                    Self::lift(&row[column])
+                } else {
+                    self.module_expr(&self.p.consts[default].value).expect("validated prelude default")
+                }
+            }
+            "coords" => v.remove(0),
+            "dir" => normalize(v.remove(0)),
             "loft_zero" => match &v[0] {
                 Val::S(_) => Val::S(S::c(0.0)),
                 Val::V(c, _) => Val::V(vec![S::c(0.0); c.len()], 0.0),
@@ -854,7 +947,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let k = self.arith(BinOp::Sub, Val::S(S::c(3.0)), two_t);
                 self.arith(BinOp::Mul, tt, k)
             }
-            "select" => match &v[2] {
+            "select" | "loft_conditional" => match &v[2] {
                 Val::B(Some(true)) => v[1].clone(),
                 Val::B(Some(false)) => v[0].clone(),
                 Val::Void | Val::S(_) | Val::V(..) | Val::B(_) | Val::U(_) | Val::I(_) | Val::X(_) | Val::Row(..) | Val::MapRef(..) | Val::Bsdf(_) => match (&v[0], &v[1]) {
@@ -868,7 +961,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Val::V(c, l) => Val::S(sum_sq(c).un(Un::Sqrt).with_lip(*l)),
                 other @ Val::Void | other @ Val::B(_) | other @ Val::U(_) | other @ Val::I(_) | other @ Val::X(_) | other @ Val::Row(..) | other @ Val::MapRef(..) | other @ Val::Bsdf(_) => unreachable!("checked length of {other:?}"),
             },
-            "distance" => {
+            "distance" | "dist" => {
                 let d = self.arith(BinOp::Sub, v[0].clone(), v[1].clone());
                 match d {
                     Val::V(c, l) => Val::S(sum_sq(&c).un(Un::Sqrt).with_lip(l)),
@@ -1022,6 +1115,7 @@ pub fn concrete<S: Scalar>(v: &Val<S>, span: Span) -> Res<RowVal> {
 }
 
 impl Scalar for f32 {
+    fn frame_time()->Self{0.0}
     fn c(x: f64) -> f32 {
         x as f32
     }

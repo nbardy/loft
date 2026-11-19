@@ -27,18 +27,29 @@ pub mod abi {
     pub const NONCE_PLACEHOLDER: &str = "4294967295u";
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ExpressionOrigin { pub function:usize,pub expression:usize,pub span:(String,usize,usize) }
+
+#[derive(serde::Serialize,serde::Deserialize)]
 pub struct ShaderModule {
+    #[serde(default)]
+    pub origins:Vec<ExpressionOrigin>,
     pub name: String,
+    #[serde(skip)]
     pub wgsl: String,
+    /// Author declaration (file, line, column); shared compiler modules have no source declaration.
+    pub span: Option<(String, usize, usize)>,
     pub naga: naga::Module,
 }
 
 /// One kind's storage table and how it is drawn.
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct KindTable {
     pub name: String,
     pub module: usize,
     /// f32 words per row, hidden columns included.
     pub stride: u32,
+    #[serde(with = "crate::sexp::words")]
     pub rows: Vec<f32>,
     pub n_rows: u32,
     /// The derived Lipschitz bound per row (also in the hidden column), for reports.
@@ -47,6 +58,7 @@ pub struct KindTable {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Draw {
     /// `query visible`: closed-form ray hit in the proxy's fragment.
     Analytic,
@@ -68,6 +80,7 @@ impl Draw {
 
 /// One row's derived world AABB, for the shared cull.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Instance {
     pub lo: [f32; 3],
     pub hi: [f32; 3],
@@ -75,8 +88,10 @@ pub struct Instance {
     pub row: u32,
 }
 
+
 /// Camera from the schedule's `orbit` pass, evaluated per frame at time t.
 #[derive(Clone, Copy, Debug)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Orbit {
     pub at: [f32; 3],
     pub radius: f32,
@@ -94,6 +109,7 @@ impl Orbit {
 
 /// The frame's passes in schedule order; one variant per pass kind, one handler each in the runner.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub enum Pass {
     /// One dispatch over every instance: frustum test, compact, one `DrawIndirectArgs` per kind.
     Cull,
@@ -109,12 +125,69 @@ pub enum Pass {
     Present,
 }
 
+/// Row-local laws and their terminal checks. The shader entry is advance;
+/// One vec4 per requested scalar write or check.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Dispatch {
+    pub module: usize,
+    pub entry: String,
+    pub workgroup_x: u32,
+    pub input: DispatchRows,
+    pub bindings: Vec<DispatchBinding>,
+    pub fields: Vec<String>,
+    pub checks: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum DispatchResource { Parameters, Rows, Arguments, Results }
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DispatchBinding {
+    pub group: u32,
+    pub slot: u32,
+    pub resource: DispatchResource,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum DispatchRows {
+    Drawable(usize),
+    Table {
+        name: String,
+        n_rows: u32,
+        stride: u32,
+        #[serde(with = "crate::sexp::words")]
+        words: Vec<f32>,
+    },
+}
+
+impl DispatchRows {
+    pub fn view<'a>(&'a self, kinds: &'a [KindTable]) -> Option<(&'a str, u32, u32, &'a [f32])> {
+        match self {
+            Self::Drawable(index) => kinds.get(*index).map(|k| (k.name.as_str(), k.n_rows, k.stride, k.rows.as_slice())),
+            Self::Table { name, n_rows, stride, words } => Some((name, *n_rows, *stride, words)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct MotionSample {
+    pub kind:String,
+    pub fields:Vec<(String,Vec<f32>)>,
+    pub checks:Vec<(String,Vec<[f32;2]>)>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
+    #[serde(default)]
+    pub dispatches: Vec<Dispatch>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,
     pub instances: Vec<Instance>,
     pub camera: Orbit,
     pub sun: [f32; 3],
+    /// Compiler-packed group 0 parameter storage.
+    #[serde(default, with = "crate::sexp::words")]
+    pub params: Vec<f32>,
     /// Shadow-map side in texels (0 without a shadow pass).
     pub shadow_size: u32,
     /// Every scan's baked table, concatenated (12 words per frame).
