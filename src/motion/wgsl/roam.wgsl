@@ -8,13 +8,14 @@ fn step(s:ptr<function,State>,b:ptr<function,Plan>,go:vec4f,dt:f32){
     // otherwise breaks the symmetric tie according to the ulp of the home coordinate.
     strain[j]=length(((*s).pin[j].at.xz-(*b).chain[j].home.xz)-(c+v*tc));
   }
-  var h=hull(s,down);
+  refresh(s,down);var h=boundary(s);
   var a=(go.xy-v)/(0.5*tc);
   a*=min(1.0,(*b).laws.y*9.81/max(length(a),1e-10));
-  let cop=contact(&h,c-a*(height/9.81)).closest;
+  let bearing=contact(&h,c-a*(height/9.81));
+  let cop=bearing.closest;
   a=select((c-cop)*(9.81/height),vec2f(0),down==0u);
   let weights=shares(s,down,cop);
-  let urgency=clamp((distance(c+v*tc,centroid(s,down))-0.5)*0.5,0.0,1.0);
+  let urgency=clamp((distance(c+v*tc,(*s).reach.zw)-0.5)*0.5,0.0,1.0);
   var waiting=down;var support=down;var blocks=0u;
   for(var rank=0u;rank<n;rank++){
     var best=(*b).laws.z;var i=8u;
@@ -49,9 +50,14 @@ fn step(s:ptr<function,State>,b:ptr<function,Plan>,go:vec4f,dt:f32){
       (*s).motion=vec4f((*s).motion.xy+offset,(*s).motion.zw);leash++;
     }
   }}
-  var final_h=hull(s,final_mask);
-  let w=shares(s,final_mask,cop);var least=1.0;
+  var margin=bearing.margin;
+  var w=weights;
+  if final_mask!=down {
+    refresh(s,final_mask);var final_h=boundary(s);
+    margin=contact(&final_h,cop).margin;w=shares(s,final_mask,cop);
+  } else if margin<0.0 && final_mask!=0u {margin=0.0;}
+  var least=1.0;
   for(var i=0u;i<n;i++){(*s).pin[i].shape.z=w[i];if (final_mask & (1u<<i))!=0u {least=min(least,w[i]);}}
-  (*s).support=vec4f(least,contact(&final_h,cop).margin,f32(countOneBits(final_mask)),f32(blocks));
-  (*s).reach=vec4f(slack,f32(leash),0,0);(*s).stamps.x+=1;
+  (*s).support=vec4f(least,margin,f32(countOneBits(final_mask)),f32(blocks));
+  (*s).reach=vec4f(slack,f32(leash),(*s).reach.zw);(*s).stamps.x+=1;
 }

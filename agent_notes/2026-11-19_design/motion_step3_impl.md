@@ -17,3 +17,11 @@ Measured by the submitted frame list on Apple M4 Metal: **4,880 frame dispatches
 ## Wire and host ownership
 
 Wire 5 adds one row-local step declaration. It names an immutable plan table, initial state table, exclusive output pack, input and WGSL module. Values cross the island boundary. The step and presentation law cannot bind storage. Bundle V1 readers in this branch accept previous bundles without the new records. A script retains each tick, and a level retains every 60th tick; the same advance entry handles both. A presentation reads a script checkpoint or fuses up to 64 live ticks. Camera, other frame fills and draws consume the result in the same encoder.
+
+## First score and revised cost model
+
+The first correct GPU trace produced the predicted 22 releases. All 481 states were bit-identical at all four cadences after fixing the baked-to-live checkpoint selection. Reconstructing the local distal site exposed a 5.3 mm error in the original near-vertical quaternion; choosing its better-conditioned hemisphere reduced that to 0.00082 mm. Row-local displacement before the strain comparison preserves the symmetric tie.
+
+The first instrumented 480-tick bake took 14.31 ms. Two-tick p95 was 0.085 ms for one and 0.088 ms for 256, then 0.103 ms for 1,000. These results contradict the proposal's idle-lane and bake cost model. A tick was sorting/solving its support twice, even when the set of planted anchors was unchanged. Geometry changes only at lift or touch, at most 44 of the 480 ticks. Cache the hull order, centroid and inverse covariance when anchors change. Keep the general constrained solve for a negative share. Predict unchanged lift ticks and observed holds, a 6–10 ms bake and less than 0.065 ms p95 for the solo and 256-row spans. These are revised predictions; the original gates still apply.
+
+Caching reduced the bake to **6.80 ms** and left all 22 lift ticks and plant measurements unchanged. The solo median fell from 0.073 to 0.048 ms. Its p95 remained 0.073 ms; 256 reached 0.089 ms. The cold-to-warm change and the tail during actual contact changes both matter. The proposal's 5 ms bake gate remains open. Use interleaved, matching recorded poses for the final whole-frame comparison.

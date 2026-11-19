@@ -5,7 +5,7 @@ struct Plan { dims: vec4f, laws: vec4f, chain: array<Chain,8> }
 struct Pin { at: vec4f, origin: vec4f, aim: vec4f, shape: vec4f }
 struct State {
   motion: vec4f, drive: vec4f, tilt: vec4f, spin: vec4f,
-  support: vec4f, reach: vec4f, deck: vec4f, before: vec4f,
+  support: vec4f, reach: vec4f, inertia: vec4f, before: vec4f,
   old_tilt: vec4f, stamps: vec4f, pin: array<Pin,8>,
 }
 struct Frame { t:vec4f, q:vec4f }

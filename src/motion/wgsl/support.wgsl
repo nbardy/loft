@@ -53,22 +53,49 @@ fn centroid(s:ptr<function,State>,mask:u32)->vec2f {
   for(var j=0u;j<8;j++){if (mask & (1u<<j))!=0u {sum+=(*s).pin[j].at.xz;}}
   return sum/f32(max(1u,countOneBits(mask)));
 }
+// The support geometry changes only at lift and landing. The hull's eight 3-bit site ids fit
+// exactly in an f32 integer. Rebuild on a changed contact mask and reuse on all other ticks.
+fn covariance(s:ptr<function,State>,mask:u32,mean:vec2f)->vec3f {
+  var m=vec3f(0);
+  for(var i=0u;i<8;i++){if (mask & (1u<<i))!=0u {
+    let r=(*s).pin[i].at.xz-mean; m+=vec3f(r.x*r.x,r.x*r.y,r.y*r.y);
+  }}
+  let det=m.x*m.z-m.y*m.y;
+  if det>1e-6*(m.x+m.z)*(m.x+m.z) {return vec3f(m.z,-m.y,m.x)/det;}
+  if m.x+m.z>1e-8 {return vec3f(1,0,1)/(m.x+m.z);}
+  return vec3f(0);
+}
+fn refresh(s:ptr<function,State>,mask:u32){
+  if u32((*s).stamps.y)==mask {return;}
+  var h=hull(s,mask);var order=0u;
+  for(var j=0u;j<h.count;j++){
+    for(var i=0u;i<8;i++){if (mask & (1u<<i))!=0u && all((*s).pin[i].at.xz==h.points[j]){
+      order|=i<<(3u*j);break;
+    }}
+  }
+  let mean=centroid(s,mask);
+  (*s).reach=vec4f((*s).reach.xy,mean);
+  (*s).inertia=vec4f(covariance(s,mask,mean),0);
+  (*s).stamps=vec4f((*s).stamps.x,f32(mask),f32(h.count),f32(order));
+}
+fn boundary(s:ptr<function,State>)->Hull {
+  var h:Hull;h.count=u32((*s).stamps.z);var ids=u32((*s).stamps.w);
+  for(var j=0u;j<h.count;j++){h.points[j]=(*s).pin[ids & 7u].at.xz;ids>>=3u;}
+  return h;
+}
 fn shares(s:ptr<function,State>,mask:u32,q:vec2f)->array<f32,8>{
-  var w:array<f32,8>;var free_mask=mask;
+  var w:array<f32,8>;var free_mask=mask;var mean=(*s).reach.zw;var inv=(*s).inertia.xyz;
   for(var round=0u;round<8 && free_mask!=0u;round++){
-    let mean=centroid(s,free_mask);var xx=0.0;var zz=0.0;var xz=0.0;
-    for(var j=0u;j<8;j++){if (free_mask & (1u<<j))!=0u {let d=(*s).pin[j].at.xz-mean;xx+=d.x*d.x;zz+=d.y*d.y;xz+=d.x*d.y;}}
-    let det=xx*zz-xz*xz;let d=q-mean;var v=vec2f(0);
-    if det>1e-6*(xx+zz)*(xx+zz) {v=vec2f(zz*d.x-xz*d.y,xx*d.y-xz*d.x)/det;}
-    else if xx+zz>1e-8 {v=d/(xx+zz);}
-    var least=0.0;var drop=0u;
+    let d=q-mean;let v=vec2f(dot(inv.xy,d),dot(inv.yz,d));
+    let share=1.0/f32(countOneBits(free_mask));var least=0.0;var drop=0u;
     for(var j=0u;j<8;j++){
       w[j]=0.0;if (free_mask & (1u<<j))!=0u {
-        w[j]=1.0/f32(countOneBits(free_mask))+dot((*s).pin[j].at.xz-mean,v);
+        w[j]=share+dot((*s).pin[j].at.xz-mean,v);
         if w[j]<least {least=w[j];drop=1u<<j;}
       }
     }
     if drop==0u {break;} free_mask &= ~drop;
+    mean=centroid(s,free_mask);inv=covariance(s,free_mask,mean);
   }
   return w;
 }
