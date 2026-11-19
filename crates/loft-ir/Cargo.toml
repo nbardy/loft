@@ -1,0 +1,13 @@
+[package]
+name = "loft-ir"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Layer 1: the source tree, its types and spans, diagnostics, verdicts, and the program the runner executes."
+
+[dependencies]
+naga.workspace = true
+
+[lints]
+workspace = true

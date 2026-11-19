@@ -1,0 +1,6 @@
+// The library prelude. Every file in lib/ is loaded before the scene; nothing here is privileged: a scene may
+// declare its own versions under other names and call those instead.
+unit Meters;
+unit Rad;
+unit Sec;
+unit Kg;

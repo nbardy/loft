@@ -47,7 +47,7 @@ loft_realpath() {
 # One build folder per worktree. 2026-10-30 (Keel): agents exported a fresh CARGO_TARGET_DIR per task; ~100 folders
 # held 64 GB, each a private full rebuild nothing reused. And a target shared between checkouts is unsafe: Cargo's
 # unit hashes ignore the checkout path, so a cloned target reports the other tree's crates Fresh.
-#   primary  rust/target
+#   primary  rust/target (legacy workspace) or target (the meta workspace in crates/, chosen by tools/dev.sh)
 #   owned    rust/target/<sub>, only with LOFT_TARGET_OWNER=<task>; that owner deletes it at lane end
 #   unowned  rust/target/<sub> without an owner: refused
 #   outside  anything else: refused
@@ -55,7 +55,7 @@ loft_admit_target() {
   local dir
   dir="$(loft_realpath "$1")" || return 2
   case "$dir" in
-    "$loft_root/rust/target") ;;
+    "$loft_root/rust/target"|"$loft_root/target") ;;
     "$loft_root/rust/target/"*)
       [[ "${LOFT_TARGET_OWNER:-}" =~ ^[A-Za-z0-9._-]+$ ]] || {
         echo "CARGO_TARGET_DIR=$dir: per-task build folders are refused (Keel 2026-10-30: ~100 of them, 64 GB). Unset it, or set LOFT_TARGET_OWNER=<task> and delete the folder at lane end." >&2

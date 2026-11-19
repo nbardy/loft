@@ -1,0 +1,16 @@
+[package]
+name = "loft-runner"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Layer 0: runs a loft-ir Program on a wgpu device (buffers, pipelines, RenderBundle, indirect draws, timing)."
+
+[dependencies]
+loft-ir = { path = "../loft-ir" }
+wgpu.workspace = true
+naga.workspace = true
+pollster.workspace = true
+
+[lints]
+workspace = true

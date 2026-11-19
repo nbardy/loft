@@ -1,0 +1,24 @@
+[package]
+name = "loft-cli"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "The `loft` command: check, show, run, still, and the five gates."
+
+[[bin]]
+name = "loft"
+path = "src/main.rs"
+
+[dependencies]
+loft-ir = { path = "../loft-ir" }
+loft-passes = { path = "../loft-passes" }
+loft-runner = { path = "../loft-runner" }
+wgpu.workspace = true
+pollster.workspace = true
+png.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

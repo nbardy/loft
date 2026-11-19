@@ -13,3 +13,8 @@ policy = "skip"
 [[path]]
 path = "out"
 policy = "skip"
+
+# The meta workspace's build folder (crates/ at the root), same reason as rust/target.
+[[path]]
+path = "target"
+policy = "skip"
