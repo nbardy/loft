@@ -39,3 +39,24 @@ The closed furnace gave 1.50, 1.75 and 1.999956–1.999998 E. The white furnace 
 At 10/100/1,000 things the same six pipelines and six module texts loaded. The timed bundle had 614 shader lines, excluding the host camera module. Changing the washer's radius flipped exactly pack 1 word 0. Introducing the bead changed the cover and shade in realtime and the path in reference. For this edit both sides have an existing copper box, so the bead introduces only its shape.
 
 Cold device loads were 353.208/339.694/340.789 ms. The first exceeded 350 ms. Warm medians were 6.402/6.408/6.435 ms. The cross-N spreads were 3.98% cold and 0.52% warm. At 1280 × 800 the shade medians were 2.280/4.427 ms, giving 1.207 ms + 0.1073 ms per thing. The calibrated slope and intercept missed the ±30% gate. Whole-frame medians were 2.381/4.531 ms. Training at 512² with 16 samples, N=30, took 17.644 ms median and 18.020 ms p95 over 16 frames. These are the first scored timings. GPU work at different pixels overlaps far better than the dependent arithmetic microbenchmark predicts.
+
+### The author’s side
+
+```ts
+import { scene, thing, washer, matte, print } from "loft/render";
+
+const red = matte([0.8, 0.3, 0.1]);
+const ring = thing(washer(0.5, 1), red, [0, 0, 1]);
+export default scene({
+  things: [ring],
+  shadows: [thing(washer(0, 1), red, ring.at)],
+  cameras: { front: { kind: "orthographic", eye: [0, 0, 3], target: [0, 0, 0], height: 8 } },
+  engine: print(),
+});
+```
+
+The outer and inner radii are instance data. The camera and secondary rays see the hole. A shadow ray sees the disc. The default print look calls the same sun, material, albedo and visibility readings as an authored look can call. A material may define `surface(m,x)` to vary its fields with the chart before any BRDF reading. [Runnable striped material](../../examples/slice/looks.ts) · [Whole reference engine](../../src/engines/reference.ts).
+
+Check 14 over all three linear channels gave 0.917%, 0.965%, 0.915% mean absolute relative difference, or 0.932% overall. The final static still remained byte-identical. No per-channel average was taken after display mapping.
+
+Check 16 found zero new domain identifiers in the scanned core. The five lexical matches were existing resource-layout `Shape/shape`, validation mode `Naga::Emit`, Naga's `emit_to_string` and wgpu's mandatory `occlusion_query_set` field. The vocabulary and exceptions are printed by the audit. Check 17 measured the actual source excerpts using o200k_base. Cases 2/3/4a/4b/5/6 cost 200/185/153/28/666/163 tokens against 263/231/171/69/377/107. Only 4a falls within the specified two-sided 15% band. The reference count includes its bounce loop and executable schedule. Instance fields and sharing the same shadow membership table make cases 2, 3 and 4b shorter.

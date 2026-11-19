@@ -1,4 +1,4 @@
-import { bits, reading } from "../text/kind.ts";
+import { bits, reading, type Kind } from "../text/kind.ts";
 import { SceneError } from "../errors.ts";
 import type { Declarations } from "../record/passes.ts";
 import { world, type Scene } from "../render/record.ts";
@@ -21,11 +21,12 @@ export const defaultSky=`fn sky(d:vec3f)->vec3f {
 }`;
 export function lighting(s:Scene,w:ReturnType<typeof world>,fillModule:number) {
   const ks=w.materials;
+  const receiver=(k:Kind)=>k.functions.has("surface") ? `${k.name}_surface(load_${k.name}(at),x)` : `load_${k.name}(at)`;
   const opens=[
-    reading(ks,"eval","wo:vec3f,wi:vec3f","wo,wi","vec3f","vec3f(0)"),
-    reading(ks,"emit","wo:vec3f","wo","vec3f","vec3f(0)",()=> "vec3f(0)"),
-    reading(ks,"albedo","","","vec3f","vec3f(0)",k=>`PI*${k.name}_eval(load_${k.name}(at),vec3f(0,0,1),vec3f(0,0,1))`),
-    reading(ks,"sample","wo:vec3f,u:vec2f","wo,u","Scatter","Scatter(vec3f(0),vec3f(0),0,false)",k=>`sample_eval(${k.tag}u,at,wo,u)`),
+    reading(ks,"eval","x:Point,wo:vec3f,wi:vec3f","wo,wi","vec3f","vec3f(0)",undefined,receiver),
+    reading(ks,"emit","x:Point,wo:vec3f","wo","vec3f","vec3f(0)",()=> "vec3f(0)",receiver),
+    reading(ks,"albedo","x:Point","","vec3f","vec3f(0)",(k,m)=>`PI*${k.name}_eval(${m},vec3f(0,0,1),vec3f(0,0,1))`,receiver),
+    reading(ks,"sample","x:Point,wo:vec3f,u:vec2f","wo,u","Scatter","Scatter(vec3f(0),vec3f(0),0,false)",k=>`sample_eval(${k.tag}u,at,x,wo,u)`,receiver),
   ];
   const towards=s.sun?.towards??[-0.4,0.8,0.45],len=Math.hypot(...towards);
   const energy=s.sun?.power??[2,1.9,1.7];

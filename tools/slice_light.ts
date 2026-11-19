@@ -53,12 +53,17 @@ const times=[0,0.5,1,1.37];
 run([draw,"still",one,"--view","front","--size",size,"--time","0",...times.slice(1).flatMap(t=>["--shot",`front@${t}@${size}=${out}/clip-${t}.png`])]);
 const clip=readPng(out+"/clip-1.37.png").rgba;
 const same=alone.every((v,i)=>v===clip[i]);
-const viewer=build("viewer",{...s,engine:realtime({history:true,present:float})});
-const history=out+"/history.png";
-run([draw,"still",viewer,"--view","front","--size",size,...Array.from({length:63},(_,i)=>["--shot",`front@${(i+1)/60}@${size}=${history}`]).flat()]);
-const pic=readPng(history).rgba;const hist=new Float32Array(pic.buffer,pic.byteOffset,pic.length/4);
-const still=picture(build("still64",{...s,engine:realtime({samples:64,present:float})}),size).rgba;
-const actual=new Float32Array(still.buffer,still.byteOffset,still.length/4);
-const mean=actual.reduce((s,x,i)=>s+Math.abs(x-hist[i])/Math.max(x,1e-5),0)/hist.length;
-score("14",{same,meanRelative:mean},same && mean<=0.01);
+const historyErrors=[];
+for(const channel of ["r","g","b"]) {
+  const present=float.replace("c.r","c."+channel);
+  const viewer=build("viewer"+channel,{...s,engine:realtime({history:true,present})});
+  const history=out+"/history-"+channel+".png";
+  run([draw,"still",viewer,"--view","front","--size",size,...Array.from({length:63},(_,i)=>["--shot",`front@${(i+1)/60}@${size}=${history}`]).flat()]);
+  const pic=readPng(history).rgba;const hist=new Float32Array(pic.buffer,pic.byteOffset,pic.length/4);
+  const still=picture(build("still64"+channel,{...s,engine:realtime({samples:64,present})}),size).rgba;
+  const actual=new Float32Array(still.buffer,still.byteOffset,still.length/4);
+  historyErrors.push(actual.reduce((sum,x,i)=>sum+Math.abs(x-hist[i])/Math.max(x,1e-5),0)/hist.length);
+}
+const mean=historyErrors.reduce((sum,x)=>sum+x,0)/3;
+score("14",{same,channelErrors:historyErrors,meanRelative:mean},same && mean<=0.01);
 writeFileSync(out+"/light.json",JSON.stringify(report,null,2));process.exitCode=ok?0:1;

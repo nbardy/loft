@@ -3,14 +3,15 @@ struct Scatter {wi:vec3f,weight:vec3f,pdf:f32,delta:bool}
 struct Lit {wi:vec3f,L:vec3f,pdf:f32,p:vec3f}
 struct Sigma {s:vec3f,t:vec3f}
 fn medium(p:vec3f)->Sigma {return Sigma(vec3f(0),vec3f(0));}
-fn material(x:Point)->vec2u {return rows[x.thing].refs.zw;}
-fn eval(m:vec2u,wo:vec3f,wi:vec3f)->vec3f {return read_eval(m.x,m.y,wo,wi);}
-fn emit(m:vec2u,wo:vec3f)->vec3f {return read_emit(m.x,m.y,wo);}
-fn albedo(m:vec2u)->vec3f {return read_albedo(m.x,m.y);}
-fn sample(m:vec2u,wo:vec3f,u:vec2f)->Scatter {return read_sample(m.x,m.y,wo,u);}
-fn sample_eval(tag:u32,at:u32,wo:vec3f,u:vec2f)->Scatter {
+struct Material { refs:vec2u, x:Point }
+fn material(x:Point)->Material {return Material(rows[x.thing].refs.zw,x);}
+fn eval(m:Material,wo:vec3f,wi:vec3f)->vec3f {return read_eval(m.refs.x,m.refs.y,m.x,wo,wi);}
+fn emit(m:Material,wo:vec3f)->vec3f {return read_emit(m.refs.x,m.refs.y,m.x,wo);}
+fn albedo(m:Material)->vec3f {return read_albedo(m.refs.x,m.refs.y,m.x);}
+fn sample(m:Material,wo:vec3f,u:vec2f)->Scatter {return read_sample(m.refs.x,m.refs.y,m.x,wo,u);}
+fn sample_eval(tag:u32,at:u32,x:Point,wo:vec3f,u:vec2f)->Scatter {
   let wi=cosine(u);let pdf=wi.z/PI;
-  return Scatter(wi,read_eval(tag,at,wo,wi)/pdf,pdf,false);
+  return Scatter(wi,read_eval(tag,at,x,wo,wi)/pdf,pdf,false);
 }
 struct Emitter { pos:vec3f,radius:f32,L:vec3f,cdf:f32,row:u32,prob:f32,pad:vec2u }
 @group(1) @binding(2) var<storage,read> emitters:array<Emitter>;

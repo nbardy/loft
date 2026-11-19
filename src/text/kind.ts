@@ -1,5 +1,6 @@
 // A WGSL struct and its readings. Constructor arguments live in a densely packed word table.
 // The generated fetch constructs the native WGSL struct, so vec3's storage padding never leaks to the author.
+import { parseModule, ParseError, type Module } from "./parse.ts";
 import { SceneError } from "../errors.ts";
 import type { Open } from "../record/passes.ts";
 type Arg = number | readonly number[];
@@ -15,18 +16,30 @@ export function hash(text: string) {
 }
 
 export function kind(source: string) {
-  const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, " ");
-  const struct = /\bstruct\s+(\w+)\s*\{([^{}]*)\}/.exec(code);
-  if (!struct) throw new SceneError("kind: supply a WGSL struct followed by its readings");
-  const [, name, body] = struct;
-  const fields = body.split(",").map(x => x.trim()).filter(Boolean).map(x => {
-    const m = /^(\w+)\s*:\s*(f32|u32|vec([234])([fu]))$/.exec(x);
-    if (!m) throw new SceneError(`kind ${name}: unsupported field ${x}. Use f32, u32 or their vector types`);
-    return { name: m[1], type: m[2], size: Number(m[3] ?? 1) };
+  let mod: Module;
+  try { mod = parseModule(source); } catch (e) {
+    if (e instanceof ParseError) throw new SceneError(`kind line ${e.at.line+1}: ${e.message}. ${e.fix}`);
+    throw e;
+  }
+  if (mod.structs.length !== 1) throw new SceneError("kind: declare exactly one row struct followed by its readings");
+  const [{ name, fields: members }] = mod.structs;
+  const fields = members.map(f => {
+    const type = f.type.args.length === 1 && /^vec[234]$/.test(f.type.name)
+      ? f.type.name + ({f32:"f",u32:"u"} as Record<string,string>)[f.type.args[0].name] : f.type.name;
+    const m = /^(f32|u32|vec([234])([fu]))$/.exec(type);
+    if (!m) throw new SceneError(`${name}.${f.name}: use f32, u32 or their two- to four-component vector types`);
+    return {name:f.name,type,size:Number(m[2] ?? 1)};
   });
-  const functions = new Set(Array.from(code.matchAll(/\bfn\s+(\w+)\s*\(/g), m => m[1]));
+  const functions = new Set(mod.fns.map(f=>f.sig.name));
   const tag = hash(source);
-  const scoped = source.replace(/\b[A-Za-z_]\w*\b/g, s => functions.has(s) ? `${name}_${s}` : s);
+  // Only function declarations and calls are scoped. Members and comments can use the same word.
+  let scoped="",last=0;
+  mod.toks.forEach((t,i)=>{
+    if (functions.has(t.s) && mod.toks[i+1]?.s==="(" && mod.toks[i-1]?.s!==".") {
+      scoped+=source.slice(last,t.start)+name+"_"+t.s; last=t.end;
+    }
+  });
+  scoped+=source.slice(last);
   let offset = 0;
   const args = fields.map(f => {
     const read = Array.from({ length: f.size }, () => `words[at + ${offset++}u]`);
@@ -47,11 +60,11 @@ export function kind(source: string) {
   };
 }
 
-export function reading(kinds: Kind[], name: string, params: string, args: string, ret: string, otherwise: string, adapter?: (k: Kind) => string): Open {
+export function reading(kinds: Kind[], name: string, params: string, args: string, ret: string, otherwise: string, adapter?: (k: Kind, receiver: string) => string, receiver = (k: Kind) => `load_${k.name}(at)`): Open {
   return { signature: `fn read_${name}(tag: u32, at: u32${params && ", " + params}) -> ${ret}`, selector: "tag", otherwise,
     cases: kinds.map(k => {
-      if (k.functions.has(name)) return [k.tag, `${k.name}_${name}(load_${k.name}(at)${args && ", " + args})`];
-      if (adapter) return [k.tag, adapter(k)];
+      if (k.functions.has(name)) return [k.tag, `${k.name}_${name}(${receiver(k)}${args && ", " + args})`];
+      if (adapter) return [k.tag, adapter(k, receiver(k))];
       throw new SceneError(`${k.name} has no ${name} reading. Define fn ${name}(s: ${k.name}${params && ", " + params}) -> ${ret}`);
     }) };
 }
