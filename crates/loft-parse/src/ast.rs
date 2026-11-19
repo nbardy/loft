@@ -47,6 +47,7 @@ pub enum Item {
     Camera(CameraDecl),
     World(Ident, Vec<Ident>),
     Bake(BakeDecl),
+    Retarget { name: Ident, source: Ident, target: Ident, fields: Vec<(Ident, Expr)> },
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -351,6 +352,7 @@ pub enum ExprKind {
     },
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),
+    String(String),
     Name(String),
     Member(Box<Expr>, Ident),
     Index(Box<Expr>, Box<Expr>),

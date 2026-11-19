@@ -76,6 +76,9 @@ fn flag(args: &mut Vec<String>, name: &str) -> Result<Option<String>, Failure> {
 fn command(mut args: Vec<String>) -> Result<(), Failure> {
     let set = overrides(&mut args).map_err(Failure::Usage)?;
     let cmd = args.first().cloned().unwrap_or_default();
+    if matches!(cmd.as_str(), "render" | "check") && build::trace::requested(&args[1..]) {
+        return build::trace::run(&args[1..], &set, cmd == "render");
+    }
     let time = if matches!(cmd.as_str(), "check" | "still") {
         flag(&mut args, "--t")?.map_or(Ok(0.0), |v| {
             v.parse::<f32>().ok().filter(|x| x.is_finite() && *x >= 0.)

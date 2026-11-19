@@ -100,6 +100,7 @@ pub enum Code {
     /// A schedule or default-engine configuration that cannot be lowered.
     E520,
     /// A row that cannot be emitted: missing or unknown column, a value outside its range.
+    E601,
     E602,
     /// Evaluation failed on the CPU (build or the twin).
     E701,

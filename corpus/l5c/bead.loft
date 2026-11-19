@@ -1,0 +1,61 @@
+# Source: examples/bead.ts at corpus/manifest.json's examples_rev.
+# view 0 = whole; view 1 = through. Both use the pinned legacy camera positions.
+space World
+
+param view: u = 0 in 0..1
+const bead_center = [0, 1, 0]@World
+const bore_radius = 0.35m
+
+kind Bead @World () {
+  trace(p) {
+    let q = p - bead_center
+    max(sphere(q, 1m), bore_radius - length([q.x, q.z]))
+  }
+
+  visible(ro, rd) {
+    let q = ro - bead_center
+    let b = dot(q, rd)
+    let hs = b * b - (dot(q, q) - 1.0)
+    if hs < 0.0 {
+      return -1.0
+    }
+    let rs = sqrt(hs)
+    let near = -b - rs
+    let far = -b + rs
+    let a = rd.x * rd.x + rd.z * rd.z
+    let e = q.x * rd.x + q.z * rd.z
+    let g = q.x * q.x + q.z * q.z - bore_radius * bore_radius
+    let hc = e * e - a * g
+    let root = sqrt(max(hc, 0.0))
+    let divisor = max(a, 1e-9)
+    let c0 = (-e - root) / divisor
+    let c1 = (-e + root) / divisor
+    # An axial ray never leaves the open cylinder. The clamped quadratic alone
+    # has coincident roots and would incorrectly report the sphere's front face.
+    if a == 0.0 && g < 0.0 {
+      return -1.0
+    }
+    let t = select(near, c1, hc >= 0.0 && near >= c0 && near < c1)
+    select(-1.0, t, t >= 0 && t < far)
+  }
+
+  material(p, n) = ggx([0.8, 0.3, 0.2], 0.55, 0)
+}
+
+kind Ground @World (radius: m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.38, 0.33, 0.25], 0.9, 0)
+}
+
+build {
+  emit Bead()
+  emit Ground(radius: 256m)
+  emit Sun(dir: dir([-0.4, 0.8, 0.45]@World), color: [2.2, 2, 1.7])
+}
+
+camera Main {
+  eye: [select(2.5m, 0.05m, view == 1), select(3.5m, 4.2m, view == 1), select(3.5m, 0.08m, view == 1)]@World,
+  at: bead_center,
+  fov: 0.6rad
+}

@@ -5,6 +5,8 @@ mod encode;
 pub use encode::render_bundle_stale;
 mod interop;
 mod stepping;
+mod resources;
+mod inputs;
 pub use backend::{ExecutionBackend, WgpuBackend};
 pub type Runner = WgpuBackend;
 
@@ -17,6 +19,7 @@ pub enum RunnerError {
     UnknownResource,
     AbiMismatch,
     Readback,
+    Bundle(bundle::BundleError),
     Capacity,
     InvalidShader(String),
     Unsupported(&'static str),
@@ -301,16 +304,31 @@ impl Runner {
         *old = next;
         Ok(())
     }
+    pub fn push_input(&mut self, id: InstanceId, slot: InputId, tick: u64, value: InputValue<'_>) -> Result<()> {
+        self.instance(id)?.compute.input.push(slot, tick, value)
+    }
+
+    /// Record the bundle into the caller's encoder without submitting it.
+    ///
+    /// Render passes share one caller color attachment and optional depth attachment.
+    /// Use 2D renderable views in their textures' base formats with the sample count
+    /// and depth convention supplied at attachment. Shader outputs must use that
+    /// depth convention. The caller initializes and, for MSAA, resolves the views.
     pub fn encode_into(
         &mut self,
         id: InstanceId,
         encoder: &mut wgpu::CommandEncoder,
-        _target: &wgpu::TextureView,
-        _depth: Option<&wgpu::TextureView>,
+        target: &wgpu::TextureView,
+        depth: Option<&wgpu::TextureView>,
         time_s: f64,
         dt_s: f32,
     ) -> Result<FrameIdentity> {
         let (device, queue) = (self.device.clone(), self.queue.clone());
+        let target = embed::Target {
+            color: target,
+            depth,
+            caps: self.caps,
+        };
         let inst = self.instance(id)?;
         inst.edits.update(&device, &mut inst.compute)?;
         inst.compute.encode(
@@ -329,6 +347,7 @@ impl Runner {
             (time_s * 120.).round() as u32,
             0,
             &mut inst.outbox,
+            Some(&target),
         )?;
         Ok(FrameIdentity {
             instance: id,
@@ -342,7 +361,7 @@ pub mod embed;
 pub mod events;
 pub mod params;
 pub mod pick;
-pub mod replay;
+pub use loft_format::replay;
 pub mod tier0;
 
 #[cfg(test)]

@@ -429,6 +429,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         Draw::Analytic => q <= 2,
                         Draw::Traced => q == 0 || q == 2,
                         Draw::Surface { .. } => q >= 2,
+                        Draw::Mesh { .. } => q == 1 || q == 2,
                     };
                     if used {
                         push(format!("{}.{name} (max err {:.2e}, {} samples)", kt.name, worst[q], at.len()), evidence[q].verdict());

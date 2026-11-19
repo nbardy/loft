@@ -804,7 +804,7 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 self.expr(&first.value)?
             }
-            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
+            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::String(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
         };
         let Ty::Geo(Geo::Pt, parent) = point else {
             return Err(e104(head.span, format!("a map takes a point, found `{point}`"), "map a `Pt[S]`"));
@@ -908,6 +908,7 @@ impl<'p,'a> Ck<'p,'a> {
                 NumSuffix::None | NumSuffix::Deg | NumSuffix::Unit => Ty::F32,
             }),
             ExprKind::Bool(_) => Ok(Ty::Bool),
+            ExprKind::String(_) => Err(Diag::new(Code::E403, e.span, "string outside an asset call", "pass it to a Stage 0 asset call")),
             ExprKind::Name(n) => {
                 if let Some(l) = self.lookup(n) {
                     return Ok(l.ty.clone());
@@ -961,6 +962,12 @@ impl<'p,'a> Ck<'p,'a> {
             ExprKind::Binary(op, a, b) => {
                 let ta = self.expr(a)?;
                 let tb = self.expr(b)?;
+                // Build loop counters scale physical quantities through the CPU evaluator's scalar conversion.
+                if self.comptime && matches!((*op, &ta, &tb),
+                    (BinOp::Mul, Ty::U32 | Ty::I32, Ty::F32) | (BinOp::Mul, Ty::F32, Ty::U32 | Ty::I32))
+                {
+                    return Ok(Ty::F32);
+                }
                 binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
                     // A value from a map space used outside it (the draft's gaze bug): quote the author's transform
                     // and point at the map that made the space.
@@ -1343,7 +1350,7 @@ fn path(e: &Expr) -> Option<String> {
         ExprKind::Name(n) => Some(n.clone()),
         ExprKind::Member(b, m) => path(b).map(|p| format!("{p}.{}", m.name)),
         ExprKind::Num { .. }
-        | ExprKind::Bool(_)
+        | ExprKind::Bool(_) | ExprKind::String(_)
         | ExprKind::Index(..)
         | ExprKind::Call { .. }
         | ExprKind::Ctor { .. }

@@ -9,6 +9,7 @@ use paths::PathGpu;
 use bakes::TextureBake;
 use loft_passes::emit::Aov;
 use std::sync::Mutex;
+pub mod ray_query;
 pub use motion::{sample_motion, sample_motion_timed};
 
 use loft_passes::program::{abi, Draw, Pass, Program};
@@ -19,6 +20,7 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter: String,
+    pub device_signature: String,
     pub timestamps: bool,
     /// The disk pipeline cache's file name, when the backend has one (Vulkan); `None` on Metal.
     pub cache_key: Option<String>,
@@ -27,6 +29,10 @@ pub struct Gpu {
 
 /// A high-performance device; timestamps when the adapter grants them.
 pub fn gpu() -> Result<Gpu, String> {
+    request_gpu(false)
+}
+
+pub fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::HighPerformance,
@@ -35,10 +41,20 @@ pub fn gpu() -> Result<Gpu, String> {
     .map_err(|e| format!("no adapter: {e}"))?;
     // PIPELINE_CACHE exists on Vulkan only: wgpu 30's Metal backend stubs `create_pipeline_cache` (it never uses
     // MTLBinaryArchive), so on Metal the only cache across processes is the OS's own Metal shader cache.
-    let features = adapter.features() & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_CACHE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+    let mut requested = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::PIPELINE_CACHE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    if ray_query { requested |= wgpu::Features::EXPERIMENTAL_RAY_QUERY; }
+    let features = adapter.features() & requested;
+    // Opt in only for callers that request the unstable native traversal feature.
+    let experimental_features = if features.contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY) {
+        #[allow(unsafe_code)]
+        unsafe { wgpu::ExperimentalFeatures::enabled() }
+    } else {
+        Default::default()
+    };
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-runner"),
         required_features: features,
+        experimental_features,
         // The cube kernel covers six 8x8 faces. wgpu otherwise grants only the default 256 lanes.
         required_limits: wgpu::Limits {
             max_compute_invocations_per_workgroup: adapter.limits().max_compute_invocations_per_workgroup.min(384),
@@ -63,6 +79,7 @@ pub fn gpu() -> Result<Gpu, String> {
         bake_formats,
         device,
         queue,
+        device_signature: format!("{} ({:?}) {} {}", info.name, info.backend, info.driver, info.driver_info),
         adapter: format!("{} ({:?})", info.name, info.backend),
         timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
         cache_key: features.contains(wgpu::Features::PIPELINE_CACHE).then(|| wgpu::util::pipeline_cache_key(&info)).flatten(),
@@ -503,7 +520,7 @@ impl Loaded {
                     // A proxy draws its box's back faces (the camera may be inside); a surface draws both sides.
                     let face = match kt.draw {
                         Draw::Analytic | Draw::Traced => Some(wgpu::Face::Front),
-                        Draw::Surface { .. } => None,
+                        Draw::Surface { .. } | Draw::Mesh { .. } => None,
                     };
                     let r = sc.spawn(move || timed(|| render(d, &kt.name, &[bgl0, bgl_kind], m, ("vs", "fs"), VIS, true, face, cache)));
                     let s = sc.spawn(move || timed(|| compute(d, &kt.name, &[bgl0, bgl_kind, bgl_shade], m, "shade", cache)));
@@ -728,23 +745,13 @@ impl Loaded {
 
     /// The camera's frame uniform at time t, or the sun's (`sun`: orthographic, `eye` holds the ray direction).
     fn frame_uniform(&self, t: f32, sun: bool, samples: u32) -> Vec<u8> {
-        let eye = self.camera.eye(t);
-        let aspect = self.size.0 as f32 / self.size.1 as f32;
-        let vp = mul(perspective(self.camera.fov, aspect, 0.05, 400.0), look_at(eye, self.camera.at));
-        let s = self.sun;
-        let l = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
-        let (light_vp, texel, dir) = self.shadow.as_ref().map_or(([[0.0; 4]; 4], 0.0, [0.0; 3]), |x| (x.view_proj, x.texel, x.dir));
-        let (vp, eye) = if sun { (light_vp, dir) } else { (vp, eye) };
-        let inv = invert(vp);
-        let mut w: Vec<f32> = vp.iter().flatten().copied().collect();
-        w.extend(inv.iter().flatten());
-        w.extend([eye[0], eye[1], eye[2], t, s[0] / l, s[1] / l, s[2] / l, texel]);
-        let mut b = f32_bytes(&w);
-        let tiles = [self.size.0, self.size.1, self.tiles.0, self.tiles.0 * self.tiles.1];
-        b.extend(bytes_of(&[tiles[0], tiles[1], tiles[2], tiles[3], 0, u32::from(sun), u32::from(self.shadow.is_some()), samples]));
-        b.extend(f32_bytes(&light_vp.iter().flatten().copied().collect::<Vec<_>>()));
-        debug_assert_eq!(b.len() as u64, abi::FRAME_BYTES);
-        b
+        let mut bytes = frame_bytes(
+            self.camera, self.sun, self.size, t, sun,
+            self.shadow.as_ref().map(|x| (x.view_proj, x.texel, x.dir)),
+        );
+        // The public template uses zero samples. The native path fills this ABI word per frame.
+        bytes[188..192].copy_from_slice(&samples.to_le_bytes());
+        bytes
     }
 
     pub fn set_param_word(&self, word: usize, value: f32) -> Result<(), String> {
@@ -993,11 +1000,35 @@ impl Loaded {
     }
 }
 
+pub fn frame_bytes(
+    camera: loft_passes::program::Orbit, light: [f32; 3], size: (u32, u32),
+    t: f32, sun: bool, light_view: Option<(M4, f32, [f32; 3])>,
+) -> Vec<u8> {
+    let eye = camera.eye(t);
+    let aspect = size.0 as f32 / size.1 as f32;
+    let vp = mul(perspective(camera.fov, aspect, 0.05, 400.0), look_at(eye, camera.at));
+    let s = light;
+    let l = (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt();
+    let (light_vp, texel, dir) = light_view.unwrap_or(([[0.0; 4]; 4], 0.0, [0.0; 3]));
+    let (vp, eye) = if sun { (light_vp, dir) } else { (vp, eye) };
+    let inv = invert(vp);
+    let mut w: Vec<f32> = vp.iter().flatten().copied().collect();
+    w.extend(inv.iter().flatten());
+    w.extend([eye[0], eye[1], eye[2], t, s[0] / l, s[1] / l, s[2] / l, texel]);
+    let mut b = f32_bytes(&w);
+    let cols = size.0.div_ceil(abi::TILE);
+    let tiles = [size.0, size.1, cols, cols * size.1.div_ceil(abi::TILE)];
+    b.extend(bytes_of(&[tiles[0], tiles[1], tiles[2], tiles[3], 0, u32::from(sun), u32::from(light_view.is_some()), 0]));
+    b.extend(f32_bytes(&light_vp.iter().flatten().copied().collect::<Vec<_>>()));
+    debug_assert_eq!(b.len() as u64, abi::FRAME_BYTES);
+    b
+}
+
 type M4 = [[f32; 4]; 4];
 
 /// The sun's orthographic camera around a box: (view-projection, texel size in metres, ray direction). Depth runs from
 /// the box's sunward face to 100 m past it, so receivers below the casters fall inside it.
-fn sun_camera(sun: [f32; 3], lo: [f32; 3], hi: [f32; 3], side: u32) -> (M4, f32, [f32; 3]) {
+pub fn sun_camera(sun: [f32; 3], lo: [f32; 3], hi: [f32; 3], side: u32) -> (M4, f32, [f32; 3]) {
     let l = (sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2]).sqrt();
     let s = sun.map(|x| x / l);
     let c = [0, 1, 2].map(|i| 0.5 * (lo[i] + hi[i]));

@@ -130,6 +130,7 @@ mod tests {
                 height: 0.,
                 period: 1.,
                 fov: 1.,
+                fixed_eye: None,
             },
             sun: [0.; 3],
             params: vec![],

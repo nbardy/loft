@@ -66,6 +66,7 @@ pub enum Draw {
     Traced,
     /// `query surface`: a `nu × nv` grid evaluated in the vertex stage; the record carries (u, v).
     Surface { nu: u32, nv: u32 },
+    Mesh { vertices: u32 },
 }
 
 impl Draw {
@@ -74,6 +75,7 @@ impl Draw {
         match self {
             Draw::Analytic | Draw::Traced => 36,
             Draw::Surface { nu, nv } => 6 * nu * nv,
+            Draw::Mesh { vertices } => vertices,
         }
     }
 }
@@ -89,7 +91,7 @@ pub struct Instance {
 }
 
 
-/// Camera from the schedule's `orbit` pass, evaluated per frame at time t.
+/// Perspective camera evaluated per frame at time t.
 #[derive(Clone, Copy, Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Orbit {
@@ -98,10 +100,15 @@ pub struct Orbit {
     pub height: f32,
     pub period: f32,
     pub fov: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_eye: Option<[f32; 3]>,
 }
 
 impl Orbit {
     pub fn eye(&self, t: f32) -> [f32; 3] {
+        if let Some(eye) = self.fixed_eye {
+            return eye;
+        }
         let a = std::f32::consts::TAU * t / self.period;
         [self.at[0] + self.radius * a.sin(), self.at[1] + self.height, self.at[2] + self.radius * a.cos()]
     }

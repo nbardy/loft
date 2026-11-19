@@ -73,6 +73,11 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
         // encoded advance with portable pass-boundary timestamps before readback.
         let timestamp = |enc: &mut wgpu::CommandEncoder, begin, end| {
             if let Some(c) = clock {
+                // Metal can discard empty compute passes. Stamp the encoder boundary when supported.
+                if g.device.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS) {
+                    enc.write_timestamp(&c.set, begin.or(end).expect("timestamp index"));
+                    return;
+                }
                 drop(enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                     label: Some("motion timing boundary"),
                     timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
