@@ -276,7 +276,10 @@ impl<'g> Body<'g> {
                 return inline(format!("{}(frame.inputs[{s}].{})", ty_name(ty, "lf"), &"xyzw"[..w]));
             }
             Op::Bind(_) => return Err(unsupported(g, n, "a binder read outside its function or loop")),
-            Op::Var(_) => return Err(unsupported(g, n, "a free variable (bound by the job's consumer) in WGSL")),
+            Op::Var(v) => {
+                let what = format!("the free variable `{}` (bound by the job's consumer) in WGSL", g.sym(v));
+                return Err(unsupported(g, n, &what));
+            }
             Op::Loop { decl, k } => {
                 self.need_loop(decl)?;
                 return Ok(format!("s{}_{k}", self.loops[&decl]));

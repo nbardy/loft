@@ -10,7 +10,7 @@ fn ink_texel(px: vec2<f32>) -> vec2<i32> { return vec2<i32>(clamp(px, vec2<f32>(
     vec2<f32>(0.7071, 0.7071), vec2<f32>(-0.7071, -0.7071), vec2<f32>(0.7071, -0.7071), vec2<f32>(-0.7071, 0.7071));
   var radii = array<f32, 6>(1.0, 2.0, 3.0, 4.5, 6.0, 8.0);
   let px = in.pos.xy;
-  let here = textureLoad(loft_scene_colour, ink_texel(px), 0);
+  let here = textureLoad(loft_post_colour, ink_texel(px), 0);
   let r = ray_at(px);
   let zh = textureLoad(loft_scene_depth, ink_texel(px), 0).x;
   let z = select(3.4e38, dot(world_at(px, zh) - r.o, r.d), zh < 1.0);
@@ -20,7 +20,7 @@ fn ink_texel(px: vec2<f32>) -> vec2<i32> { return vec2<i32>(clamp(px, vec2<f32>(
     for (var k = 0u; k < 8u; k++) {
       let q = floor(px + dirs[k] * radii[j]) + 0.5;
       let dq = textureLoad(loft_scene_depth, ink_texel(q), 0).x;
-      let cq = textureLoad(loft_scene_colour, ink_texel(q), 0);
+      let cq = textureLoad(loft_post_colour, ink_texel(q), 0);
       if (dq >= 1.0 || cq.a >= 0.5) { continue; }
       let rq = ray_at(q);
       let world = world_at(q, dq);

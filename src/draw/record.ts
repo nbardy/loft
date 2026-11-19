@@ -206,21 +206,54 @@ function cameraOf(name: string, c: SceneCamera): Camera {
 /**
  * A style's post pass (TS POST_WGSL): its fragment text as a raw function of the screen uv, drawn as a Screen cover in a
  * pass of its own that loads the view (the host resolves the picture so far before it; the prelude's `post_color`
- * samples it). A text that reads the TS scene's style functions (`sea_height`) cannot be lowered so.
+ * samples it). A text that reads the TS scene's style functions (`sea_height`) cannot be lowered so; helpers that read
+ * them and that the pass never reaches (POST_COMMON's `sty_water`, carried by every post pass) are left out first.
  */
 function postPass(p: PostSpec, k: number, camera: Camera): { readonly kind: "pass"; readonly pass: Pass } | { readonly kind: "unported"; readonly what: string } {
   const head = /@fragment\s+fn\s+fs\s*\(\s*in\s*:\s*PostIn\s*\)\s*->\s*@location\(0\)\s*vec4<f32>/;
   if (!head.test(p.wgsl)) return { kind: "unported", what: "its text has no `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`" };
-  const reads = ["sea_height", "sea_gradient", "shade(", "ink(", "sky("].filter((n) => p.wgsl.includes(n));
+  const text = withoutStyleReaders(p.wgsl);
+  const reads = [...new Set([...text.matchAll(STYLE_CALL)].map((m) => m[1]!))];
   if (reads.length > 0) return { kind: "unported", what: `it reads the TS scene's style functions (${reads.join(", ")})` };
   const name = `post${k}`;
   const fn: LibFn = {
     name: `${name}_at`, ret: "vec4", js: "gpu-only",
-    wgsl: `struct PostIn { px: vec4<f32>, uv: vec2<f32> };\n${p.wgsl.replace(head, `fn ${name}(in: PostIn) -> vec4<f32>`)}\nfn ${name}_at(uv: vec2<f32>) -> vec4<f32> { return ${name}(PostIn(vec4<f32>(uv * frame.viewport.xy, 0.0, 1.0), uv)); }`,
+    wgsl: `struct PostIn { px: vec4<f32>, uv: vec2<f32> };\n${text.replace(head, `fn ${name}(in: PostIn) -> vec4<f32>`)}\nfn ${name}_at(uv: vec2<f32>) -> vec4<f32> { return ${name}(PostIn(vec4<f32>(uv * frame.viewport.xy, 0.0, 1.0), uv)); }`,
   };
   const paint = paintRole(name, (_p, _n, uv) => lib<"vec4">(fn, uv));
   const draw: Draw = { name, layer: "surroundings", raster: { cull: "none", depthWrite: false, blend: "opaque" }, paint, cover: { kind: "screen" } };
   return { kind: "pass", pass: { camera, draws: [draw], clear: { kind: "load" }, ground: { kind: "none" }, outline: { kind: "none" } } };
+}
+
+/** A call of a function only the TS scene's style defines. */
+const STYLE_CALL = /\b(sea_height|sea_gradient|shade|ink|sky)\s*\(/g;
+
+/**
+ * `wgsl` without its top-level helper functions that call a style function, directly or through another such helper.
+ * A helper the rest still calls stays in the rest's calls, so the caller's check above names what it reads.
+ */
+function withoutStyleReaders(wgsl: string): string {
+  const fns: { name: string; start: number; end: number }[] = [];
+  const head = /(^|\n)fn\s+([A-Za-z_]\w*)\s*\(/g;
+  for (let m = head.exec(wgsl); m !== null; m = head.exec(wgsl)) {
+    let i = wgsl.indexOf("{", head.lastIndex), depth = 0;
+    for (; i < wgsl.length; i++) if (wgsl[i] === "{") depth++; else if (wgsl[i] === "}" && --depth === 0) break;
+    fns.push({ name: m[2]!, start: m.index + m[1]!.length, end: i + 1 });
+    head.lastIndex = i + 1;
+  }
+  const calls = (body: string, names: ReadonlySet<string>) => [...names].some((n) => new RegExp(`\\b${n}\\s*\\(`).test(body));
+  const bad = new Set<string>();
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const f of fns) {
+      const body = wgsl.slice(f.start, f.end);
+      if (!bad.has(f.name) && (new RegExp(STYLE_CALL.source).test(body) || calls(body, bad))) { bad.add(f.name); grew = true; }
+    }
+  }
+  const dropped = fns.filter((f) => bad.has(f.name));
+  const rest = dropped.reduceRight((t, f) => t.slice(0, f.start) + t.slice(f.end), wgsl);
+  // A dropped helper the pass still calls: keep the text whole, so the check names the style function it reads.
+  return calls(rest, bad) ? wgsl : rest;
 }
 
 /** The style's clear colour, as the TS host clears the view. */

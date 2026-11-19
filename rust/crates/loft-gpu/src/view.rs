@@ -5,7 +5,7 @@
 //!   inputs); a host look camera writes it from the CPU. A host matrix camera (`Aim::Matrices`, Keel's own
 //!   view-projection) skips the builder.
 //! - **The scene resolve.** Media, Screen covers and the ink composer read the opaque scene through the prelude
-//!   (`loft_scene_depth`, `loft_scene_colour`). Once per pass, before the first item that writes no depth after one that
+//!   (`loft_scene_depth`, `loft_post_colour`). Once per pass, before the first item that writes no depth after one that
 //!   did, the host ends the render pass, copies the depth attachment into the r32float scene depth (a full-screen draw:
 //!   a depth texture cannot be copied to a colour one) and the colour attachment into the scene colour, and goes on
 //!   with a pass that loads both. `loft_scene_clearance` stays 0: its 8 × 8 tile reduction is not ported yet.

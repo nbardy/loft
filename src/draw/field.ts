@@ -316,7 +316,9 @@ export class FieldDrawable implements Drawable {
   /** The field's sphere trace as a hit role (draw/march.ts, the same steps and step scale), painted by the style. */
   record(ctx: RecordContext): Recorded {
     const trace = march(this.field, { within: this.o.bounds, steps: this.o.steps, safety: this.stepScale() });
-    return rayDraw(ctx, this.name, { kind: "box", box: aabbOf(this.o.bounds) }, (ray) => trace(ray), (p, normal) => this.o.paint({ p, normal }));
+    // The paint sees `fieldPixel` as the pixel's world size at the hit, as the TS fragment binds it (coral, island_tide
+    // paint by level of detail); unsubstituted it reached emit as a free variable.
+    return rayDraw(ctx, this.name, { kind: "box", box: aabbOf(this.o.bounds) }, (ray) => trace(ray), (p, normal) => atPixel(this.o.paint({ p, normal }), pixelWorld(p)));
   }
   draws(ctx: CompileContext): Emitted {
     const safety = this.stepScale();

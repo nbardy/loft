@@ -216,7 +216,7 @@ pub struct Loft {
     steps: Buffer,
     /// `loft_detail` (emit's prelude, `@group(0) @binding(1)`): zero until the level-of-detail plan is ported.
     detail: Buffer,
-    /// `loft_scene_depth`, `loft_scene_clearance` and `loft_scene_colour` (emit's prelude, bindings 2 to 4): 1 × 1, far
+    /// `loft_scene_depth`, `loft_scene_clearance` and `loft_post_colour` (emit's prelude, bindings 2 to 4): 1 × 1, far
     /// and clear, until a pass resolves the opaque draws into them (view.rs).
     scene: view::Scene,
     resolve: view::Resolve,

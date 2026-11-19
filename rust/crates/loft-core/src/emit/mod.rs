@@ -194,6 +194,16 @@ fn raws(g: &Graph) -> Result<(), Error> {
     (0..g.raws.len() as u32).try_for_each(|r| {
         // The prelude, then each dep's text on its own lines, then this one's: line `skip + 1` is its first.
         let mut src = format!("alias lf = f32;\n{}\n", prelude::text(1, 1));
+        // The accessors of the tables the closure reads (stand-ins of the same signature), as `prelude::globals` and
+        // the module give them: without them a raw function reading `t_<name>` failed here alone (spray_burst's veil).
+        for d in raw_closure(g, r) {
+            for read in g.raws[d as usize].reads.iter() {
+                if let loft_ir::graph::Read::Table(k) = *read {
+                    src.push_str(&accessor(g, k, None));
+                    src.push('\n');
+                }
+            }
+        }
         for d in raw_closure(g, r).into_iter().filter(|&d| d != r) {
             src.push_str(g.sym(g.raws[d as usize].text));
             src.push('\n');
