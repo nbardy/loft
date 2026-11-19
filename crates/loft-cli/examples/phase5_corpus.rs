@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             serde_json::json!({"scene":name,"p95_ms":ms[15],"control_p50_ms":control,"contended":control>0.35})
         );
         if path == Path::new("corpus/l5c/bead.loft") {
-            let out = Path::new("out/meta/i5/r0g");
+            let out = Path::new("out/meta/i5-fix/r0g");
             fs::create_dir_all(out)?;
             for (view, selector) in [("whole", 0.), ("through", 1.)] {
                 let (mut p, _, _) = loft_passes::compile(&src, &[("view".into(), selector)])

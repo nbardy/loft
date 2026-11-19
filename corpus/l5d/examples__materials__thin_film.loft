@@ -1,0 +1,56 @@
+# R0 source: examples/materials/thin_film.ts. Camera: whole.
+space World Local
+
+const VIEW_YAW = -0.7188299996rad
+const VIEW_PIVOT = [0, 0.35, 0]@World
+
+build fn placement(p: p3@World) -> xf@Local>World {
+  let d = p - VIEW_PIVOT
+  let c = cos(VIEW_YAW)
+  let s = sin(VIEW_YAW)
+  place(VIEW_PIVOT + [c * d.x + s * d.z, d.y, -s * d.x + c * d.z], VIEW_YAW)
+}
+
+kind Floor @World (radius: m = 80m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.42, 0.39, 0.34], 0.9, 0)
+}
+
+fn thin_film_fresnel(h: f, f0: rgb, nm: f) -> rgb {
+  let cost = sqrt(1 - (1 - h * h) / (1.56 * 1.56))
+  let phase = 2 * TAU * 1.56 * nm
+  f0 + 0.25 * (rgb(1) + cos([phase / 650, phase / 530, phase / 450] * cost))
+}
+
+lobe beetle_coating(nm: f, n: rgb, v: rgb, l: rgb) -> v4 {
+  let h = normalize(v + l)
+  let f = thin_film_fresnel(saturate(dot(v, h)), [0.04, 0.04, 0.04], nm)
+  let g = max(dot(n, l), 0)
+  v4(f * g * pow(max(dot(n, h), 0), 18), 1.0)
+}
+
+kind Beetle @Local (pose: xf@Local>World) {
+  surface(u, v) grid 96x24 {
+    let m = 0.4 * u + 0.3 * (1 - cos(u * 3.14159265))
+    let a = TAU * (v + 0.25)
+    let r = 0.12 + 0.55 * sin(m * 3.14159265)
+    [(m - 0.5) * 2.2, 0.35 + 0.55 * r * sin(a), r * cos(a)]@Local
+  }
+  material(p, n, uv) = ggx([0.05, 0.06, 0.04], 0.3, 0) + beetle_coating(380)
+}
+
+build {
+  emit Beetle(pose: placement([0, 0, 0]@World))
+  emit Floor()
+}
+
+schedule Main {
+  orbit(at: [0, 0.35, 0]@World, radius: 5.315072906m, height: 2.15m, period: 1000000000s, fov: 0.6rad)
+  cull_indirect(Beetle, Floor)
+  render_bundle(Vis64) { draw_indirect(Beetle); draw_indirect(Floor) }
+  find_shadow_map(Beetle, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.5973577514, 0.8, 0.07525766947])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

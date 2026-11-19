@@ -1,11 +1,10 @@
 # Source: examples/bead.ts at corpus/manifest.json's examples_rev.
-# view 0 = whole; view 1 = through. Both use the legacy eye relative to the target.
+# view 0 = whole; view 1 = through. Both use the pinned legacy camera positions.
 space World
 
 param view: u = 0 in 0..1
 const bead_center = [0, 1, 0]@World
 const bore_radius = 0.35m
-const eye_yaw = select(0.620249486, 0.558599315, view == 1)
 
 kind Bead @World () {
   trace(p) {
@@ -50,17 +49,13 @@ kind Ground @World (radius: m) {
 }
 
 build {
-  let c = cos(eye_yaw)
-  let s = sin(eye_yaw)
   emit Bead()
   emit Ground(radius: 256m)
-  emit Sun(dir: dir([-0.4 * c - 0.45 * s, 0.8, -0.4 * s + 0.45 * c]@World), color: [2.2, 2, 1.7])
+  emit Sun(dir: dir([-0.4, 0.8, 0.45]@World), color: [2.2, 2, 1.7])
 }
 
 camera Main {
+  eye: [select(2.5m, 0.05m, view == 1), select(3.5m, 4.2m, view == 1), select(3.5m, 0.08m, view == 1)]@World,
   at: bead_center,
-  radius: select(sqrt(18.5), sqrt(0.0089), view == 1),
-  height: select(2.5m, 3.2m, view == 1),
-  period: 1e20s,
   fov: 0.6rad
 }

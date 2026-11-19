@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import manifest from "../manifest.json";
 import parity from "../../tools/parity/corpus.json";
@@ -17,17 +17,19 @@ type Seed = { id: string; code: string };
 type Strip = { part: string; around: number; exponent: number; paint: V3; rings: [Ring, Ring][] };
 
 const root = resolve(import.meta.dir, "../..");
-const scratch = resolve(root, "out/meta/p5/l5e");
-const pinned = parity.seeds.sets.find(({ set }) => set === "crab-actions-v1")!;
-const seeds = execFileSync("git", ["-C", process.env.LOFT_CREATIVE ?? resolve(process.env.HOME!, "git/creative"),
-  "show", `${parity.seeds.commit}:${pinned.path}`], { maxBuffer: 4 * 1024 * 1024 });
-if (createHash("sha256").update(seeds).digest("hex") !== pinned.sha256) {
-  throw new Error("crab-actions seed source differs from the corpus pin");
+const scratch = resolve(root, "out/meta/i5-fix/seed-samples");
+const input = new Map<string, string>();
+for (const pinned of parity.seeds.sets) {
+  const seeds = execFileSync("git", ["-C", process.env.LOFT_CREATIVE ?? resolve(process.env.HOME!, "git/creative"),
+    "show", `${parity.seeds.commit}:${pinned.path}`], { maxBuffer: 4 * 1024 * 1024 });
+  if (createHash("sha256").update(seeds).digest("hex") !== pinned.sha256) {
+    throw new Error(`${pinned.set} differs from the corpus pin`);
+  }
+  for (const line of seeds.toString().trimEnd().split("\n")) {
+    const row = JSON.parse(line) as Seed;
+    input.set(`${pinned.set}/${row.id}`, row.code);
+  }
 }
-const input = new Map(seeds.toString().trimEnd().split("\n").map(line => {
-  const row = JSON.parse(line) as Seed;
-  return [`${pinned.set}/${row.id}`, row.code];
-}));
 const times = [0, 0.25, 0.5, 0.75, 0.9375, 1.37, 2.9];
 const vector = (value: unknown): V3 => {
   if (!Array.isArray(value) || value.length !== 3 || !value.every(Number.isFinite)) {
@@ -48,10 +50,6 @@ const axis = (x: number, square: number, exponent: number) => x * (square + 1e-1
 function capture(scene: Scene) {
   const camera = scene.cameras.fixed;
   if (camera?.kind !== "perspective") throw new Error("expected the R0 fixed perspective camera");
-  const [x, height, z] = sub(vector(camera.eye), vector(camera.target));
-  const radius = Math.hypot(x, z);
-  const orient = ([a, b, c]: V3): V3 => [(z * a - x * c) / radius, b, (x * a + z * c) / radius];
-  // Orbit has no start angle. Rotate geometry and light together to make its t=0 view the pinned perspective.
   const strands = scene.things.filter((part): part is Strand => part instanceof Strand);
   const other = scene.things.filter(part => !strands.includes(part as Strand));
   if (!strands.length || other.some(part => !["sky", "ground", "sea", "shadows", "light"].includes(part.name))) {
@@ -76,7 +74,7 @@ function capture(scene: Scene) {
       const sample = compileJs([point, swatch]);
       const get = (j: number, a: number) => {
         const [p, paint] = sample({ vars: { corpus_u: j, corpus_v: a }, inputs: { time: t }, params: {}, tables });
-        return { p: orient(vector(p)), paint: vector(paint) };
+        return { p: vector(p), paint: vector(paint) };
       };
       return coordinates.map(m => {
         const p0 = get(m, 0).p;
@@ -107,8 +105,8 @@ function capture(scene: Scene) {
       strips.push({ part: strand.name, around, exponent, paint, rings });
     }
   }
-  return { strips, vertices, maxError, maxPaintDelta, radius, height, fov: camera.fovY,
-    at: orient(vector(camera.target)), sun: orient(vector(scene.sun)) };
+  return { strips, vertices, maxError, maxPaintDelta, fov: camera.fovY,
+    eye: vector(camera.eye), at: vector(camera.target), sun: vector(scene.sun) };
 }
 
 const columns = ["center_a", "side_a", "up_a", "center_b", "side_b", "up_b"];
@@ -144,7 +142,7 @@ function surface(around: number, animated: boolean) {
 }
 
 function encode(id: string, captured: ReturnType<typeof capture>) {
-  const { strips, at, radius, height, fov, sun } = captured;
+  const { strips, eye, at, fov, sun } = captured;
   const kinds = new Map<string, ReturnType<typeof surface>>();
   const samples: string[] = [];
   const counts = new Map<string, number>();
@@ -186,7 +184,7 @@ function encode(id: string, captured: ReturnType<typeof capture>) {
   });
   const source = [`# R0 seed ${id}`, "# Ring centers and section axes sampled from the pinned legacy CPU twin.",
     "# Each row spans adjacent rings, with linear keyframe deltas at the corpus sample times.", "space World", "",
-    `camera Main { at: ${literal(at)}@World, radius: ${number(radius)}m, height: ${number(height)}m, period: 1e9s, fov: ${number(fov)}rad }`,
+    `camera Main { eye: ${literal(eye)}@World, at: ${literal(at)}@World, fov: ${number(fov)}rad }`,
     "",
     ...[...kinds.values()].flatMap(k => [k.source, ""]),
     "kind Water @World (size: m > 0m) {",
@@ -202,8 +200,18 @@ function encode(id: string, captured: ReturnType<typeof capture>) {
 mkdirSync(scratch, { recursive: true });
 const results = [];
 const samples: string[] = [];
-for (const batch of manifest.batches.filter(b => b.lane === "l5e")) {
-  for (const id of batch.scenes) {
+const batches = new Set(process.argv.slice(2).map(Number));
+if (!batches.size || [...batches].some(batch => !manifest.batches.some(b => b.batch === batch))) {
+  throw new Error("supply the corpus batch numbers to regenerate");
+}
+const outputRoot = resolve(root, "corpus/seeds");
+mkdirSync(outputRoot, { recursive: true });
+for (const batch of manifest.batches.filter(b => batches.has(b.batch))) {
+  const scenes = batch.scenes.filter(id => input.has(id));
+  if (!scenes.length) continue;
+  const dir = mkdtempSync(resolve(scratch, `batch-${batch.batch}-`));
+  const start = results.length;
+  for (const id of scenes) {
     const name = id.replaceAll("/", "__");
     try {
       const code = input.get(id);
@@ -215,7 +223,7 @@ for (const batch of manifest.batches.filter(b => b.lane === "l5e")) {
       const scene = (await import(legacyFile)).default as Scene;
       const captured = capture(scene);
       const output = encode(id, captured);
-      writeFileSync(resolve(import.meta.dir, `${name}.loft`), output.source);
+      writeFileSync(resolve(dir, `${name}.loft`), output.source);
       samples.push(...output.samples);
       const result = { id, batch: batch.batch, rows: captured.strips.length, vertices: captured.vertices,
         maxError: captured.maxError, maxPaintDelta: captured.maxPaintDelta };
@@ -226,6 +234,9 @@ for (const batch of manifest.batches.filter(b => b.lane === "l5e")) {
       results.push(result);
       console.error(JSON.stringify(result));
     }
+  }
+  if (results.slice(start).every(r => !("error" in r) && r.maxError <= 1e-5 && r.maxPaintDelta === 0)) {
+    renameSync(dir, resolve(outputRoot, `batch-${batch.batch}`));
   }
 }
 writeFileSync(resolve(scratch, "cpu-geometry.json"), JSON.stringify(results, null, 2) + "\n");
