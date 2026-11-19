@@ -333,6 +333,13 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     };
+    r.declare_external_texture(id, TableId(21), &desc).unwrap();
+    let wrong = Arc::new(r.device.create_texture(&wgpu::TextureDescriptor {
+        size: wgpu::Extent3d { width: 2, ..desc.size },
+        ..desc.clone()
+    }));
+    assert_eq!(r.bind_external_texture(id, TableId(21), wrong), Err(RunnerError::AbiMismatch));
+    assert!(r.export_texture(id, TableId(21)).is_none());
     let texture = Arc::new(r.device.create_texture(&desc));
     r.bind_external_texture(id, TableId(21), texture.clone())
         .unwrap();

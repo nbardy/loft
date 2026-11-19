@@ -106,7 +106,7 @@ fn time_edit_and_compare_native_promotion() {
         "vec4f(length(tier_rows[gid.x].xyz) - tier_constants[1].x)",
     );
     let id = r.load_bundle(&fixture(&vm)).unwrap();
-    let tex = r.device.create_texture(&wgpu::TextureDescriptor {
+    let desc = wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
             width: 1,
@@ -119,7 +119,9 @@ fn time_edit_and_compare_native_promotion() {
         format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
-    });
+    };
+    r.declare_external_texture(id, TableId(5), &desc).unwrap();
+    let tex = r.device.create_texture(&desc);
     r.bind_external_texture(id, TableId(5), Arc::new(tex))
         .unwrap();
     r.register_tier0(id, KindId(0), PASS).unwrap();

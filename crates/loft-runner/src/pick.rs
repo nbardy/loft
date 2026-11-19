@@ -98,7 +98,7 @@ impl Runner {
         &mut self,
         id: InstanceId,
         px: [u32; 2],
-        cb: Box<dyn FnOnce(PickResult) + Send>,
+        cb: Box<dyn FnOnce(Result<PickResult>) + Send>,
     ) -> Result<()> {
         let (device, queue) = (self.device.clone(), self.queue.clone());
         let source = self
@@ -173,7 +173,7 @@ impl Runner {
             } else {
                 None
             };
-            cb(result.unwrap_or_else(|| miss(f32::NAN)));
+            cb(result.ok_or(RunnerError::Readback));
         });
         queue.submit([enc.finish()]);
         Ok(())
@@ -192,13 +192,8 @@ impl Runner {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|_| RunnerError::Unsupported("pick polling failed"))?;
-        let result = rx
-            .recv()
-            .map_err(|_| RunnerError::Unsupported("pick readback failed"))?;
-        if result.depth_ndc.is_nan() {
-            return Err(RunnerError::Unsupported("pick readback failed"));
-        }
-        Ok(result)
+        rx.recv().map_err(|_| RunnerError::Readback)?
+
     }
 }
 

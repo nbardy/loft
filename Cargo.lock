@@ -563,9 +563,20 @@ dependencies = [
  "blake3",
  "loft-abi",
  "loft-ir",
+ "loft-std",
  "naga",
  "pollster",
  "web-sys",
+ "wgpu",
+ "wgpu-naga-bridge",
+]
+
+[[package]]
+name = "loft-std"
+version = "0.1.0"
+dependencies = [
+ "loft-ir",
+ "naga",
  "wgpu",
  "wgpu-naga-bridge",
 ]

@@ -16,6 +16,7 @@ pub enum RunnerError {
     UnknownInstance,
     UnknownResource,
     AbiMismatch,
+    Readback,
     Capacity,
     InvalidShader(String),
     Unsupported(&'static str),
@@ -33,6 +34,7 @@ struct Table {
     buffer: Option<Arc<wgpu::Buffer>>,
     texture: Option<Arc<wgpu::Texture>>,
     texture_only: bool,
+    texture_contract: Option<interop::TextureContract>,
     active: u32,
     epoch: u64,
 }
@@ -94,6 +96,7 @@ impl Instance {
                 buffer: None,
                 texture: None,
                 texture_only,
+                texture_contract: None,
                 active,
                 epoch: 0,
             };

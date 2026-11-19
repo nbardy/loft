@@ -354,6 +354,7 @@ fn motion_gpu_washer_picks_sample_zero() {
                     id,
                     [x, y],
                     Box::new(move |v| {
+                        let v = v.unwrap();
                         tx.send((x, (v.kind_id, v.row_id))).unwrap();
                     }),
                 )
@@ -391,7 +392,7 @@ fn motion_gpu_washer_picks_sample_zero() {
             )
             .unwrap();
             d.poll(wgpu::PollType::wait_indefinitely()).unwrap();
-            let picked = rx.recv().unwrap();
+            let picked = rx.recv().unwrap().unwrap();
             let sync = r.pick_sync(id, px).unwrap();
             let oracle = washer(px[0], px[1], inner);
             assert!(picked.hit && sync.hit);

@@ -18,12 +18,27 @@ fn check_buffer(size: u64, usage: B, min: u64, required: B) -> Result<()> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct TextureShape {
+pub(super) struct TextureShape {
     size: wgpu::Extent3d,
     dim: wgpu::TextureDimension,
     format: wgpu::TextureFormat,
     samples: u32,
     mips: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct TextureContract(TextureShape, T);
+
+impl From<&wgpu::TextureDescriptor<'_>> for TextureContract {
+    fn from(desc: &wgpu::TextureDescriptor<'_>) -> Self {
+        Self(TextureShape {
+            size: desc.size,
+            dim: desc.dimension,
+            format: desc.format,
+            samples: desc.sample_count,
+            mips: desc.mip_level_count,
+        }, desc.usage)
+    }
 }
 
 impl TextureShape {
@@ -213,60 +228,54 @@ impl Runner {
         Ok(())
     }
 
+    /// Set the asset contract before the first bind. The descriptor comes from
+    /// the host's asset declaration because TableDecl carries storage layout only.
+    pub fn declare_external_texture(
+        &mut self, id: InstanceId, table: TableId, desc: &wgpu::TextureDescriptor<'_>,
+    ) -> Result<()> {
+        let features = self.device.features();
+        let inst = self.instance(id)?;
+        let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
+        let contract = TextureContract::from(desc);
+        if !t.texture_only || t.decl.lifetime != TableLifetime::External
+            || t.texture_contract.is_some_and(|existing| existing != contract)
+        {
+            return Err(RunnerError::AbiMismatch);
+        }
+        check_texture(&inst.compute, table, contract.0, contract.1, features)?;
+        t.texture_contract = Some(contract);
+        Ok(())
+    }
+
     /// Allocate backing for a texture table using a host-supplied descriptor.
     pub fn allocate_texture(
-        &mut self,
-        inst: InstanceId,
-        table: TableId,
-        desc: &wgpu::TextureDescriptor<'_>,
+        &mut self, id: InstanceId, table: TableId, desc: &wgpu::TextureDescriptor<'_>,
     ) -> Result<()> {
-        let shape = TextureShape {
-            size: desc.size,
-            dim: desc.dimension,
-            format: desc.format,
-            samples: desc.sample_count,
-            mips: desc.mip_level_count,
-        };
         let device = self.device.clone();
-        let inst_ref = self.instance(inst)?;
-        let t = inst_ref
-            .tables
-            .get(&table)
-            .ok_or(RunnerError::UnknownResource)?;
+        let inst = self.instance(id)?;
+        let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
+        let contract = TextureContract::from(desc);
         if t.decl.lifetime == TableLifetime::External || !t.texture_only || t.texture.is_some() {
             return Err(RunnerError::AbiMismatch);
         }
-        check_texture(
-            &inst_ref.compute,
-            table,
-            shape,
-            desc.usage,
-            device.features(),
-        )?;
-        self.bind_external_texture(inst, table, Arc::new(device.create_texture(desc)))
+        check_texture(&inst.compute, table, contract.0, contract.1, device.features())?;
+        let epoch = next_epoch(inst.resource_epoch)?;
+        t.texture = Some(Arc::new(device.create_texture(desc)));
+        t.texture_contract = Some(contract);
+        t.epoch = epoch;
+        inst.resource_epoch = epoch;
+        Ok(())
     }
 
     pub fn bind_external_texture(
-        &mut self,
-        inst: InstanceId,
-        table: TableId,
-        tex: Arc<wgpu::Texture>,
+        &mut self, id: InstanceId, table: TableId, tex: Arc<wgpu::Texture>,
     ) -> Result<()> {
         let features = self.device.features();
-        let inst = self.instance(inst)?;
-        let t = inst
-            .tables
-            .get_mut(&table)
-            .ok_or(RunnerError::UnknownResource)?;
-        if !t.texture_only {
-            return Err(RunnerError::AbiMismatch);
-        }
+        let inst = self.instance(id)?;
+        let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
+        let contract = t.texture_contract.ok_or(RunnerError::AbiMismatch)?;
         let shape = TextureShape::from_handle(&tex);
-        // The frozen TableDecl has no texture descriptor. The first compatible handle establishes the exact shape.
-        if t.texture
-            .as_deref()
-            .is_some_and(|old| TextureShape::from_handle(old) != shape)
-        {
+        if shape != contract.0 || !tex.usage().contains(contract.1) {
             return Err(RunnerError::AbiMismatch);
         }
         check_texture(&inst.compute, table, shape, tex.usage(), features)?;

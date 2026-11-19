@@ -3,8 +3,7 @@ use loft_abi::{AdvanceArgs, advance};
 use std::ops::Range;
 use wgpu::util::DeviceExt;
 
-#[path = "../../shared/compute_twin.rs"]
-mod twin;
+use loft_std::compute_twin as twin;
 
 const ARGUMENTS: &str = "loft_advance_args";
 type Buffers = BTreeMap<(u32, u32), Vec<u8>>;
@@ -359,7 +358,11 @@ fn run(
     buffers: &mut Buffers,
 ) -> Result<()> {
     buffers.insert(key(f.args), arguments(id, &rows, ticks).into());
-    twin::dispatch(&f.module, &f.entry, rows.end - rows.start, buffers)
+    twin::dispatch(&f.module, &f.entry, rows.end - rows.start, buffers).map_err(|err| match err {
+        twin::Error::Unsupported => RunnerError::Unsupported("operation has no deterministic CPU implementation"),
+        twin::Error::Capacity => RunnerError::Capacity,
+        twin::Error::MissingEntry => RunnerError::UnknownResource,
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]

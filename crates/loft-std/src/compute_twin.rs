@@ -1,13 +1,14 @@
 //! Evaluate the validated deterministic compute subset in Naga's evaluation order.
-use super::{Result, RunnerError};
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error { Unsupported, Capacity, MissingEntry }
+type Result<T> = std::result::Result<T, Error>;
 use naga::{
     Arena, BinaryOperator as B, Expression as E, Handle, Literal, MathFunction as M,
     ScalarKind as K, Statement as S, Type, TypeInner as T,
 };
 use std::collections::BTreeMap;
 
-const UNSUPPORTED: RunnerError =
-    RunnerError::Unsupported("operation has no deterministic CPU implementation");
+const UNSUPPORTED: Error = Error::Unsupported;
 type Expr = Handle<E>;
 type Buffers = BTreeMap<(u32, u32), Vec<u8>>;
 
@@ -40,7 +41,7 @@ impl Value {
         Ok(match *self {
             U(x) => x as usize,
             I(x) if x >= 0 => x as usize,
-            _ => return Err(RunnerError::Capacity),
+            _ => return Err(Error::Capacity),
         })
     }
     fn cond(&self) -> Result<bool> {
@@ -55,7 +56,7 @@ impl Value {
                 path.push(i);
                 Ok(self)
             }
-            List(values) => values.get(i).cloned().ok_or(RunnerError::Capacity),
+            List(values) => values.get(i).cloned().ok_or(Error::Capacity),
             _ => Err(UNSUPPORTED),
         }
     }
@@ -95,7 +96,7 @@ fn cast(v: Value, kind: K, convert: bool) -> Result<Value> {
 fn read(word: &[u8], offset: usize) -> Result<u32> {
     Ok(u32::from_le_bytes(
         word.get(offset..offset + 4)
-            .ok_or(RunnerError::Capacity)?
+            .ok_or(Error::Capacity)?
             .try_into()
             .unwrap(),
     ))
@@ -109,7 +110,7 @@ fn unpack(
     let word = |offset| bytes.map_or(Ok(0), |b| read(b, offset));
     let sub = |offset: usize| {
         bytes
-            .map(|b| b.get(offset..).ok_or(RunnerError::Capacity))
+            .map(|b| b.get(offset..).ok_or(Error::Capacity))
             .transpose()
     };
     Ok(match &types[ty].inner {
@@ -170,7 +171,7 @@ fn pack(
     let mut store = |i: usize, v: &Value| -> Result<()> {
         bytes
             .get_mut(i..i + 4)
-            .ok_or(RunnerError::Capacity)?
+            .ok_or(Error::Capacity)?
             .copy_from_slice(&v.word()?.to_le_bytes());
         Ok(())
     };
@@ -469,7 +470,7 @@ impl Eval<'_> {
             let List(inner) = v else {
                 return Err(UNSUPPORTED);
             };
-            v = inner.get(*i).ok_or(RunnerError::Capacity)?;
+            v = inner.get(*i).ok_or(Error::Capacity)?;
         }
         Ok(v)
     }
@@ -487,7 +488,7 @@ impl Eval<'_> {
             let List(inner) = v else {
                 return Err(UNSUPPORTED);
             };
-            v = inner.get_mut(*i).ok_or(RunnerError::Capacity)?;
+            v = inner.get_mut(*i).ok_or(Error::Capacity)?;
         }
         *v = x;
         Ok(())
@@ -618,7 +619,7 @@ impl Eval<'_> {
 
     fn block(&mut self, c: &mut Call<'_>, block: &naga::Block) -> Result<Flow> {
         for s in block {
-            self.budget = self.budget.checked_sub(1).ok_or(RunnerError::Capacity)?;
+            self.budget = self.budget.checked_sub(1).ok_or(Error::Capacity)?;
             let e = |h| self.get(c, h);
             let flow = match s {
                 S::Emit(range) => {
@@ -646,7 +647,7 @@ impl Eval<'_> {
                     continuing,
                     break_if,
                 } => loop {
-                    self.budget = self.budget.checked_sub(1).ok_or(RunnerError::Capacity)?;
+                    self.budget = self.budget.checked_sub(1).ok_or(Error::Capacity)?;
                     match self.block(c, body)? {
                         Flow::Break => break Flow::Next,
                         f @ Flow::Return(_) => break f,
@@ -707,7 +708,7 @@ impl Eval<'_> {
     }
 }
 
-pub(super) fn dispatch(
+pub fn dispatch(
     ir: &naga::Module,
     entry: &str,
     rows: u32,
@@ -717,7 +718,7 @@ pub(super) fn dispatch(
         .entry_points
         .iter()
         .find(|e| e.name == entry && e.stage == naga::ShaderStage::Compute)
-        .ok_or(RunnerError::UnknownResource)?
+        .ok_or(Error::MissingEntry)?
         .function;
     if !matches!(f.arguments.as_slice(), [a] if a.binding == Some(naga::Binding::BuiltIn(naga::BuiltIn::GlobalInvocationId)))
     {
