@@ -102,6 +102,7 @@ struct MeshVertex {
 }
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> MeshVertex {
     let r = visible[kp.base + ii];
+    if r == LOFT_EMPTY { return MeshVertex(vec4f(2.0, 2.0, 2.0, 1.0), r, 0u); }
     let row = load_row(r);
     let m = row.r_asset * 8u;
     let count = bitcast<u32>(luts[m + 1u]);

@@ -940,6 +940,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
 // The grid: two triangles per cell of {nu} x {nv}; corner bits (0,1,1,0,1,0) in u and (0,0,1,0,1,1) in v.
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
   let r = visible[kp.base + ii];
+  if r == LOFT_EMPTY {{ return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec2f(0.0), r); }}
   let row = load_row(r);
   let cell = vi / 6u;
   let c = vi % 6u;
@@ -983,15 +984,16 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
         ),
         Draw::Mesh { .. } => crate::world::mesh::draw(),
         Draw::Analytic | Draw::Traced => {
-            let hit = match draw {
-                Draw::Analytic => "  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_string(),
-                Draw::Traced if edit.is_some() => "  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_string(),
-                Draw::Traced | Draw::Surface { .. } | Draw::Mesh { .. } => "  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).\n  \
+            let (hit, split_ao) = match draw {
+                Draw::Analytic => ("  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n",
+                    light == "woodblock_pigment" && aov == Aov::Beauty),
+                Draw::Traced if edit.is_some() => ("  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n", false),
+                Draw::Traced => ("  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).\n  \
                      var t = max(span.x, 0.0);\n  let step = 1.0 / row.loft_lip;\n  var hit = false;\n  \
                      for (var i = 0u; i < 192u; i++) {\n    let d = q_trace(row, lro + lrd * t);\n    \
                      if d < 1e-4 + 2e-4 * t { hit = true; break; }\n    t += d * step;\n    if t > span.y { break; }\n  }\n  \
-                     if !hit { discard; }\n"
-                    .to_string(),
+                     if !hit { discard; }\n", false),
+                Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("ray draw"),
             };
             let visible_twin = if q(QueryKind::Visible) { "q_visible(row, pl, dl)" } else { "0.0" };
             (
@@ -1004,6 +1006,7 @@ struct FsOut {{ @location(0) vis: vec2<u32>, @builtin(frag_depth) depth: f32 }}
 // The proxy: the row's derived AABB, back faces (the camera may be inside it).
 @vertex fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
   let r = visible[kp.base + ii];
+  if r == LOFT_EMPTY {{ return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec3f(0.0), r); }}
   let row = load_row(r);
   let c = LOFT_CUBE[vi];
   let corner = vec3<f32>(f32(c & 1u), f32((c >> 1u) & 1u), f32((c >> 2u) & 1u));
@@ -1049,6 +1052,31 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
   let normal_ao = loft_edit_normal_ao(row, pl, t);
   let nl = normal_ao.xyz;
   let ao = normal_ao.w;
+  let n = normalize(loft_xf_vec(pose, nl));
+  let b = q_material(row, pl, nl);
+"
+                    .to_string()
+                } else if split_ao {
+                    // The tetrahedral sum and the five AO taps keep their original
+                    // order. Separate the loops to compute only the active sample.
+                    "  let t = bitcast<f32>(v.y);
+  let p = frame.eye.xyz + rd * t;
+  let pl = loft_xf_pt(xf, p);
+  let e = 5e-4 * max(1.0, 0.25 * t);
+  var g = vec3<f32>(0.0);
+  for (var i = 0u; i < 4u; i++) {
+    let offset = LOFT_TETRA[i];
+    g += offset * q_trace(row, pl + offset * e);
+  }
+  let nl = normalize(g);
+  var occ = 0.0;
+  var w = 1.0;
+  for (var i = 0u; i < 5u; i++) {
+    let h = 0.02 + 0.06 * f32(i);
+    occ += (h - q_trace(row, pl + nl * h)) * w;
+    w *= 0.8;
+  }
+  let ao = clamp(1.0 - 2.0 * occ, 0.0, 1.0);
   let n = normalize(loft_xf_vec(pose, nl));
   let b = q_material(row, pl, nl);
 "
@@ -1165,6 +1193,14 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             "vec3<f32>(0.0)".into()
         }
     };
+    // Keep the nine comparisons and their addition order. Static taps let the
+    // backend issue independent samples without the nested loop's control flow.
+    let mut shadow_taps = String::new();
+    for i in -1..=1 {
+        for j in -1..=1 {
+            let _ = writeln!(shadow_taps, "  s += textureSampleCompareLevel(shadow_tex, shadow_smp, uv + vec2<f32>({i}.0, {j}.0) * texel, depth);");
+        }
+    }
     let tl = crate::unit(crate::TWIN_LIGHT);
     let _ = write!(
         em.out,
@@ -1184,13 +1220,9 @@ fn loft_shadow(p: vec3<f32>, n: vec3<f32>) -> f32 {{
   let uv = vec2<f32>(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5);
   if any(uv < vec2<f32>(0.0)) || any(uv > vec2<f32>(1.0)) || q.z > 1.0 || q.z < 0.0 {{ return 1.0; }}
   let texel = 1.0 / f32(textureDimensions(shadow_tex).x);
+  let depth = q.z - 0.0005;
   var s = 0.0;
-  for (var i = -1; i <= 1; i++) {{
-    for (var j = -1; j <= 1; j++) {{
-      s += textureSampleCompareLevel(shadow_tex, shadow_smp, uv + vec2<f32>(f32(i), f32(j)) * texel, q.z - 0.0005);
-    }}
-  }}
-  return s / 9.0;
+{shadow_taps}  return s / 9.0;
 }}
 
 
@@ -1277,7 +1309,7 @@ fn loft_dsample(off: u32, n: u32, lo: f32, hi: f32, t: f32, dt: f32) -> LoftFram
 
 ";
 
-pub fn cull_module() -> String {
+pub fn cull_module(single_draw: bool) -> String {
     let mut s = PRELUDE.replace("{{NONCE}}", abi::NONCE_PLACEHOLDER);
     s += r"
 struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
@@ -1287,7 +1319,7 @@ struct Inst { lo: vec3<f32>, kind: u32, hi: vec3<f32>, row: u32 }
 @group(1) @binding(3) var<storage, read> bases: array<u32>;
 override loft_draw_words: u32 = 4u;
 
-// Every row of every kind: frustum-test its derived AABB, append visible rows, count one draw per kind.
+// Every row of every kind: frustum-test its derived AABB and bound the indirect draw.
 @compute @workgroup_size(64) fn cull(@builtin(global_invocation_id) g: vec3<u32>) {
   if frame.cold.x == LOFT_NONCE { return; }
   let i = g.x;
@@ -1306,11 +1338,25 @@ override loft_draw_words: u32 = 4u;
     if q.z > q.w { bits |= 32u; }
     outside &= bits;
   }
+";
+    // A single draw can use row IDs as instance indices. With strict Less,
+    // equal stored depths then retain the lower row, independent of GPU cull order.
+    if single_draw {
+        s += r"
+  let inside = outside == 0u;
+  visible[bases[b.kind] + b.row] = select(LOFT_EMPTY, b.row, inside);
+  if inside {
+    atomicMax(&draw_args[b.kind * loft_draw_words + 1u], b.row + 1u);
+  }
+";
+    } else {
+        s += r"
   if outside != 0u { return; }
   let slot = atomicAdd(&draw_args[b.kind * loft_draw_words + 1u], 1u);
   visible[bases[b.kind] + slot] = b.row;
-}
 ";
+    }
+    s += "}\n";
     s
 }
 

@@ -36,6 +36,7 @@ fn bake_surface(@builtin(global_invocation_id) id: vec3<u32>) {{
 
 @vertex fn vs_indexed(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {{
   let r = visible[kp.base + ii];
+  if r == LOFT_EMPTY {{ return VsOut(vec4f(2.0, 2.0, 2.0, 1.0), vec2f(0.0), r); }}
   let wp = loft_xf_pt(loft_pose(load_row(r)), loft_grid[vi].xyz);
   return VsOut(frame.view_proj * vec4<f32>(wp, 1.0), loft_grid_uv(vi), r);
 }}
