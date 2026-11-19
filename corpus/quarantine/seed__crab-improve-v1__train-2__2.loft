@@ -1,0 +1,19 @@
+# R0 source crab-improve-v1/train-2/2 (batch 18)
+# Seed source SHA-256 c302dd5c15968416e545ca7290c3f3de89a863dcf1031074f398c5103f2ed043
+# Legacy look toon. This file isolates the camera refusal before geometry porting.
+space World
+
+camera Fixed {
+  eye: [4.5, 4.5, 8]@World,
+  target: [0, 0.7, 0]@World,
+  fov: 0.62rad,
+}
+
+schedule Main {
+  use_camera(Fixed)
+  cull_indirect(Drawables)
+  render_bundle(Vis64) { draw_indirect(Drawables) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.45, 0.8, 0.5])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

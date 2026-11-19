@@ -1,0 +1,19 @@
+# R0 source crab-improve-v1/train-7/1 (batch 19)
+# Seed source SHA-256 134edf39e8c301e55d389cc68f24e678ee8b6a333f63e9df1270e71d34d2fa03
+# Legacy look woodblock. This file isolates the camera refusal before geometry porting.
+space World
+
+camera Fixed {
+  eye: [4.5, 4.5, 8]@World,
+  target: [0, 0.7, 0]@World,
+  fov: 0.62rad,
+}
+
+schedule Main {
+  use_camera(Fixed)
+  cull_indirect(Drawables)
+  render_bundle(Vis64) { draw_indirect(Drawables) }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.45, 0.8, 0.5])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
