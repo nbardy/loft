@@ -10,7 +10,7 @@ import { pack, Program } from "../../src/record/wire.ts";
 /** Writes `dir/scene.loft`. */
 export function writeBall(dir: string): void {
   const tint = param("ball.tint", 1, { min: 0, max: 1 });
-  const hit = role("ball_hit", ["vec3", "vec3", "vec2", "vec2"], (o, d) => {
+  const hit = role("ball_hit", ["vec3", "vec3", "vec2", "vec2", "f32"], (o, d) => {
     const b = dot(o, d), disc = sub(mul(b, b), sub(dot(o, o), 1));
     const t = sub(neg(b), sqrt(max(disc, 0)));
     return vec4(normalize(add(o, mul(d, t))), select(gt(disc, 0), t, -1));
