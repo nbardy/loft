@@ -16,7 +16,7 @@ Hard rules:
 - **Your workspace.** Work only in your cambium workspace: `cd ~/git/loft && git cambium add -b loft/l5d -name loft-l5d -ephemeral ~/git/_wt/loft-l5d` (continue in it if it exists). Touch only your lane's files.
 - **Frozen types.** NEVER change frozen shared types (crates/loft-abi, the spec's ABI) or golden vectors. If you need a change, stop and write it in your final message.
 - **No GPU.** Do not run GPU renders, `loft profile` or Metal pipeline creation; the integrator does those. Prove correctness with the CPU twin, unit tests and `naga::valid::Validator`.
-- **Builds.** Use `CARGO_BUILD_JOBS=2 tools/dev.sh ...`, which takes the shared compile lock. Wait for the lock; never kill other processes.
+- **Builds: write first, compile once.** Write your whole lane before you build anything. Do not compile after every edit. Then run `CARGO_BUILD_JOBS=2 tools/dev.sh check <crate>` and your focused tests ONCE at the end; fix what that run reports, and rerun at most twice more. tools/dev.sh queues on the machine-wide compile lock, so wait for it and never kill other processes.
 - **Stop rule.** If your own acceptance test fails twice without you narrowing the cause, stop and begin your final message with "ESCALATE:" and the evidence. Never relax a tolerance to go green.
 - **Commits.** Commit and push your branch after each milestone, staging by path. End each message with "Co-Authored-By: GPT (codex) <noreply@openai.com>". Do NOT merge into main.
 
