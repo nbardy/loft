@@ -11,23 +11,17 @@ pub(crate) fn draw() -> (String, String, String) {
   let n = select(raw_n, -raw_n, dot(raw_n, rd) > 0.0);
   let t = dot(loft_xf_pt(pose, a) - frame.eye.xyz, n) / dot(rd, n);
   let p = frame.eye.xyz + t * rd;
-  let b = mesh_material(row);
+  let b = mesh_material(row, v.y);
   let ao = 1.0;
 ".into(),
-            "  let base = bitcast<u32>(luts[row.r_asset * 8u]);
-  let count = bitcast<u32>(luts[row.r_asset * 8u + 1u]);
-  let ro = loft_xf_pt(xf, a.xyz);
+            "  let ro = loft_xf_pt(xf, a.xyz);
   let rd = normalize(loft_xf_vec(xf, d.xyz));
-  var visible = -1.0;
-  for (var i = 0u; i < count; i++) {
-    let t = mesh_hit(base, i, ro, rd);
-    if t >= 0.0 && (visible < 0.0 || t < visible) { visible = t; }
-  }
-  let o0 = vec4f(0.0, visible, 0.0, 0.0);
+  let hit = mesh_intersect(row, ro, rd, vec2f(0.0, 1e30), false);
+  let o0 = vec4f(0.0, hit.t, 0.0, 0.0);
   let o2 = vec4f(0.0);
   let o3 = vec4f(0.0);
   let nw = normalize(d.xyz);
-  let bs = mesh_material(row);
+  let bs = mesh_material(row, select(0u, hit.triangle, hit.t >= 0.0));
 ".into(),
         )
 }

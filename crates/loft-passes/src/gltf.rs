@@ -38,10 +38,12 @@ pub(crate) struct Mesh {
     pub color: Point,
     pub roughness: f32,
     pub metal: f32,
+    // The end triangle index is exclusive. Each primitive shares one material.
+    materials: Vec<(usize, Factors)>,
 }
 
 impl Mesh {
-    fn new(triangles: Vec<Triangle>, color: Point, roughness: f32, metal: f32) -> Result<Self, String> {
+    fn new(triangles: Vec<Triangle>, materials: Vec<(usize, Factors)>) -> Result<Self, String> {
         if triangles.is_empty() { return Err("mesh contains no triangles".into()); }
         let mut bounds = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
         let instances = triangles.iter().enumerate().map(|(row, triangle)| {
@@ -54,7 +56,8 @@ impl Mesh {
             Instance { kind: 0, row: row as u32, lo, hi }
         }).collect::<Vec<_>>();
         let tree = Bvh2::build(&instances).map_err(|e| format!("triangle bounds: {e:?}"))?;
-        Ok(Self { triangles, tree, lo: bounds.0, hi: bounds.1, color, roughness, metal })
+        let Factors { color, roughness, metal } = materials[0].1;
+        Ok(Self { triangles, tree, lo: bounds.0, hi: bounds.1, color, roughness, metal, materials })
     }
 
     pub fn hit(&self, origin: Point, dir: Point) -> f32 {
@@ -88,6 +91,32 @@ pub(crate) fn words(meshes: &[Mesh]) -> Vec<f32> {
             mesh.color[0], mesh.color[1], mesh.color[2], mesh.roughness, mesh.metal, 0.,
         ]);
         data.extend(mesh.triangles.iter().flatten().flatten().copied());
+        // These offsets are private to the emitted mesh module and its LUT.
+        // The header's inline material keeps the single-primitive path direct.
+        let header = data.len();
+        data[i * 8 + 7] = f32::from_bits(header as u32);
+        let nodes = header + 3;
+        let leaves = nodes + mesh.tree.nodes().len() * 8;
+        let materials = leaves + mesh.tree.leaves().len();
+        data.extend([
+            f32::from_bits(nodes as u32),
+            f32::from_bits(leaves as u32),
+            f32::from_bits(if mesh.materials.len() > 1 { materials as u32 } else { 0 }),
+        ]);
+        for node in mesh.tree.nodes() {
+            data.extend(node.lo);
+            data.extend(node.hi);
+            data.extend([f32::from_bits(node.left_or_first), f32::from_bits(node.count)]);
+        }
+        data.extend(mesh.tree.leaves().iter().map(|leaf| f32::from_bits(leaf.row_id)));
+        if mesh.materials.len() > 1 {
+            data.push(f32::from_bits(mesh.materials.len() as u32));
+            for &(end, f) in &mesh.materials {
+                data.push(f32::from_bits(end as u32));
+                data.extend(f.color);
+                data.extend([f.roughness, f.metal]);
+            }
+        }
     }
     data
 }
@@ -138,6 +167,13 @@ struct Primitive {
     mode: Option<u32>,
     targets: Option<serde_json::Value>,
 }
+#[derive(Clone, Copy)]
+struct Factors {
+    color: Point,
+    roughness: f32,
+    metal: f32,
+}
+
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Material {
@@ -219,48 +255,55 @@ fn load(path: &Path, out: &mut Vec<Mesh>) -> Result<GltfScene, String> {
     };
     let mut scene = GltfScene::default();
     for (i, mesh) in doc.meshes.iter().enumerate() {
-        let [primitive] = mesh.primitives.as_slice() else { return Err("mesh must have one primitive".into()); };
-        if primitive.mode.unwrap_or(4) != 4 || primitive.targets.is_some() {
-            return Err("mesh must use triangles without morph targets".into());
-        }
-        let pos = *primitive.attributes.get("POSITION").ok_or("missing POSITION")?;
-        if doc.accessors.get(pos).is_none_or(|a| a.component_type != 5126) { return Err("POSITION must be float32".into()); }
-        let positions = data(pos, 12, "VEC3")?.map(|x| std::array::from_fn(|i| f32::from_le_bytes(x[i * 4..i * 4 + 4].try_into().unwrap())))
-            .collect::<Vec<Point>>();
-        if !positions.iter().flatten().copied().all(f32::is_finite) { return Err("POSITION includes a nonfinite vertex".into()); }
-        let indices = match primitive.indices {
-            Some(i) => {
-                let n = match doc.accessors.get(i).ok_or("missing index accessor")?.component_type {
-                    5121 => 1, 5123 => 2, 5125 => 4, _ => return Err("index must be unsigned".into()),
-                };
-                data(i, n, "SCALAR")?.map(|x| {
-                    let mut word = [0; 4];
-                    word[..n].copy_from_slice(x);
-                    u32::from_le_bytes(word) as usize
-                }).collect::<Vec<_>>()
+        let mut triangles = Vec::new();
+        let mut factors = Vec::new();
+        for primitive in &mesh.primitives {
+            if primitive.mode.unwrap_or(4) != 4 || primitive.targets.is_some() {
+                return Err("mesh must use triangles without morph targets".into());
             }
-            None => (0..positions.len()).collect(),
-        };
-        if !indices.len().is_multiple_of(3) || indices.iter().any(|&j| j >= positions.len()) {
-            return Err("invalid triangle indices".into());
+            let pos = *primitive.attributes.get("POSITION").ok_or("missing POSITION")?;
+            if doc.accessors.get(pos).is_none_or(|a| a.component_type != 5126) { return Err("POSITION must be float32".into()); }
+            let positions = data(pos, 12, "VEC3")?.map(|x| std::array::from_fn(|i| f32::from_le_bytes(x[i * 4..i * 4 + 4].try_into().unwrap())))
+                .collect::<Vec<Point>>();
+            if !positions.iter().flatten().copied().all(f32::is_finite) { return Err("POSITION includes a nonfinite vertex".into()); }
+            let indices = match primitive.indices {
+                Some(i) => {
+                    let n = match doc.accessors.get(i).ok_or("missing index accessor")?.component_type {
+                        5121 => 1, 5123 => 2, 5125 => 4, _ => return Err("index must be unsigned".into()),
+                    };
+                    data(i, n, "SCALAR")?.map(|x| {
+                        let mut word = [0; 4];
+                        word[..n].copy_from_slice(x);
+                        u32::from_le_bytes(word) as usize
+                    }).collect::<Vec<_>>()
+                }
+                None => (0..positions.len()).collect(),
+            };
+            if !indices.len().is_multiple_of(3) || indices.iter().any(|&j| j >= positions.len()) {
+                return Err("invalid triangle indices".into());
+            }
+            let default = Material::default();
+            let material = primitive.material.map(|id| doc.materials.get(id).ok_or("unknown material")).transpose()?.unwrap_or(&default);
+            let pbr = material.pbr_metallic_roughness.as_ref();
+            if material.normal_texture.is_some() || material.emissive_texture.is_some()
+                || material.emissive_factor.is_some_and(|v| v != [0.; 3])
+                || material.alpha_mode.as_ref().is_some_and(|s| s != "OPAQUE")
+                || pbr.is_some_and(|p| p.base_color_texture.is_some() || p.metallic_roughness_texture.is_some()) {
+                return Err("mesh material requires unsupported textures, emission or blending".into());
+            }
+            let [r, g, b, _] = pbr.and_then(|p| p.base_color_factor).unwrap_or([1.; 4]);
+            let roughness = pbr.and_then(|p| p.roughness_factor).unwrap_or(1.);
+            let metal = pbr.and_then(|p| p.metallic_factor).unwrap_or(1.);
+            if indices.is_empty() {
+                return Err("mesh primitive contains no triangles".into());
+            }
+            triangles.extend(indices.as_chunks::<3>().0.iter().map(|tri| tri.map(|j| positions[j])));
+            factors.push((triangles.len(), Factors { color: [r, g, b], roughness, metal }));
         }
-        let default = Material::default();
-        let material = primitive.material.map(|id| doc.materials.get(id).ok_or("unknown material")).transpose()?.unwrap_or(&default);
-        let pbr = material.pbr_metallic_roughness.as_ref();
-        if material.normal_texture.is_some() || material.emissive_texture.is_some()
-            || material.emissive_factor.is_some_and(|v| v != [0.; 3])
-            || material.alpha_mode.as_ref().is_some_and(|s| s != "OPAQUE")
-            || pbr.is_some_and(|p| p.base_color_texture.is_some() || p.metallic_roughness_texture.is_some()) {
-            return Err("mesh material requires unsupported textures, emission or blending".into());
-        }
-        let [r, g, b, _] = pbr.and_then(|p| p.base_color_factor).unwrap_or([1.; 4]);
-        let roughness = pbr.and_then(|p| p.roughness_factor).unwrap_or(1.);
-        let metal = pbr.and_then(|p| p.metallic_factor).unwrap_or(1.);
-        let triangles = indices.as_chunks::<3>().0.iter().map(|tri| tri.map(|j| positions[j])).collect();
         let asset = MeshAsset(u32::try_from(out.len()).map_err(|_| "too many meshes")?);
         let name = mesh.name.clone().unwrap_or_else(|| i.to_string());
         if scene.meshes.insert(name.clone(), asset).is_some() { return Err(format!("duplicate mesh name {name}")); }
-        out.push(Mesh::new(triangles, [r, g, b], roughness, metal)?);
+        out.push(Mesh::new(triangles, factors)?);
     }
     Ok(scene)
 }
