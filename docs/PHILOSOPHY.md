@@ -94,7 +94,8 @@ Rendering and motion are both "state, laws, and constraints, evaluated somewhere
 
 The consumer is often a model. The shortest correct program wins.
 
-- Write maths as maths (WGSL text with holes), not as nested calls.
+- Write maths as maths (infix, as a shader writer writes it), not as nested calls. The surface is lean and typed by
+  inference; WGSL is what Loft compiles to and the escape hatch for what only the hardware can say.
 - A new name must buy a capability the consumer did not have.
 - Every generated program can be printed and read; errors point at the consumer's own line.
 - The documentation a model reads is generated from the code, so it cannot drift.

@@ -18,7 +18,7 @@ and motion, and example engines written in one language that any person or model
 |---|---|---|---|
 | **0. Runner** (Rust, wgpu; native and WASM) | Device and surface, buffer/texture arenas, async pipeline cache on disk, command-list and RenderBundle executor, indirect draw/dispatch, Tier 0 tape VM host, state store with checkpoints, frame clock and input log | ≤ 1,000 lines | Rarely |
 | **1. Core IR and gates** | Typed SSA graph (hash-consed), kind/row/table manifest, schedule IR, verdicts; the gate suite | ≤ 1,500 lines | Slowly |
-| **2. Compiler passes** (regenerable behind the gates) | Parser (WGSL superset), checker (spaces, units, smoothness), staging, forward AD, intervals and derived Lipschitz, dependency-wave batching, (wave, law) bucketing, kind dedup, cull and indirect args, naga emit, tape emit, CPU twin | ~10k lines, one module per pass | Often |
+| **2. Compiler passes** (regenerable behind the gates) | Parser (`.loft` v1.0, E+), checker (spaces, units, smoothness), staging, forward AD, intervals and derived Lipschitz, dependency-wave batching, (wave, law) bucketing, kind dedup, cull and indirect args, naga emit, tape emit, CPU twin | ~10k lines, one module per pass | Often |
 | **3. Library and example engines** (written in the language) | Analytic and SDF primitives with Lipschitz axioms, noise, BSDF lobes, light estimators, schedules (vis-buffer deferred, forward, path-traced reference, toon and print), motion laws and solvers, body plans | Unbounded | Constantly |
 
 ## 2. The invariants (what the measurements forced)
@@ -43,7 +43,9 @@ lattice and `diff` rule, the derived Lipschitz calculus, three-stage staging wit
 `schedule`, Vis64 plus tile classification, RenderBundle plus one `drawIndirect` per kind, the Tier 0/1 contract.
 
 Decided here:
-- **One surface, `.loft` files.** No TypeScript anywhere in the product. The CLI and the WASM build are Rust.
+- **One surface, `.loft` v1.0 (E+), not a WGSL superset** (decided 20 Nov after a seven-syntax blind test and the
+  research scientist's review: `docs/spec/LOFT_V1_SYNTAX.md`, `docs/handoff/2026-11-20_syntax/`). No TypeScript
+  anywhere in the product. The CLI and the WASM build are Rust.
 - **Units ship first-class but inferred**; literals need suffixes only where a unit is ambiguous.
 - **Tier 0 is edit-time only**, one dirty kind at a time, kind-bucketed; motion and solver laws never run in Tier 0.
 - **Bit-identity is per device**; across devices the contract is the stated tolerances.

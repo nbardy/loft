@@ -16,7 +16,7 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 1. **The picture.** State-of-the-art looks: lighting, materials, motion, camera.
 2. **GPU frame time.** Speed is judged on the GPU: frame time, then pipeline compile and load time. CPU build time is
    a cap (2 s for training under the Rust compiler), not a goal; it gets work only when the cap binds.
-3. **Tokens.** The author writes the least code that says the thing, in a form they already know (maths and WGSL).
+3. **Tokens.** The author writes the least code that says the thing, in the lean `.loft` surface (`docs/spec/LOFT_V1_SYNTAX.md`): infix maths, inferred types, WGSL only as the escape.
 4. **Truth.** Nothing Loft reports may be false: a check, a solve, a verdict or an error. What cannot be decided says
    so by name.
 5. **Lean.** Little code, few types, one path. Every name buys a capability the author did not have.
@@ -53,8 +53,8 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 ### Engine
 
 - **One path, in Rust on wgpu**: build, serve, tools, the wasm viewer and Keel share it, on Metal, Vulkan, DX12 and
-  WebGPU. TypeScript records the author's program into typed arrays and nothing more.
-- **A compact graph**: a graph function is a WGSL function and its uses are calls; a repeat is a loop; instances and
+  WebGPU. The Rust compiler parses `.loft` directly; there is no TypeScript in the product.
+- **A compact graph**: a graph function is one emitted WGSL function and its uses are calls; a repeat is a loop; instances and
   stations are tables; sibling subgraphs that differ only in constants are recorded once with a table of the
   constants. Graph size follows distinct code, not the number of uses.
 - **Few types**: one kernel, one ray template, one medium, one verdict, one error, one format, one identity, one
@@ -67,7 +67,9 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 
 ### Authoring
 
-- **WGSL text with holes** (`wgsl\`...\``) lowered into the same graph, so the CPU twin, checks and `solve` read it.
+- **One lean surface, `.loft` v1.0** (E+, chosen by a blind test and the research scientist): infix maths, inferred
+  types, `build`/`emit` staging, `wgsl(...) -> T { ... }` blocks as the raw escape; a lossless s-expression form of the
+  IR for agents; a `.lark` grammar for constrained decoding.
 - **One escape ladder**: graph function, raw function, `draw.shader`, compute. Each rung can call the ones below it.
 - **Compute at every time**: build, load, frame and steps. Any maths, any algorithm.
 - **Nothing hidden**: `loft show` prints the generated WGSL; errors quote the author's line.
