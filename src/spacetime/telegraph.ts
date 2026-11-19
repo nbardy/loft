@@ -7,13 +7,13 @@
 // throbs faster; at arming the whole shape flashes for one frame; then it fades. Antialiased by the distance's own
 // screen derivative, so it is crisp at any zoom.
 
-import { unported, type Recorded } from "../draw/record.ts";
+import type { RecordContext, Recorded } from "../draw/record.ts";
 import {
   add, cos, div, fract, input, lift, max, min, mix, mul, pow, saturate, step, sub, TAU, time, vec2, vec3, vec4, type Expr,
 } from "../expr.ts";
 import { scopedName } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
-import { drawGlazed, spacing, type Fragment } from "../draw/surface.ts";
+import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
 import { surfaceOf } from "../draw/ground.ts";
 import { coverage, sdTriangleIsosceles, stroke } from "../lib/sdf2.ts";
 import { fwidth } from "../lib/screen.ts";
@@ -114,8 +114,8 @@ class Telegraph implements Drawable {
     return vec4(colour, mul(shown, live));
   }
 
-  record(): Recorded { return unported("telegraph: a glazed surface on the ground, not written yet"); }
-  draws(ctx: CompileContext): Emitted {
+  /** The marker as a glazed surface on the ground (both engines draw this one drawable). */
+  private glazed(ctx: Pick<CompileContext, "ground">): SurfaceDrawable {
     const h = this.attack.hit, height = surfaceOf(ctx.ground, `telegraph "${this.name}"`);
     const surface: Surface = {
       point: (u, v) => { const xz = hitPatch(h, u, v, lift<"f32">(PAD)); return vec3(xz.x, height(xz), xz.y); },
@@ -126,7 +126,10 @@ class Telegraph implements Drawable {
     };
     return drawGlazed(this.name, surface, {
       colour: (fr) => this.colour(fr), grid: { u: spacing.even(GRID.u), v: spacing.even(GRID.v) }, phase: "on-water", sceneDepth: false,
-    }).draws(ctx);
+    });
+  }
+  record(ctx: RecordContext): Recorded { return this.glazed(ctx).record(ctx); }
+  draws(ctx: CompileContext): Emitted { return this.glazed(ctx).draws(ctx);
   }
 }
 

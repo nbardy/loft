@@ -21,7 +21,7 @@ export function sampleJob(): Job {
   const glow = param("sample.glow", 0.5, { min: 0, max: 1 });
   const table: TableSource = { name: "sample_pose", lanes: 1, entries: 4, role: "data", program: mapOf(4, (i) => [vec4(i, mul(time, i), 0, 0.5)]) };
   const paint = role("sample_paint", ["vec3", "vec3", "vec2", "f32"], (p, n, uv, id) => vec4(mul(n, glow), add(length(p), add(id, uv.x))));
-  const hit = role("sample_hit", ["vec3", "vec3", "vec2", "vec2"], (o, d) => vec4(d, sub(dot(o, d), 1)));
+  const hit = role("sample_hit", ["vec3", "vec3", "vec2", "vec2", "f32"], (o, d) => vec4(d, sub(dot(o, d), 1)));
   const place = role("sample_place", ["vec2", "f32"], (uv, id) => vec3(dot(uv, uv), id, length(fetch(table, id, 0))));
   const normal = role("sample_normal", ["vec2", "f32"], (uv) => vec3(0, 1, uv.x));
   const cells = role("sample_cells", ["f32"], (id) => vec2(8, add(2, id)));

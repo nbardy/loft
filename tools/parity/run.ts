@@ -146,12 +146,6 @@ function plan(b: { steps: boolean; cameras: string[] }): Shot[] {
 
 const frameName = (f: Shot) => `${f.camera}@${f.time}@${f.size.join("x")}.png`;
 
-/** One frame of a bundle (`dir/scene.loft`) by `loft-draw still`, lossless. */
-async function draw(dir: string, f: Shot, file: string): Promise<Frame> {
-  const r = await spawn([VIEW, "still", dir, "--view", f.camera, "--time", String(f.time), "--size", f.size.join("x"), "--out", file]);
-  if (r.exit !== 0) return { ...f, kind: "refused", executor: "loft-draw", exit: r.exit, stderr: r.stderr.slice(-2000) };
-  return { ...f, kind: "drawn", executor: "loft-draw", file, sha256: sha(readFileSync(file)) };
-}
 
 /** Lane 4.2: every loft-draw frame of `other` (the macOS R0) against this set's (OUT, another backend) under the
  * cross-executor rule (§2.3). Every entry must also end its build the same way. */
@@ -204,7 +198,8 @@ async function rust(only: string) {
   // The expected set is R0's entry records, whole: an R0 entry the corpus no longer lists fails as `unlisted`.
   const expected = new Map([...new Bun.Glob("entries/*.json").scanSync({ cwd: OUT })].map((f) => JSON.parse(readFileSync(join(OUT, f), "utf8")) as Rec).map((r) => [r.entry.id, r] as const));
   type Scored = Shot & { executor: Executor; result: "pass" | "fail"; reason: string; file?: string; diff?: unknown };
-  type Row = { id: string; r0: string; rust: string; outcome: "same" | "refused-same" | "fail"; build?: string; draws?: number; bytes?: number; ms: number; frames: Scored[] };
+  type Cost = { kind: "measured"; camera: string; frameP50: number; frameP95: number; loadMs: number; modules: number; renderPipelines: number; computePipelines: number } | { kind: "refused"; why: string };
+  type Row = { id: string; r0: string; rust: string; outcome: "same" | "refused-same" | "fail"; build?: string; draws?: number; bytes?: number; ms: number; frames: Scored[]; cost?: Cost };
   const rows: Row[] = [];
   const outcome = (b: Built) => b.kind === "refused" ? `refused:${b.verdict}:${b.head}` : b.kind === "built" ? "built" : `crashed:${b.exit}`;
   const queue = [...list];
@@ -231,6 +226,20 @@ async function rust(only: string) {
         const verdict = KIND[r.exit as keyof typeof KIND], last = r.stderr.trimEnd().split("\n").at(-1) ?? "";
         rust = verdict === undefined ? `crashed:${r.exit}: ${last}` : `refused:${verdict}:${last.replace(/^loft: [^:]+: /, "").replace(/ \(at [^()]+\)$/, "")}`;
       }
+      // Every frame of the entry from one load (`loft-draw still --shot`): the load is most of a frame's cost.
+      const shots = rust === "built" && (draws ?? 0) > 0 ? refs : [];
+      let drawn: { exit: number; stderr: string } = { exit: 0, stderr: "" };
+      if (shots.length > 0) {
+        mkdirSync(join(out, "frames", e.id), { recursive: true });
+        const file = (f: Frame) => join(out, "frames", e.id, frameName(f));
+        const [first, ...more] = shots;
+        drawn = await spawn([VIEW, "still", dir, "--view", first!.camera, "--time", String(first!.time), "--size", first!.size.join("x"), "--out", file(first!),
+          ...more.flatMap((f) => ["--shot", `${f.camera}@${f.time}@${f.size.join("x")}=${file(f)}`])]);
+      }
+      const drawnOf = (ref: Frame): Frame => {
+        const file = join(out, "frames", e.id, frameName(ref));
+        return drawn.exit === 0 && existsSync(file) ? { ...ref, kind: "drawn", executor: "loft-draw", file, sha256: sha(readFileSync(file)) } : { ...ref, kind: "refused", executor: "loft-draw", exit: drawn.exit, stderr: drawn.stderr.slice(-2000) };
+      };
       for (const ref of refs) {
         const key = `${ref.executor} ${frameName(ref)}`;
         if (keys.has(key)) { frames.push(missing(ref, `duplicate R0 key ${key}`)); continue; }
@@ -240,17 +249,30 @@ async function rust(only: string) {
         if (!existsSync(refFile) || sha(readFileSync(refFile)) !== ref.sha256) { frames.push(missing(ref, `R0 reference ${ref.file} is missing or its sha256 moved`)); continue; }
         if (rust !== "built") { frames.push(missing(ref, `not built: ${rust}`)); continue; }
         if (draws === 0) { frames.push(missing(ref, "built with no draws")); continue; }
-        mkdirSync(join(out, "frames", e.id), { recursive: true });
-        const f = await draw(dir, ref, join(out, "frames", e.id, frameName(ref)));
-        if (f.kind !== "drawn") { frames.push(missing(ref, `loft-draw refused (exit ${f.exit}): ${f.stderr.trim().split("\n").at(-1) ?? ""}`)); continue; }
+        const got = drawnOf(ref);
+        if (got.kind !== "drawn") { frames.push(missing(ref, `loft-draw refused (exit ${got.exit}): ${got.stderr.trim().split("\n").at(-1) ?? ""}`)); continue; }
+        const f = got;
         const d = await spawn([DIFF, refFile, f.file, "--rule", ref.executor === "dawn" ? "cross" : "picture"]);
         const diff = d.exit <= 1 ? JSON.parse(d.stdout) : d.stderr.trim();
         frames.push({ ...missing(ref, d.exit === 0 ? "" : d.exit === 1 ? "picture rule" : `parity-diff exit ${d.exit}`), result: d.exit === 0 ? "pass" : "fail", file: f.file, diff });
       }
+      // What the bundle costs (CORE.md: GPU frame time, then load time and the modules and pipelines it builds): one
+      // `loft-draw profile` at 960x540, R0's first camera at t = 1.37 s, 16 frames.
+      let cost: Cost | undefined;
+      const camera = refs[0]?.camera;
+      if (rust === "built" && (draws ?? 0) > 0 && camera !== undefined) {
+        const r = await spawn([VIEW, "profile", dir, "--view", camera, "--time", "1.37", "--size", "960x540", "--frames", "16"]);
+        const last = r.stdout.trimEnd().split("\n").at(-1) ?? "";
+        if (r.exit !== 0 || !last.startsWith("{")) cost = { kind: "refused", why: `loft-draw profile exit ${r.exit}: ${r.stderr.trim().split("\n").at(-1) ?? ""}` };
+        else {
+          const q = (JSON.parse(last) as { profile: { gpu_ms: number[] | null; loads_ms: number[]; modules: number; render_pipelines: number; compute_pipelines: number } }).profile;
+          cost = q.gpu_ms === null ? { kind: "refused", why: "no timestamp queries" } : { kind: "measured", camera, frameP50: q.gpu_ms[1]!, frameP95: q.gpu_ms[2]!, loadMs: q.loads_ms[0]!, modules: q.modules, renderPipelines: q.render_pipelines, computePipelines: q.compute_pipelines };
+        }
+      }
       // An outcome passes when it ends as R0's did: built as built, or the same refusal (verdict and head), or a
       // deliberate change listed in DELIBERATE (its frames are still scored, against R0's Dawn pictures).
       const same = r0 === rust || (DELIBERATE[e.id] !== undefined && rust === "built" && r0.startsWith("refused:"));
-      rows.push({ id: e.id, r0, rust, outcome: same ? (rust === "built" ? "same" : "refused-same") : "fail", build, draws, bytes: size, ms, frames });
+      rows.push({ id: e.id, r0, rust, outcome: same ? (rust === "built" ? "same" : "refused-same") : "fail", build, draws, bytes: size, ms, frames, cost });
       const x = rows.at(-1)!, fp = x.frames.filter((f) => f.result === "pass").length;
       console.log(`${rows.length}/${list.length} ${x.outcome === "fail" ? "DIFF" : "same"} ${e.id}: ${x.rust}${x.outcome === "fail" ? ` (R0 ${x.r0})` : ""}; frames ${fp}/${x.frames.length}`);
     }

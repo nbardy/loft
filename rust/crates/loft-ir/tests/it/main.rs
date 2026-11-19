@@ -507,14 +507,14 @@ fn bundle() -> Bundle {
                 layer: Layer::Subject,
                 cover: Cover::Ray { proxy: Proxy::Box { min: [f(-1.0); 3], max: [f(1.0); 3] }, find: Find::Hit },
                 shade: (0, 1),
-                raster: Raster { cull: true, depth_write: true, blend: Blend::Opaque },
+                raster: Raster { cull: Cull::Back, depth_write: true, blend: Blend::Opaque },
             },
             Draw {
                 name: 1,
                 layer: Layer::Surroundings,
                 cover: Cover::Raster { prim: RasterPrim::Grid { u: 64, v: 32 }, count: 1 },
                 shade: (0, 1),
-                raster: Raster { cull: false, depth_write: false, blend: Blend::Alpha },
+                raster: Raster { cull: Cull::None, depth_write: false, blend: Blend::Alpha },
             },
         ]
         .into(),

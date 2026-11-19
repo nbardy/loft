@@ -8,7 +8,7 @@
 //!   a grid's (u, v), a quad's disc coordinate, the screen's uv, and 0 on a ray hit or a medium sample. For a medium, p
 //!   is a sample, n the sun direction and the result the light scattered there per unit extinction. For `Screen`, p is
 //!   (uv, alpha under) and n the colour under.
-//! - `hit (o: vec3, d: vec3, span: vec2, width: vec2) -> vec4`: (normal, t), t < 0 a miss; the pixel's width at t is
+//! - `hit (o: vec3, d: vec3, span: vec2, width: vec2, id: f32) -> vec4`: (normal, t), t < 0 a miss, for copy `id`; the pixel's width at t is
 //!   `width.x + width.y * t` (TS `Ray.width`).
 //! - grid `place (uv: vec2, id: f32) -> vec3`, `normal (uv: vec2, id: f32) -> vec3` and `cells (id: f32) -> vec2`
 //!   (a copy's cell counts this frame, at most the cover's u × v: its level of detail, the library's choice); quads `place (id: f32) -> vec4` (centre, radius).

@@ -12,7 +12,9 @@
 //! - `scene_depth(px)`, `scene_position(px)`, `scene_clearance(px)` (TS `SCENE_DEPTH_WGSL`, `SCENE_CLEARANCE_WGSL`): the
 //!   opaque scene's resolved depth (r32float, `@group(0) @binding(2)`) and its 8 × 8 tile clearance (r8unorm,
 //!   `@group(0) @binding(3)`), which the sea's contact band reads; and `loft_scene_colour` (`@group(0) @binding(4)`), the
-//!   pass's colour so far, which Screen covers and the ink composer read. The host writes them after the opaque draws.
+//!   pass's colour so far, which Screen covers and the ink composer read, with `post_color(uv)` (TS POST_WGSL's: bilinear,
+//!   clamped, through `loft_scene_sampler` at binding 5) for the styles' post passes. The host writes them after the
+//!   opaque draws, and before a loading pass that opens with a Screen cover (a post pass).
 //!
 //! A raw function that reads any other global is refused by `needs`: `Scene { Global { name, needs } }`, naming the
 //! decl or prelude change that would give it one. A module is never built with a global left out.
@@ -40,6 +42,8 @@ pub fn text(params: u32, inputs: u32) -> String {
          @group(0) @binding(2) var loft_scene_depth: texture_2d<f32>;\n\
          @group(0) @binding(3) var loft_scene_clearance: texture_2d<f32>;\n\
          @group(0) @binding(4) var loft_scene_colour: texture_2d<f32>;\n\
+         @group(0) @binding(5) var loft_scene_sampler: sampler;\n\
+         fn post_color(uv: vec2<f32>) -> vec4<f32> {{ return textureSampleLevel(loft_scene_colour, loft_scene_sampler, uv, 0.0); }}\n\
          fn scene_depth(px: vec2<f32>) -> f32 {{ let size = vec2<i32>(textureDimensions(loft_scene_depth)); \
          return textureLoad(loft_scene_depth, clamp(vec2<i32>(floor(px)), vec2<i32>(0), size - 1), 0).x; }}\n\
          fn scene_position(px: vec2<f32>) -> vec3<f32> {{ let ndc = vec2<f32>(px.x * frame.viewport.z * 2.0 - 1.0, \
@@ -93,6 +97,14 @@ pub fn globals(g: &Graph) -> Result<(), Error> {
             return Err(refuse(g.sym(raw.name)));
         }
         let mut src = base.clone();
+        for d in super::raw_closure(g, r) {
+            for read in g.raws[d as usize].reads.iter() {
+                if let loft_ir::graph::Read::Table(k) = *read {
+                    src.push_str(&super::accessor(g, k, None));
+                    src.push('\n');
+                }
+            }
+        }
         for d in super::raw_closure(g, r) {
             src.push_str(g.sym(g.raws[d as usize].text));
             src.push('\n');

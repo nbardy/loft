@@ -68,6 +68,8 @@ pub fn run(a: Args, f: Flags) -> Result<(), Verdict> {
     let t = frames(&f, &g, &mut loft, &target)?;
 
     println!("adapter {} ({:?}); precision {:?}", g.info.name, g.info.backend, loft.precision());
+    let [modules, render, compute] = loft.built();
+    println!("built {modules} shader modules, {render} render and {compute} compute pipelines");
     println!("loads {}", loads.iter().map(|x| format!("{x:.1}")).collect::<Vec<_>>().join(" ") + " ms");
     let (cpu, gpu_q) = (quantiles(&t.cpu), (!t.gpu.is_empty()).then(|| quantiles(&t.gpu)));
     line(&format!("cpu x{}", f.frames), cpu);
@@ -79,6 +81,7 @@ pub fn run(a: Args, f: Flags) -> Result<(), Verdict> {
     let report = json!({"profile": {
         "bundle": a.dir, "size": a.size, "adapter": g.info.name, "backend": format!("{:?}", g.info.backend),
         "precision": format!("{:?}", loft.precision()), "loads_ms": loads, "frames": f.frames,
+        "modules": modules, "render_pipelines": render, "compute_pipelines": compute,
         "cache": cache.as_ref().map(|(_, read)| json!({"dir": f.cache, "read": read, "saved": saved})),
         "cpu_ms": cpu, "gpu_ms": gpu_q, "quantiles": ["least", "median", "p95", "most"],
     }});

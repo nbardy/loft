@@ -4,7 +4,7 @@ fn trace(px: vec2<f32>, id: u32) -> vec4<f32> {
   let r = ray_at(px);
   let b = proxy(id);
   let s = box_span(r.o, r.d, b[0], b[1]);
-  let h = vec4<f32>(loft_hit(vec3<lf>(r.o), vec3<lf>(r.d), vec2<lf>(s), vec2<lf>(r.w)));
+  let h = vec4<f32>(loft_hit(vec3<lf>(r.o), vec3<lf>(r.d), vec2<lf>(s), vec2<lf>(r.w), lf(f32(id))));
   if (s.x >= s.y || h.w < 0.0) { discard; }
   return h;
 }

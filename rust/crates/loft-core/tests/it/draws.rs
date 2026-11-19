@@ -4,7 +4,7 @@
 use loft_core::draw::{Cover, Draw, Find, Medium, Pass, Prim as P, check, lower};
 use loft_core::emit::{Row, Slots};
 use loft_ir::bundle::Access;
-use loft_ir::bundle::{self as b, Blend, Clear, F32, Layer, Proxy, Raster, Target};
+use loft_ir::bundle::{self as b, Blend, Clear, Cull, F32, Layer, Proxy, Raster, Target};
 use loft_ir::graph::{Graph, GraphFn, Node, Op, Prim, Ty};
 
 #[derive(Default)]
@@ -81,6 +81,8 @@ impl B {
 struct Fns {
     paint: u32,
     hit: u32,
+    grid_normal: u32,
+    grid_cells: u32,
     grid: u32,
     quads: u32,
     density: u32,
@@ -89,7 +91,7 @@ struct Fns {
 }
 
 fn library(b: &mut B) -> Fns {
-    let (p, n, id) = (b.arg(Ty::V3), b.arg(Ty::V3), b.arg(Ty::F32));
+    let (p, n, _uv, id) = (b.arg(Ty::V3), b.arg(Ty::V3), b.arg(Ty::V2), b.arg(Ty::F32));
     let sun = b.lit(&[0.3, 0.8, 0.5], Ty::V3);
     let lam = b.p(Prim::Dot, Ty::F32, &[n, sun]);
     let lam = b.p(Prim::Saturate, Ty::F32, &[lam]);
@@ -100,10 +102,10 @@ fn library(b: &mut B) -> Fns {
     let c = b.p(Prim::Add, Ty::V3, &[c, tint]);
     let mark = b.lit(&[0.49], Ty::F32);
     let rgba = b.node(Op::Vec, Ty::V4, &[c, mark]);
-    let paint = b.func(&[p, n, id], rgba);
+    let paint = b.func(&[p, n, _uv, id], rgba);
 
     // A sphere of radius 1 at (0, 1, 0): (normal, t), t = -1 on a miss.
-    let (o, d, span, w) = (b.arg(Ty::V3), b.arg(Ty::V3), b.arg(Ty::V2), b.arg(Ty::V2));
+    let (o, d, span, w, _copy) = (b.arg(Ty::V3), b.arg(Ty::V3), b.arg(Ty::V2), b.arg(Ty::V2), b.arg(Ty::F32));
     let centre = b.lit(&[0.0, 1.0, 0.0], Ty::V3);
     let oc = b.p(Prim::Sub, Ty::V3, &[o, centre]);
     let bb = b.p(Prim::Dot, Ty::F32, &[oc, d]);
@@ -130,10 +132,10 @@ fn library(b: &mut B) -> Fns {
     let wx = b.node(Op::Swizzle(loft_ir::graph::Sel { len: 1, comps: 0 }), Ty::F32, &[w]);
     let nrm = b.p(Prim::Add, Ty::V3, &[nrm, wx]);
     let out = b.node(Op::Vec, Ty::V4, &[nrm, t]);
-    let hit = b.func(&[o, d, span, w], out);
+    let hit = b.func(&[o, d, span, w, _copy], out);
 
     // The plane y = 0 as the ground's hit.
-    let (o, d, span, w) = (b.arg(Ty::V3), b.arg(Ty::V3), b.arg(Ty::V2), b.arg(Ty::V2));
+    let (o, d, span, w, copy) = (b.arg(Ty::V3), b.arg(Ty::V3), b.arg(Ty::V2), b.arg(Ty::V2), b.arg(Ty::F32));
     let oy = b.node(Op::Swizzle(loft_ir::graph::Sel { len: 1, comps: 1 }), Ty::F32, &[o]);
     let dy = b.node(Op::Swizzle(loft_ir::graph::Sel { len: 1, comps: 1 }), Ty::F32, &[d]);
     let noy = b.p(Prim::Neg, Ty::F32, &[oy]);
@@ -144,7 +146,7 @@ fn library(b: &mut B) -> Fns {
     let t = b.p(Prim::Max, Ty::F32, &[t, sy]);
     let t = b.p(Prim::Add, Ty::F32, &[t, wy]);
     let out = b.node(Op::Vec, Ty::V4, &[up, t]);
-    let ground_hit = b.func(&[o, d, span, w], out);
+    let ground_hit = b.func(&[o, d, span, w, copy], out);
 
     let (uv, id) = (b.arg(Ty::V2), b.arg(Ty::F32));
     let u = b.node(Op::Swizzle(loft_ir::graph::Sel { len: 1, comps: 0 }), Ty::F32, &[uv]);
@@ -155,6 +157,16 @@ fn library(b: &mut B) -> Fns {
     let y = b.p(Prim::Add, Ty::F32, &[wave, id]);
     let pos = b.node(Op::Vec, Ty::V3, &[u, y, v]);
     let grid = b.func(&[uv, id], pos);
+    let (uv2, id2) = (b.arg(Ty::V2), b.arg(Ty::F32));
+    let up = b.lit(&[0.0, 1.0, 0.0], Ty::V3);
+    let up = b.p(Prim::Add, Ty::V3, &[up, id2]);
+    let u2 = b.node(Op::Swizzle(loft_ir::graph::Sel { len: 1, comps: 0 }), Ty::F32, &[uv2]);
+    let up = b.p(Prim::Add, Ty::V3, &[up, u2]);
+    let grid_normal = b.func(&[uv2, id2], up);
+    let id3 = b.arg(Ty::F32);
+    let cells = b.lit(&[32.0, 16.0], Ty::V2);
+    let cells = b.p(Prim::Add, Ty::V2, &[cells, id3]);
+    let grid_cells = b.func(&[id3], cells);
 
     let id = b.arg(Ty::F32);
     let a = b.p(Prim::Mul, Ty::F32, &[id, k]);
@@ -176,7 +188,7 @@ fn library(b: &mut B) -> Fns {
     let wd = b.p(Prim::Abs, Ty::F32, &[wd]);
     let o4 = b.node(Op::Vec, Ty::V4, &[ink, wd]);
     let outline = b.func(&[c, q], o4);
-    Fns { paint, hit, grid, quads, density, outline, ground_hit }
+    Fns { paint, hit, grid, grid_normal, grid_cells, quads, density, outline, ground_hit }
 }
 
 fn f(x: f32) -> F32 {
@@ -186,8 +198,8 @@ fn bx(lo: f32, hi: f32) -> [[F32; 3]; 2] {
     [[f(lo); 3], [f(hi); 3]]
 }
 
-const OPAQUE: Raster = Raster { cull: true, depth_write: true, blend: Blend::Opaque };
-const GLOW: Raster = Raster { cull: false, depth_write: false, blend: Blend::Add };
+const OPAQUE: Raster = Raster { cull: Cull::Back, depth_write: true, blend: Blend::Opaque };
+const GLOW: Raster = Raster { cull: Cull::None, depth_write: false, blend: Blend::Add };
 
 /// One scene with every cover, both media, a shadow pass and a view pass with ground and outline.
 fn scene() -> (B, Vec<Draw>, Vec<Medium>, Vec<Pass>) {
@@ -203,7 +215,7 @@ fn scene() -> (B, Vec<Draw>, Vec<Medium>, Vec<Pass>) {
     let draws = vec![
         draw(ray(ball.clone(), Find::Hit(fns.hit)), OPAQUE),
         draw(ray(Proxy::Instances { res: inst, local: bx(-0.5, 0.5) }, Find::Hit(fns.hit)), OPAQUE),
-        draw(Cover::Raster { prim: P::Grid { u: 32, v: 16, place: fns.grid }, count: 2 }, OPAQUE),
+        draw(Cover::Raster { prim: P::Grid { u: 32, v: 16, place: fns.grid, normal: fns.grid_normal, cells: fns.grid_cells }, count: 2 }, OPAQUE),
         draw(Cover::Raster { prim: P::Mesh { res: mesh }, count: 1 }, OPAQUE),
         draw(ray(Proxy::Box { min: bx(-2.0, 2.0)[0], max: bx(-2.0, 2.0)[1] }, Find::Medium(0)), GLOW),
         draw(ray(Proxy::Box { min: bx(-3.0, 3.0)[0], max: bx(-3.0, 3.0)[1] }, Find::Medium(1)), GLOW),
@@ -236,7 +248,7 @@ fn every_cover_medium_and_composer_validates_both_ways() {
     assert!(matches!(l.media[1].integrate, b::Integrate::Gaussians { res: 5 }));
     assert!(matches!(l.draws[1].cover, b::Cover::Ray { proxy: Proxy::Instances { res: 4, .. }, find: b::Find::Hit }));
     // A Ray cover culls back faces whatever its draw asked (the inward proxy runs each pixel once); others keep theirs.
-    assert!(l.draws[4].raster.cull && l.draws[5].raster.cull && !l.draws[6].raster.cull);
+    assert!(l.draws[4].raster.cull == Cull::Back && l.draws[5].raster.cull == Cull::Back && l.draws[6].raster.cull == Cull::None);
     let veil = |d: usize| l.modules[l.draws[d].shade.0 as usize].lines().find(|t| t.starts_with("fn veil")).unwrap();
     // The specks (no depth write) are veiled by both media of their pass; the opaque sphere and the screen pass are not.
     assert!(veil(6).contains("loft_tr0(") && veil(6).contains("loft_tr1("), "{}", veil(6));

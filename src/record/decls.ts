@@ -3,7 +3,7 @@
 // recorder writes them (`Recorder.job`'s `scene`); loft-ir decodes each into its own array of `Graph`.
 //
 // A draw's roles are graph functions recorded once over binders (`role`), with loft-core `draw`'s signatures:
-//   paint (p: vec3, n: vec3, uv: vec2, id: f32) -> vec4   hit (o: vec3, d: vec3, span: vec2, width: vec2) -> vec4 (normal, t)
+//   paint (p: vec3, n: vec3, uv: vec2, id: f32) -> vec4   hit (o: vec3, d: vec3, span: vec2, width: vec2, id: f32) -> vec4 (normal, t)
 //   grid place and normal (uv: vec2, id: f32) -> vec3     quads place (id: f32) -> vec4 (centre, radius)
 //   grid cells (id: f32) -> vec2: a copy's cell counts this frame (its level of detail; 0 hides it)
 //   density (p: vec3) -> f32                        outline (colour: vec3, q: vec3) -> vec4 (ink, width)

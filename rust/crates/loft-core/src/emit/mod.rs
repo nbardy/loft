@@ -106,6 +106,18 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots, stage: Stage) -> R
     let mut put = |t: String| lines.push((t, Src::Gen(None)));
     prelude::text(params, inputs).lines().for_each(|l| put(l.into()));
     packs(at, stage).lines().for_each(|l| put(l.into()));
+    // A table a raw function reads by its accessor (TS `ctx.table(t).wgsl`): `t_<name>(i)`, vec4 i of its rows.
+    let mut tables: Vec<u32> = vec![];
+    for &(_, r) in &e.raw_used {
+        for read in g.raws[r as usize].reads.iter() {
+            if let loft_ir::graph::Read::Table(k) = *read
+                && !tables.contains(&k)
+            {
+                tables.push(k);
+                put(accessor(g, k, Some(at.kernels[k as usize])));
+            }
+        }
+    }
     for &(n, r) in &e.raw_used {
         lines.extend(
             g.sym(g.raws[r as usize].text).lines().enumerate().map(|(k, t)| (t.to_string(), Src::Raw(n, k as u32))),
@@ -117,6 +129,25 @@ pub fn module(g: &Graph, exports: &[(&str, u32)], at: &Slots, stage: Stage) -> R
     lines.extend(tail.into_iter().map(|t| (t, Src::Gen(None))));
     let text = lines.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>().join("\n");
     Ok(Emitted { text, lines: lines.into_iter().map(|(_, s)| s).collect() })
+}
+
+/// Table `k`'s accessor `fn t_<name>(i: u32) -> vec4<f32>` over its rows in their pack, clamped; with no slots (the
+/// globals check, before layout), a stand-in of the same signature.
+pub(crate) fn accessor(g: &Graph, k: u32, row: Option<Row>) -> String {
+    let name = match &g.kernels[k as usize] {
+        loft_ir::graph::Kernel::Table { name, .. } => g.sym(*name).to_string(),
+        loft_ir::graph::Kernel::Rows { label, .. } => g.sym(*label).to_string(),
+        loft_ir::graph::Kernel::Compute(c) => g.sym(c.name).to_string(),
+    };
+    match row {
+        Some(r) => format!(
+            "fn t_{name}(i: u32) -> vec4<f32> {{ return loft_pack{}[{}u + min(i, {}u)]; }}",
+            r.pack,
+            r.offset,
+            (u64::from(r.rows) * u64::from(r.lanes)).max(1) - 1
+        ),
+        None => format!("fn t_{name}(i: u32) -> vec4<f32> {{ return vec4<f32>(f32(i)); }}"),
+    }
 }
 
 /// Naga at emit, as f32: each raw function alone (so a typo in one nothing calls is refused at the author's line too),

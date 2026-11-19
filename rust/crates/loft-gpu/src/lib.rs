@@ -360,7 +360,7 @@ const NO_CAMERA: Camera = Camera {
 
 /// Group 0's entries (emit's prelude, `loft_ir::frame`): the frame (dynamic offset, so step frames share one buffer),
 /// `loft_detail`, and the opaque scene's depth, clearance and colour textures.
-fn group0_layout() -> [wgpu::BindGroupLayoutEntry; 5] {
+fn group0_layout() -> [wgpu::BindGroupLayoutEntry; 6] {
     let buffer = |dynamic: bool| wgpu::BindingType::Buffer {
         ty: wgpu::BufferBindingType::Uniform,
         has_dynamic_offset: dynamic,
@@ -377,7 +377,22 @@ fn group0_layout() -> [wgpu::BindGroupLayoutEntry; 5] {
         wgpu::BindGroupLayoutEntry { binding: 1, visibility, ty: buffer(false), count: None },
         wgpu::BindGroupLayoutEntry { binding: 2, visibility, ty: texture, count: None },
         wgpu::BindGroupLayoutEntry { binding: 3, visibility, ty: texture, count: None },
-        wgpu::BindGroupLayoutEntry { binding: 4, visibility, ty: texture, count: None },
+        wgpu::BindGroupLayoutEntry {
+            binding: 4,
+            visibility,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            count: None,
+        },
+        wgpu::BindGroupLayoutEntry {
+            binding: 5,
+            visibility,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        },
     ]
 }
 
@@ -386,7 +401,8 @@ fn group0<'a>(
     frame_size: u64,
     detail: &'a Buffer,
     scene: &'a view::Scene,
-) -> [wgpu::BindGroupEntry<'a>; 5] {
+) -> [wgpu::BindGroupEntry<'a>; 6] {
+    let sampler = &scene.sampler;
     let scene = &scene.views;
     [
         wgpu::BindGroupEntry {
@@ -401,6 +417,7 @@ fn group0<'a>(
         wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&scene[0]) },
         wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&scene[1]) },
         wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&scene[2]) },
+        wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(sampler) },
     ]
 }
 
@@ -702,13 +719,18 @@ impl Loft {
         }
         let lenses: Vec<_> = b.cameras.iter().map(|c| (&modules[c.lens.0 as usize], name(c.lens.1))).collect();
         let cameras = view::Cameras::new(device, &bgl0, &bgl1.render, &lenses, cache);
-        // view.rs's rule: a colour pass resolves the scene before its first item that writes no depth after one that did.
+        // view.rs's rule: a colour pass resolves the scene before its first item that writes no depth after one that did;
+        // a pass that loads the view and opens with a Screen cover (a style's post pass) resolves before it, so it
+        // reads the picture so far.
         let resolve_at = b
             .passes
             .iter()
             .zip(&pass_items)
             .map(|(pass, its)| match pass.target {
                 Target::View => {
+                    if matches!(pass.clear, Clear::Load) && its.first().is_some_and(|&it| items[it].screen) {
+                        return Some(0);
+                    }
                     let first = its.iter().position(|&it| items[it].raster.depth_write)?;
                     its.iter().skip(first).position(|&it| !items[it].raster.depth_write).map(|k| first + k)
                 }
@@ -1022,6 +1044,12 @@ impl Loft {
     }
 
     // ---- the view ----------------------------------------------------------------------------------------------
+
+    /// What loading built: shader modules, render pipelines and compute pipelines (the camera builder's included). Load
+    /// time grows with these (CORE.md: score them beside frame time).
+    pub fn built(&self) -> [usize; 3] {
+        [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()]
+    }
 
     pub fn precision(&self) -> Precision {
         self.precision

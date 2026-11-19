@@ -3,6 +3,8 @@
 //!   loft-draw still <bundle> --view game --time 1.0 --size 1280x800 [--out f.png] [--input name=v[,v...]] [--param name=v]
 //!
 //! `--view` names one of the bundle's cameras, evaluated on the GPU at the frame's time. The bundle draws as f32.
+//! `--shot VIEW@TIME@WxH=FILE` (repeatable) draws more frames after the first from the same load: a parity run draws
+//! every frame of a scene with one load, which is most of a frame's cost when a bundle builds hundreds of pipelines.
 
 use crate::profile::Flags;
 use crate::{Target, Verdict, gpu, load, read_bundle};
@@ -19,6 +21,7 @@ pub struct Args {
     out: Option<PathBuf>,
     inputs: Vec<(String, Vec<f32>)>,
     params: Vec<(String, f32)>,
+    shots: Vec<(String, f64, (u32, u32), PathBuf)>,
 }
 
 const PROFILE: &str = "--frames, --loads, --pipeline-cache and --budget-ms are flags of `profile`";
@@ -38,7 +41,7 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
     let dir =
         it.next().map(PathBuf::from).unwrap_or_else(|| usage("expected a bundle (scene.loft or its directory)".into()));
     let mut a =
-        Args { dir, view: "game".into(), time: 1.0, size: (1280, 800), out: None, inputs: vec![], params: vec![] };
+        Args { dir, view: "game".into(), time: 1.0, size: (1280, 800), out: None, inputs: vec![], params: vec![], shots: vec![] };
     let num = |s: &str, flag: &str| s.parse::<f64>().unwrap_or_else(|_| usage(format!("{flag}: not a number: {s}")));
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| usage(format!("{flag} needs a value")));
@@ -53,6 +56,16 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
                 a.size = (num(w, "--size") as u32, num(h, "--size") as u32);
             }
             "--out" => a.out = Some(value().into()),
+            "--shot" if !profile => {
+                let v = value();
+                let bad = || -> ! { usage(format!("--shot: expected VIEW@TIME@WxH=FILE, got {v}")) };
+                let (what, file) = v.split_once('=').unwrap_or_else(|| bad());
+                let mut parts = what.splitn(3, '@');
+                let (view, time, size) = (parts.next(), parts.next(), parts.next());
+                let (Some(view), Some(time), Some(size)) = (view, time, size) else { bad() };
+                let (w, h) = size.split_once('x').unwrap_or_else(|| bad());
+                a.shots.push((view.into(), num(time, "--shot"), (num(w, "--shot") as u32, num(h, "--shot") as u32), file.into()));
+            }
             "--input" | "--param" => {
                 let v = value();
                 let (name, vals) =
@@ -89,24 +102,31 @@ pub fn aim(a: &Args, loft: &mut Loft) -> Result<(), Verdict> {
     Ok(())
 }
 
-pub fn run(a: Args) -> Result<(), Verdict> {
+pub fn run(mut a: Args) -> Result<(), Verdict> {
     let g = gpu(true)?;
     eprintln!("adapter {} ({:?}); timestamp queries {}", g.info.name, g.info.backend, g.timing);
     let t = Instant::now();
     let mut loft = load(&g, &read_bundle(&a.dir)?, Precision::F32, None)?;
     eprintln!("load {:.3} ms, precision {:?}", t.elapsed().as_secs_f64() * 1e3, loft.precision());
-    aim(&a, &mut loft)?;
-    let target = Target::new(&g.device, a.size);
-    let rgba = target.picture(&g, &mut loft)?;
-    eprintln!("frame: {} draws in {} passes", loft.bundle().draws.len(), loft.bundle().passes.len());
-    if let Some(out) = &a.out {
-        let fail = |e: &dyn std::fmt::Display| Verdict::Environment(format!("{}: {e}", out.display()));
-        let file = std::fs::File::create(out).map_err(|e| fail(&e))?;
-        let mut png = png::Encoder::new(std::io::BufWriter::new(file), a.size.0, a.size.1);
-        png.set_filter(png::Filter::NoFilter); // tools/picdiff.ts reads unfiltered rows only
-        png.set_color(png::ColorType::Rgba);
-        png.set_depth(png::BitDepth::Eight);
-        png.write_header().and_then(|mut w| w.write_image_data(&rgba)).map_err(|e| fail(&e))?;
+    let shots = std::mem::take(&mut a.shots);
+    let first = (a.view.clone(), a.time, a.size, a.out.clone());
+    for (k, (view, time, size, out)) in std::iter::once(first).chain(shots.into_iter().map(|(v, t, s, o)| (v, t, s, Some(o)))).enumerate() {
+        (a.view, a.time, a.size) = (view, time, size);
+        aim(&a, &mut loft)?;
+        let target = Target::new(&g.device, a.size);
+        let rgba = target.picture(&g, &mut loft)?;
+        if k == 0 {
+            eprintln!("frame: {} draws in {} passes", loft.bundle().draws.len(), loft.bundle().passes.len());
+        }
+        if let Some(out) = &out {
+            let fail = |e: &dyn std::fmt::Display| Verdict::Environment(format!("{}: {e}", out.display()));
+            let file = std::fs::File::create(out).map_err(|e| fail(&e))?;
+            let mut png = png::Encoder::new(std::io::BufWriter::new(file), a.size.0, a.size.1);
+            png.set_filter(png::Filter::NoFilter); // tools/picdiff.ts reads unfiltered rows only
+            png.set_color(png::ColorType::Rgba);
+            png.set_depth(png::BitDepth::Eight);
+            png.write_header().and_then(|mut w| w.write_image_data(&rgba)).map_err(|e| fail(&e))?;
+        }
     }
     Ok(())
 }

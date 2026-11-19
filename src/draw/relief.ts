@@ -10,14 +10,15 @@
 // relief below a pixel is not marched at all: the plain surface at the pixel's height, with the paint's shading.
 
 import { f, variable, vec2, vec3 } from "../expr.ts";
-import { unported, type Recorded } from "./record.ts";
+import type { RecordContext, Recorded } from "./record.ts";
+import { drawSurface } from "./surface.ts";
 import { readsBody } from "../style.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
 import { drawSpec, type Form, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import type { Folded } from "../lib/fold.ts";
-import type { F, P3, Painted, Skeleton, Surface, Warp } from "../map/types.ts";
+import type { F, P3, Paint, Painted, Skeleton, Surface, Warp } from "../map/types.ts";
 import { displace, shellFrame, type ShellFrame } from "../relief/displace.ts";
 import type { Height } from "../relief/height.ts";
 import { traceMarch, tracePlain, type Traced } from "../relief/trace.ts";
@@ -85,6 +86,9 @@ export class ReliefDrawable implements Drawable {
   readonly forms: readonly Form[];
   /** The height as a function of (u, v), through the fold. */
   readonly heightOf: Height;
+  /** The surface displaced by the height, and its paint: what the baker and the Rust path read. */
+  private readonly displaced: Surface;
+  private readonly displacedPaint: Paint;
 
   constructor(readonly name: string, readonly surface: Surface, readonly o: ReliefOptions) {
     if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(name)) throw new Error(`draw.relief "${name}": names must be identifiers (they name shaders)`);
@@ -98,10 +102,24 @@ export class ReliefDrawable implements Drawable {
     this.skeletons = [surface.skeleton];
     // The baker gets the relief as displacement of the surface: the same height, sampled on the grid.
     const heightOf = this.heightOf;
-    this.forms = [{ kind: "surface", name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
+    this.displaced = displace(surface, heightOf);
+    this.displacedPaint = (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) });
+    this.forms = [{ kind: "surface", name, surface: this.displaced, paint: this.displacedPaint, grid: o.grid, sides: "one", copy: 0 }];
   }
 
-  record(): Recorded { return unported("relief: the shell march hit role, not written yet"); }
+  /**
+   * The relief as the baker reads it, its surface displaced by the height (`forms`), drawn as a lit grid at the relief's
+   * grid counts: not TS's shell march, so the picture differs where the height has detail finer than a cell.
+   */
+  record(ctx: RecordContext): Recorded {
+    const outline = ((): "none" | "hull" => {
+      switch (this.o.outline) {
+        case "none": return "none";
+        case "ink": return "hull";
+      }
+    })();
+    return drawSurface(this.name, this.displaced, { paint: this.displacedPaint, grid: this.o.grid, sides: "one", outline }).record(ctx);
+  }
   draws(ctx: CompileContext): Emitted {
     const n = this.name, key = `relief.${n}`;
     const NU = this.o.grid.u.count, NV = this.o.grid.v.count;

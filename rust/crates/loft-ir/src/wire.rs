@@ -1112,7 +1112,7 @@ fn top_layout(g: &Graph, top: Top) -> Result<(), ()> {
     let is = |x: u32, t: Ty| (ty(x) == t).then_some(()).ok_or(());
     let kernel = |k: u32| ((k as usize) < g.kernels.len()).then_some(()).ok_or(());
     let paint = |f: u32| sig(g, f, &[V3, V3, V2, F32], V4);
-    let hit = |f: u32| sig(g, f, &[V3, V3, V2, V2], V4);
+    let hit = |f: u32| sig(g, f, &[V3, V3, V2, V2, F32], V4);
     match top {
         Top::Draw(k) => {
             let d = &g.draws[k];

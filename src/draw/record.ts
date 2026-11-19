@@ -5,8 +5,9 @@
 // the template's point, normal and (u, v), as the TS fragment stages evaluate it. What a thing cannot record yet is a
 // named `unported` answer the build prints, never a silent gap.
 
+import { lib, type LibFn } from "../expr.ts";
 import { abs, add, and, distance, div, fract, gt, le, length, lift, lt, max, mul, or, select, sub, vec2, vec3, vec4, type Expr } from "../expr.ts";
-import type { CompileContext, Phase } from "../compile/context.ts";
+import type { CompileContext, Phase, PostSpec } from "../compile/context.ts";
 import { PHASES } from "../compile/context.ts";
 import { CELL_PIXELS, type Artefact, type Camera as SceneCamera, type Detail } from "../artefact.ts";
 import type { Scene } from "../scene.ts";
@@ -16,7 +17,12 @@ import { eyePosition, pixelWorld, viewDir } from "../lib/screen.ts";
 import { wgsl } from "../text/index.ts";
 import { levelOf } from "./ground.ts";
 import { role, type Camera, type Draw, type Pass, type Role, type Scene as Decls } from "../record/decls.ts";
-import type { F, P3 } from "../map/types.ts";
+import type { F, P3, Painted } from "../map/types.ts";
+import type { Ray, Traced } from "./traced.ts";
+import type { Cover } from "../record/decls.ts";
+import { classify, answered } from "./painted.ts";
+import { nameId } from "./surface.ts";
+import { mapOf, type TableSource } from "../expr.ts";
 
 /**
  * What a thing is told when it records: the scene's style, ground, sun, lights, things and outline method, and `rest`,
@@ -114,6 +120,40 @@ export function skyOf(ctx: RecordContext, dir: Expr<"vec3">): Expr<"vec3"> {
 export const paintRole = (name: string, f: (p: P3, n: P3, uv: Expr<"vec2">, id: F) => Expr<"vec4">): Role =>
   role(`${name}_paint`, ["vec3", "vec3", "vec2", "f32"], f);
 
+/** A ray-found solid's per-copy box, as an instance table row: (centre, half of the largest side), proxy local ±1. */
+export type RayBound = { readonly kind: "box"; readonly box: { readonly min: readonly [number, number, number]; readonly max: readonly [number, number, number] } } | { readonly kind: "copies"; readonly count: number; readonly box: (copy: F) => { readonly centre: P3; readonly half: P3 } };
+
+/**
+ * A solid found by a ray (draw.field's march, draw.traced's own hit): a Ray cover over its bound, the hit role building
+ * TS's `Ray` from the template's span and width (a hit where the gap is under 0.3 of the ray's width there, TS
+ * traced.ts's HIT), and the style's shade at the hit as paint (TS `trace_shade`: no surface coordinates, the anchor the
+ * point). TS's inner-silhouette ink (a near miss within the ink width) is not drawn.
+ */
+export function rayDraw(ctx: RecordContext, name: string, bound: RayBound, hit: (ray: Ray, copy: F) => Traced, paint: (p: P3, n: P3, d: P3, copy: F) => P3 | Painted): Recorded {
+  const hitRole = role(`${name}_hit`, ["vec3", "vec3", "vec2", "vec2", "f32"], (o, d, span, width, copy) => {
+    const ray: Ray = { o, d, t0: span.x, t1: span.y, width: (t) => add(width.x, mul(width.y, t)) };
+    const h = hit(ray, copy);
+    return vec4(h.normal, select(le(h.gap, mul(ray.width(h.t), 0.3)), h.t, -1));
+  });
+  const id = nameId(name);
+  const paintR = paintRole(name, (p, n, _uv, copy) => {
+    const said = classify(name, paint(p, n, viewDir(p), copy));
+    const sc = litContext(ctx, { base: said.base, normal: n, world: p, uv: vec2(0, 0), anchor: p, id: copyId(id, copy) }, { thing: name, ...said.said });
+    return vec4(answered(said.answer, sc, ctx.style.block === undefined ? ctx.style.shade(sc) : ctx.style.block.body(sc)), ctx.style.mark(sc));
+  });
+  const proxy = ((): Extract<Cover, { kind: "ray" }>["proxy"] => {
+    switch (bound.kind) {
+      case "box": return { kind: "box", min: bound.box.min, max: bound.box.max };
+      case "copies": {
+        const table: TableSource = { name: `${name}_boxes`, lanes: 1, entries: bound.count, role: "data", program: mapOf(bound.count, (i) => { const b = bound.box(i); return [vec4(b.centre, max(abs(b.half.x), max(abs(b.half.y), abs(b.half.z))))]; }) };
+        return { kind: "instances", table, local: [[-1, -1, -1], [1, 1, 1]] };
+      }
+    }
+  })();
+  const draw: Draw = { name, layer: "subject", raster: { cull: "back", depthWrite: true, blend: "opaque" }, paint: paintR, cover: { kind: "ray", proxy, find: { kind: "hit", hit: hitRole } } };
+  return { kind: "draws", draws: [{ phase: "opaque", draw }] };
+}
+
 /** The sky: a full-screen draw behind everything (TS sky.ts). Below the horizon off the sea the ray is levelled. */
 export function skyDraw(ctx: RecordContext): Staged {
   const paint = paintRole("sky", (_p, _n, uv) => {
@@ -132,7 +172,7 @@ const normalizeOf = (v: Expr<"vec3">): Expr<"vec3"> => mul(v, lift<"f32">(1).div
 
 /** A plane ground (TS ground.ts): the ray meets y = 0 in closed form, coloured by the style's `ground`. */
 function planeGround(ctx: RecordContext): Pass["ground"] {
-  const hit = role("ground_hit", ["vec3", "vec3", "vec2", "vec2"], (o, d) => {
+  const hit = role("ground_hit", ["vec3", "vec3", "vec2", "vec2", "f32"], (o, d) => {
     const t = mul(o.y, -1).div(d.y);
     return vec4(0, 1, 0, select(gt(t, 0), t, -1));
   });
@@ -163,6 +203,26 @@ function cameraOf(name: string, c: SceneCamera): Camera {
   }
 }
 
+/**
+ * A style's post pass (TS POST_WGSL): its fragment text as a raw function of the screen uv, drawn as a Screen cover in a
+ * pass of its own that loads the view (the host resolves the picture so far before it; the prelude's `post_color`
+ * samples it). A text that reads the TS scene's style functions (`sea_height`) cannot be lowered so.
+ */
+function postPass(p: PostSpec, k: number, camera: Camera): { readonly kind: "pass"; readonly pass: Pass } | { readonly kind: "unported"; readonly what: string } {
+  const head = /@fragment\s+fn\s+fs\s*\(\s*in\s*:\s*PostIn\s*\)\s*->\s*@location\(0\)\s*vec4<f32>/;
+  if (!head.test(p.wgsl)) return { kind: "unported", what: "its text has no `@fragment fn fs(in: PostIn) -> @location(0) vec4<f32>`" };
+  const reads = ["sea_height", "sea_gradient", "shade(", "ink(", "sky("].filter((n) => p.wgsl.includes(n));
+  if (reads.length > 0) return { kind: "unported", what: `it reads the TS scene's style functions (${reads.join(", ")})` };
+  const name = `post${k}`;
+  const fn: LibFn = {
+    name: `${name}_at`, ret: "vec4", js: "gpu-only",
+    wgsl: `struct PostIn { px: vec4<f32>, uv: vec2<f32> };\n${p.wgsl.replace(head, `fn ${name}(in: PostIn) -> vec4<f32>`)}\nfn ${name}_at(uv: vec2<f32>) -> vec4<f32> { return ${name}(PostIn(vec4<f32>(uv * frame.viewport.xy, 0.0, 1.0), uv)); }`,
+  };
+  const paint = paintRole(name, (_p, _n, uv) => lib<"vec4">(fn, uv));
+  const draw: Draw = { name, layer: "surroundings", raster: { cull: "none", depthWrite: false, blend: "opaque" }, paint, cover: { kind: "screen" } };
+  return { kind: "pass", pass: { camera, draws: [draw], clear: { kind: "load" }, ground: { kind: "none" }, outline: { kind: "none" } } };
+}
+
 /** The style's clear colour, as the TS host clears the view. */
 const clearOf = (style: Style): readonly [number, number, number, number] => [...style.clear, 1];
 
@@ -181,7 +241,13 @@ export function sceneDecls(scene: Scene, artefact: Pick<Artefact, "draws">): { r
       case "unported": unportedList.push(`${t.name}: ${r.what}`); break;
     }
   }
-  for (const p of scene.style.post) unportedList.push(`style ${scene.style.name} post pass "${p.label}": a Screen cover reading the picture so far (the host resolves the scene colour only once per pass)`);
+  const posts = scene.style.post.flatMap((p, k): Pass[] => {
+    const r = postPass(p, k, view);
+    switch (r.kind) {
+      case "pass": return [r.pass];
+      case "unported": unportedList.push(`style ${scene.style.name} post pass "${p.label}": ${r.what}`); return [];
+    }
+  });
   const ordered = PHASES.flatMap((ph) => staged.filter((s) => s.phase === ph).map((s) => s.draw));
   const background = ordered.filter((d) => staged.find((s) => s.draw === d)!.phase === "background");
   const rest = ordered.filter((d) => !background.includes(d));
@@ -196,6 +262,7 @@ export function sceneDecls(scene: Scene, artefact: Pick<Artefact, "draws">): { r
   const passes: Pass[] = [
     { camera: view, draws: background, clear: { kind: "colour", rgba: clearOf(scene.style) }, ground: { kind: "none" }, outline: { kind: "none" } },
     { camera: view, draws: rest, clear: { kind: "load" }, ground, outline: { kind: "none" } },
+    ...posts,
   ];
   return { scene: { cameras, passes, checks: [], solves: [] }, unported: unportedList };
 }

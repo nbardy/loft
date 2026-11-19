@@ -30,7 +30,7 @@ mkdirSync(JOBS, { recursive: true });
     { label: "early", how: { kind: "prove" as const, boxes: 20000 }, body: { kind: "always" as const, leaves: [range(time, 0, 2)], body: atom(E.sub(1, time)) } },
     { label: "fast", how: { kind: "prove" as const, boxes: 20000 }, body: { kind: "eventually" as const, leaves: [range(speed, 0, 4)], body: atom(E.sub(speed, 3.5)) } },
   ];
-  writeFileSync(`${JOBS}/checks.check.job`, pack(rec.job(Program.Check, [], { passes: [], checks, solves: [] })));
+  writeFileSync(`${JOBS}/checks.check.job`, pack(rec.job(Program.Check, [], { cameras: [], passes: [], checks, solves: [] })));
 }
 
 function decl(name: string, spec: SolveSpec<string>): SolveDecl {
@@ -73,7 +73,7 @@ const cases: { name: string; spec: SolveSpec<string> }[] = [
 let probe: Probe | undefined;
 const out = cases.map(({ name, spec }) => {
   for (const [program, ext] of [[Program.Solve, "solve"], [Program.Check, "check"]] as const)
-    writeFileSync(`${JOBS}/${name.replace(/ /g, "_")}.${ext}.job`, pack(rec.job(program, [], { passes: [], checks: [], solves: [decl(name, spec)] })));
+    writeFileSync(`${JOBS}/${name.replace(/ /g, "_")}.${ext}.job`, pack(rec.job(program, [], { cameras: [], passes: [], checks: [], solves: [decl(name, spec)] })));
   const g = graph(name);
   g.slot("time", 0);
   const keys = Object.keys(spec.vary).sort();

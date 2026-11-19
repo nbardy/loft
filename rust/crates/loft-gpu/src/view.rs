@@ -163,6 +163,8 @@ pub struct Scene {
     pub depth: wgpu::Texture,
     pub colour: wgpu::Texture,
     pub views: [wgpu::TextureView; 3],
+    /// Bilinear, clamped: `post_color(uv)` (TS POST_WGSL's sampler).
+    pub sampler: wgpu::Sampler,
 }
 
 impl Scene {
@@ -199,7 +201,13 @@ impl Scene {
         fill(&colour, &vec![0; texel]);
         fill(&clearance, &[0]);
         let views = [&depth, &clearance, &colour].map(|t| t.create_view(&Default::default()));
-        Scene { depth, colour, views }
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("loft scene"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        Scene { depth, colour, views, sampler }
     }
 
     pub fn fits(&self, size: [u32; 2], colour: TextureFormat) -> bool {
