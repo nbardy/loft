@@ -1,3 +1,5 @@
+Base (lead ruling, overrides 'wait for m23'): do not wait for Phases 2+3 to reach main. Start from branch loft/int23-fix (commit d4b7646), merging origin/main into it first. The m23 Speed miss (6/12, against 12/12 at ri23 on the same code) is the timing-measurement instability that d1.md's frame-time class addresses. That is exactly what d1b fixes, so it cannot gate the lanes.
+
 # d1c · Authored edit to first usable frame
 
 You are Loft's Sol implementation engineer for d1c. Repo ~/git/loft. Read CORE.md, docs/PHILOSOPHY.md, docs/spec/README.md (07 > PATCH_V1_2 > 06 > 00–05), the Tier 0 lowering contract in 02, 06 §13, agent_notes/2026-11-20_v1/design/d1.md §3 and agent_notes/2026-11-20_v1/reviews/i23.md. Read the primary checkout's out/meta/i23-r2/{BLOCKED,gate.json,edit.log,run.sh} and probes/edit-{old,new}.loft.
