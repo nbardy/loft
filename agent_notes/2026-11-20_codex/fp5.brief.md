@@ -13,4 +13,6 @@ Process:
 - **Commits.** Commit and push after each milestone. Stage by path. End commit messages with "Co-Authored-By: GPT (codex) <noreply@openai.com>".
 - **Merging.** When the gates pass, merge into main and push. Append an "Outcome" section to the review file: each finding fixed or declined, and the merged sha.
 
+Builds: write all of your code first, and do not run rustc or cargo after each edit. Compile and run the tests once at the end, through tools/dev.sh (the shared compile lock). Fix what that run reports, and rerun at most twice.
+
 Final message (≤120 words): what you fixed, the gate results, and the merged sha.
