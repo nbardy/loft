@@ -29,3 +29,7 @@ Caching reduced the bake to **6.80 ms** and left all 22 lift ticks and plant mea
 ## Phase 2 predictions before the run
 
 A pin is a point in deck coordinates. Present its joint frames through a rigid deck transform, then transform the observed distal site back into the deck frame for the signed margin. A deck translating 0.5 m/s for 120 ticks should move every planted site 0.500 ± 0.001 m in world coordinates while its deck-frame residual stays below 0.1 mm. For four pads at (±0.30, ±0.20) and pressure point (0.15, 0), linear load constraints have extrema on simplices of at most three pads. Enumerating those simplices should give [0.25, 0.50] on the positive-x positive-z pad, with least-norm share 0.375.
+
+The extra fractional join instrument presents the largest representable f32 time below each tick and the tick itself. Extrapolating the previous acceleration and aim missed by 0.206 mm at the root and 8.150 mm at a distal site. The selected tick owns a span. Use its saved start velocity, selected acceleration and two attitude endpoints. Retain the prior aim while a swing retargets and its prior phase for the last partial tick. Expect less than 0.01 mm at all 480 joins without changing any lift decision.
+
+Measured at all 480 joins, the new span reduced the left-limit differences to 0.00054 mm at the root and 0.0061 mm at the distal sites. The integer decisions still give 22 releases. The test uses the preceding representable f32 timestamp, with multiplication in f64 to distinguish it from the exact tick.

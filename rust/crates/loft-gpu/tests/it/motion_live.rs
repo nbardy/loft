@@ -87,6 +87,17 @@ impl Run {
         let states = self.bytes(&states);
         fs::write(self.dir.join(format!("{name}.state")), &states).unwrap();
         fs::write(self.dir.join(format!("{name}.pose")), self.bytes(&poses)).unwrap();
+        if name == "one" {
+            let mut e = self.d.create_command_encoder(&Default::default());
+            for k in 1..=TICKS {
+                // One representable second just to the left of the next tick.
+                l.set_time(f32::from_bits((k as f32 / 120.).to_bits() - 1));
+                l.advance_rows(&mut e);
+                l.copy_rows(&mut e, output, &poses, u64::from(k) * 928).unwrap();
+            }
+            self.q.submit([e.finish()]);
+            fs::write(self.dir.join("left.pose"), self.bytes(&poses)).unwrap();
+        }
         states
     }
     fn replay(&self, group: u32, alternate: bool, baked: &[u8]) -> (Vec<u8>, loft_ir::identity::FrameKey, Vec<u8>) {

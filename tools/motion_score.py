@@ -33,13 +33,13 @@ for k,s in enumerate(states):
             lifts[i].append(k);duration.append(a[11]);heights.append(a[12])
         if is_down and last[3]>=0:
             landing.append((math.dist((a[0],a[2]),(last[0],last[2])),abs(a[1]),abs(last[1]-a[1])))
-        if is_down:
+        if p[201+4*i]<0:
             err=math.dist(site(p,i),a[:3]);max_plant[i]=max(max_plant[i],err)
             reported_error=max(reported_error,abs(err-(0.0001-p[200+4*i])))
             disturbed[i].append(math.dist(site(broken[k],i),a[:3]))
         else:
             for j in range(i+1,8):
-                if (j==i+4 or (i//4==j//4 and j==i+1)) and pin(s,j)[3]>=0: overlaps+=1
+                if (j==i+4 or (i//4==j//4 and j==i+1)) and p[201+4*j]>=0: overlaps+=1
             standard=site(p,i)[1];low=site(low_p[k],i)[1];scale=1-.5*a[15]
             low_err=max(low_err,abs(low-standard*scale));changed_y=max(changed_y,standard-low)
         decision_diff+=((pin(low_s[k],i)[3]<0)!=is_down)
@@ -89,3 +89,9 @@ print("Phase 2 deck: world carry range m / worst deck-frame hold mm", min(carry)
 print("Phase 2 four pads: feasible range and least-norm share", loads)
 assert max(abs(v-0.5) for v in carry) <= 0.001 and deck_error <= 0.0001
 assert max(abs(v-w) for v,w in zip(loads,(.25,.5,.375))) <= 1e-5
+
+left = frames("left", "pose", 232)
+join_root = max(math.dist(p[:3],l[:3]) for p,l in zip(poses[1:],left[1:]))
+join_site = max(math.dist(site(p,i),site(l,i)) for p,l in zip(poses[1:],left[1:]) for i in range(8))
+print("left limit vs tick (max root / distal site) mm",1000*join_root,1000*join_site)
+assert max(join_root,join_site) < 0.00001

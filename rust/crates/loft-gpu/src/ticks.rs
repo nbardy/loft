@@ -247,10 +247,11 @@ impl Timeline {
     }
 
     pub fn moment(p: &Program, time: f32) -> (u32, f32) {
-        let rate = p.spec.hz as f32;
-        let t = (time * rate).clamp(0.0, p.spec.ticks as f32);
-        // The canonical f32 representation of tick/rate can multiply back to one ulp below tick.
-        if time == t.round() / rate { (t.round() as u32, 0.0) } else { (t as u32, t.fract()) }
+        // Multiplication in f32 can round the last representable instant before a tick onto it.
+        // Exact k/hz timestamps still select k, including those rounded down when stored as seconds.
+        let t = (f64::from(time) * f64::from(p.spec.hz)).clamp(0., f64::from(p.spec.ticks));
+        let nearest = t.round() as u32;
+        if time == nearest as f32 / p.spec.hz as f32 { (nearest, 0.) } else { (t as u32, t.fract() as f32) }
     }
 
     pub fn key(&self, p: &Program, time: f32) -> TickKey {

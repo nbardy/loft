@@ -3,14 +3,14 @@
 fn observed(f:Frame,l:f32)->vec3f {return f.t.xyz+rot(f.q,vec3f(0,l,0));}
 fn present(s:ptr<function,State>,b:ptr<function,Plan>,fraction:f32,dt:f32)->Pose {
   let deck=deck_at(((*s).stamps.x+fraction)*dt);
-  var p:Pose;let v=(*s).motion.zw;let t=fraction*dt;
-  let c=(*s).motion.xy+t*(v+0.5*t*(*s).drive.xy);
-  let angle=(*s).tilt.xy+t*(*s).spin.xy;
+  var p:Pose;let v=(*s).before.zw;let t=fraction*dt;
+  let free=(*s).before.xy+dt*(v+0.5*dt*(*s).drive.xy);
+  let c=(*s).before.xy+t*(v+0.5*t*(*s).drive.xy)+fraction*fraction*((*s).motion.xy-free);
+  let angle=mix((*s).old_tilt.xy,(*s).tilt.xy,fraction);
   p.joints[0]=placed(deck,Frame(vec4f(c.x,(*b).laws.x,c.y,1),lean_q(angle)));
   for(var i=0u;i<u32((*b).dims.w);i++){
     let chain=(*b).chain[i];let pin=(*s).pin[i];
-    var pad=pin.at.xyz;
-    if pin.at.w>=0.0 {pad=swing_at(pin,min(1.0,pin.at.w+t/pin.aim.w));}
+    let end=present_pin(pin,fraction,dt);let pad=end.xyz;
     let root=root_at(b,i,c,angle);let lens=chain.lengths.xyz;
     let axis=normalize(pad-root);let dist=distance(pad,root);
     var pole=vec3f(0,1,0)-axis*axis.y;
@@ -26,7 +26,7 @@ fn present(s:ptr<function,State>,b:ptr<function,Plan>,fraction:f32,dt:f32)->Pose
     var distal=placed(deck,axis_frame(ankle,pad));
     p.joints[k+2]=distal;
     let site=deck_site(deck,observed(distal,lens.z));
-    p.margins[i]=vec4f(0.0001-distance(site,pin.at.xyz),pin.at.w,pin.shape.z,site.y);
+    p.margins[i]=vec4f(0.0001-distance(site,pin.at.xyz),end.w,pin.shape.z,site.y);
   }
   return p;
 }
