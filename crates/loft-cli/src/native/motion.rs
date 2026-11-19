@@ -71,7 +71,7 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
         let mut encoder = g.device.create_command_encoder(&Default::default());
         // The runner can split a tick range across passes. Bracket the whole
         // encoded advance with portable pass-boundary timestamps before readback.
-        let timestamp = |enc: &mut wgpu::CommandEncoder, begin, end| {
+        let timestamp = |enc: &mut wgpu::CommandEncoder, begin: Option<u32>, end| {
             if let Some(c) = clock {
                 // Metal can discard empty compute passes. Stamp the encoder boundary when supported.
                 if g.device.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS) {
