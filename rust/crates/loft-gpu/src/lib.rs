@@ -968,22 +968,25 @@ impl Loft {
         (&self.g0[0], &self.g1.compute, &self.g2)
     }
 
+    fn compute_clock(&self, begin: bool, end: bool) -> Option<wgpu::ComputePassTimestampWrites<'_>> {
+        self.timestamps.as_ref().map(|query_set| wgpu::ComputePassTimestampWrites {
+            query_set,
+            beginning_of_pass_write_index: begin.then_some(0),
+            end_of_pass_write_index: end.then_some(1),
+        })
+    }
+
     /// One compute pass: `kernels` in order for each set of bind groups (the loft's own, or one per instance).
     fn dispatch_all(
         &self,
         enc: &mut wgpu::CommandEncoder,
         kernels: &[usize],
-        timestamps: Option<&wgpu::QuerySet>,
+        timestamp_writes: Option<wgpu::ComputePassTimestampWrites<'_>>,
         sets: &[Groups],
     ) {
         if kernels.is_empty() || sets.is_empty() {
             return;
         }
-        let timestamp_writes = timestamps.map(|query_set| wgpu::ComputePassTimestampWrites {
-            query_set,
-            beginning_of_pass_write_index: Some(0),
-            end_of_pass_write_index: Some(1),
-        });
         let mut pass =
             enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft kernels"), timestamp_writes });
         for &(g0, g1, g2) in sets {
@@ -1218,15 +1221,12 @@ impl Loft {
             self.group0s(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        self.cameras.encode(
-            queue,
-            enc,
-            &self.aim,
-            (&self.g0[0], &self.g1.render),
-            &[&self.frame],
-            if self.ordered.is_some() { self.timestamps.as_ref() } else { None },
-        );
-        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
+        let frame_kernels = self.frame_kernels();
+        // Each query slot has one writer. The ordered interval spans both the GPU camera and the graph fills.
+        let measure_camera = self.ordered.is_some() && !matches!(self.aim, Aim::Matrices(_));
+        let camera_clock = if measure_camera { self.compute_clock(true, frame_kernels.is_empty()) } else { None };
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame], camera_clock);
+        self.dispatch_all(enc, &frame_kernels, self.compute_clock(!measure_camera, true), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
             let Keep::Latest = st.s.keep else { continue };
@@ -1483,7 +1483,7 @@ impl Loft {
         let frames: Vec<&Buffer> = instances.iter().map(|i| &i.frame).collect();
         self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames, None);
         let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1.compute, &i.g2[..])).collect();
-        self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
+        self.dispatch_all(enc, &self.frame_kernels(), self.compute_clock(true, true), &sets);
     }
 
     /// Records every instance's subject draws of the view passes into the caller's render pass, whose attachments are
