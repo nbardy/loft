@@ -8,8 +8,11 @@ struct Lamp { base:vec3f, power:vec3f }
 fn eval(m:Lamp,wo:vec3f,wi:vec3f)->vec3f {return m.base*(max(wi.z,0)/PI);}
 fn emit(m:Lamp,wo:vec3f)->vec3f {return m.power;}
 fn albedo(m:Lamp)->vec3f {return m.base;}`);
-export const lamp = (base:readonly number[], emission:readonly number[])=>({...lampKind(base,emission),emission});
-export const glow = (power: readonly number[]) => lamp([0,0,0],power);
+export const lamp = (base: readonly number[], emission: readonly number[]) => ({
+  ...lampKind(base, emission),
+  emission,
+});
+export const glow = (power: readonly number[]) => lamp([0, 0, 0], power);
 
 export const metal = kind(`
 struct Metal { base:vec3f, rough:f32 }

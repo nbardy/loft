@@ -42,7 +42,8 @@ for line in added.splitlines():
         if vocab.intersection(parts):
             hits.add(word)
 # Decl.Medium is repeated on the existing wire enum line extended by Kind and Open.
+# crate::emit is the existing graph WGSL emitter used to share table accessors.
 # Existing Resource.shape and Shape describe buffer/texture layout. The other two names belong to naga/wgpu.
-inherited = {"Medium","Shape","shape","Emit","emit_to_string","occlusion_query_set"}
+inherited = {"emit","Medium","Shape","shape","Emit","emit_to_string","occlusion_query_set"}
 print(json.dumps({"16":{"vocabulary":sorted(vocab),"hits":sorted(hits),"domain_identifiers":sorted(hits-inherited),"passed":not (hits-inherited)},
                   "17":counts},indent=2))

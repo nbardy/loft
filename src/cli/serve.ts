@@ -433,7 +433,8 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
       const previous=r.frames[k].previous;
       return {build,frame:{...frameAt(time),...(previous ? {previous}: {})},device};
     });
-    const { time: _, ...frame } = identities[0]!.frame;
+    // History belongs to each observation. The response header contains only values shared across the batch.
+    const { time: _, ...frame } = frameAt(req.times[0]!);
     const frames = r.frames.map((f, k) => ({ time: req.times[k]!, ...f, id: identityId(identities[k]!) }));
     return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };
   };

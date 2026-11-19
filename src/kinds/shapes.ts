@@ -21,7 +21,7 @@ fn hit(s:Sphere,r:Ray)->Hit {
   let n=normalize(r.o+t*r.d);return Hit(t,n,n.xy);
 }`);
 
-export const sphere = (radius:number) => ({...sphereKind(radius),radius});
+export const sphere = (radius: number) => ({ ...sphereKind(radius), radius });
 
 // All four boundary events are candidates. A parallel ray contributes no cylinder roots.
 export const bead = kind(`
