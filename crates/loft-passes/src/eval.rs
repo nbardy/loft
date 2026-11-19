@@ -449,7 +449,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     }
 
     pub fn expr(&mut self, e: &'a Expr) -> Res<Val<S>> {
-        let v = self.expr_inner(e)?;
+        // A composite abstract integer (for example -1 or 1 + 2) can
+        // acquire a concrete type at its return or argument boundary.
+        let v = match (self.ty(e).clone(),self.expr_inner(e)?) {
+            (Ty::F32,Val::I(x))=>Val::S(S::c(f64::from(x))),
+            (Ty::F32,Val::U(x))=>Val::S(S::c(f64::from(x))),
+            (Ty::U32,Val::I(x))=>Val::U(x as u32),
+            (_,v)=>v,
+        };
         let inf = match &v {
             Val::S(s) => s.lip().is_infinite(),
             Val::V(_, l) => l.is_infinite(),

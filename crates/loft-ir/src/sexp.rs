@@ -63,6 +63,7 @@ mod tests {
         let shader =
             "// secret author comment\n@compute @workgroup_size(1) fn main() { let x = 2u; }";
         let p = Program {
+            motion:vec![],
             modules: vec![ShaderModule {
                 name: "example".into(),
                 wgsl: shader.into(),

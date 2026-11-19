@@ -434,6 +434,12 @@ pub fn front(src: &Sources) -> Res<(Vec<Module>, Vec<Ty>)> {
 }
 
 pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Report, Compiled)> {
+    compile_snapshot(src,overrides,&[])
+}
+
+/// Re-derive local bounds and pack the sampled pose before drawing a requested
+/// still. The render path never culls an animated row against its time-zero box.
+pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir::program::MotionSample])->Res<(Program,Report,Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
@@ -492,6 +498,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                 }
                 rows_fns.push(p.fns[v]);
             }
+            "run_laws" | "check" => {}, // lowered together in schedule order by motion_module
             "orbit" => {
                 let f = |n: &str, types: &mut Vec<Ty>| -> Res<f32> {
                     let e = arg(pd, n)?;
@@ -638,6 +645,19 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
     for f in &rows_fns {
         ev.call_fn(f, vec![], f.name.span)?;
     }
+    for sample in samples{
+        let k=p.kinds.get(sample.kind.as_str()).ok_or_else(||Diag::new(Code::E602,Span::NONE,"snapshot names an unknown kind","sample the same scene revision"))?;
+        let t=p.kind_index(&sample.kind);
+        for (field,values) in &sample.fields{
+            let col=k.row.iter().position(|f|f.name.name==*field).ok_or_else(||Diag::new(Code::E602,k.name.span,"snapshot field is absent","sample the current row layout"))?;
+            if ev.tables[t].len()!=values.len(){return Err(Diag::new(Code::E602,k.name.span,"motion row count differs from build","sample the same scene and parameter values"))}
+            for (i,x) in values.iter().enumerate(){
+                if !x.is_finite(){return Err(Diag::new(Code::E602,k.row[col].name.span,"nonfinite motion result","guard the law expression"))}
+                if let Some(range)=&k.row[col].range{ev.validate_range(&k.row[col].name,range,*x,k.row[col].name.span)?;}
+                ev.tables[t][i][col]=RowVal::F(*x);
+            }
+        }
+    }
     let tables = ev.tables;
     let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
         let Some(k)=p.kinds.get(kind) else{return Ok(None)};
@@ -764,8 +784,14 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         off += l.frames.len() as u32;
     }
     let mut texts = vec![];
-    for (name, kt) in drawn.iter().zip(&kinds) {
-        texts.push((name.to_string(), emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?));
+    let mut motion=vec![];
+    for (id,(name, kt)) in drawn.iter().zip(&kinds).enumerate() {
+        let mut shader=emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?;
+        if let Some((entry,meta))=emit::motion_module(&p,&types,p.kinds[*name],id)?{
+            shader.push_str(&entry);
+            if samples.is_empty(){motion.push(meta);}
+        }
+        texts.push((name.to_string(),shader));
     }
     texts.push(("cull".into(), emit::cull_module()));
     texts.push(("classify".into(), emit::classify_module()));
@@ -780,6 +806,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
 
     let n = drawn.len();
     let program = Program {
+        motion,
         modules: shader_modules,
         kinds,
         instances,

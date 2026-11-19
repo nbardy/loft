@@ -93,7 +93,16 @@ fn read_png(path: &Path) -> Result<((u32, u32), Vec<u8>), String> {
 
 pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path) -> Result<(), String> {
     let g = loft_runner::gpu()?;
-    let (p, _, _, _) = compile(scene, set)?;
+    let (mut p, _, _, _) = compile(scene, set)?;
+    if !p.motion.is_empty(){
+        let sampled=loft_runner::sample_motion(&g,&p,t)?;
+        for kind in &sampled{
+            for (n,values) in &kind.fields{println!("{}.{} {:?}",kind.kind,n,values);}
+            for (n,values) in &kind.checks{println!("check {} {:?}",n,values);}
+        }
+        let src=crate::sources(scene)?;
+        p=loft_passes::compile_snapshot(&src,set,&sampled).map_err(|d|crate::render(&d,&src))?.0;
+    }
     let size = (1280, 800);
     let l = Loaded::new(&g, &p, size, None)?;
     l.frame(&g, t);

@@ -8,6 +8,9 @@
 //! view into a depth map the shade pass compares against. The bundles are recorded once at load; per frame only the
 //! two frame uniforms and the indirect-argument resets are written. Pipelines are O(kinds): 2 per kind plus 3 shared.
 
+mod motion;
+pub use motion::sample_motion;
+
 use loft_ir::program::{abi, Draw, Pass, Program};
 use std::borrow::Cow;
 use std::time::Instant;
@@ -252,6 +255,7 @@ fn render(
 impl Loaded {
     /// Builds every GPU object for `p` at `size`. `nonce` (any value but `u32::MAX`) forces a cold driver compile.
     pub fn new(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>) -> Result<Loaded, String> {
+        if !p.motion.is_empty(){return Err("sample the scheduled motion and derive its current bounds before loading the still".into())}
         let d = &g.device;
         let nonce = nonce.unwrap_or(u32::MAX);
         let k_n = p.kinds.len();

@@ -121,8 +121,26 @@ pub enum Pass {
     Present,
 }
 
+/// Row-local laws and their terminal checks. The shader entry is advance;
+/// one vec4 per scalar write, followed by one (held, margin) pair per check.
+#[derive(Clone,Debug,serde::Serialize,serde::Deserialize)]
+pub struct Motion {
+    pub kind:usize,
+    pub fields:Vec<String>,
+    pub checks:Vec<String>,
+}
+
+#[derive(Debug)]
+pub struct MotionSample {
+    pub kind:String,
+    pub fields:Vec<(String,Vec<f32>)>,
+    pub checks:Vec<(String,Vec<[f32;2]>)>,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Program {
+    #[serde(default)]
+    pub motion:Vec<Motion>,
     pub modules: Vec<ShaderModule>,
     pub kinds: Vec<KindTable>,
     pub instances: Vec<Instance>,

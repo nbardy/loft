@@ -1,6 +1,6 @@
 space World Blob
 
-kind Blob @World (pose: xf@Blob>World, size: m, wobble: m, tint: rgb) {
+kind Blob @World (pose: xf@Blob>World, size: m > 0m, wobble: m, tint: rgb) {
 
   trace(p) {
     let q = inv(pose) * p

@@ -13,7 +13,7 @@ kind Heron @Bird (pose: xf@Bird>World, yaw: rad = 0rad, lift: m = 0m, phase: f =
     let trunk = sphere(body.p - hips, 0.21m)
     map pair = body.p |> mirror_x
     let legs = capsule(pair.p, pair.pt(0.12m, 0.02m, 0), pair.pt(0.1m, 0.65m, 0), 0.026m)
-    map head = body.p |> move([0, -1.1m, -0.24m]) |> rot_y(-neck) |> rot_x(pitch)
+    map head = body.p |> move([0, -1.1m, -0.24m]) |> rot_y(-neck) |> rot_x(-pitch)
     let face = sphere(head.p - head.pt(0, 0, 0), 0.09m)
     let bill = capsule(head.p, head.pt(0, 0, 0.05m), head.pt(0, 0, 0.32m), 0.025m)
     let middle = body.pt(0, 0.84m, -0.04m)
@@ -24,13 +24,26 @@ kind Heron @Bird (pose: xf@Bird>World, yaw: rad = 0rad, lift: m = 0m, phase: f =
   material(p, n) = ggx([0.65, 0.73, 0.78], 0.65, 0)
 }
 
+kind Fish @World () {
+  trace(p) = {
+    let q = p - fish(time)
+    capsule([q.xyz]@World, [0,0,-0.09m], [0,0,0.09m], 0.045m)
+  }
+  material(p,n) = ggx([0.28,0.46,0.51],0.24,0.3)
+}
+
+kind Shore @World () {
+  trace(p) = box_sdf(p-[0,-0.04m,0]@World,[3m,0.04m,3m])
+  material(p,n) = ggx([0.18,0.28,0.31],0.26,0) + coat(0.7,0.09)
+}
+
 fn eye(h: Heron) -> p3@World = h.pose * [0.24m * sin(h.yaw), 1.1m + h.lift, 0.24m * cos(h.yaw)]@Bird
 law hop(h: Heron, dt) writes h.{yaw, lift, phase} {
   let err = angle(bearing(eye(h), fish(time)) - h.yaw)
   let start = h.phase == 0 && abs(err) > 0.8rad
   let ph = if start || h.phase > 0 { min(h.phase + dt / 0.26s, 1) } else { 0 }
   h.lift = 0.12m * 4 * ph * (1 - ph)
-  if h.lift > 0m { h.yaw = angle(h.yaw + clamp(err, -2.4rad/s * dt, 2.4rad/s * dt)) }
+  if h.lift > 0.04m { h.yaw = angle(h.yaw + clamp(err, -2.4rad/s * dt, 2.4rad/s * dt)) }
   h.phase = if ph == 1 { 0 } else { ph }
 }
 
@@ -47,7 +60,7 @@ check posture(h: Heron) -> m {
   let margin = eye(h).y - (h.pose * [0, h.lift + 0.65m, 0]@Bird).y
   if margin > 0m { held(margin) } else { missed(-margin) }
 }
-build { emit Heron(pose: place([0, 0, 0]@World)) }
+build { emit Heron(pose: place([0, 0, 0]@World)); emit Fish(); emit Shore() }
 schedule Main {
   run_laws(hop, gaze)
   check(lock, posture)

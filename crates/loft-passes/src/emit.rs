@@ -3,6 +3,9 @@
 //! count are data in `KindParams`. The author's structure is kept: their fns stay fns, their loops stay loops.
 
 use crate::Prog;
+#[path="motion.rs"]
+mod motion;
+pub use motion::motion_module;
 use loft_ir::ast::*;
 use loft_ir::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res};
@@ -115,6 +118,7 @@ pub struct Emitter<'p, 'a> {
     out: String,
     maps: Vec<(String, Vec<MapStage>)>,
     luts: &'p [LutRef],
+    motion:bool,
 }
 
 /// The lobe calls of a `Bsdf` sum, bottom first.
@@ -208,7 +212,7 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[] }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -242,6 +246,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             .params
             .iter()
             .map(|prm| match &prm.ty {
+                Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())=>format!("{}: Row",wgsl_name(&prm.name.name)),
                 Some(t) => format!("{}: {}", wgsl_name(&prm.name.name), wty(&self.resolve(t))),
                 None => "self_: Row".into(),
             })
@@ -390,7 +395,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
             },
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Name(n) if n == "self" => "self_".into(),
-            ExprKind::Name(n) if n=="time"=>"frame.eye.w".into(),
+            ExprKind::Name(n) if n=="time"=>if self.motion{"loft_tick_time"}else{"frame.eye.w"}.into(),
+            ExprKind::Name(n) if self.motion && self.p.consts.contains_key(n.as_str())=>format!("motion_const_{}",wgsl_name(n)),
             ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
@@ -457,7 +463,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
                 match callee.name.as_str(){"sky_zenith"=>return "environment.zenith.xyz".into(),"sky_horizon"=>return "environment.horizon.xyz".into(),"sun_color"=>return "environment.sun_color.xyz".into(),_=>{}}
                 if callee.name=="coords"{return a[0].clone()}
-                if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}({})",wgsl_name(&callee.name),a.join(", "));}
+                if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_fn_"}else{""},wgsl_name(&callee.name),a.join(", "));}
+                if self.motion && matches!(callee.name.as_str(),"sin"|"cos"|"atan2"){return format!("det_{}({})",callee.name,a.join(", "));}
+                if matches!(callee.name.as_str(),"held"|"missed"){return format!("vec2<f32>({}, {})",if callee.name=="held"{"1.0"}else{"0.0"},a[0]);}
                 let name = match callee.name.as_str() {
                     "frame_axes" => "LoftFrame".into(),
                     "dir" => "normalize".into(),
