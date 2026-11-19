@@ -208,6 +208,9 @@ impl Timeline {
             (Source::Levels(_) | Source::Samples(_), None) => {}
         }
         self.changes.insert((row, k), v);
+        // show() reads a retained slot without writing slot zero. On the first live input the latter
+        // still holds the end of the bake. Resume from a checkpoint even if no tick was presented yet.
+        if self.baked { self.dirty = Some(k); }
         self.baked = false;
         self.valid = self.valid.min(k - 1);
         if self.done >= k {
