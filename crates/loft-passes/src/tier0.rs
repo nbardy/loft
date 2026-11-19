@@ -2,12 +2,19 @@
 #[path = "tier0_author.rs"]
 mod author;
 pub use author::{TAPE_BYTES, TraceEdit, authored_trace};
+#[path = "tier0/session.rs"]
+mod session;
 use loft_abi::Tier0Opcode as Op;
+pub use session::{EditClass, PreparedEdit, TraceSource};
 use std::collections::BTreeMap;
 
 pub const REGISTERS: usize = 32;
 pub const MAX_WORDS: usize = 2048;
-pub const VM_WGSL: &str = include_str!("tier0.wgsl");
+pub const VM_WGSL: &str = concat!(
+    include_str!("tier0/compute.wgsl"),
+    include_str!("tier0.wgsl")
+);
+const VM_OPERATIONS: &str = include_str!("tier0.wgsl");
 
 type V = [f32; 4];
 
