@@ -44,6 +44,9 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
   bodies, otherwise a call or a loop over a table, and a spatial lookup for many instances. The recorded graph stays
   compact either way; unrolling is an emit choice, never a recording.
 - **Fewer reads, fewer registers**: packed tables, folded constants, small shaders, a pipeline cache.
+- **Load time does not grow with content**: shaders are shared per kind of thing, with per-instance data in tables.
+  Five crabs need a handful of shader modules, not 305 (measured 55 s to load on 19 Nov). Score shader module count
+  and load time beside frame time.
 - **Precision**: f32. f16 stays frozen until a scene shows a frame-time gain.
 
 ### Engine
@@ -56,6 +59,8 @@ The product is the picture. The reward we train on is aesthetic; checks and `sol
 - **Few types**: one kernel, one ray template, one medium, one verdict, one error, one format, one identity, one
   operator table. Kinds are sum types with one exhaustive dispatcher; inputs are classified once at the boundary; a
   missing case is a typed refusal that names the fix, never a fallback.
+- **A small core, content outside it**: sea, sun and style are library values a scene may omit, not part of the core.
+  Assets come in (meshes, textures, motion clips) and picking and readback go out.
 - **Embeddable**: a Loft subject draws on a device someone else owns (Keel and room-runners), with wgpu and naga
   pinned to the host's versions.
 
