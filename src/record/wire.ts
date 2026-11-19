@@ -38,7 +38,7 @@
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
-const WIRE = 5;
+const WIRE = 4;
 
 export enum Program { Scene, Solve, Evaluate, Check }
 export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, RowStep }
@@ -80,7 +80,12 @@ export function pack(job: Job): Uint8Array {
   const parts = SPANS.map((s) => new Uint8Array(job[s].buffer, job[s].byteOffset, job[s].byteLength));
   const out = new Uint8Array(16 + parts.reduce((n, p) => n + 8 + ((p.length + 7) & ~7), 0));
   const w = new DataView(out.buffer);
-  [MAGIC, WIRE, job.program, SPANS.length].forEach((v, k) => w.setUint32(4 * k, v, true));
+  // Retain the original bytes and identity for jobs without row-local steps.
+  let version = WIRE;
+  for (let i = 1; i < job.decls.length; i += 3 + job.decls[i + 2]!) {
+    if (job.decls[i] === Decl.RowStep) { version = 5; break; }
+  }
+  [MAGIC, version, job.program, SPANS.length].forEach((v, k) => w.setUint32(4 * k, v, true));
   let at = 16;
   for (const p of parts) { w.setUint32(at, p.length, true); out.set(p, at + 8); at += 8 + ((p.length + 7) & ~7); }
   return out;

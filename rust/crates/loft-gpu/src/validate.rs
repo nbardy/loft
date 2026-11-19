@@ -211,7 +211,7 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
     for i in b.inputs.iter() {
         let name = at(&b.names, i.name, "input name")?;
         // Main's wire (lr-wire) has no record type: every Ty is a scalar or vector, and `lits` is its float count.
-        if i.ty.width().is_none() || i.def.len() != usize::from(i.ty.lits()) {
+        if i.def.len() != usize::from(i.ty.lits()) {
             return Err(bad(format!("input {name} is {:?} with {} default floats", i.ty, i.def.len())));
         }
     }
@@ -304,9 +304,11 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
                     .global_variables
                     .iter()
                     .find(|(_, g)| g.binding.as_ref().is_some_and(|v| v.group == 0 && v.binding == binding))
-                    .and_then(|(_, g)| match module.types[g.ty].inner {
-                        naga::TypeInner::Array { stride, .. } => Some(stride),
-                        _ => None,
+                    .and_then(|(_, g)| {
+                        let naga::TypeInner::Array { stride, .. } = module.types[g.ty].inner else {
+                            return None;
+                        };
+                        Some(stride)
                     });
                 if stride.is_none_or(|v| u64::from(v) * u64::from(count) != expected) {
                     return Err(bad(format!(

@@ -124,12 +124,12 @@ enum FnSlot {
 }
 
 /// The header and the eleven spans, each checked for length, padding and whole elements.
-fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
+fn spans(buf: &[u8]) -> Result<(u32, Program, [&[u8]; 11]), Error> {
     let word = |at: usize| buf.get(at..at + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     let h = |i: usize| word(4 * i).ok_or_else(|| bad(Span::Header, i, Fault::Truncated));
     (h(0)? == MAGIC).then_some(()).ok_or_else(|| bad(Span::Header, 0, Fault::Magic))?;
     let wire = h(1)?;
-    (wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
+    (wire == 4 || wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
     let code = h(2)?;
     let program = [Program::Scene, Program::Solve, Program::Evaluate, Program::Check]
         .get(code as usize)
@@ -155,7 +155,7 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
         at = padded;
     }
     (at == buf.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::Length))?;
-    Ok((program, out))
+    Ok((wire, program, out))
 }
 
 /// The decls of a job, classified into `Graph`'s per-kind arrays, with each Fn ordinal's kind and each decl's word
@@ -570,7 +570,7 @@ fn late_refs(out: &mut Decls) -> Result<(), Error> {
     Ok(())
 }
 
-fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
+fn decls(d: &[u32], roots: &[u32], z: &Sizes, wire: u32) -> Result<Decls, Error> {
     let r0 = *d.first().ok_or_else(|| bad(Span::Decls, 0, Fault::Length))?;
     (r0 as usize <= roots.len()).then_some(()).ok_or_else(|| bad(Span::Decls, 0, Fault::Ref { found: r0 }))?;
     let mut out = Decls {
@@ -717,7 +717,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 out.kernel_at.push(at);
                 out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role, fill });
             }
-            (11, [text, plan, seed, output, input, hz, ticks, how, arg]) => {
+            (11, [text, plan, seed, output, input, hz, ticks, how, arg]) if wire >= 5 => {
                 use crate::bundle::{InputKind, RowStep};
                 let table =
                     |r: u32| matches!(out.kernels.get(r as usize), Some(Kernel::Table { fill: Fill::Data { .. }, .. }));
@@ -861,7 +861,7 @@ impl Top {
 
 /// Decodes and validates a job: every bound, reference, layout, quota and type rule, before any pass sees it.
 pub fn decode(buf: &[u8]) -> Result<Job, Error> {
-    let (program, spans) = spans(buf)?;
+    let (wire, program, spans) = spans(buf)?;
     let [nodes_b, args_b, lits_b, rows_b, blobs_b, syms_b, at_b, sites_b, nsites_b, decls_b, roots_b] = spans;
 
     let n_nodes = nodes_b.len() / 16;
@@ -903,7 +903,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         return Err(bad(Span::Roots, i, Fault::Ref { found: roots[i] }));
     }
     let sizes = Sizes { nodes: n_nodes, lits: lits.len(), rows: rows.len(), syms: n_syms };
-    let d = decls(&words(decls_b), &roots, &sizes)?;
+    let d = decls(&words(decls_b), &roots, &sizes, wire)?;
 
     let nodes = nodes(&words(nodes_b), &args, &d, &sizes)?;
     let graph = Graph {

@@ -84,7 +84,9 @@ impl Program {
             InputKind::Script { samples } => (
                 Source::Samples(
                     data(b, *samples)
-                        .chunks_exact(16)
+                        .as_chunks::<16>()
+                        .0
+                        .iter()
                         .map(|r| std::array::from_fn(|i| u32::from_le_bytes(r[i * 4..i * 4 + 4].try_into().unwrap())))
                         .collect(),
                 ),
@@ -137,6 +139,11 @@ enum Source {
     Levels([u32; 4]),
     Samples(Vec<[u32; 4]>),
     Events(u32),
+}
+
+enum Dispatch {
+    Advance(std::ops::Range<u32>),
+    Present(u32),
 }
 
 pub(super) struct Timeline {
@@ -281,14 +288,16 @@ impl Timeline {
         &self,
         p: &Program,
         enc: &mut wgpu::CommandEncoder,
-        from: u32,
-        to: u32,
+        span: Dispatch,
         slot: u32,
         f: f32,
-        show: bool,
         ts: Option<&wgpu::QuerySet>,
     ) {
-        if !show && from < to {
+        let (from, to, pipeline) = match span {
+            Dispatch::Advance(span) => (span.start, span.end, &p.advance),
+            Dispatch::Present(k) => (k, k, &p.show),
+        };
+        if from < to {
             let mut bytes = Vec::with_capacity(((to - from) * p.count * 16) as usize);
             for k in from + 1..=to {
                 for r in 0..p.count {
@@ -306,13 +315,13 @@ impl Timeline {
         });
         let mut pass = enc
             .begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("advance and present"), timestamp_writes });
-        pass.set_pipeline(if show { &p.show } else { &p.advance });
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &self.group, &[]);
         pass.dispatch_workgroups(p.count.div_ceil(32), 1, 1);
     }
 
     pub fn bake(&mut self, p: &Program, enc: &mut wgpu::CommandEncoder, ts: Option<&wgpu::QuerySet>) {
-        self.run(p, enc, 0, p.spec.ticks, 1, 0.0, false, ts);
+        self.run(p, enc, Dispatch::Advance(0..p.spec.ticks), 1, 0.0, ts);
         self.valid = p.spec.ticks;
     }
 
@@ -325,7 +334,7 @@ impl Timeline {
     ) -> usize {
         let (to, f) = Self::moment(p, time);
         if self.baked {
-            self.run(p, enc, to, to, 1 + to, f, true, ts);
+            self.run(p, enc, Dispatch::Present(to), 1 + to, f, ts);
             self.done = to;
             return 1;
         }
@@ -342,7 +351,7 @@ impl Timeline {
         let mut n = 0;
         loop {
             let end = to.min(from.saturating_add(64));
-            self.run(p, enc, from, end, slot, f, false, ts.filter(|_| end == to));
+            self.run(p, enc, Dispatch::Advance(from..end), slot, f, ts.filter(|_| end == to));
             n += 1;
             if end == to {
                 break;
@@ -370,8 +379,7 @@ impl Timeline {
                 return Err(Error::Usage("state was not kept: present that tick first and copy current state".into()));
             }
         };
-        enc.copy_buffer_to_buffer(&self.state, u64::from(slot) * p.bytes, dest, offset, Some(p.bytes));
-        Ok(())
+        super::copy_into(enc, &self.state, u64::from(slot) * p.bytes, dest, offset, p.bytes)
     }
 }
 

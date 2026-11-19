@@ -131,7 +131,7 @@ impl Run {
         }
         self.q.submit([e.finish()]);
         let bytes = self.bytes(&states);
-        let diff = bytes.chunks_exact(672).zip(baked.chunks_exact(672)).filter(|(a, b)| a != b).count();
+        let diff = bytes.as_chunks::<672>().0.iter().zip(baked.as_chunks::<672>().0).filter(|(a, b)| a != b).count();
         println!(
             "group {group} alternate {alternate}: {diff}/481 states differ, {dispatches}/{frames} dispatches/frames"
         );
@@ -174,6 +174,25 @@ impl Run {
         self.q.submit([e.finish()]);
         self.bytes(&dst)
     }
+    fn compare_bakes(&self, baseline: &str) {
+        let mut versions = [self.load(&self.read(baseline)), self.load(&self.read("one"))];
+        for v in &mut versions {
+            v.set_timestamps(Some(self.queries.clone()));
+        }
+        let mut samples = [vec![], vec![]];
+        for i in 0..9 {
+            for arm in [i % 2, 1 - i % 2] {
+                let mut enc = self.d.create_command_encoder(&Default::default());
+                versions[arm].bake_rows(&mut enc, 0).unwrap();
+                self.q.submit([enc.finish()]);
+                let t = self.spans();
+                if i > 0 {
+                    samples[arm].push(t[1] - t[0]);
+                }
+            }
+        }
+        println!("paired 480-tick bakes (p50/p95) baseline vs current: {:?}", samples.map(quantiles));
+    }
     fn events(&self) {
         let mut l = self.load(&self.read("events"));
         for (seq, t, v) in [(2, 5, 2.), (1, 5, 1.), (1, 5, 1.), (3, 20, 0.)] {
@@ -200,9 +219,8 @@ impl Run {
     }
     fn bench(&self, name: &str) {
         let b = self.read(name);
-        let size = match b.resources[b.row_steps[0].seed as usize].shape {
-            Shape::Rows { rows, .. } => rows,
-            _ => unreachable!(),
+        let Shape::Rows { rows: size, .. } = b.resources[b.row_steps[0].seed as usize].shape else {
+            unreachable!("validated rows")
         };
         let mut l = self.load(&b);
         l.set_timestamps(Some(self.queries.clone()));
@@ -249,7 +267,9 @@ impl Run {
         let poses = fs::read(self.dir.join("one.pose")).unwrap();
         let words: Vec<_> = fs::read(self.dir.join("game.camera"))
             .unwrap()
-            .as_chunks::<4>().0.iter()
+            .as_chunks::<4>()
+            .0
+            .iter()
             .map(|v| f32::from_le_bytes(*v))
             .collect();
         for loft in [&mut live, &mut frozen] {
@@ -339,10 +359,15 @@ fn recorded_take_score() {
     r.trace("broken");
     r.trace("deck");
     r.trace("pads");
-    for name in ["tracking","saturated","flight"] { r.trace(name); }
+    for name in ["tracking", "saturated", "flight"] {
+        r.trace(name);
+    }
     let (_, key, rgba) = r.replay(4, false, &base);
-    let mut baked=r.load(&r.read("one"));baked.set_time(4.0);baked.use_camera("game").unwrap();
-    assert_eq!(key,baked.frame_key(0,SIZE));assert_eq!(rgba,r.picture(&mut baked));
+    let mut baked = r.load(&r.read("one"));
+    baked.set_time(4.0);
+    baked.use_camera("game").unwrap();
+    assert_eq!(key, baked.frame_key(0, SIZE));
+    assert_eq!(rgba, r.picture(&mut baked));
     assert!(rgba.as_chunks::<4>().0.iter().any(|p| p != &rgba[..4]));
     for group in [2, 1, 6] {
         let (_, other, pix) = r.replay(group, false, &base);
@@ -357,4 +382,7 @@ fn recorded_take_score() {
         r.bench(name);
     }
     r.frozen();
+    if let Ok(name) = std::env::var("LOFT_COMPARE_BAKE") {
+        r.compare_bakes(&name);
+    }
 }

@@ -40,6 +40,8 @@ export type FrameCamera =
 export type Identity = {
   readonly build: { readonly program: Program; readonly library: string; readonly tier: "compiled"; readonly precision: "f32" | "mixed" };
   readonly frame: {
+    /** A stepped frame also depends on the exact input prefix at its retained checkpoint and presented tick. */
+    readonly steps?: readonly { checkpoint: number; prefix: readonly number[]; tick: number; fraction: number }[];
     readonly camera: FrameCamera; readonly time: number; readonly size: readonly [number, number];
     readonly params: Readonly<Record<string, number>>; readonly inputs: Readonly<Record<string, readonly number[]>>;
     readonly precision: FramePrecision;

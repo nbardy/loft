@@ -66,6 +66,12 @@ export async function shownModules(path: string, variant: VariantArg): Promise<S
   // Before the scene is imported: drawables may emit their WGSL as they are constructed. A node the compiler rewrote
   // (a frame-uniform part hoisted into a table) has the site of the node it was made from.
   noteStatements((e) => siteOfNode(e) ?? siteOfNode(rewrittenFrom(e)));
+  const { moduleAt } = await import("./variant.ts");
+  const explicit = (await moduleAt(path)).default as ReturnType<typeof import("../record/decls.ts").recorded> | undefined;
+  if (explicit?.kind === "recorded") {
+    if (variant.kind === "ask") throw new UsageError("these explicit passes have one variant: drop --variant");
+    return (await import("./trace.ts")).recordedModules(explicit.scene);
+  }
   const artefact = await loadArtefact({ kind: "file", path, style: { kind: "scene" }, light: { kind: "scene" }, variant });
   return modulesOf(lower(artefact, "f32"));
 }

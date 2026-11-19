@@ -30,7 +30,9 @@ export function body(spec: Body, edges = neighbours(spec.chains)) {
   chains.forEach(({root,lengths,end},i)=>{
     if (![...root,...end.at].every(Number.isFinite) || !lengths.every(x=>Number.isFinite(x)&&x>0) || end.at[1]!==0) refuse(`invalid chain ${i}`);
     const distance=Math.hypot(root[0]-end.at[0],trunk.height+root[1]-end.at[1],root[2]-end.at[2]);
-    if (distance>=lengths.reduce((a,b)=>a+b) || distance<1e-5) refuse(`unreachable rest site ${i}`);
+    const total = lengths.reduce((a,b)=>a+b);
+    const shortest = Math.max(1e-5, 2*Math.max(...lengths)-total);
+    if (distance>=total || distance<shortest) refuse(`unreachable rest site ${i}`);
     const mask=edges[i]!;
     if (!Number.isInteger(mask) || mask<0 || mask>=(1<<chains.length) || (mask&(1<<i))!==0) refuse(`invalid neighbours of chain ${i}`);
     plan.set([...root,0,...end.at,0,...lengths,mask],8+12*i);

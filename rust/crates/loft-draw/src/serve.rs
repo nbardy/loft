@@ -127,7 +127,12 @@ fn draw(g: &Gpu, req: &Request) -> Result<Value, Verdict> {
         let rgba = target.picture(g, &mut loft)?;
         let file = req.out.join(format!("{k}.rgba"));
         std::fs::write(&file, &rgba).map_err(env)?;
-        frames.push(json!({"file": file, "sha256": format!("{:x}", Sha256::digest(&rgba))}));
+        let mut frame = json!({"file": file, "sha256": format!("{:x}", Sha256::digest(&rgba))});
+        let steps = loft.frame_key(0, req.size.map(|n| n.get())).steps;
+        if !steps.is_empty() {
+            frame["steps"] = json!(steps);
+        }
+        frames.push(frame);
     }
     Ok(json!({"ok": true, "precision": precision, "frames": frames, "ms": {"load": load, "frames": ms(t1)}}))
 }

@@ -20,7 +20,7 @@ export function move(shape: Body | readonly Body[], source: string, inputs: {
   const samples=new Float32Array(script ? (ticks+1)*4 : 0);
   if(script) for(let k=0;k<=ticks;k++){
     const v=script(k);
-    if(!v.every(Number.isFinite)) throw new SceneError(`move: script has a nonfinite sample at tick ${k}. Fix: return finite velocities`);
+    if(v.length!==2 || !v.every(Number.isFinite)) throw new SceneError(`move: invalid stick sample at tick ${k}. Fix: return two finite velocity components`);
     samples.set(v,4*k);
   }
   const steps: RowStep = { source, plan:table("plans",bodies.length,26,joined("plan")), seed:table("initial",bodies.length,42,joined("state")),

@@ -239,6 +239,7 @@ impl Target {
 
 enum Command {
     Serve,
+    Show(std::path::PathBuf),
     Trace(std::path::PathBuf, usize, String),
     Still(still::Args),
     Profile(still::Args, profile::Flags),
@@ -247,6 +248,10 @@ enum Command {
 fn main() {
     let mut args = std::env::args().skip(1);
     let command = match args.next().as_deref() {
+        Some("show") => {
+            let (Some(file), None) = (args.next(), args.next()) else { still::usage("show BUNDLE".into()) };
+            Command::Show(file.into())
+        }
         Some("trace") => {
             let (Some(dir), Some(step), Some(sites), None) =
                 (args.next(), args.next().and_then(|n| n.parse().ok()), args.next(), args.next())
@@ -262,12 +267,13 @@ fn main() {
             Command::Profile(a, f)
         }
         other => {
-            eprintln!("loft-draw: expected `serve`, `still DIR ...` or `profile DIR ...`, got {other:?}");
+            eprintln!("loft-draw: expected serve, still, profile, show or trace, got {other:?}");
             std::process::exit(2)
         }
     };
     let ended = match command {
         Command::Trace(dir, step, sites) => trace::run(&dir, step, &sites),
+        Command::Show(dir) => trace::modules(&dir),
         Command::Serve => serve::run(),
         Command::Still(a) => still::run(a),
         Command::Profile(a, f) => profile::run(a, f),

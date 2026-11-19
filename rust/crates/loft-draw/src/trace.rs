@@ -80,3 +80,34 @@ pub(super) fn run(dir: &Path, index: usize, sites: &str) -> Result<(), Verdict> 
     }
     if failed == 0 { Ok(()) } else { Err(Verdict::Check(format!("{failed} traced margins failed"))) }
 }
+
+/// Expose the emitted module, including the generated dispatch. No device is needed for inspection.
+pub(super) fn modules(path: &Path) -> Result<(), Verdict> {
+    use loft_ir::bundle::{Bundle, InputKind};
+    let b = Bundle::read(&read_bundle(path)?)?;
+    let invalid = || Verdict::Load("module reference out of bounds: rebuild the bundle".into());
+    let name = |id: u32| b.names.get(id as usize).map(AsRef::as_ref).ok_or_else(invalid);
+    for (i, m) in b.modules.iter().enumerate() {
+        let label = if let Some(step) = b.row_steps.iter().find(|s| s.module as usize == i) {
+            let input = b.inputs.get(step.input as usize).ok_or_else(invalid)?;
+            let home = match input.kind {
+                InputKind::Level | InputKind::Events { .. } => "live",
+                InputKind::Script { .. } => "baked",
+            };
+            format!("{home} {} · {} ticks at {} Hz", name(input.name)?, step.ticks, step.hz)
+        } else {
+            let draws = b
+                .draws
+                .iter()
+                .filter(|d| d.shade.0 as usize == i)
+                .map(|d| name(d.name))
+                .collect::<Result<Vec<&str>, _>>()?;
+            if draws.is_empty() { format!("module {i}") } else { draws.join(" ") }
+        };
+        let section = b.sections.get(m.wgsl as usize).ok_or_else(invalid)?;
+        let wgsl = std::str::from_utf8(section).map_err(|e| Verdict::Load(e.to_string()))?;
+        let text = format!("{}{wgsl}", loft_gpu::prelude(m, Precision::F32));
+        println!("{}", serde_json::json!({"label":label,"text":text,"lines":text.lines().count(),"sited":0}));
+    }
+    Ok(())
+}

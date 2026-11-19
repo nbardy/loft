@@ -279,7 +279,7 @@ pub struct Loft {
     timelines: Vec<ticks::Timeline>,
 }
 
-pub(crate) fn prelude(m: &Module, p: Precision) -> &'static str {
+pub fn prelude(m: &Module, p: Precision) -> &'static str {
     match (m.precision_alias, p) {
         (false, _) => "",
         (true, Precision::F32) => "alias lf = f32;\n",
@@ -383,6 +383,29 @@ fn frame_bytes(camera: &Camera, size: [u32; 2], time: f32, params: &[f32], input
     let mut out = frame::header(camera, [w, h, 1.0 / w, 1.0 / h], time).to_vec();
     out.extend(floats(&[params, inputs].concat()));
     out
+}
+
+fn copy_into(
+    enc: &mut wgpu::CommandEncoder,
+    source: &Buffer,
+    from: u64,
+    dst: &Buffer,
+    offset: u64,
+    size: u64,
+) -> Result<(), Error> {
+    if !dst.usage().contains(wgpu::BufferUsages::COPY_DST)
+        || !offset.is_multiple_of(wgpu::COPY_BUFFER_ALIGNMENT)
+        || offset.checked_add(size).is_none_or(|end| end > dst.size())
+    {
+        return Err(Error::Usage(
+            format!(
+                "readback needs {size} bytes at aligned offset {offset}: provide a sufficiently large COPY_DST buffer"
+            )
+            .into(),
+        ));
+    }
+    enc.copy_buffer_to_buffer(source, from, dst, offset, Some(size));
+    Ok(())
 }
 
 /// The camera before the caller sets one: identity matrices, the eye at the origin looking down -z, the sun overhead.
@@ -1231,6 +1254,11 @@ impl Loft {
         let Some(Res::Rows { pack, offset }) = self.res.get(r as usize) else {
             return Err(Error::Usage("choose a rows resource to upload".into()));
         };
+        if self.programs.iter().any(|p| p.spec.plan == r || p.spec.seed == r)
+            || self.b.inputs.iter().any(|d| matches!(d.kind,loft_ir::bundle::InputKind::Script{samples} if samples==r))
+        {
+            return Err(Error::Usage("row source was fixed at load: rebuild it or write the input at its tick".into()));
+        }
         if self.programs.iter().any(|p| p.spec.output == r) || self.b.kernels.iter().any(|k| k.writes.contains(&r)) {
             return Err(Error::Usage(
                 "table already has a writer: remove the producing kernel before supplying its rows".into(),
@@ -1248,14 +1276,7 @@ impl Loft {
         let Some(Res::Rows { pack, offset }) = self.res.get(r as usize) else {
             return Err(Error::Usage("choose a rows resource to read".into()));
         };
-        enc.copy_buffer_to_buffer(
-            &self.packs[*pack],
-            16 * offset,
-            dst,
-            off,
-            Some(state_bytes(&self.b.resources[r as usize].shape)),
-        );
-        Ok(())
+        copy_into(enc, &self.packs[*pack], 16 * offset, dst, off, state_bytes(&self.b.resources[r as usize].shape))
     }
     fn param_slot(&self, name: &str) -> Result<usize, Error> {
         self.named(&self.b.params, |p| p.name, name, "param").map(|(k, _)| k)

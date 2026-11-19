@@ -157,7 +157,7 @@ impl Live {
             }
             drop(pass);
             k = end;
-            if k % 60 == 0 {
+            if k.is_multiple_of(60) {
                 enc.copy_buffer_to_buffer(&self.pair[0], 0, &self.checkpoints, u64::from(k / 60) * bytes, Some(bytes));
             }
         }
