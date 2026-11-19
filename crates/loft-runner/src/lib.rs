@@ -31,6 +31,8 @@ pub struct FrameIdentity {
 struct Table {
     decl: TableDecl,
     buffer: Option<Arc<wgpu::Buffer>>,
+    texture: Option<Arc<wgpu::Texture>>,
+    texture_only: bool,
     active: u32,
     epoch: u64,
 }
@@ -39,7 +41,11 @@ struct Instance {
     decl: Bundle,
     resource_epoch: u64,
     checkpoints: Vec<Arc<wgpu::Buffer>>,
+    history: stepping::History,
+    outbox: Option<events::Outbox>,
+    pick_source: Option<pick::Source>,
     compute: encode::ComputeCache,
+    edits: tier0::Edits,
 }
 fn allocate(d: &wgpu::Device, size: u64) -> Arc<wgpu::Buffer> {
     use wgpu::BufferUsages as U;
@@ -68,6 +74,8 @@ impl Instance {
     fn new(device: &wgpu::Device, queue: &wgpu::Queue, decl: &Bundle) -> Result<Self> {
         let mut tables = BTreeMap::new();
         for t in &decl.tables {
+            let texture_only = decl.passes.iter().flat_map(|p| p.bindings.iter())
+                .any(|b| b.resource == t.id && matches!(b.access, BindAccess::SampledTex | BindAccess::StorageTex | BindAccess::BindlessTexArray));
             if t.stride_bytes == 0
                 || !t.stride_bytes.is_multiple_of(4)
                 || !t.initial.len().is_multiple_of(t.stride_bytes as usize)
@@ -84,11 +92,13 @@ impl Instance {
             let mut table = Table {
                 decl: t.clone(),
                 buffer: None,
+                texture: None,
+                texture_only,
                 active,
                 epoch: 0,
             };
             let bytes = table.bounds(t.capacity, device)?;
-            if t.lifetime == TableLifetime::External {
+            if texture_only || t.lifetime == TableLifetime::External {
                 if active != 0 {
                     return Err(RunnerError::AbiMismatch);
                 }
@@ -118,8 +128,12 @@ impl Instance {
             tables,
             decl: decl.clone(),
             compute,
+            edits: tier0::Edits::default(),
             resource_epoch: 0,
             checkpoints,
+            history: Default::default(),
+            outbox: None,
+            pick_source: None,
         })
     }
     fn arena(&mut self, k: KindId) -> Result<&mut Table> {
@@ -230,6 +244,9 @@ impl Runner {
     pub fn hot_swap_module(&mut self, id: InstanceId, module: ModuleId, wgsl: &str) -> Result<()> {
         let device = self.device.clone();
         let inst = self.instance(id)?;
+        if inst.edits.request(module, wgsl)? {
+            return Ok(());
+        }
         let mut decl = inst.decl.clone();
         let m = decl
             .modules
@@ -239,9 +256,11 @@ impl Runner {
         m.bytes = wgsl.as_bytes().into();
         m.target = ShaderTarget::Wgsl;
         m.hash = *blake3::hash(wgsl.as_bytes()).as_bytes();
-        let replacement = encode::ComputeCache::new(&device, &decl, &inst.tables)?;
+        let mut replacement = encode::ComputeCache::new(&device, &decl, &inst.tables)?;
+        replacement.keep_parameters(&inst.compute);
         inst.decl = decl;
         inst.compute = replacement;
+        inst.edits = tier0::Edits::default();
         Ok(())
     }
     pub fn hot_swap_bundle(&mut self, id: InstanceId, b: &Bundle) -> Result<()> {
@@ -268,6 +287,7 @@ impl Runner {
                 new.active = current.active;
                 new.decl.capacity = current.decl.capacity;
                 next.checkpoints = std::mem::take(&mut old.checkpoints);
+                next.history = std::mem::take(&mut old.history);
                 // Ring history survives code/configuration swaps along with its live allocation.
                 next.decl.state.as_mut().unwrap().checkpoint_slots = a.checkpoint_slots;
             }
@@ -287,16 +307,25 @@ impl Runner {
         time_s: f64,
         dt_s: f32,
     ) -> Result<FrameIdentity> {
-        let device = self.device.clone();
+        let (device, queue) = (self.device.clone(), self.queue.clone());
         let inst = self.instance(id)?;
+        inst.edits.update(&device, &mut inst.compute)?;
         inst.compute.encode(
             &device,
+            &queue,
             encoder,
             &inst.decl.passes,
             &inst.tables,
             inst.resource_epoch,
             time_s,
             dt_s,
+            &mut inst.history,
+            &inst.checkpoints,
+            inst.decl.state.as_ref().map(|s| s.table),
+            id,
+            (time_s * 120.).round() as u32,
+            0,
+            &mut inst.outbox,
         )?;
         Ok(FrameIdentity {
             instance: id,

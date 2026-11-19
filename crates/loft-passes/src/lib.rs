@@ -372,6 +372,31 @@ impl Compiled {
         Prog::index(&self.modules).expect("indexed once already")
     }
 
+    /// Reflected slots follow the same ordering and offsets used by WGSL lowering.
+    pub fn param_meta(&self, program: &Program) -> Res<Vec<loft_ir::ParamMeta>> {
+        use loft_ir::{IrTy, ParamId, ParamMeta};
+        let prog = self.prog();
+        let mut eval: Eval<f32> = Eval::new(&prog, &self.types, vec![], &[]);
+        prog.continuous_params().enumerate().map(|(i, (name, decl))| {
+            let range = decl.range.as_ref().map(|r| -> Res<_> {
+                let lo = as_f32(eval::concrete(&eval.module_expr(&r.lo)?, r.lo.span)?, r.lo.span)?;
+                let lo = if r.strict { lo.next_up() } else { lo };
+                let hi = match &r.hi {
+                    Some(e) => as_f32(eval::concrete(&eval.module_expr(e)?, e.span)?, e.span)?,
+                    None => f32::MAX,
+                };
+                Ok(([lo, 0., 0., 0.], [hi, 0., 0., 0.]))
+            }).transpose()?;
+            let offset = (3 + i) * 4;
+            Ok(ParamMeta {
+                id: ParamId(i as u32), name: name.to_owned(), ty: IrTy::F32,
+                offset_bytes: (offset * 4) as u32,
+                default: [program.params[offset], 0., 0., 0.],
+                range,
+            })
+        }).collect()
+    }
+
     /// The row's placement in World (identity for a kind asked in World).
     pub fn pose(&self, kind_id: usize, row: usize) -> eval::Rigid {
         let prog = self.prog();
@@ -967,7 +992,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
             let table = &tables[p.kind_index(name)];
             let output = || {
                 if let Some(draw) = draw {
-                    return Ok((draw, DispatchRows::Drawable(draw)));
+                    return Ok((texts.len(), DispatchRows::Drawable(draw)));
                 }
                 if table.is_empty() {
                     return Err(Diag::new(Code::E602, kind.name.span, "scheduled table has no rows", "emit a row or remove its scheduled operation"));
@@ -982,13 +1007,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 }))
             };
             if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, output)? {
-                if let Some(draw) = draw {
-                    texts[draw].1.push_str(&entry);
-                } else {
-                    let mut kernel = emit::table_module(&p, &types, kind);
-                    kernel.push_str(&entry);
-                    texts.push((name.into(), kernel));
-                }
+                texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
         }

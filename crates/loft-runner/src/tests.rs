@@ -51,7 +51,7 @@ fn bundle() -> Bundle {
         ..Default::default()
     }
 }
-fn read(r: &Runner, buf: &wgpu::Buffer) -> Vec<u32> {
+pub(super) fn read(r: &Runner, buf: &wgpu::Buffer) -> Vec<u32> {
     let result = r.device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
         size: buf.size(),
@@ -77,9 +77,17 @@ fn step(r: &mut Runner, id: InstanceId, view: &wgpu::TextureView) -> Vec<u32> {
     read(r, &r.export_buffer(id, TABLE).unwrap())
 }
 fn device() -> (Runner, wgpu::TextureView) {
+    device_with_features(wgpu::Features::empty())
+}
+
+pub(super) fn device_with_features(features: wgpu::Features) -> (Runner, wgpu::TextureView) {
     let api = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = pollster::block_on(api.request_adapter(&Default::default())).unwrap();
-    let (d, q) = pollster::block_on(adapter.request_device(&Default::default())).unwrap();
+    let (d, q) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: features,
+        ..Default::default()
+    }))
+    .unwrap();
     let view = d
         .create_texture(&wgpu::TextureDescriptor {
             label: None,
@@ -249,8 +257,128 @@ fn reflected_texture_group_accepts_sparse_slots() {
     b.passes[0].bindings = bindings.into();
     let id = r.load_bundle(&b).unwrap();
     let mut encoder = r.device.create_command_encoder(&Default::default());
-    assert!(matches!(
+    assert_eq!(
         r.encode_into(id, &mut encoder, &view, None, 0., 0.),
-        Err(RunnerError::Unsupported(_))
+        Err(RunnerError::UnknownResource)
+    );
+}
+
+#[test]
+fn host_edits_parameters_and_external_handles_at_frame_boundary() {
+    let (mut r, view) = device();
+    let mut b = bundle();
+    let src = "@group(0) @binding(2) var<storage,read> params:array<vec4f>;
+@group(1) @binding(0) var<storage,read> host_words:array<u32>;
+@group(2) @binding(5) var<storage,read_write> rows:array<u32>;
+@group(3) @binding(0) var image:texture_2d<u32>;
+@compute @workgroup_size(1) fn update() {
+    rows[0] = host_words[0] + textureLoad(image,vec2i(0),0).x
+        + u32(params[0].x*8.0) + u32(params[1].y*16.0);
+}
+@compute @workgroup_size(1) fn second() { rows[1] = u32(params[1].y*16.0); }";
+    b.modules[0].bytes = src.as_bytes().into();
+    b.modules[0].hash = *blake3::hash(src.as_bytes()).as_bytes();
+    let mut independent = b.passes[0].clone();
+    independent.id = PassId(2);
+    independent.run = PassRun::Compute {
+        module: MODULE,
+        entry: "second".into(),
+        dispatch: DispatchExtent::Fixed([1, 1, 1]),
+    };
+    b.passes.push(independent);
+    for (id, group, access) in [
+        (20, 1, BindAccess::ReadStorage),
+        (21, 3, BindAccess::SampledTex),
+    ] {
+        b.tables.push(TableDecl {
+            id: TableId(id),
+            lifetime: TableLifetime::External,
+            format: ElemFormat::U32,
+            stride_bytes: 4,
+            capacity: 1,
+            initial: Box::default(),
+        });
+        let mut bindings = b.passes[0].bindings.to_vec();
+        bindings.push(PassBinding {
+            group,
+            slot: 0,
+            resource: TableId(id),
+            access,
+        });
+        b.passes[0].bindings = bindings.into();
+    }
+    for (id, name, ty) in [(0, "roughness", IrTy::F32), (1, "sun", IrTy::Vec3)] {
+        b.params.push(ParamMeta {
+            id: ParamId(id),
+            name: name.into(),
+            ty,
+            offset_bytes: id * 16,
+            default: [0.; 4],
+            range: Some(([0.; 4], [1.; 4])),
+        });
+    }
+    let id = r.load_bundle(&b).unwrap();
+    let pipe = r.instances[0].compute.pipeline(PassId(1)).unwrap().clone();
+    let desc = wgpu::TextureDescriptor {
+        label: None,
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R32Uint,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    };
+    let texture = Arc::new(r.device.create_texture(&desc));
+    r.bind_external_texture(id, TableId(21), texture.clone())
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &texture,
+        &r.export_texture(id, TableId(21)).unwrap()
     ));
+    let host = allocate(&r.device, 4);
+    r.bind_external_buffer(id, TableId(20), host.clone())
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &host,
+        &r.export_buffer(id, TableId(20)).unwrap()
+    ));
+    for (i, v) in [0., 0.25, 0.5, 0.75, 1.].into_iter().enumerate() {
+        r.set_param(id, ParamId(0), &[v]).unwrap();
+        r.set_param(id, ParamId(1), &[0., v, 0.]).unwrap();
+        r.queue
+            .write_buffer(&host, 0, &(100 + i as u32).to_le_bytes());
+        assert_eq!(
+            step(&mut r, id, &view)[0],
+            100 + i as u32 + (v * 24.) as u32
+        );
+    }
+    let before = r.instances[0].compute.bound_groups(PassId(1));
+    let unrelated = r.instances[0].compute.bound_groups(PassId(2));
+    let other = allocate(&r.device, 4);
+    r.queue.write_buffer(&other, 0, &230u32.to_le_bytes());
+    r.bind_external_buffer(id, TableId(20), other).unwrap();
+    assert_eq!(step(&mut r, id, &view)[0], 254);
+    let after = r.instances[0].compute.bound_groups(PassId(1));
+    assert_ne!(before[0], after[0]);
+    assert_eq!(&before[1..], &after[1..]);
+    assert_eq!(unrelated, r.instances[0].compute.bound_groups(PassId(2)));
+    let new_tex = Arc::new(r.device.create_texture(&desc));
+    r.queue.write_texture(
+        new_tex.as_image_copy(),
+        &11u32.to_le_bytes(),
+        Default::default(),
+        desc.size,
+    );
+    r.bind_external_texture(id, TableId(21), new_tex).unwrap();
+    assert_eq!(step(&mut r, id, &view), [265, 16]);
+    let rebound = r.instances[0].compute.bound_groups(PassId(1));
+    assert_eq!(&after[..2], &rebound[..2]);
+    assert_ne!(after[2], rebound[2]);
+    assert_eq!(unrelated, r.instances[0].compute.bound_groups(PassId(2)));
+    assert_eq!(r.instances[0].compute.pipeline(PassId(1)).unwrap(), &pipe);
 }
