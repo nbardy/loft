@@ -14,3 +14,4 @@ Lead's notes on the addendum (decided without the scientist; small):
 - `E501` is used twice (undeclared field write, and the schedule DAG's read-before-write). The DAG error becomes `E505`.
 - Motion `wgsl` blocks must be marked deterministic; the spelling is `wgsl det (...) -> T { ... }` (a keyword, not an `@` attribute).
 - `--max-frame-ms` on a device without timestamp queries (some browsers) exits `6` with the reason, never a guessed time.
+- `PATCH_V1_2.md` (20 Nov): the meta-engine ABI patch. Bind groups are derived per pass (only `@group(0)` is fixed), with expanded HostCaps features, table lifetimes and runtime row arenas, `step_pass_cpu`, `unproved {}`, typed `kernel allow(...)`, `mix_bsdf` and a rebindable `Radiance`. Precedence: PATCH_V1_2 > 06_ADDENDUM > 00–05.
