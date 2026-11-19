@@ -154,6 +154,16 @@ pub(super) struct Timeline {
 }
 
 impl Timeline {
+    pub fn copy_from(&mut self, other: &Self, enc: &mut wgpu::CommandEncoder) {
+        enc.copy_buffer_to_buffer(&other.state, 0, &self.state, 0, None);
+        self.baked = other.baked;
+        self.done = other.done;
+        self.valid = other.valid;
+        self.dirty = other.dirty;
+        self.changes.clone_from(&other.changes);
+        self.seq.clone_from(&other.seq);
+    }
+
     pub fn is_baked(&self) -> bool {
         self.baked
     }
@@ -210,7 +220,9 @@ impl Timeline {
         self.changes.insert((row, k), v);
         // show() reads a retained slot without writing slot zero. On the first live input the latter
         // still holds the end of the bake. Resume from a checkpoint even if no tick was presented yet.
-        if self.baked { self.dirty = Some(k); }
+        if self.baked {
+            self.dirty = Some(k);
+        }
         self.baked = false;
         self.valid = self.valid.min(k - 1);
         if self.done >= k {

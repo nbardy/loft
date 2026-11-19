@@ -211,7 +211,7 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
     for i in b.inputs.iter() {
         let name = at(&b.names, i.name, "input name")?;
         // Main's wire (lr-wire) has no record type: every Ty is a scalar or vector, and `lits` is its float count.
-        if i.def.len() != usize::from(i.ty.lits()) {
+        if i.ty.width().is_none() || i.def.len() != usize::from(i.ty.lits()) {
             return Err(bad(format!("input {name} is {:?} with {} default floats", i.ty, i.def.len())));
         }
     }
@@ -228,12 +228,6 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
     for c in b.cameras.iter() {
         at(&b.names, c.name, "camera name")?;
         entry(c.lens, "camera lens module")?;
-    }
-    for d in &b.inputs {
-        at(&b.names, d.name, "input name")?;
-        if d.ty.width().is_none() || d.def.len() != d.ty.lits() as usize {
-            return Err(bad("input default: supply one number per declared component".into()));
-        }
     }
     let mut outputs = std::collections::HashSet::new();
     for s in &b.row_steps {
@@ -302,6 +296,25 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
         };
         let module = naga::front::wgsl::parse_str(&src)
             .map_err(|e| refuse(e.location(&src).map(|l| l.line_number), e.message().into()))?;
+        for spec in b.row_steps.iter().filter(|s| s.module as usize == k) {
+            let Shape::Rows { rows: count, .. } = b.resources[spec.seed as usize].shape else { unreachable!() };
+            for (binding, r) in [(1, spec.plan), (2, spec.seed), (4, spec.output)] {
+                let expected = state_bytes(&b.resources[r as usize].shape);
+                let stride = module
+                    .global_variables
+                    .iter()
+                    .find(|(_, g)| g.binding.as_ref().is_some_and(|v| v.group == 0 && v.binding == binding))
+                    .and_then(|(_, g)| match module.types[g.ty].inner {
+                        naga::TypeInner::Array { stride, .. } => Some(stride),
+                        _ => None,
+                    });
+                if stride.is_none_or(|v| u64::from(v) * u64::from(count) != expected) {
+                    return Err(bad(format!(
+                        "table {r}: {expected} supplied bytes for {count} rows disagree with the WGSL array stride {stride:?}. Fix: match the record and shader layouts"
+                    )));
+                }
+            }
+        }
         let caps = naga::valid::Capabilities::default() | naga::valid::Capabilities::SHADER_FLOAT16;
         naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
             .validate(&module)

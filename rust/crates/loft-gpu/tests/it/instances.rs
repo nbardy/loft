@@ -184,9 +184,15 @@ fn instances_draw_in_the_callers_pass_each_with_its_own_pose() {
         (green, green),
         "the game's pixels between them are untouched"
     );
-    // A live stepped kernel cannot be shared by copies: refused by name.
+    // Each copy of a legacy Latest kernel keeps its own cursor and ping-pong buffers.
     let live = load(&d, &q, &counter());
-    assert!(matches!(live.instance(&d, &q), Err(Error::Usage(m)) if m.contains("steps live")));
+    let mut fast = live.instance(&d, &q).unwrap();
+    fast.time = 2.0;
+    let mut slow = live.instance(&d, &q).unwrap();
+    slow.time = 0.5;
+    let mut enc = d.create_command_encoder(&Default::default());
+    live.prepare(&q, &mut enc, &[fast, slow]);
+    q.submit([enc.finish()]);
 }
 
 /// Median of `f`'s GPU milliseconds over `n` frames.

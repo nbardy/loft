@@ -281,11 +281,13 @@ pub enum InputKind {
     },
 }
 impl InputKind {
-    fn level(&self)->bool {matches!(self,Self::Level)}
+    fn level(&self) -> bool {
+        matches!(self, Self::Level)
+    }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InputDecl {
-    #[serde(default,skip_serializing_if="InputKind::level")]
+    #[serde(default, skip_serializing_if = "InputKind::level")]
     pub kind: InputKind,
     pub name: Id,
     pub ty: Ty,

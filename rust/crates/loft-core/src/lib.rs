@@ -418,9 +418,10 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         }
         let text = format!("{source}\n{}", include_str!("../wgsl/advance.wgsl"));
         if matches!(build.naga, Naga::Emit) {
-            let module=naga::front::wgsl::parse_str(&text).map_err(|e| unsupported(e.emit_to_string(&text)))?;
+            let module = naga::front::wgsl::parse_str(&text).map_err(|e| unsupported(e.emit_to_string(&text)))?;
             naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
-                .validate(&module).map_err(|e| unsupported(e.emit_to_string(&text)))?;
+                .validate(&module)
+                .map_err(|e| unsupported(e.emit_to_string(&text)))?;
         }
         let module = modules.len() as u32;
         sections.push(text.into_bytes().into());
@@ -466,7 +467,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         sections: sections.into(),
     };
     let resources = b.resources.len();
-    let (n_kernels, n_draws, n_packs) = (b.kernels.len()+b.row_steps.len(), b.draws.len(), b.packs.len());
+    let (n_kernels, n_draws, n_packs) = (b.kernels.len() + b.row_steps.len(), b.draws.len(), b.packs.len());
     let bytes = b.write()?;
     let build = Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect();
     phases.bundle = ns(t);

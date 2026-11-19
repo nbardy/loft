@@ -48,6 +48,7 @@
 //! ```
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+mod live;
 mod ticks;
 mod validate;
 mod view;
@@ -114,11 +115,16 @@ pub struct Instance {
     g1: Packs<BindGroup>,
     g2: Vec<BindGroup>,
     timelines: std::cell::RefCell<Vec<ticks::Timeline>>,
+    live: Vec<live::Live>,
     _own: (Vec<Buffer>, Vec<Res>),
 }
 impl Instance {
     pub fn set_param(&mut self, loft: &Loft, name: &str, value: f32) -> Result<(), Error> {
-        self.params[loft.param_slot(name)?] = value;
+        let k = loft.param_slot(name)?;
+        for s in &mut self.live {
+            s.set_at_time(k, &[value], self.time);
+        }
+        self.params[k] = value;
         Ok(())
     }
     pub fn set_input(&mut self, loft: &Loft, name: &str, value: &[f32]) -> Result<(), Error> {
@@ -133,6 +139,9 @@ impl Instance {
             for row in 0..p.count {
                 s.write(p, row, ((self.time * p.spec.hz as f32) as u32).max(1), value, None)?;
             }
+        }
+        for s in &mut self.live {
+            s.set_at_time(self.params.len() + slot.start, value, self.time);
         }
         self.inputs[slot].copy_from_slice(value);
         Ok(())
@@ -194,7 +203,6 @@ struct Stepper {
     s: Stepping,
     x: [Buffer; 2],
     base: u64,
-    done: u32,
     groups: Vec<(BindGroup, BindGroup)>,
 }
 
@@ -256,6 +264,7 @@ pub struct Loft {
     inputs: Vec<f32>,
     timestamps: Option<wgpu::QuerySet>,
     frame_dispatches: usize,
+    live: Vec<live::Live>,
     programs: Vec<ticks::Program>,
     timelines: Vec<ticks::Timeline>,
 }
@@ -786,6 +795,7 @@ impl Loft {
             inputs,
             timestamps: None,
             frame_dispatches: 0,
+            live: vec![],
             programs: b
                 .row_steps
                 .iter()
@@ -813,7 +823,7 @@ impl Loft {
                 Keep::Latest => [loft.packs[pack].clone(), scratch()],
                 Keep::Every(_) => [scratch(), scratch()],
             };
-            loft.steppers.push(Stepper { kernel, res, pack, s, x, base, done: 0, groups: Vec::new() });
+            loft.steppers.push(Stepper { kernel, res, pack, s, x, base, groups: Vec::new() });
             base += u64::from(s.count) + 1;
         }
         loft.bind(device);
@@ -837,6 +847,13 @@ impl Loft {
             }
             loft.timelines.push(timeline);
         }
+        loft.live = loft
+            .steppers
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.s.keep == Keep::Latest)
+            .map(|(index, _)| live::Live::new(&loft, device, index, &|p| &loft.packs[p], &mut enc, None))
+            .collect();
         // Every(k) states are final after load; Latest starts at state 0.
         queue.submit([enc.finish()]);
         loft
@@ -1133,6 +1150,9 @@ impl Loft {
     /// A param by name; `min` and `max` are for editors and do not clamp.
     pub fn set_param(&mut self, name: &str, value: f32) -> Result<(), Error> {
         let k = self.param_slot(name)?;
+        for s in &mut self.live {
+            s.set_at_time(k, &[value], self.time);
+        }
         self.params[k] = value;
         Ok(())
     }
@@ -1147,6 +1167,9 @@ impl Loft {
                 s.write(p, r, tick, value, None)?;
             }
         }
+        for s in &mut self.live {
+            s.set_at_time(self.params.len() + at.start, value, self.time);
+        }
         self.inputs[at].copy_from_slice(value);
         Ok(())
     }
@@ -1160,9 +1183,20 @@ impl Loft {
         sequence: Option<u64>,
     ) -> Result<(), Error> {
         let slot = self.input_slot(name, value.len())?.start / 4;
+        if !self.live.is_empty()
+            && (row != 0 || sequence.is_some() || tick == 0 || self.live.iter().any(|s| tick > s.count()))
+        {
+            return Err(Error::Usage(
+                "legacy level input: write row zero at a tick within every reader, without an event sequence".into(),
+            ));
+        }
         let mut found = false;
         for (s, p) in self.timelines.iter_mut().zip(&self.programs).filter(|(_, p)| p.spec.input as usize == slot) {
             s.write(p, row, tick, value, sequence)?;
+            found = true;
+        }
+        for s in &mut self.live {
+            s.set(self.params.len() + 4 * slot, value, tick);
             found = true;
         }
         if !found {
@@ -1201,6 +1235,23 @@ impl Loft {
         timeline.bake(p, enc, self.timestamps.as_ref());
         Ok(())
     }
+    /// Supply a whole table (for example, recorded transforms from another host).
+    pub fn write_rows(&self, queue: &wgpu::Queue, r: Id, bytes: &[u8]) -> Result<(), Error> {
+        let Some(Res::Rows { pack, offset }) = self.res.get(r as usize) else {
+            return Err(Error::Usage("choose a rows resource to upload".into()));
+        };
+        if self.programs.iter().any(|p| p.spec.output == r) || self.b.kernels.iter().any(|k| k.writes.contains(&r)) {
+            return Err(Error::Usage(
+                "table already has a writer: remove the producing kernel before supplying its rows".into(),
+            ));
+        }
+        if bytes.len() as u64 != state_bytes(&self.b.resources[r as usize].shape) {
+            return Err(Error::Usage("supply exactly one complete table of vec4 rows".into()));
+        }
+        queue.write_buffer(&self.packs[*pack], offset * 16, bytes);
+        Ok(())
+    }
+
     /// GPU-to-GPU copy of a row resource, including its pack offset.
     pub fn copy_rows(&self, enc: &mut wgpu::CommandEncoder, r: Id, dst: &Buffer, off: u64) -> Result<(), Error> {
         let Some(Res::Rows { pack, offset }) = self.res.get(r as usize) else {
@@ -1242,7 +1293,13 @@ impl Loft {
             .flat_map(|(k, d)| self.inputs[k * 4..k * 4 + d.def.len()].to_vec())
             .collect();
         FrameKey {
-            steps: self.programs.iter().zip(&self.timelines).map(|(p, s)| s.key(p, self.time)).collect(),
+            steps: self
+                .programs
+                .iter()
+                .zip(&self.timelines)
+                .map(|(p, s)| s.key(p, self.time))
+                .chain(self.live.iter().map(|s| s.key(self.time)))
+                .collect(),
             camera,
             time: self.time.to_bits(),
             size,
@@ -1257,7 +1314,7 @@ impl Loft {
 
     // ---- a frame -----------------------------------------------------------------------------------------------
 
-    /// Records a frame into the caller's encoder: frame kernels, live steps to the time, then the passes in order. A
+    /// Records a frame into the caller's encoder: live steps, their camera and frame readers, then the draws. A
     /// `View` pass draws into `view`'s attachments, and with `Owner::Caller` it loads them and clears nothing.
     pub fn encode_into(
         &mut self,
@@ -1288,28 +1345,8 @@ impl Loft {
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
 
-        for s in 0..self.steppers.len() {
-            let st = &self.steppers[s];
-            let Keep::Latest = st.s.keep else { continue };
-            let to = st.s.at(self.time);
-            if to < st.done {
-                // Rewind: the resource back to its init, state 0.
-                let init = self.b.resources[st.res].init.clone();
-                self.init(queue, enc, st.res, &init);
-                if let Init::By(k) = init {
-                    self.dispatch_all(enc, &[k as usize], None, &[self.own()]);
-                }
-                self.steppers[s].done = 0;
-            }
-            let st = &self.steppers[s];
-            if to > st.done {
-                self.run_steps(queue, enc, s, st.done, to);
-                // Readers bind x[0], the resource: an odd last state is copied home.
-                if to % 2 == 1 {
-                    enc.copy_buffer_to_buffer(&st.x[1], 0, &st.x[0], 0, None);
-                }
-                self.steppers[s].done = to;
-            }
+        for s in &self.live {
+            s.encode(self, enc, self.time);
         }
         let kernels = self.frame_kernels();
         self.frame_dispatches = kernels.len();
@@ -1419,13 +1456,8 @@ impl Loft {
     // ---- many instances (Keel step 8) ------------------------------------------------------------------------------
 
     /// A new copy at this loft's current time, params and inputs. Refused when a copy would share per-frame state it
-    /// cannot share: a live (`Keep::Latest`) stepped kernel, an offscreen pass, or a view-sized `Frame` write.
+    /// cannot share: an offscreen pass or a view-sized frame write.
     pub fn instance(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Instance, Error> {
-        let live = self
-            .steppers
-            .iter()
-            .find(|st| st.s.keep == Keep::Latest)
-            .map(|st| format!("kernel {} steps live", st.kernel));
         let offscreen = self
             .b
             .passes
@@ -1434,13 +1466,14 @@ impl Loft {
             .map(|p| format!("pass {p} draws offscreen"));
         let frame: Vec<usize> = self.frame_kernels();
         let written = |r: usize| {
-            self.programs.iter().any(|p| p.spec.output as usize == r)
+            self.live.iter().any(|x| self.steppers[x.index].res == r)
+                || self.programs.iter().any(|p| p.spec.output as usize == r)
                 || frame.iter().any(|&k| self.b.kernels[k].writes.contains(&(r as Id)))
         };
         let sized = (0..self.res.len())
             .find(|&r| written(r) && matches!(self.b.resources[r].shape, Shape::ViewSized { .. }))
             .map(|r| format!("frame kernels write view-sized resource {r}"));
-        if let Some(why) = live.or(offscreen).or(sized) {
+        if let Some(why) = offscreen.or(sized) {
             return Err(Error::Usage(
                 format!("this bundle cannot be instanced: {why}, which every copy would share. Fix: draw it with encode_into").into(),
             ));
@@ -1515,18 +1548,23 @@ impl Loft {
         let timelines = self
             .programs
             .iter()
-            .map(|p| {
+            .zip(&self.timelines)
+            .map(|(p, parent)| {
                 let Res::Rows { pack: index, .. } = self.res[p.spec.output as usize] else { unreachable!() };
                 let mut s = p.start(device, queue, &self.b, pack(index));
-                if matches!(self.b.inputs[p.spec.input as usize].kind, loft_ir::bundle::InputKind::Script { .. }) {
-                    s.bake(p, &mut start, None);
-                }
+                s.copy_from(parent, &mut start);
                 s
             })
+            .collect();
+        let live = self
+            .live
+            .iter()
+            .map(|parent| live::Live::new(self, device, parent.index, &pack, &mut start, Some(parent)))
             .collect();
         queue.submit([start.finish()]);
         Ok(Instance {
             timelines: std::cell::RefCell::new(timelines),
+            live,
             time: self.time,
             params: self.params.clone(),
             inputs: self.inputs.clone(),
@@ -1543,6 +1581,9 @@ impl Loft {
     pub fn prepare(&self, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, instances: &[Instance]) {
         let camera = self.host_camera();
         for i in instances {
+            for s in &i.live {
+                s.encode(self, enc, i.time);
+            }
             for (s, p) in i.timelines.borrow_mut().iter_mut().zip(&self.programs) {
                 s.encode(p, enc, i.time, None);
             }
