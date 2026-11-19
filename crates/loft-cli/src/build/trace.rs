@@ -182,7 +182,7 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
         return Err(usage("trace rendering requires a distinct .png output"));
     }
     let src = sources(Path::new(scene)).map_err(usage)?;
-    let (program, _, mut compiled) =
+    let (mut program, _, mut compiled) =
         loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
     let hash = bundle_hash(&program, &compiled)?;
     let mut log = if let Some(path) = replay {
@@ -204,8 +204,32 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
         log.record(ticks as u32, Input::End).map_err(usage)?;
         log
     };
-    adapt_checks(&mut compiled)?;
-    let result = execute(&compiled, &program, &src, &log, hash)?;
+    // Historical twin logs identify their own backend. New recordings hash the native law outputs.
+    let gpu = if recording.is_some() || log.device_signature != TWIN || out.is_some() {
+        Some(native::gpu().map_err(device)?)
+    } else {
+        None
+    };
+    if recording.is_some() {
+        log.device_signature = gpu
+            .as_ref()
+            .expect("recording device")
+            .device_signature
+            .clone();
+    }
+    let result = if log.device_signature == TWIN {
+        adapt_checks(&mut compiled)?;
+        execute(&compiled, &program, &src, &log, hash)?
+    } else {
+        execute_native(
+            gpu.as_ref().expect("replay device"),
+            &compiled,
+            &mut program,
+            &log,
+            hash,
+            !render,
+        )?
+    };
     log.verify_identity(&result.bytes)
         .map_err(|e| Failure::Parity(e.to_string()))?;
     if let Some(out) = out {
@@ -215,21 +239,26 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)], render: bool) -> Resul
         for (i, name) in live_names(&resolved.prog()).enumerate() {
             snapshot.params[(3 + i) * 4] = result.params[name];
         }
-        let gpu = native::gpu().map_err(device)?;
-        let loaded = Loaded::new(&gpu, &snapshot, size, None).map_err(device)?;
-        loaded.frame(&gpu, time);
-        gates::write_png(&out, size, &loaded.pixels(&gpu).map_err(device)?).map_err(usage)?;
+        let gpu = gpu.as_ref().expect("output device");
+        let loaded = Loaded::new(gpu, &snapshot, size, None).map_err(device)?;
+        loaded.frame(gpu, time);
+        gates::write_png(&out, size, &loaded.pixels(gpu).map_err(device)?).map_err(usage)?;
     }
     if let Some(path) = recording {
         log.expected_final_identity = Some(identity(&result.bytes));
         let data = if json {
-            serde_json::to_vec_pretty(&Json(log)).map_err(usage)?
+            serde_json::to_vec_pretty(&Json(log.clone())).map_err(usage)?
         } else {
             log.encode().map_err(usage)?
         };
         write(Path::new(&path), &data)?;
     }
-    println!("state {}", blake3::hash(&result.bytes));
+    println!(
+        "state {} ({} bytes, {})",
+        blake3::hash(&result.bytes),
+        result.bytes.len(),
+        log.device_signature
+    );
     if let Some(verdict) = result.missed
         && !render
     {
@@ -302,6 +331,15 @@ fn execute(
         tables = ev.tables;
     }
 
+    Ok(Outcome {
+        bytes: state_bytes(tables),
+        samples,
+        params,
+        missed,
+    })
+}
+
+fn state_bytes(tables: loft_passes::eval::Tables) -> Vec<u8> {
     let mut bytes = Vec::new();
     for rows in tables {
         for row in rows {
@@ -320,8 +358,87 @@ fn execute(
             }
         }
     }
+    bytes
+}
+
+fn execute_native(
+    gpu: &native::Gpu,
+    compiled: &Compiled,
+    program: &mut Program,
+    log: &LoftLog,
+    hash: [u8; 32],
+    check_trace: bool,
+) -> Result<Outcome> {
+    if log.device_signature != gpu.device_signature {
+        return Err(device(
+            "cross-device replay needs a numeric tolerance reference",
+        ));
+    }
+    if log.dt_s.to_bits() != DT.to_bits() || log.initial_seed != 0 || log.checkpoints_every != 0 {
+        return Err(device(
+            "native snapshots require 120 Hz, seed zero and no checkpoints",
+        ));
+    }
+    let mut ticks = log.ticks(hash).map_err(usage)?;
+    let end = log.validate().map_err(usage)?;
+    let schema = super::artifact::parameters(program, compiled).map_err(Failure::Compile)?;
+    let prog = compiled.prog();
+    let mut params: BTreeMap<_, _> = live_names(&prog)
+        .map(|name| (name.to_owned(), 0.))
+        .collect();
+    if log.params.len() != params.len() {
+        return Err(usage("parameter snapshot differs from the scene"));
+    }
+    for (name, value) in &log.params {
+        update(&schema, &mut params, name, *value)?;
+    }
+    apply_inputs(
+        &schema,
+        &mut params,
+        ticks.next().expect("validated tick zero").1,
+    )?;
+    // A snapshot starts from the initial rows. A later update needs a resumable motion dispatch.
+    if log
+        .inputs
+        .iter()
+        .any(|e| e.tick != 0 && e.input != Input::End)
+    {
+        return Err(device(
+            "native snapshot cannot apply an input after tick zero",
+        ));
+    }
+    for (i, name) in live_names(&prog).enumerate() {
+        program.params[(3 + i) * 4] = params[name];
+    }
+    let mut missed = None;
+    let mut samples = Vec::new();
+    for tick in (if check_trace { 0 } else { end })..=end {
+        let seconds = tick as f32 * DT;
+        if (f64::from(seconds) * 120.).round() != f64::from(tick) {
+            return Err(device("native snapshot time cannot represent this tick"));
+        }
+        samples = native::sample_motion(gpu, program, seconds).map_err(device)?;
+        for (name, verdict) in gates::check_records(program, &samples) {
+            if !matches!(verdict, Verdict::Held { .. }) && missed.is_none() {
+                missed = Some(format!("tick {tick} {name}: {verdict}"));
+            }
+        }
+    }
+    let mut tables = compiled.tables.clone();
+    for sample in &samples {
+        let rows = &mut tables[prog.kind_index(&sample.kind)];
+        for (name, values) in &sample.fields {
+            let field = column(&prog, &sample.kind, name)?;
+            if values.len() != rows.len() {
+                return Err(device("incomplete native state readback"));
+            }
+            for (row, value) in rows.iter_mut().zip(values) {
+                row[field] = RowVal::F(*value);
+            }
+        }
+    }
     Ok(Outcome {
-        bytes,
+        bytes: state_bytes(tables),
         samples,
         params,
         missed,
@@ -588,6 +705,46 @@ mod tests {
     use super::*;
 
     const SCENE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/l5g/scramble.loft");
+
+    #[test]
+    fn native_scramble_record_replays_every_state_bit() {
+        let src = sources(Path::new(SCENE)).unwrap();
+        let (mut program, _, code) =
+            loft_passes::compile(&src, &[]).unwrap_or_else(|e| panic!("{}", e.render(&src)));
+        let hash = bundle_hash(&program, &code).unwrap();
+        let gpu = native::gpu().unwrap();
+        let mut log = initial_log(hash, &code.prog(), &program);
+        log.device_signature = gpu.device_signature.clone();
+        log.record(
+            0,
+            Input::Param {
+                name: "scramble_speed".into(),
+                value: [-0.3, 0., 0., 0.],
+            },
+        )
+        .unwrap();
+        log.record(481, Input::End).unwrap();
+        let original = execute_native(&gpu, &code, &mut program, &log, hash, false)
+            .unwrap()
+            .bytes;
+        assert_eq!(original.len(), 32);
+        log.expected_final_identity = Some(identity(&original));
+        let loaded = LoftLog::decode(&log.encode().unwrap()).unwrap();
+        let (mut fresh, _, code) = loft_passes::compile(&src, &[]).unwrap();
+        let replay = execute_native(&gpu, &code, &mut fresh, &loaded, hash, false).unwrap();
+        assert_eq!(original, replay.bytes);
+        loaded.verify_identity(&replay.bytes).unwrap();
+        let mut other = loaded.clone();
+        other.inputs[0].input = Input::Param {
+            name: "scramble_speed".into(),
+            value: [0.3, 0., 0., 0.],
+        };
+        let changed = execute_native(&gpu, &code, &mut fresh, &other, hash, false).unwrap();
+        assert_ne!(
+            original, changed.bytes,
+            "logged input must drive the device state"
+        );
+    }
 
     #[test]
     fn scramble_replays_every_state_bit() {

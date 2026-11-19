@@ -10,6 +10,7 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pub adapter: String,
+    pub device_signature: String,
     pub timestamps: bool,
     /// The disk pipeline cache's file name, when the backend has one (Vulkan); `None` on Metal.
     pub cache_key: Option<String>,
@@ -36,6 +37,7 @@ pub fn gpu() -> Result<Gpu, String> {
     Ok(Gpu {
         device,
         queue,
+        device_signature: format!("{} ({:?}) {} {}", info.name, info.backend, info.driver, info.driver_info),
         adapter: format!("{} ({:?})", info.name, info.backend),
         timestamps: features.contains(wgpu::Features::TIMESTAMP_QUERY),
         cache_key: features.contains(wgpu::Features::PIPELINE_CACHE).then(|| wgpu::util::pipeline_cache_key(&info)).flatten(),

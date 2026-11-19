@@ -35,8 +35,8 @@ fn number(name: &str, s: &str) -> Result<f64, Failure> {
 
 impl Clip {
     fn parse(mut args: Vec<String>) -> Result<Self, Failure> {
+        let dest = flag(&mut args, "--out")?.map(PathBuf::from);
         let mut required = |key| flag(&mut args, key)?.ok_or_else(|| Failure::Usage(format!("clip requires {key}")));
-        let out = std::path::absolute(required("--out")?).map_err(output_error)?;
         let size = required("--size")?;
         let positive = |s: &str| s.parse::<u32>().ok().filter(|&x| x > 0);
         let size = size
@@ -57,6 +57,8 @@ impl Clip {
         if scene.starts_with('-') || fps == 0. || !((start + f64::from(frames - 1) / fps) as f32).is_finite() {
             return Err(Failure::Usage("clip requires a scene and finite frame times at positive fps".into()));
         }
+        let stem = Path::new(scene).file_stem().ok_or_else(|| Failure::Usage("clip requires a scene filename".into()))?;
+        let out = std::path::absolute(dest.unwrap_or_else(|| Path::new("out/clip").join(stem))).map_err(output_error)?;
         Ok(Self { scene: scene.into(), out, json, size, frames, fps, start, max_build, max_frame })
     }
 }
