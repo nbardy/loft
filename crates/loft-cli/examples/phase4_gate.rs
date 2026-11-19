@@ -147,8 +147,85 @@ emit Sun(dir: dir([0,1,0]@World), color: [0,0,0])
 emit Sky(zenith: [0.5,0.5,0.5], horizon: [0.5,0.5,0.5]) }
 ";
 
+fn quant(g: &Gpu) -> Result<Value, String> {
+    use loft_ir::{DepthConvention, GpuFeatures, HostCaps, Span};
+    use loft_passes::eval::{Eval, Val};
+    let mut src = prelude();
+    let demo = "
+use std::quant::*
+fn sums(a:u,b:u) -> v2 = [f32(dot4_i8(a,b)),f32(dot4_u8(a,b))]
+fn bf(a:u) -> v2 = unpack_bf16x2(a)
+fn lo(a:u) -> v4 = unpack_u4_lo(a)
+fn hi(a:u) -> v4 = unpack_u4_hi(a)
+fn retain_all(a:u,b:u) -> rgb = [sums(a,b).x,bf(a).y,lo(a).x + hi(a).y]
+";
+    src.add("quant.loft", demo.to_owned());
+    src.add(
+        "sphere.loft",
+        SPHERE.replace(
+            "ggx([1,1,1],1,1)",
+            "lambert(retain_all(0x7f00ff80,0x7f80fd02))",
+        ),
+    );
+    let probe = "
+        let word = 0xfedcba98u;
+        let s = f32(loft_quant_dot4_i8(0x7f00ff80u,0x7f80fd02u));
+        let u = f32(loft_quant_dot4_u8(0x7f00ff80u,0x7f80fd02u));
+        let bf = loft_quant_unpack_bf16x2(0xc0203f80u);
+        let lo = loft_quant_unpack_u4_lo(word);
+        let hi = loft_quant_unpack_u4_hi(word);
+        let v = array(vec3(s,u,bf.x),vec3(bf.y,lo.x,lo.y),vec3(lo.z,lo.w,hi.x),hi.yzw);
+        let value = v[test][ch];";
+    let mut result = json!({});
+    for (label, features) in [
+        ("portable", GpuFeatures::empty()),
+        ("packed", GpuFeatures::PACKED_INT8_DOT),
+    ] {
+        let caps = HostCaps {
+            features,
+            msaa_samples: 4,
+            depth_convention: DepthConvention::StandardZeroToOne,
+        };
+        let (mut p, _, c) =
+            loft_passes::quant::compile(&src, &[], caps).map_err(|d| d.render(&src))?;
+        let shader = &p.modules[p.present].wgsl;
+        let packed = features.contains(GpuFeatures::PACKED_INT8_DOT);
+        if shader.contains("dot4I8Packed(a, b)") != packed
+            || shader.contains("dot4U8Packed(a, b)") != packed
+        {
+            return Err(format!("wrong packed dot emission for {label}"));
+        }
+        let prog = c.prog();
+        let mut twin = Eval::<f32>::new(&prog, &c.types, vec![], &[]);
+        let mut expected = Vec::new();
+        for (name, args) in [
+            ("sums", vec![0x7f00ff80, 0x7f80fd02]),
+            ("bf", vec![0xc0203f80]),
+            ("lo", vec![0xfedcba98]),
+            ("hi", vec![0xfedcba98]),
+        ] {
+            let vals = args.into_iter().map(Val::U).collect();
+            let Val::V(v, _) = twin
+                .call_fn(prog.fns[name], vals, Span::NONE)
+                .map_err(|e| e.render(&src))?
+            else {
+                return Err(format!("expected a twin vector from {name}"));
+            };
+            expected.extend(v.into_iter().map(f64::from));
+        }
+        let device = observe(g, &mut p, probe, 1, 4)?;
+        let actual: Vec<[f64; 3]> =
+            serde_json::from_value(device["linear_rgb"].clone()).map_err(|e| e.to_string())?;
+        let actual = actual.as_flattened();
+        result[label] = json!({"gpu":actual,"cpu":expected,"match":actual == expected,
+            "naga_validated":true,"packed_dot_emitted":packed});
+    }
+    Ok(result)
+}
+
 fn measure(g: &Gpu, gate: &str) -> Result<Value, String> {
     match gate {
+        "quant" => quant(g),
         "bake" => bake(g),
         "shrine" => shrine(g),
         "closed" => observe(g,&mut compile(WALL)?.0,
