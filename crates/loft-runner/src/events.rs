@@ -4,10 +4,15 @@ use std::{collections::VecDeque, sync::Mutex};
 use wgpu::util::DeviceExt;
 
 pub use loft_ir::OutboxEvent;
-const HEADER: usize = 16;
-const RECORD: usize = 32;
+pub(super) use loft_std::events::capacity;
+use loft_std::events::{Events, decode};
+#[cfg(test)]
+use loft_std::events::{HEADER, RECORD};
 
-type Events = (Vec<OutboxEvent>, u32);
+impl From<loft_std::events::InvalidOutbox> for RunnerError {
+    fn from(_: loft_std::events::InvalidOutbox) -> Self { Self::AbiMismatch }
+}
+
 type Completion = Arc<Mutex<Option<Result<Events>>>>;
 
 struct Slot {
@@ -87,7 +92,7 @@ impl Outbox {
                     let bytes = copy
                         .get_mapped_range(..)
                         .map_err(|_| RunnerError::Unsupported("outbox mapping failed"))?;
-                    decode(&bytes, frame)
+                    Ok(decode(&bytes, frame)?)
                 });
             if status.is_ok() {
                 copy.unmap();
@@ -137,35 +142,6 @@ impl Runner {
             .as_mut()
             .map_or_else(|| Ok((vec![], 0)), Outbox::drain)
     }
-}
-
-pub(super) fn capacity(size: u64) -> Result<u32> {
-    (size >= (HEADER + RECORD) as u64 && (size - HEADER as u64).is_multiple_of(RECORD as u64)
-        || size == 16_384)
-        .then(|| (size - HEADER as u64) / RECORD as u64)
-        .and_then(|n| u32::try_from(n).ok())
-        .ok_or(RunnerError::AbiMismatch)
-}
-
-fn decode(bytes: &[u8], frame: u32) -> Result<Events> {
-    let n = capacity(bytes.len() as u64)?;
-    let word = |i: usize| u32::from_le_bytes(bytes[i * 4..i * 4 + 4].try_into().unwrap());
-    if word(1) != n || word(3) != frame || word(2) != word(0).saturating_sub(n) {
-        return Err(RunnerError::AbiMismatch);
-    }
-    let events = (0..word(0).min(n) as usize)
-        .map(|i| {
-            let j = 4 + i * 8;
-            OutboxEvent {
-                tag: word(j),
-                instance_id: word(j + 1),
-                site_id: word(j + 2),
-                tick: word(j + 3),
-                payload: std::array::from_fn(|k| f32::from_bits(word(j + 4 + k))),
-            }
-        })
-        .collect();
-    Ok((events, word(2)))
 }
 
 #[cfg(test)]

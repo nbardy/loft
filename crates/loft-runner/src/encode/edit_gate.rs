@@ -165,7 +165,7 @@ fn time_edit_and_compare_native_promotion() {
     });
     for i in 0..N {
         let mut enc = r.device.create_command_encoder(&Default::default());
-        for (j, pipeline) in [&vm_pipeline, &pass.pipeline].into_iter().enumerate() {
+        for (j, pipeline) in [&vm_pipeline, cache.pipeline(PASS).unwrap()].into_iter().enumerate() {
             let begin = 4 * i + 2 * j as u32;
             let mut cp = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: None,
@@ -177,7 +177,7 @@ fn time_edit_and_compare_native_promotion() {
             });
             cp.set_pipeline(pipeline);
             cp.set_bind_group(0, &cache.fixed, &[]);
-            for (g, b) in pass.groups.iter().enumerate() {
+            for (g, b) in pass.groups().iter().enumerate() {
                 cp.set_bind_group(g as u32 + 1, &b.cached.as_ref().unwrap().1, &[]);
             }
             cp.dispatch_workgroups(PIXELS.div_ceil(32), 1, 1);
