@@ -197,8 +197,11 @@ export class ShaderTextError extends SceneError {
  */
 function authorRefusal(b: Bundle, mod: ModuleDesc, message: string): ShaderTextError | undefined {
   const hit = /:(\d+):\d+ error: ([^\n]*)/.exec(message);
-  if (hit === null) return undefined;
-  const line = Number(hit[1]);
+  return hit === null ? undefined : authorRefusalAt(b, mod, Number(hit[1]), hit[2]!, message);
+}
+
+/** `authorRefusal` once the module's line and the error's text are read (from Tint's text here, Naga's in src/cli/view.ts). */
+export function authorRefusalAt(b: Bundle, mod: ModuleDesc, line: number, error: string, message: string): ShaderTextError | undefined {
   let before = 0;
   for (const c of mod.chunks) {
     const name = b.manifest.chunks[c]!, text = b.chunks.get(name) ?? "";
@@ -208,7 +211,7 @@ function authorRefusal(b: Bundle, mod: ModuleDesc, message: string): ShaderTextE
     const k = line - 1 - before;
     if (k < lines.length - (text.endsWith("\n") ? 1 : 0) || c === mod.chunks.at(-1)) {
       const at = authorLineAt(b.manifest.authored?.[name] ?? [], k);
-      return at === undefined ? undefined : new ShaderTextError(`${at.file}:${at.line}`, at.what, hit[2]!, lines[k] ?? "", mod.label, line, message);
+      return at === undefined ? undefined : new ShaderTextError(`${at.file}:${at.line}`, at.what, error, lines[k] ?? "", mod.label, line, message);
     }
     before += lines.length - 1;
   }

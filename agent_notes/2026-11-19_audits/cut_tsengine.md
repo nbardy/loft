@@ -1,3 +1,5 @@
+**Cancelled 19 Nov 2026 (lead):** `rust/crates/loft-loader` is not deleted. Its `loft-view` is Loft's default executor (it draws the TS compiler's artefacts at or below Dawn's GPU time; `agent_notes/2026-11-19_loader_measure.md`, CORE.md "Where we are"). Every loader cut below is withdrawn; the rest of this audit stands as written.
+
 # How much of the TypeScript engine can go?
 
 At `a7b9ded`, the assigned TypeScript sources and the old Rust loader contain **27,345 physical lines**. I can identify **18,386 distinct lines to retire**. The old code left standing would occupy 8,959 lines. Charging 5,348 lines for replacement code gives a **14,307-line target**, a saving of **13,038 lines (47.7%)**. To halve this area, replacements must fit in **4,713** lines. The decision worth making now is how to record a complete scene. A smaller host cannot recover a pass, a camera, an editable curve or a check that never crossed the recorder.

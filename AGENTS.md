@@ -42,6 +42,10 @@ is judged.
   engine (`src/compile`, `src/draw`, `src/host`, `expr.ts`, `interval.ts`, `ranged.ts`, `check.ts`, `geom/solve.ts`).
   A feature request during the port is written against the Rust types in that plan and lands in its lane. A fix that
   changes a reference picture or refusal (`out/parity/R0`) says so in its commit.
+- **Executors.** `loft serve`, `render`, `frames`, `clip` and `profile` draw on `loft-view` (rust/crates/loft-loader)
+  by default: the TS compiler writes the artefact, loft-view draws it. Build it with `tools/dev.sh build loft-loader
+  --fast`. `LOFT_ENGINE=dawn` draws on the TS host through Dawn; `LOFT_ENGINE=rust` builds Bundle V1 for loft-draw
+  (`build`, `profile`, `serve`). `bun tools/parity/run.ts repeat` draws R0 through the default path.
 - Rust: one workspace in `rust/` (toolchain pinned by `rust/rust-toolchain.toml`). Edit loop `tools/dev.sh
   check|lint|test|build|run CRATE`, gate `tools/check.sh static|quick|full`, lanes `tools/lane.sh`. Cargo goes
   through the machine-wide compile lock shared with Keel; a waiter prints the holder. Picture parity:

@@ -1,3 +1,5 @@
+**Cancelled 19 Nov 2026 (lead):** `rust/crates/loft-loader` is not deleted. Its `loft-view` is Loft's default executor (it draws the TS compiler's artefacts at or below Dawn's GPU time; `agent_notes/2026-11-19_loader_measure.md`, CORE.md "Where we are"). Every loader cut below is withdrawn; the rest of this audit stands as written.
+
 [The audit](/Users/nicholasbardy/git/loft/agent_notes/2026-11-19_audits/cut_tslib.md) identifies 22 cuts that would take the library, examples, loader and six affected tests from **44,038 to 39,265 physical lines**, a **10.8% reduction**. I measured 7,119 lines for removal and budgeted 2,346 for replacements. Halving this scope would require another 17,246 net lines.
 
 **173 net lines can go now.** The remaining 4,600 depend on Rust picture and performance parity. Retiring the old loader yields the largest saving, 2,632 net lines, once Rust preserves camera-dependent detail, visible instance runs and profiling. The first milestone is a painted scene drawn through the public Rust build path. The last documented corpus run loaded 232 entries and produced zero comparable pictures.

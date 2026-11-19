@@ -16,10 +16,12 @@ mod camera;
 pub mod manifest;
 mod plan;
 mod read;
+mod still;
 
 pub use cache::PipelineCache;
 pub use manifest::Camera;
 pub use read::{read_dir, Artefact, Error};
+pub use still::Still;
 
 use manifest::{
     BoundsRead, ComputeRun, Dispatch, DrawCommand, FrameWrite, GroupResource, LoadOp, Manifest, RawDispatch, StepCopy,
@@ -564,6 +566,28 @@ impl Loft {
     }
 
     // ---- the view ------------------------------------------------------------------------------------------------
+    /// Back to the state `load` left: default inputs and params, time 0, no camera, construction hidden, and the
+    /// level-of-detail memory and bounds forgotten. A served artefact drawn again draws as if it were loaded afresh
+    /// (the only state a frame keeps is that memory: load jobs run once, and frame compute clears what it writes).
+    pub fn reset(&mut self, device: &wgpu::Device) -> Result<(), Error> {
+        self.harvest(device, true)?;
+        self.last_bounds = None;
+        self.memory.clear();
+        self.detail.fill(0.0);
+        self.inputs.fill(0.0);
+        for i in &self.m.inputs {
+            self.inputs[i.slot..i.slot + i.def.len()].copy_from_slice(&i.def);
+        }
+        self.params.fill(0.0);
+        for p in &self.m.params {
+            self.params[p.slot] = p.def;
+        }
+        self.time = 0.0;
+        self.camera = None;
+        self.cell_pixels = 7.0;
+        self.construction = false;
+        Ok(())
+    }
 
     /// The precision selected at warm-up: mixed on a device with SHADER_F16, else f32 or f32-fallback.
     pub fn precision(&self) -> Precision {
@@ -667,25 +691,7 @@ impl Loft {
         let camera = self.camera.ok_or_else(|| Error::Camera("no camera set".into()))?;
         let mats = camera::matrices(&camera, width as f64 / height as f64)?;
         // 1. Frame writes.
-        if let Some(t) = self.m.inputs.iter().find(|i| i.name == "time") {
-            self.inputs[t.slot] = self.time as f32;
-        }
-        // The step each replay replays to, from the time, so the GPU and every other host agree on it exactly.
-        for r in &self.m.frame.replay {
-            self.inputs[r.slot] = r.step(self.time).0 as f32;
-        }
-        for w in &self.m.frame.writes {
-            let (buffer, data) = match *w {
-                FrameWrite::Frame { buffer } => {
-                    (buffer, bytes(&camera::frame_uniform(&mats, width, height, self.time)))
-                }
-                FrameWrite::Inputs { buffer } => (buffer, bytes(&self.inputs)),
-                FrameWrite::Params { buffer } => (buffer, bytes(&self.params)),
-            };
-            if !data.is_empty() {
-                queue.write_buffer(&self.buffers[buffer], 0, &data);
-            }
-        }
+        self.write_frame(queue, &camera::frame_uniform(&mats, width, height, self.time));
         let mut gpu_wait = Duration::ZERO;
         // A headless frame wants this frame's bounds: an older read still in flight is finished first.
         if bounds == Bounds::Latest {
@@ -696,6 +702,67 @@ impl Loft {
             (BoundsRead::Read { .. }, Read::Idle) => true,
             (BoundsRead::Read { .. }, Read::InFlight(_)) | (BoundsRead::None, _) => false,
         };
+        self.submit_pose(device, queue, copy);
+        // 4. Read the bounds: wait for this frame's, or take whatever has completed.
+        gpu_wait += self.harvest(device, bounds == Bounds::Latest)?;
+        // 5. Plan, and the level-of-detail slots.
+        let read = match &self.last_bounds {
+            None => plan::Bounds::None,
+            Some(floats) => plan::Bounds::Read { floats, at: &self.bounds_at },
+        };
+        plan::plan_frame(
+            &self.m.plan,
+            &mats,
+            width,
+            height,
+            self.cell_pixels,
+            self.construction,
+            &read,
+            &mut self.memory,
+            &mut self.detail,
+            &mut self.plan,
+        );
+        let detail = self.m.frame.detail.buffer;
+        queue.write_buffer(&self.buffers[detail], 0, &bytes(&self.detail));
+        // 6. Passes.
+        self.sized_for(device, (width, height));
+        self.encode_passes(encoder, target, 0..self.m.frame.passes.len());
+        Ok(self.plan_stats(gpu_wait))
+    }
+
+    fn plan_stats(&self, gpu_wait: Duration) -> FrameStats {
+        let (mut triangles, mut draws) = (0u64, 0u32);
+        for r in self.plan.iter().flatten() {
+            triangles += (r.vertices / 3) as u64 * r.instances as u64;
+            draws += 1;
+        }
+        FrameStats { triangles, draws, gpu_wait }
+    }
+
+    /// The frame's writes: the time and replay steps into the inputs, then the frame uniform `frame`, inputs and params.
+    fn write_frame(&mut self, queue: &wgpu::Queue, frame: &[f32; 48]) {
+        if let Some(t) = self.m.inputs.iter().find(|i| i.name == "time") {
+            self.inputs[t.slot] = self.time as f32;
+        }
+        // The step each replay replays to, from the time, so the GPU and every other host agree on it exactly.
+        for r in &self.m.frame.replay {
+            self.inputs[r.slot] = r.step(self.time).0 as f32;
+        }
+        for w in &self.m.frame.writes {
+            let (buffer, data) = match *w {
+                FrameWrite::Frame { buffer } => (buffer, bytes(frame)),
+                FrameWrite::Inputs { buffer } => (buffer, bytes(&self.inputs)),
+                FrameWrite::Params { buffer } => (buffer, bytes(&self.params)),
+            };
+            if !data.is_empty() {
+                queue.write_buffer(&self.buffers[buffer], 0, &data);
+            }
+        }
+    }
+
+    /// Submits the pose pass (author compute, replays, pose dispatches) and the camera copies as their own command
+    /// buffer; with `copy`, also the copy of the grids' bounds and the start of its read-back.
+    fn submit_pose(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, copy: bool) {
         let mut pose = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("loft pose") });
         let author = &self.m.frame.compute;
         // Distinct frame writers let us clear everything before opening the shared compute pass.
@@ -737,36 +804,6 @@ impl Loft {
             self.buffers[*buffer].map_async(wgpu::MapMode::Read, .., move |r| *done.lock().unwrap() = Some(r));
             self.read = Read::InFlight(slot);
         }
-        // 4. Read the bounds: wait for this frame's, or take whatever has completed.
-        gpu_wait += self.harvest(device, bounds == Bounds::Latest)?;
-        // 5. Plan, and the level-of-detail slots.
-        let read = match &self.last_bounds {
-            None => plan::Bounds::None,
-            Some(floats) => plan::Bounds::Read { floats, at: &self.bounds_at },
-        };
-        plan::plan_frame(
-            &self.m.plan,
-            &mats,
-            width,
-            height,
-            self.cell_pixels,
-            self.construction,
-            &read,
-            &mut self.memory,
-            &mut self.detail,
-            &mut self.plan,
-        );
-        let detail = self.m.frame.detail.buffer;
-        queue.write_buffer(&self.buffers[detail], 0, &bytes(&self.detail));
-        // 6. Passes.
-        self.sized_for(device, (width, height));
-        self.encode_passes(encoder, target);
-        let (mut triangles, mut draws) = (0u64, 0u32);
-        for r in self.plan.iter().flatten() {
-            triangles += (r.vertices / 3) as u64 * r.instances as u64;
-            draws += 1;
-        }
-        Ok(FrameStats { triangles, draws, gpu_wait })
     }
 
     /// The replays and then the pose dispatches, in order, into an open compute pass (the frame's state must have been
@@ -893,13 +930,22 @@ impl Loft {
         }
     }
 
-    fn encode_passes(&self, encoder: &mut wgpu::CommandEncoder, target: &wgpu::TextureView) {
+    /// Records the frame's render passes `range` (all of them for a frame; a still splits scene and post passes).
+    fn encode_passes(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &wgpu::TextureView,
+        range: std::ops::Range<usize>,
+    ) {
         let sized = self.sized.as_ref().expect("sized_for runs before encode_passes");
         let view = |t: Target| match t {
             Target::Texture { texture } => &sized.views[texture],
             Target::Output => target,
         };
         for (k, (p, ops)) in self.m.frame.passes.iter().zip(&self.ops).enumerate() {
+            if !range.contains(&k) {
+                continue;
+            }
             let timestamp_writes = self.timestamps.as_ref().map(|t| wgpu::RenderPassTimestampWrites {
                 query_set: &t.set,
                 beginning_of_pass_write_index: Some(2 + 2 * k as u32),

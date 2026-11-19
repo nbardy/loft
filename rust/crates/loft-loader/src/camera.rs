@@ -43,7 +43,7 @@ fn multiply(a: &Mat4, b: &Mat4) -> Mat4 {
 }
 
 /// General inverse by cofactors, term for term as camera.ts (so both hosts round alike).
-fn invert(m: &Mat4) -> Result<Mat4, Error> {
+pub fn invert(m: &Mat4) -> Result<Mat4, Error> {
     let [a00, a01, a02, a03, a10, a11, a12, a13, a20, a21, a22, a23, a30, a31, a32, a33] = *m;
     let (b00, b01, b02) = (a00 * a11 - a01 * a10, a00 * a12 - a02 * a10, a00 * a13 - a03 * a10);
     let (b03, b04, b05) = (a01 * a12 - a02 * a11, a01 * a13 - a03 * a11, a02 * a13 - a03 * a12);

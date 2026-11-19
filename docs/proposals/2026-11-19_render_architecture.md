@@ -690,7 +690,8 @@ corpus.
 
 **Delete.** Wire 4's `Draw`, `Cover`, `Find`, `Proxy`, `Compose`, `Medium`, `Integrate`, `Target::Shadow`, `Kernel`;
 `loft-core/src/draw/mod.rs`; the 13 templates (their text moves to `src/render/covers/`); composition and resolve
-policy in `loft-gpu/src/view.rs`. The TS engine and `loft-loader` go at the lean plan's cutover.
+policy in `loft-gpu/src/view.rs`. The TS engine goes at the lean plan's cutover; `loft-loader` stays (lead, 19 Nov: its
+`loft-view` is the default executor, CORE.md "Where we are").
 
 **Depends on** the compact-graph lane for line counts (§5.4). Without it the command and module predictions hold and
 the line and cold-load ones do not.

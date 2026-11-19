@@ -3,15 +3,20 @@
 Loads a Loft artefact folder (`docs/artefact_format.md`, format versions 1 through 5) onto a `wgpu` 30 device and draws its
 frames. It is an executor of the manifest: it creates the objects the manifest lists, in order, and per frame runs the
 recipe (frame writes, the pose compute pass, the level-of-detail bounds read and plan, the render passes). It knows
-nothing about scenes. `loft-view` is a small headless binary on top of it, for pictures and timing.
+nothing about scenes. Its binary `loft-view` is Loft's default executor: `loft serve`, `render`, `frames`, `clip` and
+`profile` draw through it unless `LOFT_ENGINE` names `dawn` or `rust` (src/cli/args.ts).
 
 ```
-tools/dev.sh build loft-loader --release    # output in rust/target/release (git-ignored)
-rust/target/release/loft-view <dir> --view game --time 1.0 --size 1280x800 --out f.png
-rust/target/release/loft-view <dir> --view game --frames 60          # CPU and GPU time per frame
-rust/target/release/loft-view <dir> --view game --pose-time          # pose stages alone, as tools/pose_time.ts
-WGPU_BACKEND=vulkan rust/target/release/loft-view <dir> --view game --pipeline-cache <cache-dir> --loads 3
+tools/dev.sh build loft-loader --fast       # rust/target/lab/loft-view, where the CLI looks (git-ignored)
+rust/target/lab/loft-view serve                                        # JSON lines: the CLI's draw child (serve.rs)
+rust/target/lab/loft-view still <dir> --view game --time 1.0 --size 1280x800 --out f.png
+rust/target/lab/loft-view profile <dir> --view game --frames 60        # load, CPU and GPU time per frame, p50/p95
+rust/target/lab/loft-view profile <dir> --view game --pose-time        # pose stages alone, as tools/pose_time.ts
+WGPU_BACKEND=vulkan rust/target/lab/loft-view profile <dir> --view game --pipeline-cache <cache-dir> --loads 3
 ```
+
+`Loft::draw_still` draws a still (`--samples N`, `--shutter`, `--aperture`; src/host/still.ts term for term), and
+`Loft::reset` puts a loaded artefact back as a fresh load leaves it, so `serve` keeps the last artefact warm.
 
 When creating a device, request the optional `wgpu::Features::SHADER_F16` if the adapter exposes it.
 `Loft::load` selects the variant on the supplied device and `Loft::precision()` reports `F32`, `Mixed`, or
@@ -69,7 +74,7 @@ cleared and rebuilt. Open one cache, share it across the device's artefact warm-
 whole snapshot. Saving replaces the previous file atomically. Independent writers to the same file leave the last
 complete snapshot.
 
-`loft-view --loads N` repeats the read and warm-up on one device and draws from the last load. It prints read,
+`loft-view profile --loads N` repeats the read and warm-up on one device and draws from the last load. It prints read,
 pipeline and resource times. With `--pipeline-cache` it also prints bytes read and written. Use a fresh cache
 directory for a cold run and the same directory in a fresh process for warm-from-disk. On macOS, testing this via
 MoltenVK requires building the viewer with `--features wgpu/vulkan-portability` and supplying a Vulkan loader and ICD.

@@ -1,3 +1,5 @@
+**Cancelled 19 Nov 2026 (lead):** `rust/crates/loft-loader` is not deleted. Its `loft-view` is Loft's default executor (it draws the TS compiler's artefacts at or below Dawn's GPU time; `agent_notes/2026-11-19_loader_measure.md`, CORE.md "Where we are"). Every loader cut below is withdrawn; the rest of this audit stands as written.
+
 # How much of the Rust path can Loft delete?
 
 **21,149 physical source lines today. The priced cuts leave 16,783, a reduction of 4,366 lines (20.6%).** The old loader supplies the largest saving, but it also contains the only working implementation of grid LOD in this area. The best immediate cut is much smaller and easier to prove. Use the wire's existing `Prim` everywhere and two exhaustive translations of the same 53 operators disappear.

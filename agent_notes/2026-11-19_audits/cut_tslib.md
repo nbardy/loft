@@ -1,3 +1,5 @@
+**Cancelled 19 Nov 2026 (lead):** `rust/crates/loft-loader` is not deleted. Its `loft-view` is Loft's default executor (it draws the TS compiler's artefacts at or below Dawn's GPU time; `agent_notes/2026-11-19_loader_measure.md`, CORE.md "Where we are"). Every loader cut below is withdrawn; the rest of this audit stands as written.
+
 # How much of Loft's TypeScript library can go?
 
 At `a2b227c`, I can account for **7,119 physical lines to replace or delete** in this lane. The proposed replacements have a **2,346-line budget**, for **4,773 net lines saved**. That would take the audited source and six affected test files from **44,038 to 39,265 lines**, a 10.8% reduction. The old Rust loader accounts for 2,632 of the net. Halving this denominator would require another 17,246 net lines. The example scenes alone contain 16,477 lines. A claim to have halved the engine needs an engine denominator, and a claim to have halved this library needs a much larger demonstrated saving.

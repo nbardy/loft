@@ -23,7 +23,7 @@ sha2 = "0.10.9"
 
 # Members opt in with `[lints] workspace = true`. loft-gpu and loft-node override unsafe_code to allow, and each
 # `unsafe` block carries a SAFETY: comment naming its contract. loft-ir adds clippy::float_arithmetic = "deny".
-# loft-loader moved over unchanged and has not opted in; it becomes loft-gpu in lane 3.2.
+# loft-loader moved over unchanged and has not opted in; it stays as the default executor (loft-view, 19 Nov).
 [workspace.lints.rust]
 unsafe_code = "deny"
 

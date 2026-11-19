@@ -1,3 +1,5 @@
+**Cancelled 19 Nov 2026 (lead):** `rust/crates/loft-loader` is not deleted. Its `loft-view` is Loft's default executor (it draws the TS compiler's artefacts at or below Dawn's GPU time; `agent_notes/2026-11-19_loader_measure.md`, CORE.md "Where we are"). Every loader cut below is withdrawn; the rest of this audit stands as written.
+
 The [audit](</Users/nicholasbardy/git/loft/agent_notes/2026-11-19_audits/cut_tsengine.md>) identifies **18,386 lines to retire** from the 27,345 lines in the assigned TypeScript sources and old Rust loader. Allowing 5,348 lines for replacements leaves **14,307 lines**, a projected saving of **13,038 (47.7%)**. Halving this area requires another 635 lines of savings. The retirement counts are measured. Replacement sizes are budgets.
 
 The largest gains come from compiling directly to one bundle, retiring the old loader, and recording draws, resources and passes once. Wire 3 already carries recurrence, compute and offscreen-pass data. The Rust driver still needs to execute those records, and ordinary builds still depend on the TS compiler to discover roots.

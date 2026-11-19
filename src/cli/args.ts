@@ -30,7 +30,8 @@ export type SceneSource = Exclude<Source, { kind: "artefact" }>;
 export type Size = { readonly width: number; readonly height: number };
 export type ViewName = string;
 
-type Shared = { readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly still: StillSpec; readonly precision?: Precision };
+/** `engine`: who draws (`Engine`, from LOFT_ENGINE): loft-view (the default) or the TS host on Dawn. */
+type Shared = { readonly engine: Exclude<Drawing, "rust">; readonly source: Source; readonly size: Size; readonly params: Readonly<Record<string, number>>; readonly inputs: InputValues; readonly still: StillSpec; readonly precision?: Precision };
 
 /** What `bake` writes: the bodies at one time, or keyed over a span (the scene's period, or `--seconds`). */
 export type BakeWhen = { readonly kind: "at"; readonly time: number } | { readonly kind: "animated"; readonly seconds: number | undefined };
@@ -54,8 +55,9 @@ export type Command =
   }
   /** `naga`: LOFT_ENGINE=rust only; "emit" (`--naga`) validates at emit and refuses at the author's line, "load" leaves it
    * to the host's module creation (src/core/native.ts `Build`). */
-  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string; readonly engine: "ts" | "rust"; readonly naga: "emit" | "load" }
-  | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: "ts" | "rust" }
+  /** `engine`: "view" and "dawn" both write the TS compiler's artefact folder; "rust" writes `scene.loft` (Bundle V1). */
+  | { readonly kind: "build"; readonly precision: Precision; readonly source: Extract<Source, { kind: "file" }>; readonly out: string; readonly engine: Drawing; readonly naga: "emit" | "load" }
+  | { readonly kind: "profile"; readonly precision: Precision; readonly path: string; readonly style: StyleChoice; readonly light: LightChoice; readonly variant: VariantArg; readonly view: ViewName; readonly size: Size; readonly frames: number; readonly time: number; readonly outline: "scene" | OutlineMethod; readonly engine: Drawing }
   | { readonly kind: "bake"; readonly source: SceneSource; readonly path: string; readonly out: string; readonly when: BakeWhen; readonly density: { readonly along: number; readonly around: number } }
   /** Text only, no GPU: the usage, the API reference (all of it, or one name), and the craft guide with the API. */
   | { readonly kind: "help" }
@@ -101,7 +103,10 @@ export const USAGE = `usage: loft <command> <scene.ts | --fixture | --artefact d
                     (requests admitted at once; compile and draw deadlines; what an artefact may hold. Budget limits answer exit 7)
   show   <scene> [--thing name] [--variant v]   (the WGSL the GPU compiles; with --thing, those modules whole, your lines marked)
   bake   <scene> --out f.glb  [--time 1.0] [--density 48x16]   (glTF mesh of the bodies at one time; the sea is not baked)
-         [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)`;
+         [--animated [--seconds s]]   (keyed over the period, or s seconds: skinned bodies, morphed meshes; error per body)
+  LOFT_ENGINE=view|dawn|rust   who draws for render, frames, clip, profile and serve: loft-view (the default; Rust,
+                    rust/crates/loft-loader, drawing the TS compiler's artefact; build it with tools/dev.sh build
+                    loft-loader --fast), the TS host on Dawn, or loft-draw on Bundle V1 (build and profile only)`;
 
 const FLAGS: Record<string, { readonly value: boolean; readonly commands: readonly string[] }> = {
   "--fixture": { value: false, commands: ["render", "clip", "frames", "dev"] },
@@ -202,14 +207,28 @@ export function parsePrecision(value: unknown): Precision | undefined {
   }
 }
 
-/** `LOFT_ENGINE` (plan 2026-11-19 §8.2): unset is "ts" until the wave 3 cutover, which removes the switch. */
-export type Engine = "ts" | "rust" | "shadow";
+/**
+ * `LOFT_ENGINE`, classified once here. Unset is "view": loft-view (rust/crates/loft-loader) draws the artefact folder
+ * the TypeScript compiler writes; it is Loft's default executor (CORE.md "Where we are", 19 Nov). "dawn" draws on the TS
+ * host through Dawn. "rust" is loft-core's program driver and Bundle V1 on loft-draw (loft-gpu), kept for its lane.
+ * "shadow" diffs two engines and is for the corpus tools.
+ */
+export type Engine = "view" | "dawn" | "rust" | "shadow";
+/** An engine that draws one picture: every command's but the corpus tools'. */
+export type Drawing = Exclude<Engine, "shadow">;
 export function parseEngine(value: string | undefined): Engine {
   switch (value) {
-    case undefined: case "ts": return "ts";
-    case "rust": case "shadow": return value;
-    default: throw new UsageError(`LOFT_ENGINE=${value}: not ts, rust or shadow`);
+    case undefined: case "view": return "view";
+    case "dawn": case "rust": case "shadow": return value;
+    default: throw new UsageError(`LOFT_ENGINE=${value}: not view (the default), dawn, rust or shadow`);
   }
+}
+
+/** The engine of a command that draws: `shadow` is refused by name. */
+function drawingEngine(command: string): Drawing {
+  const engine = parseEngine(process.env.LOFT_ENGINE);
+  if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: ${command} draws on one engine, "view", "dawn" or "rust" ("shadow" is for the corpus tools)`);
+  return engine;
 }
 
 export function parseArgs(argv: readonly string[]): Command {
@@ -284,10 +303,9 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind !== "file") throw new UsageError("profile: needs a scene file");
     const frames = one("--frames") === undefined ? 30 : positive("--frames", one("--frames")!);
     if (!Number.isInteger(frames)) throw new UsageError(`--frames: ${frames} is not a whole number`);
-    const engine = parseEngine(process.env.LOFT_ENGINE), outline = outlineOf(one("--outline"));
-    if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: profile times one engine, "ts" or "rust"`);
-    // loft-draw times the built bundle as drawn; the outline method is a TS-host profiling knob.
-    if (engine === "rust" && outline !== "scene") throw new UsageError(`--outline: a flag of the TS profile; LOFT_ENGINE=rust draws the scene's own outline`);
+    const engine = drawingEngine("profile"), outline = outlineOf(one("--outline"));
+    // loft-view and loft-draw time the built artefact as drawn; the outline method is a TS-host profiling knob.
+    if (engine !== "dawn" && outline !== "scene") throw new UsageError(`--outline: a flag of the Dawn profile (LOFT_ENGINE=dawn); LOFT_ENGINE=${engine} draws the scene's own outline`);
     return {
       kind: "profile", engine, precision: precision ?? "f32", path: source.path, style: source.style, light: source.light, variant: source.variant, view: one("--view") ?? "game", size: parseSize(one("--size") ?? "1280x800"), frames,
       time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!),
@@ -298,9 +316,8 @@ export function parseArgs(argv: readonly string[]): Command {
     if (source.kind !== "file") throw new UsageError("build: needs a scene file");
     const dir = one("--out");
     if (dir === undefined) throw new UsageError("build: --out dir is required");
-    const engine = parseEngine(process.env.LOFT_ENGINE);
-    if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: build writes one engine's files, "ts" or "rust"`);
-    if (engine === "ts" && flags.has("--naga")) throw new UsageError(`--naga: a flag of LOFT_ENGINE=rust build (the TS build validates in its own host)`);
+    const engine = drawingEngine("build");
+    if (engine !== "rust" && flags.has("--naga")) throw new UsageError(`--naga: a flag of LOFT_ENGINE=rust build (the TS build validates in its own host)`);
     return { kind: "build", source, out: dir, precision: precision ?? "f32", engine, naga: flags.has("--naga") ? "emit" : "load" };
   }
   if (name === "dev" && source.kind === "artefact") throw new UsageError("dev: needs a scene file or --fixture");
@@ -321,7 +338,10 @@ export function parseArgs(argv: readonly string[]): Command {
       : { kind: "at", time: one("--time") === undefined ? 1.0 : num("--time", one("--time")!) };
     return { kind: "bake", source, path: positional[0]!, out, density: { along: Number(d[1]), around: Number(d[2]) }, when };
   }
+  const engine = drawingEngine(name);
+  if (engine === "rust") throw new UsageError(`LOFT_ENGINE=rust: ${name} draws a TS artefact, which loft-draw does not read. Fix: unset LOFT_ENGINE (loft-view), or LOFT_ENGINE=dawn; loft-draw draws through \`loft profile\` and \`loft serve\``);
   const shared: Shared = {
+    engine,
     source,
     ...(precision === undefined ? {} : { precision }),
     size: parseSize(one("--size") ?? "1280x800"),
@@ -382,9 +402,7 @@ function parseServeArgs(rest: readonly string[]): ServeCommand {
   };
   // Split on spaces, no quoting: a confinement whose path holds a space goes in a wrapper script.
   const confine = (values.get("--confine") ?? "").split(" ").filter((s) => s !== "");
-  // Classified here, the one place serve reads LOFT_ENGINE; "shadow" diffs two engines and is for the corpus tools.
-  const engine = parseEngine(process.env.LOFT_ENGINE);
-  if (engine === "shadow") throw new UsageError(`LOFT_ENGINE=shadow: serve draws on "ts" or "rust" ("shadow" is for the corpus tools)`);
+  const engine = drawingEngine("serve");
   return { kind: "serve", engine, compiles, confine, check: values.get("--check"), pending, compileSeconds: seconds("--compile-seconds"), drawSeconds: seconds("--draw-seconds"), limits: parseLimits(values.get("--limits")) };
 }
 

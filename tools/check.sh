@@ -20,7 +20,7 @@ members() { cargo metadata --locked --no-deps --format-version 1 | perl -MJSON::
 deps() { cargo tree --locked -p "$1" -e normal,build --prefix none --format '{p}' | awk '{print $1}' | sort -u; }
 
 # Layering (plan §1.2, §5.2): the compiler never links wgpu and a game loads bundles without the compiler.
-# loft-loader is today's host; it becomes loft-gpu in lane 3.2 and leaves this list.
+# loft-loader is the default executor (loft-view, CORE.md "Where we are"); loft-gpu is the Bundle V1 host.
 check_layers() {
   local member reach status=0
   for member in $(members); do

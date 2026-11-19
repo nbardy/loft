@@ -37,7 +37,8 @@ import { readBundle, type ArtefactLimits } from "../host/files.ts";
 import { headlessDevice } from "../host/headless.ts";
 import { loadBundle } from "../host/host.ts";
 import type { Bundle, FramePrecision, Precision } from "../host/manifest.ts";
-import { parsePrecision, parseSize, UsageError, type Size } from "./args.ts";
+import { parsePrecision, parseSize, UsageError, type Drawing, type Size } from "./args.ts";
+import { startView, verdictOfView } from "./view.ts";
 import { FALLBACK_CAMERAS } from "./cameras.ts";
 import { checkInputs, type InputValues } from "./inputs.ts";
 import { compilerModulesLoaded } from "./run_files.ts";
@@ -47,8 +48,8 @@ import { ending, exitWith, headed, type Verdict } from "./verdict.ts";
 
 export type ServeCommand = {
   readonly kind: "serve";
-  /** Which executor draws: the Dawn worker or `loft-draw serve` (LOFT_ENGINE, classified in args.ts). */
-  readonly engine: "ts" | "rust";
+  /** Which executor draws: `loft-view serve` (the default), the Dawn worker, or `loft-draw serve` (LOFT_ENGINE, args.ts). */
+  readonly engine: Drawing;
   /** Compiles running at once (each a child process); draws are always one at a time. */
   readonly compiles: number;
   /** The command a compile runs inside (a sandbox), prefixed to `bun src/cli/main.ts build ...`; empty for none. */
@@ -192,8 +193,8 @@ class Budget extends Error {}
 
 async function compile(cmd: ServeCommand, scene: string, dir: string, precision: Precision, children: Set<{ kill(signal?: number | NodeJS.Signals): void }>): Promise<void> {
   const child = Bun.spawn([...cmd.confine, process.execPath, MAIN, "build", scene, "--out", dir, "--precision", precision], {
-    // The compile builds for the executor that draws: the TS artefact directory for Dawn, `scene.loft` (Bundle V1,
-    // loft-core's driver) for loft-draw.
+    // The compile builds for the executor that draws: the TS artefact directory for loft-view and Dawn, `scene.loft`
+    // (Bundle V1, loft-core's driver) for loft-draw.
     env: { ...process.env, LOFT_NO_GPU: "1", LOFT_ENGINE: cmd.engine }, stdin: "ignore", stdout: "ignore", stderr: "pipe",
   });
   children.add(child);
@@ -444,6 +445,61 @@ function startRustDraw(checkPath: string | undefined, stopped: (v: Verdict) => v
   };
 }
 
+/**
+ * The draw child as `loft-view serve` (the default engine), with startDrawWorker's interface. This process reads and
+ * checks the artefact folder (limits, --check, names, camera) as the Dawn worker does and builds each frame's identity;
+ * the child loads (keeping the last artefact warm), draws and writes `out/k.rgba`.
+ */
+function startViewDraw(checkPath: string | undefined, stopped: (v: Verdict) => void): ReturnType<typeof startDrawWorker> {
+  type Boot = Exclude<DrawMessage, { kind: "answer" }>;
+  let starting = true, retired = false, boot!: (message: Boot) => void;
+  const ready = new Promise<Boot>((go) => { boot = go; });
+  const stop = (verdict: Verdict) => {
+    if (retired) return;
+    retired = true;
+    if (starting) boot({ kind: "stop", verdict });
+    else stopped(verdict);
+  };
+  const child = startView((message) => stop({ kind: "environment", message: `${message}; the server ends: start a new one` }));
+  let check: (b: Bundle) => void = () => {};
+  let device: Identity["device"];
+  void (async () => {
+    try {
+      if (checkPath !== undefined) check = (await import(resolve(checkPath))).default;
+      if (typeof check !== "function") throw new UsageError(`--check ${checkPath}: its default export is not a function`);
+      const r = await child.ready;
+      device = r.device;
+      starting = false;
+      boot({ kind: "ready", adapter: r.adapter });
+    } catch (e) {
+      stop(verdictHere(e));
+    }
+  })();
+  const draw = async ({ req, dir, limits }: Draw): Promise<Answer> => {
+    let bundle: Bundle, camera: Camera;
+    try {
+      try { bundle = readBundle(dir, limits); } catch (e) { throw new LoadError(`artefact ${dir}: ${e instanceof Error ? e.message : String(e)}`); }
+      try { check(bundle); } catch (e) { throw new LoadError(`artefact ${dir}: refused by --check: ${e instanceof Error ? e.message : String(e)}`); }
+      checkParams(req.params, bundle.manifest);
+      checkInputs(bundle.manifest, req.inputs, { kind: "none" }, "serve");
+      camera = cameraFor(req.camera, bundle);
+    } catch (e) {
+      return failed(req.id, verdictHere(e));
+    }
+    const r = await child.draw({ dir, camera, times: req.times, size: [req.size.width, req.size.height], params: req.params, inputs: req.inputs, precision: req.precision ?? "f32", construction: false, still: { kind: "frame" }, out: req.out });
+    if (!r.ok) return failed(req.id, verdictOfView(r.verdict));
+    const build = buildOf(bundle);
+    const identities = req.times.map((time): Identity => {
+      const view: View = { camera, ...req.size, time, params: req.params, inputs: req.inputs, construction: false };
+      return { build, frame: frameOf(bundle.manifest, view, r.precision, { kind: "frame" }), device };
+    });
+    const { time: _, ...frame } = identities[0]!.frame;
+    const frames = r.frames.map((f, k) => ({ time: req.times[k]!, file: f.file, sha256: f.sha256, id: identityId(identities[k]!) }));
+    return { id: req.id, ok: true, identity: { build, frame, device }, frames, ms: r.ms };
+  };
+  return { ready, draw, kill: () => { retired = true; return child.kill(); } };
+}
+
 async function drawWorker(checkPath: string | undefined) {
   console.log = console.error;
   const send = (message: DrawMessage) => process.send!(message);
@@ -565,7 +621,7 @@ export async function serve(cmd: ServeCommand) {
     process.stdout.write(text, () => process.exit(code));
   };
 
-  const startDraw = cmd.engine === "rust" ? startRustDraw : startDrawWorker;
+  const startDraw = { view: startViewDraw, dawn: startDrawWorker, rust: startRustDraw }[cmd.engine];
   worker = startDraw(cmd.check, closeWith);
   const boot = await worker.ready;
   if (boot.kind === "stop") {

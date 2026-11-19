@@ -287,8 +287,10 @@ LOD bounds and camera asynchronously.
 - **Replaced by `Bundle` and `Identity`:** `artefact.ts`, `host/{manifest,lower,files,precision,share,fixture}`,
   `identity.ts`, the `precision.ts` WeakSet, format versions 1–5, and every byte-preserving optional field.
 - **Replaced by `loft-gpu` and `loft-draw`:** `host/{host,detail,camera,still,profile,cache,headless}.ts`, Dawn,
-  `bun-webgpu`, the Dawn GPU tests and benches, and `rust/loft-loader` (2.6k; its device sharing, pipeline cache,
-  LOD plan and timestamps are moved over, not rewritten).
+  `bun-webgpu`, the Dawn GPU tests and benches. **Not `rust/crates/loft-loader`** (lead, 19 Nov): it was on this
+  list, and its `loft-view` is now Loft's default executor, drawing the TS compiler's artefacts at or below Dawn's GPU
+  time (`agent_notes/2026-11-19_loader_measure.md`, CORE.md "Where we are"). Its level batching, shared shaders and
+  LOD plan are what loft-gpu has to match.
 - **Deleted with no replacement:**
   - `FilledTable`, the `cpu` table path, `NotDataError` and `js-tables`;
   - about 30 module-level `WeakMap` memo tables, which interning and the program cache replace;
@@ -826,7 +828,8 @@ every concern. Then, **in the same wave:**
 
 - delete `src/compile/*`, the `draw/*` emitters, `frame/*`, the WGSL in `soft/*`, `relief/trace.ts`, the graph half
   of `src/expr.ts`, `compileJs`, `grad.ts`, `artefact.ts`, `identity.ts`, `precision.ts`, all of `src/host/*`,
-  `rust/crates/loft-loader`, `bun-webgpu`, the Dawn GPU tests and the Dawn benches;
+  `bun-webgpu`, the Dawn GPU tests and the Dawn benches (not `rust/crates/loft-loader`: cancelled 19 Nov, its
+  `loft-view` is the default executor);
 - remove `LOFT_ENGINE`.
 
 The cutover is atomic across compile, serve and viewer. They share one format, and the TS host cannot read
@@ -854,8 +857,8 @@ no second engine survives a wave boundary:
 1. **Wave 0.** Nothing switches. The reference is frozen and the TS engine stops growing.
 2. **Wave 1.** Rust runs only in `shadow`.
 3. **End of wave 2.** The CPU analyses switch. TS checks, ranged and solve numerics are deleted.
-4. **End of wave 3.** Bundles and GPU execution switch together. The TS compiler, TS host, Dawn and `loft-loader`
-   are deleted.
+4. **End of wave 3.** Bundles and GPU execution switch together. The TS compiler, TS host and Dawn are deleted.
+   `loft-loader` stays (cancelled 19 Nov: its `loft-view` is the default executor).
 5. **Wave 4.** Additions and deletions only, each with its own gate.
 
 | Risk | Where it shows | Response |

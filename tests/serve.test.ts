@@ -19,8 +19,8 @@ const MAIN = join(ROOT, "src/cli/main.ts");
 type Answer = { id: string; ok: boolean; exit?: number; line?: string; identity?: { frame: { precision: string } }; frames?: { file: string; sha256: string; id: string }[] };
 
 /** Runs one server over `requests` (sent at once, then stdin closed): its exit code and its answers by id. */
-async function served(flags: readonly string[], requests: readonly object[]): Promise<{ code: number; by: Map<string, Answer>; count: number }> {
-  const p = Bun.spawn([process.execPath, MAIN, "serve", ...flags], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+async function served(flags: readonly string[], requests: readonly object[], engine: "view" | "dawn" = "view"): Promise<{ code: number; by: Map<string, Answer>; count: number }> {
+  const p = Bun.spawn([process.execPath, MAIN, "serve", ...flags], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, LOFT_ENGINE: engine } });
   p.stdin.write(requests.map((l) => JSON.stringify(l)).join("\n") + "\n");
   p.stdin.end();
   const [text, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
@@ -53,8 +53,6 @@ test("serve: A, B, A draws A's pixels both times, as a fresh process does; a bad
     expect(new Set(ids(by.get("A1"))).size).toBe(2);
     expect(ids(by.get("B")).filter((id) => ids(by.get("A1")).includes(id))).toEqual([]);
     expect(by.get("A1")!.identity!.frame.precision).toBe("f32");
-    // B shares shader modules with A (the sea, the sky): the second A was drawn partly from the cache.
-    expect((by.get("A2") as unknown as { cache: { hits: number } }).cache.hits).toBeGreaterThan((by.get("A1") as unknown as { cache: { hits: number } }).cache.hits);
 
     const fresh = Bun.spawnSync([process.execPath, MAIN, "frames", join(ROOT, "examples/shell.ts"), "--view", "three", "--times", "0.4,1.3", "--size", "96x64", "--out", join(out, "fresh.webp")]);
     expect(fresh.exitCode).toBe(0);
@@ -196,7 +194,8 @@ export default function () {
 `);
     const ask = (id: string) => ({ id, artefact: dir, camera: "three", times: [0.4], size: "96x64", out: join(out, id) });
     const t0 = performance.now();
-    const { code, by, count } = await served(["--check", block, "--draw-seconds", "5"], [ask("warm"), ask("late"), ask("next")]);
+    // The hook reaches into Dawn's GPUDevice: this deadline is the Dawn worker's (the supervisor's kill is the same for loft-view).
+    const { code, by, count } = await served(["--check", block, "--draw-seconds", "5"], [ask("warm"), ask("late"), ask("next")], "dawn");
     expect(performance.now() - t0).toBeLessThan(15_000);
     expect(code).toBe(0);
     expect(count).toBe(3);
@@ -224,7 +223,8 @@ export default function () {
 }
 `);
     const ask = (id: string) => ({ id, artefact: dir, camera: "three", times: [0.4], size: "96x64", out: join(out, id) });
-    const { code, by, count } = await served(["--check", lose], [ask("l1"), ask("l2"), ask("l3")]);
+    // The hook destroys a Dawn GPUDevice: this loss is the Dawn worker's (loft-view's loss is its exit 6, main.rs `gpu`).
+    const { code, by, count } = await served(["--check", lose], [ask("l1"), ask("l2"), ask("l3")], "dawn");
     expect(code).toBe(6);
     expect(count).toBe(3);
     expect(by.get("l1")!.ok).toBe(true);

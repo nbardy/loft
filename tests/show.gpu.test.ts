@@ -61,7 +61,7 @@ test("a raw-function typo exits with the scene code at file:line, compiled and f
   console.log(`typo, compiled: exit ${compiled.code}: ${compiled.last.slice(0, 160)}`);
   expect(compiled.code).toBe(4);
   expect(compiled.last).toStartWith(`loft: scene: ${TYPO}:9: `);
-  expect(compiled.last).toContain("unresolved value 'hsh'");
+  expect(compiled.last).toContain("hsh"); // the GPU's own words: Tint's on Dawn, Naga's on loft-view
   expect((await loft("build", TYPO, "--out", "out/l4/typo_files")).code).toBe(0);
   const files = await loft("render", "--artefact", "out/l4/typo_files", "--views", "three", "--size", "64x40", "--out", "out/l4/typo.webp");
   console.log(`typo, from files: exit ${files.code}`);

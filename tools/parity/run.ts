@@ -4,13 +4,17 @@
 //                                                     program driver), each ending against R0's build, and every
 //                                                     bundle with draws drawn by loft-draw at R0's frames and compared
 //                                                     under the §2.2a picture rule: out/parity/rust
+//   bun tools/parity/run.ts repeat [--only text]      every R0 frame loft-view drew, drawn again through the default
+//                                                     path (`loft serve`, which draws on loft-view) from R0's build
+//                                                     directories and compared pixel for pixel: out/parity/R0/repeat.json
 //   bun tools/parity/run.ts checks <scene.ts>         (child) one scene's check verdicts as JSON on stdout
 //   bun tools/parity/run.ts dawn <scene.ts> <id>      (child) a scene `loft build` refuses, drawn as `loft render` draws it
 //   bun tools/parity/run.ts cross <R0 dir>            this set's frames against another backend's R0 (§2.3 cross rule)
 //
-// R0 (out/parity/R0) is recorded data: lane 0.2's `reference` and `repeat` modes drew TS artefact directories with
-// loft-draw on loft-loader, and loft-draw now draws Bundle V1 files on loft-gpu (lean Rust draw note, 2026-11-19). To
-// draw a reference set again, check out the commit that last had them (7f48109) and run `reference` there.
+// R0 (out/parity/R0) is recorded data: lane 0.2's `reference` mode drew TS artefact directories with loft-loader (then
+// named loft-view, later loft-draw; loft-draw now draws Bundle V1 files on loft-gpu). To draw a reference set again,
+// check out the commit that last had `reference` (7f48109) and run it there. loft-view is Loft's default executor again
+// (19 Nov), and `repeat` draws R0 through it.
 //
 // LOFT_PARITY_OUT names the set (default out/parity/R0): the Linux runner (tools/parity/linux.sh) draws its own set on
 // Vulkan and crosses it with the macOS R0.
@@ -36,7 +40,7 @@ type Corpus = {
   seeds: { default: string; env: string; commit: string; sets: { set: string; path: string; rows: number; sha256: string }[] };
   frames: { cameras: number; times: number[]; size: [number, number]; stepsTime: number; detail: { time: number; size: [number, number] } };
 };
-type Mode = { kind: "rust"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
+type Mode = { kind: "rust" | "repeat"; only: string } | { kind: "checks" | "cross"; path: string } | { kind: "dawn"; path: string; id: string };
 type Origin = { kind: "example" } | { kind: "seed"; set: string; seed: string; unported: number };
 type Entry = { id: string; path: string; origin: Origin };
 /** How `loft build` ended: the CLI's verdict kinds (src/cli/verdict.ts, docs/errors.md), or a process that died outside them. */
@@ -60,9 +64,9 @@ class ParityError extends Error {}
 function parse(argv: string[]): Mode {
   const [cmd, ...rest] = argv;
   switch (cmd) {
-    case "reference": case "repeat":
-      throw new ParityError(`${cmd}: R0 is recorded data, and loft-draw no longer draws TS artefact directories. Fix: check out 7f48109 (the last commit with loft-loader's loft-draw) to draw a reference set`);
-    case "rust": {
+    case "reference":
+      throw new ParityError(`${cmd}: R0 is recorded data. Fix: check out 7f48109 (the last commit with \`reference\`) to draw a reference set`);
+    case "rust": case "repeat": {
       const i = rest.indexOf("--only");
       if (rest.length !== (i < 0 ? 0 : 2) || (i >= 0 && !rest[i + 1])) throw new ParityError(`${cmd} takes only --only <text>`);
       return { kind: cmd, only: i < 0 ? "" : rest[i + 1]! };
@@ -73,7 +77,7 @@ function parse(argv: string[]): Mode {
     case "dawn":
       if (rest.length !== 2) throw new ParityError("dawn takes a scene path and its entry id");
       return { kind: "dawn", path: rest[0]!, id: rest[1]! };
-    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: rust | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
+    default: throw new ParityError(`unknown mode ${cmd ?? "(none)"}: rust | repeat | checks <scene.ts> | dawn <scene.ts> <id> | cross <R0 dir>`);
   }
 }
 
@@ -146,6 +150,56 @@ function plan(b: { steps: boolean; cameras: string[] }): Shot[] {
 
 const frameName = (f: Shot) => `${f.camera}@${f.time}@${f.size.join("x")}.png`;
 
+
+/**
+ * Every native R0 frame (drawn by loft-view at R0) drawn again through the default path: one `loft serve` with
+ * LOFT_ENGINE unset, so loft-view draws, given R0's build directory, the frame's camera, time and size. The RGBA is
+ * compared with R0's lossless PNG; a frame that differs is kept beside R0 and measured. R0 was drawn by loft-view, so
+ * the expectation is identity. Exit 0 only when every frame was drawn and is identical.
+ */
+async function repeat(only: string) {
+  const { readPng, difference } = await import("../picdiff.ts");
+  const recs = (await entries(only)).flatMap((e) => existsSync(join(OUT, "entries", `${e.id}.json`)) ? [JSON.parse(readFileSync(join(OUT, "entries", `${e.id}.json`), "utf8")) as Rec] : []);
+  const drawn = recs.flatMap((r) => r.frames.flatMap((f) => f.kind === "drawn" && f.executor !== "dawn" ? [{ id: r.entry.id, f }] : []));
+  const env: Record<string, string | undefined> = { ...process.env };
+  delete env.LOFT_ENGINE;
+  const serve = Bun.spawn(["nice", "-n", "15", process.execPath, "src/cli/main.ts", "serve", "--draw-seconds", String(DEADLINE / 1000)], { cwd: ROOT, env, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+  const reader = serve.stdout.getReader(), decoder = new TextDecoder();
+  let buffered = "";
+  const line = async (): Promise<Record<string, unknown>> => {
+    for (let at = buffered.indexOf("\n"); at < 0; at = buffered.indexOf("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new ParityError(`loft serve ended: ${await new Response(serve.stderr).text()}`);
+      buffered += decoder.decode(value, { stream: true });
+    }
+    const at = buffered.indexOf("\n"), head = buffered.slice(0, at);
+    buffered = buffered.slice(at + 1);
+    return JSON.parse(head) as Record<string, unknown>;
+  };
+  void new Response(serve.stderr).text();
+  console.log(`serve ready: ${JSON.stringify(await line())}`);
+  const differing: { id: string; frame: string; diff: unknown }[] = [], refused: { id: string; frame: string; line: unknown }[] = [];
+  const started = performance.now();
+  for (const [i, { id, f }] of drawn.entries()) {
+    if (i % 100 === 0) console.log(`${i}/${drawn.length} frames, ${differing.length} differ, ${refused.length} refused, ${((performance.now() - started) / 1000).toFixed(0)} s`);
+    if (f.kind !== "drawn") continue;
+    const out = join(OUT, "repeat", id, frameName(f).replace(/\.png$/, ""));
+    serve.stdin.write(JSON.stringify({ id: i, artefact: join(OUT, "build", id), camera: f.camera, times: [f.time], size: f.size.join("x"), out }) + "\n");
+    serve.stdin.flush();
+    const a = await line() as { ok: boolean; frames?: { file: string }[]; line?: string };
+    if (!a.ok) { refused.push({ id, frame: frameName(f), line: a.line }); continue; }
+    const file = a.frames![0]!.file, rgba = new Uint8Array(readFileSync(file)), ref = readPng(join(OUT, f.file));
+    rmSync(out, { recursive: true, force: true });
+    if (ref.rgba.length === rgba.length && Buffer.compare(Buffer.from(ref.rgba), Buffer.from(rgba)) === 0) continue;
+    differing.push({ id, frame: frameName(f), diff: ref.rgba.length === rgba.length ? difference(ref, { width: ref.width, height: ref.height, rgba }) : `size ${rgba.length} bytes, R0 ${ref.rgba.length}` });
+  }
+  serve.stdin.end();
+  await serve.exited;
+  const report = { r0: readFileSync(join(OUT, "r0"), "utf8").trim(), head: git("rev-parse", "HEAD"), only, frames: drawn.length, identical: drawn.length - differing.length - refused.length, refused, differing, seconds: (performance.now() - started) / 1000 };
+  writeFileSync(join(OUT, only === "" ? "repeat.json" : `repeat.only-${only}.json`), json(report));
+  console.log(`${report.identical}/${drawn.length} frames identical to R0 through the default path (loft serve on loft-view); ${differing.length} differ; ${refused.length} refused`);
+  process.exit(report.identical === drawn.length && drawn.length > 0 ? 0 : 1);
+}
 
 /** Lane 4.2: every loft-draw frame of `other` (the macOS R0) against this set's (OUT, another backend) under the
  * cross-executor rule (§2.3). Every entry must also end its build the same way. */
@@ -364,6 +418,7 @@ try {
   const mode = parse(Bun.argv.slice(2));
   switch (mode.kind) {
     case "rust": await rust(mode.only); break;
+    case "repeat": await repeat(mode.only); break;
     case "checks": process.stdout.write(json(await verdicts(mode.path), 0)); process.exit(0);
     case "cross": await cross(resolve(mode.path)); break;
     case "dawn": process.stdout.write(json(await dawn(mode.path, mode.id), 0)); process.exit(0);
