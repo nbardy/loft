@@ -16,8 +16,8 @@ fn moving_sky(d: rgb, sun: rgb) -> rgb {
   mix([0.56, 0.27, 0.09], [0.10, 0.24, 0.58], t) * (0.7 + 0.3 * d.z)
 }
 
+# The disc faces away from the sun. The projected sky dominates its front.
 fn ceramic_light(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
-  # The disc faces away from the sun. The projected sky dominates its front.
   eval_bsdf(b, n, v, [0, 0, 1]) * moving_sky([0, 0, 1], sun) * 3.14159265
 }
 

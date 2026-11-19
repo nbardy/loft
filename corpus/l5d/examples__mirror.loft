@@ -31,7 +31,7 @@ fn ring_from_world(p: rgb, centre: rgb) -> f {
   length([length([x, q.y]) - 0.9, z]) - 0.25
 }
 
-lobe mirror_reflection(point: rgb, centre: rgb, n: rgb, v: rgb, l: rgb) -> v4 {
+lobe mirror_reflection(point: rgb, centre: rgb, n: rgb, v: rgb, l: rgb) {
   if dot(l, l) > 0 {
     return v4(rgb(0), 1.0)
   }

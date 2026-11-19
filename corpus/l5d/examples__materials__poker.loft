@@ -23,7 +23,7 @@ fn planck_channel(wavelength: f, kelvin: f) -> f {
   x / (1 + x)
 }
 
-lobe ember(kelvin: f, n: rgb, v: rgb, l: rgb) -> v4 {
+lobe ember(kelvin: f, n: rgb, v: rgb, l: rgb) {
   let light = [planck_channel(650, kelvin), planck_channel(530, kelvin), planck_channel(450, kelvin)]
   v4(select(rgb(0), light, dot(l, l) == 0), 1.0)
 }

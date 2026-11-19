@@ -23,7 +23,7 @@ fn thin_film_fresnel(h: f, f0: rgb, nm: f) -> rgb {
   f0 + 0.25 * (rgb(1) + cos([phase / 650, phase / 530, phase / 450] * cost))
 }
 
-lobe beetle_coating(nm: f, n: rgb, v: rgb, l: rgb) -> v4 {
+lobe beetle_coating(nm: f, n: rgb, v: rgb, l: rgb) {
   let h = normalize(v + l)
   let f = thin_film_fresnel(saturate(dot(v, h)), [0.04, 0.04, 0.04], nm)
   let g = max(dot(n, l), 0)
