@@ -1,0 +1,55 @@
+use std::geom::*
+space World Bird
+
+param side: f = 1 in -1..1
+fn fish(t: s) = [side * 2m * sin(t / 1s), 0.16m, 1.5m * cos(t / 1s)]@World
+fn bearing(p, q) = atan2(q.x - p.x, q.z - p.z)
+fn angle(a) = atan2(sin(a), cos(a))
+
+kind Heron @Bird (pose: xf@Bird>World, yaw: rad = 0rad, lift: m = 0m, phase: f = 0, neck: rad = 0rad, pitch: rad = 0rad, left: rad = 0rad) {
+  trace(p) = {
+    map body = p |> rot_y(-yaw) |> move([0, -lift, 0])
+    let hips = body.pt(0, 0.65m, 0)
+    let trunk = sphere(body.p - hips, 0.21m)
+    map pair = body.p |> mirror_x
+    let legs = capsule(pair.p, pair.pt(0.12m, 0.02m, 0), pair.pt(0.1m, 0.65m, 0), 0.026m)
+    map head = body.p |> move([0, -1.1m, -0.24m]) |> rot_y(-neck) |> rot_x(pitch)
+    let face = sphere(head.p - head.pt(0, 0, 0), 0.09m)
+    let bill = capsule(head.p, head.pt(0, 0, 0.05m), head.pt(0, 0, 0.32m), 0.025m)
+    let middle = body.pt(0, 0.84m, -0.04m)
+    let bend = body.pt(0, 0.98m, 0.18m)
+    let throat = smin(capsule(body.p, hips, middle, 0.055m), capsule(body.p, middle, bend, 0.05m), 0.06m)
+    min(min(trunk, legs), min(min(face, bill), smin(throat, capsule(body.p, bend, body.pt(0, 1.1m, 0.24m), 0.04m), 0.05m)))
+  }
+  material(p, n) = ggx([0.65, 0.73, 0.78], 0.65, 0)
+}
+
+fn eye(h) = h.pose * [0.24m * sin(h.yaw), 1.1m + h.lift, 0.24m * cos(h.yaw)]@Bird
+law hop(h: Heron, dt) writes h.{yaw, lift, phase} {
+  let err = angle(bearing(eye(h), fish(time)) - h.yaw)
+  let start = h.phase == 0 && abs(err) > 0.8rad
+  let ph = if start || h.phase > 0 { min(h.phase + dt / 0.26s, 1) } else { 0 }
+  h.lift = 0.12m * 4 * ph * (1 - ph)
+  if h.lift > 0m { h.yaw = angle(h.yaw + clamp(err, -2.4rad/s * dt, 2.4rad/s * dt)) }
+  h.phase = if ph == 1 { 0 } else { ph }
+}
+
+law gaze(h: Heron, dt) writes h.{neck, pitch, left} {
+  let d = fish(time) - eye(h)
+  let want = angle(atan2(d.x, d.z) - h.yaw)
+  h.neck = clamp(want, -0.8rad, 0.8rad)
+  h.pitch = atan2(d.y, length(d.xz))
+  h.left = abs(angle(want - h.neck))
+}
+
+check lock(h: Heron) -> rad { if h.left > 0.001rad { missed(h.left) } else { held(0.001rad - h.left) } }
+check posture(h: Heron) -> m {
+  let margin = eye(h).y - (h.pose * [0, h.lift + 0.65m, 0]@Bird).y
+  if margin > 0m { held(margin) } else { missed(-margin) }
+}
+build { emit Heron(pose: place([0, 0, 0]@World)) }
+schedule Main {
+  run_laws(hop, gaze)
+  check(lock, posture)
+  orbit(at: [0, 0.65m, 0]@World, radius: 3m, fov: 42deg)
+}
