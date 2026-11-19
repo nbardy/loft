@@ -8,3 +8,9 @@ Written by the research scientist on 19 Nov 2026 (bundle: `docs/handoff/2026-11-
 - `03_SUB_ENGINES_AND_STDLIB.md`
 - `04_ENGINES_AND_SCENES.md`
 - `05_NUMBERS_AND_BUILD_ORDER.md`
+- `06_ADDENDUM.md`: the scientist's answers to our final request (19 Nov): contradictions settled (layered `+`, owner-approved references, `waive` keyword, normative `loft.lark` with patch), schedule IR, query types and `shade_fn`, full typed `std`, motion table layouts and `body`, `plan`, determinism rules, units, `std::rand` (Philox), the 56 Tier 0 opcodes, the `.loftb` bundle, lossless CST and `loft fmt`, CLI exit codes and the training contract, glTF import. The addendum overrides earlier files where they differ.
+
+Lead's notes on the addendum (decided without the scientist; small):
+- `E501` is used twice (undeclared field write, and the schedule DAG's read-before-write). The DAG error becomes `E505`.
+- Motion `wgsl` blocks must be marked deterministic; the spelling is `wgsl det (...) -> T { ... }` (a keyword, not an `@` attribute).
+- `--max-frame-ms` on a device without timestamp queries (some browsers) exits `6` with the reason, never a guessed time.
