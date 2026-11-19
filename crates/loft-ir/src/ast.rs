@@ -326,6 +326,7 @@ pub enum TyExpr {
     Name(Ident),
     /// `vec3<f32>`.
     Generic(Ident, Vec<TyExpr>),
+    Array(Box<TyExpr>, u32, Span),
     Geo(Geo, SpaceRef),
     Xform(SpaceRef, SpaceRef),
     Field(SpaceRef),
@@ -338,6 +339,7 @@ pub enum TyExpr {
 impl TyExpr {
     pub fn span(&self) -> Span {
         match self {
+            TyExpr::Array(_, _, span) => *span,
             TyExpr::Name(i) | TyExpr::Generic(i, _) | TyExpr::Table(i) => i.span,
             TyExpr::Geo(_, s) | TyExpr::Field(s) | TyExpr::Frame(s) => s.span,
             TyExpr::Xform(a, b) => a.span.to(b.span),
@@ -413,6 +415,7 @@ pub enum Ty {
     /// A kind's row (`self`).
     Row(String),
     Struct(String),
+    Array(Box<Ty>, u32),
     /// Origin, tangent, normal, binormal.
     Frame(Space),
     /// An ordered sum of library lobes (`lobe` fns), bottom layer first.
@@ -439,6 +442,7 @@ impl std::fmt::Display for Ty {
             Ty::Geo(g, s) => write!(f, "{}@{s}", g.short()),
             Ty::Xform(a, b) => write!(f, "xf@{a}>{b}"),
             Ty::Map(a, b) => write!(f, "map {a} -> {b}"),
+            Ty::Array(t, n) => write!(f, "array[{t}, {n}]"),
             Ty::Struct(k) => write!(f, "{k}"),
             Ty::Row(k) => write!(f, "row of {k}"),
             Ty::Frame(s) => write!(f, "frame@{s}"),
@@ -458,7 +462,7 @@ impl Ty {
             Ty::VecN(n) => Some(u32::from(*n)),
             Ty::Geo(..) => Some(3),
             Ty::Xform(..) | Ty::Frame(_) => Some(12),
-            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Struct(_) | Ty::Bsdf | Ty::Table(_) | Ty::Verdict => None,
+            Ty::Void | Ty::AbstractInt | Ty::Map(..) | Ty::Row(_) | Ty::Struct(_) | Ty::Array(..) | Ty::Bsdf | Ty::Table(_) | Ty::Verdict => None,
         }
     }
 }

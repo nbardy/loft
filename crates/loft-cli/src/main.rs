@@ -1,6 +1,6 @@
 //! `loft`: the meta engine's command line.
 //!
-//!   loft check SCENE [--set NAME=VALUE]...      compile without a GPU; print per-kind rows, derived L and pass times
+//!   loft check SCENE [--set NAME=VALUE]...      compile and run any scheduled checks at --t (default 0)
 //!   loft show SCENE [MODULE] [--set ...]        print the generated WGSL (every module, or the one named)
 //!   loft still SCENE OUT.png [--t SECONDS] [--set ...]
 //!   loft gate [--approve]                       the five gates on every scene in engines/gates.json

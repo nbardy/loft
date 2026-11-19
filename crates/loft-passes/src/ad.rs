@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashSet};
 fn tty(t: &TyExpr) -> TyExpr {
     match t {
         TyExpr::Geo(Geo::Pt | Geo::Dir | Geo::Norm, s) => TyExpr::Geo(Geo::Vec, s.clone()),
-        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_)) => other.clone(),
+        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_)) => other.clone(),
     }
 }
 
@@ -172,7 +172,7 @@ impl Ad<'_> {
                 let ty = match ty {
                     TyExpr::Geo(Geo::Pt | Geo::Vec, s) => TyExpr::Geo(Geo::Vec, s.clone()),
                     TyExpr::Name(_) | TyExpr::Generic(..) => ty.clone(),
-                    TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Table(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
+                    TyExpr::Array(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Table(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
                 };
                 let mut out = vec![];
                 for (a, d) in args.iter().zip(ds) {

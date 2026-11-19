@@ -54,6 +54,7 @@ fn syntax(
         Ty::Xform(a, b) => TyExpr::Xform(space(a)?, space(b)?),
         Ty::Bsdf => TyExpr::Name(n("Bsdf")),
         Ty::Row(k) | Ty::Id(k) | Ty::Struct(k) => TyExpr::Name(n(k)),
+        Ty::Array(t, n) => TyExpr::Array(Box::new(syntax(t, sp, spaces, generalize)?), *n, sp),
         Ty::Table(k) => TyExpr::Table(n(k)),
         Ty::Map(..) | Ty::Verdict | Ty::Void => return None,
     })

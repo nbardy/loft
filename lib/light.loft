@@ -1,6 +1,10 @@
 # Light: a sun with its shadow, a sky by quadrature, and whatever the surface emits. The schedule's shade pass names
 # the light fn and the present pass names the sky fn; write others and name them instead.
 
+const DEFAULT_SUN_COLOR = [2.2, 2.0, 1.7]
+const DEFAULT_ZENITH = [0.16, 0.29, 0.55]
+const DEFAULT_HORIZON = [0.48, 0.55, 0.64]
+
 # Sky radiance by direction, without the sun's disc (the sun arrives separately, shadowed).
 fn sky_dome(d: rgb) -> rgb {
   let up = clamp(d.y, -1.0, 1.0)

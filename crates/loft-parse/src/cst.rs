@@ -180,6 +180,9 @@ impl Cst {
                     lexer.bump(n);
                 }
                 s.hi = lexer.span().end as u32;
+                if lexer.remainder().as_bytes().first().is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') {
+                    return Err(Diag::new(Code::E001, s, "number or unit touches an identifier", "separate the number or unit from the identifier"));
+                }
             }
             if island && lexer.slice() == "{" {
                 let end = raw_end(&text[r.start..]).ok_or_else(|| {

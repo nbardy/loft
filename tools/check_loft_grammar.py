@@ -28,8 +28,6 @@ TOKENIZER = LLTokenizer(TokenizerWrapper(ByteVocabulary()))
 DECODER_GRAMMAR = LLMatcher.grammar_from_lark(GRAMMAR_TEXT)
 DECODER_LIMITS = LLParserLimits(step_max_items=1_000_000, verbose_errors=False)
 TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|\#[^\n]*|\r?\n|[ \t]+|[\w]+|::|\|>|==|!=|<=|>=|&&|\|\||->|\.\.|\S')
-UNIT = r"(?:mm|m|rad|deg|s|kg|N|J|Hz)(?:\^-?[0-9]+)?"
-UNIT_END = re.compile(rf"([0-9](?:{UNIT})(?:[*/]{UNIT})*)([*/])(?=({UNIT})[A-Za-z_0-9])")
 CONTINUE = set("+ - * / % == != < <= > >= && || , = |>".split())
 
 
@@ -83,9 +81,7 @@ def lexical_input(source):
             depth += int(t in {"(", "["}) - int(t in {")", "]"})
             i += 1
             result.append(" .. " if t == ".." else t)
-    # The decoder regex has no lookaround. Force an operator boundary when
-    # the following whole identifier merely starts with a unit (m/sin).
-    return UNIT_END.sub(r"\1 \2 ", "".join(result))
+    return "".join(result)
 
 
 def accepts(source):

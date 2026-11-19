@@ -1,7 +1,7 @@
 //! Lower the row-local subset needed for a Phase 1.5 bakeoff snapshot.
 //! Phase 3 persistent state, solver tables and checkpoints use a separate schedule ABI.
 use super::*;
-use loft_ir::{Span, program::{Dispatch, DispatchRows}};
+use loft_ir::{Span, program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows}};
 
 fn unsupported(sp: Span, what: &str) -> Diag {
     Diag::new(
@@ -102,19 +102,7 @@ pub fn motion_module(
     em.out.push_str(include_str!("det.wgsl"));
     let roots: Vec<_> = laws.iter().chain(&checks).copied().collect();
     let (lib, constants) = reachable(p, &roots, &[]);
-    for n in constants {
-        if p.param_slot(&n).is_some() { continue; }
-        let c = p.consts[n.as_str()];
-        let value = em.expr(&c.value);
-        writeln!(
-            em.out,
-            "const motion_const_{}: {} = {};",
-            wgsl_name(&n),
-            wty(em.ty_of(&c.value)),
-            value
-        )
-        .unwrap();
-    }
+    em.constants(&constants);
     for f in lib {
         em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
     }
@@ -123,7 +111,7 @@ pub fn motion_module(
         let row = wgsl_name(&f.params[0].name.name);
         writeln!(
             em.out,
-            "fn law_{}(initial: Row, dt: f32) -> Row {{ var {row} = initial;",
+            "fn law_{}(initial: Row, loft_local_dt: f32) -> Row {{ var {row} = initial;",
             f.name.name
         )
         .unwrap();
@@ -172,6 +160,12 @@ pub fn motion_module(
             entry: "advance".into(),
             workgroup_x: 64,
             input,
+            bindings: [
+                (0, 2, DispatchResource::Parameters),
+                (1, 0, DispatchResource::Rows),
+                (3, 0, DispatchResource::Arguments),
+                (3, 1, DispatchResource::Results),
+            ].into_iter().map(|(group, slot, resource)| DispatchBinding { group, slot, resource }).collect(),
             fields,
             checks: checks.iter().map(|c| c.name.name.clone()).collect(),
         },

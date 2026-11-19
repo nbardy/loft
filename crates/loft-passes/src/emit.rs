@@ -76,21 +76,31 @@ fn wty(t: &Ty) -> String {
         Ty::Frame(_) => "LoftFrame".into(),
         Ty::Bsdf => "Bsdf".into(),
         Ty::Id(_) => "u32".into(),
-        Ty::Struct(_) | Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
+        Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
+        Ty::Struct(k) => format!("loft_type_{k}"),
+        Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
         Ty::Map(..) => unreachable!("maps are not values"),
     }
 }
 
-// Escape the escape prefix as well, so a user declaration cannot collide
-// with the encoded spelling of a WGSL keyword. Row fields have their own prefix.
-fn wgsl_name(n:&str)->String{
-    if naga::keywords::wgsl::RESERVED.contains(&n) || n.starts_with("loft_user_") || n.starts_with("loft_tmp_") || matches!(n,"frame"|"rows"|"visible"|"kp"|"luts"|"self_"|"load_row"){
-        format!("loft_user_{n}")
-    }else{n.into()}
+// Typed Loft locals and generated WGSL symbols use separate namespaces.
+fn wgsl_name(n: &str) -> String { format!("loft_local_{n}") }
+fn map_symbol(n: &str) -> String { format!("loft_map_{}_{}", n.len(), n) }
+
+#[derive(Clone, Copy)]
+pub(crate) enum MotionMath { Native, Fixed, Unavailable }
+
+pub(crate) fn motion_math(name: &str) -> MotionMath {
+    match name {
+        "sin" | "cos" | "atan2" | "acos" | "exp" | "log" => MotionMath::Fixed,
+        "tan" | "asin" | "atan" | "exp2" | "log2" | "pow" => MotionMath::Unavailable,
+        _ => MotionMath::Native,
+    }
 }
 
 fn fn_symbol(n: &str) -> String {
     match n.split_once('#') {
+        Some(("", internal)) => format!("loft_internal_{internal}"),
         Some((kind, helper)) => format!("loft_kind_{}_{}_{}", kind.len(), kind, helper),
         None => format!("loft_user_{n}"),
     }
@@ -292,8 +302,11 @@ impl<'p, 'a> Emitter<'p, 'a> {
             .iter()
             .map(|prm| match &prm.ty {
                 Some(TyExpr::Name(n)) if self.p.kinds.contains_key(n.name.as_str())=>format!("{}: Row",wgsl_name(&prm.name.name)),
-                Some(t) => format!("{}: {}", wgsl_name(&prm.name.name), wty(&self.resolve(t))),
-                None => "self_: Row".into(),
+                Some(t) => {
+                    let name = if f.raw.is_some() { prm.name.name.clone() } else { wgsl_name(&prm.name.name) };
+                    format!("{name}: {}", wty(&self.resolve(t)))
+                }
+                None => format!("{}: Row", wgsl_name(&prm.name.name)),
             })
             .collect();
         let ret = f.ret.as_ref().map(|t| format!(" -> {}", wty(&self.resolve(t)))).unwrap_or_default();
@@ -336,7 +349,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 self.line(d, &format!("{t} {op} {v};"));
             }
             Stmt::Map { name, head, stages } => {
-                let n = &wgsl_name(&name.name);
+                let n = &map_symbol(&name.name);
                 let (point, mut all): (String, Vec<(&str, Vec<String>)>) = match &head.kind {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value), vec![(callee.name.as_str(), vec![])])
@@ -371,7 +384,8 @@ impl<'p, 'a> Emitter<'p, 'a> {
                         other => unreachable!("checked map stage {other}"),
                     }
                 }
-                self.line(d, &format!("let {n}: vec3<f32> = {n}_s{};", all.len()));
+                self.line(d, &format!("let {}: vec3<f32> = {n}_s{};", wgsl_name(&name.name), all.len()));
+                self.locals.push(name.name.clone());
                 self.maps.push((n.clone(), recorded));
             }
             Stmt::Return(v, _) => {
@@ -391,7 +405,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             Stmt::For { var, lo, hi, body, .. } => {
                 let t = wty(self.ty_of(lo)).replace("i32", match self.ty_of(hi) {
                     Ty::U32 => "u32",
-                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Id(_) | Ty::Bsdf => "i32",
+                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => "i32",
                 });
                 let (a, b) = (self.expr(lo), self.expr(hi));
                 let v = wgsl_name(&var.name);
@@ -465,25 +479,25 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 Ty::U32 => format!("{}u", *value as u32),
                 Ty::I32 => format!("{}i", *value as i32),
                 Ty::AbstractInt => text.clone(),
-                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Id(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
+                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
             },
             ExprKind::Bool(b) => b.to_string(),
-            ExprKind::Name(n) if n == "self" => "self_".into(),
-            ExprKind::Name(n) if n=="time"=>if self.motion{"loft_tick_time"}else{"frame.eye.w"}.into(),
+            ExprKind::Name(n) if n=="time" && !self.locals.contains(n)=>if self.motion{"loft_tick_time"}else{"frame.eye.w"}.into(),
             ExprKind::Name(n) if !self.locals.contains(n) && self.p.consts.contains_key(n.as_str()) => {
                 if let Some(i) = self.p.param_slot(n) {
                     format!("loft_params[{i}u].x")
                 } else {
-                    format!("{}_{}", if self.motion { "motion_const" } else { "loft_const" }, n)
+                    let suffix = if self.p.runtime_constant(n) { "()" } else { "" };
+                    format!("{}_{}{suffix}", if self.motion { "motion_const" } else { "loft_const" }, n)
                 }
             }
             ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
                     && m.name == "cell"
-                    && self.maps.iter().any(|(k, _)| k == &wgsl_name(n))
+                    && self.maps.iter().any(|(k, _)| k == &map_symbol(n))
                 {
-                    return format!("{}_cell",wgsl_name(n));
+                    return format!("{}_cell",map_symbol(n));
                 }
                 if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
             }
@@ -501,7 +515,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     (Ty::Map(..), ExprKind::Member(base, m)) => {
                         let ExprKind::Name(n) = &base.kind else { unreachable!("checked map ref") };
                         let x = self.expr(b);
-                        self.map_apply(&wgsl_name(n), m.name == "to_parent", x, point)
+                        self.map_apply(&map_symbol(n), m.name == "to_parent", x, point)
                     }
                     (Ty::Xform(..), _) if matches!(self.ty_of(b), Ty::Xform(..)) => format!("loft_xf_mul({}, {})", self.expr(a), self.expr(b)),
                     (Ty::Xform(..), _) => {
@@ -516,7 +530,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 match self.ty_of(e) {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => format!("normalize(vec3<f32>({}))", a.join(", ")),
                     Ty::Xform(..) => format!("loft_xform_yaw({}, {})", a[0], a[1]),
-                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Table(_) | t @ Ty::Verdict | t @ Ty::Struct(_) | t @ Ty::Id(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
+                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Table(_) | t @ Ty::Verdict | t @ Ty::Struct(_) | t @ Ty::Array(..) | t @ Ty::Id(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
                 }
             }
             ExprKind::Call { callee, args } if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") => {
@@ -534,7 +548,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     Ty::Frame(_) => "LoftFrame(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0))".into(),
                     Ty::F32 => "0.0".into(),
                     t @ Ty::VecN(_) | t @ Ty::Geo(..) => format!("{}(0.0)", wty(t)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked zero of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked zero of {other}"),
                 }
             }
             ExprKind::Call { callee, args } if callee.name == "loft_vec" => self.expr(&args[0].value),
@@ -553,7 +567,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 }
                 if callee.name=="coords"{return a[0].clone()}
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
-                if self.motion && matches!(callee.name.as_str(),"sin"|"cos"|"atan2"|"acos"|"exp"|"log"){return format!("det_{}({})",callee.name,a.join(", "));}
+                if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
                 if matches!(callee.name.as_str(),"held"|"missed"){return format!("vec2<f32>({}, {})",if callee.name=="held"{"1.0"}else{"2.0"},a[0]);}
                 let name = match callee.name.as_str() {
                     "frame_axes" => "LoftFrame".into(),
@@ -599,7 +613,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     w(10),
                     w(11)
                 ),
-                other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
+                other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
             };
             fields.push(format!("  r_{}: {},", rf.name.name, wty(&t)));
             loads.push(load);
@@ -632,14 +646,26 @@ impl<'p, 'a> Emitter<'p, 'a> {
         );
     }
 
-    fn library(&mut self, fns: &[&FnDecl], consts: &BTreeSet<String>) {
-        for c in consts {
-            if self.p.param_slot(c).is_some() { continue; }
-            let decl = self.p.consts[c.as_str()];
-            let v = self.expr(&decl.value);
-            let t = wty(&self.types[decl.value.id as usize]);
-            let c=format!("loft_const_{c}");let _ = writeln!(self.out, "const {c}: {t} = {v};");
+    fn constants(&mut self, constants: &BTreeSet<String>) {
+        self.locals.clear();
+        for name in constants {
+            if self.p.param_slot(name).is_some() { continue; }
+            let decl = self.p.consts[name.as_str()];
+            let t = wty(self.ty_of(&decl.value));
+            let prefix = if self.motion { "motion_const" } else { "loft_const" };
+            if self.p.runtime_constant(name) {
+                let _ = writeln!(self.out, "fn {prefix}_{name}() -> {t} {{");
+                let v = self.expr(&decl.value);
+                let _ = writeln!(self.out, "  return {v};\n}}");
+            } else {
+                let v = self.expr(&decl.value);
+                let _ = writeln!(self.out, "const {prefix}_{name}: {t} = {v};");
+            }
         }
+    }
+
+    fn library(&mut self, fns: &[&FnDecl], consts: &BTreeSet<String>) {
+        self.constants(consts);
         for f in fns {
             self.func(f, &fn_symbol(&f.name.name));
         }
@@ -728,7 +754,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     );
     em.library(&lib, &consts);
     for f in &k.fns {
-        em.func(f, &wgsl_name(&f.name.name));
+        em.func(f, "loft_surface_jvp");
     }
     for (which, f) in &k.queries {
         let n = match which {
@@ -769,7 +795,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
             ),
             "  let uv = vec2<f32>(f32(v.y & 0xffffu), f32(v.y >> 16u)) / 65535.0;
   let pl = q_surface(row, uv.x, uv.y);
-  let cr = cross(surface__jvp(row, uv.x, uv.y, 1.0, 0.0), surface__jvp(row, uv.x, uv.y, 0.0, 1.0));
+  let cr = cross(loft_surface_jvp(row, uv.x, uv.y, 1.0, 0.0), loft_surface_jvp(row, uv.x, uv.y, 0.0, 1.0));
   let nl = cr * inverseSqrt(max(dot(cr, cr), 1e-30));
   let p = loft_xf_pt(pose, pl);
   var n = normalize(loft_xf_vec(pose, nl));
@@ -780,7 +806,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
 "
             .to_string(),
             "  let pl = q_surface(row, a.x, a.y);
-  let cr = cross(surface__jvp(row, a.x, a.y, 1.0, 0.0), surface__jvp(row, a.x, a.y, 0.0, 1.0));
+  let cr = cross(loft_surface_jvp(row, a.x, a.y, 1.0, 0.0), loft_surface_jvp(row, a.x, a.y, 0.0, 1.0));
   let nl = normalize(cr);
   let nw = loft_xf_vec(pose, nl);
   let o0 = vec4<f32>(0.0);

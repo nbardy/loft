@@ -1,4 +1,5 @@
-# The CRT keeps the raw bytes, the decoder sees a single balanced island.
+# The CST keeps the raw bytes, the decoder sees a single balanced island.
+type WavelengthBins = array[vec4f, 4]
 type Acceleration = m/s^2
 struct Sample {
   a: Acceleration = 9.81m/s^2

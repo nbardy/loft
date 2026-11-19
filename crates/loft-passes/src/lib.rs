@@ -132,6 +132,23 @@ impl<'a> Prog<'a> {
         self.continuous_params().position(|(key, _)| key == name).map(|i| 3 + i)
     }
 
+    fn runtime_constant(&self, name: &str) -> bool {
+        let mut pending = vec![name];
+        let mut known = HashSet::new();
+        while let Some(name) = pending.pop() {
+            if !known.insert(name) { continue; }
+            let mut refs = emit::References::default();
+            refs.expr(&self.consts[name].value, &[]);
+            if matches!(self.consts[name].value.kind, ExprKind::If { .. }) || !refs.calls.is_empty()
+                || refs.names.iter().any(|(n, _)| *n == "time" || self.param_slot(n).is_some())
+            {
+                return true;
+            }
+            pending.extend(refs.names.into_iter().map(|(n, _)| n).filter(|n| self.consts.contains_key(n)));
+        }
+        false
+    }
+
     pub fn kind_index(&self, name: &str) -> usize {
         self.kind_order.iter().position(|k| *k == name).expect("checked kind")
     }
@@ -568,6 +585,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::
     let mut culled: Vec<&str> = vec![];
     let mut casters: Vec<&str> = vec![];
     let mut shadow_size = 0u32;
+    let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
+    let mut emitted_passes = HashSet::new();
     let mut available: HashSet<&str> = ["FrameUniform", "InputsBuf", "ParamsBuf", "RowTables", "LutTables", "BodyTables", "StateBuf", "PoseBuf"].into_iter().collect();
     for pd in &sched.passes {
         if let Some(resources) = &pd.resources {
@@ -578,6 +597,9 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::
             return Err(Diag::new(Code::E405, pd.label.span, "custom entry is outside this phase’s renderer", "use a supported schedule operation"));
         }
         let verb = pd.verb.name.as_str();
+        if GPU_ORDER.contains(&verb) && !emitted_passes.insert(verb) {
+            return Err(Diag::new(Code::E505, pd.verb.span, format!("duplicate render pass {verb}"), "schedule one producer per renderer resource"));
+        }
         match verb {
             v if p.fns.get(v).is_some_and(|f| f.comptime) => {
                 if !pd.args.is_empty() || !p.fns[v].params.is_empty() {
@@ -665,6 +687,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::
             "render_bundle" => (&["IndirectBuf"], &["Vis64", "DepthBuf"]),
             "find_shadow_map" => (&["IndirectBuf"], &["ShadowMap"]),
             "tile_classify" => (&["Vis64"], &["TileLists"]),
+            "shade_tiles" if has_shadow_pass => (&["Vis64", "DepthBuf", "TileLists", "ShadowMap"], &["ColorHdr"]),
             "shade_tiles" => (&["Vis64", "DepthBuf", "TileLists"], &["ColorHdr"]),
             "tonemap_aces" => (&["ColorHdr"], &["Swapchain"]),
             _ => (&[], &[]),
@@ -734,6 +757,11 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::
         }
     }
     let authored_params = p.continuous_params().map(|(_, c)| as_f32(eval::concrete(&ev.module_expr(&c.value)?, c.name.span)?, c.name.span)).collect::<Res<Vec<_>>>()?;
+    let mut environment_defaults = [[0.; 3]; 3];
+    for (color, name) in environment_defaults.iter_mut().zip(defaults::ENV_DEFAULTS) {
+        let decl = p.consts.get(name).ok_or_else(|| Diag::new(Code::E011, Span::NONE, format!("missing environment default {name}"), "load the light prelude"))?;
+        *color = as_v3(eval::concrete(&ev.module_expr(&decl.value)?, decl.name.span)?, decl.name.span)?;
+    }
     let tables = ev.tables;
     let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
         let Some(k)=p.kinds.get(kind) else{return Ok(None)};
@@ -745,8 +773,9 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::
     };
     let sky_colors=environment("Sky")?;
     let sun_row=environment("Sun")?;
-    let [sun, sun_color] = sun_row.unwrap_or([sun, defaults::SUN_COLOR]);
-    let [zenith, horizon] = sky_colors.unwrap_or(defaults::SKY_COLORS);
+    let [default_sun, default_zenith, default_horizon] = environment_defaults;
+    let [sun, sun_color] = sun_row.unwrap_or([sun, default_sun]);
+    let [zenith, horizon] = sky_colors.unwrap_or([default_zenith, default_horizon]);
     let mut params: Vec<f32> = [sun_color, zenith, horizon].into_iter().zip([0., f32::from(sky_colors.is_some()), 0.])
         .flat_map(|([r, g, b], flag)| [r, g, b, flag]).collect();
     params.extend(authored_params.into_iter().flat_map(|x| [x, 0., 0., 0.]));

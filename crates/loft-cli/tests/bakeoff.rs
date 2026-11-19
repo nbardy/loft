@@ -88,27 +88,59 @@ fn mirrored_fish_reverse_the_compiled_gpu_laws() {
     for side in [1., -1.] {
         let (p, _, _) = compile(&src, &[("side".into(), side)]).unwrap();
         let read = |t| loft_runner::sample_motion(&g, &p, t).unwrap().remove(0);
-        let held = read(1.1);
-        let field = |n: &str| held.fields.iter().find(|(f, _)| f == n).unwrap().1[0];
-        yaw.push(field("yaw"));
-        assert!(held.checks.iter().all(|(_, c)| c[0][0] == 1.));
-        let mut missed = false;
-        for tick in 40..105 {
-            let hop = read(tick as f32 / 120.);
-            let lock = &hop.checks.iter().find(|(n, _)| n == "lock").unwrap().1;
-            if lock[0][0] == 2.0 {
-                assert!(lock[0][1] > 0.001);
-                missed = true;
-                break;
+        let verdicts = |s: &loft_ir::program::MotionSample| {
+            assert_eq!(s.checks.len(), 2);
+            ["lock", "posture"].map(|name| {
+                let records = &s.checks.iter().find(|(n, _)| n == name).unwrap().1;
+                assert_eq!(records.len(), 1);
+                records[0]
+            })
+        };
+        let field = |s: &loft_ir::program::MotionSample, name| {
+            s.fields.iter().find(|(n, _)| n == name).unwrap().1[0]
+        };
+        let mut airborne_miss = false;
+        let mut landed_lock = false;
+        for tick in 40..=132 {
+            let sample = read(tick as f32 / 120.);
+            let [lock, posture] = verdicts(&sample);
+            let lift = field(&sample, "lift");
+            assert_eq!(posture[0], 1.0, "posture failed at {tick} on side {side}");
+            if lock[0] == 2.0 && lock[1] > 0.001 && lift > 0.01 {
+                airborne_miss = true;
+            }
+            if airborne_miss && lift.abs() < 1e-5 && lock[0] == 1.0 {
+                landed_lock = true;
             }
         }
-        assert!(missed, "neck limit never reported missed");
+        assert!(airborne_miss && landed_lock, "missing airborne loss then landing and lock on side {side}");
+        let last = read(1.1);
+        assert!(verdicts(&last).into_iter().all(|v| v[0] == 1.0));
+        yaw.push(field(&last, "yaw"));
     }
     assert!(yaw[0] > 0.3 && yaw[1] < -0.3 && (yaw[0] + yaw[1]).abs() < 2e-5);
     println!(
         "132 GPU ticks, signed yaw {:.8} and {:.8} rad",
         yaw[0], yaw[1]
     );
+}
+
+#[test]
+fn heron_checks_fail_for_reversed_pitch_and_a_displaced_landmark() {
+    let g = loft_runner::gpu().unwrap();
+    for (from, to, check) in [
+        ("h.pitch = atan2", "h.pitch = -atan2", "lock"),
+        ("const HIPS_Y = 0.65m", "const HIPS_Y = 1.2m", "posture"),
+    ] {
+        let mut src = scene("heron");
+        let text = &mut src.files.last_mut().unwrap().1;
+        assert!(text.contains(from));
+        *text = text.replace(from, to);
+        let (p, _, _) = compile(&src, &[]).unwrap();
+        let samples = loft_runner::sample_motion(&g, &p, 1.1).unwrap();
+        let v = samples[0].checks.iter().find(|(name, _)| name == check).unwrap().1[0];
+        assert_eq!(v[0], 2., "changing {from} must fail {check}");
+    }
 }
 
 #[test]
@@ -244,4 +276,56 @@ schedule Main { run_laws(advance_row); check(data_only) }");
     let result = loft_runner::sample_motion(&g, &p, 0.1).unwrap();
     assert_eq!(result[0].fields[0].1, [12., 12.]);
     assert_eq!(result[0].checks[0].1, [[1., 1.], [1., 1.]]);
+}
+
+#[test]
+fn fixed_motion_math_covers_direct_and_transitive_calls() {
+    let src = source("space World
+kind Data @World (x: f = 0) {}
+fn wrapped(x: f) -> f = acos(x) + log(x)
+law apply(h: Data, dt) writes h.{x} { h.x = exp(dt) + wrapped(0.5) }
+build { emit Data() }
+schedule Main { run_laws(apply) }");
+    let (p, _, _) = compile(&src, &[]).unwrap();
+    let wgsl = &p.modules[p.dispatches[0].module].wgsl;
+    let law = wgsl.split("fn law_apply").nth(1).unwrap().split("@compute").next().unwrap();
+    let helper = wgsl.split("fn motion_loft_user_wrapped").nth(1).unwrap().split("fn law_apply").next().unwrap();
+    assert!(law.contains("det_exp(loft_local_dt)") && !law.contains("= exp("));
+    assert!(helper.contains("det_acos(") && helper.contains("det_log("));
+    let g = loft_runner::gpu().unwrap();
+    let samples = loft_runner::sample_motion(&g, &p, 1. / 120.).unwrap();
+    let want = (1.0f32 / 120.).exp() + 0.5f32.acos() + 0.5f32.ln();
+    assert!((samples[0].fields[0].1[0] - want).abs() < 2e-6);
+}
+
+#[test]
+fn geometry_cache_follows_resolved_functions_and_only_used_scans() {
+    let mut src = scene("crab");
+    let cache = tempfile::TempDir::new().unwrap();
+    let run = |src: &Sources| loft_passes::compile_cached(src, &[], cache.path()).unwrap().1;
+    let get = |r: &loft_passes::Report, kind| {
+        let kind = r.kinds.iter().find(|k| k.name == kind).unwrap();
+        (kind.cache_hits, kind.shapes)
+    };
+    let first = run(&src);
+    assert_eq!(get(&first, "Coil"), (0, 1));
+    let sdf = src.files.iter().position(|(name, _)| name.ends_with("/sdf.loft")).unwrap();
+    src.files[sdf].1.insert_str(0, "# Formatting does not change an analytic certificate.\n");
+    let text = &mut src.files.last_mut().unwrap().1;
+    let unused = text[text.find("scan coil").unwrap()..text.find("fn roughness").unwrap()]
+        .replace("scan coil", "scan unused")
+        .replace("by 192", "by 12");
+    text.push_str(&unused);
+    let second = run(&src);
+    assert!(second.kinds.iter().all(|k| k.cache_hits == k.shapes));
+    let text = &mut src.files.last_mut().unwrap().1;
+    *text = text.replace("by 192", "by 193");
+    let third = run(&src);
+    assert_eq!(get(&third, "Coil"), (0, 1));
+    assert_eq!(get(&third, "Pincer"), get(&second, "Pincer"));
+
+    src.files[sdf].1 = src.files[sdf].1.replace("length(v) - r", "length(v) - (r + 0.002)");
+    let fourth = run(&src);
+    assert_eq!(get(&fourth, "Eyes").0, 0, "a changed sphere must rederive the eye bound");
+    assert_eq!(get(&fourth, "Coil"), (1, 1), "the coil does not call sphere");
 }

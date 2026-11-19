@@ -522,7 +522,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
-                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
+                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
@@ -538,7 +538,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return Ok(match self.types[c.value.id as usize] {
                         Ty::U32 => Val::U(*x as u32),
                         Ty::I32 | Ty::AbstractInt => Val::I(*x as i32),
-                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(*x)),
+                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Struct(_) | Ty::Array(..) | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(*x)),
                     });
                 }
                 self.module_expr(&c.value)
@@ -620,7 +620,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
                     Ty::Geo(..) => Ok(build(vals, 3)),
                     Ty::VecN(n) => Ok(build(vals, n as usize)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
                 }
             }
             ExprKind::Call { callee, args } => {
@@ -830,9 +830,19 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
         match name {
             "frame_axes" => build(v,12),
             "has_sky"=>Val::B(Some(self.p.kind_order.iter().position(|k|*k=="Sky").and_then(|i|self.tables.get(i)).is_some_and(|t|!t.is_empty()))),
-            "sky_zenith"|"sky_horizon"|"sun_color"=>{
-                let (k,i,default)=match name{"sky_zenith"=>("Sky",0,crate::defaults::SKY_COLORS[0]),"sky_horizon"=>("Sky",1,crate::defaults::SKY_COLORS[1]),_=>("Sun",1,crate::defaults::SUN_COLOR)};
-                self.p.kind_order.iter().position(|n|*n==k).and_then(|k|self.tables.get(k)).and_then(|rows|rows.first()).and_then(|row|row.get(i)).map(Self::lift).unwrap_or_else(||Val::V(default.map(|x|S::c(f64::from(x))).to_vec(),0.))
+            "sky_zenith" | "sky_horizon" | "sun_color" => {
+                let (kind, column, default) = match name {
+                    "sky_zenith" => ("Sky", 0, crate::defaults::ENV_DEFAULTS[1]),
+                    "sky_horizon" => ("Sky", 1, crate::defaults::ENV_DEFAULTS[2]),
+                    _ => ("Sun", 1, crate::defaults::ENV_DEFAULTS[0]),
+                };
+                if let Some(row) = self.p.kind_order.iter().position(|k| *k == kind)
+                    .and_then(|i| self.tables.get(i)).and_then(|rows| rows.first())
+                {
+                    Self::lift(&row[column])
+                } else {
+                    self.module_expr(&self.p.consts[default].value).expect("validated prelude default")
+                }
             }
             "coords" => v.remove(0),
             "dir" => normalize(v.remove(0)),

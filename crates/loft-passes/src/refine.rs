@@ -44,7 +44,7 @@ impl Proof<'_, '_> {
     fn expr(&mut self, e: &Expr, env: &Env) -> Res<Option<Term>> {
         Ok(match &e.kind {
             ExprKind::If { condition, then, otherwise } => {
-                self.expr(condition, env)?;
+                let row_condition = self.expr(condition, env)?.is_some_and(|v| v.row);
                 let mut result: Option<Term> = None;
                 for arm in [then, otherwise] {
                     let mut locals = env.clone();
@@ -55,7 +55,7 @@ impl Proof<'_, '_> {
                         (a, b) => a.or(b),
                     };
                 }
-                result
+                result.map(|mut value| { value.row |= row_condition; value })
             }
             ExprKind::Num { value, suffix, .. } => Some(num(if *suffix == NumSuffix::Deg {
                 value.to_radians()
@@ -261,13 +261,15 @@ pub fn check(p: &Prog, types: &[Ty], overrides: &[(String, f64)]) -> Res<()> {
         }
         scalar(&c.value).ok().map(|x| (name.to_string(), num(x.into())))
     }).collect();
+    let mut unused_types = vec![];
+    let checker = crate::check::Ck::new(p, &mut unused_types);
     for k in p.kinds.values() {
         let Some(trace) = k.query(QueryKind::Trace) else {
             continue;
         };
         let mut fields = Env::new();
         for f in &k.row {
-            if !matches!(&f.ty,TyExpr::Name(n) if matches!(n.name.as_str(),"f32"|"i32"|"u32")) {
+            if !matches!(checker.resolve(&f.ty, true)?, Ty::F32 | Ty::I32 | Ty::U32) {
                 continue;
             }
             let (lo, hi) = match &f.range {

@@ -125,7 +125,7 @@ expr_list:   expr ("," expr)* ","?
 
 // --- Terminals ---
 QUERY_NAME:  "trace" | "visible" | "material" | "light" | "sky" | "medium" | "hit" | "bound" | "sigma" | "tau"
-PRIM_TY:     "p3" | "v3" | "d3" | "n3" | "v2" | "v4" | "rgb" | "quat" | "f" | "u" | "i" | "bool" 
+PRIM_TY:     "p3" | "v3" | "d3" | "n3" | "v2" | "v4" | "rgb" | "quat" | "f" | "u" | "i" | "bool" | "f32" | "u32" | "i32" | "vec2f" | "vec3f" | "vec4f"
 GRID_DIM:    /[0-9]+x[0-9]+/
 unit_expr: unit_atom (("*" | "/") unit_atom)*
 unit_atom: (UNIT_SYM | "1") ("^" "-"? INT)?

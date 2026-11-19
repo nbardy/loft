@@ -1,8 +1,7 @@
 //! Elaborate an omitted render schedule from the authored realtime recipe.
 use loft_ir::{Code, Diag, Res, Span, ast::*};
 
-pub(crate) const SUN_COLOR: [f32; 3] = [2.2, 2.0, 1.7];
-pub(crate) const SKY_COLORS: [[f32; 3]; 2] = [[0.16, 0.29, 0.55], [0.48, 0.55, 0.64]];
+pub(crate) const ENV_DEFAULTS: [&str; 3] = ["DEFAULT_SUN_COLOR", "DEFAULT_ZENITH", "DEFAULT_HORIZON"];
 
 pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     let items = || modules.iter().flat_map(|m| &m.items);

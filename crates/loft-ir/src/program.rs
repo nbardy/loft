@@ -133,8 +133,19 @@ pub struct Dispatch {
     pub entry: String,
     pub workgroup_x: u32,
     pub input: DispatchRows,
+    pub bindings: Vec<DispatchBinding>,
     pub fields: Vec<String>,
     pub checks: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum DispatchResource { Parameters, Rows, Arguments, Results }
+
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub struct DispatchBinding {
+    pub group: u32,
+    pub slot: u32,
+    pub resource: DispatchResource,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

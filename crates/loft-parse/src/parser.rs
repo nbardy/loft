@@ -188,6 +188,16 @@ impl Parser<'_, '_> {
         })
     }
     fn ty(&mut self) -> Res<TyExpr> {
+        let span = self.cur().span;
+        if self.eat("array") {
+            self.expect("[")?;
+            let element = self.ty()?;
+            self.expect(",")?;
+            let count = self.integer()?;
+            let span = span.to(self.cur().span);
+            self.expect("]")?;
+            return Ok(TyExpr::Array(Box::new(element), count, span));
+        }
         if self.eat("[") {
             let t = self.ident()?;
             self.expect("]")?;
@@ -290,7 +300,7 @@ impl Parser<'_, '_> {
         let build = self.eat("build");
         let start = self.cur().span;
         if build && self.is("{") {
-            let name = named(&format!("loft_build_{}_{}", start.file, start.lo), start);
+            let name = named(&format!("#build_{}_{}", start.file, start.lo), start);
             let body = self.block(false)?;
             return Ok(Item::Build(FnDecl {
                 comptime: true,
@@ -1138,7 +1148,7 @@ impl Parser<'_, '_> {
             if self.cur().kind!=Kind::Raw{return self.err("a balanced WGSL block")}
             let island=self.pop();let end=island.span;
             let raw=RawWgsl{body:island.text.into(),deterministic};
-            let name=named(&format!("loft_raw_{}_{}",span.file,span.lo),span);
+            let name=named(&format!("#raw_{}_{}",span.file,span.lo),span);
             let args=params.iter().map(|prm|Arg{name:None,value:self.node(prm.name.span,ExprKind::Name(prm.name.name.clone()))}).collect();
             self.module.items.push(Item::Fn(FnDecl{name:name.clone(),params,ret:Some(ret),body:Block{stmts:vec![]},raw:Some(raw),attrs:vec![],comptime:false}));
             return Ok(self.node(span.to(end),ExprKind::Call{callee:name,args}));
