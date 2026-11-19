@@ -1134,11 +1134,47 @@ impl<'p,'a> Ck<'p,'a> {
             };
             return Ok(subst(&ret, &vars));
         }
+        if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
+            let (params, result) = op.signature();
+            if ts.len() != params.len() {
+                return Err(e003(span, format!("{} takes {} arguments", op.name(), params.len()), "match the packed intrinsic signature"));
+            }
+            for ((arg, ty), expected) in args.iter().zip(ts).zip(params) {
+                self.assignable(&ty, expected, arg.value.span)?;
+                if ty == Ty::AbstractInt {
+                    self.set(&arg.value, expected.clone());
+                }
+            }
+            return Ok(result);
+        }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
             self.pending_lowering.get_or_insert(span);
             return self.world_query(world, span);
         }
         match callee.name.as_str() {
+            "inscatter_joint" => {
+                let [world, ray, distance, tail @ ..] = ts.as_slice() else {
+                    return Err(e003(span, "inscatter_joint needs a world, ray, ray limit and RNG key", "write inscatter_joint(w, r, t_max, steps, rng)"));
+                };
+                let rng = match tail {
+                    [rng] => rng,
+                    [steps, rng] => {
+                        self.assignable(steps, &Ty::U32, args[3].value.span)?;
+                        if *steps == Ty::AbstractInt { self.set(&args[3].value, Ty::U32); }
+                        rng
+                    }
+                    _ => return Err(e003(span, "inscatter_joint takes four or five arguments", "omit steps for 24 integration steps")),
+                };
+                let named = |name: &str| self.resolve(&TyExpr::Name(Ident { name: name.into(), span }), true);
+                self.assignable(world, &named("World")?, sp[0])?;
+                self.assignable(ray, &named("Ray")?, sp[1])?;
+                self.assignable(distance, &Ty::F32, sp[2])?;
+                self.assignable(rng, &named("RngKey")?, *sp.last().unwrap())?;
+                let result = named("Vol")?;
+                if *distance == Ty::AbstractInt { self.set(&args[2].value, Ty::F32); }
+                self.pending_lowering.get_or_insert(span);
+                return Ok(result);
+            }
             "atomic_add" => {
                 self.require(KernelCapability::Atomics, span)?;
                 let [dst, val] = args else { return Err(e003(span, "atomic_add needs a destination and value", "write atomic_add(table[i].field, value)")); };
@@ -1416,6 +1452,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
     match name {
         "held"|"missed" if matches!(ts,[Ty::F32|Ty::AbstractInt])=>Ok(Ty::Verdict),
         "atan2" if matches!(ts,[Ty::F32,Ty::F32])=>Ok(Ty::F32),
+        "ggx_energy" if matches!(ts, [Ty::F32, Ty::F32]) => Ok(Ty::VecN(2)),
         "has_sky"=>{arity(0)?;Ok(Ty::Bool)},
         "sky_zenith"|"sky_horizon"|"sun_color"=>{arity(0)?;Ok(Ty::VecN(3))},
         "dist" => return builtin("distance",ts,sp,span),

@@ -79,7 +79,7 @@ impl<'a> Prog<'a> {
                 }
                 Item::Use(path) => {
                     let parts: Vec<_> = path.iter().map(|n| n.name.as_str()).collect();
-                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise"] | ["engines", "realtime"]) {
+                    if !matches!(parts.as_slice(), ["std", "geom" | "light" | "math" | "color" | "noise" | "quant"] | ["engines", "realtime"]) {
                         let span = path.first().unwrap().span.to(path.last().unwrap().span);
                         return Err(Diag::new(Code::E011, span, format!("unresolved import {}", parts.join("::")), "use a module supplied by the loaded prelude"));
                     }
@@ -516,8 +516,13 @@ fn pack(row: &[RowVal], out: &mut Vec<f32>) {
     }
 }
 
-fn naga_module(name:&str,text:String,src:&Sources)->Res<ShaderModule>{
-    let map=provenance::Map::new(text);
+fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures) -> Res<ShaderModule> {
+    let mut prelude = quant::wgsl_prelude(&text, features);
+    if text.contains("loft_ggx_energy(") {
+        prelude.push_str(&bsdf::energy_wgsl());
+    }
+    prelude.push_str(&text);
+    let map=provenance::Map::new(prelude);
     let diagnostic=|at:Option<Span>,message:String|Diag::new(Code::E701,at.unwrap_or(Span::NONE),format!("WGSL validation in {name}: {message}"),"correct the WGSL expression at this source location");
     let module=naga::front::wgsl::parse_str(&map.shader).map_err(|e|diagnostic(e.labels().find_map(|(s,_)|map.origin(s)),e.emit_to_string(&map.shader)))?;
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(),naga::valid::Capabilities::default()).validate(&module).map_err(|e|diagnostic(e.spans().find_map(|(s,_)|map.origin(*s)),e.emit_to_string(&map.shader)))?;
@@ -552,16 +557,16 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
 }
 
 pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
-    compile_impl(src, overrides, &[], cache)
+    compile_impl(src, overrides, &[], cache, loft_ir::GpuFeatures::empty())
 }
 
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
 pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
-    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"))
+    compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"), loft_ir::GpuFeatures::empty())
 }
 
-fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
+fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path, features: loft_ir::GpuFeatures) -> Res<(Program, Report, Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
@@ -999,7 +1004,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     texts.push(("present".into(), emit::present_module(&p, &types, sky)));
     lap("emit", &mut ms);
     let shader_modules = texts.into_iter().map(|(n,w)| {
-        let mut m=naga_module(&n,w,src)?;
+        let mut m=naga_module(&n, w, src, features)?;
         if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
         Ok(m)
     }).collect::<Res<Vec<_>>>()?;

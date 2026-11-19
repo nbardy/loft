@@ -656,6 +656,16 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 if callee.name == "eval_bsdf" {
                     return self.eval_bsdf(&vals[0], &vals[1], &vals[2], &vals[3], e.span);
                 }
+                if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
+                    return op.twin(&vals, e.span);
+                }
+                if callee.name == "ggx_energy" {
+                    let [Val::S(rough), Val::S(mu)] = vals.as_slice() else { unreachable!("checked GGX arguments") };
+                    let (Some(rough), Some(mu)) = (rough.exact(), mu.exact()) else {
+                        return Err(Diag::new(Code::E211, e.span, "GGX albedo lookup requires exact inputs", "evaluate the lobe in a material query"));
+                    };
+                    return Ok(Val::V(crate::bsdf::ggx_energy(rough as f32, mu as f32).map(|x| S::c(f64::from(x))).into(), 0.0));
+                }
                 Ok(self.builtin(&callee.name, vals, e))
             }
         }
@@ -1026,6 +1036,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     pub fn eval_bsdf(&mut self, b: &Val<S>, n: &Val<S>, v: &Val<S>, l: &Val<S>, span: Span) -> Res<Val<S>> {
         let Val::Bsdf(lobes) = b else { unreachable!("checked Bsdf") };
         let mut c = Val::V(vec![S::c(0.0); 3], 0.0);
+        let mut emission = c.clone();
         for (name, args) in lobes {
             let f = self.p.fns[name.as_str()];
             let mut a = args.clone();
@@ -1033,10 +1044,14 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             let Val::V(r, _) = self.call_fn(f, a, span)? else { unreachable!("checked vec4") };
             let below = Val::S(r[3].clone());
             let own = Val::V(r[..3].to_vec(), 0.0);
-            let kept = self.arith(BinOp::Mul, c, below);
-            c = self.arith(BinOp::Add, kept, own);
+            if name == "emit_lobe" {
+                emission = self.arith(BinOp::Add, emission, own);
+            } else {
+                let kept = self.arith(BinOp::Mul, c, below);
+                c = self.arith(BinOp::Add, kept, own);
+            }
         }
-        Ok(c)
+        Ok(self.arith(BinOp::Add, c, emission))
     }
 
     /// Arithmetic on values without source expressions (used by builtins composed of ops).
