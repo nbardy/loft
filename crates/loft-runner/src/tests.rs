@@ -274,9 +274,18 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
 @compute @workgroup_size(1) fn update() {
     rows[0] = host_words[0] + textureLoad(image,vec2i(0),0).x
         + u32(params[0].x*8.0) + u32(params[1].y*16.0);
-}";
+}
+@compute @workgroup_size(1) fn second() { rows[1] = u32(params[1].y*16.0); }";
     b.modules[0].bytes = src.as_bytes().into();
     b.modules[0].hash = *blake3::hash(src.as_bytes()).as_bytes();
+    let mut independent = b.passes[0].clone();
+    independent.id = PassId(2);
+    independent.run = PassRun::Compute {
+        module: MODULE,
+        entry: "second".into(),
+        dispatch: DispatchExtent::Fixed([1, 1, 1]),
+    };
+    b.passes.push(independent);
     for (id, group, access) in [
         (20, 1, BindAccess::ReadStorage),
         (21, 3, BindAccess::SampledTex),
@@ -310,7 +319,7 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
     }
     let id = r.load_bundle(&b).unwrap();
     let pipe = r.instances[0].compute.pipeline(PassId(1)).unwrap().clone();
-    let texture = Arc::new(r.device.create_texture(&wgpu::TextureDescriptor {
+    let desc = wgpu::TextureDescriptor {
         label: None,
         size: wgpu::Extent3d {
             width: 1,
@@ -321,9 +330,10 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::R32Uint,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
-    }));
+    };
+    let texture = Arc::new(r.device.create_texture(&desc));
     r.bind_external_texture(id, TableId(21), texture.clone())
         .unwrap();
     assert!(Arc::ptr_eq(
@@ -348,6 +358,7 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
         );
     }
     let before = r.instances[0].compute.bound_groups(PassId(1));
+    let unrelated = r.instances[0].compute.bound_groups(PassId(2));
     let other = allocate(&r.device, 4);
     r.queue.write_buffer(&other, 0, &230u32.to_le_bytes());
     r.bind_external_buffer(id, TableId(20), other).unwrap();
@@ -355,5 +366,19 @@ fn host_edits_parameters_and_external_handles_at_frame_boundary() {
     let after = r.instances[0].compute.bound_groups(PassId(1));
     assert_ne!(before[0], after[0]);
     assert_eq!(&before[1..], &after[1..]);
+    assert_eq!(unrelated, r.instances[0].compute.bound_groups(PassId(2)));
+    let new_tex = Arc::new(r.device.create_texture(&desc));
+    r.queue.write_texture(
+        new_tex.as_image_copy(),
+        &11u32.to_le_bytes(),
+        Default::default(),
+        desc.size,
+    );
+    r.bind_external_texture(id, TableId(21), new_tex).unwrap();
+    assert_eq!(step(&mut r, id, &view), [265, 16]);
+    let rebound = r.instances[0].compute.bound_groups(PassId(1));
+    assert_eq!(&after[..2], &rebound[..2]);
+    assert_ne!(after[2], rebound[2]);
+    assert_eq!(unrelated, r.instances[0].compute.bound_groups(PassId(2)));
     assert_eq!(r.instances[0].compute.pipeline(PassId(1)).unwrap(), &pipe);
 }
