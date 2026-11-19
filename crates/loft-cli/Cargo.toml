@@ -11,6 +11,8 @@ name = "loft"
 path = "src/main.rs"
 
 [dependencies]
+loft-parse = { path = "../loft-parse" }
+naga.workspace = true
 loft-ir = { path = "../loft-ir" }
 loft-passes = { path = "../loft-passes" }
 loft-runner = { path = "../loft-runner" }

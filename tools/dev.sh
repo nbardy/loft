@@ -2,13 +2,14 @@
 # The Rust edit loop (plan 2026-11-19 §6, after Keel's keel/scripts/dev.sh):
 #   tools/dev.sh check|lint|test|build|run CRATE [--fast|--release|--dev] [cargo args] [-- program/test args]
 # Pinned toolchain (rust/rust-toolchain.toml), --locked, rust/target only, and a machine-wide compile lock shared with
-# Keel: check/lint/test take LIGHT (4 jobs, niced), build/run take HEAVY (full -j). A waiter prints the holder and waits.
+# Keel: check/lint/test take LIGHT (niced), build/run take HEAVY. Both default to two jobs.
 #   lint   single-crate Clippy with the gate's flags (tools/lib/gate_flags.sh), so it shares units with check.sh full
 #   test   cargo-nextest (rust/.config/nextest.toml); `test CRATE --doc` runs the doctests with cargo test
 #   run    builds under HEAVY (default --fast = profile lab), releases the lock, then execs the program at nice +15:
 #          a long run never holds the compile lock (Keel 2026-11-02: a 70-minute batch stalled every lane)
 #   --fast = --profile lab (release code, no thin LTO; rust/Cargo.toml says why)
 set -euo pipefail
+export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 root="$(cd "$(dirname "$0")/.." && pwd -P)"
 usage() { echo 'Usage: tools/dev.sh check|lint|test|build|run CRATE [--fast|--release|--dev] [cargo args] [-- args]' >&2; exit 2; }
 [[ $# -ge 2 ]] || usage

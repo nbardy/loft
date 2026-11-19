@@ -1,0 +1,9 @@
+space World
+param drift_m: f = 0.0
+kind Pin @World (anchor: f, toe: f) {}
+check planted(h: Pin) -> m {
+  let drift = abs(h.toe - h.anchor)
+  if drift > 0.00005m { missed(drift) } else { held(0.00005m - drift) }
+}
+build { emit Pin(anchor: 0, toe: drift_m) }
+schedule Verify { check(planted) }

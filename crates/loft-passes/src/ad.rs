@@ -6,7 +6,7 @@
 //! compiler calls for the surface normal. Rules are the textbook ones; a `C0` builtin (abs, min, clamp, floor, ...) is
 //! E307: differentiating it needs a choice the author has not made.
 
-use loft_ir::ast::*;
+use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::{BTreeMap, HashSet};
 

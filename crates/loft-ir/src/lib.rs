@@ -1,9 +1,7 @@
-//! Layer 1 of the meta engine (plan 2026-11-20 §1): the source tree and its types, diagnostics that name the fix,
-//! three-valued verdicts, and the `Program` the runner executes. No pass logic lives here.
+//! Shared execution declarations, source locations, diagnostics and verdicts.
+mod bundle;
+pub use bundle::*;
 
-pub mod ast;
-pub mod program;
-pub mod sexp;
 
 use std::fmt;
 
@@ -63,9 +61,10 @@ pub enum Code {
     E101,
     /// Space mismatch, or a map's space used outside it.
     E104,
+    E105,
     /// A map misused: bare map name, `.cell` without a mirror, a map of something other than a query point.
     E106,
-    /// A bare kind where a law or check reads a table (`fish: Fish` for `fishes: [Fish]`), or a row id of another kind.
+    /// A bare kind where a function reads a table (`fish: Fish` for `fishes: [Fish]`), or a row id of another kind.
     E108,
     /// A traced field or surface with no finite derived bound.
     E201,
@@ -89,7 +88,7 @@ pub enum Code {
     E404,
     /// Valid language that this phase does not lower yet: a named refusal, never a fallback.
     E405,
-    /// A field write outside a law's `writes`, or a write to a table.
+    /// A field write outside its declared write set, or a write to a table.
     E501,
     /// Two laws write the same field.
     E502,
@@ -171,7 +170,7 @@ impl Diag {
 
 pub type Res<T> = Result<T, Diag>;
 
-/// What any check reports (plan §2.5): gates pass only on `Held`.
+/// What any check reports (§2.5): gates pass only on `Held`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Verdict {
     Held { margin: f64 },

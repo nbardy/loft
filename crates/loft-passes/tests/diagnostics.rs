@@ -262,3 +262,12 @@ fn bracketed_if_expression_scopes_branch_locals() {
         + &kind("", OK_TRACE, "ggx(rgb(choose(q.x)), 0.5, 0)");
     if let Err((_, text)) = compile(&src) { panic!("{text}"); }
 }
+
+#[test]
+fn frozen_diagnostic_fixtures() {
+    let dir=Path::new(env!("CARGO_MANIFEST_DIR")).join("../loft-abi/tests/negative");
+    for code in [Code::E104, Code::E105, Code::E108, Code::E210, Code::E211, Code::E307, Code::E401,
+        Code::E402, Code::E404, Code::E501, Code::E502, Code::E504, Code::E505] {
+        expect(code,&std::fs::read_to_string(dir.join(format!("{code}.loft"))).unwrap());
+    }
+}

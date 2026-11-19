@@ -1,0 +1,329 @@
+use super::*;
+use std::collections::{BTreeSet, HashMap};
+use wgpu::util::DeviceExt;
+
+struct Group {
+    index: u8,
+    layout: wgpu::BindGroupLayout,
+    slots: Vec<(u32, TableId)>,
+    cached: Option<(u64, wgpu::BindGroup)>,
+}
+impl Group {
+    fn resolve(
+        &mut self,
+        d: &wgpu::Device,
+        tables: &BTreeMap<TableId, Table>,
+        epoch: u64,
+    ) -> Result<&wgpu::BindGroup> {
+        if self.index == 3 {
+            return Err(RunnerError::Unsupported(
+                "texture and sampler resources (Phase 2)",
+            ));
+        }
+        if self
+            .cached
+            .as_ref()
+            .is_none_or(|(stamp, _)| self.slots.iter().any(|(_, id)| tables[id].epoch > *stamp))
+        {
+            let entries = self
+                .slots
+                .iter()
+                .map(|(slot, id)| {
+                    Ok(wgpu::BindGroupEntry {
+                        binding: *slot,
+                        resource: tables[id].bytes()?.as_entire_binding(),
+                    })
+                })
+                .collect::<Result<Vec<_>>>()?;
+            self.cached = Some((
+                epoch,
+                d.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: None,
+                    layout: &self.layout,
+                    entries: &entries,
+                }),
+            ));
+        }
+        Ok(&self.cached.as_ref().unwrap().1)
+    }
+}
+/// A recorded draw retains its vertex and index handles even when all bind groups are current.
+pub fn render_bundle_stale(
+    draws: &[IndirectDraw],
+    cached_epoch: u64,
+    epoch: impl Fn(TableId) -> u64,
+) -> bool {
+    draws
+        .iter()
+        .flat_map(|draw| [draw.vertex, draw.index])
+        .flatten()
+        .any(|id| epoch(id) > cached_epoch)
+}
+pub(super) struct ComputeCache {
+    fixed: wgpu::BindGroup,
+    frame: wgpu::Buffer,
+    passes: BTreeMap<PassId, (wgpu::ComputePipeline, Vec<Group>)>,
+}
+pub(super) fn slot(binding: u32, ty: wgpu::BufferBindingType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+impl ComputeCache {
+    pub(super) fn new(
+        d: &wgpu::Device,
+        b: &Bundle,
+        tables: &BTreeMap<TableId, Table>,
+    ) -> Result<Self> {
+        use wgpu::BufferBindingType::{Storage, Uniform};
+        use wgpu::BufferUsages as U;
+        let fixed = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("frame, inputs, parameters"),
+            entries: &[
+                slot(0, Uniform),
+                slot(1, Storage { read_only: true }),
+                slot(2, Storage { read_only: true }),
+            ],
+        });
+        let frame = d.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: 256,
+            usage: U::UNIFORM | U::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let inputs = allocate(d, 16);
+        let mut params = vec![0; 16];
+        for p in &b.params {
+            let n = match p.ty {
+                IrTy::F32 | IrTy::Bool | IrTy::U32 => 1,
+                IrTy::Vec2 => 2,
+                IrTy::Vec3 => 3,
+                IrTy::Vec4 => 4,
+            };
+            if p.offset_bytes % 4 != 0 {
+                return Err(RunnerError::AbiMismatch);
+            }
+            let start = p.offset_bytes as usize;
+            let end = start
+                .checked_add(n * 4)
+                .filter(|&n| n as u64 <= u64::from(d.limits().max_storage_buffer_binding_size))
+                .ok_or(RunnerError::Capacity)?;
+            params.resize(params.len().max(end), 0);
+            for (out, v) in params[start..end].chunks_exact_mut(4).zip(p.default) {
+                let word = match p.ty {
+                    IrTy::U32 => v as u32,
+                    IrTy::Bool => u32::from(v != 0.),
+                    _ => v.to_bits(),
+                };
+                out.copy_from_slice(&word.to_le_bytes());
+            }
+        }
+        let params = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            usage: U::STORAGE | U::COPY_DST,
+            contents: &params,
+        });
+        let g0 = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &fixed,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: inputs.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: params.as_entire_binding(),
+                },
+            ],
+        });
+        let mut modules = BTreeMap::new();
+        for m in &b.modules {
+            if m.target != ShaderTarget::Wgsl {
+                return Err(RunnerError::Unsupported("shader target"));
+            }
+            let src = std::str::from_utf8(&m.bytes).map_err(|_| RunnerError::AbiMismatch)?;
+            let ir = naga::front::wgsl::parse_str(src)
+                .map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
+            let info = wgpu_naga_bridge::create_validator(
+                d.features(),
+                wgpu::DownlevelFlags::all(),
+                naga::valid::ValidationFlags::all(),
+            )
+            .validate(&ir)
+            .map_err(|e| RunnerError::InvalidShader(e.to_string()))?;
+            let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: None,
+                source: wgpu::ShaderSource::Wgsl(src.into()),
+            });
+            if modules.insert(m.id, (module, ir, info)).is_some() {
+                return Err(RunnerError::AbiMismatch);
+            }
+        }
+        let mut layouts = HashMap::new();
+        let mut passes = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        for p in &b.passes {
+            let mut slots = BTreeSet::new();
+            if !ids.insert(p.id)
+                || p.bindings.iter().any(|x| {
+                    x.group != x.access.group()
+                        || !tables.contains_key(&x.resource)
+                        || !slots.insert((x.group, x.slot))
+                })
+            {
+                return Err(RunnerError::AbiMismatch);
+            }
+            let PassRun::Compute {
+                module,
+                entry,
+                dispatch,
+            } = &p.run
+            else {
+                continue;
+            };
+            let (shader, ir, info) = modules.get(module).ok_or(RunnerError::UnknownResource)?;
+            let index = ir
+                .entry_points
+                .iter()
+                .position(|e| e.name == *entry && e.stage == naga::ShaderStage::Compute)
+                .ok_or(RunnerError::AbiMismatch)?;
+            let reflected = crate::bindings::reflect(ir, info.get_entry_point(index), p)?;
+            match dispatch {
+                DispatchExtent::FromRowCount { table, workgroup_x }
+                    if *workgroup_x == 0 || !tables.contains_key(table) =>
+                {
+                    return Err(RunnerError::AbiMismatch);
+                }
+                DispatchExtent::Indirect { buf, offset_bytes }
+                    if !offset_bytes.is_multiple_of(4) || !tables.contains_key(buf) =>
+                {
+                    return Err(RunnerError::AbiMismatch);
+                }
+                _ => {}
+            }
+            let mut groups = Vec::new();
+            for group in 1..=p.bindings.iter().map(|x| x.group).max().unwrap_or(0) {
+                let mut bindings: Vec<_> = p.bindings.iter().filter(|x| x.group == group).collect();
+                bindings.sort_by_key(|x| x.slot);
+                let entries = bindings
+                    .iter()
+                    .map(|x| match reflected.get(&(u32::from(x.group), x.slot)) {
+                        Some(e) => Ok(*e),
+                        None if x.group <= 2 => Ok(slot(
+                            x.slot,
+                            Storage {
+                                read_only: x.access == BindAccess::ReadStorage,
+                            },
+                        )),
+                        None => Err(RunnerError::AbiMismatch),
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let layout = layouts.entry(entries.clone()).or_insert_with(|| {
+                    d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                        label: None,
+                        entries: &entries,
+                    })
+                });
+                groups.push(Group {
+                    index: group,
+                    layout: layout.clone(),
+                    slots: bindings.iter().map(|x| (x.slot, x.resource)).collect(),
+                    cached: None,
+                });
+            }
+            let bind_group_layouts: Vec<_> = std::iter::once(Some(&fixed))
+                .chain(groups.iter().map(|g| Some(&g.layout)))
+                .collect();
+            let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &bind_group_layouts,
+                immediate_size: 0,
+            });
+            let pipeline = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: None,
+                layout: Some(&layout),
+                module: shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+            passes.insert(p.id, (pipeline, groups));
+        }
+        Ok(Self {
+            fixed: g0,
+            frame,
+            passes,
+        })
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn encode(
+        &mut self,
+        d: &wgpu::Device,
+        enc: &mut wgpu::CommandEncoder,
+        passes: &[PassDecl],
+        tables: &BTreeMap<TableId, Table>,
+        epoch: u64,
+        time: f64,
+        dt: f32,
+    ) -> Result<()> {
+        // Validate and resolve the entire sequence before touching the caller's encoder.
+        for p in passes {
+            let (_, groups) = self
+                .passes
+                .get_mut(&p.id)
+                .ok_or(RunnerError::Unsupported("pass execution"))?;
+            for g in groups {
+                g.resolve(d, tables, epoch)?;
+            }
+            if let PassRun::Compute {
+                dispatch: DispatchExtent::Indirect { buf, offset_bytes },
+                ..
+            } = &p.run
+            {
+                if u64::from(*offset_bytes) + 12 > tables[buf].bytes()?.size() {
+                    return Err(RunnerError::Capacity);
+                }
+            }
+        }
+        let data = [(time as f32).to_le_bytes(), dt.to_le_bytes()];
+        let upload = d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: data.as_flattened(),
+            usage: wgpu::BufferUsages::COPY_SRC,
+        });
+        enc.copy_buffer_to_buffer(&upload, 0, &self.frame, 0, Some(8));
+        for p in passes {
+            let (pipeline, groups) = &self.passes[&p.id];
+            let mut pass = enc.begin_compute_pass(&Default::default());
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.fixed, &[]);
+            for (i, g) in groups.iter().enumerate() {
+                pass.set_bind_group(i as u32 + 1, &g.cached.as_ref().unwrap().1, &[])
+            }
+            let PassRun::Compute { dispatch, .. } = &p.run else {
+                unreachable!()
+            };
+            match dispatch {
+                DispatchExtent::Fixed([x, y, z]) => pass.dispatch_workgroups(*x, *y, *z),
+                DispatchExtent::FromRowCount { table, workgroup_x } => {
+                    pass.dispatch_workgroups(tables[table].active.div_ceil(*workgroup_x), 1, 1)
+                }
+                DispatchExtent::Indirect { buf, offset_bytes } => pass
+                    .dispatch_workgroups_indirect(tables[buf].bytes()?, u64::from(*offset_bytes)),
+            }
+        }
+        Ok(())
+    }
+}

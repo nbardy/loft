@@ -2,7 +2,8 @@
 //! Each successful iteration fills at least one hole. The ordinary checker
 //! subsequently checks every call against the same generalized signature.
 use crate::{Prog, check::Ck};
-use loft_ir::{Res, Span, ast::*};
+use loft_ir::{Res, Span};
+use loft_parse::ast::*;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Default)]

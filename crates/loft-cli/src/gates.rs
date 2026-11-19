@@ -11,9 +11,9 @@
 
 use crate::budget::{self, Failure};
 use loft_ir::Verdict;
-use loft_ir::program::{Draw, Program};
+use loft_passes::program::{Draw, Program};
 use loft_passes::Compiled;
-use loft_runner::{Gpu, Loaded};
+use loft_cli::native::{Gpu, Loaded};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -199,7 +199,7 @@ fn decode_verdict(record: Option<[f32; 2]>) -> Verdict {
     }
 }
 
-fn check_records(p: &Program, samples: &[loft_ir::program::MotionSample]) -> Vec<(String, Verdict)> {
+fn check_records(p: &Program, samples: &[loft_passes::program::MotionSample]) -> Vec<(String, Verdict)> {
     let mut results = vec![];
     for step in &p.dispatches {
         let (kind, rows, _, _) = step.input.view(&p.kinds).expect("compiled dispatch input");
@@ -217,16 +217,16 @@ fn check_records(p: &Program, samples: &[loft_ir::program::MotionSample]) -> Vec
 
 pub fn authored_checks(g: &Gpu, p: &Program, t: f32) -> Result<Vec<(String, Verdict)>, String> {
     if p.dispatches.iter().all(|m| m.checks.is_empty()) { return Ok(vec![]); }
-    loft_runner::sample_motion(g, p, t).map(|samples| check_records(p, &samples))
+    loft_cli::native::sample_motion(g, p, t).map(|samples| check_records(p, &samples))
 }
 
 pub fn still(scene: &Path, set: &[(String, f64)], t: f32, out: &Path, max_frame: Option<f64>) -> Result<(), Failure> {
     let src = crate::sources(scene).map_err(Failure::Usage)?;
     let (mut p, _, _) = loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
-    let g = loft_runner::gpu().map_err(Failure::Device)?;
+    let g = loft_cli::native::gpu().map_err(Failure::Device)?;
     if max_frame.is_some() { budget::timestamps(g.timestamps)?; }
     if !p.dispatches.is_empty() {
-        let sampled = loft_runner::sample_motion(&g, &p, t).map_err(Failure::Device)?;
+        let sampled = loft_cli::native::sample_motion(&g, &p, t).map_err(Failure::Device)?;
         for kind in &sampled {
             for (n, values) in &kind.fields { println!("{}.{} {:?}", kind.kind, n, values); }
             for (n, values) in &kind.checks { println!("check {} {:?}", n, values); }
@@ -403,7 +403,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             report[&s.name]["speed_passes_p50_ms"] = json!(pass_p50);
             let (p50, p95) = (quantile(&ms, 0.5), quantile(&ms, 0.95));
             let deciles: Vec<f64> = (0..=10).map(|i| quantile(&ms, f64::from(i) / 10.0)).collect();
-            let contended = p95 > b.p95_ms && control > 0.35;
+            let contended = control > 0.35;
             report[&s.name]["speed"] = json!({"control_p50_ms": control, "contended": contended, "p50_ms": p50, "p95_ms": p95, "commands": commands, "frames": ms.len(), "deciles_ms": deciles, "ms": ms});
             push(format!("{commands} GPU commands == {}", b.commands), held_if(-f64::from(commands.abs_diff(b.commands)), None));
             out.push(Check {
@@ -451,8 +451,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
             report[&s.name]["load"]["cache_bytes"] = json!(times[0].2.cache_bytes);
             match c.modules.iter().find(|(f, _, _)| *f == s.file) {
                 Some((_, other, t)) => {
-                    let same = *t == texts;
-                    push(format!("modules byte-identical to {other}"), if same { Verdict::Held { margin: 0.0 } } else { Verdict::Missed { by: 1.0 } });
+                    push(format!("modules byte-identical to {other}"), module_parity(t,&texts));
                 }
                 None => c.modules.push((s.file.clone(), s.name.clone(), texts)),
             }
@@ -536,7 +535,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         outside.add(f64::from(cq(row, x, d)?.trace));
                     }
                     // `visible` agrees with `trace`: where the closed form hits, the field is ~0 there.
-                    if kt.draw == loft_ir::program::Draw::Analytic {
+                    if kt.draw == loft_passes::program::Draw::Analytic {
                         for _ in 0..64 {
                             let target = rng.in_box(inst.lo, inst.hi);
                             let rd = [0, 1, 2].map(|i| target[i] - eye[i]);
@@ -556,7 +555,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 report[&s.name]["truth"][&kt.name] = json!({"derived_L": kt.lipschitz.iter().copied().fold(0.0f32, f32::max), "max_ratio": lip_worst, "outside_min_f": outside.min, "visible_hits": hits});
                 push(format!("{}: derived L bounds sampled slopes (max {lip_worst:.4})", kt.name), lip.verdict());
                 push(format!("{}: field > 0 outside every derived bound", kt.name), outside.verdict());
-                if kt.draw == loft_ir::program::Draw::Analytic {
+                if kt.draw == loft_passes::program::Draw::Analytic {
                     push(format!("{}: visible agrees with trace on {hits} hits (|f| <= 1e-3)", kt.name), agree.verdict());
                 }
             }
@@ -573,7 +572,7 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
     let scenes = cfg.select(only, approve)?;
     let size = cfg.size;
     let t = Instant::now();
-    let g = loft_runner::gpu().map_err(Failure::Device)?;
+    let g = loft_cli::native::gpu().map_err(Failure::Device)?;
     let device_ms = t.elapsed().as_secs_f64() * 1e3;
     println!("adapter {}  device {device_ms:.0} ms  {}x{}", g.adapter, size.0, size.1);
     let mut c = Ctx {
@@ -611,7 +610,6 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
         std::fs::write(&path, serde_json::to_string_pretty(&cfg).map_err(|e| Failure::Usage(e.to_string()))? + "\n").map_err(|e| Failure::Usage(e.to_string()))?;
         println!("approved {} references into engines/gates.json and out/meta/refs/", c.refs.len());
     }
-    let mut failed = 0;
     for gt in GATES {
         let mine: Vec<&Check> = checks.iter().filter(|x| x.gate == gt).collect();
         let held = mine.iter().filter(|x| matches!(x.verdict, Verdict::Held { .. })).count();
@@ -621,13 +619,17 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
             let mark = if x.contended { "CONTENDED" } else if matches!(x.verdict, Verdict::Held { .. }) { "ok  " } else { "FAIL" };
             println!("  {mark} {:<12} {:<64} {}", x.scene, x.what, x.verdict);
         }
-        failed += mine.len() - held - warnings;
     }
     let out = root.join("out/meta/gate.json");
     std::fs::create_dir_all(out.parent().expect("out/meta")).map_err(|e| Failure::Usage(e.to_string()))?;
     std::fs::write(&out, serde_json::to_string_pretty(&report).map_err(|e| Failure::Usage(e.to_string()))?).map_err(|e| Failure::Usage(e.to_string()))?;
     println!("\nreport: {}", out.display());
+    result(&checks)
+}
+
+fn result(checks:&[Check])->Result<(),Failure>{
     let failed_in = |gate| checks.iter().any(|c| c.gate == gate && !c.contended && !matches!(c.verdict, Verdict::Held { .. }));
+    let failed=checks.iter().filter(|c| !c.contended && !matches!(c.verdict, Verdict::Held { .. })).count();
     let message = format!("{failed} checks failed");
     if failed_in(Gate::Truth) { Err(Failure::Truth(message)) }
     else if failed_in(Gate::Pictures) || failed_in(Gate::Twin) { Err(Failure::Parity(message)) }
@@ -677,3 +679,10 @@ mod tests {
         assert!(matches!(e.verdict(), Verdict::Unknown { .. }));
     }
 }
+
+fn module_parity(reference:&[String], current:&[String])->Verdict {
+    if reference==current {Verdict::Held{margin:0.0}} else {Verdict::Missed{by:1.0}}
+}
+#[cfg(test)]
+#[path="../../../tests/gate_mutants.rs"]
+mod gate_mutants;

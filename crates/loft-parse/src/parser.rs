@@ -1,7 +1,7 @@
 //! Recursive descent over the lossless CST. Newlines are virtual separators;
 //! all expression and diagnostic spans still address the original UTF-8.
 use crate::cst::{Cst, Kind, Trivia};
-use loft_ir::ast::*;
+use crate::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::HashSet;
 
@@ -229,6 +229,8 @@ impl Parser<'_, '_> {
                     self.expect(">")?;
                     TyExpr::Xform(a, self.space()?)
                 }
+                "attach" => TyExpr::Geo(Geo::Attach,a),
+                "target" => TyExpr::Geo(Geo::Target,a),
                 "frame" => TyExpr::Frame(a),
                 "p3" | "v3" | "d3" | "n3" => TyExpr::Geo(
                     match n.name.as_str() {

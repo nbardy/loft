@@ -3,7 +3,7 @@
 //! shared; a branch the domain cannot decide is an error, never a guess.
 
 use crate::Prog;
-use loft_ir::ast::*;
+use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 
 /// A scalar domain. `lip` is the scalar's Lipschitz bound in the traced point (always 0 for `f32`).

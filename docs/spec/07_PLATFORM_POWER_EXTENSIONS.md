@@ -8,6 +8,12 @@ The outbox intrinsic is `emit_event(...)`. The keyword `emit` continues to const
 
 ## 1. Step 0 ABI and grammar
 
+Step 0 freezes the [execution declarations](../../crates/loft-ir/src/bundle.rs), the
+[backend interface](../../crates/loft-runner/src/backend.rs) and the [normative grammar](loft.lark).
+The [golden vectors](../../crates/loft-abi/tests/golden.rs) specify field offsets, visibility lanes
+and deterministic output bits. For Philox spatial hashes, floor each coordinate to a signed cell
+and use its two’s-complement bits. The upper 24 output bits divided by 2²⁴ give a uniform f32 in [0, 1).
+
 ### 1.1 `loft.lark`
 
 Add `struct_decl`, `type_alias`, `kernel_decl` and `bake_tex_decl` to the alternatives in `top_item`.

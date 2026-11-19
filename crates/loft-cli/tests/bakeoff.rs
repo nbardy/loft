@@ -1,5 +1,6 @@
 //! These probes distinguish a correct image from two plausible mirrored-coordinate mistakes.
-use loft_ir::{Sources, Span, ast::QueryKind};
+use loft_ir::{Sources, Span};
+use loft_parse::ast::QueryKind;
 use loft_passes::{
     compile,
     eval::{Eval, Val},
@@ -82,13 +83,13 @@ fn both_pupils_use_their_own_world_origin() {
 
 #[test]
 fn mirrored_fish_reverse_the_compiled_gpu_laws() {
-    let g = loft_runner::gpu().expect("motion proof needs a GPU");
+    let g = loft_cli::native::gpu().expect("motion proof needs a GPU");
     let src = scene("heron");
     let mut yaw = vec![];
     for side in [1., -1.] {
         let (p, _, _) = compile(&src, &[("side".into(), side)]).unwrap();
-        let read = |t| loft_runner::sample_motion(&g, &p, t).unwrap().remove(0);
-        let verdicts = |s: &loft_ir::program::MotionSample| {
+        let read = |t| loft_cli::native::sample_motion(&g, &p, t).unwrap().remove(0);
+        let verdicts = |s: &loft_passes::program::MotionSample| {
             assert_eq!(s.checks.len(), 2);
             ["lock", "posture"].map(|name| {
                 let records = &s.checks.iter().find(|(n, _)| n == name).unwrap().1;
@@ -96,7 +97,7 @@ fn mirrored_fish_reverse_the_compiled_gpu_laws() {
                 records[0]
             })
         };
-        let field = |s: &loft_ir::program::MotionSample, name| {
+        let field = |s: &loft_passes::program::MotionSample, name| {
             s.fields.iter().find(|(n, _)| n == name).unwrap().1[0]
         };
         let mut airborne_miss = false;
@@ -127,7 +128,7 @@ fn mirrored_fish_reverse_the_compiled_gpu_laws() {
 
 #[test]
 fn heron_checks_fail_for_reversed_pitch_and_a_displaced_landmark() {
-    let g = loft_runner::gpu().unwrap();
+    let g = loft_cli::native::gpu().unwrap();
     for (from, to, check) in [
         ("h.pitch = atan2", "h.pitch = -atan2", "lock"),
         ("const HIPS_Y = 0.65m", "const HIPS_Y = 1.2m", "posture"),
@@ -137,7 +138,7 @@ fn heron_checks_fail_for_reversed_pitch_and_a_displaced_landmark() {
         assert!(text.contains(from));
         *text = text.replace(from, to);
         let (p, _, _) = compile(&src, &[]).unwrap();
-        let samples = loft_runner::sample_motion(&g, &p, 1.1).unwrap();
+        let samples = loft_cli::native::sample_motion(&g, &p, 1.1).unwrap();
         let v = samples[0].checks.iter().find(|(name, _)| name == check).unwrap().1[0];
         assert_eq!(v[0], 2., "changing {from} must fail {check}");
     }
@@ -147,9 +148,9 @@ fn heron_checks_fail_for_reversed_pitch_and_a_displaced_landmark() {
 fn sexp_rebuilds_the_crab_with_its_shader_origins_and_pixels() {
     let source = scene("crab");
     let (program, _, _) = compile(&source, &[]).unwrap();
-    let text = loft_ir::sexp::write(&program).unwrap();
-    let restored = loft_ir::sexp::read(&text).unwrap();
-    assert_eq!(loft_ir::sexp::write(&restored).unwrap(), text);
+    let text = loft_passes::sexp::write(&program).unwrap();
+    let restored = loft_passes::sexp::read(&text).unwrap();
+    assert_eq!(loft_passes::sexp::write(&restored).unwrap(), text);
     assert!(
         restored
             .modules
@@ -157,9 +158,9 @@ fn sexp_rebuilds_the_crab_with_its_shader_origins_and_pixels() {
             .flat_map(|m| &m.origins)
             .any(|o| o.span.0.ends_with("crab.loft") && o.span.1 > 1 && o.span.2 > 1)
     );
-    let device = loft_runner::gpu().unwrap();
+    let device = loft_cli::native::gpu().unwrap();
     let pixels = |p| {
-        let loaded = loft_runner::Loaded::new(&device, p, (160, 100), None).unwrap();
+        let loaded = loft_cli::native::Loaded::new(&device, p, (160, 100), None).unwrap();
         loaded.frame(&device, 2.0);
         loaded.pixels(&device).unwrap()
     };
@@ -185,7 +186,7 @@ fn source(text: &str) -> Sources {
 
 #[test]
 fn map_y_rotation_keeps_cpu_gpu_and_culling_in_the_same_space() {
-    let g = loft_runner::gpu().unwrap();
+    let g = loft_cli::native::gpu().unwrap();
     for (angle, x) in [(90, -1.), (-90, 1.)] {
         let src = source(&format!("space World
 kind Orb @World () {{
@@ -198,7 +199,7 @@ build {{ emit Orb() }}"));
         let center = [x, 0., 0.];
         let i = &p.instances[0];
         assert!((0..3).all(|j| i.lo[j] < center[j] && center[j] < i.hi[j]));
-        let l = loft_runner::Loaded::new(&g, &p, (96, 64), None).unwrap();
+        let l = loft_cli::native::Loaded::new(&g, &p, (96, 64), None).unwrap();
         l.frame(&g, 0.);
         for (pos, expected) in [(center, -0.1), ([-x, 0., 0.], 1.9)] {
             let cpu = c.cpu_query(0, 0, pos, [0., 0., 1.]).unwrap();
@@ -224,8 +225,8 @@ kind Orb @World (scale: f = 2) {
 }
 build { emit Orb() }");
     let (p, _, c) = compile(&src, &[]).unwrap();
-    let g = loft_runner::gpu().unwrap();
-    let l = loft_runner::Loaded::new(&g, &p, (80, 60), None).unwrap();
+    let g = loft_cli::native::gpu().unwrap();
+    let l = loft_cli::native::Loaded::new(&g, &p, (80, 60), None).unwrap();
     l.frame(&g, 0.);
     assert!((c.cpu_query(0, 0, [0.; 3], [0., 0., 1.]).unwrap().trace + 0.3).abs() < 1e-5);
     assert!((l.twin(&g, 0, &[0., 0., 0., 0., 0., 0., 1., 0.]).unwrap()[0] + 0.3).abs() < 1e-5);
@@ -233,7 +234,7 @@ build { emit Orb() }");
 
 #[test]
 fn overrides_change_data_and_pixels_without_changing_shader_text() {
-    let g = loft_runner::gpu().unwrap();
+    let g = loft_cli::native::gpu().unwrap();
     let mut src = scene("heron");
     let text = &mut src.files.last_mut().unwrap().1;
     *text = text.replace("at: [0, 0.65m, 0]@World, radius: 3m", "at: [0, 0.2m, 0]@World, radius: 5m");
@@ -242,7 +243,7 @@ fn overrides_change_data_and_pixels_without_changing_shader_text() {
     assert!(a.modules.iter().map(|m| &m.wgsl).eq(b.modules.iter().map(|m| &m.wgsl)));
     assert_ne!(a.params, b.params);
     let pixels = |p| {
-        let l = loft_runner::Loaded::new(&g, p, (128, 80), None).unwrap();
+        let l = loft_cli::native::Loaded::new(&g, p, (128, 80), None).unwrap();
         l.frame(&g, 0.45);
         l.pixels(&g).unwrap()
     };
@@ -272,8 +273,8 @@ build { emit Ledger(); emit Ledger() }
 schedule Main { run_laws(advance_row); check(data_only) }");
     let (p, _, _) = compile(&src, &[]).unwrap();
     assert!(p.kinds.is_empty());
-    let g = loft_runner::gpu().unwrap();
-    let result = loft_runner::sample_motion(&g, &p, 0.1).unwrap();
+    let g = loft_cli::native::gpu().unwrap();
+    let result = loft_cli::native::sample_motion(&g, &p, 0.1).unwrap();
     assert_eq!(result[0].fields[0].1, [12., 12.]);
     assert_eq!(result[0].checks[0].1, [[1., 1.], [1., 1.]]);
 }
@@ -292,8 +293,8 @@ schedule Main { run_laws(apply) }");
     let helper = wgsl.split("fn motion_loft_user_wrapped").nth(1).unwrap().split("fn law_apply").next().unwrap();
     assert!(law.contains("det_exp(loft_local_dt)") && !law.contains("= exp("));
     assert!(helper.contains("det_acos(") && helper.contains("det_log("));
-    let g = loft_runner::gpu().unwrap();
-    let samples = loft_runner::sample_motion(&g, &p, 1. / 120.).unwrap();
+    let g = loft_cli::native::gpu().unwrap();
+    let samples = loft_cli::native::sample_motion(&g, &p, 1. / 120.).unwrap();
     let want = (1.0f32 / 120.).exp() + 0.5f32.acos() + 0.5f32.ln();
     assert!((samples[0].fields[0].1[0] - want).abs() < 2e-6);
 }

@@ -1,6 +1,6 @@
 //! Execute the compiler's row-local fixed-tick entry for a still or a semantic probe.
 use super::*;
-use loft_ir::program::{DispatchResource, MotionSample};
+use loft_passes::program::{DispatchResource, MotionSample};
 
 pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSample>, String> {
     if !seconds.is_finite() || seconds < 0. || f64::from(seconds) * 120. >= f64::from(u32::MAX) {

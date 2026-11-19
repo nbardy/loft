@@ -6,8 +6,8 @@ use crate::Prog;
 #[path="motion.rs"]
 mod motion;
 pub use motion::motion_module;
-use loft_ir::ast::*;
-use loft_ir::program::{abi, Draw};
+use loft_parse::ast::*;
+use crate::program::{abi, Draw};
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::BTreeSet;
 use std::fmt::Write;

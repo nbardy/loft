@@ -495,12 +495,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "loft-abi"
+version = "0.1.0"
+
+[[package]]
 name = "loft-cli"
 version = "0.1.0"
 dependencies = [
  "loft-ir",
+ "loft-parse",
  "loft-passes",
  "loft-runner",
+ "naga",
  "png",
  "pollster",
  "serde",
@@ -514,9 +520,8 @@ dependencies = [
 name = "loft-ir"
 version = "0.1.0"
 dependencies = [
- "naga",
+ "bitflags",
  "serde",
- "serde-lexpr",
 ]
 
 [[package]]
@@ -525,6 +530,7 @@ version = "0.1.0"
 dependencies = [
  "loft-ir",
  "logos",
+ "serde",
 ]
 
 [[package]]
@@ -532,22 +538,33 @@ name = "loft-passes"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "loft-abi",
  "loft-ir",
  "loft-parse",
+ "loft-plan",
  "naga",
  "serde",
+ "serde-lexpr",
  "serde_json",
  "tempfile",
 ]
 
 [[package]]
+name = "loft-plan"
+version = "0.1.0"
+
+[[package]]
 name = "loft-runner"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "loft-abi",
  "loft-ir",
  "naga",
  "pollster",
+ "web-sys",
  "wgpu",
+ "wgpu-naga-bridge",
 ]
 
 [[package]]

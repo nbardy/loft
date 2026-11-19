@@ -1,15 +1,17 @@
 # /// script
-# dependencies = ["lark==1.3.1", "llguidance==1.9.1"]
+# dependencies = ["lark==1.3.1", "llguidance==1.9.1", "tiktoken"]
 # ///
 """Independent acceptance test of the decoding grammar, with the two lexer rules in §06.A.4."""
 from pathlib import Path
 import re
 import sys
+import subprocess
+import tiktoken
 from lark import Lark, UnexpectedInput
 from llguidance import LLMatcher, LLParserLimits, LLTokenizer, TokenizerWrapper
 
 ROOT = Path(__file__).resolve().parents[1]
-GRAMMAR_TEXT = (ROOT / "grammar/loft.lark").read_text()
+GRAMMAR_TEXT = (ROOT / "docs/spec/loft.lark").read_text()
 GRAMMAR = Lark(GRAMMAR_TEXT, parser="earley")
 
 
@@ -103,17 +105,23 @@ def main():
     files = list(map(Path, sys.argv[1:]))
     fixtures = ROOT / "crates/loft-parse/tests/fixtures"
     if not files:
-        files = sorted(
-            f for folder in ("lib", "engines", "agent_notes/2026-11-20_meta/v1_syntax")
-            for f in (ROOT / folder).rglob("*.loft")
-        ) + [fixtures / "review-accept.loft", fixtures / "review-reject.loft"]
+        names = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.loft"], cwd=ROOT)
+        files = sorted({ROOT / name.decode() for name in names.split(b"\0") if name})
+        files.append(fixtures / "review-reject.invalid")
     failed = 0
     for path in files:
-        expected = path.name != "review-reject.loft"
+        expected = path.suffix != ".invalid"
         earley, decoder, rejected = accepts(path.read_text())
         if (earley, decoder) != (expected, expected):
             failed += 1
             print(f"{path}: wanted {expected}, Earley={earley}, llguidance={decoder} (byte {rejected})")
+    card = (ROOT / "AGENT_CARD.md").read_text()
+    tokens = len(tiktoken.get_encoding("o200k_base").encode_ordinary(card))
+    if tokens >= 1400:
+        raise ValueError(f"author card has {tokens} tokens (limit <1400)")
+    for block in re.findall(r"```loft\n(.*?)\n```", card, re.S):
+        if accepts(block)[:2] != (True, True):
+            raise ValueError("author card failed the decoding grammar")
     print(f"{len(files)-failed}/{len(files)} files gave their expected result in Earley and llguidance")
     return bool(failed)
 

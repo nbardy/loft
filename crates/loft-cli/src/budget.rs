@@ -1,5 +1,5 @@
 //! Exit statuses shared by the CLI operations and their instruments.
-use loft_runner::{Gpu, Loaded};
+use loft_cli::native::{Gpu, Loaded};
 
 #[derive(Debug)]
 pub enum Failure {
@@ -39,6 +39,10 @@ pub fn check(g: &Gpu, loaded: &Loaded, budget: f64) -> Result<(), Failure> {
     timestamps(g.timestamps)?;
     let (ms, _) = loaded.gpu_ms(g).map_err(Failure::Device)?
         .ok_or_else(|| Failure::Device("GPU timestamps are unavailable".into()))?;
+    measured(ms,budget)
+}
+
+pub(crate) fn measured(ms:f64,budget:f64)->Result<(), Failure>{
     if ms.is_finite() && ms <= budget {
         println!("GPU frame {ms:.3} ms <= {budget:.3} ms");
         Ok(())

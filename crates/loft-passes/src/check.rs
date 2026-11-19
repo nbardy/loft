@@ -4,7 +4,7 @@
 //! Output: the type of every expression, by id.
 
 use crate::Prog;
-use loft_ir::ast::*;
+use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
 use std::collections::HashMap;
 
@@ -321,6 +321,8 @@ impl<'p,'a> Ck<'p,'a> {
             return Ok(());
         }
         Err(match (from, to) {
+            (Ty::Geo(Geo::Attach,_), Ty::Geo(Geo::Target,_)) | (Ty::Geo(Geo::Target,_), Ty::Geo(Geo::Attach,_)) =>
+                Diag::new(Code::E105, span, format!("expected {to}, found {from}"), "supply an independent goal or an attached anchor of the declared type"),
             (Ty::Geo(_, a), Ty::Geo(_, b)) if a != b => e104(
                 span,
                 format!("space mismatch: expected `{to}`, found `{from}`"),

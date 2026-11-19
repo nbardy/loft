@@ -1,0 +1,7 @@
+struct MediumEntry { density: f }
+type Radiance = rgb
+param rough: f = 0.5 in 0..1
+kernel fill(x: f) allow(atomics, workgroup) { x }
+bake_tex Mask 32x64 r8 on dirty(rough) mips(true) (uv: v2) { rough }
+bake_tex Volume 4x8x16 rgba8 on load mips(false) (p: v3) { p }
+bake_tex Environment cube 32x32 rgba8 on load mips(true) (d: v3) { d }

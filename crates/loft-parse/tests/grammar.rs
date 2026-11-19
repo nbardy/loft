@@ -15,5 +15,16 @@ fn parser_accepts_the_decoder_corpus_and_rejects_the_same_fixture() {
     }
     assert!(count >= 14);
     loft_parse::parse(0, include_str!("fixtures/review-accept.loft"), &mut 0).unwrap();
-    assert!(loft_parse::parse(0, include_str!("fixtures/review-reject.loft"), &mut 0).is_err());
+    assert!(loft_parse::parse(0, include_str!("fixtures/review-reject.invalid"), &mut 0).is_err());
+}
+
+#[test]
+fn author_card_uses_the_native_parser() {
+    let card=include_str!("../../../AGENT_CARD.md");
+    let mut blocks=0;
+    for block in card.split("```loft\n").skip(1) {
+        loft_parse::parse(0,block.split_once("\n```").unwrap().0,&mut 0).unwrap();
+        blocks+=1;
+    }
+    assert!(blocks>0);
 }

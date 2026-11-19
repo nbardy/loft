@@ -6,7 +6,7 @@
 //! the AABB is padded by `PAD` (absolute) + `PAD_REL` (relative to its size); the truth gate samples both claims.
 
 use crate::eval::{Eval, Scalar, Un, Val};
-use loft_ir::ast::{BinOp, FnDecl};
+use loft_parse::ast::{BinOp, FnDecl};
 use loft_ir::{Code, Diag, Res, Span};
 
 #[derive(Clone, Copy, Debug, PartialEq)]

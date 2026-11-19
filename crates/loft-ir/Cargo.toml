@@ -7,9 +7,9 @@ publish.workspace = true
 description = "Layer 1: the source tree, its types and spans, diagnostics, verdicts, and the program the runner executes."
 
 [dependencies]
-naga = { workspace = true, features = ["serialize","deserialize","wgsl-out"] }
+bitflags = "2"
 serde = { version = "1", features = ["derive"] }
-serde-lexpr = "0.1"
+
 
 [lints]
 workspace = true

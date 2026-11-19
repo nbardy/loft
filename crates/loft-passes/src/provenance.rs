@@ -1,6 +1,7 @@
 //! Carry an expression's author span through WGSL string composition. Markers are
 //! removed before Naga sees its input, so source edits cannot change module text.
-use loft_ir::{Sources, Span, program::ExpressionOrigin};
+use loft_ir::{Sources, Span};
+use crate::program::ExpressionOrigin;
 const OPEN: char = '\u{fdd0}';
 const END: char = '\u{fdd1}';
 

@@ -18,8 +18,8 @@ pub use loft_parse as parse;
 
 use eval::{Eval, RowVal, Tables, Val};
 use lip::Iv;
-use loft_ir::ast::*;
-use loft_ir::program::{abi, Draw, Instance, KindTable, Orbit, Pass, Program, ShaderModule};
+use loft_parse::ast::*;
+use crate::program::{abi, Draw, Instance, KindTable, Orbit, Pass, Program, ShaderModule};
 use loft_ir::{Code, Diag, Res, Sources, Span};
 use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
@@ -531,11 +531,11 @@ pub fn compile_cached(src: &Sources, overrides: &[(String, f64)], cache: &std::p
 
 /// Re-derive local bounds and pack the sampled pose before drawing a requested
 /// still. The render path never culls an animated row against its time-zero box.
-pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir::program::MotionSample])->Res<(Program,Report,Compiled)> {
+pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[crate::program::MotionSample])->Res<(Program,Report,Compiled)> {
     compile_impl(src, overrides, samples, std::path::Path::new("target/loft_cache"))
 }
 
-fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::program::MotionSample], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
+fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::program::MotionSample], cache: &std::path::Path) -> Res<(Program, Report, Compiled)> {
     let mut ms = vec![];
     let mut clock = Instant::now();
     let mut lap = |name: &'static str, ms: &mut Vec<(&'static str, f64)>| {
@@ -931,7 +931,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[loft_ir::
     let mut dispatches = vec![];
     if samples.is_empty() {
         for &name in &p.kind_order {
-            use loft_ir::program::DispatchRows;
+            use crate::program::DispatchRows;
             let kind = p.kinds[name];
             let draw = drawn.iter().position(|&n| n == name);
             let table = &tables[p.kind_index(name)];
@@ -1002,3 +1002,16 @@ fn clone_name(e: &Expr) -> Expr {
     };
     Expr { id: e.id, span: e.span, kind }
 }
+
+pub mod program;
+pub mod sexp;
+pub mod tier0;
+pub mod telemetry;
+pub mod fusion;
+pub mod bvh;
+pub mod bsdf;
+pub mod quant;
+pub mod bake_tex;
+pub mod gltf;
+pub mod bundle;
+pub mod plan;

@@ -1,0 +1,7 @@
+space World Local
+kind K @Local (pose: xf@Local>World, r: f = 1) {
+  trace(p) = sphere(p - [0,0,0]@Local, 0.5)
+  material(p,n) = ggx(rgb(0.5), 0.5, 0)
+}
+build { emit K(pose: place([0,0,0]@World)) }
+schedule Main { pass overlay reads [Later] writes [Output] { raster(verts: 3) } }

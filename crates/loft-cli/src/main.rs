@@ -9,6 +9,12 @@
 //! A scene loads every `lib/*.loft` first (the library prelude), then the scene file.
 
 mod gates;
+mod build;
+mod render;
+mod clip;
+mod profile;
+mod fmt;
+mod fork;
 mod budget;
 
 use loft_ir::{Diag, Sources};
@@ -96,16 +102,22 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             let path = scene(&args)?;
             let program = if path.extension().is_some_and(|e| e == "sexp") {
                 let text = std::fs::read_to_string(&path).map_err(|e| Failure::Usage(format!("{}: {e}", path.display())))?;
-                loft_ir::sexp::read(&text).map_err(Failure::Compile)?
+                loft_passes::sexp::read(&text).map_err(Failure::Compile)?
             } else {
                 let src = sources(&path).map_err(Failure::Usage)?;
                 loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?.0
             };
-            let text = loft_ir::sexp::write(&program).map_err(Failure::Compile)?;
+            let text = loft_passes::sexp::write(&program).map_err(Failure::Compile)?;
             if let Some(out) = output { std::fs::write(out, text).map_err(|e| Failure::Usage(e.to_string()))?; }
             else if cmd == "ir" { println!("{text}"); }
             Ok(())
         }
+        "build" => build::run(&args[1..]),
+        "render" => render::run(&args[1..]),
+        "clip" => clip::run(&args[1..]),
+        "profile" => profile::run(&args[1..]),
+        "fmt" => fmt::run(&args[1..]),
+        "fork" => fork::run(&args[1..]),
         "check" | "show" => {
             exact(&args, 2, if cmd == "show" { 3 } else { 2 })?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
@@ -117,7 +129,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 return Ok(());
             }
             if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
-                let g = loft_runner::gpu().map_err(Failure::Device)?;
+                let g = loft_cli::native::gpu().map_err(Failure::Device)?;
                 let mut failed = false;
                 for (name, verdict) in gates::authored_checks(&g, &program, time).map_err(Failure::Device)? {
                     println!("check {name} at t={time}: {verdict}");
@@ -149,12 +161,12 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 .ok_or_else(|| Failure::Usage("load needs --nonce N (a nonzero u32)".into()))?;
             exact(&args, 2, 2)?;
             let path = scene(&args)?;
-            let g = loft_runner::gpu().map_err(Failure::Device)?;
+            let g = loft_cli::native::gpu().map_err(Failure::Device)?;
             let t = std::time::Instant::now();
             let src = sources(&path).map_err(Failure::Usage)?;
             let (p, _, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
             let front = t.elapsed().as_secs_f64();
-            let l = loft_runner::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
+            let l = loft_cli::native::Loaded::new(&g, &p, (1280, 800), Some(nonce)).map_err(Failure::Device)?;
             l.frame(&g, 0.0);
             let gpu = l.gpu_ms(&g).map_err(Failure::Device)?.map_or_else(|| "unavailable".into(), |(ms, _)| format!("{ms:.2} ms"));
             println!("load {:.3} s  front {front:.3} s  pipelines {:.1} ms  frame {gpu}  ({})",

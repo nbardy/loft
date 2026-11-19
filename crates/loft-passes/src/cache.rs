@@ -5,7 +5,8 @@ use crate::{
     eval::{Lut, RowVal},
     lip::Derived,
 };
-use loft_ir::{Code, Diag, Res, Span, ast::*};
+use loft_ir::{Code, Diag, Res, Span};
+use loft_parse::ast::*;
 use std::{
     io::{ErrorKind, Write},
     path::Path,

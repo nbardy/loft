@@ -5,7 +5,8 @@ use crate::{
     eval::{Eval, Scalar, concrete},
     lip::Iv,
 };
-use loft_ir::{Code, Diag, Res, ast::*};
+use loft_ir::{Code, Diag, Res};
+use loft_parse::ast::*;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy)]

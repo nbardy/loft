@@ -77,6 +77,8 @@ static_checks() {
   trap static_cleanup EXIT
   wall_start="$(now)"
   static_job tsc node_modules/.bin/tsc --noEmit
+  static_job grammar uv run --script tools/check_loft_grammar.py
+  static_job core-words tools/check_core_words.sh
   static_job loader-closure bun tools/check_loader_closure.ts
   static_job layers check_layers
   static_job test-layout check_test_layout
@@ -149,7 +151,7 @@ full_gate() {
   cargo test "${LOFT_GATE_DOCTEST_ARGS[@]}" --workspace
   keel_gate_release
   # Outside the compile lock, niced: the Bun suite renders on the GPU (tests/setup.ts admits one per user; exit 75).
-  nice -n 15 bun test --timeout 120000
+  tools/gpu_lock.sh nice -n 15 bun test --timeout 120000
   echo "loft check full: ok"
 }
 
@@ -163,14 +165,22 @@ quick_gate() {
     cargo nextest run "${LOFT_GATE_TEST_ARGS[@]}" "${scope[@]}"
     keel_gate_release
   fi
-  [[ ${#PLAN_BUN[@]} -eq 0 ]] || nice -n 15 bun test --timeout 120000 "${PLAN_BUN[@]/#/./}"
+  [[ ${#PLAN_BUN[@]} -eq 0 ]] || tools/gpu_lock.sh nice -n 15 bun test --timeout 120000 "${PLAN_BUN[@]/#/./}"
   echo "loft check quick: ok"
 }
 
 case "${1:-}" in
   static) static_checks ;;
   plan) plan ;;
-  quick) static_checks; plan; quick_gate ;;
-  full) static_checks; full_gate ;;
+  quick)
+    static_checks
+    CARGO_TARGET_DIR="$root/target" tools/dev.sh check loft-runner --target wasm32-unknown-unknown
+    plan
+    quick_gate ;;
+  full)
+    static_checks
+    CARGO_TARGET_DIR="$root/target" tools/dev.sh check loft-runner --target wasm32-unknown-unknown
+    CARGO_TARGET_DIR="$root/target" tools/gpu_lock.sh tools/dev.sh test loft-cli --workspace --test-threads 1
+    full_gate ;;
   *) echo 'Usage: tools/check.sh static|quick|plan|full' >&2; exit 2 ;;
 esac

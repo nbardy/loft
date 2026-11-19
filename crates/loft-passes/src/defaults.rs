@@ -1,5 +1,6 @@
 //! Elaborate an omitted render schedule from the authored realtime recipe.
-use loft_ir::{Code, Diag, Res, Span, ast::*};
+use loft_ir::{Code, Diag, Res, Span};
+use loft_parse::ast::*;
 
 pub(crate) const ENV_DEFAULTS: [&str; 3] = ["DEFAULT_SUN_COLOR", "DEFAULT_ZENITH", "DEFAULT_HORIZON"];
 

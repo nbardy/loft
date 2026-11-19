@@ -3,7 +3,7 @@
 //! side table indexed by it. The parser may leave holes the elaborator fills (an unannotated parameter, a bracket
 //! literal, a scan's element type); after elaboration the tree is fully typed and every pass reads it unchanged.
 
-use crate::Span;
+use loft_ir::Span;
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct Ident {
@@ -357,6 +357,8 @@ pub struct SpaceRef {
 
 #[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Geo {
+    Attach,
+    Target,
     Pt,
     Vec,
     Dir,
@@ -367,6 +369,8 @@ impl Geo {
     /// The surface spelling: `p3`, `v3`, `d3`, `n3`.
     pub fn short(self) -> &'static str {
         match self {
+            Geo::Attach => "attach",
+            Geo::Target => "target",
             Geo::Pt => "p3",
             Geo::Vec => "v3",
             Geo::Dir => "d3",

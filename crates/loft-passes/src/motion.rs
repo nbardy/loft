@@ -1,7 +1,8 @@
 //! Lower the row-local subset needed for a Phase 1.5 bakeoff snapshot.
 //! Phase 3 persistent state, solver tables and checkpoints use a separate schedule ABI.
 use super::*;
-use loft_ir::{Span, program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows}};
+use loft_ir::{Span};
+use crate::program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows};
 
 fn unsupported(sp: Span, what: &str) -> Diag {
     Diag::new(
@@ -99,7 +100,7 @@ pub fn motion_module(
     let (module, input) = output()?;
     let mut em = Emitter::new(p, types);
     em.motion = true;
-    em.out.push_str(include_str!("det.wgsl"));
+    em.out.push_str(loft_abi::DET_WGSL);
     let roots: Vec<_> = laws.iter().chain(&checks).copied().collect();
     let (lib, constants) = reachable(p, &roots, &[]);
     em.constants(&constants);
