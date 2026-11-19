@@ -18,6 +18,8 @@ const pitch = keyed([[0, 0], [0.35, -0.22], [0.6, 0.18], [0.9, 0], [1.2, -0.12],
 const fx = keyed([[0, 0], [0.6, 0], [0.9, 1.6], [1.2, land], [END, land]]);
 const fy = keyed([[0, 0], [0.6, 0], [0.9, 1.55], [1.2, top], [END, top]]);
 
+/** The keyed curves: the prior of heron_hop_near.ts. */
+export const KEYS = { x, y, pitch, fx, fy };
 const body = poseFrame(pose({ at: vec3(x, y, 0), heading: 0, pitch, heel: 0 }));
 const foot = (i: number): P3 => vec3(fx, fy, HOMES[i]![2]);
 export default stage(NUMBERS, heron(body, foot, { x: vec3(1, 0, 0), z: vec3(0, 0, 1) }).things);
