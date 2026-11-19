@@ -9,6 +9,8 @@ macro_rules! layout {
 }
 #[test]
 fn storage_layouts() {
+    assert_eq!((size_of::<MeshAsset>(), align_of::<MeshAsset>()), (4, 4));
+    layout!(MeshRow, 56, 4; pose=0, asset=48, lod=52);
     layout!(BodyRow, 112, 16; com_local=0, mass=12, inv_inertia=16, inv_mass=64, rest_h=68, tc=72, mu=76, strength=80, chain_start=84, chain_count=88, seg_start=92, seg_count=96, eye_chain=100, flags=104, pad=108);
     layout!(ChainRow, 112, 16; socket_pos=0, role=12, socket_rot=16, rest_end=32, ik_kind=44, lens=48, pitch_lo=64, pitch_hi=68, yaw_lo=72, yaw_hi=76, twist_lo=80, twist_hi=84, mu_s=88, mu_k=92, max_load=96, seg_count=100, pose_offset=104, neighbours=108);
     layout!(SegmentRow, 48, 16; rest_pos=0, mass=12, rest_rot=16, half_extents=32, parent_seg=44);

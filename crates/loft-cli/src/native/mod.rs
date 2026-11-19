@@ -1,6 +1,6 @@
 //! Native execution of the Phase 1.5 picture and motion fixtures.
 mod motion;
-pub use motion::sample_motion;
+pub use motion::{sample_motion, sample_motion_timed};
 
 use loft_passes::program::{abi, Draw, Pass, Program};
 use std::borrow::Cow;
@@ -243,6 +243,20 @@ fn render(
     })
 }
 
+impl Clock {
+    fn new(g: &Gpu, n: u32) -> Self {
+        use wgpu::BufferUsages as U;
+        Self {
+            set: g.device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("GPU timer"), ty: wgpu::QueryType::Timestamp, count: n,
+            }),
+            resolve: buffer(&g.device, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
+            read: buffer(&g.device, "ts read", u64::from(n) * 8, U::COPY_DST | U::MAP_READ),
+            n, period_ns: f64::from(g.queue.get_timestamp_period()),
+        }
+    }
+}
+
 fn read_clock(g: &Gpu, c: &Clock) -> Result<Vec<u64>, String> {
     let poll = || g.device.poll(wgpu::PollType::wait_indefinitely()).map(|_| ()).map_err(|e| e.to_string());
     poll()?;
@@ -278,13 +292,7 @@ impl Gpu {
             )),
         });
         let pipe = render(d, "speed control", &[], &module, ("vs", "fs"), format, false, None, None);
-        use wgpu::BufferUsages as U;
-        let c = Clock {
-            set: d.create_query_set(&wgpu::QuerySetDescriptor { label: None, ty: wgpu::QueryType::Timestamp, count: 2 }),
-            resolve: buffer(d, "control resolve", 16, U::QUERY_RESOLVE | U::COPY_SRC),
-            read: buffer(d, "control read", 16, U::MAP_READ | U::COPY_DST),
-            n: 2, period_ns: f64::from(self.queue.get_timestamp_period()),
-        };
+        let c = Clock::new(self, 2);
         let mut times = [0.; 11];
         for ms in &mut times {
             let mut encoder = d.create_command_encoder(&Default::default());
@@ -534,13 +542,7 @@ impl Loaded {
         });
 
         let n = 2 * p.passes.len() as u32;
-        let clock = g.timestamps.then(|| Clock {
-            set: d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("frame"), ty: wgpu::QueryType::Timestamp, count: n }),
-            resolve: buffer(d, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
-            read: buffer(d, "ts read", u64::from(n) * 8, U::MAP_READ | U::COPY_DST),
-            n,
-            period_ns: f64::from(g.queue.get_timestamp_period()),
-        });
+        let clock = g.timestamps.then(|| Clock::new(g, n));
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         stats.resources_ms = t.elapsed().as_secs_f64() * 1e3;
         Ok(Loaded {

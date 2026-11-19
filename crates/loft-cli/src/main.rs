@@ -112,9 +112,9 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             else if cmd == "ir" { println!("{text}"); }
             Ok(())
         }
-        "build" => build::run(&args[1..]),
+        "build" => build::run(&args[1..], &set),
         "render" => render::run(&args[1..]),
-        "clip" => clip::run(&args[1..]),
+        "clip" => clip::run(&args[1..], &set),
         "profile" => profile::run(&args[1..]),
         "fmt" => fmt::run(&args[1..]),
         "fork" => fork::run(&args[1..]),
@@ -173,7 +173,7 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
                 t.elapsed().as_secs_f64(), l.stats.pipelines_ms, g.adapter);
             Ok(())
         }
-        _ => Err(Failure::Usage("usage: loft check|show|still|gate|load|ir".into())),
+        _ => Err(Failure::Usage("usage: loft build|check|show|still|clip|gate|load|ir".into())),
     }
 }
 

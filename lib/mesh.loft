@@ -1,0 +1,3 @@
+# A bundle-wide index into ASSETS. Every imported primitive uses the same Mesh kind.
+type MeshAsset = u
+kind Mesh @Local (pose: xf@Local>World, asset: MeshAsset, lod: u = 0) {}

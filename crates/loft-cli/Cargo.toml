@@ -11,6 +11,7 @@ name = "loft"
 path = "src/main.rs"
 
 [dependencies]
+blake3 = "1"
 loft-parse = { path = "../loft-parse" }
 naga.workspace = true
 loft-ir = { path = "../loft-ir" }

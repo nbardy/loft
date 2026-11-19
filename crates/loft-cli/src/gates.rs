@@ -170,7 +170,7 @@ fn root() -> Result<PathBuf, String> {
         .ok_or_else(|| "run from inside the repository: no engines/gates.json above the current directory".into())
 }
 
-fn write_png(path: &Path, size: (u32, u32), rgba: &[u8]) -> Result<(), String> {
+pub(crate) fn write_png(path: &Path, size: (u32, u32), rgba: &[u8]) -> Result<(), String> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
@@ -199,7 +199,7 @@ fn decode_verdict(record: Option<[f32; 2]>) -> Verdict {
     }
 }
 
-fn check_records(p: &Program, samples: &[loft_passes::program::MotionSample]) -> Vec<(String, Verdict)> {
+pub(crate) fn check_records(p: &Program, samples: &[loft_passes::program::MotionSample]) -> Vec<(String, Verdict)> {
     let mut results = vec![];
     for step in &p.dispatches {
         let (kind, rows, _, _) = step.input.view(&p.kinds).expect("compiled dispatch input");
