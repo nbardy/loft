@@ -1,0 +1,48 @@
+# The meta engine workspace (plan 2026-11-20 §1): runner (layer 0), ir and gates (layer 1), compiler passes (layer 2),
+# cli. Independent of the legacy rust/ workspace beside it; build through tools/dev.sh, which takes the compile lock.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["rust"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+
+# Same pins as the legacy workspace and Keel.
+[workspace.dependencies]
+wgpu = { version = "=30.0.1", default-features = false, features = ["std", "parking_lot", "metal", "vulkan", "wgsl"] }
+naga = { version = "=30.0.1", default-features = false, features = ["wgsl-in"] }
+pollster = "0.4"
+png = "0.18"
+serde_json = "1.0.149"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# One handler per variant is the compiler's check (Keel S8).
+wildcard_enum_match_arm = "deny"
+
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only"
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+[profile.test]
+opt-level = 1
+debug = false
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.lab]
+inherits = "release"
+lto = false
+codegen-units = 16

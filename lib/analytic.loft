@@ -1,0 +1,40 @@
+// Closed-form ray intersections (after iq). `rd` is unit length; a negative result is a miss.
+
+fn ray_sphere(ro: Pt['s], rd: Dir['s], c: Pt['s], r: f32) -> f32 {
+  let oc = ro - c;
+  let b = dot(oc, rd);
+  let h = b * b - (dot(oc, oc) - r * r);
+  if h < 0.0 {
+    return -1.0;
+  }
+  return -b - sqrt(h);
+}
+
+fn ray_capsule(ro: Pt['s], rd: Dir['s], a: Pt['s], b: Pt['s], r: f32) -> f32 {
+  let ba = b - a;
+  let oa = ro - a;
+  let baba = dot(ba, ba);
+  if baba < 1e-12 {
+    return ray_sphere(ro, rd, a, r);
+  }
+  let bard = dot(ba, rd);
+  let baoa = dot(ba, oa);
+  let qa = baba - bard * bard;
+  let qb = baba * dot(rd, oa) - baoa * bard;
+  let qc = baba * dot(oa, oa) - baoa * baoa - r * r * baba;
+  let h = qb * qb - qa * qc;
+  if h < 0.0 {
+    return -1.0;
+  }
+  // The cylinder body; outside its span the hit is on a cap sphere.
+  let t = (-qb - sqrt(h)) / qa;
+  let y = baoa + t * bard;
+  if y > 0.0 && y < baba {
+    return t;
+  }
+  var cap = b;
+  if y <= 0.0 {
+    cap = a;
+  }
+  return ray_sphere(ro, rd, cap, r);
+}

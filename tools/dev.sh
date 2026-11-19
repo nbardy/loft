@@ -20,7 +20,16 @@ case "$command_name" in
   run) profile=lab ;;
   *) usage ;;
 esac
-[[ -f "$root/rust/crates/$crate/Cargo.toml" ]] || { echo "dev.sh: no crate rust/crates/$crate" >&2; exit 2; }
+# Two workspaces while the old tree stays (meta plan 2026-11-20 §5): the meta engine's crates/ at the root, with its
+# own target/, and the legacy rust/ workspace. A crate name picks its workspace; the meta one wins a clash.
+if [[ -f "$root/crates/$crate/Cargo.toml" ]]; then
+  ws="$root"
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$root/target}"
+elif [[ -f "$root/rust/crates/$crate/Cargo.toml" ]]; then
+  ws="$root/rust"
+else
+  echo "dev.sh: no crate crates/$crate or rust/crates/$crate" >&2; exit 2
+fi
 
 # Cargo's arguments before the first `--` (the profile shorthands rewritten), the program's after it, untouched.
 cargo_args=() program_args=() doc=0
@@ -41,7 +50,7 @@ done
 source "$root/tools/lib/cache-env.sh"
 source "$root/tools/lib/gate_flags.sh"
 source "$root/tools/lib/build_gate.sh"
-cd "$root/rust"
+cd "$ws"
 toolchain="$(sed -n 's/^channel = "\([^"]*\)"/\1/p' rust-toolchain.toml)"
 cargo=(rustup run "$toolchain" cargo)
 case "$command_name" in
