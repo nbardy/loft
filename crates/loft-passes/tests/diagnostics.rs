@@ -169,3 +169,21 @@ fn e307_diff_of_a_c0_expression() {
         panic!("{text}");
     }
 }
+
+#[test]
+fn row_division_needs_a_proof_before_specialization(){
+    let src=kind("", "let divisor = scale; sphere(q - [0,0,0]@Body, 0.5) / divisor",OK_MATERIAL)
+        .replace("pose: xf@Body>World)", "pose: xf@Body>World, scale: f = 1)");
+    expect(Code::E211,&src);
+    assert!(compile(&src.replace("scale: f =", "scale: f > 0 =")).is_ok());
+}
+
+#[test]
+fn raw_shader_islands_cannot_certify_geometry_or_unmarked_motion(){
+    let src=kind("", "wgsl (q: p3@Body) -> f { return length(q) - 0.5; }",OK_MATERIAL);
+    expect(Code::E211,&src);
+    let motion=kind("",OK_TRACE,OK_MATERIAL).replace("pose: xf@Body>World)", "pose: xf@Body>World, yaw: rad = 0)")
+        +"\nfn drift(x: f) -> f = wgsl (x: f) -> f { return x; }\nlaw turn(h: K, dt) writes h.{yaw} { h.yaw = drift(dt) }";
+    expect(Code::E504,&motion);
+    assert!(compile(&motion.replace("wgsl (","wgsl det (")).is_ok());
+}

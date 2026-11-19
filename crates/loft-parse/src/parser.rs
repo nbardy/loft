@@ -1021,6 +1021,19 @@ impl Parser<'_, '_> {
     }
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
+        if self.eat("wgsl"){
+            let deterministic=self.eat("det");
+            let params=self.params()?;
+            if let Some(p)=params.iter().find(|p|p.ty.is_none()){return Err(Diag::new(Code::E003,p.name.span,"WGSL capture requires a type","annotate the boundary parameter"))}
+            self.expect("->")?;let ret=self.ty()?;
+            if self.cur().kind!=Kind::Raw{return self.err("a balanced WGSL block")}
+            let island=self.pop();let end=island.span;
+            let raw=RawWgsl{body:island.text.into(),deterministic};
+            let name=named(&format!("loft_raw_{}_{}",span.file,span.lo),span);
+            let args=params.iter().map(|prm|Arg{name:None,value:self.node(prm.name.span,ExprKind::Name(prm.name.name.clone()))}).collect();
+            self.module.items.push(Item::Fn(FnDecl{name:name.clone(),params,ret:Some(ret),body:Block{stmts:vec![]},raw:Some(raw),attrs:vec![],comptime:false}));
+            return Ok(self.node(span.to(end),ExprKind::Call{callee:name,args}));
+        }
         if self.eat("if") {
             let cond = self.expr(0)?;
             let arm = |p: &mut Self| -> Res<Expr> {

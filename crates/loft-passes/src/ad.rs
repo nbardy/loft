@@ -417,6 +417,7 @@ impl Ad<'_> {
 
     /// `f__jvp(params..., tangents...)`: f's value derivative along the given tangents.
     fn jvp(&mut self, f: &FnDecl) -> Res<FnDecl> {
+        if f.raw.is_some(){return Err(Diag::new(Code::E307,f.name.span,"raw WGSL has no symbolic derivative","write the differentiated function in Loft"))}
         self.live.clear();
         let mut params: Vec<Param> = f.params.iter().map(|p| Param { name: p.name.clone(), ty: p.ty.clone() }).collect();
         for p in &f.params {

@@ -248,6 +248,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
             .collect();
         let ret = f.ret.as_ref().map(|t| format!(" -> {}", wty(&self.resolve(t)))).unwrap_or_default();
         let _ = writeln!(self.out, "fn {name}({}){ret} {{", params.join(", "));
+        if let Some(raw)=&f.raw{
+            self.out.push_str(&raw.body[1..raw.body.len()-1]);self.out.push_str("\n}\n");return;
+        }
         self.maps.clear();
         self.block_body(&f.body, 1);
         self.out += "}\n\n";

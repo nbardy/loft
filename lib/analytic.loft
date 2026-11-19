@@ -60,3 +60,23 @@ fn hit_min(a: f, b: f) -> f {
   }
   min(a, b)
 }
+
+# Upper face of a square ground plane, centered on the origin.
+fn ray_ground[S](ro: p3@S, rd: d3@S, radius: m) -> f {
+  if rd.y >= 0 {
+    return -1
+  }
+  let t = -ro.y / rd.y
+  let p = ro + rd * t
+  if max(abs(p.x), abs(p.z)) > radius {
+    return -1
+  }
+  t
+}
+
+# Three capsule segments sharing their endpoints and one radius per segment.
+fn capsule_chain[S](p: p3@S, a: p3@S, b: p3@S, c: p3@S, d: p3@S, r: v3) -> m =
+  min(min(capsule(p, a, b, r.x), capsule(p, b, c, r.y)), capsule(p, c, d, r.z))
+
+fn ray_capsule_chain[S](p: p3@S, rd: d3@S, a: p3@S, b: p3@S, c: p3@S, d: p3@S, r: v3) -> f =
+  hit_min(hit_min(ray_capsule(p, rd, a, b, r.x), ray_capsule(p, rd, b, c, r.y)), ray_capsule(p, rd, c, d, r.z))

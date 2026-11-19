@@ -63,6 +63,14 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
             }
         }
     }
+    for law in p.laws.values(){
+        if let Some(f)=crate::emit::reachable(p,&[&law.f],&[]).0.into_iter().find(|f|f.refuses_unverified_raw()){
+            return Err(Diag::new(Code::E504,f.name.span,"motion reaches unverified raw WGSL","use wgsl det (...) after verifying the block is deterministic"))
+        }
+    }
+    for k in p.kinds.values(){if let Some(trace)=k.query(QueryKind::Trace) && let Some(f)=crate::emit::reachable(p,&[trace],&[]).0.into_iter().find(|f|f.raw.is_some()){
+        return Err(Diag::new(Code::E211,f.name.span,"raw WGSL has no proven spatial Lipschitz bound","write the trace term in Loft or move it to the material"))
+    }}
     for law in p.laws.values(){ck.motion(&law.f,Some(&law.writes))?;}
     for f in p.checks.values(){ck.motion(f,None)?;}
     Ok(())

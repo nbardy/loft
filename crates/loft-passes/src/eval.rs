@@ -223,6 +223,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
 
     /// Calls `f` with arguments; a query's `self` is `Val::Row`.
     pub fn call_fn(&mut self, f: &'a FnDecl, args: Vec<Val<S>>, span: Span) -> Res<Val<S>> {
+        if f.raw.is_some(){return Err(Diag::new(Code::E405,span,"raw WGSL has no CPU evaluation","use a Loft expression for build-time evaluation or CPU twin queries"))}
         let mark = self.env.len();
         let saved = std::mem::take(&mut self.env);
         for (prm, a) in f.params.iter().zip(args.iter()) {

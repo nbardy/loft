@@ -95,7 +95,7 @@ pub struct FnDecl {
     pub ret: Option<TyExpr>,
     pub body: Block,
     /// A `wgsl(...) -> T { ... }` island lifted into a fn: its raw body, which naga validates at emit.
-    pub raw: Option<String>,
+    pub raw: Option<RawWgsl>,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -287,6 +287,13 @@ pub enum UnOp {
 
 pub fn frame_field(name:&str)->&str {
     match name {"o"=>"origin","t"=>"tangent","n"=>"normal","b"=>"binormal",s=>s}
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RawWgsl {pub body:String,pub deterministic:bool}
+
+impl FnDecl {
+    pub fn refuses_unverified_raw(&self)->bool{self.raw.as_ref().is_some_and(|r|!r.deterministic)}
 }
 
 /// Type syntax as written.
