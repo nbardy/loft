@@ -42,7 +42,8 @@ const inBody = (body: Frame, p: readonly [number, number, number] | P3): P3 => a
 /** Where leg k leaves the body (body coordinates). */
 export const legRoot = (k: number): readonly [number, number, number] => [S.legRoots[k % 4]!, 0.1, (k < 4 ? -1 : 1) * S.width * 0.78];
 
-export function crab(body: Frame) {
+/** The crab drawn at `body` with foot k (left 0..3, right 0..3, front to back) at `foot(k)`. */
+export function crab(body: Frame, foot: (k: number) => P3) {
   const local = (p: readonly [number, number, number] | P3) => inBody(body, p);
   const carapace = place(strand({
     name: "carapace", spine: (m) => through(m, [[-S.length, 0, 0], [0, 0.1, 0], [S.length, -0.05, 0]]), stations: 8,
@@ -53,7 +54,7 @@ export function crab(body: Frame) {
   const segs = keys([[0, 1], [0.4, 0.85], [0.8, 0.5], [1, 0.18]]);
   const legs = sides.flatMap((s, si) => S.legRoots.map((_, i) => {
     const k = si * 4 + i;
-    const leg = chain({ root: local(legRoot(k)), target: walk.foot(k), lengths: S.legLengths, bend: add(body.y, mul(body.z, s * 0.45)), foot: mul(body.y, -1) });
+    const leg = chain({ root: local(legRoot(k)), target: foot(k), lengths: S.legLengths, bend: add(body.y, mul(body.z, s * 0.45)), foot: mul(body.y, -1) });
     return strand({
       name: `leg${s < 0 ? "L" : "R"}${i}`, spine: leg.spine, stations: 24, girth: (m) => mul(segs(m).x, 0.36), tips: ["round", { point: 0.1 }],
       section: { aspect: 0.8 }, up: body.y,
@@ -95,5 +96,6 @@ export function crab(body: Frame) {
 
 /** The comparison's camera, ground and light: identical for both panels. */
 export const CAMERAS = {
+  game: { kind: "perspective" as const, eye: [13, 21, 19] as [number, number, number], target: [0.3, 0.8, 0.3] as [number, number, number], fovY: 0.8 },
   square: { kind: "perspective" as const, eye: [12, 17, 20] as [number, number, number], target: [0.9, 1.4, 2.0] as [number, number, number], fovY: 0.74 },
 };

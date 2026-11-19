@@ -28,5 +28,5 @@ const solved = solve({
 });
 console.error(`crab solve: ${solved.report.ms.toFixed(0)} ms, ${solved.report.steps} steps, ${solved.report.rounds} rounds`);
 const c = solved.curves;
-export default scene({ ground: plane, things: crab(bodyFrame(vec3(c.x, c.y, c.z), c.yaw)), style: toon({ bands: 3, outline: 0.04 }), sun: [-0.45, 0.75, 0.5], cameras: CAMERAS });
+export default scene({ ground: plane, things: crab(bodyFrame(vec3(c.x, c.y, c.z), c.yaw), walk.foot), style: toon({ bands: 3, outline: 0.04 }), sun: [-0.45, 0.75, 0.5], cameras: CAMERAS });
 export { solved };

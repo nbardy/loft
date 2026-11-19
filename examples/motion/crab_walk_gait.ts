@@ -7,4 +7,4 @@ import { bodyFrame, CAMERAS, crab, S, walk } from "./lib/crab.ts";
 const g = walk.body;
 const bob = mul(cos(mul(time, (4 * Math.PI) / S.period)), 0.09), roll = mul(sin(mul(time, (2 * Math.PI) / S.period)), 0.04);
 const yaw = mul(time, S.stride / S.period / S.radius);
-export default scene({ ground: plane, things: crab(bodyFrame(add(g.o, mul(g.y, add(S.ride, bob))), yaw, roll)), style: toon({ bands: 3, outline: 0.04 }), sun: [-0.45, 0.75, 0.5], cameras: CAMERAS });
+export default scene({ ground: plane, things: crab(bodyFrame(add(g.o, mul(g.y, add(S.ride, bob))), yaw, roll), walk.foot), style: toon({ bands: 3, outline: 0.04 }), sun: [-0.45, 0.75, 0.5], cameras: CAMERAS });
