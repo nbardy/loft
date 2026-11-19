@@ -552,6 +552,9 @@ dependencies = [
 [[package]]
 name = "loft-plan"
 version = "0.1.0"
+dependencies = [
+ "loft-abi",
+]
 
 [[package]]
 name = "loft-runner"

@@ -125,8 +125,8 @@ pub enum Pass {
     Present,
 }
 
-/// Row-local laws and their terminal checks. The shader entry is advance;
-/// One vec4 per requested scalar write or check.
+/// Phase 1.5 snapshot from the initial row through one target tick.
+/// Writes one vec4 per requested scalar field or check.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Dispatch {
     pub module: usize,

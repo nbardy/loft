@@ -29,6 +29,7 @@ pub trait ExecutionBackend: Sized {
         time_s: f64,
         dt_s: f32,
     ) -> Result<FrameIdentity>;
+    /// Synchronous row-local CPU twin step. See [`Runner::step_pass_cpu`].
     fn step_pass_cpu(
         &mut self,
         inst: InstanceId,

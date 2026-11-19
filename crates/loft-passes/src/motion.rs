@@ -131,7 +131,7 @@ pub fn motion_module(
         em.block_body(&f.body, 1);
         em.out.push_str("}\n");
     }
-    em.out.push_str("@compute @workgroup_size(64) fn advance(@builtin(global_invocation_id) gid: vec3<u32>) {\n let i=gid.x; if i >= arrayLength(&rows)/STRIDE { return; } var state=load_row(i);\n let last=bitcast<u32>(twin_in[0].x); let dt=1.0/120.0;\n for(var tick=1u; tick<=last; tick++){ loft_tick_time=f32(tick)*dt;\n");
+    em.out.push_str("@compute @workgroup_size(64) fn snapshot(@builtin(global_invocation_id) gid: vec3<u32>) {\n let i=gid.x; if i >= arrayLength(&rows)/STRIDE { return; } var state=load_row(i);\n let last=bitcast<u32>(twin_in[0].x); let dt=1.0/120.0;\n for(var tick=1u; tick<=last; tick++){ loft_tick_time=f32(tick)*dt;\n");
     for f in &laws {
         writeln!(em.out, "state=law_{}(state,dt);", f.name.name).unwrap();
     }
@@ -158,7 +158,7 @@ pub fn motion_module(
         em.out,
         Dispatch {
             module,
-            entry: "advance".into(),
+            entry: "snapshot".into(),
             workgroup_x: 64,
             input,
             bindings: [

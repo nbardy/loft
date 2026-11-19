@@ -1,4 +1,9 @@
 //! Shared std430 wire records (06 §8 and 02 §3). Integers occupy integer lanes.
+mod advance;
+mod tier0;
+pub use advance::{AdvanceArgs, advance};
+pub use tier0::Tier0Opcode;
+
 pub mod det;
 pub mod rand;
 pub const DET_WGSL: &str = include_str!("det.wgsl");
@@ -138,6 +143,29 @@ pub struct BvhNode {
     pub count: u32,
 }
 
+/// Wire values for `VerdictRecord::tag` (02 §3.2).
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerdictTag {
+    Skipped = 0,
+    Held = 1,
+    Missed = 2,
+    Unknown = 3,
+}
+
+/// Wire values for `VerdictRecord::reason_code`.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerdictReason {
+    None = 0,
+    IterCap = 1,
+    NonFinite = 2,
+    MissingSurface = 3,
+    MissingFrame = 4,
+    SolveFailed = 5,
+}
+
+// Raw u32 lanes allow checking a GPU record before interpreting either discriminant.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct VerdictRecord {
