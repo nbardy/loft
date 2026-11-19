@@ -10,42 +10,43 @@ pub(super) struct PathGpu {
 impl PathGpu {
     pub(super) fn layout(d: &wgpu::Device, path: &PathTrace) -> wgpu::BindGroupLayout {
         let stages = CS | FS;
-        let mut entries = vec![(stages, storage(true)); 4];
+        let mut entries = vec![(stages, storage(true)); 5];
         if matches!(path.integrator, Integrator::Spectral) { entries.push((stages, storage(false))); }
         layout(d, "path world", &entries)
     }
 
     pub(super) fn prepare(g: &Gpu, p: &Program, fixed: &wgpu::BindGroupLayout, present: &wgpu::BindGroupLayout,
-                      path_layout: &wgpu::BindGroupLayout, shader: &wgpu::ShaderModule) -> Self {
+                      path_layout: &wgpu::BindGroupLayout, shader: &wgpu::ShaderModule) -> Result<Self, String> {
         use wgpu::{BufferUsages as U, util::DeviceExt};
         let path = p.path.as_ref().expect("path layout needs a path");
         let d = &g.device;
         let init = |bytes: &[u8]| d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytes, usage: U::STORAGE });
-        let mut words = Vec::new();
-        let mut base = Vec::new();
-        for kind in &p.kinds {
-            base.push(words.len() as u32);
-            words.extend_from_slice(&kind.rows);
+        let tree = loft_passes::bvh::Bvh2::build(&p.instances)
+            .map_err(|e| format!("invalid world BVH: {e:?}"))?;
+        // Frozen leaf IDs remain (kind,row). A per-kind base translates them into the packed row arena.
+        let mut words = vec![0u32; 1 + 2 * p.kinds.len()];
+        words[0] = tree.nodes().len() as u32;
+        for (i, kind) in p.kinds.iter().enumerate() {
+            words[1 + i * 2] = words.len() as u32;
+            words[2 + i * 2] = kind.stride;
+            words.extend(kind.rows.iter().map(|v| v.to_bits()));
         }
-        if words.is_empty() { words.extend([0.0; 4]); }
-        let packed = init(&f32_bytes(&words));
-        let mut rows = Vec::new();
-        for row in &p.instances {
-            let i = row.kind as usize;
-            rows.extend(row.lo.map(f32::to_bits));
-            rows.push(row.kind);
-            rows.extend(row.hi.map(f32::to_bits));
-            rows.push(base[i] + row.row * p.kinds[i].stride);
+        let packed = init(&bytes_of(&words));
+        let mut nodes = Vec::new();
+        for n in tree.nodes() {
+            nodes.extend(n.lo.map(f32::to_bits));
+            nodes.push(n.left_or_first);
+            nodes.extend(n.hi.map(f32::to_bits));
+            nodes.push(n.count);
         }
-        if rows.is_empty() {
-            // The storage array requires one stride. An empty sentinel is behind every ray.
-            rows.extend([0.0_f32.to_bits(); 8]);
-            rows[3] = u32::MAX;
-        }
-        let rows = init(&bytes_of(&rows));
+        if nodes.is_empty() { nodes.resize(8, 0); }
+        let nodes = init(&bytes_of(&nodes));
+        let mut leaves: Vec<_> = tree.leaves().iter().flat_map(|r| [r.kind_id, r.row_id]).collect();
+        if leaves.is_empty() { leaves.resize(2, 0); }
+        let leaves = init(&bytes_of(&leaves));
         let luts = init(&f32_bytes(if p.luts.is_empty() { &[0.0; 4] } else { &p.luts }));
         let lights = init(&f32_bytes(path.lamps.as_flattened().as_flattened()));
-        let mut resources = vec![packed.as_entire_binding(), rows.as_entire_binding(), luts.as_entire_binding(), lights.as_entire_binding()];
+        let mut resources = vec![packed.as_entire_binding(), nodes.as_entire_binding(), luts.as_entire_binding(), lights.as_entire_binding(), leaves.as_entire_binding()];
         let bins = matches!(path.integrator, Integrator::Spectral).then(|| {
             buffer(d, "fixed photon bins", 16 * 128 * 128, U::STORAGE | U::COPY_DST)
         });
@@ -55,7 +56,7 @@ impl PathGpu {
             let kernel = compute(d, "caustic photons", &[fixed, present, path_layout], shader, "photons", None);
             (kernel, bins)
         });
-        Self { group, photons }
+        Ok(Self { group, photons })
     }
 
     pub(super) fn has_photons(&self) -> bool { self.photons.is_some() }

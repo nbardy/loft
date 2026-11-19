@@ -86,6 +86,12 @@ pub enum RowVal {
 }
 
 #[derive(Clone, Debug)]
+pub enum Layer<S> {
+    Lobe(String, Vec<Val<S>>),
+    Mix(Vec<Layer<S>>, Vec<Layer<S>>, S),
+}
+
+#[derive(Clone, Debug)]
 pub enum Val<S> {
     Void,
     S(S),
@@ -99,7 +105,7 @@ pub enum Val<S> {
     /// `m.to_parent` (true) or `m.from_parent` (false), applied by `*`.
     MapRef(String, bool),
     /// Lobes bottom first: the `@lobe` fn's name and the arguments bound at material time.
-    Bsdf(Vec<(String, Vec<Val<S>>)>),
+    Bsdf(Vec<Layer<S>>),
 }
 
 /// One baked scan: its parameter range and 12 words per frame (origin, tangent, normal, binormal).
@@ -649,9 +655,13 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 let vals = args.iter().map(|a| self.expr(&a.value)).collect::<Res<Vec<_>>>()?;
                 if let Some(f) = self.p.fns.get(callee.name.as_str()) {
                     if f.attrs.iter().any(|a| a.name.name == "lobe") {
-                        return Ok(Val::Bsdf(vec![(callee.name.clone(), vals)]));
+                        return Ok(Val::Bsdf(vec![Layer::Lobe(callee.name.clone(), vals)]));
                     }
                     return self.call_fn(f, vals, e.span);
+                }
+                if callee.name == "mix_bsdf" {
+                    let [Val::Bsdf(a), Val::Bsdf(b), Val::S(t)] = vals.as_slice() else { unreachable!("checked material mix") };
+                    return Ok(Val::Bsdf(vec![Layer::Mix(a.clone(), b.clone(), t.max(&S::c(0.)).min(&S::c(1.)))]));
                 }
                 if callee.name == "eval_bsdf" {
                     return self.eval_bsdf(&vals[0], &vals[1], &vals[2], &vals[3], e.span);
@@ -1035,26 +1045,36 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
     /// transmittance it leaves the layers under it).
     pub fn eval_bsdf(&mut self, b: &Val<S>, n: &Val<S>, v: &Val<S>, l: &Val<S>, span: Span) -> Res<Val<S>> {
         let Val::Bsdf(lobes) = b else { unreachable!("checked Bsdf") };
-        let mut c = Val::V(vec![S::c(0.0); 3], 0.0);
-        let mut emission = c.clone();
-        for (name, args) in lobes {
-            let f = self.p.fns[name.as_str()];
-            let mut a = args.clone();
-            a.extend([n.clone(), v.clone(), l.clone()]);
-            let Val::V(r, _) = self.call_fn(f, a, span)? else { unreachable!("checked vec4") };
-            let below = Val::S(r[3].clone());
-            let own = Val::V(r[..3].to_vec(), 0.0);
-            if name == "emit_lobe" {
-                emission = self.arith(BinOp::Add, emission, own);
-            } else {
-                let kept = self.arith(BinOp::Mul, c, below);
-                c = self.arith(BinOp::Add, kept, own);
-            }
-        }
-        Ok(self.arith(BinOp::Add, c, emission))
+        let (color, _, emission) = self.eval_layers(lobes, [n,v,l], span)?;
+        Ok(Val::V(color.into_iter().zip(emission).map(|(a,b)| a.add(&b)).collect(), 0.))
     }
 
-    /// Arithmetic on values without source expressions (used by builtins composed of ops).
+    fn eval_layers(&mut self, layers: &[Layer<S>], dirs: [&Val<S>;3], span: Span) -> Res<([S;3], S, [S;3])> {
+        let zero = || std::array::from_fn(|_| S::c(0.));
+        let (mut color, mut through, mut emission): ([S;3], S, [S;3]) = (zero(), S::c(1.), zero());
+        for layer in layers {
+            let (own, t, glow) = match layer {
+                Layer::Lobe(name, bound) => {
+                    let mut args = bound.clone();
+                    args.extend(dirs.map(Clone::clone));
+                    let Val::V(r, _) = self.call_fn(self.p.fns[name.as_str()], args, span)? else { unreachable!("checked vec4") };
+                    let rgb = std::array::from_fn(|i| r[i].clone());
+                    if name == "emit_lobe" { (zero(), S::c(1.), rgb) } else { (rgb, r[3].clone(), zero()) }
+                }
+                Layer::Mix(a,b,t) => {
+                    let (ac, at, ae) = self.eval_layers(a,dirs,span)?;
+                    let (bc, bt, be) = self.eval_layers(b,dirs,span)?;
+                    let blend = |x:&S,y:&S| x.add(&y.sub(x).mul(t));
+                    (std::array::from_fn(|i| blend(&ac[i], &bc[i])), blend(&at,&bt), std::array::from_fn(|i| blend(&ae[i],&be[i])))
+                }
+            };
+            color = std::array::from_fn(|i| color[i].mul(&t).add(&own[i]));
+            through = through.mul(&t);
+            emission = std::array::from_fn(|i| emission[i].add(&glow[i]));
+        }
+        Ok((color, through, emission))
+    }
+
     fn arith(&mut self, op: BinOp, x: Val<S>, y: Val<S>) -> Val<S> {
         let dummy = Expr { id: u32::MAX, span: Span::default(), kind: ExprKind::Bool(false) };
         // Only float/vector operands reach here, so the integer arms that read `ty` are never taken.

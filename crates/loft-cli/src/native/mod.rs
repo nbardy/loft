@@ -637,7 +637,7 @@ impl Loaded {
                 stats.load_bake_gpu_ms = Some(ticks as f64 * c.period_ns / 1e6);
             }
         }
-        let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present]));
+        let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present])).transpose()?;
         let n = 2 * (p.passes.len() as u32 + u32::from(path.as_ref().is_some_and(PathGpu::has_photons)));
         let clock = g.timestamps.then(|| Clock {
             set: d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("frame"), ty: wgpu::QueryType::Timestamp, count: n }),

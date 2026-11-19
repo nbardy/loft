@@ -1,12 +1,14 @@
 struct PathHit { t: f32, p: vec3<f32>, n: vec3<f32>, kind: u32, at: u32, entering: bool }
-struct PathRow { lo: vec3<f32>, kind: u32, hi: vec3<f32>, at: u32 }
+
 struct PathLamp { position: vec4<f32>, intensity: vec4<f32> }
 struct PathLight { wi: vec3<f32>, l: vec3<f32>, t: f32 }
 struct PathRay { o: vec3<f32>, d: vec3<f32> }
 @group(2) @binding(0) var<storage, read> world_words: array<f32>;
-@group(2) @binding(1) var<storage, read> world_rows: array<PathRow>;
+@group(2) @binding(1) var<storage, read> loft_bvh_nodes: array<LoftBvhNode>;
 @group(2) @binding(2) var<storage, read> world_luts: array<f32>;
 @group(2) @binding(3) var<storage, read> world_lamps: array<PathLamp>;
+
+@group(2) @binding(4) var<storage, read> loft_bvh_leaves: array<LoftLeafRef>;
 
 fn path_hash(input: u32) -> u32 {
   var h = (input ^ (input >> 16u)) * 0x7feb352du;
@@ -34,38 +36,19 @@ fn path_camera(px: vec2<f32>, seed: u32) -> PathRay {
   let focal_point = d * (FOCUS / max(1e-4,dot(axis,d)));
   return PathRay(frame.eye.xyz + offset, normalize(focal_point-offset));
 }
-fn path_span(o: vec3<f32>, d: vec3<f32>, row: PathRow) -> vec2<f32> {
-  let safe = select(d, vec3<f32>(1e-30), abs(d) < vec3<f32>(1e-30));
-  let a = (row.lo - o) / safe;
-  let b = (row.hi - o) / safe;
-  let lo = min(a,b);
-  let hi = max(a,b);
-  return vec2<f32>(max(max(lo.x,lo.y),lo.z),min(min(hi.x,hi.y),hi.z));
+fn world_at(leaf: LoftLeafRef) -> u32 {
+  let i = 1u + 2u * leaf.kind_id;
+  return bitcast<u32>(world_words[i]) + leaf.row_id * bitcast<u32>(world_words[i+1u]);
+}
+fn loft_bvh_field(leaf: LoftLeafRef, p: vec3<f32>) -> f32 {
+  return world_field(leaf.kind_id, world_at(leaf), p);
 }
 fn world_trace(o: vec3<f32>, d: vec3<f32>, limit: f32) -> PathHit {
-  var at = 0u;
-  var kind = 0u;
-  var nearest = limit;
-  // Counts, bounds and row offsets are instance data. Field code is emitted once per kind.
-  for (var i = 0u; i < arrayLength(&world_rows); i++) {
-    let row = world_rows[i];
-    if row.kind == 0xffffffffu { continue; }
-    let span = path_span(o,d,row);
-    let end = min(span.y, nearest);
-    var t = max(span.x, 0.0001);
-    if t > end { continue; }
-    let lip = world_lipschitz(row.kind, row.at);
-    for (var step=0u; step<192u && t<=end; step++) {
-      let dist = abs(world_field(row.kind, row.at, o+d*t));
-      if dist <= 8e-6 * max(1.0,t) {
-        // abs(distance) is required for rays beginning inside a closed interface.
-        if t<nearest { nearest=t; kind=row.kind; at=row.at; }
-        break;
-      }
-      t += dist / lip;
-    }
-  }
-  if nearest == limit { return PathHit(-1.0, vec3<f32>(0.0), vec3<f32>(0.0), 0u, 0u, false); }
+  let hit = loft_bvh_trace(LoftRay(o, d, 0.0001, limit), bitcast<u32>(world_words[0]), false);
+  let nearest = hit.t;
+  if nearest < 0.0 { return PathHit(nearest, vec3(0.0), vec3(0.0), 0u, 0u, false); }
+  let kind = hit.leaf.kind_id;
+  let at = world_at(hit.leaf);
   let p = o + d*nearest;
   var g = vec3<f32>(0.0);
   for (var j=0u; j<6u; j++) {
@@ -113,8 +96,8 @@ fn world_direct(h: PathHit, wo: vec3<f32>, seed: u32, bounce: u32) -> vec3<f32> 
   let scale = loft_user_reservoir_scale(r);
   if scale == 0.0 { return vec3<f32>(0.0); }
   let lt = world_light(u32(r.w), h.p);
-  let v = world_trace(h.p+h.n*0.0002, lt.wi, lt.t-0.0002);
-  if v.t>=0.0 { return vec3<f32>(0.0); }
+  let v = loft_bvh_trace(LoftRay(h.p+h.n*0.0002, lt.wi, 0.0001, lt.t-0.0002), bitcast<u32>(world_words[0]), true);
+  if v.t != -1.0 { return vec3<f32>(0.0); }
   return world_eval(h, wo, lt.wi) * lt.l * scale;
 }
 

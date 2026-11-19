@@ -47,13 +47,14 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let prefix_len = em.out.len();
+    em.out.push_str(crate::bvh::WGSL);
     em.out.push_str(WORLD);
     let [radius, focus] = path.lens;
     let _ = writeln!(em.out, "const LENS_RADIUS: f32 = {}; const FOCUS: f32 = {};", super::f32_lit(f64::from(radius)), super::f32_lit(f64::from(focus)));
     let spectral = matches!(path.integrator, Integrator::Spectral);
     let mut field_cases = Vec::new();
     let mut eval_cases = Vec::new();
-    let mut lip_cases = Vec::new();
+    let mut intersect_cases = Vec::new();
     let mut optics_cases = Vec::new();
     for (i, (kind, (_, whole))) in kinds.iter().zip(queries).enumerate() {
         let decl = p.kinds[kind.name.as_str()];
@@ -73,8 +74,17 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
       let pose = kind{i}_loft_pose(row);
       return kind{i}_q_trace(row, loft_xf_pt(loft_xf_inv(pose), point));
     }}"));
-        let stride = kind.stride - 1;
-        lip_cases.push(format!("case {i}u: {{ return world_words[at + {stride}u]; }}"));
+        let intersection = match kind.draw {
+            Draw::Analytic => format!(r"
+                let row = kind{i}_load_row(at);
+                let xf = loft_xf_inv(kind{i}_loft_pose(row));
+                let t = kind{i}_q_visible(row, loft_xf_pt(xf, ray.o + ray.t0 * ray.d), loft_xf_vec(xf, ray.d));
+                let hit = ray.t0 + t;
+                return select(-1.0, hit, t >= 0.0 && hit >= span.x && hit <= span.y);"),
+            Draw::Traced => "return loft_bvh_march(leaf, LoftRay(ray.o, ray.d, span.x, span.y), world_words[b + 6u]);".into(),
+            Draw::Surface { .. } => unreachable!("grid-only worlds refused above"),
+        };
+        intersect_cases.push(format!("case {i}u: {{ {intersection} }}"));
         let mat = decl.query(QueryKind::Material).expect("draw material");
         let uv = if mat.params.len() == 4 { ", vec2<f32>(0.0)" } else { "" };
         eval_cases.push(format!(r"
@@ -101,12 +111,18 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
 fn world_field(kind: u32, at: u32, point: vec3<f32>) -> f32 {{
   switch kind {{ {} default: {{ return 1e6; }} }}
 }}
-fn world_lipschitz(kind: u32, at: u32) -> f32 {{
-  switch kind {{ {} default: {{ return 1.0; }} }}
+fn loft_bvh_intersect(leaf: LoftLeafRef, ray: LoftRay) -> f32 {{
+  let at = world_at(leaf);
+  let b = at + bitcast<u32>(world_words[2u + 2u*leaf.kind_id]) - 7u;
+  let lo = vec3(world_words[b],world_words[b+1u],world_words[b+2u]);
+  let hi = vec3(world_words[b+3u],world_words[b+4u],world_words[b+5u]);
+  let span = loft_bvh_span(ray, lo, hi);
+  if span.x > span.y {{ return -1.0; }}
+  switch leaf.kind_id {{ {} default: {{ return -2.0; }} }}
 }}
 fn world_eval(h: PathHit, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {{
   switch h.kind {{ {} default: {{ return vec3<f32>(0.0); }} }}
-}}", field_cases.join("\n"), lip_cases.join("\n"), eval_cases.join("\n"));
+}}", field_cases.join("\n"), intersect_cases.join("\n"), eval_cases.join("\n"));
     if spectral {
         let _ = writeln!(em.out, r"
 struct Optics {{ base: f32, dispersion: f32, absorb: vec3<f32> }}
