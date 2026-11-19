@@ -1,0 +1,10 @@
+build {
+  let asset = import_gltf("primitives.gltf")
+  emit Mesh(pose: place([0m, 0m, 0m]@World), asset: asset.mesh("Paired"))
+}
+
+camera Main {
+  eye: [1.75, 0.5, 5]@World,
+  at: [1.75, 0.5, 0]@World,
+  fov: 0.6rad
+}
