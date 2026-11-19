@@ -26,6 +26,8 @@ export type World = {
 };
 export type Scene = World & {
   cameras: Record<string, Camera>;
+  /** Row steps (loft/motion `move(...).steps`). Each frame presents their rows before any camera or pass reads them. */
+  steps?: readonly import("../record/decls.ts").RowStep[];
   engine: (s: Scene) => Declarations;
   sky?: string;
   sun?: { towards: V3; power: V3 };
@@ -34,6 +36,7 @@ export const scene = (s: Scene) => ({
   kind: "ordered" as const,
   cameras: s.cameras,
   tables: s.tables,
+  steps: s.steps,
   record: (engine: Scene["engine"] = s.engine) => engine(s),
 });
 export type OrderedScene = ReturnType<typeof scene>;

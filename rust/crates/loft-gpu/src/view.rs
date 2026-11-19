@@ -137,10 +137,8 @@ impl Cameras {
             Aim::Named(k) => Some(*k),
         };
         {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("loft camera"),
-                timestamp_writes,
-            });
+            let mut pass =
+                enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("loft camera"), timestamp_writes });
             pass.set_bind_group(0, g0, &[0]);
             if let Some(k) = lens {
                 pass.set_pipeline(&self.lenses[k]);

@@ -84,7 +84,7 @@ pub enum Why {
 pub enum Scope {
     Proved,
     Sampled { n: u32 },
-    Trace { ticks: u32, inputs: [u8; 32], law: [u8; 32], by: Evaluator },
+    Observed { ticks: u32, inputs: [u8; 32], law: [u8; 32], by: Evaluator },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum Evaluator {
@@ -93,10 +93,10 @@ pub enum Evaluator {
 }
 
 /// Each element is the signed margin of the observed site at that tick. Refuse missing or nonfinite evidence.
-pub fn trace(margins: &[Option<f32>], inputs: [u8; 32], law: [u8; 32], by: Evaluator) -> Result<Verdict, Error> {
+pub fn observed(margins: &[Option<f32>], inputs: [u8; 32], law: [u8; 32], by: Evaluator) -> Result<Verdict, Error> {
     if margins.is_empty() || margins.iter().flatten().any(|m| !m.is_finite()) {
         return Err(Error::Usage(
-            "trace needs a finite observed margin at every sampled tick: supply the missing site".into(),
+            "an observed check needs a finite margin at every sampled tick: supply the missing site".into(),
         ));
     }
     let (tick, margin) = margins
@@ -113,7 +113,7 @@ pub fn trace(margins: &[Option<f32>], inputs: [u8; 32], law: [u8; 32], by: Evalu
         bounds: [f64::from(margin); 2],
         witness: Box::new([(0, tick as f32)]),
         work: Work::default(),
-        scope: Scope::Trace { ticks: margins.len() as u32, inputs, law, by },
+        scope: Scope::Observed { ticks: margins.len() as u32, inputs, law, by },
     })
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

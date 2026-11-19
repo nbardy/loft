@@ -318,6 +318,86 @@ impl Run {
         );
     }
 }
+impl Run {
+    /// The render seam: ordered record and ray observers of the live post-IK POSE, through playback, seeks and
+    /// rewinds. Each frame's POSE is copied after its passes in the same encoder, so the oracle is the snapshot those
+    /// passes read; it must also equal the baked take at that tick (`one.pose`).
+    fn posed_observers(&self) {
+        let rows: Vec<u32> = fs::read(self.dir.join("seen.rows"))
+            .unwrap()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|w| u32::from_le_bytes(*w))
+            .collect();
+        let baked = fs::read(self.dir.join("one.pose")).unwrap();
+        let ticks: Vec<u32> = (0..=48).map(|k| 5 * k).chain([420, 150, 60, 240, 480, 0]).collect();
+        let mut observers = ["record", "trace"].map(|name| {
+            let b = self.read(&format!("seen-{name}"));
+            let output = b.row_steps[0].output;
+            let mut l = self.load(&b);
+            l.use_camera("top").unwrap();
+            (l, output)
+        });
+        let [w, h] = SIZE;
+        let (mut edge, mut wrong, mut disagree, mut stale) = (0, 0, 0, 0);
+        for &k in &ticks {
+            let mut masks = vec![];
+            for (l, output) in &mut observers {
+                l.set_time(k as f32 / 120.0);
+                let mut e = self.d.create_command_encoder(&Default::default());
+                self.encode(l, &mut e);
+                let pixels = self.stage(u64::from(4 * w * h));
+                e.copy_texture_to_buffer(
+                    self.targets[0].texture().as_image_copy(),
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &pixels,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(4 * w),
+                            rows_per_image: Some(h),
+                        },
+                    },
+                    wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                );
+                let pose = self.stage(928);
+                l.copy_rows(&mut e, *output, &pose, 0).unwrap();
+                self.q.submit([e.finish()]);
+                let pose = self.bytes(&pose);
+                stale += usize::from(pose[..] != baked[k as usize * 928..(k as usize + 1) * 928]);
+                let f = |i: usize| f32::from_le_bytes(pose[4 * i..4 * i + 4].try_into().unwrap());
+                let centres: Vec<[f32; 2]> = rows.iter().map(|&r| [f(4 * r as usize), f(4 * r as usize + 2)]).collect();
+                let rgba = self.bytes(&pixels);
+                let mut mask = vec![];
+                for (i, p) in rgba.as_chunks::<4>().0.iter().enumerate() {
+                    // Top view: screen right is world -x and screen up is world +z (src/host/camera.ts lookAt).
+                    let scale = 20.0 / h as f32;
+                    let x = 1.5 - ((i as u32 % w) as f32 + 0.5 - w as f32 / 2.0) * scale;
+                    let z = (h as f32 / 2.0 - ((i as u32 / w) as f32 + 0.5)) * scale;
+                    let d = centres
+                        .iter()
+                        .map(|c| ((x - c[0]).powi(2) + (z - c[1]).powi(2)).sqrt())
+                        .fold(f32::MAX, f32::min);
+                    let seen = p[0] == 255;
+                    if (d - 0.5).abs() < 1e-3 {
+                        edge += 1;
+                    } else if seen != (d < 0.5) {
+                        wrong += 1;
+                    }
+                    mask.push((seen, (d - 0.5).abs() < 1e-3));
+                }
+                masks.push(mask);
+            }
+            // Off the edge band both observers already match the oracle; count where they differ within it.
+            disagree += masks[0].iter().zip(&masks[1]).filter(|(a, b)| a.0 != b.0).count();
+        }
+        println!(
+            "posed observers over {} frames x 2: {wrong} wrong pixels, {edge} edge pixels, {disagree} record/trace disagreements (all within the edge band), {stale} snapshots unlike the baked tick",
+            ticks.len()
+        );
+        assert_eq!((wrong, stale), (0, 0));
+    }
+}
 fn quantiles(mut values: Vec<f64>) -> Vec<f64> {
     if values.is_empty() {
         return vec![];
@@ -355,6 +435,7 @@ fn recorded_take_score() {
     let r = Run { d, q, dir, targets, queries };
     r.events();
     let base = r.trace("one");
+    r.posed_observers();
     r.trace("low");
     r.trace("broken");
     r.trace("deck");

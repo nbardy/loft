@@ -14,7 +14,7 @@ fn invalid(reason: impl Into<Box<str>>) -> Error {
 fn rows_bytes(b: &Bundle, r: u32) -> Option<u64> {
     match &b.resources.get(r as usize)?.shape {
         Shape::Rows { rows, lanes } => Some(u64::from(*rows) * u64::from(*lanes) * 16),
-        _ => None,
+        Shape::Texture { .. } | Shape::ViewSized { .. } | Shape::Frame => None,
     }
 }
 pub(super) fn buffer_roles(s: &Schedule) -> std::collections::HashMap<u32, BufferUsages> {
@@ -225,6 +225,7 @@ fn blend(b: Blend) -> Option<BlendState> {
 }
 
 impl Ordered {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         device: &Device,
         queue: &Queue,
@@ -298,7 +299,10 @@ impl Ordered {
                         let sample_type = match im.format {
                             TexFormat::Rgba16Uint => TextureSampleType::Uint,
                             TexFormat::Depth32Float => TextureSampleType::Depth,
-                            _ => TextureSampleType::Float { filterable: false },
+                            TexFormat::Rgba8Unorm
+                            | TexFormat::Rgba16Float
+                            | TexFormat::Rgba32Float
+                            | TexFormat::R32Float => TextureSampleType::Float { filterable: false },
                         };
                         binds.push(BindGroupLayoutEntry {
                             binding: binds.len() as u32,

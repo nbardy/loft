@@ -770,7 +770,7 @@ impl Graph {
                 sum.checked_add(match *t {
                     Ty::Kind(child) => *widths.get(child as usize)?,
                     Ty::U32 => 2,
-                    _ => t.lits() as usize,
+                    Ty::F32 | Ty::V2 | Ty::V3 | Ty::V4 | Ty::Bool => t.lits() as usize,
                 })
             })?;
             widths.push(n);

@@ -245,7 +245,21 @@ impl<'g> Body<'g> {
                         calls.extend(o.targets());
                     }
                 }
-                _ => {}
+                Op::Lit(_)
+                | Op::Time
+                | Op::Param(_)
+                | Op::Input(_)
+                | Op::Bind(_)
+                | Op::Var(_)
+                | Op::Fetch { .. }
+                | Op::Loop { .. }
+                | Op::Grad
+                | Op::Raw(_)
+                | Op::Field(_)
+                | Op::Make(_)
+                | Op::Swizzle(_)
+                | Op::Vec
+                | Op::Prim(_) => {}
             }
         }
         calls

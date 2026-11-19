@@ -1160,11 +1160,17 @@ impl Loft {
         match &self.ordered {
             Some(p) => {
                 let [r, c] = p.counts();
-                [self.b.modules.len() + 1, r, c + self.compute.len() + self.b.cameras.len() + 2 * self.programs.len() + 1]
+                [
+                    self.b.modules.len() + 1,
+                    r,
+                    c + self.compute.len() + self.b.cameras.len() + 2 * self.programs.len() + 1,
+                ]
             }
-            None => {
-                [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len() + 2 * self.programs.len()]
-            }
+            None => [
+                self.b.modules.len(),
+                self.render.len(),
+                self.compute.len() + self.b.cameras.len() + 2 * self.programs.len(),
+            ],
         }
     }
 
@@ -1430,7 +1436,7 @@ impl Loft {
                 };
                 self.frame_key(camera, view.size).prefix()
             });
-            let ordered = self.ordered.as_mut().expect("checked above");
+            let Some(ordered) = self.ordered.as_mut() else { unreachable!("checked above") };
             let loft_ir::bundle::Format::V2(s) = &self.b.format else {
                 unreachable!("ordered bundles carry a schedule")
             };

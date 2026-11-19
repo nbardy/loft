@@ -199,7 +199,7 @@ fn frames(f: &Flags, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<Times,
             let last = n as usize - 1;
             // An empty kernel pass or no pass at all writes no timestamps; resolved, they read 0.
             let (kernels, passes) = (c.ms(k[0], k[1]), if last > 1 { c.ms(k[2], k[last]) } else { 0.0 });
-            for (p, ticks) in k[2..].chunks_exact(2).enumerate() {
+            for (p, ticks) in k[2..].as_chunks::<2>().0.iter().enumerate() {
                 t.by_pass[p].push(c.ms(ticks[0], ticks[1]));
             }
             t.pose.push(kernels);

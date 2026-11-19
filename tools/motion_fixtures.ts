@@ -82,3 +82,26 @@ for (const [source, expected] of [
   catch (e) { if (e instanceof NativeError && e.kind==="scene" && e.message.includes(expected)) continue; throw e; }
   throw new Error("row-locality check accepted a stateful global or cross-row operation");
 }
+
+// Render seam: one sphere at each distal joint frame of the post-IK POSE, seen by the record (print) and by the
+// independent ray observer (inspect) from a top orthographic camera. motion_live.rs `posed_observers` reads them.
+{
+  const { scene, thing, sphere, matte, print, inspect } = await import("../src/render/index.ts");
+  const { buildOrdered } = await import("../src/core/ordered.ts");
+  const m = move(crab, normal, { go, script: stick });
+  const rows = crab.chains.map((_, i) => m.frame(0, 3 + 3 * i));
+  const world = {
+    things: rows.map((_, i) => ({ ...thing(sphere(0.5), matte([1, 1, 1])), id: i + 1 })),
+    tables: [m.pose],
+    steps: [m.steps],
+    origin: `fn origin(i:u32)->vec3f {return t_posed(array<u32,8>(${rows.map((r) => r + "u")})[i]).xyz;}`,
+    cameras: { top: { kind: "orthographic" as const, eye: [1.5, 20, 0] as const, target: [1.5, 0, 0] as const, height: 20 } },
+  };
+  const engines = {
+    record: print({ samples: 1, shade: "fn shade(x:Point,wo:vec3f,ink:bool,px:vec2f)->vec4f{return vec4f(1,0,0,1);}" }),
+    trace: inspect("fn pixel(px:vec2f)->vec4f{return vec4f(f32(trace(camera_ray(px)).t>=0),0,0,1);}"),
+  };
+  for (const [name, engine] of Object.entries(engines))
+    buildOrdered(scene({ ...world, engine }), join(out, `seen-${name}.loft`), { naga: "emit", precision: "f32" });
+  writeFileSync(join(out, "seen.rows"), Uint32Array.from(rows));
+}

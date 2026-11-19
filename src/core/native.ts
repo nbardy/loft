@@ -25,7 +25,7 @@ export type Phases = { readonly decode: number; readonly plan: number; readonly 
 /** loft-core `check::Verdict` as serde writes it. */
 export type Verdict = {
   readonly truth: "Holds" | "Fails" | { readonly Undecided: unknown }; readonly margin: number; readonly bounds: readonly [number, number];
-  readonly witness: readonly (readonly [number, number])[]; readonly work: { readonly boxes: number }; readonly scope: "Proved" | { readonly Sampled: { readonly n: number } } | { readonly Trace: {ticks:number; inputs:number[]; law:number[]; by:"Gpu"|"Twin"} };
+  readonly witness: readonly (readonly [number, number])[]; readonly work: { readonly boxes: number }; readonly scope: "Proved" | { readonly Sampled: { readonly n: number } } | { readonly Observed: {ticks:number; inputs:number[]; law:number[]; by:"Gpu"|"Twin"} };
 };
 export type Site = { readonly file: string; readonly line: number; readonly col: number };
 /** A Solve job leaves every hold "Unproved" (never a pass); a Check job proves each (loft-core `solve::Proof`). */

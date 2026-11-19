@@ -1,6 +1,6 @@
 //! Measure signed margins stored by a presented table. The predicate and margin refer to words of the *same* record.
 use crate::{Verdict, gpu, load, read_bundle};
-use loft_core::check::{Evaluator, Truth, trace};
+use loft_core::check::{Evaluator, Truth, observed};
 use loft_ir::{
     bundle::Shape,
     identity::{Precision, build},
@@ -71,7 +71,7 @@ pub(super) fn run(dir: &Path, index: usize, sites: &str) -> Result<(), Verdict> 
     let prefix = l.frame_key(0, [1, 1]).steps[index].prefix;
     let mut failed = 0;
     for (site, margins) in sites.into_iter().zip(samples) {
-        let v = trace(&margins, prefix, law, Evaluator::Gpu)?;
+        let v = observed(&margins, prefix, law, Evaluator::Gpu)?;
         failed += usize::from(!matches!(v.truth, Truth::Holds));
         println!(
             "{}",

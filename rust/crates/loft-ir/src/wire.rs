@@ -124,8 +124,11 @@ enum FnSlot {
     Raw(u32),
 }
 
+/// A checked job: its wire version, program, the eleven spans and wire 5's optional ordered declarations.
+type Spans<'a> = (u32, Program, [&'a [u8]; 11], Option<crate::pass::Declarations>);
+
 /// The header and the eleven spans, each checked for length, padding and whole elements.
-fn spans(buf: &[u8]) -> Result<(u32, Program, [&[u8]; 11], Option<crate::pass::Declarations>), Error> {
+fn spans(buf: &[u8]) -> Result<Spans<'_>, Error> {
     let word = |at: usize| buf.get(at..at + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     let h = |i: usize| word(4 * i).ok_or_else(|| bad(Span::Header, i, Fault::Truncated));
     (h(0)? == MAGIC).then_some(()).ok_or_else(|| bad(Span::Header, 0, Fault::Magic))?;
@@ -823,8 +826,11 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
             (12, [name, fields @ ..]) if z.typed => {
                 layout(!fields.is_empty() && fields.len() % 2 == 0 && fields.len() / 2 <= u16::MAX as usize)?;
                 let id = out.kinds.len() as u32;
-                let fields =
-                    fields.chunks_exact(2).map(|f| Ok((sym(f[0])?, ty(f[1])?))).collect::<Result<Vec<_>, Error>>()?;
+                let fields = fields.as_chunks::<2>().0.iter().map(|f| Ok((sym(f[0])?, ty(f[1])?))).collect::<Result<
+                    Vec<_>,
+                    Error,
+                >>(
+                )?;
                 let unique: std::collections::HashSet<_> = fields.iter().map(|f| f.0).collect();
                 layout(unique.len() == fields.len())?;
                 for &r in rs {
@@ -839,8 +845,11 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                     _ => Err(bad(Span::Decls, at, Fault::Ref { found: f })),
                 };
                 let otherwise = graph_fn(*fallback)?;
-                let mut cases =
-                    cases.chunks_exact(2).map(|c| Ok((c[0], graph_fn(c[1])?))).collect::<Result<Vec<_>, Error>>()?;
+                let mut cases = cases.as_chunks::<2>().0.iter().map(|c| Ok((c[0], graph_fn(c[1])?))).collect::<Result<
+                    Vec<_>,
+                    Error,
+                >>(
+                )?;
                 cases.sort_by_key(|c| c.0);
                 layout(!cases.windows(2).any(|p| p[0].0 == p[1].0))?;
                 out.opens.push(crate::graph::Open { name: sym(*name)?, cases: cases.into(), otherwise });

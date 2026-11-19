@@ -10,7 +10,7 @@ export function buildOrdered(scene: OrderedScene, file: string, options: Build) 
   const job = rec.job(
     Program.Scene,
     (scene.tables ?? []).map((t) => fetch(t, 0, 0)),
-    { cameras, passes: [], checks: [], solves: [] },
+    { cameras, passes: [], checks: [], solves: [], ...(scene.steps?.length ? { rowSteps: scene.steps } : {}) },
   );
   return native().run(
     pack(job, scene.record()),

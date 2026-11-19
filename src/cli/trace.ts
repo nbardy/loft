@@ -33,16 +33,16 @@ export function recordedModules(scene: Scene): Shown[] {
   return withRecording(scene, dir => inspect(["show", dir]).lines.map(line => JSON.parse(line) as Shown));
 }
 export function checkRecorded(scene: Scene) {
-  const groups = scene.traces;
-  if (!groups?.length) throw new UsageError("this recording declares no observations: include trace sites from the presented rows");
+  const groups = scene.observed;
+  if (!groups?.length) throw new UsageError("this recording declares no observations: include observed sites from the presented rows");
   withRecording(scene, dir => {
     let failed = false;
     for (const group of groups) {
       const result = inspect(["trace", dir, String(group.step), JSON.stringify(group.sites)]);
       for (const line of result.lines) {
         const { label, observations, verdict: v } = JSON.parse(line) as { label: string; observations: number; verdict: Verdict };
-        if (typeof v.scope !== "object" || !("Trace" in v.scope)) throw new Error("expected a GPU trace verdict");
-        const scope = v.scope.Trace;
+        if (typeof v.scope !== "object" || !("Observed" in v.scope)) throw new Error("expected a GPU trace verdict");
+        const scope = v.scope.Observed;
         const digest = (bytes: number[]) => Buffer.from(bytes).toString("hex").slice(0, 12);
         console.log(`${label}: ${v.truth}, margin ${v.margin.toPrecision(5)} at tick ${v.witness[0][1]} · ${observations}/${scope.ticks} samples · ${scope.by} · input ${digest(scope.inputs)} · law ${digest(scope.law)}`);
       }
