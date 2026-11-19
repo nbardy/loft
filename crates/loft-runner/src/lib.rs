@@ -278,16 +278,27 @@ impl Runner {
         *old = next;
         Ok(())
     }
+    /// Record the bundle into the caller's encoder without submitting it.
+    ///
+    /// Render passes share one caller color attachment and optional depth attachment.
+    /// Use 2D renderable views in their textures' base formats with the sample count
+    /// and depth convention supplied at attachment. Shader outputs must use that
+    /// depth convention. The caller initializes and, for MSAA, resolves the views.
     pub fn encode_into(
         &mut self,
         id: InstanceId,
         encoder: &mut wgpu::CommandEncoder,
-        _target: &wgpu::TextureView,
-        _depth: Option<&wgpu::TextureView>,
+        target: &wgpu::TextureView,
+        depth: Option<&wgpu::TextureView>,
         time_s: f64,
         dt_s: f32,
     ) -> Result<FrameIdentity> {
         let device = self.device.clone();
+        let target = embed::Target {
+            color: target,
+            depth,
+            caps: self.caps,
+        };
         let inst = self.instance(id)?;
         inst.compute.encode(
             &device,
@@ -297,6 +308,7 @@ impl Runner {
             inst.resource_epoch,
             time_s,
             dt_s,
+            &target,
         )?;
         Ok(FrameIdentity {
             instance: id,
