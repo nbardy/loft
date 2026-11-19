@@ -23,7 +23,7 @@ fn pick(u:f32)->u32 {
 fn light(i:u32,p:vec3f,u:vec2f)->Lit {
   let e=emitters[i];
   if e.radius==0 {return Lit(e.pos,e.L,e.prob,p+e.pos*1e5);}
-  let v=e.pos-p;let l=length(v);
+  let v=origin(e.row)-p;let l=length(v);
   // Stable solid angle of a sphere. Inside the emitter every direction hits its exit.
   let sin2=min(1,e.radius*e.radius/dot(v,v));
   let cap=select(sin2/(1+sqrt(1-sin2)),2.0,l<=e.radius);

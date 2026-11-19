@@ -1,5 +1,5 @@
 fn intersect(i: u32,r: Ray) -> Hit {
-  let s=rows[i]; let ray=local(r,s.origin);
+  let s=rows[i]; let ray=local(r,origin(i));
   let bounds=read_bound(s.refs.x,s.refs.y);
   let limits=span(bounds,ray);
   if limits.x>limits.y || limits.y<r.t0 || limits.x>=r.t1 {return miss;}

@@ -458,7 +458,7 @@ fn scene(
     };
     let wgsl_bytes = wgsl_bytes
         + match declarations {
-            Some(d) => pass::link(&mut b, d, build)?,
+            Some(d) => pass::link(&mut b, d, build, &g, &slots)?,
             None => 0,
         };
     let resources = b.resources.len();

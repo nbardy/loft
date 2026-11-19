@@ -2,7 +2,7 @@ struct Vertex { @builtin(position) px: vec4f, @location(0) @interpolate(flat) ro
 @vertex fn boxes(@builtin(vertex_index) k: u32,@builtin(instance_index) i: u32) -> Vertex {
   let corners=array<u32,36>(0,2,6,0,6,4,5,7,3,5,3,1,0,4,5,0,5,1,3,7,6,3,6,2,0,1,3,0,3,2,6,7,5,6,5,4);
   let c=corners[k]; let s=rows[i]; let b=read_bound(s.refs.x,s.refs.y);
-  let p=s.origin + select(b.lo,b.hi,(vec3u(c)&vec3u(1,2,4))!=vec3u(0));
+  let p=origin(i) + select(b.lo,b.hi,(vec3u(c)&vec3u(1,2,4))!=vec3u(0));
   var clip=frame.vp*vec4f(p,1);
   // Only the proxy is depth-clamped. The fragment writes the actual surface depth.
   clip.z=clamp(clip.z,0,clip.w);
@@ -15,7 +15,7 @@ struct Record { @location(0) id: vec4u, @builtin(frag_depth) depth: f32, @builti
   let o=v.world-d*dot(v.world-frame.eye.xyz,d);
   let scale=2.0/(frame.viewport.y*length(vec3f(frame.vp[0].y,frame.vp[1].y,frame.vp[2].y)));
   let r=Ray(o,d,0,1e30,select(vec2f(scale,0),vec2f(0,scale*dot(frame.forward.xyz,d)),frame.eye.w!=0));
-  let ray=local(r,s.origin);
+  let ray=local(r,origin(v.row));
   let h=read_hit(s.refs.x,s.refs.y,ray);
   var t=h.t; var mask=15u; var ink=0u;
   if t<0 {
