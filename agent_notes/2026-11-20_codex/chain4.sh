@@ -7,7 +7,7 @@ disk() { f=$(df -k /System/Volumes/Data | tail -1 | awk '{print int($4/1048576)}
 wait_done() { until [ -s "$D/$1.done" ]; do sleep 60; done; }
 run() { "$D/run.sh" "$1" "$2" "$3" ~/git/loft; }
 ok()  { [ "$(cat "$D/$1.done")" = "0" ] || { echo "stop at $1" > "$D/chain.stopped"; exit 1; }; }
-step() { if pgrep -f "run.sh $1 " >/dev/null; then wait_done $1; else run $1 $2 $3; fi; ok $1; }
+step() { if pgrep -f "/run.sh $1 gpt" >/dev/null; then wait_done $1; else run $1 $2 $3; fi; ok $1; }
 lanes() { local pids=(); for l in "$@"; do run $l gpt-6.2-sol high & pids+=($!); sleep 20; done; wait "${pids[@]}"; }   # wait only for the lanes (a bare wait also waited on caffeinate and hung)   # the integrators judge lane failures
 step rp15 gpt-6.2-astra xhigh
 step fp15 gpt-6.2-sol high
