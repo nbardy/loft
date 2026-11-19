@@ -797,6 +797,20 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Layout<'k>> {
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).
 pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef], draw: Draw, aov: Aov) -> Res<String> {
+    emit_kind_module(p, types, k, light, luts, draw, aov, None)
+}
+
+pub(crate) fn kind_module_edit(
+    p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
+    draw: Draw, aov: Aov, edit: &str,
+) -> Res<String> {
+    emit_kind_module(p, types, k, light, luts, draw, aov, Some(edit))
+}
+
+fn emit_kind_module(
+    p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[LutRef],
+    draw: Draw, aov: Aov, edit: Option<&str>,
+) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.luts = luts;
     em.header(abi::NONCE_PLACEHOLDER);
@@ -859,6 +873,10 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
         em.func(f, "loft_surface_jvp");
     }
     for (which, f) in &k.queries {
+        if *which == QueryKind::Trace && let Some(source) = edit {
+            em.out.push_str(source);
+            continue;
+        }
         let n = match which {
             QueryKind::Visible => "q_visible",
             QueryKind::Trace => "q_trace",
@@ -922,6 +940,7 @@ struct FsOut {{ @location(0) vis: vec2<u32> }}
         Draw::Analytic | Draw::Traced => {
             let hit = match draw {
                 Draw::Analytic => "  // Closed form: the author's `visible` query, in the kind's space (a rigid pose keeps t).\n  let t = q_visible(row, lro, lrd);\n  if t < 0.0 { discard; }\n".to_string(),
+                Draw::Traced if edit.is_some() => "  let t = loft_edit_march(row, lro, lrd, span);\n  if t < 0.0 { discard; }\n".to_string(),
                 Draw::Traced | Draw::Surface { .. } | Draw::Mesh { .. } => "  // Sphere trace with the row's derived Lipschitz bound (hidden column `loft_lip`).\n  \
                      var t = max(span.x, 0.0);\n  let step = 1.0 / row.loft_lip;\n  var hit = false;\n  \
                      for (var i = 0u; i < 192u; i++) {\n    let d = q_trace(row, lro + lrd * t);\n    \
@@ -978,6 +997,18 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
 }}
 "
                 ),
+                if edit.is_some() {
+                    "  let t = bitcast<f32>(v.y);
+  let p = frame.eye.xyz + rd * t;
+  let pl = loft_xf_pt(xf, p);
+  let normal_ao = loft_edit_normal_ao(row, pl, t);
+  let nl = normal_ao.xyz;
+  let ao = normal_ao.w;
+  let n = normalize(loft_xf_vec(pose, nl));
+  let b = q_material(row, pl, nl);
+"
+                    .to_string()
+                } else {
                 "  let t = bitcast<f32>(v.y);
   let p = frame.eye.xyz + rd * t;
   let pl = loft_xf_pt(xf, p);
@@ -1003,7 +1034,8 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
   let n = normalize(loft_xf_vec(pose, nl));
   let b = q_material(row, pl, nl);
 "
-                .to_string(),
+                    .to_string()
+                },
                 format!(
                     "  let pl = loft_xf_pt(xf, a.xyz);
   let dl = normalize(loft_xf_vec(xf, d.xyz));

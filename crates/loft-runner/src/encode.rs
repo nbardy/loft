@@ -1,11 +1,11 @@
 use super::*;
 use std::collections::{BTreeSet, HashMap};
-use wgpu::util::DeviceExt;
+use wgpu::{ShaderStages as S, util::DeviceExt};
 
 pub(super) struct Group {
     pub index: u8,
     layout: wgpu::BindGroupLayout,
-    slots: Vec<(wgpu::BindGroupLayoutEntry, TableId)>,
+    pub(super) slots: Vec<(wgpu::BindGroupLayoutEntry, TableId)>,
     cached: Option<(u64, wgpu::BindGroup)>,
 }
 impl Group {
@@ -107,7 +107,7 @@ struct ComputePass {
     layout: wgpu::PipelineLayout,
     groups: Vec<Group>,
 }
-pub(super) pub(super) struct Shader {
+pub(super) struct Shader {
     pub handle: wgpu::ShaderModule,
     ir: naga::Module,
     info: naga::valid::ModuleInfo,

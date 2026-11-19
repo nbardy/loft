@@ -363,6 +363,8 @@ pub mod params;
 pub mod pick;
 pub use loft_format::replay;
 pub mod tier0;
+#[doc(hidden)]
+pub use loft_std::promotion;
 
 #[cfg(test)]
 mod tests;
