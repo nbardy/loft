@@ -40,6 +40,9 @@ pub struct Draw {
     pub vertex: String,
     pub fragment: String,
     pub vertices: u32,
+    /// First u32 index in this row table begins the indexed draw.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indices: Option<Id>,
     pub instances: Count,
     pub cull: Cull,
 }
@@ -80,8 +83,25 @@ pub struct Declarations {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged, deny_unknown_fields)]
 pub enum Table {
-    Data { lanes: u16, words: Vec<u32> },
-    Made { lanes: u16, rows: u32, module: Id, entry: String, extent: [u32; 3] },
+    Data {
+        lanes: u16,
+        words: Vec<u32>,
+    },
+    Made {
+        lanes: u16,
+        rows: u32,
+        module: Id,
+        entry: String,
+        extent: [u32; 3],
+        #[serde(default)]
+        when: Clock,
+    },
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+pub enum Clock {
+    #[default]
+    Load,
+    Frame,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Source {

@@ -44,7 +44,7 @@ pub fn link(b: &mut Bundle, mut d: Declarations, build: Build) -> Result<usize, 
                 sections.push(words.into_iter().flat_map(u32::to_le_bytes).collect());
                 (lanes, rows, Access::Read, init)
             }
-            Table::Made { lanes, rows, module, entry, extent } => {
+            Table::Made { lanes, rows, module, entry, extent, when } => {
                 let module = module
                     .checked_add(offset)
                     .filter(|&m| (m as usize) < modules.len())
@@ -52,10 +52,13 @@ pub fn link(b: &mut Bundle, mut d: Declarations, build: Build) -> Result<usize, 
                 if lanes == 0 || rows == 0 || extent.contains(&0) {
                     return Err(unsupported(format!("table {i}: use nonzero row, lane and dispatch counts")));
                 }
-                let init = Init::By(kernels.len() as u32);
+                let (init, when) = match when {
+                    loft_ir::pass::Clock::Load => (Init::By(kernels.len() as u32), When::Load),
+                    loft_ir::pass::Clock::Frame => (Init::Zero, When::Frame),
+                };
                 let body = Body::Raw { module, entry: names.len() as u32, dispatch: extent };
                 names.push(entry.into());
-                kernels.push(Kernel { when: When::Load, reads: Box::new([]), writes: Box::new([i as u32]), body });
+                kernels.push(Kernel { when, reads: Box::new([]), writes: Box::new([i as u32]), body });
                 (lanes, rows, Access::Write, init)
             }
         };

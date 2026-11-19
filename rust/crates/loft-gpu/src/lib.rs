@@ -556,11 +556,16 @@ impl Loft {
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: None, entries: &entries })
             })
             .collect();
+        let roles = match &b.format {
+            loft_ir::bundle::Format::V2(s) => pass::buffer_roles(s),
+            loft_ir::bundle::Format::V1 => Default::default(),
+        };
         let packs: Vec<Buffer> = b
             .packs
             .iter()
             .map(|p| {
                 let usage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
+                let usage = p.holds.iter().filter_map(|(r, _)| roles.get(r)).fold(usage, |bits, role| bits | *role);
                 device.create_buffer(&wgpu::BufferDescriptor {
                     label: Some("loft pack"),
                     size: p.vec4s * 16,
@@ -747,7 +752,7 @@ impl Loft {
         let ordered = match &b.format {
             loft_ir::bundle::Format::V1 => None,
             loft_ir::bundle::Format::V2(s) => {
-                Some(pass::Ordered::new(device, queue, s, &b, &modules, [&bgl0, &bgl1.render], canvases, cache))
+                Some(pass::Ordered::new(device, queue, s, &b, &modules, &packs, [&bgl0, &bgl1.render], canvases, cache))
             }
         };
         let mut loft = Loft {

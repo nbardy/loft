@@ -10,3 +10,4 @@ export { reference, film, resolve } from "../engines/reference.ts";
 export { lighting, albedoFill } from "../light/queries.ts";
 export { inspect } from "../engines/inspect.ts";
 export { twin, type Pick } from "./twin.ts";
+export { grid, compact } from "./covers/grid.ts";

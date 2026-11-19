@@ -11,6 +11,28 @@ fn invalid(reason: impl Into<Box<str>>) -> Error {
     Error::Load(LoadFault::Invalid(reason.into()))
 }
 
+fn rows_bytes(b: &Bundle, r: u32) -> Option<u64> {
+    match &b.resources.get(r as usize)?.shape {
+        Shape::Rows { rows, lanes } => Some(u64::from(*rows) * u64::from(*lanes) * 16),
+        _ => None,
+    }
+}
+pub(super) fn buffer_roles(s: &Schedule) -> std::collections::HashMap<u32, BufferUsages> {
+    let mut roles = std::collections::HashMap::new();
+    for pass in &s.passes {
+        if let Run::Raster { draws } = &pass.run {
+            for d in draws {
+                if let Some(r) = d.indices {
+                    *roles.entry(r).or_insert(BufferUsages::empty()) |= BufferUsages::INDEX;
+                }
+                if let Count::Indirect(r) = d.instances {
+                    *roles.entry(r).or_insert(BufferUsages::empty()) |= BufferUsages::INDIRECT;
+                }
+            }
+        }
+    }
+    roles
+}
 pub(super) fn validate(s: &Schedule, b: &Bundle, device: &Device) -> Result<(), Error> {
     let mut available = HashSet::new();
     if !b.passes.is_empty() || s.passes.is_empty() {
@@ -75,13 +97,23 @@ pub(super) fn validate(s: &Schedule, b: &Bundle, device: &Device) -> Result<(), 
                     return Err(bad("supply a draw and a destination"));
                 }
                 for d in draws {
+                    if let Some(r) = d.indices
+                        && !rows_bytes(b, r).is_some_and(|bytes| bytes >= u64::from(d.vertices) * 4)
+                    {
+                        return Err(bad("supply a u32 index table large enough for the requested draw"));
+                    }
                     match d.instances {
                         Count::Fixed(_) => {}
                         Count::Rows(id)
                             if b.resources.get(id as usize).is_some_and(|r| matches!(r.shape, Shape::Rows { .. })) => {}
                         Count::Rows(_) => return Err(bad("use a row table for the draw count")),
-                        Count::Indirect(_) => {
-                            return Err(bad("indirect counts require the compacted table lane; use Rows or Fixed"));
+                        Count::Indirect(r) => {
+                            let minimum = if d.indices.is_some() { 20 } else { 16 };
+                            if !rows_bytes(b, r).is_some_and(|bytes| bytes >= minimum) {
+                                return Err(bad(
+                                    "put the complete WebGPU indirect command in the first words of a row table",
+                                ));
+                            }
                         }
                     }
                 }
@@ -110,9 +142,58 @@ pub(super) fn validate(s: &Schedule, b: &Bundle, device: &Device) -> Result<(), 
 }
 
 enum Pipeline {
-    Raster(Vec<(RenderPipeline, u32, u32)>),
+    Raster(Vec<(RenderPipeline, Command)>),
     Compute(ComputePipeline, [u32; 3]),
 }
+enum Command {
+    Direct(u32, u32),
+    Indirect(Buffer, u64),
+    Indexed(Buffer, u64, u64, u32, u32),
+    IndexedIndirect(Buffer, u64, u64, Buffer, u64),
+}
+impl Command {
+    fn encode(&self, p: &mut RenderPass<'_>) {
+        match self {
+            Self::Direct(v, n) => p.draw(0..*v, 0..*n),
+            Self::Indirect(buf, at) => p.draw_indirect(buf, *at),
+            Self::Indexed(index, start, end, v, n) => {
+                p.set_index_buffer(index.slice(*start..*end), IndexFormat::Uint32);
+                p.draw_indexed(0..*v, 0, 0..*n);
+            }
+            Self::IndexedIndirect(index, start, end, buf, at) => {
+                p.set_index_buffer(index.slice(*start..*end), IndexFormat::Uint32);
+                p.draw_indexed_indirect(buf, *at);
+            }
+        }
+    }
+}
+fn command(d: &loft_ir::pass::Draw, b: &Bundle, packs: &[Buffer]) -> Command {
+    let table = |r| {
+        let (buffer, offset) = b
+            .packs
+            .iter()
+            .enumerate()
+            .find_map(|(i, p)| p.holds.iter().find(|(id, _)| *id == r).map(|(_, o)| (&packs[i], 16 * o)))
+            .expect("validated row resource");
+        (buffer.clone(), offset, offset + rows_bytes(b, r).expect("validated table"))
+    };
+    let direct = |n| match d.indices.map(table) {
+        Some((i, a, z)) => Command::Indexed(i, a, z, d.vertices, n),
+        None => Command::Direct(d.vertices, n),
+    };
+    match d.instances {
+        Count::Fixed(n) => direct(n),
+        Count::Rows(r) => direct(rows_of(b, r)),
+        Count::Indirect(r) => {
+            let (buf, at, _) = table(r);
+            match d.indices.map(table) {
+                Some((i, a, z)) => Command::IndexedIndirect(i, a, z, buf, at),
+                None => Command::Indirect(buf, at),
+            }
+        }
+    }
+}
+
 struct Entry {
     pipe: Pipeline,
     layout: BindGroupLayout,
@@ -150,6 +231,7 @@ impl Ordered {
         s: &Schedule,
         b: &Bundle,
         modules: &[ShaderModule],
+        packs: &[Buffer],
         groups: [&BindGroupLayout; 2],
         canvases: &[Canvas],
         cache: Option<&PipelineCache>,
@@ -292,11 +374,6 @@ impl Ordered {
                             draws
                                 .iter()
                                 .map(|d| {
-                                    let count = match d.instances {
-                                        Count::Fixed(n) => n,
-                                        Count::Rows(r) => rows_of(b, r),
-                                        Count::Indirect(_) => unreachable!("validated"),
-                                    };
                                     let pipe = device.create_render_pipeline(&RenderPipelineDescriptor {
                                         label: Some(&p.name),
                                         layout: Some(&layout),
@@ -325,7 +402,7 @@ impl Ordered {
                                         multiview_mask: None,
                                         cache,
                                     });
-                                    (pipe, d.vertices, count)
+                                    (pipe, command(d, b, packs))
                                 })
                                 .collect(),
                         ),
@@ -519,9 +596,9 @@ impl Ordered {
                     pass.set_bind_group(2, &g2, &[]);
                     for rep in 0..p.repeat {
                         pass.set_bind_group(3, &self.iteration, &[rep * self.stride]);
-                        for (pipe, v, n) in draws {
+                        for (pipe, command) in draws {
                             pass.set_pipeline(pipe);
-                            pass.draw(0..*v, 0..*n);
+                            command.encode(&mut pass);
                         }
                     }
                 }
