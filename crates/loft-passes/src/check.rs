@@ -1076,11 +1076,29 @@ impl<'p,'a> Ck<'p,'a> {
         }
         if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
             if let [Arg { value: Expr { kind: ExprKind::Name(reason), .. }, .. }] = args
-                && reason.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+                && crate::fusion::reason(reason).is_some()
             {
                 return Ok(Ty::Verdict);
             }
             return Err(e003(span, "unknown verdict requires a reason tag", "write unknown(MissingSurface)"));
+        }
+        if callee.name == "emit_event" {
+            if self.ownership.is_none() && self.kernel.is_none() {
+                return Err(e003(span, "emit_event requires an effectful entry", "call it in a law, solver or kernel"));
+            }
+            let [tag, instance, site, payload] = args else {
+                return Err(e003(span, "emit_event needs four arguments", "provide tag, instance_id, site_id and payload"));
+            };
+            if !matches!(&tag.value.kind, ExprKind::Name(n) if n.as_bytes().first().is_some_and(u8::is_ascii_uppercase)) {
+                return Err(e003(tag.value.span, "expected an event symbol", "name the event tag with an initial capital"));
+            }
+            self.set(&tag.value, Ty::U32);
+            for (arg, want) in [(instance, Ty::U32), (site, Ty::U32), (payload, Ty::VecN(4))] {
+                let actual = self.expr(&arg.value)?;
+                self.assignable(&actual, &want, arg.value.span)?;
+                self.set(&arg.value, want);
+            }
+            return Ok(Ty::Void);
         }
         let ts: Vec<Ty> = args.iter().map(|a| self.expr(&a.value)).collect::<Res<_>>()?;
         let sp: Vec<Span> = args.iter().map(|a| a.value.span).collect();
@@ -1426,6 +1444,7 @@ fn builtin(name: &str, ts: &[Ty], sp: &[Span], span: Span) -> Res<Ty> {
         "acos" | "log" | "abs" | "sqrt" | "sin" | "cos" | "exp" | "floor" | "fract" | "sign" | "saturate" => componentwise(1),
         "min" | "max" | "pow" | "step" => componentwise(2),
         "clamp" | "smoothstep" => componentwise(3),
+        "fma" if matches!(ts, [Ty::F32, Ty::F32, Ty::F32]) => Ok(Ty::F32),
         "smootherstep" | "loft_dsmoothstep" | "loft_dsmootherstep" => {
             arity(3)?;
             for (t, s) in ts.iter().zip(sp) {

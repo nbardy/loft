@@ -78,7 +78,8 @@ fn wty(t: &Ty) -> String {
         Ty::Id(_) => "u32".into(),
         Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
         Ty::Struct(k) => format!("loft_type_{k}"),
-        Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
+        Ty::Verdict => "CheckValue".into(),
+        Ty::Table(_) => unreachable!("motion tables are lowered in a law"),
         Ty::Map(..) => unreachable!("maps are not values"),
     }
 }
@@ -486,7 +487,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;
                 let condition = self.expr(condition);
-                let ty = if self.ty_of(e) == &Ty::Verdict { "vec2<f32>".into() } else { wty(self.ty_of(e)) };
+                let ty = wty(self.ty_of(e));
                 self.line(1, &format!("var {name}: {ty};"));
                 self.line(1, &format!("if {condition} {{"));
                 for (i, arm) in [then, otherwise].into_iter().enumerate() {
@@ -580,7 +581,16 @@ impl<'p, 'a> Emitter<'p, 'a> {
             ExprKind::Call { callee, args } if callee.name == "loft_vec" => self.expr(&args[0].value),
             ExprKind::Call { callee, args } => {
                 if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
-                    return "vec2<f32>(3.0, 0.0)".into();
+                    let ExprKind::Name(reason) = &args[0].value.kind else { unreachable!("checked reason") };
+                    return format!("CheckValue(3u, {}u, 0.0)", crate::fusion::reason(reason).expect("checked reason") as u32);
+                }
+                if callee.name == "emit_event" {
+                    let tag = match &args[0].value.kind {
+                        ExprKind::Name(name) => format!("{}u", crate::fusion::event_tag(name)),
+                        _ => self.expr(&args[0].value),
+                    };
+                    let args = args[1..].iter().map(|arg| self.expr(&arg.value)).collect::<Vec<_>>();
+                    return format!("emit_event({tag}, {})", args.join(", "));
                 }
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
                 if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
@@ -594,7 +604,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 if callee.name=="coords"{return a[0].clone()}
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
                 if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
-                if matches!(callee.name.as_str(),"held"|"missed"){return format!("vec2<f32>({}, {})",if callee.name=="held"{"1.0"}else{"2.0"},a[0]);}
+                if matches!(callee.name.as_str(),"held"|"missed"){return format!("CheckValue({}u, 0u, {})",if callee.name=="held"{1}else{2},a[0]);}
                 let name = match callee.name.as_str() {
                     "frame_axes" => "LoftFrame".into(),
                     "dir" => "normalize".into(),
@@ -739,14 +749,6 @@ fn material_layout<'k>(p: &Prog<'k>, k: &'k KindDecl) -> Res<Vec<(&'k str, &'k [
         layout.ok_or_else(|| Diag::new(Code::E003, f.name.span, "the material returns nothing", "return a sum of lobes"))
     }
     resolve(p, k.query(QueryKind::Material).expect("checked material"), &mut BTreeSet::new())
-}
-
-pub fn table_module(p: &Prog, types: &[Ty], kind: &KindDecl) -> String {
-    let mut em = Emitter::new(p, types);
-    em.header(abi::NONCE_PLACEHOLDER);
-    em.row_header(kind);
-    em.out.push_str("@group(3) @binding(0) var<storage, read> twin_in: array<vec4<f32>>;\n@group(3) @binding(1) var<storage, read_write> twin_out: array<vec4<f32>>;\n");
-    em.out
 }
 
 /// The text of one kind's module. `light` is the library fn the shade pass calls (named in the schedule).

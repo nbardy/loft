@@ -125,8 +125,7 @@ pub enum Pass {
     Present,
 }
 
-/// Phase 1.5 snapshot from the initial row through one target tick.
-/// Writes one vec4 per requested scalar field or check.
+/// A fixed-step dispatch and its packed row and verdict layouts.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Dispatch {
     pub module: usize,
@@ -134,12 +133,13 @@ pub struct Dispatch {
     pub workgroup_x: u32,
     pub input: DispatchRows,
     pub bindings: Vec<DispatchBinding>,
-    pub fields: Vec<String>,
+    pub fields: Vec<(String, u32)>,
+    pub layout_hash: [u8; 32],
     pub checks: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum DispatchResource { Parameters, Rows, Arguments, Results }
+pub enum DispatchResource { Rows, Arguments, Results, Outbox }
 
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DispatchBinding {

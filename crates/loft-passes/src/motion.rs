@@ -1,17 +1,12 @@
-//! Lower the row-local subset needed for a Phase 1.5 bakeoff snapshot.
-//! Phase 3 persistent state, solver tables and checkpoints use a separate schedule ABI.
+//! Lower consecutive row-local operations to a single fixed-step compute entry.
 use super::*;
-use loft_ir::{Span};
 use crate::program::{Dispatch, DispatchBinding, DispatchResource, DispatchRows};
+use loft_abi::AdvanceArgs;
 
 fn unsupported(sp: Span, what: &str) -> Diag {
-    Diag::new(
-        Code::E405,
-        sp,
-        what,
-        "use a row-local law with scalar writes for this phase",
-    )
+    Diag::new(Code::E405, sp, what, "use a row-local operation on a kind")
 }
+
 pub fn motion_module(
     p: &Prog,
     types: &[Ty],
@@ -65,29 +60,16 @@ pub fn motion_module(
                 if f.params.len() != 2 || f.params[1].name.name != "dt" {
                     return Err(unsupported(
                         f.name.span,
-                        "snapshot laws take the target row and dt",
+                        "row-local laws take the target row and dt",
                     ));
                 }
-                for w in &p.laws[n.as_str()].writes {
-                    let field = kind
-                        .row
-                        .iter()
-                        .find(|rf| rf.name.name == w.name)
-                        .expect("checked ownership");
-                    if !matches!(&field.ty,TyExpr::Name(t) if t.name=="f32") {
-                        return Err(unsupported(
-                            w.span,
-                            "snapshot requires a scalar float column",
-                        ));
-                    }
-                    fields.push(w.name.clone());
-                }
+                fields.extend(p.laws[n.as_str()].writes.iter().map(|w| w.name.clone()));
                 laws.push(f);
             } else {
                 if f.params.len() != 1 {
                     return Err(unsupported(
                         f.name.span,
-                        "snapshot checks take one target row",
+                        "row-local checks take one target row",
                     ));
                 }
                 checks.push(f);
@@ -97,12 +79,39 @@ pub fn motion_module(
     if laws.is_empty() && checks.is_empty() {
         return Ok(None);
     }
+
     let (module, input) = output()?;
     let mut em = Emitter::new(p, types);
+    em.header(abi::NONCE_PLACEHOLDER);
+    em.row_header(kind);
+    em.out = em.out.replace(
+        "@group(1) @binding(0) var<storage, read> rows:",
+        "@group(2) @binding(0) var<storage, read_write> rows:",
+    );
     em.motion = true;
     em.out.push_str(loft_abi::DET_WGSL);
+    em.out.push_str(AdvanceArgs::WGSL);
+    em.out.push_str(
+        r#"
+struct DispatchArgs { ticks: AdvanceArgs, first_row: u32, end_row: u32, instance_id: u32 }
+@group(1) @binding(0) var<storage, read> loft_advance_args: DispatchArgs;
+@group(2) @binding(1) var<storage, read_write> loft_results: array<u32>;
+struct CheckValue { tag: u32, reason: u32, value: f32 }
+var<private> loft_tick: u32;
+"#,
+    );
     let roots: Vec<_> = laws.iter().chain(&checks).copied().collect();
     let (lib, constants) = reachable(p, &roots, &[]);
+    let has_events = roots.iter().chain(&lib).any(|f| {
+        References::function(f)
+            .calls
+            .iter()
+            .any(|c| c.name == "emit_event")
+    });
+    if has_events {
+        em.out
+            .push_str(&crate::fusion::event_wgsl(2, 2, "loft_tick"));
+    }
     em.constants(&constants);
     for f in lib {
         em.func(f, &format!("motion_{}", fn_symbol(&f.name.name)));
@@ -123,7 +132,7 @@ pub fn motion_module(
         em.locals = f.params.iter().map(|p| p.name.name.clone()).collect();
         writeln!(
             em.out,
-            "fn check_{}({}: Row) -> vec2<f32> {{",
+            "fn check_{}({}: Row) -> CheckValue {{",
             f.name.name,
             wgsl_name(&f.params[0].name.name)
         )
@@ -131,43 +140,115 @@ pub fn motion_module(
         em.block_body(&f.body, 1);
         em.out.push_str("}\n");
     }
-    em.out.push_str("@compute @workgroup_size(64) fn snapshot(@builtin(global_invocation_id) gid: vec3<u32>) {\n let i=gid.x; if i >= arrayLength(&rows)/STRIDE { return; } var state=load_row(i);\n let last=bitcast<u32>(twin_in[0].x); let dt=1.0/120.0;\n for(var tick=1u; tick<=last; tick++){ loft_tick_time=f32(tick)*dt;\n");
+    let hash = u32::from_le_bytes(
+        blake3::hash(em.out.as_bytes()).as_bytes()[..4]
+            .try_into()
+            .unwrap(),
+    );
+    writeln!(
+        em.out,
+        r#"
+@compute @workgroup_size(64) fn advance(@builtin(global_invocation_id) gid: vec3<u32>) {{
+    let i = gid.x + loft_advance_args.first_row;
+    if i >= loft_advance_args.end_row {{ return; }}
+    var state = load_row(i);
+    let from_tick = loft_advance_args.ticks.from_tick;
+    let to_tick = loft_advance_args.ticks.to_tick;
+    let dt = 1.0 / 120.0;
+    for (var step = 0u; step < {}u; step += 1u) {{
+        if step >= to_tick - from_tick {{ break; }}
+        loft_tick = from_tick + step + 1u;
+        loft_tick_time = f32(loft_tick) * dt;
+"#,
+        AdvanceArgs::MAX_TICKS
+    )
+    .unwrap();
     for f in &laws {
-        writeln!(em.out, "state=law_{}(state,dt);", f.name.name).unwrap();
+        writeln!(em.out, "        state = law_{}(state, dt);", f.name.name).unwrap();
     }
-    em.out.push_str("}\n");
-    let width = fields.len() + checks.len();
-    for (i, n) in fields.iter().enumerate() {
-        writeln!(
-            em.out,
-            "twin_out[i*{width}u+{i}u]=vec4<f32>(state.r_{n},0.,0.,0.);"
-        )
-        .unwrap();
+    em.out.push_str("    }\n");
+    let mut dispatch_fields = vec![];
+    let mut layout = blake3::Hasher::new();
+    let mut offset = 0;
+    for f in &kind.row {
+        let ty = em.resolve(&f.ty);
+        let width = ty.words().expect("checked row field");
+        layout.update(format!("{}:{ty}:{offset}:{width}\n", f.name.name).as_bytes());
+        if fields.contains(&f.name.name) {
+            let field = format!("state.r_{}", f.name.name);
+            let lane = |j| match ty {
+                Ty::F32 => field.clone(),
+                Ty::I32 | Ty::U32 | Ty::Id(_) => format!("bitcast<f32>({field})"),
+                Ty::Bool => format!("select(0.0, 1.0, {field})"),
+                Ty::VecN(_) | Ty::Geo(..) => format!("{field}[{j}u]"),
+                Ty::Xform(..) if j < 9 => format!("{field}.r[{}u][{}u]", j / 3, j % 3),
+                Ty::Xform(..) => format!("{field}.t[{}u]", j - 9),
+                _ => unreachable!("checked row field"),
+            };
+            for j in 0..width {
+                writeln!(
+                    em.out,
+                    "    rows[i * STRIDE + {}u] = {};",
+                    offset + j,
+                    lane(j)
+                )
+                .unwrap();
+            }
+            dispatch_fields.push((f.name.name.clone(), offset));
+        }
+        offset += width;
+    }
+    if !checks.is_empty() {
+        em.out.push_str("    loft_tick_time = f32(to_tick) * dt;\n");
     }
     for (j, f) in checks.iter().enumerate() {
-        let i = j + fields.len();
         writeln!(
             em.out,
-            "twin_out[i*{width}u+{i}u]=vec4<f32>(check_{}(state),0.,0.);",
-            f.name.name
+            r#"
+    let v{j} = check_{}(state);
+    let dst{j} = (i * {}u + {j}u) * 8u;
+    let finite{j} = (bitcast<u32>(v{j}.value) & 0x7f800000u) != 0x7f800000u;
+    loft_results[dst{j}] = {j}u;
+    loft_results[dst{j} + 1u] = loft_advance_args.instance_id;
+    loft_results[dst{j} + 2u] = i;
+    loft_results[dst{j} + 3u] = to_tick;
+    loft_results[dst{j} + 4u] = select(3u, v{j}.tag, finite{j});
+    loft_results[dst{j} + 5u] = select(2u, v{j}.reason, finite{j});
+    loft_results[dst{j} + 6u] = bitcast<u32>(v{j}.value);
+    loft_results[dst{j} + 7u] = {hash}u;"#,
+            f.name.name,
+            checks.len()
         )
         .unwrap();
     }
     em.out.push_str("}\n");
+    let mut bindings = vec![
+        (1, 0, DispatchResource::Arguments),
+        (2, 0, DispatchResource::Rows),
+    ];
+    if !checks.is_empty() {
+        bindings.push((2, 1, DispatchResource::Results));
+    }
+    if has_events {
+        bindings.push((2, 2, DispatchResource::Outbox));
+    }
     Ok(Some((
         em.out,
         Dispatch {
             module,
-            entry: "snapshot".into(),
+            entry: AdvanceArgs::ENTRY.into(),
             workgroup_x: 64,
             input,
-            bindings: [
-                (0, 2, DispatchResource::Parameters),
-                (1, 0, DispatchResource::Rows),
-                (3, 0, DispatchResource::Arguments),
-                (3, 1, DispatchResource::Results),
-            ].into_iter().map(|(group, slot, resource)| DispatchBinding { group, slot, resource }).collect(),
-            fields,
+            bindings: bindings
+                .into_iter()
+                .map(|(group, slot, resource)| DispatchBinding {
+                    group,
+                    slot,
+                    resource,
+                })
+                .collect(),
+            fields: dispatch_fields,
+            layout_hash: *layout.finalize().as_bytes(),
             checks: checks.iter().map(|c| c.name.name.clone()).collect(),
         },
     )))
