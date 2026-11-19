@@ -163,6 +163,30 @@ impl Run {
         self.q.submit([e.finish()]);
         self.bytes(&dst)
     }
+    fn events(&self) {
+        let mut l = self.load(&self.read("events"));
+        for (seq, t, v) in [(2, 5, 2.), (1, 5, 1.), (1, 5, 1.), (3, 20, 0.)] {
+            l.write_tick("stick", 1, t, &[v, 0.], Some(seq)).unwrap();
+        }
+        assert!(matches!(l.write_tick("stick", 1, 5, &[9., 0.], Some(4)), Err(Error::Usage(_))));
+        assert!(matches!(l.write_tick("stick", 1, 20, &[8., 0.], Some(3)), Err(Error::Usage(_))));
+        for (tick, want) in [(4, [0., 0.]), (10, [12., 2.]), (100, [120., 3.]), (10, [12., 2.]), (20, [120., 3.])] {
+            l.set_time(tick as f32 / 120.);
+            let mut e = self.d.create_command_encoder(&Default::default());
+            l.advance_rows(&mut e);
+            let buf = self.stage(2 * 672);
+            l.copy_state(&mut e, 0, None, &buf, 0).unwrap();
+            self.q.submit([e.finish()]);
+            let bytes = self.bytes(&buf);
+            let read = |k| f32::from_le_bytes(bytes[k..k + 4].try_into().unwrap());
+            assert_eq!([read(16), read(20)], [0., 0.]);
+            assert_eq!([read(672 + 16), read(672 + 20)], want);
+        }
+        let mut instance = l.instance(&self.d, &self.q).unwrap();
+        instance.write_tick(&l, "stick", 1, 20, &[0., 0.], Some(3)).unwrap();
+        assert!(instance.write_tick(&l, "stick", 1, 21, &[0., 0.], Some(3)).is_err());
+        instance.write_tick(&l, "stick", 0, 21, &[5., 0.], Some(3)).unwrap();
+    }
     fn bench(&self, name: &str) {
         let b = self.read(name);
         let size = match b.resources[b.row_steps[0].seed as usize].shape {
@@ -212,12 +236,18 @@ impl Run {
         let spec = b.row_steps.pop().unwrap();
         let mut frozen = self.load(&b);
         let poses = fs::read(self.dir.join("one.pose")).unwrap();
-        let words: Vec<_> = fs::read(self.dir.join("game.camera")).unwrap().chunks_exact(4)
-            .map(|v| f32::from_le_bytes(v.try_into().unwrap())).collect();
+        let words: Vec<_> = fs::read(self.dir.join("game.camera"))
+            .unwrap()
+            .chunks_exact(4)
+            .map(|v| f32::from_le_bytes(v.try_into().unwrap()))
+            .collect();
         for loft in [&mut live, &mut frozen] {
             loft.set_camera(loft_ir::frame::Camera {
-                view_proj: words[0..16].try_into().unwrap(), inv_view_proj: words[16..32].try_into().unwrap(),
-                eye: words[32..36].try_into().unwrap(), forward: words[36..40].try_into().unwrap(), sun:[0.,1.,0.,0.]
+                view_proj: words[0..16].try_into().unwrap(),
+                inv_view_proj: words[16..32].try_into().unwrap(),
+                eye: words[32..36].try_into().unwrap(),
+                forward: words[36..40].try_into().unwrap(),
+                sun: [0., 1., 0., 0.],
             });
             loft.set_timestamps(Some(self.queries.clone()));
         }
@@ -292,6 +322,7 @@ fn recorded_take_score() {
         .map(PathBuf::from)
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../out/motion-score"));
     let r = Run { d, q, dir, targets, queries };
+    r.events();
     let base = r.trace("one");
     r.trace("low");
     r.trace("broken");

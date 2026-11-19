@@ -260,9 +260,9 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
                 (1, u64::from(s.ticks) + 1)
             }
             loft_ir::bundle::InputKind::Level => (60, 65),
-            loft_ir::bundle::InputKind::Events { slots: 1 } => (60, 65),
+            loft_ir::bundle::InputKind::Events { slots } if slots > 0 => (60, 65 * input.kind.packet_lanes()),
             loft_ir::bundle::InputKind::Events { .. } => {
-                return Err(bad("this entry reads one event packet: declare one slot per tick".into()));
+                return Err(bad("an event input needs capacity: declare at least one slot per tick".into()));
             }
         };
         let limit = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);

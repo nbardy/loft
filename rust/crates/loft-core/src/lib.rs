@@ -410,13 +410,19 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
     let low = draw::lower(&g, &slots, &draws_ir, &media_ir, &passes_ir)?;
     let mut row_steps = Vec::new();
     for (spec, kind) in &g.row_steps {
-        let source = g.sym(spec.module);
+        let authored = g.sym(spec.module);
+        let (source, packet) = match kind {
+            bundle::InputKind::Level | bundle::InputKind::Script { .. } => (authored.to_owned(), "vec4f"),
+            bundle::InputKind::Events { slots } => {
+                (format!("struct TickEvents {{ count:u32, values:array<vec4f,{slots}> }}\n{authored}"), "TickEvents")
+            }
+        };
         // Only value/private arguments enter an island. Raw cross-row kernels retain the existing per-tick schedule.
-        let parsed = naga::front::wgsl::parse_str(source).map_err(|e| unsupported(e.emit_to_string(source)))?;
+        let parsed = naga::front::wgsl::parse_str(&source).map_err(|e| unsupported(e.emit_to_string(&source)))?;
         if !parsed.entry_points.is_empty() || parsed.global_variables.iter().any(|(_, v)| v.binding.is_some()) {
             return Err(unsupported("row-local laws must read only their arguments and private variables; use a raw pass for shared storage".into()));
         }
-        let text = format!("{source}\n{}", include_str!("../wgsl/advance.wgsl"));
+        let text = format!("{source}\n{}", include_str!("../wgsl/advance.wgsl").replace("PACKET_TYPE", packet));
         if matches!(build.naga, Naga::Emit) {
             let module = naga::front::wgsl::parse_str(&text).map_err(|e| unsupported(e.emit_to_string(&text)))?;
             naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
@@ -427,7 +433,14 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         sections.push(text.into_bytes().into());
         modules.push(Module { wgsl: sections.len() as u32 - 1, origin: Origin::Author, precision_alias: false });
         row_steps.push(bundle::RowStep { module, ..spec.clone() });
-        inputs[spec.input as usize].kind = kind.clone();
+        let declaration = &mut inputs[spec.input as usize];
+        if g.row_steps.iter().any(|(other, k)| other.input == spec.input && k != kind) {
+            return Err(unsupported(
+                "a shared stepped input has conflicting sources: choose one source or give each input its own name"
+                    .into(),
+            ));
+        }
+        declaration.kind = kind.clone();
     }
     let (module0, name0) = (modules.len() as u32, strings.len() as u32);
     for text in low.modules {

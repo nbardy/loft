@@ -49,3 +49,9 @@ const loads = roam({present:`fn present(s:ptr<function,State>,b:ptr<function,Pla
   var p:Pose; p.margins[0]=vec4f(interval,shares(s,15u,q)[3],0); return p;
 }`});
 save("pads",headless(move(pads,loads,parked)));
+
+// Two numbered impulses on one tick exercise capacity, sequence order and a zero-valued event.
+const impulse = move([crab,crab],roam({step:`fn step(s:ptr<function,State>,b:ptr<function,Plan>,e:TickEvents,dt:f32){
+  for(var i=0u;i<e.count;i++){(*s).drive.x=10.0*(*s).drive.x+e.values[i].x;(*s).drive.y+=1.0;}
+}`}),{go});
+save("events",{...headless(impulse),rowSteps:[{...impulse.steps,home:{kind:"events",slots:2}}]});

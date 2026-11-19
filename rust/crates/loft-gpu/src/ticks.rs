@@ -100,7 +100,8 @@ impl Program {
         q.write_buffer(&state, 0, data(b, self.spec.seed));
         q.write_buffer(&state, self.bytes, data(b, self.spec.seed));
         let capacity = if baked { self.spec.ticks + 1 } else { 65 };
-        let packets = make(u64::from(capacity) * u64::from(self.count) * 16, rw, "per-tick packets");
+        let packets =
+            make(u64::from(capacity) * u64::from(self.count) * 16 * decl.kind.packet_lanes(), rw, "per-tick packets");
         let clock = make(32, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, "tick clock");
         let entries: Vec<_> = [&clock, &self.plans, &state, &packets, output]
             .into_iter()
@@ -120,6 +121,7 @@ impl Program {
             source,
             changes: BTreeMap::new(),
             seq: BTreeMap::new(),
+            events: BTreeMap::new(),
             keep,
             baked,
             done: 0,
@@ -146,6 +148,7 @@ pub(super) struct Timeline {
     source: Source,
     changes: BTreeMap<(u32, u32), [u32; 4]>,
     seq: BTreeMap<(u32, u64), (u32, [u32; 4])>,
+    events: BTreeMap<(u32, u32), BTreeMap<u64, [u32; 4]>>,
     keep: u32,
     baked: bool,
     pub done: u32,
@@ -162,52 +165,54 @@ impl Timeline {
         self.dirty = other.dirty;
         self.changes.clone_from(&other.changes);
         self.seq.clone_from(&other.seq);
+        self.events.clone_from(&other.events);
     }
 
     pub fn is_baked(&self) -> bool {
         self.baked
     }
-    fn packet(&self, row: u32, k: u32) -> [u32; 4] {
+    fn packet(&self, row: u32, tick: u32, bytes: &mut Vec<u8>) {
+        let level = |default| self.changes.range((row, 0)..=(row, tick)).next_back().map_or(default, |(_, v)| *v);
+        let mut append = |v: [u32; 4]| bytes.extend(v.into_iter().flat_map(u32::to_le_bytes));
         match &self.source {
-            Source::Events(_) => self.changes.get(&(row, k)).copied().unwrap_or([0; 4]),
-            source => self.changes.range((row, 0)..=(row, k)).next_back().map_or_else(
-                || match source {
-                    Source::Samples(a) => a[k as usize],
-                    Source::Levels(v) => *v,
-                    Source::Events(_) => unreachable!(),
-                },
-                |(_, v)| *v,
-            ),
+            Source::Levels(v) => append(level(*v)),
+            Source::Samples(samples) => append(level(samples[tick as usize])),
+            Source::Events(slots) => {
+                let events = self.events.get(&(row, tick));
+                let count = events.map_or(0, BTreeMap::len);
+                append([count as u32, 0, 0, 0]);
+                if let Some(events) = events {
+                    for value in events.values() {
+                        append(*value);
+                    }
+                }
+                bytes.resize(bytes.len() + 16 * (*slots as usize - count), 0);
+            }
         }
     }
 
-    pub fn write(&mut self, p: &Program, row: u32, k: u32, values: &[f32], sequence: Option<u64>) -> Result<(), Error> {
-        if k == 0 || k > p.spec.ticks || row >= p.count || values.len() > 4 || values.iter().any(|x| !x.is_finite()) {
+    /// Check all readers before mutating any log. A duplicate event is an idempotent delivery.
+    fn accepts(&self, p: &Program, u: &Update) -> Result<(), Error> {
+        let (row, k) = (u.row, u.tick);
+        if k == 0 || k > p.spec.ticks || row >= p.count || u.value.iter().any(|v| !f32::from_bits(*v).is_finite()) {
             return Err(Error::Usage(
                 format!("row {row}, tick {k}: use a declared row, tick 1..={} and finite components", p.spec.ticks)
                     .into(),
             ));
         }
-        let mut v = [0; 4];
-        for (x, y) in v.iter_mut().zip(values) {
-            *x = y.to_bits();
-        }
-        match (&self.source, sequence) {
+        match (&self.source, u.sequence) {
             (Source::Events(slots), Some(seq)) => {
                 if let Some(old) = self.seq.get(&(row, seq)) {
-                    return if *old == (k, v) {
-                        Ok(())
-                    } else {
-                        Err(Error::Usage("event sequence reused with different data: send a new sequence".into()))
-                    };
-                }
-                if *slots != 1 || self.changes.contains_key(&(row, k)) {
+                    if *old != (k, u.value) {
+                        return Err(Error::Usage(
+                            "event sequence reused with different data: send a new sequence".into(),
+                        ));
+                    }
+                } else if self.events.get(&(row, k)).is_some_and(|events| events.len() >= *slots as usize) {
                     return Err(Error::Usage(
-                        "one event packet fits this tick: allocate a wider event packet or choose a different tick"
-                            .into(),
+                        "event capacity exceeded: declare more slots or send on a different tick".into(),
                     ));
                 }
-                self.seq.insert((row, seq), (k, v));
             }
             (Source::Events(_), None) => {
                 return Err(Error::Usage("event input needs a sequence: use write_tick".into()));
@@ -217,7 +222,18 @@ impl Timeline {
             }
             (Source::Levels(_) | Source::Samples(_), None) => {}
         }
-        self.changes.insert((row, k), v);
+        Ok(())
+    }
+    fn apply(&mut self, u: &Update) {
+        let k = u.tick;
+        if let Some(seq) = u.sequence {
+            if self.seq.insert((u.row, seq), (k, u.value)).is_some() {
+                return;
+            }
+            self.events.entry((u.row, k)).or_default().insert(seq, u.value);
+        } else {
+            self.changes.insert((u.row, k), u.value);
+        }
         // show() reads a retained slot without writing slot zero. On the first live input the latter
         // still holds the end of the bake. Resume from a checkpoint even if no tick was presented yet.
         if self.baked {
@@ -228,10 +244,9 @@ impl Timeline {
         if self.done >= k {
             self.dirty = Some(self.dirty.map_or(k, |old| old.min(k)));
         }
-        Ok(())
     }
 
-    fn moment(p: &Program, time: f32) -> (u32, f32) {
+    pub fn moment(p: &Program, time: f32) -> (u32, f32) {
         let rate = p.spec.hz as f32;
         let t = (time * rate).clamp(0.0, p.spec.ticks as f32);
         // The canonical f32 representation of tick/rate can multiply back to one ulp below tick.
@@ -244,9 +259,7 @@ impl Timeline {
         // Canonical packets, including scripts: changing the grouping or sending a redundant level retains identity.
         for k in 0..=tick {
             for r in 0..p.count {
-                for x in self.packet(r, k) {
-                    bytes.extend(x.to_le_bytes());
-                }
+                self.packet(r, k, &mut bytes);
             }
         }
         TickKey { checkpoint: tick / self.keep * self.keep, prefix: build(&bytes), tick, fraction: f.to_bits() }
@@ -278,9 +291,7 @@ impl Timeline {
             let mut bytes = Vec::with_capacity(((to - from) * p.count * 16) as usize);
             for k in from + 1..=to {
                 for r in 0..p.count {
-                    for x in self.packet(r, k) {
-                        bytes.extend(x.to_le_bytes());
-                    }
+                    self.packet(r, k, &mut bytes);
                 }
             }
             self.upload(enc, &self.packets, &bytes);
@@ -361,4 +372,77 @@ impl Timeline {
         enc.copy_buffer_to_buffer(&self.state, u64::from(slot) * p.bytes, dest, offset, Some(p.bytes));
         Ok(())
     }
+}
+
+/// Validate the finite take and every reader up front, including legacy frame-uniform readers.
+pub(super) struct Update {
+    pub row: u32,
+    pub tick: u32,
+    pub sequence: Option<u64>,
+    value: [u32; 4],
+}
+impl Update {
+    pub fn new(row: u32, tick: u32, value: &[f32], sequence: Option<u64>) -> Self {
+        let mut words = [0; 4];
+        for (word, v) in words.iter_mut().zip(value) {
+            *word = v.to_bits();
+        }
+        Self { row, tick, sequence, value: words }
+    }
+}
+pub(super) fn write_tick(
+    programs: &[Program],
+    states: &mut [Timeline],
+    live: &mut [super::live::Live],
+    input: (usize, usize),
+    value: &[f32],
+    update: Update,
+) -> Result<(), Error> {
+    let (slot, frame_offset) = input;
+    let readers = programs.iter().enumerate().filter(|(_, p)| p.spec.input as usize == slot);
+    if live.is_empty() && readers.clone().next().is_none() {
+        return Err(Error::Usage("input is frame-rate: use set_input".into()));
+    }
+    if !live.is_empty()
+        && (update.row != 0
+            || update.sequence.is_some()
+            || update.tick == 0
+            || value.iter().any(|v| !v.is_finite())
+            || live.iter().any(|s| update.tick > s.count()))
+    {
+        return Err(Error::Usage(
+            "shared-row level input: supply finite values for row zero at a valid tick, without an event sequence"
+                .into(),
+        ));
+    }
+    for (i, p) in readers.clone() {
+        states[i].accepts(p, &update)?;
+    }
+    for (i, _) in readers {
+        states[i].apply(&update);
+    }
+    for s in live {
+        s.set(frame_offset, value, update.tick);
+    }
+    Ok(())
+}
+pub(super) fn set_level(
+    programs: &[Program],
+    states: &mut [Timeline],
+    slot: usize,
+    time: f32,
+    value: &[f32],
+) -> Result<(), Error> {
+    let readers = programs.iter().enumerate().filter(|(_, p)| p.spec.input as usize == slot);
+    for (i, p) in readers.clone() {
+        let u = Update::new(0, Timeline::moment(p, time).0.max(1), value, None);
+        states[i].accepts(p, &u)?;
+    }
+    for (i, p) in readers {
+        let tick = Timeline::moment(p, time).0.max(1);
+        for row in 0..p.count {
+            states[i].apply(&Update::new(row, tick, value, None));
+        }
+    }
+    Ok(())
 }

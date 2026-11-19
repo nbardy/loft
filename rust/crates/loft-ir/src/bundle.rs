@@ -281,6 +281,13 @@ pub enum InputKind {
     },
 }
 impl InputKind {
+    /// A level/sample is one vec4. An event batch has a count header and one vec4 per payload.
+    pub fn packet_lanes(&self) -> u64 {
+        match self {
+            Self::Level | Self::Script { .. } => 1,
+            Self::Events { slots } => 1 + u64::from(*slots),
+        }
+    }
     fn level(&self) -> bool {
         matches!(self, Self::Level)
     }

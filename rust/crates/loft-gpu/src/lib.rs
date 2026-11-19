@@ -129,22 +129,32 @@ impl Instance {
     }
     pub fn set_input(&mut self, loft: &Loft, name: &str, value: &[f32]) -> Result<(), Error> {
         let slot = loft.input_slot(name, value.len())?;
-        for (s, p) in self
-            .timelines
-            .get_mut()
-            .iter_mut()
-            .zip(&loft.programs)
-            .filter(|(_, p)| p.spec.input as usize == slot.start / 4)
-        {
-            for row in 0..p.count {
-                s.write(p, row, ((self.time * p.spec.hz as f32) as u32).max(1), value, None)?;
-            }
-        }
+        ticks::set_level(&loft.programs, self.timelines.get_mut(), slot.start / 4, self.time, value)?;
         for s in &mut self.live {
             s.set_at_time(self.params.len() + slot.start, value, self.time);
         }
         self.inputs[slot].copy_from_slice(value);
         Ok(())
+    }
+    /// Supply one numbered event or level to this copy's own history.
+    pub fn write_tick(
+        &mut self,
+        loft: &Loft,
+        name: &str,
+        row: u32,
+        tick: u32,
+        value: &[f32],
+        sequence: Option<u64>,
+    ) -> Result<(), Error> {
+        let slot = loft.input_slot(name, value.len())?.start / 4;
+        ticks::write_tick(
+            &loft.programs,
+            self.timelines.get_mut(),
+            &mut self.live,
+            (slot, self.params.len() + 4 * slot),
+            value,
+            ticks::Update::new(row, tick, value, sequence),
+        )
     }
 }
 
@@ -1159,14 +1169,7 @@ impl Loft {
     /// An input by name, as many floats as its type (a host camera writes the view camera's inputs).
     pub fn set_input(&mut self, name: &str, value: &[f32]) -> Result<(), Error> {
         let at = self.input_slot(name, value.len())?;
-        for (s, p) in
-            self.timelines.iter_mut().zip(&self.programs).filter(|(_, p)| p.spec.input as usize == at.start / 4)
-        {
-            let tick = ((self.time * p.spec.hz as f32).floor() as u32).max(1);
-            for r in 0..p.count {
-                s.write(p, r, tick, value, None)?;
-            }
-        }
+        ticks::set_level(&self.programs, &mut self.timelines, at.start / 4, self.time, value)?;
         for s in &mut self.live {
             s.set_at_time(self.params.len() + at.start, value, self.time);
         }
@@ -1183,26 +1186,14 @@ impl Loft {
         sequence: Option<u64>,
     ) -> Result<(), Error> {
         let slot = self.input_slot(name, value.len())?.start / 4;
-        if !self.live.is_empty()
-            && (row != 0 || sequence.is_some() || tick == 0 || self.live.iter().any(|s| tick > s.count()))
-        {
-            return Err(Error::Usage(
-                "legacy level input: write row zero at a tick within every reader, without an event sequence".into(),
-            ));
-        }
-        let mut found = false;
-        for (s, p) in self.timelines.iter_mut().zip(&self.programs).filter(|(_, p)| p.spec.input as usize == slot) {
-            s.write(p, row, tick, value, sequence)?;
-            found = true;
-        }
-        for s in &mut self.live {
-            s.set(self.params.len() + 4 * slot, value, tick);
-            found = true;
-        }
-        if !found {
-            return Err(Error::Usage(format!("input {name} is frame-rate: use set_input").into()));
-        }
-        Ok(())
+        ticks::write_tick(
+            &self.programs,
+            &mut self.timelines,
+            &mut self.live,
+            (slot, self.params.len() + 4 * slot),
+            value,
+            ticks::Update::new(row, tick, value, sequence),
+        )
     }
     /// Copy a current or retained state into a caller-owned staging buffer without mapping in the frame loop.
     pub fn copy_state(
