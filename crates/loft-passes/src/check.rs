@@ -584,7 +584,20 @@ impl Ck<'_, '_> {
             ExprKind::Binary(op, a, b) => {
                 let ta = self.expr(a)?;
                 let tb = self.expr(b)?;
-                binary(*op, &ta, &tb, a.span, b.span, e.span)
+                binary(*op, &ta, &tb, a.span, b.span, e.span).map_err(|d| {
+                    // A value from a map space used outside it (the draft's gaze bug): quote the author's transform
+                    // and point at the map that made the space.
+                    let Ty::Geo(_, Space::Fresh(m, _)) = &tb else { return d };
+                    let Some(l) = self.lookup(m) else { return d };
+                    let d = match (&ta, path(a)) {
+                        (Ty::Xform(..), Some(x)) => Diag {
+                            fix: format!("lift it out of `'{m}` first: `{x} * ({m}.to_parent * value)` inverts the map's offset and mirror"),
+                            ..d
+                        },
+                        _ => d,
+                    };
+                    d.note(l.span, format!("space `'{m}` introduced here"))
+                })
             }
             ExprKind::Ctor { ty, args } => {
                 let target = self.resolve(ty, false)?;
@@ -712,6 +725,21 @@ impl Ck<'_, '_> {
     }
 }
 
+/// `a.b.c` as written, for quoting the author's expression in a fix.
+fn path(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::Name(n) => Some(n.clone()),
+        ExprKind::Member(b, m) => path(b).map(|p| format!("{p}.{}", m.name)),
+        ExprKind::Num { .. }
+        | ExprKind::Bool(_)
+        | ExprKind::Index(..)
+        | ExprKind::Call { .. }
+        | ExprKind::Ctor { .. }
+        | ExprKind::Binary(..)
+        | ExprKind::Unary(..) => None,
+    }
+}
+
 pub const MAP_OPS: [&str; 3] = ["mirror_x", "translate", "rot_y"];
 
 fn subst(t: &Ty, vars: &HashMap<String, Space>) -> Ty {
@@ -811,10 +839,9 @@ fn binary(op: BinOp, a: &Ty, b: &Ty, sa: Span, sb: Span, span: Span) -> Res<Ty> 
                 Ok(Ty::Geo(*g, y.clone()))
             } else {
                 let fix = match (a, s) {
-                    (Ty::Xform(..), Space::Fresh(m, _)) => format!(
-                        "lift the value out of `'{m}` first: `{} * ({m}.to_parent * value)` inverts the map's offset and mirror",
-                        "xform"
-                    ),
+                    (Ty::Xform(..), Space::Fresh(m, _)) => {
+                        format!("lift the value out of `'{m}` first with `{m}.to_parent`, which inverts the map's offset and mirror")
+                    }
                     _ => format!("the transform takes `{x}`; bring the value into `{x}` first"),
                 };
                 Err(e104(sb, format!("space mismatch in transform application: expected `{g:?}[{x}]`, found `{b}`"), fix))
