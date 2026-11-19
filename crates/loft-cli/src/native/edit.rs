@@ -1,11 +1,18 @@
-//! An edit session owns the render policy, including debounce and promotion;
-//! the renderer's tables and bind groups stay live across an edit.
+//! Dirty-kind pipeline selection and publication of one checked generation.
 use super::*;
-use loft_passes::tier0::{TraceEdit, authored_trace};
-use std::collections::VecDeque;
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::time::Duration;
+use loft_passes::tier0::{EditClass, TraceEdit, TraceSource};
+use loft_runner::promotion::{self, Pending};
+use std::{
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{Receiver, TryRecvError},
+    },
+    time::Duration,
+};
 
+#[derive(Clone)]
 struct Pipelines {
     module: wgpu::ShaderModule,
     render: wgpu::RenderPipeline,
@@ -22,15 +29,63 @@ impl Pipelines {
     }
 }
 
+struct PipelineCreates {
+    foreground_id: std::thread::ThreadId,
+    foreground: AtomicUsize,
+    background: AtomicUsize,
+}
+
+impl PipelineCreates {
+    fn new() -> Self {
+        Self {
+            foreground_id: std::thread::current().id(),
+            foreground: 0.into(),
+            background: 0.into(),
+        }
+    }
+
+    fn record(&self) {
+        let counter = if std::thread::current().id() == self.foreground_id {
+            &self.foreground
+        } else {
+            &self.background
+        };
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+struct Job {
+    generation: u64,
+    source: String,
+    done: Receiver<Result<Pipelines, String>>,
+}
+
+pub struct EditReceipt {
+    pub class: EditClass,
+    pub generation: u64,
+    pub parse_check: Duration,
+    pub bounds_lowering: Duration,
+    pub upload: Duration,
+    pub elapsed: Duration,
+    pub foreground_creates: usize,
+    pub dirtied_rows: Vec<u32>,
+    pub tape_writes: Vec<Range<usize>>,
+    pub caster_changed: bool,
+}
+
 pub struct TraceSession {
     pub loaded: Loaded,
-    kind: usize,
-    normalized_shader: String,
+    source: TraceSource,
+    tape: TraceEdit,
     fallback: Pipelines,
-    generation: u64,
-    request: Option<(Instant, String)>,
-    job: Option<(u64, String, Receiver<Result<Pipelines, String>>)>,
-    cache: VecDeque<(String, Pipelines)>,
+    instances: Vec<loft_passes::program::Instance>,
+    instance_slots: Vec<usize>,
+    rows: Vec<f32>,
+    stride: usize,
+    shadow_size: u32,
+    pending: Pending<Pipelines>,
+    job: Option<Job>,
+    creates: Arc<PipelineCreates>,
     edited: bool,
 }
 
@@ -48,142 +103,185 @@ fn shadow_kinds(passes: &[Pass]) -> &[u32] {
     })
 }
 
-fn same_words(a: &[f32], b: &[f32]) -> bool {
-    a.iter()
-        .map(|f| f.to_bits())
-        .eq(b.iter().map(|f| f.to_bits()))
+// Queue writes use aligned, contiguous ranges, including a single vec4 radius
+// when the instruction sequence and remaining pool slots are unchanged.
+fn changed_ranges(old: &[u8], new: &[u8]) -> Vec<Range<usize>> {
+    let differs = |i: usize| old.get(i..i + 4) != new.get(i..i + 4);
+    let mut ranges = Vec::new();
+    let mut i = 0;
+    while i < new.len() {
+        if !differs(i) {
+            i += 4;
+            continue;
+        }
+        let start = i;
+        while i < new.len() && differs(i) {
+            i += 4;
+        }
+        ranges.push(start..i);
+    }
+    ranges
 }
 
 impl TraceSession {
     pub fn new(
         g: &Gpu,
         p: &Program,
-        kind: &str,
-        tape: &TraceEdit,
+        source: TraceSource,
+        tape: TraceEdit,
         size: (u32, u32),
     ) -> Result<Self, String> {
-        let index = p
-            .kinds
-            .iter()
-            .position(|k| k.name == kind && k.draw == Draw::Traced)
-            .ok_or("edit mode needs a drawn, sphere-traced kind")?;
-        if !p.dispatches.is_empty() {
-            return Err("edit mode requires a render-only program".into());
+        let kind = source.kind();
+        let loaded = Loaded::load(g, p, size, None, Some((kind, &tape)), Aov::Beauty)?;
+        let fallback = Pipelines::current(&loaded.kinds[kind]);
+        let mut instance_slots = vec![usize::MAX; p.kinds[kind].n_rows as usize];
+        for (i, inst) in p.instances.iter().enumerate() {
+            if inst.kind as usize == kind {
+                instance_slots[inst.row as usize] = i;
+            }
         }
-        let normalized_shader = tape.shader(&p.modules[p.kinds[index].module].wgsl)?;
-        let loaded = Loaded::load(g, p, size, None, Some((index, tape)), Aov::Beauty)?;
-        let fallback = Pipelines::current(&loaded.kinds[index]);
+        if instance_slots.contains(&usize::MAX) {
+            return Err("edit session could not find a culling slot for every row".into());
+        }
         Ok(Self {
             loaded,
-            kind: index,
-            normalized_shader,
+            source,
+            tape,
             fallback,
-            generation: 0,
-            request: None,
+            instances: p.instances.clone(),
+            instance_slots,
+            rows: p.kinds[kind].rows.clone(),
+            stride: p.kinds[kind].stride as usize,
+            shadow_size: p.shadow_size,
+            pending: Pending::default(),
             job: None,
-            cache: VecDeque::new(),
+            creates: Arc::new(PipelineCreates::new()),
             edited: false,
         })
+    }
+
+    pub fn describe(&self) -> String {
+        self.tape.describe()
     }
 
     pub fn edit(
         &mut self,
         g: &Gpu,
-        initial: &Program,
         src: &loft_ir::Sources,
         overrides: &[(String, f64)],
-    ) -> Result<Duration, String> {
-        let (next, _, compiled) =
-            loft_passes::compile(src, overrides).map_err(|d| d.render(src))?;
-        let kind = &initial.kinds[self.kind].name;
-        let tape = authored_trace(&compiled, kind).map_err(|d| d.render(src))?;
-        if !self.compatible(initial, &next) {
-            return Err(
-                "the edit changes the scene layout or another kind; reload the scene".into(),
-            );
+        start: Instant,
+    ) -> Result<EditReceipt, String> {
+        let before_creates = self.creates.foreground.load(Ordering::Relaxed);
+        let next = self
+            .source
+            .prepare(src, overrides)
+            .map_err(|d| d.render(src))?;
+        let class = next.class(&self.tape);
+        match class {
+            EditClass::ConstantPool | EditClass::StructuralTape => {}
+            EditClass::IncompatibleLayout => {
+                return Err("incompatible trace tape layout, reload the scene".into());
+            }
         }
-        let kt = &next.kinds[self.kind];
-        let specialized = &next.modules[kt.module].wgsl;
-        if tape.shader(specialized)? != self.normalized_shader {
-            return Err("the edit changes WGSL outside the trace query; reload the scene".into());
+        let kind = self.source.kind();
+        let tape = next.tape.bytes();
+        let tape_writes = changed_ranges(&self.tape.bytes(), &tape);
+        let dirty_columns = self.stride - abi::HIDDEN_WORDS as usize;
+        let mut row_patches = Vec::new();
+        for (i, (bound, lip)) in next.bounds.iter().zip(&next.lips).enumerate() {
+            let begin = i * self.stride + dirty_columns;
+            let words = [
+                bound.lo[0],
+                bound.lo[1],
+                bound.lo[2],
+                bound.hi[0],
+                bound.hi[1],
+                bound.hi[2],
+                *lip,
+            ];
+            if self.rows[begin..begin + words.len()]
+                .iter()
+                .map(|w| w.to_bits())
+                .ne(words.iter().map(|w| w.to_bits()))
+            {
+                row_patches.push((i, begin, words));
+            }
         }
-        let rows = f32_bytes(&kt.rows);
-        let instructions = tape.bytes();
-        let instances = instance_bytes(&next);
-        let shadow = self.loaded.shadow.as_ref().map(|_| {
-            let (lo, hi) = caster_bounds(&next, shadow_kinds(&next.passes));
-            sun_camera(next.sun, lo, hi, next.shadow_size)
-        });
-        let start = Instant::now();
-        let dst = &self.loaded.kinds[self.kind].rows;
-        g.queue.write_buffer(dst, 0, &rows);
-        g.queue.write_buffer(dst, rows.len() as u64, &instructions);
-        g.queue
-            .write_buffer(&self.loaded.instance_bounds, 0, &instances);
-        if let Some((vp, texel, dir)) = shadow {
-            let s = self.loaded.shadow.as_mut().unwrap();
-            (s.view_proj, s.texel, s.dir) = (vp, texel, dir);
+        let mut instance_patches = Vec::new();
+        for (&slot, &next) in self.instance_slots.iter().zip(&next.bounds) {
+            let old = self.instances[slot];
+            if old.lo != next.lo || old.hi != next.hi {
+                instance_patches.push((slot, next));
+            }
         }
-        if self.loaded.kinds[self.kind].shade != self.fallback.shade {
-            self.install(
-                &g.device,
-                Pipelines {
-                    module: self.fallback.module.clone(),
-                    render: self.fallback.render.clone(),
-                    shade: self.fallback.shade.clone(),
-                },
-            );
+        let casters = shadow_kinds(&self.loaded.passes);
+        let caster_changed = !instance_patches.is_empty() && casters.contains(&(kind as u32));
+        for &(slot, bound) in &instance_patches {
+            self.instances[slot] = bound;
         }
-        let upload = start.elapsed();
-        self.generation = self.generation.wrapping_add(1);
-        self.request = Some((
-            Instant::now() + Duration::from_millis(400),
-            specialized.clone(),
-        ));
-        self.edited = true;
-        Ok(upload)
-    }
+        if caster_changed && let Some(shadow) = &mut self.loaded.shadow {
+            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+            for inst in self.instances.iter().filter(|i| casters.contains(&i.kind)) {
+                for axis in 0..3 {
+                    lo[axis] = lo[axis].min(inst.lo[axis]);
+                    hi[axis] = hi[axis].max(inst.hi[axis]);
+                }
+            }
+            (shadow.view_proj, shadow.texel, shadow.dir) =
+                sun_camera(self.loaded.sun, lo, hi, self.shadow_size);
+        }
+        if self.loaded.kinds[kind].shade != self.fallback.shade {
+            self.install(&g.device, self.fallback.clone());
+        }
 
-    fn compatible(&self, old: &Program, new: &Program) -> bool {
-        let camera = |p: &Program| {
-            let c = p.camera;
-            [
-                c.at[0], c.at[1], c.at[2], c.radius, c.height, c.period, c.fov,
-            ]
-        };
-        new.dispatches.is_empty()
-            && old.kinds.len() == new.kinds.len()
-            && old.modules.len() == new.modules.len()
-            && old.instances.len() == new.instances.len()
-            && old.passes == new.passes
-            && old.shadow_size == new.shadow_size
-            && old.sun == new.sun
-            && camera(old) == camera(new)
-            && same_words(&old.params, &new.params)
-            && same_words(&old.luts, &new.luts)
-            && old
-                .kinds
-                .iter()
-                .zip(&new.kinds)
-                .enumerate()
-                .all(|(i, (a, b))| {
-                    a.name == b.name
-                        && a.module == b.module
-                        && a.stride == b.stride
-                        && a.n_rows == b.n_rows
-                        && a.draw == b.draw
-                        && (i == self.kind || same_words(&a.rows, &b.rows))
-                })
-            && old
-                .modules
-                .iter()
-                .zip(&new.modules)
-                .enumerate()
-                .all(|(i, (a, b))| i == old.kinds[self.kind].module || a.wgsl == b.wgsl)
+        // Loaded is exclusively borrowed through publication. Render commands
+        // for this session cannot observe the middle of these queue writes.
+        let write_start = Instant::now();
+        let dst = &self.loaded.kinds[kind].rows;
+        for &(_, offset, words) in &row_patches {
+            self.rows[offset..offset + words.len()].copy_from_slice(&words);
+            g.queue
+                .write_buffer(dst, (offset * 4) as u64, &f32_bytes(&words));
+        }
+        for range in &tape_writes {
+            g.queue.write_buffer(
+                dst,
+                (self.rows.len() * 4 + range.start) as u64,
+                &tape[range.clone()],
+            );
+        }
+        for (slot, bound) in instance_patches {
+            let mut bytes = [0; 32];
+            bytes[..12].copy_from_slice(&f32_bytes(&bound.lo));
+            bytes[12..16].copy_from_slice(&bound.kind.to_le_bytes());
+            bytes[16..28].copy_from_slice(&f32_bytes(&bound.hi));
+            bytes[28..].copy_from_slice(&bound.row.to_le_bytes());
+            g.queue.write_buffer(
+                &self.loaded.instance_bounds,
+                (slot * bytes.len()) as u64,
+                &bytes,
+            );
+        }
+        let finished = Instant::now();
+        self.tape = next.tape;
+        self.pending.request(next.shader);
+        self.edited = true;
+        Ok(EditReceipt {
+            class,
+            generation: self.pending.generation(),
+            parse_check: next.parse_check,
+            bounds_lowering: next.bounds_lowering,
+            upload: finished - write_start,
+            elapsed: finished - start,
+            foreground_creates: self.creates.foreground.load(Ordering::Relaxed) - before_creates,
+            dirtied_rows: row_patches.iter().map(|(row, ..)| *row as u32).collect(),
+            tape_writes,
+            caster_changed,
+        })
     }
 
     fn install(&mut self, d: &wgpu::Device, pipelines: Pipelines) {
-        let kind = &mut self.loaded.kinds[self.kind];
+        let kind = &mut self.loaded.kinds[self.source.kind()];
         kind.module = pipelines.module;
         kind.render = pipelines.render;
         kind.shade = pipelines.shade;
@@ -205,55 +303,29 @@ impl TraceSession {
         }
     }
 
-    /// Call from the frame loop. An in-flight result for an old tape can
-    /// never replace the current pipeline.
+    /// A preparation failure leaves the last validated tape installed.
     pub fn poll_promotion(&mut self, g: &Gpu) -> Result<bool, String> {
-        if let Some((_, _, done)) = &self.job {
-            let result = match done.try_recv() {
+        if let Some(job) = &self.job {
+            let result = match job.done.try_recv() {
                 Err(TryRecvError::Empty) => return Ok(false),
                 Err(TryRecvError::Disconnected) => Err("trace pipeline worker stopped".into()),
                 Ok(result) => result,
             };
-            let (generation, source, _) = self.job.take().unwrap();
-            if generation == self.generation {
-                let ready = result?;
-                self.install(
-                    &g.device,
-                    Pipelines {
-                        module: ready.module.clone(),
-                        render: ready.render.clone(),
-                        shade: ready.shade.clone(),
-                    },
-                );
-                self.cache.push_front((source, ready));
-                self.cache.truncate(8);
+            let job = self.job.take().expect("completed trace job");
+            if let Some(pipeline) = self.pending.complete(job.generation, job.source, result)? {
+                self.install(&g.device, pipeline);
                 self.edited = false;
                 return Ok(true);
             }
         }
-        let Some((at, _)) = &self.request else {
+        let Some((generation, source)) = self.pending.ready() else {
             return Ok(!self.edited);
         };
-        if *at > Instant::now() {
-            return Ok(false);
-        }
-        let (_, source) = self.request.take().unwrap();
-        if let Some(i) = self.cache.iter().position(|(s, _)| s == &source) {
-            let item = self.cache.remove(i).unwrap();
-            let p = &item.1;
-            self.install(
-                &g.device,
-                Pipelines {
-                    module: p.module.clone(),
-                    render: p.render.clone(),
-                    shade: p.shade.clone(),
-                },
-            );
-            self.cache.push_front(item);
+        if let Some(pipelines) = self.pending.cached(generation, &source) {
+            self.install(&g.device, pipelines);
             self.edited = false;
             return Ok(true);
         }
-        let (send, receive) = std::sync::mpsc::channel();
         let d = g.device.clone();
         let [g0, g1, g2] = [
             &self.loaded.bgl0,
@@ -262,45 +334,95 @@ impl TraceSession {
         ]
         .map(Clone::clone);
         let wgsl = source.clone();
-        std::thread::Builder::new()
-            .name("loft-trace-promotion".into())
-            .spawn(move || {
-                let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
-                let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some("promoted trace"),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&wgsl)),
-                });
-                let render = render(
-                    &d,
-                    "promoted visibility",
-                    &[&g0, &g1],
-                    &module,
-                    ("vs", "fs"),
-                    VIS,
-                    true,
-                    Some(wgpu::Face::Front),
-                    None,
-                );
-                let shade = compute(
-                    &d,
-                    "promoted shade",
-                    &[&g0, &g1, &g2],
-                    &module,
-                    "shade",
-                    None,
-                );
-                let result = pollster::block_on(scope.pop()).map_or(
-                    Ok(Pipelines {
-                        module,
-                        render,
-                        shade,
-                    }),
-                    |e| Err(e.to_string()),
-                );
-                let _ = send.send(result);
-            })
-            .map_err(|e| e.to_string())?;
-        self.job = Some((self.generation, source, receive));
+        let creates = self.creates.clone();
+        let done = promotion::worker(move || {
+            let scope = d.push_error_scope(wgpu::ErrorFilter::Validation);
+            let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("promoted trace"),
+                source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&wgsl)),
+            });
+            creates.record();
+            let render = render(
+                &d,
+                "promoted visibility",
+                &[&g0, &g1],
+                &module,
+                ("vs", "fs"),
+                VIS,
+                true,
+                Some(wgpu::Face::Front),
+                None,
+            );
+            creates.record();
+            let shade = compute(
+                &d,
+                "promoted shade",
+                &[&g0, &g1, &g2],
+                &module,
+                "shade",
+                None,
+            );
+            pollster::block_on(scope.pop()).map_or(
+                Ok(Pipelines {
+                    module,
+                    render,
+                    shade,
+                }),
+                |e| Err(e.to_string()),
+            )
+        })
+        .map_err(|e| e.to_string())?;
+        self.job = Some(Job {
+            generation,
+            source,
+            done,
+        });
         Ok(false)
+    }
+
+    pub fn measure_paired(
+        &mut self,
+        g: &Gpu,
+        t: f32,
+        count: usize,
+    ) -> Result<Vec<[Option<f64>; 2]>, String> {
+        let current = Pipelines::current(&self.loaded.kinds[self.source.kind()]);
+        let mut observations = Vec::with_capacity(count);
+        let result = (|| {
+            for i in 0..count {
+                let mut pair = [None; 2];
+                for tier in [i % 2, 1 - i % 2] {
+                    let target = if tier == 0 { &self.fallback } else { &current };
+                    self.install(&g.device, target.clone());
+                    self.loaded.frame(g, t);
+                    pair[tier] = self.loaded.gpu_ms(g)?.map(|(ms, _)| ms);
+                }
+                observations.push(pair);
+            }
+            Ok(observations)
+        })();
+        self.install(&g.device, current);
+        result
+    }
+
+    pub fn clean_pipelines(&self) -> Vec<(wgpu::RenderPipeline, wgpu::ComputePipeline)> {
+        self.loaded
+            .kinds
+            .iter()
+            .enumerate()
+            .filter(|(kind, _)| *kind != self.source.kind())
+            .map(|(_, kind)| (kind.render.clone(), kind.shade.clone()))
+            .collect()
+    }
+
+    pub fn kind(&self) -> usize {
+        self.source.kind()
+    }
+
+    pub fn promotion_stats(&self) -> (usize, u64) {
+        (
+            self.creates.background.load(Ordering::Relaxed),
+            self.pending.stale(),
+        )
     }
 }

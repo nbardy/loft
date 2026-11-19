@@ -245,7 +245,7 @@ fn l23a_vm_validates_and_dispatches_all_frozen_ids() {
     let vm = module
         .functions
         .iter()
-        .find(|(_, f)| f.name.as_deref() == Some("loft_tier0"))
+        .find(|(_, f)| f.name.as_deref() == Some("tier_eval"))
         .unwrap()
         .1;
     let mut cases = Vec::new();

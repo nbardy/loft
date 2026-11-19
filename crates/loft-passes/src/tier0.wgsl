@@ -1,13 +1,4 @@
-// One fixed entry per dirty kind, with a workgroup-uniform tape/PC.
-@group(0) @binding(0) var<uniform> tier_frame: array<vec4f, 16>;
-@group(0) @binding(1) var<storage, read> tier_input: array<vec4f>;
-@group(1) @binding(0) var<storage, read> tier_tape: array<u32>;
-@group(1) @binding(1) var<storage, read> tier_constants: array<vec4f>;
-@group(1) @binding(2) var<storage, read> tier_rows: array<vec4f>;
-@group(1) @binding(3) var<storage, read> tier_lut: array<vec4f>;
-@group(2) @binding(0) var<storage, read_write> tier_out: array<vec4f>;
-@group(3) @binding(0) var tier_texture: texture_2d_array<f32>;
-
+// The fixed ABI operations, shared by compute and authored kind shaders.
 fn tier_quintic(t: f32) -> f32 { return t*t*t*((6.*t - 15.)*t + 10.); }
 fn tier_smin(a: f32, b: f32, k: f32) -> f32 {
     let h = max(k - abs(a - b), 0.) / k;
@@ -64,34 +55,16 @@ fn tier_fbm(p: vec2f, octaves: u32) -> f32 {
     }
     return result;
 }
-fn tier_lut_sample(slot: u32, u: f32) -> vec4f {
-    let info = vec2u(tier_lut[slot].xy);
-    let x = clamp(u, 0., 1.) * f32(info.y - 1u);
-    let i = u32(x);
-    return mix(tier_lut[info.x + i], tier_lut[info.x + min(i + 1u, info.y - 1u)], tier_quintic(fract(x)));
-}
-fn tier_tex_sample(slot: u32, uv: vec2f) -> vec4f {
-    let dims = vec2i(textureDimensions(tier_texture));
-    let p = clamp(uv, vec2f(0.), vec2f(1.)) * vec2f(dims) - 0.5;
-    let i = vec2i(floor(p));
-    let lo = clamp(i, vec2i(0), dims - 1);
-    let hi = clamp(i + 1, vec2i(0), dims - 1);
-    let f = fract(p);
-    let a = textureLoad(tier_texture, lo, i32(slot), 0);
-    let b = textureLoad(tier_texture, vec2i(hi.x, lo.y), i32(slot), 0);
-    let c = textureLoad(tier_texture, vec2i(lo.x, hi.y), i32(slot), 0);
-    let d = textureLoad(tier_texture, hi, i32(slot), 0);
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-fn loft_tier0(row: u32) -> vec4f {
+fn tier_sphere(p: vec3f, radius: f32) -> f32 { return length(p) - radius; }
+fn tier_eval(ctx: TierContext, point: vec3f) -> vec4f {
     var reg: array<vec4f, 32>;
     var trips: array<u32, 32>;
     var depth = 0u;
     var pc = 0u;
-    let count = tier_tape[0];
+    let count = tier_count(ctx);
     loop {
         if pc >= count { return vec4f(0.); }
-        let ins = tier_tape[pc + 1u];
+        let ins = tier_word(ctx, pc);
         let dst = (ins >> 21u) & 31u;
         let imm = ins & 2047u;
         let a = reg[(ins >> 16u) & 31u];
@@ -99,10 +72,10 @@ fn loft_tier0(row: u32) -> vec4f {
         let c = reg[imm & 31u];
         switch ins >> 26u {
             case 0u: {}
-            case 1u: { reg[dst] = tier_constants[imm]; }
-            case 2u: { reg[dst] = tier_rows[row + imm]; }
-            case 3u: { reg[dst] = tier_input[imm]; }
-            case 4u: { reg[dst] = tier_frame[imm]; }
+            case 1u: { reg[dst] = tier_constant(ctx, imm); }
+            case 2u: { reg[dst] = tier_row(ctx, imm); }
+            case 3u: { reg[dst] = tier_input_at(ctx, point, imm); }
+            case 4u: { reg[dst] = tier_frame_at(ctx, imm); }
             case 5u: { reg[dst] = a; }
             case 6u: { reg[dst] = vec4f(a[imm & 3u], a[(imm >> 2u) & 3u], a[(imm >> 4u) & 3u], a[(imm >> 6u) & 3u]); }
             case 7u: { reg[dst] = vec4f(a[imm & 3u]); }
@@ -141,12 +114,12 @@ fn loft_tier0(row: u32) -> vec4f {
             case 37u: { let n = length(a.xyz); reg[dst] = vec4f(a.xyz / n, n); }
             case 38u, 39u: {
                 let w = f32((ins >> 26u) == 38u);
-                let m = mat4x4f(tier_constants[imm], tier_constants[imm+1u], tier_constants[imm+2u], tier_constants[imm+3u]);
+                let m = mat4x4f(tier_constant(ctx, imm), tier_constant(ctx, imm + 1u), tier_constant(ctx, imm + 2u), tier_constant(ctx, imm + 3u));
                 reg[dst] = m * vec4f(a.xyz, w);
             }
             case 40u: { reg[dst] = vec4f(abs(a.x), a.yz, sign(a.x)); }
             case 41u: { reg[dst] = vec4f(a.xyz - b.xyz * floor(a.xyz / b.xyz + 0.5), a.w); }
-            case 42u: { reg[dst] = vec4f(length(a.xyz) - b.x); }
+            case 42u: { reg[dst] = vec4f(tier_sphere(a.xyz, b.x)); }
             case 43u: { reg[dst] = vec4f(tier_box(a.xyz, b.xyz)); }
             case 44u: { reg[dst] = vec4f(tier_box(a.xyz, b.xyz - vec3f(c.x)) - c.x); }
             case 45u: {
@@ -155,13 +128,13 @@ fn loft_tier0(row: u32) -> vec4f {
                 let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0., 1.);
                 reg[dst] = vec4f(length(pa - ba*h) - c.w);
             }
-            case 46u: { reg[dst] = vec4f(tier_smin(a.x, b.x, tier_constants[imm].x)); }
-            case 47u: { reg[dst] = vec4f(-tier_smin(-a.x, b.x, tier_constants[imm].x)); }
+            case 46u: { reg[dst] = vec4f(tier_smin(a.x, b.x, tier_constant(ctx, imm).x)); }
+            case 47u: { reg[dst] = vec4f(-tier_smin(-a.x, b.x, tier_constant(ctx, imm).x)); }
             case 48u: { reg[dst] = vec4f(tier_noise(a.xyz)); }
             case 49u: { reg[dst] = vec4f(tier_voronoi(a.xyz)); }
             case 50u: { reg[dst] = vec4f(tier_fbm(a.xy, imm)); }
-            case 51u: { reg[dst] = tier_lut_sample(imm, a.x); }
-            case 52u: { reg[dst] = tier_tex_sample(imm, a.xy); }
+            case 51u: { reg[dst] = tier_lut_sample(ctx, imm, a.x); }
+            case 52u: { reg[dst] = tier_tex_sample(ctx, imm, a.xy); }
             case 53u: {
                 let trip = u32(a.x);
                 if trip == 0u { pc = imm + 1u; continue; }
@@ -180,10 +153,4 @@ fn loft_tier0(row: u32) -> vec4f {
         pc += 1u;
     }
     return vec4f(0.);
-}
-
-@compute @workgroup_size(32) fn loft_tier0_main(@builtin(global_invocation_id) gid: vec3u) {
-    if gid.x < arrayLength(&tier_out) {
-        tier_out[gid.x] = loft_tier0(gid.x);
-    }
 }
