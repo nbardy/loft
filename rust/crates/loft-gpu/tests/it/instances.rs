@@ -63,7 +63,8 @@ fn boss(origin: Origin) -> Bundle {
             },
         ]
         .into(),
-        inputs: [InputDecl { name: 5, ty: loft_ir::graph::Ty::F32, def: [f(0.0)].into() }].into(),
+        inputs: [InputDecl { kind: InputKind::Level, name: 5, ty: loft_ir::graph::Ty::F32, def: [f(0.0)].into() }]
+            .into(),
         sections: text(&[POSE, &boss, SKY]),
         ..subject()
     }

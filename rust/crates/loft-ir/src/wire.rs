@@ -74,7 +74,7 @@ use crate::graph::{
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LFTW");
 /// Internal, never persisted: the recorder and this decoder change together. The binding reports it at load.
-pub const WIRE: u32 = 4;
+pub const WIRE: u32 = 5;
 /// Quota checked before any span is read: 16.7M nodes, 30x Titan's recorded count.
 pub const MAX_NODES: u64 = 1 << 24;
 /// Wire code of `Prim::ALL[0]`.
@@ -176,6 +176,7 @@ struct Decls {
     passes: Vec<Pass>,
     media: Vec<Medium>,
     cameras: Vec<Camera>,
+    row_steps: Vec<(crate::bundle::RowStep, crate::bundle::InputKind)>,
     checks: Vec<Check>,
     solves: Vec<Solve>,
     /// Each scene-level decl's word offset, for refusing a reference checked after all decls are read.
@@ -588,6 +589,7 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
         passes: Vec::new(),
         media: Vec::new(),
         cameras: Vec::new(),
+        row_steps: Vec::new(),
         checks: Vec::new(),
         solves: Vec::new(),
         top_at: Vec::new(),
@@ -714,6 +716,38 @@ fn decls(d: &[u32], roots: &[u32], z: &Sizes) -> Result<Decls, Error> {
                 };
                 out.kernel_at.push(at);
                 out.kernels.push(Kernel::Table { name: sym(*name)?, lanes: *lanes, entries: *entries, role, fill });
+            }
+            (11, [text, plan, seed, output, input, hz, ticks, how, arg]) => {
+                use crate::bundle::{InputKind, RowStep};
+                let table =
+                    |r: u32| matches!(out.kernels.get(r as usize), Some(Kernel::Table { fill: Fill::Data { .. }, .. }));
+                layout(
+                    rs.is_empty()
+                        && table(*plan)
+                        && table(*seed)
+                        && table(*output)
+                        && (*input as usize) < out.inputs.len()
+                        && *hz > 0
+                        && *ticks > 0,
+                )?;
+                let kind = match (*how, *arg) {
+                    (0, 0) => InputKind::Level,
+                    (1, r) if table(r) => InputKind::Script { samples: r },
+                    (2, slots) if slots > 0 => InputKind::Events { slots },
+                    _ => return Err(bad(Span::Decls, at, Fault::Layout)),
+                };
+                out.row_steps.push((
+                    RowStep {
+                        module: sym(*text)?,
+                        plan: *plan,
+                        seed: *seed,
+                        output: *output,
+                        input: *input,
+                        hz: *hz,
+                        ticks: *ticks,
+                    },
+                    kind,
+                ));
             }
             (8, [name, def, min, max]) => {
                 layout(rs.is_empty())?;
@@ -892,6 +926,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
         passes: d.passes.into(),
         media: d.media.into(),
         cameras: d.cameras.into(),
+        row_steps: d.row_steps,
         checks: d.checks.into(),
         solves: d.solves.into(),
         roots: roots[..d.program_roots as usize].into(),

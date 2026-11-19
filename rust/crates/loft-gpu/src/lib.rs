@@ -48,6 +48,7 @@
 //! ```
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+mod ticks;
 mod validate;
 mod view;
 
@@ -112,6 +113,7 @@ pub struct Instance {
     g0: BindGroup,
     g1: Packs<BindGroup>,
     g2: Vec<BindGroup>,
+    timelines: std::cell::RefCell<Vec<ticks::Timeline>>,
     _own: (Vec<Buffer>, Vec<Res>),
 }
 impl Instance {
@@ -120,7 +122,19 @@ impl Instance {
         Ok(())
     }
     pub fn set_input(&mut self, loft: &Loft, name: &str, value: &[f32]) -> Result<(), Error> {
-        self.inputs[loft.input_slot(name, value.len())?].copy_from_slice(value);
+        let slot = loft.input_slot(name, value.len())?;
+        for (s, p) in self
+            .timelines
+            .get_mut()
+            .iter_mut()
+            .zip(&loft.programs)
+            .filter(|(_, p)| p.spec.input as usize == slot.start / 4)
+        {
+            for row in 0..p.count {
+                s.write(p, row, ((self.time * p.spec.hz as f32) as u32).max(1), value, None)?;
+            }
+        }
+        self.inputs[slot].copy_from_slice(value);
         Ok(())
     }
 }
@@ -242,6 +256,8 @@ pub struct Loft {
     inputs: Vec<f32>,
     timestamps: Option<wgpu::QuerySet>,
     frame_dispatches: usize,
+    programs: Vec<ticks::Program>,
+    timelines: Vec<ticks::Timeline>,
 }
 
 pub(crate) fn prelude(m: &Module, p: Precision) -> &'static str {
@@ -770,6 +786,12 @@ impl Loft {
             inputs,
             timestamps: None,
             frame_dispatches: 0,
+            programs: b
+                .row_steps
+                .iter()
+                .map(|s| ticks::Program::new(device, &b, s, &modules[s.module as usize], cache))
+                .collect(),
+            timelines: vec![],
             b,
         };
         loft.res = (0..loft.b.resources.len()).map(|r| loft.resource(device, r)).collect();
@@ -806,6 +828,14 @@ impl Loft {
         loft.dispatch_all(&mut enc, &load, None, &[loft.own()]);
         for s in 0..loft.steppers.len() {
             loft.precompute(queue, &mut enc, s);
+        }
+        for p in &loft.programs {
+            let Res::Rows { pack, .. } = loft.res[p.spec.output as usize] else { unreachable!() };
+            let mut timeline = p.start(device, queue, &loft.b, &loft.packs[pack]);
+            if matches!(loft.b.inputs[p.spec.input as usize].kind, loft_ir::bundle::InputKind::Script { .. }) {
+                timeline.bake(p, &mut enc, None);
+            }
+            loft.timelines.push(timeline);
         }
         // Every(k) states are final after load; Latest starts at state 0.
         queue.submit([enc.finish()]);
@@ -1050,7 +1080,7 @@ impl Loft {
     /// What loading built: shader modules, render pipelines and compute pipelines (the camera builder's included). Load
     /// time grows with these (CORE.md: score them beside frame time).
     pub fn built(&self) -> [usize; 3] {
-        [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()]
+        [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len() + 2 * self.programs.len()]
     }
 
     /// Frame-rate kernels dispatched in the most recent encode, excluding lens and step passes.
@@ -1109,7 +1139,80 @@ impl Loft {
     /// An input by name, as many floats as its type (a host camera writes the view camera's inputs).
     pub fn set_input(&mut self, name: &str, value: &[f32]) -> Result<(), Error> {
         let at = self.input_slot(name, value.len())?;
+        for (s, p) in
+            self.timelines.iter_mut().zip(&self.programs).filter(|(_, p)| p.spec.input as usize == at.start / 4)
+        {
+            let tick = ((self.time * p.spec.hz as f32).floor() as u32).max(1);
+            for r in 0..p.count {
+                s.write(p, r, tick, value, None)?;
+            }
+        }
         self.inputs[at].copy_from_slice(value);
+        Ok(())
+    }
+    /// Supply an input at its simulation tick, independently of the presentation clock.
+    pub fn write_tick(
+        &mut self,
+        name: &str,
+        row: u32,
+        tick: u32,
+        value: &[f32],
+        sequence: Option<u64>,
+    ) -> Result<(), Error> {
+        let slot = self.input_slot(name, value.len())?.start / 4;
+        let mut found = false;
+        for (s, p) in self.timelines.iter_mut().zip(&self.programs).filter(|(_, p)| p.spec.input as usize == slot) {
+            s.write(p, row, tick, value, sequence)?;
+            found = true;
+        }
+        if !found {
+            return Err(Error::Usage(format!("input {name} is frame-rate: use set_input").into()));
+        }
+        Ok(())
+    }
+    /// Copy a current or retained state into a caller-owned staging buffer without mapping in the frame loop.
+    pub fn copy_state(
+        &self,
+        enc: &mut wgpu::CommandEncoder,
+        index: usize,
+        tick: Option<u32>,
+        dst: &Buffer,
+        off: u64,
+    ) -> Result<(), Error> {
+        let p = self.programs.get(index).ok_or_else(|| Error::Usage("choose a declared stepped table".into()))?;
+        self.timelines[index].copy(p, enc, tick, dst, off)
+    }
+    /// Run just the stepped tables, e.g. for headless verification. Timestamp the single-table span at 0/1.
+    pub fn advance_rows(&mut self, enc: &mut wgpu::CommandEncoder) -> usize {
+        self.programs
+            .iter()
+            .zip(&mut self.timelines)
+            .enumerate()
+            .map(|(i, (p, s))| s.encode(p, enc, self.time, self.timestamps.as_ref().filter(|_| i == 0)))
+            .sum()
+    }
+    /// Rebake an unedited script into its retained states, optionally measuring that same entry at 0/1.
+    pub fn bake_rows(&mut self, enc: &mut wgpu::CommandEncoder, index: usize) -> Result<(), Error> {
+        let p = self.programs.get(index).ok_or_else(|| Error::Usage("choose a declared script".into()))?;
+        let timeline = &mut self.timelines[index];
+        if !timeline.is_baked() {
+            return Err(Error::Usage("live input is present: reload the script to bake it".into()));
+        }
+        timeline.bake(p, enc, self.timestamps.as_ref());
+        Ok(())
+    }
+    /// GPU-to-GPU copy of a row resource, including its pack offset.
+    pub fn copy_rows(&self, enc: &mut wgpu::CommandEncoder, r: Id, dst: &Buffer, off: u64) -> Result<(), Error> {
+        let Some(Res::Rows { pack, offset }) = self.res.get(r as usize) else {
+            return Err(Error::Usage("choose a rows resource to read".into()));
+        };
+        enc.copy_buffer_to_buffer(
+            &self.packs[*pack],
+            16 * offset,
+            dst,
+            off,
+            Some(state_bytes(&self.b.resources[r as usize].shape)),
+        );
         Ok(())
     }
     fn param_slot(&self, name: &str) -> Result<usize, Error> {
@@ -1139,6 +1242,7 @@ impl Loft {
             .flat_map(|(k, d)| self.inputs[k * 4..k * 4 + d.def.len()].to_vec())
             .collect();
         FrameKey {
+            steps: self.programs.iter().zip(&self.timelines).map(|(p, s)| s.key(p, self.time)).collect(),
             camera,
             time: self.time.to_bits(),
             size,
@@ -1183,10 +1287,7 @@ impl Loft {
             self.group0s(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame]);
-        let kernels = self.frame_kernels();
-        self.frame_dispatches = kernels.len();
-        self.dispatch_all(enc, &kernels, self.timestamps.as_ref(), &[self.own()]);
+
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
             let Keep::Latest = st.s.keep else { continue };
@@ -1210,6 +1311,15 @@ impl Loft {
                 self.steppers[s].done = to;
             }
         }
+        let kernels = self.frame_kernels();
+        self.frame_dispatches = kernels.len();
+        for (i, (p, s)) in self.programs.iter().zip(&mut self.timelines).enumerate() {
+            self.frame_dispatches +=
+                s.encode(p, enc, self.time, self.timestamps.as_ref().filter(|_| kernels.is_empty() && i == 0));
+        }
+        // A camera can read presented rows. Fill its matrices before frame kernels that use the view.
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame]);
+        self.dispatch_all(enc, &kernels, self.timestamps.as_ref(), &[self.own()]);
         for (p, pass) in self.b.passes.iter().enumerate() {
             let clear = |owned: bool| match (owned, &pass.clear) {
                 (true, Clear::Color(c)) => {
@@ -1323,7 +1433,10 @@ impl Loft {
             .position(|p| !matches!(p.target, Target::View))
             .map(|p| format!("pass {p} draws offscreen"));
         let frame: Vec<usize> = self.frame_kernels();
-        let written = |r: usize| frame.iter().any(|&k| self.b.kernels[k].writes.contains(&(r as Id)));
+        let written = |r: usize| {
+            self.programs.iter().any(|p| p.spec.output as usize == r)
+                || frame.iter().any(|&k| self.b.kernels[k].writes.contains(&(r as Id)))
+        };
         let sized = (0..self.res.len())
             .find(|&r| written(r) && matches!(self.b.resources[r].shape, Shape::ViewSized { .. }))
             .map(|r| format!("frame kernels write view-sized resource {r}"));
@@ -1398,7 +1511,22 @@ impl Loft {
             compute: pack_group(device, &self.bgl1.compute, n, &pack),
         };
         let g2 = self.b.kernels.iter().zip(&self.bgl2).map(|(k, l)| group(device, l, &k.writes, &at)).collect();
+        let mut start = device.create_command_encoder(&Default::default());
+        let timelines = self
+            .programs
+            .iter()
+            .map(|p| {
+                let Res::Rows { pack: index, .. } = self.res[p.spec.output as usize] else { unreachable!() };
+                let mut s = p.start(device, queue, &self.b, pack(index));
+                if matches!(self.b.inputs[p.spec.input as usize].kind, loft_ir::bundle::InputKind::Script { .. }) {
+                    s.bake(p, &mut start, None);
+                }
+                s
+            })
+            .collect();
+        queue.submit([start.finish()]);
         Ok(Instance {
+            timelines: std::cell::RefCell::new(timelines),
             time: self.time,
             params: self.params.clone(),
             inputs: self.inputs.clone(),
@@ -1415,6 +1543,9 @@ impl Loft {
     pub fn prepare(&self, queue: &wgpu::Queue, enc: &mut wgpu::CommandEncoder, instances: &[Instance]) {
         let camera = self.host_camera();
         for i in instances {
+            for (s, p) in i.timelines.borrow_mut().iter_mut().zip(&self.programs) {
+                s.encode(p, enc, i.time, None);
+            }
             queue.write_buffer(&i.frame, 0, &frame_bytes(&camera, self.size, i.time, &i.params, &i.inputs));
         }
         // A GPU camera is built once, on the loft's own frame, and copied into every copy's.

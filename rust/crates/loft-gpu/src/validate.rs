@@ -229,6 +229,61 @@ pub fn validate(b: &Bundle, precision: Precision, limits: &wgpu::Limits) -> Resu
         at(&b.names, c.name, "camera name")?;
         entry(c.lens, "camera lens module")?;
     }
+    for d in &b.inputs {
+        at(&b.names, d.name, "input name")?;
+        if d.ty.width().is_none() || d.def.len() != d.ty.lits() as usize {
+            return Err(bad("input default: supply one number per declared component".into()));
+        }
+    }
+    let mut outputs = std::collections::HashSet::new();
+    for s in &b.row_steps {
+        at(&b.modules, s.module, "row-local module")?;
+        let input = at(&b.inputs, s.input, "row-local input")?;
+        let supplied = |r, what| match at(&b.resources, r, what)? {
+            loft_ir::bundle::Resource { shape: Shape::Rows { rows, lanes }, init: Init::Bytes(_) } => {
+                Ok((*rows, u64::from(*rows) * u64::from(*lanes) * 16))
+            }
+            _ => Err(bad(format!("{what}: supply a nonempty table of initial rows"))),
+        };
+        let (count, size) = supplied(s.seed, "initial state")?;
+        let (n, _) = supplied(s.plan, "immutable plans")?;
+        supplied(s.output, "presented rows")?;
+        if n != count
+            || !outputs.insert(s.output)
+            || b.kernels.iter().any(|k| k.writes.contains(&s.output))
+            || !b.packs.iter().any(|p| p.holds.as_ref() == [(s.output, 0)] && p.access == Access::Write)
+        {
+            return Err(bad(
+                "row-local step: supply one plan per initial row and an exclusively written output pack".into()
+            ));
+        }
+        let (keep, packets) = match input.kind {
+            loft_ir::bundle::InputKind::Script { samples } => {
+                let (_, n) = supplied(samples, "script")?;
+                if n != 16 * (u64::from(s.ticks) + 1) {
+                    return Err(bad("script needs one packet per tick, including zero".into()));
+                }
+                (1, u64::from(s.ticks) + 1)
+            }
+            loft_ir::bundle::InputKind::Level => (60, 65),
+            loft_ir::bundle::InputKind::Events { slots: 1 } => (60, 65),
+            loft_ir::bundle::InputKind::Events { .. } => {
+                return Err(bad("this entry reads one event packet: declare one slot per tick".into()));
+            }
+        };
+        let limit = limits.max_storage_buffer_binding_size.min(limits.max_buffer_size);
+        if s.hz == 0
+            || s.ticks == 0
+            || s.ticks >= u32::MAX - 64
+            || size > limit / (2 + u64::from(s.ticks / keep))
+            || u64::from(count) > limit / (16 * packets)
+            || count.div_ceil(32) > limits.max_compute_workgroups_per_dimension
+        {
+            return Err(bad(
+                "row-local clock or storage exceeds device limits: shorten the take or reduce the row count".into(),
+            ));
+        }
+    }
     packs(b, limits)?;
     for (k, m) in b.modules.iter().enumerate() {
         let text = std::str::from_utf8(at(&b.sections, m.wgsl, "module text")?)

@@ -252,6 +252,16 @@ class Writer {
 
   write(program: Program, roots: readonly number[], scene: Scene): Job {
     const top = roots.map((r) => this.visit(r));
+    for (const s of scene.rowSteps ?? []) {
+      const input = this.input(s.input, TY[s.input.ty]);
+      const home = () => { switch (s.home.kind) {
+        case "level": return [0, 0];
+        case "script": return [1, this.kernel(s.home.samples)];
+        case "events": return [2, s.home.slots];
+      } };
+      const words = [this.sym(s.source), this.kernel(s.plan), this.kernel(s.seed), this.kernel(s.output), input, s.hz, s.ticks, ...home()];
+      this.reserve(Decl.RowStep, s).d.words.push(...words);
+    }
     for (const c of scene.cameras) this.camera(c);
     for (const p of scene.passes) this.pass(p);
     for (const c of scene.checks) this.check(c);

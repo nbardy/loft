@@ -11,3 +11,9 @@ Record 481 GPU state rows at 120 Hz with the two velocity changes at ticks 24, 2
 Motion owns per-instance input history, step scheduling and presented rows. Render can consume a table of 32-byte rigid frames (translation, xyzw quaternion) through its own kinds. Keep end kinds, IK and support arithmetic in editable WGSL. Coordinate additive bundle changes through this note before merging either lane.
 
 The recorded lineup at this revision has 4,884 fill pipelines (4,880 frame, four load) and 21 named camera pipelines. A named view adds two camera dispatches. The profiler reports the length actually passed to the frame encoder. GPU timing at 96×64 is a count experiment and cannot replace the 960×540 baseline.
+
+Measured by the submitted frame list on Apple M4 Metal: **4,880 frame dispatches**, two camera dispatches, 5,539 modules, 4,905 compute and 654 render pipelines. At 96×64 the two timed frames took 29.48 and 30.03 ms, including 13.68 and 13.80 ms in the kernel pass. Cold load on this shared machine was 154.0 s. The majority prediction passes. Dividing 97 ms by pipeline count does not measure dispatch overhead: the kernel pass here cost about 2.8 µs per submitted kernel, including its arithmetic.
+
+## Wire and host ownership
+
+Wire 5 adds one row-local step declaration. It names an immutable plan table, initial state table, exclusive output pack, input and WGSL module. Values cross the island boundary. The step and presentation law cannot bind storage. Bundle V1 readers in this branch accept previous bundles without the new records. A script retains each tick, and a level retains every 60th tick; the same advance entry handles both. A presentation reads a script checkpoint or fuses up to 64 live ticks. Camera, other frame fills and draws consume the result in the same encoder.

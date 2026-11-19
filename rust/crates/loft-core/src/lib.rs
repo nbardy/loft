@@ -229,7 +229,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
     let dispatch_list = schedule::schedule(&plan, &decls)?;
     let dispatches = dispatch_list.len();
     let order: Vec<usize> = dispatch_list.iter().flat_map(|d| d.iter().map(|&k| k as usize)).collect();
-    let lay = layout::layout(&plan)?;
+    let lay = layout::with_outputs(&plan, &g.row_steps.iter().map(|(s, _)| s.output).collect::<Vec<_>>())?;
     phases.plan = ns(t);
 
     // Emit: each distinct root as `r{k}(free variables in name order)`, as a graph function appended to the job's.
@@ -392,10 +392,11 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         max: lit(p.max),
     });
     let params: Box<[ParamDecl]> = params.collect();
-    let inputs: Box<[InputDecl]> = g
+    let mut inputs: Box<[InputDecl]> = g
         .inputs
         .iter()
         .map(|i| InputDecl {
+            kind: bundle::InputKind::Level,
             name: name(g.sym(i.name)),
             ty: i.ty,
             def: (0..u32::from(i.ty.lits())).map(|k| lit(i.def + k)).collect(),
@@ -407,6 +408,26 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
     // Draws, media and passes: lowered by `draw` into modules of their own; their module and name ids move past ours.
     let (draws_ir, media_ir, passes_ir) = draw_decls(&g);
     let low = draw::lower(&g, &slots, &draws_ir, &media_ir, &passes_ir)?;
+    let mut row_steps = Vec::new();
+    for (spec, kind) in &g.row_steps {
+        let source = g.sym(spec.module);
+        // Only value/private arguments enter an island. Raw cross-row kernels retain the existing per-tick schedule.
+        let parsed = naga::front::wgsl::parse_str(source).map_err(|e| unsupported(e.emit_to_string(source)))?;
+        if !parsed.entry_points.is_empty() || parsed.global_variables.iter().any(|(_, v)| v.binding.is_some()) {
+            return Err(unsupported("row-local laws must read only their arguments and private variables; use a raw pass for shared storage".into()));
+        }
+        let text = format!("{source}\n{}", include_str!("../wgsl/advance.wgsl"));
+        if matches!(build.naga, Naga::Emit) {
+            let module=naga::front::wgsl::parse_str(&text).map_err(|e| unsupported(e.emit_to_string(&text)))?;
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
+                .validate(&module).map_err(|e| unsupported(e.emit_to_string(&text)))?;
+        }
+        let module = modules.len() as u32;
+        sections.push(text.into_bytes().into());
+        modules.push(Module { wgsl: sections.len() as u32 - 1, origin: Origin::Author, precision_alias: false });
+        row_steps.push(bundle::RowStep { module, ..spec.clone() });
+        inputs[spec.input as usize].kind = kind.clone();
+    }
     let (module0, name0) = (modules.len() as u32, strings.len() as u32);
     for text in low.modules {
         sections.push(text.into_bytes().into());
@@ -433,6 +454,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         resources: resources.into(),
         packs: lay.packs.into(),
         kernels: kernels.into(),
+        row_steps,
         modules: modules.into(),
         draws,
         passes,
@@ -444,7 +466,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         sections: sections.into(),
     };
     let resources = b.resources.len();
-    let (n_kernels, n_draws, n_packs) = (b.kernels.len(), b.draws.len(), b.packs.len());
+    let (n_kernels, n_draws, n_packs) = (b.kernels.len()+b.row_steps.len(), b.draws.len(), b.packs.len());
     let bytes = b.write()?;
     let build = Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect();
     phases.bundle = ns(t);

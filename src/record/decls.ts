@@ -8,7 +8,7 @@
 //   grid cells (id: f32) -> vec2: a copy's cell counts this frame (its level of detail; 0 hides it)
 //   density (p: vec3) -> f32                        outline (colour: vec3, q: vec3) -> vec4 (ink, width)
 
-import { variable, type Expr, type NumTy, type Row, type TableSource } from "../expr.ts";
+import { variable, type DataTable, type InputSpec, type Expr, type NumTy, type Row, type TableSource } from "../expr.ts";
 import { rec } from "./recorder.ts";
 
 /** A graph function recorded for a decl to name (`role`). */
@@ -90,5 +90,13 @@ export type Hold = { readonly times: Times; readonly said: string; readonly site
 
 /** Everything scene-level a job carries: the named cameras a host may view by (each written once, passes' too), the
  * passes (their media and draws are reached from them), checks and solves. */
-export type Scene = { readonly cameras: readonly Camera[]; readonly passes: readonly Pass[]; readonly checks: readonly Check[]; readonly solves: readonly Solve[] };
+export type RowStep = {
+  readonly source: string; readonly plan: DataTable; readonly seed: DataTable; readonly output: DataTable;
+  readonly input: InputSpec; readonly hz: number; readonly ticks: number;
+  readonly home: { kind: "level" } | { kind: "script"; samples: DataTable } | { kind: "events"; slots: number };
+};
+export type Scene = { readonly rowSteps?: readonly RowStep[]; readonly cameras: readonly Camera[]; readonly passes: readonly Pass[]; readonly checks: readonly Check[]; readonly solves: readonly Solve[] };
 export const NO_SCENE: Scene = { cameras: [], passes: [], checks: [], solves: [] };
+
+/** A scene given as explicit passes. The Rust build consumes these declarations directly. */
+export function recorded(scene: Scene) { return { kind: "recorded" as const, scene }; }

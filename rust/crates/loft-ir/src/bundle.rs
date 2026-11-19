@@ -33,6 +33,8 @@ pub struct Bundle {
     /// `@group(1) @binding(p)` and reads resource r at its offset, a constant in its text (layout, loft-core).
     pub packs: Box<[Pack]>,
     pub kernels: Box<[Kernel]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub row_steps: Vec<RowStep>,
     pub modules: Box<[Module]>,
     pub draws: Box<[Draw]>,
     pub passes: Box<[Pass]>,
@@ -257,7 +259,34 @@ pub struct ParamDecl {
     pub max: F32,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RowStep {
+    pub module: Id,
+    pub plan: Id,
+    pub seed: Id,
+    pub output: Id,
+    pub input: Id,
+    pub hz: u32,
+    pub ticks: u32,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputKind {
+    #[default]
+    Level,
+    /// Sampled at integer ticks, row zero is the initial input.
+    Script {
+        samples: Id,
+    },
+    Events {
+        slots: u32,
+    },
+}
+impl InputKind {
+    fn level(&self)->bool {matches!(self,Self::Level)}
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct InputDecl {
+    #[serde(default,skip_serializing_if="InputKind::level")]
+    pub kind: InputKind,
     pub name: Id,
     pub ty: Ty,
     pub def: Box<[F32]>,

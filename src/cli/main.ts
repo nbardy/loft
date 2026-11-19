@@ -233,11 +233,20 @@ async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
   const [{ rec }, { pack, Program }, { native, UNLIMITED }, { mkdirSync }, { compiledScene }, { sceneDecls }] = await Promise.all([
     import("../record/recorder.ts"), import("../record/wire.ts"), import("../core/native.ts"), import("node:fs"), import("./load.ts"), import("../draw/record.ts")]);
   const t = performance.now(), stop = rec.watch();
-  let roots: ReturnType<typeof stop>, scene: Awaited<ReturnType<typeof compiledScene>>["scene"];
-  let artefact: Awaited<ReturnType<typeof compiledScene>>["artefact"];
-  try { ({ scene, artefact } = await compiledScene(cmd.source)); } finally { roots = stop(); }
-  // The scene's cameras and draws (src/draw/record.ts); what no thing can record yet is said by name.
-  const decls = sceneDecls(scene, artefact);
+  let roots: ReturnType<typeof stop>, decls: ReturnType<typeof sceneDecls>;
+  try {
+    const { moduleAt } = await import("./variant.ts");
+    const file = await moduleAt(cmd.source.path);
+    const explicit = file.default as { kind?: string; scene: import("../record/decls.ts").Scene } | undefined;
+    if (explicit?.kind === "recorded") {
+      if (cmd.source.variant.kind === "ask" || cmd.source.style.kind !== "scene" || cmd.source.light.kind !== "scene")
+        throw new UsageError("explicit passes own their draws and lighting: drop the variant, style and light overrides");
+      decls = { scene: explicit.scene, unported: [] };
+    } else {
+      const { scene, artefact } = await compiledScene(cmd.source);
+      decls = sceneDecls(scene, artefact);
+    }
+  } finally { roots = stop(); }
   for (const u of decls.unported) console.log(`unported ${u}`);
   const job = pack(rec.job(Program.Scene, roots, decls.scene));
   mkdirSync(cmd.out, { recursive: true });

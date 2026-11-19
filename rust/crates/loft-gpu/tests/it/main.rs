@@ -60,6 +60,7 @@ fn text(s: &[&str]) -> Box<[Box<[u8]>]> {
 /// Sky (surroundings, a screen draw) then a red subject quad at depth 0.5 whose colour a load kernel fills.
 fn subject() -> Bundle {
     Bundle {
+        row_steps: vec![],
         format: Format::V1,
         compiler: "test".into(),
         names: ["fill", "paint", "sky", "subject", "backdrop"].map(Into::into).into(),

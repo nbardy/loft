@@ -470,6 +470,7 @@ fn quota_is_a_budget() {
 fn bundle() -> Bundle {
     let f = |x: f32| loft_ir::bundle::F32(x.to_bits());
     Bundle {
+        row_steps: vec![],
         format: Format::V1,
         compiler: "c8502c2".into(),
         names: ["view".into(), "main".into()].into(),
@@ -529,7 +530,8 @@ fn bundle() -> Bundle {
         media: [Medium { transmittance: (0, 1), integrate: Integrate::March { steps: 64, shadow_steps: 16 } }].into(),
         cameras: [Camera { name: 0, lens: (0, 0) }].into(),
         params: [ParamDecl { name: 1, def: f(0.5), min: f(0.0), max: f(1.0) }].into(),
-        inputs: [InputDecl { name: 0, ty: Ty::V3, def: [f(0.0), f(1.0), f(-0.0)].into() }].into(),
+        inputs: [InputDecl { kind: InputKind::Level, name: 0, ty: Ty::V3, def: [f(0.0), f(1.0), f(-0.0)].into() }]
+            .into(),
         sites: [Site { file: "examples/owl.ts".into(), line: 3, col: 1 }].into(),
         sections: [vec![1u8; 100].into(), b"fn main() {}".to_vec().into(), vec![].into()].into(),
     }
@@ -559,6 +561,7 @@ fn every_identity_field_moves_the_hash() {
     let base = Identity {
         build: identity::build(&bundle().write().unwrap()),
         frame: FrameKey {
+            steps: vec![],
             camera: 0,
             time: 0.5f32.to_bits(),
             size: [512, 512],

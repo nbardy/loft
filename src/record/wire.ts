@@ -38,10 +38,10 @@
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
-const WIRE = 4;
+const WIRE = 5;
 
 export enum Program { Scene, Solve, Evaluate, Check }
-export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }
+export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera, RowStep }
 /** How a Kernel decl fills its resource: the first word of its layout. */
 export enum Fill { Map, Rows, Scan, Data, Recurrence, Compute }
 export enum Op { Lit, Time, Param, Input, Bind, Call, Fetch, Loop, Grad, Raw, Swizzle, Vec } // then PRIMS from PRIM0

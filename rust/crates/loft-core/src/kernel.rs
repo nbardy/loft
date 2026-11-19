@@ -130,7 +130,13 @@ pub fn plan(g: &Graph, sources: &[Source], decls: &[Decl]) -> Result<Plan, Error
 
     // Classify, refilling the per-frame bits of resources until they settle (a reader of a per-frame resource is
     // per frame). Monotone: at most one pass per resource.
-    let curve: Vec<bool> = sources.iter().map(|s| matches!(s, Source::Curve { .. })).collect();
+    let curve: Vec<bool> = sources
+        .iter()
+        .enumerate()
+        .map(|(r, s)| {
+            matches!(s, Source::Curve { .. }) || g.row_steps.iter().any(|(step, _)| step.output as usize == r)
+        })
+        .collect();
     let mut frame_res = curve.clone();
     let (rates, when) = loop {
         let rates = rate::rates(g, &frame_res, &items);

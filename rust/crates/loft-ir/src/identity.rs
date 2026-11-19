@@ -13,7 +13,17 @@ pub struct Identity {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct TickKey {
+    pub checkpoint: u32,
+    pub prefix: [u8; 32],
+    pub tick: u32,
+    pub fraction: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FrameKey {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<TickKey>,
     pub camera: Id,
     /// f32 bits of the time.
     pub time: u32,
