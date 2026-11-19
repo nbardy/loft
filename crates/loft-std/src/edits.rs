@@ -226,9 +226,8 @@ fn upload_words(words: &[u32]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use crate::error::*;
-    use loft_ir::*;
-    use std::collections::BTreeMap;
+    use super::{RunnerError, upload_words};
+    use loft_abi::Tier0Opcode;
     #[test]
     fn l23a_upload_validates_before_replacing_tape() {
         let ret = Tier0Opcode::Ret.pack(0, 0, 0, 0).unwrap();
