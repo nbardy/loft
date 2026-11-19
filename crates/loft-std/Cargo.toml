@@ -7,6 +7,7 @@ publish.workspace = true
 description = "Host-side standard library for CPU shader evaluation and native pipeline promotion."
 
 [dependencies]
+loft-abi = { path = "../loft-abi" }
 naga.workspace = true
 loft-ir = { path = "../loft-ir" }
 wgpu = { workspace = true, features = ["webgpu"] }

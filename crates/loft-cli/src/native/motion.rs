@@ -69,32 +69,13 @@ fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(
             .load_bundle(&fusion::motion_bundle(p, step, 0))
             .map_err(err)?;
         let mut encoder = g.device.create_command_encoder(&Default::default());
-        // The runner can split a tick range across passes. Bracket the whole
-        // encoded advance with portable pass-boundary timestamps before readback.
-        let timestamp = |enc: &mut wgpu::CommandEncoder, begin, end| {
-            if let Some(c) = clock {
-                // Metal can discard empty compute passes. Stamp the encoder boundary when supported.
-                if g.device.features().contains(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS) {
-                    enc.write_timestamp(&c.set, begin.or(end).expect("timestamp index"));
-                    return;
-                }
-                drop(enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("motion timing boundary"),
-                    timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
-                        query_set: &c.set,
-                        beginning_of_pass_write_index: begin,
-                        end_of_pass_write_index: end,
-                    }),
-                }));
-            }
-        };
-        timestamp(&mut encoder, None, Some(0));
-        runner
-            .advance_into(id, &mut encoder, ticks, 0)
-            .map_err(err)?;
-        timestamp(&mut encoder, Some(1), None);
+        let timed = clock.filter(|_| n_rows != 0);
+        match timed {
+            Some(c) => runner.advance_timed_into(id, &mut encoder, ticks, 0, &c.set),
+            None => runner.advance_into(id, &mut encoder, ticks, 0),
+        }.map_err(err)?;
         g.queue.submit([encoder.finish()]);
-        if let Some(c) = clock {
+        if let Some(c) = timed {
             let stamps = read_clock(g, c)?;
             let dt = stamps[1].checked_sub(stamps[0]).filter(|_| stamps[0] != 0)
                 .ok_or("motion GPU timestamps are unavailable")?;

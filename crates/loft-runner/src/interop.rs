@@ -166,7 +166,7 @@ impl Runner {
             .tables
             .get_mut(&table)
             .ok_or(RunnerError::UnknownResource)?;
-        if t.texture_only {
+        if !matches!(t.resource, Resource::Buffer(_)) {
             return Err(RunnerError::AbiMismatch);
         }
         let mut required = B::STORAGE;
@@ -219,7 +219,7 @@ impl Runner {
         }
         check_buffer(buf.size(), buf.usage(), min.max(binding_min), required)?;
         let epoch = next_epoch(inst.resource_epoch)?;
-        t.buffer = Some(buf);
+        t.resource = Resource::Buffer(Some(buf));
         if t.decl.lifetime == TableLifetime::External {
             t.active = t.decl.capacity;
         }
@@ -236,14 +236,15 @@ impl Runner {
         let features = self.device.features();
         let inst = self.instance(id)?;
         let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
-        let contract = TextureContract::from(desc);
-        if !t.texture_only || t.decl.lifetime != TableLifetime::External
-            || t.texture_contract.is_some_and(|existing| existing != contract)
-        {
+        let Resource::Texture { contract, .. } = &mut t.resource else {
+            return Err(RunnerError::AbiMismatch);
+        };
+        let expected = TextureContract::from(desc);
+        if t.decl.lifetime != TableLifetime::External || contract.is_some_and(|old| old != expected) {
             return Err(RunnerError::AbiMismatch);
         }
-        check_texture(&inst.compute, table, contract.0, contract.1, features)?;
-        t.texture_contract = Some(contract);
+        check_texture(&inst.compute, table, expected.0, expected.1, features)?;
+        *contract = Some(expected);
         Ok(())
     }
 
@@ -254,14 +255,17 @@ impl Runner {
         let device = self.device.clone();
         let inst = self.instance(id)?;
         let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
-        let contract = TextureContract::from(desc);
-        if t.decl.lifetime == TableLifetime::External || !t.texture_only || t.texture.is_some() {
+        let Resource::Texture { handle, contract } = &mut t.resource else {
+            return Err(RunnerError::AbiMismatch);
+        };
+        let expected = TextureContract::from(desc);
+        if t.decl.lifetime == TableLifetime::External || handle.is_some() {
             return Err(RunnerError::AbiMismatch);
         }
-        check_texture(&inst.compute, table, contract.0, contract.1, device.features())?;
+        check_texture(&inst.compute, table, expected.0, expected.1, device.features())?;
         let epoch = next_epoch(inst.resource_epoch)?;
-        t.texture = Some(Arc::new(device.create_texture(desc)));
-        t.texture_contract = Some(contract);
+        *handle = Some(Arc::new(device.create_texture(desc)));
+        *contract = Some(expected);
         t.epoch = epoch;
         inst.resource_epoch = epoch;
         Ok(())
@@ -273,14 +277,16 @@ impl Runner {
         let features = self.device.features();
         let inst = self.instance(id)?;
         let t = inst.tables.get_mut(&table).ok_or(RunnerError::UnknownResource)?;
-        let contract = t.texture_contract.ok_or(RunnerError::AbiMismatch)?;
+        let Resource::Texture { handle, contract: Some(contract) } = &mut t.resource else {
+            return Err(RunnerError::AbiMismatch);
+        };
         let shape = TextureShape::from_handle(&tex);
         if shape != contract.0 || !tex.usage().contains(contract.1) {
             return Err(RunnerError::AbiMismatch);
         }
         check_texture(&inst.compute, table, shape, tex.usage(), features)?;
         let epoch = next_epoch(inst.resource_epoch)?;
-        t.texture = Some(tex);
+        *handle = Some(tex);
         t.epoch = epoch;
         inst.resource_epoch = epoch;
         Ok(())
@@ -291,17 +297,16 @@ impl Runner {
             .get(inst.0 as usize)?
             .tables
             .get(&table)?
-            .buffer
-            .clone()
+            .buffer()
+            .cloned()
     }
 
     pub fn export_texture(&self, inst: InstanceId, table: TableId) -> Option<Arc<wgpu::Texture>> {
-        self.instances
-            .get(inst.0 as usize)?
-            .tables
-            .get(&table)?
-            .texture
-            .clone()
+        match &self.instances.get(inst.0 as usize)?.tables.get(&table)?.resource {
+            Resource::Texture { handle, .. } => handle.clone(),
+            Resource::Attachment(view, _) => Some(Arc::new(view.texture().clone())),
+            _ => None,
+        }
     }
 }
 

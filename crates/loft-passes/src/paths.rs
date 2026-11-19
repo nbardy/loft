@@ -106,9 +106,9 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
     let mut optics_cases = Vec::new();
     for (i, (kind, (_, whole))) in kinds.iter().zip(queries).enumerate() {
         let decl = p.kinds[kind.name.as_str()];
-        if matches!(kind.draw, Draw::Surface { .. }) {
+        if matches!(kind.draw, Draw::Surface { .. } | Draw::Mesh { .. }) {
             return Err(Diag::new(Code::E405, decl.name.span, "path schedules require trace geometry for every drawable",
-                "supply a trace kind or use the raster schedule for parametric surfaces"));
+                "supply a trace kind or use the raster schedule for surfaces and mesh assets"));
         }
         let (head, _) = whole.split_once(QUERIES_END).expect("kind query section");
         let body = row_arena_source(&head[prefix_len..]);
@@ -133,7 +133,7 @@ fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, 
                 let hit = ray.t0 + t;
                 return select(-1.0, hit, t >= 0.0 && hit >= span.x && hit <= span.y);"),
             Draw::Traced => "return loft_bvh_march(leaf, LoftRay(ray.o, ray.d, span.x, span.y), world_words[b + 6u]);".into(),
-            Draw::Surface { .. } => unreachable!("grid-only worlds refused above"),
+            Draw::Surface { .. } | Draw::Mesh { .. } => unreachable!("raster-only geometry refused above"),
         };
         intersect_cases.push(format!("case {i}u: {{ {intersection} }}"));
         let mat = decl.query(QueryKind::Material).expect("draw material");

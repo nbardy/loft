@@ -586,6 +586,7 @@ dependencies = [
 name = "loft-std"
 version = "0.1.0"
 dependencies = [
+ "loft-abi",
  "loft-ir",
  "naga",
  "wgpu",

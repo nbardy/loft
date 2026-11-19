@@ -66,37 +66,18 @@ fn comparison(convention: DepthConvention) -> CompareFunction {
 
 #[cfg(test)]
 fn check_targets(passes: &[PassDecl]) -> Result<()> {
-    check_host_targets(passes, &resources::Images::default())
-}
-
-pub(super) fn check_host_targets(passes: &[PassDecl], images: &resources::Images) -> Result<()> {
-    let mut color = None;
-    let mut depth = None;
+    let mut ids = std::collections::BTreeSet::new();
     for pass in passes {
-        if let PassRun::RenderBundle {
-            color_targets,
-            depth: attachment,
-            ..
-        } = &pass.run
-        {
-            for target in color_targets.iter().filter(|t| !images.views.contains_key(&t.table)) {
-                if *color.get_or_insert(target.table) != target.table {
-                    return Err(RunnerError::Unsupported("multiple color targets in host encode"));
-                }
-            }
-            if let Some(target) = attachment
-                && !images.views.contains_key(&target.table)
-                && *depth.get_or_insert(target.table) != target.table
-            {
-                return Err(RunnerError::Unsupported(
-                    "multiple depth targets in host encode",
-                ));
-            }
+        if let PassRun::RenderBundle { color_targets, depth, .. } = &pass.run {
+            ids.extend(color_targets.iter().map(|t| t.table));
+            ids.extend(depth.iter().map(|t| t.table));
         }
     }
-    if color.is_some() && color == depth {
-        return Err(RunnerError::AbiMismatch);
-    }
+    let bundle = Bundle { tables: ids.into_iter().map(|id| TableDecl {
+        id, format: ElemFormat::U32, lifetime: TableLifetime::External, capacity: 0,
+        stride_bytes: 4, initial: Box::default(),
+    }).collect(), passes: passes.to_vec(), ..Bundle::default() };
+    loft_std::bundle::Resources::new(&bundle)?;
     Ok(())
 }
 
@@ -191,7 +172,7 @@ impl Render {
         ))
     }
 
-    fn canvas(&self, target: &Target<'_>, images: &resources::Images) -> Result<Canvas> {
+    fn canvas(&self, target: &Target<'_>, tables: &BTreeMap<TableId, Table>) -> Result<Canvas> {
         let samples = u32::from(self.samples);
         let attachment = |view: &TextureView, depth: bool| {
             let texture = view.texture();
@@ -212,19 +193,19 @@ impl Render {
             Ok(format)
         };
         let colors = self.colors.iter().map(|t| {
-            let view = images.views.get(&t.table).map_or(target.color, |(view, _)| view);
+            let view = tables.get(&t.table).and_then(Table::attachment).map_or(target.color, |(view, _)| view);
             attachment(view, false)
         }).collect::<Result<Vec<_>>>()?;
         let depth_view = self.depth.as_ref().map(|t| {
-            images.views.get(&t.table).map(|(view, _)| view).or(target.depth)
+            tables.get(&t.table).and_then(Table::attachment).map(|(view, _)| view).or(target.depth)
                 .ok_or(RunnerError::AbiMismatch)
         }).transpose()?;
-        let compare = if self.depth.as_ref().is_some_and(|t| images.views.contains_key(&t.table)) {
+        let compare = if self.depth.as_ref().is_some_and(|t| tables.get(&t.table).and_then(Table::attachment).is_some()) {
             CompareFunction::Less
         } else {
             comparison(target.caps.depth_convention)
         };
-        if self.colors.iter().any(|t| !images.views.contains_key(&t.table))
+        if self.colors.iter().any(|t| tables.get(&t.table).and_then(Table::attachment).is_none())
             && self.samples != target.caps.msaa_samples {
             return Err(RunnerError::AbiMismatch);
         }
@@ -237,12 +218,11 @@ impl Render {
         d: &wgpu::Device,
         target: &Target<'_>,
         fixed: &wgpu::BindGroup,
-        images: &resources::Images,
         groups: &[Group],
         tables: &BTreeMap<TableId, Table>,
         epoch: u64,
     ) -> Result<()> {
-        let canvas = self.canvas(target, images)?;
+        let canvas = self.canvas(target, tables)?;
         for draw in &self.draws {
             let args = tables[&draw.decl.args].bytes()?;
             let bytes = if let Some(id) = draw.decl.index {
@@ -355,13 +335,13 @@ impl Render {
     }
 
     pub(super) fn encode(
-        &self, enc: &mut wgpu::CommandEncoder, target: &Target<'_>, images: &resources::Images,
+        &self, enc: &mut wgpu::CommandEncoder, target: &Target<'_>, tables: &BTreeMap<TableId, Table>,
         written: &mut std::collections::BTreeSet<TableId>,
     ) {
         let (_, _, _, bundle) = self.cached.as_ref().expect("render prepared");
         // Internal targets are cleared on their first writer each frame. Caller targets always load.
         let color: Vec<_> = self.colors.iter().map(|t| {
-            let (view, clear) = images.views.get(&t.table)
+            let (view, clear) = tables.get(&t.table).and_then(Table::attachment)
                 .map_or((target.color, None), |(view, decl)| (view, decl.clear));
             let load = match clear.filter(|_| written.insert(t.table)) {
                 Some([r, g, b, a]) => LoadOp::Clear(wgpu::Color {
@@ -375,7 +355,7 @@ impl Render {
             })
         }).collect();
         let depth = self.depth.as_ref().map(|t| {
-            let (view, clear) = match images.views.get(&t.table) {
+            let (view, clear) = match tables.get(&t.table).and_then(Table::attachment) {
                 Some((view, decl)) => (view, decl.clear),
                 None => (target.depth.expect("validated host depth"), None),
             };

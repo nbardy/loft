@@ -63,7 +63,7 @@ pub(super) fn request_gpu(ray_query: bool) -> Result<Gpu, String> {
     .map_err(|e| format!("no adapter: {e}"))?;
     // PIPELINE_CACHE exists on Vulkan only: wgpu 30's Metal backend stubs `create_pipeline_cache` (it never uses
     // MTLBinaryArchive), so on Metal the only cache across processes is the OS's own Metal shader cache.
-    let mut requested = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::PIPELINE_CACHE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+    let mut requested = wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::PIPELINE_CACHE | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
     if ray_query { requested |= wgpu::Features::EXPERIMENTAL_RAY_QUERY; }
     let features = adapter.features() & requested;
     // Opt in only for callers that request the unstable native traversal feature.
