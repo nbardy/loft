@@ -12,7 +12,7 @@ use serde::Serialize;
 use std::panic::{self, AssertUnwindSafe};
 
 /// What native.ts expects, byte for byte. Bump the abi number with any change to `run`'s arguments or answer.
-const STAMP: &str = concat!("loft-node abi 4 wire ", 3);
+const STAMP: &str = concat!("loft-node abi 5 wire ", 3);
 const _: () = assert!(WIRE == 3, "STAMP names the wire version");
 /// The Loft commit this addon was built from (build.rs), written into every bundle as `compiler`.
 const COMMIT: &str = env!("LOFT_COMMIT");

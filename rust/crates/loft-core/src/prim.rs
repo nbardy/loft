@@ -266,7 +266,9 @@ pub static ATOMS: [AtomDef; 40] = [
     at(1, |a, _, _| m::ceilf(a), 0, iv::ceil, |_, _, _, _| None),
     at(1, |a, _, _| m::truncf(a), 0, iv::trunc, |_, _, _, _| None),
     at(1, |a, _, _| m::rintf(a), 0, iv::round_even, |_, _, _, _| None),
-    at(1, |a, _, _| m::sqrtf(a), 1, iv::sqrt, |g, _, [da, _, _], o| { let h = g.lit(0.5); let q = g.op(Atom::Div, [h, o, 0]); g.mul(q, da) }),
+    // d sqrt(a) = da / (2 max(sqrt a, 1e-30)), floored as src/grad.ts floors it: at a = 0 with da = 0 (a clamped
+    // cosine, `chain`'s fully stretched leg) the unfloored 0.5 / 0 * 0 is NaN, and solve read it as an unreadable hold.
+    at(1, |a, _, _| m::sqrtf(a), 1, iv::sqrt, |g, _, [da, _, _], o| { let (h, t) = (g.lit(0.5), g.lit(1e-30)); let f = g.op(Atom::Max, [o, t, 0]); let q = g.op(Atom::Div, [h, f, 0]); g.mul(q, da) }),
     at(1, |a, _, _| m::expf(a), T, iv::exp, |g, _, [da, _, _], o| g.mul(o, da)),
     at(1, |a, _, _| m::exp2f(a), T, iv::exp2, |g, _, [da, _, _], o| { let k = g.lit(LN2); let q = g.op(Atom::Mul, [o, k, 0]); g.mul(q, da) }),
     at(1, |a, _, _| m::logf(a), T, iv::log, |g, [a, _, _], [da, _, _], _| g.div(da, a)),
