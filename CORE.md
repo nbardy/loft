@@ -1,6 +1,7 @@
 # Loft: core
 
-What Loft is for, what we want from it, and how we judge a change. Everything else (DESIGN.md, the proposals, the
+What Loft is for, what we want from it, and how we judge a change. The stance behind it is `docs/PHILOSOPHY.md`;
+the design goals are `docs/design/render.md` and `docs/design/motion.md`. Everything else (DESIGN.md, the proposals, the
 lane notes) serves this page. When a design and this page disagree, change the design or argue here.
 
 ## The aim
