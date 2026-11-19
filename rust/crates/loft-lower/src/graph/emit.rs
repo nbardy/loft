@@ -202,6 +202,8 @@ impl<B: Bind> Emitter<'_, B> {
         for (j, &e) in l.next.iter().enumerate() {
             body.push(format!("let {name}n{j}: {} = {};", wgsl_ty(self.arena[e].ty), self.reference(e)));
         }
+        // The next-state lets have their own names but still occupy emission ordinals.
+        self.next_let += l.next.len();
         for j in 0..l.next.len() {
             body.push(format!("{name}s{j} = {name}n{j};"));
         }

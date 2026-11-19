@@ -1,12 +1,18 @@
 //! The compiler's expression arena, from src/expr.ts.
 
 mod emit;
+mod fold;
 pub mod lit;
+mod rewrite;
+#[cfg(test)]
+mod tests;
 mod walk;
+mod wire;
 
 pub use emit::{Bind, Emission, wgsl_ty};
 pub use loft_ir::graph::{Prim, Ty};
 pub use walk::Leaves;
+pub use wire::{Imported, KernelRef};
 
 use crate::{Error, input::Input};
 use std::cell::RefCell;
@@ -217,6 +223,7 @@ pub struct Arena {
     loops: Vec<Loop>,
     next_loop: usize,
     stamps: RefCell<walk::Stamps>,
+    folded: fold::Folded,
     identities: usize,
 }
 
@@ -523,6 +530,24 @@ impl Arena {
             };
             return Err(scene(name, &format!("{count} operand{plural}"), &expected, &fix));
         }
+        if assoc || matches!(prim, Prim::Sub | Prim::Div | Prim::Pow | Prim::Mod | Prim::Atan2 | Prim::Step | Prim::Rem)
+        {
+            // The call form validates every operand before lifting any. A bad later argument must not leave
+            // constants or intermediate nodes from an earlier pair in the arena.
+            for (i, x) in args.iter().copied().map(Into::into).enumerate() {
+                let given = match x {
+                    In::Array(v) if !(2..=4).contains(&v.len()) => format!("an array of {} numbers", v.len()),
+                    In::Bool(_) => "boolean".into(),
+                    In::Expr(_) | In::Number(_) | In::Array(_) => continue,
+                };
+                return Err(scene(
+                    &format!("{}, operand {}", prim.name(), i + 1),
+                    &given,
+                    "an expression, a number, or an array of 2 to 4 numbers",
+                    "write each operand out; for a list, xs.reduce((a, b) => add(a, b)) (reduce passes the index and the array as well)",
+                ));
+            }
+        }
         if assoc {
             let mut a = args[0].into();
             for &b in &args[1..] {
@@ -656,10 +681,10 @@ impl Arena {
                 )));
             }
         }
-        if let Some(e) = stop {
-            if self[e].ty != Ty::Bool {
-                return Err(Error::Internal(format!("iterate: until must return a bool, got {}", self[e].ty.name())));
-            }
+        if let Some(e) = stop
+            && self[e].ty != Ty::Bool
+        {
+            return Err(Error::Internal(format!("iterate: until must return a bool, got {}", self[e].ty.name())));
         }
         let body: Vec<_> = next.iter().copied().chain(stop).collect();
         let own: Vec<_> = [index].into_iter().chain(state.iter().copied()).collect();
@@ -700,6 +725,34 @@ impl Arena {
 }
 
 /// The program roots emitted in one call with the probe binding, then out and libs lines.
-pub fn probe(_input: &Input) -> Result<String, Error> {
-    Err(Error::Unported { module: "src/record/port.ts graph import", lane: "G1" })
+pub fn probe(input: &Input) -> Result<String, Error> {
+    let Imported { arena, roots, .. } = Arena::from_wire(input.graph())?;
+    let mut e = arena.emit_wgsl(&roots, &ProbeBind, "e", &HashMap::new(), None)?;
+    e.lines.push(format!("out {}", e.out.join(" ")));
+    e.lines.push(format!(
+        "libs {}",
+        e.libs.iter().map(|&id| arena.lib_fn(id).name.as_str()).collect::<Vec<_>>().join(" ")
+    ));
+    e.lines.push(String::new());
+    Ok(e.lines.join("\n"))
+}
+
+struct ProbeBind;
+
+impl Bind for ProbeBind {
+    fn variable(&self, name: &str, _ty: Ty) -> String {
+        name.to_owned()
+    }
+    fn input(&self, spec: &InputSpec) -> String {
+        format!("input_{}", spec.name)
+    }
+    fn param(&self, spec: &ParamSpec) -> String {
+        format!("param_{}", spec.name)
+    }
+    fn row(&self, _id: RowId, row: &Row, x: &str) -> String {
+        format!("row_{}({x})", row.label)
+    }
+    fn table(&self, _id: TableId, table: &Table, index: &str, lane: u32) -> String {
+        format!("fetch_{}_{lane}({index})", table.name)
+    }
 }
