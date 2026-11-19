@@ -1,0 +1,56 @@
+# R0 source: examples/materials/poker.ts. Camera: whole.
+space World Local
+
+const VIEW_YAW = -0.4228539261rad
+const VIEW_PIVOT = [1.2, 0.6, 0]@World
+
+build fn placement(p: p3@World) -> xf@Local>World {
+  let d = p - VIEW_PIVOT
+  let c = cos(VIEW_YAW)
+  let s = sin(VIEW_YAW)
+  place(VIEW_PIVOT + [c * d.x + s * d.z, d.y, -s * d.x + c * d.z], VIEW_YAW)
+}
+
+kind Floor @World (radius: m = 80m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.42, 0.39, 0.34], 0.9, 0)
+}
+
+fn planck_channel(wavelength: f, kelvin: f) -> f {
+  let c = 14388000 / wavelength
+  let x = pow(530 / wavelength, 5) * (exp(14388000 / (530 * 1300)) - 1) / (exp(c / kelvin) - 1)
+  x / (1 + x)
+}
+
+lobe ember(kelvin: f, n: rgb, v: rgb, l: rgb) -> v4 {
+  let light = [planck_channel(650, kelvin), planck_channel(530, kelvin), planck_channel(450, kelvin)]
+  v4(select(rgb(0), light, dot(l, l) == 0), 1.0)
+}
+
+kind Poker @Local (pose: xf@Local>World) {
+  surface(u, v) grid 96x24 {
+    let a = TAU * (v + 0.25)
+    let m = 0.4 * u + 0.3 * (1 - cos(u * 3.14159265))
+    [2.5 * m - 0.0063196 * sin(a), 0.3 + 0.4 * m + 0.0394976 * sin(a), 0.04 * cos(a)]@Local
+  }
+  material(p, n, uv) {
+    let heat = 300 + (950 + 120 * sin(time * TAU / 3)) * exp(8 * (p.x / 2.5 - 1))
+    ggx([0.18, 0.18, 0.2], 0.6, 0) + ember(heat)
+  }
+}
+
+build {
+  emit Poker(pose: placement([0, 0, 0]@World))
+  emit Floor()
+}
+
+schedule Main {
+  orbit(at: [1.2, 0.6, 0]@World, radius: 4.38634244m, height: 1.4m, period: 1000000000s, fov: 0.6rad)
+  cull_indirect(Poker, Floor)
+  render_bundle(Vis64) { draw_indirect(Poker); draw_indirect(Floor) }
+  find_shadow_map(Poker, size: 1024)
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.5494327069, 0.8, 0.2462188064])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
