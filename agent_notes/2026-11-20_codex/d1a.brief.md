@@ -1,0 +1,30 @@
+Base (lead ruling, overrides 'wait for m23'): do not wait for Phases 2+3 to reach main. Start from branch loft/int23-fix (commit d4b7646), merging origin/main into it first. The m23 Speed miss (6/12, against 12/12 at ri23 on the same code) is the timing-measurement instability that d1.md's frame-time class addresses. That is exactly what d1b fixes, so it cannot gate the lanes.
+
+# d1a · One bundle executor
+
+You are Loft's Sol implementation engineer for d1a. Work in ~/git/loft. Read CORE.md, docs/PHILOSOPHY.md, docs/spec/README.md (07 > PATCH_V1_2 > 06 > 00–05), the D1 design in agent_notes/2026-11-20_v1/design/d1.md, and the i23/i4/i5 reviews under agent_notes/2026-11-20_v1/reviews. The original BLOCKED files, gate.json, binaries and fixtures are in the primary checkout under out/meta/{i23,i4,i5}-r2.
+
+**Start and shared base.** m23 must have merged. In the primary checkout run `git merge-base --is-ancestor d4b7646 main`. On failure stop before creating a workspace and report ESCALATE with main's SHA and out/meta/m23/BLOCKED. On success, create the workspace.
+
+```sh
+cd ~/git/loft
+git cambium add -b loft/d1a -name loft-d1a -ephemeral ~/git/_wt/loft-d1a main
+cd ~/git/_wt/loft-d1a
+git merge --no-ff --no-commit loft/i4-scored-fix
+```
+
+Commit the resolved Phase 4 import, then run `git merge --no-ff --no-commit loft/i5-scored-fix` and commit its resolution. You alone reconcile the imports. Retain motion timestamps, per-pass texture resources and edit handling. Verify the prior.loft timed clip explicitly since it failed at i23-r2. Stage resolved paths individually and use the trailer below on **both** merge commits. As the final preparation, mechanically give each production entry point one owner: move the body of the CLI edit command from gates.rs into sibling edit_cmd.rs, native device negotiation into native/ray_query.rs and the mesh traversal hook into the mesh/World lowering unit. Keep callers working through delegations. Preserve the existing native Loaded facade. Publish this common handoff on loft/d1a with the exact subject `Prepare D1 lane base` and the trailer. Record its SHA and both scored parents. Peers fast-forward from post-m23 main to this commit before writing. Distinguish inherited branch changes and mechanical moves from every subsequent lane diff.
+
+**Implementation ownership from that commit.** Own crates/loft-runner/**, crates/loft-format/**, crates/loft-std/** except src/promotion.rs, crates/loft-passes/src/bundle.rs and its bundle/ modules, crates/loft-cli/src/build/artifact.rs and the d1a note. Coordinate lowering/resource contracts with the other lanes using these paths and the existing IR. The native host facade belongs to d1b. Preserve frozen ABI/goldens and the backend trait. If the persisted schema needs a serial change, give the integrator the exact old/new reader matrix and migration requirement. Do independent work up to that boundary.
+
+**Implement and predict.**
+
+- Read i23 stepping, interop, pick and encode alongside i5 embed, resources and encode. Classify buffers, textures, samplers and host attachment requirements at load. Share layout/epoch validation. Lower the five PassRun variants exhaustively to prepared commands, with one typed handler per command. Represent direct, row-count and indirect dispatch through DispatchExtent. Preserve generation checks, first-bind validation, dynamic rows, current state and checkpoint history. An unsupported variant fails before partially encoding a frame.
+- In loft-passes resolve typed resources, pass bindings, tick/loop/clock plans and readbacks. In std keep actual host algorithms including twin evaluation, tick/history selection and pick/event decoding. The codec stays compiler-free. Keep device calls, validation against device limits and record-only encoding in L0. Preserve CPU stepping and every public host call. Delegate both source and file callers to the same prepared pass list. Supply the d1b host with the common prepare/record entry point. Count any displaced device executor against L0.
+- Baselines 1,003 main, 2,779+11 i23, 1,000 i4 and 1,993 i5. Allocate 120 entry/backend, 220 resources, 200 preparation, 235 encoding and 165 transfer/timing lines, total **940**, ceiling 1,000. Use i23-r2/record.py's physical-count convention, count inline tests, recursively charge included sources once and report destination deltas. No minification, test relabeling or source-inclusion workaround.
+
+**Cheapest proof.** Count first, run tools/check_core_words.sh and inspect the compiler-free dependency tree. Exercise a compute/tick/transfer and a textured multi-target hermit through the source and standalone callers. Check two-frame handle reuse, epoch isolation, host color/depth preservation in both conventions, stale swap, and 481-tick same-device replay. Check the wasm runner and retained public API. Supply the corpus lane with the typed asset/attachment limits or its specific unsupported result.
+
+**Delivery.** Write the predictions and all code before compiling. Use one end-of-lane compile/test pass through `CARGO_BUILD_JOBS=2 tools/dev.sh test loft-runner`, plus the target-specific wasm check. Use tools/gpu_lock.sh for focused device checks. i6 owns the full combined suite and GPU gate. Rerun at most twice after narrowing a failure. Never kill other processes. After two failures without a narrower cause, stop and report **ESCALATE** with revision, input, prediction and observation.
+
+Never change or re-approve references, golden vectors, tolerances or manifests. Put any intended visual differences under out/meta/d1a/approval as old/new WebP q95 and list OWNER APPROVAL NEEDED. Preserve lossless diff inputs. Commit and push milestones on loft/d1a, staging by path. End each commit message with `Co-Authored-By: GPT (codex) <noreply@openai.com>`. Leave main to i6. Write agent_notes/2026-11-20_v1/lanes/d1a.md with file ownership, before/after counts, commands, results and escalations. Preserve ignored evidence before safe workspace removal. Final ≤150 words.
