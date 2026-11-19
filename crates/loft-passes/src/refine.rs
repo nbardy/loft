@@ -44,6 +44,12 @@ struct Proof<'a, 'b> {
 impl Proof<'_, '_> {
     fn expr(&mut self, e: &Expr, env: &Env) -> Res<Option<Term>> {
         Ok(match &e.kind {
+            ExprKind::Unproved { step_scale, .. } => {
+                self.expr(step_scale, env)?;
+                // The opt-out has lexical extent. Its result cannot prove a later divisor safe.
+                Some(unknown(true))
+            }
+            ExprKind::FiniteDiff { .. } => unreachable!("finite differences occur within an opted-out body"),
             ExprKind::If { condition, then, otherwise } => {
                 let row_condition = self.expr(condition, env)?.is_some_and(|v| v.row);
                 let mut result: Option<Term> = None;

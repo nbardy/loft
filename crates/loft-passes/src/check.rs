@@ -3,10 +3,12 @@
 //! E401/E402 on kind parameters, E403 stage-0 statements outside `comptime fn`, E404 kind code reading stage 0.
 //! Output: the type of every expression, by id.
 
+#[path = "kernel_units.rs"]
+mod kernel_units;
 use crate::Prog;
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone)]
 struct Local {
@@ -19,6 +21,11 @@ struct Local {
 
 pub(crate) struct Ck<'p, 'a> {
     pub(crate) hints: Option<&'p mut crate::infer::Hints>,
+    kernel: Option<&'a KernelDecl>,
+    atomic_writes: BTreeMap<String, Determinism>,
+    pending_lowering: Option<Span>,
+    local_units: HashMap<Span, Dimension>,
+    expr_units: HashMap<u32, Dimension>,
     ownership: Option<(String,Vec<String>)>,
     p: &'p Prog<'a>,
     types: &'p mut Vec<Ty>,
@@ -34,7 +41,12 @@ pub(crate) struct Ck<'p, 'a> {
 /// Kind parameter variants allowed per kind (draft §3: "E402: kind variant budget exceeded (12 > max 4)").
 pub const VARIANT_BUDGET: u64 = 4;
 
-pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
+pub struct CheckedEffects {
+    pub kernels: BTreeMap<String, BTreeMap<String, Determinism>>,
+    pub pending_lowering: Option<Span>,
+}
+
+pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
     let mut ck = Ck::new(p,types);
     for (name, target) in p.aliases.values() {
         ck.resolve_named(name, true, &mut vec![])?;
@@ -101,17 +113,23 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<()> {
             return Err(Diag::new(Code::E504, call.span, "no deterministic motion implementation for this operation", "rewrite it using deterministic operations"));
         }
     }
-    for k in p.kinds.values(){if let Some(trace)=k.query(QueryKind::Trace) && let Some(f)=crate::emit::reachable(p,&[trace],&[]).0.into_iter().find(|f|f.raw.is_some()){
+    for k in p.kinds.values(){if let Some(trace)=k.query(QueryKind::Trace) && let Some(f)=crate::emit::proof_dependencies(p,trace).into_iter().find(|f|f.raw.is_some()){
         return Err(Diag::new(Code::E211,f.name.span,"raw WGSL has no proven spatial Lipschitz bound","write the trace term in Loft or move it to the material"))
     }}
+    let mut effects = BTreeMap::new();
+    for k in p.kernels.values() {
+        effects.insert(k.f.name.name.clone(), ck.kernel(k)?);
+    }
     for law in p.laws.values(){ck.motion(&law.f,Some(&law.writes))?;}
     for f in p.checks.values(){ck.motion(f,None)?;}
-    Ok(())
+    Ok(CheckedEffects { kernels: effects, pending_lowering: ck.pending_lowering })
 }
 
 /// Types one stage-0 expression (a schedule argument): it may read `comptime const`s and call any fn.
 pub fn check_stage0_expr(p: &Prog, types: &mut Vec<Ty>, e: &Expr) -> Res<Ty> {
-    let mut ck = Ck { hints:None,ownership:None,p, types, scopes: vec![HashMap::new()], comptime: true, ret: Ty::Void, fresh: 0, sig_vars: vec![] };
+    let mut ck = Ck::new(p, types);
+    ck.scopes.push(HashMap::new());
+    ck.comptime = true;
     ck.expr(e)
 }
 
@@ -161,7 +179,7 @@ fn e003(span: Span, msg: impl Into<String>, fix: impl Into<String>) -> Diag {
 
 impl<'p,'a> Ck<'p,'a> {
     pub(crate) fn new(p:&'p Prog<'a>, types:&'p mut Vec<Ty>)->Self {
-        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None}
+        Self{p,types,scopes:vec![],comptime:false,ret:Ty::Void,fresh:0,sig_vars:vec![],hints:None,ownership:None,kernel:None,atomic_writes:BTreeMap::new(),pending_lowering:None,local_units:HashMap::new(),expr_units:HashMap::new()}
     }
 
     fn lookup(&self, n: &str) -> Option<&Local> {
@@ -219,7 +237,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(
@@ -242,6 +260,7 @@ impl<'p,'a> Ck<'p,'a> {
                 "Bsdf" => Ok(Ty::Bsdf),
                 "Verdict"=>Ok(Ty::Verdict),
                 n if self.p.aliases.contains_key(n) || self.p.structs.contains_key(n) => self.resolve_named(i, sig, stack),
+                "Radiance" => Ok(Ty::VecN(3)),
                 n if self.p.kinds.contains_key(n) => Ok(Ty::Id(n.into())),
                 n if self.p.units.contains(n) => Ok(Ty::F32),
                 n => Err(Diag::new(
@@ -270,7 +289,8 @@ impl<'p,'a> Ck<'p,'a> {
             TyExpr::Xform(a, b) => Ok(Ty::Xform(space(a)?, space(b)?)),
             TyExpr::Field(s) => space(s).map(|_| Ty::F32),
             TyExpr::Frame(s) => Ok(Ty::Frame(space(s)?)),
-            TyExpr::Table(n) => Ok(Ty::Table(n.name.clone())),
+            TyExpr::Table(n) if self.p.kinds.contains_key(n.name.as_str()) || self.p.structs.contains_key(n.name.as_str()) => Ok(Ty::Table(n.name.clone())),
+            TyExpr::Table(n) => Err(Diag::new(Code::E011, n.span, "unknown table row type", "declare the kind or struct")),
         }
     }
 
@@ -366,6 +386,29 @@ impl<'p,'a> Ck<'p,'a> {
             self.attr(a, f, kind.is_some())?;
         }
         self.block(&f.body)
+    }
+
+    pub(crate) fn kernel(&mut self, k: &'a KernelDecl) -> Res<BTreeMap<String, Determinism>> {
+        self.pending_lowering.get_or_insert(k.f.name.span);
+        self.local_units.clear();
+        self.expr_units.clear();
+        for p in &k.f.params {
+            if let Some(t) = &p.ty {
+                self.resolve(t, true)?;
+                self.local_units.insert(p.name.span, self.declared_unit(t));
+            }
+        }
+        self.kernel = Some(k);
+        self.atomic_writes.clear();
+        let result = self.func(&k.f, None);
+        self.kernel = None;
+        result.map(|()| std::mem::take(&mut self.atomic_writes))
+    }
+
+    fn require(&self, capability: KernelCapability, span: Span) -> Res<()> {
+        if self.kernel.is_some_and(|k| k.allow.contains(&capability)) { return Ok(()); }
+        Err(Diag::new(Code::E504, span, format!("operation requires kernel permission {capability:?}"),
+            "declare the capability in the kernel's allow list"))
     }
 
     pub(crate) fn motion(&mut self,f:&FnDecl,writes:Option<&[Ident]>)->Res<()>{
@@ -595,6 +638,13 @@ impl<'p,'a> Ck<'p,'a> {
                     if t == Ty::AbstractInt { self.set(value, want.clone()); }
                     t = want;
                 }
+                if self.kernel.is_some() {
+                    let dim = match ty {
+                        Some(t) => { let d = self.declared_unit(t); self.expect_unit(value, d)?; d }
+                        None => self.expr_units[&value.id],
+                    };
+                    self.local_units.insert(name.span, dim);
+                }
                 if t == Ty::AbstractInt {
                     t = Ty::I32;
                 }
@@ -620,6 +670,7 @@ impl<'p,'a> Ck<'p,'a> {
                 self.set(target, l.ty.clone());
                 let t = self.expr(value)?;
                 self.assignable(&t, &l.ty, value.span)?;
+                if self.kernel.is_some() { self.expect_unit(value, self.local_units[&l.span])?; }
             }
             Stmt::Map { name, head, stages } => self.map(name, head, stages)?,
             Stmt::Return(v, span) => {
@@ -657,6 +708,14 @@ impl<'p,'a> Ck<'p,'a> {
                         "`comptime for` is stage 0 and runs only inside a `comptime fn`",
                         "move the loop into a `comptime fn` that `emit`s rows, or drop `comptime` to keep a GPU loop",
                     ));
+                }
+                if self.kernel.is_some() && [lo, hi].iter().any(|e| {
+                    let mut refs = crate::emit::References::default();
+                    refs.expr(e, &[]);
+                    refs.names.iter().any(|(n, _)| self.lookup(n).is_some() || !self.p.consts.contains_key(n))
+                        || runtime_read(self.p, refs).is_some()
+                }) {
+                    self.require(KernelCapability::DynamicLoops, *span)?;
                 }
                 let a = self.expr(lo)?;
                 let b = self.expr(hi)?;
@@ -742,7 +801,7 @@ impl<'p,'a> Ck<'p,'a> {
                 }
                 self.expr(&first.value)?
             }
-            ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
+            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => self.expr(head)?,
         };
         let Ty::Geo(Geo::Pt, parent) = point else {
             return Err(e104(head.span, format!("a map takes a point, found `{point}`"), "map a `Pt[S]`"));
@@ -793,6 +852,10 @@ impl<'p,'a> Ck<'p,'a> {
 
     fn expr(&mut self, e: &Expr) -> Res<Ty> {
         let t = self.expr_inner(e)?;
+        if self.kernel.is_some() {
+            let dim = self.kernel_unit(e)?;
+            self.expr_units.insert(e.id, dim);
+        }
         Ok(self.set(e, t))
     }
 
@@ -806,6 +869,27 @@ impl<'p,'a> Ck<'p,'a> {
 
     fn expr_inner(&mut self, e: &Expr) -> Res<Ty> {
         match &e.kind {
+            ExprKind::Unproved { step_scale, body } => {
+                self.pending_lowering.get_or_insert(e.span);
+                let scale = self.expr(step_scale)?;
+                self.assignable(&scale, &Ty::F32, step_scale.span)?;
+                self.set(step_scale, Ty::F32);
+                self.expr_arm(body)
+            }
+            ExprKind::FiniteDiff { function, parameter, args } => {
+                let f = self.p.fns.get(function.name.as_str()).ok_or_else(|| Diag::new(Code::E011,
+                    function.span, "unknown differentiated function", "name a declared function"))?;
+                let param = if parameter.name.is_empty() { f.params.first() }
+                    else { f.params.iter().find(|p| p.name.name == parameter.name) };
+                if param.is_none() {
+                    return Err(Diag::new(Code::E011, parameter.span, "unknown differentiated parameter", "name a parameter of this function"));
+                }
+                let t = self.call(function, args, e.span)?;
+                Ok(match t {
+                    Ty::Geo(Geo::Pt | Geo::Dir | Geo::Norm, space) => Ty::Geo(Geo::Vec, space),
+                    t => t,
+                })
+            }
             ExprKind::If { condition, then, otherwise } => {
                 let actual = self.expr(condition)?;
                 self.assignable(&actual, &Ty::Bool, condition.span)?;
@@ -825,6 +909,7 @@ impl<'p,'a> Ck<'p,'a> {
                 if let Some(l) = self.lookup(n) {
                     return Ok(l.ty.clone());
                 }
+                if n == "SceneWorld" && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
                 if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
                     if self.comptime {
@@ -846,6 +931,10 @@ impl<'p,'a> Ck<'p,'a> {
                 let b = self.expr(base)?;
                 let it = self.expr(i)?;
                 if let Ty::Table(k)=b{
+                    if self.kernel.is_some() && matches!(it, Ty::U32 | Ty::AbstractInt) {
+                        self.set(i, Ty::U32);
+                        return Ok(if self.p.structs.contains_key(k.as_str()) { Ty::Struct(k) } else { Ty::Row(k) });
+                    }
                     if it!=Ty::Id(k.clone()){return Err(Diag::new(Code::E108,i.span,format!("expected an id of {k}, found {it}"),"index the table with an id emitted for this kind"))}return Ok(Ty::Row(k))
                 }
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
@@ -1045,6 +1134,51 @@ impl<'p,'a> Ck<'p,'a> {
             };
             return Ok(subst(&ret, &vars));
         }
+        if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
+            self.pending_lowering.get_or_insert(span);
+            return self.world_query(world, span);
+        }
+        match callee.name.as_str() {
+            "atomic_add" => {
+                self.require(KernelCapability::Atomics, span)?;
+                let [dst, val] = args else { return Err(e003(span, "atomic_add needs a destination and value", "write atomic_add(table[i].field, value)")); };
+                let ExprKind::Member(row, _) = &dst.value.kind else { return Err(e003(dst.value.span, "atomic destination must be a table field", "index a kernel table parameter")); };
+                let ExprKind::Index(table, _) = &row.kind else { return Err(e003(row.span, "expected a table row", "index a kernel table parameter")); };
+                let ExprKind::Name(n) = &table.kind else { return Err(e003(table.span, "expected a table parameter", "name a kernel table parameter")); };
+                let binding = self.lookup(n).map(|l| l.span);
+                if !self.kernel.unwrap().f.params.iter().any(|p| p.name.name == *n && Some(p.name.span) == binding && matches!(p.ty, Some(TyExpr::Table(_)))) {
+                    return Err(e003(table.span, "atomic destination is not a table parameter", "write the destination through its table parameter"));
+                }
+                let det = match ts[0] {
+                    Ty::U32 | Ty::I32 => Determinism::Det,
+                    Ty::F32 => Determinism::NonDet,
+                    _ => return Err(e003(dst.value.span, "atomic destination must be u, i or f", "use a scalar accumulator")),
+                };
+                self.assignable(&ts[1], &ts[0], val.value.span)?;
+                if ts[1] == Ty::AbstractInt { self.set(&val.value, ts[0].clone()); }
+                self.atomic_writes.entry(n.clone()).and_modify(|d| *d = (*d).max(det)).or_insert(det);
+                return Ok(ts[0].clone());
+            }
+            "workgroup_barrier" => {
+                self.require(KernelCapability::Workgroup, span)?;
+                if ts.is_empty() { return Ok(Ty::Void); }
+                return Err(e003(span, "workgroup_barrier takes no arguments", "write workgroup_barrier()"));
+            }
+            "subgroup_add" => {
+                self.require(KernelCapability::Subgroups, span)?;
+                if let [t @ (Ty::F32 | Ty::U32 | Ty::I32)] = ts.as_slice() { return Ok(t.clone()); }
+                return Err(e003(span, "subgroup_add takes one numeric scalar", "pass an f, i or u value"));
+            }
+            "mix_bsdf" => {
+                self.pending_lowering.get_or_insert(span);
+                if let [Ty::Bsdf, Ty::Bsdf, Ty::F32 | Ty::AbstractInt] = ts.as_slice() {
+                    self.set(&args[2].value, Ty::F32);
+                    return Ok(Ty::Bsdf);
+                }
+                return Err(e003(span, "mix_bsdf takes (Bsdf, Bsdf, f)", "supply two materials and a scalar weight"));
+            }
+            _ => {}
+        }
         if MAP_OPS.contains(&callee.name.as_str()) {
             return Err(Diag::new(
                 Code::E011,
@@ -1054,6 +1188,32 @@ impl<'p,'a> Ck<'p,'a> {
             ));
         }
         builtin(&callee.name, &ts, &sp, span)
+    }
+
+    fn world_query(&self, call: crate::world::WorldCall<Ty>, span: Span) -> Res<Ty> {
+        use crate::world::{LightSelection, WorldQuery::*};
+        let payload = |s: &str| Ty::Struct(s.into());
+        let point = Ty::Geo(Geo::Pt, Space::Named("World".into()));
+        let dir = Ty::Geo(Geo::Dir, Space::Named("World".into()));
+        let named = |s: &str| self.resolve(&TyExpr::Name(Ident { name: s.into(), span }), true);
+        if let Some(world) = call.world { self.assignable(&world, &payload("World"), span)?; }
+        match call.query {
+            Trace { ray } => { self.assignable(&ray, &payload("Ray"), span)?; named("Hit") }
+            Visible { a, b } => {
+                self.assignable(&a, &point, span)?;
+                self.assignable(&b, &point, span)?;
+                Ok(Ty::VecN(3))
+            }
+            Material { hit } => { self.assignable(&hit, &payload("Hit"), span)?; Ok(Ty::Bsdf) }
+            Light { selection, point: p, rng } => {
+                if let LightSelection::Indexed(i) = selection { self.assignable(&i, &Ty::U32, span)?; }
+                self.assignable(&p, &point, span)?;
+                self.assignable(&rng, &named("RngKey")?, span)?;
+                named("Lit")
+            }
+            Sky { direction } => { self.assignable(&direction, &dir, span)?; named("Radiance") }
+            Medium { point: p } => { self.assignable(&p, &point, span)?; named("Sigma") }
+        }
     }
 
     /// Binds a signature's space variables from an argument; a clash is E104.
@@ -1093,7 +1253,7 @@ fn path(e: &Expr) -> Option<String> {
         | ExprKind::Call { .. }
         | ExprKind::Ctor { .. }
         | ExprKind::Binary(..)
-        | ExprKind::If { .. } | ExprKind::Unary(..) => None,
+        | ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Unary(..) => None,
     }
 }
 

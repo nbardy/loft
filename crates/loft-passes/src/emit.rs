@@ -148,19 +148,24 @@ fn lobes<'e>(e: &'e Expr, out: &mut Vec<(&'e str, &'e [Arg])>) -> bool {
             out.push((&callee.name, args));
             true
         }
-        ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
+        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => false,
     }
 }
 
 #[derive(Default)]
 pub(crate) struct References<'a> {
+    proof_only: bool,
     pub names: Vec<(&'a str, Span)>,
     pub calls: Vec<&'a Ident>,
     pub scans: BTreeSet<&'a str>,
 }
 impl<'a> References<'a> {
     pub fn function(f: &'a FnDecl) -> Self {
-        let mut refs = Self::default();
+        Self::from_body(f, false)
+    }
+
+    fn from_body(f: &'a FnDecl, proof_only: bool) -> Self {
+        let mut refs = Self { proof_only, ..Self::default() };
         let mut locals = f.params.iter().map(|p| p.name.name.as_str()).collect();
         refs.block(&f.body, &mut locals);
         refs
@@ -168,6 +173,18 @@ impl<'a> References<'a> {
 
     pub fn expr(&mut self, e: &'a Expr, locals: &[&'a str]) {
         match &e.kind {
+            ExprKind::Unproved { step_scale, body } => {
+                self.expr(step_scale, locals);
+                if !self.proof_only {
+                    let mut inner = locals.to_vec();
+                    self.statements(&body.body, &mut inner);
+                    self.expr(&body.value, &inner);
+                }
+            }
+            ExprKind::FiniteDiff { function, args, .. } => {
+                self.calls.push(function);
+                self.args(args, locals);
+            }
             ExprKind::If { condition, then, otherwise } => {
                 self.expr(condition, locals);
                 for arm in [then, otherwise] {
@@ -253,6 +270,14 @@ impl<'a> References<'a> {
 
 /// The fns, user and library, reachable from a kind's queries and the shade glue's light fn.
 pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a FnDecl>, BTreeSet<String>) {
+    reachable_impl(p, roots, extra, false)
+}
+
+pub(crate) fn proof_dependencies<'a>(p: &Prog<'a>, root: &'a FnDecl) -> Vec<&'a FnDecl> {
+    reachable_impl(p, &[root], &[], true).0
+}
+
+fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_only: bool) -> (Vec<&'a FnDecl>, BTreeSet<String>) {
     let mut seen: Vec<&FnDecl> = vec![];
     let mut consts = BTreeSet::new();
     let mut todo: Vec<&FnDecl> = roots.to_vec();
@@ -261,7 +286,7 @@ pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) 
         todo.push(f);
     }
     while let Some(f) = todo.pop() {
-        let mut refs = References::function(f);
+        let mut refs = References::from_body(f, proof_only);
         while let Some((n, _)) = refs.names.pop() {
             if let Some(c) = p.consts.get(n) && consts.insert(n.to_owned()) {
                 refs.expr(&c.value, &[]);
@@ -354,7 +379,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     ExprKind::Call { callee, args } if crate::check::MAP_OPS.contains(&callee.name.as_str()) => {
                         (self.expr(&args[0].value), vec![(callee.name.as_str(), vec![])])
                     }
-                    ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
+                    ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => (self.expr(head), vec![]),
                 };
                 for (op, args) in stages {
                     let a = args.iter().map(|x| self.expr(x)).collect();
@@ -456,6 +481,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             return format!("Bsdf({})", a.join(", "));
         }
         match &e.kind {
+            ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } => unreachable!("Phase 4 geometry is refused before legacy emission"),
             ExprKind::If { condition, then, otherwise } => {
                 let name = format!("loft_tmp_{}", self.temp);
                 self.temp += 1;

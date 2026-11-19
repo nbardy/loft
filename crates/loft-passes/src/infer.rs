@@ -87,6 +87,7 @@ pub(crate) fn run(modules: &mut [Module]) -> Res<()> {
         for sc in p.scans.values() {
             let _ = ck.scan(sc);
         }
+        for k in p.kernels.values() { let _ = ck.kernel(k); }
         for law in p.laws.values() {
             let _ = ck.motion(&law.f, Some(&law.writes));
         }

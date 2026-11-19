@@ -17,7 +17,8 @@ type_alias:  "type" UIDENT "=" type_expr
 const_decl:  "const" IDENT (":" type_expr)? "=" expr
 input_decl:  "input" LIDENT ":" type_expr ("=" expr)?
 param_decl:  "param" LIDENT ":" type_expr "=" expr ("in" expr ".." expr)?
-kernel_decl: "kernel" LIDENT "(" params? ")" ("allow" "(" ident_list ")")? block
+kernel_decl: "kernel" LIDENT "(" params? ")" ("allow" "(" capability ("," capability)* ","? ")")? block
+capability: "atomics" | "workgroup" | "subgroups" | "dynamic_loops"
 bake_tex_decl: "bake_tex" UIDENT bake_tex_dim LIDENT "on" bake_tex_clock "mips" "(" ("true" | "false") ")" "(" LIDENT ":" type_expr ")" block
 bake_tex_dim: GRID_DIM | TEX_DIM_3D | "cube" GRID_DIM
 bake_tex_clock: "load" | "dirty" "(" ident_list ")"
@@ -65,6 +66,7 @@ build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body
 build_blk:   "build" block
 sched_decl:  "schedule" IDENT ("(" params? ")")? "{" (_NL? sched_stmt (_sep sched_stmt)* _sep?)? "}"
 sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block
+           | "type" "Radiance" "=" type_expr
            | waive_stmt
            | expr block?
 waive_stmt: "waive" UIDENT STRING
@@ -121,8 +123,10 @@ primary:     unit_number | NUMBER | "true" | "false" | IDENT
            | "[" expr_list? "]" ("@" IDENT)?
            | "if" expr block ("else" "if" expr block)* ("else" block)?
            | "emit" UIDENT ("[" expr_list "]")? "(" named_args? ")"
+           | "unproved" "(" ("step_scale" ":")? expr ")" block
            | "wgsl" "det"? "(" params? ")" "->" type_expr RAW_WGSL_BLOCK
 
+// mix_bsdf(a, b, t) uses ordinary call syntax; its arguments are checked as Bsdf, Bsdf, f.
 call_args:   arg ("," arg)* ","?
 arg:         (LIDENT ":")? expr
 named_args:  field_init ("," field_init)* ","?

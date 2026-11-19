@@ -26,6 +26,7 @@ use std::time::Instant;
 
 /// The program's items by name. Built from parsed modules; cheap to rebuild.
 pub struct Prog<'a> {
+    dimensions: std::collections::HashMap<Span, Dimension>,
     pub fns: BTreeMap<&'a str, &'a FnDecl>,
     pub kinds: BTreeMap<&'a str, &'a KindDecl>,
     /// Declaration order; a kind's index here is its stage-0 table.
@@ -37,6 +38,7 @@ pub struct Prog<'a> {
     pub units: HashSet<&'a str>,
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
+    pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -44,6 +46,7 @@ pub struct Prog<'a> {
 impl<'a> Prog<'a> {
     pub fn index(modules: &'a [Module]) -> Res<Prog<'a>> {
         let mut p = Prog {
+            dimensions: modules.iter().flat_map(|m| m.dimensions.iter().copied()).collect(),
             fns: BTreeMap::new(),
             kinds: BTreeMap::new(),
             kind_order: vec![],
@@ -53,6 +56,7 @@ impl<'a> Prog<'a> {
             aliases: BTreeMap::new(),
             units: HashSet::new(),
             scans: BTreeMap::new(),
+            kernels: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -81,6 +85,10 @@ impl<'a> Prog<'a> {
                     }
                 }
                 Item::Camera(_) => {}
+                Item::Kernel(k) => {
+                    name(&k.f.name)?;
+                    p.kernels.insert(&k.f.name.name, k);
+                }
                 Item::Law(l)=>{name(&l.f.name)?;p.laws.insert(&l.f.name.name,l);}
                 Item::Check(f)=>{name(&f.name)?;p.checks.insert(&f.name.name,f);}
                 Item::Struct(n, fields) => {
@@ -120,6 +128,9 @@ impl<'a> Prog<'a> {
                     p.schedule = Some(s);
                 }
             }
+        }
+        if let Some((n, target)) = p.schedule.and_then(|s| s.radiance.as_ref()) {
+            p.aliases.insert(&n.name, (n, target));
         }
         Ok(p)
     }
@@ -231,6 +242,12 @@ pub fn pose_field(k: &KindDecl) -> Option<usize> {
 fn geometry_fields(k: &KindDecl) -> Vec<usize> {
     fn walk(e: &Expr, out: &mut Vec<String>) {
         match &e.kind {
+            ExprKind::Unproved { step_scale, body } => {
+                walk(step_scale, out);
+                block(&body.body, out);
+                walk(&body.value, out);
+            }
+            ExprKind::FiniteDiff { args, .. } => args.iter().for_each(|a| walk(&a.value, out)),
             ExprKind::If { condition, then, otherwise } => {
                 walk(condition, out);
                 for arm in [then, otherwise] { block(&arm.body, out); walk(&arm.value, out); }
@@ -452,7 +469,7 @@ fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     let e = arg(pd, name)?;
     match &e.kind {
         ExprKind::Name(n) if p.fns.contains_key(n.as_str()) => Ok(n),
-        ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
+        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
     }
 }
 
@@ -513,12 +530,21 @@ pub const GPU_ORDER: [&str; 6] = ["cull_indirect", "render_bundle", "find_shadow
 
 /// Front end only: parse, index, check. For `loft check` and the error tests.
 pub fn front(src: &Sources) -> Res<(Vec<Module>, Vec<Ty>)> {
-    let modules = parse_all(src)?;    let mut types = vec![];
-    {
-        let p = Prog::index(&modules)?;
-        check::check(&p, &mut types)?;
-    }
+    let mut modules = parse_all(src)?;
+    let mut types = vec![];
+    check_modules(&mut modules, &mut types)?;
+    refine::check(&Prog::index(&modules)?, &types, &[])?;
     Ok((modules, types))
+}
+
+fn check_modules(modules: &mut [Module], types: &mut Vec<Ty>) -> Res<Option<Span>> {
+    let mut effects = check::check(&Prog::index(modules)?, types)?;
+    for item in modules.iter_mut().flat_map(|m| &mut m.items) {
+        if let Item::Kernel(k) = item {
+            k.writes = effects.kernels.remove(&k.f.name.name).expect("checked kernel");
+        }
+    }
+    Ok(effects.pending_lowering)
 }
 
 pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Report, Compiled)> {
@@ -554,9 +580,9 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     }
 
     lap("parse+ad", &mut ms);
-    let p = Prog::index(&modules)?;
     let mut types = vec![];
-    check::check(&p, &mut types)?;
+    let pending_lowering = check_modules(&mut modules, &mut types)?;
+    let p = Prog::index(&modules)?;
     for (name, _) in overrides {
         match p.consts.get(name.as_str()) {
             Some(c) if c.comptime => {}
@@ -574,6 +600,10 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
     }
     refine::check(&p,&types,overrides)?;
+    if let Some(span) = pending_lowering {
+        return Err(Diag::new(Code::E405, span, "Phase 4 lowering is pending for this checked program",
+            "use the typed front end to inspect the Phase 4 contract"));
+    }
     lap("check", &mut ms);
 
     // The schedule: stage-0 passes, the camera, and the GPU passes in dependency order.
@@ -998,7 +1028,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
 fn clone_name(e: &Expr) -> Expr {
     let kind = match &e.kind {
         ExprKind::Name(n) => ExprKind::Name(n.clone()),
-        ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => ExprKind::Bool(false),
+        ExprKind::Unproved { .. } | ExprKind::FiniteDiff { .. } | ExprKind::If { .. } | ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => ExprKind::Bool(false),
     };
     Expr { id: e.id, span: e.span, kind }
 }
@@ -1008,6 +1038,7 @@ pub mod sexp;
 pub mod tier0;
 pub mod telemetry;
 pub mod fusion;
+pub mod world;
 pub mod bvh;
 pub mod bsdf;
 pub mod quant;

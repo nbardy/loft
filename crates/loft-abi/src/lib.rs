@@ -134,6 +134,9 @@ pub struct PoseJoint {
     pub rot: [f32; 4],
 }
 
+/// Node zero is the root of a nonempty tree. With count == 0 the two children
+/// are consecutive nodes at left_or_first and left_or_first + 1. Otherwise
+/// count consecutive LeafRefs start at left_or_first (indices, never bytes).
 #[repr(C, align(16))]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BvhNode {
@@ -141,6 +144,13 @@ pub struct BvhNode {
     pub left_or_first: u32,
     pub hi: [f32; 3],
     pub count: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LeafRef {
+    pub kind_id: u32,
+    pub row_id: u32,
 }
 
 /// Wire values for `VerdictRecord::tag` (02 §3.2).

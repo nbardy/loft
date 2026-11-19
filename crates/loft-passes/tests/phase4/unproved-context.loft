@@ -1,0 +1,1 @@
+fn field(x: f) -> f = unproved(0.5) { x }

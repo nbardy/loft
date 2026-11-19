@@ -1,0 +1,2 @@
+fn energy(x: Radiance) -> rgb = x
+schedule Spectral { type Radiance = v4 }

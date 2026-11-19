@@ -13,10 +13,14 @@ pub struct Ident {
 
 #[derive(serde::Serialize, Clone, Debug, Default)]
 pub struct Module {
+    /// Dimensions (length, time, mass, angle) on source types and literals. Their GPU representation is f32.
+    pub dimensions: Vec<(Span, Dimension)>,
     pub items: Vec<Item>,
     /// `diff(f, x)` sites, as written: the AD pass generates `f__d_x` (the parser already called it).
     pub diffs: Vec<(Ident, Ident)>,
 }
+
+pub type Dimension = [f64; 4];
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum Item {
@@ -33,10 +37,32 @@ pub enum Item {
     /// `build { ... }`: an anonymous build fn; the default engine runs every one in source order.
     Build(FnDecl),
     Law(LawDecl),
+    Kernel(KernelDecl),
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
 }
+
+/// Permissions checked at a kernel's typed boundary.
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum KernelCapability { Atomics, Workgroup, Subgroups, DynamicLoops }
+
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Determinism { Det, NonDet }
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct KernelDecl {
+    pub f: FnDecl,
+    pub allow: std::collections::BTreeSet<KernelCapability>,
+    /// Checked atomic destinations, keyed by the table parameter at this entry.
+    pub writes: std::collections::BTreeMap<String, Determinism>,
+}
+
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnprovedReason { AuthorOptOut }
+
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeometryProof { Required, Unproved(UnprovedReason) }
 
 /// `law name(h: K, dt, tbl: [T]) writes h.{a, b} { ... }`.
 #[derive(serde::Serialize, Clone, Debug)]
@@ -121,6 +147,7 @@ pub enum QueryKind {
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct KindDecl {
+    pub proof: GeometryProof,
     pub name: Ident,
     pub params: Vec<KindParam>,
     pub row: Vec<RowField>,
@@ -163,6 +190,7 @@ pub struct RowRange {
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct ScheduleDecl {
+    pub radiance: Option<(Ident, TyExpr)>,
     pub implicit: bool,
     pub name: Ident,
     pub passes: Vec<PassDecl>,
@@ -231,6 +259,10 @@ pub struct ExprBlock {
 
 #[derive(serde::Serialize, Clone, Debug)]
 pub enum ExprKind {
+    /// Geometry lowering reads the scale at this site and uses four-tap normals.
+    Unproved { step_scale: Box<Expr>, body: ExprBlock },
+    /// Explicit derivative inside an opted-out block; lowering supplies finite differences.
+    FiniteDiff { function: Ident, parameter: Ident, args: Vec<Arg> },
     If {
         condition: Box<Expr>,
         then: ExprBlock,

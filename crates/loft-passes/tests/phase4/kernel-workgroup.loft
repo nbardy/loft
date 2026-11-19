@@ -1,0 +1,1 @@
+kernel fill() { workgroup_barrier() }

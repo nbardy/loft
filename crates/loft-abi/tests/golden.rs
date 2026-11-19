@@ -18,6 +18,7 @@ fn storage_layouts() {
     layout!(TrailNode, 32, 16; pos=0, inv_m=12, prev=16, pad=28);
     layout!(PoseJoint, 32, 16; pos=0, scale=12, rot=16);
     layout!(BvhNode, 32, 16; lo=0, left_or_first=12, hi=16, count=28);
+    layout!(LeafRef, 8, 4; kind_id=0, row_id=4);
     layout!(VerdictRecord, 32, 4; constraint_id=0, instance_id=4, site_id=8, tick=12, tag=16, reason_code=20, value=24, law_hash_lo=28);
     layout!(AdvanceArgs, 12, 4; from_tick=0, to_tick=4, keep_stride=8);
 }

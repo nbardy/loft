@@ -1,0 +1,1 @@
+fn blend(b: Bsdf) -> Bsdf = mix_bsdf(b, rgb(1), 0.5)

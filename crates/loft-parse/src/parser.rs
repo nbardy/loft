@@ -78,6 +78,9 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
         fields: HashSet::new(),
         locals: HashSet::new(),
         maps: HashSet::new(),
+        geometry: false,
+        in_opt_out: false,
+        proof: GeometryProof::Required,
         derivatives: vec![],
         kind_helpers: Default::default(),
     };
@@ -100,6 +103,9 @@ struct Parser<'a, 'b> {
     fields: HashSet<String>,
     locals: HashSet<String>,
     maps: HashSet<String>,
+    geometry: bool,
+    in_opt_out: bool,
+    proof: GeometryProof,
     derivatives: Vec<(Ident, Ident)>,
     kind_helpers: std::collections::HashMap<String, String>,
 }
@@ -112,14 +118,14 @@ fn named(name: &str, span: Span) -> Ident {
 fn ty(name: &str, span: Span) -> TyExpr {
     TyExpr::Name(named(name, span))
 }
-impl Parser<'_, '_> {
-    fn cur(&self) -> Lex<'_> {
+impl<'src> Parser<'src, '_> {
+    fn cur(&self) -> Lex<'src> {
         self.tokens[self.at]
     }
     fn is(&self, s: &str) -> bool {
         self.cur().text == s
     }
-    fn pop(&mut self) -> Lex<'_> {
+    fn pop(&mut self) -> Lex<'src> {
         let i = self.at;
         if self.tokens[i].kind != Kind::End {
             self.at += 1;
@@ -205,17 +211,24 @@ impl Parser<'_, '_> {
         }
         if unit(self.cur().text) || self.is("1") {
             let span = self.cur().span;
+            let mut dim = [0.; 4];
+            let mut sign = 1.;
             loop {
                 if !unit(self.cur().text) && !self.is("1") {
                     return self.err("a unit atom");
                 }
-                self.pop();
+                let atom = self.pop();
+                let mut power = sign;
                 if self.eat("^") {
-                    self.eat("-");
-                    self.integer()?;
+                    if self.eat("-") { power = -power; }
+                    power *= f64::from(self.integer()?);
                 }
-                if !self.eat("/") && !self.eat("*") { break; }
+                add_unit(&mut dim, atom.text, power);
+                if self.eat("/") { sign = -1.; }
+                else if self.eat("*") { sign = 1.; }
+                else { break; }
             }
+            self.module.dimensions.push((span, dim));
             return Ok(ty("f32", span));
         }
         let n = self.ident()?;
@@ -372,8 +385,19 @@ impl Parser<'_, '_> {
             let name = self.ident()?;
             self.expect("{")?;
             self.seps();
+            let mut radiance = None;
             let (mut passes, mut waivers) = (vec![], vec![]);
             while !self.eat("}") {
+                if self.eat("type") {
+                    let n = self.cur().span;
+                    self.expect("Radiance")?;
+                    self.expect("=")?;
+                    if radiance.replace((named("Radiance", n), self.ty()?)).is_some() {
+                        return Err(Diag::new(Code::E011, n, "duplicate Radiance binding", "bind Radiance once"));
+                    }
+                    self.end()?;
+                    continue;
+                }
                 if self.eat("waive") {
                     let name = self.upper_ident()?;
                     if self.cur().kind != Kind::String {
@@ -405,7 +429,7 @@ impl Parser<'_, '_> {
                 passes.push(PassDecl { label: verb.clone(), verb, args, body, resources });
                 self.end()?
             }
-            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers }));
+            return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }));
         }
         if self.eat("camera") {
             let name = self.ident()?;
@@ -449,6 +473,33 @@ impl Parser<'_, '_> {
                 step,
                 elem: None,
             }));
+        }
+        if self.eat("kernel") {
+            let name = self.ident()?;
+            let params = self.params()?;
+            let mut allow = std::collections::BTreeSet::new();
+            if self.eat("allow") {
+                self.expect("(")?;
+                loop {
+                    let cap = self.ident()?;
+                    let value = match cap.name.as_str() {
+                        "atomics" => KernelCapability::Atomics,
+                        "workgroup" => KernelCapability::Workgroup,
+                        "subgroups" => KernelCapability::Subgroups,
+                        "dynamic_loops" => KernelCapability::DynamicLoops,
+                        _ => return Err(Diag::new(Code::E001, cap.span, "unknown kernel capability",
+                            "use atomics, workgroup, subgroups or dynamic_loops")),
+                    };
+                    if !allow.insert(value) {
+                        return Err(Diag::new(Code::E011, cap.span, "duplicate kernel capability", "list it once"));
+                    }
+                    if !self.eat(",") || self.is(")") { break; }
+                }
+                self.expect(")")?;
+            }
+            let body = self.block(false)?;
+            let f = FnDecl { comptime: false, attrs: vec![], name, params, ret: None, body, raw: None };
+            return Ok(Item::Kernel(KernelDecl { f, allow, writes: Default::default() }));
         }
         if self.eat("law") {
             let name = self.ident()?;
@@ -675,6 +726,7 @@ impl Parser<'_, '_> {
         self.fields = row.iter().map(|f| f.name.name.clone()).collect();
         self.expect("{")?;
         self.seps();
+        self.proof = GeometryProof::Required;
         let fns = vec![];
         let mut queries = vec![];
         let mut maps = vec![];
@@ -788,7 +840,9 @@ impl Parser<'_, '_> {
                     }
                 }
                 self.at = query_pos;
+                self.geometry = matches!(q, QueryKind::Trace | QueryKind::Surface);
                 let mut b = self.body(true)?;
+                self.geometry = false;
                 pre.append(&mut b.stmts);
                 b.stmts = pre;
                 ps.insert(
@@ -818,6 +872,7 @@ impl Parser<'_, '_> {
         self.fields.clear();
         self.kind_helpers.clear();
         Ok(KindDecl {
+            proof: self.proof,
             name,
             params,
             row,
@@ -1135,13 +1190,32 @@ impl Parser<'_, '_> {
     }
     fn expr_arm(&mut self) -> Res<ExprBlock> {
         let mut body = self.block(false)?;
-        let Some(Stmt::Expr(value)) = body.stmts.pop() else {
-            return self.err("a value at the end of the if arm");
+        let value = match body.stmts.pop() {
+            Some(Stmt::Expr(e) | Stmt::Return(Some(e), _)) => e,
+            _ => return self.err("a value at the end of the block"),
         };
         Ok(ExprBlock { body, value: Box::new(value) })
     }
     fn primary(&mut self) -> Res<Expr> {
         let span = self.cur().span;
+        if self.eat("unproved") {
+            if !self.geometry {
+                return Err(Diag::new(Code::E405, span, "unproved outside a geometry query",
+                    "place the block inside trace or surface"));
+            }
+            self.expect("(")?;
+            if self.is("step_scale") && self.tokens.get(self.at + 1).is_some_and(|t| t.text == ":") {
+                self.pop();
+                self.pop();
+            }
+            let step_scale = Box::new(self.expr(0)?);
+            self.expect(")")?;
+            let outer = std::mem::replace(&mut self.in_opt_out, true);
+            let body = self.expr_arm()?;
+            self.in_opt_out = outer;
+            self.proof = GeometryProof::Unproved(UnprovedReason::AuthorOptOut);
+            return Ok(self.node(span.to(body.value.span), ExprKind::Unproved { step_scale, body }));
+        }
         if self.eat("wgsl"){
             let deterministic=self.eat("det");
             let params=self.params()?;
@@ -1204,6 +1278,10 @@ impl Parser<'_, '_> {
             } else {
                 (n.clone(), named("", span))
             };
+            if self.in_opt_out {
+                let args = self.args()?;
+                return Ok(self.node(span, ExprKind::FiniteDiff { function: f, parameter: x, args }));
+            }
             n.name = format!("{}__d_{}", f.name, x.name);
             self.derivatives.push((f, x));
         }
@@ -1295,6 +1373,7 @@ impl Parser<'_, '_> {
         let suffix = if units.is_empty() {
             NumSuffix::None
         } else {
+            let mut dim = [0.; 4];
             let mut op = 1;
             let mut at = 0;
             while at < units.len() {
@@ -1320,7 +1399,9 @@ impl Parser<'_, '_> {
                     "deg" => std::f64::consts::PI / 180.,
                     _ => 1.,
                 };
-                value *= factor.powi(op * power);
+                let exponent = power.checked_mul(op).ok_or_else(bad)?;
+                add_unit(&mut dim, sym, f64::from(exponent));
+                value *= factor.powi(exponent);
                 if at < units.len() {
                     op = match units.as_bytes()[at] {
                         b'/' => -1,
@@ -1330,6 +1411,7 @@ impl Parser<'_, '_> {
                     at += 1;
                 }
             }
+            self.module.dimensions.push((sp, dim));
             NumSuffix::Unit
         };
         Ok(self.node(
@@ -1343,6 +1425,21 @@ impl Parser<'_, '_> {
         ))
     }
 }
+fn add_unit(dim: &mut Dimension, symbol: &str, power: f64) {
+    let base = match symbol {
+        "1" => [0, 0, 0, 0],
+        "m" | "mm" => [1, 0, 0, 0],
+        "s" => [0, 1, 0, 0],
+        "kg" => [0, 0, 1, 0],
+        "rad" | "deg" => [0, 0, 0, 1],
+        "Hz" => [0, -1, 0, 0],
+        "N" => [1, -2, 1, 0],
+        "J" => [2, -2, 1, 0],
+        _ => unreachable!("validated unit symbol"),
+    };
+    for (v, e) in dim.iter_mut().zip(base) { *v += power * f64::from(e); }
+}
+
 fn unit(s: &str) -> bool {
     matches!(
         s,

@@ -1,0 +1,2 @@
+struct Bin { count: u }
+kernel add(rows: [Bin], i: u) { atomic_add(rows[i].count, 1) }

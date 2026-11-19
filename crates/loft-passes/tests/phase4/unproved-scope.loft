@@ -1,0 +1,2 @@
+space World
+kind K @World (k: f) { trace(p) = unproved(0.5) { 1 / k } + 1 / k; material(p,n) = coat(1,1) }

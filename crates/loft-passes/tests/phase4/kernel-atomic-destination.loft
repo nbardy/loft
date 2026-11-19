@@ -1,0 +1,1 @@
+kernel fill(x: f) allow(atomics) { atomic_add(x, 1) }

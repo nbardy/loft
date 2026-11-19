@@ -1,0 +1,9 @@
+# Query payloads (06 §6). A negative Hit.t is a miss. Lit.pdf <= 0 means no sample.
+struct World {}
+type RngKey = array[u, 4]
+struct Ray { o: p3@World, d: d3@World, t0: m, t1: m, w: v2 }
+struct Hit { t: m, p: p3@World, n: n3@World, uv: v2, local_p: p3@Local, kind_id: u, row_id: u, cell: v4 }
+struct Scatter { wi: d3@World, weight: Radiance, pdf: f, delta: bool }
+struct Lit { wi: d3@World, l: Radiance, pdf: f, p: p3@World, idx: u }
+struct Sigma { s: rgb, t: rgb, g: f, emit: Radiance }
+struct Vol { l: Radiance, t: rgb }

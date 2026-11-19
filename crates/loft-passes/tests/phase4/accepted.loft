@@ -1,0 +1,31 @@
+space World Local
+type Fixed = i
+struct Bin { fixed: Fixed, count: u, flux: f }
+kernel scatter(fixed: [Bin], floating: [Bin], n: u, travel: m, dt: s) allow(atomics, workgroup, subgroups, dynamic_loops) {
+  let speed: m/s = travel / dt
+  for i in 0..n {
+    atomic_add(fixed[i].count, 1)
+    atomic_add(fixed[i].fixed, 2)
+    atomic_add(floating[i].flux, subgroup_add(1.0))
+    atomic_add(floating[i].count, 1)
+  }
+  workgroup_barrier()
+}
+fn kink(x: f) -> f = abs(x)
+kind Opted @World (scale: f) {
+  trace(p) = unproved(step_scale: 0.25) { diff(kink, x)(p.x) / scale }
+  material(p,n) = mix_bsdf(ggx(rgb(1), 1, 0), coat(1, 0.1), 0.4)
+}
+kind Ragged @World () {
+  surface(u, v) grid 8x8 = unproved(0.5) { [abs(u),v,0]@World }
+  material(p,n,uv) = coat(1, 0.1)
+}
+fn nearest(w: World, r: Ray) -> Hit = trace(w, r)
+fn attenuation(a: p3@World, b: p3@World) -> rgb = visible(a, b)
+fn at_hit(h: Hit) -> Bsdf = material(SceneWorld, h)
+fn sun(p: p3@World, rng: RngKey) -> Lit = light(0, p, rng)
+fn emitter(w: World, p: p3@World, rng: RngKey) -> Lit = pick_light(w, p, rng)
+fn environment(d: d3@World) -> Radiance = sky(d)
+fn extinction(p: p3@World) -> rgb = medium(p).t
+fn energy(l: Lit) -> v4 = l.l
+schedule Spectral { type Radiance = vec4f }

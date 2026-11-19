@@ -28,6 +28,7 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     if let Some(s) = authored {
         schedule.name = s.name.clone();
         schedule.waivers = s.waivers.clone();
+        schedule.radiance = s.radiance.clone();
         before.extend(s.passes.iter().filter(|p| p.verb.name != "realtime" || !p.args.is_empty()).cloned());
     }
     if before.iter().any(|p| p.verb.name == "orbit") {
