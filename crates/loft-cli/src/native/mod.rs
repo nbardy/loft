@@ -101,8 +101,8 @@ pub struct Loaded {
     shade_reset: Vec<u8>,
     cull: (wgpu::ComputePipeline, wgpu::BindGroup),
     classify: (wgpu::ComputePipeline, wgpu::BindGroup),
-    present: wgpu::RenderBundle,
-    bundle: wgpu::RenderBundle,
+    present: command::Raster,
+    bundle: command::Raster,
     /// The sun's view: its uniform, bundle, targets, and the texel size in metres; `None` without a shadow pass.
     shadow: Option<Shadow>,
     vis: wgpu::TextureView,
@@ -113,7 +113,7 @@ pub struct Loaded {
     bake_textures: Mutex<Vec<TextureBake>>,
     params: wgpu::Buffer,
     param_values: Mutex<(Vec<f32>, bool)>,
-    overdraw: Option<(wgpu::RenderBundle, wgpu::TextureView)>,
+    overdraw: Option<(command::Raster, wgpu::TextureView)>,
     path: Option<PathGpu>,
     pub stats: LoadStats,
 }
@@ -122,7 +122,7 @@ struct Shadow {
     groups: (wgpu::BindGroup, Vec<wgpu::BindGroup>),
     args: wgpu::Buffer,
     frame_buf: wgpu::Buffer,
-    bundle: wgpu::RenderBundle,
+    bundle: command::Raster,
     vis: wgpu::TextureView,
     depth: wgpu::TextureView,
     view_proj: [[f32; 4]; 4],
@@ -403,31 +403,28 @@ impl Gpu {
 fn draw_bundle(
     d: &wgpu::Device, main: &wgpu::BindGroup, kinds: &[KindGpu], pass: &[u32],
     args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>,
-) -> wgpu::RenderBundle {
+) -> command::Raster {
     let arg_stride = if kinds.iter().any(|kind| kind.grid.is_some()) { 20 } else { 16 };
-    let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+    let draws = pass.iter().map(|&k| {
+        let kg = &kinds[k as usize];
+        let group = overrides.map_or(&kg.g1, |groups| &groups[k as usize]);
+        let offset = u64::from(k) * arg_stride;
+        let (groups, source) = match &kg.grid {
+            Some((indices, grid)) => (vec![group, grid], command::DrawSource::Indexed {
+                args, offset, indices, format: wgpu::IndexFormat::Uint32,
+            }),
+            None => (vec![group], command::DrawSource::Indirect { args, offset }),
+        };
+        command::Draw { pipeline: &kg.render, groups, source }
+    });
+    command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
         label: Some("visibility"),
         color_formats: &[Some(VIS)],
         depth_stencil: Some(wgpu::RenderBundleDepthStencil {
             format: DEPTH, depth_read_only: false, stencil_read_only: true,
         }),
         sample_count: 1, multiview: None,
-    });
-    be.set_bind_group(0, main, &[]);
-    for &k in pass {
-        let kg = &kinds[k as usize];
-        be.set_pipeline(&kg.render);
-        be.set_bind_group(1, overrides.map_or(&kg.g1, |groups| &groups[k as usize]), &[]);
-        let offset = u64::from(k) * arg_stride;
-        if let Some((indices, group)) = &kg.grid {
-            be.set_bind_group(2, group, &[]);
-            be.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
-            be.draw_indexed_indirect(args, offset);
-        } else {
-            be.draw_indirect(args, offset);
-        }
-    }
-    be.finish(&wgpu::RenderBundleDescriptor { label: Some("visibility") })
+    }, &[main], draws)
 }
 
 fn grid_layout(device: &wgpu::Device, write: bool) -> wgpu::BindGroupLayout {
@@ -740,10 +737,6 @@ impl Loaded {
         let vis_kinds: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Vis(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
         let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None);
         let overdraw = (aov == Aov::Overdraw).then(|| {
-            let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                label: Some("overdraw"), color_formats: &[Some(HDR)], depth_stencil: None,
-                sample_count: 1, multiview: None,
-            });
             let component = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::One, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
             let pipelines: Vec<_> = vis_kinds.iter().map(|&k| {
                 let kt = &p.kinds[k as usize];
@@ -751,13 +744,15 @@ impl Loaded {
                 render_blended(d, &kt.name, &[&bgl0, &bgl_kind], &modules[kt.module], ("vs", "fs_overdraw"),
                     HDR, false, face, cache, Some(wgpu::BlendState { color: component, alpha: component }))
             }).collect();
-            be.set_bind_group(0, &g0, &[]);
-            for (&kind, pipeline) in vis_kinds.iter().zip(&pipelines) {
-                be.set_pipeline(pipeline);
-                be.set_bind_group(1, &kinds[kind as usize].g1, &[]);
-                be.draw_indirect(&draw_args, u64::from(kind) * 16);
-            }
-            (be.finish(&wgpu::RenderBundleDescriptor { label: Some("overdraw") }), hdr)
+            let draws = vis_kinds.iter().zip(&pipelines).map(|(&kind, pipeline)| command::Draw {
+                pipeline, groups: vec![&kinds[kind as usize].g1],
+                source: command::DrawSource::Indirect { args: &draw_args, offset: u64::from(kind) * 16 },
+            });
+            let raster = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
+                label: Some("overdraw"), color_formats: &[Some(HDR)], depth_stencil: None,
+                sample_count: 1, multiview: None,
+            }, &[&g0], draws);
+            (raster, hdr)
         });
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
@@ -800,15 +795,13 @@ impl Loaded {
             }
         }
         let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present], &g0, &present_bg)).transpose()?;
-        let mut present_bundle = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+        let present_groups = [&g0, &present_bg].into_iter().chain(path.iter().map(|p| &p.group)).collect::<Vec<_>>();
+        let present_bundle = command::Raster::prepare(d, &wgpu::RenderBundleEncoderDescriptor {
             color_formats: &[Some(color_format)], sample_count: 1, ..Default::default()
-        });
-        present_bundle.set_pipeline(&present_pl);
-        present_bundle.set_bind_group(0, &g0, &[]);
-        present_bundle.set_bind_group(1, &present_bg, &[]);
-        if let Some(path) = &path { present_bundle.set_bind_group(2, &path.group, &[]); }
-        present_bundle.draw(0..3, 0..1);
-        let present_bundle = present_bundle.finish(&Default::default());
+        }, &present_groups, [command::Draw {
+            pipeline: &present_pl, groups: vec![],
+            source: command::DrawSource::Direct { vertices: 0..3, instances: 0..1 },
+        }]);
         let n = 2 * (p.passes.len() as u32 + u32::from(path.as_ref().is_some_and(PathGpu::has_photons)));
         let clock = g.timestamps.then(|| Clock::new(g, n));
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
@@ -853,18 +846,23 @@ impl Loaded {
         Ok(scene)
     }
 
+    // The source schedule selects already prepared runner commands. The same
+    // lowering reconnects the handles when an edit publishes new pipelines.
     fn prepare_passes(&mut self) {
         self.commands = self.passes.iter().map(|pass| match pass {
             Pass::Cull => self.direct(&self.cull, [self.n_inst.div_ceil(64), 1, 1]),
-            Pass::Vis(ids) => self.visibility(ids, &self.bundle, &self.vis, &self.depth,
+            Pass::Vis(_) => visibility(&self.bundle, &self.vis, &self.depth,
                 wgpu::StoreOp::Store, wgpu::StoreOp::Discard),
-            Pass::Shadow(ids) => {
+            Pass::Shadow(_) => {
                 let sun = self.shadow.as_ref().expect("validated caster pass");
-                self.visibility(ids, &sun.bundle, &sun.vis, &sun.depth, wgpu::StoreOp::Discard, wgpu::StoreOp::Store)
+                visibility(&sun.bundle, &sun.vis, &sun.depth, wgpu::StoreOp::Discard, wgpu::StoreOp::Store)
             }
             Pass::Classify => self.direct(&self.classify, [self.tiles.0, self.tiles.1, 1]),
-            Pass::Shade(ids) => self.shading(ids),
-            Pass::Present => color_pass(&self.color_view, wgpu::Color::BLACK, &self.present, 1),
+            Pass::Shade(ids) => match &self.overdraw {
+                Some((raster, hdr)) => color_pass(hdr, wgpu::Color::TRANSPARENT, raster),
+                None => self.shading(ids),
+            },
+            Pass::Present => color_pass(&self.color_view, wgpu::Color::BLACK, &self.present),
         }).collect();
     }
 
@@ -874,20 +872,7 @@ impl Loaded {
         }])
     }
 
-    fn visibility(&self, ids: &[u32], bundle: &wgpu::RenderBundle, color: &wgpu::TextureView,
-        depth: &wgpu::TextureView, store: wgpu::StoreOp, depth_store: wgpu::StoreOp) -> command::Pass {
-        let clear = wgpu::Color { r: f64::from(abi::EMPTY), g: 0., b: 0., a: 0. };
-        command::Pass::Render {
-            colors: vec![command::Color { view: color.clone(), ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store } }],
-            depth: Some(command::Depth { view: depth.clone(), ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.), store: depth_store }) }),
-            bundle: bundle.clone(), draws: ids.len() as u32,
-        }
-    }
-
     fn shading(&self, ids: &[u32]) -> command::Pass {
-        if let Some((bundle, hdr)) = &self.overdraw {
-            return color_pass(hdr, wgpu::Color::TRANSPARENT, bundle, ids.len() as u32);
-        }
         command::Pass::Compute(ids.iter().map(|&id| {
             let kind = &self.kinds[id as usize];
             Dispatch { pipeline: kind.shade.clone(), groups: vec![self.g0.clone(), kind.g1.clone(), kind.g2.clone()],
@@ -1081,10 +1066,18 @@ impl Loaded {
     }
 }
 
-fn color_pass(view: &wgpu::TextureView, clear: wgpu::Color, bundle: &wgpu::RenderBundle, draws: u32) -> command::Pass {
-    command::Pass::Render { colors: vec![command::Color { view: view.clone(),
-        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store } }],
-        depth: None, bundle: bundle.clone(), draws }
+fn visibility(raster: &command::Raster, color: &wgpu::TextureView, depth: &wgpu::TextureView,
+    store: wgpu::StoreOp, depth_store: wgpu::StoreOp) -> command::Pass {
+    let clear = wgpu::Color { r: f64::from(abi::EMPTY), g: 0., b: 0., a: 0. };
+    raster.attach(
+        vec![command::Color { view: color.clone(), ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store } }],
+        Some(command::Depth { view: depth.clone(), ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.), store: depth_store }) }),
+    )
+}
+
+fn color_pass(view: &wgpu::TextureView, clear: wgpu::Color, raster: &command::Raster) -> command::Pass {
+    raster.attach(vec![command::Color { view: view.clone(),
+        ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store } }], None)
 }
 
 pub fn frame_bytes(

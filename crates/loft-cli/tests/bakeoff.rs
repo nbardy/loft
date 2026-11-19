@@ -11,6 +11,7 @@ fn scene(name: &str) -> Sources {
     let mut paths: Vec<_> = fs::read_dir(root.join("lib"))
         .unwrap()
         .map(|p| p.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
         .collect();
     paths.sort();
     paths.push(root.join(format!("agent_notes/2026-11-20_meta/v1_syntax/{name}.loft")));

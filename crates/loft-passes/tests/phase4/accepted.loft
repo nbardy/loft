@@ -26,6 +26,5 @@ fn at_hit(h: Hit) -> Bsdf = material(SceneWorld, h)
 fn sun(p: p3@World, rng: RngKey) -> Lit = light(0, p, rng)
 fn emitter(w: World, p: p3@World, rng: RngKey) -> Lit = pick_light(w, p, rng)
 fn environment(d: d3@World) -> Radiance = sky(d)
-fn extinction(p: p3@World) -> rgb = medium(p).t
 fn energy(l: Lit) -> v4 = l.l
 schedule Spectral { type Radiance = vec4f }
