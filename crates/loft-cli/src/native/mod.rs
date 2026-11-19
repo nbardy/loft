@@ -36,6 +36,11 @@ pub fn gpu() -> Result<Gpu, String> {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("loft-runner"),
         required_features: features,
+        // The cube kernel covers six 8x8 faces. wgpu otherwise grants only the default 256 lanes.
+        required_limits: wgpu::Limits {
+            max_compute_invocations_per_workgroup: adapter.limits().max_compute_invocations_per_workgroup.min(384),
+            ..Default::default()
+        },
         ..Default::default()
     }))
     .map_err(|e| format!("no device: {e}"))?;

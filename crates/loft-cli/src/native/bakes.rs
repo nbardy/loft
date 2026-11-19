@@ -36,6 +36,9 @@ impl TextureBake {
         let [width, height, depth_or_array_layers] = bake.size();
         let d = &g.device;
         let limits = d.limits();
+        if bake.workgroup().into_iter().product::<u32>() > limits.max_compute_invocations_per_workgroup {
+            return Err(format!("{}: bake workgroup exceeds the attached device invocation limit", bake.name));
+        }
         let (dimension, fits) = if dim == Dimension::D3 {
             (wgpu::TextureDimension::D3, [width, height, depth_or_array_layers].into_iter().all(|n| n <= limits.max_texture_dimension_3d))
         } else {
