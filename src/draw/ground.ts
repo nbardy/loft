@@ -12,6 +12,7 @@
 
 import { lift, type Expr, type In } from "../expr.ts";
 import { drawSpec, type Drawable } from "../compile/context.ts";
+import { NONE } from "./record.ts";
 import type { Sea } from "../geom/sea.ts";
 import type { F } from "../map/types.ts";
 import { SceneError } from "../errors.ts";
@@ -100,6 +101,8 @@ export const plane: Plane = {
   name: "ground",
   skeletons: [],
   forms: [],
+  // The plane is the pass's ground (src/draw/record.ts `sceneDecls`), traced over the view, not a draw.
+  record: () => NONE,
   draws: () => ({
     shaders: { ground: { code: PLANE_WGSL, libs: [] } },
     draws: [drawSpec({ label: "ground", shader: "ground", vertices: 3, phase: "water", cull: "none", depthWrite: false })],
@@ -115,5 +118,6 @@ export const nothing: Nothing = {
   name: "ground",
   skeletons: [],
   forms: [],
+  record: () => NONE,
   draws: () => ({ shaders: {}, draws: [] }),
 };

@@ -21,6 +21,7 @@
 // point on a limb's own lit side moves away from that limb's axis and is never shadowed by it.
 
 import { add, fetch, gt, lift, listOf, lt, select, vec4, type Expr, type MapRun, type TableSource } from "../expr.ts";
+import { unported, type Recorded } from "./record.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type DrawSpec, type Emitted, type Shader } from "../compile/context.ts";
 import type { BlockCast, BlockOverlap, ShadowBlock } from "../style.ts";
@@ -237,6 +238,7 @@ export const light: Drawable = {
   name: NAME,
   skeletons: [],
   forms: [],
+  record: (): Recorded => unported("the shadow block (alpha blended by min), not written yet"),
   draws(ctx: CompileContext): Emitted {
     const b = ctx.style.block;
     if (b === undefined) throw new Error(`${NAME}: the scene's style prints no shadow block (it is added by scene() for a style that has one)`);

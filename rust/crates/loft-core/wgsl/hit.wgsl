@@ -13,7 +13,7 @@ fn trace(px: vec2<f32>, id: u32) -> vec4<f32> {
   let h = trace(in.pos.xy, in.id);
   let r = ray_at(in.pos.xy);
   let p = r.o + r.d * h.w;
-  let c = paint(p, normalize(h.xyz), in.id);
+  let c = paint(p, normalize(h.xyz), vec2<f32>(0.0), in.id);
   return Lit(vec4<f32>(c.rgb * veil(p, -r.d, h.w), c.a), depth_of(p));
 }
 

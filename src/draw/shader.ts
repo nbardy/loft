@@ -5,6 +5,7 @@
 // see it, and say nothing about it.
 
 import { emitShaderFn } from "../compile/bind.ts";
+import { unported, type Recorded } from "./record.ts";
 import { drawSpec, type Drawable, type DrawSpec } from "../compile/context.ts";
 import { SceneError, shown } from "../errors.ts";
 import { WGSL_TY } from "../expr.ts";
@@ -37,6 +38,7 @@ export function drawShader(name: string, module: WgslModule, o: ShaderOptions): 
   const sceneDepth = [code.text, ...code.libs.map((l) => l.wgsl)].some((t) => /\bscene_(depth|position)\s*\(/.test(t));
   return {
     name, skeletons: [], forms: [],
+    record: (): Recorded => unported("draw.shader: an author vertex/fragment module (a raw Screen or raster module), not written yet"),
     draws(ctx) {
       const accessors = code.values.map((e, k) => emitShaderFn(ctx.slots, { name: `loft_value_${k}`, args: [], out: WGSL_TY[e.ty], roots: [e], ret: ([v]) => v! }));
       return {

@@ -473,10 +473,11 @@ pub enum Layer {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Raster {
-    pub cull: bool,
+    pub cull: Cull,
     pub depth_write: bool,
     pub blend: Blend,
 }
+pub use crate::bundle::Cull;
 /// Wire code = the order here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Blend {
@@ -487,11 +488,14 @@ pub enum Blend {
 /// Fn ids name `Graph::fns`, kernel ids `Graph::kernels`, lit ids the first of `Graph::lits`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Cover {
-    /// `count` copies of a u × v grid of `place(uv: vec2, id: f32) -> vec3`.
+    /// `count` copies of a grid of `place(uv: vec2, id: f32) -> vec3`, its unit normal `normal(uv, id) -> vec3`, each
+    /// copy drawn at the cell counts `cells(id: f32) -> vec2` choose (its level of detail; 0 hides it), at most u × v.
     Grid {
         u: u32,
         v: u32,
         place: u32,
+        normal: u32,
+        cells: u32,
         count: u32,
     },
     /// `count` copies of the triangles in a table's rows.

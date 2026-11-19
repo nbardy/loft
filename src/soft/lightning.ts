@@ -8,6 +8,7 @@
 // stored state. The hash is the integer one of `src/lib/noise.ts`, identical on both backends.
 
 import { abs, add, cos, cross, exp, floor, length, lift, lt, max, min, mix, mul, normalize, select, sin, step, sub, time, vec3, type Expr, type In } from "../expr.ts";
+import { unported, type Recorded } from "../draw/record.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
 import { hash33 } from "../lib/noise.ts";
@@ -217,6 +218,7 @@ export function sheetFlash(s: StrikeSchedule, box: { readonly min: readonly [num
 export function skyFlash(name: string, brightness: In<"f32">, colour: readonly [number, number, number]): Drawable {
   return {
     name, skeletons: [], forms: [],
+    record: (): Recorded => unported("lightning: quads, not written yet"),
     draws(ctx: CompileContext): Emitted {
       const b = emitShaderFn(ctx.slots, { name: `flash_${name}`, args: [], out: "f32", roots: [lift<"f32">(brightness)], ret: (v) => v[0] });
       const code = /* wgsl */ `${b.code}

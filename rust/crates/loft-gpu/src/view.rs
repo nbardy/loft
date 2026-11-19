@@ -21,6 +21,16 @@ const RESOLVE: &str = "@group(0) @binding(0) var depth: texture_depth_2d;
 @fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(textureLoad(depth, vec2<i32>(p.xy), 0), 0.0, 0.0, 0.0);
 }";
+/// A multisampled depth's resolve: the nearest of each pixel's samples (TS SCENE_DEPTH_WGSL, which R0 drew with).
+const RESOLVE_MS: &str = "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;
+@vertex fn vs(@builtin(vertex_index) k: u32) -> @builtin(position) vec4<f32> {
+  return vec4<f32>(f32(k == 1u) * 4.0 - 1.0, f32(k == 2u) * 4.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+  var z = 1.0;
+  for (var s = 0u; s < textureNumSamples(depth); s++) { z = min(z, textureLoad(depth, vec2<i32>(p.xy), i32(s))); }
+  return vec4<f32>(z, 0.0, 0.0, 0.0);
+}";
 
 /// Where the frame's camera comes from.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -198,61 +208,66 @@ impl Scene {
     }
 }
 
-/// The depth resolve's pipeline (a full-screen draw into the r32float scene depth).
+/// The depth resolve's pipelines (a full-screen draw into the r32float scene depth), single- and multisampled.
 pub struct Resolve {
-    layout: BindGroupLayout,
-    pipeline: wgpu::RenderPipeline,
+    one: (BindGroupLayout, wgpu::RenderPipeline),
+    many: (BindGroupLayout, wgpu::RenderPipeline),
+}
+
+fn resolve_pipeline(device: &wgpu::Device, multisampled: bool) -> (BindGroupLayout, wgpu::RenderPipeline) {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("loft resolve"),
+        entries: &[wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled,
+            },
+            count: None,
+        }],
+    });
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("loft resolve"),
+        source: wgpu::ShaderSource::Wgsl(if multisampled { RESOLVE_MS } else { RESOLVE }.into()),
+    });
+    let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: None,
+        bind_group_layouts: &[Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("loft resolve"),
+        layout: Some(&pl),
+        vertex: wgpu::VertexState {
+            module: &module,
+            entry_point: None,
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &module,
+            entry_point: None,
+            compilation_options: Default::default(),
+            targets: &[Some(TextureFormat::R32Float.into())],
+        }),
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    (layout, pipeline)
 }
 
 impl Resolve {
     pub fn new(device: &wgpu::Device) -> Resolve {
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("loft resolve"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Depth,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            }],
-        });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("loft resolve"),
-            source: wgpu::ShaderSource::Wgsl(RESOLVE.into()),
-        });
-        let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[Some(&layout)],
-            immediate_size: 0,
-        });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("loft resolve"),
-            layout: Some(&pl),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: None,
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: None,
-                compilation_options: Default::default(),
-                targets: &[Some(TextureFormat::R32Float.into())],
-            }),
-            primitive: Default::default(),
-            depth_stencil: None,
-            multisample: Default::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        Resolve { layout, pipeline }
+        Resolve { one: resolve_pipeline(device, false), many: resolve_pipeline(device, true) }
     }
 
-    /// Copies `depth` and `colour` (the pass's attachments, single-sampled) into `scene`. Refused, naming the fix, when
+    /// Copies `colour` (the pass's picture, single-sampled: a multisampled view's resolve) and `depth` (the nearest
+    /// sample when multisampled) into `scene`. Refused, naming the fix, when
     /// the attachments cannot be read: a caller's view must allow it.
     pub fn encode(
         &self,
@@ -264,11 +279,11 @@ impl Resolve {
     ) -> Result<(), Error> {
         let (c, d) = (colour.texture(), depth.texture());
         let need = |t: &wgpu::Texture, u: wgpu::TextureUsages, what: &str| {
-            match t.usage().contains(u) && t.sample_count() == 1 {
+            match t.usage().contains(u) && (t.sample_count() == 1 || what == "depth") {
             true => Ok(()),
             false => Err(Error::Usage(
                 format!(
-                    "this view's passes read the opaque scene (a medium, a Screen cover or ink), so its {what} must be single-sampled with {u:?}. Fix: create it so, or draw a bundle whose passes do not read the scene"
+                    "this view's passes read the opaque scene (a medium, a Screen cover or ink), so its {what} must be readable ({u:?}; a colour single-sampled, or resolved). Fix: create it so, or draw a bundle whose passes do not read the scene"
                 )
                 .into(),
             )),
@@ -277,9 +292,10 @@ impl Resolve {
         need(c, wgpu::TextureUsages::COPY_SRC, "colour")?;
         need(d, wgpu::TextureUsages::TEXTURE_BINDING, "depth")?;
         enc.copy_texture_to_texture(c.as_image_copy(), scene.colour.as_image_copy(), c.size());
+        let (layout, pipeline) = if d.sample_count() > 1 { &self.many } else { &self.one };
         let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("loft resolve"),
-            layout: &self.layout,
+            layout,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(depth) }],
         });
         let mut rp = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -295,7 +311,7 @@ impl Resolve {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        rp.set_pipeline(&self.pipeline);
+        rp.set_pipeline(pipeline);
         rp.set_bind_group(0, &group, &[]);
         rp.draw(0..3, 0..1);
         Ok(())

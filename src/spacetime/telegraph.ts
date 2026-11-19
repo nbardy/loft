@@ -7,6 +7,7 @@
 // throbs faster; at arming the whole shape flashes for one frame; then it fades. Antialiased by the distance's own
 // screen derivative, so it is crisp at any zoom.
 
+import { unported, type Recorded } from "../draw/record.ts";
 import {
   add, cos, div, fract, input, lift, max, min, mix, mul, pow, saturate, step, sub, TAU, time, vec2, vec3, vec4, type Expr,
 } from "../expr.ts";
@@ -113,6 +114,7 @@ class Telegraph implements Drawable {
     return vec4(colour, mul(shown, live));
   }
 
+  record(): Recorded { return unported("telegraph: a glazed surface on the ground, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const h = this.attack.hit, height = surfaceOf(ctx.ground, `telegraph "${this.name}"`);
     const surface: Surface = {

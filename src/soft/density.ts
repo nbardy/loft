@@ -25,6 +25,7 @@
 // per blob (through the medium) plus a small even share.
 
 import { add, div, dot, exp, lift, max, mul, sub, variable, type Expr } from "../expr.ts";
+import { unported, type Recorded } from "../draw/record.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Form, type Shader, type V3 } from "../compile/context.ts";
 import { fbm3 } from "../lib/noise.ts";
@@ -101,6 +102,7 @@ export class DensityDrawable implements Drawable {
     if (!(o.forward >= 0 && o.forward < 1)) throw new Error(`draw.density "${name}": forward must be in [0, 1)`);
   }
 
+  record(): Recorded { return unported("density: a Gaussians medium, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const key = `density.${this.name}`;
     const integral = densityIntegral(ctx, this);

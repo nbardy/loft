@@ -29,17 +29,21 @@ export async function loadArtefact(source: SceneSource, still: StillSpec = { kin
       const mod = await importFrom<Record<string, unknown>>("../host/fixture.ts");
       return need<Artefact>(mod, "fixture", "src/host/fixture.ts");
     }
-    case "file": {
-      // A design draws the chosen variant (its base when none is given); a plain scene draws its default export.
-      const { chosenAt } = await import("./variant.ts");
-      const { scene } = await chosenAt(source.path, source.variant);
-      const index = await importFrom<Record<string, unknown>>("../index.ts");
-      const artefact = need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(sampledFor(await styled(scene, source.style, source.light), still));
-      // What the compiler noticed and did not refuse (a channel no part of the style reads), before any final line.
-      for (const n of artefact.notes ?? []) console.error(`note: ${n}`);
-      return artefact;
-    }
+    case "file": return (await compiledScene(source, still)).artefact;
   }
+}
+
+/** A scene file's chosen, styled scene and the TS engine's artefact of it (the Rust path records the scene's draws). */
+export async function compiledScene(source: Extract<SceneSource, { kind: "file" }>, still: StillSpec = { kind: "frame" }): Promise<{ readonly scene: Scene; readonly artefact: Artefact }> {
+  // A design draws the chosen variant (its base when none is given); a plain scene draws its default export.
+  const { chosenAt } = await import("./variant.ts");
+  const { scene } = await chosenAt(source.path, source.variant);
+  const index = await importFrom<Record<string, unknown>>("../index.ts");
+  const drawn = sampledFor(await styled(scene, source.style, source.light), still) as Scene;
+  const artefact = need<(s: unknown) => Artefact>(index, "compile", "src/index.ts")(drawn);
+  // What the compiler noticed and did not refuse (a channel no part of the style reads), before any final line.
+  for (const n of artefact.notes ?? []) console.error(`note: ${n}`);
+  return { scene: drawn, artefact };
 }
 
 /** The scene as a still compiles it: its lights sampled. One handler per kind of frame. */

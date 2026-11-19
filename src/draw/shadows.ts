@@ -17,6 +17,12 @@ import {
   add, and, clamp, div, exp, fetch, gt, lift, listOf, lt, mapOf, max, min, mul, saturate, select, sub, vec2, vec4, type Expr, type In, type MapRun, type TableSource,
 } from "../expr.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import { distance, dot, ge, le, length, mix, or, smoothstep, vec3 } from "../expr.ts";
+import { foldAt, sunDir } from "../light.ts";
+import { eyePosition, viewDir } from "../lib/screen.ts";
+import { role } from "../record/decls.ts";
+import type { LayerCtx } from "../style.ts";
+import { cellsRole, NONE, paintRole, seaFootprint, type RecordContext, type Recorded } from "./record.ts";
 import type { F, Skeleton } from "../map/types.ts";
 import { sunParts } from "../light.ts";
 import { levelOf } from "./ground.ts";
@@ -33,6 +39,13 @@ export const shadows: Drawable = {
   name: "shadows",
   skeletons: [],
   forms: [],
+  record(ctx: RecordContext): Recorded {
+    switch (ctx.ground.kind) {
+      case "sea": return recordPatches(ctx, (c) => ctx.style.shadow(c));
+      case "plane": return recordPatches(ctx, (c) => vec4(ctx.style.ground({ world: c.world, view: c.view, sun: lift<"vec3">(sunDir(ctx.lighting.sun)), distance: c.distance, shadow: c.amount, lights: foldAt(ctx.lighting, { kind: "surface", at: c.world, normal: lift<"vec3">([0, 1, 0]) }) }), 1));
+      case "nothing": return NONE;
+    }
+  },
   draws(ctx: CompileContext): Emitted {
     switch (ctx.ground.kind) {
       case "sea": return patches(ctx, "sea_shadow(in.world, -view_dir(in.world), distance(in.world, frame.eye.xyz), s)", "alpha");
@@ -105,6 +118,41 @@ fn capsule_shadow(i: u32, p: vec2<f32>, px: f32) -> f32 {
       shaders: { shadows: { code, libs: [] } },
       draws: [drawSpec({ label: "shadows", shader: "shadows", vertices: 6 * PATCH * PATCH, instances: Math.max(capacity, 1), phase: "on-water", cull: "none", depthWrite: false, blend })],
     };
+}
+
+/**
+ * The patches on the Rust path: a PATCH x PATCH grid per capsule (an invalid one collapsed to a point, so it covers
+ * nothing), painted by `colour` at the capsule's coverage; where TS discards (no coverage, or a neighbour of the same
+ * chain is darker) the paint's alpha is 0, which the alpha blend makes the same as nothing drawn.
+ */
+function recordPatches(ctx: RecordContext, colour: (c: LayerCtx) => Expr<"vec4">): Recorded {
+  const { chains, at } = casters(ctx.things);
+  const capacity = chains.reduce((n, c) => n + c.length - 1, 0);
+  if (capacity === 0) return NONE;
+  const level = levelOf(ctx.ground), table = shadowTable(chains, level, sunParts(ctx.sunAt), at);
+  const row = (i: F, k: number) => fetch(table, i, k);
+  const place = role("shadows_place", ["vec2", "f32"], (st, i) => {
+    const a = row(i, 0), b = row(i, 1), ab = sub(a.zw, a.xy), len = length(ab);
+    const along = select(gt(len, 1e-6), div(ab, max(len, 1e-6)), vec2(1, 0)), across = vec2(mul(along.y, -1), along.x);
+    const pad = add(add(max(b.x, b.y), mul(b.w, 2)), 0.1);
+    const xz = add(add(a.xy, mul(along, mix(mul(pad, -1), add(len, pad), st.x))), mul(across, mix(mul(pad, -1), pad, st.y)));
+    return select(lt(row(i, 2).z, 0.5), lift<"vec3">([0, -1e9, 0]), vec3(xz.x, level(xz), xz.y));
+  });
+  const normal = role("shadows_normal", ["vec2", "f32"], () => vec3(0, 1, 0));
+  const cells = cellsRole("shadows", [PATCH, PATCH], undefined, () => vec4(0, 0, 0, 1));
+  const paint = paintRole("shadows", (p, _n, _uv, i) => {
+    const px = seaFootprint(p), xz = p.xz;
+    const capsule = (j: F): F => {
+      const a = row(j, 0), b = row(j, 1), pa = sub(xz, a.xy), ba = sub(a.zw, a.xy);
+      const h = clamp(div(dot(pa, ba), max(dot(ba, ba), 1e-8)), 0, 1), r = mix(b.x, b.y, h), soft = max(b.w, px);
+      return mul(b.z, sub(1, smoothstep(sub(r, soft), add(r, soft), length(sub(pa, mul(ba, h))))));
+    };
+    const s = capsule(i), c = row(i, 2);
+    const hidden = or(le(s, 0), or(and(gt(c.x, 0.5), gt(capsule(max(sub(i, 1), 0)), s)), and(gt(c.y, 0.5), ge(capsule(add(i, 1)), s))));
+    const out = colour({ world: p, view: mul(viewDir(p), -1), distance: distance(p, eyePosition()), amount: s });
+    return vec4(out.xyz, select(hidden, 0, out.w));
+  });
+  return { kind: "draws", draws: [{ phase: "on-water", draw: { name: "shadows", layer: "surroundings", raster: { cull: "none", depthWrite: false, blend: "alpha" }, paint, cover: { kind: "grid", u: PATCH, v: PATCH, place, normal, cells, count: capacity } } }] };
 }
 
 /** smoothstep(0, 1, x), written out (as the CPU fill had it). */

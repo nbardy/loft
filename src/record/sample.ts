@@ -20,16 +20,18 @@ import { pack, Program, type Job } from "./wire.ts";
 export function sampleJob(): Job {
   const glow = param("sample.glow", 0.5, { min: 0, max: 1 });
   const table: TableSource = { name: "sample_pose", lanes: 1, entries: 4, role: "data", program: mapOf(4, (i) => [vec4(i, mul(time, i), 0, 0.5)]) };
-  const paint = role("sample_paint", ["vec3", "vec3", "f32"], (p, n, id) => vec4(mul(n, glow), add(length(p), id)));
+  const paint = role("sample_paint", ["vec3", "vec3", "vec2", "f32"], (p, n, uv, id) => vec4(mul(n, glow), add(length(p), add(id, uv.x))));
   const hit = role("sample_hit", ["vec3", "vec3", "vec2", "vec2"], (o, d) => vec4(d, sub(dot(o, d), 1)));
   const place = role("sample_place", ["vec2", "f32"], (uv, id) => vec3(dot(uv, uv), id, length(fetch(table, id, 0))));
+  const normal = role("sample_normal", ["vec2", "f32"], (uv) => vec3(0, 1, uv.x));
+  const cells = role("sample_cells", ["f32"], (id) => vec2(8, add(2, id)));
   const quads = role("sample_quads", ["f32"], (id) => fetch(table, id, 0));
   const density = role("sample_density", ["vec3"], (p) => sub(1, length(p)));
   const ink = role("sample_ink", ["vec3", "vec3"], (c, q) => vec4(c, length(q)));
-  const raster = { cull: true, depthWrite: true, blend: "opaque" } as const;
+  const raster = { cull: "back", depthWrite: true, blend: "opaque" } as const;
   const camera: Camera = { name: "game", kind: "look", eye: vec3(0, 2, mul(time, -5)), target: vec3(0, 0, 0), up: vec3(0, 1, 0), fovy: add(0.8, glow) };
   const draws: Draw[] = [
-    { name: "sheet", layer: "subject", raster, paint, cover: { kind: "grid", u: 8, v: 4, place, count: 2 } },
+    { name: "sheet", layer: "subject", raster, paint, cover: { kind: "grid", u: 8, v: 4, place, normal, cells, count: 2 } },
     { name: "body", layer: "subject", raster, paint, cover: { kind: "ray", proxy: { kind: "box", min: [-1, 0, -1], max: [1, 2, 1] }, find: { kind: "hit", hit } } },
     { name: "fog", layer: "surroundings", raster: { ...raster, depthWrite: false, blend: "alpha" }, paint, cover: {
       kind: "ray", proxy: { kind: "instances", table, local: [[-1, -1, -1], [1, 1, 1]] },
@@ -41,6 +43,7 @@ export function sampleJob(): Job {
   ];
   const t = variable("sample_t", "f32"), jets = [0, 1, 2, 3].map((k) => variable(`sample_y${k}`, "f32")) as [Expr<"f32">, Expr<"f32">, Expr<"f32">, Expr<"f32">];
   const scene: Scene = {
+    cameras: [],
     passes: [
       { camera, draws: draws.slice(0, 4), clear: { kind: "colour", rgba: [0.1, 0.2, 0.3, 1] }, ground: { kind: "traced", hit, paint }, outline: { kind: "ink", outline: ink } },
       { camera: { name: "top", kind: "matrix", cols: [vec4(1, 0, 0, 0), vec4(0, 1, 0, 0), vec4(0, 0, 1, 0), vec4(0, 0, 0, 1)] }, draws: draws.slice(4), clear: { kind: "load" }, ground: { kind: "none" }, outline: { kind: "none" } },

@@ -476,9 +476,10 @@ fn draw_decls(g: &Graph) -> (Vec<draw::Draw>, Vec<draw::Medium>, Vec<draw::Pass>
         .iter()
         .map(|d| {
             let cover = match &d.cover {
-                ir::Cover::Grid { u, v, place, count } => {
-                    draw::Cover::Raster { prim: draw::Prim::Grid { u: *u, v: *v, place: *place }, count: *count }
-                }
+                ir::Cover::Grid { u, v, place, normal, cells, count } => draw::Cover::Raster {
+                    prim: draw::Prim::Grid { u: *u, v: *v, place: *place, normal: *normal, cells: *cells },
+                    count: *count,
+                },
                 ir::Cover::Mesh { kernel, count } => {
                     draw::Cover::Raster { prim: draw::Prim::Mesh { res: *kernel }, count: *count }
                 }

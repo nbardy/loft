@@ -11,6 +11,7 @@
 // counted twice (the same rule the cast shadows use for their capsules).
 
 import { div, floor, lift, mapOf, mul, sub, variable, vec4, type Expr, type In, type TableSource } from "../expr.ts";
+import { unported, type Recorded } from "../draw/record.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Shader } from "../compile/context.ts";
 import type { F, P3, Skeleton } from "../map/types.ts";
@@ -106,6 +107,7 @@ export class GlowDrawable implements Drawable {
     if (!(o.halo >= 1)) throw new Error(`glow "${name}": halo must be at least 1 (a multiple of the core width)`);
   }
 
+  record(): Recorded { return unported("glow: quads, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const key = `glow.${this.name}`;
     const T = ctx.table(strokeTable(this.strokes)).wgsl;

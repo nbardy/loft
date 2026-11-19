@@ -2,6 +2,7 @@
 // returns a `Strand`, which is a `Body` (Surface, Chart, Skeleton) that also draws itself with `draw.surface`: rings
 // crowded toward the tips, a vertex on the dorsal line at every density, lit by the style with an ink hull.
 
+import type { RecordContext, Recorded } from "../draw/record.ts";
 import { Expr, lift, vec3, type In } from "../expr.ts";
 import type { Form, CompileContext, Drawable, Emitted } from "../compile/context.ts";
 import { drawSurface, spacing, type SurfaceDrawable } from "../draw/surface.ts";
@@ -95,6 +96,7 @@ export class Strand extends Body implements Drawable {
   get skeletons(): readonly Skeleton[] { return this.drawn.skeletons; }
   get forms(): readonly Form[] { return this.drawn.forms; }
   draws(ctx: CompileContext): Emitted { return this.drawn.draws(ctx); }
+  record(ctx: RecordContext): Recorded { return this.drawn.record(ctx); }
   /** Copies of this strand, one per pose, each turned and sized (teeth, spikes, a row of bells each on its own swing). Drawn by `draw.posed`. */
   posed(name: string, poses: Poses): Drawable { return this.drawn.posed(name, poses); }
 

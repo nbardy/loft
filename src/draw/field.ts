@@ -36,6 +36,7 @@
 // statement that the field is known to need (or not need) it.
 
 import { nameId } from "./surface.ts";
+import { unported, type Recorded } from "./record.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { compileJs, f, leaves, libsOf, mul, topo, substitute, variable, type Expr, type LibFn, type TableSource } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
@@ -311,6 +312,7 @@ export class FieldDrawable implements Drawable {
     return made;
   }
 
+  record(): Recorded { return unported("field: the sphere-trace hit role (draw/march.ts as a graph loop), not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const safety = this.stepScale();
     const p = this.plan();

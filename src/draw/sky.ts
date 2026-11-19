@@ -1,6 +1,7 @@
 // The sky: one full-screen triangle behind everything, coloured by the style along each view ray.
 
 import { drawSpec, type CompileContext, type Drawable } from "../compile/context.ts";
+import { skyDraw } from "./record.ts";
 
 /**
  * Below the horizon a style's sky is its water seen through the sea. On a plane or on nothing there is no water: the
@@ -40,5 +41,6 @@ export const sky: Drawable = {
   name: "sky",
   skeletons: [],
   forms: [],
+  record: (ctx) => ({ kind: "draws", draws: [skyDraw(ctx)] }),
   draws: (ctx) => ({ shaders: { sky: { code: code(ctx), libs: [] } }, draws: [drawSpec({ label: "sky", shader: "sky", vertices: 3, phase: "background", cull: "none", depthWrite: false })] }),
 };

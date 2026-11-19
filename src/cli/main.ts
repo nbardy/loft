@@ -230,12 +230,16 @@ async function build(cmd: Extract<Command, { kind: "build" }>) {
  * carries Draw/Pass decls and Kernel bodies the bundle has no draws and zero tables, and this says so.
  */
 async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
-  const [{ rec }, { pack, Program }, { native, UNLIMITED }, { mkdirSync }] = await Promise.all([
-    import("../record/recorder.ts"), import("../record/wire.ts"), import("../core/native.ts"), import("node:fs")]);
+  const [{ rec }, { pack, Program }, { native, UNLIMITED }, { mkdirSync }, { compiledScene }, { sceneDecls }] = await Promise.all([
+    import("../record/recorder.ts"), import("../record/wire.ts"), import("../core/native.ts"), import("node:fs"), import("./load.ts"), import("../draw/record.ts")]);
   const t = performance.now(), stop = rec.watch();
-  let roots: ReturnType<typeof stop>;
-  try { await loadArtefact(cmd.source); } finally { roots = stop(); }
-  const job = pack(rec.job(Program.Scene, roots));
+  let roots: ReturnType<typeof stop>, scene: Awaited<ReturnType<typeof compiledScene>>["scene"];
+  let artefact: Awaited<ReturnType<typeof compiledScene>>["artefact"];
+  try { ({ scene, artefact } = await compiledScene(cmd.source)); } finally { roots = stop(); }
+  // The scene's cameras and draws (src/draw/record.ts); what no thing can record yet is said by name.
+  const decls = sceneDecls(scene, artefact);
+  for (const u of decls.unported) console.log(`unported ${u}`);
+  const job = pack(rec.job(Program.Scene, roots, decls.scene));
   mkdirSync(cmd.out, { recursive: true });
   const file = `${cmd.out}/scene.loft`;
   const r = native().run(job, { nodes: UNLIMITED, tapeOps: UNLIMITED, boxes: UNLIMITED, gpuNanos: UNLIMITED }, file, { naga: cmd.naga, precision: cmd.precision });
@@ -245,7 +249,7 @@ async function buildRust(cmd: Extract<Command, { kind: "build" }>) {
   console.log(`naga     f32 ${cmd.naga === "emit" ? "valid" : "at load (--naga checks at emit)"}; f16 ${f16}`);
   console.log(`wrote ${file}  ${(s.bundle_bytes / 1024).toFixed(1)} KB, build ${s.build.slice(0, 16)}`);
   console.log(`fills    ${s.kernels} GPU kernels, ${s.unfilled} unfilled tables (a recurrence's: not on the wire yet)`);
-  if (s.draws === 0) console.log("not drawable yet: 0 draws (the library records no Draw decls yet: lane 3.1's hit, place and paint functions)");
+  console.log(`draws    ${s.draws} recorded, ${decls.unported.length} things unported`);
 }
 
 async function buildTs(cmd: Extract<Command, { kind: "build" }>) {

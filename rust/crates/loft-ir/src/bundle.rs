@@ -178,9 +178,17 @@ pub enum Proxy {
     Box { min: [F32; 3], max: [F32; 3] },
     Instances { res: Id, local: [[F32; 3]; 2] },
 }
+/// Which faces a raster draw drops (wire code = the order here). `Front` is the hull outline's: the surface pushed out
+/// along its normal and drawn from behind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Cull {
+    None,
+    Back,
+    Front,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Raster {
-    pub cull: bool,
+    pub cull: Cull,
     pub depth_write: bool,
     pub blend: Blend,
 }

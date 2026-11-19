@@ -287,6 +287,7 @@ fn five_instances_in_one_pass_against_five_loads_and_trusted_against_checked() {
             let view = View {
                 canvas: CANVAS,
                 color: &views[0],
+                resolve: None,
                 depth: &views[1],
                 size,
                 owner: Owner::Caller,

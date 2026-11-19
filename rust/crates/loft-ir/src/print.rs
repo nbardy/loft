@@ -361,7 +361,12 @@ impl Printer<'_> {
             // The paint first, then the cover's functions: print.ts's order.
             let paint = self.fn_ref(d.paint)?;
             let cover = match &d.cover {
-                Cover::Grid { u, v, place, count } => format!("grid {u} {v} {} {count}", self.fn_ref(*place)?),
+                Cover::Grid { u, v, place, normal, cells, count } => format!(
+                    "grid {u} {v} {} {} {} {count}",
+                    self.fn_ref(*place)?,
+                    self.fn_ref(*normal)?,
+                    self.fn_ref(*cells)?
+                ),
                 Cover::Mesh { kernel, count } => format!("mesh {} {count}", self.table_name(*kernel)),
                 Cover::Quads { place, count } => format!("quads {} {count}", self.fn_ref(*place)?),
                 Cover::Ray { proxy, find } => {
@@ -388,7 +393,7 @@ impl Printer<'_> {
                 Blend::Alpha => "alpha",
                 Blend::Add => "add",
             };
-            let (cull, depth) = (u8::from(d.raster.cull), u8::from(d.raster.depth_write));
+            let (cull, depth) = (d.raster.cull as u8, u8::from(d.raster.depth_write));
             out.push(format!("draw {} {layer} {cull} {depth} {blend} paint {paint} {cover}", g.sym(d.name)));
         }
         for p in g.passes.iter() {

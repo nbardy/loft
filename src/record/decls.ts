@@ -3,8 +3,9 @@
 // recorder writes them (`Recorder.job`'s `scene`); loft-ir decodes each into its own array of `Graph`.
 //
 // A draw's roles are graph functions recorded once over binders (`role`), with loft-core `draw`'s signatures:
-//   paint (p: vec3, n: vec3, id: f32) -> vec4       hit (o: vec3, d: vec3, span: vec2, width: vec2) -> vec4 (normal, t)
-//   grid place (uv: vec2, id: f32) -> vec3          quads place (id: f32) -> vec4 (centre, radius)
+//   paint (p: vec3, n: vec3, uv: vec2, id: f32) -> vec4   hit (o: vec3, d: vec3, span: vec2, width: vec2) -> vec4 (normal, t)
+//   grid place and normal (uv: vec2, id: f32) -> vec3     quads place (id: f32) -> vec4 (centre, radius)
+//   grid cells (id: f32) -> vec2: a copy's cell counts this frame (its level of detail; 0 hides it)
 //   density (p: vec3) -> f32                        outline (colour: vec3, q: vec3) -> vec4 (ink, width)
 
 import { variable, type Expr, type NumTy, type Row, type TableSource } from "../expr.ts";
@@ -26,7 +27,8 @@ export function role<const P extends readonly NumTy[], R extends NumTy>(name: st
   };
 }
 
-export type Raster = { readonly cull: boolean; readonly depthWrite: boolean; readonly blend: "opaque" | "alpha" | "add" };
+/** Which faces a raster draw drops: `front` is a hull outline's (the surface pushed out, drawn from behind). */
+export type Raster = { readonly cull: "none" | "back" | "front"; readonly depthWrite: boolean; readonly blend: "opaque" | "alpha" | "add" };
 export type Draw = {
   readonly name: string;
   readonly layer: "subject" | "surroundings";
@@ -35,7 +37,7 @@ export type Draw = {
   readonly cover: Cover;
 };
 export type Cover =
-  | { readonly kind: "grid"; readonly u: number; readonly v: number; readonly place: Role; readonly count: number }
+  | { readonly kind: "grid"; readonly u: number; readonly v: number; readonly place: Role; readonly normal: Role; readonly cells: Role; readonly count: number }
   | { readonly kind: "mesh"; readonly table: TableSource | Row; readonly count: number }
   | { readonly kind: "quads"; readonly place: Role; readonly count: number }
   | { readonly kind: "ray"; readonly proxy: Proxy; readonly find: Find }
@@ -86,6 +88,7 @@ export type Hold = { readonly times: Times; readonly said: string; readonly site
   | { readonly kind: "bound"; readonly margin: Expr<"f32"> }
 );
 
-/** Everything scene-level a job carries. Cameras, media and draws are reached from the passes. */
-export type Scene = { readonly passes: readonly Pass[]; readonly checks: readonly Check[]; readonly solves: readonly Solve[] };
-export const NO_SCENE: Scene = { passes: [], checks: [], solves: [] };
+/** Everything scene-level a job carries: the named cameras a host may view by (each written once, passes' too), the
+ * passes (their media and draws are reached from them), checks and solves. */
+export type Scene = { readonly cameras: readonly Camera[]; readonly passes: readonly Pass[]; readonly checks: readonly Check[]; readonly solves: readonly Solve[] };
+export const NO_SCENE: Scene = { cameras: [], passes: [], checks: [], solves: [] };

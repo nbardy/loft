@@ -19,6 +19,10 @@ import { refuseSurface } from "../mistakes.ts";
 import { SceneError } from "../errors.ts";
 import { graphFn } from "../record/graph_fn.ts";
 import type { DrawDepth } from "../artefact.ts";
+import { floor, lt, select, smoothstep, sub } from "../expr.ts";
+import { role, type Cover, type Draw, type Raster } from "../record/decls.ts";
+import { cellsRole, copyId, inkWidth, litContext, paintRole, pixelOf, skyOf, unported, type RecordContext, type Recorded, type Staged } from "./record.ts";
+import { answered } from "./painted.ts";
 
 /** How a grid direction is sampled: `count` cells, the cell corner at s in [0, 1] going to the coordinate `at(s)`. */
 export type Sampling = { readonly count: number; readonly at: (s: F) => F };
@@ -136,6 +140,101 @@ export class SurfaceDrawable implements Drawable {
    */
   through(chart: Chart): SurfaceDrawable {
     return new SurfaceDrawable(this.name, carriedSurface(this.surface, this.copies, chart), this.grid, this.look, carriedCopies(this.copies, chart));
+  }
+
+  /**
+   * The grid as the Rust path draws it: place and normal roles over the grid's (s, t) in [0, 1]², warped by the grid's
+   * spacing and posed per copy, and a paint role per look; a hull outline is the same grid pushed out by the ink
+   * width, front faces culled, painted with the style's ink. The grid is drawn at its authored counts (the LOD plan,
+   * `loft_detail`, is not ported), and paint reads (u, v) warped from the interpolated (s, t).
+   */
+  record(ctx: RecordContext): Recorded {
+    const name = this.name, s = this.surface, grid = this.grid, copies = this.copies, look = this.look, style = ctx.style;
+    const placed = (i: F): Surface => {
+      switch (copies.kind) {
+        case "one": return s;
+        case "poses": return framedPose(s, copies.poses.at(i));
+      }
+    };
+    const uvOf = (st: Expr<"vec2">): readonly [F, F] => [grid.u.at(st.x), grid.v.at(st.y)];
+    const at = (f: (x: Surface, u: F, v: F) => P3) => (st: Expr<"vec2">, i: F): P3 => { const [u, v] = uvOf(st); return f(placed(i), u, v); };
+    const point = at((x, u, v) => x.point(u, v));
+    const place = role(`${name}_place`, ["vec2", "f32"], point);
+    const glazed = look.kind === "glazed";
+    // A glazed surface's colour does not read the normal (TS `vertexNormal`), so it is not computed.
+    const normalOf = glazed ? () => vec3(0, 1, 0) : at((x, u, v) => x.normal(u, v));
+    const normal = role(`${name}_normal`, ["vec2", "f32"], normalOf);
+    // A lit grid's level of detail as R0 chose it; flat and glazed grids keep their authored counts (TS `detailOf`).
+    const bound = (i: F): Expr<"vec4"> => {
+      switch (copies.kind) {
+        case "one": return vec4(s.point(grid.u.at(f(0.5)), grid.v.at(f(0.5))), 1);
+        case "poses": { const p = copies.poses.at(i); return vec4(p.frame.o, sizeBound(p.size)); }
+      }
+    };
+    const cells = cellsRole(name, [grid.u.count, grid.v.count], look.kind === "lit" ? ctx.rest(name) : undefined, bound);
+    const cover = (p: typeof place): Cover => ({ kind: "grid", u: grid.u.count, v: grid.v.count, place: p, normal, cells, count: countOf(copies) });
+    const draw = (phase: Staged["phase"], draw: Draw): Staged => ({ phase, draw });
+    const id = nameId(name);
+    switch (look.kind) {
+      case "lit": {
+        const raster: Raster = { cull: look.sides === "one" ? "back" : "none", depthWrite: true, blend: "opaque" };
+        const shaded = (which: "shade" | "ink" | "border") => paintRole(`${name}_${which}`, (p, n, st, i) => {
+          const [u, v] = uvOf(st);
+          const said = classify(name, look.paint(u, v, { world: p, normal: n, copy: i }));
+          const anchor = readsBody(style) ? placed(i).anchor(u, v) : vec3(0, 0, 0);
+          const sc = litContext(ctx, { base: said.base, normal: n, world: p, uv: vec2(u, v), anchor, id: copyId(id, i) }, { thing: name, ...said.said });
+          const shade = (): P3 => answered(said.answer, sc, style.block === undefined ? style.shade(sc) : style.block.body(sc));
+          const colour = ((): P3 => {
+            switch (which) {
+              case "shade": return shade();
+              case "ink": return style.ink(sc);
+              case "border": {
+                // Ink along the v = 1 edge, about two pixels wide at any distance (TS surface.ts, outline "border").
+                const fw = fwidth(st.y);
+                return mix(shade(), style.ink(sc), sub(1, smoothstep(mul(fw, 1), mul(fw, 2.2), sub(1, st.y))));
+              }
+            }
+          })();
+          return vec4(colour, style.mark(sc));
+        });
+        const body = (which: "shade" | "border") => draw("opaque", { name, layer: "subject", raster, paint: shaded(which), cover: cover(place) });
+        switch (look.outline) {
+          case "none": return { kind: "draws", draws: [body("shade")] };
+          case "border": return { kind: "draws", draws: [body("border")] };
+          case "hull": switch (ctx.outline) {
+            case "screen": return unported("a screen outline (the pass composer's ink reads the picture's alpha marks; not written yet)");
+            case "hull": {
+              const pushed = role(`${name}_hull`, ["vec2", "f32"], (st, i) => { const p = point(st, i); return add(p, mul(normalOf(st, i), inkWidth(style, p))); });
+              const hull = draw("opaque", { name: `${name}_outline`, layer: "subject", raster: { ...raster, cull: "front" }, paint: shaded("ink"), cover: cover(pushed) });
+              return { kind: "draws", draws: [body("shade"), hull] };
+            }
+          }
+        }
+      }
+      // falls through: no outline is left
+      case "flat": {
+        const paint = paintRole(name, (p, n, st, i) => { const [u, v] = uvOf(st); return vec4(flatColour(name, look.paint(u, v, { world: p, normal: n, copy: i })), 1); });
+        return { kind: "draws", draws: [draw("opaque", { name, layer: "subject", raster: { cull: "none", depthWrite: true, blend: "opaque" }, paint, cover: cover(place) })] };
+      }
+      case "glazed": {
+        const paint = paintRole(name, (p, _n, st) => {
+          const [u, v] = uvOf(st);
+          // The fragment position is the pixel centre (TS reads `@builtin(position).xy`); the role recovers it from the point.
+          const fr: Fragment = { world: p, px: add(floor(pixelOf(p)), 0.5), u, v, style, sun: sunDir(ctx.sunAt), lights: foldAt(ctx.lighting, { kind: "point", at: p }), sky: (dir) => skyOf(ctx, dir) };
+          const c = look.colour;
+          switch (c.kind) {
+            case "one": return c.colour(fr);
+            case "cases": {
+              // Every case is evaluated and one is selected (a role has no branch): uniform control flow, so a case's
+              // derivatives are its own; the cost is every case's.
+              const k = c.choose(fr), cases = c.cases.map((x) => x(fr));
+              return cases.slice(0, -1).reduceRight<Expr<"vec4">>((rest, x, j) => select(lt(k, j + 0.5), x, rest), cases.at(-1)!);
+            }
+          }
+        });
+        return { kind: "draws", draws: [draw(look.phase, { name, layer: "surroundings", raster: { cull: "none", depthWrite: false, blend: "alpha" }, paint, cover: cover(place) })] };
+      }
+    }
   }
 
   draws(ctx: CompileContext): Emitted {

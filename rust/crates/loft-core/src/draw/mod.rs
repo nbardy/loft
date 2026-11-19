@@ -4,12 +4,14 @@
 //! tracers, particle drawables and media is the library's graph functions (content), never a branch here.
 //!
 //! Graph function signatures, by role (emit's export wrappers take and return `lf`):
-//! - `paint (p: vec3, n: vec3, id: f32) -> vec4`: rgba, alpha below 0.5 asking the composer for ink. For a medium, p
+//! - `paint (p: vec3, n: vec3, uv: vec2, id: f32) -> vec4`: rgba, alpha below 0.5 asking the composer for ink; `uv` is
+//!   a grid's (u, v), a quad's disc coordinate, the screen's uv, and 0 on a ray hit or a medium sample. For a medium, p
 //!   is a sample, n the sun direction and the result the light scattered there per unit extinction. For `Screen`, p is
 //!   (uv, alpha under) and n the colour under.
 //! - `hit (o: vec3, d: vec3, span: vec2, width: vec2) -> vec4`: (normal, t), t < 0 a miss; the pixel's width at t is
 //!   `width.x + width.y * t` (TS `Ray.width`).
-//! - grid `place (uv: vec2, id: f32) -> vec3`; quads `place (id: f32) -> vec4` (centre, radius).
+//! - grid `place (uv: vec2, id: f32) -> vec3`, `normal (uv: vec2, id: f32) -> vec3` and `cells (id: f32) -> vec2`
+//!   (a copy's cell counts this frame, at most the cover's u × v: its level of detail, the library's choice); quads `place (id: f32) -> vec4` (centre, radius).
 //! - medium `density (p: vec3) -> f32`; ground `hit` and `paint` as a draw's; `outline (colour: vec3, q: vec3) -> vec4`
 //!   (ink rgb, width in world units).
 //!
@@ -50,7 +52,7 @@ pub enum Cover {
     Screen,
 }
 pub enum Prim {
-    Grid { u: u32, v: u32, place: u32 },
+    Grid { u: u32, v: u32, place: u32, normal: u32, cells: u32 },
     Mesh { res: u32 },
     Quads { place: u32 },
 }
@@ -152,7 +154,7 @@ impl Glue {
     /// The draw's paint and its f32 face (`paint(p, n, id: u32)`), which every colour template calls.
     fn paint(&mut self, decl: u32) {
         self.export("loft_paint", decl);
-        self.line("fn paint(p: vec3<f32>, n: vec3<f32>, id: u32) -> vec4<f32> { return vec4<f32>(loft_paint(vec3<lf>(p), vec3<lf>(n), lf(f32(id)))); }");
+        self.line("fn paint(p: vec3<f32>, n: vec3<f32>, uv: vec2<f32>, id: u32) -> vec4<f32> { return vec4<f32>(loft_paint(vec3<lf>(p), vec3<lf>(n), vec2<lf>(uv), lf(f32(id)))); }");
     }
     /// A row resource's reader, `loft_rows{res}(k) -> vec4<f32>` over its `loft_rows{res}_n` vec4s, clamped (plan §4.3),
     /// from its pack; written once per module. Returns the reader's name.
@@ -231,8 +233,10 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
     let (out, raster) = match &d.cover {
         Cover::Raster { prim, count } => {
             let prim = match *prim {
-                Prim::Grid { u, v, place } => {
+                Prim::Grid { u, v, place, normal, cells } => {
                     gl.export("loft_place", place);
+                    gl.export("loft_normal", normal);
+                    gl.export("loft_cells", cells);
                     gl.line(format!("const GRID_U = {u}u;\nconst GRID_V = {v}u;"));
                     gl.templates.push(GRID);
                     b::RasterPrim::Grid { u, v }
@@ -249,6 +253,13 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
                     b::RasterPrim::Quads
                 }
             };
+            // A quad's uv is its disc coordinate (its edge fades); a grid's is its (u, v). A surface drawn with no
+            // culling is two-sided: its normal faces the viewer (TS surface.ts `select(-1.0, 1.0, front)`).
+            gl.line(format!(
+                "const DISC = {};\nconst TWO_SIDED = {};",
+                matches!(prim, b::RasterPrim::Quads),
+                d.raster.cull == b::Cull::None
+            ));
             gl.templates.push(LIT);
             (b::Cover::Raster { prim, count: *count }, d.raster)
         }
@@ -272,13 +283,13 @@ fn cover(at: &Slots, d: &Draw, media: &[Medium], veils: &[u32]) -> Result<(Glue,
             };
             // The proxy box is wound inward, so only culling back faces runs each pixel once (outside or inside the
             // box). A draw that asked for no culling (a medium drawn like glow) would otherwise composite twice, once per face.
-            (b::Cover::Ray { proxy: bundle_proxy(at, proxy), find }, Raster { cull: true, ..d.raster })
+            (b::Cover::Ray { proxy: bundle_proxy(at, proxy), find }, Raster { cull: b::Cull::Back, ..d.raster })
         }
         Cover::Screen => {
             gl.templates.push(SCREEN);
             // The full-screen triangle is wound clockwise: a Screen cover never culls, or a draw that asked for back
             // faces culled (as an opaque sky does) drew nothing (measured: the sample job's sky, 2026-11-19).
-            (b::Cover::Screen, Raster { cull: false, ..d.raster })
+            (b::Cover::Screen, Raster { cull: b::Cull::None, ..d.raster })
         }
     };
     for &k in &need {

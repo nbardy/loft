@@ -21,6 +21,7 @@
 // y = 0 casts, which is the water's level only for a frame that rides at it.
 
 import { nameId } from "./surface.ts";
+import { unported, type Recorded } from "./record.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { add, lift, variable, type Expr, type TableSource } from "../expr.ts";
 import { scopedName } from "../expr.ts";
@@ -125,6 +126,7 @@ export class Copies implements Drawable {
     this.skeletons = [rideShadow(copiesShadow(o.copies), rideOf(o.carry))];
   }
 
+  record(): Recorded { return unported("copies (spheres, capsules, cones): a hit role per kind of solid, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const table = ctx.table(copiesTable(`${this.name}_copies`, this.o.copies));
     const said = classify(this.name, this.o.paint({ p: P, normal: N, level: LEVEL, id: ID }));

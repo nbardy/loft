@@ -30,7 +30,7 @@
 // a graph function a decl names prints as `#body` over binders `arg TY K`, a solve's jets as `jet TY UNKNOWN ORDER`:
 //   camera NAME look [#eye #target #up #fovy] | matrix [#c0 #c1 #c2 #c3] | table TABLE
 //   medium march #density within HEX steps STEPS SHADOW | medium gaussians TABLE
-//   draw NAME subject|surroundings CULL DEPTH BLEND paint #p COVER, COVER one of grid U V #place COUNT,
+//   draw NAME subject|surroundings CULL (0 none, 1 back, 2 front) DEPTH BLEND paint #p COVER, COVER one of grid U V #place #normal #cells COUNT,
 //        mesh TABLE COUNT, quads #place COUNT, ray box HEX|instances TABLE HEX hit #h|medium K, screen
 //   pass camera K draws FIRST END clear load|HEX ground none|#hit #paint outline none|#ink target TARGET, TARGET one of
 //        view, texture NAME view HEX|fixed W H colour|depth|light SCENE (an offscreen pass, which raw text reads)
@@ -395,7 +395,7 @@ function sceneLines(job: Job, decls: ReturnType<typeof declsOf>["decls"], walk: 
   for (const d of of(Decl.Draw)) {
     const w = d.words, paint = fnRef(w[5]!), c = w.subarray(6);
     const find = (at: number): string => (c[at] === 0 ? `hit ${fnRef(c[at + 1]!)}` : `medium ${c[at + 1]}`);
-    const cover = c[0] === 0 ? `grid ${c[1]} ${c[2]} ${fnRef(c[3]!)} ${c[4]}`
+    const cover = c[0] === 0 ? `grid ${c[1]} ${c[2]} ${fnRef(c[3]!)} ${fnRef(c[4]!)} ${fnRef(c[5]!)} ${c[6]}`
       : c[0] === 1 ? `mesh ${table(c[1]!)} ${c[2]}`
       : c[0] === 2 ? `quads ${fnRef(c[1]!)} ${c[2]}`
       : c[0] === 3 ? `ray box ${lits(c[3]!, 6)} ${find(1)}`

@@ -8,6 +8,7 @@
 // capsules do not cover the pixel) and, along a chain, only where it is the deepest of its neighbours, so each pixel is
 // foamed by the youngest slice that left it: a trail that fades with age, with no foam stacked on foam.
 
+import { unported, type Recorded } from "../draw/record.ts";
 import {
   add, and, clamp, div, fetch, floor, gt, lift, listOf, lt, mapOf, max, mul, or, select, sqrt, sub, time, vec2, vec4, type Expr, type MapRun, type TableSource,
 } from "../expr.ts";
@@ -40,6 +41,7 @@ class Wake implements Drawable {
   readonly forms = [];
   constructor(readonly name: string, readonly body: Body, readonly spec: Required<WakeSpec>) {}
 
+  record(): Recorded { return unported("wake: a glazed surface on the sea, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const s = this.spec, dt = s.over / s.samples, sea = seaOf(ctx.ground, `wake "${this.name}"`);
     // Past slices are skeletons only (positions and radii, no frames), at every STRIDE-th station: all a waterline

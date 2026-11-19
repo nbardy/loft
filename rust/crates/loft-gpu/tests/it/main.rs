@@ -203,7 +203,7 @@ impl Game {
             self.clear(&mut enc, z);
         }
         let (color, dview) = (self.color.create_view(&Default::default()), self.depth.create_view(&Default::default()));
-        let view = View { canvas: CANVAS, color: &color, depth: &dview, size: [N, N], owner, layers };
+        let view = View { canvas: CANVAS, color: &color, resolve: None, depth: &dview, size: [N, N], owner, layers };
         loft.encode_into(d, q, &mut enc, &view).expect("a frame");
         let read = |tex: &wgpu::Texture, enc: &mut wgpu::CommandEncoder| {
             let buf = d.create_buffer(&wgpu::BufferDescriptor {
@@ -301,7 +301,7 @@ fn refusals_are_typed_and_named() {
     let game = Game::new(&d);
     let (c, z) = (game.color.create_view(&Default::default()), game.depth.create_view(&Default::default()));
     let other = Canvas { samples: 4, ..CANVAS };
-    let view = View { canvas: other, color: &c, depth: &z, size: [N, N], owner: Owner::Caller, layers: Layers::All };
+    let view = View { canvas: other, color: &c, resolve: None, depth: &z, size: [N, N], owner: Owner::Caller, layers: Layers::All };
     let mut enc = d.create_command_encoder(&Default::default());
     assert!(matches!(loft.encode_into(&d, &q, &mut enc, &view), Err(Error::Usage(_))));
 }
@@ -358,6 +358,7 @@ fn corpus_bundles_load() {
             let view = View {
                 canvas: CANVAS,
                 color: &color,
+                resolve: None,
                 depth: &depth,
                 size: [N, N],
                 owner: Owner::Loft,

@@ -9,6 +9,7 @@
 // Cost: one quad per streak and per splash, whatever the screen coverage; the fragment work is a few lines.
 
 import { drawSpec, type CompileContext, type Drawable, type Emitted } from "../compile/context.ts";
+import { unported, type Recorded } from "../draw/record.ts";
 import { emitShaderFn } from "../compile/bind.ts";
 import { lift, type In } from "../expr.ts";
 import type { Skeleton } from "../map/types.ts";
@@ -91,6 +92,7 @@ class RainDrawable implements Drawable {
     if (!(Number.isInteger(r.count) && r.count >= 1)) throw new Error(`rain "${name}": count must be a positive integer`);
     if (!(r.speed > 0 && r.top > 0 && r.radius > 0 && r.length > 0 && r.width > 0)) throw new Error(`rain "${name}": speed, top, radius, length and width must be positive`);
   }
+  record(): Recorded { return unported("rain: quads, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const r = this.r;
     const key = `rain.${this.name}`;
@@ -153,6 +155,7 @@ class SplashDrawable implements Drawable {
     if (!(Number.isInteger(s.count) && s.count >= 1 && s.count <= r.count)) throw new Error(`splashes "${name}": count must be an integer in [1, rain count]`);
     if (!(s.radius > 0 && s.life > 0)) throw new Error(`splashes "${name}": radius and life must be positive`);
   }
+  record(): Recorded { return unported("splashes: quads, not written yet"); }
   draws(): Emitted {
     const { r, s } = this;
     const key = `splash.${this.name}`;

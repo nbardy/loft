@@ -10,6 +10,7 @@
 // leaves its cell late; that is the author's to avoid (a radius of zero is allowed and draws nothing: a missing copy).
 
 import { nameId } from "./surface.ts";
+import { unported, type Recorded } from "./record.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { add, mul, variable, vec4, type Expr } from "../expr.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
@@ -213,6 +214,7 @@ export class Impostors implements Drawable {
   /** Number of copies drawn (cells in the bounds). */
   get count(): number { return this.lo.reduce((n, l, i) => n * (this.hi[i] - l + 1), 1); }
 
+  record(): Recorded { return unported("impostors: a hit role per closed form, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const c = this.o.cell;
     const cell = cellOf(ID, c);

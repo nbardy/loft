@@ -16,7 +16,8 @@ use std::path::Path;
 
 /// What every picture is drawn into, and read back as.
 pub const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-pub const CANVAS: Canvas = Canvas { color: OUTPUT_FORMAT, depth: loft_gpu::DEPTH, samples: 1 };
+/// 4x multisampled, resolved into the output: as TS src/host/lower.ts drew R0 (its edges are the 4x resolve's).
+pub const CANVAS: Canvas = Canvas { color: OUTPUT_FORMAT, depth: loft_gpu::DEPTH, samples: 4 };
 
 /// What failed, in `src/cli/verdict.ts`'s kinds: the supervisor turns it into the exit code and the `loft:` line.
 #[derive(Debug, serde::Serialize)]
@@ -123,6 +124,8 @@ pub fn gpu(f16: bool) -> Result<Gpu, Verdict> {
 pub struct Target {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    /// The 4x colour attachment, resolved into `view`.
+    many: wgpu::TextureView,
     /// Read by the scene resolve when a pass reads the opaque scene (loft-gpu view.rs), so it is a binding too.
     depth: wgpu::TextureView,
     readback: wgpu::Buffer,
@@ -142,11 +145,21 @@ impl Target {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
+        let many = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("loft-draw colour x4"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: CANVAS.samples,
+            dimension: wgpu::TextureDimension::D2,
+            format: OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
         let depth = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("loft-draw depth"),
             size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
             mip_level_count: 1,
-            sample_count: 1,
+            sample_count: CANVAS.samples,
             dimension: wgpu::TextureDimension::D2,
             format: CANVAS.depth,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -160,7 +173,8 @@ impl Target {
             mapped_at_creation: false,
         });
         let depth = depth.create_view(&Default::default());
-        Target { view: texture.create_view(&Default::default()), texture, depth, readback, size: (w, h), row }
+        let many = many.create_view(&Default::default());
+        Target { view: texture.create_view(&Default::default()), many, texture, depth, readback, size: (w, h), row }
     }
 
     /// Records the copy of the drawn texture into the read-back buffer.
@@ -184,7 +198,8 @@ impl Target {
         let (w, h) = self.size;
         let view = View {
             canvas: CANVAS,
-            color: &self.view,
+            color: &self.many,
+            resolve: Some(&self.view),
             depth: &self.depth,
             size: [w, h],
             owner: Owner::Loft,

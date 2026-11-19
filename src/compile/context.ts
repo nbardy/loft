@@ -20,6 +20,7 @@ import type { Style } from "../style.ts";
 import type { OutlineMethod } from "../scene.ts";
 import type { Lighting, Sun } from "../light.ts";
 import type { Slots } from "./bind.ts";
+import type { RecordContext, Recorded } from "../draw/record.ts";
 
 /** What `ctx.table` hands back: `wgsl` is the accessor to call in raw WGSL, `fn <wgsl>(i: u32) -> vec4<f32>` (i counts vec4s). */
 export type TableRef = { readonly name: string; readonly wgsl: string };
@@ -150,6 +151,11 @@ export interface Drawable {
   readonly skeletons: readonly Skeleton[];
   /** What it is, for any other reader (the baker, the checks, another renderer). Empty: nothing a reader can use. */
   readonly forms: readonly Form[];
+  /**
+   * Its draws for the Rust path (src/draw/record.ts): covers and roles over loft-core's templates, or what it cannot
+   * record yet. Absent on a drawable written outside the library (its own WGSL): recorded as unported, by name.
+   */
+  record?(ctx: RecordContext): Recorded;
 }
 
 /**

@@ -20,6 +20,7 @@
 // stage, so a field's surface-nets mesh (src/draw/field.ts, the `mesh` schedule) draws as it did before it moved here.
 
 import { add, cross, f, leaves, libsOf, mul, swizzle, variable, vec3, compileJs, type Expr, scopedName } from "../expr.ts";
+import { unported, type Recorded } from "./record.ts";
 import { jacobian } from "../grad.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, tracedCall, withShading } from "./painted.ts";
@@ -343,6 +344,7 @@ export class MeshDrawable implements Drawable {
     return new MeshDrawable(name, this.data, this.o, { kind: "poses", poses });
   }
 
+  record(): Recorded { return unported("mesh: a Mesh cover over its moved rows, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     return emitMesh(ctx, this.name, this.mesh, this.motion, this.copies, this.o, { key: `mesh.${this.name}`, show: "true", gate: "" });
   }

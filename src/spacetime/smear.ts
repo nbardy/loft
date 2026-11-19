@@ -5,6 +5,7 @@
 // layer of translucency, not two.
 
 import { answered, classify } from "../draw/painted.ts";
+import { unported, type Recorded } from "../draw/record.ts";
 import { shadeContext } from "../style.ts";
 import { distance, dot, f, lift, mix, mul, smoothstep, step, sub, time, vec2, vec4, withIdentities, type Expr } from "../expr.ts";
 import type { CompileContext, Drawable, Emitted } from "../compile/context.ts";
@@ -44,6 +45,7 @@ class Smear implements Drawable {
   readonly forms = [];
   constructor(readonly name: string, readonly strike: Strike, readonly spec: Required<SmearSpec>) {}
 
+  record(): Recorded { return unported("smear: a glazed surface, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const { part } = this.strike, s = this.spec, dt = s.over / s.samples;
     // Each copy posts only the part's stations (`partAt`): the spine is what a slice costs.

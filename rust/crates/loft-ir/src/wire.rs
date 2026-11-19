@@ -43,8 +43,8 @@
 //!                         when 0 build | 1 load | 2 frame | 3 steps [start sym, count, rate lit, keep];
 //!                         shape 0 buffer [entries, lanes] | 1 texture [dims, x, y, z, format sym]
 //!   8 Param   [name, def lit, min lit, max lit]      9 Input [name, ty, first def lit]       roots []
-//!   3 Draw    [name, layer, cull, depth write, blend, paint Fn, cover...]                         roots []
-//!             cover  0 grid [u, v, place Fn, count]   1 mesh [kernel, count]   2 quads [place Fn, count]
+//!   3 Draw    [name, layer, cull (none, back, front), depth write, blend, paint Fn, cover...]     roots []
+//!             cover  0 grid [u, v, place Fn, normal Fn, cells Fn, count]   1 mesh [kernel, count]   2 quads [place Fn, count]
 //!                    3 ray box [find, f, box lits (min, max)]   4 ray instances [find, f, kernel, local lits]
 //!                    5 screen []      find 0 hit (f a Fn), 1 medium (f a Medium ordinal)
 //!   4 Pass    [camera, first draw, end draw, clear..., ground..., outline...]                    roots []
@@ -66,7 +66,7 @@
 //! A Call or Loop node comes after every root and binder of its decl, so the job is acyclic through decls too.
 use crate::error::{Error, Fault, Internal, Meter, SceneFault, Span, WireFault};
 use crate::graph::{
-    Blend, Camera, Cells, Check, Clear, Compute, Cover, Draw, Fill, Find, Formula, Graph, GraphFn, Ground, Hold,
+    Blend, Camera, Cull, Cells, Check, Clear, Compute, Cover, Draw, Fill, Find, Formula, Graph, GraphFn, Ground, Hold,
     HoldKind, Input, Keep, Kept, Kernel, Layer, Lens, Loop, Medium, Near, Node, Op, OutShape, Outline, Output, Param,
     Part, Pass, Prim, Program, Proxy, Quant, Raster, RawFn, Read, Recur, Role, Run, Scan, Sel, Site, Size, Solve,
     Strategy, Target, Times, Ty, Unknown, When,
@@ -74,7 +74,7 @@ use crate::graph::{
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LFTW");
 /// Internal, never persisted: the recorder and this decoder change together. The binding reports it at load.
-pub const WIRE: u32 = 3;
+pub const WIRE: u32 = 4;
 /// Quota checked before any span is read: 16.7M nodes, 30x Titan's recorded count.
 pub const MAX_NODES: u64 = 1 << 24;
 /// Wire code of `Prim::ALL[0]`.
@@ -240,7 +240,8 @@ impl Cur<'_> {
 fn draw(c: &mut Cur) -> Result<Draw, ()> {
     let name = c.sym()?;
     let layer = [Layer::Subject, Layer::Surroundings].get(c.word()? as usize).copied().ok_or(())?;
-    let (cull, depth_write) = (c.flag()?, c.flag()?);
+    let cull = [Cull::None, Cull::Back, Cull::Front].get(c.word()? as usize).copied().ok_or(())?;
+    let depth_write = c.flag()?;
     let blend = [Blend::Opaque, Blend::Alpha, Blend::Add].get(c.word()? as usize).copied().ok_or(())?;
     let paint = c.word()?;
     let find = |c: &mut Cur| match c.word()? {
@@ -249,7 +250,7 @@ fn draw(c: &mut Cur) -> Result<Draw, ()> {
         _ => Err(()),
     };
     let cover = match c.word()? {
-        0 => Cover::Grid { u: c.word()?, v: c.word()?, place: c.word()?, count: c.word()? },
+        0 => Cover::Grid { u: c.word()?, v: c.word()?, place: c.word()?, normal: c.word()?, cells: c.word()?, count: c.word()? },
         1 => Cover::Mesh { kernel: c.word()?, count: c.word()? },
         2 => Cover::Quads { place: c.word()?, count: c.word()? },
         3 => {
@@ -770,7 +771,12 @@ fn graph_fns(out: &mut Decls) -> Result<(), Error> {
         let top = Top::Draw(k);
         map(&mut d.paint, top)?;
         match &mut d.cover {
-            Cover::Grid { place, .. } | Cover::Quads { place, .. } => map(place, top)?,
+            Cover::Grid { place, normal, cells, .. } => {
+                map(place, top)?;
+                map(normal, top)?;
+                map(cells, top)?;
+            }
+            Cover::Quads { place, .. } => map(place, top)?,
             Cover::Ray { find: Find::Hit(f), .. } => map(f, top)?,
             Cover::Mesh { .. } | Cover::Ray { find: Find::Medium(_), .. } | Cover::Screen => {}
         }
@@ -1105,14 +1111,16 @@ fn top_layout(g: &Graph, top: Top) -> Result<(), ()> {
     let ty = |x: u32| g.nodes[x as usize].ty;
     let is = |x: u32, t: Ty| (ty(x) == t).then_some(()).ok_or(());
     let kernel = |k: u32| ((k as usize) < g.kernels.len()).then_some(()).ok_or(());
-    let paint = |f: u32| sig(g, f, &[V3, V3, F32], V4);
+    let paint = |f: u32| sig(g, f, &[V3, V3, V2, F32], V4);
     let hit = |f: u32| sig(g, f, &[V3, V3, V2, V2], V4);
     match top {
         Top::Draw(k) => {
             let d = &g.draws[k];
             paint(d.paint)?;
             match &d.cover {
-                Cover::Grid { place, .. } => sig(g, *place, &[V2, F32], V3),
+                Cover::Grid { place, normal, cells, .. } => sig(g, *place, &[V2, F32], V3)
+                    .and(sig(g, *normal, &[V2, F32], V3))
+                    .and(sig(g, *cells, &[F32], V2)),
                 Cover::Mesh { kernel: r, .. } => kernel(*r),
                 Cover::Quads { place, .. } => sig(g, *place, &[F32], V4),
                 Cover::Ray { proxy, find } => {

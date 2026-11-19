@@ -15,11 +15,12 @@ export function writeBall(dir: string): void {
     const t = sub(neg(b), sqrt(max(disc, 0)));
     return vec4(normalize(add(o, mul(d, t))), select(gt(disc, 0), t, -1));
   });
-  const paint = role("ball_paint", ["vec3", "vec3", "f32"], (_p, n) => vec4(mul(add(mul(n, 0.5), 0.5), tint), 1));
+  const paint = role("ball_paint", ["vec3", "vec3", "vec2", "f32"], (_p, n) => vec4(mul(add(mul(n, 0.5), 0.5), tint), 1));
   const scene: Scene = {
+    cameras: [],
     passes: [{
       camera: { name: "front", kind: "look", eye: vec3(0, 0, 5), target: vec3(0, 0, 0), up: vec3(0, 1, 0), fovy: vec3(0.8, 0, 0).x },
-      draws: [{ name: "ball", layer: "subject", raster: { cull: true, depthWrite: true, blend: "opaque" }, paint, cover: { kind: "ray", proxy: { kind: "box", min: [-1, -1, -1], max: [1, 1, 1] }, find: { kind: "hit", hit } } }],
+      draws: [{ name: "ball", layer: "subject", raster: { cull: "back", depthWrite: true, blend: "opaque" }, paint, cover: { kind: "ray", proxy: { kind: "box", min: [-1, -1, -1], max: [1, 1, 1] }, find: { kind: "hit", hit } } }],
       clear: { kind: "colour", rgba: [0, 0, 0, 1] }, ground: { kind: "none" }, outline: { kind: "none" },
     }],
     checks: [], solves: [],

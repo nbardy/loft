@@ -8,7 +8,7 @@
 //! let mut loft = pollster::block_on(Loft::load(&device, &queue, &bytes, Precision::Mixed, &[canvas], None))?;
 //! loft.set_time(t);
 //! loft.set_input("strike.at", &[x, z])?;
-//! loft.encode_into(&device, &queue, &mut encoder, &View { canvas, color: &color, depth: &depth, size: [w, h],
+//! loft.encode_into(&device, &queue, &mut encoder, &View { canvas, color: &color, resolve: None, depth: &depth, size: [w, h],
 //!                                                         owner: Owner::Caller, layers: Layers::Subject })?;
 //! queue.submit([encoder.finish()]);
 //! ```
@@ -58,7 +58,7 @@ pub use view::Aim;
 
 use loft_ir::Error;
 use loft_ir::bundle::{
-    Access, Blend, Body, Bundle, Clear, Cover, Id, Init, Keep, Kernel, Layer, Module, Origin, Pack, Proxy, Raster,
+    Access, Blend, Body, Bundle, Clear, Cull, Cover, Id, Init, Keep, Kernel, Layer, Module, Origin, Pack, Proxy, Raster,
     RasterPrim, Shape, Target, TexFormat, When,
 };
 use loft_ir::frame::{self, Camera};
@@ -91,7 +91,11 @@ pub struct Canvas {
 }
 pub struct View<'a> {
     pub canvas: Canvas,
+    /// The colour attachment: multisampled when `canvas.samples` > 1, then resolved into `resolve` (TS src/host/lower.ts
+    /// drew R0 4x multisampled).
     pub color: &'a TextureView,
+    /// Where a multisampled `color` resolves: the single-sampled picture. None when `canvas.samples` is 1.
+    pub resolve: Option<&'a TextureView>,
     pub depth: &'a TextureView,
     pub size: [u32; 2],
     pub owner: Owner,
@@ -592,7 +596,7 @@ impl Loft {
                 Item { module: d.shade.0, entry: d.shade.1, layer: d.layer, raster: d.raster, screen, count }
             })
             .collect();
-        let over = Raster { cull: false, depth_write: false, blend: Blend::Alpha };
+        let over = Raster { cull: Cull::None, depth_write: false, blend: Blend::Alpha };
         let mut pass_items = Vec::new();
         for p in b.passes.iter() {
             let mut compose = |e: &Option<(Id, Id)>| {
@@ -670,7 +674,11 @@ impl Loft {
                                 targets: &targets,
                             }),
                             primitive: wgpu::PrimitiveState {
-                                cull_mode: item.raster.cull.then_some(wgpu::Face::Back),
+                                cull_mode: match item.raster.cull {
+                                    Cull::None => None,
+                                    Cull::Back => Some(wgpu::Face::Back),
+                                    Cull::Front => Some(wgpu::Face::Front),
+                                },
                                 ..Default::default()
                             },
                             depth_stencil: Some(wgpu::DepthStencilState {
@@ -1173,23 +1181,24 @@ impl Loft {
                 }
                 (true, Clear::Load) | (false, _) => (wgpu::LoadOp::Load, wgpu::LoadOp::Load),
             };
-            let (color, depth, ops, key) = match pass.target {
+            let (color, depth, ops, key, into) = match pass.target {
                 Target::View => (
                     Some(view.color),
                     view.depth,
                     clear(view.owner == Owner::Loft),
                     (Some(view.canvas.color), view.canvas.depth, view.canvas.samples),
+                    view.resolve,
                 ),
                 Target::Texture(r) => match &self.res[r as usize] {
                     Res::Target { tex, depth } => {
-                        (Some(&tex.view), depth, clear(true), (Some(tex.tex.format()), DEPTH, 1))
+                        (Some(&tex.view), depth, clear(true), (Some(tex.tex.format()), DEPTH, 1), None)
                     }
                     Res::Tex(_) | Res::Rows { .. } | Res::Frame => {
                         unreachable!("a pass's colour target is a Res::Target")
                     }
                 },
                 Target::Shadow { map, .. } => match &self.res[map as usize] {
-                    Res::Tex(t) => (None, &t.view, clear(true), (None, DEPTH, 1)),
+                    Res::Tex(t) => (None, &t.view, clear(true), (None, DEPTH, 1), None),
                     Res::Target { .. } | Res::Rows { .. } | Res::Frame => {
                         unreachable!("validated: a shadow map is a depth texture, never a colour target")
                     }
@@ -1204,7 +1213,9 @@ impl Loft {
                     if run.is_empty() {
                         break;
                     }
-                    self.resolve.encode(device, enc, &self.scene, color.expect("a View pass has colour"), depth)?;
+                    // A multisampled view resolves its colour each segment: the scene colour is copied from there.
+                    let picture = into.or(color).expect("a View pass has colour");
+                    self.resolve.encode(device, enc, &self.scene, picture, depth)?;
                 }
                 let load = if seg == 0 { ops } else { (wgpu::LoadOp::Load, wgpu::LoadOp::Load) };
                 let colors: Vec<_> = color
@@ -1212,7 +1223,7 @@ impl Loft {
                         Some(wgpu::RenderPassColorAttachment {
                             view,
                             depth_slice: None,
-                            resolve_target: None,
+                            resolve_target: into,
                             ops: wgpu::Operations { load: load.0, store },
                         })
                     })

@@ -10,6 +10,7 @@
 // relief below a pixel is not marched at all: the plain surface at the pixel's height, with the paint's shading.
 
 import { f, variable, vec2, vec3 } from "../expr.ts";
+import { unported, type Recorded } from "./record.ts";
 import { readsBody } from "../style.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, shadeCall, withShading } from "./painted.ts";
@@ -100,6 +101,7 @@ export class ReliefDrawable implements Drawable {
     this.forms = [{ kind: "surface", name, surface: displace(surface, heightOf), paint: (u, v) => o.paint({ ...site(u, v), h: heightOf(u, v) }), grid: o.grid, sides: "one", copy: 0 }];
   }
 
+  record(): Recorded { return unported("relief: the shell march hit role, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const n = this.name, key = `relief.${n}`;
     const NU = this.o.grid.u.count, NV = this.o.grid.v.count;

@@ -38,7 +38,7 @@
 import type { Fn, TableSource, Ty } from "../expr.ts";
 
 export const MAGIC = 0x5754464c; // "LFTW", little-endian
-const WIRE = 3;
+const WIRE = 4;
 
 export enum Program { Scene, Solve, Evaluate, Check }
 export enum Decl { Fn, Loop, Kernel, Draw, Pass, Medium, Check, Solve, Param, Input, Camera }

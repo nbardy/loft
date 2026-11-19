@@ -171,7 +171,7 @@ export class Recorder {
   }
 
   /** The job for `program` over these roots, with the scene-level decls `scene` (none by default). */
-  job(program: Program, roots: readonly Expr[], scene: Scene = { passes: [], checks: [], solves: [] }): Job {
+  job(program: Program, roots: readonly Expr[], scene: Scene = { cameras: [], passes: [], checks: [], solves: [] }): Job {
     this.settle();
     const variable = this.variable;
     if (variable === undefined) throw new Error("internal: src/expr.ts has not handed the recorder `variable`");
@@ -252,6 +252,7 @@ class Writer {
 
   write(program: Program, roots: readonly number[], scene: Scene): Job {
     const top = roots.map((r) => this.visit(r));
+    for (const c of scene.cameras) this.camera(c);
     for (const p of scene.passes) this.pass(p);
     for (const c of scene.checks) this.check(c);
     for (const s of scene.solves) this.solve(s);
@@ -479,7 +480,7 @@ class Writer {
   }
   private cover(c: Cover): number[] {
     switch (c.kind) {
-      case "grid": return [0, c.u, c.v, this.role(c.place), c.count];
+      case "grid": return [0, c.u, c.v, this.role(c.place), this.role(c.normal), this.role(c.cells), c.count];
       case "mesh": return [1, this.kernel(c.table), c.count];
       case "quads": return [2, this.role(c.place), c.count];
       case "ray": {
@@ -497,7 +498,7 @@ class Writer {
     const paint = this.role(x.paint), cover = this.cover(x.cover);
     const { k, d } = this.reserve(Decl.Draw, x);
     const blend = ["opaque", "alpha", "add"].indexOf(x.raster.blend);
-    d.words.push(this.sym(x.name), x.layer === "subject" ? 0 : 1, Number(x.raster.cull), Number(x.raster.depthWrite), blend, paint, ...cover);
+    d.words.push(this.sym(x.name), x.layer === "subject" ? 0 : 1, ["none", "back", "front"].indexOf(x.raster.cull), Number(x.raster.depthWrite), blend, paint, ...cover);
     return k;
   }
   private pass(p: Pass): void {

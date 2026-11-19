@@ -1,5 +1,6 @@
 // A bounded march of the author's extinction field. Both rays sample the same field and time.
 import { emitShaderFn } from "../compile/bind.ts";
+import { unported, type Recorded } from "./record.ts";
 import { drawSpec, type CompileContext, type Drawable, type Emitted, type Form, type Shader } from "../compile/context.ts";
 import { SceneError, shown } from "../errors.ts";
 import { add, clamp, div, dot, Expr, gt, lib, lift, max, mul, neg, pow, leaves, select, sub, substitute, time, variable, withIdentities, type In, type LibFn } from "../expr.ts";
@@ -132,6 +133,7 @@ export class VolumeDrawable implements Drawable {
     return { fns: [emit(ctx, "volume_density", SAMPLE_ARGS, density), emit(ctx, "volume_source", [...SAMPLE_ARGS, ["ray", "vec3"], ["sigma", "f32"]], shaded)], closed };
   }
 
+  record(): Recorded { return unported("volume: a march medium, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const key = `volume.${this.name}`;
     const fns = [...this.sampling(ctx).fns, emit(ctx, "volume_jitter", [["px", "vec2"]], hash2(variable("px", "vec2")))];

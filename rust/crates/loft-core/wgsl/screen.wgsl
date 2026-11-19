@@ -3,5 +3,5 @@
 
 @fragment fn fs(in: Out) -> @location(0) vec4<f32> {
   let u = textureLoad(loft_scene_colour, vec2<i32>(in.pos.xy), 0);
-  return paint(vec3<f32>(in.uv, u.a), u.rgb, 0u);
+  return paint(vec3<f32>(in.uv, u.a), u.rgb, in.uv, 0u);
 }

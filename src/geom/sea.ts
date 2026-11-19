@@ -17,7 +17,8 @@ import {
 import { gradient } from "../grad.ts";
 import { CELL_PIXELS } from "../artefact.ts";
 import type { Form, CompileContext, Drawable, Emitted } from "../compile/context.ts";
-import { drawGlazed, spacing, type Fragment, type SurfaceDrawable } from "../draw/surface.ts";
+import { drawGlazed, spacing, type Fragment, type GlazedColour, type Grid, type SurfaceDrawable } from "../draw/surface.ts";
+import type { RecordContext, Recorded } from "../draw/record.ts";
 import type { Contact } from "../style.ts";
 import { eyePosition, viewDir } from "../lib/screen.ts";
 import { NO_SKELETON, type Chart, type F, type Frame, type Skeleton, type Surface } from "../map/types.ts";
@@ -104,6 +105,28 @@ fn loft_sea_plane(u: f32, v: f32) -> vec2<f32> {
 }`,
 };
 const seaPlane = (...args: In[]): Expr<"vec2"> => lib<"vec2">(SEA_PLANE, ...args);
+
+/**
+ * The same projected grid for the Rust path, which has no CPU plan of the plane's rows yet (loft_detail stays zero):
+ * NDC x across the screen widened by a fixed margin, NDC y from below the screen up to the row where the water `reach`
+ * ahead (along the view's level forward) projects. A row whose ray does not meet the water ahead is held at the reach.
+ */
+const SEA_PLANE_VIEW: LibFn = { js: "gpu-only",
+  name: "sea_plane_view", ret: "vec2", wgsl: /* wgsl */ `
+fn sea_plane_view(u: f32, v: f32, reach: f32) -> vec2<f32> {
+  let m = 0.12;
+  let h = normalize(vec3<f32>(frame.forward.x, 0.0, frame.forward.z + 1e-7));
+  let far = frame.view_proj * vec4<f32>(frame.eye.x + h.x * reach, 0.0, frame.eye.z + h.z * reach, 1.0);
+  let top = select(1.0 + m, clamp(far.y / far.w, -1.0 - m, 1.0 + m), far.w > 0.0);
+  let ndc = vec2<f32>(mix(-1.0 - m, 1.0 + m, u), mix(-1.0 - m, top, v));
+  let a = frame.inv_view_proj * vec4<f32>(ndc, 0.0, 1.0);
+  let b = frame.inv_view_proj * vec4<f32>(ndc, 1.0, 1.0);
+  let o = a.xyz / a.w;
+  let d = b.xyz / b.w - o;
+  let t = select(reach / max(length(d), 1e-12), -o.y / d.y, o.y * d.y < 0.0);
+  return (o + d * min(t, reach / max(length(d), 1e-12))).xz;
+}`,
+};
 
 /** Longest extent of one pixel's footprint on the sea at p (`sea_footprint` in sceneWgsl). */
 const SEA_FOOTPRINT: LibFn = { js: "gpu-only", name: "loft_sea_footprint", ret: "f32", wgsl: "fn loft_sea_footprint(p: vec3<f32>) -> f32 { return sea_footprint(p); }" };
@@ -326,6 +349,8 @@ export class Sea implements Chart, Drawable {
   /** The water follows the camera and reads the scene's depth: nothing to bake. */
   readonly forms: readonly Form[] = [];
   private readonly drawn: SurfaceDrawable;
+  private readonly colour: GlazedColour;
+  private readonly grid: Grid;
 
   constructor(readonly waves: readonly Wave[], readonly reach: number, readonly foam: number, readonly deforms: readonly SeaDeform[] = []) {
     // Transparent: what shows through the water is the submerged body (tinted by its own shader) or, where nothing
@@ -336,14 +361,22 @@ export class Sea implements Chart, Drawable {
     // Case index: contact (clear 0, near 1) + 2 x reach (open 0, deformed 1); a sea with no deformation is always open.
     const reaches: readonly ReachCase[] = deforms.length > 0 ? ["open", "deformed"] : ["open"];
     const cases = reaches.flatMap((r) => CONTACT_CASES.map((c) => (fr: Fragment) => this.water(fr, c, r)));
+    this.colour = { kind: "cases", choose: (fr) => this.choose(fr), cases };
+    this.grid = { u: spacing.even(declared(1280)), v: spacing.even(declared(800)) };
     this.drawn = drawGlazed("sea", this.surface(), {
-      colour: { kind: "cases", choose: (fr) => this.choose(fr), cases },
-      grid: { u: spacing.even(declared(1280)), v: spacing.even(declared(800)) }, phase: "water", sceneDepth: true,
+      colour: this.colour,
+      grid: this.grid, phase: "water", sceneDepth: true,
       detail: { kind: "projected", cell: SEA_CELL, plane: 0, reach, lift },
     });
   }
 
   draws(ctx: CompileContext): Emitted { return this.drawn.draws(ctx); }
+  /** The same water on the Rust path, over a grid it places itself (SEA_PLANE_VIEW). */
+  record(ctx: RecordContext): Recorded {
+    const plane = (u: F, v: F) => lib<"vec2">(SEA_PLANE_VIEW, u, v, this.reach);
+    const surface: Surface = { ...this.surface(), point: (u, v) => { const p = plane(u, v); return this.frame(vec3(p.x, p.y, 0)).o; } };
+    return drawGlazed("sea", surface, { colour: this.colour, grid: this.grid, phase: "water", sceneDepth: true }).record(ctx);
+  }
 
   private phaseOf(w: Wave, xz: Expr<"vec2">, t: In<"f32">): F {
     return add(sub(mul(add(mul(xz.x, w.dir[0]), mul(xz.y, w.dir[1])), w.k), mul(t, w.omega)), w.phase);

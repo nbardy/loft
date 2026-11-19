@@ -1,6 +1,7 @@
 // `draw.points`: camera-facing specks generated from their index (and `time`) in one instanced draw. Nothing is stored
 // per speck.
 import { emitShaderFn } from "../compile/bind.ts";
+import { unported, type Recorded } from "../draw/record.ts";
 import { drawSpec, type CompileContext, type Drawable, type Shader } from "../compile/context.ts";
 import { lit } from "../compile/scene_wgsl.ts";
 import { SceneError, shown } from "../errors.ts";
@@ -76,6 +77,7 @@ export function specks(name: string, count: number, speck: (index: F) => Speck, 
   const q = { at: at as Expr<"vec3">, radius: radius as Expr<"f32">, colour: colour as Expr<"vec3">, opacity: opacity as Expr<"f32"> };
   return {
     name, forms: [], skeletons: [],
+    record: (): Recorded => unported("points: quads, not written yet"),
     draws(ctx) {
       const key = `specks.${name}`;
       const sample = emitShaderFn(ctx.slots, {

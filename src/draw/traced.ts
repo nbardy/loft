@@ -3,6 +3,7 @@
 // style's light and the CPU twin.
 
 import { add, compileJs, f, leaves, libsOf, lift, mul, sub, substitute, variable, vec2, vec3, type Expr } from "../expr.ts";
+import { unported, type Recorded } from "./record.ts";
 import { emitShaderFn, type FnSpec } from "../compile/bind.ts";
 import { classify, lookFns, tracedCall, withShading, type Shading } from "./painted.ts";
 import { lit } from "../compile/scene_wgsl.ts";
@@ -87,6 +88,7 @@ export class TracedDrawable implements Drawable {
     this.forms = [{ kind: "hit", name, count: this.proxy.kind === "copies" ? this.proxy.count : 1, bound: o.bound, hit: o.hit, paint: o.paint }];
   }
 
+  record(): Recorded { return unported("traced: the author hit over its bound, not written yet"); }
   draws(ctx: CompileContext): Emitted {
     const { D, COPY, T } = vars();
     const h = this.o.hit(viewRay(), COPY);
