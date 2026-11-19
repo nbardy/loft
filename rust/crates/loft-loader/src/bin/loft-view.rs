@@ -84,7 +84,8 @@ fn parse() -> Args {
 fn stats(xs: &mut [f64]) -> String {
     xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let q = |p: f64| xs[((xs.len() - 1) as f64 * p).round() as usize];
-    format!("least {:.3}  median {:.3}  most {:.3} ms", q(0.0), q(0.5), q(1.0))
+    // p95 as loft-draw profile's quantiles (nearest rank on (n - 1) * p), so the two binaries compare row for row.
+    format!("least {:.3}  median {:.3}  p95 {:.3}  most {:.3} ms", q(0.0), q(0.5), q(0.95), q(1.0))
 }
 
 fn main() {
