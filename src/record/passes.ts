@@ -9,4 +9,4 @@ export type Pass = {
 };
 export type Open = { signature: string; selector: string; cases: [number, string][]; otherwise: string };
 export type Source = { text: string; opens: Open[] };
-export type Declarations = { tables: { lanes: number; words: number[] }[]; modules: Source[]; schedule: { images: Image[]; passes: Pass[] } };
+export type Declarations = { tables: ({ lanes: number; words: number[] } | { lanes:number; rows:number; module:number; entry:string; extent:[number,number,number] })[]; modules: Source[]; schedule: { images: Image[]; passes: Pass[] } };

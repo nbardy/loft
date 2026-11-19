@@ -78,9 +78,10 @@ pub struct Declarations {
     pub schedule: Schedule,
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct Table {
-    pub lanes: u16,
-    pub words: Vec<u32>,
+#[serde(untagged, deny_unknown_fields)]
+pub enum Table {
+    Data { lanes: u16, words: Vec<u32> },
+    Made { lanes: u16, rows: u32, module: Id, entry: String, extent: [u32; 3] },
 }
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Source {

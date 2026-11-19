@@ -10,7 +10,7 @@ fn hit(s:Washer,r:Ray)->Hit {
   return Hit(t,vec3f(0,0,1),p);
 }`);
 
-export const sphere = kind(`
+const sphereKind = kind(`
 struct Sphere { radius:f32 }
 fn bound(s:Sphere)->Box {return Box(vec3f(-s.radius),vec3f(s.radius));}
 fn hit(s:Sphere,r:Ray)->Hit {
@@ -20,6 +20,8 @@ fn hit(s:Sphere,r:Ray)->Hit {
   if !on_ray(r,t) {return miss;}
   let n=normalize(r.o+t*r.d);return Hit(t,n,n.xy);
 }`);
+
+export const sphere = (radius:number) => ({...sphereKind(radius),radius});
 
 // All four boundary events are candidates. A parallel ray contributes no cylinder roots.
 export const bead = kind(`

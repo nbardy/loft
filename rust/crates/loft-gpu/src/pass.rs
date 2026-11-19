@@ -337,6 +337,8 @@ impl Ordered {
         Self { by_canvas, images: vec![], paired, size: [0, 0], frame: 0, iteration, stride }
     }
 
+    pub fn reset_history(&mut self) { self.size=[0,0];self.frame=0; }
+
     pub fn extent(&self) -> [u32; 2] {
         self.size
     }

@@ -37,10 +37,12 @@ for (const [inner,solid] of [[0.5,false],[0.25,false],[0.5,true]] as const) {
     const probe=inspect(`fn pixel(px:vec2f)->vec4f {
       let k=u32(px.x);let z=select(3.0,2.0,k>=2u);
       let x=trace(Ray(vec3f(0,select(0.0,0.375,k%2u==1u),z),vec3f(0,0,-1),0,10,vec2f(0)));
-      return vec4f(f32(rows[x.thing].id)/255,x.t/255,0,1);
+      if px.y>1 {return unpack4x8unorm(bitcast<u32>(x.t));}
+      return vec4f(f32(rows[x.thing].id)/255,0,0,1);
     }`);
-    const {rgba:r}=picture(build("pick"+inner,{things,cameras,engine:probe}),"4x1");
-    const got=Array.from({length:4},(_,k)=>[r[4*k],r[4*k+1]]);
+    const {rgba:r}=picture(build("pick"+inner,{things,cameras,engine:probe}),"4x2");
+    const distances=new DataView(r.buffer,r.byteOffset+16,16);
+    const got=Array.from({length:4},(_,k)=>[r[4*k],distances.getFloat32(k*4,true)]);
     score("6 "+inner,got,JSON.stringify(got)===JSON.stringify(inner===0.5?[[9,3],[9,3],[9,2],[9,2]]:[[9,3],[7,2],[9,2],[7,1]]));
   }
 }
@@ -49,19 +51,19 @@ const rays=`fn probe_ray(k:u32)->Ray {
   let origins=array<vec3f,4>(vec3f(0,3,0),vec3f(0.6,3,0),vec3f(0,0,0),vec3f(0.6,0,0));
   return Ray(origins[k],select(vec3f(0,-1,0),vec3f(1,0,0),k>=2u),0,10,vec2f(0));
 }`;
-const probe=`fn pixel(px:vec2f)->vec4f {let h=intersect(0,probe_ray(u32(px.x)));return unpack4x8unorm(bitcast<u32>(select(h.t,h.n.x,px.y>1)));}`;
-const {rgba}=picture(build("bore",{things:[thing(value,ring.material)],cameras,engine:inspect(rays+probe)}),"4x2");
-const gpu=Array.from(new Float32Array(rgba.buffer,rgba.byteOffset,8));
-const cpu=new Float32Array(8).fill(NaN);
+const probe=`fn pixel(px:vec2f)->vec4f {let h=intersect(0,probe_ray(u32(px.x)));let v=vec4f(h.t,h.n);return unpack4x8unorm(bitcast<u32>(v[u32(px.y)]));}`;
+const {rgba}=picture(build("bore",{things:[thing(value,ring.material)],cameras,engine:inspect(rays+probe)}),"4x4");
+const gpu=Array.from(new Float32Array(rgba.buffer,rgba.byteOffset,16));
+const cpu=new Float32Array(16).fill(NaN);
 const shader=base+value.kind.source+rays+`
-@group(2) @binding(0) var<storage,read_write> res:array<f32,8>;
+@group(2) @binding(0) var<storage,read_write> res:array<f32,16>;
 @compute @workgroup_size(1) fn probe(@builtin(global_invocation_id) gid:vec3u) {
-  let k=gid.x;let h=Bead_hit(load_Bead(0u),probe_ray(k));res[k]=h.t;res[k+4u]=h.n.x;
+  let k=gid.x;let h=Bead_hit(load_Bead(0u),probe_ray(k));res[k]=h.t;res[k+4u]=h.n.x;res[k+8u]=h.n.y;res[k+12u]=h.n.z;
 }`;
 const exec=new WgslExec(new WgslParser().parse(shader));
 exec.dispatchWorkgroups("probe",4,{1:{1:Uint32Array.from(value.words)},2:{0:cpu}});
-const exact=[-1,2.2,0.35,0.4,0,0.6,-1,1];
-score("7",{cpu:Array.from(cpu),gpu},[...cpu,...gpu].every((n,i)=>Math.abs(n-exact[i%8])<1e-5));
+const exact=[-1,2.2,0.35,0.4,0,0.6,-1,1,0,0.8,0,0,0,0,0,0];
+score("7",{cpu:Array.from(cpu),gpu},[...cpu,...gpu].every((n,i)=>Math.abs(n-exact[i%16])<1e-5));
 
 const engine=(s:Scene)=>{
   const w=world(s),f=find(w,4);

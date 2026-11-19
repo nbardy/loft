@@ -6,10 +6,10 @@ import base from "./interface.wgsl" with { type: "text" };
 import queries from "./world.wgsl" with { type: "text" };
 import screen from "./covers/screen.wgsl" with { type: "text" };
 export type V3 = readonly [number,number,number];
-export type Thing = { shape: Value; material: Value; at: V3; id?: number; ink?: number };
-export const thing = (shape: Value, material: Value, at: V3 = [0,0,0]): Thing => ({ shape, material, at });
+export type Thing = { shape: Value & {radius?: number}; material: Value & {emission?: readonly number[]}; at: V3; id?: number; ink?: number };
+export const thing = (shape: Thing["shape"], material: Thing["material"], at: V3 = [0,0,0]): Thing => ({ shape, material, at });
 export type World = { things: readonly Thing[]; shadows?: readonly Thing[] };
-export type Scene = World & { cameras: Record<string,Camera>; engine: (s: Scene) => Declarations; sky?: string };
+export type Scene = World & { cameras: Record<string,Camera>; engine: (s: Scene) => Declarations; sky?: string; sun?: {towards:V3; power:V3} };
 export const scene = (s: Scene) => ({ kind: "ordered" as const, cameras: s.cameras, record: () => s.engine(s) });
 export type OrderedScene = ReturnType<typeof scene>;
 
@@ -30,7 +30,7 @@ export function world(s: World) {
     const ref = (v:Value) => { const at=words.length; words.push(...v.words); return [v.kind.tag,at]; };
     const id=t.id ?? i+1;
     if (id !== (id>>>0) || t.at.some(x=>!Number.isFinite(Math.fround(x))) || !Number.isFinite(t.ink ?? 0)) throw new SceneError("thing: use a u32 id, finite position and ink width");
-    rows.push(...ref(t.shape),...ref(t.material),...t.at.map(bits),id,(primary.has(t)?1:0)|(shadows.has(t)?2:0),bits(t.ink??0),0,0);
+    rows.push(...ref(t.shape),...ref(t.material),...t.at.map(bits),id,(primary.has(t)?1:0)|(shadows.has(t)?2:0),bits(t.ink??0),Number(!!t.shape.radius && !!t.material.emission && primary.has(t)),0);
   }
   while (!words.length || words.length%4) words.push(0);
   const opens = [
@@ -39,7 +39,7 @@ export function world(s: World) {
   ];
   const geometry = base+"\n"+shapes.map(k=>k.source).join("\n");
   return {
-    tables:[{lanes:3,words:rows},{lanes:1,words}],
+    things, tables:[{lanes:3,words:rows},{lanes:1,words}],
     cover(body:string):Source { return {text:geometry+body,opens:[...opens,reading(shapes,"gap","r: Ray","r","vec2f","vec2f(-1,1e30)",()=> "vec2f(-1,1e30)")]}; },
     query(body:string, extra:Open[]=[]):Source { return {text:geometry+queries+screen+body,opens:[...opens,...extra]}; },
     materials,

@@ -2,7 +2,8 @@
 use super::{Build, Naga, unsupported};
 use loft_ir::Error;
 use loft_ir::bundle::{Access, Bundle, Format, Init, Module, Origin, Pack, Resource, Shape};
-use loft_ir::pass::{Declarations, Open};
+use loft_ir::bundle::{Body, Kernel, When};
+use loft_ir::pass::{Declarations, Open, Table};
 
 fn dispatch(open: Open) -> Result<String, Error> {
     let mut cases = open.cases;
@@ -45,18 +46,41 @@ pub fn link(b: &mut Bundle, mut d: Declarations, build: Build) -> Result<usize, 
     }
     let mut packs = vec![];
     let mut resources = vec![];
+    let mut names = std::mem::take(&mut b.names).into_vec();
+    let mut kernels = vec![];
     for (i, t) in d.tables.into_iter().enumerate() {
-        let stride = usize::from(t.lanes) * 4;
-        if stride == 0 || t.words.is_empty() || !t.words.len().is_multiple_of(stride) {
-            return Err(unsupported(format!("table {i}: supply nonempty whole rows of {} vec4s", t.lanes)));
-        }
-        let rows = u32::try_from(t.words.len() / stride)
-            .map_err(|_| unsupported("table exceeds u32 rows; split it".into()))?;
-        packs.push(Pack { access: Access::Read, vec4s: t.words.len() as u64 / 4, holds: Box::new([(i as u32, 0)]) });
-        resources
-            .push(Resource { shape: Shape::Rows { rows, lanes: t.lanes }, init: Init::Bytes(sections.len() as u32) });
-        sections.push(t.words.into_iter().flat_map(u32::to_le_bytes).collect());
+        let (lanes, rows, access, init) = match t {
+            Table::Data { lanes, words } => {
+                let stride = usize::from(lanes) * 4;
+                if stride == 0 || words.is_empty() || !words.len().is_multiple_of(stride) {
+                    return Err(unsupported(format!("table {i}: supply nonempty whole rows of {lanes} vec4s")));
+                }
+                let rows = u32::try_from(words.len() / stride)
+                    .map_err(|_| unsupported("table exceeds u32 rows; split it".into()))?;
+                let init = Init::Bytes(sections.len() as u32);
+                sections.push(words.into_iter().flat_map(u32::to_le_bytes).collect());
+                (lanes, rows, Access::Read, init)
+            }
+            Table::Made { lanes, rows, module, entry, extent } => {
+                let module = module
+                    .checked_add(offset)
+                    .filter(|&m| (m as usize) < modules.len())
+                    .ok_or_else(|| unsupported(format!("table {i}: supply a declared fill module")))?;
+                if lanes == 0 || rows == 0 || extent.contains(&0) {
+                    return Err(unsupported(format!("table {i}: use nonzero row, lane and dispatch counts")));
+                }
+                let init = Init::By(kernels.len() as u32);
+                let body = Body::Raw { module, entry: names.len() as u32, dispatch: extent };
+                names.push(entry.into());
+                kernels.push(Kernel { when: When::Load, reads: Box::new([]), writes: Box::new([i as u32]), body });
+                (lanes, rows, Access::Write, init)
+            }
+        };
+        packs.push(Pack { access, vec4s: u64::from(rows) * u64::from(lanes), holds: Box::new([(i as u32, 0)]) });
+        resources.push(Resource { shape: Shape::Rows { rows, lanes }, init });
     }
+    b.names = names.into();
+    b.kernels = kernels.into();
     for p in &mut d.schedule.passes {
         p.module = p
             .module

@@ -35,7 +35,9 @@ ${background}
       let i=(tag&0x7fffffffu)-1u;
       let p3=unproject(px.xy,zs[j]);let t=dot(p3-ray.o,ray.d);nearest=min(nearest,t);
       let h=intersect(i,ray);
-      c=shade(Point(p3,h.n,h.uv,t,i),-ray.d,(tag&0x80000000u)!=0u,px.xy);
+      // Device depth loses precision with distance. Launch secondary rays from the analytic surface.
+      let surface=select(p3,ray.o+ray.d*h.t,h.t>=0);
+      c=shade(Point(surface,h.n,h.uv,t,i),-ray.d,(tag&0x80000000u)!=0u,px.xy);
     }
     color+=c*f32(counts[j]);
   }

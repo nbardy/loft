@@ -6,6 +6,7 @@
 //!   loft-draw still BUNDLE [flags]       one PNG (still.rs)
 //!   loft-draw profile BUNDLE [flags]     load and frame timings, the Vulkan cache, the frame budget (profile.rs)
 
+mod nonce;
 mod profile;
 mod serve;
 mod still;

@@ -1070,7 +1070,7 @@ impl Loft {
         match &self.ordered {
             Some(p) => {
                 let [r, c] = p.counts();
-                [self.b.modules.len() + 1, r, c + self.b.cameras.len() + 1]
+                [self.b.modules.len() + 1, r, c + self.compute.len() + self.b.cameras.len() + 1]
             }
             None => [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()],
         }
@@ -1087,17 +1087,21 @@ impl Loft {
     }
     /// The host's camera matrices for every pass (`loft_ir::frame`); the viewport comes from the view's size.
     pub fn set_camera(&mut self, camera: Camera) {
-        self.aim = Aim::Matrices(camera);
+        self.select_aim(Aim::Matrices(camera));
     }
     /// A host look camera (perspective, `fovy` radians), built on the GPU as a bundle's look cameras are.
     pub fn set_look(&mut self, eye: [f32; 3], target: [f32; 3], up: [f32; 3], fovy: f32) {
-        self.aim = Aim::Look(frame::look(eye, target, up, fovy));
+        self.select_aim(Aim::Look(frame::look(eye, target, up, fovy)));
     }
     /// The bundle camera named `name`, evaluated on the GPU every frame.
     pub fn use_camera(&mut self, name: &str) -> Result<(), Error> {
         let (k, _) = self.named(&self.b.cameras, |c| c.name, name, "camera")?;
-        self.aim = Aim::Named(k);
+        self.select_aim(Aim::Named(k));
         Ok(())
+    }
+    fn select_aim(&mut self, next:Aim) {
+        if self.aim != next && let Some(p)=&mut self.ordered {p.reset_history();}
+        self.aim=next;
     }
     /// The bundle's camera names, in order.
     pub fn cameras(&self) -> impl Iterator<Item = &str> {
@@ -1201,7 +1205,7 @@ impl Loft {
             self.group0s(device);
         }
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame]);
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &[&self.frame], if self.ordered.is_some() {self.timestamps.as_ref()} else {None});
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &[self.own()]);
         for s in 0..self.steppers.len() {
             let st = &self.steppers[s];
@@ -1444,7 +1448,7 @@ impl Loft {
         // A GPU camera is built once, on the loft's own frame, and copied into every copy's.
         queue.write_buffer(&self.frame, 0, &self.frame_bytes(self.time));
         let frames: Vec<&Buffer> = instances.iter().map(|i| &i.frame).collect();
-        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames);
+        self.cameras.encode(queue, enc, &self.aim, (&self.g0[0], &self.g1.render), &frames,None);
         let sets: Vec<Groups> = instances.iter().map(|i| (&i.g0, &i.g1.compute, &i.g2[..])).collect();
         self.dispatch_all(enc, &self.frame_kernels(), self.timestamps.as_ref(), &sets);
     }
