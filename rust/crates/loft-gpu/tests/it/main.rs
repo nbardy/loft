@@ -7,6 +7,7 @@ use loft_ir::error::{LoadFault, SceneFault};
 use loft_ir::identity::Precision;
 
 mod instances;
+mod motion_live;
 
 /// Emit's prelude frame (loft-core emit/prelude.rs, bytes in `loft_ir::frame`), with one param and one input vec4.
 pub(crate) const PRE: &str =

@@ -93,13 +93,20 @@ pub enum Evaluator {
 }
 
 /// Each element is the signed margin of the observed site at that tick. Refuse missing or nonfinite evidence.
-pub fn trace(margins: &[f32], inputs: [u8; 32], law: [u8; 32], by: Evaluator) -> Result<Verdict, Error> {
-    if margins.is_empty() || margins.iter().any(|m| !m.is_finite()) {
+pub fn trace(margins: &[Option<f32>], inputs: [u8; 32], law: [u8; 32], by: Evaluator) -> Result<Verdict, Error> {
+    if margins.is_empty() || margins.iter().flatten().any(|m| !m.is_finite()) {
         return Err(Error::Usage(
             "trace needs a finite observed margin at every sampled tick: supply the missing site".into(),
         ));
     }
-    let (tick, &margin) = margins.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1)).unwrap();
+    let (tick, margin) = margins
+        .iter()
+        .enumerate()
+        .filter_map(|(k, v)| v.map(|m| (k, m)))
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .ok_or_else(|| {
+            Error::Usage("the predicate selected no observed ticks: choose a take containing the hold".into())
+        })?;
     Ok(Verdict {
         truth: if margin >= 0.0 { Truth::Holds } else { Truth::Fails },
         margin,

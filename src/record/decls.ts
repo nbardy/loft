@@ -95,7 +95,8 @@ export type RowStep = {
   readonly input: InputSpec; readonly hz: number; readonly ticks: number;
   readonly home: { kind: "level" } | { kind: "script"; samples: DataTable } | { kind: "events"; slots: number };
 };
-export type Scene = { readonly rowSteps?: readonly RowStep[]; readonly cameras: readonly Camera[]; readonly passes: readonly Pass[]; readonly checks: readonly Check[]; readonly solves: readonly Solve[] };
+export type TraceSite = { label: string; word: number; negative?: number };
+export type Scene = { readonly traces?: readonly { step: number; sites: readonly TraceSite[] }[]; readonly rowSteps?: readonly RowStep[]; readonly cameras: readonly Camera[]; readonly passes: readonly Pass[]; readonly checks: readonly Check[]; readonly solves: readonly Solve[] };
 export const NO_SCENE: Scene = { cameras: [], passes: [], checks: [], solves: [] };
 
 /** A scene given as explicit passes. The Rust build consumes these declarations directly. */

@@ -10,7 +10,7 @@
 import type { Ranged } from "../ranged.ts";
 import type { Check, Verdict } from "../check.ts";
 import type { Command } from "./args.ts";
-import { choose, subjectAt, type Chosen } from "./variant.ts";
+import { choose, subjectAt, moduleAt, type Chosen } from "./variant.ts";
 import type { VariantAsk } from "../design.ts";
 import { ChecksFailed } from "./verdict.ts";
 import { UsageError } from "./args.ts";
@@ -28,6 +28,14 @@ type Outcome = { readonly label: string; readonly about: string; readonly result
 export async function check(cmd: Extract<Command, { kind: "check" }>): Promise<void> {
   // Before the scene is imported: a call-form node's line is the stack it was built with.
   if (cmd.explain) (await import("../expr.ts")).recordStacks();
+  const mod = await moduleAt(cmd.path);
+  const explicit = mod.default as ReturnType<typeof import("../record/decls.ts").recorded> | undefined;
+  if (explicit?.kind === "recorded") {
+    if (cmd.at.size || cmd.combinations || cmd.variant.kind === "ask" || cmd.explain)
+      throw new UsageError("a GPU trace measures the recorded take: drop the range, variant or explanation flags");
+    const { checkRecorded } = await import("./trace.ts");
+    return checkRecorded(explicit.scene);
+  }
   const subject = await subjectAt(cmd.path);
   const { runChecks, formatChecks, checkOutcome, Probe } = await import("../check.ts");
   const { pinned } = await import("../ranged.ts");

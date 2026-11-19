@@ -75,5 +75,5 @@ export function stage(motion:Motion){
     paint:role("deckPaint",["vec3","vec3","vec2","f32"],p=>lib<"vec4">(sand,p))};
   const camera:Camera={name:"game",kind:"look",eye:vec3(17,14,15),target:vec3(0,1.8,-0.2),up:vec3(0,1,0),fovy:f(0.63)};
   return recorded({cameras:[camera],passes:[{camera,draws:[ground,solids("limbs",capsules,motion,true),solids("shell",ellipsoids,motion,false)],
-    clear:{kind:"colour",rgba:[0.9,0.8,0.66,1]},ground:{kind:"none"},outline:{kind:"none"}}],rowSteps:[motion.steps],checks:[],solves:[]});
+    clear:{kind:"colour",rgba:[0.9,0.8,0.66,1]},ground:{kind:"none"},outline:{kind:"none"}}],rowSteps:[motion.steps],traces:[{step:0,sites:motion.holds}],checks:[],solves:[]});
 }

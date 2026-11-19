@@ -9,6 +9,7 @@
 mod profile;
 mod serve;
 mod still;
+mod trace;
 
 use loft_gpu::{Canvas, Layers, Loft, Owner, View};
 use loft_ir::identity::Precision;
@@ -25,6 +26,7 @@ pub const CANVAS: Canvas = Canvas { color: OUTPUT_FORMAT, depth: loft_gpu::DEPTH
 pub enum Verdict {
     /// The request names something the artefact lacks, or a bad size or camera.
     Usage(String),
+    Check(String),
     /// The bundle is refused: format, ids, sizes, or library WGSL that validation refuses.
     Load(String),
     /// The author's WGSL in the bundle, refused at load.
@@ -42,6 +44,7 @@ impl Verdict {
         match self {
             Verdict::Internal(_) => 1,
             Verdict::Usage(_) => 2,
+            Verdict::Check(_) => 5,
             Verdict::Load(_) => 3,
             Verdict::Scene(_) => 4,
             Verdict::Environment(_) => 6,
@@ -236,6 +239,7 @@ impl Target {
 
 enum Command {
     Serve,
+    Trace(std::path::PathBuf, usize, String),
     Still(still::Args),
     Profile(still::Args, profile::Flags),
 }
@@ -243,6 +247,14 @@ enum Command {
 fn main() {
     let mut args = std::env::args().skip(1);
     let command = match args.next().as_deref() {
+        Some("trace") => {
+            let (Some(dir), Some(step), Some(sites), None) =
+                (args.next(), args.next().and_then(|n| n.parse().ok()), args.next(), args.next())
+            else {
+                still::usage("trace BUNDLE STEP SITES_JSON".into())
+            };
+            Command::Trace(dir.into(), step, sites)
+        }
         Some("serve") => Command::Serve,
         Some("still") => Command::Still(still::parse(args, false).0),
         Some("profile") => {
@@ -255,6 +267,7 @@ fn main() {
         }
     };
     let ended = match command {
+        Command::Trace(dir, step, sites) => trace::run(&dir, step, &sites),
         Command::Serve => serve::run(),
         Command::Still(a) => still::run(a),
         Command::Profile(a, f) => profile::run(a, f),

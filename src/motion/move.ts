@@ -25,5 +25,9 @@ export function move(shape: Body | readonly Body[], source: string, inputs: {
   }
   const steps: RowStep = { source, plan:table("plans",bodies.length,26,joined("plan")), seed:table("initial",bodies.length,42,joined("state")),
     output:pose, input:node.spec, hz,ticks, home:script ? {kind:"script",samples:table("script",ticks+1,1,samples)} : {kind:"level"} };
-  return {bodies,steps,pose};
+  const holds=bodies.flatMap((b,row)=>b.chains.map((_,i)=>{
+    const word=4*(58*row+50+i);
+    return {label:`row ${row}, planted toe ${i}`,word,negative:word+1};
+  }));
+  return {bodies,steps,pose,holds};
 }
