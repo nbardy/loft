@@ -478,3 +478,6 @@ impl ComputeCache {
         pass
     }
 }
+
+#[cfg(all(test,not(target_arch="wasm32")))]
+mod edit_gate;

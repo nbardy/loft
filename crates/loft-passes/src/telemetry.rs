@@ -172,16 +172,7 @@ mod tests {
 
     #[test]
     fn l23a_exact_naga_counts_and_json() {
-        let text = "var<workgroup> scratch: array<vec4f, 4>;
-@group(1) @binding(0) var<storage, read_write> data: array<f32>;
-fn term(x: f32) -> f32 { return sin(x) + x; }
-fn dead(x: f32) -> f32 { return cos(x); }
-@compute @workgroup_size(32) fn main(@builtin(local_invocation_index) i: u32) {
-    loop {
-        if i == 0u { data[i] = term(data[i]); }
-        break;
-    }
-}";
+        let text = include_str!("../../../tests/fixtures/telemetry.wgsl");
         assert_eq!(
             serde_json::to_value(counts(text)).unwrap(),
             serde_json::json!({

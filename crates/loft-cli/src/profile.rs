@@ -43,9 +43,17 @@ pub(crate) fn run(args: &[String], set: &[(String, f64)]) -> Result<(), Failure>
             "usage: loft profile SCENE --size WxH [--frames N] [--nonce N] [--json OUT]".into(),
         ));
     };
-    let src = sources(Path::new(scene)).map_err(Failure::Usage)?;
-    let (program, _, _) =
-        loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?;
+    let path = Path::new(scene);
+    let program = if path.extension().is_some_and(|ext| ext == "sexp") {
+        if !set.is_empty() {
+            return Err(Failure::Usage("--set requires an authored scene".into()));
+        }
+        let data = std::fs::read_to_string(path).map_err(|e| Failure::Usage(e.to_string()))?;
+        loft_passes::sexp::read(&data).map_err(Failure::Compile)?
+    } else {
+        let src = sources(path).map_err(Failure::Usage)?;
+        loft_passes::compile(&src, set).map_err(|d| Failure::Compile(d.render(&src)))?.0
+    };
     let modules = telemetry::collect(&program);
     let gpu = native::gpu().map_err(Failure::Device)?;
     crate::budget::timestamps(gpu.timestamps)?;

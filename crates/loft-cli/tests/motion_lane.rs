@@ -343,6 +343,34 @@ fn motion_gpu_washer_picks_sample_zero() {
             p.draw(0..3, 0..1);
         }
         g.queue.submit([enc.finish()]);
+        // Check every pixel in the washer's bounding square through the actual async API.
+        // Keep at most one scanline's staging buffers and callbacks in flight.
+        let mut ring_count = 0;
+        for y in 192..320 {
+            let (tx, rx) = std::sync::mpsc::channel();
+            for x in 192..320 {
+                let tx = tx.clone();
+                r.pick_async(
+                    id,
+                    [x, y],
+                    Box::new(move |v| {
+                        tx.send((x, (v.kind_id, v.row_id))).unwrap();
+                    }),
+                )
+                .unwrap();
+            }
+            drop(tx);
+            d.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+            let mut returned = std::collections::BTreeSet::new();
+            for (x, ids) in rx {
+                assert!(returned.insert(x));
+                assert_eq!(ids, washer(x, y, inner));
+                ring_count += usize::from(ids == (7, 3));
+            }
+            assert_eq!(returned.len(), 128);
+        }
+        assert_eq!(ring_count, if inner == 64 { 9664 } else { 12080 });
+        println!("Washer inner {inner}: {ring_count} exact ring IDs in 16384 async picks");
         for px in [
             [256, 256],
             [271, 256],
@@ -517,5 +545,382 @@ fn motion_gpu_boss_hit_one() {
             ),
             (tag, 0, site, 60, payload)
         );
+    }
+}
+
+#[test]
+fn profile_json_counts_executed_fixture() {
+    let src = sources(include_str!("../../../engines/capsules.loft"));
+    let mut p = loft_passes::compile(&src, &[]).unwrap().0;
+    let fixture = include_str!("../../../tests/fixtures/telemetry.wgsl");
+    p.modules[p.classify].naga = naga::front::wgsl::parse_str(fixture).unwrap();
+    p.modules[p.classify].name = "fixture".into();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("profile.sexp");
+    let json = dir.path().join("profile.json");
+    std::fs::write(&path, loft_passes::sexp::write(&p).unwrap()).unwrap();
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_loft"))
+        .arg("profile")
+        .arg(path)
+        .args(["--frames", "3", "--size", "8x8", "--json"])
+        .arg(&json)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let report: serde_json::Value = serde_json::from_slice(&std::fs::read(json).unwrap()).unwrap();
+    let m = report["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["module_id"] == "fixture")
+        .unwrap();
+    for (key, expected) in [
+        ("alu_ops", 2),
+        ("transcendentals", 1),
+        ("storage_loads", 1),
+        ("storage_stores", 1),
+        ("workgroup_bytes", 64),
+    ] {
+        assert_eq!(m[key], expected, "{key}");
+    }
+    assert_eq!(report["gpu_frame_ms"].as_array().unwrap().len(), 3);
+    println!("profile fixture {m}");
+}
+
+fn mapped_bytes(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Vec<u8> {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    buffer.map_async(wgpu::MapMode::Read, .., move |r| tx.send(r).unwrap());
+    device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+    rx.recv().unwrap().unwrap();
+    let bytes = buffer.get_mapped_range(..).unwrap().to_vec();
+    buffer.unmap();
+    bytes
+}
+
+#[test]
+fn crab_gpu_grouped_frames_match_every_tick() {
+    let bundle = compile_peer(&peer_sources("crab"), &[]);
+    let g = loft_cli::native::gpu().unwrap();
+    let fresh = || {
+        let mut runner = Runner::attach(
+            Arc::new(g.device.clone()),
+            Arc::new(g.queue.clone()),
+            HostCaps {
+                depth_convention: DepthConvention::StandardZeroToOne,
+                msaa_samples: 1,
+                features: GpuFeatures::empty(),
+            },
+        );
+        let id = runner.load_bundle(&bundle).unwrap();
+        (runner, id)
+    };
+    let trace = |interval: u32| {
+        let (mut r, id) = fresh();
+        let stride = [ROWS, RESULTS]
+            .map(|t| r.export_buffer(id, t).unwrap().size())
+            .iter()
+            .sum::<u64>();
+        let dest = g.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("481 state and verdict records"),
+            size: 481 * stride,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let capture = |r: &mut Runner, t: u32, keep: u32| {
+            let mut enc = g.device.create_command_encoder(&Default::default());
+            r.advance_into(id, &mut enc, t, keep).unwrap();
+            let mut offset = u64::from(t) * stride;
+            for table in [ROWS, RESULTS] {
+                let buffer = r.export_buffer(id, table).unwrap();
+                enc.copy_buffer_to_buffer(&buffer, 0, &dest, offset, Some(buffer.size()));
+                offset += buffer.size();
+            }
+            g.queue.submit([enc.finish()]);
+        };
+        capture(&mut r, 0, 0);
+        let mut start = 0;
+        while start < 480 {
+            let end = (start + if start == 120 { 6 } else { interval }).min(480);
+            for t in start + 1..end {
+                capture(&mut r, t, 0);
+                // Each within-frame prefix starts at the same retained boundary.
+                if start == 0 {
+                    r = fresh().0;
+                } else {
+                    r.restore_checkpoint(id, start).unwrap();
+                }
+            }
+            capture(&mut r, end, end);
+            start = end;
+        }
+        (mapped_bytes(&g.device, &dest), stride as usize)
+    };
+    let (reference, stride) = trace(1);
+    assert_ne!(&reference[..stride], &reference[480 * stride..]);
+    for interval in [2, 4] {
+        let (sample, _) = trace(interval);
+        let mismatched: Vec<_> = sample
+            .chunks_exact(stride)
+            .zip(reference.chunks_exact(stride))
+            .enumerate()
+            .filter_map(|(tick, (a, b))| (a != b).then_some(tick))
+            .collect();
+        assert!(
+            mismatched.is_empty(),
+            "{} differing ticks: {:?}",
+            mismatched.len(),
+            mismatched.first()
+        );
+    }
+    println!("Crab GPU state and verdicts: 0/481 differing ticks; 30/60/120 Hz and 6-tick stall");
+}
+
+#[test]
+fn crab_gpu_thousand_row_motion_budget() {
+    use wgpu::util::DeviceExt;
+    let mut b = compile_peer(&peer_sources("crab"), &[]);
+    let g = loft_cli::native::gpu().unwrap();
+    assert!(g.timestamps);
+    let control = g.triangle_control_ms((1280, 800)).unwrap();
+    let d = &g.device;
+    let module = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: None,
+        source: wgpu::ShaderSource::Wgsl(std::str::from_utf8(&b.modules[0].bytes).unwrap().into()),
+    });
+    let p = d.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: None,
+        layout: None,
+        module: &module,
+        entry_point: Some("advance"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let rows = b.tables.iter_mut().find(|t| t.id == ROWS).unwrap();
+    let row_data = rows.initial.repeat(1000);
+    let result_size = b
+        .tables
+        .iter()
+        .find(|t| t.id == RESULTS)
+        .unwrap()
+        .stride_bytes as usize
+        * 1000;
+    let make = |bytes: &[u8]| {
+        d.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytes,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        })
+    };
+    let args = make(&[0; 24]);
+    let rows = make(&row_data);
+    let results = make(&vec![0; result_size]);
+    let bind = |i: u32, entries: &[wgpu::BindGroupEntry]| {
+        d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &p.get_bind_group_layout(i),
+            entries,
+        })
+    };
+    let g0 = bind(0, &[]);
+    let g1 = bind(
+        1,
+        &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: args.as_entire_binding(),
+        }],
+    );
+    let g2 = bind(
+        2,
+        &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: rows.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: results.as_entire_binding(),
+            },
+        ],
+    );
+    const N: u32 = 330;
+    let queries = d.create_query_set(&wgpu::QuerySetDescriptor {
+        label: None,
+        ty: wgpu::QueryType::Timestamp,
+        count: N * 2,
+    });
+    for i in 0..N {
+        g.queue.write_buffer(
+            &args,
+            0,
+            [i, i + 1, 0, 0, 1000, 0]
+                .map(u32::to_le_bytes)
+                .as_flattened(),
+        );
+        let mut enc = d.create_command_encoder(&Default::default());
+        let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: None,
+            timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                query_set: &queries,
+                beginning_of_pass_write_index: Some(i * 2),
+                end_of_pass_write_index: Some(i * 2 + 1),
+            }),
+        });
+        pass.set_pipeline(&p);
+        for (n, group) in [&g0, &g1, &g2].into_iter().enumerate() {
+            pass.set_bind_group(n as u32, group, &[]);
+        }
+        pass.dispatch_workgroups(1000u32.div_ceil(64), 1, 1);
+        drop(pass);
+        g.queue.submit([enc.finish()]);
+    }
+    let buf = |usage| {
+        d.create_buffer(&wgpu::BufferDescriptor {
+            label: None,
+            size: u64::from(N) * 16,
+            usage,
+            mapped_at_creation: false,
+        })
+    };
+    let resolved = buf(wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC);
+    let read = buf(wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST);
+    let mut enc = d.create_command_encoder(&Default::default());
+    enc.resolve_query_set(&queries, 0..2 * N, &resolved, 0);
+    enc.copy_buffer_to_buffer(&resolved, 0, &read, 0, Some(read.size()));
+    g.queue.submit([enc.finish()]);
+    let mut ms = mapped_bytes(d, &read)
+        .chunks_exact(16)
+        .skip(30)
+        .map(|b| {
+            let (a, z) = b.split_at(8);
+            let dt = u64::from_le_bytes(z.try_into().unwrap())
+                - u64::from_le_bytes(a.try_into().unwrap());
+            dt as f64 * f64::from(g.queue.get_timestamp_period()) / 1e6
+        })
+        .collect::<Vec<_>>();
+    ms.sort_by(f64::total_cmp);
+    let p95 = ms[284];
+    println!("1000 Crab Scramble rows motion p95 {p95:.6} ms; control p50 {control:.6} ms");
+    assert!(control > 0.35 || p95 <= 0.15);
+}
+
+#[test]
+fn authored_gpu_heron_and_boss_verdicts() {
+    let g = loft_cli::native::gpu().unwrap();
+    for name in ["heron", "boss"] {
+        let src = peer_sources(name);
+        let p = loft_passes::compile(&src, &[]).unwrap().0;
+        let step = &p.dispatches[0];
+        let b = fusion::motion_bundle(&p, step, 0);
+        let capture = |interval: u32| {
+            let mut r = Runner::attach(
+                Arc::new(g.device.clone()),
+                Arc::new(g.queue.clone()),
+                HostCaps {
+                    depth_convention: DepthConvention::StandardZeroToOne,
+                    msaa_samples: 1,
+                    features: GpuFeatures::empty(),
+                },
+            );
+            let id = r.load_bundle(&b).unwrap();
+            let state = r.export_buffer(id, ROWS).unwrap();
+            let records = r.export_buffer(id, RESULTS).unwrap();
+            let stride = state.size() + records.size();
+            let dst = g.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: 481 * stride,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut ticks = vec![];
+            let mut tick = 0;
+            loop {
+                let mut enc = g.device.create_command_encoder(&Default::default());
+                r.advance_into(id, &mut enc, tick, 0).unwrap();
+                let off = u64::from(tick) * stride;
+                enc.copy_buffer_to_buffer(&state, 0, &dst, off, Some(state.size()));
+                enc.copy_buffer_to_buffer(
+                    &records,
+                    0,
+                    &dst,
+                    off + state.size(),
+                    Some(records.size()),
+                );
+                g.queue.submit([enc.finish()]);
+                g.device.poll(wgpu::PollType::wait_indefinitely()).unwrap();
+                assert_eq!(r.drain_events(id).unwrap().1, 0);
+                ticks.push(tick as usize);
+                if tick == 480 {
+                    break;
+                }
+                tick = (tick
+                    + if interval > 1 && tick == 120 {
+                        6
+                    } else {
+                        interval
+                    })
+                .min(480);
+            }
+            (
+                mapped_bytes(&g.device, &dst),
+                stride as usize,
+                state.size() as usize,
+                ticks,
+            )
+        };
+        let (bytes, stride, state_bytes, _) = capture(1);
+        let field = |row: &[u8], name: &str| {
+            let off = step.fields.iter().find(|(n, _)| n == name).unwrap().1 as usize * 4;
+            f32::from_le_bytes(row[off..off + 4].try_into().unwrap())
+        };
+        let mut crouch = f32::INFINITY;
+        let mut max_pitch = 0f32;
+        let mut neck_error = 0f32;
+        let mut windup = 0f32;
+        let mut hit_ticks = vec![];
+        let mut previous = 0.;
+        for (tick, row) in bytes.chunks_exact(stride).enumerate() {
+            for (i, rec) in row[state_bytes..].chunks_exact(32).enumerate() {
+                assert_eq!(
+                    u32::from_le_bytes(rec[16..20].try_into().unwrap()),
+                    1,
+                    "{name} {} tick {tick}",
+                    step.checks[i]
+                );
+                if step.checks[i] == "heron_neck_length" {
+                    neck_error = neck_error
+                        .max(0.0002 - f32::from_le_bytes(rec[24..28].try_into().unwrap()));
+                }
+            }
+            if name == "heron" {
+                crouch = crouch.min(field(row, "hip_y"));
+                max_pitch = max_pitch.max(field(row, "lean").abs().atan().to_degrees());
+            } else {
+                windup = windup.max(field(row, "windup"));
+                let hits = field(row, "hits");
+                if hits > previous {
+                    hit_ticks.push(tick);
+                    assert_eq!(field(row, "slipping"), 1.);
+                }
+                previous = hits;
+            }
+        }
+        if name == "heron" {
+            println!(
+                "Heron GPU: min hip {crouch:.6} m, max pitch {max_pitch:.6} deg, max neck error {:.6} mm, all 481 forward gaze checks Held",
+                1000. * neck_error
+            );
+            assert!((crouch - 0.59).abs() < 1e-5 && max_pitch <= 12. && neck_error <= 0.0002);
+        } else {
+            assert_eq!(hit_ticks, [60, 75]);
+            assert!((windup - 0.69).abs() < 1e-6);
+            let (grouped, _, _, ticks) = capture(4);
+            for t in ticks {
+                let span = t * stride..(t + 1) * stride;
+                assert_eq!(&bytes[span.clone()], &grouped[span], "Boss at tick {t}");
+            }
+            println!(
+                "Boss GPU: windup {windup:.6} m, hit ticks {hit_ticks:?}, grouped state and verdicts bit-identical at every frame boundary"
+            );
+        }
     }
 }
