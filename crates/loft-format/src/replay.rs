@@ -1,33 +1,22 @@
 //! Fixed-tick host input recording. A replay driver supplies state and verdicts for its own backend.
 use crate::bundle::{
     BundleError,
-    wire::{Reader, Wire, fields, variants},
+    wire::{Reader, Wire, fields, sum},
 };
 use std::fmt;
 
 const MAGIC: &[u8; 8] = b"LOFTLOG1";
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Input {
-    Level {
-        name: String,
-        value: [f32; 4],
-    },
-    Event {
-        name: String,
-        payload: [f32; 4],
-    },
-    PosePacket {
-        name: String,
-        bytes: Vec<u8>,
-    },
-    Param {
-        name: String,
-        value: [f32; 4],
-    },
-    /// Terminal tick, including when the preceding input stream was empty.
-    End,
-}
+sum!(pub enum
+    #[derive(Clone, Debug, PartialEq)]
+    Input {
+        0 => Level { name: String, value: [f32; 4] },
+        1 => Event { name: String, payload: [f32; 4] },
+        2 => PosePacket { name: String, bytes: Vec<u8> },
+        3 => Param { name: String, value: [f32; 4] },
+        4 => End, // Terminal tick, including when the input stream was empty.
+    }
+);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoggedInput {
@@ -200,10 +189,3 @@ fields!(LoftLog {
     expected_final_identity,
 });
 fields!(LoggedInput { tick, seq, input });
-variants!(Input {
-    0 => Level { name, value },
-    1 => Event { name, payload },
-    2 => PosePacket { name, bytes },
-    3 => Param { name, value },
-    4 => End,
-});

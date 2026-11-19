@@ -2,7 +2,7 @@
 use loft_ir::*;
 use std::{collections::BTreeMap, fmt};
 pub(super) mod wire;
-use wire::{Reader, Wire, fields, get_bytes, length, put_bytes, variants};
+use wire::{Reader, Wire, get_bytes, length, put_bytes, sum};
 
 const MAGIC: &[u8; 8] = b"LOFTB001";
 const COMPILER_ABI: u32 = 1;
@@ -34,42 +34,11 @@ impl fmt::Display for BundleError {
 }
 impl std::error::Error for BundleError {}
 
-struct Manifest {
-    modules: Vec<(ModuleId, ([u8; 32], ShaderTarget))>,
-    tables: Vec<TableMeta>,
-    struct_layouts: Vec<StructLayout>,
-    rows: Vec<(KindId, TableId)>,
-    state: Option<StateStoreDecl>,
-    params: Vec<ParamMeta>,
-    passes: Vec<PassDecl>,
-}
-
-struct TableMeta {
-    id: TableId,
-    format: ElemFormat,
-    lifetime: TableLifetime,
-    stride_bytes: u32,
-    capacity: u32,
-}
-
 pub fn encode(bundle: &Bundle) -> Vec<u8> {
     let mut manifest = Vec::new();
-    // Keep the bulk bytes in their own sections and leave declaration order intact.
-    (bundle.modules.len() as u64).put(&mut manifest);
-    for module in &bundle.modules {
-        (module.id, (module.hash, module.target)).put(&mut manifest);
-    }
-    (bundle.tables.len() as u64).put(&mut manifest);
-    for table in &bundle.tables {
-        TableMeta {
-            id: table.id,
-            format: table.format,
-            lifetime: table.lifetime,
-            stride_bytes: table.stride_bytes,
-            capacity: table.capacity,
-        }
-        .put(&mut manifest);
-    }
+    // The two lengths and their declarations precede the rest of the manifest.
+    put_metadata(&bundle.modules, &mut manifest);
+    put_metadata(&bundle.tables, &mut manifest);
     bundle.struct_layouts.put(&mut manifest);
     (bundle.rows.len() as u64).put(&mut manifest);
     for (&kind, &table) in &bundle.rows {
@@ -90,15 +59,7 @@ pub fn encode(bundle: &Bundle) -> Vec<u8> {
         sections.push((ASSETS, assets));
     }
     let mut bytes = vec![0; HEADER + ENTRY * sections.len()];
-    let flags = if bundle
-        .modules
-        .iter()
-        .any(|m| m.target == ShaderTarget::Wgsl)
-    {
-        HAS_WGSL
-    } else {
-        0
-    };
+    let flags = shader_flags(&bundle.modules);
     bytes[..8].copy_from_slice(MAGIC);
     bytes[8..12].copy_from_slice(&1_u32.to_le_bytes());
     bytes[12..16].copy_from_slice(&flags.to_le_bytes());
@@ -118,6 +79,17 @@ pub fn encode(bundle: &Bundle) -> Vec<u8> {
     }
     bytes[16..48].copy_from_slice(digest.finalize().as_bytes());
     bytes
+}
+
+fn shader_flags(modules: &[ModuleBlob]) -> u32 {
+    if modules
+        .iter()
+        .any(|module| module.target == ShaderTarget::Wgsl)
+    {
+        HAS_WGSL
+    } else {
+        0
+    }
 }
 
 fn bulk<'a>(data: impl ExactSizeIterator<Item = &'a [u8]>) -> Vec<u8> {
@@ -146,7 +118,10 @@ pub fn decode(bytes: &[u8]) -> Result<Bundle, BundleError> {
     let mut digest = blake3::Hasher::new();
     let mut end = HEADER + ENTRY * count;
     let mut sections = [&[][..]; 4];
-    for (slot, tag) in sections[..count].iter_mut().zip(TAGS.into_iter().chain([ASSETS])) {
+    for (slot, tag) in sections[..count]
+        .iter_mut()
+        .zip(TAGS.into_iter().chain([ASSETS]))
+    {
         if u32::get(&mut header)? != tag || u32::get(&mut header)? != 0 {
             return Err(BundleError::Encoding);
         }
@@ -181,40 +156,32 @@ pub fn decode(bytes: &[u8]) -> Result<Bundle, BundleError> {
         let mut reader = Reader::new(assets);
         let resources = Resources::get(&mut reader)?;
         reader.finish()?;
-        if resources.is_empty() { return Err(BundleError::Encoding); }
+        if resources.is_empty() {
+            return Err(BundleError::Encoding);
+        }
         resources
     } else {
         Resources::default()
     };
     let mut reader = Reader::new(meta);
-    let manifest = Manifest::get(&mut reader)?;
+    let modules = get_metadata::<ModuleBlob>(&mut reader)?;
+    let tables = get_metadata::<TableDecl>(&mut reader)?;
+    let struct_layouts = Vec::get(&mut reader)?;
+    let row_entries = Vec::get(&mut reader)?;
+    let state = Option::get(&mut reader)?;
+    let params = Vec::get(&mut reader)?;
+    let passes = Vec::get(&mut reader)?;
     reader.finish()?;
-    let tables = read_bulk(manifest.tables, packed_rows, |t, initial| TableDecl {
-        id: t.id,
-        format: t.format,
-        lifetime: t.lifetime,
-        stride_bytes: t.stride_bytes,
-        capacity: t.capacity,
-        initial,
-    })?;
-    let modules = read_bulk(
-        manifest.modules,
-        packed_modules,
-        |(id, (hash, target)), bytes| ModuleBlob {
-            id,
-            hash,
-            target,
-            bytes,
-        },
-    )?;
-    let has_wgsl = modules.iter().any(|m| m.target == ShaderTarget::Wgsl);
-    if has_wgsl != (flags == HAS_WGSL) {
+    // Validate the entire manifest before attaching either section of bulk data.
+    let tables = read_bulk::<TableDecl>(tables, packed_rows)?;
+    let modules = read_bulk::<ModuleBlob>(modules, packed_modules)?;
+    if shader_flags(&modules) != flags {
         return Err(BundleError::Encoding);
     }
-    let rows: BTreeMap<_, _> = manifest.rows.iter().copied().collect();
+    let rows: BTreeMap<_, _> = row_entries.iter().copied().collect();
     if !rows
         .iter()
-        .eq(manifest.rows.iter().map(|(kind, table)| (kind, table)))
+        .eq(row_entries.iter().map(|(kind, table)| (kind, table)))
     {
         return Err(BundleError::Encoding);
     }
@@ -222,26 +189,22 @@ pub fn decode(bytes: &[u8]) -> Result<Bundle, BundleError> {
         resources,
         modules,
         tables,
-        struct_layouts: manifest.struct_layouts,
+        struct_layouts,
         rows,
-        state: manifest.state,
-        params: manifest.params,
-        passes: manifest.passes,
+        state,
+        params,
+        passes,
     })
 }
 
-fn read_bulk<T, U>(
-    entries: Vec<T>,
-    bytes: &[u8],
-    join: impl Fn(T, Box<[u8]>) -> U,
-) -> Result<Vec<U>, BundleError> {
+fn read_bulk<T: SplitRecord>(entries: Vec<T::Fields>, bytes: &[u8]) -> Result<Vec<T>, BundleError> {
     let mut reader = Reader::new(bytes);
     if length(&mut reader)? != entries.len() {
         return Err(BundleError::Encoding);
     }
     let out = entries
         .into_iter()
-        .map(|entry| Ok(join(entry, get_bytes(&mut reader)?.into())))
+        .map(|fields| Ok(T::join(fields, get_bytes(&mut reader)?.into())))
         .collect::<Result<_, _>>()?;
     reader.finish()?;
     Ok(out)
@@ -278,115 +241,74 @@ macro_rules! ids {
         }
     )+};
 }
-ids!(ModuleId, TableId, PassId, KindId, ParamId);
 
-impl<T: Wire> Wire for Box<[T]> {
-    fn put(&self, out: &mut Vec<u8>) {
-        (self.len() as u64).put(out);
-        for value in self {
-            value.put(out);
+trait SplitRecord: Sized {
+    type Fields;
+
+    fn put_metadata(&self, out: &mut Vec<u8>);
+    fn get_metadata(input: &mut Reader<'_>) -> wire::Result<Self::Fields>;
+    fn join(fields: Self::Fields, bytes: Box<[u8]>) -> Self;
+}
+
+fn put_metadata(records: &[impl SplitRecord], out: &mut Vec<u8>) {
+    (records.len() as u64).put(out);
+    for record in records {
+        record.put_metadata(out);
+    }
+}
+
+fn get_metadata<T: SplitRecord>(input: &mut Reader<'_>) -> wire::Result<Vec<T::Fields>> {
+    (0..length(input)?)
+        .map(|_| T::get_metadata(input))
+        .collect()
+}
+
+macro_rules! decode_record {
+    ($input:ident nested, $record:expr) => {
+        $input.nested(|$input| $record)
+    };
+    ($input:ident, $record:expr) => {
+        $record
+    };
+}
+
+macro_rules! record {
+    ($(#[$attr:meta])* $ty:ident {
+        $($(#[$doc:meta])* $field:ident: $field_ty:ty),+ $(,)?
+    } / $bulk:ident: $blob:ty) => {
+        impl SplitRecord for $ty {
+            type Fields = ($($field_ty,)+);
+
+            fn put_metadata(&self, out: &mut Vec<u8>) {
+                $(self.$field.put(out);)+
+            }
+
+            fn get_metadata(input: &mut Reader<'_>) -> wire::Result<Self::Fields> {
+                Ok(($(<$field_ty>::get(input)?,)+))
+            }
+
+            fn join(($($field,)+): Self::Fields, $bulk: $blob) -> Self {
+                Self { $($field),+, $bulk }
+            }
         }
-    }
-    fn get(input: &mut Reader<'_>) -> wire::Result<Self> {
-        Ok(Vec::get(input)?.into_boxed_slice())
-    }
+    };
+    ($(#[$attr:meta])* $ty:ident {
+        $($(#[$doc:meta])* $field:ident: $field_ty:ty),+ $(,)?
+    } $($guard:ident)?) => {
+        impl Wire for $ty {
+            fn put(&self, out: &mut Vec<u8>) {
+                let Self { $($field),+ } = self;
+                $($field.put(out);)+
+            }
+
+            fn get(input: &mut Reader<'_>) -> wire::Result<Self> {
+                decode_record!(input $($guard)?, Ok(Self { $($field: Wire::get(input)?),+ }))
+            }
+        }
+    };
 }
 
-fields!(Manifest {
-    modules,
-    tables,
-    struct_layouts,
-    rows,
-    state,
-    params,
-    passes
-});
-fields!(TableMeta {
-    id,
-    format,
-    lifetime,
-    stride_bytes,
-    capacity
-});
-fields!(StructLayout {
-    stride_bytes,
-    offsets
-});
-fields!(StateStoreDecl {
-    table,
-    layout_hash,
-    checkpoint_slots
-});
-fields!(ParamMeta {
-    id,
-    name,
-    ty,
-    offset_bytes,
-    default,
-    range
-});
-impl Wire for PassDecl {
-    fn put(&self, out: &mut Vec<u8>) {
-        self.id.put(out);
-        self.wave.put(out);
-        self.queue.put(out);
-        self.bindings.put(out);
-        self.run.put(out);
-    }
-
-    fn get(input: &mut Reader<'_>) -> wire::Result<Self> {
-        input.nested(|input| {
-            Ok(Self {
-                id: Wire::get(input)?,
-                wave: Wire::get(input)?,
-                queue: Wire::get(input)?,
-                bindings: Wire::get(input)?,
-                run: Wire::get(input)?,
-            })
-        })
-    }
-}
-fields!(PassBinding {
-    group,
-    slot,
-    resource,
-    access
-});
-fields!(IndirectDraw {
-    module,
-    vertex_entry,
-    fragment_entry,
-    args,
-    offset_bytes,
-    vertex,
-    index
-});
-fields!(TextureDecl { table, format, extent, samples, clear });
-fields!(FrameData { main, variants, time_offset });
-fields!(InputSlot { kind, offset_words, words });
-variants!(InputKind { 0 => Level, 1 => Event, 2 => Packet });
-fields!(Resources { inputs, textures, comparison_samplers, resets, cull_front, frame });
-variants!(ImageFormat { 0 => Rg32Uint, 1 => Rgba16Float, 2 => Depth32Float });
-fields!(TargetDesc { table });
-fields!(DepthDesc { table, write });
-variants!(ShaderTarget { 0 => NagaIr, 1 => Wgsl, 2 => Msl, 3 => Spirv, 4 => Ptx, 5 => Wasm });
-variants!(ElemFormat {
-    0 => F32, 1 => F16, 2 => Bf16, 3 => F64, 4 => U32, 5 => I32, 6 => U16, 7 => I16,
-    8 => U8, 9 => I8, 10 => PackedU4, 11 => PackedI4, 12 => PackedU2, 13 => Fp8E4M3,
-    14 => Fp8E5M2, 15 => Struct(index),
-});
-variants!(TableLifetime { 0 => Static, 1 => DynamicArena { max_rows }, 2 => Transient, 3 => PingPong, 4 => External });
-variants!(IrTy { 0 => F32, 1 => Vec2, 2 => Vec3, 3 => Vec4, 4 => U32, 5 => Bool });
-variants!(QueueClass { 0 => Graphics, 1 => AsyncCompute, 2 => Transfer });
-variants!(BindAccess { 0 => ReadStorage, 1 => ReadWriteStorage, 2 => SampledTex, 3 => StorageTex, 4 => BindlessTexArray, 5 => Sampler });
-variants!(DispatchExtent { 0 => Fixed(groups), 1 => FromRowCount { table, workgroup_x }, 2 => Indirect { buf, offset_bytes } });
-variants!(PassRun {
-    0 => Compute { module, entry, dispatch },
-    1 => ComputeFusedTicks { module, entry, max_ticks, instances },
-    2 => RenderBundle { draws, color_targets, depth, msaa },
-    3 => PassLoop { max_iters, cond_buf, body },
-    4 => GenerateMips { texture },
-});
+loft_ir::bundle_schema!(ids, record, sum);
 
 #[cfg(test)]
 #[test]
@@ -432,4 +354,35 @@ fn container_rejects_corruption() {
     );
     *encoded.last_mut().unwrap() ^= 1;
     assert_eq!(decode(&encoded).unwrap_err(), BundleError::Hash);
+}
+
+#[test]
+fn pass_tree_preserves_the_wire_depth_limit() {
+    let pass = |run| PassDecl {
+        id: PassId(0),
+        wave: 0,
+        queue: QueueClass::Graphics,
+        bindings: Box::new([]),
+        run,
+    };
+    let mut nested = pass(PassRun::GenerateMips {
+        texture: TableId(1),
+    });
+    for depth in 1..=33 {
+        let bundle = Bundle {
+            passes: vec![nested.clone()],
+            ..Bundle::default()
+        };
+        let bytes = encode(&bundle);
+        if depth <= 32 {
+            assert_eq!(encode(&decode(&bytes).unwrap()), bytes);
+        } else {
+            assert_eq!(decode(&bytes).unwrap_err(), BundleError::Encoding);
+        }
+        nested = pass(PassRun::PassLoop {
+            max_iters: 2,
+            cond_buf: None,
+            body: Box::new([nested]),
+        });
+    }
 }
