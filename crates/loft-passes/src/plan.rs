@@ -3,7 +3,7 @@ use loft_abi::{VerdictReason, VerdictRecord, VerdictTag};
 use loft_plan::{COLLOCATION, Plan};
 #[path = "plan_source.rs"]
 mod source;
-pub(crate) use source::{check_source, lower_source};
+pub(crate) use source::{check_source, closed, lower_source};
 
 const HEADER_WORDS: usize = 8;
 const SAMPLE_WORDS: usize = 12;
@@ -114,10 +114,12 @@ pub fn sample_prior_cpu(luts: &[f32], header_word: u32, time: f32) -> Option<[[f
         let d = rows[SAMPLE_WORDS + axis] - p;
         let v0 = rows[4 + axis] * dt;
         let v1 = rows[SAMPLE_WORDS + 4 + axis] * dt;
-        let b = 3.0 * d - 2.0 * v0 - v1;
-        let c = v0 + v1 - 2.0 * d;
-        out[0][axis] = p + u * (v0 + u * (b + u * c));
-        out[1][axis] = (v0 + u * (2.0 * b + u * (3.0 * c))) / dt;
+        // Use the same explicit FMAs as WGSL. Metal otherwise contracts the
+        // Hermite polynomial and rounds differently from the Rust twin.
+        let b = 3.0f32.mul_add(d, (-2.0f32).mul_add(v0, -v1));
+        let c = (-2.0f32).mul_add(d, v0 + v1);
+        out[0][axis] = u.mul_add(u.mul_add(u.mul_add(c, b), v0), p);
+        out[1][axis] = u.mul_add(u.mul_add(3.0 * c, 2.0 * b), v0) / dt;
     }
     out[0][3] = rows[3];
     out[1][3] = rows[7];
@@ -153,11 +155,12 @@ fn sample_prior(header: u32, t: f32) -> PriorSample {
   let d = prior_row(o + 12u).xyz - p.xyz;
   let v0 = v.xyz * dt;
   let v1 = prior_row(o + 16u).xyz * dt;
-  let b = 3.0 * d - 2.0 * v0 - v1;
-  let c = v0 + v1 - 2.0 * d;
+  let b = fma(vec3f(3.0), d, fma(vec3f(-2.0), v0, -v1));
+  let c = fma(vec3f(-2.0), d, v0 + v1);
+  let x = vec3f(u);
   return PriorSample(
-    vec4f(p.xyz + u * (v0 + u * (b + u * c)), p.w),
-    vec4f((v0 + u * (2.0 * b + u * (3.0 * c))) / dt, v.w),
+    vec4f(fma(x, fma(x, fma(x, c, b), v0), p.xyz), p.w),
+    vec4f(fma(x, fma(x, 3.0 * c, 2.0 * b), v0) / dt, v.w),
     prior_row(o + 8u)
   );
 }

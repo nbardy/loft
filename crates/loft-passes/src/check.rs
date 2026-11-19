@@ -6,7 +6,7 @@
 #[path = "kernel_units.rs"]
 mod kernel_units;
 #[path = "motion_source.rs"]
-mod motion_source;
+pub(crate) mod motion_source;
 use crate::Prog;
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
@@ -660,8 +660,18 @@ impl<'p,'a> Ck<'p,'a> {
                     let want=self.expr(target)?;let t=self.expr(value)?;self.assignable(&t,&want,value.span)?;if t==Ty::AbstractInt{self.set(value,want);}
                     return Ok(());
                 }
+                if let ExprKind::Index(base, _) = &target.kind
+                    && let ExprKind::Name(n) = &base.kind
+                    && self.lookup(n).is_some_and(|local| local.mutable && matches!(local.ty, Ty::Array(..)))
+                {
+                    let want = self.expr(target)?;
+                    let actual = self.expr(value)?;
+                    self.assignable(&actual, &want, value.span)?;
+                    if actual == Ty::AbstractInt { self.set(value, want); }
+                    return Ok(());
+                }
                 let ExprKind::Name(n) = &target.kind else {
-                    return Err(e003(target.span, "Phase 0 assigns to names only", "assign the whole variable"));
+                    return Err(e003(target.span, "assignment needs a mutable local", "assign the whole variable or a mutable array element"));
                 };
                 let Some(l) = self.lookup(n).cloned() else {
                     return Err(Diag::new(Code::E011, target.span, format!("unknown name `{n}`"), "declare it with `var`"));
@@ -944,7 +954,13 @@ impl<'p,'a> Ck<'p,'a> {
                 self.assignable(&it, &Ty::U32, i.span).or_else(|_| self.assignable(&it, &Ty::I32, i.span))?;
                 match b {
                     Ty::VecN(_) | Ty::Geo(..) => Ok(Ty::F32),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Array(..) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(base.span, format!("cannot index `{other}`"), "index a vector")),
+                    Ty::Array(t, count) => {
+                        if matches!(i.kind, ExprKind::Num { value, .. } if !(0.0..f64::from(count)).contains(&value)) {
+                            return Err(e003(i.span, "array index is outside its declared extent", "index an element of the array"));
+                        }
+                        Ok(*t)
+                    }
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Struct(_) | other @ Ty::Id(_) | other @ Ty::Bsdf => Err(e003(base.span, format!("cannot index `{other}`"), "index a vector")),
                 }
             }
             ExprKind::Unary(op, x) => {
@@ -1083,7 +1099,7 @@ impl<'p,'a> Ck<'p,'a> {
                 ExprKind::Name(name) => self.p.plans.get(name.as_str()),
                 _ => None,
             }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
-            if self.ownership.is_none() || decl.params.iter().any(|p| p.default.is_none()) {
+            if self.ownership.is_none() || !crate::plan::closed(self.p, decl) {
                 return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
                     "bind every plan parameter at Stage 0 and sample from a law"));
             }

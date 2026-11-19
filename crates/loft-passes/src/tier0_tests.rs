@@ -276,6 +276,7 @@ fn l23a_sphere_tape_matches_the_e_plus_twin() {
     let mut files = std::fs::read_dir(root)
         .unwrap()
         .map(|p| p.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
         .collect::<Vec<_>>();
     files.sort();
     let mut src = loft_ir::Sources::default();
