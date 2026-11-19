@@ -9,7 +9,7 @@ pub(super) struct Render {
     pub spec: Raster,
     pub shaders: Vec<ShaderModule>,
     pub layout: PipelineLayout,
-    pub cached: Option<(Canvas, Vec<RenderPipeline>, u64, RenderBundle)>,
+    pub cached: Option<(Canvas, Vec<RenderPipeline>, u64, command::Raster)>,
 }
 
 impl Render {
@@ -18,23 +18,27 @@ impl Render {
         let canvas = self.spec.targets.canvas(target, |id| tables.get(&id)?.attachment())?;
         let mut newest = groups.iter().flat_map(|g| &g.slots).map(|(_,id)| tables[id].epoch).max().unwrap_or(0);
         for draw in &self.spec.draws {
-            let args = &tables[&draw.decl.args];
-            let buf = args.bytes()?;
-            let size = match draw.index {
-                Some((id, _)) => {
-                    let index = &tables[&id];
-                    if !index.bytes()?.usage().contains(BufferUsages::INDEX) { return Err(RunnerError::AbiMismatch); }
-                    newest = newest.max(index.epoch);
-                    20
-                }
-                None => 16,
-            };
-            if !buf.usage().contains(BufferUsages::INDIRECT) { return Err(RunnerError::AbiMismatch); }
-            if u64::from(draw.decl.offset_bytes) + size > buf.size() { return Err(RunnerError::Capacity); }
             // Bundles capture argument and index handles even when the shader has no binding for either.
-            newest = newest.max(args.epoch);
+            newest = newest.max(tables[&draw.decl.args].epoch);
+            if let Some((id, _)) = draw.index { newest = newest.max(tables[&id].epoch); }
         }
+        // Buffer usage and capacity are fixed for a resource epoch.
         if self.cached.as_ref().is_some_and(|(c,_,e,_)| *c == canvas && *e >= newest) { return Ok(()); }
+        let sources = self.spec.draws.iter().map(|draw| {
+            let args = tables[&draw.decl.args].bytes()?;
+            let offset = u64::from(draw.decl.offset_bytes);
+            let (source, size) = match draw.index {
+                Some((id, format)) => {
+                    let indices = tables[&id].bytes()?;
+                    if !indices.usage().contains(BufferUsages::INDEX) { return Err(RunnerError::AbiMismatch); }
+                    (command::DrawSource::Indexed { args, offset, indices, format }, 20)
+                }
+                None => (command::DrawSource::Indirect { args, offset }, 16),
+            };
+            if !args.usage().contains(BufferUsages::INDIRECT) { return Err(RunnerError::AbiMismatch); }
+            if offset + size > args.size() { return Err(RunnerError::Capacity); }
+            Ok(source)
+        }).collect::<super::Result<Vec<_>>>()?;
         let targets: Vec<_> = canvas.colors.iter().map(|&format| Some(format.into())).collect();
         let pipelines = match self.cached.take() {
             Some((old, pipelines, _, _)) if old == canvas => pipelines,
@@ -53,31 +57,19 @@ impl Render {
             }).collect(),
         };
         let formats: Vec<_> = canvas.colors.iter().copied().map(Some).collect();
-        let mut enc = device.create_render_bundle_encoder(&RenderBundleEncoderDescriptor {
-            color_formats: &formats, depth_stencil: canvas.depth_layout(), sample_count: canvas.samples, ..Default::default()
+        let fixed = std::iter::once(fixed).chain(groups.iter().map(Group::bound)).collect::<Vec<_>>();
+        let draws = sources.into_iter().zip(&pipelines).map(|(source, pipeline)| command::Draw {
+            pipeline, groups: vec![], source,
         });
-        enc.set_bind_group(0, fixed, &[]);
-        for (i,g) in groups.iter().enumerate() { enc.set_bind_group(i as u32 + 1, g.bound(), &[]); }
-        for (draw, pipeline) in self.spec.draws.iter().zip(&pipelines) {
-            enc.set_pipeline(pipeline);
-            let args = tables[&draw.decl.args].bytes()?;
-            let offset = u64::from(draw.decl.offset_bytes);
-            match draw.index {
-                Some((id, format)) => {
-                    enc.set_index_buffer(tables[&id].bytes()?.slice(..), format);
-                    enc.draw_indexed_indirect(args, offset);
-                }
-                None => enc.draw_indirect(args, offset),
-            }
-        }
-        let bundle = enc.finish(&Default::default());
-        self.cached = Some((canvas, pipelines, epoch, bundle));
+        let raster = command::Raster::prepare(device, &RenderBundleEncoderDescriptor {
+            color_formats: &formats, depth_stencil: canvas.depth_layout(), sample_count: canvas.samples, ..Default::default()
+        }, &fixed, draws);
+        self.cached = Some((canvas, pipelines, epoch, raster));
         Ok(())
     }
 
     pub fn pass(&self, target: &Target<'_>, tables: &BTreeMap<TableId, Table>, written: &mut std::collections::BTreeSet<TableId>) -> command::Pass {
         let (colors, depth) = self.spec.targets.views(target, |id| tables.get(&id)?.attachment(), written);
-        let bundle = self.cached.as_ref().expect("prepared raster pass").3.clone();
-        command::Pass::Render { colors, depth, bundle, draws: self.spec.draws.len() as u32 }
+        self.cached.as_ref().expect("prepared raster pass").3.attach(colors, depth)
     }
 }

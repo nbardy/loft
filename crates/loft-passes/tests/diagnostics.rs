@@ -11,6 +11,7 @@ fn compile(scene: &str) -> Result<(), (Code, String)> {
     let mut files: Vec<_> = std::fs::read_dir(&lib)
         .expect("lib/")
         .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|ext| ext == "loft"))
         .collect();
     files.sort();
     for f in files {

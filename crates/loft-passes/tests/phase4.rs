@@ -41,10 +41,17 @@ fn shared_function_still_requires_proof_at_an_unwrapped_call() {
 
 #[test]
 fn radiance_defaults_to_rgb() {
-    let src = sources("fn radiance(x: Radiance) -> rgb = x");
+    let extinction = "fn extinction(p: p3@World) -> rgb = medium(p).t";
+    let src = sources(&format!("fn radiance(x: Radiance) -> rgb = x\n{extinction}"));
     front(&src).unwrap_or_else(|d| panic!("{}", d.render(&src)));
     let src = sources("type Radiance = rgb\nschedule Main { type Radiance = v4 }\nfn energy(x: Radiance) -> v4 = x");
     front(&src).unwrap_or_else(|d| panic!("{}", d.render(&src)));
+    // The built-in field sampler has RGB emission. A schedule with custom
+    // Radiance must supply its own coefficient sampling.
+    let src = sources(&format!("schedule Main {{ type Radiance = v4 }}\n{extinction}"));
+    let err = front(&src).unwrap_err();
+    assert_eq!(err.code, Code::E405, "{}", err.render(&src));
+    assert_eq!(src.locate(err.span).3, extinction);
 }
 
 #[test]

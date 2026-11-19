@@ -11,6 +11,7 @@ fn compile_scene(scene: &str, overrides: &[(&str, f64)]) -> (Program, Compiled) 
         ("core", include_str!("../../../lib/core.loft")),
         ("bsdf", include_str!("../../../lib/bsdf.loft")),
         ("light", include_str!("../../../lib/light.loft")),
+        ("post", include_str!("../../../lib/post.loft")),
         ("analytic", include_str!("../../../lib/analytic.loft")),
         ("sdf", include_str!("../../../lib/sdf.loft")),
         ("world", include_str!("../../../lib/world.loft")),
