@@ -144,15 +144,20 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             exact(&args, 2, 2)?;
             let src = sources(&scene(&args)?).map_err(Failure::Usage)?;
             let (program, report, _) = loft_passes::compile(&src, &set).map_err(|d| Failure::Compile(render(&d, &src)))?;
+            let mut failed = false;
+            for (name, &header) in &program.priors {
+                let held = program.luts[header as usize + 3].to_bits() == 1;
+                println!("plan {name}: {}", if held { "Held" } else { "Unknown(SolveFailed)" });
+                failed |= !held;
+            }
             if program.dispatches.iter().any(|m| !m.checks.is_empty()) {
                 let g = loft_cli::native::gpu().map_err(Failure::Device)?;
-                let mut failed = false;
                 for (name, verdict) in gates::authored_checks(&g, &program, time).map_err(Failure::Device)? {
                     println!("check {name} at t={time}: {verdict}");
                     failed |= !matches!(verdict, loft_ir::Verdict::Held { .. });
                 }
-                if failed { return Err(Failure::Truth("authored checks failed".into())); }
             }
+            if failed { return Err(Failure::Truth("authored checks failed".into())); }
             for k in &report.kinds {
                 println!("kind {:<12} {:?}  rows {:>4}  shapes {:>3}  derived L {:.4}..{:.4}  bound evals {}",
                     k.name, k.draw, k.rows, k.shapes, k.l_min, k.l_max, k.evals);
@@ -161,6 +166,14 @@ fn command(mut args: Vec<String>) -> Result<(), Failure> {
             Ok(())
         }
         "still" => {
+            let edit = flag(&mut args, "--edit")?;
+            let kind = flag(&mut args, "--kind")?;
+            if let Some(edit) = edit {
+                exact(&args, 3, 3)?;
+                let kind = kind.ok_or_else(|| Failure::Usage("still --edit needs --kind K".into()))?;
+                return gates::edited_still(&scene(&args)?, Path::new(&edit), &kind, &set, time, Path::new(&args[2]), max_frame);
+            }
+            if kind.is_some() { return Err(Failure::Usage("still --kind needs --edit SOURCE".into())); }
             exact(&args, 3, 3)?;
             gates::still(&scene(&args)?, &set, time, Path::new(&args[2]), max_frame)
         }

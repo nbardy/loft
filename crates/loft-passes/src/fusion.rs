@@ -48,6 +48,31 @@ fn emit_event(tag: u32, instance_id: u32, site_id: u32, payload: vec4<f32>) {{
     )
 }
 
+fn motion_params(program: &Program) -> Vec<ParamMeta> {
+    const ENV_WORDS: usize = 12;
+    let numeric = |i: usize, v| ParamMeta {
+        id: ParamId(i as u32), name: i.to_string(), ty: IrTy::F32,
+        offset_bytes: i as u32 * 4, default: [v, 0., 0., 0.], range: None,
+    };
+    if program.param_ranges.is_empty() {
+        return program.params.iter().copied().enumerate().map(|(i, v)| numeric(i, v)).collect();
+    }
+    // Legacy environment words stay populated and receive private IDs that
+    // cannot alias the reflected authored parameter IDs.
+    let mut result: Vec<_> = program.params.iter().copied().take(ENV_WORDS).enumerate().map(|(i, v)| {
+        ParamMeta { id: ParamId(u32::MAX - i as u32), ..numeric(i, v) }
+    }).collect();
+    result.extend(program.param_ranges.iter().enumerate().map(|(i, (name, range))| {
+        let word = ENV_WORDS + i * 4;
+        ParamMeta {
+            id: ParamId(i as u32), name: name.clone(), ty: IrTy::F32,
+            offset_bytes: word as u32 * 4, default: [program.params[word], 0., 0., 0.],
+            range: range.map(|[lo, hi]| ([lo, 0., 0., 0.], [hi, 0., 0., 0.])),
+        }
+    }));
+    result
+}
+
 pub fn motion_bundle(program: &Program, step: &Dispatch, checkpoint_slots: u32) -> Bundle {
     let (_, rows, stride, words) = step.input.view(&program.kinds).expect("validated dispatch");
     let wgsl = &program.modules[step.module].wgsl;
@@ -63,19 +88,7 @@ pub fn motion_bundle(program: &Program, step: &Dispatch, checkpoint_slots: u32) 
             layout_hash: step.layout_hash,
             checkpoint_slots,
         }),
-        params: program
-            .params
-            .iter()
-            .enumerate()
-            .map(|(i, &v)| ParamMeta {
-                id: ParamId(i as u32),
-                name: i.to_string(),
-                ty: IrTy::F32,
-                offset_bytes: i as u32 * 4,
-                default: [v, 0., 0., 0.],
-                range: None,
-            })
-            .collect(),
+        params: motion_params(program),
         ..Default::default()
     };
     let mut bindings = vec![];
@@ -100,6 +113,10 @@ pub fn motion_bundle(program: &Program, step: &Dispatch, checkpoint_slots: u32) 
                 rows,
                 step.checks.len() as u32 * 32,
                 vec![],
+            ),
+            DispatchResource::Luts => (
+                TableId(4), BindAccess::ReadStorage, program.luts.len() as u32, 4,
+                program.luts.iter().flat_map(|f| f.to_le_bytes()).collect(),
             ),
             DispatchResource::Outbox => (TableId(3), BindAccess::ReadWriteStorage, 4096, 4, vec![]),
         };

@@ -39,6 +39,10 @@ pub struct Prog<'a> {
     pub scans: BTreeMap<&'a str, &'a ScanDecl>,
     pub schedule: Option<&'a ScheduleDecl>,
     pub kernels: BTreeMap<&'a str, &'a KernelDecl>,
+    pub bodies: BTreeMap<&'a str, (&'a Ident, &'a [BodyItem])>,
+    pub states: BTreeMap<&'a str, &'a StateDecl>,
+    pub solvers: BTreeMap<&'a str, &'a SolverDecl>,
+    pub plans: BTreeMap<&'a str, &'a PlanDecl>,
     pub laws:BTreeMap<&'a str,&'a LawDecl>,
     pub checks:BTreeMap<&'a str,&'a FnDecl>,
 }
@@ -57,6 +61,7 @@ impl<'a> Prog<'a> {
             units: HashSet::new(),
             scans: BTreeMap::new(),
             kernels: BTreeMap::new(),
+            bodies: BTreeMap::new(), states: BTreeMap::new(), solvers: BTreeMap::new(), plans: BTreeMap::new(),
             schedule: None,laws:BTreeMap::new(),checks:BTreeMap::new(),
         };
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
@@ -85,6 +90,23 @@ impl<'a> Prog<'a> {
                     }
                 }
                 Item::Camera(_) => {}
+                Item::Body(n, items) => {
+                    name(n)?;
+                    p.bodies.insert(&n.name, (n, items));
+                }
+                Item::State(state) => {
+                    name(&state.name)?;
+                    p.states.insert(&state.name.name, state);
+                    p.structs.insert(&state.name.name, (&state.name, &state.fields));
+                }
+                Item::Solver(solver) => {
+                    name(&solver.name)?;
+                    p.solvers.insert(&solver.name.name, solver);
+                }
+                Item::Plan(plan) => {
+                    name(&plan.name)?;
+                    p.plans.insert(&plan.name.name, plan);
+                }
                 Item::Kernel(k) => {
                     name(&k.f.name)?;
                     p.kernels.insert(&k.f.name.name, k);
@@ -367,6 +389,29 @@ fn of_v3(v: Val<f32>) -> [f32; 3] {
     }
 }
 
+fn reflect_params(prog: &Prog<'_>, types: &[Ty], packed: &[f32]) -> Res<Vec<loft_ir::ParamMeta>> {
+    use loft_ir::{IrTy, ParamId, ParamMeta};
+    let mut eval: Eval<f32> = Eval::new(prog, types, vec![], &[]);
+    prog.continuous_params().enumerate().map(|(i, (name, decl))| {
+        let range = decl.range.as_ref().map(|r| -> Res<_> {
+            let lo = as_f32(eval::concrete(&eval.module_expr(&r.lo)?, r.lo.span)?, r.lo.span)?;
+            let lo = if r.strict { lo.next_up() } else { lo };
+            let hi = match &r.hi {
+                Some(e) => as_f32(eval::concrete(&eval.module_expr(e)?, e.span)?, e.span)?,
+                None => f32::MAX,
+            };
+            Ok(([lo, 0., 0., 0.], [hi, 0., 0., 0.]))
+        }).transpose()?;
+        let offset = (3 + i) * 4;
+        Ok(ParamMeta {
+            id: ParamId(i as u32), name: name.to_owned(), ty: IrTy::F32,
+            offset_bytes: (offset * 4) as u32,
+            default: [packed[offset], 0., 0., 0.],
+            range,
+        })
+    }).collect()
+}
+
 impl Compiled {
     pub fn prog(&self) -> Prog<'_> {
         Prog::index(&self.modules).expect("indexed once already")
@@ -374,27 +419,7 @@ impl Compiled {
 
     /// Reflected slots follow the same ordering and offsets used by WGSL lowering.
     pub fn param_meta(&self, program: &Program) -> Res<Vec<loft_ir::ParamMeta>> {
-        use loft_ir::{IrTy, ParamId, ParamMeta};
-        let prog = self.prog();
-        let mut eval: Eval<f32> = Eval::new(&prog, &self.types, vec![], &[]);
-        prog.continuous_params().enumerate().map(|(i, (name, decl))| {
-            let range = decl.range.as_ref().map(|r| -> Res<_> {
-                let lo = as_f32(eval::concrete(&eval.module_expr(&r.lo)?, r.lo.span)?, r.lo.span)?;
-                let lo = if r.strict { lo.next_up() } else { lo };
-                let hi = match &r.hi {
-                    Some(e) => as_f32(eval::concrete(&eval.module_expr(e)?, e.span)?, e.span)?,
-                    None => f32::MAX,
-                };
-                Ok(([lo, 0., 0., 0.], [hi, 0., 0., 0.]))
-            }).transpose()?;
-            let offset = (3 + i) * 4;
-            Ok(ParamMeta {
-                id: ParamId(i as u32), name: name.to_owned(), ty: IrTy::F32,
-                offset_bytes: (offset * 4) as u32,
-                default: [program.params[offset], 0., 0., 0.],
-                range,
-            })
-        }).collect()
+        reflect_params(&self.prog(), &self.types, &program.params)
     }
 
     /// The row's placement in World (identity for a kind asked in World).
@@ -662,6 +687,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 }
                 rows_fns.push(p.fns[v]);
             }
+            "run_solver" => return Err(Diag::new(Code::E405, pd.verb.span,
+                "the checked solver has no execution lowering", "use a lowered schedule")),
             "run_laws" | "check" => {}, // lowered together in schedule order by motion_module
             "orbit" => {
                 let f = |n: &str, types: &mut Vec<Ty>| -> Res<f32> {
@@ -978,6 +1005,13 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         lut_refs.push(emit::LutRef { name: l.name.clone(), offset: off, n: l.frames.len() as u32, lo: l.lo, hi: l.hi });
         off += l.frames.len() as u32;
     }
+    let mut lut_words: Vec<f32> = luts.iter().flat_map(|l| l.frames.iter().flatten().copied()).collect();
+    let mut priors = BTreeMap::new();
+    for (name, decl) in &p.plans {
+        if let Some(prior) = plan::lower_source(decl, &mut lut_words)? {
+            priors.insert((*name).to_string(), prior.header_word);
+        }
+    }
     let mut texts = Vec::new();
     for (name, kt) in drawn.iter().zip(&kinds) {
         let shader = emit::kind_module(&p, &types, p.kinds[*name], light, &lut_refs, kt.draw)?;
@@ -1006,7 +1040,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                     name: name.into(), n_rows: table.len() as u32, stride: (words.len() / table.len()) as u32, words,
                 }))
             };
-            if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, output)? {
+            if let Some((entry, dispatch)) = emit::motion_module(&p, &types, kind, &priors, output)? {
                 texts.push((format!("{name}.advance"), entry));
                 dispatches.push(dispatch);
             }
@@ -1024,7 +1058,10 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     }).collect::<Res<Vec<_>>>()?;
     lap("naga", &mut ms);
 
+    let param_ranges = reflect_params(&p, &types, &params)?.into_iter().map(|m|
+        (m.name, m.range.map(|(lo, hi)| [lo[0], hi[0]]))).collect();
     let program = Program {
+        param_ranges,
         dispatches,
         modules: shader_modules,
         kinds,
@@ -1032,7 +1069,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         camera,
         sun, params,
         shadow_size,
-        luts: luts.iter().flat_map(|l| l.frames.iter().flatten().copied()).collect(),
+        luts: lut_words,
+        priors,
         passes,
         cull: shared,
         classify: shared + 1,

@@ -1,4 +1,7 @@
 //! A single render-kind tape. Motion and raw shader code stay in Tier 1.
+#[path = "tier0_author.rs"]
+mod author;
+pub use author::{TAPE_BYTES, TraceEdit, authored_trace};
 use loft_abi::Tier0Opcode as Op;
 use std::collections::BTreeMap;
 

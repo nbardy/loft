@@ -77,6 +77,7 @@ fn wty(t: &Ty) -> String {
         Ty::Bsdf => "Bsdf".into(),
         Ty::Id(_) => "u32".into(),
         Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
+        Ty::Struct(k) if k == "PriorSample" => "PriorSample".into(),
         Ty::Struct(k) => format!("loft_type_{k}"),
         Ty::Verdict => "CheckValue".into(),
         Ty::Table(_) => unreachable!("motion tables are lowered in a law"),
@@ -137,6 +138,7 @@ pub struct Emitter<'p, 'a> {
     maps: Vec<(String, Vec<MapStage>)>,
     luts: &'p [LutRef],
     motion:bool,
+    priors: Option<&'p std::collections::BTreeMap<String, u32>>,
     locals: Vec<String>,
     temp: u32,
 }
@@ -311,7 +313,7 @@ fn reachable_impl<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str], proof_
 
 impl<'p, 'a> Emitter<'p, 'a> {
     pub fn new(p: &'p Prog<'a>, types: &'p [Ty]) -> Self {
-        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,locals:vec![],temp:0 }
+        Emitter { p, types, out: String::new(), maps: vec![], luts: &[],motion:false,priors:None,locals:vec![],temp:0 }
     }
 
     fn ty_of(&self, e: &Expr) -> &Ty {
@@ -526,6 +528,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 {
                     return format!("{}_cell",map_symbol(n));
                 }
+                if matches!(self.ty_of(base), Ty::Struct(k) if k == "PriorSample") {
+                    let base = self.expr(base);
+                    return match m.name.as_str() {
+                        "pos" => format!("{base}.pos_compliance.xyz"),
+                        "vel" => format!("{base}.vel_active.xyz"),
+                        "rot" => format!("{base}.rot"),
+                        "compliance" => format!("{base}.pos_compliance.w"),
+                        "active" => format!("({base}.vel_active.w != 0.0)"),
+                        _ => unreachable!("checked prior sample field"),
+                    };
+                }
                 if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
@@ -583,6 +596,11 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 if callee.name == "unknown" && !self.p.fns.contains_key("unknown") {
                     let ExprKind::Name(reason) = &args[0].value.kind else { unreachable!("checked reason") };
                     return format!("CheckValue(3u, {}u, 0.0)", crate::fusion::reason(reason).expect("checked reason") as u32);
+                }
+                if callee.name == "sample_prior" {
+                    let ExprKind::Name(name) = &args[0].value.kind else { unreachable!("checked plan name"); };
+                    let header = self.priors.expect("motion prior bindings")[name];
+                    return format!("sample_prior({header}u, {})", self.expr(&args[1].value));
                 }
                 if callee.name == "emit_event" {
                     let tag = match &args[0].value.kind {

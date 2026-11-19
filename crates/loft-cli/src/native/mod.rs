@@ -1,5 +1,7 @@
 //! Native execution of the Phase 1.5 picture and motion fixtures.
 mod motion;
+mod edit;
+pub use edit::TraceSession;
 pub use motion::sample_motion;
 
 use loft_passes::program::{abi, Draw, Pass, Program};
@@ -74,7 +76,7 @@ struct KindGpu {
     shade: wgpu::ComputePipeline,
     module: wgpu::ShaderModule,
     /// Owned here so the tables live as long as the kind.
-    _rows: wgpu::Buffer,
+    rows: wgpu::Buffer,
     _params: wgpu::Buffer,
     g1: wgpu::BindGroup,
     g2: wgpu::BindGroup,
@@ -92,6 +94,8 @@ pub struct Loaded {
     g0: wgpu::BindGroup,
     bgl0: wgpu::BindGroupLayout,
     bgl_kind: wgpu::BindGroupLayout,
+    bgl_shade: wgpu::BindGroupLayout,
+    instance_bounds: wgpu::Buffer,
     draw_args: wgpu::Buffer,
     draw_reset: Vec<u8>,
     shade_args: wgpu::Buffer,
@@ -111,6 +115,8 @@ pub struct Loaded {
 }
 
 struct Shadow {
+    groups: (wgpu::BindGroup, Vec<wgpu::BindGroup>),
+    args: wgpu::Buffer,
     frame_buf: wgpu::Buffer,
     bundle: wgpu::RenderBundle,
     vis: wgpu::TextureView,
@@ -313,9 +319,60 @@ impl Gpu {
     }
 }
 
+fn draw_bundle(
+    d: &wgpu::Device, main: &wgpu::BindGroup, kinds: &[KindGpu], pass: &[u32],
+    args: &wgpu::Buffer, overrides: Option<&[wgpu::BindGroup]>,
+) -> wgpu::RenderBundle {
+    let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
+        label: Some("visibility"),
+        color_formats: &[Some(VIS)],
+        depth_stencil: Some(wgpu::RenderBundleDepthStencil {
+            format: DEPTH, depth_read_only: false, stencil_read_only: true,
+        }),
+        sample_count: 1, multiview: None,
+    });
+    be.set_bind_group(0, main, &[]);
+    for &k in pass {
+        let kg = &kinds[k as usize];
+        be.set_pipeline(&kg.render);
+        be.set_bind_group(1, overrides.map_or(&kg.g1, |groups| &groups[k as usize]), &[]);
+        be.draw_indirect(args, u64::from(k) * 16);
+    }
+    be.finish(&wgpu::RenderBundleDescriptor { label: Some("visibility") })
+}
+
+fn instance_bytes(p: &Program) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for i in &p.instances {
+        bytes.extend(f32_bytes(&i.lo));
+        bytes.extend(i.kind.to_le_bytes());
+        bytes.extend(f32_bytes(&i.hi));
+        bytes.extend(i.row.to_le_bytes());
+    }
+    bytes
+}
+
+fn caster_bounds(p: &Program, casters: &[u32]) -> ([f32; 3], [f32; 3]) {
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for i in p.instances.iter().filter(|i| casters.contains(&i.kind)) {
+        for a in 0..3 {
+            lo[a] = lo[a].min(i.lo[a]);
+            hi[a] = hi[a].max(i.hi[a]);
+        }
+    }
+    (lo, hi)
+}
+
 impl Loaded {
     /// Builds every GPU object for `p` at `size`. `nonce` (any value but `u32::MAX`) forces a cold driver compile.
     pub fn new(g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>) -> Result<Loaded, String> {
+        Self::load(g, p, size, nonce, None)
+    }
+
+    fn load(
+        g: &Gpu, p: &Program, size: (u32, u32), nonce: Option<u32>,
+        edit: Option<(usize, &loft_passes::tier0::TraceEdit)>,
+    ) -> Result<Loaded, String> {
         let d = &g.device;
         let nonce = nonce.unwrap_or(u32::MAX);
         let k_n = p.kinds.len();
@@ -323,7 +380,18 @@ impl Loaded {
         let mut stats = LoadStats { modules: p.modules.len(), ..Default::default() };
 
         let t = Instant::now();
-        let modules: Vec<wgpu::ShaderModule> = p.modules.iter().map(|m| shader(d, m, nonce)).collect();
+        let mut modules: Vec<wgpu::ShaderModule> = p.modules.iter().map(|m| shader(d, m, nonce)).collect();
+        if let Some((i, edit)) = edit {
+            let index = p.kinds[i].module;
+            let source = edit.shader(&p.modules[index].wgsl)?;
+            let ir = naga::front::wgsl::parse_str(&source).map_err(|e| e.emit_to_string(&source))?;
+            naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
+                .validate(&ir).map_err(|e| e.emit_to_string(&source))?;
+            modules[index] = d.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("editable trace"),
+                source: wgpu::ShaderSource::Naga(Cow::Owned(ir)),
+            });
+        }
         stats.modules_ms = t.elapsed().as_secs_f64() * 1e3;
 
         let t = Instant::now();
@@ -411,25 +479,18 @@ impl Loaded {
         if !p.params.is_empty() { g.queue.write_buffer(&params, 0, &f32_bytes(&p.params)); }
         let g0 = bind(d, &bgl0, &[frame_buf.as_entire_binding(), inputs.as_entire_binding(), params.as_entire_binding()]);
         let n_inst = p.instances.len() as u32;
-        let mut inst = vec![];
         let mut bases = vec![];
         let mut base = 0u32;
         for kt in &p.kinds {
             bases.push(base);
             base += kt.n_rows;
         }
-        for i in &p.instances {
-            inst.extend(f32_bytes(&i.lo));
-            inst.extend(i.kind.to_le_bytes());
-            inst.extend(f32_bytes(&i.hi));
-            inst.extend(i.row.to_le_bytes());
-        }
         let init = |label: &str, bytes: &[u8], usage: U| {
             let b = buffer(d, label, bytes.len() as u64, usage | U::COPY_DST);
             g.queue.write_buffer(&b, 0, bytes);
             b
         };
-        let insts = init("instances", &inst, U::STORAGE);
+        let insts = init("instances", &instance_bytes(p), U::STORAGE);
         let bases_buf = init("bases", &bytes_of(&bases), U::STORAGE);
         let visible = buffer(d, "visible", u64::from(n_inst.max(1)) * 4, U::STORAGE);
         let draw_reset = bytes_of(&p.kinds.iter().flat_map(|k| [k.draw.vertices(), 0, 0, 0]).collect::<Vec<_>>());
@@ -477,11 +538,24 @@ impl Loaded {
         let mut g1_sun = vec![];
         for (k, render, shade) in kinds_pl {
             let kt = &p.kinds[k];
-            let rows = init(&kt.name, &f32_bytes(&kt.rows), U::STORAGE);
+            let bytes = f32_bytes(&kt.rows);
+            let rows = if let Some((_, tape)) = edit.filter(|(i, _)| *i == k) {
+                let offset = bytes.len() as u64;
+                let capacity = offset + loft_passes::tier0::TAPE_BYTES;
+                if capacity > d.limits().max_storage_buffer_binding_size {
+                    return Err("editable rows exceed GPU storage binding capacity".into());
+                }
+                let rows = buffer(d, &kt.name, capacity, U::STORAGE | U::COPY_DST);
+                g.queue.write_buffer(&rows, 0, &bytes);
+                g.queue.write_buffer(&rows, offset, &tape.bytes());
+                rows
+            } else {
+                init(&kt.name, &bytes, U::STORAGE)
+            };
             let params = init("kind params", &bytes_of(&[k as u32, bases[k], kt.n_rows, 0]), U::UNIFORM);
             let g1 = bind(d, &bgl_kind, &[rows.as_entire_binding(), visible.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]);
             g1_sun.push(bind(d, &bgl_kind, &[rows.as_entire_binding(), all_rows.as_entire_binding(), params.as_entire_binding(), luts.as_entire_binding()]));
-            kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), _rows: rows, _params: params, g1, g2: g2.clone() });
+            kinds.push(KindGpu { render, shade, module: modules[kt.module].clone(), rows, _params: params, g1, g2: g2.clone() });
         }
         let cull_bg = bind(d, &bgl_cull, &[insts.as_entire_binding(), draw_args.as_entire_binding(), visible.as_entire_binding(), bases_buf.as_entire_binding()]);
         let classify_bg =
@@ -490,47 +564,15 @@ impl Loaded {
 
         // The bundle: recorded once, replayed every frame. Per kind: set pipeline, bind, one drawIndirect.
         let vis_kinds: Vec<u32> = p.passes.iter().find_map(|x| if let Pass::Vis(k) = x { Some(k.clone()) } else { None }).unwrap_or_default();
-        let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-            label: Some("vis64"),
-            color_formats: &[Some(VIS)],
-            depth_stencil: Some(wgpu::RenderBundleDepthStencil { format: DEPTH, depth_read_only: false, stencil_read_only: true }),
-            sample_count: 1,
-            multiview: None,
-        });
-        be.set_bind_group(0, &g0, &[]);
-        for &k in &vis_kinds {
-            let kg = &kinds[k as usize];
-            be.set_pipeline(&kg.render);
-            be.set_bind_group(1, &kg.g1, &[]);
-            be.draw_indirect(&draw_args, u64::from(k) * 16);
-        }
-        let bundle = be.finish(&wgpu::RenderBundleDescriptor { label: Some("vis64") });
+        let bundle = draw_bundle(d, &g0, &kinds, &vis_kinds, &draw_args, None);
         let shadow = (p.shadow_size > 0).then(|| {
             let frame_buf = buffer(d, "sun frame", abi::FRAME_BYTES, U::UNIFORM | U::COPY_DST);
             let g0s = bind(d, &bgl0, &[frame_buf.as_entire_binding(),inputs.as_entire_binding(),params.as_entire_binding()]);
-            let mut be = d.create_render_bundle_encoder(&wgpu::RenderBundleEncoderDescriptor {
-                label: Some("sun"),
-                color_formats: &[Some(VIS)],
-                depth_stencil: Some(wgpu::RenderBundleDepthStencil { format: DEPTH, depth_read_only: false, stencil_read_only: true }),
-                sample_count: 1,
-                multiview: None,
-            });
-            be.set_bind_group(0, &g0s, &[]);
-            let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
-            for &k in &casters {
-                be.set_pipeline(&kinds[k as usize].render);
-                be.set_bind_group(1, &g1_sun[k as usize], &[]);
-                be.draw_indirect(&shadow_args, u64::from(k) * 16);
-                for i in p.instances.iter().filter(|i| i.kind == k) {
-                    for a in 0..3 {
-                        lo[a] = lo[a].min(i.lo[a]);
-                        hi[a] = hi[a].max(i.hi[a]);
-                    }
-                }
-            }
+            let bundle = draw_bundle(d, &g0s, &kinds, &casters, &shadow_args, Some(&g1_sun));
+            let (lo, hi) = caster_bounds(p, &casters);
             let (view_proj, texel, dir) = sun_camera(p.sun, lo, hi, side);
             let vis_t = tex(d, "sun vis", (side, side), VIS, T::RENDER_ATTACHMENT);
-            Shadow { frame_buf, bundle: be.finish(&wgpu::RenderBundleDescriptor { label: Some("sun") }), vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
+            Shadow { frame_buf, bundle, groups: (g0s, g1_sun), args: shadow_args, vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
         });
 
         let n = 2 * p.passes.len() as u32;
@@ -555,6 +597,8 @@ impl Loaded {
             g0,
             bgl0,
             bgl_kind,
+            bgl_shade,
+            instance_bounds: insts,
             draw_args,
             draw_reset,
             shade_args,

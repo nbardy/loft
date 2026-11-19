@@ -1,0 +1,314 @@
+//! Source binding for the Stage 0 prior solver. The solver itself owns the
+//! numerical representation and the convergence verdict.
+use loft_ir::{Code, Diag, Res, Span};
+use loft_parse::ast::*;
+use loft_plan::{Hold, Objective, Plan};
+use std::collections::{BTreeMap, HashSet};
+
+use super::PriorRef;
+
+fn invalid(span: Span, message: &str) -> Diag {
+    Diag::new(
+        Code::E003,
+        span,
+        message,
+        "use the typed plan objectives and holds in spec §9",
+    )
+}
+
+fn objective_terms<'a>(e: &'a Expr, terms: &mut Vec<&'a Expr>) {
+    match &e.kind {
+        ExprKind::Binary(BinOp::Add, left, right) => {
+            objective_terms(left, terms);
+            objective_terms(right, terms);
+        }
+        _ => terms.push(e),
+    }
+}
+
+fn call(e: &Expr) -> Res<(&str, &[Arg])> {
+    match &e.kind {
+        ExprKind::Call { callee, args } => Ok((&callee.name, args)),
+        _ => Err(invalid(e.span, "expected a plan objective or hold call")),
+    }
+}
+
+fn bind<'a, const N: usize>(
+    names: [&str; N],
+    required: usize,
+    args: &'a [Arg],
+    span: Span,
+) -> Res<[Option<&'a Expr>; N]> {
+    let mut bound = [None; N];
+    for (i, arg) in args.iter().enumerate() {
+        let slot = match &arg.name {
+            Some(name) => names.iter().position(|n| *n == name.name),
+            None => (i < N).then_some(i),
+        }
+        .ok_or_else(|| invalid(arg.value.span, "unknown or excess plan argument"))?;
+        if bound[slot].replace(&arg.value).is_some() {
+            return Err(invalid(arg.value.span, "duplicate plan argument"));
+        }
+    }
+    if bound[..required].iter().any(Option::is_none) {
+        return Err(invalid(span, "required plan argument is missing"));
+    }
+    Ok(bound)
+}
+
+enum Weight<'a> {
+    Effort(&'a Expr),
+    Jerk(&'a Expr),
+    Near(&'a Expr, [Option<&'a Expr>; 3]),
+}
+
+enum Constraint<'a> {
+    Position(&'a Expr, &'a Expr, Option<&'a Expr>),
+    Velocity(&'a Expr, &'a Expr, Option<&'a Expr>),
+    Acceleration(&'a Expr, &'a Expr),
+    Arrival(&'a Expr, &'a Expr, &'a Expr),
+    Clearance(&'a Expr, &'a Expr),
+    Landing(&'a Expr, &'a Expr),
+    Pitch(&'a Expr, &'a Expr),
+    Flight(&'a Expr, &'a Expr),
+}
+
+fn weight(e: &Expr) -> Res<Weight<'_>> {
+    let (f, args) = call(e)?;
+    if f == "near" {
+        let [spline, pos, vel, acc] = bind(["spline", "pos", "vel", "acc"], 2, args, e.span)?;
+        return Ok(Weight::Near(spline.unwrap(), [pos, vel, acc]));
+    }
+    let [w] = bind(["w"], 1, args, e.span)?;
+    match f {
+        "effort" => Ok(Weight::Effort(w.unwrap())),
+        "jerk" => Ok(Weight::Jerk(w.unwrap())),
+        _ => Err(invalid(e.span, "unknown plan objective")),
+    }
+}
+
+fn constraint(e: &Expr) -> Res<Constraint<'_>> {
+    let (f, args) = call(e)?;
+    let s = e.span;
+    let pair = |a, b| -> Res<(&Expr, &Expr)> {
+        let [a, b] = bind([a, b], 2, args, s)?;
+        Ok((a.unwrap(), b.unwrap()))
+    };
+    Ok(match f {
+        "pos_at" => {
+            let [t, p, tol] = bind(["t", "p", "tol"], 2, args, s)?;
+            Constraint::Position(t.unwrap(), p.unwrap(), tol)
+        }
+        "vel_at" => {
+            let [t, v, tol] = bind(["t", "v", "tol"], 2, args, s)?;
+            Constraint::Velocity(t.unwrap(), v.unwrap(), tol)
+        }
+        "acc_at" => {
+            let (t, a) = pair("t", "a")?;
+            Constraint::Acceleration(t, a)
+        }
+        "arrive_at" => {
+            let [t, p, v] = bind(["t", "p", "v"], 3, args, s)?;
+            Constraint::Arrival(t.unwrap(), p.unwrap(), v.unwrap())
+        }
+        "clear" => {
+            let (b, m) = pair("b", "margin")?;
+            Constraint::Clearance(b, m)
+        }
+        "land_on" => {
+            let (surf, t) = pair("surf", "at")?;
+            Constraint::Landing(surf, t)
+        }
+        "pitch_in" => {
+            let (lo, hi) = pair("lo", "hi")?;
+            Constraint::Pitch(lo, hi)
+        }
+        "flight_ballistic" => {
+            let (lo, hi) = pair("from", "to")?;
+            Constraint::Flight(lo, hi)
+        }
+        _ => return Err(invalid(e.span, "unknown plan hold")),
+    })
+}
+
+pub(crate) fn check_source(plan: &PlanDecl) -> Res<()> {
+    if !matches!(&plan.ret, TyExpr::Name(n) if n.name == "PriorTable") {
+        return Err(invalid(plan.name.span, "plan must return PriorTable"));
+    }
+    if let Some((knots, span)) = &plan.horizon
+        && *knots as usize != loft_plan::KNOTS
+    {
+        return Err(invalid(span.span, "the v1 solver requires 24 knots"));
+    }
+    let mut names = HashSet::new();
+    for field in &plan.params {
+        if !names.insert(&field.name.name) {
+            return Err(invalid(field.name.span, "duplicate plan parameter"));
+        }
+    }
+    let mut objectives = vec![];
+    objective_terms(&plan.objective, &mut objectives);
+    for e in objectives {
+        weight(e)?;
+    }
+    let mut flight = false;
+    for e in &plan.holds {
+        if matches!(constraint(e)?, Constraint::Flight(..)) && std::mem::replace(&mut flight, true)
+        {
+            return Err(invalid(e.span, "only one ballistic interval is supported"));
+        }
+    }
+    Ok(())
+}
+
+type Defaults<'a> = BTreeMap<&'a str, f64>;
+
+fn scalar(e: &Expr, defaults: &Defaults<'_>) -> Res<f64> {
+    let value = match &e.kind {
+        ExprKind::Name(name) => *defaults
+            .get(name.as_str())
+            .ok_or_else(|| invalid(e.span, "unbound plan scalar"))?,
+        ExprKind::Num {
+            value,
+            suffix: NumSuffix::Deg,
+            ..
+        } => value.to_radians(),
+        ExprKind::Num { value, .. } => *value,
+        ExprKind::Unary(UnOp::Neg, inner) => -scalar(inner, defaults)?,
+        ExprKind::Binary(op, a, b) => {
+            let a = scalar(a, defaults)?;
+            let b = scalar(b, defaults)?;
+            match op {
+                BinOp::Add => a + b,
+                BinOp::Sub => a - b,
+                BinOp::Mul => a * b,
+                BinOp::Div => a / b,
+                _ => return Err(invalid(e.span, "expected scalar arithmetic")),
+            }
+        }
+        _ => return Err(invalid(e.span, "expected a numeric plan expression")),
+    };
+    if !value.is_finite() {
+        return Err(invalid(e.span, "non-finite plan argument"));
+    }
+    Ok(value)
+}
+
+fn vector(e: &Expr, defaults: &Defaults<'_>) -> Res<[f64; 3]> {
+    if let ExprKind::Ctor { args, .. } = &e.kind
+        && let [x, y, z] = args.as_slice()
+    {
+        return Ok([
+            scalar(&x.value, defaults)?,
+            scalar(&y.value, defaults)?,
+            scalar(&z.value, defaults)?,
+        ]);
+    }
+    Err(invalid(e.span, "expected a three-component plan vector"))
+}
+
+fn needs_input(e: &Expr) -> Diag {
+    Diag::new(
+        Code::E405,
+        e.span,
+        "plan asset input has no Stage 0 value binding",
+        "supply spline, box and surface values at a lowered plan call",
+    )
+}
+
+pub(crate) fn lower_source(decl: &PlanDecl, words: &mut Vec<f32>) -> Res<Option<PriorRef>> {
+    if decl.params.iter().any(|p| p.default.is_none()) {
+        // An uninstantiated template has no curve or Truth verdict yet.
+        return Ok(None);
+    }
+    let mut defaults = Defaults::new();
+    for p in &decl.params {
+        defaults.insert(
+            &p.name.name,
+            scalar(p.default.as_ref().unwrap(), &defaults)?,
+        );
+    }
+    let (_, duration) = decl
+        .horizon
+        .as_ref()
+        .ok_or_else(|| invalid(decl.name.span, "missing plan horizon"))?;
+    let duration = scalar(duration, &defaults)?;
+    let num = |e| scalar(e, &defaults);
+    let vec = |e| vector(e, &defaults);
+    let tol = |e: Option<&Expr>| {
+        e.map(|v| scalar(v, &defaults))
+            .transpose()
+            .map(|v| v.unwrap_or(0.001))
+    };
+    let mut terms = vec![];
+    objective_terms(&decl.objective, &mut terms);
+    let mut objectives = vec![];
+    for e in terms {
+        objectives.push(match weight(e)? {
+            Weight::Effort(w) => Objective::Effort(num(w)?),
+            Weight::Jerk(w) => Objective::Jerk(num(w)?),
+            Weight::Near(spline, weights) => {
+                for w in weights.into_iter().flatten() {
+                    num(w)?;
+                }
+                return Err(needs_input(spline));
+            }
+        });
+    }
+    let (mut holds, mut flight) = (vec![], None);
+    for e in &decl.holds {
+        holds.push(match constraint(e)? {
+            Constraint::Position(t, p, l) => Hold::PosAt {
+                time: num(t)?,
+                position: vec(p)?,
+                tolerance: tol(l)?,
+            },
+            Constraint::Velocity(t, v, l) => Hold::VelAt {
+                time: num(t)?,
+                velocity: vec(v)?,
+                tolerance: tol(l)?,
+            },
+            Constraint::Acceleration(t, a) => Hold::AccAt {
+                time: num(t)?,
+                acceleration: vec(a)?,
+            },
+            Constraint::Arrival(t, p, v) => Hold::ArriveAt {
+                time: num(t)?,
+                position: vec(p)?,
+                velocity: vec(v)?,
+            },
+            Constraint::Pitch(a, b) => Hold::PitchIn {
+                lo: num(a)?,
+                hi: num(b)?,
+            },
+            Constraint::Flight(a, b) => {
+                flight = Some([num(a)?, num(b)?]);
+                continue;
+            }
+            Constraint::Clearance(b, m) | Constraint::Landing(b, m) => {
+                num(m)?;
+                return Err(needs_input(b));
+            }
+        });
+    }
+    super::lower(
+        &Plan {
+            duration,
+            gravity: [0., -9.81, 0.],
+            flight,
+            objectives: &objectives,
+            holds: &holds,
+        },
+        0.,
+        words,
+    )
+    .map(Some)
+    .map_err(|_| {
+        Diag::new(
+            Code::E602,
+            decl.name.span,
+            "prior table exceeds the LUT word address space",
+            "reduce the number of baked tables",
+        )
+    })
+}

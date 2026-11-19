@@ -5,6 +5,8 @@
 
 #[path = "kernel_units.rs"]
 mod kernel_units;
+#[path = "motion_source.rs"]
+mod motion_source;
 use crate::Prog;
 use loft_parse::ast::*;
 use loft_ir::{Code, Diag, Res, Span};
@@ -79,6 +81,7 @@ pub fn check(p: &Prog, types: &mut Vec<Ty>) -> Res<CheckedEffects> {
             ck.assignable(&t, &want, c.value.span)?; if t==Ty::AbstractInt {ck.set(&c.value,want);}
         }
     }
+    motion_source::check(&mut ck)?;
     for sc in p.scans.values() { ck.scan(sc)?; }
     for f in p.fns.values() { ck.func(f, None)?; }
     for k in p.kinds.values() {
@@ -237,7 +240,7 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 };
             }
-            if matches!(s.name.as_str(), "World" | "Local") || self.p.spaces.contains(s.name.as_str()) {
+            if matches!(s.name.as_str(), "World" | "Local") || self.comptime && !self.p.bodies.is_empty() && s.name == "Body" || self.p.spaces.contains(s.name.as_str()) {
                 Ok(Space::Named(s.name.clone()))
             } else {
                 Err(Diag::new(
@@ -1036,6 +1039,14 @@ impl<'p,'a> Ck<'p,'a> {
                     )),
                 }
             }
+            Ty::Struct(k) if k == "PriorSample" => match m.name.as_str() {
+                "pos" => Ok(Ty::Geo(Geo::Pt, Space::Named("World".into()))),
+                "vel" => Ok(Ty::Geo(Geo::Vec, Space::Named("World".into()))),
+                "rot" => Ok(Ty::VecN(4)),
+                "compliance" => Ok(Ty::F32),
+                "active" => Ok(Ty::Bool),
+                _ => Err(e003(m.span, "unknown prior sample field", "use pos, vel, rot, compliance or active")),
+            },
             Ty::Struct(k) => {
                 let (_, fields) = self.p.structs[k.as_str()];
                 let f = fields.iter().find(|f| f.name.name == m.name).ok_or_else(||
@@ -1056,6 +1067,24 @@ impl<'p,'a> Ck<'p,'a> {
     fn call(&mut self, callee: &Ident, args: &[Arg], span: Span) -> Res<Ty> {
         if let Some(a) = args.iter().find_map(|a| a.name.as_ref()) {
             return Err(Diag::new(Code::E405, a.span, "named arguments are schedule-only in Phase 0", "pass arguments by position"));
+        }
+        if callee.name == "sample_prior" {
+            let [prior, time] = args else {
+                return Err(e003(span, "sample_prior needs two arguments", "write sample_prior(PlanName, t)"));
+            };
+            let decl = match &prior.value.kind {
+                ExprKind::Name(name) => self.p.plans.get(name.as_str()),
+                _ => None,
+            }.ok_or_else(|| e003(prior.value.span, "expected a named plan", "name a declared plan"))?;
+            if self.ownership.is_none() || decl.params.iter().any(|p| p.default.is_none()) {
+                return Err(Diag::new(Code::E405, span, "sample_prior needs a closed plan and a motion law",
+                    "bind every plan parameter at Stage 0 and sample from a law"));
+            }
+            let actual = self.expr(&time.value)?;
+            self.assignable(&actual, &Ty::F32, time.value.span)?;
+            self.set(&time.value, Ty::F32);
+            self.set(&prior.value, Ty::U32);
+            return Ok(Ty::Struct("PriorSample".into()));
         }
         // `sample_c2(scan, t)`: the scan is named, not passed as a value.
         if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {

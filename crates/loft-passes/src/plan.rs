@@ -1,9 +1,15 @@
 //! Stage 0 lowering for plan declarations. Offsets are word indices in LutTables.
 use loft_abi::{VerdictReason, VerdictRecord, VerdictTag};
 use loft_plan::{COLLOCATION, Plan};
+#[path = "plan_source.rs"]
+mod source;
+pub(crate) use source::{check_source, lower_source};
 
 const HEADER_WORDS: usize = 8;
 const SAMPLE_WORDS: usize = 12;
+
+#[derive(Debug)]
+pub struct LutCapacity;
 
 pub struct PriorRef {
     pub header_word: u32,
@@ -12,7 +18,7 @@ pub struct PriorRef {
 
 /// Append the 32-byte header and the uniform 48-byte Hermite rows. A failed
 /// plan has a header with zero rows and the frozen failure verdict.
-pub fn lower(plan: &Plan<'_>, compliance: f32, luts: &mut Vec<f32>) -> PriorRef {
+pub fn lower(plan: &Plan<'_>, compliance: f32, luts: &mut Vec<f32>) -> Result<PriorRef, LutCapacity> {
     let duration = plan.duration as f32;
     let samples = (|| {
         if !duration.is_finite() || duration <= 0.0 || !compliance.is_finite() || compliance < 0.0 {
@@ -47,12 +53,13 @@ pub fn lower(plan: &Plan<'_>, compliance: f32, luts: &mut Vec<f32>) -> PriorRef 
             .collect::<Option<Vec<_>>>()
     })();
 
-    let header = luts.len().next_multiple_of(4);
-    let table = header + HEADER_WORDS;
-    let (header_word, table_word) = (
-        u32::try_from(header).expect("LutTables header address"),
-        u32::try_from(table).expect("LutTables row address"),
-    );
+    let header = luts.len().checked_next_multiple_of(4).ok_or(LutCapacity)?;
+    let table = header.checked_add(HEADER_WORDS).ok_or(LutCapacity)?;
+    let end = table.checked_add(samples.as_ref().map_or(0, |s| s.len() * SAMPLE_WORDS)).ok_or(LutCapacity)?;
+    u32::try_from(end).map_err(|_| LutCapacity)?;
+    let header_word = u32::try_from(header).map_err(|_| LutCapacity)?;
+    let table_word = u32::try_from(table).map_err(|_| LutCapacity)?;
+    luts.try_reserve(end - luts.len()).map_err(|_| LutCapacity)?;
     let (tag, reason) = if samples.is_some() {
         (VerdictTag::Held, VerdictReason::None)
     } else {
@@ -71,14 +78,14 @@ pub fn lower(plan: &Plan<'_>, compliance: f32, luts: &mut Vec<f32>) -> PriorRef 
         0.0,
     ]);
     luts.extend(samples.into_iter().flatten().flatten());
-    PriorRef {
+    Ok(PriorRef {
         header_word,
         verdict: VerdictRecord {
             tag: tag as u32,
             reason_code: reason as u32,
             ..VerdictRecord::default()
         },
-    }
+    })
 }
 
 /// Cpu twin of the LUT reader. Words in each returned row are position and
@@ -179,7 +186,7 @@ mod tests {
                 Hold::PitchIn { lo: 0.1, hi: 0.2 },
             ],
         };
-        let prior = lower(&request, 0.125, &mut lut);
+        let prior = lower(&request, 0.125, &mut lut).unwrap();
         assert_eq!(prior.verdict.tag, VerdictTag::Held as u32);
         assert_eq!(prior.header_word, 4);
         assert_eq!(&lut[..4], &[7.0, 8.0, 9.0, 0.0]);
@@ -217,7 +224,7 @@ mod tests {
             },
             0.125,
             &mut lut,
-        );
+        ).unwrap();
         assert_eq!(bad.verdict.tag, VerdictTag::Unknown as u32);
         assert_eq!(bad.verdict.reason_code, VerdictReason::SolveFailed as u32);
         assert_eq!(lut[bad.header_word as usize + 1].to_bits(), 0);

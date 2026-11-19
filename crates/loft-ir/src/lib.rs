@@ -92,6 +92,8 @@ pub enum Code {
     E501,
     /// Two laws write the same field.
     E502,
+    /// A solver constraint would race.
+    E503,
     E504,
     E505,
     E110,
