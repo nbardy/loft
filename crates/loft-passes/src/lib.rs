@@ -1297,7 +1297,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         emit::paths::present(&p, &types, sky, aov, print)
     };
     let shared = texts.len();
-    texts.push(("cull".into(), emit::cull_module()));
+    texts.push(("cull".into(), emit::cull_module(ids.len() == 1)));
     texts.push(("classify".into(), emit::classify_module()));
     texts.push(("present".into(), present));
     let mut bakes = Vec::new();

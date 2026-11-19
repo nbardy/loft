@@ -63,6 +63,13 @@ fn branch_hit(ro: p3@Branch, rd: d3@Branch, len: f) -> f {
   let lo = ra * s
   let hi = len + rb * s
   let h = qb * qb - qa * qc
+  # The endpoint balls are inside the cone tangent to both. A separated
+  # positive quadratic rules out the sides and both caps. Keep the original
+  # tests near tangency, where the three rebased quadratics can round differently.
+  let margin = 0.0001 * (dot(v, v) + len * len)
+  if qa > 0.0001 && h < -margin {
+    return -1
+  }
   var side = -1.0
   let oy = dot(ro - a, axis)
   if qa == 0 {
