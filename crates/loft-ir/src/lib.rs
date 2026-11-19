@@ -3,11 +3,12 @@
 
 pub mod ast;
 pub mod program;
+pub mod sexp;
 
 use std::fmt;
 
 /// A byte range in one source file.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Span {
     pub file: u16,
     pub lo: u32,
@@ -92,6 +93,9 @@ pub enum Code {
     E501,
     /// Two laws write the same field.
     E502,
+    E504,
+    E505,
+    E110,
     /// A schedule or default-engine configuration that cannot be lowered.
     E520,
     /// A row that cannot be emitted: missing or unknown column, a value outside its range.

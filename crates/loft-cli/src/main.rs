@@ -68,6 +68,20 @@ fn run() -> Result<(), String> {
     let set = overrides(&mut args)?;
     let cmd = args.first().cloned().unwrap_or_default();
     match cmd.as_str() {
+        "ir" | "build" if cmd=="ir" || args.get(1).is_some_and(|p|p.ends_with(".sexp")) => {
+            let output=flag(&mut args,"-o");
+            args.retain(|a|a!="--sexp");
+            let path=Path::new(args.get(1).ok_or("usage: loft ir SCENE --sexp [-o FILE]")?);
+            let program=if path.extension().is_some_and(|e|e=="sexp") {
+                loft_ir::sexp::read(&std::fs::read_to_string(path).map_err(|e|e.to_string())?)?
+            } else {
+                let src=sources(path)?;
+                loft_passes::compile(&src,&set).map_err(|e|render(&e,&src))?.0
+            };
+            let text=loft_ir::sexp::write(&program)?;
+            if let Some(out)=output {std::fs::write(out,text).map_err(|e|e.to_string())?;}else if cmd=="ir"{println!("{text}");}
+            Ok(())
+        }
         "check" | "show" => {
             let scene = PathBuf::from(args.get(1).ok_or("usage: loft check|show SCENE")?);
             let src = sources(&scene)?;

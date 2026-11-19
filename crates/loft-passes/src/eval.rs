@@ -454,7 +454,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                 Ok(match self.ty(e) {
                     Ty::U32 => Val::U(v as u32),
                     Ty::I32 | Ty::AbstractInt => Val::I(v as i32),
-                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
+                    Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(f64::from(v as f32))),
                 })
             }
             ExprKind::Bool(b) => Ok(Val::B(Some(*b))),
@@ -469,7 +469,7 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     return Ok(match self.types[c.value.id as usize] {
                         Ty::U32 => Val::U(*x as u32),
                         Ty::I32 | Ty::AbstractInt => Val::I(*x as i32),
-                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => Val::S(S::c(*x)),
+                        Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => Val::S(S::c(*x)),
                     });
                 }
                 let saved = std::mem::take(&mut self.env);
@@ -554,10 +554,16 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => Ok(normalize(build(vals, 3))),
                     Ty::Geo(..) => Ok(build(vals, 3)),
                     Ty::VecN(n) => Ok(build(vals, n as usize)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::U32 | other @ Ty::I32 | other @ Ty::F32 | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked ctor of {other}"),
                 }
             }
             ExprKind::Call { callee, args } => {
+                if callee.name=="place" {
+                    let Val::V(o,_)=self.expr(&args[0].value)? else {unreachable!("typed placement")};
+                    let exact=|s:&S|s.exact().map(|v|v as f32).ok_or_else(||err(e.span,"placement varies across the query","store it in a row"));
+                    let yaw=match args.get(1) {Some(a)=>match self.expr(&a.value)?{Val::S(x)=>exact(&x)?,Val::I(n)=>n as f32,_=>unreachable!("typed yaw")},None=>0.};
+                    return Ok(Val::X(Rigid::yaw([exact(&o[0])?,exact(&o[1])?,exact(&o[2])?],yaw)));
+                }
                 if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") {
                     let ExprKind::Name(n) = &args[0].value.kind else { unreachable!("checked scan name") };
                     let lut = self.luts.iter().find(|l| &l.name == n).ok_or_else(|| err(e.span, format!("scan `{n}` is not baked yet"), "a scan reads only scans declared before it"))?;
@@ -753,6 +759,9 @@ impl<'p, 'a, S: Scalar> Eval<'p, 'a, S> {
             }
         };
         match name {
+            "frame_axes" => build(v,12),
+            "coords" => v.remove(0),
+            "dir" => normalize(v.remove(0)),
             "loft_zero" => match &v[0] {
                 Val::S(_) => Val::S(S::c(0.0)),
                 Val::V(c, _) => Val::V(vec![S::c(0.0); c.len()], 0.0),

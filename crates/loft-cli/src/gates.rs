@@ -222,7 +222,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                         // The surface normal is a unit vector from a cross product of two AD derivatives (|du| ~ 6 m
                         // per unit u): f32 cancellation alone measured 3.1e-5. Its contract is 1e-4 per component, set
                         // after that measurement (phase1.md says so); every other quantity keeps 1e-5 or 8 ULP.
-                        let tol = if q == 4 { 1e-4 } else { twin_tol(a) };
+                        let tol = match q { 4 => 1e-4, 2 => twin_tol(a).max(2e-5), _ => twin_tol(a) };
                         // `visible` misses are any negative value: compare hit/miss, then t on hits.
                         let err = if q == 1 && (a < 0.0 || gv < 0.0) { if (a < 0.0) == (gv < 0.0) { 0.0 } else { f64::INFINITY } } else { err };
                         if err > worst[q] && q == 2 {

@@ -1,41 +1,41 @@
-// Light: a sun with its shadow, a sky by quadrature, and whatever the surface emits. The schedule's shade pass names
-// the light fn and the present pass names the sky fn; write others and name them instead.
+# Light: a sun with its shadow, a sky by quadrature, and whatever the surface emits. The schedule's shade pass names
+# the light fn and the present pass names the sky fn; write others and name them instead.
 
-// Sky radiance by direction, without the sun's disc (the sun arrives separately, shadowed).
-fn sky_dome(d: vec3<f32>) -> vec3<f32> {
-  let up = clamp(d.y, -1.0, 1.0);
-  let sky = mix(vec3(0.48, 0.55, 0.64), vec3(0.16, 0.29, 0.55), sqrt(max(up, 0.0)));
-  let ground = mix(vec3(0.24, 0.21, 0.16), vec3(0.12, 0.10, 0.08), sqrt(max(-up, 0.0)));
-  return select(ground, sky, up >= 0.0);
+# Sky radiance by direction, without the sun's disc (the sun arrives separately, shadowed).
+fn sky_dome(d: rgb) -> rgb {
+  let up = clamp(d.y, -1.0, 1.0)
+  let sky = mix([0.48, 0.55, 0.64], [0.16, 0.29, 0.55], sqrt(max(up, 0.0)))
+  let ground = mix([0.24, 0.21, 0.16], [0.12, 0.10, 0.08], sqrt(max(-up, 0.0)))
+  select(ground, sky, up >= 0.0)
 }
 
-// The Bsdf under the sun (radiance factor 2.2, 2.0, 1.7, times the shadow map), plus the sky integrated by a fixed
-// 12-direction Fibonacci quadrature of the sphere (each 4 pi / 12 sr, times ambient occlusion, times an exposure of
-// 0.85), plus emission (the Bsdf at l = 0). A quadrature, not image-based light: glossy lobes see the sky as twelve
-// soft patches. One loop with one `eval_bsdf` site: each site is inlined, and Metal's compile time follows it.
-fn sun_sky(b: Bsdf, n: vec3<f32>, v: vec3<f32>, sun: vec3<f32>, shadow: f32, ao: f32) -> vec3<f32> {
-  var c = vec3(0.0);
-  for i in 0u..14u {
-    var l = vec3(0.0);
-    var e = vec3(1.0);
-    if i == 1u {
-      l = sun;
-      e = vec3(2.2, 2.0, 1.7) * shadow;
+# The Bsdf under the sun (radiance factor 2.2, 2.0, 1.7, times the shadow map), plus the sky integrated by a fixed
+# 12-direction Fibonacci quadrature of the sphere (each 4 pi / 12 sr, times ambient occlusion, times an exposure of
+# 0.85), plus emit_lobe (the Bsdf at l = 0). A quadrature, not image-based light: glossy lobes see the sky as twelve
+# soft patches. One loop with one `eval_bsdf` site: each site is inlined, and Metal's compile time follows it.
+fn sun_sky(b: Bsdf, n: rgb, v: rgb, sun: rgb, shadow: f, ao: f) -> rgb {
+  var c = rgb(0.0)
+  for i in 0..14 {
+    var l = rgb(0.0)
+    var e = rgb(1.0)
+    if i == 1 {
+      l = sun
+      e = [2.2, 2.0, 1.7] * shadow
     }
-    if i >= 2u {
-      let z = 1.0 - (2.0 * f32(i - 2u) + 1.0) / 12.0;
-      let r = sqrt(1.0 - z * z);
-      let a = 2.3999632 * f32(i - 2u);
-      l = vec3(r * cos(a), z, r * sin(a));
-      e = sky_dome(l) * (0.85 * 1.0471976 * ao);
+    if i >= 2 {
+      let z = 1.0 - (2.0 * f32(i - 2) + 1.0) / 12.0
+      let r = sqrt(1.0 - z * z)
+      let a = 2.3999632 * f32(i - 2)
+      l = [r * cos(a), z, r * sin(a)]
+      e = sky_dome(l) * (0.85 * 1.0471976 * ao)
     }
-    c += eval_bsdf(b, n, v, l) * e;
+    c = c + eval_bsdf(b, n, v, l) * e
   }
-  return c;
+  c
 }
 
-// Background: the dome plus the sun's disc and glow.
-fn sky_color(rd: vec3<f32>, sun: vec3<f32>) -> vec3<f32> {
-  let s = max(dot(rd, sun), 0.0);
-  return sky_dome(rd) + vec3(1.0, 0.85, 0.6) * (pow(s, 600.0) * 6.0 + pow(s, 8.0) * 0.2);
+# Background: the dome plus the sun's disc and glow.
+fn sky_color(rd: rgb, sun: rgb) -> rgb {
+  let s = max(dot(rd, sun), 0.0)
+  sky_dome(rd) + [1.0, 0.85, 0.6] * (pow(s, 600.0) * 6.0 + pow(s, 8.0) * 0.2)
 }

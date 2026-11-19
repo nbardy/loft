@@ -5,20 +5,20 @@
 
 use crate::Span;
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Ident {
     pub name: String,
     pub span: Span,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(serde::Serialize, Clone, Debug, Default)]
 pub struct Module {
     pub items: Vec<Item>,
     /// `diff(f, x)` sites, as written: the AD pass generates `f__d_x` (the parser already called it).
     pub diffs: Vec<(Ident, Ident)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub enum Item {
     Use(Vec<Ident>),
     Space(Vec<Ident>),
@@ -37,14 +37,14 @@ pub enum Item {
 }
 
 /// `law name(h: K, dt, tbl: [T]) writes h.{a, b} { ... }`.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct LawDecl {
     pub f: FnDecl,
     pub writes: Vec<Ident>,
 }
 
 /// `camera Main { at: ..., radius: ..., height: ..., period: ..., fov: ... }`: build-stage values.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct CameraDecl {
     pub name: Ident,
     pub fields: Vec<(Ident, Expr)>,
@@ -52,7 +52,7 @@ pub struct CameraDecl {
 
 /// `scan name(t: f32 in lo..hi, steps: N) @schedule(bake_lut) -> Table[T] { init: e; step(prev, t_i): e; }`:
 /// a sequential integration baked at load into an N-entry table, read with `sample_c2(name, t)`.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct ScanDecl {
     pub name: Ident,
     pub var: Ident,
@@ -69,7 +69,7 @@ pub struct ScanDecl {
 }
 
 /// `const X: T = e;` (stage 1, plain WGSL) or `comptime const X: T = e;` (stage 0, overridable by the CLI).
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct ConstDecl {
     pub comptime: bool,
     pub name: Ident,
@@ -79,13 +79,13 @@ pub struct ConstDecl {
 
 /// `@name(args)` before a fn. Phase 0 knows one: `@lipschitz(param)` or `@lipschitz(max(a, b))`, a library axiom
 /// the truth gate samples.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Attr {
     pub name: Ident,
     pub args: Vec<Expr>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct FnDecl {
     pub comptime: bool,
     pub attrs: Vec<Attr>,
@@ -97,14 +97,14 @@ pub struct FnDecl {
     pub raw: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Param {
     pub name: Ident,
     /// `None` for a query's `self`, and for an unannotated parameter until elaboration infers it.
     pub ty: Option<TyExpr>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum QueryKind {
     /// Closed-form ray hit: `(self, ro: Pt[S], rd: Dir[S]) -> f32`, negative for a miss.
     Visible,
@@ -116,7 +116,7 @@ pub enum QueryKind {
     Surface,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct KindDecl {
     pub name: Ident,
     pub params: Vec<KindParam>,
@@ -132,7 +132,7 @@ impl KindDecl {
 }
 
 /// `comptime name: T` or `comptime name: u32 in lo..hi`.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct KindParam {
     pub name: Ident,
     pub ty: TyExpr,
@@ -140,7 +140,7 @@ pub struct KindParam {
     pub span: Span,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct RowField {
     pub name: Ident,
     pub ty: TyExpr,
@@ -150,7 +150,7 @@ pub struct RowField {
     pub default: Option<Expr>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct RowRange {
     pub lo: Expr,
     pub hi: Option<Expr>,
@@ -158,14 +158,14 @@ pub struct RowRange {
     pub strict: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct ScheduleDecl {
     pub name: Ident,
     pub passes: Vec<PassDecl>,
 }
 
 /// `pass label: verb(args) { body calls };`
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct PassDecl {
     pub label: Ident,
     pub verb: Ident,
@@ -173,12 +173,12 @@ pub struct PassDecl {
     pub body: Vec<(Ident, Vec<Arg>)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Block {
     pub stmts: Vec<Stmt>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub enum Stmt {
     Let { mutable: bool, name: Ident, ty: Option<TyExpr>, value: Expr },
     Assign { target: Expr, op: Option<BinOp>, value: Expr },
@@ -192,14 +192,14 @@ pub enum Stmt {
     Expr(Expr),
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Expr {
     pub id: u32,
     pub span: Span,
     pub kind: ExprKind,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumSuffix {
     None,
     /// Degrees: the value converts to radians where it is used.
@@ -209,7 +209,7 @@ pub enum NumSuffix {
     Unit,
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub enum ExprKind {
     Num { value: f64, suffix: NumSuffix, text: String, float: bool },
     Bool(bool),
@@ -221,17 +221,16 @@ pub enum ExprKind {
     Ctor { ty: TyExpr, args: Vec<Arg> },
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
-    /// `[x, y, z]` or `[x, y, z]@S` before elaboration, which replaces it by the constructor its context asks for.
-    List(Vec<Expr>, Option<SpaceRef>),
+
 }
 
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct Arg {
     pub name: Option<Ident>,
     pub value: Expr,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -278,14 +277,14 @@ impl BinOp {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnOp {
     Neg,
     Not,
 }
 
 /// Type syntax as written.
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub enum TyExpr {
     /// `f32`, `u32`, `bool`, `vec3f`, a unit alias like `Meters`.
     Name(Ident),
@@ -311,14 +310,14 @@ impl TyExpr {
 }
 
 /// `World`, or `'s` (a space variable in a fn signature, or a map's fresh space).
-#[derive(Clone, Debug)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct SpaceRef {
     pub name: String,
     pub var: bool,
     pub span: Span,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Geo {
     Pt,
     Vec,
@@ -340,7 +339,7 @@ impl Geo {
 
 /// A checked space: declared, fresh (introduced by `map`, numbered), a signature variable, or the open source of a
 /// placement built by `place` (fixed where it is stored or composed, so it meets any space).
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Space {
     Named(String),
     Fresh(String, u32),
@@ -360,7 +359,7 @@ impl std::fmt::Display for Space {
 }
 
 /// Checked types. Units are f32 aliases in Phase 0 (`Meters`, `Rad`, ...); suffixes convert (`deg` to radians).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
 pub enum Ty {
     Void,
     Bool,

@@ -1,39 +1,30 @@
-// Exact signed distances. `@lipschitz(v)` is an axiom: the result is 1-Lipschitz in `v` while the other arguments are
-// constant over the traced region (the compiler voids the axiom otherwise). The truth gate samples every axiom used.
-
-@lipschitz(v)
-fn sd_sphere(v: Vec['s], r: f32) -> f32 {
-  return length(v) - r;
+fn sphere[S](v: v3@S, r: f) -> f {
+  length(v) - r
 }
 
-@lipschitz(p)
-fn sd_capsule(p: Pt['s], a: Pt['s], b: Pt['s], r: f32) -> f32 {
-  let pa = p - a;
-  let ba = b - a;
-  let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0);
-  return length(pa - ba * h) - r;
+fn capsule[S](p: p3@S, a: p3@S, b: p3@S, r: f) -> f {
+  let pa = p - a
+  let ba = b - a
+  let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-12), 0.0, 1.0)
+  length(pa - ba * h) - r
 }
 
-@lipschitz(v)
-fn sd_box(v: Vec['s], half: vec3<f32>) -> f32 {
-  let q = abs(v.xyz) - half;
-  return length(max(q, vec3(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0);
+fn box_sdf[S](v: v3@S, half: rgb) -> f {
+  let q = abs(v.xyz) - half
+  length(max(q, rgb(0.0))) + min(max(q.x, max(q.y, q.z)), 0.0)
 }
 
-// Polynomial smooth minimum (iq). Its gradient is a convex combination of the inputs' gradients.
-@lipschitz(max(a, b))
-fn smin_poly(a: f32, b: f32, k: f32) -> f32 {
-  let h = max(k - abs(a - b), 0.0) / k;
-  return min(a, b) - h * h * k * 0.25;
+# Polynomial smooth minimum (iq). Its gradient is a convex combination of the inputs' gradients.
+fn smin(a: f, b: f, k: f) -> f {
+  let h = max(k - abs(a - b), 0.0) / k
+  min(a, b) - h * h * k * 0.25
 }
 
-@lipschitz(v)
-fn sd_round_box(v: Vec['s], half: vec3<f32>, r: f32) -> f32 {
-  return sd_box(v, half - vec3(r)) - r;
+fn round_box[S](v: v3@S, half: rgb, r: f) -> f {
+  box_sdf(v, half - rgb(r)) - r
 }
 
-// Polynomial smooth subtraction: `a` with `b` carved out, blended over `k`.
-@lipschitz(max(a, b))
-fn ssub_poly(a: f32, b: f32, k: f32) -> f32 {
-  return -smin_poly(-a, b, k);
+# Polynomial smooth subtraction: `a` with `b` carved out, blended over `k`.
+fn ssub(a: f, b: f, k: f) -> f {
+  -smin(-a, b, k)
 }

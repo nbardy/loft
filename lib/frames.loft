@@ -1,18 +1,18 @@
-// Frames along a curve, for scans: a first frame from a tangent and an up hint, then rotation-minimising transport by
-// double reflection (Wang, Juttler, Zheng, Liu 2008): no twist accumulates, unlike a Frenet frame.
+# Frames along a curve, for scans: a first frame from a tangent and an up hint, then rotation-minimising transport by
+# double reflection (Wang, Juttler, Zheng, Liu 2008): no twist accumulates, unlike a Frenet frame.
 
-fn frame_from_tangent(o: Pt['s], t: Dir['s], up: Dir['s]) -> Frame['s] {
-  let n = normalize(up - t * dot(up, t));
-  return Frame['s](o, t, n, cross(t, n));
+fn frame_from_tangent[S](o: p3@S, t: d3@S, up: d3@S) -> frame@S {
+  let n = normalize(up - t * dot(up, t))
+  frame_axes(o, t, n, cross(t, n))
 }
 
-fn transport_frame(prev: Frame['s], o: Pt['s], t1: Dir['s]) -> Frame['s] {
-  let v1 = o - prev.origin;
-  let c1 = max(dot(v1, v1), 1e-20);
-  let rl = prev.normal - v1 * (2.0 * dot(v1, prev.normal) / c1);
-  let tl = prev.tangent - v1 * (2.0 * dot(v1, prev.tangent) / c1);
-  let v2 = t1 - tl;
-  let c2 = max(dot(v2, v2), 1e-20);
-  let n = normalize(rl - v2 * (2.0 * dot(v2, rl) / c2));
-  return Frame['s](o, t1, n, cross(t1, n));
+fn transport_frame[S](prev: frame@S, o: p3@S, t1: d3@S) -> frame@S {
+  let v1 = o - prev.origin
+  let c1 = max(dot(v1, v1), 1e-20)
+  let rl = prev.normal - v1 * (2.0 * dot(v1, prev.normal) / c1)
+  let tl = prev.tangent - v1 * (2.0 * dot(v1, prev.tangent) / c1)
+  let v2 = t1 - tl
+  let c2 = max(dot(v2, v2), 1e-20)
+  let n = normalize(rl - v2 * (2.0 * dot(v2, rl) / c2))
+  frame_axes(o, t1, n, cross(t1, n))
 }

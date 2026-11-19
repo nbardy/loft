@@ -42,7 +42,13 @@ pub fn parse(file: u16, source: &str, next: &mut u32) -> Res<Module> {
     let mut prev = "";
     for t in tree.tokens() {
         let word = t.text(source);
-        if (!continued(prev, word, depth) || (prev == "*" && tokens.iter().rev().nth(1).is_some_and(|t: &Lex| t.text == "::")))
+        if (!continued(prev, word, depth)
+            || (prev == "*"
+                && tokens
+                    .iter()
+                    .rev()
+                    .nth(1)
+                    .is_some_and(|t: &Lex| t.text == "::")))
             && let Some((_, s)) = t.leading.iter().find(|(k, _)| *k == Trivia::Newline)
         {
             tokens.push(Lex {
@@ -103,9 +109,6 @@ fn named(name: &str, span: Span) -> Ident {
 }
 fn ty(name: &str, span: Span) -> TyExpr {
     TyExpr::Name(named(name, span))
-}
-fn arg(value: Expr) -> Arg {
-    Arg { name: None, value }
 }
 impl Parser<'_, '_> {
     fn cur(&self) -> Lex<'_> {
@@ -280,7 +283,8 @@ impl Parser<'_, '_> {
             }
             return Ok(Item::Space(ns));
         }
-        if self.eat("const") || self.eat("param") {
+        let parameter = self.eat("param");
+        if parameter || self.eat("const") {
             let name = self.ident()?;
             let t = if self.eat(":") {
                 Some(self.ty()?)
@@ -290,7 +294,7 @@ impl Parser<'_, '_> {
             self.expect("=")?;
             let value = self.expr(0)?;
             return Ok(Item::Const(ConstDecl {
-                comptime: true,
+                comptime: parameter,
                 name,
                 ty: t,
                 value,
@@ -504,7 +508,7 @@ impl Parser<'_, '_> {
             vec![]
         };
         self.locals = params.iter().map(|p| p.name.name.clone()).collect();
-        let body = self.body(!build)?;
+        let body = self.body(!build || ret.is_some())?;
         self.generics.clear();
         self.locals.clear();
         Ok(FnDecl {
@@ -1024,7 +1028,34 @@ impl Parser<'_, '_> {
             self.derivatives.push((f, x));
         }
         if self.is("(") {
-            let args = self.args()?;
+            let mut args = self.args()?;
+            if matches!(n.name.as_str(), "rgb" | "v2" | "v3" | "v4") {
+                let target = match n.name.as_str() {
+                    "v2" => "vec2f",
+                    "v4" => "vec4f",
+                    _ => "vec3f",
+                };
+                return Ok(self.node(
+                    span,
+                    ExprKind::Ctor {
+                        ty: ty(target, span),
+                        args,
+                    },
+                ));
+            }
+            if let Some(op) = match n.name.as_str() {
+                "xor" => Some(BinOp::BitXor),
+                "shr" => Some(BinOp::Shr),
+                "bit_and" => Some(BinOp::BitAnd),
+                _ => None,
+            } {
+                if args.len() != 2 {
+                    return self.err("two integer operands");
+                }
+                let rhs = args.pop().unwrap().value;
+                let lhs = args.pop().unwrap().value;
+                return Ok(self.node(span, ExprKind::Binary(op, Box::new(lhs), Box::new(rhs))));
+            }
             return Ok(self.node(span, ExprKind::Call { callee: n, args }));
         }
         if self.fields.contains(&n.name) && !self.locals.contains(&n.name) {

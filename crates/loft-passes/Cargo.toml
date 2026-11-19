@@ -7,6 +7,11 @@ publish.workspace = true
 description = "Layer 2: parse, check, stage 0 (comptime rows), derived bounds and Lipschitz, WGSL/naga emit, schedule lowering."
 
 [dependencies]
+loft-parse = { path = "../loft-parse" }
+blake3 = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+tempfile = "3"
 loft-ir = { path = "../loft-ir" }
 naga.workspace = true
 

@@ -1,16 +1,16 @@
-// Stage-0 helpers for laying out instances.
+# Stage-0 helpers for laying out instances.
 
-// Cell `i` of `n` on a near-square grid in the xz plane, centred on the origin.
-comptime fn grid_spot(i: u32, n: u32, spacing: f32) -> vec3<f32> {
-  let cols = u32(sqrt(f32(n)) + 0.999);
-  let rows = (n + cols - 1u) / cols;
-  let x = (f32(i % cols) - 0.5 * f32(cols - 1u)) * spacing;
-  let z = (f32(i / cols) - 0.5 * f32(rows - 1u)) * spacing;
-  return vec3(x, 0.0, z);
+# Cell `i` of `n` on a near-square grid in the xz plane, centred on the origin.
+build fn grid_spot(i: u, n: u, spacing: f) -> rgb {
+  let cols = u32(sqrt(f32(n)) + 0.999)
+  let rows = (n + cols - 1) / cols
+  let x = (f32(i % cols) - 0.5 * f32(cols - 1)) * spacing
+  let z = (f32(i / cols) - 0.5 * f32(rows - 1)) * spacing
+  [x, 0.0, z]
 }
 
-// A soft colour per index.
-comptime fn palette(i: u32) -> vec3<f32> {
-  let a = f32(i) * 1.7 + 0.4;
-  return vec3(0.55 + 0.35 * sin(a), 0.5 + 0.35 * sin(a + 2.1), 0.5 + 0.35 * sin(a + 4.2));
+# A soft colour per index.
+build fn palette(i: u) -> rgb {
+  let a = f32(i) * 1.7 + 0.4
+  [0.55 + 0.35 * sin(a), 0.5 + 0.35 * sin(a + 2.1), 0.5 + 0.35 * sin(a + 4.2)]
 }

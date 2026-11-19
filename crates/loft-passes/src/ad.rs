@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, HashSet};
 fn tty(t: &TyExpr) -> TyExpr {
     match t {
         TyExpr::Geo(Geo::Pt | Geo::Dir | Geo::Norm, s) => TyExpr::Geo(Geo::Vec, s.clone()),
-        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_)) => other.clone(),
+        other @ (TyExpr::Name(_) | TyExpr::Generic(..) | TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) | TyExpr::Table(_)) => other.clone(),
     }
 }
 
@@ -71,6 +71,7 @@ impl Ad<'_> {
     fn dz(&mut self, x: &Expr) -> Res<Expr> {
         match self.d(x)? {
             Some(d) => Ok(d),
+            None if matches!(x.kind, ExprKind::Num { .. }) => Ok(self.num(0.0,x.span)),
             None => {
                 let c = self.cp(x);
                 Ok(self.call("loft_zero", vec![c], x.span))
@@ -169,7 +170,7 @@ impl Ad<'_> {
                 let ty = match ty {
                     TyExpr::Geo(Geo::Pt | Geo::Vec, s) => TyExpr::Geo(Geo::Vec, s.clone()),
                     TyExpr::Name(_) | TyExpr::Generic(..) => ty.clone(),
-                    TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
+                    TyExpr::Geo(..) | TyExpr::Xform(..) | TyExpr::Field(_) | TyExpr::Table(_) | TyExpr::Frame(_) => return Err(refuse("this constructor")),
                 };
                 let mut out = vec![];
                 for (a, d) in args.iter().zip(ds) {
@@ -425,7 +426,7 @@ impl Ad<'_> {
             }
         }
         let body = self.block(&f.body)?;
-        Ok(FnDecl {
+        Ok(FnDecl { raw: None,
             comptime: false,
             attrs: vec![],
             name: Ident { name: format!("{}__jvp", f.name.name), span: f.name.span },
@@ -454,10 +455,11 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 continue;
             }
             let Some(decl) = ad.orig.get(f.name.as_str()).copied() else {
-                return Err(Diag::new(Code::E002, f.span, format!("`diff` of unknown fn `{}`", f.name), "differentiate a top-level fn"));
+                return Err(Diag::new(Code::E011, f.span, format!("`diff` of unknown fn `{}`", f.name), "differentiate a top-level fn"));
             };
-            if !decl.params.iter().any(|p| p.name.name == x.name) {
-                return Err(Diag::new(Code::E002, x.span, format!("`{}` has no parameter `{}`", f.name, x.name), "name one of its parameters"));
+            let derivative = if x.name.is_empty() { decl.params.first().map(|p| &p.name.name) } else { Some(&x.name) };
+            if !decl.params.iter().any(|p| Some(&p.name.name) == derivative) {
+                return Err(Diag::new(Code::E011, x.span, format!("`{}` has no parameter `{}`", f.name, x.name), "name one of its parameters"));
             }
             // f__d_x(p...) = f__jvp(p..., [1 in x, 0 elsewhere])
             let sp = f.span;
@@ -466,7 +468,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 args.push(ad.name(&p.name.name, sp));
             }
             for p in &decl.params {
-                let t = if p.name.name == x.name {
+                let t = if Some(&p.name.name) == derivative {
                     ad.num(1.0, sp)
                 } else {
                     let n = ad.name(&p.name.name, sp);
@@ -475,7 +477,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                 args.push(t);
             }
             let call = ad.call(&format!("{}__jvp", f.name), args, sp);
-            top.push(FnDecl {
+            top.push(FnDecl { raw: None,
                 comptime: false,
                 attrs: vec![],
                 name: Ident { name: format!("{}__d_{}", f.name, x.name), span: sp },
@@ -508,7 +510,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
                     let Some(i) = top.iter().position(|f| f.name.name == name) else {
                         return Err(Diag::new(Code::E405, Span::NONE, format!("`diff` reaches `{name}`, which has no body to differentiate"), "differentiate fns with bodies"));
                     };
-                    let f = std::mem::replace(&mut top[i], FnDecl { comptime: false, attrs: vec![], name: Ident { name: String::new(), span: Span::NONE }, params: vec![], ret: None, body: Block { stmts: vec![] } });
+                    let f = std::mem::replace(&mut top[i], FnDecl { raw: None, comptime: false, attrs: vec![], name: Ident { name: String::new(), span: Span::NONE }, params: vec![], ret: None, body: Block { stmts: vec![] } });
                     let j = ad.jvp(&f);
                     top[i] = f;
                     j?
@@ -520,7 +522,7 @@ pub fn run(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     for (k, f) in in_kinds {
         let kd = modules.iter_mut().flat_map(|m| m.items.iter_mut()).find_map(|item| match item {
             Item::Kind(kd) if kd.name.name == k => Some(kd),
-            Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
+            Item::Build(_) | Item::Use(_) | Item::Law(_) | Item::Check(_) | Item::Camera(_) | Item::Kind(_) | Item::Space(_) | Item::Unit(_) | Item::Const(_) | Item::Fn(_) | Item::Scan(_) | Item::Schedule(_) => None,
         });
         kd.expect("the kind the jvp came from").fns.push(f);
     }

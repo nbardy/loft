@@ -70,6 +70,8 @@ fn wty(t: &Ty) -> String {
         Ty::Row(_) => "Row".into(),
         Ty::Frame(_) => "LoftFrame".into(),
         Ty::Bsdf => "Bsdf".into(),
+        Ty::Id(_) => "u32".into(),
+        Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
         Ty::Map(..) => unreachable!("maps are not values"),
     }
 }
@@ -118,7 +120,7 @@ fn lobes<'e>(e: &'e Expr, out: &mut Vec<(&'e str, &'e [Arg])>) -> bool {
 }
 
 /// The fns, user and library, reachable from a kind's queries and the shade glue's light fn.
-fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a FnDecl>, BTreeSet<String>) {
+pub(crate) fn reachable<'a>(p: &Prog<'a>, roots: &[&'a FnDecl], extra: &[&str]) -> (Vec<&'a FnDecl>, BTreeSet<String>) {
     fn walk_expr(e: &Expr, calls: &mut Vec<String>, names: &mut Vec<String>) {
         match &e.kind {
             ExprKind::Call { callee, args } => {
@@ -218,6 +220,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             TyExpr::Generic(i, _) => Ty::VecN(i.name.as_bytes()[3] - b'0'),
             TyExpr::Geo(g, _) => Ty::Geo(*g, Space::Var(String::new())),
             TyExpr::Xform(..) => Ty::Xform(Space::Var(String::new()), Space::Var(String::new())),
+            TyExpr::Table(n) => Ty::Table(n.name.clone()),
             TyExpr::Field(_) => Ty::F32,
             TyExpr::Frame(_) => Ty::Frame(Space::Var(String::new())),
         }
@@ -320,7 +323,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             Stmt::For { var, lo, hi, body, .. } => {
                 let t = wty(self.ty_of(lo)).replace("i32", match self.ty_of(hi) {
                     Ty::U32 => "u32",
-                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => "i32",
+                    Ty::Void | Ty::Bool | Ty::I32 | Ty::F32 | Ty::AbstractInt | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => "i32",
                 });
                 let (a, b) = (self.expr(lo), self.expr(hi));
                 let v = &var.name;
@@ -369,7 +372,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 Ty::U32 => format!("{}u", *value as u32),
                 Ty::I32 => format!("{}i", *value as i32),
                 Ty::AbstractInt => text.clone(),
-                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
+                Ty::Void | Ty::Bool | Ty::F32 | Ty::VecN(_) | Ty::Geo(..) | Ty::Xform(..) | Ty::Map(..) | Ty::Row(_) | Ty::Frame(_) | Ty::Table(_) | Ty::Verdict | Ty::Id(_) | Ty::Bsdf => f32_lit(if *suffix == NumSuffix::Deg { value.to_radians() } else { *value }),
             },
             ExprKind::Bool(b) => b.to_string(),
             ExprKind::Name(n) if n == "self" => "self_".into(),
@@ -381,7 +384,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 {
                     return format!("{n}_cell");
                 }
-                format!("{}.{}", self.expr(base), m.name)
+                if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -412,7 +415,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 match self.ty_of(e) {
                     Ty::Geo(Geo::Dir | Geo::Norm, _) => format!("normalize(vec3<f32>({}))", a.join(", ")),
                     Ty::Xform(..) => format!("loft_xform_yaw({}, {})", a[0], a[1]),
-                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
+                    t @ Ty::Void | t @ Ty::Bool | t @ Ty::U32 | t @ Ty::I32 | t @ Ty::F32 | t @ Ty::AbstractInt | t @ Ty::VecN(_) | t @ Ty::Geo(..) | t @ Ty::Map(..) | t @ Ty::Row(_) | t @ Ty::Frame(_) | t @ Ty::Table(_) | t @ Ty::Verdict | t @ Ty::Id(_) | t @ Ty::Bsdf => format!("{}({})", wty(t), a.join(", ")),
                 }
             }
             ExprKind::Call { callee, args } if matches!(callee.name.as_str(), "sample_c2" | "loft_dsample") => {
@@ -430,13 +433,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     Ty::Frame(_) => "LoftFrame(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0))".into(),
                     Ty::F32 => "0.0".into(),
                     t @ Ty::VecN(_) | t @ Ty::Geo(..) => format!("{}(0.0)", wty(t)),
-                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Bsdf => unreachable!("checked zero of {other}"),
+                    other @ Ty::Void | other @ Ty::Bool | other @ Ty::Xform(..) | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Id(_) | other @ Ty::Bsdf => unreachable!("checked zero of {other}"),
                 }
             }
             ExprKind::Call { callee, args } if callee.name == "loft_vec" => self.expr(&args[0].value),
             ExprKind::Call { callee, args } => {
                 let a: Vec<String> = args.iter().map(|x| self.expr(&x.value)).collect();
+                if callee.name=="place"{return format!("loft_xform_yaw({}, {})",a[0],a.get(1).map(String::as_str).unwrap_or("0.0"))}
+                if callee.name=="coords"{return a[0].clone()}
                 let name = match callee.name.as_str() {
+                    "frame_axes" => "LoftFrame".into(),
+                    "dir" => "normalize".into(),
                     "smootherstep" => "loft_smootherstep".to_string(),
                     "inv" => "loft_xf_inv".to_string(),
                     "vec2" | "vec2f" => "vec2<f32>".into(),
@@ -516,7 +523,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
         let w = |i: u32| format!("rows[o + {}u]", o + i);
         let load = match &t {
             Ty::F32 => w(0),
-            Ty::U32 => format!("bitcast<u32>({})", w(0)),
+            Ty::U32 | Ty::Id(_) => format!("bitcast<u32>({})", w(0)),
             Ty::I32 => format!("bitcast<i32>({})", w(0)),
             Ty::Bool => format!("({} != 0.0)", w(0)),
             Ty::VecN(n) => format!("vec{n}<f32>({})", (0..u32::from(*n)).map(w).collect::<Vec<_>>().join(", ")),
@@ -528,9 +535,9 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
                 w(10),
                 w(11)
             ),
-            other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
+            other @ Ty::Void | other @ Ty::AbstractInt | other @ Ty::Map(..) | other @ Ty::Row(_) | other @ Ty::Frame(_) | other @ Ty::Table(_) | other @ Ty::Verdict | other @ Ty::Bsdf => unreachable!("checked row field type {other}"),
         };
-        fields.push(format!("  {}: {},", rf.name.name, wty(&t)));
+        fields.push(format!("  r_{}: {},", rf.name.name, wty(&t)));
         loads.push(load);
         o += t.words().expect("checked storable");
     }
@@ -540,7 +547,7 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
     loads.push(format!("vec3<f32>(rows[o + {}u], rows[o + {}u], rows[o + {}u])", o + 3, o + 4, o + 5));
     loads.push(format!("rows[o + {}u]", o + 6));
     let pose = match crate::pose_field(k) {
-        Some(i) => format!("r.{}", k.row[i].name.name),
+        Some(i) => format!("r.r_{}", k.row[i].name.name),
         None => "LoftXform(mat3x3<f32>(1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0), vec3<f32>(0.0))".into(),
     };
     let _ = write!(

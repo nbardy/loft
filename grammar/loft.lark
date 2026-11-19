@@ -1,5 +1,5 @@
 // Loft v1.0 Context-Free Grammar (Lark / llguidance compatible)
-start: _SEP? (top_item (_SEP top_item)* _SEP?)?
+start: _sep? (top_item (_sep top_item)* _sep?)?
 
 top_item: use_decl
         | "pub"? ( space_decl | const_decl | input_decl | param_decl
@@ -22,9 +22,9 @@ fn_decl:     "fn" LIDENT gen_params? "(" params? ")" ("->" type_expr)? fn_body
 lobe_decl:   "lobe" LIDENT "(" params? ")" fn_body
 fn_body:     "=" (expr | block) | block
 
-scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _SEP "step" LIDENT "=" expr _SEP? "}"
+scan_decl:   "scan" LIDENT LIDENT "in" expr ".." expr "by" INT "on" LIDENT "{" _NL? "init" "=" expr _sep "step" LIDENT "=" expr _sep? "}"
 
-kind_decl:   "kind" UIDENT var_params? "@" UIDENT "(" col_list? ")" "{" (_NL? kind_item (_SEP kind_item)* _SEP?)? "}"
+kind_decl:   "kind" UIDENT var_params? "@" UIDENT "(" col_list? ")" "{" (_NL? kind_item (_sep kind_item)* _sep?)? "}"
 var_params:  "[" param ("," param)* ","? "]"
 col_list:    col ("," col)* ","?
 col:         LIDENT ":" type_expr range_ref? ("=" expr)?
@@ -34,14 +34,14 @@ map_decl:    "map" LIDENT "(" LIDENT ")" "=" expr
 query_decl:  QUERY_NAME "(" params? ")" fn_body
            | "surface" "(" params? ")" "grid" GRID_DIM fn_body
 
-body_decl:   "body" UIDENT "{" (_NL? body_item (_SEP body_item)* _SEP?)? "}"
+body_decl:   "body" UIDENT "{" (_NL? body_item (_sep body_item)* _sep?)? "}"
 body_item:   waive_stmt
            | "trunk" "{" field_inits "}"
            | "chain" LIDENT ("[" expr "]")? ":" LIDENT "{" field_inits "}"
            | "segment" LIDENT "{" field_inits "}"
-           | "build" "for" for_bind ("," for_bind)* "{" _NL? (body_item | stmt) (_SEP (body_item | stmt))* _SEP? "}"
+           | "build" "for" for_bind ("," for_bind)* "{" _NL? (body_item | stmt) (_sep (body_item | stmt))* _sep? "}"
 
-state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _SEP) col)* ("," | _SEP)?)? "}"
+state_decl:  "state" UIDENT ("checkpoint" INT)? ("home" LIDENT)? "{" (_NL? col (("," | _sep) col)* ("," | _sep)?)? "}"
 
 law_decl:    "law" LIDENT "(" params ")" "writes" write_set block
 write_set:   LIDENT ("." "{" ident_list "}")?
@@ -49,14 +49,14 @@ write_set:   LIDENT ("." "{" ident_list "}")?
 solver_decl: "solver" UIDENT "over" path_ref ("writes" write_set)? "config" "{" field_inits "}" block
 path_ref:    IDENT ("." LIDENT)*
 
-plan_decl:   "plan" UIDENT "(" params? ")" "->" type_expr "{" _NL? ("knots" ":" INT "," "duration" ":" expr _SEP)? "minimize" expr _SEP "subject_to" block _SEP? "}"
+plan_decl:   "plan" UIDENT "(" params? ")" "->" type_expr "{" _NL? ("knots" ":" INT "," "duration" ":" expr _sep)? "minimize" expr _sep "subject_to" block _sep? "}"
 check_decl:  "check" LIDENT "(" params ")" "->" type_expr block
 retarget_decl: "retarget" UIDENT "from" UIDENT "to" UIDENT "{" field_inits "}"
 
 world_decl:  "world" UIDENT "{" field_inits "}"
-build_fn:    "build" "fn" LIDENT "(" params? ")" fn_body
+build_fn:    "build" "fn" LIDENT "(" params? ")" ("->" type_expr)? fn_body
 build_blk:   "build" block
-sched_decl:  "schedule" IDENT ("(" params? ")")? "{" (_NL? sched_stmt (_SEP sched_stmt)* _SEP?)? "}"
+sched_decl:  "schedule" IDENT ("(" params? ")")? "{" (_NL? sched_stmt (_sep sched_stmt)* _sep?)? "}"
 sched_stmt:  "pass" LIDENT ("reads" "[" resource_list "]")? ("writes" "[" resource_list "]")? block
            | waive_stmt
            | expr block?
@@ -76,11 +76,11 @@ gen_params:  "[" UIDENT ("," UIDENT)* ","? "]"
 params:      param ("," param)* ","?
 param:       LIDENT (":" type_expr)? ("=" expr)?
 ident_list:  LIDENT ("," LIDENT)* ","?
-field_inits: (_NL? field_init (("," | _SEP) field_init)* ("," | _SEP)?)?
+field_inits: (_NL? field_init (("," | _sep) field_init)* ("," | _sep)?)?
 field_init:  LIDENT ":" expr
 
 // --- Statements & Blocks ---
-block:       "{" (_NL? stmt (_SEP stmt)* _SEP?)? "}"
+block:       "{" (_NL? stmt (_sep stmt)* _sep?)? "}"
 stmt:        "let" LIDENT (":" type_expr)? "=" expr
            | "var" LIDENT (":" type_expr)? "=" expr
            | "map" LIDENT "=" expr
@@ -136,7 +136,7 @@ IDENT:       UIDENT | LIDENT
 RAW_WGSL_BLOCK: /\{[^{}]*(\{[^{}]*\}[^{}]*)*\}/
 
 _NL:         /(\r?\n)+/
-_SEP:        (_NL | ";")+
+_sep:        (_NL | ";")+
 COMMENT:     /#[^\n]*/
 %ignore /[ \t]+/
 %ignore COMMENT

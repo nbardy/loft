@@ -6,10 +6,11 @@
 
 pub mod ad;
 pub mod check;
+mod cache;
 pub mod emit;
 pub mod eval;
 pub mod lip;
-pub mod parse;
+pub use loft_parse as parse;
 
 use eval::{Eval, RowVal, Tables, Val};
 use lip::Iv;
@@ -47,7 +48,7 @@ impl<'a> Prog<'a> {
         let mut seen: BTreeMap<&str, Span> = BTreeMap::new();
         let mut name = |n: &'a Ident| -> Res<()> {
             if let Some(prev) = seen.insert(&n.name, n.span) {
-                return Err(Diag::new(Code::E002, n.span, format!("`{}` is declared twice", n.name), "rename one")
+                return Err(Diag::new(Code::E011, n.span, format!("`{}` is declared twice", n.name), "rename one")
                     .note(prev, "first declared here"));
             }
             Ok(())
@@ -58,10 +59,11 @@ impl<'a> Prog<'a> {
                 Item::Space(names) => {
                     for n in names {
                         if !p.spaces.insert(&n.name) {
-                            return Err(Diag::new(Code::E002, n.span, format!("space `{}` is declared twice", n.name), "declare it once"));
+                            return Err(Diag::new(Code::E011, n.span, format!("space `{}` is declared twice", n.name), "declare it once"));
                         }
                     }
                 }
+                Item::Use(_) | Item::Camera(_) | Item::Law(_) | Item::Check(_) => {}
                 Item::Unit(n) => {
                     name(n)?;
                     p.units.insert(&n.name);
@@ -70,7 +72,7 @@ impl<'a> Prog<'a> {
                     name(&c.name)?;
                     p.consts.insert(&c.name.name, c);
                 }
-                Item::Fn(f) => {
+                Item::Build(f) | Item::Fn(f) => {
                     name(&f.name)?;
                     p.fns.insert(&f.name.name, f);
                 }
@@ -85,7 +87,7 @@ impl<'a> Prog<'a> {
                 }
                 Item::Schedule(s) => {
                     if let Some(prev) = p.schedule {
-                        return Err(Diag::new(Code::E501, s.name.span, "a program has one schedule", "remove one")
+                        return Err(Diag::new(Code::E520, s.name.span, "a program has one schedule", "remove one")
                             .note(prev.name.span, "first schedule here"));
                     }
                     p.schedule = Some(s);
@@ -104,6 +106,23 @@ impl<'a> Prog<'a> {
 pub fn parse_all(src: &Sources) -> Res<Vec<Module>> {
     let mut next = 0;
     let mut modules = src.files.iter().enumerate().map(|(i, (_, text))| parse::parse(i as u16, text, &mut next)).collect::<Res<Vec<_>>>()?;
+    // The exact-SDF rules certify these specific library bodies. An edited library
+    // goes through ordinary interval evaluation, including edits to their callees.
+    for (module,(_,text)) in modules.iter_mut().zip(&src.files) {
+        if blake3::hash(text.as_bytes()).to_hex().as_str() != "05ede07bbdd154e997c131f4058bb36b529266032a2128ac350d4b22fae98b4b" {continue;}
+        for item in &mut module.items {
+            let Item::Fn(f)=item else {continue};
+            let sp=f.name.span;
+            let make=|name:&str,next:&mut u32|{let id=*next;*next+=1;Expr{id,span:sp,kind:ExprKind::Name(name.into())}};
+            let ax=match f.name.name.as_str(){
+                "sphere"|"round_box"|"box_sdf"=>make("v",&mut next),
+                "capsule"=>make("p",&mut next),
+                "smin"|"ssub"=>{let args=["a","b"].map(|n|Arg{name:None,value:make(n,&mut next)}).to_vec();next+=1;Expr{id:next-1,span:sp,kind:ExprKind::Call{callee:Ident{name:"max".into(),span:sp},args}}},
+                _=>continue,
+            };
+            f.attrs.push(Attr{name:Ident{name:"lipschitz".into(),span:sp},args:vec![ax]});
+        }
+    }
     ad::run(&mut modules, &mut next)?;
     Ok(modules)
 }
@@ -313,7 +332,7 @@ impl Compiled {
 
 fn arg<'e>(pd: &'e PassDecl, name: &str) -> Res<&'e Expr> {
     pd.args.iter().find(|a| a.name.as_ref().is_some_and(|n| n.name == name)).map(|a| &a.value).ok_or_else(|| {
-        Diag::new(Code::E501, pd.verb.span, format!("`{}` needs `{name}: ...`", pd.verb.name), format!("add `{name}: ...`"))
+        Diag::new(Code::E520, pd.verb.span, format!("`{}` needs `{name}: ...`", pd.verb.name), format!("add `{name}: ...`"))
     })
 }
 
@@ -323,8 +342,8 @@ fn kind_args<'p>(p: &Prog<'p>, pd: &PassDecl) -> Res<Vec<&'p str>> {
         .iter()
         .filter(|a| a.name.is_none())
         .map(|a| match &a.value.kind {
-            ExprKind::Name(n) => p.kinds.get(n.as_str()).map(|k| k.name.name.as_str()).ok_or_else(|| Diag::new(Code::E002, a.value.span, format!("unknown kind `{n}`"), "declare the kind")),
-            _ => Err(Diag::new(Code::E501, a.value.span, format!("`{}` takes kind names", pd.verb.name), "write the kind's name")),
+            ExprKind::Name(n) => p.kinds.get(n.as_str()).map(|k| k.name.name.as_str()).ok_or_else(|| Diag::new(Code::E011, a.value.span, format!("unknown kind `{n}`"), "declare the kind")),
+            _ => Err(Diag::new(Code::E520, a.value.span, format!("`{}` takes kind names", pd.verb.name), "write the kind's name")),
         })
         .collect()
 }
@@ -333,7 +352,7 @@ fn fn_name_arg<'e>(p: &Prog, pd: &'e PassDecl, name: &str) -> Res<&'e str> {
     let e = arg(pd, name)?;
     match &e.kind {
         ExprKind::Name(n) if p.fns.contains_key(n.as_str()) => Ok(n),
-        ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E002, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
+        ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) | ExprKind::Member(..) | ExprKind::Index(..) | ExprKind::Call { .. } | ExprKind::Ctor { .. } | ExprKind::Binary(..) | ExprKind::Unary(..) => Err(Diag::new(Code::E011, e.span, format!("`{name}:` names a library fn"), "write the fn's name, e.g. `sky: sky_color`")),
     }
 }
 
@@ -388,11 +407,11 @@ fn naga_module(name: &str, wgsl: String) -> Res<ShaderModule> {
     naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::default())
         .validate(&module)
         .map_err(|e| internal(e.emit_to_string(&wgsl)))?;
-    Ok(ShaderModule { name: name.into(), wgsl, naga: module })
+    Ok(ShaderModule { name: name.into(), wgsl, naga: module, span: None })
 }
 
-/// The GPU passes in dependency order; `shadow_map` is optional, between the vis bundle and classification.
-pub const GPU_ORDER: [&str; 6] = ["build_indirect", "render_bundle", "shadow_map", "tile_bin_kinds", "dispatch_material_tiles", "tonemap_aces"];
+/// The GPU passes in dependency order; `find_shadow_map` is optional, between the vis bundle and classification.
+pub const GPU_ORDER: [&str; 6] = ["cull_indirect", "render_bundle", "find_shadow_map", "tile_classify", "shade_tiles", "tonemap_aces"];
 
 /// Front end only: parse, index, check. For `loft check` and the error tests.
 pub fn front(src: &Sources) -> Res<(Vec<Module>, Vec<Ty>)> {
@@ -421,15 +440,15 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         match p.consts.get(name.as_str()) {
             Some(c) if c.comptime => {}
             _ => {
-                return Err(Diag::new(Code::E002, Span::NONE, format!("`--set {name}`: no `comptime const {name}`"), "override a `comptime const` declared in the scene"));
+                return Err(Diag::new(Code::E011, Span::NONE, format!("`--set {name}`: no `comptime const {name}`"), "override a `comptime const` declared in the scene"));
             }
         }
     }
     lap("check", &mut ms);
 
     // The schedule: stage-0 passes, the camera, and the GPU passes in dependency order.
-    let sched = p.schedule.ok_or_else(|| Diag::new(Code::E501, Span::NONE, "the program has no `schedule`", "add `schedule Main { ... }` to the scene"))?;
-    let mut rows_fns = vec![];
+    let sched = p.schedule.ok_or_else(|| Diag::new(Code::E520, Span::NONE, "the program has no `schedule`", "add `schedule Main { ... }` to the scene"))?;
+    let mut rows_fns: Vec<&FnDecl> = modules.iter().flat_map(|m| &m.items).filter_map(|i| if let Item::Build(f)=i {Some(f)}else{None}).collect();
     let (mut camera, mut sun, mut light, mut sky) = (None, None, None, None);
     let (mut passes, mut verbs) = (vec![], vec![]);
     let mut drawn: Vec<&str> = vec![];
@@ -459,7 +478,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                     fov: f("fov", &mut types)?,
                 });
             }
-            "build_indirect" => {
+            "cull_indirect" => {
                 culled = kind_args(&p, pd)?;
                 passes.push(Pass::Cull);
                 verbs.push(pd);
@@ -470,7 +489,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                 }
                 for (call, args) in &pd.body {
                     if call.name != "draw_indirect" {
-                        return Err(Diag::new(Code::E501, call.span, format!("`{}` in a render bundle", call.name), "write `draw_indirect(Kind, ...)`"));
+                        return Err(Diag::new(Code::E520, call.span, format!("`{}` in a render bundle", call.name), "write `draw_indirect(Kind, ...)`"));
                     }
                     let fake = PassDecl { label: pd.label.clone(), verb: call.clone(), args: args.iter().map(|a| Arg { name: None, value: clone_name(&a.value) }).collect(), body: vec![] };
                     for k in kind_args(&p, &fake)? {
@@ -483,17 +502,17 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                 passes.push(Pass::Vis((0..drawn.len() as u32).collect()));
                 verbs.push(pd);
             }
-            "shadow_map" => {
+            "find_shadow_map" => {
                 casters = kind_args(&p, pd)?;
                 let e = arg(pd, "size")?;
                 shadow_size = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)? as u32;
                 if !(64..=8192).contains(&shadow_size) || casters.is_empty() {
-                    return Err(Diag::new(Code::E501, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `shadow_map(Kind, ..., size: 1024u)`"));
+                    return Err(Diag::new(Code::E520, pd.verb.span, "a shadow map needs casters and a size of 64 to 8192 texels", "write `find_shadow_map(Kind, ..., size: 1024u)`"));
                 }
                 passes.push(Pass::Shadow(vec![]));
                 verbs.push(pd);
             }
-            "tile_bin_kinds" => {
+            "tile_classify" => {
                 let tile = arg(pd, "tile")?;
                 if as_f32(stage0(&p, &mut types, tile, overrides)?, tile.span)? != abi::TILE as f32 {
                     return Err(Diag::new(Code::E405, tile.span, "tiles are 8x8", "write `tile: 8u`"));
@@ -501,7 +520,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
                 passes.push(Pass::Classify);
                 verbs.push(pd);
             }
-            "dispatch_material_tiles" => {
+            "shade_tiles" => {
                 light = Some(fn_name_arg(&p, pd, "light")?);
                 let s = arg(pd, "sun")?;
                 sun = Some(as_v3(stage0(&p, &mut types, s, overrides)?, s.span)?);
@@ -515,7 +534,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
             }
             other => {
                 return Err(Diag::new(
-                    Code::E501,
+                    Code::E520,
                     pd.verb.span,
                     format!("unknown pass `{other}`"),
                     format!("passes: a `comptime fn` (rows), orbit, {}", GPU_ORDER.join(", ")),
@@ -524,19 +543,19 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         }
     }
     let order: Vec<&str> = verbs.iter().map(|v| v.verb.name.as_str()).collect();
-    let want: Vec<&str> = GPU_ORDER.iter().copied().filter(|v| *v != "shadow_map" || shadow_size > 0).collect();
+    let want: Vec<&str> = GPU_ORDER.iter().copied().filter(|v| *v != "find_shadow_map" || shadow_size > 0).collect();
     if order != want {
-        return Err(Diag::new(Code::E501, sched.name.span, format!("GPU passes {order:?} out of dependency order"), format!("write each once, in order: {}", GPU_ORDER.join(", "))));
+        return Err(Diag::new(Code::E505, sched.name.span, format!("GPU passes {order:?} out of dependency order"), format!("write each once, in order: {}", GPU_ORDER.join(", "))));
     }
     let mut a = culled.clone();
     let mut b = drawn.clone();
     a.sort_unstable();
     b.sort_unstable();
     if a != b || drawn.is_empty() || drawn.len() > abi::MAX_KINDS {
-        return Err(Diag::new(Code::E501, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull exactly the kinds the bundle draws (1 to 32)"));
+        return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull exactly the kinds the bundle draws (1 to 32)"));
     }
     let id_of = |k: &str| drawn.iter().position(|d| *d == k);
-    let caster_ids = casters.iter().map(|c| id_of(c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E501, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))).collect::<Res<Vec<_>>>()?;
+    let caster_ids = casters.iter().map(|c| id_of(c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E520, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))).collect::<Res<Vec<_>>>()?;
     let ids: Vec<u32> = (0..drawn.len() as u32).collect();
     for pass in &mut passes {
         match pass {
@@ -545,7 +564,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
             Pass::Cull | Pass::Vis(_) | Pass::Classify | Pass::Present => {}
         }
     }
-    let camera = camera.ok_or_else(|| Diag::new(Code::E501, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
+    let camera = camera.ok_or_else(|| Diag::new(Code::E520, sched.name.span, "no camera", "add `pass camera: orbit(at: ..., radius: ..., height: ..., period: ..., fov: ...);`"))?;
     let (light, sky, sun) = (light.expect("checked order"), sky.expect("checked order"), sun.expect("checked order"));
     lap("schedule", &mut ms);
 
@@ -560,7 +579,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
             let hi = as_f32(eval::concrete(&ev.expr(&sc.hi)?, sc.hi.span)?, sc.hi.span)?;
             let n = as_f32(eval::concrete(&ev.expr(&sc.steps)?, sc.steps.span)?, sc.steps.span)? as usize;
             if n < 4 || n > 65_536 || hi <= lo {
-                return Err(Diag::new(Code::E601, sc.name.span, "a scan needs 4 to 65,536 steps over a range lo < hi", "fix `steps` or the range"));
+                return Err(Diag::new(Code::E602, sc.name.span, "a scan needs 4 to 65,536 steps over a range lo < hi", "fix `steps` or the range"));
             }
             let frame = |v: Val<f32>, span: Span| -> Res<[f32; 12]> {
                 match v {
@@ -604,7 +623,7 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         let t = p.kind_index(name);
         let rows = &tables[t];
         if rows.is_empty() || rows.len() as u32 >= abi::MAX_ROWS {
-            return Err(Diag::new(Code::E601, k.name.span, format!("kind `{name}` is drawn with {} rows", rows.len()), "emit 1 to 16,777,215 rows from the rows pass"));
+            return Err(Diag::new(Code::E602, k.name.span, format!("kind `{name}` is drawn with {} rows", rows.len()), "emit 1 to 16,777,215 rows from the rows pass"));
         }
         let key_fields = geometry_fields(k);
         let mut shapes: Vec<usize> = vec![];
@@ -623,22 +642,23 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
         }
         let surface = k.query(QueryKind::Surface);
         let trace = k.query(QueryKind::Trace);
+        let domain=cache::kind_key(&p,k,&luts)?;
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(shapes.len());
         let chunk = shapes.len().div_ceil(threads);
         let derived: Vec<lip::Derived> = std::thread::scope(|sc| {
-            let jobs: Vec<_> = (0..threads)
-                .map(|j| {
-                    let (p, types, tables, shapes, luts) = (&p, &types, &tables, &shapes, &luts);
+            let jobs: Vec<_> = shapes.chunks(chunk)
+                .map(|group| {
+                    let (p, types, tables, luts, keys, shape_of, domain) = (&p, &types, &tables, &luts, &keys, &shape_of, &domain);
                     sc.spawn(move || {
                         let mut iv: Eval<Iv> = Eval::new(p, types, tables.clone(), overrides);
                         iv.luts = luts;
-                        shapes[j * chunk..((j + 1) * chunk).min(shapes.len())]
+                        group
                             .iter()
-                            .map(|&r| match (surface, trace) {
+                            .map(|&r| cache::derive(domain, &keys[shape_of[r]], k.name.span, || match (surface, trace) {
                                 (Some(s), _) => lip::derive_surface(&mut iv, s, t, r, k.name.span),
                                 (None, Some(f)) => lip::derive(&mut iv, f, t, r, k.name.span),
                                 (None, None) => unreachable!("checked: trace or surface"),
-                            })
+                            }))
                             .collect::<Res<Vec<_>>>()
                     })
                 })
@@ -713,7 +733,11 @@ pub fn compile(src: &Sources, overrides: &[(String, f64)]) -> Res<(Program, Repo
     texts.push(("classify".into(), emit::classify_module()));
     texts.push(("present".into(), emit::present_module(&p, &types, sky)));
     lap("emit", &mut ms);
-    let shader_modules = texts.into_iter().map(|(n, w)| naga_module(&n, w)).collect::<Res<Vec<_>>>()?;
+    let shader_modules = texts.into_iter().map(|(n,w)| {
+        let mut m=naga_module(&n,w)?;
+        if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
+        Ok(m)
+    }).collect::<Res<Vec<_>>>()?;
     lap("naga", &mut ms);
 
     let n = drawn.len();
