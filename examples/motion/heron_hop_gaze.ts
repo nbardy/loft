@@ -4,7 +4,8 @@
 //   - position: a critically damped follower (a `recur`, 120 steps/s, w = 2 pi 2 Hz) of the shoulder's path plus the
 //     rest neck offset, fed the shoulder's velocity times LEAD / w (LEAD = 1: half the steady lag cancelled); during the run-up
 //     (0 to 0.6 s) its target holds the shoulder's position at the end of each 0.2 s and then jumps: hold, then thrust.
-//   - attitude: no roll, the bill toward a look point (the landing spot, then ahead), its pitch within -20..+12 degrees.
+//   - attitude: no roll, level (looking ahead at its own height), glancing at most 15 degrees toward the landing spot in
+//     the run-up and level again by takeoff.
 // The neck is a fixed-length S between the shoulder and the head: two circular arcs, each of chord d / 2 and length
 // L / 2, bending opposite ways. The bend angle theta solves sin(theta) / theta = d / L by four Newton steps per frame.
 import {
@@ -18,6 +19,8 @@ import { NUMBERS, stage } from "../second/heron_leap.ts";
 import { hop, rig } from "./heron_hop_near.ts";
 
 /** The neck's length (metres) and the head's rest offset from the shoulder (world, standing). */
+/** The run-up glance's largest pitch, radians (15 degrees). */
+const GLANCE = 15 * Math.PI / 180;
 export const NECK = { L: 1.55, rest: [0.5, 1.18, 0] as const, w: 2 * Math.PI * 2, bob: 0.2, runUp: 0.6, rate: 120, until: 2.4 };
 export const solved = hop({ kind: "placed", pitch: 0.6 });
 const { body, foot } = rig(solved.curves as never);
@@ -29,7 +32,10 @@ const held = select(lt(time, NECK.runUp), min(mul(add(floor(div(time, NECK.bob))
 // velocity steps; LEAD = 1 (chosen) halves that and leaves a lag of v / w (the note scores both).
 export const LEAD = Number(process.env.HERON_LEAD ?? 1);
 const lead = mul(derivative(shoulder, time), LEAD / NECK.w);
-const target = add(add(vec3(at(shoulder, held).x, shoulder.y, shoulder.z), vec3(...NECK.rest)), lead);
+// Over the last window (0.4 to 0.6 s) the held target blends into tracking: equal position and speed at both ends, so
+// the hand-off at takeoff has no velocity step (it was the head's largest jerk, 670 m/s^3 at 0.608 s).
+const tracking = smoothstep(NECK.runUp - NECK.bob, NECK.runUp, time);
+const target = add(add(vec3(mix(at(shoulder, held).x, shoulder.x, tracking), shoulder.y, shoulder.z), vec3(...NECK.rest)), lead);
 
 export const headPath = recur({
   name: "heronHead", size: 1, rate: NECK.rate, until: NECK.until,
@@ -44,9 +50,12 @@ export const headPath = recur({
 });
 const head: P3 = headPath.at(0)[0]!.xyz;
 
-// The look point: the landing spot until about the top of the arc, then ahead.
-const look = mix(vec3(NUMBERS.deck.land + 0.6, NUMBERS.deck.top, 0), add(head, vec3(6, 0, 0)), smoothstep(0.9, 1.4, time));
-const toward = sub(look, head), pitch = clamp(atan2(toward.y, toward.x), -0.35, 0.2);
+// Gaze: level, at a point ahead at the head's own height. In the run-up the head glances toward the landing spot
+// (pitch clamped to 15 degrees), and is level again by takeoff, through the flight and the landing.
+const toward = sub(vec3(NUMBERS.deck.land + 0.6, NUMBERS.deck.top, 0), head);
+const glance = mul(smoothstep(0.05, 0.25, time), sub(1, smoothstep(0.45, NECK.runUp, time)));
+export const headPitch = mul(glance, clamp(atan2(toward.y, toward.x), -GLANCE, GLANCE));
+const pitch = headPitch;
 const turned = { x: vec3(cos(pitch), sin(pitch), 0), y: vec3(mul(sin(pitch), -1), cos(pitch), 0), z: lift<"vec3">([0, 0, 1]) };
 // The head frame puts the bill's root (1.0, 1.38) of heron.ts's head coordinates at the head point.
 const headFrame: Frame = { ...turned, o: sub(head, add(mul(turned.x, 1.0), mul(turned.y, 1.38))) };
@@ -91,9 +100,11 @@ export const checks: Check[] = [{
       // Least distance from the rail's axis to the bill (root to tip), in the side plane.
       for (let q = 0; q <= 8; q++) { const x = rx! + (bx! - rx!) * q / 8, y = ry! + (by! - ry!) * q / 8; rail = Math.min(rail, Math.hypot(x - NUMBERS.rail.x, y - NUMBERS.rail.y)); }
     }
+    const heads = T.map((t) => probe.scalar(headPitch, t)), mostHead = heads.reduce((m, x, n) => (Math.abs(x) > Math.abs(m.x) ? { x, t: T[n]! } : m), { x: 0, t: 0 });
+    const flightHead = Math.max(...heads.filter((_, n) => T[n]! >= 0.6).map(Math.abs));
     const pitches = T.map((t) => probe.scalar(solved.curves.pitch!, t)), deg = (r: number) => (r * 180 / Math.PI).toFixed(1);
     return { name: "gaze", pass: true, value: lenErr,
-      measured: `head jerk max ${jerk(0.05, 0.6).toFixed(0)} (run-up) / ${jerk(0.6, 1.75).toFixed(0)} (0.6..1.75) m/s^3 (0.8..1.75: ${jerk(0.8, 1.75).toFixed(0)}; argmax ${argmax(0.6, 1.75).toFixed(3)} s); neck length error ${lenErr.toExponential(2)} m (L ${NECK.L}); chord/L max ${ratio.toFixed(3)}; body pitch ${deg(Math.min(...pitches))}..${deg(Math.max(...pitches))} deg; bill to rail axis ${rail.toFixed(2)} m; solve ${solved.report.ms.toFixed(0)} ms`,
+      measured: `head pitch most ${deg(mostHead.x)} deg at ${mostHead.t.toFixed(3)}, from 0.6 s ${deg(flightHead)} deg; head jerk max ${jerk(0.05, 0.6).toFixed(0)} (run-up) / ${jerk(0.6, 1.75).toFixed(0)} (0.6..1.75) m/s^3 (0.8..1.75: ${jerk(0.8, 1.75).toFixed(0)}; argmax ${argmax(0.6, 1.75).toFixed(3)} s); neck length error ${lenErr.toExponential(2)} m (L ${NECK.L}); chord/L max ${ratio.toFixed(3)}; body pitch ${deg(Math.min(...pitches))}..${deg(Math.max(...pitches))} deg; bill to rail axis ${rail.toFixed(2)} m; solve ${solved.report.ms.toFixed(0)} ms`,
       limit: "readout" };
   },
 }];
