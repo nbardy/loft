@@ -166,8 +166,9 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
             ExprKind::Member(b, m) => {
                 if matches!(&b.kind, ExprKind::Name(n) if n == "self") {
                     out.push(m.name.clone());
+                } else {
+                    walk(b, out);
                 }
-                walk(b, out);
             }
             ExprKind::Call { args, .. } | ExprKind::Ctor { args, .. } => args.iter().for_each(|a| walk(&a.value, out)),
             ExprKind::Index(a, b) | ExprKind::Binary(_, a, b) => {
@@ -175,6 +176,9 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
                 walk(b, out);
             }
             ExprKind::Unary(_, a) => walk(a, out),
+            // Passing the entire row to a helper (including through a local)
+            // lets its callee read any column. Include all words in this key.
+            ExprKind::Name(n) if n == "self" => out.push(n.clone()),
             ExprKind::Num { .. } | ExprKind::Bool(_) | ExprKind::Name(_) => {}
         }
     }
@@ -198,7 +202,8 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
                     walk(hi, out);
                     block(body, out);
                 }
-                Stmt::Emit { .. } | Stmt::Expr(_) => {}
+                Stmt::Expr(e) => walk(e, out),
+                Stmt::Emit { .. } => {}
             }
         }
     }
@@ -211,7 +216,7 @@ fn geometry_fields(k: &KindDecl) -> Vec<usize> {
     // A placement applied by the draw is external to this proof. A query
     // explicitly reading its placement (for world-space wind, for example)
     // makes those words ordinary shape dependencies.
-    (0..k.row.len()).filter(|i| names.contains(&k.row[*i].name.name)).collect()
+    (0..k.row.len()).filter(|i| names.iter().any(|name| name == "self" || name == &k.row[*i].name.name)).collect()
 }
 
 /// Per drawn kind: rows, distinct shapes (one bound derivation each) and the derived L range.
@@ -466,7 +471,7 @@ pub fn compile_snapshot(src:&Sources,overrides:&[(String,f64)],samples:&[loft_ir
         match p.consts.get(name.as_str()) {
             Some(c) if c.comptime => {}
             _ => {
-                return Err(Diag::new(Code::E011, Span::NONE, format!("`--set {name}`: no `comptime const {name}`"), "override a `comptime const` declared in the scene"));
+                return Err(Diag::new(Code::E011, Span::NONE, format!("`--set {name}`: no scene parameter with this name"), "override a declared `param`"));
             }
         }
     }

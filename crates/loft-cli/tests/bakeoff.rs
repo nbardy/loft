@@ -110,3 +110,36 @@ fn mirrored_fish_reverse_the_compiled_gpu_laws() {
         yaw[0], yaw[1]
     );
 }
+
+#[test]
+fn sexp_rebuilds_the_crab_with_its_shader_origins_and_pixels() {
+    let source = scene("crab");
+    let (program, _, _) = compile(&source, &[]).unwrap();
+    let text = loft_ir::sexp::write(&program).unwrap();
+    let restored = loft_ir::sexp::read(&text).unwrap();
+    assert_eq!(loft_ir::sexp::write(&restored).unwrap(), text);
+    assert!(
+        restored
+            .modules
+            .iter()
+            .flat_map(|m| &m.origins)
+            .any(|o| o.span.0.ends_with("crab.loft") && o.span.1 > 1 && o.span.2 > 1)
+    );
+    let device = loft_runner::gpu().unwrap();
+    let pixels = |p| {
+        let loaded = loft_runner::Loaded::new(&device, p, (160, 100), None).unwrap();
+        loaded.frame(&device, 2.0);
+        loaded.pixels(&device).unwrap()
+    };
+    let actual = pixels(&restored);
+    let expected = pixels(&program);
+    assert_eq!(actual.len(), expected.len());
+    assert_eq!(
+        actual
+            .iter()
+            .zip(expected)
+            .filter(|(a, b)| **a != *b)
+            .count(),
+        0
+    );
+}
