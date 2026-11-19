@@ -378,19 +378,28 @@ impl TraceSession {
         g: &Gpu,
         t: f32,
         count: usize,
-    ) -> Result<Vec<[Option<f64>; 2]>, String> {
+    ) -> Result<Vec<(f64, Vec<f64>)>, String> {
         let current = Pipelines::current(&self.loaded.kinds[self.source.kind()]);
         let mut observations = Vec::with_capacity(count);
         let result = (|| {
             for i in 0..count {
-                let mut pair = [None; 2];
+                let mut pair = [None, None];
                 for tier in [i % 2, 1 - i % 2] {
                     let target = if tier == 0 { &self.fallback } else { &current };
                     self.install(&g.device, target.clone());
                     self.loaded.frame(g, t);
-                    pair[tier] = self.loaded.gpu_ms(g)?.map(|(ms, _)| ms);
+                    pair[tier] = self.loaded.gpu_ms(g)?;
                 }
-                observations.push(pair);
+                if let [Some((edit, edit_passes)), Some((promoted, promoted_passes))] = pair {
+                    observations.push((
+                        edit - promoted,
+                        edit_passes
+                            .iter()
+                            .zip(promoted_passes)
+                            .map(|(a, b)| a - b)
+                            .collect(),
+                    ));
+                }
             }
             Ok(observations)
         })();
@@ -417,5 +426,104 @@ impl TraceSession {
             self.creates.background.load(Ordering::Relaxed),
             self.pending.stale(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn general_edit_keeps_bounds_and_pixels_across_evaluators() {
+        use loft_ir::Sources;
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut inputs: Vec<_> = std::fs::read_dir(repo.join("lib"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "loft"))
+            .collect();
+        inputs.sort();
+        let mut base = Sources::default();
+        for input in inputs {
+            base.add(
+                input.display().to_string(),
+                std::fs::read_to_string(&input).unwrap(),
+            );
+        }
+        let scene = include_str!("../../tests/d1_edit/literal-old.loft");
+        let mut edited = Sources {
+            files: base.files.clone(),
+        };
+        base.add("base.loft", scene);
+        edited.add(
+            "general.loft",
+            scene.replace(
+                "sphere(p - shift, 0.59)",
+                "max(sphere(p - shift, 0.64), p.x - 0.35)",
+            ),
+        );
+
+        let (before, _, compiled) = loft_passes::compile(&base, &[]).unwrap();
+        let (after, _, _) = loft_passes::compile(&edited, &[]).unwrap();
+        let (source, tape) = TraceSource::new(base, compiled, &before, "EditSphere").unwrap();
+        let prepared = source.prepare(&edited, &[]).unwrap();
+        assert!(prepared.tape.describe().starts_with("Pair(Max,"));
+        let kind = source.kind();
+        let rows = &after.kinds[kind].rows;
+        let hidden = after.kinds[kind].stride as usize - abi::HIDDEN_WORDS as usize;
+        let [lo, hi] = prepared.local_bounds[0];
+        assert_eq!(
+            &rows[hidden..hidden + 7],
+            &[lo, hi]
+                .concat()
+                .into_iter()
+                .chain(prepared.lips)
+                .collect::<Vec<_>>()
+        );
+
+        let Ok(gpu) = gpu() else { return };
+        let mut session = TraceSession::new(&gpu, &before, source, tape, (1280, 800)).unwrap();
+        session.edit(&gpu, &edited, &[], Instant::now()).unwrap();
+        let limit = Instant::now() + Duration::from_secs(30);
+        while !session.poll_promotion(&gpu).unwrap() {
+            assert!(Instant::now() < limit, "promotion timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        session.loaded.frame(&gpu, 0.0);
+        let pixels = session.loaded.pixels(&gpu).unwrap();
+        let promoted = Pipelines::current(&session.loaded.kinds[kind]);
+        for (mode, name) in [(16u32, "fused"), (3, "compact VM"), (0, "full VM")] {
+            // Alter only the selector. All three paths see the same tape,
+            // row data, pipelines, command counts, and timestamps.
+            gpu.queue.write_buffer(
+                &session.loaded.kinds[kind].rows,
+                (session.rows.len() * 4 + 4) as u64,
+                &mode.to_le_bytes(),
+            );
+            session.install(&gpu.device, session.fallback.clone());
+            session.loaded.frame(&gpu, 0.0);
+            let actual = session.loaded.pixels(&gpu).unwrap();
+            assert_eq!(actual.len(), pixels.len());
+            assert!(
+                actual.iter().eq(&pixels),
+                "{name} differs at {} RGBA bytes",
+                actual.iter().zip(&pixels).filter(|(a, b)| a != b).count()
+            );
+
+            session.install(&gpu.device, promoted.clone());
+            let observations = session.measure_paired(&gpu, 0.0, 132).unwrap();
+            if let Some((_, passes)) = observations.first() {
+                let stats = |select: &dyn Fn(&(f64, Vec<f64>)) -> f64| {
+                    let mut samples: Vec<_> = observations[12..].iter().map(select).collect();
+                    samples.sort_by(f64::total_cmp);
+                    [samples[59], samples[113]]
+                };
+                let pass: Vec<_> = (0..passes.len()).map(|i| stats(&|(_, p)| p[i])).collect();
+                println!(
+                    "{name} paired frame p50/p95 {:?} ms, passes {pass:?}",
+                    stats(&|(t, _)| *t)
+                );
+            }
+        }
     }
 }

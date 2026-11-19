@@ -102,6 +102,7 @@ pub fn edited_still(
         .filter(|(a, b)| *a != b)
         .count();
     let changed = pixel_count(&before, &tier0, 0);
+    let differing = pixel_count(&tier0, &tier1, 0);
     let over = pixel_count(&tier0, &tier1, 1);
     let error = field0
         .chunks_exact(16)
@@ -120,6 +121,7 @@ pub fn edited_still(
         tier0.len() / 4,
         inputs.len() / 8
     );
+    println!("differing RGBA pixels after promotion {differing}");
     println!(
         "promotion created {creates} pipelines, stale completions discarded {stale}, clean-kind pipeline pairs changed {clean_changed}"
     );
@@ -133,17 +135,22 @@ pub fn edited_still(
         let paired = session
             .measure_paired(&gpu, t, TIMING_FRAMES)
             .map_err(Failure::Device)?;
-        let paired: Vec<_> = paired
-            .into_iter()
-            .filter_map(|[a, b]| Some([a?, b?]))
-            .collect();
-        let delta: Vec<_> = paired.iter().map(|[a, b]| a - b).collect();
-        if !delta.is_empty() {
+        if let Some((_, passes)) = paired.first() {
+            let delta: Vec<_> = paired.iter().map(|(ms, _)| *ms).collect();
             println!(
                 "{} paired GPU frames, paired p95 overhead {:.6} ms",
-                paired.len(),
+                delta.len(),
                 quantile(&delta, 0.95)
             );
+            let pass_p95: Vec<_> = (0..passes.len())
+                .map(|i| {
+                    quantile(
+                        &paired.iter().map(|(_, pass)| pass[i]).collect::<Vec<_>>(),
+                        0.95,
+                    )
+                })
+                .collect();
+            println!("paired pass p95 overhead in schedule order {pass_p95:.6?} ms");
         }
     }
     write_png(out, SIZE, &tier0).map_err(Failure::Usage)?;
@@ -192,12 +199,7 @@ fn field_inputs() -> Vec<f32> {
 fn pixel_count(a: &[u8], b: &[u8], limit: u8) -> usize {
     a.chunks_exact(4)
         .zip(b.chunks_exact(4))
-        .filter(|(a, b)| {
-            a[..3]
-                .iter()
-                .zip(&b[..3])
-                .any(|(x, y)| x.abs_diff(*y) > limit)
-        })
+        .filter(|(a, b)| a.iter().zip(b.iter()).any(|(x, y)| x.abs_diff(*y) > limit))
         .count()
 }
 
@@ -225,9 +227,15 @@ mod tests {
         let (program, _, checked) = loft_passes::compile(&sources, &[]).unwrap();
         let (session, tape) = TraceSource::new(sources, checked, &program, "EditSphere").unwrap();
         let edited = crate::sources(&new).unwrap();
+        let verify_shader = |shader: &str| {
+            naga::front::wgsl::parse_str(shader)
+                .unwrap_or_else(|e| panic!("{}", e.emit_to_string(shader)));
+        };
+        verify_shader(&tape.shader("").unwrap());
         let literal = session
             .prepare(&edited, &[])
             .unwrap_or_else(|d| panic!("{}", d.render(&edited)));
+        verify_shader(&literal.shader);
         assert_eq!(literal.class(&tape), EditClass::ConstantPool);
         assert!(
             literal
