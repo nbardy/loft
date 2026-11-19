@@ -1,0 +1,2 @@
+# R0 source: examples/second/heron_leap_refused.ts
+# solve: given a local search that stopped with equal at t = 0 (examples/second/heron_leap.ts:71) off by 0.0373; expected a solve that settles. Fix: give a starting curve with spline(n, from), or start the curve on the other side of the obstacle

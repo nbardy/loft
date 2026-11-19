@@ -1,0 +1,2 @@
+# R0 source: examples/open.ts
+# build: 2 table(s) are filled by JavaScript, which a file cannot hold: "smoke_blobs" (sorts the blobs along a Morton curve and runs an O(N^2) light pass between them (a scan could; not ported in phase 1)), "smoke_clusters" (bounding spheres of the sorted blobs, which are filled on the CPU)

@@ -1,0 +1,2 @@
+# R0 source: examples/serpent_relief.ts
+# source requires Sea, Object, ReliefDrawable, Strand, SurfaceDrawable lowering

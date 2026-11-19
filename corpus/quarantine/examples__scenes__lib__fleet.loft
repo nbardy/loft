@@ -1,0 +1,2 @@
+# R0 source: examples/scenes/lib/fleet.ts
+# examples/scenes/lib/fleet.ts has no default export (it must export a scene or a design). Fix: export default scene({ ... })

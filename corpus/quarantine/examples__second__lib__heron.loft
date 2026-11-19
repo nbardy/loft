@@ -1,0 +1,2 @@
+# R0 source: examples/second/lib/heron.ts
+# examples/second/lib/heron.ts has no default export (it must export a scene or a design). Fix: export default scene({ ... })

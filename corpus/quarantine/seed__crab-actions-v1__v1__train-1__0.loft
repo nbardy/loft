@@ -1,0 +1,156 @@
+# R0 source: crab-actions-v1/v1/train-1/0
+# Animated strand crusher_pincer_up keeps the legacy spine and section in a reduced scan reproduction.
+# Part names: belly, carapace, frontrim, rostrum, crusher_upper, crusher_fore, crusher_palm, crusher_pincer_up, crusher_pincer_fix, cutter_upper, cutter_fore, cutter_palm, cutter_pincer_up, cutter_pincer_fix, leg_l1, leg_l2, leg_l3, leg_r1, leg_r2, leg_r3, stalk_l, stalk_r, eye_l, eye_r, stripe_l, stripe_r, dot_front, dot_mid, dot_rear, antenna_l, antenna_r
+space World Local
+
+fn spine_xyz(u: f) -> rgb {
+  let x1 = [-1.06, 0.96, 1.56]
+  let x2 = clamp(u, 0.0, 1.0)
+  let x3 = x2 * 2.0
+  let x4 = x3 - 0.0
+  let x5 = abs(x4)
+  let x6 = x5 < 1.0
+  let x7 = x5 * x5
+  let x8 = x7 * x5
+  let x9 = x8 * 1.5
+  let x10 = x7 * 2.5
+  let x11 = x9 - x10
+  let x12 = x11 + 1.0
+  let x13 = x5 < 2.0
+  let x14 = x8 * -0.5
+  let x15 = x14 + x10
+  let x16 = x5 * 4.0
+  let x17 = x15 - x16
+  let x18 = x17 + 2.0
+  let x19 = select(0.0, x18, x13)
+  let x20 = select(x19, x12, x6)
+  let x21 = x3 + 1.0
+  let x22 = abs(x21)
+  let x23 = x22 < 1.0
+  let x24 = x22 * x22
+  let x25 = x24 * x22
+  let x26 = x25 * 1.5
+  let x27 = x24 * 2.5
+  let x28 = x26 - x27
+  let x29 = x28 + 1.0
+  let x30 = x22 < 2.0
+  let x31 = x25 * -0.5
+  let x32 = x31 + x27
+  let x33 = x22 * 4.0
+  let x34 = x32 - x33
+  let x35 = x34 + 2.0
+  let x36 = select(0.0, x35, x30)
+  let x37 = select(x36, x29, x23)
+  let x38 = x37 * 2.0
+  let x39 = x20 + x38
+  let x40 = x1 * x39
+  let x41 = [-1.18, 1.24, 1.78]
+  let x42 = x3 - 1.0
+  let x43 = abs(x42)
+  let x44 = x43 < 1.0
+  let x45 = x43 * x43
+  let x46 = x45 * x43
+  let x47 = x46 * 1.5
+  let x48 = x45 * 2.5
+  let x49 = x47 - x48
+  let x50 = x49 + 1.0
+  let x51 = x43 < 2.0
+  let x52 = x46 * -0.5
+  let x53 = x52 + x48
+  let x54 = x43 * 4.0
+  let x55 = x53 - x54
+  let x56 = x55 + 2.0
+  let x57 = select(0.0, x56, x51)
+  let x58 = select(x57, x50, x44)
+  let x59 = x58 - x37
+  let x60 = x3 - 3.0
+  let x61 = abs(x60)
+  let x62 = x61 < 1.0
+  let x63 = x61 * x61
+  let x64 = x63 * x61
+  let x65 = x64 * 1.5
+  let x66 = x63 * 2.5
+  let x67 = x65 - x66
+  let x68 = x67 + 1.0
+  let x69 = x61 < 2.0
+  let x70 = x64 * -0.5
+  let x71 = x70 + x66
+  let x72 = x61 * 4.0
+  let x73 = x71 - x72
+  let x74 = x73 + 2.0
+  let x75 = select(0.0, x74, x69)
+  let x76 = select(x75, x68, x62)
+  let x77 = x59 - x76
+  let x78 = x41 * x77
+  let x79 = x40 + x78
+  let x80 = [-1.0, 1.34, 1.93]
+  let x81 = time * 1.5
+  let x82 = sin(x81)
+  let x83 = x82 * 0.05
+  let x84 = [0.0, x83, 0.0]
+  let x85 = x80 + x84
+  let x86 = x3 - 2.0
+  let x87 = abs(x86)
+  let x88 = x87 < 1.0
+  let x89 = x87 * x87
+  let x90 = x89 * x87
+  let x91 = x90 * 1.5
+  let x92 = x89 * 2.5
+  let x93 = x91 - x92
+  let x94 = x93 + 1.0
+  let x95 = x87 < 2.0
+  let x96 = x90 * -0.5
+  let x97 = x96 + x92
+  let x98 = x87 * 4.0
+  let x99 = x97 - x98
+  let x100 = x99 + 2.0
+  let x101 = select(0.0, x100, x95)
+  let x102 = select(x101, x94, x88)
+  let x103 = x76 * 2.0
+  let x104 = x102 + x103
+  let x105 = x85 * x104
+  let x106 = x79 + x105
+  x106
+}
+
+fn width(u: f) -> f {
+  let x1 = 1.0 - u
+  let x2 = x1 * 0.085
+  let x3 = x2 + 0.024
+  x3
+}
+
+fn aspect_ratio(u: f) -> f {
+  1.0
+}
+
+fn strand_color(u: f) -> rgb {
+  let x1 = [0.11, 0.44, 0.46]
+  x1
+}
+
+fn spine(u: f) -> p3@Local = [spine_xyz(u)]@Local
+fn heading(u: f) -> d3@Local = dir(spine(u + 0.001) - spine(u - 0.001))
+
+scan frames u in 0.0..1.0 by 8 on bake_lut {
+  init = frame(spine(u), heading(u), dir([0.0, 1.0, 0.0]@Local))
+  step prev = transport(prev, spine(u), heading(u))
+}
+
+fn tip_closure(u: f) -> f = sqrt(max(1.0 - pow(clamp(1.0 - (u) / 0.05, 0.0, 1.0), 2.0), 0.0)) * clamp(1.0 - u / 0.12, 0.0, 1.0)
+fn section_axis(x: f) -> f = x * pow(max(x * x, 0.000000000001), 0.0)
+
+kind Strand @Local (pose: xf@Local>World) {
+  surface(u, v) grid 12x10 {
+    let m = 0.4 * u + 0.3 * (1 - cos(3.14159265 * u))
+    let f = frames(m)
+    let a = TAU * (v + 0.25)
+    let r = width(m) * tip_closure(m)
+    f.o + f.b * (r * section_axis(cos(a))) + f.n * (r * aspect_ratio(m) * section_axis(sin(a)))
+  }
+  material(p, n, uv) = ggx(strand_color(uv.x), 0.5, 0)
+}
+
+build { emit Strand(pose: place([0, 0, 0]@World)) }
+
+camera Main { at: [0, 0.7, 0]@World, radius: 9.178779875m, height: 3.8m, period: 1000000000s, fov: 0.62rad }

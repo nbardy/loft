@@ -1,0 +1,273 @@
+# R0 source: examples/spray_burst.ts
+
+# Port dependency: additional R0 drawables: ground, shadows, dust, grains
+
+# R0 view: game.
+
+space World Local
+
+
+# boot
+kind Part1Boot @Local (pose: xf@Local>World) {
+  trace(p) {
+    let x1 = smoothstep(0.0, 1.15, time)
+    let x2 = x1 * 1.55
+    let x3 = 0.46 + x2
+    let x4 = [-0.88, x3, 0.0]
+    let x5 = p.xyz - x4
+    let x6 = (x5).x
+    let x7 = x6 * 0.896
+    let x8 = (x5).y
+    let x9 = x8 * 0.444
+    let x10 = x7 + x9
+    let x11 = x8 * 0.896
+    let x12 = x6 * 0.444
+    let x13 = x11 - x12
+    let x14 = (x5).z
+    let x15 = [x10, x13, x14]
+    let x16 = x15 - [0.32, -0.29, 0.0]
+    let x17 = abs(x16)
+    let x18 = [0.99, 0.09, 0.39] - rgb(0.085)
+    let x19 = x17 - x18
+    let x20 = max(x19, 0.0)
+    let x21 = length(x20)
+    let x22 = (x19).x
+    let x23 = (x19).y
+    let x24 = (x19).z
+    let x25 = max(x23, x24)
+    let x26 = max(x22, x25)
+    let x27 = min(x26, 0.0)
+    let x28 = x21 + x27
+    let x29 = x28 - 0.085
+    let x30 = x15 - [0.4, -0.08, 0.0]
+    let x31 = abs(x30)
+    let x32 = [0.88, 0.23, 0.35] - rgb(0.2)
+    let x33 = x31 - x32
+    let x34 = max(x33, 0.0)
+    let x35 = length(x34)
+    let x36 = (x33).x
+    let x37 = (x33).y
+    let x38 = (x33).z
+    let x39 = max(x37, x38)
+    let x40 = max(x36, x39)
+    let x41 = min(x40, 0.0)
+    let x42 = x35 + x41
+    let x43 = x42 - 0.2
+    let x44 = x15 - [-0.28, 0.2, 0.0]
+    let x45 = abs(x44)
+    let x46 = [0.38, 0.5, 0.35] - rgb(0.23)
+    let x47 = x45 - x46
+    let x48 = max(x47, 0.0)
+    let x49 = length(x48)
+    let x50 = (x47).x
+    let x51 = (x47).y
+    let x52 = (x47).z
+    let x53 = max(x51, x52)
+    let x54 = max(x50, x53)
+    let x55 = min(x54, 0.0)
+    let x56 = x49 + x55
+    let x57 = x56 - 0.23
+    let x58 = min(x43, x57)
+    let x59 = x43 - x57
+    let x60 = abs(x59)
+    let x61 = 0.16 - x60
+    let x62 = max(x61, 0.0)
+    let x63 = x62 / 0.16
+    let x64 = x63 * x63
+    let x65 = 0.16 * 0.25
+    let x66 = x64 * x65
+    let x67 = x58 - x66
+    let x68 = min(x29, x67)
+    let x69 = x15 - [0.135, 0.157, -0.21]
+    let x70 = [0.185, 0.157, 0.21] - [0.135, 0.157, -0.21]
+    let x71 = dot(x69, x70)
+    let x72 = dot(x70, x70)
+    let x73 = x71 / x72
+    let x74 = saturate(x73)
+    let x75 = x70 * x74
+    let x76 = x69 - x75
+    let x77 = length(x76)
+    let x78 = x77 - 0.022
+    let x79 = x15 - [0.265, 0.157, -0.21]
+    let x80 = [0.315, 0.157, 0.21] - [0.265, 0.157, -0.21]
+    let x81 = dot(x79, x80)
+    let x82 = dot(x80, x80)
+    let x83 = x81 / x82
+    let x84 = saturate(x83)
+    let x85 = x80 * x84
+    let x86 = x79 - x85
+    let x87 = length(x86)
+    let x88 = x87 - 0.022
+    let x89 = min(x78, x88)
+    let x90 = x15 - [0.395, 0.157, -0.21]
+    let x91 = [0.445, 0.157, 0.21] - [0.395, 0.157, -0.21]
+    let x92 = dot(x90, x91)
+    let x93 = dot(x91, x91)
+    let x94 = x92 / x93
+    let x95 = saturate(x94)
+    let x96 = x91 * x95
+    let x97 = x90 - x96
+    let x98 = length(x97)
+    let x99 = x98 - 0.022
+    let x100 = min(x89, x99)
+    let x101 = x15 - [0.525, 0.157, -0.21]
+    let x102 = [0.575, 0.157, 0.21] - [0.525, 0.157, -0.21]
+    let x103 = dot(x101, x102)
+    let x104 = dot(x102, x102)
+    let x105 = x103 / x104
+    let x106 = saturate(x105)
+    let x107 = x102 * x106
+    let x108 = x101 - x107
+    let x109 = length(x108)
+    let x110 = x109 - 0.022
+    let x111 = min(x100, x110)
+    let x112 = (x15).x
+    let x113 = x112 - -0.43
+    let x114 = (x15).y
+    let x115 = x114 + 0.4
+    let x116 = (x15).z
+    let x117 = x116 * -1.0
+    let x118 = max(x116, x117)
+    let x119 = x118 - 0.245
+    let x120 = [x113, x115, x119]
+    let x121 = abs(x120)
+    let x122 = [0.1, 0.12, 0.1] - rgb(0.035)
+    let x123 = x121 - x122
+    let x124 = max(x123, 0.0)
+    let x125 = length(x124)
+    let x126 = (x123).x
+    let x127 = (x123).y
+    let x128 = (x123).z
+    let x129 = max(x127, x128)
+    let x130 = max(x126, x129)
+    let x131 = min(x130, 0.0)
+    let x132 = x125 + x131
+    let x133 = x132 - 0.035
+    let x134 = x112 - 0.3
+    let x135 = [x134, x115, x119]
+    let x136 = abs(x135)
+    let x137 = x136 - x122
+    let x138 = max(x137, 0.0)
+    let x139 = length(x138)
+    let x140 = (x137).x
+    let x141 = (x137).y
+    let x142 = (x137).z
+    let x143 = max(x141, x142)
+    let x144 = max(x140, x143)
+    let x145 = min(x144, 0.0)
+    let x146 = x139 + x145
+    let x147 = x146 - 0.035
+    let x148 = min(x133, x147)
+    let x149 = x112 - 0.95
+    let x150 = [x149, x115, x119]
+    let x151 = abs(x150)
+    let x152 = x151 - x122
+    let x153 = max(x152, 0.0)
+    let x154 = length(x153)
+    let x155 = (x152).x
+    let x156 = (x152).y
+    let x157 = (x152).z
+    let x158 = max(x156, x157)
+    let x159 = max(x155, x158)
+    let x160 = min(x159, 0.0)
+    let x161 = x154 + x160
+    let x162 = x161 - 0.035
+    let x163 = min(x148, x162)
+    let x164 = min(x111, x163)
+    let x165 = min(x68, x164)
+    x165
+  }
+  material(p, n) {
+    let x1 = [0.34, 0.3, 0.24]
+    let x2 = [0.24, 0.16, 0.09]
+    let x3 = [0.061, 0.075, 0.084]
+    let x4 = smoothstep(0.0, 1.15, time)
+    let x5 = x4 * 1.55
+    let x6 = 0.46 + x5
+    let x7 = [-0.88, x6, 0.0]
+    let x8 = p.xyz - x7
+    let x9 = (x8).x
+    let x10 = x9 * 0.896
+    let x11 = (x8).y
+    let x12 = x11 * 0.444
+    let x13 = x10 + x12
+    let x14 = x11 * 0.896
+    let x15 = x9 * 0.444
+    let x16 = x14 - x15
+    let x17 = (x8).z
+    let x18 = [x13, x16, x17]
+    let x19 = (x18).y
+    let x20 = smoothstep(-0.27, -0.16, x19)
+    let x21 = mix(x2, x3, x20)
+    let x22 = x18 - [0.135, 0.157, -0.21]
+    let x23 = [0.185, 0.157, 0.21] - [0.135, 0.157, -0.21]
+    let x24 = dot(x22, x23)
+    let x25 = dot(x23, x23)
+    let x26 = x24 / x25
+    let x27 = saturate(x26)
+    let x28 = x23 * x27
+    let x29 = x22 - x28
+    let x30 = length(x29)
+    let x31 = x30 - 0.022
+    let x32 = x18 - [0.265, 0.157, -0.21]
+    let x33 = [0.315, 0.157, 0.21] - [0.265, 0.157, -0.21]
+    let x34 = dot(x32, x33)
+    let x35 = dot(x33, x33)
+    let x36 = x34 / x35
+    let x37 = saturate(x36)
+    let x38 = x33 * x37
+    let x39 = x32 - x38
+    let x40 = length(x39)
+    let x41 = x40 - 0.022
+    let x42 = min(x31, x41)
+    let x43 = x18 - [0.395, 0.157, -0.21]
+    let x44 = [0.445, 0.157, 0.21] - [0.395, 0.157, -0.21]
+    let x45 = dot(x43, x44)
+    let x46 = dot(x44, x44)
+    let x47 = x45 / x46
+    let x48 = saturate(x47)
+    let x49 = x44 * x48
+    let x50 = x43 - x49
+    let x51 = length(x50)
+    let x52 = x51 - 0.022
+    let x53 = min(x42, x52)
+    let x54 = x18 - [0.525, 0.157, -0.21]
+    let x55 = [0.575, 0.157, 0.21] - [0.525, 0.157, -0.21]
+    let x56 = dot(x54, x55)
+    let x57 = dot(x55, x55)
+    let x58 = x56 / x57
+    let x59 = saturate(x58)
+    let x60 = x55 * x59
+    let x61 = x54 - x60
+    let x62 = length(x61)
+    let x63 = x62 - 0.022
+    let x64 = min(x53, x63)
+    let x65 = smoothstep(0.003, 0.012, x64)
+    let x66 = mix(x1, x21, x65)
+    ggx(x66, 0.5, 0.0)
+  }
+}
+
+kind Floor @World (radius: m = 80m) {
+  visible(ro, rd) = ray_ground(ro, rd, radius)
+  trace(p) = box_sdf(p - [0, -0.05, 0]@World, [radius, 0.05, radius])
+  material(p, n) = ggx([0.42, 0.39, 0.34], 0.9, 0)
+}
+
+build {
+  let pose: xf@Local>World = place([0.07585384526, 0.0, -0.2787210504]@World, -0.5314287335rad)
+  emit Part1Boot(pose: pose)
+  emit Floor()
+}
+
+schedule Main {
+  orbit(at: [0.55, 1.3, 0.0]@World, radius: 8.583851117m, height: 1.75m, period: 1000000000s, fov: 0.47rad)
+  cull_indirect(Part1Boot, Floor)
+  render_bundle(Vis64) {
+    draw_indirect(Part1Boot)
+    draw_indirect(Floor)
+  }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.5728780629, 0.8, 0.1852315445])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}

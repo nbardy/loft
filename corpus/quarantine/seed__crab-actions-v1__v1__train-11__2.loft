@@ -1,0 +1,138 @@
+# R0 source: crab-actions-v1/v1/train-11/2
+# Animated strand smallFingerB keeps the legacy spine and section in a reduced scan reproduction.
+# Part names: carapace, browRidge, legFrontR, legMidR, legRearR, legFrontL, legMidL, legRearL, bigArm, bigPalm, bigFingerFixed, bigFingerMoving, smallArm, smallPalm, smallFingerA, smallFingerB, stalkL, stalkR, eyeL, eyeR, antennaL, antennaR
+space World Local
+
+fn spine_xyz(u: f) -> rgb {
+  let x1 = [-1.4, 1.08, 0.74]
+  let x2 = clamp(u, 0.0, 1.0)
+  let x3 = x2 * 1.0
+  let x4 = x3 - 0.0
+  let x5 = abs(x4)
+  let x6 = x5 < 1.0
+  let x7 = x5 * x5
+  let x8 = x7 * x5
+  let x9 = x8 * 1.5
+  let x10 = x7 * 2.5
+  let x11 = x9 - x10
+  let x12 = x11 + 1.0
+  let x13 = x5 < 2.0
+  let x14 = x8 * -0.5
+  let x15 = x14 + x10
+  let x16 = x5 * 4.0
+  let x17 = x15 - x16
+  let x18 = x17 + 2.0
+  let x19 = select(0.0, x18, x13)
+  let x20 = select(x19, x12, x6)
+  let x21 = x3 + 1.0
+  let x22 = abs(x21)
+  let x23 = x22 < 1.0
+  let x24 = x22 * x22
+  let x25 = x24 * x22
+  let x26 = x25 * 1.5
+  let x27 = x24 * 2.5
+  let x28 = x26 - x27
+  let x29 = x28 + 1.0
+  let x30 = x22 < 2.0
+  let x31 = x25 * -0.5
+  let x32 = x31 + x27
+  let x33 = x22 * 4.0
+  let x34 = x32 - x33
+  let x35 = x34 + 2.0
+  let x36 = select(0.0, x35, x30)
+  let x37 = select(x36, x29, x23)
+  let x38 = x37 * 2.0
+  let x39 = x20 + x38
+  let x40 = x3 - 2.0
+  let x41 = abs(x40)
+  let x42 = x41 < 1.0
+  let x43 = x41 * x41
+  let x44 = x43 * x41
+  let x45 = x44 * 1.5
+  let x46 = x43 * 2.5
+  let x47 = x45 - x46
+  let x48 = x47 + 1.0
+  let x49 = x41 < 2.0
+  let x50 = x44 * -0.5
+  let x51 = x50 + x46
+  let x52 = x41 * 4.0
+  let x53 = x51 - x52
+  let x54 = x53 + 2.0
+  let x55 = select(0.0, x54, x49)
+  let x56 = select(x55, x48, x42)
+  let x57 = x39 - x56
+  let x58 = x1 * x57
+  let x59 = time * 2.1
+  let x60 = x59 + 3.14159265359
+  let x61 = sin(x60)
+  let x62 = x61 * 0.02
+  let x63 = -1.5 + x62
+  let x64 = x61 * 0.06
+  let x65 = 0.82 + x64
+  let x66 = [x63, 1.14, x65]
+  let x67 = x3 - 1.0
+  let x68 = abs(x67)
+  let x69 = x68 < 1.0
+  let x70 = x68 * x68
+  let x71 = x70 * x68
+  let x72 = x71 * 1.5
+  let x73 = x70 * 2.5
+  let x74 = x72 - x73
+  let x75 = x74 + 1.0
+  let x76 = x68 < 2.0
+  let x77 = x71 * -0.5
+  let x78 = x77 + x73
+  let x79 = x68 * 4.0
+  let x80 = x78 - x79
+  let x81 = x80 + 2.0
+  let x82 = select(0.0, x81, x76)
+  let x83 = select(x82, x75, x69)
+  let x84 = x83 - x37
+  let x85 = x56 * 2.0
+  let x86 = x84 + x85
+  let x87 = x66 * x86
+  let x88 = x58 + x87
+  x88
+}
+
+fn width(u: f) -> f {
+  let x1 = u * 0.8
+  let x2 = 1.0 - x1
+  let x3 = x2 * 0.07
+  x3
+}
+
+fn aspect_ratio(u: f) -> f {
+  1.0
+}
+
+fn strand_color(u: f) -> rgb {
+  let x1 = [0.96, 0.88, 0.7]
+  x1
+}
+
+fn spine(u: f) -> p3@Local = [spine_xyz(u)]@Local
+fn heading(u: f) -> d3@Local = dir(spine(u + 0.001) - spine(u - 0.001))
+
+scan frames u in 0.0..1.0 by 6 on bake_lut {
+  init = frame(spine(u), heading(u), dir([0.0, 1.0, 0.0]@Local))
+  step prev = transport(prev, spine(u), heading(u))
+}
+
+fn tip_closure(u: f) -> f = sqrt(max(1.0 - pow(clamp(1.0 - (u) / 0.05, 0.0, 1.0), 2.0), 0.0)) * clamp(1.0 - u / 0.12, 0.0, 1.0)
+fn section_axis(x: f) -> f = x * pow(max(x * x, 0.000000000001), 0.0)
+
+kind Strand @Local (pose: xf@Local>World) {
+  surface(u, v) grid 10x8 {
+    let m = 0.4 * u + 0.3 * (1 - cos(3.14159265 * u))
+    let f = frames(m)
+    let a = TAU * (v + 0.25)
+    let r = width(m) * tip_closure(m)
+    f.o + f.b * (r * section_axis(cos(a))) + f.n * (r * aspect_ratio(m) * section_axis(sin(a)))
+  }
+  material(p, n, uv) = ggx(strand_color(uv.x), 0.5, 0)
+}
+
+build { emit Strand(pose: place([0, 0, 0]@World)) }
+
+camera Main { at: [0, 0.7, 0]@World, radius: 9.178779875m, height: 3.8m, period: 1000000000s, fov: 0.62rad }

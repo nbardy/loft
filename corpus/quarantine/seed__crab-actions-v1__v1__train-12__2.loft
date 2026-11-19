@@ -1,0 +1,57 @@
+# R0 source: crab-actions-v1/v1/train-12/2
+# Animated strand armUpperR keeps the legacy spine and section in a reduced scan reproduction.
+# Part names: carapace, belly, shellHighlight, smile, stalkL, ballL, pupilL, stalkR, ballR, pupilR, legL0, legL1, legL2, legR0, legR1, legR2, armUpperL, armForeL, palmL, fingerL1, fingerL2, armUpperR, armForeR, palmR, fingerR1, fingerR2, spike0, spike1, spike2, spike3, spike4, spike5
+space World Local
+
+fn spine_xyz(u: f) -> rgb {
+  let x1 = [0.64, 1.16, 0.29]
+  let x2 = time * 2.0
+  let x3 = sin(x2)
+  let x4 = x3 * 0.04
+  let x5 = 1.44 + x4
+  let x6 = [1.09, x5, 0.43]
+  let x7 = mix(x1, x6, u)
+  x7
+}
+
+fn width(u: f) -> f {
+  let x1 = 1.0 - u
+  let x2 = 0.05 * x1
+  let x3 = 0.085 + x2
+  x3
+}
+
+fn aspect_ratio(u: f) -> f {
+  1.0
+}
+
+fn strand_color(u: f) -> rgb {
+  let x1 = [0.85, 0.32, 0.18]
+  x1
+}
+
+fn spine(u: f) -> p3@Local = [spine_xyz(u)]@Local
+fn heading(u: f) -> d3@Local = dir(spine(u + 0.001) - spine(u - 0.001))
+
+scan frames u in 0.0..1.0 by 5 on bake_lut {
+  init = frame(spine(u), heading(u), dir([0.0, 1.0, 0.0]@Local))
+  step prev = transport(prev, spine(u), heading(u))
+}
+
+fn tip_closure(u: f) -> f = sqrt(max(1.0 - pow(clamp(1.0 - (u) / 0.05, 0.0, 1.0), 2.0), 0.0)) * sqrt(max(1.0 - pow(clamp(1.0 - (1.0 - u) / 0.05, 0.0, 1.0), 2.0), 0.0))
+fn section_axis(x: f) -> f = x * pow(max(x * x, 0.000000000001), 0.0)
+
+kind Strand @Local (pose: xf@Local>World) {
+  surface(u, v) grid 8x8 {
+    let m = 0.4 * u + 0.3 * (1 - cos(3.14159265 * u))
+    let f = frames(m)
+    let a = TAU * (v + 0.25)
+    let r = width(m) * tip_closure(m)
+    f.o + f.b * (r * section_axis(cos(a))) + f.n * (r * aspect_ratio(m) * section_axis(sin(a)))
+  }
+  material(p, n, uv) = ggx(strand_color(uv.x), 0.5, 0)
+}
+
+build { emit Strand(pose: place([0, 0, 0]@World)) }
+
+camera Main { at: [0, 0.7, 0]@World, radius: 9.178779875m, height: 3.8m, period: 1000000000s, fov: 0.62rad }

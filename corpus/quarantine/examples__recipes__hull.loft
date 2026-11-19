@@ -1,0 +1,2 @@
+# R0 source: examples/recipes/hull.ts
+# examples/recipes/hull.ts has no default export (it must export a scene or a design). Fix: export default scene({ ... })

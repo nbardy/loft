@@ -1,0 +1,265 @@
+# R0 source: examples/nest.ts
+
+# Port dependency: legacy ground sea needs its original water/media pass
+
+# Port dependency: additional R0 drawables: sea, shadows
+
+# R0 view: three.
+
+space World Local
+
+
+# nest
+kind Part1Nest @Local (pose: xf@Local>World) {
+  trace(p) {
+    let x1 = [0.0, 1.1, 0.0]
+    let x2 = p.xyz - x1
+    let x3 = length(x2)
+    let x4 = max(x3, 1e-20)
+    let x5 = log(x4)
+    let x6 = x5 - -0.1823215568
+    let x7 = x6 / 0.4054651081
+    let x8 = floor(x7)
+    let x9 = x8 * 0.4054651081
+    let x10 = exp(x9)
+    let x11 = x2 / x10
+    let x12 = x11 * 1.0
+    let x13 = length(x12)
+    let x14 = x13 - 1.0
+    let x15 = abs(x14)
+    let x16 = 0.12 * 0.5
+    let x17 = x15 - x16
+    let x18 = -(x17)
+    let x19 = [x8, 0.0, 0.0]
+    let x20 = (x19).x
+    let x21 = x20 + 0.0
+    let x22 = x21 * 0.5
+    let x23 = x22 + 0.8
+    let x24 = cos(x23)
+    let x25 = x24 * 0.9004471024
+    let x26 = sin(x23)
+    let x27 = x26 * 0.9004471024
+    let x28 = [x25, 0.4349655341, x27]
+    let x29 = dot(x12, x28)
+    let x30 = x29 * 0.7173560909
+    let x31 = x28 * x29
+    let x32 = x12 - x31
+    let x33 = length(x32)
+    let x34 = x33 * 0.6967067093
+    let x35 = x30 - x34
+    let x36 = -(x35)
+    let x37 = min(x18, x36)
+    let x38 = x18 - x36
+    let x39 = abs(x38)
+    let x40 = 0.04 - x39
+    let x41 = max(x40, 0.0)
+    let x42 = x41 / 0.04
+    let x43 = x42 * x42
+    let x44 = 0.04 * 0.25
+    let x45 = x43 * x44
+    let x46 = x37 - x45
+    let x47 = -(x46)
+    let x48 = x10 * 1.0
+    let x49 = x47 * x48
+    let x50 = x11 * 2.25
+    let x51 = length(x50)
+    let x52 = x51 - 1.0
+    let x53 = abs(x52)
+    let x54 = x53 - x16
+    let x55 = -(x54)
+    let x56 = x20 + -2.0
+    let x57 = x56 * 0.5
+    let x58 = x57 + 0.8
+    let x59 = cos(x58)
+    let x60 = x59 * 0.9004471024
+    let x61 = sin(x58)
+    let x62 = x61 * 0.9004471024
+    let x63 = [x60, 0.4349655341, x62]
+    let x64 = dot(x50, x63)
+    let x65 = x64 * 0.7173560909
+    let x66 = x63 * x64
+    let x67 = x50 - x66
+    let x68 = length(x67)
+    let x69 = x68 * 0.6967067093
+    let x70 = x65 - x69
+    let x71 = -(x70)
+    let x72 = min(x55, x71)
+    let x73 = x55 - x71
+    let x74 = abs(x73)
+    let x75 = 0.04 - x74
+    let x76 = max(x75, 0.0)
+    let x77 = x76 / 0.04
+    let x78 = x77 * x77
+    let x79 = x78 * x44
+    let x80 = x72 - x79
+    let x81 = -(x80)
+    let x82 = x10 * 0.4444444444
+    let x83 = x81 * x82
+    let x84 = min(x49, x83)
+    let x85 = x11 * 1.5
+    let x86 = length(x85)
+    let x87 = x86 - 1.0
+    let x88 = abs(x87)
+    let x89 = x88 - x16
+    let x90 = -(x89)
+    let x91 = x20 + -1.0
+    let x92 = x91 * 0.5
+    let x93 = x92 + 0.8
+    let x94 = cos(x93)
+    let x95 = x94 * 0.9004471024
+    let x96 = sin(x93)
+    let x97 = x96 * 0.9004471024
+    let x98 = [x95, 0.4349655341, x97]
+    let x99 = dot(x85, x98)
+    let x100 = x99 * 0.7173560909
+    let x101 = x98 * x99
+    let x102 = x85 - x101
+    let x103 = length(x102)
+    let x104 = x103 * 0.6967067093
+    let x105 = x100 - x104
+    let x106 = -(x105)
+    let x107 = min(x90, x106)
+    let x108 = x90 - x106
+    let x109 = abs(x108)
+    let x110 = 0.04 - x109
+    let x111 = max(x110, 0.0)
+    let x112 = x111 / 0.04
+    let x113 = x112 * x112
+    let x114 = x113 * x44
+    let x115 = x107 - x114
+    let x116 = -(x115)
+    let x117 = x10 * 0.6666666667
+    let x118 = x116 * x117
+    let x119 = min(x84, x118)
+    let x120 = x11 * 0.6666666667
+    let x121 = length(x120)
+    let x122 = x121 - 1.0
+    let x123 = abs(x122)
+    let x124 = x123 - x16
+    let x125 = -(x124)
+    let x126 = x20 + 1.0
+    let x127 = x126 * 0.5
+    let x128 = x127 + 0.8
+    let x129 = cos(x128)
+    let x130 = x129 * 0.9004471024
+    let x131 = sin(x128)
+    let x132 = x131 * 0.9004471024
+    let x133 = [x130, 0.4349655341, x132]
+    let x134 = dot(x120, x133)
+    let x135 = x134 * 0.7173560909
+    let x136 = x133 * x134
+    let x137 = x120 - x136
+    let x138 = length(x137)
+    let x139 = x138 * 0.6967067093
+    let x140 = x135 - x139
+    let x141 = -(x140)
+    let x142 = min(x125, x141)
+    let x143 = x125 - x141
+    let x144 = abs(x143)
+    let x145 = 0.04 - x144
+    let x146 = max(x145, 0.0)
+    let x147 = x146 / 0.04
+    let x148 = x147 * x147
+    let x149 = x148 * x44
+    let x150 = x142 - x149
+    let x151 = -(x150)
+    let x152 = x10 * 1.5
+    let x153 = x151 * x152
+    let x154 = min(x119, x153)
+    let x155 = x11 * 0.4444444444
+    let x156 = length(x155)
+    let x157 = x156 - 1.0
+    let x158 = abs(x157)
+    let x159 = x158 - x16
+    let x160 = -(x159)
+    let x161 = x20 + 2.0
+    let x162 = x161 * 0.5
+    let x163 = x162 + 0.8
+    let x164 = cos(x163)
+    let x165 = x164 * 0.9004471024
+    let x166 = sin(x163)
+    let x167 = x166 * 0.9004471024
+    let x168 = [x165, 0.4349655341, x167]
+    let x169 = dot(x155, x168)
+    let x170 = x169 * 0.7173560909
+    let x171 = x168 * x169
+    let x172 = x155 - x171
+    let x173 = length(x172)
+    let x174 = x173 * 0.6967067093
+    let x175 = x170 - x174
+    let x176 = -(x175)
+    let x177 = min(x160, x176)
+    let x178 = x160 - x176
+    let x179 = abs(x178)
+    let x180 = 0.04 - x179
+    let x181 = max(x180, 0.0)
+    let x182 = x181 / 0.04
+    let x183 = x182 * x182
+    let x184 = x183 * x44
+    let x185 = x177 - x184
+    let x186 = -(x185)
+    let x187 = x10 * 2.25
+    let x188 = x186 * x187
+    let x189 = min(x154, x188)
+    let x190 = x3 - 2.42
+    let x191 = max(x189, x190)
+    x191
+  }
+  material(p, n) {
+    let x1 = [1.0, 1.0, 1.0]
+    let x2 = [0.0, 1.1, 0.0]
+    let x3 = p.xyz - x2
+    let x4 = length(x3)
+    let x5 = max(x4, 1e-20)
+    let x6 = log(x5)
+    let x7 = x6 - -0.1823215568
+    let x8 = x7 / 0.4054651081
+    let x9 = floor(x8)
+    let x10 = [x9, 0.0, 0.0]
+    let x11 = (x10).x
+    let x12 = x11 * 0.17
+    let x13 = x12 + 0.55
+    let x14 = x13 + 0.08
+    let x15 = x14 * 6.0
+    let x16 = [0.0, 4.0, 2.0]
+    let x17 = rgb(x15) + x16
+    let x18 = x17 - 6.0 * floor(x17 / 6.0)
+    let x19 = x18 - 3.0
+    let x20 = abs(x19)
+    let x21 = x20 - 1.0
+    let x22 = clamp(x21, 0.0, 1.0)
+    let x23 = mix(x1, x22, 0.35)
+    let x24 = 1.0 * x23
+    let x25 = x13 * 6.0
+    let x26 = x25 + x16
+    let x27 = x26 - 6.0 * floor(x26 / 6.0)
+    let x28 = x27 - 3.0
+    let x29 = abs(x28)
+    let x30 = x29 - 1.0
+    let x31 = clamp(x30, 0.0, 1.0)
+    let x32 = mix(x1, x31, 0.8)
+    let x33 = 0.95 * x32
+    let x34 = normalize(x3)
+    let x35 = dot(n.xyz, x34)
+    let x36 = x35 * 0.5
+    let x37 = x36 + 0.5
+    let x38 = mix(x24, x33, x37)
+    ggx(x38, 0.5, 0.0)
+  }
+}
+
+build {
+  let pose: xf@Local>World = place([0.0, 0.0, 0.0]@World, 0.5280744484rad)
+  emit Part1Nest(pose: pose)
+}
+
+schedule Main {
+  orbit(at: [0.0, 1.0, 0.0]@World, radius: 8.335466394m, height: 3.4m, period: 1000000000s, fov: 0.62rad)
+  cull_indirect(Part1Nest)
+  render_bundle(Vis64) {
+    draw_indirect(Part1Nest)
+  }
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [-0.1187695989, 0.8, 0.5902489156])
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
