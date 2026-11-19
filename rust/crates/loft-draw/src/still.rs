@@ -131,7 +131,12 @@ pub fn run(mut a: Args) -> Result<(), Verdict> {
         let target = Target::new(&g.device, a.size);
         let rgba = target.picture(&g, &mut loft)?;
         if k == 0 {
-            eprintln!("frame: {} draws in {} passes", loft.bundle().draws.len(), loft.bundle().passes.len());
+            let b = loft.bundle();
+            let (draws, passes) = match &b.format {
+                loft_ir::bundle::Format::V1 => (b.draws.len(), b.passes.len()),
+                loft_ir::bundle::Format::V2(s) => (s.draws(), s.passes.len()),
+            };
+            eprintln!("frame: {draws} draws in {passes} passes");
         }
         if let Some(out) = &out {
             let fail = |e: &dyn std::fmt::Display| Verdict::Environment(format!("{}: {e}", out.display()));

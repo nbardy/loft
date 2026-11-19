@@ -74,7 +74,7 @@ use crate::graph::{
 
 pub const MAGIC: u32 = u32::from_le_bytes(*b"LFTW");
 /// Internal, never persisted: the recorder and this decoder change together. The binding reports it at load.
-pub const WIRE: u32 = 4;
+pub const WIRE: u32 = 5;
 /// Quota checked before any span is read: 16.7M nodes, 30x Titan's recorded count.
 pub const MAX_NODES: u64 = 1 << 24;
 /// Wire code of `Prim::ALL[0]`.
@@ -101,6 +101,7 @@ const SPANS: [(Span, usize); 11] = [
 pub struct Job {
     pub program: Program,
     pub graph: Graph,
+    pub declarations: Option<crate::pass::Declarations>,
 }
 
 fn bad(span: Span, at: usize, what: Fault) -> Error {
@@ -124,19 +125,21 @@ enum FnSlot {
 }
 
 /// The header and the eleven spans, each checked for length, padding and whole elements.
-fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
+fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11], Option<crate::pass::Declarations>), Error> {
     let word = |at: usize| buf.get(at..at + 4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]));
     let h = |i: usize| word(4 * i).ok_or_else(|| bad(Span::Header, i, Fault::Truncated));
     (h(0)? == MAGIC).then_some(()).ok_or_else(|| bad(Span::Header, 0, Fault::Magic))?;
     let wire = h(1)?;
-    (wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
+    (wire == 4 || wire == WIRE).then_some(()).ok_or_else(|| bad(Span::Header, 1, Fault::Version { found: wire }))?;
     let code = h(2)?;
     let program = [Program::Scene, Program::Solve, Program::Evaluate, Program::Check]
         .get(code as usize)
         .copied()
         .ok_or_else(|| bad(Span::Header, 2, Fault::Program { found: code }))?;
     let n = h(3)?;
-    (n as usize == SPANS.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::SpanCount { found: n }))?;
+    (n == if wire == 4 { 11 } else { 12 })
+        .then_some(())
+        .ok_or_else(|| bad(Span::Header, 3, Fault::SpanCount { found: n }))?;
     let mut out: [&[u8]; 11] = [&[]; 11];
     let mut at = 16usize;
     for (i, (span, size)) in SPANS.iter().enumerate() {
@@ -154,8 +157,28 @@ fn spans(buf: &[u8]) -> Result<(Program, [&[u8]; 11]), Error> {
         out[i] = &buf[start..end];
         at = padded;
     }
+    let declarations = if wire == WIRE {
+        let fault = || bad(Span::Decls, at, Fault::Length);
+        let len = word(at).ok_or_else(fault)? as usize;
+        let start = at + 8;
+        let end = start.checked_add(len).ok_or_else(fault)?;
+        let padded = end.next_multiple_of(8);
+        if program != Program::Scene
+            || word(at + 4) != Some(0)
+            || !buf.get(end..padded).is_some_and(|p| p.iter().all(|v| *v == 0))
+        {
+            return Err(fault());
+        }
+        let d = serde_json::from_slice(buf.get(start..end).ok_or_else(fault)?).map_err(|e| {
+            Error::Usage(format!("ordered declarations: {e}. Fix the declaration at its reported column").into())
+        })?;
+        at = padded;
+        Some(d)
+    } else {
+        None
+    };
     (at == buf.len()).then_some(()).ok_or_else(|| bad(Span::Header, 3, Fault::Length))?;
-    Ok((program, out))
+    Ok((program, out, declarations))
 }
 
 /// The decls of a job, classified into `Graph`'s per-kind arrays, with each Fn ordinal's kind and each decl's word
@@ -827,7 +850,7 @@ impl Top {
 
 /// Decodes and validates a job: every bound, reference, layout, quota and type rule, before any pass sees it.
 pub fn decode(buf: &[u8]) -> Result<Job, Error> {
-    let (program, spans) = spans(buf)?;
+    let (program, spans, declarations) = spans(buf)?;
     let [nodes_b, args_b, lits_b, rows_b, blobs_b, syms_b, at_b, sites_b, nsites_b, decls_b, roots_b] = spans;
 
     let n_nodes = nodes_b.len() / 16;
@@ -914,7 +937,7 @@ pub fn decode(buf: &[u8]) -> Result<Job, Error> {
             fault: SceneFault::Type { want, got },
         })?;
     }
-    Ok(Job { program, graph })
+    Ok(Job { program, graph, declarations })
 }
 
 /// The node words, each classified into its `Op` with its references, counts and flags checked.

@@ -185,7 +185,7 @@ function planeGround(ctx: RecordContext): Pass["ground"] {
 }
 
 /** A scene camera as a camera decl (TS src/host/camera.ts's conventions; loft-gpu camera.wgsl builds a look). */
-function cameraOf(name: string, c: SceneCamera): Camera {
+export function cameraOf(name: string, c: SceneCamera): Camera {
   switch (c.kind) {
     case "perspective": return { name, kind: "look", eye: lift<"vec3">([...c.eye]), target: lift<"vec3">([...c.target]), up: lift<"vec3">([0, 1, 0]), fovy: lift<"f32">(c.fovY) };
     case "orthographic": {

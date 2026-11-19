@@ -211,17 +211,38 @@ async function profileOnDraw(cmd: Extract<Command, { kind: "profile" }>) {
   const { existsSync } = await import("node:fs");
   if (!existsSync(LOFT_DRAW)) throw new EnvironmentError(`${LOFT_DRAW} is missing. Fix: tools/dev.sh build loft-draw --fast`, false);
   const out = `out/profile/${/([^/]+?)(\.ts)?$/.exec(cmd.path)![1]!}`;
-  await buildRust({ kind: "build", engine: "rust", naga: "load", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
+  await build({ kind: "build", engine: "rust", naga: "load", precision: cmd.precision, out, source: { kind: "file", path: cmd.path, style: cmd.style, light: cmd.light, variant: cmd.variant } });
   const child = Bun.spawn([LOFT_DRAW, "profile", out, "--view", cmd.view, "--time", String(cmd.time), "--size", `${cmd.size.width}x${cmd.size.height}`, "--frames", String(cmd.frames)], { stdout: "inherit", stderr: "inherit" });
   const code = await child.exited;
   if (code !== 0) process.exit(code);
 }
 
 async function build(cmd: Extract<Command, { kind: "build" }>) {
+  if (cmd.source.kind === "file") {
+    const { subjectAt } = await import("./variant.ts");
+    const subject = await subjectAt(cmd.source.path);
+    if (subject.kind === "scene" && "kind" in subject.scene && subject.scene.kind === "ordered") {
+      if (cmd.source.variant.kind === "ask" || cmd.source.style.kind !== "scene" || cmd.source.light.kind !== "scene") {
+        throw new UsageError("ordered scene: set the look and world in its engine and omit --variant, --style and --light");
+      }
+      return buildOrdered(cmd, subject.scene as unknown as import("../render/record.ts").OrderedScene);
+    }
+  }
   switch (cmd.engine) {
     case "ts": return buildTs(cmd);
     case "rust": return buildRust(cmd);
   }
+}
+
+async function buildOrdered(cmd: Extract<Command, {kind:"build"}>, scene: import("../render/record.ts").OrderedScene) {
+  const [{rec},{pack,Program},{native,UNLIMITED},{cameraOf},{mkdirSync}] = await Promise.all([
+    import("../record/recorder.ts"),import("../record/wire.ts"),import("../core/native.ts"),import("../draw/record.ts"),import("node:fs")]);
+  const cameras=Object.entries(scene.cameras).map(([name,c])=>cameraOf(name,c));
+  const job=pack(rec.job(Program.Scene,[],{cameras,passes:[],checks:[],solves:[]}),scene.record());
+  mkdirSync(cmd.out,{recursive:true});
+  const file=`${cmd.out}/scene.loft`;
+  const r=native().run(job,{nodes:UNLIMITED,tapeOps:UNLIMITED,boxes:UNLIMITED,gpuNanos:UNLIMITED},file,{naga:cmd.naga,precision:cmd.precision});
+  console.log(`wrote ${file}  ${r.scene!.resources} resources  build ${r.scene!.build}`);
 }
 
 /**

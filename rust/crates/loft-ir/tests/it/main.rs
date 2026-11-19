@@ -5,7 +5,7 @@ use loft_ir::bundle::*;
 use loft_ir::error::{Error, Fault, Internal, SceneFault, Span};
 use loft_ir::graph::{self, Fill, Op, Prim, Program, Site, Ty};
 use loft_ir::identity::{self, Backend, Device, FrameKey, Identity, Precision};
-use loft_ir::wire::{self, BOUND, MAGIC, PRIM0, WIRE};
+use loft_ir::wire::{self, BOUND, MAGIC, PRIM0};
 
 /// A job writer in the wire's layout (src/record/wire.ts `pack`; the recorder's job in TS, here only for test jobs).
 #[derive(Default, Clone)]
@@ -89,7 +89,7 @@ impl Job {
             le(&decls),
             le(&roots),
         ];
-        let mut out = le(&[MAGIC, WIRE, program, 11]);
+        let mut out = le(&[MAGIC, 4, program, 11]);
         for s in &spans {
             out.extend(le(&[s.len() as u32, 0]));
             out.extend(s);

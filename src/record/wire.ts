@@ -76,11 +76,12 @@ export type Job = {
 const SPANS = ["nodes", "args", "lits", "rows", "blobs", "syms", "symAt", "sites", "siteOf", "decls", "roots"] as const;
 
 /** The job as one byte string: the header, then each span as its byte length and its bytes padded to 8. What is hashed and dumped. */
-export function pack(job: Job): Uint8Array {
+export function pack(job: Job, declarations?: import("./passes.ts").Declarations): Uint8Array {
   const parts = SPANS.map((s) => new Uint8Array(job[s].buffer, job[s].byteOffset, job[s].byteLength));
+  if (declarations) parts.push(new TextEncoder().encode(JSON.stringify(declarations)));
   const out = new Uint8Array(16 + parts.reduce((n, p) => n + 8 + ((p.length + 7) & ~7), 0));
   const w = new DataView(out.buffer);
-  [MAGIC, WIRE, job.program, SPANS.length].forEach((v, k) => w.setUint32(4 * k, v, true));
+  [MAGIC, declarations ? 5 : WIRE, job.program, parts.length].forEach((v, k) => w.setUint32(4 * k, v, true));
   let at = 16;
   for (const p of parts) { w.setUint32(at, p.length, true); out.set(p, at + 8); at += 8 + ((p.length + 7) & ~7); }
   return out;

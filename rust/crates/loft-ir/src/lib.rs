@@ -5,6 +5,7 @@ pub mod bundle;
 pub mod error;
 pub mod frame;
 pub mod graph;
+pub mod pass;
 pub mod identity;
 pub mod print;
 pub mod wire;

@@ -159,7 +159,11 @@ fn frames(f: &Flags, g: &Gpu, loft: &mut Loft, target: &Target) -> Result<Times,
     let poll =
         || g.device.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| Verdict::Environment(format!("poll: {e}")));
     // loft-gpu's timestamps: the kernel pass at 0 and 1, render pass k at 2 + 2k and 3 + 2k.
-    let n = 2 + 2 * loft.bundle().passes.len() as u32;
+    let passes = match &loft.bundle().format {
+        loft_ir::bundle::Format::V1 => loft.bundle().passes.len(),
+        loft_ir::bundle::Format::V2(s) => s.passes.len(),
+    };
+    let n = 2 + 2 * passes as u32;
     let clock = g.timing.then(|| {
         let set = g.device.create_query_set(&wgpu::QuerySetDescriptor {
             label: Some("loft frame"),

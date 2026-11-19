@@ -48,6 +48,7 @@
 //! ```
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
+mod pass;
 mod validate;
 mod view;
 
@@ -206,6 +207,7 @@ struct Packs<T> {
 
 pub struct Loft {
     b: Bundle,
+    ordered: Option<pass::Ordered>,
     build: [u8; 32],
     precision: Precision,
     canvases: Vec<Canvas>,
@@ -219,7 +221,7 @@ pub struct Loft {
     /// `loft_scene_depth`, `loft_scene_clearance` and `loft_post_colour` (emit's prelude, bindings 2 to 4): 1 × 1, far
     /// and clear, until a pass resolves the opaque draws into them (view.rs).
     scene: view::Scene,
-    resolve: view::Resolve,
+    resolve: Option<view::Resolve>,
     /// Per pass: the item before which it resolves the scene (view.rs's rule), if any.
     resolve_at: Vec<Option<usize>>,
     cameras: view::Cameras,
@@ -254,6 +256,8 @@ pub(crate) fn prelude(m: &Module, p: Precision) -> &'static str {
 fn texel(f: TexFormat) -> (TextureFormat, u64) {
     match f {
         TexFormat::Rgba8Unorm => (TextureFormat::Rgba8Unorm, 4),
+        TexFormat::Rgba16Uint => (TextureFormat::Rgba16Uint, 8),
+        TexFormat::Rgba32Float => (TextureFormat::Rgba32Float, 16),
         TexFormat::Rgba16Float => (TextureFormat::Rgba16Float, 8),
         TexFormat::R32Float => (TextureFormat::R32Float, 4),
         TexFormat::Depth32Float => (TextureFormat::Depth32Float, 4),
@@ -472,6 +476,9 @@ impl Loft {
             Precision::Mixed | Precision::F32 => Precision::F32,
         };
         validate(&b, precision, &device.limits())?;
+        if let loft_ir::bundle::Format::V2(s) = &b.format {
+            pass::validate(s, &b, device)?;
+        }
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let loft = Loft::create(device, queue, b, loft_ir::identity::build(bytes), precision, canvases, cache);
         match scope.pop().await {
@@ -737,7 +744,14 @@ impl Loft {
                 Target::Texture(_) | Target::Shadow { .. } => None,
             })
             .collect();
+        let ordered = match &b.format {
+            loft_ir::bundle::Format::V1 => None,
+            loft_ir::bundle::Format::V2(s) => {
+                Some(pass::Ordered::new(device, queue, s, &b, &modules, [&bgl0, &bgl1.render], canvases, cache))
+            }
+        };
         let mut loft = Loft {
+            ordered,
             res: Vec::new(),
             packs,
             build,
@@ -747,7 +761,7 @@ impl Loft {
             steps,
             detail,
             scene,
-            resolve: view::Resolve::new(device),
+            resolve: matches!(b.format, loft_ir::bundle::Format::V1).then(|| view::Resolve::new(device)),
             resolve_at,
             cameras,
             aim: Aim::Matrices(NO_CAMERA),
@@ -985,7 +999,12 @@ impl Loft {
     }
 
     fn frame_bytes(&self, time: f32) -> Vec<u8> {
-        frame_bytes(&self.host_camera(), self.size, time, &self.params, &self.inputs)
+        let mut bytes = frame_bytes(&self.host_camera(), self.size, time, &self.params, &self.inputs);
+        if let Some(o) = &self.ordered {
+            let index = if self.size == o.extent() { o.frame } else { 0 };
+            bytes[frame::TIME + 4..frame::TIME + 8].copy_from_slice(&index.to_le_bytes());
+        }
+        bytes
     }
 
     /// The camera the CPU writes with the frame: the host's matrices, or a stand-in the GPU camera then overwrites.
@@ -1048,7 +1067,13 @@ impl Loft {
     /// What loading built: shader modules, render pipelines and compute pipelines (the camera builder's included). Load
     /// time grows with these (CORE.md: score them beside frame time).
     pub fn built(&self) -> [usize; 3] {
-        [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()]
+        match &self.ordered {
+            Some(p) => {
+                let [r, c] = p.counts();
+                [self.b.modules.len() + 1, r, c + self.b.cameras.len() + 1]
+            }
+            None => [self.b.modules.len(), self.render.len(), self.compute.len() + self.b.cameras.len()],
+        }
     }
 
     pub fn precision(&self) -> Precision {
@@ -1201,6 +1226,9 @@ impl Loft {
                 self.steppers[s].done = to;
             }
         }
+        if let (Some(ordered), loft_ir::bundle::Format::V2(s)) = (&mut self.ordered, &self.b.format) {
+            return ordered.encode(device, enc, view, s, [&self.g0[0], &self.g1.render], self.timestamps.as_ref());
+        }
         for (p, pass) in self.b.passes.iter().enumerate() {
             let clear = |owned: bool| match (owned, &pass.clear) {
                 (true, Clear::Color(c)) => {
@@ -1243,7 +1271,7 @@ impl Loft {
                     }
                     // A multisampled view resolves its colour each segment: the scene colour is copied from there.
                     let picture = into.or(color).expect("a View pass has colour");
-                    self.resolve.encode(device, enc, &self.scene, picture, depth)?;
+                    self.resolve.as_ref().expect("wire 4 resolve").encode(device, enc, &self.scene, picture, depth)?;
                 }
                 let load = if seg == 0 { ops } else { (wgpu::LoadOp::Load, wgpu::LoadOp::Load) };
                 let colors: Vec<_> = color
@@ -1302,6 +1330,11 @@ impl Loft {
     /// A new copy at this loft's current time, params and inputs. Refused when a copy would share per-frame state it
     /// cannot share: a live (`Keep::Latest`) stepped kernel, an offscreen pass, or a view-sized `Frame` write.
     pub fn instance(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Instance, Error> {
+        if self.ordered.is_some() {
+            return Err(Error::Usage(
+                "an ordered program must run through encode_into; use a separate Loft per instance".into(),
+            ));
+        }
         let live = self
             .steppers
             .iter()

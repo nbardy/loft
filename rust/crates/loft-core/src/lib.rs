@@ -27,6 +27,7 @@ pub mod grad;
 pub mod interval;
 pub mod kernel;
 pub mod layout;
+mod pass;
 pub mod prim;
 pub mod rate;
 pub mod schedule;
@@ -149,7 +150,7 @@ pub fn run(job: &[u8], limits: Limits, build: Build, compiler: &str) -> Result<(
     let (nodes, decls) = (g.nodes.len(), decls.iter().sum());
     match job.program {
         Program::Scene => {
-            let (scene, bytes) = scene(g, build, compiler, &mut phases)?;
+            let (scene, bytes) = scene(g, job.declarations, build, compiler, &mut phases)?;
             let report = Report {
                 program: job.program,
                 nodes,
@@ -201,7 +202,13 @@ fn unlowered(g: &Graph) -> Result<(), Error> {
     }
 }
 
-fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Result<(Scene, Vec<u8>), Error> {
+fn scene(
+    mut g: Graph,
+    declarations: Option<loft_ir::pass::Declarations>,
+    build: Build,
+    compiler: &str,
+    phases: &mut Phases,
+) -> Result<(Scene, Vec<u8>), Error> {
     unlowered(&g)?;
     // Plan: one resource per Kernel decl, in decl order, so resource k is kernel k (emit's Slots, Fetch's binding).
     let t = Instant::now();
@@ -426,7 +433,7 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
             bundle::Pass { compose, ..p }
         })
         .collect();
-    let b = Bundle {
+    let mut b = Bundle {
         format: Format::V1,
         compiler: compiler.into(),
         names: strings.into(),
@@ -443,8 +450,20 @@ fn scene(mut g: Graph, build: Build, compiler: &str, phases: &mut Phases) -> Res
         sites: Box::new([]),
         sections: sections.into(),
     };
+    let wgsl_bytes = wgsl_bytes
+        + match declarations {
+            Some(d) => pass::link(&mut b, d, build)?,
+            None => 0,
+        };
     let resources = b.resources.len();
-    let (n_kernels, n_draws, n_packs) = (b.kernels.len(), b.draws.len(), b.packs.len());
+    let (n_kernels, n_draws, n_packs) = (
+        b.kernels.len(),
+        match &b.format {
+            Format::V1 => b.draws.len(),
+            Format::V2(s) => s.draws(),
+        },
+        b.packs.len(),
+    );
     let bytes = b.write()?;
     let build = Sha256::digest(&bytes).iter().map(|x| format!("{x:02x}")).collect();
     phases.bundle = ns(t);
