@@ -1,0 +1,421 @@
+{
+  "examples_rev": "d3674dbdb918b604a5e82f9736db84780a6894a8",
+  "seeds_manifest": "tools/parity/corpus.json",
+  "batches": [
+    {
+      "batch": 1,
+      "lane": "l5c",
+      "scenes": [
+        "examples/bead.ts",
+        "examples/bosses/crab_lineup.ts",
+        "examples/bosses/crab_song.ts",
+        "examples/bosses/lib/face_parts.ts",
+        "examples/bosses/lib/growth.ts",
+        "examples/bosses/lib/impact.ts",
+        "examples/bosses/lib/scale_ship.ts",
+        "examples/bosses/lib/stalk_eyes.ts",
+        "examples/bosses/lib/warning.ts",
+        "examples/bosses/lineup_shots.ts",
+        "examples/bosses/maelstrom_wyrm.ts",
+        "examples/bosses/reefback_titan.ts",
+        "examples/bosses/thundermaw.ts",
+        "examples/bosses/titan/back/base.ts",
+        "examples/bosses/titan/back/beacon.ts"
+      ]
+    },
+    {
+      "batch": 2,
+      "lane": "l5c",
+      "scenes": [
+        "examples/bosses/titan/back/headland.ts",
+        "examples/bosses/titan/back/keep.ts",
+        "examples/bosses/titan/back/lighthouse.ts",
+        "examples/bosses/titan/back/shrine.ts",
+        "examples/bosses/titan/back/spiral.ts",
+        "examples/bosses/titan/back/spiral_shell.ts",
+        "examples/bosses/titan/back/terraces.ts",
+        "examples/bosses/titan/boats/base.ts",
+        "examples/bosses/titan/boats/host.ts",
+        "examples/bosses/titan/carapace/base.ts",
+        "examples/bosses/titan/carapace/kabuto.ts",
+        "examples/bosses/titan/carapace/pebble.ts",
+        "examples/bosses/titan/carapace/thorny.ts",
+        "examples/bosses/titan/claws/base.ts",
+        "examples/bosses/titan/claws/fiddler.ts"
+      ]
+    },
+    {
+      "batch": 3,
+      "lane": "l5c",
+      "scenes": [
+        "examples/bosses/titan/claws/gauntlet.ts",
+        "examples/bosses/titan/claws/tongs.ts",
+        "examples/bosses/titan/face/base.ts",
+        "examples/bosses/titan/face/brow.ts",
+        "examples/bosses/titan/face/dandy.ts",
+        "examples/bosses/titan/face/jitter.ts",
+        "examples/bosses/titan/face/mask.ts",
+        "examples/bosses/titan/face/mourner.ts",
+        "examples/bosses/titan/face/patient.ts",
+        "examples/bosses/titan/face/periscope.ts",
+        "examples/bosses/titan/ink.ts",
+        "examples/bosses/titan/legs/armoured.ts",
+        "examples/bosses/titan/legs/base.ts",
+        "examples/bosses/titan/legs/hermit.ts",
+        "examples/bosses/titan/legs/slim.ts"
+      ]
+    },
+    {
+      "batch": 4,
+      "lane": "l5c",
+      "scenes": [
+        "examples/bosses/titan/legs/stilt.ts",
+        "examples/bosses/titan/numbers.ts",
+        "examples/bosses/titan/rig.ts",
+        "examples/bosses/titan/slots.ts",
+        "examples/bosses/tithe/kit.ts",
+        "examples/bosses/tithe_fleet.ts",
+        "examples/bosses/wreckers_lamp.ts",
+        "examples/brig.ts",
+        "examples/compute_frame.ts",
+        "examples/compute_steps.ts",
+        "examples/compute_volume.ts",
+        "examples/coral.ts",
+        "examples/coral_list.ts",
+        "examples/creep.ts",
+        "examples/dust_veil.ts"
+      ]
+    },
+    {
+      "batch": 5,
+      "lane": "l5c",
+      "scenes": [
+        "examples/first/lantern.ts",
+        "examples/first/lantern_nothing.ts",
+        "examples/first/lantern_swings.ts",
+        "examples/fleet.ts",
+        "examples/flock.ts",
+        "examples/grab.ts",
+        "examples/islandback.ts",
+        "examples/light/area_lamp.ts",
+        "examples/light/heron_lamp.ts",
+        "examples/light/lantern_night.ts",
+        "examples/light/lure.ts",
+        "examples/light/road.ts",
+        "examples/maelstrom.ts",
+        "examples/materials/beetle.ts",
+        "examples/materials/lacquer.ts"
+      ]
+    },
+    {
+      "batch": 6,
+      "lane": "l5d",
+      "scenes": [
+        "examples/materials/moving_sun.ts",
+        "examples/materials/occlusion.ts",
+        "examples/materials/poker.ts",
+        "examples/materials/refocus.ts",
+        "examples/materials/spheres.ts",
+        "examples/materials/thin_film.ts",
+        "examples/mirror.ts",
+        "examples/mixed_precision.ts",
+        "examples/nest.ts",
+        "examples/open.ts",
+        "examples/pearls.ts",
+        "examples/pool.ts",
+        "examples/ranged.ts",
+        "examples/recipes/film.ts",
+        "examples/recipes/hull.ts"
+      ]
+    },
+    {
+      "batch": 7,
+      "lane": "l5d",
+      "scenes": [
+        "examples/recipes/ship.ts",
+        "examples/recipes/thunderhead.ts",
+        "examples/reeds_shadow.ts",
+        "examples/rope.ts",
+        "examples/scenes/island_tide.ts",
+        "examples/scenes/lib/fleet.ts",
+        "examples/scenes/lib/wyrm.ts",
+        "examples/scenes/maelstrom.ts",
+        "examples/scenes/night_hunt.ts",
+        "examples/scenes/stormfront.ts",
+        "examples/scenes/the_strike.ts",
+        "examples/second/buoys.ts",
+        "examples/second/crane.ts",
+        "examples/second/heron.ts",
+        "examples/second/heron_leap.ts"
+      ]
+    },
+    {
+      "batch": 8,
+      "lane": "l5d",
+      "scenes": [
+        "examples/second/heron_leap_refused.ts",
+        "examples/second/lantern.ts",
+        "examples/second/lanternfish.ts",
+        "examples/second/lib/heron.ts",
+        "examples/second/lighthouse.ts",
+        "examples/second/owl.ts",
+        "examples/second/pair.ts",
+        "examples/serpent.ts",
+        "examples/serpent_clip.ts",
+        "examples/serpent_relief.ts",
+        "examples/serpent_scales.ts",
+        "examples/shatter.ts",
+        "examples/shell.ts",
+        "examples/shell_relief.ts",
+        "examples/skin.ts"
+      ]
+    },
+    {
+      "batch": 9,
+      "lane": "l5d",
+      "scenes": [
+        "examples/spray_burst.ts",
+        "examples/storm.ts",
+        "examples/stormwing.ts",
+        "examples/strike.ts",
+        "examples/volume_dust.ts",
+        "crab-actions-v1/v1/train-0/0",
+        "crab-actions-v1/v1/train-0/1",
+        "crab-actions-v1/v1/train-1/0",
+        "crab-actions-v1/v1/train-1/1",
+        "crab-actions-v1/v1/train-1/2",
+        "crab-actions-v1/v1/train-1/3",
+        "crab-actions-v1/v1/train-10/0",
+        "crab-actions-v1/v1/train-10/1",
+        "crab-actions-v1/v1/train-10/2",
+        "crab-actions-v1/v1/train-11/0"
+      ]
+    },
+    {
+      "batch": 10,
+      "lane": "l5d",
+      "scenes": [
+        "crab-actions-v1/v1/train-11/1",
+        "crab-actions-v1/v1/train-11/2",
+        "crab-actions-v1/v1/train-12/0",
+        "crab-actions-v1/v1/train-12/1",
+        "crab-actions-v1/v1/train-12/2",
+        "crab-actions-v1/v1/train-12/3",
+        "crab-actions-v1/v1/train-13/0",
+        "crab-actions-v1/v1/train-13/1",
+        "crab-actions-v1/v1/train-13/2",
+        "crab-actions-v1/v1/train-14/0",
+        "crab-actions-v1/v1/train-14/1",
+        "crab-actions-v1/v1/train-14/2",
+        "crab-actions-v1/v1/train-14/3",
+        "crab-actions-v1/v1/train-15/0",
+        "crab-actions-v1/v1/train-15/1"
+      ]
+    },
+    {
+      "batch": 11,
+      "lane": "l5e",
+      "scenes": [
+        "crab-actions-v1/v1/train-15/2",
+        "crab-actions-v1/v1/train-15/3",
+        "crab-actions-v1/v1/train-16/0",
+        "crab-actions-v1/v1/train-16/1",
+        "crab-actions-v1/v1/train-16/2",
+        "crab-actions-v1/v1/train-17/0",
+        "crab-actions-v1/v1/train-17/1",
+        "crab-actions-v1/v1/train-17/2",
+        "crab-actions-v1/v1/train-17/3",
+        "crab-actions-v1/v1/train-18/1",
+        "crab-actions-v1/v1/train-18/2",
+        "crab-actions-v1/v1/train-18/3",
+        "crab-actions-v1/v1/train-19/0",
+        "crab-actions-v1/v1/train-19/1",
+        "crab-actions-v1/v1/train-19/3"
+      ]
+    },
+    {
+      "batch": 12,
+      "lane": "l5e",
+      "scenes": [
+        "crab-actions-v1/v1/train-2/1",
+        "crab-actions-v1/v1/train-2/2",
+        "crab-actions-v1/v1/train-3/0",
+        "crab-actions-v1/v1/train-3/1",
+        "crab-actions-v1/v1/train-3/3",
+        "crab-actions-v1/v1/train-4/1",
+        "crab-actions-v1/v1/train-4/2",
+        "crab-actions-v1/v1/train-4/3",
+        "crab-actions-v1/v1/train-5/0",
+        "crab-actions-v1/v1/train-5/1",
+        "crab-actions-v1/v1/train-5/2",
+        "crab-actions-v1/v1/train-5/3",
+        "crab-actions-v1/v1/train-6/0",
+        "crab-actions-v1/v1/train-6/1",
+        "crab-actions-v1/v1/train-6/3"
+      ]
+    },
+    {
+      "batch": 13,
+      "lane": "l5e",
+      "scenes": [
+        "crab-actions-v1/v1/train-7/0",
+        "crab-actions-v1/v1/train-7/1",
+        "crab-actions-v1/v1/train-7/2",
+        "crab-actions-v1/v1/train-7/3",
+        "crab-actions-v1/v1/train-8/0",
+        "crab-actions-v1/v1/train-8/1",
+        "crab-actions-v1/v1/train-8/2",
+        "crab-actions-v1/v1/train-8/3",
+        "crab-actions-v1/v1/train-9/0",
+        "crab-actions-v1/v1/train-9/1",
+        "crab-actions-v1/v1/train-9/2",
+        "crab-actions-v1/v1/train-9/3",
+        "crab-actions-v1/r38retry-before/before-0/0",
+        "crab-actions-v1/r38retry-before/before-0/1",
+        "crab-actions-v1/r38retry-before/before-0/3"
+      ]
+    },
+    {
+      "batch": 14,
+      "lane": "l5e",
+      "scenes": [
+        "crab-actions-v1/r38retry-before/before-1/0",
+        "crab-actions-v1/r38retry-before/before-1/1",
+        "crab-actions-v1/r38retry-before/before-1/2",
+        "crab-actions-v1/r38retry-before/before-1/3",
+        "crab-actions-v1/r38retry-before/before-2/0",
+        "crab-actions-v1/r38retry-before/before-2/2",
+        "crab-actions-v1/r38retry-before/before-2/3",
+        "crab-actions-v1/r38retry-before/before-3/0",
+        "crab-actions-v1/r38retry-before/before-3/3",
+        "crab-actions-v1/smoke/eval-after/group-0/0",
+        "crab-actions-v1/smoke/eval-after/group-0/1",
+        "crab-actions-v1/smoke/eval-after/group-0/2",
+        "crab-actions-v1/smoke/eval-after/group-1/0",
+        "crab-actions-v1/smoke/eval-after/group-1/1",
+        "crab-actions-v1/smoke/eval-after/group-1/3"
+      ]
+    },
+    {
+      "batch": 15,
+      "lane": "l5e",
+      "scenes": [
+        "crab-actions-v1/smoke/eval-before/group-0/0",
+        "crab-actions-v1/smoke/eval-before/group-0/1",
+        "crab-actions-v1/smoke/eval-before/group-0/2",
+        "crab-actions-v1/smoke/eval-before/group-0/3",
+        "crab-actions-v1/smoke/eval-before/group-1/1",
+        "crab-actions-v1/smoke/eval-before/group-1/3",
+        "crab-actions-v1/smoke/round-0/group-0/0",
+        "crab-actions-v1/smoke/round-0/group-0/1",
+        "crab-actions-v1/smoke/round-0/group-0/2",
+        "crab-actions-v1/smoke/round-0/group-0/3",
+        "crab-actions-v1/smoke/round-0/group-1/1",
+        "crab-actions-v1/smoke/round-0/group-1/3",
+        "crab-actions-v1/smoke/round-1/group-0/0",
+        "crab-actions-v1/smoke/round-1/group-0/1",
+        "crab-actions-v1/smoke/round-1/group-0/2"
+      ]
+    },
+    {
+      "batch": 16,
+      "lane": "l5f",
+      "scenes": [
+        "crab-actions-v1/smoke/round-1/group-0/3",
+        "crab-actions-v1/smoke/round-1/group-1/0",
+        "crab-actions-v1/smoke/round-1/group-1/1",
+        "crab-improve-v1/train-0/0",
+        "crab-improve-v1/train-0/1",
+        "crab-improve-v1/train-1/0",
+        "crab-improve-v1/train-1/1",
+        "crab-improve-v1/train-1/2",
+        "crab-improve-v1/train-1/3",
+        "crab-improve-v1/train-10/0",
+        "crab-improve-v1/train-10/1",
+        "crab-improve-v1/train-10/2",
+        "crab-improve-v1/train-11/0",
+        "crab-improve-v1/train-11/1",
+        "crab-improve-v1/train-11/2"
+      ]
+    },
+    {
+      "batch": 17,
+      "lane": "l5f",
+      "scenes": [
+        "crab-improve-v1/train-12/0",
+        "crab-improve-v1/train-12/1",
+        "crab-improve-v1/train-12/2",
+        "crab-improve-v1/train-12/3",
+        "crab-improve-v1/train-13/0",
+        "crab-improve-v1/train-13/1",
+        "crab-improve-v1/train-13/2",
+        "crab-improve-v1/train-14/0",
+        "crab-improve-v1/train-14/1",
+        "crab-improve-v1/train-14/2",
+        "crab-improve-v1/train-14/3",
+        "crab-improve-v1/train-15/0",
+        "crab-improve-v1/train-15/1",
+        "crab-improve-v1/train-15/2",
+        "crab-improve-v1/train-15/3"
+      ]
+    },
+    {
+      "batch": 18,
+      "lane": "l5f",
+      "scenes": [
+        "crab-improve-v1/train-16/0",
+        "crab-improve-v1/train-16/1",
+        "crab-improve-v1/train-16/2",
+        "crab-improve-v1/train-17/0",
+        "crab-improve-v1/train-17/1",
+        "crab-improve-v1/train-17/2",
+        "crab-improve-v1/train-17/3",
+        "crab-improve-v1/train-18/1",
+        "crab-improve-v1/train-18/2",
+        "crab-improve-v1/train-18/3",
+        "crab-improve-v1/train-19/0",
+        "crab-improve-v1/train-19/1",
+        "crab-improve-v1/train-19/3",
+        "crab-improve-v1/train-2/1",
+        "crab-improve-v1/train-2/2"
+      ]
+    },
+    {
+      "batch": 19,
+      "lane": "l5f",
+      "scenes": [
+        "crab-improve-v1/train-3/0",
+        "crab-improve-v1/train-3/1",
+        "crab-improve-v1/train-3/3",
+        "crab-improve-v1/train-4/1",
+        "crab-improve-v1/train-4/2",
+        "crab-improve-v1/train-4/3",
+        "crab-improve-v1/train-5/0",
+        "crab-improve-v1/train-5/1",
+        "crab-improve-v1/train-5/2",
+        "crab-improve-v1/train-5/3",
+        "crab-improve-v1/train-6/0",
+        "crab-improve-v1/train-6/1",
+        "crab-improve-v1/train-6/3",
+        "crab-improve-v1/train-7/0",
+        "crab-improve-v1/train-7/1"
+      ]
+    },
+    {
+      "batch": 20,
+      "lane": "l5f",
+      "scenes": [
+        "crab-improve-v1/train-7/2",
+        "crab-improve-v1/train-7/3",
+        "crab-improve-v1/train-8/0",
+        "crab-improve-v1/train-8/1",
+        "crab-improve-v1/train-8/2",
+        "crab-improve-v1/train-8/3",
+        "crab-improve-v1/train-9/0",
+        "crab-improve-v1/train-9/1",
+        "crab-improve-v1/train-9/2",
+        "crab-improve-v1/train-9/3"
+      ]
+    }
+  ]
+}

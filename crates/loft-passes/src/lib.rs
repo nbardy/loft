@@ -845,6 +845,13 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         *color = as_v3(eval::concrete(&ev.module_expr(&decl.value)?, decl.name.span)?, decl.name.span)?;
     }
     let tables = ev.tables;
+    // A declared Mesh with no importer yet must never render as an empty data-only table.
+    if let Some(mesh) = p.kinds.get("Mesh")
+        && mesh.queries.is_empty() && !tables[p.kind_index("Mesh")].is_empty()
+    {
+        return Err(Diag::new(Code::E405, mesh.name.span, "imported Mesh drawing is not lowered yet",
+            "supply Mesh asset lowering in the glTF adapter"));
+    }
     let environment=|kind:&str|->Res<Option<[[f32;3];2]>>{
         let Some(k)=p.kinds.get(kind) else{return Ok(None)};
         match tables[p.kind_index(kind)].as_slice(){

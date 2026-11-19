@@ -6,6 +6,18 @@ use loft_runner::Runner;
 use std::sync::Arc;
 
 pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSample>, String> {
+    Ok(sample(g, p, seconds, None)?.0)
+}
+
+/// The same submitted law/check dispatches, timed in GPU milliseconds for clip scoring.
+pub fn sample_motion_timed(g: &Gpu, p: &Program, seconds: f32) -> Result<(Vec<MotionSample>, f64), String> {
+    let clock = (g.timestamps && !p.dispatches.is_empty()).then(|| Clock::new(g, 2));
+    sample(g, p, seconds, clock.as_ref())
+}
+
+fn sample(g: &Gpu, p: &Program, seconds: f32, clock: Option<&Clock>) -> Result<(Vec<MotionSample>, f64), String> {
+    let mut ms = 0.0;
+    if p.dispatches.is_empty() { return Ok((vec![], ms)); }
     if !seconds.is_finite() || seconds < 0. || f64::from(seconds) * 120. >= f64::from(u32::MAX) {
         return Err(
             "motion time must be finite, nonnegative and representable in 120 Hz ticks".into(),
@@ -57,10 +69,32 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
             .load_bundle(&fusion::motion_bundle(p, step, 0))
             .map_err(err)?;
         let mut encoder = g.device.create_command_encoder(&Default::default());
+        // The runner can split a tick range across passes. Bracket the whole
+        // encoded advance with portable pass-boundary timestamps before readback.
+        let timestamp = |enc: &mut wgpu::CommandEncoder, begin, end| {
+            if let Some(c) = clock {
+                drop(enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("motion timing boundary"),
+                    timestamp_writes: Some(wgpu::ComputePassTimestampWrites {
+                        query_set: &c.set,
+                        beginning_of_pass_write_index: begin,
+                        end_of_pass_write_index: end,
+                    }),
+                }));
+            }
+        };
+        timestamp(&mut encoder, None, Some(0));
         runner
             .advance_into(id, &mut encoder, ticks, 0)
             .map_err(err)?;
+        timestamp(&mut encoder, Some(1), None);
         g.queue.submit([encoder.finish()]);
+        if let Some(c) = clock {
+            let stamps = read_clock(g, c)?;
+            let dt = stamps[1].checked_sub(stamps[0]).filter(|_| stamps[0] != 0)
+                .ok_or("motion GPU timestamps are unavailable")?;
+            ms += dt as f64 * c.period_ns / 1e6;
+        }
         let state = runner
             .export_buffer(id, fusion::ROWS)
             .ok_or("missing state table")?;
@@ -122,5 +156,5 @@ pub fn sample_motion(g: &Gpu, p: &Program, seconds: f32) -> Result<Vec<MotionSam
             checks,
         });
     }
-    Ok(samples)
+    Ok((samples, ms))
 }

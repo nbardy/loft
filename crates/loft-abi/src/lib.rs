@@ -211,3 +211,19 @@ impl VisRec {
         (id >> 23, id & (1 << 22) != 0, id & 0x3fffff, c | d << 16)
     }
 }
+
+/// Bundle-wide mesh asset index, stored in an integer lane (06 §§7, 18).
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MeshAsset(pub u32);
+
+/// Authored columns of the Mesh kind, before the compiler's derived bounds.
+/// Like other xf rows, pose holds three packed basis columns then translation.
+/// Each column is three scalar words in RowTables, with no vec3 padding.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MeshRow {
+    pub pose: [[f32; 3]; 4],
+    pub asset: MeshAsset,
+    pub lod: u32,
+}
