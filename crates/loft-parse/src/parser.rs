@@ -434,6 +434,25 @@ impl<'src> Parser<'src, '_> {
             }
             return Ok(Item::Schedule(ScheduleDecl { implicit: false, name, passes, waivers, radiance }));
         }
+        if self.eat("world") {
+            let name = self.upper_ident()?;
+            self.expect("{")?;
+            self.seps();
+            self.expect("things")?;
+            self.expect(":")?;
+            self.expect("[")?;
+            self.seps();
+            let mut things = Vec::new();
+            while !self.eat("]") {
+                things.push(self.upper_ident()?);
+                if !self.eat(",") { self.expect("]")?; break; }
+                self.seps();
+            }
+            self.eat(",");
+            self.seps();
+            self.expect("}")?;
+            return Ok(Item::World(name, things));
+        }
         if self.eat("camera") {
             let name = self.ident()?;
             self.expect("{")?;
@@ -572,7 +591,7 @@ impl<'src> Parser<'src, '_> {
         Err(Diag::new(
             if matches!(
                 self.cur().text,
-                "body" | "state" | "solver" | "plan" | "target" | "world" | "retarget" | "input"
+                "body" | "state" | "solver" | "plan" | "target" | "retarget" | "input"
             ) {
                 Code::E405
             } else {

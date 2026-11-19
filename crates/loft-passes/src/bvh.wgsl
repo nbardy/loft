@@ -31,15 +31,19 @@ fn loft_bvh_span(ray: LoftRay, lo: vec3<f32>, hi: vec3<f32>) -> vec2<f32> {
 // The kind switch supplies a forward distance, -1 for a miss, or a value below
 // -1 for an unresolved query. The result preserves that failure in either mode.
 fn loft_bvh_trace(ray: LoftRay, node_count: u32, any_hit: bool) -> LoftBvhHit {
+  return loft_bvh_trace_at(ray, select(0xffffffffu, 0u, node_count != 0u), any_hit);
+}
+
+fn loft_bvh_trace_at(ray: LoftRay, root_id: u32, any_hit: bool) -> LoftBvhHit {
   var best = LoftBvhHit(LoftLeafRef(0xffffffffu, 0xffffffffu), -1.0);
-  if node_count == 0u { return best; }
-  let root = loft_bvh_nodes[0u];
+  if root_id == 0xffffffffu { return best; }
+  let root = loft_bvh_nodes[root_id];
   let span = loft_bvh_span(ray, root.lo, root.hi);
   if span.x > span.y { return best; }
 
   var stack: array<u32, 32>;
   var enters: array<f32, 32>;
-  stack[0u] = 0u;
+  stack[0u] = root_id;
   enters[0u] = span.x;
   var depth = 1u;
   var active_ray = ray;

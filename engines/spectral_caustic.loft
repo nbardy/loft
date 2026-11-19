@@ -53,7 +53,8 @@ fn spectral_path(origin: v3, direction: v3, seed: u, bounces: u, nm: f, lane: u)
     var radiance = 0.0;
     for (var bounce=0u; bounce<=bounces; bounce++) {
       let h = world_trace(ray.o,ray.d,1e6);
-      if h.t<0.0 {
+      if h.t < -1.0 { break; }
+      if h.t == -1.0 {
         radiance += throughput*loft_user_spectral_band(loft_user_sky_dome(ray.d),nm);
         break;
       }
@@ -108,6 +109,6 @@ schedule SpectralCaustic {
   render_bundle(Vis64) { draw_indirect(Drawables) }
   tile_classify(Vis64, tile: 8)
   shade_tiles(Vis64, light: sun_sky, sun: [0.5, 0.75, 0.35])
-  screen_pass(spectral_sample, bounces: 16)
+  screen_pass(spectral_sample, spectral: true, bounces: 16)
   tonemap_aces(ColorHdr, sky: sky_color)
 }

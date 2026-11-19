@@ -14,12 +14,22 @@ pub enum Integrator {
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct WorldResources {
+    pub kinds: Vec<u32>,
+    pub media: bool,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct PathTrace {
     pub integrator: Integrator,
     pub bounces: u32,
     #[serde(default)]
     pub lens: [f32; 2],
     pub lamps: Vec<[[f32; 4]; 2]>,
+    #[serde(default)]
+    pub worlds: Vec<WorldResources>,
+    #[serde(default)]
+    pub media: Vec<[[f32; 4]; 5]>,
 }
 
 const WORLD: &str = include_str!("world_path.wgsl");
@@ -43,15 +53,38 @@ fn namespace(text: &str, kind: usize) -> String {
 
 pub(super) const QUERIES_END: &str = "// --- generated entry points ---";
 
-pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace) -> Res<String> {
+pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(String, String)], luts: &[LutRef], path: &PathTrace, entry: &str) -> Res<String> {
     let mut em = Emitter::new(p, types);
     em.header(abi::NONCE_PLACEHOLDER);
     let prefix_len = em.out.len();
     em.out.push_str(crate::bvh::WGSL);
     em.out.push_str(WORLD);
+    em.out.push_str(crate::bsdf::VOLUME_STEP_WGSL);
+    em.out.push_str(include_str!("world_medium.wgsl"));
+    for name in ["Ray", "Hit", "Sigma", "Vol"] {
+        let mut fields = Vec::new();
+        for field in p.structs[name].1 {
+            fields.push(format!("  {}: {},", super::member_name(&field.name.name), super::wty(&em.resolve(&field.ty))));
+        }
+        let _ = writeln!(em.out, "struct loft_type_{name} {{\n{}\n}}", fields.join("\n"));
+    }
+    let radiance = &p.structs["Vol"].1[0].ty;
+    if em.resolve(radiance) == Ty::VecN(3) {
+        em.out.push_str(r"
+fn loft_medium(world: u32, p: vec3<f32>) -> loft_type_Sigma {
+  let sigma = world_medium(world, p);
+  return loft_type_Sigma(sigma.s, sigma.t, sigma.g, sigma.emission);
+}
+fn loft_authored_volume(world: u32, ray: loft_type_Ray, limit: f32, steps: u32, rng: array<u32, 4>) -> loft_type_Vol {
+  let vol = world_volume(world, LoftRay(ray.o, ray.d, ray.t0, min(ray.t1, limit)), steps, true);
+  return loft_type_Vol(vol.l, vol.t);
+}
+");
+    }
     let [radius, focus] = path.lens;
     let _ = writeln!(em.out, "const LENS_RADIUS: f32 = {}; const FOCUS: f32 = {};", super::f32_lit(f64::from(radius)), super::f32_lit(f64::from(focus)));
     let spectral = matches!(path.integrator, Integrator::Spectral);
+    let mut local_cases = Vec::new();
     let mut field_cases = Vec::new();
     let mut eval_cases = Vec::new();
     let mut intersect_cases = Vec::new();
@@ -68,6 +101,11 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
         body = body.replace("let o = i * STRIDE;", "let o = i;").replace("rows[o +", "world_words[o +").replace("luts[", "world_luts[");
         em.out.push_str(&namespace(&body, i));
         em.out.push('\n');
+        local_cases.push(format!(r"
+    case {i}u: {{
+      let row = kind{i}_load_row(at);
+      return loft_xf_pt(loft_xf_inv(kind{i}_loft_pose(row)), point);
+    }}"));
         field_cases.push(format!(r"
     case {i}u: {{
       let row = kind{i}_load_row(at);
@@ -91,7 +129,7 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     case {i}u: {{
       let row = kind{i}_load_row(h.at);
       let xf = loft_xf_inv(kind{i}_loft_pose(row));
-      let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, h.n){uv});
+      let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, select(-h.n, h.n, h.entering)){uv});
       return kind{i}_eval_bsdf(b, h.n, wo, wi);
     }}"));
         if spectral {
@@ -101,13 +139,16 @@ pub(crate) fn module(p: &Prog, types: &[Ty], kinds: &[KindTable], queries: &[(St
     case {i}u: {{
       let row = kind{i}_load_row(h.at);
       let xf = loft_xf_inv(kind{i}_loft_pose(row));
-      let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, h.n){uv});
+      let b = kind{i}_q_material(row, loft_xf_pt(xf, h.p), loft_xf_vec(xf, select(-h.n, h.n, h.entering)){uv});
       return Optics(b.l{slot}_0, b.l{slot}_1, b.l{slot}_2);
     }}"));
             }
         }
     }
     let _ = writeln!(em.out, r"
+fn world_local(kind: u32, at: u32, point: vec3<f32>) -> vec3<f32> {{
+  switch kind {{ {} default: {{ return point; }} }}
+}}
 fn world_field(kind: u32, at: u32, point: vec3<f32>) -> f32 {{
   switch kind {{ {} default: {{ return 1e6; }} }}
 }}
@@ -122,7 +163,7 @@ fn loft_bvh_intersect(leaf: LoftLeafRef, ray: LoftRay) -> f32 {{
 }}
 fn world_eval(h: PathHit, wo: vec3<f32>, wi: vec3<f32>) -> vec3<f32> {{
   switch h.kind {{ {} default: {{ return vec3<f32>(0.0); }} }}
-}}", field_cases.join("\n"), intersect_cases.join("\n"), eval_cases.join("\n"));
+}}", local_cases.join("\n"), field_cases.join("\n"), intersect_cases.join("\n"), eval_cases.join("\n"));
     if spectral {
         let _ = writeln!(em.out, r"
 struct Optics {{ base: f32, dispersion: f32, absorb: vec3<f32> }}
@@ -130,10 +171,6 @@ fn world_optics(h: PathHit) -> Optics {{
   switch h.kind {{ {} default: {{ return Optics(0.0, 0.0, vec3<f32>(0.0)); }} }}
 }}", optics_cases.join("\n"));
     }
-    let entry = match path.integrator {
-        Integrator::Reference => "reference_sample",
-        Integrator::Spectral => "spectral_sample",
-    };
     let f = p.fns.get(entry).ok_or_else(|| Diag::new(Code::E011, Span::NONE, format!("missing path function {entry}"), "load the selected engine recipe"))?;
     let mut helper = vec!["sky_dome", "reservoir_add", "reservoir_scale", "reservoir_reuse"];
     if spectral {

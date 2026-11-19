@@ -268,7 +268,6 @@ impl Runner {
                 new.active = current.active;
                 new.decl.capacity = current.decl.capacity;
                 next.checkpoints = std::mem::take(&mut old.checkpoints);
-                // Ring history survives code/configuration swaps along with its live allocation.
                 next.decl.state.as_mut().unwrap().checkpoint_slots = a.checkpoint_slots;
             }
         }
@@ -308,7 +307,6 @@ impl Runner {
 pub mod bundle;
 pub mod embed;
 pub mod events;
-pub mod mips;
 pub mod params;
 pub mod pick;
 pub mod replay;

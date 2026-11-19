@@ -8,7 +8,11 @@ fn reference_sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb =
     var radiance = vec3<f32>(0.0);
     for (var bounce = 0u; bounce <= bounces; bounce++) {
       let hit = world_trace(ray_o, ray_d, 1e6);
-      if hit.t < 0.0 {
+      if hit.t < -1.0 { break; }
+      let volume = world_volume(0u, LoftRay(ray_o, ray_d, 0.0001, select(1e6, hit.t, hit.t >= 0.0)), 24u, true);
+      radiance += energy * volume.l;
+      energy *= volume.t;
+      if hit.t == -1.0 {
         radiance += energy * loft_user_sky_dome(ray_d);
         break;
       }

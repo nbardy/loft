@@ -10,7 +10,7 @@ pub(super) struct PathGpu {
 impl PathGpu {
     pub(super) fn layout(d: &wgpu::Device, path: &PathTrace) -> wgpu::BindGroupLayout {
         let stages = CS | FS;
-        let mut entries = vec![(stages, storage(true)); 5];
+        let mut entries = vec![(stages, storage(true)); 6];
         if matches!(path.integrator, Integrator::Spectral) { entries.push((stages, storage(false))); }
         layout(d, "path world", &entries)
     }
@@ -21,32 +21,40 @@ impl PathGpu {
         let path = p.path.as_ref().expect("path layout needs a path");
         let d = &g.device;
         let init = |bytes: &[u8]| d.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytes, usage: U::STORAGE });
-        let tree = loft_passes::bvh::Bvh2::build(&p.instances)
-            .map_err(|e| format!("invalid world BVH: {e:?}"))?;
-        // Frozen leaf IDs remain (kind,row). A per-kind base translates them into the packed row arena.
         let mut words = vec![0u32; 1 + 2 * p.kinds.len()];
-        words[0] = tree.nodes().len() as u32;
+        let mut nodes = Vec::new();
+        let mut leaves = Vec::new();
+        let mut world_data = vec![path.worlds.len() as u32, path.media.len() as u32];
+        for world in &path.worlds {
+            let instances = p.instances.iter().filter(|r| world.kinds.contains(&r.kind)).copied().collect::<Vec<_>>();
+            let tree = loft_passes::bvh::Bvh2::build(&instances).map_err(|e| format!("invalid world BVH: {e:?}"))?;
+            let node_base = (nodes.len() / 8) as u32;
+            let leaf_base = (leaves.len() / 2) as u32;
+            let root = if tree.nodes().is_empty() { u32::MAX } else { node_base };
+            world_data.extend([root, if world.media { path.media.len() as u32 } else { 0 }]);
+            for n in tree.nodes() {
+                nodes.extend(n.lo.map(f32::to_bits));
+                nodes.push(n.left_or_first + if n.count == 0 { node_base } else { leaf_base });
+                nodes.extend(n.hi.map(f32::to_bits));
+                nodes.push(n.count);
+            }
+            leaves.extend(tree.leaves().iter().flat_map(|r| [r.kind_id, r.row_id]));
+        }
+        world_data.extend(path.media.as_flattened().as_flattened().iter().map(|v| v.to_bits()));
+        let world_data = init(&bytes_of(&world_data));
         for (i, kind) in p.kinds.iter().enumerate() {
             words[1 + i * 2] = words.len() as u32;
             words[2 + i * 2] = kind.stride;
             words.extend(kind.rows.iter().map(|v| v.to_bits()));
         }
         let packed = init(&bytes_of(&words));
-        let mut nodes = Vec::new();
-        for n in tree.nodes() {
-            nodes.extend(n.lo.map(f32::to_bits));
-            nodes.push(n.left_or_first);
-            nodes.extend(n.hi.map(f32::to_bits));
-            nodes.push(n.count);
-        }
         if nodes.is_empty() { nodes.resize(8, 0); }
         let nodes = init(&bytes_of(&nodes));
-        let mut leaves: Vec<_> = tree.leaves().iter().flat_map(|r| [r.kind_id, r.row_id]).collect();
         if leaves.is_empty() { leaves.resize(2, 0); }
         let leaves = init(&bytes_of(&leaves));
         let luts = init(&f32_bytes(if p.luts.is_empty() { &[0.0; 4] } else { &p.luts }));
         let lights = init(&f32_bytes(path.lamps.as_flattened().as_flattened()));
-        let mut resources = vec![packed.as_entire_binding(), nodes.as_entire_binding(), luts.as_entire_binding(), lights.as_entire_binding(), leaves.as_entire_binding()];
+        let mut resources = vec![packed.as_entire_binding(), nodes.as_entire_binding(), luts.as_entire_binding(), lights.as_entire_binding(), leaves.as_entire_binding(), world_data.as_entire_binding()];
         let bins = matches!(path.integrator, Integrator::Spectral).then(|| {
             buffer(d, "fixed photon bins", 16 * 128 * 128, U::STORAGE | U::COPY_DST)
         });

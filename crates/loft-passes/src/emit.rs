@@ -85,6 +85,7 @@ fn wty(t: &Ty) -> String {
         Ty::Bsdf => "Bsdf".into(),
         Ty::Id(_) => "u32".into(),
         Ty::Array(t, n) => format!("array<{}, {n}>", wty(t)),
+        Ty::Struct(k) if k == "World" => "u32".into(),
         Ty::Struct(k) => format!("loft_type_{k}"),
         Ty::Table(_) | Ty::Verdict => unreachable!("motion values are lowered in a law"),
         Ty::Map(..) => unreachable!("maps are not values"),
@@ -92,6 +93,10 @@ fn wty(t: &Ty) -> String {
 }
 
 // Typed Loft locals and generated WGSL symbols use separate namespaces.
+fn member_name(n: &str) -> String {
+    if n == "emit" { "r_emit".into() } else { n.into() }
+}
+
 fn wgsl_name(n: &str) -> String { format!("loft_local_{n}") }
 fn map_symbol(n: &str) -> String { format!("loft_map_{}_{}", n.len(), n) }
 
@@ -514,6 +519,9 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     format!("{}_{}{suffix}", if self.motion { "motion_const" } else { "loft_const" }, n)
                 }
             }
+            ExprKind::Name(n) if n == "SceneWorld" && !self.locals.contains(n) => "0u".into(),
+            ExprKind::Name(n) if self.p.worlds.contains_key(n.as_str()) && !self.locals.contains(n) =>
+                format!("{}u", 1 + self.p.worlds.keys().position(|k| *k == n).expect("checked world")),
             ExprKind::Name(n) => wgsl_name(n),
             ExprKind::Member(base, m) => {
                 if let ExprKind::Name(n) = &base.kind
@@ -522,7 +530,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 {
                     return format!("{}_cell",map_symbol(n));
                 }
-                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), m.name)}
+                if matches!(self.ty_of(base),Ty::Frame(_)){format!("{}.{}",self.expr(base),frame_field(&m.name))}else if matches!(self.ty_of(base),Ty::Row(_)){format!("{}.r_{}", self.expr(base),m.name)}else{format!("{}.{}", self.expr(base), member_name(&m.name))}
             }
             ExprKind::Index(a, i) => format!("{}[{}]", self.expr(a), self.expr(i)),
             ExprKind::Unary(op, x) => {
@@ -593,6 +601,21 @@ impl<'p, 'a> Emitter<'p, 'a> {
                 if self.p.fns.contains_key(callee.name.as_str()) {return format!("{}{}({})",if self.motion{"motion_"}else{""},fn_symbol(&callee.name),a.join(", "));}
                 if let Some(op) = crate::quant::Quant::resolve(&callee.name) {
                     return format!("loft_quant_{}({})", op.name(), a.join(", "));
+                }
+                if let Ok(Some(call)) = crate::world::WorldCall::resolve(&callee.name, &a, e.span) {
+                    use crate::world::WorldQuery::*;
+                    let world = call.world.as_deref().unwrap_or("0u");
+                    match call.query {
+                        Trace { ray } => return format!("loft_trace({world}, {ray})"),
+                        Visible { a, b } => return format!("loft_visible({world}, {a}, {b})"),
+                        Sky { direction } => return format!("loft_user_sky_dome({direction})"),
+                        Medium { point } => return format!("loft_medium({world}, {point})"),
+                        Material { .. } | Light { .. } => {}
+                    }
+                }
+                if callee.name == "inscatter_joint" {
+                    let steps = if a.len() == 5 { a[3].as_str() } else { "24u" };
+                    return format!("loft_authored_volume({}, {}, {}, {steps}, {})", a[0], a[1], a[2], a.last().unwrap());
                 }
                 if self.motion && matches!(motion_math(&callee.name), MotionMath::Fixed){return format!("det_{}({})",callee.name,a.join(", "));}
                 if matches!(callee.name.as_str(),"held"|"missed"){return format!("vec2<f32>({}, {})",if callee.name=="held"{"1.0"}else{"2.0"},a[0]);}
@@ -786,10 +809,24 @@ pub fn kind_module(p: &Prog, types: &[Ty], k: &KindDecl, light: &str, luts: &[Lu
         bfields.extend((0..layout.weights.len()).map(|i| format!("  mix{i}: f32,")));
         layout.eval(&mut evals)
     };
+    // The shelf's reflective lobes vanish behind the surface. The wrapped
+    // diffuse lobe extends support only by its authored wrap. Preserve custom lobes.
+    let mut horizon = "0.0".to_owned();
+    let mut finite_support = true;
+    for (i, (name, _)) in layout.lobes.iter().enumerate() {
+        match *name {
+            "ggx" | "coat" | "film" | "lambert" | "sheen" | "emit_lobe" => {}
+            "sss" => horizon = format!("max({horizon}, clamp(b.l{i}_1 * 4.0, 0.0, 1.0))"),
+            _ => finite_support = false,
+        }
+    }
+    let support = if finite_support {
+        format!("  if dot(n, l) <= -{horizon} && dot(l, l) > 0.0 {{ return vec3<f32>(0.0); }}\n")
+    } else { String::new() };
     let _ = write!(
         em.out,
         "// The material's lobes, bottom first; `l = 0` asks for emitted radiance.\nstruct Bsdf {{\n{}\n}}\n\
-         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n  var c = vec3<f32>(0.0);\n  var emission = vec3<f32>(0.0);\n{evals}  return {result};\n}}\n\n",
+         fn eval_bsdf(b: Bsdf, n: vec3<f32>, v: vec3<f32>, l: vec3<f32>) -> vec3<f32> {{\n{support}  var c = vec3<f32>(0.0);\n  var emission = vec3<f32>(0.0);\n{evals}  return {result};\n}}\n\n",
         bfields.join("\n")
     );
     em.library(&lib, &consts);
@@ -957,6 +994,9 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
     };
     let mut diagnostics = "";
     let shade = match aov {
+        // The shelf light evaluates an emission-only stack exactly once at zero incident direction.
+        Aov::Beauty if light == "sun_sky" && layout.lobes.iter().all(|(name, _)| *name == "emit_lobe") =>
+            "eval_bsdf(b, n, -rd, vec3<f32>(0.0))".into(),
         Aov::Beauty => format!("{}(b, n, -rd, sun, loft_shadow(p, n), ao)", fn_symbol(light)),
         Aov::Albedo => layout.lobes.iter().enumerate().find_map(|(i, (name, _))| {
             let f = p.fns[*name];
@@ -987,18 +1027,31 @@ fn loft_box(ro: vec3<f32>, rd: vec3<f32>, lo: vec3<f32>, hi: vec3<f32>) -> vec2<
             if matches!(draw, Draw::Surface { .. }) {
                 "vec3<f32>(0.0)".into()
             } else {
-                // Central differences cancel the first-order truncation error of the tetrahedral stencil.
+                // Axis differences estimate the direction. One secant in that direction is
+                // itself bounded by L, even where axis samples straddle different smooth pieces.
                 geometry.push_str(r"
+  let delta = max(4.0 * e, 64.0 * 1.1920929e-7 * length(pl));
   var grad = vec3<f32>(0.0);
   for (var j = 0u; j < 6u; j++) {
     let axis = j / 2u;
     var q = pl;
     let side = select(-1.0, 1.0, (j & 1u) == 0u);
-    q[axis] += side * e;
+    q[axis] += side * delta;
     grad[axis] += side * q_trace(row, q);
   }
+  let offset = grad * (delta * inverseSqrt(max(dot(grad, grad), 1e-30)));
+  let a = pl - offset;
+  let b0 = pl + offset;
+  let fa = q_trace(row, a);
+  let fb = q_trace(row, b0);
+  let chord = distance(a, b0);
+  // Subtract the endpoint uncertainty in field units. Compare the resulting
+  // lower estimate at the original threshold; zero-length chords prove nothing.
+  let extent = length(row.loft_hi - row.loft_lo);
+  let roundoff = 8.0 * 1.1920929e-7 * (abs(fa) + abs(fb) + row.loft_lip * max(extent, length(pl)));
+  let ratio = select(0.0, max(0.0, abs(fa - fb) - roundoff) / max(chord * row.loft_lip, 1e-30), chord > 0.0);
 ");
-                "loft_ratio(length(grad) / (2.0 * e * row.loft_lip))".into()
+                "loft_ratio(ratio)".into()
             }
         }
         Aov::Overdraw => {

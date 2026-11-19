@@ -1,6 +1,7 @@
 //! Native execution of the Phase 1.5 picture and motion fixtures.
 mod motion;
 mod bakes;
+mod mips;
 mod paths;
 use paths::PathGpu;
 use bakes::TextureBake;
@@ -621,7 +622,7 @@ impl Loaded {
             Shadow { frame_buf, bundle: be.finish(&wgpu::RenderBundleDescriptor { label: Some("sun") }), vis: view(&vis_t), depth: shadow_view.clone(), view_proj, texel, dir }
         });
 
-        let mut bake_cache = loft_runner::mips::Pipelines::default();
+        let mut bake_cache = mips::Pipelines::default();
         let mut bake_textures = p.bakes.iter().map(|b| TextureBake::prepare(g, b, &modules, &bgl0, &mut bake_cache))
             .collect::<Result<Vec<_>, _>>()?;
         let n_load = bake_textures.iter().filter(|b| b.clock.due(true, &p.params)).count() as u32;
@@ -642,14 +643,6 @@ impl Loaded {
         }
         let path = path_layout.as_ref().map(|layout| PathGpu::prepare(g, p, &bgl0, &bgl_present, layout, &modules[p.present])).transpose()?;
         let n = 2 * (p.passes.len() as u32 + u32::from(path.as_ref().is_some_and(PathGpu::has_photons)));
-        let clock = g.timestamps.then(|| Clock {
-            set: d.create_query_set(&wgpu::QuerySetDescriptor { label: Some("frame"), ty: wgpu::QueryType::Timestamp, count: n }),
-            resolve: buffer(d, "ts resolve", u64::from(n) * 8, U::QUERY_RESOLVE | U::COPY_SRC),
-            read: buffer(d, "ts read", u64::from(n) * 8, U::MAP_READ | U::COPY_DST),
-            n,
-            period_ns: f64::from(g.queue.get_timestamp_period()),
-        });
-        let n = 2 * p.passes.len() as u32;
         let clock = g.timestamps.then(|| Clock::new(g, n));
         d.poll(wgpu::PollType::wait_indefinitely()).map_err(|e| e.to_string())?;
         stats.resources_ms = t.elapsed().as_secs_f64() * 1e3;

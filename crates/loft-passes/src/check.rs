@@ -909,7 +909,7 @@ impl<'p,'a> Ck<'p,'a> {
                 if let Some(l) = self.lookup(n) {
                     return Ok(l.ty.clone());
                 }
-                if n == "SceneWorld" && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
+                if (n == "SceneWorld" || self.p.worlds.contains_key(n.as_str())) && self.p.structs.contains_key("World") { return Ok(Ty::Struct("World".into())); }
                 if n=="time" {return if self.comptime{Err(Diag::new(Code::E403,e.span,"time read at build stage","read time in a query or a law"))}else{Ok(Ty::F32)}}
                 if let Some(c) = self.p.consts.get(n.as_str()) {
                     if self.comptime {
@@ -1148,7 +1148,10 @@ impl<'p,'a> Ck<'p,'a> {
             return Ok(result);
         }
         if let Some(world) = crate::world::WorldCall::resolve(&callee.name, &ts, span)? {
-            self.pending_lowering.get_or_insert(span);
+            if !matches!(world.query, crate::world::WorldQuery::Trace { .. } | crate::world::WorldQuery::Visible { .. }
+                | crate::world::WorldQuery::Sky { .. } | crate::world::WorldQuery::Medium { .. }) {
+                self.pending_lowering.get_or_insert(span);
+            }
             return self.world_query(world, span);
         }
         match callee.name.as_str() {
@@ -1170,9 +1173,12 @@ impl<'p,'a> Ck<'p,'a> {
                 self.assignable(ray, &named("Ray")?, sp[1])?;
                 self.assignable(distance, &Ty::F32, sp[2])?;
                 self.assignable(rng, &named("RngKey")?, *sp.last().unwrap())?;
+                if named("Radiance")? != Ty::VecN(3) {
+                    return Err(Diag::new(Code::E405, span, "the RGB medium marcher needs Radiance = rgb",
+                        "supply a marcher for the schedule's custom radiance"));
+                }
                 let result = named("Vol")?;
                 if *distance == Ty::AbstractInt { self.set(&args[2].value, Ty::F32); }
-                self.pending_lowering.get_or_insert(span);
                 return Ok(result);
             }
             "atomic_add" => {
@@ -1247,7 +1253,14 @@ impl<'p,'a> Ck<'p,'a> {
                 named("Lit")
             }
             Sky { direction } => { self.assignable(&direction, &dir, span)?; named("Radiance") }
-            Medium { point: p } => { self.assignable(&p, &point, span)?; named("Sigma") }
+            Medium { point: p } => {
+                self.assignable(&p, &point, span)?;
+                if named("Radiance")? != Ty::VecN(3) {
+                    return Err(Diag::new(Code::E405, span, "the field medium sampler needs Radiance = rgb",
+                        "supply coefficient sampling for the schedule's custom radiance"));
+                }
+                named("Sigma")
+            }
         }
     }
 

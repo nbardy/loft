@@ -106,3 +106,17 @@ lobe sss(color: rgb, radius: f, n: rgb, v: rgb, l: rgb) {
 lobe emit_lobe(color: rgb, n: rgb, v: rgb, l: rgb) {
   v4(color * (1.0 - min(dot(l, l), 1.0)), 1.0)
 }
+
+# Charlie distribution with the bounded Neubelt visibility term.
+lobe sheen(color: rgb, rough: f, n: rgb, v: rgb, l: rgb) {
+  let nl = clamp(dot(n, l), 0.0, 1.0)
+  let nv = clamp(dot(n, v), 0.0, 1.0)
+  if nl <= 0.0 || nv <= 0.0 {
+    return v4(rgb(0.0), 1.0)
+  }
+  let nh = clamp(dot(n, normalize(v + l)), 0.0, 1.0)
+  let inv_r = 1.0 / clamp(rough, 0.02, 1.0)
+  let d = (2.0 + inv_r) * pow(max(1.0 - nh * nh, 0.0), 0.5 * inv_r) * 0.159154943
+  let vis = 0.25 / max(nl + nv - nl * nv, 1e-6)
+  v4(color * (d * vis * nl), 1.0)
+}

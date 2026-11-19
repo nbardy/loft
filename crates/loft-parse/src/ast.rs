@@ -41,6 +41,7 @@ pub enum Item {
     /// `check name(h: K, ...) -> unit { ... }`: `ret` is the verdict's unit.
     Check(FnDecl),
     Camera(CameraDecl),
+    World(Ident, Vec<Ident>),
     Bake(BakeDecl),
 }
 

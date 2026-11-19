@@ -20,26 +20,35 @@ pub(crate) fn ggx_energy(roughness: f32, mu: f32) -> [f32; 2] {
     ]
 }
 
-pub(crate) fn energy_wgsl() -> String {
-    let mut wgsl = format!("const loft_ggx_albedo = array<u32, {}>(\n", ENERGY.len());
-    for row in ENERGY.chunks_exact(PITCH) {
-        for value in row {
-            write!(wgsl, "{value}u,").unwrap();
+pub(crate) fn energy_words() -> impl Iterator<Item = f32> {
+    ENERGY.into_iter().map(f32::from)
+}
+
+pub(crate) fn energy_wgsl(table: Option<&str>) -> String {
+    let mut wgsl = String::new();
+    if let Some(table) = table {
+        writeln!(wgsl, "fn loft_ggx_word(i: u32) -> f32 {{ return {table}[arrayLength(&{table}) - {}u + i]; }}", ENERGY.len()).unwrap();
+    } else {
+        wgsl = format!("const loft_ggx_albedo = array<u32, {}>(\n", ENERGY.len());
+        for row in ENERGY.chunks_exact(PITCH) {
+            for value in row {
+                write!(wgsl, "{value}u,").unwrap();
+            }
+            wgsl.push('\n');
         }
-        wgsl.push('\n');
+        wgsl.push_str(");\nfn loft_ggx_word(i: u32) -> f32 { return f32(loft_ggx_albedo[i]); }\n");
     }
     wgsl.push_str(
-        ");\n\
-        fn loft_ggx_energy(roughness: f32, mu: f32) -> vec2<f32> {\n\
+        "fn loft_ggx_energy(roughness: f32, mu: f32) -> vec2<f32> {\n\
             let r = clamp(roughness, 0.0, 1.0) * 32.0;\n\
             let v = sqrt(clamp(mu, 0.0, 1.0)) * 32.0;\n\
             let i = min(u32(r), 31u);\n\
             let j = min(u32(v), 31u);\n\
             let base = i * 34u;\n\
             let b = v - f32(j);\n\
-            let e0 = mix(f32(loft_ggx_albedo[base+j]), f32(loft_ggx_albedo[base+j+1u]), b);\n\
-            let e1 = mix(f32(loft_ggx_albedo[base+34u+j]), f32(loft_ggx_albedo[base+34u+j+1u]), b);\n\
-            return mix(vec2(e0, f32(loft_ggx_albedo[base+33u])), vec2(e1, f32(loft_ggx_albedo[base+67u])), r - f32(i)) / 65535.0;\n\
+            let e0 = mix(loft_ggx_word(base+j), loft_ggx_word(base+j+1u), b);\n\
+            let e1 = mix(loft_ggx_word(base+34u+j), loft_ggx_word(base+34u+j+1u), b);\n\
+            return mix(vec2(e0, loft_ggx_word(base+33u)), vec2(e1, loft_ggx_word(base+67u)), r - f32(i)) / 65535.0;\n\
         }\n",
     );
     wgsl
@@ -108,4 +117,5 @@ pub fn inscatter_joint(
 /// Bind the world lowering's summed sampler as
 /// `fn loft_sample_medium(o: vec3<f32>, d: vec3<f32>, t: f32, step: u32, rng: vec4<u32>) -> LoftCoefficients`.
 /// The caller supplies a normalized ray, clipped interval, and positive step count.
-pub const INSCATTER_WGSL: &str = include_str!("bsdf/inscatter.wgsl");
+pub const INSCATTER_WGSL: &str = concat!(include_str!("bsdf/volume_step.wgsl"), include_str!("bsdf/inscatter.wgsl"));
+pub(crate) const VOLUME_STEP_WGSL: &str = include_str!("bsdf/volume_step.wgsl");

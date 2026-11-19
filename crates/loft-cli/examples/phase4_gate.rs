@@ -64,17 +64,21 @@ fn shrine(g: &Gpu) -> Result<Value, String> {
     let control = g.triangle_control_ms(size)?;
     let l = Loaded::new(g, &p, size, None)?;
     let mut times = Vec::new();
+    let mut pass_times = Vec::new();
     for i in 0..130 {
         l.frame(g, 0.);
-        let ms = l.gpu_ms(g)?.ok_or("missing GPU timestamps")?.0;
+        let (ms, passes) = l.gpu_ms(g)?.ok_or("missing GPU timestamps")?;
         if i >= 30 {
             times.push(ms);
+            pass_times.push(passes);
         }
     }
     times.sort_by(f64::total_cmp);
     Ok(
         json!({"control_p50_ms":control,"p50_ms":times[49],"p95_ms":times[94],
-        "frames":100,"warmup":30,"camera_radius":p.camera.radius,"instances":p.instances.len(),"schedule":"authored raster"}),
+        "frames":100,"warmup":30,"camera_radius":p.camera.radius,"instances":p.instances.len(),"schedule":"two-world woodblock",
+        "passes":p.passes.iter().map(|p| format!("{p:?}")).collect::<Vec<_>>(),
+        "gpu_pass_ms":pass_times,"modules":loft_passes::telemetry::collect(&p)}),
     )
 }
 
@@ -241,15 +245,74 @@ fn measure(g: &Gpu, gate: &str) -> Result<Value, String> {
             observe(g,&mut compile(&scene)?.0,"let h = world_trace(vec3(0.,0.,4.),vec3(0.,0.,-1.),10.);
                 let value = world_direct(h,vec3(0.,0.,1.),seed,0u)[ch];",1024,32)
         }
+        "authored-media" => {
+            let source = r#"
+space World Local
+world Fog { things: [FieldMedium] }
+world Vacuum { things: [] }
+fn authored(w: World, r: Ray, rng: RngKey) -> Vol = inscatter_joint(w, r, 1m, 24, rng)
+fn authored_visibility(w: World, a: p3@World, b: p3@World) -> rgb = visible(w, a, b)
+fn sample_ray(seed: u) -> Ray =
+  wgsl(seed: u) -> Ray {
+    return loft_type_Ray(vec3(0.0), vec3(0.0,0.0,1.0), 0.0, 1.0, vec2(0.0));
+  }
+fn sample_key(seed: u) -> RngKey =
+  wgsl(seed: u) -> RngKey {
+    return array<u32,4>(seed,0u,0u,0u);
+  }
+fn measurement(o: v3, d: v3, seed: u, bounces: u) -> rgb {
+  let ray = sample_ray(seed)
+  let vol = authored(Fog, ray, sample_key(seed))
+  vol.l + authored_visibility(Vacuum, ray.o, ray.o + ray.d) * vol.t
+}
+schedule Main {
+  orbit(at: [0,0,0], radius: 3, height: 0.5, fov: 40deg)
+  cull_indirect()
+  render_bundle(Vis64) {}
+  tile_classify(Vis64, tile: 8)
+  shade_tiles(Vis64, light: sun_sky, sun: [0,1,0])
+  screen_pass(measurement, bounces: 0)
+  tonemap_aces(ColorHdr, sky: sky_color)
+}
+"#;
+            // Call the checked Loft functions from the linear readback probe.
+            // Red/blue row permutation must give the same L and T and leave the second world in vacuum.
+            let rows = [("0.69314718", "[0.69314718,0,0]"), ("0.69314718", "[0,0,0.69314718]")];
+            let mut results = Vec::new();
+            for order in [rows, [rows[1], rows[0]]] {
+                let mut text = format!("{source}\nbuild {{\n");
+                for (extinction, emission) in order {
+                    text += &format!("emit FieldMedium(lo: [-1,-1,0]@World, hi: [1,1,1]@World, sigma_t: rgb({extinction}), albedo: [0,0,0], emission: {emission})\n");
+                }
+                text += "}\n";
+                let (mut p, _) = compile(&text)?;
+                results.push(observe(g, &mut p, r"
+                    let ray = loft_type_Ray(vec3(0.0), vec3(0.0,0.0,1.0), 0.0, 1.0, vec2(0.0));
+                    let vol = loft_user_authored(1u, ray, array<u32,4>(seed,0u,0u,0u));
+                    let vis = loft_user_authored_visibility(select(1u,2u,test==3u),ray.o,ray.o+ray.d);
+                    let value = select(select(vol.t[ch],vol.l[ch],test==0u),vis[ch],test>=2u);
+                ", 32, 4)?);
+            }
+            let target = [[0.375,0.0,0.375],[0.25;3],[0.25;3],[1.0;3]];
+            for result in &results {
+                let measured: Vec<[f64;3]> = serde_json::from_value(result["linear_rgb"].clone()).map_err(|e| e.to_string())?;
+                if measured.len()!=target.len() || measured.iter().zip(target).any(|(got, expected)| (0..3).any(|i| (got[i]-expected[i]).abs()>1e-4)) {
+                    return Err(format!("authored media differs from slab oracle: {result}"));
+                }
+            }
+            Ok(json!({"orders":results,"case_order":["radiance","transmittance","visibility","vacuum_visibility"]}))
+        }
         "media" => {
             let mut p = compile(SPHERE)?.0;
             let m = &mut p.modules[p.present];
             // Supply the two World coefficients in both orders to the shipped WGSL marcher.
-            m.wgsl = format!("{}\nfn loft_sample_medium(o:vec3<f32>,d:vec3<f32>,t:f32,k:u32,r:vec4<u32>)->LoftCoefficients {{
+            let (_, marcher) = loft_passes::bsdf::INSCATTER_WGSL.split_once("struct LoftCoefficients")
+                .expect("joint marcher coefficients");
+            m.wgsl = format!("struct LoftCoefficients{}\nfn loft_sample_medium(o:vec3<f32>,d:vec3<f32>,t:f32,k:u32,r:vec4<u32>)->LoftCoefficients {{
                 let sigma=log(2.); let a=select(vec3(sigma,0.,0.),vec3(0.,0.,sigma),r.x==1u);
                 let b=select(vec3(0.,0.,sigma),vec3(sigma,0.,0.),r.x==1u);
                 return LoftCoefficients(vec3(sigma+sigma),a+b);
-            }}\n{}",loft_passes::bsdf::INSCATTER_WGSL,m.wgsl);
+            }}\n{}",marcher,m.wgsl);
             observe(g,&mut p,"let m = loft_inscatter_joint(vec3(0.),vec3(0.,0.,1.),0.,1.,24u,vec4(test/2u));
                 let value = select(m.l,m.t,test%2u==1u)[ch];",1,4)
         }
@@ -260,8 +323,10 @@ fn measure(g: &Gpu, gate: &str) -> Result<Value, String> {
 fn main() -> Result<(), String> {
     let gate = std::env::args().nth(1).ok_or("supply an observation")?;
     let result = measure(&native::gpu()?, &gate)?;
+    let dir = std::env::args().nth(2).unwrap_or_else(|| "out/meta/i4".into());
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     fs::write(
-        Path::new("out/meta/i4").join(format!("{gate}.json")),
+        Path::new(&dir).join(format!("{gate}.json")),
         result.to_string(),
     )
     .map_err(|e| e.to_string())

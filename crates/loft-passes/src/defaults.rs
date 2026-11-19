@@ -16,9 +16,10 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
         _ => None,
     }).next_back();
     let authored = items().find_map(|i| if let Item::Schedule(s) = i { Some(s) } else { None });
+    let woodblock = authored.and_then(|s| s.passes.iter().find(|p| p.verb.name == "woodblock"));
     let complete = authored.is_some_and(|s| s.passes.iter().any(|p| p.verb.name == "render_bundle"));
     if complete && selection.is_none() { return Ok(()); }
-    let text = match selection.map(|n| n.name.as_str()) {
+    let text = match selection.map(|n| n.name.as_str()).or(woodblock.map(|_| "woodblock")) {
         Some("reference") => include_str!("../../../engines/reference.loft"),
         Some("woodblock") => include_str!("../../../engines/woodblock.loft"),
         Some("spectral_caustic") => include_str!("../../../engines/spectral_caustic.loft"),
@@ -27,6 +28,34 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
     let mut recipe = crate::parse::parse(Span::NONE.file, text, next)?;
     let index = recipe.items.iter().position(|i| matches!(i, Item::Schedule(_))).expect("one default schedule");
     let Item::Schedule(mut schedule) = recipe.items.remove(index) else { unreachable!("found schedule") };
+    if let Some(call) = woodblock {
+        let bad = || Diag::new(Code::E520, call.verb.span, "invalid two-world woodblock schedule",
+            "write woodblock(PrimaryWorld, SolidShadow, MainCam) with declared worlds and camera");
+        let [primary, shadow, cam] = call.args.as_slice() else { return Err(bad()); };
+        let names = [primary, shadow, cam].map(|a| match &a.value.kind { ExprKind::Name(n) => Some(n.as_str()), _ => None });
+        let [Some(primary), Some(shadow), Some(cam)] = names else { return Err(bad()); };
+        if !camera.is_some_and(|c| c.name.name == cam) { return Err(bad()); }
+        let index = crate::Prog::index(modules)?;
+        let geometry = |name| -> Res<Vec<Arg>> {
+            let kinds = index.worlds.get(name).ok_or_else(bad)?;
+            Ok(kinds.iter().filter(|k| !index.kinds[k.name.as_str()].queries.is_empty()).map(|k| Arg {
+                name: None, value: Expr { id: 0, span: k.span, kind: ExprKind::Name(k.name.clone()) },
+            }).collect())
+        };
+        let primary = geometry(primary)?;
+        let shadow = geometry(shadow)?;
+        for pass in &mut schedule.passes {
+            match pass.verb.name.as_str() {
+                "cull_indirect" => pass.args = primary.clone(),
+                "render_bundle" => pass.body[0].1 = primary.clone(),
+                "find_shadow_map" => {
+                    pass.args.retain(|a| a.name.is_some());
+                    pass.args.extend(shadow.clone());
+                }
+                _ => {}
+            }
+        }
+    }
     if complete {
         modules.push(recipe);
         return Ok(());
@@ -42,7 +71,7 @@ pub fn schedule(modules: &mut Vec<Module>, next: &mut u32) -> Res<()> {
         schedule.name = s.name.clone();
         schedule.waivers = s.waivers.clone();
         if s.radiance.is_some() { schedule.radiance = s.radiance.clone(); }
-        before.extend(s.passes.iter().filter(|p| p.verb.name != "realtime" || !p.args.is_empty()).cloned());
+        before.extend(s.passes.iter().filter(|p| (p.verb.name != "realtime" || !p.args.is_empty()) && p.verb.name != "woodblock").cloned());
     }
     if before.iter().any(|p| p.verb.name == "orbit") {
         schedule.passes.retain(|p| p.verb.name != "orbit");

@@ -2,7 +2,7 @@
 use super::*;
 use loft_ir::{DispatchExtent, PassId, PassRun, TableId};
 use loft_passes::bake_tex::{Bake, Clock as DeclClock, TexDim};
-use loft_runner::mips::{Clock as BakeClock, Dimension, Mips, Pipelines};
+use super::mips::{Clock as BakeClock, Dimension, Mips, Pipelines};
 
 pub(super) struct TextureBake {
     pub(super) name: String,

@@ -86,6 +86,6 @@ schedule Study {
   render_bundle(Vis64) { draw_indirect(StudyDesk, StudyPaper, StudyOptic, StudyBead) }
   tile_classify(Vis64, tile: 8)
   shade_tiles(Vis64, light: sun_sky, sun: [-0.55, 0.86, -0.24])
-  screen_pass(spectral_sample, bounces: 16, lens_radius: 0.014, focus: 3.49)
+  screen_pass(spectral_sample, spectral: true, bounces: 16, lens_radius: 0.014, focus: 3.49)
   tonemap_aces(ColorHdr, sky: sky_color)
 }

@@ -32,6 +32,7 @@ pub struct Prog<'a> {
     /// Declaration order; a kind's index here is its stage-0 table.
     pub kind_order: Vec<&'a str>,
     pub consts: BTreeMap<&'a str, &'a ConstDecl>,
+    pub worlds: BTreeMap<&'a str, &'a [Ident]>,
     pub spaces: HashSet<&'a str>,
     pub structs: BTreeMap<&'a str, (&'a Ident, &'a [RowField])>,
     pub aliases: BTreeMap<&'a str, (&'a Ident, &'a TyExpr)>,
@@ -51,6 +52,7 @@ impl<'a> Prog<'a> {
             kinds: BTreeMap::new(),
             kind_order: vec![],
             consts: BTreeMap::new(),
+            worlds: BTreeMap::new(),
             spaces: HashSet::new(),
             structs: BTreeMap::new(),
             aliases: BTreeMap::new(),
@@ -85,6 +87,16 @@ impl<'a> Prog<'a> {
                     }
                 }
                 Item::Camera(_) => {}
+                Item::World(n, kinds) => {
+                    name(n)?;
+                    let mut seen = HashSet::new();
+                    for kind in kinds {
+                        if !seen.insert(&kind.name) {
+                            return Err(Diag::new(Code::E003, kind.span, "duplicate world kind", "list each world kind once"));
+                        }
+                    }
+                    p.worlds.insert(&n.name, kinds.as_slice());
+                }
                 Item::Bake(b) => {
                     name(&b.texel.name)?;
                     p.fns.insert(&b.texel.name.name, &b.texel);
@@ -130,6 +142,13 @@ impl<'a> Prog<'a> {
                             .note(prev.name.span, "first schedule here"));
                     }
                     p.schedule = Some(s);
+                }
+            }
+        }
+        for kinds in p.worlds.values() {
+            for kind in *kinds {
+                if !p.kinds.contains_key(kind.name.as_str()) {
+                    return Err(Diag::new(Code::E011, kind.span, format!("unknown world kind {}", kind.name), "declare the kind before using it in the world"));
                 }
             }
         }
@@ -527,7 +546,10 @@ fn pack(row: &[RowVal], out: &mut Vec<f32>) {
 fn naga_module(name: &str, text: String, src: &Sources, features: loft_ir::GpuFeatures) -> Res<ShaderModule> {
     let mut prelude = quant::wgsl_prelude(&text, features);
     if text.contains("loft_ggx_energy(") {
-        prelude.push_str(&bsdf::energy_wgsl());
+        let table = if text.contains("var<storage, read> world_luts:") { Some("world_luts") }
+            else if text.contains("var<storage, read> luts:") { Some("luts") }
+            else { None };
+        prelude.push_str(&bsdf::energy_wgsl(table));
     }
     prelude.push_str(&text);
     let map=provenance::Map::new(prelude);
@@ -637,6 +659,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     let mut casters: Vec<&str> = vec![];
     let mut shadow_size = 0u32;
     let mut path = None;
+    let mut path_entry = None;
     let mut print = false;
     let has_shadow_pass = sched.passes.iter().any(|p| p.verb.name == "find_shadow_map");
     let mut emitted_passes = HashSet::new();
@@ -720,11 +743,26 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                 passes.push(Pass::Shade(vec![]));
             }
             "screen_pass" => {
-                let first = pd.args.first().map(|a| &a.value.kind);
-                let integrator = match first {
-                    Some(ExprKind::Name(n)) if n == "reference_sample" => emit::paths::Integrator::Reference,
-                    Some(ExprKind::Name(n)) if n == "spectral_sample" => emit::paths::Integrator::Spectral,
-                    _ => return Err(Diag::new(Code::E405, pd.verb.span, "unsupported screen pass signature", "supply reference_sample or spectral_sample")),
+                let Some(ExprKind::Name(entry)) = pd.args.first().map(|a| &a.value.kind) else {
+                    return Err(Diag::new(Code::E405, pd.verb.span, "screen pass needs a path function", "name a fn with signature (v3, v3, u, u) -> rgb"));
+                };
+                let f = p.fns.get(entry.as_str()).ok_or_else(|| Diag::new(Code::E011, pd.args[0].value.span,
+                    format!("unknown path function {entry}"), "name a declared fn"))?;
+                let checker = check::Ck::new(&p, &mut types);
+                let params = f.params.iter().map(|a| a.ty.as_ref().map(|t| checker.resolve(t, true)).transpose())
+                    .collect::<Res<Vec<_>>>()?;
+                let rgb = Some(Ty::VecN(3));
+                if params != [rgb.clone(), rgb.clone(), Some(Ty::U32), Some(Ty::U32)]
+                    || f.ret.as_ref().map(|t| checker.resolve(t, true)).transpose()? != rgb
+                {
+                    return Err(Diag::new(Code::E003, pd.args[0].value.span, "invalid path function signature",
+                        "write fn sample(origin: v3, direction: v3, seed: u, bounces: u) -> rgb"));
+                }
+                path_entry = Some(entry.as_str());
+                let integrator = match pd.args.iter().find(|a| a.name.as_ref().is_some_and(|key| key.name == "spectral")).map(|a| &a.value.kind) {
+                    Some(ExprKind::Bool(true)) => emit::paths::Integrator::Spectral,
+                    Some(ExprKind::Bool(false)) | None => emit::paths::Integrator::Reference,
+                    Some(_) => return Err(Diag::new(Code::E003, pd.verb.span, "spectral requires a boolean", "use spectral: true or omit the option")),
                 };
                 let e = arg(pd, "bounces")?;
                 let bounces = as_f32(stage0(&p, &mut types, e, overrides)?, e.span)?;
@@ -742,7 +780,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
                     return Err(Diag::new(Code::E602, pd.verb.span, "invalid thin lens", "use a nonnegative lens radius and positive focus distance"));
                 }
                 let lens = [radius, focus];
-                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![] }).is_some() {
+                if path.replace(emit::paths::PathTrace { integrator, bounces: bounces as u32, lens, lamps: vec![], worlds: vec![], media: vec![] }).is_some() {
                     return Err(Diag::new(Code::E505, pd.verb.span, "duplicate path pass", "schedule one path integrator"));
                 }
             }
@@ -863,13 +901,51 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     };
     if aov != emit::Aov::Beauty { path = None; }
     if let Some(path) = &mut path {
+        if let Some(medium) = p.kinds.get("FieldMedium") {
+            for row in &tables[p.kind_index("FieldMedium")] {
+                let [lo, hi, sigma_t, albedo, g, emission] = row.as_slice() else {
+                    return Err(Diag::new(Code::E003, medium.name.span, "invalid medium layout", "use FieldMedium from the light prelude"));
+                };
+                let v = |x: &RowVal| as_v3(x.clone(), medium.name.span);
+                let (lo, hi, t, albedo, emit) = (v(lo)?, v(hi)?, v(sigma_t)?, v(albedo)?, v(emission)?);
+                let g = as_f32(g.clone(), medium.name.span)?;
+                if (0..3).any(|i| !(lo[i] < hi[i] && t[i] >= 0.0 && (0.0..=1.0).contains(&albedo[i]) && emit[i] >= 0.0))
+                    || !(-1.0..1.0).contains(&g) || g == -1.0
+                {
+                    return Err(Diag::new(Code::E602, medium.name.span, "invalid medium coefficients or bounds",
+                        "use positive extents, nonnegative extinction and emission, albedo in [0,1] and |g| < 1"));
+                }
+                path.media.push([[lo[0], lo[1], lo[2], g], [hi[0], hi[1], hi[2], 0.0],
+                    [t[0], t[1], t[2], 0.0], [t[0] * albedo[0], t[1] * albedo[1], t[2] * albedo[2], 0.0],
+                    [emit[0], emit[1], emit[2], 0.0]]);
+            }
+        }
         path.lamps.push([[0.0; 4]; 2]); // index zero is the directional sun
         if let Some(lamp) = p.kinds.get("PointLamp") {
             for row in &tables[p.kind_index("PointLamp")] {
                 let [pos, color, reach] = row.as_slice() else { return Err(Diag::new(Code::E003, lamp.name.span, "invalid light layout", "use the PointLamp from the light prelude")); };
                 let [x,y,z] = as_v3(pos.clone(), lamp.name.span)?;
                 let [r,g,b] = as_v3(color.clone(), lamp.name.span)?;
-                path.lamps.push([[x,y,z,as_f32(reach.clone(),lamp.name.span)?],[r,g,b,0.0]]);
+                if let Some(medium) = p.kinds.get("FieldMedium") {
+            for row in &tables[p.kind_index("FieldMedium")] {
+                let [lo, hi, sigma_t, albedo, g, emission] = row.as_slice() else {
+                    return Err(Diag::new(Code::E003, medium.name.span, "invalid medium layout", "use FieldMedium from the light prelude"));
+                };
+                let v = |x: &RowVal| as_v3(x.clone(), medium.name.span);
+                let (lo, hi, t, albedo, emit) = (v(lo)?, v(hi)?, v(sigma_t)?, v(albedo)?, v(emission)?);
+                let g = as_f32(g.clone(), medium.name.span)?;
+                if (0..3).any(|i| !(lo[i] < hi[i] && t[i] >= 0.0 && (0.0..=1.0).contains(&albedo[i]) && emit[i] >= 0.0))
+                    || !(-1.0..1.0).contains(&g) || g == -1.0
+                {
+                    return Err(Diag::new(Code::E602, medium.name.span, "invalid medium coefficients or bounds",
+                        "use positive extents, nonnegative extinction and emission, albedo in [0,1] and |g| < 1"));
+                }
+                path.media.push([[lo[0], lo[1], lo[2], g], [hi[0], hi[1], hi[2], 0.0],
+                    [t[0], t[1], t[2], 0.0], [t[0] * albedo[0], t[1] * albedo[1], t[2] * albedo[2], 0.0],
+                    [emit[0], emit[1], emit[2], 0.0]]);
+            }
+        }
+        path.lamps.push([[x,y,z,as_f32(reach.clone(),lamp.name.span)?],[r,g,b,0.0]]);
             }
         }
     }
@@ -900,10 +976,26 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     if a != b || b.windows(2).any(|pair| pair[0] == pair[1]) || drawn.len() > abi::MAX_KINDS {
         return Err(Diag::new(Code::E520, sched.name.span, format!("cull lists {culled:?} but the bundle draws {drawn:?}"), "cull each drawable kind once (up to 32)"));
     }
+    let ids: Vec<u32> = (0..drawn.len() as u32).collect();
+    // Shadow-only geometry has row and shader resources but no primary draw.
+    for &caster in &casters {
+        if !drawn.contains(&caster) { drawn.push(caster); }
+    }
+    if drawn.len() > abi::MAX_KINDS {
+        return Err(Diag::new(Code::E520, sched.name.span, "too many primary and shadow kinds", "use up to 32 kinds"));
+    }
+    if let Some(path) = &mut path {
+        path.worlds.push(emit::paths::WorldResources { kinds: (0..drawn.len() as u32).collect(), media: true });
+        for members in p.worlds.values() {
+            path.worlds.push(emit::paths::WorldResources {
+                kinds: members.iter().filter_map(|m| drawn.iter().position(|k| *k == m.name).map(|k| k as u32)).collect(),
+                media: members.iter().any(|m| m.name == "FieldMedium"),
+            });
+        }
+    }
     let caster_ids = casters.iter().map(|c| {
         drawn.iter().position(|d| d == c).map(|i| i as u32).ok_or_else(|| Diag::new(Code::E520, sched.name.span, format!("shadow caster `{c}` is not drawn"), "cast shadows from drawn kinds"))
     }).collect::<Res<Vec<_>>>()?;
-    let ids: Vec<u32> = (0..drawn.len() as u32).collect();
     for pass in &mut passes {
         match pass {
             Pass::Vis(k) | Pass::Shade(k) => *k = ids.clone(),
@@ -1068,7 +1160,7 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
     let present = if let Some(path) = &path {
         passes.retain(|pass| matches!(pass, Pass::Present));
         shadow_size = 0;
-        emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path)?
+        emit::paths::module(&p, &types, &kinds, &texts, &lut_refs, path, path_entry.expect("checked path entry"))?
     } else {
         emit::paths::present(&p, &types, sky, aov, print)
     };
@@ -1085,6 +1177,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         }
     }
     lap("emit", &mut ms);
+    let store_energy = texts.iter().any(|(_, w)| w.contains("loft_ggx_energy(")
+        && (w.contains("var<storage, read> luts:") || w.contains("var<storage, read> world_luts:")));
     let shader_modules = texts.into_iter().map(|(n,w)| {
         let mut m=naga_module(&n, w, src, features)?;
         if let Some(k)=p.kinds.get(n.as_str()) {let (file,line,col,_,_)=src.locate(k.name.span); m.span=Some((file,line,col));}
@@ -1102,7 +1196,8 @@ fn compile_impl(src: &Sources, overrides: &[(String, f64)], samples: &[crate::pr
         camera,
         sun, params,
         shadow_size,
-        luts: luts.iter().flat_map(|l| l.frames.iter().flatten().copied()).collect(),
+        luts: luts.iter().flat_map(|l| l.frames.iter().flatten().copied())
+            .chain(store_energy.then(bsdf::energy_words).into_iter().flatten()).collect(),
         passes,
         cull: shared,
         classify: shared + 1,

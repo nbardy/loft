@@ -3,7 +3,7 @@ struct MediumStack {
 }
 struct MediumBend { ray: PathRay, stack: MediumStack, eta: f32, through: bool, valid: bool }
 struct CausticBin { flux: atomic<u32> }
-@group(2) @binding(5) var<storage, read_write> loft_local_bins: array<CausticBin>;
+@group(2) @binding(6) var<storage, read_write> loft_local_bins: array<CausticBin>;
 
 fn medium_air() -> MediumStack {
   return MediumStack(0u, array<u32, 4>(0xffffffffu,0u,0u,0u), array<f32,4>(1.0,0.0,0.0,0.0), array<f32,4>(0.0,0.0,0.0,0.0));

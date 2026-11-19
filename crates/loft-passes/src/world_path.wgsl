@@ -1,4 +1,4 @@
-struct PathHit { t: f32, p: vec3<f32>, n: vec3<f32>, kind: u32, at: u32, entering: bool }
+struct PathHit { t: f32, p: vec3<f32>, n: vec3<f32>, kind: u32, at: u32, entering: bool, row: u32 }
 
 struct PathLamp { position: vec4<f32>, intensity: vec4<f32> }
 struct PathLight { wi: vec3<f32>, l: vec3<f32>, t: f32 }
@@ -44,9 +44,15 @@ fn loft_bvh_field(leaf: LoftLeafRef, p: vec3<f32>) -> f32 {
   return world_field(leaf.kind_id, world_at(leaf), p);
 }
 fn world_trace(o: vec3<f32>, d: vec3<f32>, limit: f32) -> PathHit {
-  let hit = loft_bvh_trace(LoftRay(o, d, 0.0001, limit), bitcast<u32>(world_words[0]), false);
+  return world_trace_ray(0u, LoftRay(o, d, 0.0001, limit));
+}
+
+fn world_trace_ray(world: u32, ray: LoftRay) -> PathHit {
+  let o = ray.o;
+  let d = ray.d;
+  let hit = loft_bvh_trace_at(ray, world_root(world), false);
   let nearest = hit.t;
-  if nearest < 0.0 { return PathHit(nearest, vec3(0.0), vec3(0.0), 0u, 0u, false); }
+  if nearest < 0.0 { return PathHit(nearest, vec3(0.0), vec3(0.0), 0u, 0u, false, 0u); }
   let kind = hit.leaf.kind_id;
   let at = world_at(hit.leaf);
   let p = o + d*nearest;
@@ -58,9 +64,10 @@ fn world_trace(o: vec3<f32>, d: vec3<f32>, limit: f32) -> PathHit {
     q[axis] += 0.0001 * sign;
     g[axis] += sign * world_field(kind, at, q);
   }
+  if !(dot(g, g) > 0.0) { return PathHit(-2.0, p, vec3(0.0), kind, at, false, hit.leaf.row_id); }
   let entering = dot(g,d) < 0.0;
   let n = select(-normalize(g), normalize(g), entering);
-  return PathHit(nearest,p,n,kind,at,entering);
+  return PathHit(nearest,p,n,kind,at,entering,hit.leaf.row_id);
 }
 
 fn world_light(id: u32, point: vec3<f32>) -> PathLight {
@@ -96,9 +103,9 @@ fn world_direct(h: PathHit, wo: vec3<f32>, seed: u32, bounce: u32) -> vec3<f32> 
   let scale = loft_user_reservoir_scale(r);
   if scale == 0.0 { return vec3<f32>(0.0); }
   let lt = world_light(u32(r.w), h.p);
-  let v = loft_bvh_trace(LoftRay(h.p+h.n*0.0002, lt.wi, 0.0001, lt.t-0.0002), bitcast<u32>(world_words[0]), true);
-  if v.t != -1.0 { return vec3<f32>(0.0); }
-  return world_eval(h, wo, lt.wi) * lt.l * scale;
+  let start = h.p+h.n*0.0002;
+  let vis = world_visibility(0u, LoftRay(start, lt.wi, 0.0001, lt.t-0.0002));
+  return world_eval(h, wo, lt.wi) * lt.l * scale * vis;
 }
 
 fn path_aces(x: vec3<f32>) -> vec3<f32> {
