@@ -58,8 +58,8 @@ pub use view::Aim;
 
 use loft_ir::Error;
 use loft_ir::bundle::{
-    Access, Blend, Body, Bundle, Clear, Cull, Cover, Id, Init, Keep, Kernel, Layer, Module, Origin, Pack, Proxy, Raster,
-    RasterPrim, Shape, Target, TexFormat, When,
+    Access, Blend, Body, Bundle, Clear, Cover, Cull, Id, Init, Keep, Kernel, Layer, Module, Origin, Pack, Proxy,
+    Raster, RasterPrim, Shape, Target, TexFormat, When,
 };
 use loft_ir::frame::{self, Camera};
 use loft_ir::identity::{FrameKey, Precision};

@@ -66,7 +66,7 @@
 //! A Call or Loop node comes after every root and binder of its decl, so the job is acyclic through decls too.
 use crate::error::{Error, Fault, Internal, Meter, SceneFault, Span, WireFault};
 use crate::graph::{
-    Blend, Camera, Cull, Cells, Check, Clear, Compute, Cover, Draw, Fill, Find, Formula, Graph, GraphFn, Ground, Hold,
+    Blend, Camera, Cells, Check, Clear, Compute, Cover, Cull, Draw, Fill, Find, Formula, Graph, GraphFn, Ground, Hold,
     HoldKind, Input, Keep, Kept, Kernel, Layer, Lens, Loop, Medium, Near, Node, Op, OutShape, Outline, Output, Param,
     Part, Pass, Prim, Program, Proxy, Quant, Raster, RawFn, Read, Recur, Role, Run, Scan, Sel, Site, Size, Solve,
     Strategy, Target, Times, Ty, Unknown, When,
@@ -250,7 +250,14 @@ fn draw(c: &mut Cur) -> Result<Draw, ()> {
         _ => Err(()),
     };
     let cover = match c.word()? {
-        0 => Cover::Grid { u: c.word()?, v: c.word()?, place: c.word()?, normal: c.word()?, cells: c.word()?, count: c.word()? },
+        0 => Cover::Grid {
+            u: c.word()?,
+            v: c.word()?,
+            place: c.word()?,
+            normal: c.word()?,
+            cells: c.word()?,
+            count: c.word()?,
+        },
         1 => Cover::Mesh { kernel: c.word()?, count: c.word()? },
         2 => Cover::Quads { place: c.word()?, count: c.word()? },
         3 => {
@@ -1118,9 +1125,9 @@ fn top_layout(g: &Graph, top: Top) -> Result<(), ()> {
             let d = &g.draws[k];
             paint(d.paint)?;
             match &d.cover {
-                Cover::Grid { place, normal, cells, .. } => sig(g, *place, &[V2, F32], V3)
-                    .and(sig(g, *normal, &[V2, F32], V3))
-                    .and(sig(g, *cells, &[F32], V2)),
+                Cover::Grid { place, normal, cells, .. } => {
+                    sig(g, *place, &[V2, F32], V3).and(sig(g, *normal, &[V2, F32], V3)).and(sig(g, *cells, &[F32], V2))
+                }
                 Cover::Mesh { kernel: r, .. } => kernel(*r),
                 Cover::Quads { place, .. } => sig(g, *place, &[F32], V4),
                 Cover::Ray { proxy, find } => {

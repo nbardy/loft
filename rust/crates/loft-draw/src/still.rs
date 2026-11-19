@@ -40,8 +40,16 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
     };
     let dir =
         it.next().map(PathBuf::from).unwrap_or_else(|| usage("expected a bundle (scene.loft or its directory)".into()));
-    let mut a =
-        Args { dir, view: "game".into(), time: 1.0, size: (1280, 800), out: None, inputs: vec![], params: vec![], shots: vec![] };
+    let mut a = Args {
+        dir,
+        view: "game".into(),
+        time: 1.0,
+        size: (1280, 800),
+        out: None,
+        inputs: vec![],
+        params: vec![],
+        shots: vec![],
+    };
     let num = |s: &str, flag: &str| s.parse::<f64>().unwrap_or_else(|_| usage(format!("{flag}: not a number: {s}")));
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| usage(format!("{flag} needs a value")));
@@ -64,7 +72,12 @@ pub fn parse(mut it: impl Iterator<Item = String>, profile: bool) -> (Args, Flag
                 let (view, time, size) = (parts.next(), parts.next(), parts.next());
                 let (Some(view), Some(time), Some(size)) = (view, time, size) else { bad() };
                 let (w, h) = size.split_once('x').unwrap_or_else(|| bad());
-                a.shots.push((view.into(), num(time, "--shot"), (num(w, "--shot") as u32, num(h, "--shot") as u32), file.into()));
+                a.shots.push((
+                    view.into(),
+                    num(time, "--shot"),
+                    (num(w, "--shot") as u32, num(h, "--shot") as u32),
+                    file.into(),
+                ));
             }
             "--input" | "--param" => {
                 let v = value();
@@ -110,7 +123,9 @@ pub fn run(mut a: Args) -> Result<(), Verdict> {
     eprintln!("load {:.3} ms, precision {:?}", t.elapsed().as_secs_f64() * 1e3, loft.precision());
     let shots = std::mem::take(&mut a.shots);
     let first = (a.view.clone(), a.time, a.size, a.out.clone());
-    for (k, (view, time, size, out)) in std::iter::once(first).chain(shots.into_iter().map(|(v, t, s, o)| (v, t, s, Some(o)))).enumerate() {
+    for (k, (view, time, size, out)) in
+        std::iter::once(first).chain(shots.into_iter().map(|(v, t, s, o)| (v, t, s, Some(o)))).enumerate()
+    {
         (a.view, a.time, a.size) = (view, time, size);
         aim(&a, &mut loft)?;
         let target = Target::new(&g.device, a.size);

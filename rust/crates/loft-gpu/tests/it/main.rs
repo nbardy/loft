@@ -51,7 +51,7 @@ fn pack(access: Access, vec4s: u64, holds: &[(Id, u64)]) -> Pack {
     Pack { access, vec4s, holds: holds.into() }
 }
 fn raster(depth_write: bool) -> Raster {
-    Raster { cull: false, depth_write, blend: Blend::Opaque }
+    Raster { cull: Cull::None, depth_write, blend: Blend::Opaque }
 }
 fn text(s: &[&str]) -> Box<[Box<[u8]>]> {
     s.iter().map(|t| format!("{PRE}{t}").into_bytes().into()).collect()
@@ -301,7 +301,15 @@ fn refusals_are_typed_and_named() {
     let game = Game::new(&d);
     let (c, z) = (game.color.create_view(&Default::default()), game.depth.create_view(&Default::default()));
     let other = Canvas { samples: 4, ..CANVAS };
-    let view = View { canvas: other, color: &c, resolve: None, depth: &z, size: [N, N], owner: Owner::Caller, layers: Layers::All };
+    let view = View {
+        canvas: other,
+        color: &c,
+        resolve: None,
+        depth: &z,
+        size: [N, N],
+        owner: Owner::Caller,
+        layers: Layers::All,
+    };
     let mut enc = d.create_command_encoder(&Default::default());
     assert!(matches!(loft.encode_into(&d, &q, &mut enc, &view), Err(Error::Usage(_))));
 }

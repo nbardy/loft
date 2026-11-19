@@ -215,7 +215,13 @@ fn scene() -> (B, Vec<Draw>, Vec<Medium>, Vec<Pass>) {
     let draws = vec![
         draw(ray(ball.clone(), Find::Hit(fns.hit)), OPAQUE),
         draw(ray(Proxy::Instances { res: inst, local: bx(-0.5, 0.5) }, Find::Hit(fns.hit)), OPAQUE),
-        draw(Cover::Raster { prim: P::Grid { u: 32, v: 16, place: fns.grid, normal: fns.grid_normal, cells: fns.grid_cells }, count: 2 }, OPAQUE),
+        draw(
+            Cover::Raster {
+                prim: P::Grid { u: 32, v: 16, place: fns.grid, normal: fns.grid_normal, cells: fns.grid_cells },
+                count: 2,
+            },
+            OPAQUE,
+        ),
         draw(Cover::Raster { prim: P::Mesh { res: mesh }, count: 1 }, OPAQUE),
         draw(ray(Proxy::Box { min: bx(-2.0, 2.0)[0], max: bx(-2.0, 2.0)[1] }, Find::Medium(0)), GLOW),
         draw(ray(Proxy::Box { min: bx(-3.0, 3.0)[0], max: bx(-3.0, 3.0)[1] }, Find::Medium(1)), GLOW),
@@ -248,7 +254,11 @@ fn every_cover_medium_and_composer_validates_both_ways() {
     assert!(matches!(l.media[1].integrate, b::Integrate::Gaussians { res: 5 }));
     assert!(matches!(l.draws[1].cover, b::Cover::Ray { proxy: Proxy::Instances { res: 4, .. }, find: b::Find::Hit }));
     // A Ray cover culls back faces whatever its draw asked (the inward proxy runs each pixel once); others keep theirs.
-    assert!(l.draws[4].raster.cull == Cull::Back && l.draws[5].raster.cull == Cull::Back && l.draws[6].raster.cull == Cull::None);
+    assert!(
+        l.draws[4].raster.cull == Cull::Back
+            && l.draws[5].raster.cull == Cull::Back
+            && l.draws[6].raster.cull == Cull::None
+    );
     let veil = |d: usize| l.modules[l.draws[d].shade.0 as usize].lines().find(|t| t.starts_with("fn veil")).unwrap();
     // The specks (no depth write) are veiled by both media of their pass; the opaque sphere and the screen pass are not.
     assert!(veil(6).contains("loft_tr0(") && veil(6).contains("loft_tr1("), "{}", veil(6));
