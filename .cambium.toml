@@ -2,6 +2,9 @@ version = 1
 
 [settings]
 require_cow = true
+workspace_root = "~/git/_wt"
+merge_target = "origin/main"
+prune_merged_on_add = true
 
 # Cargo outputs hold source-path-sensitive state: a target cloned into another checkout reports that tree's crates
 # Fresh (Keel 2026-10-30). Each worktree builds its own rust/target; sccache shares compatible units across them.
@@ -9,7 +12,7 @@ require_cow = true
 path = "rust/target"
 policy = "skip"
 
-# Generated renders and reports: rebuilt per lane, never cloned (1.7 GB in the primary checkout on 2026-11-19).
+# Generated renders and reports: rebuilt per workspace, never cloned (1.7 GB in the primary checkout on 2026-11-19).
 [[path]]
 path = "out"
 policy = "skip"
@@ -17,4 +20,5 @@ policy = "skip"
 # The meta workspace's build folder (crates/ at the root), same reason as rust/target.
 [[path]]
 path = "target"
-policy = "skip"
+policy = "seed"
+seed = "cargo-deps"

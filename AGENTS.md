@@ -3,7 +3,7 @@
 Start with `CORE.md`: what Loft is for, the priorities (picture, GPU frame time, tokens, truth, lean) and how a change
 is judged.
 
-- Lanes: `tools/lane.sh new NAME BRANCH` (a Cambium worktree; it first sweeps merged lanes). After merging a lane into main and pushing, run `tools/lane.sh sweep`: it removes every clean lane already merged into origin/main and keeps the rest with the reason.
+- Parallel work: a disposable Cambium workspace, `git cambium add -b BRANCH -name NAME -ephemeral` (root `~/git/_wt` and the sweep come from `.cambium.toml`; `add` first removes workspaces already merged into origin/main). From the primary checkout, run `cambium prune --merged origin/main` or `cambium maintain` after a merge: it removes every clean workspace merged into origin/main and keeps the rest with the reason. `cambium remove NAME` refuses a dirty or in-use workspace and checkpoints before deleting. Pass the base commit explicitly if you need one other than this checkout's HEAD.
 - `bun` runs everything; `pnpm` installs. Nothing is compiled ahead of time.
 - Typecheck with `rtk proxy pnpm exec tsc --noEmit`. A shell hook rewrites a bare `tsc` and reports errors that are
   not there.
@@ -44,7 +44,7 @@ is judged.
   A feature request during the port is written against the Rust types in that plan and lands in its lane. A fix that
   changes a reference picture or refusal (`out/parity/R0`) says so in its commit.
 - Rust: one workspace in `rust/` (toolchain pinned by `rust/rust-toolchain.toml`). Edit loop `tools/dev.sh
-  check|lint|test|build|run CRATE`, gate `tools/check.sh static|quick|full`, lanes `tools/lane.sh`. Cargo goes
+  check|lint|test|build|run CRATE`, gate `tools/check.sh static|quick|full`, workspaces `git cambium add -ephemeral`. Cargo goes
   through the machine-wide compile lock shared with Keel; a waiter prints the holder. Picture parity:
   `bun tools/parity/run.ts`, reference set in `out/parity/R0`.
 - Design as built: `DESIGN.md`. Research notes: `docs/`. Handoff prompts: `prompts/art_research/`.
