@@ -425,8 +425,7 @@ fn gate(c: &mut Ctx, gate: Gate, s: &Scene, p: &Program, comp: &Compiled, shapes
                 let front = t.elapsed().as_secs_f64() * 1e3;
                 let device = Instant::now();
                 let l = Loaded::new(c.g, &p2, c.size, Some(nonce))?;
-                l.frame(c.g, 0.0);
-                l.gpu_ms(c.g)?;
+                // Loaded::new waits for device compilation and resource creation.
                 let hits: usize = r.kinds.iter().map(|k| k.cache_hits).sum();
                 times.push((front, device.elapsed().as_secs_f64() * 1e3, l.stats.clone(), hits));
             }
@@ -589,6 +588,7 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
     };
     let mut checks = vec![];
     let mut report = json!({"adapter": g.adapter, "device_ms": device_ms});
+    let mut compiled = vec![];
     for s in scenes {
         let file = root.join(&s.file);
         let set: Vec<_> = s.set.iter().map(|(k, &v)| (k.clone(), v)).collect();
@@ -597,7 +597,12 @@ pub fn run(approve: bool, only: Option<&str>) -> Result<(), Failure> {
         report[&s.name]["compile_ms"] = json!(r.ms.iter().map(|(n, t)| json!([n, t])).collect::<Vec<_>>());
         report[&s.name]["rows"] = json!(r.kinds.iter().map(|k| json!([k.name, k.rows, k.shapes, k.l_max])).collect::<Vec<_>>());
         let shapes: Vec<usize> = r.kinds.iter().map(|k| k.shapes).collect();
-        for gt in GATES {
+        gate(&mut c, Gate::Load, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
+        compiled.push((s, p, comp, shapes));
+    }
+    // Measure all cold/warm loads before the long timestamped frame batches.
+    for (s, p, comp, shapes) in compiled {
+        for gt in GATES.into_iter().filter(|g| *g != Gate::Load) {
             gate(&mut c, gt, s, &p, &comp, &shapes, &mut checks, &mut report).map_err(Failure::Device)?;
         }
     }
